@@ -20,10 +20,14 @@ import pytest
 from gobby.config.terminals import TerminalConfig
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.terminals import AttachLocator, Terminal, TerminalManager, native_locator_key
-from gobby.terminals import host_events
+from gobby.terminals import host_event_reader, host_events
 from gobby.terminals.frame_client import FrameClient
 from gobby.terminals.host_client import HostManagerStopped
-from gobby.terminals.host_events import HostInventorySnapshot, TerminalExitedEvent
+from gobby.terminals.host_events import (
+    HostInventorySnapshot,
+    InputActivityEvent,
+    TerminalExitedEvent,
+)
 from gobby.terminals.host_protocol import HostListRow
 from gobby.terminals.host_reconcile import ReconcileError, reconcile_host_inventory
 from gobby.utils.machine_id import require_machine_id
@@ -202,7 +206,7 @@ async def test_gap_settles_indeterminate_from_list(
     host = _host(tmp_path, terminals, client)
     host._client = client
 
-    await host._recover_event_gap(GapStream())
+    await host_event_reader.recover_event_gap(host, cast(host_events.HostEventStream, GapStream()))
 
     assert _loaded(terminals, committed.id).state == "live"
     assert _loaded(terminals, prepared.id).state == "exited"
@@ -356,7 +360,7 @@ async def test_gap_recovery_converges_under_ring_churn(
         return original_settle(terminal_id, host_terminal_id)
 
     with patch.object(terminals, "settle_exit", side_effect=record_settle):
-        await host._event_reader_loop()
+        await host_event_reader.event_reader_loop(host)
 
     assert subscriptions == 1
     assert settled == [(first.id, "ht-first"), (second.id, "ht-second")]
@@ -420,10 +424,68 @@ async def test_gap_buffer_overflow_repeats_cut(
     host._client = client
     monkeypatch.setattr(host_events, "GAP_BUFFER_ENTRIES", 2)
 
-    await host._recover_event_gap(stream)
+    await host_event_reader.recover_event_gap(host, cast(host_events.HostEventStream, stream))
 
     assert client.list_calls == 2
     assert (host.last_event_epoch, host.last_event_seq) == (epoch, 5)
+
+
+@pytest.mark.asyncio
+async def test_input_activity_reaches_sink_not_settle_exit(
+    tmp_path: Path,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    epoch = "epoch-input"
+    terminals = TerminalManager(temp_db)
+    pending = _pending(terminals, sample_project["id"])
+    terminals.record_process(
+        pending.id,
+        {"host_terminal_id": "ht-typed"},
+        attempt_generation=pending.attempt_generation,
+        attempt_started_at=pending.attempt_started_at,
+    )
+    row = terminals.promote_to_live(
+        pending.id,
+        locator={"host_terminal_id": "ht-typed"},
+        locator_key=native_locator_key(epoch, "ht-typed"),
+        host_epoch=epoch,
+    )
+    assert row is not None
+    client = FakeControlClient(host_epoch=epoch)
+    client.authed = True
+    host = _host(tmp_path, terminals, client)
+    host._client = client
+    host.host_epoch = epoch
+    host.last_event_epoch = epoch
+    host.last_event_seq = 4
+    seen: list[InputActivityEvent] = []
+    host.set_input_activity_sink(seen.append)
+    typed = InputActivityEvent(row.id, "ht-typed", "att-1", "input", 1, "ctrl_c", epoch, 5)
+
+    def failing_sink(_event: InputActivityEvent) -> None:
+        raise RuntimeError("sink down")
+
+    with patch.object(terminals, "settle_exit", wraps=terminals.settle_exit) as settle:
+        await host_event_reader.apply_host_event(host, typed)
+        assert seen == [typed]
+        settle.assert_not_called()
+        assert host.last_event_seq == 5
+        # A replayed sequence is dropped like any other duplicate.
+        await host_event_reader.apply_host_event(host, typed)
+        assert seen == [typed]
+        # A failing sink is logged, never propagated, and never stalls the cursor.
+        host.set_input_activity_sink(failing_sink)
+        await host_event_reader.apply_host_event(
+            host, InputActivityEvent(row.id, "ht-typed", "att-1", "paste", 3, None, epoch, 6)
+        )
+        assert host.last_event_seq == 6
+        await host_event_reader.apply_host_event(
+            host, TerminalExitedEvent(row.id, "ht-typed", 0, epoch, 7)
+        )
+        settle.assert_called_once_with(row.id, "ht-typed")
+    assert host.last_event_seq == 7
+    assert _loaded(terminals, row.id).state == "exited"
 
 
 @pytest.mark.asyncio
@@ -443,9 +505,9 @@ async def test_event_reader_joins_singleflight_and_stops_cleanly(
     host._event_connector = crash_stream
     restart = AsyncMock(side_effect=HostManagerStopped())
     with patch.object(host, "ensure_restart", new=restart):
-        host._arm_events()
+        host_event_reader.arm_events(host)
         event_task = host._event_task
-        host._arm_events()
+        host_event_reader.arm_events(host)
         assert host._event_task is event_task
         assert event_task is not None
         await event_task
@@ -461,7 +523,7 @@ async def test_event_reader_joins_singleflight_and_stops_cleanly(
     stopped._event_connector = stopped_stream
     stopped.last_event_epoch = "epoch-before-stop"
     stopped.last_event_seq = 23
-    stopped._arm_events()
+    host_event_reader.arm_events(stopped)
     assert stopped._event_task is not None
     await stopped._event_task
     assert (stopped.last_event_epoch, stopped.last_event_seq) == ("epoch-before-stop", 23)

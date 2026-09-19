@@ -23,6 +23,7 @@ pub use ws::{
     TERMINAL_WS_SAFE_INTEGER_MAX,
 };
 
+use crate::app::Backend;
 use crate::copy_mode::{paste_payload, PASTE_MAX_BYTES};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
@@ -167,6 +168,11 @@ pub struct RosterEntry {
     pub task: Option<TaskRef>,
     pub provider: Option<String>,
     pub model: Option<String>,
+    /// The model's name as its provider prints it (`Claude Fable 5.1`),
+    /// resolved by the daemon from its capability rows; absent when no row
+    /// matches, and the chrome then shows the raw selector.
+    #[serde(default)]
+    pub model_display_name: Option<String>,
     pub terminal: Option<TerminalRef>,
     #[serde(default, rename = "tmux", deserialize_with = "tmux_session_name")]
     pub tmux_session_name: Option<String>,
@@ -198,7 +204,7 @@ pub struct TaskRef {
 #[serde(default)]
 pub struct TerminalRef {
     pub terminal_id: String,
-    pub backend: String,
+    pub backend: Backend,
     /// The terminal row's lifecycle state (`live`, `orphaned`, ...); an
     /// `orphaned` row lost its host and can only be destroyed.
     pub state: Option<String>,

@@ -156,6 +156,21 @@ def test_composer_region_prefers_bottom_frame() -> None:
     assert matcher.composer_region(_CLAUDE_FRAME) == "❯ hello draft"
 
 
+def test_composer_region_reads_a_frame_whose_top_rule_carries_a_name() -> None:
+    """The regression that stranded two live pull prompts (gobby#22550).
+
+    Claude Code draws the terminal's name into the composer's top rule. A rule the
+    frame finder does not recognise leaves no region at all, so every probe reads
+    ``unknown`` -- no draft is ever seen and no Enter is ever verified.
+    """
+    named = _CLAUDE_FRAME.replace(
+        "────────────────────\n❯ hello draft",
+        "──────────── epic-22508-feedback-triage ─\n❯ hello draft",
+    )
+
+    assert matcher.composer_region(named) == "❯ hello draft"
+
+
 def test_composer_region_falls_back_to_the_last_prompt_box() -> None:
     pane = "╭──────╮\n│ >    │\n╰──────╯\n[⏱ 7m] MCP ✓"
     assert matcher.composer_region(pane) == "╭──────╮\n│ >    │\n╰──────╯"

@@ -17,6 +17,14 @@ _FALLBACK_KEYS = (
 _NESTED_KEYS = ("launch_metadata", "launchMetadata", "config", "configuration")
 
 
+def _effort_level(value: Any) -> str | None:
+    if isinstance(value, Mapping):
+        value = value.get("level")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
 def observed_reasoning_effort(data: Mapping[str, Any]) -> str | None:
     """Prefer an effective effort, then the requested or configured fallback."""
     sources = [data]
@@ -24,7 +32,6 @@ def observed_reasoning_effort(data: Mapping[str, Any]) -> str | None:
     for keys in (_EFFECTIVE_KEYS, _FALLBACK_KEYS):
         for source in sources:
             for key in keys:
-                value = source.get(key)
-                if isinstance(value, str) and value.strip():
-                    return value.strip()
+                if effort := _effort_level(source.get(key)):
+                    return effort
     return None

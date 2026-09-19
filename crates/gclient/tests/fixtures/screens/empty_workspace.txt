@@ -2,20 +2,20 @@
 # 120x40, dark theme, colours normalised to theme::Palette roles
 00 | [Menu]              [+] │                                                                                              |
 00 : -/accent*1 panel_bg/accent+b*6 -/accent*14 panel_bg/accent+b*3 -/accent*1 surface_dim/panel_bg*1 -/panel_bg*94
-01 | Machines                │                                                                                              |
-01 : -/surface0*1 subtext0/surface0+b*8 -/surface0*16 surface_dim/panel_bg*1 -/panel_bg*94
-02 | ○ scripted · local      │                                                                                              |
-02 : -/surface_dim*1 overlay0/surface_dim*1 overlay0/surface_dim+d*1 text/surface_dim+b*8 overlay0/surface_dim+d*8 -/surface_dim*6 surface_dim/panel_bg*1 -/panel_bg*94
-03 | Projects      [working] │                                                                                              |
-03 : -/surface0*1 subtext0/surface0+b*8 -/surface0*6 overlay0/surface0*9 -/surface0*1 surface_dim/panel_bg*1 -/panel_bg*94
-04 | Sessions         [view] │                                                                                              |
-04 : -/surface0*1 subtext0/surface0+b*8 -/surface0*9 overlay0/surface0*6 -/surface0*1 surface_dim/panel_bg*1 -/panel_bg*94
-05 |                         │                                                                                              |
-05 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
+01 |                         │                                                                                              |
+01 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
+02 | Machines                │                                                                                              |
+02 : -/surface0*1 subtext0/surface0+b*8 -/surface0*16 surface_dim/panel_bg*1 -/panel_bg*94
+03 | ○ scripted · local      │                                                                                              |
+03 : -/surface_dim*1 overlay0/surface_dim*1 overlay0/surface_dim+d*1 text/surface_dim+b*8 overlay0/surface_dim+d*8 -/surface_dim*6 surface_dim/panel_bg*1 -/panel_bg*94
+04 |                         │                                                                                              |
+04 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
+05 | Projects      [working] │                                                                                              |
+05 : -/surface0*1 subtext0/surface0+b*8 -/surface0*6 overlay0/surface0*9 -/surface0*1 surface_dim/panel_bg*1 -/panel_bg*94
 06 |                         │                                                                                              |
 06 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
-07 |                         │                                                                                              |
-07 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
+07 | Sessions         [view] │                                                                                              |
+07 : -/surface0*1 subtext0/surface0+b*8 -/surface0*9 overlay0/surface0*6 -/surface0*1 surface_dim/panel_bg*1 -/panel_bg*94
 08 |                         │                                                                                              |
 08 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
 09 |                         │                                                                                              |

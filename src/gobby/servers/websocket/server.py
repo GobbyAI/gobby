@@ -44,6 +44,7 @@ from gobby.sessions.turn_lifecycle import TurnLifecycleReducer
 from gobby.storage.attention import AttentionStateManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.workspaces import WorkspaceManager
+from gobby.terminals.host_events import InputActivityEvent
 from gobby.terminals.workspace_ops import WorkspaceOps
 from gobby.utils.json_helpers import json_dumps
 
@@ -54,6 +55,9 @@ logger = logging.getLogger(__name__)
 # message type so a client's request timeout can be traced to the handler that
 # held the connection (#22544).
 SLOW_WEBSOCKET_HANDLER_SECONDS = 1.0
+# The byte an interrupt keystroke carries on the daemon-mediated input path; direct
+# input reports only the interrupt kind, so the turn observer sees the same payload.
+_INTERRUPT_PAYLOADS = {"esc": "\x1b", "ctrl_c": "\x03"}
 websockets_logger = logging.getLogger("websockets.server")
 
 
@@ -258,6 +262,23 @@ class WebSocketServer(
         )
         if self.terminal_turn_observer is not None:
             self.terminal_turn_observer.set_terminal_manager(terminal_manager)
+        if host_manager is not None:
+            host_manager.set_input_activity_sink(self._observe_input_activity)
+
+    def _observe_input_activity(self, event: InputActivityEvent) -> None:
+        """Keep turn observation and the quarantine lift for typing that bypassed us.
+
+        Runs on the host event reader for every accepted direct write, so it
+        does exactly what the mediated input handler does after a delivered
+        write and nothing more.
+        """
+        observer = self.terminal_turn_observer
+        if observer is not None:
+            payload = _INTERRUPT_PAYLOADS.get(event.interrupt or "", "")
+            observer.record_mediated_input(event.terminal_id, payload, "delivered")
+        coordinator = self.write_coordinator
+        if coordinator is not None:
+            coordinator.observe_operator_input(event.terminal_id)
 
     @property
     def daemon_config(self) -> DaemonConfig | None:

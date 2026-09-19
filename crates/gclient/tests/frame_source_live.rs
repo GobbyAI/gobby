@@ -533,6 +533,146 @@ async fn direct_frames_verify_epoch_and_render() {
     }));
 }
 
+/// One control RPC on its own blocking connection, so the async frame source
+/// keeps running while the host answers.
+async fn control_rpc(host_dir: &Path, request: Value) -> Value {
+    let host_dir = host_dir.to_path_buf();
+    let id = request["id"].as_str().expect("control rpc id").to_string();
+    timeout(
+        HOST_TIMEOUT,
+        tokio::task::spawn_blocking(move || {
+            let mut control = control_connection_at(&host_dir);
+            send_control(&mut control, &request);
+            recv_response_with_id(&mut control, &id)
+        }),
+    )
+    .await
+    .expect("control rpc deadline")
+    .expect("control rpc task")
+}
+
+/// A real gterm host proves the whole direct write path (#22573): the daemon
+/// grants input to one attachment id, gclient binds that id and types on the
+/// frame stream, the PTY echoes the bytes back as frames, and a revoke turns
+/// the next key into a typed `InputRefused` without closing the stream.
+#[tokio::test]
+async fn granted_direct_input_echoes_and_revoke_refuses() {
+    let host = TestHost::spawn(&[]).await;
+    let host_dir = host.socket_dir().to_path_buf();
+    let spawn_dir = host_dir.clone();
+    let (epoch, host_terminal_id) = timeout(
+        HOST_TIMEOUT * 2,
+        tokio::task::spawn_blocking(move || spawn_native_terminal_at(&spawn_dir)),
+    )
+    .await
+    .expect("spawn native control deadline")
+    .expect("spawn native control task");
+
+    let mut source = UnixSocketFrameSource::connect(
+        &native_locator_for(&host.frame_socket(), &epoch, &host_terminal_id),
+        LOCAL_TOKEN,
+        80,
+        24,
+    )
+    .await
+    .expect("connect real direct source");
+    assert!(matches!(
+        timeout(IO_TIMEOUT, source.recv())
+            .await
+            .expect("attach timeout"),
+        Ok(ServerMessage::Attached { host_terminal_id: attached, .. })
+            if attached == host_terminal_id
+    ));
+    collect_direct_until(&mut source, |message| {
+        frame_text(message).is_some_and(|text| text.contains("GCLIENT-NATIVE-READY"))
+    })
+    .await;
+
+    // Ungranted input is refused, and the stream survives to be granted.
+    source
+        .send_input(&ClientMessage::Input {
+            data: b"ungranted\n".to_vec(),
+        })
+        .expect("queue ungranted input");
+    let refusals = collect_direct_until(&mut source, |message| {
+        matches!(message, ServerMessage::InputRefused { .. })
+    })
+    .await;
+    assert!(matches!(
+        refusals.last(),
+        Some(ServerMessage::InputRefused { code }) if code == "input_not_granted"
+    ));
+
+    let granted = control_rpc(
+        &host_dir,
+        json!({
+            "method": "grant_input",
+            "id": "grant-1",
+            "host_terminal_id": host_terminal_id,
+            "attachment_id": "att-live"
+        }),
+    )
+    .await;
+    assert_eq!(granted["granted"], true, "grant input: {granted}");
+
+    source
+        .send_input(&ClientMessage::BindAttachment {
+            attachment_id: "att-live".into(),
+        })
+        .expect("queue bind");
+    source
+        .send_input(&ClientMessage::Input {
+            data: b"hello\n".to_vec(),
+        })
+        .expect("queue granted input");
+    let echoed = collect_direct_until(&mut source, |message| {
+        frame_text(message).is_some_and(|text| text.contains("hello"))
+    })
+    .await;
+    assert!(
+        echoed
+            .iter()
+            .any(|message| frame_text(message).is_some_and(|text| text.contains("hello"))),
+        "the PTY echoed the directly typed bytes"
+    );
+
+    let revoked = control_rpc(
+        &host_dir,
+        json!({
+            "method": "revoke_input",
+            "id": "revoke-1",
+            "host_terminal_id": host_terminal_id,
+            "attachment_id": "att-live"
+        }),
+    )
+    .await;
+    assert_eq!(revoked["revoked"], true, "revoke input: {revoked}");
+
+    source
+        .send_input(&ClientMessage::Input {
+            data: b"revoked\n".to_vec(),
+        })
+        .expect("queue input after revoke");
+    let after_revoke = collect_direct_until(&mut source, |message| {
+        matches!(message, ServerMessage::InputRefused { .. })
+    })
+    .await;
+    assert!(matches!(
+        after_revoke.last(),
+        Some(ServerMessage::InputRefused { code }) if code == "input_not_granted"
+    ));
+    assert_eq!(
+        source.transport(),
+        Transport::Direct,
+        "a refusal never retires the source"
+    );
+    source
+        .send_input(&ClientMessage::Paste {
+            text: "pasted".into(),
+        })
+        .expect("a refused stream still accepts writes");
+}
+
 #[tokio::test]
 async fn tmux_pane_attaches_through_host_observer() {
     // Warm gterm before opening the tmux pane. TestHost::spawn may block on a
@@ -1306,8 +1446,10 @@ async fn all_three_sources_share_one_surface() {
         .split_once("}\n")
         .expect("FrameSource body")
         .0;
-    assert_eq!(trait_body.matches("fn ").count(), 3);
+    assert_eq!(trait_body.matches("fn ").count(), 4);
     assert!(trait_body.contains("fn send"));
+    // The non-awaiting write a held pane types with (#22573).
+    assert!(trait_body.contains("fn send_input"));
     assert!(trait_body.contains("fn recv"));
     assert!(trait_body.contains("fn transport"));
     assert!(!trait_body.contains("connect"));

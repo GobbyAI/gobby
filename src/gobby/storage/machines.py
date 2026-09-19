@@ -30,7 +30,7 @@ class MachineNotRegisteredError(RuntimeError):
     """Raised when untrusted ingress references an unknown machine."""
 
 
-_NODE_REF_RE = re.compile(r"n([1-9][0-9]*)")
+_NODE_REF_RE = re.compile(r"[0-9]+")
 
 
 def _clean_optional_text(value: str | None) -> str | None:
@@ -39,15 +39,15 @@ def _clean_optional_text(value: str | None) -> str | None:
 
 
 def parse_node_ref(reference: str) -> int | None:
-    """Return the number of an ``n#`` node ref, or None for any other text."""
+    """Return the number of an all-digit node ref, or None for any other text."""
     match = _NODE_REF_RE.fullmatch(reference.strip())
-    return int(match.group(1)) if match else None
+    return int(match.group(0)) if match else None
 
 
 def lowest_free_ref(taken: Iterable[int]) -> int:
-    """Return the lowest positive integer absent from ``taken``, so released refs are reused."""
+    """Return the lowest non-negative integer absent from ``taken``; released refs are reused."""
     used = set(taken)
-    ref = 1
+    ref = 0
     while ref in used:
         ref += 1
     return ref
@@ -253,7 +253,7 @@ class LocalMachineManager:
         return Machine.from_row(row) if row else None
 
     def get(self, machine_id: str, *, owner_user_id: str | None = None) -> Machine | None:
-        """Return a machine by id, or by ``n#`` node ref within one owner's machines."""
+        """Return a machine by id, or by node ref (a number) within one owner's machines."""
         node_ref = parse_node_ref(machine_id)
         if node_ref is None:
             row = self.db.fetchone(

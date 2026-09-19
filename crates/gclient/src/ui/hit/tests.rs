@@ -6,7 +6,7 @@ use crate::daemon::{Checkout, ProjectRow, SidebarRows, WorktreeRow};
 use crate::ui::chrome::{Chrome, Mode, ViewState};
 use crate::ui::dialogs::{CloseScope, CloseTarget, Dialog};
 use crate::ui::render_workspace;
-use crate::ui::status::{Toast, ToastKind};
+use crate::ui::status::Toast;
 use ratatui::backend::TestBackend;
 use ratatui::layout::{Position, Rect};
 use ratatui::Terminal;
@@ -263,12 +263,7 @@ fn dialog_buttons_hit_first_and_clear_with_the_dialog() {
 fn settings_and_toast_hits_take_precedence() {
     let (ws, mut chrome) = split_live();
     chrome.mode = Mode::Settings;
-    chrome.toast = Some(Toast {
-        kind: ToastKind::Success,
-        title: "done".to_string(),
-        body: None,
-        target: None,
-    });
+    chrome.notify(Toast::success("done"));
     rendered(&ws, &mut chrome);
     let view = &chrome.view;
 

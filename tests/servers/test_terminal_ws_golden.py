@@ -27,7 +27,7 @@ from gobby.storage.terminals import AttachLocator
 from gobby.storage.workspaces import Workspace, WorkspacePane, WorkspaceTab
 from gobby.terminals import web_spawn
 from gobby.terminals.actor_scope import OPERATOR_ACTOR
-from gobby.terminals.leases import TerminalLeaseRegistry
+from gobby.terminals.leases import HolderChange, TerminalLeaseRegistry
 from gobby.terminals.runtime import (
     Delivered,
     IndeterminateWrite,
@@ -615,3 +615,27 @@ def test_attachment_finalized_is_pinned() -> None:
         "message_seq_overflow",
     }
     assert isinstance(payload["lease_generation"], int)
+
+
+def test_control_result_pins_host_input_granted() -> None:
+    message = _message("control_result.json")
+    assert "host_input_granted" in message
+    assert message["host_input_granted"] is None
+
+
+@pytest.mark.asyncio
+async def test_control_result_carries_the_holder_observer_answer() -> None:
+    server, _, _ = _server()
+
+    async def granting(_change: HolderChange) -> bool | None:
+        return True
+
+    server.lease_registry.set_holder_observer(granting)
+    await server.lease_registry.attach(TERMINAL_ID, attachment_id=ATTACHMENT_ID)
+    websocket = MockWebSocket()
+    await TerminalControlMixin._handle_terminal_take_control(
+        server, websocket, _message("take_control.json")
+    )
+    sent = _sent(websocket)
+    assert sent["host_input_granted"] is True
+    assert sent | {"host_input_granted": None} == _message("control_result.json")

@@ -80,8 +80,15 @@ class _FakeArtifacts:
     base_commit_sha: None = None
 
 
+class _FakeDb:
+    """Hub double with an empty plan registry: every registry lookup misses."""
+
+    def fetchone(self, _sql: str, _params: tuple[object, ...] = ()) -> None:
+        return None
+
+
 class _FakeTaskManager:
-    db = object()
+    db = _FakeDb()
 
     def __init__(self) -> None:
         self.requested_refs: list[str] = []

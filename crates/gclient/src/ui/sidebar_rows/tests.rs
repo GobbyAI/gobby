@@ -121,7 +121,7 @@ fn session_rows_point_at_their_terminal() {
     assert_eq!(rows[0].height(), 2);
     assert!(rows[0].tokens.is_empty(), "{:?}", rows[0].tokens);
     assert_eq!(rows[1].label, "term-beta");
-    assert_eq!(rows[1].tokens, ["native"]);
+    assert_eq!(rows[1].tokens, ["gclient"]);
     assert!(!rows[1].nested);
 }
 
@@ -176,7 +176,7 @@ fn session_rows_render_session_effort_without_a_stray_separator() {
 
     let rows = session_rows(&ws, &Chrome::dark());
 
-    assert_eq!(rows[0].tokens, ["codex", "gpt-5-high"]);
+    assert_eq!(rows[0].tokens, ["codex", "gpt-5 high"]);
     assert_eq!(rows[1].tokens, ["codex", "gpt-5"]);
 }
 
@@ -194,12 +194,15 @@ fn project_lines_carry_the_toggle_branch_and_counts() {
         ..SidebarRow::default()
     };
     assert_eq!(
-        line_text(&row_line(&row, 24, &chrome)),
+        line_text(&row_line(&row, 24, &chrome, 0)),
         " ○ alpha (main ↑2 ↓1)  ▾"
     );
     // The parenthetical goes whole before the name loses a cell.
-    assert_eq!(line_text(&row_line(&row, 16, &chrome)), " ○ alpha       ▾");
-    assert_eq!(line_text(&row_line(&row, 7, &chrome)), " ○ a… ▾");
+    assert_eq!(
+        line_text(&row_line(&row, 16, &chrome, 0)),
+        " ○ alpha       ▾"
+    );
+    assert_eq!(line_text(&row_line(&row, 7, &chrome, 0)), " ○ a… ▾");
     assert_eq!(line_text(&row_second_line(&row, 24, &chrome)), "");
     let worktree = SidebarRow {
         id: "wt-1".into(),
@@ -212,7 +215,7 @@ fn project_lines_carry_the_toggle_branch_and_counts() {
         ..SidebarRow::default()
     };
     assert_eq!(
-        line_text(&row_line(&worktree, 30, &chrome)),
+        line_text(&row_line(&worktree, 30, &chrome, 0)),
         "▸  └─ ○ feature · #123"
     );
     let group = SidebarRow {
@@ -221,7 +224,7 @@ fn project_lines_carry_the_toggle_branch_and_counts() {
         kind: RowKind::Group,
         ..SidebarRow::default()
     };
-    assert_eq!(line_text(&row_line(&group, 12, &chrome)), " alpha ─────");
+    assert_eq!(line_text(&row_line(&group, 12, &chrome, 0)), " alpha ─────");
     assert_eq!(group.height(), 1);
 }
 
@@ -236,20 +239,21 @@ fn agent_lines_carry_needs_you_and_nest_under_their_session() {
         tokens: vec!["codex".into(), "gpt-5".into(), "#123".into()],
         ..SidebarRow::default()
     };
-    let wide = line_text(&row_line(&row, 60, &chrome));
+    let wide = line_text(&row_line(&row, 60, &chrome, 0));
     assert_eq!(wide, " ⍾ term-alpha · needs you");
     // The state word no longer fits beside the whole title, so it drops
     // before the title loses a cell.
-    let narrow = line_text(&row_line(&row, 14, &chrome));
+    let narrow = line_text(&row_line(&row, 14, &chrome, 0));
     assert_eq!(narrow, " ⍾ term-alpha");
-    let tiny = line_text(&row_line(&row, 8, &chrome));
-    assert_eq!(tiny, " ⍾ term…");
+    // Too narrow even alone, the title tickers from its head.
+    let tiny = line_text(&row_line(&row, 8, &chrome, 0));
+    assert_eq!(tiny, " ⍾ term-");
     // An idle row carries no word.
     let idle = SidebarRow {
         state: RowState::Idle,
         ..row.clone()
     };
-    assert_eq!(line_text(&row_line(&idle, 60, &chrome)), " ○ term-alpha");
+    assert_eq!(line_text(&row_line(&idle, 60, &chrome, 0)), " ○ term-alpha");
     // The tokens sit under the label and drop from the right.
     assert_eq!(
         line_text(&row_second_line(&row, 60, &chrome)),
@@ -264,7 +268,7 @@ fn agent_lines_carry_needs_you_and_nest_under_their_session() {
         ..row.clone()
     };
     assert_eq!(
-        line_text(&row_line(&nested, 60, &chrome)),
+        line_text(&row_line(&nested, 60, &chrome, 0)),
         " ├─ ⍾ term-alpha · needs you"
     );
     assert_eq!(
@@ -279,31 +283,45 @@ fn agent_lines_carry_needs_you_and_nest_under_their_session() {
 }
 
 #[test]
-fn ticker_walks_the_active_label_and_rests_at_both_ends() {
-    assert_eq!(ticker_window("abcdefghij", 12, 500), "abcdefghij");
-    assert_eq!(ticker_window("abcdefghij", 3, 500), "abcdefghij");
-    let at = |step: u64| ticker_window("abcdefghij", 6, step * TICKER_STEP);
+fn marquee_shares_one_period_and_parks_shorter_titles() {
+    assert_eq!(ticker_window("abcdefghij", 12, 500, 0), "abcdefghij");
+    assert_eq!(ticker_window("abcdefghij", 3, 500, 0), "abcdefghij");
+    // Alone, a four-cell overrun rests, walks, parks and jumps home.
+    let at = |step: u64| ticker_window("abcdefghij", 6, step * TICKER_STEP, 0);
     assert_eq!(at(0), "abcdef");
     assert_eq!(at(TICKER_PAUSE - 1), "abcdef");
     assert_eq!(at(TICKER_PAUSE + 2), "cdefgh");
     assert_eq!(at(TICKER_PAUSE + 4), "efghij");
-    assert_eq!(at(2 * TICKER_PAUSE + 4), "efghij");
-    assert_eq!(at(2 * TICKER_PAUSE + 6), "cdefgh");
-    assert_eq!(at(2 * TICKER_PAUSE + 8), "abcdef");
-    // Only the active row scrolls; a plain row keeps the ellipsis.
+    assert_eq!(at(2 * TICKER_PAUSE + 3), "efghij");
+    assert_eq!(at(2 * TICKER_PAUSE + 4), "abcdef");
+    // Beside a ten-cell overrun it parks until that one has arrived, so
+    // both restart together (D7).
+    let beside = |step: u64| ticker_window("abcdefghij", 6, step * TICKER_STEP, 10);
+    assert_eq!(beside(TICKER_PAUSE + 4), "efghij");
+    assert_eq!(beside(2 * TICKER_PAUSE + 9), "efghij");
+    assert_eq!(beside(2 * TICKER_PAUSE + 10), "abcdef");
+}
+
+#[test]
+fn every_overflowing_row_tickers_unless_motion_is_reduced() {
     let mut chrome = Chrome::dark();
     chrome.ticker = (TICKER_PAUSE + 2) * TICKER_STEP;
     let row = SidebarRow {
         id: "session:one".into(),
         label: "abcdefghij".into(),
         kind: RowKind::Agent,
-        active: true,
         ..SidebarRow::default()
     };
-    assert_eq!(line_text(&row_line(&row, 9, &chrome)), " ○ cdefgh");
-    let plain = SidebarRow {
-        active: false,
-        ..row
-    };
-    assert_eq!(line_text(&row_line(&plain, 9, &chrome)), " ○ abcde…");
+    assert_eq!(row_travel(&row, 9), 4);
+    assert_eq!(row_travel(&row, 60), 0);
+    // A plain row scrolls like the active one.
+    assert_eq!(line_text(&row_line(&row, 9, &chrome, 0)), " ○ cdefgh");
+    // Beside a longer title it reads the same clock, then parks at its
+    // end while the longer one walks on.
+    assert_eq!(line_text(&row_line(&row, 9, &chrome, 10)), " ○ cdefgh");
+    chrome.ticker = (TICKER_PAUSE + 8) * TICKER_STEP;
+    assert_eq!(line_text(&row_line(&row, 9, &chrome, 10)), " ○ efghij");
+    // Under reduced motion the title truncates like any other.
+    chrome.prefs.reduced_motion = true;
+    assert_eq!(line_text(&row_line(&row, 9, &chrome, 10)), " ○ abcde…");
 }

@@ -21,8 +21,7 @@ use gobby_client::ui::scrollbar::{
 use gobby_client::ui::settings::{SettingsRow, SETTINGS_POPUP_HEIGHT, SETTINGS_POPUP_WIDTH};
 use gobby_client::ui::sidebar::{collapsed_sections, section_body_rect};
 use gobby_client::ui::status::{
-    render_copy_feedback, render_status_line, render_toast_notification, toast_notification_rect,
-    Toast, ToastKind,
+    render_copy_feedback, render_status_line, toast_notification_rect, Toast, ToastKind,
 };
 use gobby_client::ui::tab_surface::render_tab_surface;
 use gobby_client::ui::tabs::{render_tab_bar, tab_display_name, TabBarHits};
@@ -166,23 +165,6 @@ fn render_full(ws: &Workspace, chrome: &Chrome, area: Rect) -> Terminal<TestBack
 /// gclient shows the mode in the status line below the terminal area.
 fn mode_row(chrome: &Chrome) -> Rect {
     chrome.view.status_rect
-}
-
-/// herdr anchored these toasts `TopLeft` and read `x`/`y`; gclient pins every
-/// toast bottom-right, so the anchored corner's distance from the frame's
-/// corner stands in for herdr's `x`/`y`.
-fn toast_anchor_offset(hit: Rect, frame: Rect) -> (u16, u16) {
-    (frame.right() - hit.right(), frame.bottom() - hit.bottom())
-}
-
-/// Toast hit area as the run loop stores it: the rect the renderer drew.
-fn toast_hit_area(ws: &Workspace, chrome: &Chrome, area: Rect) -> Rect {
-    let mut hit = None;
-    render(area.width, area.height, |frame| {
-        render_workspace(frame, ws, chrome);
-        hit = render_toast_notification(frame, frame.area(), chrome);
-    });
-    hit.expect("toast drawn")
 }
 
 /// Bounding box of every cell drawn in `fg`: the copy-feedback box has a
@@ -407,9 +389,9 @@ parity_tests! {
             });
             let feedback_rect = drawn_rect(&drawn, palette().green);
 
-            let bottom_right_toast = toast_notification_rect(area, &toast).expect("toast rect");
+            let top_right_toast = toast_notification_rect(area, &toast).expect("toast rect");
             assert_eq!(
-                copy_feedback_offset_for_toast(feedback_rect, 0, bottom_right_toast),
+                copy_feedback_offset_for_toast(feedback_rect, 0, top_right_toast),
                 0
             );
 
@@ -479,22 +461,6 @@ parity_tests! {
             terminal
                 .backend_mut()
                 .assert_cursor_position((focused.inner_rect.x + 4, focused.inner_rect.y));
-        }
-
-        fn desktop_toast_hit_area_uses_full_frame_not_terminal_area() {
-            let ws = scripted(&["one"]);
-            let mut chrome = chrome_for(&ws, "one");
-            chrome.mode = Mode::Terminal;
-            chrome.toast = Some(finished_toast("pi finished", "one"));
-
-            let area = Rect::new(0, 0, 100, 20);
-            chrome.compute_view(&ws, area);
-            let hit = toast_hit_area(&ws, &chrome, area);
-            let anchor = toast_anchor_offset(hit, area);
-
-            assert!(chrome.view.terminal_area.x > 0);
-            assert_eq!(anchor.0, 0);
-            assert_eq!(anchor.1, 0);
         }
 
         fn hide_tab_bar_when_single_tab_toggles_geometry_with_tab_count() {
@@ -603,10 +569,11 @@ parity_tests! {
                 selected: 0,
                 text: String::new(),
             });
-            chrome.status_message = Some(
-                "unsafe direct keybinding: keys.new_workspace = \"n\"\nunsafe direct keybinding: keys.new_tab = \"c\""
-                    .into(),
-            );
+            // herdr's config-diagnostic bar is gone (D3); the warning is a
+            // toast under the modal.
+            chrome.notify(Toast::warning(
+                "unsafe direct keybinding: keys.new_workspace = \"n\"",
+            ));
 
             let area = Rect::new(0, 0, 44, 20);
             chrome.compute_view(&ws, area);
@@ -623,6 +590,7 @@ parity_tests! {
 
             assert!(row.contains("Keybinding syntax changed"));
             assert!(!row.contains("config warning"));
+            assert!(!row.contains("unsafe direct keybinding"));
         }
 
         fn compute_view_clamps_sidebar_width_to_configured_max() {
@@ -708,8 +676,11 @@ parity_tests! {
             // projects band, left of the separator column.
             let sidebar = chrome.view.sidebar_rect;
             let projects = SidebarSection::Projects;
-            let body =
-                section_body_rect(chrome.view.sidebar_section_rects[projects.index()], false);
+            let body = section_body_rect(
+                chrome.view.sidebar_section_rects[projects.index()],
+                projects,
+                false,
+            );
             let card = Rect::new(sidebar.x, body.y, sidebar.width - 1, 1);
             let line1 = buffer_row_text(&terminal, card, card.y);
             let line2 = buffer_row_text(&terminal, card, card.y + 1);
@@ -719,9 +690,10 @@ parity_tests! {
                 "{line1}"
             );
             assert!(!line1.contains("1 one"));
-            // The card is one line: the sessions band follows it.
-            assert!(line2.starts_with(" Sessions"), "{line2}");
-            assert!(!line2.contains("main"));
+            // The card is one line: its blank row, then the sessions band.
+            assert_eq!(line2.trim(), "", "{line2}");
+            let line3 = buffer_row_text(&terminal, card, card.y + 2);
+            assert!(line3.starts_with(" Sessions"), "{line3}");
         }
 
         fn tab_bar_dims_auto_named_tabs_and_emphasizes_custom_tabs() {
@@ -1234,12 +1206,14 @@ switch_project = "ctrl+1..9"
                     // and again when the sessions band traded its scope and
                     // sort controls for one `[view]` menu (#22209), and again
                     // when the right pane gave up its name so the label ladder
-                    // reaches this frame (#22536):
+                    // reaches this frame (#22536), and again when every band
+                    // gained a blank row above it and the rows took the pane
+                    // address and backend tokens (#22572):
                     // 4.1.3 requires a glyph change to fail here, so this
                     // digest moves only alongside a deliberate render change.
                     assert_eq!(
                         frame_digest(&terminal),
-                        "7b7583f4d19d29c2605376bd56d43e814cfd63e350831a8ba8b116ad2044e52e"
+                        "3ee3627b495a55cea980b3ad02f51338addc586ea634f273f0e3615f7412fde8"
                     );
                 });
         }
@@ -1427,6 +1401,7 @@ fn rendered_settings_hits_match_drawn_rows() {
         "sidebar width",
         "right-click passthrough",
         "agent sort",
+        "reduced motion",
     ];
     for (index, rect) in &view.settings_row_hit_areas {
         let text = hit_text(&terminal, *rect);

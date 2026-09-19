@@ -45,6 +45,11 @@ _TEST_TYPES_AUDIT_COMMAND = (
     "uv run gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json --fail-on-new"
 )
 _TEST_TYPES_BASELINE = ".gobby/test-types-baseline.json"
+# Flags that change only how the audit reports. ``--min-severity`` cannot weaken the
+# ratchet: its default is already the loosest choice, so an explicit value is at least
+# as strict. Everything else -- ``--write-baseline``, ``--allow-failing-baseline``,
+# ``--mypy-command`` -- changes what the audit enforces and still voids credit.
+_TEST_TYPES_OUTPUT_ONLY_FLAGS = frozenset({"--format", "--output", "--min-severity"})
 _GENERIC_COMMAND_WORDS = frozenset(
     {"uv", "run", "npx", "npm", "python", "python3", "bash", "sh", "git", "check", "test", "ci"}
 )
@@ -78,7 +83,7 @@ class CloseGateResult:
 
 @dataclass(frozen=True)
 class CloseChecklist:
-    """Ordered deterministic gate results, stopping at the first failure."""
+    """Every deterministic gate result in checklist order."""
 
     gates: tuple[CloseGateResult, ...]
 
@@ -90,21 +95,28 @@ class CloseChecklist:
     def first_failure(self) -> CloseGateResult | None:
         return next((gate for gate in self.gates if not gate.passed), None)
 
+    @property
+    def all_failures(self) -> tuple[CloseGateResult, ...]:
+        """Every failed gate, so one response names every blocker the caller must fix."""
+        return tuple(gate for gate in self.gates if not gate.passed)
+
+    def summary(self) -> list[dict[str, Any]]:
+        """Gate statuses without the detail payloads, which run to tens of kilobytes."""
+        return [
+            {
+                "item": gate.item,
+                "name": gate.name,
+                "status": gate.status,
+                "message": gate.message,
+            }
+            for gate in self.gates
+        ]
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "ready": self.ready,
             "gates": [gate.to_dict() for gate in self.gates],
         }
-
-
-def first_failed_gate(gates: Iterable[CloseGateResult]) -> CloseChecklist:
-    """Keep successful gates through the first failure and discard later work."""
-    evaluated: list[CloseGateResult] = []
-    for gate in gates:
-        evaluated.append(gate)
-        if not gate.passed:
-            break
-    return CloseChecklist(tuple(evaluated))
 
 
 def evaluate_validation_commands(
@@ -534,6 +546,13 @@ def _test_types_command_targets(command: str) -> tuple[str, ...] | None:
             baselines.append(argument.partition("=")[2])
         elif argument == "--fail-on-new":
             fail_on_new += 1
+        elif argument in _TEST_TYPES_OUTPUT_ONLY_FLAGS:
+            # Consume the flag's value so it is never mistaken for a target.
+            index += 1
+            if index >= len(arguments):
+                return None
+        elif argument.partition("=")[0] in _TEST_TYPES_OUTPUT_ONLY_FLAGS:
+            pass  # `--flag=value` carries its value inline.
         elif argument.startswith("-"):
             return None
         else:
@@ -952,5 +971,4 @@ __all__ = [
     "CloseGateResult",
     "GateStatus",
     "evaluate_validation_commands",
-    "first_failed_gate",
 ]

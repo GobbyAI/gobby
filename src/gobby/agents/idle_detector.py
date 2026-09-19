@@ -188,6 +188,15 @@ class IdleDetector:
         """Return whether pane output shows text typed at a prompt but not submitted."""
         return self.unsubmitted_input_fingerprint(pane_output) is not None
 
+    def reads_composer(self) -> bool:
+        """Whether this provider's manifest can classify its composer at all.
+
+        A provider without composer rules answers every probe ``unknown``, so its
+        callers take no reader rather than a reader that can only shrug.
+        """
+        manifest = self._manifest()
+        return manifest is not None and manifest.reads_composer()
+
     def composer_read(self, pane_output: str | None) -> ComposerRead:
         """Classify the composer frame at the bottom of ``pane_output``.
 

@@ -29,6 +29,7 @@ from gobby.adapters.degradation import (
     truncate_context_for_adapter,
 )
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+from gobby.sessions.reasoning_effort import observed_reasoning_effort
 
 if TYPE_CHECKING:
     from gobby.hooks.hook_manager import HookManager
@@ -82,6 +83,11 @@ class CodexHooksAdapter(BaseAdapter):
         from gobby.hooks.normalization import normalize_tool_fields
 
         normalized_data = normalize_tool_fields(dict(input_data))
+        effort = observed_reasoning_effort(normalized_data)
+        if effort is None:
+            normalized_data.pop("effort", None)
+        else:
+            normalized_data["effort"] = effort
         raw_tool_name = normalized_data.get("tool_name")
         if isinstance(raw_tool_name, str):
             normalized_tool_name = SHARED_TOOL_MAP.get(raw_tool_name, raw_tool_name)

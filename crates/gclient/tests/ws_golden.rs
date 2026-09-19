@@ -304,9 +304,12 @@ fn write_outcome_enters_uncertain_readonly() {
         decode_message(&raw).unwrap();
     }
 
+    // A proxy attachment, because write outcomes are the daemon write protocol:
+    // a pane on its own frame socket types there and has no write sequence for
+    // an outcome to answer (#22573).
     let mut ws = Workspace::scripted();
     let pane = ws.open_terminal("term-a", "native", "epoch-a").unwrap();
-    ws.attach_frames(pane).unwrap();
+    ws.reattach_frames(pane).unwrap();
     ws.focus_pane(pane).unwrap();
     ws.send_keys(pane, "ls\n").unwrap();
     let seq = ws.pane(pane).in_flight_write().expect("in flight");

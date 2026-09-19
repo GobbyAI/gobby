@@ -19,6 +19,8 @@ pub enum RowState {
     Attention,
     /// The terminal's host is gone; the row can only be destroyed.
     Orphaned,
+    /// The session's turn ended waiting on input, approval, or a handoff.
+    Paused,
     /// Output is arriving on an attached pane.
     Working,
     /// New output landed since the pane was last focused.
@@ -31,9 +33,10 @@ pub enum RowState {
 }
 
 impl RowState {
-    pub const ALL: [RowState; 6] = [
+    pub const ALL: [RowState; 7] = [
         RowState::Attention,
         RowState::Orphaned,
+        RowState::Paused,
         RowState::Working,
         RowState::Unseen,
         RowState::Idle,
@@ -93,7 +96,7 @@ pub fn attention_pane<W: WorkspaceView>(ws: &W, entry_id: &str) -> Option<PaneId
 /// blocked session reads `15 %15` and never its session uuid.
 pub fn attention_label<W: WorkspaceView>(ws: &W, entry_id: &str) -> String {
     if let Some(agent) = agent_entry(ws, entry_id) {
-        return agent_label(ws, agent);
+        return agent_label(agent);
     }
     // No agent row and no pane leaves only the entry id, and that is a uuid the
     // ladder exists to keep out of the chrome (D1), so the row reads as the
@@ -103,9 +106,34 @@ pub fn attention_label<W: WorkspaceView>(ws: &W, entry_id: &str) -> String {
     };
     let pane = ws.pane(pane);
     let name = pane.display_name();
-    match pane.address.as_deref().filter(|address| *address != name) {
+    match terminal_address(ws, &pane.terminal_id) {
         Some(address) => format!("{name} {address}"),
         None => name.to_string(),
+    }
+}
+
+/// Where a terminal sits: its pane's workspace address (`0:0:1:2`) when the
+/// workspace model places it, else the tmux pane id of an external tmux pane.
+/// Every row and the status line carry it, because it is what tells two
+/// otherwise identical terminals apart.
+pub fn terminal_address<W: WorkspaceView>(ws: &W, terminal_id: &str) -> Option<String> {
+    ws.workspace_model()
+        .and_then(|model| model.pane_ref_for_terminal(terminal_id))
+        .or_else(|| {
+            ws.pane_for_terminal(terminal_id)
+                .and_then(|pane| ws.pane(pane).address.clone())
+        })
+}
+
+/// The status line's title for a terminal: `provider · name` for one running
+/// a Gobby session, else the pane's own name.
+pub fn terminal_title<W: WorkspaceView>(ws: &W, terminal_id: &str) -> String {
+    match agent_for_terminal(ws, terminal_id) {
+        Some(agent) if !agent.provider.is_empty() => {
+            format!("{} · {}", agent.provider, agent_label(agent))
+        }
+        Some(agent) => agent_label(agent),
+        None => terminal_label(ws, terminal_id),
     }
 }
 
@@ -126,6 +154,8 @@ pub fn row_state<W: WorkspaceView>(ws: &W, terminal_id: &str) -> RowState {
         return RowState::Unknown;
     };
     let pane = ws.pane(pane_id);
-    agent_for_terminal(ws, terminal_id)
-        .map_or_else(|| pane_state(pane), |agent| agent_row_state(agent, pane))
+    agent_for_terminal(ws, terminal_id).map_or_else(
+        || pane_state(pane),
+        |agent| agent_row_state(agent, Some(pane)),
+    )
 }

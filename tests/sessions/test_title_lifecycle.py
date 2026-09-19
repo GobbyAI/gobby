@@ -5,6 +5,8 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
+import pytest
+
 from gobby.sessions.reasoning_effort import observed_reasoning_effort
 from gobby.sessions.title_lifecycle import (
     heuristic_title_suffix,
@@ -124,11 +126,32 @@ def test_reasoning_effort_prefers_effective_then_requested() -> None:
     assert (
         observed_reasoning_effort(
             {
-                "requested_reasoning_effort": "medium",
-                "launch_metadata": {"effective_reasoning_effort": "high"},
+                "requested_reasoning_effort": {"level": " medium "},
+                "launch_metadata": {"effective_reasoning_effort": {"level": " high "}},
             }
         )
         == "high"
     )
-    assert observed_reasoning_effort({"reasoningEffort": "xhigh"}) == "xhigh"
+    assert (
+        observed_reasoning_effort(
+            {
+                "effective_reasoning_effort": {"level": ""},
+                "requested_reasoning_effort": "medium",
+            }
+        )
+        == "medium"
+    )
+
+
+def test_reasoning_effort_accepts_strings_and_structured_levels() -> None:
+    assert observed_reasoning_effort({"reasoningEffort": " xhigh "}) == "xhigh"
+    assert observed_reasoning_effort({"effort": {"level": " xhigh "}}) == "xhigh"
     assert observed_reasoning_effort({}) is None
+
+
+@pytest.mark.parametrize(
+    "effort",
+    ["", "   ", {}, {"level": ""}, {"level": "   "}, {"level": 3}, {"other": "high"}],
+)
+def test_reasoning_effort_ignores_empty_or_malformed_values(effort: Any) -> None:
+    assert observed_reasoning_effort({"effort": effort}) is None

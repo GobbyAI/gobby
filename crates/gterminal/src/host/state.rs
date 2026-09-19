@@ -596,3 +596,63 @@ impl TerminalSlot {
         max_lines
     }
 }
+
+/// Inserts a committed native slot that owns no PTY writer, which is the state
+/// a slot holds before its child is prepared and after the child has gone. Only
+/// the slot's bookkeeping is filled in, so this serves both feature builds.
+#[cfg(test)]
+pub(crate) async fn insert_native_slot(
+    state: &HostState,
+    host_terminal_id: &str,
+    rows: u16,
+    cols: u16,
+) {
+    let identity = Identity {
+        terminal_id: format!("term-{host_terminal_id}"),
+        spawn_key: format!("spawn-{host_terminal_id}"),
+    };
+    let slot = TerminalSlot {
+        identity: identity.clone(),
+        host_terminal_id: host_terminal_id.to_owned(),
+        commit_state: CommitState::Committed,
+        pgid: 0,
+        start_time: 0.0,
+        title: String::new(),
+        rows,
+        cols,
+        last_seq: 0,
+        observation_state: ObservationState::Live,
+        observation_reason: None,
+        observation_generation: 1,
+        fingerprint: 0,
+        reservation_id: String::new(),
+        reserve_key: String::new(),
+        reserve_generation: 0,
+        observer_bind: ObserverBind::None,
+        commit_deadline: None,
+        #[cfg(feature = "vt-engine")]
+        child: None,
+        #[cfg(feature = "vt-engine")]
+        written_bytes: 0,
+        #[cfg(feature = "vt-engine")]
+        dropped_bytes: 0,
+        #[cfg(feature = "vt-engine")]
+        total_bytes: 0,
+        #[cfg(feature = "vt-engine")]
+        truncated: false,
+        user_attachments: HashSet::new(),
+        input_grant: None,
+        locator: None,
+        tmux_history_bytes: 0,
+        history: None,
+        last_frame: None,
+        #[cfg(feature = "vt-engine")]
+        observer_generation: 1,
+        consecutive_failures: 0,
+    };
+    let mut inner = state.inner.lock().await;
+    inner
+        .by_host_id
+        .insert(host_terminal_id.to_owned(), identity.clone());
+    inner.terminals.insert(identity, slot);
+}

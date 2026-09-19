@@ -1,6 +1,6 @@
 //! Terminal frame renderer for a workspace pane.
 
-use crate::app::Pane;
+use crate::app::{Backend, Pane};
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier};
 use ratatui::Frame;
@@ -32,7 +32,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, pane: &Pane, focused: bool) {
     // the native branch already does. Centering the source instead cropped the
     // prompt and the left of every line away, which rendered a pane wider than
     // its viewport as an empty body.
-    let (dst_x, dst_y) = if pane.backend == "tmux" {
+    let (dst_x, dst_y) = if pane.backend == Backend::Tmux {
         (
             area.x + (area.width - width) / 2,
             area.y + (area.height - height) / 2,
@@ -101,7 +101,7 @@ fn decode_color(value: u32) -> Color {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::{Pane, PaneId};
+    use crate::app::{Backend, Pane, PaneId};
     use gobby_terminal::protocol::{CellData, CursorState, FrameData};
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
@@ -153,7 +153,7 @@ mod tests {
         size: (u16, u16),
         focused: bool,
     ) -> Terminal<TestBackend> {
-        let mut pane = Pane::new_detached(PaneId(1), "term-1", backend, "epoch");
+        let mut pane = Pane::new_detached(PaneId(1), "term-1", Backend::parse(backend), "epoch");
         pane.latest_frame = Some(frame);
         let mut terminal = Terminal::new(TestBackend::new(size.0, size.1)).expect("test backend");
         terminal
@@ -266,9 +266,9 @@ mod tests {
                 shape: Default::default(),
             })
         };
-        let mut focused = Pane::new_detached(PaneId(1), "term-1", "native", "epoch");
+        let mut focused = Pane::new_detached(PaneId(1), "term-1", Backend::Native, "epoch");
         focused.latest_frame = Some(coordinate_frame(10, 4, cursor(2, 1)));
-        let mut other = Pane::new_detached(PaneId(2), "term-2", "native", "epoch");
+        let mut other = Pane::new_detached(PaneId(2), "term-2", Backend::Native, "epoch");
         other.latest_frame = Some(coordinate_frame(10, 4, cursor(3, 3)));
 
         let mut terminal = Terminal::new(TestBackend::new(20, 4)).expect("test backend");

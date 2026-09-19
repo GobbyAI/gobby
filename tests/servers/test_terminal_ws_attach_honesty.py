@@ -274,6 +274,10 @@ class _StartupHost:
     def __init__(self, settled: bool) -> None:
         self._settled = settled
         self.waits: list[float] = []
+        self.input_activity_sink: object | None = None
+
+    def set_input_activity_sink(self, sink: object | None) -> None:
+        self.input_activity_sink = sink
 
     async def wait_startup_settled(self, timeout: float) -> bool:
         self.waits.append(timeout)

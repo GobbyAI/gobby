@@ -232,25 +232,25 @@ def test_upsert_seen_allocates_lowest_free_ref(temp_db: HubDatabase) -> None:
     first = manager.upsert_seen(MACHINE_A, TEST_USER_ID)
     second = manager.upsert_seen(MACHINE_B, TEST_USER_ID, label="beta")
     foreign = manager.upsert_seen(MACHINE_C, OTHER_USER_ID)
-    assert (first.ref, second.ref, foreign.ref) == (1, 2, 1)
-    assert manager.upsert_seen(MACHINE_A, TEST_USER_ID, hostname="alpha").ref == 1
-    assert second.to_dict()["ref"] == 2
+    assert (first.ref, second.ref, foreign.ref) == (0, 1, 0)
+    assert manager.upsert_seen(MACHINE_A, TEST_USER_ID, hostname="alpha").ref == 0
+    assert second.to_dict()["ref"] == 1
 
     temp_db.execute("DELETE FROM machines WHERE id = %s", (MACHINE_A,))
     seeded = manager.upsert_seen(SEEDED_MACHINE_ID, TEST_USER_ID, hostname="alpha")
-    assert seeded.ref == 1
-    by_ref = manager.get("n2", owner_user_id=TEST_USER_ID)
+    assert seeded.ref == 0
+    by_ref = manager.get("1", owner_user_id=TEST_USER_ID)
     assert by_ref is not None
     assert by_ref.id == MACHINE_B
     refs = {machine.id: machine.ref for machine in manager.list_for_user(TEST_USER_ID)}
-    assert (refs[SEEDED_MACHINE_ID], refs[MACHINE_B]) == (1, 2)
+    assert (refs[SEEDED_MACHINE_ID], refs[MACHINE_B]) == (0, 1)
 
     with patch("gobby.utils.machine_id._cached_machine_id", SEEDED_MACHINE_ID):
         workspaces = WorkspaceManager(temp_db)
         resolved = [
-            workspaces.resolve_node(node).id for node in (None, "n2", MACHINE_B, "alpha", "beta")
+            workspaces.resolve_node(node).id for node in (None, "1", MACHINE_B, "alpha", "beta")
         ]
         assert resolved == [SEEDED_MACHINE_ID, MACHINE_B, MACHINE_B, SEEDED_MACHINE_ID, MACHINE_B]
-        for unknown in ("n9", "gamma", MACHINE_C):
+        for unknown in ("9", "gamma", MACHINE_C):
             with pytest.raises(WorkspaceNotFoundError):
                 workspaces.resolve_node(unknown)

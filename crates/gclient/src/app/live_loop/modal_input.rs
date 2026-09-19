@@ -25,6 +25,7 @@ use crate::ui::navigator::{
 use crate::ui::settings::{PassthroughModifier, SettingsRow};
 use crate::ui::sidebar::attention_order;
 use crate::ui::sidebar_rows::{project_rows, RowKind};
+use crate::ui::status::Toast;
 use crate::ui::{Action, Chrome, Mode, WorkspaceView};
 
 use super::super::{PaneId, Workspace};
@@ -114,6 +115,12 @@ pub(super) fn close_modal(chrome: &mut Chrome) -> ModalOutcome {
     chrome.mode = Mode::Terminal;
     chrome.dialog = None;
     ModalOutcome::Close
+}
+
+/// Open the alert log from [Menu]; `project_dialog_key` routes its keys.
+pub(super) fn open_alerts_dialog(chrome: &mut Chrome) {
+    chrome.dialog = Some(Dialog::Alerts { scroll: 0 });
+    chrome.mode = Mode::ProjectDialog;
 }
 
 /// Apply a committed rename: the active tab's title, or the focused pane's
@@ -407,6 +414,7 @@ fn step_settings_row<W: WorkspaceView>(ws: &W, chrome: &mut Chrome, delta: isize
             prefs.right_click_passthrough_modifier = PASSTHROUGH_CYCLE[next as usize];
         }
         SettingsRow::AgentSort => prefs.agent_sort = prefs.agent_sort.toggled(),
+        SettingsRow::ReducedMotion => prefs.reduced_motion = !prefs.reduced_motion,
     }
     persist_prefs(ws.gobby_home(), chrome);
 }
@@ -417,7 +425,7 @@ pub(super) fn persist_prefs(home: Option<&Path>, chrome: &mut Chrome) {
     let written = match home.map(|home| save_prefs(home, &chrome.prefs)) {
         Some(Ok(_)) => true,
         Some(Err(error)) => {
-            chrome.status_message = Some(format!("Could not save preferences: {error}"));
+            chrome.notify(Toast::error(format!("Could not save preferences: {error}")));
             false
         }
         None => false,

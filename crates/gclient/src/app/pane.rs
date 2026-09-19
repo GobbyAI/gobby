@@ -1,21 +1,79 @@
 //! Per-pane attach, lease, and copy-mode state.
 
 use std::collections::HashSet;
+use std::fmt;
 use std::time::Duration;
 
+use serde::{Deserialize, Serialize};
 use tokio::time::Instant;
 
 use super::attach::{AttachState, ATTACH_RETRY_BASE};
 use crate::daemon::Generation;
-use crate::frame_source::{FrameSource, PaneFrameSource, ScriptedFrameSource, Transport};
-use gobby_terminal::protocol::FrameData;
+use crate::frame_source::{
+    FrameError, FrameSource, PaneFrameSource, ScriptedFrameSource, Transport,
+};
+use gobby_terminal::protocol::{ClientMessage, FrameData};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PaneId(pub u32);
 
+/// Which runtime owns a terminal: a gclient-native pty or a tmux pane. The
+/// daemon reports it as `backend: "native" | "tmux"`; any other word reads as
+/// native, the one a pane can least go wrong as.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Backend {
+    Tmux,
+    #[default]
+    #[serde(other)]
+    Native,
+}
+
+impl Backend {
+    pub fn parse(raw: &str) -> Self {
+        if raw == "tmux" {
+            Self::Tmux
+        } else {
+            Self::Native
+        }
+    }
+
+    /// The word the daemon uses for this backend on the wire.
+    pub fn wire(self) -> &'static str {
+        match self {
+            Self::Native => "native",
+            Self::Tmux => "tmux",
+        }
+    }
+
+    /// The word the chrome prints: `gclient` for a native pane, `tmux` for a
+    /// tmux one. The wire word `native` names nothing the user can see.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Native => "gclient",
+            Self::Tmux => "tmux",
+        }
+    }
+
+    pub fn is_native(self) -> bool {
+        matches!(self, Self::Native)
+    }
+}
+
+impl fmt::Display for Backend {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.label())
+    }
+}
+
+/// What a pane says when the daemon granted the writer lease but the terminal
+/// host never got the matching input grant. gclient does not type through the
+/// daemon (#22573), so the only honest offer is to take control again.
+pub const HOST_GRANT_UNAVAILABLE: &str = "terminal did not grant input; take control again";
+
 /// The last rung of the pane label ladder (D1): what a terminal is called once
-/// it has no name of its own, no session bound to it, and no foreground command
-/// the daemon could read. A literal, so no rung of the ladder can be an id.
+/// it has no name of its own and no foreground command the daemon could read.
+/// A literal, so no rung of the ladder can be an id.
 pub const UNNAMED_PANE: &str = "shell";
 
 /// A UUID reduced to its leading segment, for the surfaces whose subject *is*
@@ -41,28 +99,20 @@ pub enum ControlState {
 pub struct Pane {
     pub id: PaneId,
     pub terminal_id: String,
-    pub backend: String,
-    /// The terminal's own name, as the daemon reports it: a tmux pane title
-    /// (`zsh`, `15`) or a spawned agent's session name (`gobby-codex-d0`).
-    /// Empty until a roster page arrives, which is what `display_name` covers.
-    pub title: String,
+    pub backend: Backend,
     /// The name the user gave this pane in the rename dialog. Roster pages
-    /// refresh `title` and leave this alone; `display_name` shows it first.
+    /// leave it alone; `display_name` shows it first.
     pub label: Option<String>,
     /// The terminal's address on its backend — the tmux pane id, `%15`. Unique
-    /// and stable where `title` is neither, and it is what the user types into
+    /// and stable where a name is neither, and it is what the user types into
     /// tmux, so the chrome shows it wherever two terminals could be confused.
     pub address: Option<String>,
     /// The Gobby session running in this terminal, when one is. Attention
     /// entries are keyed by session, not by terminal, so this is what points
     /// a blocked session at the row the user can act on.
     pub session_id: Option<String>,
-    /// The provider of the session bound to this terminal — `claude`, `codex`,
-    /// `droid`. Rung 2 of the label ladder, resolved from the roster rather
-    /// than the terminal row, which is why it is refreshed with the sidebar.
-    pub provider: Option<String>,
     /// The command in this terminal's foreground, as the daemon observed it:
-    /// `zsh` at an idle prompt, `nvim` or `cargo` while a job holds it. Rung 3
+    /// `zsh` at an idle prompt, `nvim` or `cargo` while a job holds it. Rung 2
     /// of the label ladder, and the last rung with any information in it.
     pub command: Option<String>,
     pub expected_host_epoch: String,
@@ -80,6 +130,14 @@ pub struct Pane {
     pub required_created_flag: bool,
     pub in_flight_write: Option<u64>,
     pub(super) pending_input: Option<Vec<u8>>,
+    /// The daemon granted this attachment input at the terminal's host, so its
+    /// keystrokes belong on the frame stream rather than in a daemon request
+    /// (#22573). Every control result rewrites it; only `Held` panes read it.
+    pub host_input_granted: bool,
+    /// The attachment id already bound on the installed frame source. gterm
+    /// delivers input only to the bound holder, and a fresh source or a fresh
+    /// attachment has to bind again.
+    pub(super) host_bound_attachment: Option<String>,
     pub client_write_seq: u64,
     pub bracketed_paste: bool,
     pub search_buffer: String,
@@ -115,7 +173,7 @@ impl Pane {
     pub fn new(
         id: PaneId,
         terminal_id: impl Into<String>,
-        backend: impl Into<String>,
+        backend: Backend,
         epoch: impl Into<String>,
     ) -> Self {
         let epoch = epoch.into();
@@ -125,12 +183,10 @@ impl Pane {
         Self {
             id,
             terminal_id: terminal_id.into(),
-            backend: backend.into(),
-            title: String::new(),
+            backend,
             label: None,
             address: None,
             session_id: None,
-            provider: None,
             command: None,
             expected_host_epoch: epoch,
             control: ControlState::Observe,
@@ -145,6 +201,8 @@ impl Pane {
             required_created_flag: false,
             in_flight_write: None,
             pending_input: None,
+            host_input_granted: false,
+            host_bound_attachment: None,
             client_write_seq: 0,
             bracketed_paste: false,
             search_buffer: String::new(),
@@ -174,7 +232,7 @@ impl Pane {
     pub(crate) fn new_detached(
         id: PaneId,
         terminal_id: impl Into<String>,
-        backend: impl Into<String>,
+        backend: Backend,
         epoch: impl Into<String>,
     ) -> Self {
         let mut pane = Self::new(id, terminal_id, backend, epoch);
@@ -184,21 +242,19 @@ impl Pane {
         pane
     }
 
-    /// What every chrome surface calls this terminal, by the D1 ladder: the
-    /// name the user gave the pane, then the provider of the session bound to
-    /// it, then the command in its foreground, then the literal `shell`.
+    /// What every chrome surface calls a bare terminal, by the D1 ladder: the
+    /// name the user gave the pane, then the command in its foreground, then
+    /// the literal `shell`. A terminal running a Gobby session is named by
+    /// that session's title on the sidebar instead, so the provider is no
+    /// rung here.
     ///
-    /// The last rung is a literal so no rung can ever be an id. `title` is not
-    /// a rung: the daemon fills it from `window_name or pane_title or
-    /// session_name`, which yields `zsh` for one pane and `75`, `[tmux]` or a
-    /// whole session banner for the next, and `gobby-codex-d0` for a spawned
-    /// agent that rung 2 renders as `codex`.
+    /// The last rung is a literal so no rung can ever be an id. The daemon's
+    /// own `title` is no rung and the client does not keep it: it comes from
+    /// `window_name or pane_title or session_name`, which yields `zsh` for one
+    /// pane and `75`, `[tmux]` or a whole session banner for the next.
     pub fn display_name(&self) -> &str {
         if let Some(label) = self.label.as_deref().filter(|name| !name.is_empty()) {
             return label;
-        }
-        if let Some(provider) = self.provider.as_deref().filter(|name| !name.is_empty()) {
-            return provider;
         }
         if let Some(command) = self.command.as_deref().filter(|name| !name.is_empty()) {
             return command;
@@ -309,6 +365,84 @@ impl Pane {
         self.is_live() && !self.terminating && self.control == ControlState::Held
     }
 
+    /// Frames arrive on a direct socket and the backend is one gclient can
+    /// write to. Whether it may type is [`Pane::direct_input`].
+    fn direct_native(&self) -> bool {
+        self.transport() == Some(Transport::Direct) && self.backend.is_native()
+    }
+
+    /// This pane types straight into its terminal's host: a direct frame
+    /// socket, a native backend, and a daemon-issued input grant (#22573).
+    pub fn direct_input(&self) -> bool {
+        self.direct_native() && self.host_input_granted
+    }
+
+    /// Type `data` into the host on the frame stream, binding this attachment
+    /// the first time. Never awaits: a full write channel drops the key and
+    /// names the backlog on the pane instead of stalling the render loop.
+    pub(super) fn send_host_input(&mut self, data: &[u8], paste: bool) -> Result<(), FrameError> {
+        let attachment_id = self.attachment_id().to_string();
+        let needs_bind = self.host_bound_attachment.as_deref() != Some(attachment_id.as_str());
+        let message = if paste {
+            ClientMessage::Paste {
+                text: String::from_utf8_lossy(data).into_owned(),
+            }
+        } else {
+            ClientMessage::Input {
+                data: data.to_vec(),
+            }
+        };
+        let source = self
+            .frame_source
+            .as_mut()
+            .ok_or_else(|| FrameError::Protocol("pane has no frame source".into()))?;
+        if needs_bind {
+            source.send_input(&ClientMessage::BindAttachment {
+                attachment_id: attachment_id.clone(),
+            })?;
+        }
+        let outcome = source.send_input(&message);
+        if needs_bind {
+            self.host_bound_attachment = Some(attachment_id);
+        }
+        match outcome {
+            Err(error @ FrameError::Backpressure) => {
+                self.status_message = Some(error.to_string());
+                Ok(())
+            }
+            other => other,
+        }
+    }
+
+    /// Record the host input grant that came with a granted writer lease. A
+    /// direct native pane the host did not grant cannot type there, and
+    /// gclient never falls back to daemon-mediated keys, so the pane returns
+    /// to observing and offers take-back. Reports whether the grant stands.
+    pub(super) fn apply_host_grant(&mut self, granted: Option<bool>) -> bool {
+        self.host_input_granted = granted.unwrap_or(false);
+        if self.host_input_granted || !self.direct_native() {
+            return true;
+        }
+        self.control = ControlState::Observe;
+        self.take_back = true;
+        self.pending_input = None;
+        self.status_message = Some(HOST_GRANT_UNAVAILABLE.to_string());
+        false
+    }
+
+    /// gterm refused a host write: `input_not_granted` once the daemon moved
+    /// the grant, `terminal_gone` once the PTY went away. The stream stays
+    /// open; only this pane's claim to type on it is gone.
+    pub(super) fn refuse_host_input(&mut self, code: &str) {
+        self.host_input_granted = false;
+        self.control = ControlState::Observe;
+        self.take_back = true;
+        self.pending_input = None;
+        self.status_message = Some(format!(
+            "terminal refused input ({code}); take control again"
+        ));
+    }
+
     pub fn frame_source(&self) -> Option<&PaneFrameSource> {
         self.frame_source.as_ref()
     }
@@ -366,5 +500,6 @@ impl Pane {
         }
         self.frame_source = Some(source);
         self.fallback_in_flight = false;
+        self.host_bound_attachment = None;
     }
 }

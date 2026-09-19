@@ -112,12 +112,17 @@ def criterion_command_records(
     criteria: str,
     evidence: TranscriptEvidence,
 ) -> list[dict[str, object]]:
-    # Judge each top-level run before splitting it, so a chain's segments share its freshness.
-    invalidating = {
-        segment_run: first_invalidating_edit(evidence, run)
-        for run in (*evidence.validation_runs, *evidence.command_runs)
-        for segment_run in expand_successful_and_segments((run,))
-    }
+    # Judge each top-level run before splitting it, so a chain's segments share its
+    # freshness. Keep the chain itself as a candidate too: a criterion may name the
+    # whole chain, command_covers matches a chain only by exact string, and the
+    # expansion replaces a successful chain with its segments. Without the chain here
+    # such a criterion could only ever be matched by a failing run, which keeps the
+    # chain intact, so it never reported satisfied (#22570).
+    invalidating: dict[TranscriptValidationRun, TranscriptEdit | None] = {}
+    for run in (*evidence.validation_runs, *evidence.command_runs):
+        edit = first_invalidating_edit(evidence, run)
+        for candidate in (run, *expand_successful_and_segments((run,))):
+            invalidating.setdefault(candidate, edit)
     runs = sorted(invalidating, key=lambda item: (item.order, item.completed_at))
     observed_cores = {run.core_command for run in runs if run.core_command is not None}
     records: list[dict[str, object]] = []

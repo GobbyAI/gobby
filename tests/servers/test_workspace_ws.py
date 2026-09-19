@@ -194,20 +194,20 @@ async def test_attach_creates_default_on_the_local_node(stack: _Stack) -> None:
         stack,
         websocket,
         "tab.create",
-        workspace=f"n{node.ref}:w{home.ref}",
+        workspace=f"{node.ref}:{home.ref}",
         project_id=stack.project_id,
     )
     again = await _request(
         stack.server,
         websocket,
-        {"type": "workspace_attach", "node": f"n{node.ref}", "workspace": "default"},
+        {"type": "workspace_attach", "node": str(node.ref), "workspace": "default"},
     )
     tab, pane = created["tabs"][0], created["panes"][0]
     assert again["workspace"]["id"] == home.id and again["workspace"]["node_ref"] == node.ref
     assert again["tabs"] == [tab]
     assert tab["layout"] == {"kind": "pane", "pane_id": pane["id"]}
     assert again["panes"] == [pane]
-    assert pane["ref"] == 1 and stack.terminals.get(pane["terminal_id"]) is not None
+    assert pane["ref"] == 0 and stack.terminals.get(pane["terminal_id"]) is not None
     assert again["snapshot"] == {"daemon_epoch": DAEMON_EPOCH, "seq": 2}
     assert [event["kind"] for event in _lifecycle(websocket)] == ["tab.created"]
 
@@ -294,7 +294,7 @@ async def test_ops_round_trip_and_errors_are_typed(stack: _Stack) -> None:
         await _error(
             server, websocket, _op_request("pane.rename", pane=str(uuid.uuid4()), label="x")
         ),
-        await _error(server, websocket, _op_request("pane.rename", pane="w1:t1:bogus", label="x")),
+        await _error(server, websocket, _op_request("pane.rename", pane="0:0:0:bogus", label="x")),
         await _error(
             server, websocket, _op_request("pane.split", pane=pane["id"], axis="diagonal")
         ),

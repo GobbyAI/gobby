@@ -2,6 +2,7 @@
 //! Modal dialogs: confirm close, rename, and the Gobby attention respond
 //! prompt. No plugin or repository-checkout dialogs.
 
+use crate::app::Backend;
 use crate::ui::chrome::Chrome;
 use crate::ui::widgets::{
     action_button_row_rects, centered_popup_rect, modal_choice_rows, modal_description,
@@ -14,6 +15,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
 use ratatui::Frame;
 
+pub mod alerts;
 pub mod orphans;
 pub mod project;
 
@@ -114,7 +116,7 @@ pub struct WorktreeChoice {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OrphanRow {
     pub terminal_id: String,
-    pub backend: String,
+    pub backend: Backend,
     /// The tmux session name, the row title, or the short terminal id.
     pub name: String,
     /// The Gobby session still owning the row's pane, when one does.
@@ -171,6 +173,8 @@ pub enum Dialog {
         value: String,
         cursor: usize,
     },
+    /// The alert log, newest first, scrolled by `scroll` rows.
+    Alerts { scroll: usize },
     /// Answer an attention prompt: pick an option or type free text.
     Respond {
         entry_id: String,
@@ -228,6 +232,7 @@ pub fn render_dialog(frame: &mut Frame, area: Rect, chrome: &Chrome) -> Vec<Rect
             checked,
             selected,
         }) => orphans::render_destroy_orphans(frame, area, chrome, rows, checked, *selected),
+        Some(Dialog::Alerts { scroll }) => alerts::render_alerts(frame, area, chrome, *scroll),
         Some(Dialog::RemoveWorktree {
             branch,
             path,

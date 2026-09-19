@@ -38,7 +38,8 @@ def init_terminal_wiring(runner: GobbyRunner, config: DaemonConfig) -> None:
     from gobby.storage.workspaces import WorkspaceManager
     from gobby.terminals import TerminalRuntimeRegistry
     from gobby.terminals.host_manager import TerminalHostManager
-    from gobby.terminals.leases import TerminalLeaseRegistry
+    from gobby.terminals.input_grants import sync_host_input_grant
+    from gobby.terminals.leases import HolderChange, TerminalLeaseRegistry
     from gobby.terminals.native_runtime import HostManagerControl, NativeTerminalRuntime
     from gobby.terminals.services import TerminalServices
     from gobby.terminals.sync_bridge import TerminalEffectBridge
@@ -66,13 +67,19 @@ def init_terminal_wiring(runner: GobbyRunner, config: DaemonConfig) -> None:
     terminal_runtime_registry.register(
         configured_tmux_runtime(HostManagerControl(runner.terminal_host_manager))
     )
-    terminal_runtime_registry.register(
-        NativeTerminalRuntime(
-            HostManagerControl(runner.terminal_host_manager),
-            terminal_manager=runner.terminal_manager,
-            spawn_in_doubt_seconds=config.terminals.spawn_in_doubt_seconds,
-        )
+    native_runtime = NativeTerminalRuntime(
+        HostManagerControl(runner.terminal_host_manager),
+        terminal_manager=runner.terminal_manager,
+        spawn_in_doubt_seconds=config.terminals.spawn_in_doubt_seconds,
     )
+    terminal_runtime_registry.register(native_runtime)
+
+    async def follow_lease_holder(change: HolderChange) -> bool | None:
+        return await sync_host_input_grant(native_runtime, change.terminal, change.holder)
+
+    # The gterm input grant mirrors the writer lease; this is the one place it
+    # is wired, so every take, release, and socket loss re-syncs the host.
+    runner.lease_registry.set_holder_observer(follow_lease_holder)
     runner.frame_client = getattr(runner.terminal_host_manager, "_frame_client", None)
     runner.terminal_runtime_registry = terminal_runtime_registry
     runner.write_coordinator = WriteCoordinator(

@@ -18,7 +18,7 @@ use super::{render_band, render_section_rows, BandStyle, SidebarHits};
 use crate::app::project_tabs::TabSet;
 use crate::app::short_terminal_id;
 use crate::app::sidebar_model::{agent_row_state, pane_state, urgency, AgentEntry, SidebarModel};
-use crate::ui::chrome::{Chrome, RowState, WorkspaceView};
+use crate::ui::chrome::{terminal_address, Chrome, RowState, WorkspaceView};
 use crate::ui::hit::SidebarSection;
 use crate::ui::settings::AgentSort;
 use crate::ui::sidebar_rows::{displayed_project_ids, project_label, RowKind, SidebarRow};
@@ -41,19 +41,12 @@ const GROUP_ROW: &str = "group:";
 /// leading whether the daemon's title carried it (`gobby#12856: fix` reads
 /// `#12856: fix`) or not; else the name with the tmux address that keeps
 /// two same-named terminals apart, never a raw UUID.
-pub fn agent_label<W: WorkspaceView>(ws: &W, agent: &AgentEntry) -> String {
-    if let Some(reference) = agent.session_ref.as_deref() {
-        return match agent.name.find(reference) {
+pub fn agent_label(agent: &AgentEntry) -> String {
+    match agent.session_ref.as_deref() {
+        Some(reference) => match agent.name.find(reference) {
             Some(at) => agent.name[at..].to_string(),
             None => format!("{reference}: {}", agent.name),
-        };
-    }
-    let address = ws
-        .pane_for_terminal(&agent.terminal_id)
-        .and_then(|pane| ws.pane(pane).address.clone())
-        .filter(|address| *address != agent.name);
-    match address {
-        Some(address) => format!("{} {address}", agent.name),
+        },
         None => agent.name.clone(),
     }
 }
@@ -80,8 +73,10 @@ pub fn next_machine_filter(model: &SidebarModel, current: Option<&str>) -> Optio
 /// The row state: the pane's live state where one is attached, else the
 /// roster's.
 pub(super) fn agent_state<W: WorkspaceView>(ws: &W, agent: &AgentEntry) -> RowState {
-    ws.pane_for_terminal(&agent.terminal_id)
-        .map_or(agent.state, |pane| agent_row_state(agent, ws.pane(pane)))
+    let pane = ws
+        .pane_for_terminal(&agent.terminal_id)
+        .map(|pane| ws.pane(pane));
+    agent_row_state(agent, pane)
 }
 
 /// Whether the entry is waiting on an attention prompt; an entry the model
@@ -129,22 +124,10 @@ fn tab_set<'a>(chrome: &'a Chrome, project: &str) -> Option<&'a TabSet> {
 
 /// The tab that shows the agent's pane in its project's set, and its title
 /// when the set has more than one tab (the row's tab token).
-fn tab_of<W: WorkspaceView>(
-    ws: &W,
-    chrome: &Chrome,
-    agent: &AgentEntry,
-) -> (Option<usize>, Option<String>) {
-    let Some(pane) = ws.pane_for_terminal(&agent.terminal_id) else {
-        return (None, None);
-    };
-    let Some(set) = tab_set(chrome, &agent.project_id) else {
-        return (None, None);
-    };
-    let index = set.tabs.iter().position(|tab| tab.slot_for(pane).is_some());
-    let title = index
-        .filter(|_| set.tabs.len() > 1)
-        .map(|index| set.tabs[index].title.clone());
-    (index, title)
+fn tab_of<W: WorkspaceView>(ws: &W, chrome: &Chrome, agent: &AgentEntry) -> Option<usize> {
+    let pane = ws.pane_for_terminal(&agent.terminal_id)?;
+    let set = tab_set(chrome, &agent.project_id)?;
+    set.tabs.iter().position(|tab| tab.slot_for(pane).is_some())
 }
 
 /// An admitted entry with its live state and tab.
@@ -152,7 +135,6 @@ struct Visible<'a> {
     agent: &'a AgentEntry,
     state: RowState,
     tab_index: Option<usize>,
-    tab_title: Option<String>,
 }
 
 /// The entries the scope and filter admit, with their live state and tab
@@ -164,14 +146,10 @@ fn visible_agents<'a, W: WorkspaceView>(ws: &'a W, chrome: &Chrome) -> Vec<Visib
         .agents
         .iter()
         .filter(|agent| admits(ws, chrome, agent))
-        .map(|agent| {
-            let (tab_index, tab_title) = tab_of(ws, chrome, agent);
-            Visible {
-                agent,
-                state: agent_state(ws, agent),
-                tab_index,
-                tab_title,
-            }
+        .map(|agent| Visible {
+            agent,
+            state: agent_state(ws, agent),
+            tab_index: tab_of(ws, chrome, agent),
         })
         .collect();
     sort_visible(&mut agents, chrome.prefs.agent_sort);
@@ -307,28 +285,26 @@ fn push_children(
 }
 
 fn agent_candidate<W: WorkspaceView>(ws: &W, chrome: &Chrome, visible: Visible<'_>) -> Candidate {
-    let Visible {
-        agent,
-        state,
-        tab_title,
-        ..
-    } = visible;
+    let Visible { agent, state, .. } = visible;
     let focused = chrome.focused_pane();
     let local_machine = ws.sidebar().local_machine.as_str();
     let pane = ws.pane_for_terminal(&agent.terminal_id);
     let machine = (!agent.machine_id.is_empty() && agent.machine_id != local_machine)
         .then(|| short_terminal_id(&agent.machine_id).to_string());
+    // The address leads: it is what tells two rows with one title apart.
+    // Then the provider, the model as its provider prints it, and the effort.
     let model = agent
-        .model
+        .model_display_name
         .clone()
+        .or_else(|| agent.model.clone())
         .map(|model| match agent.effort.as_deref() {
-            Some(effort) => format!("{model}-{effort}"),
+            Some(effort) => format!("{model} {effort}"),
             None => model,
         });
     let tokens = [
+        terminal_address(ws, &agent.terminal_id),
         Some(agent.provider.clone()),
         model,
-        agent.task_ref.clone().or(tab_title),
         machine,
     ]
     .into_iter()
@@ -338,7 +314,7 @@ fn agent_candidate<W: WorkspaceView>(ws: &W, chrome: &Chrome, visible: Visible<'
     Candidate {
         row: SidebarRow {
             id: agent.entry_id.clone(),
-            label: agent_label(ws, agent),
+            label: agent_label(agent),
             kind: RowKind::Agent,
             state,
             tokens,
@@ -373,14 +349,14 @@ fn bare_terminals<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Vec<Candidate> {
             let pane_id = ws.pane_for_terminal(&terminal_id)?;
             let pane = ws.pane(pane_id);
             let name = pane.display_name().to_string();
+            // The foreground job names the row; the address and the backend
+            // that owns it sit under it. The daemon's `title` is neither.
             let tokens = [
-                Some(pane.title.clone()).filter(|title| *title != name),
-                pane.address.clone().filter(|address| *address != name),
-                Some(pane.backend.clone()),
+                terminal_address(ws, &terminal_id),
+                Some(pane.backend.label().to_string()),
             ]
             .into_iter()
             .flatten()
-            .filter(|token| !token.is_empty())
             .collect();
             Some(Candidate {
                 row: SidebarRow {

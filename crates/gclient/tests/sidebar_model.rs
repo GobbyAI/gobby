@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use gobby_client::app::sidebar_model::{agent_state, build, SidebarInputs, SidebarModel};
-use gobby_client::app::{Pane, PaneId};
+use gobby_client::app::{Backend, Pane, PaneId};
 use gobby_client::daemon::{
     Attention, Checkout, ProjectRow, RosterEntry, RunRow, SessionRow, SidebarRows, SourceStatus,
     TaskRef, TerminalRef, WorktreeRow,
@@ -25,7 +25,7 @@ fn entry(entry_id: &str, terminal_id: Option<&str>) -> RosterEntry {
         lifecycle_status: Some("running".to_string()),
         terminal: terminal_id.map(|terminal_id| TerminalRef {
             terminal_id: terminal_id.to_string(),
-            backend: "native".to_string(),
+            backend: Backend::Native,
             state: None,
         }),
         ..Default::default()
@@ -41,7 +41,7 @@ fn blocked() -> Option<Attention> {
 }
 
 fn pane(index: u32, terminal_id: &str, new_output: bool, live: bool) -> Pane {
-    let mut pane = Pane::new(PaneId(index), terminal_id, "native", "epoch");
+    let mut pane = Pane::new(PaneId(index), terminal_id, Backend::Native, "epoch");
     pane.new_output = new_output;
     pane.live = live;
     pane
@@ -116,6 +116,27 @@ fn agent_state_follows_attention_and_terminal() {
         RowState::Attention,
         "only a set attention renders blocked"
     );
+
+    for status in ["awaiting_input", "awaiting_approval", "awaiting_handoff"] {
+        let mut waiting = running.clone();
+        waiting.lifecycle_status = Some(status.to_string());
+        assert_eq!(
+            agent_state(&waiting, Some(&busy)),
+            RowState::Paused,
+            "{status} pauses the row even while output lands"
+        );
+        assert_eq!(
+            agent_state(&waiting, None),
+            RowState::Paused,
+            "{status} pauses a row with no pane"
+        );
+        waiting.attention = blocked();
+        assert_eq!(
+            agent_state(&waiting, Some(&quiet)),
+            RowState::Attention,
+            "a prompt outranks {status}"
+        );
+    }
 
     let roster = [entry("run:a", Some("terminal-a")), entry("session:s", None)];
     let model = model(&SidebarRows::default(), &roster, &[quiet]);

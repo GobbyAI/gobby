@@ -67,10 +67,9 @@ _CLI_COMPACT_CONFIRM_PROMPTS: dict[tuple[str, str], str] = {
 _COMPACTION_CONFIRM_SETTLE_SECONDS = 5.0
 _COMPACTION_REJECTION_RETRIES = 1
 _COMPACTION_REJECTION_CAPTURE_LINES = 30
-# The typed command and its Enter are two writes, and a CLI still redrawing an
-# interrupted turn reads them as one input chunk and takes the Enter as a literal
-# newline. Both writes still report Delivered, so `submit_text` reads the composer
-# back and polls it this long for the command to leave before its next rung.
+# The command and its newline are one write and the Enter follows as its own; both
+# report Delivered whether or not the CLI took them, so `submit_text` reads the
+# composer back and polls it this long for the command to leave before its next rung.
 _SUBMIT_VERIFY_SETTLE_SECONDS = SUBMIT_VERIFY_SECONDS
 _COMPACTION_REJECTION_ERROR_CODE = "compaction_command_rejected"
 _COMMAND_NOT_SUBMITTED_ERROR_CODE = "command_not_submitted"
@@ -81,10 +80,11 @@ _INTERRUPT_OBSERVATION_UNAVAILABLE_ERROR_CODE = "interrupt_observation_unavailab
 
 
 def composer_reader(db: HubDatabase, cli_source: str | None) -> ComposerReader | None:
-    """Bind the provider's composer probe for a compaction, or None without a provider."""
+    """Bind the provider's composer probe for a compaction, or None when it cannot read one."""
     if not cli_source:
         return None
-    return IdleDetector(DetectionManifestRegistry(db), cli_source).composer_read
+    detector = IdleDetector(DetectionManifestRegistry(db), cli_source)
+    return detector.composer_read if detector.reads_composer() else None
 
 
 def _compact_interrupt_key(source: str | None) -> NamedKey:

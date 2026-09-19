@@ -19,6 +19,7 @@ use crate::frame_source::{FrameError, FrameSource};
 use crate::input::key_to_bytes_with_protocol;
 use crate::key_input::{key_input, resolve_chord, text_bytes, Resolution};
 use crate::teardown::MouseCaptureSwitch;
+use crate::ui::status::Toast;
 use crate::ui::{Action, Chrome, Mode, WorkspaceView};
 
 use super::attention::route_response_input;
@@ -109,10 +110,21 @@ impl ExitSignals {
     }
 
     async fn recv(&mut self) -> &'static str {
-        tokio::select! {
-            _ = self.interrupt.recv() => "SIGINT",
-            _ = self.terminate.recv() => "SIGTERM",
-            _ = self.hangup.recv() => "SIGHUP",
+        loop {
+            tokio::select! {
+                _ = self.interrupt.recv() => return "SIGINT",
+                _ = self.terminate.recv() => return "SIGTERM",
+                // Registered so the default disposition (terminate) stays
+                // off, then ignored: a hangup is not a reason to drop the
+                // window, and a terminal that really went away still ends
+                // the loop through input EOF or the failed draw.
+                _ = self.hangup.recv() => {
+                    tracing::info!(
+                        lifecycle_stage = "sighup-ignored",
+                        "SIGHUP ignored; the terminal is still attached"
+                    );
+                }
+            }
         }
     }
 }
@@ -170,19 +182,32 @@ pub async fn run_live_loop<B: Backend>(
 ) -> Result<(), FrameError> {
     let daemon = workspace.daemon().clone();
     let mut loop_error = None;
-    if let Err(error) = reconcile_ready(workspace).await {
-        workspace.latch_exit(error.to_string());
-        loop_error = Some(FrameError::from(error));
+    let mut supervisor = ReconnectSupervisor::new();
+    // A daemon that is down at launch, or a first reconcile that fails, is
+    // the supervisor's to retry: the window opens and waits, and the
+    // restore of the focused rows runs after the first handshake instead.
+    let launch_error = match reconcile_ready(workspace).await {
+        Err(error) => Some(error),
+        Ok(()) if daemon.ready() => None,
+        Ok(()) => Some(
+            daemon
+                .last_error()
+                .unwrap_or(DaemonError::Unavailable { retry_after: None }),
+        ),
+    };
+    if let Some(error) = launch_error {
+        begin_reconnect(workspace, &mut supervisor, &daemon, error);
     }
     sync_live_chrome(workspace, chrome);
-    if loop_error.is_none() {
+    let mut launch_pending = !workspace.daemon_ready();
+    if !launch_pending {
         if let Err(error) = restore_focused(workspace, chrome).await {
-            chrome.status_message = Some(error.to_string());
+            chrome.notify(Toast::error(error.to_string()));
         }
     }
     if let Some(pane_id) = chrome.focused_pane() {
         if let Err(error) = focus_live_pane(workspace, pane_id).await {
-            chrome.status_message = Some(error.to_string());
+            chrome.notify(Toast::error(error.to_string()));
         }
     }
 
@@ -193,7 +218,6 @@ pub async fn run_live_loop<B: Backend>(
     let mut render_tick = tokio::time::interval(RENDER_TICK);
     render_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut prefix_armed = false;
-    let mut supervisor = ReconnectSupervisor::new();
     let mut reconnect_job = None;
     let mut sidebar_job: Option<SidebarFetchFuture> = None;
     let mut sidebar_error_shown = false;
@@ -213,7 +237,7 @@ pub async fn run_live_loop<B: Backend>(
         if let Err(error) =
             resize_live_workspace(terminal, workspace, chrome, &mut sent_geometry).await
         {
-            chrome.status_message = Some(error.to_string());
+            chrome.notify(Toast::error(error.to_string()));
         }
     }
 
@@ -233,7 +257,7 @@ pub async fn run_live_loop<B: Backend>(
                         workspace.latch_exit("quit");
                     }
                     Ok(false) => {}
-                    Err(error) => chrome.status_message = Some(error.to_string()),
+                    Err(error) => chrome.notify(Toast::error(error.to_string())),
                 }
             }
             event = recv_daemon_event(&mut events) => {
@@ -299,7 +323,7 @@ pub async fn run_live_loop<B: Backend>(
                         }
                         FrameRecovery::Complete(result) => {
                             if let Err(recovery_error) = result {
-                                chrome.status_message = Some(recovery_error.to_string());
+                                chrome.notify(Toast::error(recovery_error.to_string()));
                             }
                             for event in deferred_input {
                                 match route_live_input(
@@ -314,7 +338,7 @@ pub async fn run_live_loop<B: Backend>(
                                     }
                                     Ok(false) => {}
                                     Err(error) => {
-                                        chrome.status_message = Some(error.to_string());
+                                        chrome.notify(Toast::error(error.to_string()));
                                     }
                                 }
                             }
@@ -335,11 +359,7 @@ pub async fn run_live_loop<B: Backend>(
                     }
                     Err(error) => Some(error),
                 };
-                settle_sidebar_banner(
-                    &mut chrome.status_message,
-                    &mut sidebar_error_shown,
-                    error.as_ref(),
-                );
+                settle_sidebar_banner(chrome, &mut sidebar_error_shown, error.as_ref());
             }
             result = await_reconnect_job(&mut reconnect_job), if reconnect_job.is_some() => {
                 reconnect_job = None;
@@ -351,6 +371,7 @@ pub async fn run_live_loop<B: Backend>(
                     chrome,
                     &mut events,
                     &mut supervisor,
+                    &mut launch_pending,
                     outcome,
                 ).await;
             }
@@ -369,16 +390,18 @@ pub async fn run_live_loop<B: Backend>(
             }
             _ = render_tick.tick() => {
                 chrome.ticker = chrome.ticker.wrapping_add(1);
+                chrome.expire_toasts(std::time::Instant::now());
                 workspace.submit_expired_detaches(&mut supervisor, Instant::now());
                 if workspace.attach_retry_due(Instant::now()) {
                     if let Err(error) = workspace.attach_ready_panes().await {
-                        chrome.status_message = Some(error.to_string());
+                        chrome.notify(Toast::error(error.to_string()));
                     }
                     sync_live_chrome(workspace, chrome);
                 }
                 if !chrome.sidebar.collapsed {
                     workspace.request_git_refresh_if_due();
                 }
+                workspace.request_roster_refresh_if_due();
                 // The refetch runs beside the loop; its branch above applies it.
                 if sidebar_job.is_none() {
                     sidebar_job = workspace.start_sidebar_refetch();
@@ -393,13 +416,13 @@ pub async fn run_live_loop<B: Backend>(
         // flipped here, outside any borrow of the chrome.
         if let Some(on) = chrome.pending_mouse_capture.take() {
             if let Err(error) = switch.set_mouse_capture(on) {
-                chrome.status_message = Some(error.to_string());
+                chrome.notify(Toast::error(error.to_string()));
             }
         }
         if let Err(error) =
             send_focus_hints_if_changed(workspace, chrome, &mut last_focus_hints).await
         {
-            chrome.status_message = Some(error.to_string());
+            chrome.notify(Toast::error(error.to_string()));
         }
         // Every shown live pane carries the geometry of its slot: the pass
         // keys on pane, rect and attachment, so a slot change, an attach
@@ -409,7 +432,7 @@ pub async fn run_live_loop<B: Backend>(
             if let Err(error) =
                 resize_live_workspace(terminal, workspace, chrome, &mut sent_geometry).await
             {
-                chrome.status_message = Some(error.to_string());
+                chrome.notify(Toast::error(error.to_string()));
             }
         }
     }
@@ -574,20 +597,26 @@ async fn handle_reconnect_outcome(
     chrome: &mut Chrome,
     events: &mut Option<EventReceiver>,
     supervisor: &mut ReconnectSupervisor,
+    launch_pending: &mut bool,
     outcome: ReconnectAttempt,
 ) {
     match outcome {
         ReconnectAttempt::Reconnected(generation) => match reconcile_ready(workspace).await {
             Ok(()) => {
                 supervisor.handshake_complete(generation);
-                // The outage's failure banner is stale once the handshake lands.
-                chrome.status_message = None;
                 let (_, fallback) = Daemon::subscribe(workspace.daemon());
                 *events = Some(workspace.event_rx.take().unwrap_or(fallback));
                 sync_live_chrome(workspace, chrome);
+                // The launch that found the daemon down skipped the restore
+                // of its focused rows; the first handshake is where it runs.
+                if std::mem::take(launch_pending) {
+                    if let Err(error) = restore_focused(workspace, chrome).await {
+                        chrome.notify(Toast::error(error.to_string()));
+                    }
+                }
                 if let Some(pane_id) = chrome.focused_pane() {
                     if let Err(error) = focus_live_pane(workspace, pane_id).await {
-                        chrome.status_message = Some(error.to_string());
+                        chrome.notify(Toast::error(error.to_string()));
                     }
                 }
             }
@@ -641,6 +670,8 @@ async fn route_live_input(
         return Ok(false);
     }
     if let Some(input) = key_input(event, KeyboardProtocol::Legacy) {
+        // Any keypress clears the toast stack (D3); the alert log keeps them.
+        chrome.dismiss_toasts();
         if chrome.mode == Mode::Respond {
             *prefix_armed = false;
             route_response_input(workspace, chrome, &input.key)
@@ -796,24 +827,16 @@ async fn resize_live_workspace<B: Backend>(
     workspace.propagate_geometry(&updates).await
 }
 
-/// Show a sidebar refetch failure in the status line and retire it on the
-/// next successful refetch. A transient timeout under daemon load otherwise
-/// stays on screen until an unrelated message replaces it.
-fn settle_sidebar_banner(
-    status: &mut Option<String>,
-    shown: &mut bool,
-    error: Option<&DaemonError>,
-) {
+/// One toast per sidebar refetch outage: the first failure raises it, later
+/// ones stay quiet, and a success re-arms it.
+fn settle_sidebar_banner(chrome: &mut Chrome, shown: &mut bool, error: Option<&DaemonError>) {
     match error {
-        Some(error) => {
-            *status = Some(error.to_string());
+        Some(error) if !*shown => {
+            chrome.notify(Toast::error(error.to_string()));
             *shown = true;
         }
-        None if *shown => {
-            *status = None;
-            *shown = false;
-        }
-        None => {}
+        Some(_) => {}
+        None => *shown = false,
     }
 }
 
@@ -822,29 +845,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn sidebar_banner_clears_on_the_next_successful_refetch() {
-        let mut status = None;
+    fn sidebar_banner_raises_one_toast_per_outage() {
+        let mut chrome = Chrome::dark();
         let mut shown = false;
-        settle_sidebar_banner(
-            &mut status,
-            &mut shown,
-            Some(&DaemonError::timeout("GET /api/terminals")),
-        );
+        let timeout = DaemonError::timeout("GET /api/terminals");
+        settle_sidebar_banner(&mut chrome, &mut shown, Some(&timeout));
+        settle_sidebar_banner(&mut chrome, &mut shown, Some(&timeout));
+        assert_eq!(chrome.toasts.len(), 1);
         assert_eq!(
-            status.as_deref(),
-            Some("Daemon did not answer GET /api/terminals in time.")
+            chrome.toasts[0].toast.title,
+            "Daemon did not answer GET /api/terminals in time."
         );
         assert!(shown);
-        settle_sidebar_banner(&mut status, &mut shown, None);
-        assert_eq!(status, None);
+        settle_sidebar_banner(&mut chrome, &mut shown, None);
         assert!(!shown);
-    }
-
-    #[test]
-    fn sidebar_banner_leaves_an_unrelated_message_alone() {
-        let mut status = Some("Response sent.".to_string());
-        let mut shown = false;
-        settle_sidebar_banner(&mut status, &mut shown, None);
-        assert_eq!(status.as_deref(), Some("Response sent."));
+        settle_sidebar_banner(&mut chrome, &mut shown, Some(&timeout));
+        assert_eq!(chrome.alert_log.len(), 2, "the next outage raises again");
     }
 }

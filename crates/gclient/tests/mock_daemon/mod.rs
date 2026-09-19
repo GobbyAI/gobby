@@ -62,7 +62,10 @@ struct MockState {
     websocket_closes: usize,
     unique_attachment_ids: bool,
     next_attachment_id: u64,
-    take_control_replies: VecDeque<(bool, u64, Option<String>)>,
+    /// `(granted, lease_generation, reason, host_input_granted)`. The last
+    /// field is the terminal host's input grant, which a direct native pane
+    /// needs before it may type on its own frame socket (#22573).
+    take_control_replies: VecDeque<(bool, u64, Option<String>, Option<bool>)>,
     write_outcomes: VecDeque<(String, Option<String>)>,
     /// Reasons the next `terminal_kill` replies refuse with, in order.
     kill_refusals: VecDeque<String>,
@@ -70,6 +73,10 @@ struct MockState {
     workspace_refusals: VecDeque<(String, String)>,
     detach_replies: VecDeque<(bool, Option<String>)>,
     proxy_attach_refusals: VecDeque<(String, String)>,
+    /// The `direct` locator every `frame_delivery: "direct"` attach answers
+    /// with. `None` omits it, which is how a daemon says the host has no
+    /// socket to offer and gclient falls back to a proxy attachment.
+    direct_attach_locator: Option<Value>,
     proxy_finalizations_before_reply: VecDeque<(String, u64, String, String)>,
     activity: Vec<String>,
     /// The daemon workspace `workspace_attach` serves and `workspace_op` moves.
@@ -89,9 +96,13 @@ pub struct MockDaemon {
 
 impl MockDaemon {
     pub async fn start(token: &str) -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("bind mock daemon");
+        Self::start_at(token, "127.0.0.1:0").await
+    }
+
+    /// `start` on a chosen address: the daemon coming back on the port a
+    /// client already holds the URL of.
+    pub async fn start_at(token: &str, address: &str) -> Self {
+        let listener = TcpListener::bind(address).await.expect("bind mock daemon");
         let address = listener.local_addr().expect("mock address");
         let state = Arc::new(Mutex::new(MockState {
             token: token.to_string(),
@@ -114,6 +125,7 @@ impl MockDaemon {
             workspace_refusals: VecDeque::new(),
             detach_replies: VecDeque::new(),
             proxy_attach_refusals: VecDeque::new(),
+            direct_attach_locator: None,
             proxy_finalizations_before_reply: VecDeque::new(),
             workspace: WorkspaceSim::from_fixture(),
             pending_workspace_events: VecDeque::new(),
@@ -291,7 +303,29 @@ impl MockDaemon {
             .lock()
             .expect("mock state")
             .take_control_replies
-            .push_back((granted, lease_generation, reason.map(ToString::to_string)));
+            .push_back((
+                granted,
+                lease_generation,
+                reason.map(ToString::to_string),
+                Some(granted),
+            ));
+    }
+
+    /// A grant the terminal host never matched: the daemon hands out the
+    /// writer lease and omits `host_input_granted`. A direct native pane must
+    /// refuse to type rather than fall back to the daemon (#22573).
+    pub fn enqueue_take_control_reply_without_host_grant(&self, lease_generation: u64) {
+        self.state
+            .lock()
+            .expect("mock state")
+            .take_control_replies
+            .push_back((true, lease_generation, None, None));
+    }
+
+    /// Answer every direct attach with `locator`, so the client connects a real
+    /// frame socket and the pane lands on `Transport::Direct`.
+    pub fn serve_direct_attach(&self, locator: Value) {
+        self.state.lock().expect("mock state").direct_attach_locator = Some(locator);
     }
 
     pub fn enqueue_write_outcome(&self, outcome: &str, reason: Option<&str>) {
@@ -729,6 +763,15 @@ fn websocket_reply(state: &Arc<Mutex<MockState>>, request: &Value) -> Option<Val
                     "reason": reason,
                 }));
             }
+            let direct = (request.get("frame_delivery").and_then(Value::as_str) == Some("direct"))
+                .then(|| {
+                    state
+                        .lock()
+                        .expect("mock state")
+                        .direct_attach_locator
+                        .clone()
+                })
+                .flatten();
             let attachment_id = {
                 let mut state = state.lock().expect("mock state");
                 if state.unique_attachment_ids {
@@ -748,7 +791,7 @@ fn websocket_reply(state: &Arc<Mutex<MockState>>, request: &Value) -> Option<Val
                 "rows": 24,
                 "cols": 80,
                 "lease_generation": 0,
-                "direct": null,
+                "direct": direct,
                 "frame_delivery": request.get("frame_delivery"),
             }))
         }
@@ -828,13 +871,14 @@ fn websocket_reply(state: &Arc<Mutex<MockState>>, request: &Value) -> Option<Val
                 .expect("mock state")
                 .take_control_replies
                 .pop_front()
-                .unwrap_or((true, 1, None));
+                .unwrap_or((true, 1, None, Some(true)));
             Some(json!({
                 "type": "terminal_control_result",
                 "attachment_id": request.get("attachment_id"),
                 "granted": reply.0,
                 "lease_generation": reply.1,
                 "reason": reply.2,
+                "host_input_granted": reply.3,
             }))
         }
         "terminal_release_control" => Some(json!({

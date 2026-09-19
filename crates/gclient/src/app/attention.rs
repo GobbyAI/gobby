@@ -2,6 +2,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::daemon::{Answer, Daemon, DaemonError, LiveDaemon, RosterEntry};
 use crate::ui::dialogs::Dialog;
+use crate::ui::status::Toast;
 use crate::ui::{Chrome, Mode};
 
 use super::Workspace;
@@ -37,7 +38,7 @@ pub(super) async fn open_response_dialog(
         .filter(|entry| entry_id.is_none_or(|wanted| wanted == entry.entry_id))
         .find_map(parse_prompt);
     let Some(prompt) = prompt else {
-        chrome.status_message = Some("No actionable attention prompt.".to_string());
+        chrome.notify(Toast::warning("No actionable attention prompt."));
         return Ok(());
     };
 
@@ -136,7 +137,7 @@ async fn submit_response(
     workspace.pending_attention = None;
     chrome.dialog = None;
     chrome.mode = Mode::Terminal;
-    chrome.status_message = Some("Response sent.".to_string());
+    chrome.notify(Toast::success("Response sent."));
     Ok(())
 }
 

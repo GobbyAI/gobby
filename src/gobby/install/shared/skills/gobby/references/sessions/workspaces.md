@@ -4,9 +4,9 @@ Load when arranging workspaces, tabs, and panes, or when typing into or watching
 pane's terminal. Fetch the `gobby-workspaces` schemas you need. For cross-session
 messages, use `gobby-agents:send_message` instead.
 
-A node is one of the operator's machines (`n#`). It holds workspaces (`w#`) whose
-tabs (`t#`) hold panes (`p#`). Address rows by ref, such as `n1:w2:t1:p3`, or by id.
-`node` resolves refs by `n#`, hostname, or label; changing another node's rows is
+A node is one of the operator's machines. It holds workspaces whose tabs hold
+panes, and every ref is a number counting from zero. Address rows by ref, such as
+`0:1:0:2`, or by id. `node` resolves a node by its ref, hostname, or label; changing another node's rows is
 refused `invalid_op` because that node's daemon owns them. Start from `list_nodes`,
 `list_workspaces`, and `get_workspace`, which returns every tab and pane.
 

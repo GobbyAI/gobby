@@ -1,14 +1,14 @@
 // upstream: herdr v0.8.0 src/ui/status.rs
-//! Toasts, copy feedback, the config-diagnostic bar, and the state glyphs
-//! shared by sidebar, navigator, and pane titles.
+//! Toasts, copy feedback, and the state glyphs shared by sidebar,
+//! navigator, and pane titles.
+
+use std::time::{Duration, Instant};
 
 use crate::app::ControlState;
-use crate::frame_source::Transport;
 use crate::theme::Palette;
-use crate::ui::chrome::{Chrome, Mode, RowState, WorkspaceView};
+use crate::ui::chrome::{terminal_address, terminal_title, Chrome, Mode, RowState, WorkspaceView};
 use crate::ui::hit::Hit;
 use crate::ui::text::display_width_u16;
-use crate::ui::widgets::panel_contrast_fg;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -23,13 +23,59 @@ pub enum ToastKind {
     Success,
 }
 
+/// How long a toast stays up before the render tick drops it.
+pub const TOAST_TTL: Duration = Duration::from_secs(6);
+/// Most toasts shown at once; the oldest leaves when one more arrives.
+pub const TOAST_STACK: usize = 3;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Toast {
     pub kind: ToastKind,
     pub title: String,
+    /// Second row: the affected pane by label, or the detail behind the title.
     pub body: Option<String>,
     /// Roster row the toast points at, if any.
     pub target: Option<String>,
+}
+
+impl Toast {
+    fn new(kind: ToastKind, title: impl Into<String>) -> Self {
+        Self {
+            kind,
+            title: title.into(),
+            body: None,
+            target: None,
+        }
+    }
+
+    pub fn info(title: impl Into<String>) -> Self {
+        Self::new(ToastKind::Info, title)
+    }
+
+    pub fn warning(title: impl Into<String>) -> Self {
+        Self::new(ToastKind::Warning, title)
+    }
+
+    pub fn error(title: impl Into<String>) -> Self {
+        Self::new(ToastKind::Error, title)
+    }
+
+    pub fn success(title: impl Into<String>) -> Self {
+        Self::new(ToastKind::Success, title)
+    }
+
+    pub fn with_body(mut self, body: impl Into<String>) -> Self {
+        self.body = Some(body.into());
+        self
+    }
+}
+
+/// A toast on screen and when it went up; `Chrome::expire_toasts` reads the
+/// clock against [`TOAST_TTL`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActiveToast {
+    pub toast: Toast,
+    pub shown_at: Instant,
 }
 
 /// Glyph plus colour for a roster row state, one shape per state so the
@@ -40,6 +86,8 @@ pub fn state_dot(state: RowState, p: &Palette) -> (&'static str, Color) {
     match state {
         RowState::Attention => ("⍾", p.peach),
         RowState::Orphaned => ("◌", p.red),
+        // U+2016, one cell in a mono face; the emoji pause would not be.
+        RowState::Paused => ("‖", p.yellow),
         RowState::Working => ("▶", p.accent),
         RowState::Unseen => ("◆", p.teal),
         RowState::Idle => ("○", p.overlay0),
@@ -53,6 +101,7 @@ pub fn state_label(state: RowState) -> &'static str {
     match state {
         RowState::Attention => "needs you",
         RowState::Orphaned => "orphaned",
+        RowState::Paused => "paused",
         RowState::Working => "working",
         RowState::Unseen => "unseen",
         RowState::Idle | RowState::Unknown => "idle",
@@ -99,18 +148,6 @@ pub fn control_glyph_label(control: ControlState, take_back: bool) -> (&'static 
 /// Kind cue for a toast: glyph plus label, so Info, Warning, Error, and
 /// Success stay apart with colour stripped. Gobby-specific; colour is the
 /// fourth signal after glyph, label, and title position.
-/// Label for the transport a pane's frames arrive over.
-///
-/// A pane with no attachment and no frame source has no transport to report,
-/// so the status line omits the field rather than naming a default it cannot
-/// stand behind — see `Pane::transport`.
-pub fn transport_label(transport: Transport) -> &'static str {
-    match transport {
-        Transport::Direct => "direct",
-        Transport::Proxy => "proxy",
-    }
-}
-
 pub fn toast_cue(kind: ToastKind) -> (&'static str, &'static str) {
     match kind {
         ToastKind::Info => ("◇", "info"),
@@ -156,29 +193,56 @@ fn mode_name(mode: Mode) -> Option<&'static str> {
     })
 }
 
-/// herdr `toast_notification_rect`, pinned to the bottom-right corner.
-pub fn toast_notification_rect(area: Rect, toast: &Toast) -> Option<Rect> {
-    if area.width == 0 || area.height == 0 {
-        return None;
-    }
+/// Size of one toast: the cue, title, body and borders.
+fn toast_size(toast: &Toast) -> (u16, u16) {
     let body = toast.body.as_deref().unwrap_or("");
     let content_width = display_width_u16(&toast.title)
         .saturating_add(toast_cue_width(toast.kind))
         .max(display_width_u16(body).saturating_add(2))
         .saturating_add(2);
-    let width = content_width.saturating_add(2).min(area.width);
     let content_height = if body.is_empty() { 1 } else { 2 };
-    let height = (content_height + 2).min(area.height);
-    let x = area.x + area.width.saturating_sub(width);
-    let y = area.y + area.height.saturating_sub(height);
-    Some(Rect::new(x, y, width, height))
+    (content_width.saturating_add(2), content_height + 2)
 }
 
-/// herdr `render_toast_notification`; returns the drawn rect as its hit area.
+/// herdr `toast_notification_rect`, moved to the top-right corner of `area`
+/// (the pane area, D3): the rect of a lone toast.
+pub fn toast_notification_rect(area: Rect, toast: &Toast) -> Option<Rect> {
+    toast_stack_rects(area, [toast]).pop()
+}
+
+/// Rects for `toasts` stacked downward from the top-right corner of `area`,
+/// oldest first; toasts the area cannot fit are left out.
+pub fn toast_stack_rects<'a>(area: Rect, toasts: impl IntoIterator<Item = &'a Toast>) -> Vec<Rect> {
+    let bottom = area.y.saturating_add(area.height);
+    let mut rects = Vec::new();
+    let mut top = area.y;
+    for toast in toasts {
+        let (width, height) = toast_size(toast);
+        let width = width.min(area.width);
+        if width == 0 || height == 0 || top.saturating_add(height) > bottom {
+            break;
+        }
+        let x = area.x + area.width.saturating_sub(width);
+        rects.push(Rect::new(x, top, width, height));
+        top = top.saturating_add(height);
+    }
+    rects
+}
+
+/// herdr `render_toast_notification` over the stack: every active toast is
+/// drawn top-down; returns the union of the drawn rects as the hit area.
 pub fn render_toast_notification(frame: &mut Frame, area: Rect, chrome: &Chrome) -> Option<Rect> {
-    let toast = chrome.toast.as_ref()?;
-    let toast_area = toast_notification_rect(area, toast)?;
-    let p = &chrome.palette;
+    let toasts = chrome.toasts.iter().map(|active| &active.toast);
+    let rects = toast_stack_rects(area, toasts.clone());
+    let mut union: Option<Rect> = None;
+    for (toast, rect) in toasts.zip(rects) {
+        render_one_toast(frame, rect, toast, &chrome.palette);
+        union = Some(union.map_or(rect, |acc| acc.union(rect)));
+    }
+    union
+}
+
+fn render_one_toast(frame: &mut Frame, toast_area: Rect, toast: &Toast, p: &Palette) {
     let (glyph, label) = toast_cue(toast.kind);
     let cue_color = toast_cue_color(toast.kind, p);
     let body = toast.body.as_deref().unwrap_or("");
@@ -192,7 +256,7 @@ pub fn render_toast_notification(frame: &mut Frame, area: Rect, chrome: &Chrome)
     frame.render_widget(block, toast_area);
 
     if inner.height < 1 {
-        return Some(toast_area);
+        return;
     }
 
     let [title_row, context_row] =
@@ -217,7 +281,6 @@ pub fn render_toast_notification(frame: &mut Frame, area: Rect, chrome: &Chrome)
     if !body.is_empty() && inner.height >= 2 {
         frame.render_widget(Paragraph::new(context), context_row);
     }
-    Some(toast_area)
 }
 
 /// herdr `copy_feedback_rect`, bottom-centre.
@@ -268,34 +331,6 @@ pub fn render_copy_feedback(frame: &mut Frame, area: Rect, chrome: &Chrome, mess
     frame.render_widget(Paragraph::new(text), inner);
 }
 
-/// herdr `render_config_diagnostic`: a one-line warning bar, top right.
-pub fn render_diagnostic(frame: &mut Frame, area: Rect, chrome: &Chrome, message: &str) {
-    let p = &chrome.palette;
-    let style = Style::default()
-        .fg(panel_contrast_fg(p))
-        .bg(p.yellow)
-        .add_modifier(Modifier::BOLD);
-
-    for (row, line) in message
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .take(area.height as usize)
-        .enumerate()
-    {
-        let text = format!(" {line} ");
-        let width = (text.len() as u16).min(area.width);
-        let notif_area = Rect::new(
-            area.x + area.width.saturating_sub(width),
-            area.y + row as u16,
-            width,
-            1,
-        );
-
-        frame.render_widget(Clear, notif_area);
-        frame.render_widget(Paragraph::new(Span::styled(text, style)), notif_area);
-    }
-}
-
 /// Gobby status line: daemon reachability, focused pane control state, mode.
 /// Returns the control indicator's cells, when a focused pane put one there.
 ///
@@ -317,7 +352,10 @@ pub fn render_status_line<W: WorkspaceView>(
     let mut spans = Vec::new();
     let mut indicator = None;
 
-    match chrome.focused_pane().map(|id| ws.pane(id)) {
+    // D4: control, address, backend, prefix, mode, then the title last so it
+    // is the segment that gives way when the line runs out of width.
+    let pane = chrome.focused_pane().map(|id| ws.pane(id));
+    match pane {
         Some(pane) => {
             let (glyph, label, color) = control_indicator(pane.control, pane.take_back, p);
             let text = format!(" [{glyph} {label}]");
@@ -332,29 +370,15 @@ pub fn render_status_line<W: WorkspaceView>(
                 style = style.add_modifier(Modifier::UNDERLINED);
             }
             spans.push(Span::styled(text, style));
-            let name = match pane.address.as_deref() {
-                Some(address) => format!("{} {address}", pane.display_name()),
-                None => pane.display_name().to_string(),
-            };
-            spans.push(Span::styled(format!(" │ {name}"), base.fg(p.text)));
-            if let Some(pane_ref) = chrome
-                .focus_slot()
-                .and_then(|slot| chrome.viewer.panes.daemon_id(slot))
-                .and_then(|pane_id| ws.workspace_model()?.pane_ref(pane_id))
-            {
-                spans.push(Span::styled(format!(" │ {pane_ref}"), base.fg(p.subtext0)));
+            if let Some(address) = terminal_address(ws, &pane.terminal_id) {
+                spans.push(Span::styled(format!(" │ {address}"), base.fg(p.text)));
             }
-            if let Some(transport) = pane.transport() {
-                spans.push(Span::styled(
-                    format!(" │ {}", transport_label(transport)),
-                    base.fg(p.subtext0),
-                ));
-            }
+            spans.push(Span::styled(
+                format!(" │ {}", pane.backend),
+                base.fg(p.subtext0),
+            ));
         }
         None => spans.push(Span::styled(" No pane.", base.fg(p.overlay1))),
-    }
-    if let Some(name) = mode_name(chrome.mode) {
-        spans.push(Span::styled(format!(" │ {name}"), base.fg(p.accent)));
     }
     // The prefix is the way into every chord, quit included, so the status
     // line always names it; under an outer tmux it is the shifted chord.
@@ -362,11 +386,18 @@ pub fn render_status_line<W: WorkspaceView>(
         format!(" │ prefix {}", chrome.keymap.prefix_label),
         base.fg(p.subtext0),
     ));
+    if let Some(name) = mode_name(chrome.mode) {
+        spans.push(Span::styled(format!(" │ {name}"), base.fg(p.accent)));
+    }
+    // A condition, not an event: it stays until the daemon is back.
     if !ws.daemon_ready() {
         spans.push(Span::styled(" │ Daemon unreachable.", base.fg(p.red)));
     }
-    if let Some(message) = chrome.status_message.as_deref() {
-        spans.push(Span::styled(format!(" │ {message}"), base.fg(p.subtext0)));
+    if let Some(pane) = pane {
+        spans.push(Span::styled(
+            format!(" │ {}", terminal_title(ws, &pane.terminal_id)),
+            base.fg(p.text),
+        ));
     }
 
     frame.render_widget(Paragraph::new(Line::from(spans)).style(base), area);
@@ -393,25 +424,35 @@ mod tests {
     }
 
     #[test]
-    fn toast_rect_hugs_the_bottom_right_and_grows_with_a_body() {
+    fn toast_rect_hugs_the_top_right_and_grows_with_a_body() {
         let area = Rect::new(0, 0, 80, 24);
-        let mut toast = Toast {
-            kind: ToastKind::Info,
-            title: "term-alpha".to_string(),
-            body: None,
-            target: None,
-        };
+        let mut toast = Toast::info("term-alpha");
         // "◇ info  " (8 cells) leads the 10-cell title, plus padding and borders.
         assert_eq!(
             toast_notification_rect(area, &toast),
-            Some(Rect::new(58, 21, 22, 3))
+            Some(Rect::new(58, 0, 22, 3))
         );
-        toast.body = Some("waiting on an answer".to_string());
+        toast = toast.with_body("waiting on an answer");
         assert_eq!(
             toast_notification_rect(area, &toast),
-            Some(Rect::new(54, 20, 26, 4))
+            Some(Rect::new(54, 0, 26, 4))
         );
         assert!(toast_notification_rect(Rect::default(), &toast).is_none());
+    }
+
+    #[test]
+    fn toast_stack_grows_downward_and_stops_at_the_area_bottom() {
+        let area = Rect::new(10, 2, 60, 7);
+        let toasts = [
+            Toast::info("one"),
+            Toast::warning("two").with_body("term-alpha"),
+            Toast::error("three"),
+        ];
+        let rects = toast_stack_rects(area, &toasts);
+        assert_eq!(rects.len(), 2, "the third toast does not fit: {rects:?}");
+        assert_eq!(rects[0].y, 2);
+        assert_eq!(rects[1].y, 5);
+        assert!(rects.iter().all(|rect| rect.x + rect.width == 70));
     }
 
     #[test]
@@ -427,7 +468,6 @@ mod tests {
         let mut chrome = Chrome::dark();
         chrome.open_pane(ws.pane_for_terminal("term-alpha").unwrap(), "alpha");
         chrome.mode = Mode::Navigate;
-        chrome.status_message = Some("copied".to_string());
 
         let mut terminal = Terminal::new(TestBackend::new(80, 1)).unwrap();
         terminal
@@ -436,9 +476,14 @@ mod tests {
             })
             .unwrap();
         let text = screen(&terminal);
-        for needle in ["○ observe", "term-alpha", "navigate", "copied"] {
+        for needle in ["○ observe", "gclient", "navigate", "term-alpha"] {
             assert!(text.contains(needle), "status lacks {needle:?}: {text}");
         }
+        // D4 order: the mode comes after the prefix and the title comes last.
+        let at = |needle: &str| text.find(needle).unwrap_or(usize::MAX);
+        assert!(at("gclient") < at("prefix"), "backend after prefix: {text}");
+        assert!(at("prefix") < at("navigate"), "mode before prefix: {text}");
+        assert!(at("navigate") < at("term-alpha"), "title not last: {text}");
         assert!(!text.contains('!'));
         assert!(
             text.contains("│ prefix ctrl+b"),
@@ -461,12 +506,12 @@ mod tests {
     }
 
     #[test]
-    fn status_line_names_the_active_transport_per_pane() {
-        // A remote pane and a direct pane look identical otherwise, so the
-        // status line is the only place the operator learns which one they
-        // are typing into.
-        for (reattach_over_proxy, expected, unexpected) in
-            [(false, "direct", "proxy"), (true, "proxy", "direct")]
+    fn status_line_names_the_backend_per_pane() {
+        // The backend changes what the keys do (a tmux pane still answers to
+        // the tmux prefix), so the status line names it rather than the
+        // transport, which the operator cannot act on.
+        for (backend, expected, unexpected) in
+            [("native", "gclient", "tmux"), ("tmux", "tmux", "gclient")]
         {
             let mut ws = Workspace::scripted();
             ws.daemon_mut().set_roster(json!({
@@ -475,11 +520,8 @@ mod tests {
                 "entries": []
             }));
             ws.reconcile_subscribe_first().unwrap();
-            ws.open_terminal("term-alpha", "native", "epoch").unwrap();
+            ws.open_terminal("term-alpha", backend, "epoch").unwrap();
             let id = ws.pane_for_terminal("term-alpha").unwrap();
-            if reattach_over_proxy {
-                ws.reattach_frames(id).unwrap();
-            }
             let mut chrome = Chrome::dark();
             chrome.open_pane(id, "alpha");
 
@@ -499,17 +541,15 @@ mod tests {
     }
 
     #[test]
-    fn diagnostic_and_copy_feedback_stay_inside_the_area() {
+    fn copy_feedback_stays_inside_the_area() {
         let chrome = Chrome::dark();
         let mut terminal = Terminal::new(TestBackend::new(40, 6)).unwrap();
         terminal
             .draw(|frame| {
-                render_diagnostic(frame, frame.area(), &chrome, "keymap has an unknown action");
                 render_copy_feedback(frame, frame.area(), &chrome, "copied 3 lines");
             })
             .unwrap();
         let text = screen(&terminal);
-        assert!(text.contains("keymap has an unknown action"));
         assert!(text.contains("copied 3 lines"));
         assert_eq!(
             copy_feedback_rect(Rect::new(0, 0, 40, 6), "copied 3 lines"),

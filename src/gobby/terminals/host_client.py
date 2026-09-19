@@ -621,6 +621,28 @@ class HostClient:
             }
         )
 
+    async def grant_input(self, host_terminal_id: str, attachment_id: str) -> dict[str, Any]:
+        """Hand the frame-stream input grant for a native terminal to one attachment."""
+        return await self._roundtrip(
+            {
+                "method": "grant_input",
+                "host_terminal_id": host_terminal_id,
+                "attachment_id": attachment_id,
+            }
+        )
+
+    async def revoke_input(
+        self, host_terminal_id: str, attachment_id: str | None = None
+    ) -> dict[str, Any]:
+        """Clear the input grant; naming an attachment revokes only that holder."""
+        payload: dict[str, Any] = {
+            "method": "revoke_input",
+            "host_terminal_id": host_terminal_id,
+        }
+        if attachment_id is not None:
+            payload["attachment_id"] = attachment_id
+        return await self._roundtrip(payload)
+
     async def subscribe_events(self, since: int | None = None) -> dict[str, Any]:
         request: dict[str, Any] = {"method": "subscribe_events"}
         if since is not None:

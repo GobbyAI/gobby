@@ -76,6 +76,15 @@ def session_db(hub_db: HubDatabase) -> HubDatabase:
 # Gobby clears the composer before typing the pull prompt; Codex has no whole-buffer
 # clear, so the drain sends kill-line/delete keys in passes.
 _CODEX_DRAIN = [("%12", key, False) for key in ("C-u", "C-k", "BSpace", "DC")] * 8
+#: An empty Codex composer, rule-delimited, so the submit ladder can read one back.
+_EMPTY_CODEX_COMPOSER = "\n".join(("output", "─" * 20, "›", "─" * 20, "  codex  12%"))
+_ENTER = ("%12", "Enter", False)
+
+
+@pytest.fixture(autouse=True)
+def _no_enter_gap(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The gap before the Enter is live-CLI timing, not something these tests wait on."""
+    monkeypatch.setattr("gobby.terminals.pane_io.SUBMIT_ENTER_GAP_SECONDS", 0.0)
 
 
 def _append_bytes(path: Path, content: bytes) -> None:
@@ -128,7 +137,9 @@ def test_codex_rollout_cursor_rejects_truncated_transcript(tmp_path: Path) -> No
 
 
 class _FakeTmux:
-    composer_text: str | None = None
+    #: A readable, empty composer by default -- the steady state of a pane whose
+    #: text submitted. Tests that exercise an unclassifiable frame set this None.
+    composer_text: str | None = _EMPTY_CODEX_COMPOSER
 
     def __init__(self) -> None:
         self.sent_keys: list[tuple[str, str, bool]] = []
@@ -186,14 +197,17 @@ async def test_scheduled_task_is_retained_and_multiline_prompt_is_sent_once() ->
         await send_started.wait()
 
         assert len(_HANDOFF_COMPACT_CONTINUATION_TASKS) == 1
-        assert tmux.sent_keys == [*_CODEX_DRAIN, ("%12", prompt, True)]
+        assert tmux.sent_keys == [*_CODEX_DRAIN, ("%12", f"{prompt}\n", True)]
         task = next(iter(_HANDOFF_COMPACT_CONTINUATION_TASKS))
 
         release_send.set()
         await task
         await drain_asyncio_tasks()
 
-    assert tmux.sent_keys[-1] == ("%12", "Enter", False)
+    # The write carries the newline; the Enter that submits a paste follows as its own
+    # key, and the prompt itself was written exactly once.
+    assert tmux.sent_keys[-2:] == [("%12", f"{prompt}\n", True), _ENTER]
+    assert sum(1 for _pane, _text, literal in tmux.sent_keys if literal) == 1
     assert not _HANDOFF_COMPACT_CONTINUATION_TASKS
 
 
@@ -312,12 +326,7 @@ async def test_codex_waits_for_fresh_compaction_marker_before_continuing(
     # The fake pane never draws a composer this manifest can classify, so the read
     # is unreadable and the second Enter follows it -- a no-op once the first Enter
     # submitted, and the recovery when a paste review gate swallowed it.
-    assert tmux.sent_keys == [
-        *_CODEX_DRAIN,
-        ("%12", prompt, True),
-        ("%12", "Enter", False),
-        ("%12", "Enter", False),
-    ]
+    assert tmux.sent_keys == [*_CODEX_DRAIN, ("%12", f"{prompt}\n", True), _ENTER]
     variables = SessionVariableManager(session_db).get_variables(SESSION_ID)
     assert HANDOFF_COMPACT_CONTINUE_VARIABLE not in variables
 
@@ -482,12 +491,7 @@ async def test_codex_detects_fresh_marker_when_old_marker_scrolls_out(
             poll_seconds=0,
         )
 
-    assert tmux.sent_keys == [
-        *_CODEX_DRAIN,
-        ("%12", prompt, True),
-        ("%12", "Enter", False),
-        ("%12", "Enter", False),
-    ]
+    assert tmux.sent_keys == [*_CODEX_DRAIN, ("%12", f"{prompt}\n", True), _ENTER]
 
 
 @pytest.mark.asyncio
@@ -526,12 +530,7 @@ async def test_codex_ignores_compaction_marker_text_in_prose(
             poll_seconds=0,
         )
 
-    assert tmux.sent_keys == [
-        *_CODEX_DRAIN,
-        ("%12", prompt, True),
-        ("%12", "Enter", False),
-        ("%12", "Enter", False),
-    ]
+    assert tmux.sent_keys == [*_CODEX_DRAIN, ("%12", f"{prompt}\n", True), _ENTER]
 
 
 def test_codex_readiness_rejects_missing_baseline(session_db: HubDatabase) -> None:
@@ -837,8 +836,10 @@ def _claude_frame(row: str) -> str:
 class _StickyComposerTmux(_FakeTmux):
     """Tmux fake whose composer keeps the pull prompt until enough Enters land.
 
-    ``releases_after_enters=None`` never submits: the reported failure, where every
-    write reports Delivered and the prompt stays on screen.
+    Zero releases on the write's own newline; one models a CLI that held that
+    newline behind a paste review gate and wants a bare Enter. ``None`` never
+    submits: the reported failure, where every write reports Delivered and the
+    prompt stays on screen.
     """
 
     def __init__(
@@ -890,21 +891,21 @@ class TestPullPromptFallback:
     """The pull prompt survives a failed send and never submits an operator draft."""
 
     @pytest.mark.asyncio
-    async def test_a_clean_first_submit_sends_no_follow_up_enter(self) -> None:
+    async def test_a_clean_submit_is_one_write_and_one_enter(self) -> None:
+        tmux = _StickyComposerTmux(releases_after_enters=0)
+
+        assert await _send_pull_prompt(tmux) is True
+        assert tmux.enters == 1
+        assert tmux.typed == [f"{_PULL_PROMPT}\n"]
+        assert tmux.composer_modes == ["ansi"]
+
+    @pytest.mark.asyncio
+    async def test_a_paste_that_kept_its_newline_is_submitted_by_the_enter(self) -> None:
         tmux = _StickyComposerTmux(releases_after_enters=1)
 
         assert await _send_pull_prompt(tmux) is True
         assert tmux.enters == 1
-        assert tmux.typed == [_PULL_PROMPT]
-        assert tmux.composer_modes == ["ansi"]
-
-    @pytest.mark.asyncio
-    async def test_a_retained_prompt_is_submitted_by_the_second_enter(self) -> None:
-        tmux = _StickyComposerTmux(releases_after_enters=2)
-
-        assert await _send_pull_prompt(tmux) is True
-        assert tmux.enters == 2
-        assert tmux.typed == [_PULL_PROMPT]
+        assert tmux.typed == [f"{_PULL_PROMPT}\n"]
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -917,26 +918,31 @@ class TestPullPromptFallback:
     async def test_a_composer_that_is_not_our_prompt_counts_as_submitted(
         self, composer_text: str
     ) -> None:
-        """A foreign draft is a positive read that our prompt went in: no second Enter."""
+        """A foreign draft is a positive read that our prompt went in: no retype."""
         tmux = _FakeTmux()
         tmux.composer_text = composer_text
 
         assert await _send_pull_prompt(tmux) is True
+        assert [text for _p, text, literal in tmux.sent_keys if literal] == [f"{_PULL_PROMPT}\n"]
         assert sum(1 for _p, key, literal in tmux.sent_keys if key == "Enter" and not literal) == 1
 
     @pytest.mark.asyncio
-    async def test_an_unreadable_composer_still_gets_the_second_enter(self) -> None:
-        """A frame we cannot classify is not proof, so the recovery Enter still fires.
+    async def test_an_unreadable_composer_after_the_enter_is_trusted(self) -> None:
+        """A frame we cannot classify after the Enter is not a failure.
 
-        It stays a success because an unreadable frame is no evidence in either
-        direction -- the handoff that stranded its pull prompt was reported as
-        submitted on exactly this read (gobby#22550).
+        The write and the Enter were both delivered; retyping would queue the prompt
+        twice, and failing would deliver it a second time through the durable
+        fallback. What stranded the live prompts (gobby#22550) was skipping the
+        Enter, not trusting the frame after it.
         """
         tmux = _FakeTmux()
         tmux.composer_text = None
+        failures: list[int] = []
 
-        assert await _send_pull_prompt(tmux) is True
-        assert sum(1 for _p, key, literal in tmux.sent_keys if key == "Enter" and not literal) == 2
+        assert await _send_pull_prompt(tmux, on_send_failure=lambda: failures.append(0)) is True
+        assert failures == []
+        assert [text for _p, text, literal in tmux.sent_keys if literal] == [f"{_PULL_PROMPT}\n"]
+        assert sum(1 for _p, key, literal in tmux.sent_keys if key == "Enter" and not literal) == 1
 
     @pytest.mark.asyncio
     async def test_a_prompt_that_never_leaves_is_drained_then_reported(self) -> None:
@@ -945,9 +951,9 @@ class TestPullPromptFallback:
 
         assert await _send_pull_prompt(tmux, on_send_failure=lambda: failures.append(0)) is False
         assert failures == [0]
-        # Every rung ran: two Enters, then a drain and retype, then two more.
-        assert tmux.typed == [_PULL_PROMPT, _PULL_PROMPT]
-        assert tmux.enters == 4
+        # Every rung ran: the write and its Enter, then a drain, a retype and its Enter.
+        assert tmux.typed == [f"{_PULL_PROMPT}\n", f"{_PULL_PROMPT}\n"]
+        assert tmux.enters == 2
         # The draft is ours, so it is drained before the durable fallback delivers it.
         assert tmux.sent_keys[-len(_CLAUDE_DRAIN) :] == _CLAUDE_DRAIN
 
@@ -1063,6 +1069,6 @@ async def test_schedule_continuation_resolves_native_terminal_without_tmux() -> 
         await task
         await drain_asyncio_tasks()
 
-    assert ("text", prompt, False) in writes
+    assert writes.index(("text", prompt, True)) < writes.index(("key", "enter"))
     assert writes[-1] == ("key", "enter")
     assert not _HANDOFF_COMPACT_CONTINUATION_TASKS

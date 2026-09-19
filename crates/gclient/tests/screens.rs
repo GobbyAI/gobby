@@ -443,7 +443,11 @@ fn projects_agents_golden() {
         "the working filter hides a project with nothing live\n{rendered}"
     );
     let sessions = row_containing(" Sessions");
-    assert_eq!(sessions, alpha + 1, "the sessions band follows the cards");
+    assert_eq!(
+        sessions,
+        alpha + 2,
+        "a blank row separates the cards from the sessions band"
+    );
     assert!(
         rows[sessions].contains("[view]"),
         "sessions band: {:?}",

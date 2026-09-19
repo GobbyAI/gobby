@@ -7,6 +7,7 @@ use crate::daemon::LiveDaemon;
 use crate::frame_source::AttachLocator;
 use crate::startup::initial_project;
 use crate::theme::Theme;
+use crate::ui::status::Toast;
 use crate::ui::Chrome;
 use crate::Workspace;
 use gobby_terminal::protocol::{ClientMessage, RenderEncoding, PROTOCOL_VERSION};
@@ -45,7 +46,8 @@ pub fn run_ready(
         .build()?
         .block_on(async move {
             let daemon =
-                LiveDaemon::connect(ready.daemon_url, ready.token.unwrap_or_default()).await?;
+                LiveDaemon::connect_or_wait(ready.daemon_url, ready.token.unwrap_or_default())
+                    .await?;
             let mut workspace = Workspace::live(daemon);
             workspace.set_gobby_home(ready.gobby_home.clone());
             // Without a machine id the sidebar still lists agents; they just
@@ -58,8 +60,11 @@ pub fn run_ready(
             workspace.set_launch_dir(ready.launch_dir);
             workspace.set_frame_delivery(ready.frame_delivery);
             // The workspace rows remember the project the window last
-            // showed; the loop's reconcile re-attaches on every connect.
-            workspace.attach_live_workspace().await?;
+            // showed; the loop's reconcile re-attaches on every connect, so
+            // a daemon that is still down at launch attaches then.
+            if let Err(error) = workspace.attach_live_workspace().await {
+                tracing::warn!(%error, "workspace attach waits for the daemon");
+            }
             let focused = workspace
                 .workspace_model()
                 .and_then(|model| model.workspace.focused_project_id.clone());
@@ -69,7 +74,9 @@ pub fn run_ready(
             chrome.apply_prefs(ready.prefs);
             chrome.keymap = ready.keymap;
             chrome.nested = ready.nested;
-            chrome.status_message = ready.host_notice;
+            if let Some(notice) = ready.host_notice {
+                chrome.notify(Toast::info(notice));
+            }
             let mut terminal = Terminal::new(CrosstermBackend::new(std::io::stdout()))?;
             let input = gobby_terminal::raw_input::spawn_input_reader();
             run_live_loop(&mut workspace, &mut terminal, &mut chrome, input, switch).await?;

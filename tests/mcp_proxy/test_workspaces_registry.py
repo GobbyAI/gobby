@@ -189,10 +189,10 @@ async def test_registry_executes_every_tool_by_ref_through_shared_ops(stack: _St
         [local] = [row for row in nodes if row["local"]]
         assert local["id"] == LOCAL_MACHINE_ID
         assert {row["owner_user_id"] for row in nodes} == {TEST_USER_ID}
-        node = f"n{local['ref']}"
+        node = str(local["ref"])
         assert (await _ok(registry, "list_nodes", node=node))["nodes"] == [local]
         created = (await _ok(registry, "create_workspace", name="agents", node=node))["workspace"]
-        home = f"{node}:w{created['ref']}"
+        home = f"{node}:{created['ref']}"
         attach = {"type": "workspace_attach", "workspace": created["id"]}
         await stack.server._handle_message(watcher, json.dumps(attach))
         listed = await _ok(registry, "list_workspaces", node=node)
@@ -200,10 +200,10 @@ async def test_registry_executes_every_tool_by_ref_through_shared_ops(stack: _St
 
         layout = await _ok(registry, "create_tab", workspace=home, project_id=stack.project_id)
         tab, first = layout["tabs"][0], layout["panes"][0]
-        tab_ref = f"{home}:t{tab['ref']}"
-        first_ref = f"{tab_ref}:p{first['ref']}"
+        tab_ref = f"{home}:{tab['ref']}"
+        first_ref = f"{tab_ref}:{first['ref']}"
         split_layout = await _ok(registry, "split_pane", pane=first_ref, axis="vertical")
-        second_ref = f"{tab_ref}:p{split_layout['panes'][0]['ref']}"
+        second_ref = f"{tab_ref}:{split_layout['panes'][0]['ref']}"
         swapped = await _ok(registry, "swap_panes", pane=first_ref, other=second_ref)
         assert swapped["tab"]["id"] == tab["id"]
         labelled = await _ok(registry, "rename_workspace_item", ref=first_ref, name="main")
@@ -216,7 +216,7 @@ async def test_registry_executes_every_tool_by_ref_through_shared_ops(stack: _St
 
         other = await _ok(registry, "create_tab", workspace=home, project_id=stack.project_id)
         other_tab = other["tabs"][0]
-        other_ref = f"{home}:t{other_tab['ref']}"
+        other_ref = f"{home}:{other_tab['ref']}"
         moved = await _ok(registry, "move_pane", pane=second_ref, tab=other_ref)
         assert {row["tab_id"] for row in moved["panes"]} == {other_tab["id"]}
 
@@ -239,7 +239,7 @@ async def test_registry_executes_every_tool_by_ref_through_shared_ops(stack: _St
         closed = await _ok(registry, "close_workspace", workspace=home)
         assert closed["workspace"]["id"] == created["id"]
 
-        assert await _code(registry, "close_tab", tab="w1:bogus") == "invalid_ref"
+        assert await _code(registry, "close_tab", tab="0:0:bogus") == "invalid_ref"
         assert await _code(registry, "list_workspaces", node="n999999") == "not_found"
         assert await _code(registry, "rename_workspace_item", ref=home, name="gone") == "not_found"
 
@@ -266,9 +266,9 @@ async def test_read_and_wait_address_panes_by_ref(stack: _Stack) -> None:
     with _principal(None):
         workspace = (await _ok(registry, "create_workspace", name="watch"))["workspace"]
         node = stack.workspaces.resolve_node()
-        home = f"n{node.ref}:w{workspace['ref']}"
+        home = f"{node.ref}:{workspace['ref']}"
         layout = await _ok(registry, "create_tab", workspace=home, project_id=stack.project_id)
-        pane = f"{home}:t{layout['tabs'][0]['ref']}:p{layout['panes'][0]['ref']}"
+        pane = f"{home}:{layout['tabs'][0]['ref']}:{layout['panes'][0]['ref']}"
 
         stack.native.snapshot_text = "compiling\nbuild ok\n"
         screen = await _ok(registry, "read_pane", pane=pane, lines=5)
@@ -299,7 +299,7 @@ async def test_read_and_wait_address_panes_by_ref(stack: _Stack) -> None:
         assert (miss["matched"], miss["reason"]) == (False, "timeout")
         assert miss["snapshot"]["text"] == "compiling\nbuild ok\n"
 
-        assert await _code(registry, "read_pane", pane=f"{home}:t9:p9") == "not_found"
+        assert await _code(registry, "read_pane", pane=f"{home}:9:9") == "not_found"
         assert await _code(registry, "read_pane", pane=pane, lines=0) == "invalid_op"
         bad_pattern = await _code(
             registry, "wait_for_pane_output", pane=pane, pattern="(", timeout_seconds=1
@@ -439,11 +439,11 @@ async def test_agent_token_is_refused_even_with_a_session_header(stack: _Stack) 
     )
     calls: dict[str, dict[str, Any]] = {
         "create_workspace": {"name": "agent-owned"},
-        "rename_workspace_item": {"ref": "w1", "name": "agent-owned"},
-        "close_workspace": {"workspace": "w1"},
+        "rename_workspace_item": {"ref": "0", "name": "agent-owned"},
+        "close_workspace": {"workspace": "0"},
         "list_workspaces": {},
         "list_nodes": {},
-        "read_pane": {"pane": "w1:t1:p1"},
+        "read_pane": {"pane": "0:0:0:0"},
     }
     with (
         patch.object(stack.ops, "workspace_create", wraps=stack.ops.workspace_create) as create,

@@ -69,10 +69,13 @@ COMPOSER_MATCH_CHARS = 24
 #: How long a submitted text is given to leave the composer before the next rung.
 SUBMIT_VERIFY_SECONDS = 2.0
 _SUBMIT_VERIFY_POLL_SECONDS = 0.1
-#: Gap between the two Enters of one submit attempt. They must not coalesce into
-#: one stdin read -- a CLI that batches them sees a single keypress, which is the
-#: very failure the second Enter exists to recover.
-SUBMIT_ENTER_GAP_SECONDS = 0.25
+#: Gap held between the write and its Enter. Claude Code folds a newline into any
+#: single stdin read of 64 bytes or more and inserts the whole run literally (read
+#: from the 2.1.278 bundle), so a long text submits only when a Return arrives in a
+#: read of its own. 1.5s is the delay that submitted live pull prompts for months
+#: before gobby#22550, as HANDOFF_COMPACT_CONTINUE_SUBMIT_RETRY_DELAY_SECONDS; the
+#: CLI's own pty driver waits 10ms, so this is margin, not a measured minimum.
+SUBMIT_ENTER_GAP_SECONDS = 1.5
 COMPOSER_NOT_CLEAN_ERROR_CODE = "composer_not_clean"
 TEXT_NOT_SUBMITTED_ERROR_CODE = "command_not_submitted"
 
@@ -303,30 +306,28 @@ async def submit_text(
     composer_read: ComposerReader | None,
     verify_seconds: float = SUBMIT_VERIFY_SECONDS,
 ) -> SubmitResult:
-    """Type ``text`` into the drained composer and press Enter until it submits.
+    """Submit ``text`` into the drained composer, and prove it left or report it.
 
-    A Delivered Enter is not a submitted text: the CLI can take it as a literal
-    newline and leave the text on screen. Both rungs of the recovery ladder are
-    needed, and neither covers the other (measured on a live native pane against
-    Claude Code 2.1.278, gobby#22550):
+    The text and its newline go in as one write, and a bare Enter follows as its own
+    stdin read after ``SUBMIT_ENTER_GAP_SECONDS``. Both are needed. A short text such
+    as ``/compact`` is submitted by the newline in the write, and the Enter is then a
+    no-op on the empty composer. A long text -- every pull prompt -- is not: Claude
+    Code folds the newline into any read of 64 bytes or more and inserts the run
+    literally, so only the Enter submits it. That delayed Enter carried live handoffs
+    for months. The 02:32 rewrite of gobby#22550 made it conditional on a composer
+    read taken right after the write, and that read is ``empty`` before the CLI has
+    rendered the write, so the Enter was skipped and the prompt stranded, logged as
+    delivered.
 
-    * a second Enter, which is what a CLI that answered the first one with a paste
-      review gate ("review and press Enter to send") is waiting for — draining and
-      retyping only re-arms that gate, because the drain keys are the invisible
-      characters it strips;
-    * draining and retyping, which is the only thing that recovers an Enter the CLI
-      took as a literal newline — a bare Enter there just inserts another one.
-
-    Only a positive ``left`` read stops the ladder. A frame the manifest cannot
-    classify is not proof of anything, so the second Enter follows it: gobby#22550
-    first shipped that unreadable frame as the gate, and the next live handoff
-    stranded its pull prompt in a composer the sender had already reported as
-    submitted. An Enter an empty composer ignores costs nothing; one that is never
-    sent costs the handoff. Unreadable after the second Enter is the one place it
-    passes, because by then it is also the only evidence there is -- and a delivered
-    submission must not be reported as failed on a frame nobody could read. The two
-    Enters are spaced so the CLI cannot take them as a single keypress. Without a
-    ``composer_read`` (no provider) the write outcome is all there is.
+    Only after the Enter is the composer read back, because only then does a read
+    mean anything. ``left`` is proof. A draft that still starts with the text after
+    the verify window is a newline the CLI kept, so the composer is drained and the
+    text goes in once more before the ladder reports ``command_not_submitted`` and
+    the caller's durable fallback delivers it. A frame the manifest cannot classify
+    after the Enter is not evidence of a failure: the write and the key were both
+    delivered, so the text is reported submitted with a warning rather than retyped
+    into a composer that may already have taken it. Without a ``composer_read`` the
+    delivered write and key are all there is.
     """
     for attempt in range(2):
         if attempt:
@@ -343,25 +344,34 @@ async def submit_text(
                     f"composer could not be cleared before {label}: {clear_reason}",
                     COMPOSER_NOT_CLEAN_ERROR_CODE,
                 )
-        ok, reason = await pane.type_text(text)
+        ok, reason = await pane.type_text(f"{text}\n")
         if not ok:
             log_pane_failure(pane, session_id, f"typing {label}", reason)
             return SubmitResult(False, reason)
-        for enter in range(2):
-            if enter:
-                await asyncio.sleep(SUBMIT_ENTER_GAP_SECONDS)
-            ok, reason = await send_pane_key(
-                pane, "enter", session_id, action=f"submitting {label}"
+        await asyncio.sleep(SUBMIT_ENTER_GAP_SECONDS)
+        ok, reason = await send_pane_key(pane, "enter", session_id, action=f"submitting {label}")
+        if not ok:
+            return SubmitResult(False, reason)
+        if composer_read is None:
+            return SubmitResult(True)
+        verdict = await composer_verdict(pane, text, composer_read, window_seconds=verify_seconds)
+        if verdict == "held":
+            continue
+        if verdict == "unreadable":
+            logger.warning(
+                "Session %s: composer could not be read after submitting %s; "
+                "trusting the delivered write and Enter",
+                session_id,
+                label,
             )
-            if not ok:
-                return SubmitResult(False, reason)
-            if composer_read is None:
-                return SubmitResult(True)
-            verdict = await composer_verdict(
-                pane, text, composer_read, window_seconds=verify_seconds
+        else:
+            logger.info(
+                "Session %s submitted %s; the composer was empty after Enter (rung %d)",
+                session_id,
+                label,
+                attempt,
             )
-            if verdict == "left" or (verdict == "unreadable" and enter):
-                return SubmitResult(True)
+        return SubmitResult(True)
     return SubmitResult(
         False,
         f"{label} was typed but stayed in the composer: the CLI never submitted it",

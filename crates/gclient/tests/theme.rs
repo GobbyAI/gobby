@@ -28,7 +28,7 @@ const TOAST_KINDS: [ToastKind; 4] = [
 /// foreground of the first cell, where the kind cue sits.
 fn toast_title_row(kind: ThemeKind, toast_kind: ToastKind) -> (String, Color) {
     let mut chrome = Chrome::new(Theme::new(kind));
-    chrome.toast = Some(Toast {
+    chrome.notify(Toast {
         kind: toast_kind,
         title: "term-alpha".to_string(),
         body: None,

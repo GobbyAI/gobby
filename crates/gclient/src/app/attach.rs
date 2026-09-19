@@ -368,7 +368,7 @@ impl Workspace {
     }
 }
 
-fn frame_daemon_error(error: FrameError) -> DaemonError {
+pub(super) fn frame_daemon_error(error: FrameError) -> DaemonError {
     DaemonError::Protocol {
         detail: error.to_string(),
     }

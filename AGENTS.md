@@ -139,6 +139,7 @@ uv run gobby install             # install hooks for detected CLIs
 uv run ruff format src/          # format
 uv run ruff check src/           # lint
 uv run mypy src/                 # type check (repo gate is src/ only)
+# whole-tree fallback; a scoped audit covering every changed test is credited too
 uv run gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json --fail-on-new
 GOBBY_TEST_PROTECT=1 uv run pytest tests/tasks/test_validation.py -v          # focused test file
 GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/ --cov=gobby --cov-report=term-missing

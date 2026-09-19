@@ -146,6 +146,10 @@ fn client_paste_event_routes_through_terminal_paste() {
     let pane = ws
         .open_terminal("term-paste", "native", "epoch-paste")
         .expect("open terminal");
+    // A proxy attachment, so the routed paste is the daemon's to carry; a
+    // direct pane pastes on its own frame socket (#22573), which
+    // `a_direct_paste_reaches_the_host_not_the_daemon` covers.
+    ws.reattach_frames(pane).expect("proxy frame source");
     ws.force_held(pane);
     let mut chrome = Chrome::dark();
     chrome.open_pane(pane, "paste");
@@ -207,7 +211,10 @@ fn native_set_scroll_offset_and_tmux_wrap_history() {
 fn paste_is_lease_gated_and_bracketed() {
     let mut ws = Workspace::scripted();
     let pane = ws.open_terminal("term-a", "native", "epoch-a").unwrap();
-    ws.attach_frames(pane).unwrap();
+    // A proxy attachment: the bracketing and the write sequence this test
+    // follows are the daemon paste protocol. gterm brackets a granted `Paste`
+    // itself, so a direct pane has neither (#22573).
+    ws.reattach_frames(pane).unwrap();
     ws.focus_pane(pane).unwrap();
     ws.set_bracketed_paste(pane, true);
     let text = "one\ntwo\nthree";
@@ -258,6 +265,55 @@ fn paste_is_lease_gated_and_bracketed() {
     ws.paste_to_pty(pane, "query").unwrap();
     assert_eq!(ws.pane(pane).search_buffer(), "query");
     assert_eq!(ws.daemon().pty_mutation_count(), after_indeterminate);
+}
+
+/// A held native pane with a direct source pastes onto the frame stream: the
+/// host sees one `Paste` after one `BindAttachment`, and the daemon carries
+/// nothing (#22573). gterm brackets the text, so gclient sends it raw.
+#[test]
+fn a_direct_paste_reaches_the_host_not_the_daemon() {
+    let mut ws = Workspace::scripted();
+    let pane = ws
+        .open_terminal("term-direct", "native", "epoch-direct")
+        .expect("open terminal");
+    ws.attach_frames(pane).expect("attach frames");
+    ws.focus_pane(pane).expect("focus takes control");
+    ws.set_bracketed_paste(pane, true);
+    let mutations = ws.daemon().pty_mutation_count();
+
+    ws.paste_to_pty(pane, "one\ntwo").expect("paste");
+
+    assert_eq!(
+        ws.daemon().pty_mutation_count(),
+        mutations,
+        "a direct pane's paste never reaches the daemon"
+    );
+    let source = ws.pane(pane).scripted_source().expect("scripted source");
+    assert!(source.sent_host_input(), "the host received the paste");
+    let pasted: Vec<&String> = source
+        .sent_messages()
+        .iter()
+        .filter_map(|message| match message {
+            ClientMessage::Paste { text } => Some(text),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(pasted, vec![&"one\ntwo".to_string()]);
+    assert_eq!(
+        source
+            .sent_messages()
+            .iter()
+            .filter(|message| matches!(message, ClientMessage::BindAttachment { .. }))
+            .count(),
+        1,
+        "one bind per installed source"
+    );
+
+    ws.release_control(pane).expect("release");
+    assert!(
+        ws.paste_to_pty(pane, "nope").is_err(),
+        "an observing pane still refuses to type anywhere"
+    );
 }
 
 /// A frame showing `rows`, each padded with blanks to the widest row.

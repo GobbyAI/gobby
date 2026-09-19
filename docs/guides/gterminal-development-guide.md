@@ -101,12 +101,40 @@ Host sockets are Unix domain, mode 0600, under `~/.gobby/`:
 
 | Socket | Protocol | Credential |
 | --- | --- | --- |
-| `gterm-control.sock` | JSON-lines control (`spawn`, `kill`, `resize`, `write`, `list`, …) | `~/.gobby/gterm-control.token` (daemon only) |
-| `gterm-frames.sock` | bincode frames (`Hello`/`Welcome`, `AttachTerminal`, `Frame`, …) | `~/.gobby/local_cli_token` |
+| `gterm-control.sock` | JSON-lines control (`spawn`, `kill`, `resize`, `write`, `grant_input`, `list`, …) | `~/.gobby/gterm-control.token` (daemon only) |
+| `gterm-frames.sock` | bincode frames (`Hello`/`Welcome`, `AttachTerminal`, `Frame`, `Input`, …) | `~/.gobby/local_cli_token` |
 
 Golden corpus: `crates/gterminal/tests/fixtures/wire_golden/`. `gclient` attaches
 frame streams from the host and talks to the daemon only through the public
-HTTP/WS API. Writes never go on the frame socket.
+HTTP/WS API.
+
+A frame stream is read-only until the daemon grants it input. The daemon calls
+`grant_input { host_terminal_id, attachment_id }` on the control socket when a
+direct native attachment takes the terminal lease; the client claims that id with
+`BindAttachment` and then sends `Input { data }` or `Paste { text }` on the frame
+stream, which the host delivers to the PTY only while the bound id is still the
+slot's grant. A refusal is an `InputRefused { code }` on the same stream and
+never closes it. One holder per slot; `revoke_input`, a holder change, or
+removing the terminal clears the grant, and a grant outlives a control
+disconnect and a daemon restart. Automatic writes, PTY resize, and every tmux
+or proxied pane stay on the control socket behind the daemon's lease checks.
+Full shapes and refusal codes:
+[granted input](../contracts/gterm-protocols.md#granted-input).
+
+Editing this path, note that the trap lives in the build, not in the code. The
+`gterm` binary carries `required-features = ["vt-engine"]`, so a plain
+`cargo build -p gobby-terminal` builds the library alone, emits no `gterm`, exits
+0, and leaves the installed binary untouched: a green build that changed nothing.
+Name the binary and the feature, the way `gobby install` does, with Zig 0.16 on
+`PATH`:
+
+```bash
+cargo build --release -p gobby-terminal --features vt-engine --bin gterm
+```
+
+The library still compiles featureless, because `gclient` depends on it that way.
+Nothing can reach a PTY in that build, so `deliver_native` refuses with
+`terminal_gone` rather than reporting a delivery it did not make.
 
 Logs: `~/.gobby/logs/gterm.log` (host) and `~/.gobby/logs/gclient.log` (TUI).
 
@@ -225,7 +253,11 @@ erase a recorded leak. Unrelated hosts, including the daemon host under
    and fail when a required gated target (`embed`, `host_lifecycle`,
    `control_protocol`, `frame_protocol`, `frame_producer`) is missing,
    skipped, or executes zero tests. `gobby-client` is clippy'd and
-   tested separately with its default feature set.
+   tested separately with its default feature set. Run these in a debug
+   profile: the gate's fault injection is `#[cfg(debug_assertions)]`, so
+   `--release` compiles it out and the tests that depend on an injected
+   fault (`commit_wait_does_not_block_other_requests` among them) fail
+   because the child they expected to hang runs normally instead.
 4. `uv run python -m gobby.guard_set_g 4`
 5. `uv run python -m gobby.guard_set_g 5`
 6. `uv run python -m gobby.guard_set_g 6`
@@ -260,19 +292,24 @@ never at collection.
 
 `gclient` is the workspace TUI: it lists terminals by project, renders terminal
 panes, manages tabs and splits, persists layouts, shows attention, and takes or
-releases control for input and resize. Roster, lifecycle, attention, and writes
-use the daemon's public HTTP/WS API. Frame sockets remain read-only.
+releases control for input and resize. Roster, lifecycle, attention, and
+automatic writes use the daemon's public HTTP/WS API. Operator keystrokes do not:
+a direct native pane holding the lease types on its own frame socket under the
+daemon's grant, so no keystroke waits on a daemon round trip. Frame sockets are
+read-only for every other pane.
 
 Three terminal paths are available:
 
-| Terminal path | Frame delivery |
-| --- | --- |
-| Local native terminal | Direct semantic frames from `gterm-frames.sock`. |
-| Local tmux terminal | Direct semantic frames from the gterm host's tmux observer, identified by socket, server PID/start time, and pane ID. |
-| Remote terminal | Daemon WS proxy with `encoding: "semantic_frame"`; `terminal_frame` carries base64 bincode frames. |
+| Terminal path | Frame delivery | Keystrokes |
+| --- | --- | --- |
+| Local native terminal | Direct semantic frames from `gterm-frames.sock`. | Direct on the frame socket while the lease holder has the host's input grant. |
+| Local tmux terminal | Direct semantic frames from the gterm host's tmux observer, identified by socket, server PID/start time, and pane ID. | Through the daemon; the host refuses frame input for a tmux slot with `not_native`. |
+| Remote terminal | Daemon WS proxy with `encoding: "semantic_frame"`; `terminal_frame` carries base64 bincode frames. | Through the daemon. |
 
-The status bar reports `direct` or `proxy`. A failed direct connection falls back
-to the proxy for that pane. The browser uses the ANSI proxy path described in
+A failed direct connection falls back to the proxy for that pane, which also
+moves that pane's keystrokes onto the daemon. No chrome reports which transport a
+pane ended up on; `~/.gobby/logs/gclient.log` does. The browser uses the ANSI
+proxy path described in
 [the protocol contract](../contracts/gterm-protocols.md#daemon-websocket-messages).
 
 ### Remote use

@@ -13,6 +13,7 @@ use crate::ui::dialogs::project::{complete_directory, expand_home, plural};
 use crate::ui::dialogs::{CloseScope, CloseTarget, Dialog, OrphanRow, RenameKind, WorktreeChoice};
 use crate::ui::sidebar::TERMINAL_ROW;
 use crate::ui::sidebar_rows::project_label;
+use crate::ui::status::Toast;
 use crate::ui::{Chrome, Mode};
 
 use super::super::sidebar_model::{ProjectEntry, WorktreeEntry};
@@ -611,6 +612,15 @@ pub fn project_dialog_key(chrome: &mut Chrome, key: &KeyEvent) -> ModalOutcome {
             KeyCode::Esc => return close_modal(chrome),
             _ => {}
         },
+        Dialog::Alerts { scroll } => match key.code {
+            KeyCode::Up | KeyCode::Char('k') => *scroll = scroll.saturating_sub(1),
+            KeyCode::Down | KeyCode::Char('j') => {
+                let last = chrome.alert_log.len().saturating_sub(1);
+                *scroll = (*scroll + 1).min(last);
+            }
+            KeyCode::Enter | KeyCode::Esc | KeyCode::Char('q') => return close_modal(chrome),
+            _ => {}
+        },
         Dialog::ConfirmClose { .. } | Dialog::Rename { .. } | Dialog::Respond { .. } => {
             return close_modal(chrome)
         }
@@ -672,7 +682,7 @@ fn set_dialog_error(chrome: &mut Chrome, message: String) {
             | Dialog::NewWorktree { error, .. }
             | Dialog::RemoveWorktree { error, .. },
         ) => *error = Some(message),
-        _ => chrome.status_message = Some(message),
+        _ => chrome.notify(Toast::warning(message)),
     }
 }
 
@@ -696,12 +706,13 @@ fn daemon_reason(error: &DaemonError) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::Backend;
     use crossterm::event::KeyModifiers;
 
     fn orphan(terminal_id: &str) -> OrphanRow {
         OrphanRow {
             terminal_id: terminal_id.to_string(),
-            backend: "tmux".to_string(),
+            backend: Backend::Tmux,
             name: terminal_id.to_string(),
             owner: None,
             last_seen: None,

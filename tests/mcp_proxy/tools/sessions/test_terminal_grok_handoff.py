@@ -38,6 +38,9 @@ pytestmark = pytest.mark.unit
 SESSION_ID = "11111111-1111-4111-8111-111111111111"
 ATTEMPT_ID = "a" * 32
 _DRAIN = composer_clear_sequence("grok")
+#: The rules a provider draws around its composer, so the pane fake draws a frame
+#: the manifest can actually classify -- Codex reads one, Grok has no rules at all.
+_RULE = "─" * 20
 _DELIVERY = "gobby.mcp_proxy.tools.sessions._terminal_handoff_delivery"
 _COMPACTION = "gobby.mcp_proxy.tools.sessions._terminal_compaction"
 _SETTLE_WAIT = 0.3
@@ -84,7 +87,7 @@ class _GrokTurnPane:
         return True, None
 
     async def snapshot(self, lines: int = 12, *, mode: SnapshotMode = "text") -> str | None:
-        return "ready\n> "
+        return f"ready\n{_RULE}\n› \n{_RULE}"
 
 
 def _grok_events(tmp_path: Path, *records: dict[str, Any]) -> tuple[Path, Path]:
@@ -158,8 +161,8 @@ async def test_settled_grok_turn_is_compacted_without_an_interrupt_key(tmp_path:
     assert result["compacted"] is True
     assert result["interrupted"] is False
     assert result["command"] == "/compact"
-    assert pane.keys == [*_DRAIN, "enter", "enter"]
-    assert pane.typed == ["/compact"]
+    assert pane.keys == [*_DRAIN, "enter"]
+    assert pane.typed == ["/compact\n"]
 
 
 @pytest.mark.asyncio
@@ -183,9 +186,9 @@ async def test_live_grok_turn_that_settles_is_compacted_without_interrupt(
     assert result["compacted"] is True
     assert result["interrupted"] is False
     assert result["command"] == "/compact"
-    assert pane.keys == [*_DRAIN, "enter", "enter"]
+    assert pane.keys == [*_DRAIN, "enter"]
     assert "ctrl_c" not in pane.keys
-    assert pane.typed == ["/compact"]
+    assert pane.typed == ["/compact\n"]
 
 
 @pytest.mark.asyncio
@@ -203,9 +206,9 @@ async def test_live_grok_turn_is_interrupted_and_confirmed_before_compact(
     assert pane.first_ctrl_c_at - started >= wait
     assert result["compacted"] is True
     assert result["interrupted"] is True
-    assert pane.keys == ["ctrl_c", *_DRAIN, "enter", "enter"]
+    assert pane.keys == ["ctrl_c", *_DRAIN, "enter"]
     assert "escape" not in pane.keys
-    assert pane.typed == ["/compact"]
+    assert pane.typed == ["/compact\n"]
 
 
 @pytest.mark.asyncio
@@ -228,7 +231,7 @@ async def test_grok_mcp_tool_call_completed_without_turn_ended_waits_then_interr
     assert result["compacted"] is True
     assert result["interrupted"] is True
     assert pane.keys[0] == "ctrl_c"
-    assert pane.typed == ["/compact"]
+    assert pane.typed == ["/compact\n"]
 
 
 @pytest.mark.asyncio
@@ -255,9 +258,9 @@ async def test_live_codex_turn_that_settles_is_compacted_without_interrupt(
     assert result["compacted"] is True
     assert result["interrupted"] is False
     assert result["command"] == "/compact"
-    assert pane.keys == [*composer_clear_sequence("codex"), "enter", "enter"]
+    assert pane.keys == [*composer_clear_sequence("codex"), "enter"]
     assert "ctrl_c" not in pane.keys
-    assert pane.typed == ["/compact"]
+    assert pane.typed == ["/compact\n"]
 
 
 @pytest.mark.parametrize(

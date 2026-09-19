@@ -92,6 +92,7 @@ fn apply_control_result(ws: &mut Workspace, message: &Value) -> Result<(), Daemo
         .get("granted")
         .and_then(Value::as_bool)
         .unwrap_or(false);
+    let host_input_granted = message.get("host_input_granted").and_then(Value::as_bool);
     let mut pending = None;
     if let Some(pane) = ws.pane_for_attachment_mut(attachment) {
         if gen < pane.lease_generation() {
@@ -105,7 +106,12 @@ fn apply_control_result(ws: &mut Workspace, message: &Value) -> Result<(), Daemo
         };
         pane.take_back = !granted;
         if granted {
-            pending = pane.pending_input.take().map(|data| (pane.id, data));
+            // A direct native pane the host did not grant cannot type there,
+            // and gclient never falls back to daemon-mediated keys (#22573),
+            // so `apply_host_grant` hands the pane back to take-back instead.
+            if pane.apply_host_grant(host_input_granted) {
+                pending = pane.pending_input.take().map(|data| (pane.id, data));
+            }
         } else {
             pane.pending_input = None;
         }

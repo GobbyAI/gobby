@@ -357,26 +357,42 @@ fn native_slot_mut<'a>(
 /// live here so the control verb and the frame stream refuse identically:
 /// `request_too_large` over `MAX_WRITE_BYTES`, `pty_busy` when the bounded
 /// writer is full, `terminal_gone` once the writer has closed.
+///
+/// Every path out of here either handed the bytes to a writer or names why it
+/// could not. `Ok(())` means delivered, and the frame stream emits
+/// `input_activity` on it, so a path answering success for input it dropped
+/// would credit a keystroke that reached no terminal.
 fn deliver_native(slot: &TerminalSlot, input: NativeInput) -> Result<(), &'static str> {
     if input.len() > MAX_WRITE_BYTES {
         return Err("request_too_large");
     }
-    #[cfg(feature = "vt-engine")]
-    if let Some(child) = slot.child.as_ref() {
-        use tokio::sync::mpsc::error::TrySendError;
-        let sent = match input {
-            NativeInput::Bytes(bytes) => child.runtime.try_send_bytes(bytes::Bytes::from(bytes)),
-            NativeInput::Paste(text) => child.runtime.try_send_paste(text),
-        };
-        return match sent {
-            Ok(()) => Ok(()),
-            Err(TrySendError::Full(_)) => Err("pty_busy"),
-            Err(TrySendError::Closed(_)) => Err("terminal_gone"),
-        };
+    send_to_pty(slot, input)
+}
+
+#[cfg(feature = "vt-engine")]
+fn send_to_pty(slot: &TerminalSlot, input: NativeInput) -> Result<(), &'static str> {
+    use tokio::sync::mpsc::error::TrySendError;
+
+    // A slot outlives its child, so no writer means the PTY this input was aimed
+    // at has already gone.
+    let child = slot.child.as_ref().ok_or("terminal_gone")?;
+    let sent = match input {
+        NativeInput::Bytes(bytes) => child.runtime.try_send_bytes(bytes::Bytes::from(bytes)),
+        NativeInput::Paste(text) => child.runtime.try_send_paste(text),
+    };
+    match sent {
+        Ok(()) => Ok(()),
+        Err(TrySendError::Full(_)) => Err("pty_busy"),
+        Err(TrySendError::Closed(_)) => Err("terminal_gone"),
     }
-    #[cfg(not(feature = "vt-engine"))]
-    let _ = input;
-    Ok(())
+}
+
+/// This build links no VT engine, so no slot owns a PTY writer and nothing can
+/// reach a terminal. `native_slot_alive` answers `false` here for the same
+/// reason.
+#[cfg(not(feature = "vt-engine"))]
+fn send_to_pty(_slot: &TerminalSlot, _input: NativeInput) -> Result<(), &'static str> {
+    Err("terminal_gone")
 }
 
 fn parse_batch_operations(
@@ -559,5 +575,24 @@ mod tests {
         let response = state().write_batch(delayed.as_object().unwrap()).await;
         assert_eq!(response["results"][0]["error"], "invalid_delay");
         assert_eq!(response["results"][0]["stage"], "none");
+    }
+
+    #[tokio::test]
+    async fn native_input_is_refused_when_the_slot_owns_no_pty() {
+        let state = state();
+        crate::host::state::insert_native_slot(&state, "ht-1", 24, 80).await;
+        let mut inner = state.inner.lock().await;
+        let slot = native_slot_mut(&mut inner, "ht-1").expect("native slot");
+
+        // Answering Ok here would report a delivery to a terminal that owns no
+        // writer, and the frame stream would emit `input_activity` for it.
+        assert_eq!(
+            deliver_native(slot, NativeInput::Bytes(b"x".to_vec())),
+            Err("terminal_gone"),
+        );
+        assert_eq!(
+            deliver_native(slot, NativeInput::Paste("x".to_owned())),
+            Err("terminal_gone"),
+        );
     }
 }

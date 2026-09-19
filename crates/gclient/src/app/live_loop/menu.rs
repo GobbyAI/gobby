@@ -59,6 +59,8 @@ pub enum MenuAction {
     /// Open the respond dialog for this attention entry.
     Respond(String),
     MarkSeen(String),
+    /// Open the alert log.
+    ShowAlerts,
     /// Open the destroy-orphaned-terminals dialog.
     DestroyOrphans,
     /// Destroy this orphaned terminal row without the dialog.
@@ -395,10 +397,11 @@ fn global_items() -> Vec<MenuItem> {
         item("new project", MenuAction::Act(Action::NewProject)),
         item("settings", MenuAction::Act(Action::Settings)),
         item("keybinding help", MenuAction::Act(Action::Help)),
+        item("alerts…", MenuAction::ShowAlerts),
         item("reload config", MenuAction::Act(Action::ReloadConfig)),
         item("toggle sidebar", MenuAction::Act(Action::ToggleSidebar)),
         // Always enabled: the candidates are fetched on activation, and an
-        // empty result reports itself in the status line.
+        // empty result reports itself in a toast.
         item("destroy orphaned terminals…", MenuAction::DestroyOrphans),
         item("detach", MenuAction::Act(Action::Detach)),
         // The chord is prefix+shift+q; the menu is where a new user finds it.
@@ -536,6 +539,7 @@ mod tests {
                 "new project",
                 "settings",
                 "keybinding help",
+                "alerts…",
                 "reload config",
                 "toggle sidebar",
                 "destroy orphaned terminals…",
@@ -544,23 +548,24 @@ mod tests {
             ]
         );
         assert_eq!(menu.items[2].action, MenuAction::Act(Action::NewProject));
-        assert_eq!(menu.items[5].action, MenuAction::Act(Action::ReloadConfig));
-        assert_eq!(menu.items[9].action, MenuAction::Act(Action::Quit));
+        assert_eq!(menu.items[5].action, MenuAction::ShowAlerts);
+        assert_eq!(menu.items[6].action, MenuAction::Act(Action::ReloadConfig));
+        assert_eq!(menu.items[10].action, MenuAction::Act(Action::Quit));
         assert!(menu.items.iter().all(|item| item.enabled));
 
         // Rows sit one cell inside the popup at the anchor: `destroy orphaned
-        // terminals…` makes it 31 wide, ten items make it 12 tall.
+        // terminals…` makes it 31 wide, eleven items make it 13 tall.
         assert_eq!(
             menu_rect(menu.anchor, &menu.items),
-            Rect::new(40, 12, 31, 12)
+            Rect::new(40, 12, 31, 13)
         );
-        assert_eq!(menu.item_rects.len(), 10);
+        assert_eq!(menu.item_rects.len(), 11);
         assert_eq!(menu.item_rects[0], Rect::new(41, 13, 29, 1));
         assert_eq!(menu_hit(&menu, 41, 13), Some(0));
         assert_eq!(menu_hit(&menu, 57, 15), Some(2));
         assert_eq!(menu_hit(&menu, 40, 13), None, "the border is not a row");
-        assert_eq!(menu_hit(&menu, 45, 22), Some(9), "the last row");
-        assert_eq!(menu_hit(&menu, 45, 23), None, "below the last row");
+        assert_eq!(menu_hit(&menu, 45, 23), Some(10), "the last row");
+        assert_eq!(menu_hit(&menu, 45, 24), None, "below the last row");
         let short = [item("zoom", MenuAction::Act(Action::Zoom))];
         assert_eq!(
             menu_rect((0, 0), &short).width,

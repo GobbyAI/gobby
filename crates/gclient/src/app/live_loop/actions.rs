@@ -15,7 +15,7 @@ use crate::ui::dialogs::{CloseScope, CloseTarget, Dialog, RenameKind};
 use crate::ui::navigator::NavigatorState;
 use crate::ui::sidebar::{attention_order, next_machine_filter};
 use crate::ui::sidebar_rows::{displayed_project_ids, project_label, project_rows, RowKind};
-use crate::ui::status::{Toast, ToastKind};
+use crate::ui::status::Toast;
 use crate::ui::{Action, Chrome, Mode};
 use gobby_terminal::layout::{self, find_in_direction, NavDirection};
 use ratatui::layout::Rect;
@@ -27,7 +27,7 @@ use super::control::{
     set_live_scroll_offset, take_live_control,
 };
 use super::menu::{apply_local_menu_action, ContextMenuKind, MenuAction};
-use super::modal_input::{apply_rename, persist_prefs, ModalOutcome};
+use super::modal_input::{apply_rename, open_alerts_dialog, persist_prefs, ModalOutcome};
 use super::mouse::{MouseOutcome, Placement};
 use super::orphans::{agent_orphan, destroy_orphans, open_destroy_orphans_dialog};
 use super::projects::{
@@ -188,12 +188,10 @@ pub(super) async fn apply_live_mouse_outcome(
         }
         MouseOutcome::OpenLink(url) => {
             if let Err(error) = open_link(&chrome.link_opener, &url) {
-                chrome.toast = Some(Toast {
-                    kind: ToastKind::Warning,
-                    title: format!("Could not open link with {}", chrome.link_opener),
-                    body: Some(error.to_string()),
-                    target: None,
-                });
+                chrome.notify(
+                    Toast::warning(format!("Could not open link with {}", chrome.link_opener))
+                        .with_body(error.to_string()),
+                );
             }
         }
         MouseOutcome::FocusProject(project_id) => {
@@ -335,6 +333,7 @@ async fn apply_live_menu_action(
             open_agent_in_new_tab(workspace, chrome, &entry_id).await?;
         }
         MenuAction::MarkSeen(entry_id) => mark_agent_seen(workspace, &entry_id).await?,
+        MenuAction::ShowAlerts => open_alerts_dialog(chrome),
         MenuAction::DestroyOrphans => open_destroy_orphans_dialog(workspace, chrome).await,
         MenuAction::DestroyTerminal(terminal_id) => {
             let target = agent_orphan(workspace, &terminal_id);
@@ -581,7 +580,9 @@ pub(super) async fn handle_live_action(
             }
         }
         Action::OpenNotificationTarget => {
-            if let Some(terminal_id) = chrome.toast.take().and_then(|toast| toast.target) {
+            let target = chrome.latest_alert_target().map(str::to_owned);
+            chrome.dismiss_toasts();
+            if let Some(terminal_id) = target {
                 focus_terminal(workspace, chrome, &terminal_id).await?;
             }
         }
@@ -851,26 +852,17 @@ fn reload_live_prefs(workspace: &Workspace<LiveDaemon>, chrome: &mut Chrome) {
         Ok(prefs) => {
             match load_keymap(&prefs, &home, chrome.nested) {
                 Ok(keymap) => chrome.keymap = keymap,
-                Err(error) => {
-                    chrome.toast = Some(Toast {
-                        kind: ToastKind::Warning,
-                        title: "Keymap overrides kept as loaded".to_string(),
-                        body: Some(error.to_string()),
-                        target: None,
-                    })
-                }
+                Err(error) => chrome.notify(
+                    Toast::warning("Keymap overrides kept as loaded").with_body(error.to_string()),
+                ),
             }
             chrome.apply_prefs(prefs);
-            chrome.status_message = Some(format!("Reloaded {}.", path.display()));
+            chrome.notify(Toast::success(format!("Reloaded {}.", path.display())));
         }
-        Err(error) => {
-            chrome.toast = Some(Toast {
-                kind: ToastKind::Warning,
-                title: format!("Could not reload {}", path.display()),
-                body: Some(error.to_string()),
-                target: None,
-            });
-        }
+        Err(error) => chrome.notify(
+            Toast::warning(format!("Could not reload {}", path.display()))
+                .with_body(error.to_string()),
+        ),
     }
 }
 
@@ -954,7 +946,7 @@ pub(super) async fn spawn_live_shell(
             place_live_terminal(workspace, chrome, placement, &terminal_id, worktree_id).await?;
             sync_live_chrome(workspace, chrome);
         }
-        SpawnOutcome::Refused { reason } => chrome.status_message = Some(reason),
+        SpawnOutcome::Refused { reason } => chrome.notify(Toast::warning(reason)),
     }
     Ok(())
 }

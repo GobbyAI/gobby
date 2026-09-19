@@ -526,6 +526,27 @@ class WriteCoordinator:
             raise KeyError(terminal_id)
         return terminal
 
+    def observe_operator_input(self, terminal_id: str) -> None:
+        """Lift the automatic-write quarantine after the host accepted direct input.
+
+        gclient keystrokes never cross the daemon, so the host's ``input_activity``
+        event is the only proof the operator typed. The row comes from the lease
+        holder's attachment snapshot, the same row an operator write dispatches
+        against, so a keystroke never re-reads the terminal; the store is consulted
+        only when no holder snapshot exists.
+        """
+        terminal: Terminal | None = None
+        holder = self.lease_registry.holder(terminal_id)
+        if holder is not None:
+            record = self.lease_registry.get(holder)
+            if record is not None:
+                terminal = record.terminal
+        if terminal is None:
+            terminal = self._store.get(terminal_id)
+        if terminal is None:
+            return
+        self._release_quarantine(terminal)
+
     def _release_quarantine(self, terminal: Terminal) -> None:
         """Lift an automatic-write quarantine once the operator has typed.
 

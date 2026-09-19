@@ -620,19 +620,24 @@ class TestHookManagerBeforeAgent:
             "tmux_session": "gobby",
             "term_program": "tmux",
         }
-        first_prompt = HookEvent(
-            event_type=HookEventType.BEFORE_AGENT,
-            session_id=external_id,
-            source=SessionSource.CODEX,
-            timestamp=datetime.now(UTC),
-            data={
-                "prompt": "Fix the hook regression",
-                "cwd": str(temp_dir),
-                "terminal_context": terminal_context,
-                "effective_reasoning_effort": "high",
-            },
-            machine_id=LOCAL_MACHINE_ID,
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
+
+        first_prompt = CodexHooksAdapter().translate_to_hook_event(
+            {
+                "hook_type": "UserPromptSubmit",
+                "input_data": {
+                    "session_id": external_id,
+                    "prompt": "Fix the hook regression",
+                    "cwd": str(temp_dir),
+                    "terminal_context": terminal_context,
+                    "effort": {"level": " high "},
+                    "machine_id": LOCAL_MACHINE_ID,
+                },
+                "source": "codex",
+            }
         )
+        assert first_prompt is not None
+        assert first_prompt.data["effort"] == "high"
 
         # Parent identity is read from the live process table, so pin it rather than
         # depending on this machine having PID 30769 running codex.

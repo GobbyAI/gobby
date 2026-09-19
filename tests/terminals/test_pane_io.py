@@ -3,6 +3,7 @@ the verified-submit ladder every daemon-driven injection presses Enter through."
 
 from __future__ import annotations
 
+import logging
 from typing import Any, cast
 
 import pytest
@@ -233,7 +234,7 @@ class _ScriptedPane:
 
     def __init__(self, reads: list[ComposerRead]) -> None:
         self._reads = reads
-        self._probes = 0
+        self.probes = 0
         self.keys: list[str] = []
         self.typed: list[str] = []
 
@@ -249,13 +250,16 @@ class _ScriptedPane:
         return None
 
     def read(self, _snapshot: str | None) -> ComposerRead:
-        read = self._reads[min(self._probes, len(self._reads) - 1)]
-        self._probes += 1
+        read = self._reads[min(self.probes, len(self._reads) - 1)]
+        self.probes += 1
         return read
 
 
-async def _submit(pane: _ScriptedPane, monkeypatch: pytest.MonkeyPatch) -> SubmitResult:
+async def _submit(
+    pane: _ScriptedPane, monkeypatch: pytest.MonkeyPatch, *, verify_seconds: float = 0.0
+) -> SubmitResult:
     monkeypatch.setattr("gobby.terminals.pane_io.SUBMIT_ENTER_GAP_SECONDS", 0.0)
+    monkeypatch.setattr("gobby.terminals.pane_io._SUBMIT_VERIFY_POLL_SECONDS", 0.0)
     return await submit_text(
         cast(PaneIO, pane),
         _TEXT,
@@ -263,35 +267,73 @@ async def _submit(pane: _ScriptedPane, monkeypatch: pytest.MonkeyPatch) -> Submi
         label="the prompt",
         cli_source="claude",
         composer_read=pane.read,
-        verify_seconds=0.0,
+        verify_seconds=verify_seconds,
     )
 
 
 @pytest.mark.asyncio
-async def test_an_empty_composer_after_the_first_enter_stops_the_ladder(
+async def test_the_write_and_a_delayed_enter_submit_and_an_empty_composer_proves_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """One write carries the text and its newline; the Enter is its own read after it.
+
+    The composer is read only after the Enter: a read taken right after the write is
+    ``empty`` before the CLI has rendered the write, and trusting it is what stranded
+    three live pull prompts.
+    """
     pane = _ScriptedPane([ComposerRead("empty")])
 
     assert (await _submit(pane, monkeypatch)).ok is True
+    assert pane.typed == [f"{_TEXT}\n"]
+    assert pane.keys == ["enter"]
+    assert pane.probes == 1
+
+
+@pytest.mark.asyncio
+async def test_a_repaint_after_enter_is_polled_until_the_composer_settles(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pane = _ScriptedPane([ComposerRead("unknown"), ComposerRead("empty")])
+
+    assert (await _submit(pane, monkeypatch, verify_seconds=1.0)).ok is True
+    assert pane.typed == [f"{_TEXT}\n"]
     assert pane.keys == ["enter"]
 
 
 @pytest.mark.asyncio
-async def test_an_unreadable_composer_never_proves_the_first_enter_submitted(
-    monkeypatch: pytest.MonkeyPatch,
+async def test_an_unreadable_composer_trusts_the_delivered_write_and_enter(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """The read that stranded a live pull prompt: no frame is not a submitted text."""
+    """No frame after the Enter is no evidence of a failure.
+
+    The write and the key were both delivered. Retyping into a composer that may have
+    taken them would queue the text twice, so the ladder reports it submitted and
+    says why.
+    """
     pane = _ScriptedPane([ComposerRead("unknown")])
 
-    result = await _submit(pane, monkeypatch)
+    with caplog.at_level(logging.WARNING, logger="gobby.terminals.pane_io"):
+        result = await _submit(pane, monkeypatch)
 
     assert result.ok is True
-    assert pane.keys == ["enter", "enter"]
+    assert pane.typed == [f"{_TEXT}\n"]
+    assert pane.keys == ["enter"]
+    assert "could not be read after submitting the prompt" in caplog.text
 
 
 @pytest.mark.asyncio
-async def test_a_draft_that_survives_both_enters_is_retyped_then_reported(
+async def test_a_draft_the_first_enter_left_behind_is_retyped_and_submitted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pane = _ScriptedPane([ComposerRead("draft", _TEXT), ComposerRead("empty")])
+
+    assert (await _submit(pane, monkeypatch)).ok is True
+    assert pane.typed == [f"{_TEXT}\n", f"{_TEXT}\n"]
+    assert pane.keys == ["enter", *composer_clear_sequence("claude"), "enter"]
+
+
+@pytest.mark.asyncio
+async def test_a_draft_that_survives_the_whole_ladder_is_retyped_then_reported(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     pane = _ScriptedPane([ComposerRead("draft", _TEXT)])
@@ -300,11 +342,5 @@ async def test_a_draft_that_survives_both_enters_is_retyped_then_reported(
 
     assert result.ok is False
     assert result.error_code == TEXT_NOT_SUBMITTED_ERROR_CODE
-    assert pane.typed == [_TEXT, _TEXT]
-    assert pane.keys == [
-        "enter",
-        "enter",
-        *composer_clear_sequence("claude"),
-        "enter",
-        "enter",
-    ]
+    assert pane.typed == [f"{_TEXT}\n", f"{_TEXT}\n"]
+    assert pane.keys == ["enter", *composer_clear_sequence("claude"), "enter"]

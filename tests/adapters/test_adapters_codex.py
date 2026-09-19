@@ -2738,6 +2738,46 @@ class TestCodexHooksAdapterTranslateToHookEvent:
         assert hook_event is not None
         assert hook_event.event_type == HookEventType.BEFORE_AGENT
 
+    @pytest.mark.parametrize("hook_type", ["UserPromptSubmit", "PreToolUse", "PostToolUse"])
+    def test_translate_canonicalizes_structured_effort(self, hook_type: str) -> None:
+        """Codex's structured effort becomes the unified string value."""
+        input_data: dict[str, Any] = {
+            "session_id": "codex-session-123",
+            "effort": {"level": " xhigh "},
+        }
+        if hook_type in {"PreToolUse", "PostToolUse"}:
+            input_data.update(tool_name="Bash", tool_input={"command": "pwd"})
+
+        hook_event = CodexHooksAdapter().translate_to_hook_event(
+            {"hook_type": hook_type, "input_data": input_data, "source": "codex"}
+        )
+
+        assert hook_event is not None
+        assert hook_event.data["effort"] == "xhigh"
+        assert isinstance(hook_event.data["effort"], str)
+
+    @pytest.mark.parametrize(
+        "effort",
+        [{}, {"level": ""}, {"level": 3}, {"other": "high"}, ["xhigh"], 3],
+    )
+    def test_translate_omits_malformed_effort(self, effort: Any) -> None:
+        """Malformed optional effort metadata cannot escape into typed consumers."""
+        hook_event = CodexHooksAdapter().translate_to_hook_event(
+            {
+                "hook_type": "PreToolUse",
+                "input_data": {
+                    "session_id": "codex-session-123",
+                    "tool_name": "Bash",
+                    "tool_input": {"command": "pwd"},
+                    "effort": effort,
+                },
+                "source": "codex",
+            }
+        )
+
+        assert hook_event is not None
+        assert "effort" not in hook_event.data
+
     def test_translate_stop(self) -> None:
         """Translate Stop to STOP."""
         from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter

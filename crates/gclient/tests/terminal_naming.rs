@@ -145,8 +145,13 @@ async fn the_foreground_command_names_a_terminal_with_no_name_of_its_own() {
     let labels: Vec<&str> = roster.iter().map(|row| row.label.as_str()).collect();
     assert_eq!(
         labels,
-        ["nvim %533", "cargo"],
-        "the tmux row keeps its address; neither row shows the daemon's title"
+        ["nvim", "cargo"],
+        "neither row shows the daemon's title"
+    );
+    assert_eq!(
+        roster[0].tokens,
+        ["%533"],
+        "the tmux row's address is a token, not part of its name"
     );
     assert_eq!(named, labels);
 }
@@ -156,7 +161,7 @@ async fn the_foreground_command_names_a_terminal_with_no_name_of_its_own() {
 /// foreground command only says what it is doing this second — the same row
 /// would read `node` a moment later.
 #[tokio::test]
-async fn a_bound_session_is_named_by_its_provider_over_its_command() {
+async fn a_bound_session_is_named_by_its_command_and_carries_its_provider() {
     let (roster, named) = sidebar(
         vec![tmux_row(
             AGENT,
@@ -168,8 +173,9 @@ async fn a_bound_session_is_named_by_its_provider_over_its_command() {
     )
     .await;
 
-    assert_eq!(roster[0].label, "codex %533");
-    assert_eq!(named, ["codex %533"]);
+    assert_eq!(roster[0].label, "node");
+    assert_eq!(roster[0].tokens, ["%533", "codex"]);
+    assert_eq!(named, ["node"]);
 }
 
 /// Rung 4. No name, no session, and a daemon that could not read a foreground
@@ -187,7 +193,9 @@ async fn a_terminal_with_no_name_session_or_command_reads_as_the_shell_it_is() {
     .await;
 
     let labels: Vec<&str> = roster.iter().map(|row| row.label.as_str()).collect();
-    assert_eq!(labels, ["shell %3", "shell"]);
+    assert_eq!(labels, ["shell", "shell"]);
+    assert_eq!(roster[0].tokens, ["%3"]);
+    assert!(roster[1].tokens.is_empty(), "{:?}", roster[1].tokens);
     assert_eq!(named, labels);
 }
 
@@ -205,10 +213,9 @@ async fn two_terminals_running_the_same_command_stay_distinguishable_by_address(
     )
     .await;
 
-    assert!(roster.iter().all(|row| row.label.starts_with("zsh ")));
-    assert_ne!(roster[0].label, roster[1].label);
-    assert!(roster[0].label.ends_with("%0"));
-    assert!(roster[1].label.ends_with("%7"));
+    assert!(roster.iter().all(|row| row.label == "zsh"), "{roster:?}");
+    assert_eq!(roster[0].tokens, ["%0"]);
+    assert_eq!(roster[1].tokens, ["%7"]);
 }
 
 /// The guarantee the ladder exists for. Every rung above the last can be
@@ -264,8 +271,13 @@ async fn an_attention_row_keyed_by_session_names_the_terminal_that_hosts_it() {
     .await;
 
     assert_eq!(
-        rows[0].label, "codex %533",
-        "the agent row carries the address-qualified terminal name"
+        rows[0].label, "node",
+        "the agent row is named by its terminal's command"
+    );
+    assert_eq!(
+        rows[0].tokens,
+        ["%533", "codex"],
+        "the address and the provider are its tokens"
     );
     assert_eq!(
         rows[0].state,

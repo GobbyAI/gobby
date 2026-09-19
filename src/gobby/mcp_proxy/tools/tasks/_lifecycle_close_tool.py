@@ -100,6 +100,8 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             "claimed task or one with linked commits keeps its leaf gates even with "
             "children. Closing the last child auto-closes eligible ancestors, stopping at "
             "a claimed ancestor, which its owner closes through its own gates. "
+            "A blocked call reports every deterministic gate in one response: each gate "
+            "that failed, and each one a failed prerequisite left unevaluated as skipped. "
             "preview=true returns diagnostics when blocked and still closes when ready."
         ),
         input_schema={
@@ -134,7 +136,7 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                 "preview": {
                     "type": "boolean",
                     "default": False,
-                    "description": "Close when ready; otherwise return first-failure diagnostics.",
+                    "description": "Close when ready; otherwise return every gate's status.",
                 },
                 "response_detail": {
                     "type": "string",

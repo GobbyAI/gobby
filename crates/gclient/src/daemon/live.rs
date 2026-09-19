@@ -155,6 +155,13 @@ impl LiveDaemon {
         base_url: impl AsRef<str>,
         token: impl Into<String>,
     ) -> Result<Self, DaemonError> {
+        let daemon = Self::build(base_url, token)?;
+        daemon.open_connection(Generation(0)).await?;
+        Ok(daemon)
+    }
+
+    /// The daemon handle before its first connection.
+    fn build(base_url: impl AsRef<str>, token: impl Into<String>) -> Result<Self, DaemonError> {
         let base_url = Url::parse(base_url.as_ref()).map_err(|error| DaemonError::Protocol {
             detail: error.to_string(),
         })?;
@@ -162,7 +169,7 @@ impl LiveDaemon {
         let rest = RestClient::new(base_url.clone(), token.clone())?;
         let (events, _) = broadcast::channel(BROADCAST_CAPACITY);
         let (closed_tx, _) = watch::channel(false);
-        let daemon = Self {
+        Ok(Self {
             inner: Arc::new(LiveInner {
                 rest,
                 base_url,
@@ -177,9 +184,7 @@ impl LiveDaemon {
                 close_stall: Mutex::new(None),
                 owners: AtomicUsize::new(1),
             }),
-        };
-        daemon.open_connection(Generation(0)).await?;
-        Ok(daemon)
+        })
     }
 
     pub async fn connect(
@@ -187,6 +192,32 @@ impl LiveDaemon {
         token: impl Into<String>,
     ) -> Result<Self, DaemonError> {
         Self::new(base_url, token).await
+    }
+
+    /// [`Self::connect`] for a launch that waits: a daemon that is down,
+    /// away or silent yields a daemon that is not ready and carries the
+    /// connect error as `last_error`, the same shape a lost connection
+    /// leaves behind, so the live loop's supervisor brings it up. A bad URL,
+    /// a refused token or a protocol fault still fail here.
+    pub async fn connect_or_wait(
+        base_url: impl AsRef<str>,
+        token: impl Into<String>,
+    ) -> Result<Self, DaemonError> {
+        let daemon = Self::build(base_url, token)?;
+        match daemon.open_connection(Generation(0)).await {
+            Ok(_) => {}
+            Err(
+                error @ (DaemonError::Unavailable { .. }
+                | DaemonError::GoingAway
+                | DaemonError::Timeout { .. }),
+            ) => {
+                let mut state = daemon.inner.state();
+                state.ready = false;
+                state.last_error = Some(error);
+            }
+            Err(error) => return Err(error),
+        }
+        Ok(daemon)
     }
 
     pub fn generation(&self) -> Generation {
@@ -287,6 +318,14 @@ impl LiveDaemon {
             let handle = tokio::spawn(async move {
                 run_connection(inner, generation, socket, receiver).await;
             });
+            // Replacing the slot is enough to retire the reader in it, and
+            // that matters when a handshake fails after this point — the
+            // subscribe below timing out under `connect_or_wait` leaves the
+            // previous socket up, because nothing closed it. The generation
+            // above already swapped `state.outbound`, so the old reader's
+            // command channel has no senders left: its `recv` resolves to
+            // `None` and it disconnects itself. One reader feeds the broadcast
+            // channel; `a_timed_out_subscribe_leaves_no_second_reader` pins it.
             *reader = Some(handle);
             generation
         };

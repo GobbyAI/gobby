@@ -1,6 +1,6 @@
-"""Node-scoped workspaces, tabs, and panes with reusable ``n#:w#:t#:p#`` refs.
+"""Node-scoped workspaces, tabs, and panes with reusable ``node:workspace:tab:pane`` refs.
 
-Every ref is the lowest positive integer free among its siblings, picked under a
+Every ref is the lowest non-negative integer free among its siblings, picked under a
 ``SELECT ... FOR UPDATE`` lock on the parent row inside the mutation's single
 transaction, so a released number is reused. A mutation spanning two parent rows
 locks them in ascending id order. The parent-row lock is the only serialization.
@@ -33,8 +33,9 @@ from gobby.utils.uuid_validation import parse_uuid_reference
 
 DEFAULT_WORKSPACE_NAME = "default"
 
-_REF_RE = re.compile(r"(?:n([1-9][0-9]*):)?w([1-9][0-9]*)(?::t([1-9][0-9]*)(?::p([1-9][0-9]*))?)?")
-_REF_WORD_RE = re.compile(r"[nwtp][0-9]+")
+# Left-anchored and zero-based: `w`, `n:w`, `n:w:t`, `n:w:t:p`.
+_REF_RE = re.compile(r"[0-9]+(?::[0-9]+){0,3}")
+_DIGITS_RE = re.compile(r"[0-9]+")
 
 type LayoutAxis = Literal["horizontal", "vertical"]
 type _Table = Literal["machines", "workspaces", "workspace_tabs", "workspace_panes"]
@@ -50,7 +51,7 @@ class WorkspaceNotFoundError(LookupError):
 
 
 class InvalidWorkspaceRefError(ValueError):
-    """A reference is malformed: not a uuid, a name, or ``[n#:]w#[:t#[:p#]]``."""
+    """A reference is malformed: not a uuid, a name, or ``w``/``n:w``/``n:w:t``/``n:w:t:p``."""
 
 
 class InvalidWorkspaceOpError(ValueError):
@@ -200,7 +201,20 @@ def _optional_str(value: object) -> str | None:
 
 
 def _looks_like_ref(text: str) -> bool:
-    return ":" in text or _REF_WORD_RE.fullmatch(text) is not None
+    return ":" in text or _DIGITS_RE.fullmatch(text) is not None
+
+
+def _parse_ref(text: str) -> tuple[str | None, str, str | None, str | None]:
+    """Split ``w``, ``n:w``, ``n:w:t``, or ``n:w:t:p`` into node, workspace, tab, and pane."""
+    if _REF_RE.fullmatch(text) is None:
+        raise InvalidWorkspaceRefError(f"Malformed workspace ref {text!r}")
+    parts = text.split(":")
+    if len(parts) == 1:
+        return None, parts[0], None, None
+    node_ref, workspace_ref, *rest = parts
+    tab_ref = rest[0] if rest else None
+    pane_ref = rest[1] if len(rest) > 1 else None
+    return node_ref, workspace_ref, tab_ref, pane_ref
 
 
 def _workspace_name(name: str) -> str:
@@ -427,7 +441,7 @@ class WorkspaceManager:
         self._spawns_in_flight: set[str] = set()
 
     def resolve_node(self, node: str | None = None) -> Machine:
-        """Resolve a node by uuid, ``n#``, hostname, or label among the local owner's machines.
+        """Resolve a node by uuid, ref, hostname, or label among the local owner's machines.
 
         ``None`` is this daemon's own machine: only the receiving daemon answers it.
         """
@@ -446,7 +460,7 @@ class WorkspaceManager:
             owned = self._machines.list_for_user(owner)
             matches = [machine for machine in owned if text in (machine.hostname, machine.label)]
         if len(matches) > 1:
-            raise InvalidWorkspaceRefError(f"Node {text!r} matches several machines; use its n#")
+            raise InvalidWorkspaceRefError(f"Node {text!r} matches several machines; use its ref")
         if not matches:
             raise WorkspaceNotFoundError(f"Node {text!r} not found")
         return matches[0]
@@ -454,9 +468,9 @@ class WorkspaceManager:
     def resolve_reference(self, reference: str, *, node: str | None = None) -> WorkspaceTarget:
         """Resolve a workspace, tab, or pane reference.
 
-        A uuid names any of the three rows. ``[n#:]w#[:t#[:p#]]`` walks refs from
-        its node (``node`` when it carries no ``n#``). Other text is a workspace
-        name on ``node``.
+        A uuid names any of the three rows. ``w``, ``n:w``, ``n:w:t``, or ``n:w:t:p``
+        walks refs from its node (``node`` for a lone ``w``). Other text is a
+        workspace name on ``node``.
         """
         text = reference.strip()
         uuid_ref = parse_uuid_reference(text)
@@ -464,11 +478,8 @@ class WorkspaceManager:
             return self._resolve_id(str(uuid_ref))
         tab_ref = pane_ref = None
         if _looks_like_ref(text):
-            match = _REF_RE.fullmatch(text)
-            if match is None:
-                raise InvalidWorkspaceRefError(f"Malformed workspace ref {text!r}")
-            node_ref, workspace_ref, tab_ref, pane_ref = match.groups()
-            machine = self.resolve_node(node if node_ref is None else f"n{node_ref}")
+            node_ref, workspace_ref, tab_ref, pane_ref = _parse_ref(text)
+            machine = self.resolve_node(node if node_ref is None else node_ref)
             row = self.db.fetchone(
                 "SELECT * FROM workspaces WHERE machine_id = %s AND ref = %s",
                 (machine.id, int(workspace_ref)),
@@ -514,7 +525,7 @@ class WorkspaceManager:
     def create(self, machine_id: str, name: str = DEFAULT_WORKSPACE_NAME) -> tuple[Workspace, bool]:
         """Return the node's workspace named ``name`` and whether this call created it.
 
-        A missing workspace is created with the lowest free ``w#``.
+        A missing workspace is created with the lowest free ref.
         """
         machine_id, clean_name = _uuid(machine_id), _workspace_name(name)
         with self.db.transaction() as conn:
@@ -578,7 +589,7 @@ class WorkspaceManager:
         return Workspace.from_row(_required(row, f"Workspace {workspace_id}"))
 
     def close(self, workspace_id: str) -> Workspace:
-        """Delete a workspace with its tabs and panes; its ``w#`` becomes free."""
+        """Delete a workspace with its tabs and panes; its ref becomes free."""
         row = self.db.fetchone(
             "DELETE FROM workspaces WHERE id = %s RETURNING *", (_uuid(workspace_id),)
         )
@@ -632,7 +643,7 @@ class WorkspaceManager:
         return WorkspaceTab.from_row(_required(row, f"Tab {tab_id}"))
 
     def move_tab(self, tab_id: str, *, workspace_id: str, position: int) -> LayoutChange:
-        """Move a tab to ``position`` in a workspace; a new workspace gives it a free ``t#``."""
+        """Move a tab to ``position`` in a workspace; a new workspace gives it a free ref."""
         tab_id, target_id = _uuid(tab_id), _uuid(workspace_id)
         with self.db.transaction() as conn:
             source = conn.execute(
@@ -693,7 +704,7 @@ class WorkspaceManager:
         return LayoutChange(tabs=tabs)
 
     def close_tab(self, tab_id: str) -> LayoutChange:
-        """Delete a tab with its panes; its ``t#`` becomes free."""
+        """Delete a tab with its panes; its ref becomes free."""
         tab_id = _uuid(tab_id)
         with self.db.transaction() as conn:
             tab = WorkspaceTab.from_row(_lock_rows(conn, "workspace_tabs", tab_id)[tab_id])
@@ -761,7 +772,7 @@ class WorkspaceManager:
         """Move a pane beside ``beside`` in ``tab_id`` (splitting the whole tab when None).
 
         The source split collapses to its survivor and an emptied source tab is
-        removed; a pane that changes tab takes the lowest free ``p#`` there.
+        removed; a pane that changes tab takes the lowest free ref there.
         """
         pane_id, target_id, split_axis = _uuid(pane_id), _uuid(tab_id), _axis(axis)
         beside_id = None if beside is None else _uuid(beside)

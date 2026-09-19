@@ -50,6 +50,15 @@ uv run gobby test-types audit <touched-tests> --baseline .gobby/test-types-basel
 uv run gobby test-types suppressions . --baseline .gobby/python-suppressions-baseline.json
 ```
 
+Close credits one type-audit invocation whose explicit targets lexically cover
+every changed Python test. A file target covers itself, a directory target covers
+its descendants, and `tests/` is the whole-tree fallback. A rename needs both the
+source and the destination path; a deleted test cannot be its own target, so audit
+its parent directory. Coverage is judged per invocation and never unioned across
+runs, so auditing touched tests one file per call leaves every run short. Besides
+that baseline and `--fail-on-new`, only the output-only flags `--format`,
+`--output` and `--min-severity` keep credit; any other flag voids it.
+
 Run the suppression ratchet after Python or test edits. Fix types with explicit
 types, casts at deliberate invalid-input boundaries and typed seams; add no
 `type: ignore` or `noqa`. A missing suppression baseline is an error. Its

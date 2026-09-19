@@ -4,7 +4,6 @@ src/ui.rs::compute_view_clamps_sidebar_width_to_configured_max
 src/ui.rs::compute_view_clamps_sidebar_width_to_configured_min
 src/ui.rs::compute_view_reserves_terminal_column_when_pane_scrollbar_is_visible
 src/ui.rs::copy_feedback_offset_only_increases_when_toast_rect_overlaps
-src/ui.rs::desktop_toast_hit_area_uses_full_frame_not_terminal_area
 src/ui.rs::dragging_from_current_thumb_row_preserves_offset
 src/ui.rs::expanded_sidebar_workspace_rows_show_state_before_name_without_numbers
 src/ui.rs::focused_pane_cursor_wins_during_terminal_render
@@ -55,7 +54,6 @@ src/ui/panes.rs::selection_highlight_uses_one_uniform_style
 src/ui/panes.rs::tiny_pane_does_not_reserve_scrollbar_gutter
 src/ui/panes.rs::zoomed_multi_pane_keeps_border_space
 src/ui/panes.rs::zoomed_pane_scrollbar_gutter_is_reserved_before_scrollback_exists
-src/ui/sidebar.rs::agent_panel_tab_label_visibility_tracks_tab_identity
 src/ui/sidebar.rs::all_workspaces_agent_panel_entries_prefer_agent_names_for_agent_identity
 src/ui/sidebar.rs::all_workspaces_agent_panel_entries_use_live_root_runtime_cwd_for_workspace_label
 src/ui/sidebar.rs::collapsed_group_hides_inactive_children_but_keeps_active_visible

@@ -515,6 +515,7 @@ async def _load_roster_entries(
                 "task": task_cache.get(run.task_id) if run.task_id is not None else None,
                 "provider": run.provider,
                 "model": run.model,
+                "model_display_name": _model_display_name(services, run.provider, run.model),
                 "terminal": _run_terminal_block(server, run),
                 "tmux": _run_tmux_payload(server, run),
                 "last_activity_at": _serialize_timestamp(run.updated_at),
@@ -543,6 +544,7 @@ async def _load_roster_entries(
                 "task": None,
                 "provider": session.source,
                 "model": session.model,
+                "model_display_name": _model_display_name(services, session.source, session.model),
                 "terminal": terminal,
                 "tmux": _session_tmux_payload(terminal_context),
                 "last_activity_at": _serialize_timestamp(session.updated_at),
@@ -550,6 +552,15 @@ async def _load_roster_entries(
             }
         )
     return sorted(entries, key=lambda item: str(item["entry_id"]))
+
+
+def _model_display_name(services: Any, provider: str | None, model: str | None) -> str | None:
+    """The model's name as its provider prints it, when the capability catalog has it."""
+    resolver = getattr(services, "provider_capability_resolver", None)
+    if resolver is None or not provider or not model:
+        return None
+    capability = resolver.find_model(provider, model)
+    return None if capability is None else capability.display_name
 
 
 async def _list_active_runs(services: Any) -> list[AgentRun]:

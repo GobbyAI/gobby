@@ -54,12 +54,14 @@ def _server(
     temp_db: HubDatabase,
     manager: AttentionStateManager,
     sessions: list[Any] | None = None,
+    capability_resolver: Any | None = None,
 ) -> SimpleNamespace:
     live_sessions = sessions or []
     config = SimpleNamespace(tmux=SimpleNamespace(socket_path="/tmp/gobby.sock"))
     return SimpleNamespace(
         services=SimpleNamespace(
             attention_manager=manager,
+            provider_capability_resolver=capability_resolver,
             agent_lifecycle_monitor=SimpleNamespace(
                 prompt_detector=PromptDetector(DETECTION_REGISTRY, "claude")
             ),
@@ -338,6 +340,66 @@ def test_interactive_entry_end_to_end(
     assert run_entry["terminal"]["state"] == "orphaned"
     assert seen.status_code == 200 and responded.status_code == 200
     assert injected[-1].option == 1
+
+
+def test_roster_spells_the_model_as_its_provider_prints_it(
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = AttentionStateManager(temp_db, epoch="model-names")
+    session = SimpleNamespace(
+        id="session-named",
+        status="active",
+        source="codex",
+        model="gpt-5",
+        # A roster row needs a pane or a terminal block; the tmux pane is the cheaper one.
+        terminal_context={"tmux_pane": "%7"},
+        updated_at=datetime(2026, 7, 21, tzinfo=UTC),
+    )
+    run = SimpleNamespace(
+        id="run-named",
+        child_session_id="agent-session-named",
+        status="running",
+        task_id=None,
+        provider="claude",
+        model="sonnet",
+        terminal_id=None,
+        pid=None,
+        updated_at=datetime(2026, 7, 21, 1, tzinfo=UTC),
+    )
+
+    class RosterRuns:
+        def __init__(self, _db: HubDatabase) -> None:
+            pass
+
+        def list_active_for_machine(
+            self, machine_id: str, limit: int = 500, offset: int = 0
+        ) -> list[Any]:
+            del machine_id, limit
+            return [] if offset else [run]
+
+    monkeypatch.setattr("gobby.servers.routes.attention.LocalAgentRunManager", RosterRuns)
+    catalog = {("codex", "gpt-5"): "GPT-5", ("claude", "sonnet"): "Claude Sonnet 4.5"}
+    resolver = SimpleNamespace(
+        find_model=lambda provider, model: (
+            None
+            if (provider, model) not in catalog
+            else SimpleNamespace(display_name=catalog[(provider, model)])
+        )
+    )
+
+    with _client(_server(temp_db, manager, [session], resolver)) as client:
+        named = client.get("/api/attention/roster")
+    with _client(_server(temp_db, manager, [session])) as client:
+        unnamed = client.get("/api/attention/roster")
+
+    assert (named.status_code, unnamed.status_code) == (200, 200)
+    spelled = {entry["entry_id"]: entry["model_display_name"] for entry in named.json()["entries"]}
+    assert spelled == {"session:session-named": "GPT-5", "run:run-named": "Claude Sonnet 4.5"}
+    # Without a capability catalog the roster carries the raw model and no display name.
+    bare = {entry["entry_id"]: entry for entry in unnamed.json()["entries"]}
+    assert bare["session:session-named"]["model"] == "gpt-5"
+    assert {entry["model_display_name"] for entry in bare.values()} == {None}
 
 
 def test_roster_terminal_block(temp_db: HubDatabase) -> None:

@@ -112,6 +112,8 @@ pub struct ClientPrefs {
     pub project_order: Vec<String>,
     /// Labels the user gave project cards, by project id.
     pub project_labels: BTreeMap<String, String>,
+    /// Sidebar titles never scroll; an over-long title truncates instead.
+    pub reduced_motion: bool,
 }
 
 impl Default for ClientPrefs {
@@ -132,6 +134,7 @@ impl Default for ClientPrefs {
             sidebar_collapsed: false,
             project_order: Vec::new(),
             project_labels: BTreeMap::new(),
+            reduced_motion: false,
         }
     }
 }
@@ -159,10 +162,11 @@ pub enum SettingsRow {
     SidebarWidth,
     RightClickPassthrough,
     AgentSort,
+    ReducedMotion,
 }
 
 impl SettingsRow {
-    pub const ALL: [SettingsRow; 10] = [
+    pub const ALL: [SettingsRow; 11] = [
         SettingsRow::Theme,
         SettingsRow::MouseCapture,
         SettingsRow::PaneBorders,
@@ -173,6 +177,7 @@ impl SettingsRow {
         SettingsRow::SidebarWidth,
         SettingsRow::RightClickPassthrough,
         SettingsRow::AgentSort,
+        SettingsRow::ReducedMotion,
     ];
 }
 
@@ -195,6 +200,7 @@ fn row_label(row: SettingsRow) -> &'static str {
         SettingsRow::SidebarWidth => "sidebar width",
         SettingsRow::RightClickPassthrough => "right-click passthrough",
         SettingsRow::AgentSort => "agent sort",
+        SettingsRow::ReducedMotion => "reduced motion",
     }
 }
 
@@ -222,6 +228,7 @@ fn row_value(row: SettingsRow, prefs: &ClientPrefs) -> String {
             prefs.right_click_passthrough_modifier.label().to_string()
         }
         SettingsRow::AgentSort => prefs.agent_sort.label().to_string(),
+        SettingsRow::ReducedMotion => on_off(prefs.reduced_motion).to_string(),
     }
 }
 
@@ -388,5 +395,8 @@ mod tests {
         assert_eq!(row_value(SettingsRow::AgentSort, &prefs), "grouped");
         prefs.agent_sort = prefs.agent_sort.toggled();
         assert_eq!(row_value(SettingsRow::AgentSort, &prefs), "priority");
+        assert_eq!(row_value(SettingsRow::ReducedMotion, &prefs), "off");
+        prefs.reduced_motion = true;
+        assert_eq!(row_value(SettingsRow::ReducedMotion, &prefs), "on");
     }
 }

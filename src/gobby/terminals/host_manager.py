@@ -24,7 +24,8 @@ from gobby.terminals.host_client import (
     HostUnavailableError,
 )
 from gobby.terminals.host_control import HostControlError
-from gobby.terminals.host_events import HostEvent, HostEventStream, collect_gap_cut
+from gobby.terminals.host_event_reader import InputActivitySink, arm_events
+from gobby.terminals.host_events import HostEventStream
 from gobby.terminals.host_identity import PidIdentity, is_live_gterm, pid_matches_ping
 from gobby.terminals.host_protocol import (
     CONTROL_PROTOCOL_VERSION,
@@ -123,6 +124,7 @@ class TerminalHostManager:
         self.observation_health: dict[str, dict[str, Any]] = {}
         self.last_event_epoch: str | None = None
         self.last_event_seq = 0
+        self.input_activity_sink: InputActivitySink | None = None
 
     @property
     def socket_dir(self) -> Path:
@@ -209,7 +211,7 @@ class TerminalHostManager:
             self.running = True
             self.last_error = None
             await self.reconcile()
-            self._arm_events()
+            arm_events(self)
             self._arm_health()
         except Exception as exc:
             self.running = False
@@ -227,7 +229,7 @@ class TerminalHostManager:
         self.last_error = None
         await self.reconcile()
         self._healthy_since = self._monotonic()
-        self._arm_events()
+        arm_events(self)
         self._arm_health()
 
     async def _retry_adoption(self) -> None:
@@ -818,91 +820,13 @@ class TerminalHostManager:
         if callable(cancel):
             cancel(run_id, terminal_reason="daemon_stop")
 
-    async def _connect_event_stream(self, since: int | None) -> HostEventStream:
-        if self._event_connector is not None:
-            return await self._event_connector(since)
-        return await HostClient.open_event_stream(
-            control_socket_path(self.socket_dir),
-            self.ensure_control_token(),
-            since=since,
-        )
+    def set_input_activity_sink(self, sink: InputActivitySink | None) -> None:
+        """Receive every accepted direct-input write the host reports.
 
-    def _arm_events(self) -> None:
-        if self._event_task is not None:
-            return
-        if self._connector is not None and self._event_connector is None:
-            return
-        self._event_task = asyncio.create_task(self._event_reader_loop(), name="gterm-host-events")
-
-    async def _apply_host_event(self, event: HostEvent) -> None:
-        if self.last_event_epoch != event.epoch:
-            return
-        if event.seq <= self.last_event_seq:
-            return
-        manager = self.terminal_manager
-        if manager is not None:
-            await asyncio.to_thread(
-                manager.settle_exit,
-                event.terminal_id,
-                event.host_terminal_id,
-            )
-        self.last_event_seq = event.seq
-
-    async def _recover_event_gap(self, stream: HostEventStream) -> None:
-        client = self._client
-        if client is None:
-            raise ConnectionError("gterm control client unavailable")
-        snapshot, replay = await collect_gap_cut(stream, client.list_inventory)
-        await self.reconcile(
-            host_rows=list(snapshot.rows),
-            host_epoch=snapshot.epoch,
-            settle_indeterminate=True,
-        )
-        self.last_event_epoch = snapshot.epoch
-        self.last_event_seq = snapshot.seq
-        for event in replay:
-            await self._apply_host_event(event)
-
-    async def _event_reader_loop(self) -> None:
-        while not self._stop_requested:
-            stream: HostEventStream | None = None
-            try:
-                since = (
-                    self.last_event_seq
-                    if self.last_event_epoch is not None
-                    and self.last_event_epoch == self.host_epoch
-                    else None
-                )
-                previous_epoch = self.last_event_epoch
-                stream = await self._connect_event_stream(since)
-                self._event_stream = stream
-                if previous_epoch is None or stream.gap or stream.epoch != previous_epoch:
-                    await self._recover_event_gap(stream)
-                async for event in stream:
-                    if event.epoch != self.last_event_epoch:
-                        break
-                    await self._apply_host_event(event)
-            except asyncio.CancelledError:
-                raise
-            except HostManagerStopped:
-                return
-            except Exception as exc:
-                self.last_error = str(exc)
-                if self._stop_requested or self.host_drained:
-                    return
-                pid = self.host_pid
-                if not isinstance(pid, int) or pid <= 0 or not self._pid_identity(pid):
-                    try:
-                        await self.ensure_restart()
-                    except HostManagerStopped:
-                        return
-                else:
-                    await asyncio.sleep(0.1)
-            finally:
-                if stream is not None:
-                    await stream.aclose()
-                if self._event_stream is stream:
-                    self._event_stream = None
+        The sink runs on the event reader, so it must stay cheap: it observes
+        turn interrupts and lifts write quarantines, never per-key row reads.
+        """
+        self.input_activity_sink = sink
 
     def _arm_health(self) -> None:
         try:

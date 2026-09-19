@@ -191,11 +191,10 @@ async fn respond_reaches_daemon() {
     assert!(matches!(chrome.dialog, Some(Dialog::Respond { .. })));
     assert!(
         chrome
-            .status_message
-            .as_deref()
+            .last_alert()
             .is_some_and(|message| message.contains("stale_episode")),
         "stale episode must remain visible: {:?}",
-        chrome.status_message
+        chrome.last_alert()
     );
 
     terminal
@@ -329,6 +328,7 @@ async fn agent_row_click_jumps_and_labels_the_session() {
     probe.compute_view(&workspace, area);
     let sessions = section_body_rect(
         probe.view.sidebar_section_rects[SidebarSection::Sessions.index()],
+        SidebarSection::Sessions,
         false,
     );
     let row_height = SidebarRow {
@@ -410,7 +410,7 @@ async fn agent_row_click_jumps_and_labels_the_session() {
         "the idle row's click focused its terminal first"
     );
     assert_ne!(
-        chrome.status_message.as_deref(),
+        chrome.last_alert(),
         Some("No actionable attention prompt."),
         "an idle row asks for no prompt"
     );
@@ -429,7 +429,9 @@ async fn agent_row_click_jumps_and_labels_the_session() {
         .map(|cell| cell.symbol())
         .collect();
     assert!(screen.contains("#12217: 15"), "rendered UI: {screen:?}");
-    assert!(screen.contains("zsh %16"), "rendered UI: {screen:?}");
+    // The shell is named by its command; its tmux address is a token.
+    assert!(screen.contains("○ zsh"), "rendered UI: {screen:?}");
+    assert!(screen.contains("%16"), "rendered UI: {screen:?}");
     assert!(!screen.contains("sess-1"), "rendered UI: {screen:?}");
     mock.shutdown().await;
 }

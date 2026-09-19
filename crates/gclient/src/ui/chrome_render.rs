@@ -152,13 +152,17 @@ fn render_content_column<W: WorkspaceView>(
     tab_surface::render_tab_surface(frame, surface, ws, chrome, content)
 }
 
-/// herdr `render_notifications`: diagnostic bar, then the toast, both over
-/// the whole frame. Returns the toast's rect when one was drawn.
+/// herdr `render_notifications`: the toast stack over the terminal area.
+/// Returns the union of the toasts it drew, when it drew any.
 fn render_notifications(frame: &mut Frame, chrome: &Chrome) -> Option<Rect> {
-    let area = frame.area();
-    if let Some(message) = &chrome.status_message {
-        status::render_diagnostic(frame, area, chrome, message);
-    }
+    // Toasts sit over the pane area (D3); the frame stands in before a
+    // layout has run.
+    let terminal_area = chrome.view.terminal_area;
+    let area = if terminal_area.is_empty() {
+        frame.area()
+    } else {
+        terminal_area
+    };
     status::render_toast_notification(frame, area, chrome)
 }
 

@@ -128,7 +128,7 @@ pub(super) fn wheel<W: WorkspaceView>(
                     bytes: key.repeat(MOUSE_SCROLL_LINES),
                 };
             }
-            if state.backend != "native" {
+            if !state.backend.is_native() {
                 return MouseOutcome::Handled;
             }
             let step = MOUSE_SCROLL_LINES as u32;

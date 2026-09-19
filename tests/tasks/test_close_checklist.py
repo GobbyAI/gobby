@@ -2,14 +2,25 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import Literal, cast
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+import gobby.mcp_proxy.tools.tasks._lifecycle_close as lifecycle
+import gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization as close_finalization
+import gobby.mcp_proxy.tools.tasks._lifecycle_validation as lifecycle_validation
+from gobby.mcp_proxy.tools.tasks._context import RegistryContext
+from gobby.mcp_proxy.tools.tasks._lifecycle_close import _evaluate_close
+from gobby.mcp_proxy.tools.tasks._lifecycle_validation import ValidationResult
+from gobby.mcp_proxy.tools.tasks._task_scope import TaskScopeEvaluation
+from gobby.storage.tasks import Task
+from gobby.tasks.acceptance_artifacts import AcceptanceArtifactResult
 from gobby.tasks.close_checklist import (
+    CloseChecklist,
     CloseGateResult,
     evaluate_validation_commands,
-    first_failed_gate,
 )
 from gobby.tasks.command_equivalence import scope_difference
 from gobby.tasks.transcript_evidence import merge_transcript_evidence
@@ -676,6 +687,106 @@ def test_noncanonical_test_types_audits_do_not_satisfy_guard(
 
 
 @pytest.mark.parametrize(
+    "normalized_command",
+    [
+        "gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json "
+        "--fail-on-new --format json",
+        "gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json "
+        "--fail-on-new --format=json",
+        "gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json "
+        "--fail-on-new --min-severity low",
+        "gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json "
+        "--fail-on-new --output .gobby/audit.txt",
+        "gobby test-types audit --format json --output .gobby/audit.json "
+        "--min-severity low --baseline .gobby/test-types-baseline.json --fail-on-new "
+        "tests/tasks/test_close_checklist.py",
+    ],
+)
+def test_output_only_flags_keep_test_types_audit_credit(normalized_command: str) -> None:
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(
+            validation_runs=(
+                _audit_run(
+                    1,
+                    command=f"uv run {normalized_command}",
+                    normalized_command=normalized_command,
+                ),
+                _run(2),
+            )
+        ),
+        has_attributed_edits=True,
+        changed_paths=("tests/tasks/test_close_checklist.py",),
+    )
+
+    assert gate.status == "passed"
+    assert gate.details["test_types_audit_uncovered_paths"] == []
+    assert gate.details["latest_test_types_audit"]["outcome"] == "success"
+
+
+@pytest.mark.parametrize(
+    "normalized_command",
+    [
+        # An output-only flag left without its value is a malformed invocation.
+        "gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json "
+        "--fail-on-new --format",
+        # `--mypy-command` changes what the audit enforces, so it is not output-only.
+        "gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json "
+        "--fail-on-new --mypy-command 'mypy --no-error-summary'",
+        # A near-miss spelling must not be credited by prefix.
+        "gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json "
+        "--fail-on-new --format-json",
+    ],
+)
+def test_nonoutput_flags_still_void_test_types_audit_credit(normalized_command: str) -> None:
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(
+            validation_runs=(
+                _audit_run(
+                    1,
+                    command=f"uv run {normalized_command}",
+                    normalized_command=normalized_command,
+                ),
+                _run(2),
+            )
+        ),
+        has_attributed_edits=True,
+        changed_paths=("tests/tasks/test_close_checklist.py",),
+    )
+
+    assert gate.status == "failed"
+    assert gate.details["latest_test_types_audit"] is None
+
+
+def test_output_only_flag_value_is_not_read_as_an_audit_target() -> None:
+    """The consumed `--output` value must not stand in for a missing test target."""
+    normalized_command = (
+        "gobby test-types audit --output tests/tasks --baseline "
+        ".gobby/test-types-baseline.json --fail-on-new"
+    )
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(
+            validation_runs=(
+                _audit_run(
+                    1,
+                    command=f"uv run {normalized_command}",
+                    normalized_command=normalized_command,
+                ),
+                _run(2),
+            )
+        ),
+        has_attributed_edits=True,
+        changed_paths=("tests/tasks/test_close_checklist.py",),
+    )
+
+    assert gate.status == "failed"
+    assert gate.details["latest_test_types_audit"] is None
+    assert gate.details["test_types_audit_targets"] == []
+
+
+@pytest.mark.parametrize(
     "command",
     [
         "GOBBY_TEST_PROTECT=1 uv run gobby test-types audit tests/ "
@@ -1106,6 +1217,42 @@ def test_successful_top_level_and_segments_are_credited_individually() -> None:
     ]
 
 
+def test_a_criterion_naming_a_whole_chain_is_satisfied_by_that_successful_chain() -> None:
+    chain = "uv run ruff format src/ && uv run ruff check src/ && uv run mypy src/"
+    compound = replace(
+        _run(1, categories=("lint", "type_check"), command=chain),
+        validation_segments=(
+            TranscriptValidationSegment(
+                command="ruff format src/",
+                categories=("lint",),
+                segment_index=0,
+            ),
+            TranscriptValidationSegment(
+                command="ruff check src/",
+                categories=("lint",),
+                segment_index=1,
+            ),
+            TranscriptValidationSegment(
+                command="mypy src/",
+                categories=("type_check",),
+                segment_index=2,
+            ),
+        ),
+    )
+    tests = _run(2, command="uv run pytest tests/tasks/test_close_checklist.py -q")
+
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(validation_runs=(compound, tests)),
+        has_attributed_edits=True,
+        validation_criteria=f"Run `{chain}` clean after the final task edit.",
+    )
+
+    assert gate.status == "passed"
+    assert [record["status"] for record in gate.details["criterion_commands"]] == ["satisfied"]
+    assert gate.details["criterion_commands"][0]["execution"]["command"] == chain
+
+
 def test_wrapped_success_does_not_satisfy_validation_gate() -> None:
     command = "uv run pytest tests/tasks/test_close_checklist.py -q | tail -1"
 
@@ -1451,16 +1598,272 @@ def test_unknown_outcome_never_satisfies_or_blocks_and_names_cure() -> None:
     assert "definitive exit status" in gate.message
 
 
-def test_first_failed_gate_stops_ordered_checklist() -> None:
-    checklist = first_failed_gate(
+def test_all_failures_reports_every_blocker_and_keeps_the_first_for_the_reason() -> None:
+    """One evaluation names every failed gate; the first stays the headline reason."""
+    checklist = CloseChecklist(
         (
-            CloseGateResult(1, "task", "passed", "exists"),
-            CloseGateResult(2, "session", "failed", "missing"),
-            CloseGateResult(3, "repo", "passed", "exists"),
+            CloseGateResult(1, "task_exists", "passed", "exists"),
+            CloseGateResult(6, "changes_summary_present", "failed", "summary missing"),
+            CloseGateResult(7, "linked_commits", "passed", "linked"),
+            CloseGateResult(9, "uncommitted_task_edits", "failed", "src/a.py is dirty"),
+            CloseGateResult(
+                11, "acceptance_artifacts", "skipped", "Not evaluated because gate X failed."
+            ),
         )
     )
 
     assert checklist.ready is False
-    assert [gate.item for gate in checklist.gates] == [1, 2]
+    assert [gate.name for gate in checklist.all_failures] == [
+        "changes_summary_present",
+        "uncommitted_task_edits",
+    ]
     assert checklist.first_failure is not None
-    assert checklist.first_failure.name == "session"
+    assert checklist.first_failure.name == "changes_summary_present"
+
+
+def test_all_failures_is_empty_when_only_skips_remain() -> None:
+    """A skipped gate is unevaluated, so it never becomes a blocker to fix."""
+    checklist = CloseChecklist(
+        (
+            CloseGateResult(1, "task_exists", "passed", "exists"),
+            CloseGateResult(12, "tdd_evidence", "skipped", "Not evaluated because gate X failed."),
+        )
+    )
+
+    assert checklist.all_failures == ()
+    assert checklist.first_failure is None
+    assert checklist.ready is True
+
+
+def test_checklist_summary_drops_the_detail_payloads() -> None:
+    """Concise responses carry every gate status without gate 10's kilobytes of detail."""
+    checklist = CloseChecklist(
+        (
+            CloseGateResult(
+                10,
+                "validation_commands",
+                "failed",
+                "No clean test run.",
+                details={"unresolved_failure_categories": ["test"]},
+            ),
+        )
+    )
+
+    assert checklist.summary() == [
+        {
+            "item": 10,
+            "name": "validation_commands",
+            "status": "failed",
+            "message": "No clean test run.",
+        }
+    ]
+
+
+_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
+
+
+def _task(*, criteria: str | None = "Focused tests pass.") -> Task:
+    return Task(
+        id="00000000-0000-4000-8000-000000000101",
+        project_id="00000000-0000-4000-8000-000000000201",
+        title="Close checklist leaf",
+        category="code",
+        priority=2,
+        task_type="task",
+        created_at=BASE_TIME,
+        updated_at=BASE_TIME,
+        claimed_by_session_id="00000000-0000-4000-8000-000000000301",
+        validation_criteria=criteria,
+        validation_fail_count=0,
+        stages=({"stage_name": "development", "position": 0, "state": "in_progress"},),
+    )
+
+
+def _ctx(task: Task) -> RegistryContext:
+    """A context of fakes: the gates below read the task row and the call arguments."""
+    manager = MagicMock()
+    manager.db = MagicMock()
+    manager.get_task.return_value = task
+    manager.list_tasks.return_value = []
+    close_session = SimpleNamespace(id=task.claimed_by_session_id, machine_id=_MACHINE_ID)
+    return cast(
+        RegistryContext,
+        SimpleNamespace(
+            task_manager=manager,
+            task_validator=object(),
+            agent_registry=None,
+            project_manager=MagicMock(),
+            session_manager=SimpleNamespace(get=lambda _session_id: close_session),
+            session_var_manager=SimpleNamespace(get_variables=lambda _session_id: {}),
+            validation_config=None,
+            resolve_session_id=lambda session_id: session_id,
+            get_current_project_name=lambda: "gobby",
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_every_independent_deterministic_blocker_lands_in_one_response() -> None:
+    """Four independent gates fail, so one call names all four.
+
+    Eight feedback observations described fixing one blocker, retrying, and meeting
+    the next. The gates below share no inputs, so each verdict stands on its own.
+    """
+    task = _task()
+    ctx = _ctx(task)
+    scope = TaskScopeEvaluation(
+        declared_paths=("tests/",),
+        actual_paths=("src/a.py",),
+        out_of_scope_paths=("src/a.py",),
+        justification_error="Task changes exceed the declared scope.",
+    )
+    review = AsyncMock()
+
+    with (
+        patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
+        patch.object(lifecycle, "resolve_task_repo_path", return_value="/repo"),
+        patch.object(lifecycle, "collect_commit_paths", return_value=set()),
+        patch.object(lifecycle, "unlinked_tagged_commits", return_value=(([], []), None)),
+        patch.object(close_finalization, "_claimed_session_window_start", return_value=None),
+        patch.object(close_finalization, "_committable_task_paths", return_value={"src/a.py"}),
+        patch.object(lifecycle_validation, "task_dirty_paths_async", return_value={"src/a.py"}),
+        patch.object(lifecycle, "resolve_close_commit_shas", return_value=(["abc123"], None)),
+        patch.object(
+            lifecycle,
+            "validate_commit_requirements",
+            return_value=ValidationResult(can_close=True),
+        ),
+        patch.object(lifecycle, "active_validation_backoff", return_value=None),
+        patch.object(lifecycle, "evaluate_task_scope", AsyncMock(return_value=scope)),
+        patch.object(
+            lifecycle,
+            "_derive_close_transcript_evidence",
+            AsyncMock(return_value=TranscriptEvidence()),
+        ),
+        patch.object(
+            lifecycle,
+            "evaluate_acceptance_artifacts",
+            AsyncMock(
+                return_value=AcceptanceArtifactResult(
+                    passed=True, tests=(), findings=(), evidence_files=()
+                )
+            ),
+        ),
+        patch.object(lifecycle, "evaluate_criteria_review", review),
+        patch("gobby.workflows.task_claim_state.target_task_has_edits", return_value=True),
+        patch(
+            "gobby.workflows.task_claim_state.task_edited_file_set",
+            return_value={"src/a.py"},
+        ),
+    ):
+        evaluation = await _evaluate_close(
+            ctx,
+            task_id=task.id,
+            reason="completed",
+            changes_summary="",
+            commit_sha="abc123",
+            project_path=None,
+            response_detail="concise",
+        )
+
+    failures = evaluation.checklist.all_failures
+    assert [gate.name for gate in failures] == [
+        "changes_summary_present",
+        "task_scope",
+        "uncommitted_task_edits",
+        "validation_commands",
+    ]
+    response = evaluation.response(preview=True)
+    # The reason stays the first failure for readability; the gate list carries the rest.
+    assert response["error"] == "missing_changes_summary"
+    assert response["message"] == evaluation.checklist.gates[5].message
+    assert len(response["blocking_reasons"]) == 4
+    assert [entry["item"] for entry in response["gates"]] == list(range(1, 14))
+    assert [entry["item"] for entry in response["gates"] if entry["status"] == "failed"] == [
+        6,
+        8,
+        9,
+        10,
+    ]
+    # A concise response carries the statuses without the gate detail payloads.
+    assert "details" not in response["gates"][0]
+    assert response["gates"][-1]["status"] == "skipped"
+    assert "changes_summary_present" in response["gates"][-1]["message"]
+    review.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_commit_dependent_gates_report_skipped_instead_of_a_borrowed_failure() -> None:
+    """An unlinked commit set makes gates 11 and 12 unevaluable, never failed.
+
+    Gate 11 resolves each named test body out of the last linked commit, so running it
+    here would report a missing test that only the missing commit made unresolvable.
+    """
+    task = _task(criteria="Acceptance: `tests/test_example.py::test_example` passes.")
+    ctx = _ctx(task)
+    transcript = TranscriptEvidence(
+        validation_runs=(_run(1, command="uv run pytest tests/test_example.py -q"),),
+        sessions=("session-1",),
+    )
+    acceptance = AsyncMock()
+    review = AsyncMock()
+
+    with (
+        patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
+        patch.object(lifecycle, "resolve_task_repo_path", return_value="/repo"),
+        patch.object(lifecycle, "collect_commit_paths", return_value=set()),
+        patch.object(lifecycle, "unlinked_tagged_commits", return_value=(([], []), None)),
+        patch.object(close_finalization, "_claimed_session_window_start", return_value=None),
+        patch.object(close_finalization, "_committable_task_paths", return_value={"src/a.py"}),
+        patch.object(lifecycle_validation, "task_dirty_paths_async", return_value=set()),
+        patch.object(lifecycle, "resolve_close_commit_shas", return_value=([], None)),
+        patch.object(
+            lifecycle,
+            "validate_commit_requirements",
+            return_value=ValidationResult(
+                can_close=False,
+                error_type="commit_required",
+                message="Link a commit for the attributed task edits.",
+            ),
+        ),
+        patch.object(lifecycle, "active_validation_backoff", return_value=None),
+        patch.object(
+            lifecycle,
+            "evaluate_task_scope",
+            AsyncMock(return_value=TaskScopeEvaluation((), (), ())),
+        ),
+        patch.object(
+            lifecycle,
+            "_derive_close_transcript_evidence",
+            AsyncMock(return_value=transcript),
+        ),
+        patch.object(lifecycle, "evaluate_acceptance_artifacts", acceptance),
+        patch.object(lifecycle, "evaluate_criteria_review", review),
+        patch("gobby.workflows.task_claim_state.target_task_has_edits", return_value=True),
+        patch(
+            "gobby.workflows.task_claim_state.task_edited_file_set",
+            return_value={"src/a.py"},
+        ),
+    ):
+        evaluation = await _evaluate_close(
+            ctx,
+            task_id=task.id,
+            reason="completed",
+            changes_summary="Implemented and tested.",
+            commit_sha=None,
+            project_path=None,
+            response_detail="diagnostic",
+        )
+
+    assert evaluation.error == "commit_required"
+    statuses = {gate.item: gate.status for gate in evaluation.gates}
+    assert statuses[7] == "failed"
+    # The commit-independent gates still deliver their own verdicts.
+    assert statuses[9] == "passed"
+    assert statuses[10] == "passed"
+    unevaluable = [gate for gate in evaluation.gates if gate.item in {11, 12, 13}]
+    assert [gate.status for gate in unevaluable] == ["skipped", "skipped", "skipped"]
+    assert all("linked_commits" in gate.message for gate in unevaluable)
+    assert [gate.name for gate in evaluation.checklist.all_failures] == ["linked_commits"]
+    acceptance.assert_not_awaited()
+    review.assert_not_awaited()

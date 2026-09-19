@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use gobby_client::app::{
-    open_new_project_dialog, route_mouse, run_live_loop, ModalOutcome, MouseOutcome,
+    open_new_project_dialog, route_mouse, run_live_loop, Backend, ModalOutcome, MouseOutcome,
 };
 use gobby_client::daemon::LiveDaemon;
 use gobby_client::teardown::TerminalGuard;
@@ -144,7 +144,7 @@ async fn take_back_displaces_the_holder_with_takeover() {
         "the granted takeover holds the pane"
     );
     assert!(!workspace.pane(pane).has_take_back());
-    let status = chrome.status_message.clone().unwrap_or_default();
+    let status = chrome.last_alert().unwrap_or_default().to_string();
     assert!(
         status.contains("take back"),
         "the refusal names take back: {status:?}"
@@ -159,7 +159,7 @@ async fn take_back_displaces_the_holder_with_takeover() {
 fn orphan(terminal_id: &str) -> OrphanRow {
     OrphanRow {
         terminal_id: terminal_id.to_string(),
-        backend: "native".to_string(),
+        backend: Backend::Native,
         name: terminal_id.to_string(),
         owner: None,
         last_seen: None,
@@ -455,7 +455,7 @@ async fn a_timed_out_request_names_itself_and_keeps_the_pane() {
         "a timeout is not a protocol failure: {status:?}"
     );
     assert!(!workspace.pane(pane).is_live());
-    let banner = chrome.status_message.clone().unwrap_or_default();
+    let banner = chrome.last_alert().unwrap_or_default().to_string();
     assert!(
         !banner.contains("frame protocol failed"),
         "the banner never blames the frame protocol: {banner:?}"

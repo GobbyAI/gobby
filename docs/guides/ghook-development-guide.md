@@ -314,7 +314,7 @@ Producer column says which side emits each key.
 | `term_program` | ghook, proxy | `TERM_PROGRAM` env var | |
 | `term_session_id` | proxy | `TERM_SESSION_ID` env var | |
 | `gobby_terminal_id` | ghook, proxy | `GOBBY_TERMINAL_ID` env var | Exported into every native pane Gobby spawns. `SESSION_START` binds a `terminal` session to that row unless the context also has `tmux_pane`. |
-| `gobby_pane_ref` | ghook, proxy | `GOBBY_PANE_REF` env var | Workspace pane ref such as `n1:w1:t2:p3`, set on workspace pane spawns beside `GOBBY_TERMINAL_ID`; refs and the pane environment are described in the gclient user guide's [Workspaces](gclient-user-guide.md#workspaces) section and the rows in [gterm-protocols.md](../contracts/gterm-protocols.md#workspace-messages). |
+| `gobby_pane_ref` | ghook, proxy | `GOBBY_PANE_REF` env var | Workspace pane ref such as `0:0:1:2`, set on workspace pane spawns beside `GOBBY_TERMINAL_ID`; refs and the pane environment are described in the gclient user guide's [Workspaces](gclient-user-guide.md#workspaces) section and the rows in [gterm-protocols.md](../contracts/gterm-protocols.md#workspace-messages). |
 | `gobby_session_id`, `gobby_parent_session_id`, `gobby_agent_run_id`, `gobby_project_id`, `gobby_workflow_name` | ghook | Eponymous env vars | Set by the Gobby daemon when it spawns the host CLI; let us correlate hooks back to the spawning context. |
 | `gobby_acp_child` | ghook | `GOBBY_ACP_CHILD` env var | Lets `SESSION_START` drop registrations from daemon-spawned ACP subprocesses. |
 
