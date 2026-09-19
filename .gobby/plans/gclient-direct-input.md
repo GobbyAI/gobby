@@ -592,3 +592,149 @@ terminal and confirm the gclient pane shows take-back and its next key is refuse
 
 - 2026-09-19: first narrative draft (gobby#13879), awaiting Josh's confirmation of
   decisions 1 to 7 in 0.1; no enhancement or adversarial review run yet.
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: gterm accepts granted input on the frame stream
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.1.1: `ClientMessage` gains appended `BindAttachment`, `Input`,
+    `Paste` and `ServerMessage` gains appended `InputRefused`, with existing variant
+    order and the legacy rejection unchanged. symbol: `ClientMessage`. file: `crates/gterminal/src/protocol/wire_types.rs`.
+
+    1.1.2: `grant_input` and `revoke_input` control verbs set and clear `TerminalSlot.input_grant`,
+    refuse tmux slots with `not_native`, and stay out of the operation ledger. symbol:
+    `dispatch`. file: `crates/gterminal/src/host/control.rs`.
+
+    1.1.3: The frame handler delivers `Input`/`Paste` to the PTY only when the stream''s
+    bound attachment id equals the slot''s grant, and answers every refusal with a
+    typed `InputRefused` without closing the stream. symbol: `handle_connection`.
+
+    1.1.4: Accepted input emits one `input_activity` event with kind, byte count and
+    interrupt classification and no payload. symbol: `HostEvents::emit_terminal_exited`.
+    file: `crates/gterminal/src/host/events.rs`.
+
+    1.1.5: Frame protocol test proves ungranted input is refused and granted input
+    writes. test: `crates/gterminal/tests/frame_protocol.rs::ungranted_input_is_refused_and_granted_input_writes`.
+
+    1.1.6: Control protocol test covers grant, revoke and the event. test: `crates/gterminal/tests/control_protocol.rs::grant_input_binds_one_holder_and_emits_input_activity`.
+
+    1.1.7: Golden corpus covers the new frame and control messages. test: `crates/gterminal/tests/wire_golden.rs::golden_corpus_bytes_and_fragmented_reads`.'
+  labels:
+  - covers:gclient-direct-input:1.1:1.1.1
+  - covers:gclient-direct-input:1.1:1.1.2
+  - covers:gclient-direct-input:1.1:1.1.3
+  - covers:gclient-direct-input:1.1:1.1.4
+  - covers:gclient-direct-input:1.1:1.1.5
+  - covers:gclient-direct-input:1.1:1.1.6
+  - covers:gclient-direct-input:1.1:1.1.7
+  tdd: false
+  source_section: '1.1'
+  implementation_domain: backend
+- title: Daemon grants input on lease transitions and consumes input activity
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  validation_criteria: '1.2.1: Host client and native runtime expose `grant_input`/`revoke_input`.
+    symbol: `HostClient`. file: `src/gobby/terminals/native_runtime.py`.
+
+    1.2.2: The lease registry notifies one holder observer on take, release and finalize,
+    and `ControlResult` reports `host_input_granted`. symbol: `TerminalLeaseRegistry`.
+    file: `src/gobby/terminals/leases.py`.
+
+    1.2.3: `sync_host_input_grant` grants only a direct native holder and revokes
+    otherwise. file: `src/gobby/terminals/input_grants.py`.
+
+    1.2.4: `terminal_control_result` carries `host_input_granted` and the golden fixture
+    matches. file: `tests/fixtures/terminal_ws_golden/control_result.json`.
+
+    1.2.5: `input_activity` events decode and reach the sink from the split event
+    reader without touching the DB. file: `src/gobby/terminals/host_event_reader.py`.
+
+    1.2.6: The sink arms or pops turn-interrupt candidates and lifts the automatic-write
+    quarantine. symbol: `WriteCoordinator`. file: `src/gobby/servers/websocket/server.py`.
+    test: `tests/terminals/test_composition_roots.py::test_configure_terminals_installs_input_activity_sink`.
+
+    1.2.7: Lease tests cover grant on direct take, revoke on web takeover, release
+    and socket loss. test: `tests/servers/test_terminal_ws_lease.py::test_direct_gclient_holder_is_granted_and_revoked_on_transitions`.
+
+    1.2.8: Host manager test routes input activity to the sink. test: `tests/terminals/test_host_manager.py::test_input_activity_reaches_sink_not_settle_exit`.
+
+    1.2.9: The Python control client encodes `grant_input` and `revoke_input` byte-for-byte
+    against the shared golden corpus and decodes `input_activity`. test: `tests/terminals/test_wire_golden.py::test_control_client_matches_golden_corpus`.'
+  labels:
+  - covers:gclient-direct-input:1.2:1.2.1
+  - covers:gclient-direct-input:1.2:1.2.2
+  - covers:gclient-direct-input:1.2:1.2.3
+  - covers:gclient-direct-input:1.2:1.2.4
+  - covers:gclient-direct-input:1.2:1.2.5
+  - covers:gclient-direct-input:1.2:1.2.6
+  - covers:gclient-direct-input:1.2:1.2.7
+  - covers:gclient-direct-input:1.2:1.2.8
+  - covers:gclient-direct-input:1.2:1.2.9
+  tdd: false
+  source_section: '1.2'
+  implementation_domain: backend
+- title: gclient sends keystrokes on the frame stream and never awaits the daemon
+    per key
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.2'
+  validation_criteria: '2.1.1: Direct native panes send `BindAttachment` once per
+    installed source and then `Input`/`Paste` on the frame stream without awaiting
+    any daemon reply. symbol: `send_live_write`.
+
+    2.1.2: The frame source exposes a non-awaiting `send_input` with typed backpressure.
+    symbol: `FrameSource`. file: `crates/gclient/src/frame_source.rs`.
+
+    2.1.3: A granted lease whose host grant is missing shows take-back instead of
+    typing into the daemon. symbol: `request_live_control`.
+
+    2.1.4: `InputRefused` flips the pane to observe with the code in the status line
+    and keeps the stream. symbol: `recover_live_frame_error`.
+
+    2.1.5: The scripted workspace path lives in the split module and mirrors the direct
+    branch. file: `crates/gclient/src/app/scripted_input.rs`.
+
+    2.1.6: Client loop tests assert host input for direct panes and no daemon input
+    messages. test: `crates/gclient/tests/client_loop.rs::direct_pane_keys_reach_the_host_not_the_daemon`.
+
+    2.1.7: Live frame source test proves grant, input echo and revoke against a real
+    gterm. test: `crates/gclient/tests/frame_source_live.rs::granted_direct_input_echoes_and_revoke_refuses`.'
+  labels:
+  - covers:gclient-direct-input:2.1:2.1.1
+  - covers:gclient-direct-input:2.1:2.1.2
+  - covers:gclient-direct-input:2.1:2.1.3
+  - covers:gclient-direct-input:2.1:2.1.4
+  - covers:gclient-direct-input:2.1:2.1.5
+  - covers:gclient-direct-input:2.1:2.1.6
+  - covers:gclient-direct-input:2.1:2.1.7
+  tdd: false
+  source_section: '2.1'
+  implementation_domain: backend
+- title: Protocol contract, guides and decision memory reflect granted direct input
+  category: docs
+  task_type: chore
+  depends_on:
+  - '2.1'
+  validation_criteria: '3.1.1: The protocol contract documents granted frame input,
+    the new verbs, the event and the result field. behavior: "granted input" in `docs/contracts/gterm-protocols.md`.
+
+    3.1.2: The gterm development guide and the gclient user guide describe the direct
+    input path and the new meaning of read-only. file: `docs/guides/gclient-user-guide.md`.
+
+    3.1.3: Memory `be35449d` item 1 no longer claims gclient mutates through the daemon
+    for input. behavior: "memory be35449d updated" in `docs/contracts/gterm-protocols.md`.'
+  labels:
+  - covers:gclient-direct-input:3.1:3.1.1
+  - covers:gclient-direct-input:3.1:3.1.2
+  - covers:gclient-direct-input:3.1:3.1.3
+  tdd: false
+  source_section: '3.1'
+  assigned_agent: tech-writer
+```
