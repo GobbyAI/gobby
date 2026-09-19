@@ -77,6 +77,7 @@ class GitCommitInvocation:
     pathspecs: tuple[str, ...]
     chdir: str | None = None
     work_tree: str | None = None
+    root_options: tuple[str, ...] = ()
 
     @property
     def is_path_scoped(self) -> bool:
@@ -126,7 +127,7 @@ def parse_git_commit_invocations(command: str) -> tuple[GitCommitInvocation, ...
             index += 1
             continue
 
-        commit_index, chdir, work_tree = _skip_git_global_options(tokens, index + 1)
+        commit_index, chdir, work_tree, root_options = _skip_git_global_options(tokens, index + 1)
         if commit_index >= len(tokens) or tokens[commit_index] != "commit":
             index += 1
             continue
@@ -142,47 +143,63 @@ def parse_git_commit_invocations(command: str) -> tuple[GitCommitInvocation, ...
             else ()
         )
         invocations.append(
-            GitCommitInvocation(pathspecs=pathspecs, chdir=chdir, work_tree=work_tree)
+            GitCommitInvocation(
+                pathspecs=pathspecs,
+                chdir=chdir,
+                work_tree=work_tree,
+                root_options=root_options,
+            )
         )
         index = segment_end + 1
 
     return tuple(invocations)
 
 
-def _skip_git_global_options(tokens: list[str], index: int) -> tuple[int, str | None, str | None]:
+def _skip_git_global_options(
+    tokens: list[str], index: int
+) -> tuple[int, str | None, str | None, tuple[str, ...]]:
     chdir: str | None = None
     work_tree: str | None = None
+    root_options: list[str] = []
     while index < len(tokens):
         token = tokens[index]
         if token == "--":
-            return index + 1, chdir, work_tree
+            return index + 1, chdir, work_tree, tuple(root_options)
         if token == "-C" and index + 1 < len(tokens):
             chdir = _join_chdir(chdir, tokens[index + 1])
+            root_options.extend(tokens[index : index + 2])
             index += 2
             continue
         if token.startswith("-C="):
             chdir = _join_chdir(chdir, token[3:])
+            root_options.append(token)
             index += 1
             continue
         if token == "--work-tree" and index + 1 < len(tokens):
             work_tree = tokens[index + 1]
+            root_options.extend(tokens[index : index + 2])
             index += 2
             continue
         if token.startswith("--work-tree="):
             work_tree = token.split("=", 1)[1]
+            root_options.append(token)
             index += 1
             continue
         if token in _GIT_GLOBAL_OPTIONS_WITH_VALUE:
+            if token == "--git-dir":
+                root_options.extend(tokens[index : index + 2])
             index += 2
             continue
         if any(token.startswith(f"{option}=") for option in _GIT_GLOBAL_OPTIONS_WITH_VALUE):
+            if token.startswith("--git-dir="):
+                root_options.append(token)
             index += 1
             continue
         if token.startswith("-"):
             index += 1
             continue
-        return index, chdir, work_tree
-    return index, chdir, work_tree
+        return index, chdir, work_tree, tuple(root_options)
+    return index, chdir, work_tree, tuple(root_options)
 
 
 def _join_chdir(current: str | None, nxt: str) -> str:
@@ -211,6 +228,50 @@ def resolve_commit_inspect_cwd(
     return os.path.normpath(base)
 
 
+def _normalized_command_cwd(event: HookEvent, project_path: str) -> str:
+    """Resolve relative tool paths from the cwd used by the tool invocation."""
+    raw_event_cwd = event.cwd if isinstance(event.cwd, str) and event.cwd.strip() else project_path
+    event_cwd = Path(raw_event_cwd).expanduser()
+    if not event_cwd.is_absolute():
+        event_cwd = Path(project_path) / event_cwd
+
+    data = event.data if isinstance(event.data, dict) else {}
+    tool_input = data.get("tool_input")
+    if isinstance(tool_input, Mapping):
+        for key in ("workdir", "cwd"):
+            raw_tool_cwd = tool_input.get(key)
+            if not isinstance(raw_tool_cwd, str) or not raw_tool_cwd.strip():
+                continue
+            tool_cwd = Path(raw_tool_cwd).expanduser()
+            if not tool_cwd.is_absolute():
+                tool_cwd = event_cwd / tool_cwd
+            return os.path.normpath(str(tool_cwd))
+    return os.path.normpath(str(event_cwd))
+
+
+async def _resolve_commit_checkout_root(
+    invocation: GitCommitInvocation,
+    *,
+    command_cwd: str,
+) -> str | None:
+    """Return the invocation's Git top-level, or ``None`` for a non-repository cwd."""
+    result = await daemon_git.run(
+        [*invocation.root_options, "rev-parse", "--show-toplevel"],
+        cwd=command_cwd,
+        timeout=10.0,
+    )
+    if isinstance(result, GitOk):
+        checkout_root = result.stdout.strip()
+        if checkout_root:
+            return os.path.normpath(checkout_root)
+        raise DirtyEditOwnershipInspectionError("git rev-parse returned no worktree root")
+
+    detail = result.stderr.strip() or result.status
+    if "not a git repository" in detail.lower():
+        return None
+    raise DirtyEditOwnershipInspectionError(f"git rev-parse --show-toplevel failed: {detail}")
+
+
 async def foreign_staged_commit_conflict(
     db: HubDatabase,
     event: HookEvent,
@@ -225,26 +286,38 @@ async def foreign_staged_commit_conflict(
         return ""
 
     try:
-        try:
-            owners = await asyncio.to_thread(
-                _active_foreign_path_owners,
-                db,
-                session_id=session_id,
-                project_id=project_id,
-                checkout_root=project_path,
-            )
-        except (psycopg.OperationalError, PoolTimeout) as exc:
-            raise DirtyEditOwnershipInspectionError("database ownership inspection failed") from exc
-        if not owners:
-            return ""
-
-        owned_candidates: set[str] = set()
-        staged_paths_by_cwd: dict[str, set[str]] = {}
-        event_cwd = event.cwd if isinstance(event.cwd, str) else None
+        owners_by_checkout: dict[str, dict[str, tuple[ForeignPathOwner, ...]]] = {}
+        candidates_by_checkout: dict[str, set[str]] = {}
+        staged_paths_by_checkout: dict[str, set[str]] = {}
+        command_cwd = _normalized_command_cwd(event, project_path)
         for invocation in invocations:
+            checkout_root = await _resolve_commit_checkout_root(
+                invocation,
+                command_cwd=command_cwd,
+            )
+            if checkout_root is None:
+                continue
+
+            if checkout_root not in owners_by_checkout:
+                try:
+                    owners_by_checkout[checkout_root] = await asyncio.to_thread(
+                        _active_foreign_path_owners,
+                        db,
+                        session_id=session_id,
+                        project_id=project_id,
+                        checkout_root=checkout_root,
+                    )
+                except (psycopg.OperationalError, PoolTimeout) as exc:
+                    raise DirtyEditOwnershipInspectionError(
+                        "database ownership inspection failed"
+                    ) from exc
+            owners = owners_by_checkout[checkout_root]
+            if not owners:
+                continue
+
             inspect_cwd = resolve_commit_inspect_cwd(
                 invocation,
-                event_cwd=event_cwd,
+                event_cwd=command_cwd,
                 project_path=project_path,
             )
             if invocation.is_path_scoped:
@@ -252,6 +325,7 @@ async def foreign_staged_commit_conflict(
                     inspect_cwd,
                     "ls-files",
                     "-z",
+                    "--full-name",
                     "--cached",
                     "--others",
                     "--exclude-standard",
@@ -259,31 +333,36 @@ async def foreign_staged_commit_conflict(
                     *invocation.pathspecs,
                 )
             else:
-                staged_paths = staged_paths_by_cwd.get(inspect_cwd)
+                staged_paths = staged_paths_by_checkout.get(checkout_root)
                 if staged_paths is None:
                     staged_paths = await _git_paths_async(
-                        inspect_cwd,
+                        checkout_root,
                         "diff",
                         "--cached",
                         "--name-only",
                         "-z",
                         "--diff-filter=ACDMRTUXB",
                     )
-                    staged_paths_by_cwd[inspect_cwd] = staged_paths
+                    staged_paths_by_checkout[checkout_root] = staged_paths
                 candidate_paths = staged_paths
-            owned_candidates.update(path for path in candidate_paths if path in owners)
+            candidates_by_checkout.setdefault(checkout_root, set()).update(
+                path for path in candidate_paths if path in owners
+            )
 
         # A pathspec lists clean tracked files too, so ownership alone is not a
         # conflict: only a candidate that still differs from HEAD is foreign work.
-        dirty_paths = await _dirty_owned_paths_releasing_clean(
-            db,
-            owners,
-            owned_candidates,
-            checkout_root=project_path,
-        )
-        if dirty_paths is None:
-            raise DirtyEditOwnershipInspectionError("git status unavailable for owned paths")
-        conflicts = {owner for path in dirty_paths for owner in owners.get(path, ())}
+        conflicts: set[ForeignPathOwner] = set()
+        for checkout_root, owned_candidates in candidates_by_checkout.items():
+            owners = owners_by_checkout[checkout_root]
+            dirty_paths = await _dirty_owned_paths_releasing_clean(
+                db,
+                owners,
+                owned_candidates,
+                checkout_root=checkout_root,
+            )
+            if dirty_paths is None:
+                raise DirtyEditOwnershipInspectionError("git status unavailable for owned paths")
+            conflicts.update(owner for path in dirty_paths for owner in owners.get(path, ()))
         return _format_conflict_reason(conflicts) if conflicts else ""
     except DirtyEditOwnershipInspectionError as exc:
         logger.warning(
@@ -366,11 +445,7 @@ def _canonical_mutation_paths(event: HookEvent, project_path: str) -> set[str]:
         raw_paths = [single_path] if isinstance(single_path, str) else []
 
     repository_root = Path(project_path).resolve()
-    raw_cwd = data.get("cwd")
-    tool_cwd = Path(raw_cwd) if isinstance(raw_cwd, str) and raw_cwd else Path(event.cwd or "")
-    if not tool_cwd.is_absolute():
-        tool_cwd = repository_root / tool_cwd
-    tool_cwd = tool_cwd.resolve()
+    tool_cwd = Path(_normalized_command_cwd(event, project_path)).resolve()
 
     paths: set[str] = set()
     for raw_path in raw_paths:
