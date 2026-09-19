@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from pathlib import Path
+from typing import Any
+
 import pytest
 
 from gobby.storage.expansion_runs import LocalExpansionRunManager
@@ -132,7 +135,7 @@ async def test_plan_hash_drift_fails(
     assert "plan_hash_drift" in (persisted.error or "")
 
 
-def _register_case_plan(temp_db, case: dict) -> LocalPlanManager:
+def _register_case_plan(temp_db: Any, case: dict[str, Any]) -> LocalPlanManager:
     plans = LocalPlanManager(temp_db)
     plans.create_plan_record(
         project_id=case["project"].id,
@@ -146,10 +149,10 @@ def _register_case_plan(temp_db, case: dict) -> LocalPlanManager:
 
 @pytest.mark.asyncio
 async def test_registered_plan_hash_refreshes_stale_artifact_pointer(
-    temp_db,
-    project_manager,
-    temp_dir,
-    monkeypatch,
+    temp_db: Any,
+    project_manager: Any,
+    temp_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """update_plan_hash then a QA rerun rewrites the pointer a prior pass wrote."""
     case = make_expansion_qa_case(temp_db, project_manager, temp_dir)
@@ -182,9 +185,9 @@ async def test_registered_plan_hash_refreshes_stale_artifact_pointer(
 
 @pytest.mark.asyncio
 async def test_registered_plan_hash_outranks_caller_hash(
-    temp_db,
-    project_manager,
-    temp_dir,
+    temp_db: Any,
+    project_manager: Any,
+    temp_dir: Path,
 ) -> None:
     """An edit without update_plan_hash drifts even when the caller hashes the edited file."""
     case = make_expansion_qa_case(temp_db, project_manager, temp_dir)
