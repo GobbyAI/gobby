@@ -37,6 +37,30 @@ def _mixed_install(
     return pinned, mixed
 
 
+def test_status_names_why_a_member_identity_is_unreadable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A member whose probe fails is reported with the probe's reason, so a
+    refused start can be traced to the failing binary (#22544)."""
+    _mixed_install(tmp_path, monkeypatch)
+    ghook = tmp_path / "bin" / "ghook"
+    ghook.write_text("#!/bin/sh\necho 'probe exploded' >&2\nexit 3\n", encoding="utf-8")
+    monkeypatch.setattr("gobby.cli.daemon.unsupported_platform_error", lambda: None)
+    monkeypatch.setattr("gobby.cli.daemon.get_gobby_home", lambda: tmp_path / "home")
+    monkeypatch.setattr(
+        "gobby.cli.daemon.probe_daemon_lock",
+        lambda _path: SingletonProbe(state=ProbeState.ABSENT),
+    )
+
+    result = CliRunner().invoke(cli, ["status"])
+
+    assert result.exit_code == 0, result.output
+    assert (
+        "ghook identity unreadable: ghook schema identity probe failed: probe exploded"
+        in result.output
+    )
+
+
 def test_status_reports_mixed_installed_binary_member(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

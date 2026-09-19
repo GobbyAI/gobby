@@ -81,7 +81,9 @@ class InstalledBinarySet:
 
     pin_identity: dict[str, int | str] | None
     mismatches: tuple[InstalledBinaryMismatch, ...] = ()
-    unreadable_members: tuple[str, ...] = ()
+    #: Members whose identity probe failed, with the probe's own reason, so
+    #: the refusal says why instead of only that it could not read them.
+    unreadable_members: tuple[tuple[str, str], ...] = ()
     pin_error: str | None = None
 
     @property
@@ -95,7 +97,9 @@ class InstalledBinarySet:
             f"installed pin {_render_identity(self.pin_identity)}"
             for mismatch in self.mismatches
         ]
-        details.extend(f"{member} identity unreadable" for member in self.unreadable_members)
+        details.extend(
+            f"{member} identity unreadable: {reason}" for member, reason in self.unreadable_members
+        )
         if self.pin_error is not None:
             details.append(self.pin_error)
         return "mixed installed binary set: " + "; ".join(details)
@@ -123,13 +127,13 @@ def collect_installed_binary_set(bin_dir: Path | None = None) -> InstalledBinary
         )
 
     mismatches: list[InstalledBinaryMismatch] = []
-    unreadable: list[str] = []
+    unreadable: list[tuple[str, str]] = []
     for member, binary in installed:
         try:
             identity = probe_set_member_identity(binary, member)
-        except BinarySetCoherenceError:
+        except BinarySetCoherenceError as exc:
             logger.debug("Failed to probe installed %s schema identity", member, exc_info=True)
-            unreadable.append(member)
+            unreadable.append((member, str(exc)))
             continue
         if identity != pin:
             mismatches.append(InstalledBinaryMismatch(member=member, identity=identity))
