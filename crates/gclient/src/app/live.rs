@@ -326,11 +326,15 @@ impl Workspace<LiveDaemon> {
             if !SidebarStamps::accept(stamp, seq) {
                 continue;
             }
-            self.sidebar_rows
-                .worktrees
-                .retain(|row| row.project_id != project);
-            self.sidebar_rows.worktrees.extend(worktrees);
-            self.sidebar_rows.statuses.insert(project, status);
+            if let Some(worktrees) = worktrees {
+                self.sidebar_rows
+                    .worktrees
+                    .retain(|row| row.project_id != project);
+                self.sidebar_rows.worktrees.extend(worktrees);
+            }
+            if let Some(status) = status {
+                self.sidebar_rows.statuses.insert(project, status);
+            }
         }
         for (project, sessions, runs) in fetch.sessions {
             let stamp = stamps.sessions.entry(project.clone()).or_default();
@@ -673,7 +677,7 @@ pub struct SidebarFetch {
     /// The refetch that produced the rows, in start order.
     seq: u64,
     projects: Option<Vec<ProjectRow>>,
-    project_rows: Vec<(String, SourceStatus, Vec<WorktreeRow>)>,
+    project_rows: Vec<(String, Option<SourceStatus>, Option<Vec<WorktreeRow>>)>,
     sessions: Vec<(String, Vec<SessionRow>, Vec<RunRow>)>,
     roster: Option<RosterSnapshot>,
 }
@@ -725,9 +729,23 @@ impl SidebarRequest {
             if !checked_out.contains(&project) {
                 continue;
             }
-            let status = daemon.source_status(&project).await?;
-            let worktrees = daemon.worktrees(&project).await?;
-            fetch.project_rows.push((project, status, worktrees));
+            let status = daemon
+                .source_status(&project)
+                .await
+                .inspect_err(|error| {
+                    tracing::debug!(%project, %error, "source status refresh failed");
+                })
+                .ok();
+            let worktrees = daemon
+                .worktrees(&project)
+                .await
+                .inspect_err(|error| {
+                    tracing::debug!(%project, %error, "worktree refresh failed");
+                })
+                .ok();
+            if status.is_some() || worktrees.is_some() {
+                fetch.project_rows.push((project, status, worktrees));
+            }
         }
         if self.sessions || !self.session_rows.is_empty() {
             let mut projects = checked_out.clone();

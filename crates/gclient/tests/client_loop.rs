@@ -6686,6 +6686,80 @@ fn sidebar_roster_entry(entry_id: &str, run_id: &str, terminal_id: &str) -> Valu
     })
 }
 
+#[tokio::test]
+async fn source_status_failure_does_not_block_sessions_or_worktrees() {
+    let mock = MockDaemon::start("local-token").await;
+    let mut roster_entry = sidebar_roster_entry("session:session-1", "run-1", "terminal-1");
+    roster_entry["session_id"] = json!("session-1");
+    mock.enqueue(
+        "GET",
+        "/api/attention/roster",
+        200,
+        json!({"epoch": "attention-1", "seq": 1, "entries": [roster_entry]}),
+    );
+    mock.enqueue("GET", "/api/projects", 200, sidebar_project_row());
+    mock.enqueue(
+        "GET",
+        "/api/source-control/status?",
+        503,
+        json!({"detail": "git status unavailable"}),
+    );
+    mock.enqueue(
+        "GET",
+        "/api/source-control/worktrees?",
+        200,
+        json!({"worktrees": [{
+            "id": "wt-1",
+            "project_id": "project-1",
+            "branch_name": "feature",
+            "worktree_path": "/repo-wt/feature",
+            "status": "active",
+            "workspace_role": "task",
+        }]}),
+    );
+    mock.enqueue(
+        "GET",
+        "/api/sessions?project_id=project-1",
+        200,
+        json!({
+            "sessions": [{
+                "id": "session-1",
+                "ref": "#13923",
+                "title": "Restore gclient",
+                "status": "active",
+                "source": "codex",
+            }],
+            "count": 1,
+            "next_cursor": null,
+        }),
+    );
+
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    mock.wait_for_websocket().await;
+    let mut workspace = Workspace::live(daemon.clone());
+    workspace.select_project("project-1");
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("git status is optional during reconcile");
+
+    assert!(workspace.daemon_ready());
+    let agent = &workspace.sidebar().agents[0];
+    assert_eq!(agent.session_ref.as_deref(), Some("#13923"));
+    assert_eq!(agent.name, "Restore gclient");
+    let worktrees = &workspace.sidebar().projects[0].worktrees;
+    assert_eq!(worktrees.len(), 1);
+    assert_eq!(worktrees[0].worktree_id, "wt-1");
+
+    daemon
+        .close(Instant::now() + Duration::from_secs(1))
+        .await
+        .expect("close live daemon");
+    mock.shutdown().await;
+}
+
 /// 2.1.3: a `worktree_event` or `project_event` on the live socket refetches
 /// the affected project's status and worktrees once per drain however many
 /// events asked, a `session_event` refetches the attention roster, and an
@@ -7155,10 +7229,12 @@ async fn git_refresh_runs_as_a_deferred_job() {
         workspace.start_sidebar_refetch().is_none(),
         "a started refresh is not queued twice"
     );
-    let error = job.await.expect_err("the daemon refused the status");
-    assert!(
-        matches!(error, DaemonError::Unavailable { .. }),
-        "{error:?}"
+    let fetch = job.await.expect("git status is optional");
+    workspace.apply_sidebar_fetch(fetch);
+    assert_eq!(
+        workspace.sidebar().projects[0].branch,
+        None,
+        "the unavailable status leaves its previous value alone"
     );
     assert_eq!(gets(status_path), 2);
 
@@ -7168,7 +7244,7 @@ async fn git_refresh_runs_as_a_deferred_job() {
     workspace.request_git_refresh_if_due();
     assert!(
         workspace.start_sidebar_refetch().is_none(),
-        "a failed refresh waits out the interval"
+        "a partial refresh waits out the interval"
     );
 
     tokio::time::pause();
