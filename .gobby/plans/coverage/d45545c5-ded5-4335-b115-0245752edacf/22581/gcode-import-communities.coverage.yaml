@@ -1,0 +1,1327 @@
+header:
+  plan_id: gcode-import-communities
+  plan_hash: 4a8f4fdd6039fd2b2dd82e28054120348492fe3f92acd578b23a0464b7c0c1cf
+  root_task_ref: '22581'
+  project_id: d45545c5-ded5-4335-b115-0245752edacf
+  generated_at: '2026-09-19T11:38:32Z'
+  task_tree_source: db
+  task_tree_source_hash: 5d6d643efc429f0fb602e4c8e5b5676ee4d26d86967374f8aabf2081402acac1
+  evidence_summary: []
+  evidence: []
+rows:
+- section_id: '1.1'
+  item_id: 1.1.1
+  plan_node_hash: 2c1901b07f5d0ecb5c728bd9594e5fc0b9d62f0b4eb54d0567339d18a529d90c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22589'
+    validation_criteria_snippet: '1.1.1: `communities(&AnalyticsGraph)` returns the
+      same partition as `analyze` on the seeded graph and skips the other passes.
+      symbol: `communities`. file: `cra...'
+    matched_artifact_ref: communities
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.2
+  plan_node_hash: 30ff621482745c29a9cea4e6640fe92db04b0bc700b94e5d375932e74dfc3b94
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22589'
+    validation_criteria_snippet: '1.1.1: `communities(&AnalyticsGraph)` returns the
+      same partition as `analyze` on the seeded graph and skips the other passes.
+      symbol: `communities`. file: `cra...'
+    matched_artifact_ref: GraphInputError
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.3
+  plan_node_hash: aeea837583a369872463d62fb20c98d86b12b1560f639dff409d11ece6005f72
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22589'
+    validation_criteria_snippet: '1.1.1: `communities(&AnalyticsGraph)` returns the
+      same partition as `analyze` on the seeded graph and skips the other passes.
+      symbol: `communities`. file: `cra...'
+    matched_artifact_ref: crates/gcore/src/graph_analytics/tests.rs::communities_without_edges_is_all_singletons
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.4
+  plan_node_hash: 1e55c32fa245eb9a241ab90be0e2c4145ae6bd6a19ff27ac06ff210356f31c43
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22589'
+    validation_criteria_snippet: '1.1.1: `communities(&AnalyticsGraph)` returns the
+      same partition as `analyze` on the seeded graph and skips the other passes.
+      symbol: `communities`. file: `cra...'
+    matched_artifact_ref: crates/gcore/src/graph_analytics/tests.rs
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.1
+  plan_node_hash: a6516887cb46af36ec18fca04a428d76663139a3d8c3a40f8b8a2926f0e6db7a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22590'
+    validation_criteria_snippet: '1.2.1: `centrality(&AnalyticsGraph)` returns the
+      same scores as `analyze(...).centrality` on the seeded graph. test: `crates/gcore/src/graph_analytics/tests.rs...'
+    matched_artifact_ref: crates/gcore/src/graph_analytics/tests.rs::centrality_matches_analyze_centrality
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.2
+  plan_node_hash: 19d923f48b3c8004d15316d8cd171d25cd894c7b839f24bc89ec5cfd4a5c54e6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22590'
+    validation_criteria_snippet: '1.2.1: `centrality(&AnalyticsGraph)` returns the
+      same scores as `analyze(...).centrality` on the seeded graph. test: `crates/gcore/src/graph_analytics/tests.rs...'
+    matched_artifact_ref: crates/gcode/src/graph/report/summary.rs
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.3
+  plan_node_hash: 4282cb9041f3d891a4cbd194fb606802acecb1f9176d961f7731a8899ff5f8f4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22590'
+    validation_criteria_snippet: '1.2.1: `centrality(&AnalyticsGraph)` returns the
+      same scores as `analyze(...).centrality` on the seeded graph. test: `crates/gcore/src/graph_analytics/tests.rs...'
+    matched_artifact_ref: median
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.1
+  plan_node_hash: 916422522bd837f8969d6f71f0a140bfc8a42e0bef7ea920a6a2306a9bd0c35c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22591'
+    validation_criteria_snippet: '2.1.1: `ImportIdentity` lives in `crates/gcode/src/communities/identity.rs`
+      with `unique_provider` and `from_resolution` reachable crate-wide; `crates/gcode/sr...'
+    matched_artifact_ref: ImportIdentity
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.2
+  plan_node_hash: 11594b6ea1b15f1e8b0a821f9d33e1ccdbb591fb043d3535abdb5bf362b56aaa
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22591'
+    validation_criteria_snippet: '2.1.1: `ImportIdentity` lives in `crates/gcode/src/communities/identity.rs`
+      with `unique_provider` and `from_resolution` reachable crate-wide; `crates/gcode/sr...'
+    matched_artifact_ref: load_project_imports
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.3
+  plan_node_hash: 5ea1de5450a0ca218d5274d38f90720d4ac2ab92a166865a542e290b0d0cd4bc
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22591'
+    validation_criteria_snippet: '2.1.1: `ImportIdentity` lives in `crates/gcode/src/communities/identity.rs`
+      with `unique_provider` and `from_resolution` reachable crate-wide; `crates/gcode/sr...'
+    matched_artifact_ref: crates/gcode/src/communities/identity_tests.rs::mcg_identity_build_handles_twenty_thousand_rows
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.4
+  plan_node_hash: b27d249708372938272616615526c355b487121227bcc64a3f633ca4523acd36
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22591'
+    validation_criteria_snippet: '2.1.1: `ImportIdentity` lives in `crates/gcode/src/communities/identity.rs`
+      with `unique_provider` and `from_resolution` reachable crate-wide; `crates/gcode/sr...'
+    matched_artifact_ref: crates/gcode/src/communities/identity_tests.rs::overlay_partition_covers_parent_only_files
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.1
+  plan_node_hash: 10944e12998726ad81db640600643beb75c11758fee7827d2f3f0e384e893918
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22592'
+    validation_criteria_snippet: '2.2.1: `build_partition` produces one node per visible
+      file and one folded undirected edge per importer/provider pair, excluding external,
+      ambiguous, and self ...'
+    matched_artifact_ref: build_partition
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.2
+  plan_node_hash: cfbe9faedae1bbf339563901d75ffdde93300d0ac6f0e1f517b12de6a47c72b1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22592'
+    validation_criteria_snippet: '2.2.1: `build_partition` produces one node per visible
+      file and one folded undirected edge per importer/provider pair, excluding external,
+      ambiguous, and self ...'
+    matched_artifact_ref: crates/gcode/src/communities/partition_tests.rs::cohesion_threshold_uses_integer_math
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.3
+  plan_node_hash: af0f6ee6974d960c39164409e42e812d0d4fab44852371ea81d72df10a84a784
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22592'
+    validation_criteria_snippet: '2.2.1: `build_partition` produces one node per visible
+      file and one folded undirected edge per importer/provider pair, excluding external,
+      ambiguous, and self ...'
+    matched_artifact_ref: crates/gcode/src/communities/partition_tests.rs::member_signature_matches_graphify_shape
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.4
+  plan_node_hash: 212522dd8107b90e5e870cebe6103a132356b404c6b593c3964132e02b7fa41a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22592'
+    validation_criteria_snippet: '2.2.1: `build_partition` produces one node per visible
+      file and one folded undirected edge per importer/provider pair, excluding external,
+      ambiguous, and self ...'
+    matched_artifact_ref: crates/gcode/src/communities/partition_tests.rs::label_prefers_deepest_majority_prefix
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.5
+  plan_node_hash: 7395d6cc035f7ef708f3ce172b8e33af27972eeee2fa53b5c8873fe916fa6e36
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22592'
+    validation_criteria_snippet: '2.2.1: `build_partition` produces one node per visible
+      file and one folded undirected edge per importer/provider pair, excluding external,
+      ambiguous, and self ...'
+    matched_artifact_ref: PartitionError
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.6
+  plan_node_hash: 35767f0ae16ca18a573bac7c5996285a1abecfbc4b08f33a1c101c7ecad8bbaf
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22592'
+    validation_criteria_snippet: '2.2.1: `build_partition` produces one node per visible
+      file and one folded undirected edge per importer/provider pair, excluding external,
+      ambiguous, and self ...'
+    matched_artifact_ref: crates/gcode/src/communities/partition_tests.rs::partition_is_invariant_to_row_order
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.7
+  plan_node_hash: 94f45be830a1daaa1de184caa686e46a604e1fe39c74d8112fd59c531e941513
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22592'
+    validation_criteria_snippet: '2.2.1: `build_partition` produces one node per visible
+      file and one folded undirected edge per importer/provider pair, excluding external,
+      ambiguous, and self ...'
+    matched_artifact_ref: largest
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.8
+  plan_node_hash: 53e9d30893f224b301ffdd3f0506e6a520dd09c25e61ea898364bb3b7df024cf
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22592'
+    validation_criteria_snippet: '2.2.1: `build_partition` produces one node per visible
+      file and one folded undirected edge per importer/provider pair, excluding external,
+      ambiguous, and self ...'
+    matched_artifact_ref: crates/gcode/src/communities/partition_tests.rs::label_collision_gets_ordinal_suffix
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.9
+  plan_node_hash: 95fadf854bf0f315dc8f309e89c43ad36c7529811bcaa3a1c5aa16733312d8a6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22592'
+    validation_criteria_snippet: '2.2.1: `build_partition` produces one node per visible
+      file and one folded undirected edge per importer/provider pair, excluding external,
+      ambiguous, and self ...'
+    matched_artifact_ref: crates/gcode/src/communities/partition_tests.rs::candidates_are_distinct_and_lead_with_deterministic
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.10
+  plan_node_hash: 9ae9df4782419553ee1f485836200b02e83ac3c1711e2a26eed44ebb0d77154a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22592'
+    validation_criteria_snippet: '2.2.1: `build_partition` produces one node per visible
+      file and one folded undirected edge per importer/provider pair, excluding external,
+      ambiguous, and self ...'
+    matched_artifact_ref: crates/gcode/src/communities/partition_tests.rs::partition_signature_covers_edges
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.11
+  plan_node_hash: 23c02beac43c76df9bc3b59d4af32a8179b8b1228952cc4ac1636e1c1ca7fadc
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22592'
+    validation_criteria_snippet: '2.2.1: `build_partition` produces one node per visible
+      file and one folded undirected edge per importer/provider pair, excluding external,
+      ambiguous, and self ...'
+    matched_artifact_ref: placeholder
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.12
+  plan_node_hash: 3936e6e4efbaa1cbf15303bd9ab400272f001ef3cea2e6ee255ade5a33fb991b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22592'
+    validation_criteria_snippet: '2.2.1: `build_partition` produces one node per visible
+      file and one folded undirected edge per importer/provider pair, excluding external,
+      ambiguous, and self ...'
+    matched_artifact_ref: subsystems
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.1
+  plan_node_hash: 7f49f434ef98b65c1915c2438634f2b2c6abc23f517d8ea3cdc83d71dfaeffa8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22593'
+    validation_criteria_snippet: '2.3.1: `assign_ids` matches greedily by Jaccard,
+      overlap, old id, new index and keeps an id on the larger child of a split and
+      the larger parent of a merge. te...'
+    matched_artifact_ref: crates/gcode/src/communities/remap_tests.rs::split_keeps_id_on_larger_child_and_issues_fresh_id
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.2
+  plan_node_hash: 44596864c05c84a09e77f4493deccf82c19dcf7328eea2652c1938e06cab74ad
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22593'
+    validation_criteria_snippet: '2.3.1: `assign_ids` matches greedily by Jaccard,
+      overlap, old id, new index and keeps an id on the larger child of a split and
+      the larger parent of a merge. te...'
+    matched_artifact_ref: crates/gcode/src/communities/remap_tests.rs::retired_ids_are_never_reissued
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.3
+  plan_node_hash: 88bee14a5be00e5b961e8a4111b8536a4f5495889151804b45383e8811f38829
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22593'
+    validation_criteria_snippet: '2.3.1: `assign_ids` matches greedily by Jaccard,
+      overlap, old id, new index and keeps an id on the larger child of a split and
+      the larger parent of a merge. te...'
+    matched_artifact_ref: assign_ids
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.4
+  plan_node_hash: c6bbe3671f1d556f50e4eff9509f2b3e8455337391b43266fde415dbd8e8a75c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22593'
+    validation_criteria_snippet: '2.3.1: `assign_ids` matches greedily by Jaccard,
+      overlap, old id, new index and keeps an id on the larger child of a split and
+      the larger parent of a merge. te...'
+    matched_artifact_ref: crates/gcode/src/communities/remap_tests.rs::gate_rejected_label_reopens_on_membership_change
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.5
+  plan_node_hash: 2246d3cda552e600906b3457099cb8c9c6c7aa8840cf00db95084fbede14d52a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22593'
+    validation_criteria_snippet: '2.3.1: `assign_ids` matches greedily by Jaccard,
+      overlap, old id, new index and keeps an id on the larger child of a split and
+      the larger parent of a merge. te...'
+    matched_artifact_ref: LabelSource
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.6
+  plan_node_hash: 629bafe60bebe0c34e5b8b26967873f11d463ce10fa27dc22c28d717aee6b4e5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22593'
+    validation_criteria_snippet: '2.3.1: `assign_ids` matches greedily by Jaccard,
+      overlap, old id, new index and keeps an id on the larger child of a split and
+      the larger parent of a merge. te...'
+    matched_artifact_ref: LabelCarry
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.1
+  plan_node_hash: 0d82aa33c29cd9476d3942c24a50730817126ef9275a5bc7bf5a64d26838d5a9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22594'
+    validation_criteria_snippet: '3.1.1: The new migration (442, or the next free
+      number at landing) creates `code_communities` with the constraints, the `idx_cc_label_queue`
+      index, machine-sco...'
+    matched_artifact_ref: crates/gcore/assets/schema/migrations/442_add_code_communities.sql
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.2
+  plan_node_hash: a73868734607de6f920f11d8a30584aec08b01dfb895d9b84e1222a9c20daf25
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22594'
+    validation_criteria_snippet: '3.1.1: The new migration (442, or the next free
+      number at landing) creates `code_communities` with the constraints, the `idx_cc_label_queue`
+      index, machine-sco...'
+    matched_artifact_ref: src/gobby/storage/schema_expected_identity.json
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.3
+  plan_node_hash: 7d58b0cef26170e53cd55f2879f25be5e6d0523cdfdb421a4720db0570dc0e0b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22594'
+    validation_criteria_snippet: '3.1.1: The new migration (442, or the next free
+      number at landing) creates `code_communities` with the constraints, the `idx_cc_label_queue`
+      index, machine-sco...'
+    matched_artifact_ref: crates/gcore/src/schema/runner_tests.rs
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.4
+  plan_node_hash: 48d3159eb3e6891bc0b1bfe1f18306fbb56d789611dc2d4b877b46c3838f8c8d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22594'
+    validation_criteria_snippet: '3.1.1: The new migration (442, or the next free
+      number at landing) creates `code_communities` with the constraints, the `idx_cc_label_queue`
+      index, machine-sco...'
+    matched_artifact_ref: crates/gcode/security/managed_postgres_privileges.json
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.5
+  plan_node_hash: c38502261af623049af6b2e0b04783b26828e9728e4fca9e1dec01c677dba972
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22594'
+    validation_criteria_snippet: '3.1.1: The new migration (442, or the next free
+      number at landing) creates `code_communities` with the constraints, the `idx_cc_label_queue`
+      index, machine-sco...'
+    matched_artifact_ref: nothing pending
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.6
+  plan_node_hash: 2b3629d87db4386d486b57754fb3353d9cc04d825462773b924965b24c5f1c7a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22594'
+    validation_criteria_snippet: '3.1.1: The new migration (442, or the next free
+      number at landing) creates `code_communities` with the constraints, the `idx_cc_label_queue`
+      index, machine-sco...'
+    matched_artifact_ref: tests/code_index/test_gcode_privilege_manifest.py::test_manifest_privileges_match_the_managed_relation_set
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.7
+  plan_node_hash: 8172beb9cd41614284302b5f73efacafae51d49a5d860346f47ad6a46f677d3b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22594'
+    validation_criteria_snippet: '3.1.1: The new migration (442, or the next free
+      number at landing) creates `code_communities` with the constraints, the `idx_cc_label_queue`
+      index, machine-sco...'
+    matched_artifact_ref: landed as migration
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.1
+  plan_node_hash: ab55b5eb3a9fd18890fb41d9e6ccb83201a2013dab19239bc72c81c51ac801b8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22595'
+    validation_criteria_snippet: '3.2.1: `gcode index` (full, incremental, hook, and
+      overlay runs) refreshes `code_communities` after project stats and before projection
+      sync, reading the prior...'
+    matched_artifact_ref: refresh_project_communities
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.2
+  plan_node_hash: fc26ce750e0f587a1464dcb3274a97a38e2530929946eb6a37952f3af954c54b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22595'
+    validation_criteria_snippet: '3.2.1: `gcode index` (full, incremental, hook, and
+      overlay runs) refreshes `code_communities` after project stats and before projection
+      sync, reading the prior...'
+    matched_artifact_ref: crates/gcode/src/communities/refresh_tests.rs::unchanged_partition_skips_write
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.3
+  plan_node_hash: bfd1fdd14636246aca5286e90506a8ce2861220d6c2e0de0358646d0b4e60d96
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22595'
+    validation_criteria_snippet: '3.2.1: `gcode index` (full, incremental, hook, and
+      overlay runs) refreshes `code_communities` after project stats and before projection
+      sync, reading the prior...'
+    matched_artifact_ref: crates/gcode/src/communities/refresh_tests.rs::refresh_failure_degrades_index_outcome
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.4
+  plan_node_hash: a7ef580323138edd87a58752fa48b55667bb2d9435ba02d7719be1cfee2953a2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22595'
+    validation_criteria_snippet: '3.2.1: `gcode index` (full, incremental, hook, and
+      overlay runs) refreshes `code_communities` after project stats and before projection
+      sync, reading the prior...'
+    matched_artifact_ref: read_for_context
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.5
+  plan_node_hash: 30235bd6304dfb496b6035da2cd1c661ba57f731cf45be6c930b9d38dee14b19
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22595'
+    validation_criteria_snippet: '3.2.1: `gcode index` (full, incremental, hook, and
+      overlay runs) refreshes `code_communities` after project stats and before projection
+      sync, reading the prior...'
+    matched_artifact_ref: crates/gcode/contract/gcode.contract.json
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.6
+  plan_node_hash: 908abe52ca63079cc946c8ec186f21f74939b9581687393cb632dcd984343817
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22595'
+    validation_criteria_snippet: '3.2.1: `gcode index` (full, incremental, hook, and
+      overlay runs) refreshes `code_communities` after project stats and before projection
+      sync, reading the prior...'
+    matched_artifact_ref: crates/gcode/security/managed_postgres_privileges.json
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.7
+  plan_node_hash: 720cb2041e5d17fae0235248ad0857ded1334348b5b08240284b0004f51b3f6a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22595'
+    validation_criteria_snippet: '3.2.1: `gcode index` (full, incremental, hook, and
+      overlay runs) refreshes `code_communities` after project stats and before projection
+      sync, reading the prior...'
+    matched_artifact_ref: crates/gcode/src/communities/refresh_tests.rs::label_written_during_refresh_is_not_lost
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.8
+  plan_node_hash: 58979bb035ce493bba8f1ba575833d68c2f5adcbf19449e6f2735e3897403a11
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22595'
+    validation_criteria_snippet: '3.2.1: `gcode index` (full, incremental, hook, and
+      overlay runs) refreshes `code_communities` after project stats and before projection
+      sync, reading the prior...'
+    matched_artifact_ref: crates/gcode/src/communities/refresh_tests.rs::overlay_refresh_seeds_prior_rows_from_parent
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.9
+  plan_node_hash: b75496d0cb03d0613c58888ff5d0e2d37bbecf5646a2cabb8442fa07f7046019
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22595'
+    validation_criteria_snippet: '3.2.1: `gcode index` (full, incremental, hook, and
+      overlay runs) refreshes `code_communities` after project stats and before projection
+      sync, reading the prior...'
+    matched_artifact_ref: crates/gcode/src/communities/refresh_tests.rs::edge_change_without_membership_change_rewrites_rows
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.10
+  plan_node_hash: 1c630fc317b21949b9b19f63c96ff627844ff61ec9f8d93091c4b802356cf050
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22595'
+    validation_criteria_snippet: '3.2.1: `gcode index` (full, incremental, hook, and
+      overlay runs) refreshes `code_communities` after project stats and before projection
+      sync, reading the prior...'
+    matched_artifact_ref: crates/gcode/src/communities/refresh_tests.rs::stale_model_label_reads_as_deterministic
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.11
+  plan_node_hash: faaf925724767655d0270fb908083497bca294265b77bb17f7791e60c18b4ee9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22595'
+    validation_criteria_snippet: '3.2.1: `gcode index` (full, incremental, hook, and
+      overlay runs) refreshes `code_communities` after project stats and before projection
+      sync, reading the prior...'
+    matched_artifact_ref: member_signature
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.12
+  plan_node_hash: ee635a1aec311d1823160691aa713d207c280a5763813f0d6bea1a6bb3408a53
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22595'
+    validation_criteria_snippet: '3.2.1: `gcode index` (full, incremental, hook, and
+      overlay runs) refreshes `code_communities` after project stats and before projection
+      sync, reading the prior...'
+    matched_artifact_ref: p50
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.13
+  plan_node_hash: 5c5c0f94b4a8e49ffd4a14a466e87f2753898ad36360c231d4b33aff7e80edd2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22595'
+    validation_criteria_snippet: '3.2.1: `gcode index` (full, incremental, hook, and
+      overlay runs) refreshes `code_communities` after project stats and before projection
+      sync, reading the prior...'
+    matched_artifact_ref: crates/gcode/src/communities/refresh_tests.rs::invalidate_removes_community_rows_with_project_state
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.14
+  plan_node_hash: 9ab79561a5f7948a1e0bb0bce312845c82d93c7e077446f9c471eb7ee6658cce
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22595'
+    validation_criteria_snippet: '3.2.1: `gcode index` (full, incremental, hook, and
+      overlay runs) refreshes `code_communities` after project stats and before projection
+      sync, reading the prior...'
+    matched_artifact_ref: crates/gcode/src/communities/refresh_tests.rs::overlay_first_refresh_commits_when_partition_matches_parent
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.15
+  plan_node_hash: 77bc508cdbfed3a72c920d719c64459cf76573170a071155a74da20feda64941
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22595'
+    validation_criteria_snippet: '3.2.1: `gcode index` (full, incremental, hook, and
+      overlay runs) refreshes `code_communities` after project stats and before projection
+      sync, reading the prior...'
+    matched_artifact_ref: crates/gcode/src/communities/refresh_tests.rs::overlay_seed_locks_parent_state_row
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.1
+  plan_node_hash: 97875ac4fa51384b6b98aac00a08415f38f03e344c78f5e48bd1d22dd688c486
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22596'
+    validation_criteria_snippet: '4.1.1: The graph-view CLI types and impls live in
+      `crates/gcode/src/cli/graph_view.rs` and `cli.rs` is under 700 lines with unchanged
+      public paths. file: `crat...'
+    matched_artifact_ref: crates/gcode/src/cli/graph_view.rs
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.2
+  plan_node_hash: b1c28bf141c638c0e89e96b9c316421110b7fb04368d11f10abdbc1b275bd561
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22596'
+    validation_criteria_snippet: '4.1.1: The graph-view CLI types and impls live in
+      `crates/gcode/src/cli/graph_view.rs` and `cli.rs` is under 700 lines with unchanged
+      public paths. file: `crat...'
+    matched_artifact_ref: crates/gcode/src/cli/tests/projection.rs::graph_view_requires_typed_compatible_selector
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.1
+  plan_node_hash: e7a79418f7cf7259162e9b28d89cac5470eb768809b1b19e49ec083c559b1603
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22597'
+    validation_criteria_snippet: '4.2.1: MCG file and uniquely resolved module nodes
+      carry the stored community label; external and ambiguous modules carry none;
+      no `graph_analytics` import rem...'
+    matched_artifact_ref: label_communities
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.2
+  plan_node_hash: 08dbe614e928f6a0e8826fe102677d738bb6f00fda2edd583c1e336e98906681
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22597'
+    validation_criteria_snippet: '4.2.1: MCG file and uniquely resolved module nodes
+      carry the stored community label; external and ambiguous modules carry none;
+      no `graph_analytics` import rem...'
+    matched_artifact_ref: crates/gcode/src/commands/graph/view/mcg/tests.rs::mcg_without_stored_partition_hints_and_leaves_null
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.3
+  plan_node_hash: 440ba1c72a4321b5ec636a03a451a101410c3e062111b1f3b73085727b8e28e9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22597'
+    validation_criteria_snippet: '4.2.1: MCG file and uniquely resolved module nodes
+      carry the stored community label; external and ambiguous modules carry none;
+      no `graph_analytics` import rem...'
+    matched_artifact_ref: crates/gcode/src/commands/graph/view/render_tests.rs::payload_rejects_unknown_community_member
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.4
+  plan_node_hash: 26e501321a44a569dfca8bf8bc5a2e9d598342fa3549ce7932c2d8a24a811c0e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22597'
+    validation_criteria_snippet: '4.2.1: MCG file and uniquely resolved module nodes
+      carry the stored community label; external and ambiguous modules carry none;
+      no `graph_analytics` import rem...'
+    matched_artifact_ref: NodeKind
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.5
+  plan_node_hash: e1147c64a038ca77b2b8b3a3db6a01a63d83ed0fcdfb8844a617fbf2f39525c7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22597'
+    validation_criteria_snippet: '4.2.1: MCG file and uniquely resolved module nodes
+      carry the stored community label; external and ambiguous modules carry none;
+      no `graph_analytics` import rem...'
+    matched_artifact_ref: crates/gcode/src/commands/graph/view/render_tests.rs::mermaid_groups_nodes_into_community_subgraphs
+  deferral_target: null
+  detail: ''
+- section_id: '4.3'
+  item_id: 4.3.1
+  plan_node_hash: 4a61a7d6a9675aa1e6446ff750b6dab0950ca0ec68a15aa080f8b6afbdfb4152
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22598'
+    validation_criteria_snippet: '4.3.1: `--view=communities` parses without a seed
+      and accepts `--min-size` and `--community`. test: `crates/gcode/src/cli/tests/projection.rs::communities_pars...'
+    matched_artifact_ref: crates/gcode/src/cli/tests/projection.rs::communities_parses_without_seed
+  deferral_target: null
+  detail: ''
+- section_id: '4.3'
+  item_id: 4.3.2
+  plan_node_hash: 14a472cb7a333131e05c65f1ad6af406df6877cceaf0146fb75d3effe06d5b75
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22598'
+    validation_criteria_snippet: '4.3.1: `--view=communities` parses without a seed
+      and accepts `--min-size` and `--community`. test: `crates/gcode/src/cli/tests/projection.rs::communities_pars...'
+    matched_artifact_ref: run_list
+  deferral_target: null
+  detail: ''
+- section_id: '4.3'
+  item_id: 4.3.3
+  plan_node_hash: 7aebef84bf9e8d5d1553f65a3dc003dd54fd3713dbb174b7840ca2af993dcc48
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22598'
+    validation_criteria_snippet: '4.3.1: `--view=communities` parses without a seed
+      and accepts `--min-size` and `--community`. test: `crates/gcode/src/cli/tests/projection.rs::communities_pars...'
+    matched_artifact_ref: crates/gcode/src/commands/graph/view/communities/tests.rs::detail_resolves_id_label_and_unique_substring
+  deferral_target: null
+  detail: ''
+- section_id: '4.3'
+  item_id: 4.3.4
+  plan_node_hash: 108563c625e264e294a6564011e749e0c2a0acf9022b333f90568b2136645637
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22598'
+    validation_criteria_snippet: '4.3.1: `--view=communities` parses without a seed
+      and accepts `--min-size` and `--community`. test: `crates/gcode/src/cli/tests/projection.rs::communities_pars...'
+    matched_artifact_ref: crates/gcode/src/commands/graph/view/tests.rs::run_routes_every_view_and_seed_combination
+  deferral_target: null
+  detail: ''
+- section_id: '4.3'
+  item_id: 4.3.5
+  plan_node_hash: 4bfb0ddeb95b5ffd69ce1748a2b7857900d220eb312372d47adff07cc315f697
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22598'
+    validation_criteria_snippet: '4.3.1: `--view=communities` parses without a seed
+      and accepts `--min-size` and `--community`. test: `crates/gcode/src/cli/tests/projection.rs::communities_pars...'
+    matched_artifact_ref: tests/contracts/gcode.contract.json
+  deferral_target: null
+  detail: ''
+- section_id: '4.3'
+  item_id: 4.3.6
+  plan_node_hash: cb88b1a587c216b11c9ed04c995dd42310357459eda9a718172fb1d76cb1845c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22598'
+    validation_criteria_snippet: '4.3.1: `--view=communities` parses without a seed
+      and accepts `--min-size` and `--community`. test: `crates/gcode/src/cli/tests/projection.rs::communities_pars...'
+    matched_artifact_ref: 1.9.0
+  deferral_target: null
+  detail: ''
+- section_id: '4.3'
+  item_id: 4.3.7
+  plan_node_hash: 622de8f50cce3f190faf0335ef133585f3b329b0e112f481301b9c992d38eb45
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22598'
+    validation_criteria_snippet: '4.3.1: `--view=communities` parses without a seed
+      and accepts `--min-size` and `--community`. test: `crates/gcode/src/cli/tests/projection.rs::communities_pars...'
+    matched_artifact_ref: crates/gcode/src/commands/graph/view/communities/tests.rs::detail_resolves_member_path
+  deferral_target: null
+  detail: ''
+- section_id: '4.3'
+  item_id: 4.3.8
+  plan_node_hash: f60cf5790c83f5688c88527bd3f2d68337eaaa21f1c116f67af620052a00ae85
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22598'
+    validation_criteria_snippet: '4.3.1: `--view=communities` parses without a seed
+      and accepts `--min-size` and `--community`. test: `crates/gcode/src/cli/tests/projection.rs::communities_pars...'
+    matched_artifact_ref: crates/gcode/src/commands/graph/view/communities/tests.rs::detail_truncates_members_and_neighbors_with_flags
+  deferral_target: null
+  detail: ''
+- section_id: '4.3'
+  item_id: 4.3.9
+  plan_node_hash: 4d6af57f03b8200c495f058ed1ccc124349be872e0599ab43897c4f7c03966cc
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22598'
+    validation_criteria_snippet: '4.3.1: `--view=communities` parses without a seed
+      and accepts `--min-size` and `--community`. test: `crates/gcode/src/cli/tests/projection.rs::communities_pars...'
+    matched_artifact_ref: crates/gcode/src/commands/graph/view/communities/tests.rs::detail_unknown_path_is_typed_error
+  deferral_target: null
+  detail: ''
+- section_id: '4.3'
+  item_id: 4.3.10
+  plan_node_hash: e02cb22978a5e77f7fc359137a82d0c2ae1ca7ebb6d0e376b996afed3a89877c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22598'
+    validation_criteria_snippet: '4.3.1: `--view=communities` parses without a seed
+      and accepts `--min-size` and `--community`. test: `crates/gcode/src/cli/tests/projection.rs::communities_pars...'
+    matched_artifact_ref: crates/gcode/src/commands/graph/view/communities/tests.rs::detail_ambiguous_substring_is_typed_error
+  deferral_target: null
+  detail: ''
+- section_id: '4.3'
+  item_id: 4.3.11
+  plan_node_hash: 8ca67a27b43042104e90807f4e26286fee0c08eac8b85c5859fea95da63b7a21
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22598'
+    validation_criteria_snippet: '4.3.1: `--view=communities` parses without a seed
+      and accepts `--min-size` and `--community`. test: `crates/gcode/src/cli/tests/projection.rs::communities_pars...'
+    matched_artifact_ref: crates/gcode/src/commands/graph/view/communities/tests.rs::list_without_rows_hints
+  deferral_target: null
+  detail: ''
+- section_id: '4.3'
+  item_id: 4.3.12
+  plan_node_hash: e2d50226cb329d7ac6acb1e0ff0666b5d7ed38cd9deb3dca57016316b30347ad
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22598'
+    validation_criteria_snippet: '4.3.1: `--view=communities` parses without a seed
+      and accepts `--min-size` and `--community`. test: `crates/gcode/src/cli/tests/projection.rs::communities_pars...'
+    matched_artifact_ref: crates/gcode/src/cli/tests/projection.rs::communities_rejects_other_seeds_depth_and_row_limits
+  deferral_target: null
+  detail: ''
+- section_id: '4.3'
+  item_id: 4.3.13
+  plan_node_hash: fa1b0b112f5233da85eeba51035ca8a36215763ea84f63083552e8315f80aa09
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22598'
+    validation_criteria_snippet: '4.3.1: `--view=communities` parses without a seed
+      and accepts `--min-size` and `--community`. test: `crates/gcode/src/cli/tests/projection.rs::communities_pars...'
+    matched_artifact_ref: crates/gcode/src/cli/tests/projection.rs::min_size_rejected_off_communities_and_at_zero
+  deferral_target: null
+  detail: ''
+- section_id: '4.3'
+  item_id: 4.3.14
+  plan_node_hash: 6f2b9ab6b89f7e76d4633e55895949e223e568e83dde2350486196abfb2fff9b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22598'
+    validation_criteria_snippet: '4.3.1: `--view=communities` parses without a seed
+      and accepts `--min-size` and `--community`. test: `crates/gcode/src/cli/tests/projection.rs::communities_pars...'
+    matched_artifact_ref: --view communities
+  deferral_target: null
+  detail: ''
+- section_id: '4.3'
+  item_id: 4.3.15
+  plan_node_hash: c035fe76446cd070c69501f1a6110f94975acdc3089bd771eb677e602ad62335
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22598'
+    validation_criteria_snippet: '4.3.1: `--view=communities` parses without a seed
+      and accepts `--min-size` and `--community`. test: `crates/gcode/src/cli/tests/projection.rs::communities_pars...'
+    matched_artifact_ref: under one second
+  deferral_target: null
+  detail: ''
+- section_id: '4.3'
+  item_id: 4.3.16
+  plan_node_hash: aae15b2d891052c831a8a984ff61cdef92efd8ee15b3426ebf6129e55640d5b6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22598'
+    validation_criteria_snippet: '4.3.1: `--view=communities` parses without a seed
+      and accepts `--min-size` and `--community`. test: `crates/gcode/src/cli/tests/projection.rs::communities_pars...'
+    matched_artifact_ref: crates/gcode/src/commands/graph/view/communities/tests.rs::detail_no_match_and_multi_match_are_typed_errors_at_every_rung
+  deferral_target: null
+  detail: ''
+- section_id: '4.4'
+  item_id: 4.4.1
+  plan_node_hash: c0db6296062f127a9def03f1b5101163b23c748ef1a48e63b0107462928cc6bc
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22599'
+    validation_criteria_snippet: '4.4.1: `gcode graph report` includes an `Import
+      communities` section and JSON key whose total and thin counts reconcile with
+      the stored rows. test: `crates/gco...'
+    matched_artifact_ref: crates/gcode/src/graph/report/tests.rs::report_communities_section_counts_reconcile
+  deferral_target: null
+  detail: ''
+- section_id: '4.4'
+  item_id: 4.4.2
+  plan_node_hash: ccbd1e9f984b0f7ab02dec5444bc54ecf4566131b1a9753e596b738b328c4a0e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22599'
+    validation_criteria_snippet: '4.4.1: `gcode graph report` includes an `Import
+      communities` section and JSON key whose total and thin counts reconcile with
+      the stored rows. test: `crates/gco...'
+    matched_artifact_ref: crates/gcode/src/graph/report/tests.rs::report_without_communities_degrades_optional_input
+  deferral_target: null
+  detail: ''
+- section_id: '4.4'
+  item_id: 4.4.3
+  plan_node_hash: 73ae455c0bba3092d8377f9e4ebd81faf39466a5b1b45c736cdfd9aefcaed3b4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22599'
+    validation_criteria_snippet: '4.4.1: `gcode graph report` includes an `Import
+      communities` section and JSON key whose total and thin counts reconcile with
+      the stored rows. test: `crates/gco...'
+    matched_artifact_ref: crates/gcode/src/contract/schema.rs
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.1
+  plan_node_hash: 4870d0b0c78c6c0d1efb98cd0c714308d098ba6a8f6605e066d273c1020f4314
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22600'
+    validation_criteria_snippet: "5.1.1: `gcode evidence --request-json` accepts the\
+      \ flat internally tagged request `{\"schema_version\": 1, \"binding\": \u2026\
+      , \"operation\": \"communities\", \"communities..."
+    matched_artifact_ref: CommunitiesSelector
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.2
+  plan_node_hash: 87e42bfad29a3a9bd0ca56d699daa6247845bf937e94f01c024b6b68e6bd3d2c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22600'
+    validation_criteria_snippet: "5.1.1: `gcode evidence --request-json` accepts the\
+      \ flat internally tagged request `{\"schema_version\": 1, \"binding\": \u2026\
+      , \"operation\": \"communities\", \"communities..."
+    matched_artifact_ref: crates/gcode/src/evidence/tests.rs::communities_evidence_id_survives_relabel
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.3
+  plan_node_hash: c0d3dd6b3b27d6e63aedda1742ce4200dc005b93a8d444226d5d8c47354b2a19
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22600'
+    validation_criteria_snippet: "5.1.1: `gcode evidence --request-json` accepts the\
+      \ flat internally tagged request `{\"schema_version\": 1, \"binding\": \u2026\
+      , \"operation\": \"communities\", \"communities..."
+    matched_artifact_ref: crates/gcode/src/evidence/tests.rs::communities_without_rows_is_complete_empty_with_hint
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.4
+  plan_node_hash: b4a836d6a207725ff40a83653b243b9f3577378adaa8848ead140656329e10e3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22600'
+    validation_criteria_snippet: "5.1.1: `gcode evidence --request-json` accepts the\
+      \ flat internally tagged request `{\"schema_version\": 1, \"binding\": \u2026\
+      , \"operation\": \"communities\", \"communities..."
+    matched_artifact_ref: EvidenceFacts
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.5
+  plan_node_hash: 3c4472568f2ba377440604a9c034dd07491d97ce2e2b309c8f9f6a75ea5c4195
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22600'
+    validation_criteria_snippet: "5.1.1: `gcode evidence --request-json` accepts the\
+      \ flat internally tagged request `{\"schema_version\": 1, \"binding\": \u2026\
+      , \"operation\": \"communities\", \"communities..."
+    matched_artifact_ref: crates/gcode/src/contract/schema.rs
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.6
+  plan_node_hash: b265b342ca5a698c3c31cb0eae22732b9e01b80d66ce09fca9a4ba30dac32cb2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22600'
+    validation_criteria_snippet: "5.1.1: `gcode evidence --request-json` accepts the\
+      \ flat internally tagged request `{\"schema_version\": 1, \"binding\": \u2026\
+      , \"operation\": \"communities\", \"communities..."
+    matched_artifact_ref: CommunityFact
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.7
+  plan_node_hash: 31bb6c25ab149fe0179115f4ad6e6ab3ecfab7494485ec2fbf36504a46d7ebe7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22600'
+    validation_criteria_snippet: "5.1.1: `gcode evidence --request-json` accepts the\
+      \ flat internally tagged request `{\"schema_version\": 1, \"binding\": \u2026\
+      , \"operation\": \"communities\", \"communities..."
+    matched_artifact_ref: crates/gcode/src/evidence/tests.rs::communities_refreshed_but_empty_is_complete_empty
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.8
+  plan_node_hash: b1610afe9f825b65066e02af010bc836b43554ca9c9fa1ecbc4ac79c1bfa7a44
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22600'
+    validation_criteria_snippet: "5.1.1: `gcode evidence --request-json` accepts the\
+      \ flat internally tagged request `{\"schema_version\": 1, \"binding\": \u2026\
+      , \"operation\": \"communities\", \"communities..."
+    matched_artifact_ref: crates/gcode/src/evidence/tests.rs::communities_ambiguous_label_returns_every_match_with_warning
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.9
+  plan_node_hash: def25f764fe0943183344b0d3dd4f586c21de8570398abe6e80882aba1857ea0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22600'
+    validation_criteria_snippet: "5.1.1: `gcode evidence --request-json` accepts the\
+      \ flat internally tagged request `{\"schema_version\": 1, \"binding\": \u2026\
+      , \"operation\": \"communities\", \"communities..."
+    matched_artifact_ref: crates/gcode/src/evidence/tests.rs::communities_list_orders_by_size_then_id
+  deferral_target: null
+  detail: ''
+- section_id: '5.2'
+  item_id: 5.2.1
+  plan_node_hash: c9f40c8a2a6edc64c18e8d1da8cafbd10d68e2d16c43f624914b0848fc37d67c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22601'
+    validation_criteria_snippet: '5.2.1: Ask admits `communities` in pipeline and
+      interactive modes and forwards a schema-1 request with normalized selector defaults.
+      symbol: `EvidenceAdmission...'
+    matched_artifact_ref: EvidenceAdmission._normalize_selector
+  deferral_target: null
+  detail: ''
+- section_id: '5.2'
+  item_id: 5.2.2
+  plan_node_hash: 102d3af4fdeffcb06a8c103705f8fb64744d92b9b085ceb2bc271b27cb7e2252
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22601'
+    validation_criteria_snippet: '5.2.1: Ask admits `communities` in pipeline and
+      interactive modes and forwards a schema-1 request with normalized selector defaults.
+      symbol: `EvidenceAdmission...'
+    matched_artifact_ref: tests/ask/test_validation.py::test_manifest_accepts_community_item
+  deferral_target: null
+  detail: ''
+- section_id: '5.2'
+  item_id: 5.2.3
+  plan_node_hash: 510d8d1fe316ea6fff64ea74f5880e319946c17cc127a431efb526b4c170dbb5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22601'
+    validation_criteria_snippet: '5.2.1: Ask admits `communities` in pipeline and
+      interactive modes and forwards a schema-1 request with normalized selector defaults.
+      symbol: `EvidenceAdmission...'
+    matched_artifact_ref: tests/ask/test_validation.py::test_citation_of_community_item_is_rejected
+  deferral_target: null
+  detail: ''
+- section_id: '5.2'
+  item_id: 5.2.4
+  plan_node_hash: 25f785c091476bd1cd9d6515145b63f2d4c9ae05fd34390fc2b542879b9662b3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22601'
+    validation_criteria_snippet: '5.2.1: Ask admits `communities` in pipeline and
+      interactive modes and forwards a schema-1 request with normalized selector defaults.
+      symbol: `EvidenceAdmission...'
+    matched_artifact_ref: communities
+  deferral_target: null
+  detail: ''
+- section_id: '5.2'
+  item_id: 5.2.5
+  plan_node_hash: 6a8bb77765c6226527829f01080f72c31b49c5ac6eea3ebd6bca72128810b8d4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22601'
+    validation_criteria_snippet: '5.2.1: Ask admits `communities` in pipeline and
+      interactive modes and forwards a schema-1 request with normalized selector defaults.
+      symbol: `EvidenceAdmission...'
+    matched_artifact_ref: communities
+  deferral_target: null
+  detail: ''
+- section_id: '5.2'
+  item_id: 5.2.6
+  plan_node_hash: 4e45b33a05ee5a838f62080793502c99cd337d38352468c69d1ab3bcd7fc1569
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22601'
+    validation_criteria_snippet: '5.2.1: Ask admits `communities` in pipeline and
+      interactive modes and forwards a schema-1 request with normalized selector defaults.
+      symbol: `EvidenceAdmission...'
+    matched_artifact_ref: communities
+  deferral_target: null
+  detail: ''
+- section_id: '6.1'
+  item_id: 6.1.1
+  plan_node_hash: a2f14fd35947c0895c6b8a010f0c2ffed4d85a3180ee1e9e0598f73cf38593fa
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22602'
+    validation_criteria_snippet: '6.1.1: `CodeIndexCommunityStorageMixin` queues by
+      signature mismatch with a cooloff and writes labels only when the member signature
+      still matches. test: `test...'
+    matched_artifact_ref: tests/code_index/test_code_index_storage.py::test_update_community_label_is_signature_guarded
+  deferral_target: null
+  detail: ''
+- section_id: '6.1'
+  item_id: 6.1.2
+  plan_node_hash: 6726869ef5f7bb92feaae390ac1ded8e108a88020167f40f5532f0a1bbe173cf
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22602'
+    validation_criteria_snippet: '6.1.1: `CodeIndexCommunityStorageMixin` queues by
+      signature mismatch with a cooloff and writes labels only when the member signature
+      still matches. test: `test...'
+    matched_artifact_ref: CodeIndexCommunityLabelConfig
+  deferral_target: null
+  detail: ''
+- section_id: '6.1'
+  item_id: 6.1.3
+  plan_node_hash: 527909d0ff3f2b9da1207ec56356318fd530ff41ff17643395d30af02d02920c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22602'
+    validation_criteria_snippet: '6.1.1: `CodeIndexCommunityStorageMixin` queues by
+      signature mismatch with a cooloff and writes labels only when the member signature
+      still matches. test: `test...'
+    matched_artifact_ref: StoredCommunity
+  deferral_target: null
+  detail: ''
+- section_id: '6.2'
+  item_id: 6.2.1
+  plan_node_hash: d0d51498df510203baf2be1c149aad94a510eb66671cac18643ec56552e1f93f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22603'
+    validation_criteria_snippet: '6.2.1: The maintenance pass labels queued communities
+      after symbol summaries with keyword-only wiring that leaves existing call sites
+      untouched. symbol: `_labe...'
+    matched_artifact_ref: _label_unlabeled_communities
+  deferral_target: null
+  detail: ''
+- section_id: '6.2'
+  item_id: 6.2.2
+  plan_node_hash: b3239c6ceb4e8a0e499b32ab7196563c8328613297e8e730b2d549229c00c094
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22603'
+    validation_criteria_snippet: '6.2.1: The maintenance pass labels queued communities
+      after symbol summaries with keyword-only wiring that leaves existing call sites
+      untouched. symbol: `_labe...'
+    matched_artifact_ref: tests/code_index/test_community_labeler.py::test_generated_name_equal_to_candidate_writes_deterministic
+  deferral_target: null
+  detail: ''
+- section_id: '6.2'
+  item_id: 6.2.3
+  plan_node_hash: e62586fba43c9dfd43e983a711f84bf24dd3859f7c0ad692c1c1663c9b918cef
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22603'
+    validation_criteria_snippet: '6.2.1: The maintenance pass labels queued communities
+      after symbol summaries with keyword-only wiring that leaves existing call sites
+      untouched. symbol: `_labe...'
+    matched_artifact_ref: tests/code_index/test_community_labeler.py::test_generation_failure_stamps_attempt_only
+  deferral_target: null
+  detail: ''
+- section_id: '6.2'
+  item_id: 6.2.4
+  plan_node_hash: 984c0cd7cc025711ce9d156ffdfd98e96eec88266d0cd09ca6dcd71268a882d2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22603'
+    validation_criteria_snippet: '6.2.1: The maintenance pass labels queued communities
+      after symbol summaries with keyword-only wiring that leaves existing call sites
+      untouched. symbol: `_labe...'
+    matched_artifact_ref: tests/code_index/test_community_labeler.py::test_every_outcome_emits_one_log_event
+  deferral_target: null
+  detail: ''
+- section_id: '6.2'
+  item_id: 6.2.5
+  plan_node_hash: 1a8aea4c47efde12629ba3d33f0c999a8babb21a5dcaec18c50c84887cb65df2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22603'
+    validation_criteria_snippet: '6.2.1: The maintenance pass labels queued communities
+      after symbol summaries with keyword-only wiring that leaves existing call sites
+      untouched. symbol: `_labe...'
+    matched_artifact_ref: tests/code_index/test_community_labeler.py::test_ungated_validated_name_writes_model_label
+  deferral_target: null
+  detail: ''
+- section_id: '6.2'
+  item_id: 6.2.6
+  plan_node_hash: ac1451a542e98295c39e44ea16da057e73b27a04f5722f382e640a70de639c6b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22603'
+    validation_criteria_snippet: '6.2.1: The maintenance pass labels queued communities
+      after symbol summaries with keyword-only wiring that leaves existing call sites
+      untouched. symbol: `_labe...'
+    matched_artifact_ref: GeneratedLabel
+  deferral_target: null
+  detail: ''
+- section_id: '6.2'
+  item_id: 6.2.7
+  plan_node_hash: b20fe3d367676348ac9abdfc5d45bcf5f26ffbd7e523fffa963ad38d85f5a452
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22603'
+    validation_criteria_snippet: '6.2.1: The maintenance pass labels queued communities
+      after symbol summaries with keyword-only wiring that leaves existing call sites
+      untouched. symbol: `_labe...'
+    matched_artifact_ref: tests/code_index/test_community_labeler.py::test_rejections_stamp_attempt_only
+  deferral_target: null
+  detail: ''
+- section_id: '6.3'
+  item_id: 6.3.1
+  plan_node_hash: c12e1b8c2453ce542cdae3afc8304da5bcbe4bab763527efbeee43ce82eb1ff0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22604'
+    validation_criteria_snippet: '6.3.1: `DecisionsClient.choose` posts `{state, model,
+      questions}` with bearer auth, retries only on 429/529, and matches answers by
+      key. test: `tests/llm/test_...'
+    matched_artifact_ref: tests/llm/test_decisions_client.py::test_choose_posts_state_model_questions
+  deferral_target: null
+  detail: ''
+- section_id: '6.3'
+  item_id: 6.3.2
+  plan_node_hash: c1facd3f0b0283e68d96efa20264fd8c4788677b2b9d789e0a8faa8a73e0e306
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22604'
+    validation_criteria_snippet: '6.3.1: `DecisionsClient.choose` posts `{state, model,
+      questions}` with bearer auth, retries only on 429/529, and matches answers by
+      key. test: `tests/llm/test_...'
+    matched_artifact_ref: tests/code_index/test_community_labeler.py::test_gate_admits_at_threshold_and_rejects_below
+  deferral_target: null
+  detail: ''
+- section_id: '6.3'
+  item_id: 6.3.3
+  plan_node_hash: bd8a43398e3236f50f87c9d2aeedd467a9e043126f75b7a9982cde0e08070701
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22604'
+    validation_criteria_snippet: '6.3.1: `DecisionsClient.choose` posts `{state, model,
+      questions}` with bearer auth, retries only on 429/529, and matches answers by
+      key. test: `tests/llm/test_...'
+    matched_artifact_ref: community_label
+  deferral_target: null
+  detail: ''
+- section_id: '6.3'
+  item_id: 6.3.4
+  plan_node_hash: 347807025fdcd9de85b2499b446a81ceb9a51ee7ca2f3ef7c673510e9769b20a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22604'
+    validation_criteria_snippet: '6.3.1: `DecisionsClient.choose` posts `{state, model,
+      questions}` with bearer auth, retries only on 429/529, and matches answers by
+      key. test: `tests/llm/test_...'
+    matched_artifact_ref: tests/code_index/test_community_labeler.py::test_gate_outcomes_extend_the_discriminator_to_nine
+  deferral_target: null
+  detail: ''
+- section_id: '6.3'
+  item_id: 6.3.5
+  plan_node_hash: 7bcc6034b1df589fc20c1cf29c8d54c6c1d3a95c9797273b042f722c99db0b10
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22604'
+    validation_criteria_snippet: '6.3.1: `DecisionsClient.choose` posts `{state, model,
+      questions}` with bearer auth, retries only on 429/529, and matches answers by
+      key. test: `tests/llm/test_...'
+    matched_artifact_ref: ship
+  deferral_target: null
+  detail: ''
+- section_id: '6.3'
+  item_id: 6.3.6
+  plan_node_hash: 26e7881feb6523de4aba9311b63dcaf5cbf06958c7531349f410394719953275
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22604'
+    validation_criteria_snippet: '6.3.1: `DecisionsClient.choose` posts `{state, model,
+      questions}` with bearer auth, retries only on 429/529, and matches answers by
+      key. test: `tests/llm/test_...'
+    matched_artifact_ref: alpha
+  deferral_target: null
+  detail: ''
+- section_id: '7.1'
+  item_id: 7.1.1
+  plan_node_hash: 533683f372d0044e8a9b2ec3ea40b7a4ea0f28e754e05a654406f6ed0dcecf00
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22605'
+    validation_criteria_snippet: '7.1.1: The graphs reference describes the persisted
+      partition, the seedless and detail view forms, and `label_stale`. behavior:
+      "--view communities" in `src/go...'
+    matched_artifact_ref: --view communities
+  deferral_target: null
+  detail: ''
+- section_id: '7.1'
+  item_id: 7.1.2
+  plan_node_hash: 27ffcaa18edc5d6c16d1688c9c926ce091ebddb3286ed2c9cd4ff96ad8eae667
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22605'
+    validation_criteria_snippet: '7.1.1: The graphs reference describes the persisted
+      partition, the seedless and detail view forms, and `label_stale`. behavior:
+      "--view communities" in `src/go...'
+    matched_artifact_ref: code_communities
+  deferral_target: null
+  detail: ''
+- section_id: '7.1'
+  item_id: 7.1.3
+  plan_node_hash: f1881a86e16e989747078e102dd5a78e6c6b220b2692e780847badde947e2eef
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22605'
+    validation_criteria_snippet: '7.1.1: The graphs reference describes the persisted
+      partition, the seedless and detail view forms, and `label_stale`. behavior:
+      "--view communities" in `src/go...'
+    matched_artifact_ref: --view communities
+  deferral_target: null
+  detail: ''
+- section_id: D1
+  item_id: D1.1
+  plan_node_hash: 355c27fc205b29ab47298483ecf5edf30e8a4497fc88001b8ee7acf1375368a4
+  status: deferred
+  leaves: []
+  deferral_target: '#22606'
+  detail: deferral is valid
