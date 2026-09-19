@@ -270,8 +270,13 @@ fn project_dialog_mouse(chrome: &mut Chrome, mouse: &MouseEvent) -> MouseOutcome
     if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
         return MouseOutcome::Handled;
     }
+    // Buttons follow the renderers' order: the primary, the new-project
+    // dialog's tab-complete, then cancel.
     let code = match hit_test(&chrome.view, mouse.column, mouse.row) {
         Hit::DialogButton(0) => KeyCode::Enter,
+        Hit::DialogButton(1) if matches!(chrome.dialog, Some(Dialog::NewProject { .. })) => {
+            KeyCode::Tab
+        }
         Hit::DialogButton(_) => KeyCode::Esc,
         _ => return MouseOutcome::Handled,
     };

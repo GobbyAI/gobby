@@ -49,7 +49,16 @@ fn error_line(frame: &mut Frame, rect: Rect, chrome: &Chrome, error: Option<&str
     }
 }
 
-fn buttons(frame: &mut Frame, inner: Rect, chrome: &Chrome, primary: &str, hints: &[&str]) {
+/// Draw the action row and return its rects in button order: the primary,
+/// one `complete` button per hint, then cancel. The loop hit-tests these as
+/// `DialogButton(index)` in that order.
+fn buttons(
+    frame: &mut Frame,
+    inner: Rect,
+    chrome: &Chrome,
+    primary: &str,
+    hints: &[&str],
+) -> Vec<Rect> {
     let p = &chrome.palette;
     let mut specs = vec![ActionButtonSpec {
         hint: Some("↵"),
@@ -64,14 +73,15 @@ fn buttons(frame: &mut Frame, inner: Rect, chrome: &Chrome, primary: &str, hints
         label: "cancel",
     });
     let rects = action_button_row_rects(inner, &specs, 2, inner.height.saturating_sub(1));
-    for (index, (spec, rect)) in specs.iter().zip(rects).enumerate() {
+    for (index, (spec, rect)) in specs.iter().zip(&rects).enumerate() {
         let style = if index == 0 {
             primary_button_style(chrome, p.accent)
         } else {
             secondary_button_style(chrome)
         };
-        render_action_button(frame, rect, spec.hint, spec.label, style);
+        render_action_button(frame, *rect, spec.hint, spec.label, style);
     }
+    rects
 }
 
 pub fn render_new_project(
@@ -81,13 +91,13 @@ pub fn render_new_project(
     path: &str,
     cursor: usize,
     error: Option<&str>,
-) {
+) -> Vec<Rect> {
     let p = &chrome.palette;
     let Some(inner) = render_modal_shell(frame, area, POPUP_WIDTH, NEW_PROJECT_HEIGHT, p) else {
-        return;
+        return Vec::new();
     };
     if inner.height < 5 {
-        return;
+        return Vec::new();
     }
     let rows = Layout::vertical([
         Constraint::Length(1),
@@ -106,7 +116,7 @@ pub fn render_new_project(
     );
     input(frame, rows[2], chrome, path, Some(cursor));
     error_line(frame, rows[3], chrome, error);
-    buttons(frame, inner, chrome, "open", &["tab"]);
+    buttons(frame, inner, chrome, "open", &["tab"])
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -119,13 +129,13 @@ pub fn render_new_worktree(
     cursor: usize,
     base_focused: bool,
     error: Option<&str>,
-) {
+) -> Vec<Rect> {
     let p = &chrome.palette;
     let Some(inner) = render_modal_shell(frame, area, POPUP_WIDTH, NEW_WORKTREE_HEIGHT, p) else {
-        return;
+        return Vec::new();
     };
     if inner.height < 7 {
-        return;
+        return Vec::new();
     }
     let rows = Layout::vertical([
         Constraint::Length(1),
@@ -150,7 +160,7 @@ pub fn render_new_worktree(
     render_modal_description(frame, rows[3], "base", label);
     input(frame, rows[4], chrome, base, base_focused.then_some(cursor));
     error_line(frame, rows[5], chrome, error);
-    buttons(frame, inner, chrome, "create", &[]);
+    buttons(frame, inner, chrome, "create", &[])
 }
 
 pub fn render_open_worktree(
@@ -159,7 +169,7 @@ pub fn render_open_worktree(
     chrome: &Chrome,
     choices: &[WorktreeChoice],
     selected: usize,
-) {
+) -> Vec<Rect> {
     let p = &chrome.palette;
     let option_rows = choices.len().max(1).min(u16::MAX as usize) as u16;
     let Some(inner) = render_modal_shell(
@@ -169,10 +179,10 @@ pub fn render_open_worktree(
         OPEN_WORKTREE_BASE_HEIGHT + option_rows,
         p,
     ) else {
-        return;
+        return Vec::new();
     };
     if inner.height < 4 {
-        return;
+        return Vec::new();
     }
     let rows = Layout::vertical([
         Constraint::Length(1),
@@ -210,7 +220,7 @@ pub fn render_open_worktree(
             rect,
         );
     }
-    buttons(frame, inner, chrome, "open", &[]);
+    buttons(frame, inner, chrome, "open", &[])
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -223,16 +233,16 @@ pub fn render_remove_worktree(
     tabs: usize,
     panes: usize,
     error: Option<&str>,
-) {
+) -> Vec<Rect> {
     let p = &chrome.palette;
     let Some(popup) = centered_popup_rect(area, POPUP_WIDTH, REMOVE_WORKTREE_HEIGHT) else {
-        return;
+        return Vec::new();
     };
     let Some(inner) = render_panel_shell(frame, popup, p.red, p.panel_bg) else {
-        return;
+        return Vec::new();
     };
     if inner.height < 5 {
-        return;
+        return Vec::new();
     }
     let rows = Layout::vertical([
         Constraint::Length(1),
@@ -295,6 +305,8 @@ pub fn render_remove_worktree(
             secondary_button_style(chrome),
         );
     }
+    // The loop hit-tests these as `DialogButton(0)` (delete) and `(1)` (cancel).
+    rects
 }
 
 /// `1 pane` / `2 panes`.

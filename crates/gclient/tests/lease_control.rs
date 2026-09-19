@@ -1,17 +1,20 @@
 //! Lease control on the live loop (#22530): a take-back displaces the
 //! holder, a refusal is a status line rather than a frame error, and the
-//! destroy-orphans dialog's buttons answer a click.
+//! destroy-orphans dialog's buttons answer a click, as do the project
+//! dialogs' (#22543).
 
 mod mock_daemon;
 
 use std::time::Duration;
 
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use gobby_client::app::{route_mouse, run_live_loop, ModalOutcome, MouseOutcome};
+use gobby_client::app::{
+    open_new_project_dialog, route_mouse, run_live_loop, ModalOutcome, MouseOutcome,
+};
 use gobby_client::daemon::LiveDaemon;
 use gobby_client::teardown::TerminalGuard;
 use gobby_client::ui::chrome::Mode;
-use gobby_client::ui::dialogs::{Dialog, OrphanRow};
+use gobby_client::ui::dialogs::{Dialog, OrphanRow, WorktreeChoice};
 use gobby_client::ui::keymap::{Keymap, HERDR_PREFIX};
 use gobby_client::ui::{render_workspace, Chrome};
 use gobby_client::Workspace;
@@ -172,6 +175,58 @@ fn open_orphans_dialog(chrome: &mut Chrome, rows: Vec<OrphanRow>) {
     chrome.mode = Mode::ProjectDialog;
 }
 
+/// Draw the open dialog once and return its button hit areas in order.
+fn drawn_dialog_buttons(ws: &Workspace, chrome: &mut Chrome) -> Vec<Rect> {
+    let area = Rect::new(0, 0, 120, 40);
+    chrome.compute_view(ws, area);
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
+    let mut hits = None;
+    terminal
+        .draw(|frame| hits = Some(render_workspace(frame, ws, chrome)))
+        .expect("draw the dialog");
+    chrome.view.apply_hits(hits.expect("dialog drawn"));
+    chrome.view.dialog_button_hit_areas.clone()
+}
+
+fn open_project_dialog(chrome: &mut Chrome, dialog: Dialog) {
+    chrome.dialog = Some(dialog);
+    chrome.mode = Mode::ProjectDialog;
+}
+
+fn new_worktree_dialog() -> Dialog {
+    Dialog::NewWorktree {
+        project_id: "proj-1".to_string(),
+        branch: "feature".to_string(),
+        base: String::new(),
+        cursor: 7,
+        base_focused: false,
+        error: None,
+    }
+}
+
+fn open_worktree_dialog() -> Dialog {
+    Dialog::OpenWorktree {
+        project_id: "proj-1".to_string(),
+        choices: vec![WorktreeChoice {
+            worktree_id: "wt-1".to_string(),
+            branch: "feature".to_string(),
+            path: "/tmp/wt-1".to_string(),
+        }],
+        selected: 0,
+    }
+}
+
+fn remove_worktree_dialog() -> Dialog {
+    Dialog::RemoveWorktree {
+        worktree_id: "wt-1".to_string(),
+        branch: "feature".to_string(),
+        path: "/tmp/wt-1".to_string(),
+        tabs: 1,
+        panes: 2,
+        error: None,
+    }
+}
+
 fn click(rect: Rect) -> MouseEvent {
     MouseEvent {
         kind: MouseEventKind::Down(MouseButton::Left),
@@ -222,6 +277,93 @@ async fn destroy_orphans_dialog_buttons_answer_a_click() {
         "a click elsewhere stays with the dialog"
     );
     assert!(chrome.dialog.is_some(), "the dialog stays open");
+}
+
+/// Every project dialog's drawn buttons answer a click with the outcome of
+/// the key they name (#22543).
+#[test]
+fn project_dialog_buttons_answer_a_click() {
+    let ws = Workspace::scripted();
+    let mut chrome = Chrome::dark();
+
+    open_new_project_dialog(&mut chrome);
+    let buttons = drawn_dialog_buttons(&ws, &mut chrome);
+    assert_eq!(
+        buttons.len(),
+        3,
+        "open, complete and cancel drawn: {buttons:?}"
+    );
+    assert_eq!(
+        route_mouse(&ws, &mut chrome, &click(buttons[0])),
+        MouseOutcome::Modal(ModalOutcome::InitProject("~/".to_string())),
+        "open submits the path like Enter"
+    );
+    open_new_project_dialog(&mut chrome);
+    assert_eq!(
+        route_mouse(&ws, &mut chrome, &click(buttons[2])),
+        MouseOutcome::Modal(ModalOutcome::Close),
+        "cancel closes like Esc"
+    );
+    assert!(chrome.dialog.is_none(), "the dialog closes on cancel");
+    open_new_project_dialog(&mut chrome);
+    assert_eq!(
+        route_mouse(&ws, &mut chrome, &click(buttons[1])),
+        MouseOutcome::Modal(ModalOutcome::Consumed),
+        "complete edits the path in place like Tab"
+    );
+    assert!(chrome.dialog.is_some(), "completion keeps the dialog open");
+
+    open_project_dialog(&mut chrome, new_worktree_dialog());
+    let buttons = drawn_dialog_buttons(&ws, &mut chrome);
+    assert_eq!(buttons.len(), 2, "create and cancel drawn: {buttons:?}");
+    assert_eq!(
+        route_mouse(&ws, &mut chrome, &click(buttons[0])),
+        MouseOutcome::Modal(ModalOutcome::CreateWorktree {
+            project_id: "proj-1".to_string(),
+            branch: "feature".to_string(),
+            base: None,
+        }),
+        "create submits the branch like Enter"
+    );
+    open_project_dialog(&mut chrome, new_worktree_dialog());
+    assert_eq!(
+        route_mouse(&ws, &mut chrome, &click(buttons[1])),
+        MouseOutcome::Modal(ModalOutcome::Close),
+        "cancel closes like Esc"
+    );
+    assert!(chrome.dialog.is_none(), "the dialog closes on cancel");
+
+    open_project_dialog(&mut chrome, open_worktree_dialog());
+    let buttons = drawn_dialog_buttons(&ws, &mut chrome);
+    assert_eq!(buttons.len(), 2, "open and cancel drawn: {buttons:?}");
+    assert_eq!(
+        route_mouse(&ws, &mut chrome, &click(buttons[0])),
+        MouseOutcome::Modal(ModalOutcome::OpenWorktree("wt-1".to_string())),
+        "open picks the selected worktree like Enter"
+    );
+    open_project_dialog(&mut chrome, open_worktree_dialog());
+    assert_eq!(
+        route_mouse(&ws, &mut chrome, &click(buttons[1])),
+        MouseOutcome::Modal(ModalOutcome::Close),
+        "cancel closes like Esc"
+    );
+    assert!(chrome.dialog.is_none(), "the dialog closes on cancel");
+
+    open_project_dialog(&mut chrome, remove_worktree_dialog());
+    let buttons = drawn_dialog_buttons(&ws, &mut chrome);
+    assert_eq!(buttons.len(), 2, "delete and cancel drawn: {buttons:?}");
+    assert_eq!(
+        route_mouse(&ws, &mut chrome, &click(buttons[0])),
+        MouseOutcome::Modal(ModalOutcome::RemoveWorktree("wt-1".to_string())),
+        "delete confirms like Enter"
+    );
+    open_project_dialog(&mut chrome, remove_worktree_dialog());
+    assert_eq!(
+        route_mouse(&ws, &mut chrome, &click(buttons[1])),
+        MouseOutcome::Modal(ModalOutcome::Close),
+        "cancel closes like Esc"
+    );
+    assert!(chrome.dialog.is_none(), "the dialog closes on cancel");
 }
 
 /// The attach deadline (5s) plus the base retry backoff (5s) plus slack.

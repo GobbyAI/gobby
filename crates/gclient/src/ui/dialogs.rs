@@ -189,21 +189,20 @@ pub fn render_dialog(frame: &mut Frame, area: Rect, chrome: &Chrome) -> Vec<Rect
             target,
             title,
             scope,
-        }) => {
-            return render_confirm_close(frame, area, chrome, target, title, scope);
-        }
+        }) => render_confirm_close(frame, area, chrome, target, title, scope),
         Some(Dialog::Rename {
             kind,
             value,
             cursor,
-        }) => render_rename(frame, area, chrome, kind, value, *cursor),
+        }) => {
+            render_rename(frame, area, chrome, kind, value, *cursor);
+            Vec::new()
+        }
         Some(Dialog::NewProject {
             path,
             cursor,
             error,
-        }) => {
-            project::render_new_project(frame, area, chrome, path, *cursor, error.as_deref());
-        }
+        }) => project::render_new_project(frame, area, chrome, path, *cursor, error.as_deref()),
         Some(Dialog::NewWorktree {
             branch,
             base,
@@ -228,9 +227,7 @@ pub fn render_dialog(frame: &mut Frame, area: Rect, chrome: &Chrome) -> Vec<Rect
             rows,
             checked,
             selected,
-        }) => {
-            return orphans::render_destroy_orphans(frame, area, chrome, rows, checked, *selected);
-        }
+        }) => orphans::render_destroy_orphans(frame, area, chrome, rows, checked, *selected),
         Some(Dialog::RemoveWorktree {
             branch,
             path,
@@ -254,10 +251,12 @@ pub fn render_dialog(frame: &mut Frame, area: Rect, chrome: &Chrome) -> Vec<Rect
             selected,
             text,
             ..
-        }) => render_respond(frame, area, chrome, prompt, options, *selected, text),
-        None => {}
+        }) => {
+            render_respond(frame, area, chrome, prompt, options, *selected, text);
+            Vec::new()
+        }
+        None => Vec::new(),
     }
-    Vec::new()
 }
 
 fn primary_button_style(chrome: &Chrome, bg: ratatui::style::Color) -> Style {
