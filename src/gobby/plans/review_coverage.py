@@ -6,12 +6,13 @@ import hashlib
 import json
 import re
 from collections.abc import Mapping, Sequence
+from copy import deepcopy
 from pathlib import Path
-from typing import cast
+from typing import NoReturn, cast
 
 from gobby.plans.digests import canonical_json_sha256
 from gobby.plans.parser import Kind, PlanDocument
-from gobby.plans.review_citations import validate_source_citation
+from gobby.plans.review_citations import source_citation_schema, validate_source_citation
 from gobby.plans.review_evidence_models import ReviewEvidenceError, canonical_json_object
 from gobby.plans.semantic_lint import collect_target_inventory
 
@@ -26,6 +27,173 @@ _REVIEW_LANE_STATUSES = {
     "runtime_invariants": "completed",
 }
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_SHADOW_VALID = "valid"
+_SHADOW_INVALID = "invalid"
+_SHADOW_MANIFEST_STATUSES = (_SHADOW_VALID, _SHADOW_INVALID)
+_EMITTED_FINDING = "emitted_finding"
+_DISMISSED = "dismissed"
+_DISPOSITION_VALUES = (_EMITTED_FINDING, _DISMISSED)
+_CONFIDENCE_MIN = 0
+_CONFIDENCE_MAX = 1
+
+
+def _citation_array_schema() -> dict[str, object]:
+    return {
+        "type": "array",
+        "items": source_citation_schema(),
+        "minItems": 1,
+        "description": "Non-empty; every cited path is rehashed against the working tree.",
+    }
+
+
+# The candidate-issue closed set: field names drive the validator's allowlist and
+# the published schema's properties/required, so the two cannot drift apart.
+_CANDIDATE_FIELD_SHAPES: dict[str, dict[str, object]] = {
+    "candidate_id": {
+        "type": "string",
+        "description": "Non-empty and unique across every lane in this submission.",
+    },
+    "violated_invariant": {"type": "string", "description": "Non-empty."},
+    "suggested_fix": {"type": "string", "description": "Non-empty."},
+    "section_ids": {
+        "type": "array",
+        "items": {"type": "string"},
+        "minItems": 1,
+        "uniqueItems": True,
+        "description": "Non-empty subset of the plan's deliverable section ids.",
+    },
+    "confidence": {
+        "type": "number",
+        "minimum": _CONFIDENCE_MIN,
+        "maximum": _CONFIDENCE_MAX,
+    },
+    "source_citations": _citation_array_schema(),
+    "adjacent_sites_checked": {
+        "type": "array",
+        "items": {"type": "string"},
+        "uniqueItems": True,
+        "description": "Repository paths swept for the same defect class; may be empty.",
+    },
+}
+_CANDIDATE_FIELDS = frozenset(_CANDIDATE_FIELD_SHAPES)
+
+
+def review_coverage_input_schema() -> dict[str, dict[str, object]]:
+    """Publish the payload shapes ``validate_plan_review_coverage`` enforces.
+
+    Every lane id, status, field name, enum and bound is read from the constants
+    this module validates against, so the registered tool schema cannot drift from
+    the validator. The shapes are additive description only: no branch sets
+    ``additionalProperties``, and nothing here projects or filters a submission.
+    """
+    candidate_schema: dict[str, object] = {
+        "type": "object",
+        "properties": deepcopy(_CANDIDATE_FIELD_SHAPES),
+        "required": list(_CANDIDATE_FIELD_SHAPES),
+    }
+    lane_schema: dict[str, object] = {
+        "type": "object",
+        "properties": {
+            "lane_id": {"type": "string", "enum": list(REVIEW_LANES)},
+            "status": {
+                "type": "string",
+                "enum": sorted(set(_REVIEW_LANE_STATUSES.values())),
+                "description": "Pinned per lane: "
+                + "; ".join(
+                    f"{lane_id}={_REVIEW_LANE_STATUSES[lane_id]}" for lane_id in REVIEW_LANES
+                ),
+            },
+            "section_ids_checked": {
+                "type": "array",
+                "items": {"type": "string"},
+                "uniqueItems": True,
+                "description": "Every deliverable section id in the plan, exactly once.",
+            },
+            "source_citations": _citation_array_schema(),
+            "candidate_issues": {"type": "array", "items": candidate_schema},
+        },
+        "required": [
+            "lane_id",
+            "status",
+            "section_ids_checked",
+            "source_citations",
+            "candidate_issues",
+        ],
+    }
+    disposition_schema: dict[str, object] = {
+        "type": "object",
+        "properties": {
+            "candidate_id": {
+                "type": "string",
+                "description": "Exactly one disposition per candidate_issues candidate_id.",
+            },
+            "disposition": {"type": "string", "enum": list(_DISPOSITION_VALUES)},
+            "reason": {"type": "string", "description": "Non-empty."},
+            "finding_id": {
+                "type": "string",
+                "description": (
+                    f"Required when disposition is {_EMITTED_FINDING}; "
+                    "unique across this submission."
+                ),
+            },
+        },
+        "required": ["candidate_id", "disposition", "reason"],
+    }
+    return {
+        "lane_results": {
+            "type": "array",
+            "items": lane_schema,
+            "minItems": len(REVIEW_LANES),
+            "maxItems": len(REVIEW_LANES),
+            "description": "One result per review lane, in any order.",
+        },
+        "candidate_dispositions": {
+            "type": "object",
+            "properties": {
+                "cross_lane_interaction_complete": {"const": True},
+                "adjacent_variant_complete": {"const": True},
+                "items": {"type": "array", "items": disposition_schema},
+            },
+            "required": [
+                "cross_lane_interaction_complete",
+                "adjacent_variant_complete",
+                "items",
+            ],
+        },
+        "shadow_manifest_status": {
+            "type": "object",
+            "description": (
+                "The exact derive_plan_review_manifest result, passed unmodified; "
+                "its transport-only ok flag is accepted."
+            ),
+            "properties": {
+                "ok": {
+                    "type": "boolean",
+                    "description": "Transport-only flag the MCP tool adds; accepted when true.",
+                },
+                "status": {"type": "string", "enum": list(_SHADOW_MANIFEST_STATUSES)},
+                "routing_decisions": {
+                    "type": "object",
+                    "description": (
+                        "Echoed back exactly as passed to derive_plan_review_manifest."
+                    ),
+                },
+                "manifest_entries": {
+                    "type": "array",
+                    "items": {"type": "object"},
+                    "description": f"Present when status is {_SHADOW_VALID}.",
+                },
+                "manifest_digest": {"type": "string", "pattern": _SHA256_RE.pattern},
+                "entry_count": {"type": "integer", "minimum": 0},
+                "diagnostics": {
+                    "type": "array",
+                    "items": {"type": "object"},
+                    "description": f"Present when status is {_SHADOW_INVALID}.",
+                },
+            },
+            "required": ["status", "routing_decisions"],
+        },
+    }
 
 
 def review_complexity(
@@ -98,7 +266,7 @@ def validate_review_coverage(
     source_hashes = _rehash_sources(project_root, citations)
     source_digest = _source_digest(plan_hash, source_hashes)
     shadow_summary: dict[str, object] = {"status": expected_shadow["status"]}
-    if expected_shadow["status"] == "valid":
+    if expected_shadow["status"] == _SHADOW_VALID:
         shadow_summary["manifest_digest"] = expected_shadow["manifest_digest"]
         shadow_summary["entry_count"] = expected_shadow["entry_count"]
     else:
@@ -216,17 +384,17 @@ def validate_coverage_attestation(
             "adjacent-variant sweep is incomplete",
         )
     shadow = attestation.get("shadow_manifest_status")
-    if not isinstance(shadow, dict) or shadow.get("status") not in {"valid", "invalid"}:
+    if not isinstance(shadow, dict) or shadow.get("status") not in _SHADOW_MANIFEST_STATUSES:
         raise ReviewEvidenceError(
             "invalid_coverage_attestation",
             "coverage attestation has invalid shadow-manifest status",
         )
-    if verdict == "approved" and shadow.get("status") != "valid":
+    if verdict == "approved" and shadow.get("status") != _SHADOW_VALID:
         raise ReviewEvidenceError(
             "invalid_coverage_attestation",
             "approval requires a valid shadow manifest",
         )
-    if shadow.get("status") == "valid":
+    if shadow.get("status") == _SHADOW_VALID:
         if set(shadow) != {"status", "manifest_digest", "entry_count"}:
             raise ReviewEvidenceError(
                 "invalid_coverage_attestation",
@@ -299,10 +467,13 @@ def _validate_lanes(
     document: PlanDocument,
     lane_results: Sequence[object],
 ) -> list[dict[str, object]]:
+    errors: list[ReviewEvidenceError] = []
     if len(lane_results) != len(REVIEW_LANES):
-        raise ReviewEvidenceError(
-            "invalid_lane_results",
-            "lane_results must contain exactly three lanes",
+        errors.append(
+            ReviewEvidenceError(
+                "invalid_lane_results",
+                "lane_results must contain exactly three lanes",
+            )
         )
     expected_sections = {
         section.section_id for section in document.sections if section.kind is Kind.deliverable
@@ -311,49 +482,83 @@ def _validate_lanes(
     candidate_ids: set[str] = set()
     for raw_lane in lane_results:
         if not isinstance(raw_lane, Mapping):
-            raise ReviewEvidenceError("invalid_lane_results", "lane result must be an object")
+            errors.append(
+                ReviewEvidenceError("invalid_lane_results", "lane result must be an object")
+            )
+            continue
         lane = canonical_json_object(raw_lane)
-        lane_id = _required_string(lane, "lane_id", "lane result")
+        try:
+            lane_id = _required_string(lane, "lane_id", "lane result")
+        except ReviewEvidenceError as exc:
+            errors.append(exc)
+            continue
         if lane_id not in REVIEW_LANES or lane_id in by_id:
-            raise ReviewEvidenceError(
-                "invalid_lane_results",
-                f"unknown or duplicate review lane: {lane_id}",
+            errors.append(
+                ReviewEvidenceError(
+                    "invalid_lane_results",
+                    f"unknown or duplicate review lane: {lane_id}",
+                )
             )
+            continue
         if lane.get("status") != _REVIEW_LANE_STATUSES[lane_id]:
-            raise ReviewEvidenceError(
-                "invalid_lane_results",
-                f"review lane {lane_id} has a non-canonical status",
+            errors.append(
+                ReviewEvidenceError(
+                    "invalid_lane_results",
+                    f"review lane {lane_id} has a non-canonical status",
+                )
             )
-        checked = _string_list(lane.get("section_ids_checked"), "section_ids_checked")
-        if set(checked) != expected_sections or len(checked) != len(expected_sections):
-            raise ReviewEvidenceError(
-                "invalid_section_ids",
-                f"review lane {lane_id} did not cover every deliverable section",
-            )
-        citations = _citation_list(lane.get("source_citations"))
+        try:
+            checked = _string_list(lane.get("section_ids_checked"), "section_ids_checked")
+        except ReviewEvidenceError as exc:
+            errors.append(exc)
+        else:
+            if set(checked) != expected_sections or len(checked) != len(expected_sections):
+                errors.append(
+                    ReviewEvidenceError(
+                        "invalid_section_ids",
+                        f"review lane {lane_id} did not cover every deliverable section",
+                    )
+                )
+        citations: list[dict[str, object]] = []
+        try:
+            citations = _citation_list(lane.get("source_citations"))
+        except ReviewEvidenceError as exc:
+            errors.append(exc)
+        candidates: list[dict[str, object]] = []
         candidates_raw = lane.get("candidate_issues")
         if not isinstance(candidates_raw, list):
-            raise ReviewEvidenceError(
-                "invalid_lane_results",
-                f"review lane {lane_id} candidate_issues must be an array",
-            )
-        candidates: list[dict[str, object]] = []
-        for raw_candidate in candidates_raw:
-            candidate = _validate_candidate(
-                raw_candidate,
-                expected_sections=expected_sections,
-            )
-            candidate_id = str(candidate["candidate_id"])
-            if candidate_id in candidate_ids:
-                raise ReviewEvidenceError(
-                    "duplicate_candidate",
-                    f"candidate_id is duplicated: {candidate_id}",
+            errors.append(
+                ReviewEvidenceError(
+                    "invalid_lane_results",
+                    f"review lane {lane_id} candidate_issues must be an array",
                 )
-            candidate_ids.add(candidate_id)
-            candidates.append(candidate)
+            )
+        else:
+            for raw_candidate in candidates_raw:
+                try:
+                    candidate = _validate_candidate(
+                        raw_candidate,
+                        expected_sections=expected_sections,
+                    )
+                except ReviewEvidenceError as exc:
+                    errors.append(exc)
+                    continue
+                candidate_id = str(candidate["candidate_id"])
+                if candidate_id in candidate_ids:
+                    errors.append(
+                        ReviewEvidenceError(
+                            "duplicate_candidate",
+                            f"candidate_id is duplicated: {candidate_id}",
+                        )
+                    )
+                    continue
+                candidate_ids.add(candidate_id)
+                candidates.append(candidate)
         lane["source_citations"] = citations
         lane["candidate_issues"] = candidates
         by_id[lane_id] = lane
+    if errors:
+        _raise_collected(errors)
     return [by_id[lane_id] for lane_id in REVIEW_LANES]
 
 
@@ -365,16 +570,7 @@ def _validate_candidate(
     if not isinstance(raw, Mapping):
         raise ReviewEvidenceError("invalid_candidate", "candidate issue must be an object")
     candidate: dict[str, object] = canonical_json_object(raw)
-    allowed_fields = {
-        "candidate_id",
-        "violated_invariant",
-        "suggested_fix",
-        "section_ids",
-        "confidence",
-        "source_citations",
-        "adjacent_sites_checked",
-    }
-    unknown = sorted(set(candidate) - allowed_fields)
+    unknown = sorted(set(candidate) - _CANDIDATE_FIELDS)
     if unknown:
         raise ReviewEvidenceError(
             "invalid_candidate",
@@ -396,7 +592,7 @@ def _validate_candidate(
     confidence = candidate.get("confidence")
     if not isinstance(confidence, int | float) or isinstance(confidence, bool):
         raise ReviewEvidenceError("invalid_candidate", "candidate confidence must be numeric")
-    if not 0 <= float(confidence) <= 1:
+    if not _CONFIDENCE_MIN <= float(confidence) <= _CONFIDENCE_MAX:
         raise ReviewEvidenceError(
             "invalid_candidate",
             "candidate confidence must be between 0 and 1",
@@ -413,31 +609,44 @@ def _validate_dispositions(
     lanes: Sequence[Mapping[str, object]],
     raw: Mapping[str, object],
 ) -> dict[str, int]:
+    errors: list[ReviewEvidenceError] = []
     payload = canonical_json_object(raw)
     if payload.get("cross_lane_interaction_complete") is not True:
-        raise ReviewEvidenceError(
-            "incomplete_dispositions",
-            "cross-lane interaction pass must be complete",
+        errors.append(
+            ReviewEvidenceError(
+                "incomplete_dispositions",
+                "cross-lane interaction pass must be complete",
+            )
         )
     if payload.get("adjacent_variant_complete") is not True:
-        raise ReviewEvidenceError(
-            "incomplete_dispositions",
-            "class-wide adjacent-variant sweep must be complete",
+        errors.append(
+            ReviewEvidenceError(
+                "incomplete_dispositions",
+                "class-wide adjacent-variant sweep must be complete",
+            )
         )
-    items = payload.get("items")
-    if not isinstance(items, list):
-        raise ReviewEvidenceError(
-            "invalid_dispositions",
-            "candidate_dispositions.items must be an array",
+    raw_items = payload.get("items")
+    items: list[object] = []
+    if isinstance(raw_items, list):
+        items = raw_items
+    else:
+        errors.append(
+            ReviewEvidenceError(
+                "invalid_dispositions",
+                "candidate_dispositions.items must be an array",
+            )
         )
     candidate_ids: set[str] = set()
     for lane in lanes:
         candidates = lane.get("candidate_issues")
         if not isinstance(candidates, list):
-            raise ReviewEvidenceError(
-                "invalid_lane_results",
-                "validated lane candidate_issues must be an array",
+            errors.append(
+                ReviewEvidenceError(
+                    "invalid_lane_results",
+                    "validated lane candidate_issues must be an array",
+                )
             )
+            continue
         candidate_ids.update(str(candidate["candidate_id"]) for candidate in candidates)
     seen: set[str] = set()
     finding_ids: set[str] = set()
@@ -445,42 +654,70 @@ def _validate_dispositions(
     dismissed = 0
     for raw_item in items:
         if not isinstance(raw_item, Mapping):
-            raise ReviewEvidenceError(
-                "invalid_dispositions",
-                "candidate disposition must be an object",
-            )
-        item = canonical_json_object(raw_item)
-        candidate_id = _required_string(item, "candidate_id", "candidate disposition")
-        if candidate_id not in candidate_ids or candidate_id in seen:
-            raise ReviewEvidenceError(
-                "invalid_dispositions",
-                f"unknown or duplicate candidate disposition: {candidate_id}",
-            )
-        seen.add(candidate_id)
-        _required_string(item, "reason", "candidate disposition")
-        disposition = item.get("disposition")
-        if disposition == "emitted_finding":
-            finding_id = _required_string(item, "finding_id", "emitted candidate disposition")
-            if finding_id in finding_ids:
-                raise ReviewEvidenceError(
-                    "duplicate_finding",
-                    f"finding_id is duplicated: {finding_id}",
+            errors.append(
+                ReviewEvidenceError(
+                    "invalid_dispositions",
+                    "candidate disposition must be an object",
                 )
-            finding_ids.add(finding_id)
+            )
+            continue
+        item = canonical_json_object(raw_item)
+        try:
+            candidate_id = _required_string(item, "candidate_id", "candidate disposition")
+        except ReviewEvidenceError as exc:
+            errors.append(exc)
+            continue
+        if candidate_id not in candidate_ids or candidate_id in seen:
+            errors.append(
+                ReviewEvidenceError(
+                    "invalid_dispositions",
+                    f"unknown or duplicate candidate disposition: {candidate_id}",
+                )
+            )
+            continue
+        seen.add(candidate_id)
+        try:
+            _required_string(item, "reason", "candidate disposition")
+        except ReviewEvidenceError as exc:
+            errors.append(exc)
+        disposition = item.get("disposition")
+        if disposition == _EMITTED_FINDING:
             emitted += 1
-        elif disposition == "dismissed":
+            try:
+                finding_id = _required_string(item, "finding_id", "emitted candidate disposition")
+            except ReviewEvidenceError as exc:
+                errors.append(exc)
+                continue
+            if finding_id in finding_ids:
+                errors.append(
+                    ReviewEvidenceError(
+                        "duplicate_finding",
+                        f"finding_id is duplicated: {finding_id}",
+                    )
+                )
+                continue
+            finding_ids.add(finding_id)
+        elif disposition == _DISMISSED:
             dismissed += 1
         else:
-            raise ReviewEvidenceError(
-                "invalid_dispositions",
-                "candidate disposition must be emitted_finding or dismissed",
+            errors.append(
+                ReviewEvidenceError(
+                    "invalid_dispositions",
+                    f"candidate disposition must be {_EMITTED_FINDING} or {_DISMISSED}",
+                )
             )
-    if seen != candidate_ids:
+    # A non-array `items` already explains every undisposed candidate, so only an
+    # array that really omits one earns a second, independent error.
+    if isinstance(raw_items, list) and seen != candidate_ids:
         missing = sorted(candidate_ids - seen)
-        raise ReviewEvidenceError(
-            "undisposed_candidates",
-            "every candidate requires a disposition: " + ", ".join(missing),
+        errors.append(
+            ReviewEvidenceError(
+                "undisposed_candidates",
+                "every candidate requires a disposition: " + ", ".join(missing),
+            )
         )
+    if errors:
+        _raise_collected(errors)
     return {"total": len(candidate_ids), "emitted_findings": emitted, "dismissed": dismissed}
 
 
@@ -561,6 +798,22 @@ def _source_digest(plan_hash: str, source_hashes: Mapping[str, str]) -> str:
     return canonical_json_sha256({"plan_hash": plan_hash, "sources": source_hashes})
 
 
+def _raise_collected(errors: Sequence[ReviewEvidenceError]) -> NoReturn:
+    """Report every independent failure a list-shaped arm collected as one error.
+
+    The first failure keeps owning ``code`` and ``message`` so existing callers
+    read exactly what they read before; ``errors`` carries the full list.
+    """
+    first = errors[0]
+    raise ReviewEvidenceError(
+        first.code,
+        str(first),
+        retryable=first.retryable,
+        details=first.details,
+        errors=[{"error": exc.code, "message": str(exc)} for exc in errors],
+    )
+
+
 def _required_string(payload: Mapping[str, object], key: str, owner: str) -> str:
     value = payload.get(key)
     if not isinstance(value, str) or not value.strip():
@@ -585,6 +838,7 @@ def _string_list(raw: object, owner: str) -> list[str]:
 __all__ = [
     "REVIEW_LANES",
     "review_complexity",
+    "review_coverage_input_schema",
     "validate_coverage_attestation",
     "validate_review_coverage",
 ]

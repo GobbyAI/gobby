@@ -10,6 +10,7 @@ import psycopg
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.plans.handoff_manifest_service import PlanHandoffManifestService
+from gobby.plans.review_coverage import review_coverage_input_schema
 from gobby.plans.review_evidence import PlanReviewEvidenceService
 from gobby.plans.review_evidence_models import ReviewEvidenceError
 from gobby.storage.hub.protocol import HubDatabase
@@ -347,18 +348,9 @@ def register_review_evidence_tools(
             "type": "object",
             "properties": {
                 "evidence_id": {"type": "string"},
-                "lane_results": {
-                    "type": "array",
-                    "items": {"type": "object"},
-                },
-                "candidate_dispositions": {"type": "object"},
-                "shadow_manifest_status": {
-                    "type": "object",
-                    "description": (
-                        "The exact derive_plan_review_manifest result, passed unmodified; "
-                        "its transport-only ok flag is accepted."
-                    ),
-                },
+                # Derived from the validator's own constants; descriptive only, so
+                # no key of a submitted payload is dropped or rejected by shape.
+                **review_coverage_input_schema(),
             },
             "required": [
                 "evidence_id",
