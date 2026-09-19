@@ -25,7 +25,7 @@ This directory contains bundled rule groups. These are **templates** — they ar
 | `skill-discovery` | `skill-discovery/` | 30 | Bootstrap ordered core guidance each context epoch, require language skills on first file write, require the impeccable design contract on first UI file write, require a plan reference on plan-artifact writes, require the code-review skill on the first commit/merge/cherry-pick/revert of an epoch and a fresh `ocr delegate rule` review before each later one, list skill hubs once per session, and reset loading tracking |
 | `brevity` | `brevity/` | 5 | Handle opt-out phrases, drift detection and next-turn feedback, and per-turn reinforcement |
 | `restraint` | `restraint/` | 3 | Block first code write/edit until restraint is loaded, opt-out phrases, per-turn reinforcement |
-| `development-discipline` | `development-discipline/` | 1 | Block the first source write until developer test and structural guidance is loaded |
+| `development-discipline` | `development-discipline/` | 1 | Block the first checkout-touching tool call under a claimed code/refactor/test task until developer test and structural guidance is loaded |
 | `review-learning` | `review-learning/` | 5 | Inject confirmed planning and review lessons into matching work |
 | `reviewer-lifecycle` | `reviewer-lifecycle/` | 3 | Track reviewer validation and require a terminal review verdict |
 

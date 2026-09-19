@@ -394,9 +394,12 @@ class TestRequireTaskBeforeCommit:
             variables={
                 "require_task_before_edit": True,
                 "task_claimed": task_claimed,
-                # The whole bundled ruleset runs here; the code-review commit
-                # gate is satisfied so the verdict belongs to the task gate.
+                # The whole bundled ruleset runs here; both code-review commit
+                # gates are satisfied so the verdict belongs to the task gate.
+                # #22499 added the per-commit freshness gate, which needs its own
+                # variable -- loading the skill alone stopped being enough.
                 "loaded_skills": ["code-review"],
+                "code_review_fresh": True,
             },
         )
 
@@ -587,6 +590,53 @@ class TestRequireTaskBeforeEdit:
         assert "canonical_repo_mutation" in body.when
         assert "requires_task_for_any_touched_file" in body.when
         assert "plan_mode" in body.when
+
+    @pytest.mark.asyncio
+    async def test_block_reason_names_the_shell_indirection_that_caused_it(
+        self, db: HubDatabase
+    ) -> None:
+        """A scratchpad write addressed through a variable blocks, and the reason says why."""
+        _sync_bundled(db)
+        scratchpad = f"{tempfile.gettempdir()}/gobby-indirect-scratchpad"
+        data: dict[str, object] = {
+            "tool_name": "Bash",
+            "tool_input": {"command": f'SP={scratchpad}\nmkdir -p "$SP"'},
+        }
+        normalize_tool_fields(data)
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id=SESSION_ID,
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data=data,
+        )
+
+        response = await RuleEngine(db).evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables={
+                "require_task_before_edit": True,
+                "task_claimed": False,
+                "plan_mode": False,
+            },
+        )
+
+        # Naming the same directory literally is exempt, so the reason has to explain
+        # the difference or the next agent reads this as a broken scratchpad exemption.
+        literal: dict[str, object] = {
+            "tool_name": "Bash",
+            "tool_input": {"command": f"mkdir -p {scratchpad}"},
+        }
+        normalize_tool_fields(literal)
+
+        assert data["canonical_repo_mutation"] is True
+        assert data.get("canonical_file_paths") in (None, [])
+        assert literal["canonical_repo_mutation"] is False
+        assert response.decision == "block"
+        reason = response.reason or ""
+        assert "claim_task" in reason
+        assert "shell variable" in reason
+        assert "literal path" in reason
 
     @pytest.mark.parametrize(
         "command",

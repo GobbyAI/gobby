@@ -16,3 +16,9 @@ rules:
         reason: |
           Use create_task(title, category, claim=True) or claim_task(task_id) to
           unlock file edits — then retry this edit.
+
+          Scratchpad and temp paths are exempt, but only when the command names
+          them literally. A shell variable or substitution in the operand
+          (`mkdir -p "$SP"`, `mkdir -p "$(dirname "$SOCK")"`) leaves no path to
+          classify, and unknown scope counts as a repository write on purpose. If
+          this command only touches your scratchpad, use the literal path and retry.

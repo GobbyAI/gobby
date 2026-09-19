@@ -24,11 +24,13 @@ def _task(
     additional_skills: list[str] | None = None,
     labels: list[str] | None = None,
     validation_criteria: str | None = None,
+    category: str | None = None,
 ) -> SimpleNamespace:
     return SimpleNamespace(
         additional_skills=additional_skills or [],
         labels=labels or [],
         validation_criteria=validation_criteria,
+        category=category,
     )
 
 
@@ -85,6 +87,7 @@ def test_claim_exposes_tdd_gate_state() -> None:
             "tests/workflows/test_shared.py",
             "crates/gclient/tests/parity/sidebar.rs",
         ],
+        "claimed_task_is_source_work": False,
     }
 
     skill_only_state = build_claimed_task_extra_skill_state(
@@ -107,6 +110,7 @@ def test_claim_exposes_tdd_gate_state() -> None:
         "unresolvable_claimed_task_extra_skills": [],
         "claimed_task_requires_tdd": False,
         "claimed_task_acceptance_test_paths": [],
+        "claimed_task_is_source_work": False,
     }
     assert stale_variables["claimed_task_requires_tdd"] is False
     assert stale_variables["claimed_task_acceptance_test_paths"] == []
@@ -161,6 +165,60 @@ def test_tdd_is_the_only_inferred_extra(
     assert ("test-driven-development" in extras) is expected
 
 
+@pytest.mark.parametrize(
+    ("category", "expected"),
+    [
+        ("code", True),
+        ("refactor", True),
+        ("test", True),
+        ("Code", True),
+        ("config", False),
+        ("docs", False),
+        ("research", False),
+        ("planning", False),
+        ("manual", False),
+        (None, False),
+    ],
+)
+def test_source_work_flag_follows_the_claimed_category(
+    category: str | None, expected: bool
+) -> None:
+    manager = MagicMock()
+    manager.get_task.return_value = _task(category=category)
+
+    state = build_claimed_task_extra_skill_state({"claimed_tasks": {"task-1": "#1"}}, manager)
+
+    assert state["claimed_task_is_source_work"] is expected
+
+
+def test_one_source_work_claim_raises_the_flag_and_releasing_it_lowers_it() -> None:
+    manager = MagicMock()
+    tasks = {
+        "task-1": _task(category="docs"),
+        "task-2": _task(category="refactor"),
+    }
+    manager.get_task.side_effect = tasks.__getitem__
+
+    both = build_claimed_task_extra_skill_state(
+        {"claimed_tasks": {"task-1": "#1", "task-2": "#2"}},
+        manager,
+    )
+    assert both["claimed_task_is_source_work"] is True
+
+    variables = {"claimed_tasks": {"task-1": "#1"}, "claimed_task_is_source_work": True}
+    assert (
+        refresh_claimed_task_extra_skills(variables, manager)["claimed_task_is_source_work"]
+        is False
+    )
+    assert variables["claimed_task_is_source_work"] is False
+
+
+def test_source_work_flag_stays_false_without_a_task_manager() -> None:
+    state = build_claimed_task_extra_skill_state({"claimed_tasks": {"task-1": "#1"}}, None)
+
+    assert state["claimed_task_is_source_work"] is False
+
+
 def test_missing_extras_skip_loaded_and_unresolvable_names() -> None:
     variables = {
         "claimed_task_extra_skills": ["context7", "typo-skill", "python"],
@@ -185,6 +243,7 @@ def test_refresh_state_drops_unresolvable_names_after_last_claim() -> None:
         "unresolvable_claimed_task_extra_skills": [],
         "claimed_task_requires_tdd": False,
         "claimed_task_acceptance_test_paths": [],
+        "claimed_task_is_source_work": False,
     }
 
 

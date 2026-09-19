@@ -24,6 +24,14 @@ EXTRA_SKILLS_VARIABLE = "claimed_task_extra_skills"
 UNRESOLVABLE_EXTRA_SKILLS_VARIABLE = "unresolvable_claimed_task_extra_skills"
 CLAIMED_TASK_REQUIRES_TDD_VARIABLE = "claimed_task_requires_tdd"
 CLAIMED_TASK_ACCEPTANCE_TEST_PATHS_VARIABLE = "claimed_task_acceptance_test_paths"
+CLAIMED_TASK_IS_SOURCE_WORK_VARIABLE = "claimed_task_is_source_work"
+
+# Categories whose deliverable is source that the developer obligations govern.
+# Claiming one already owes those obligations, so the gate can teach them before the
+# work starts rather than at the first write, when the design is already settled.
+# The claimed category is the whole signal: a docs or research claim owes nothing
+# here, and require-task-before-edit still governs what it may write.
+SOURCE_WORK_CATEGORIES = frozenset({"code", "refactor", "test"})
 
 
 def build_claimed_task_extra_skill_state(
@@ -35,6 +43,7 @@ def build_claimed_task_extra_skill_state(
     extras: list[str] = []
     requires_tdd = False
     acceptance_test_paths: list[str] = []
+    is_source_work = False
 
     if isinstance(claimed_tasks, dict) and task_manager is not None:
         for task_id in claimed_tasks:
@@ -45,6 +54,10 @@ def build_claimed_task_extra_skill_state(
             labels = _string_list(_field(task, "labels"))
             additional_skills = _string_list(_field(task, "additional_skills"))
             validation_criteria = _string_field(task, "validation_criteria")
+
+            category = _string_field(task, "category")
+            if category is not None and category.lower() in SOURCE_WORK_CATEGORIES:
+                is_source_work = True
 
             _extend_unique(extras, additional_skills)
             task_needs_tdd = task_requires_tdd(
@@ -71,6 +84,7 @@ def build_claimed_task_extra_skill_state(
         UNRESOLVABLE_EXTRA_SKILLS_VARIABLE: [skill for skill in unresolved if skill in extras],
         CLAIMED_TASK_REQUIRES_TDD_VARIABLE: requires_tdd,
         CLAIMED_TASK_ACCEPTANCE_TEST_PATHS_VARIABLE: acceptance_test_paths,
+        CLAIMED_TASK_IS_SOURCE_WORK_VARIABLE: is_source_work,
     }
 
 

@@ -50,6 +50,21 @@ def _write_event(file_path: str = "/project/src/app.py") -> HookEvent:
     )
 
 
+def _read_event(file_path: str = "/project/src/app.py") -> HookEvent:
+    return HookEvent(
+        event_type=HookEventType.BEFORE_TOOL,
+        session_id=SESSION_ID,
+        source=SessionSource.CODEX,
+        timestamp=datetime.now(UTC),
+        data={
+            "tool_name": "Read",
+            "canonical_tool_kind": "read",
+            "canonical_file_path": file_path,
+            "tool_input": {"file_path": file_path},
+        },
+    )
+
+
 def _mcp_event(server_name: str, tool_name: str) -> HookEvent:
     return HookEvent(
         event_type=HookEventType.BEFORE_TOOL,
@@ -101,7 +116,7 @@ def test_guidance_rule_structure(
         ),
     ],
 )
-async def test_each_guidance_skill_independently_gates_source_writes(
+async def test_each_guidance_skill_independently_gates_claimed_source_work(
     temp_db: HubDatabase,
     loaded_skills: list[str],
     blocked_skill: str,
@@ -112,6 +127,7 @@ async def test_each_guidance_skill_independently_gates_source_writes(
         _write_event(),
         session_id=SESSION_ID,
         variables={
+            "claimed_task_is_source_work": True,
             "loaded_skills": [item for item in loaded_skills if ":references/" not in item],
             "loaded_skill_references": [item for item in loaded_skills if ":references/" in item],
         },
@@ -122,7 +138,9 @@ async def test_each_guidance_skill_independently_gates_source_writes(
 
 
 @pytest.mark.asyncio
-async def test_guidance_gates_allow_loaded_and_non_source_writes(temp_db: HubDatabase) -> None:
+async def test_guidance_gates_allow_loaded_skills_and_unclaimed_writes(
+    temp_db: HubDatabase,
+) -> None:
     _sync_only_guidance_rules(temp_db)
     engine = RuleEngine(temp_db)
 
@@ -137,10 +155,11 @@ async def test_guidance_gates_allow_loaded_and_non_source_writes(temp_db: HubDat
     markdown = await engine.evaluate(
         _write_event("/project/docs/notes.md"),
         session_id=SESSION_ID,
-        variables={"loaded_skills": []},
+        variables={"loaded_skills": ["restraint"]},
     )
 
     assert loaded.decision == "allow"
+    # Nothing claimed, so the discipline gate has no source work to govern.
     assert markdown.decision == "allow"
 
 
@@ -183,3 +202,68 @@ async def test_root_graph_expansion_requires_restraint(
     assert blocked.decision == "block"
     assert skill_fetch_directive("restraint") in (blocked.reason or "")
     assert allowed.decision == "allow"
+
+
+async def test_claiming_source_work_gates_the_first_tool_call_that_touches_the_checkout(
+    temp_db: HubDatabase,
+) -> None:
+    _sync_only_guidance_rules(temp_db)
+    engine = RuleEngine(temp_db)
+    claimed = {"claimed_task_is_source_work": True, "loaded_skills": ["restraint"]}
+
+    read = await engine.evaluate(_read_event(), session_id=SESSION_ID, variables=claimed)
+    markdown = await engine.evaluate(
+        _write_event("/project/docs/notes.md"), session_id=SESSION_ID, variables=claimed
+    )
+
+    obligations = GUIDANCE_RULES["require-development-discipline-skill"]
+    assert read.decision == "block"
+    assert skill_fetch_directive(obligations) in (read.reason or "")
+    # No extension list any more: under a source-work claim the gate owns the docs
+    # write too, because the claim is what says the obligations are owed.
+    assert markdown.decision == "block"
+
+    loaded = await engine.evaluate(
+        _read_event(),
+        session_id=SESSION_ID,
+        variables={**claimed, "loaded_skill_references": [obligations]},
+    )
+    assert loaded.decision == "allow"
+
+
+async def test_the_claim_gate_never_blocks_the_mcp_call_that_clears_it(
+    temp_db: HubDatabase,
+) -> None:
+    _sync_only_guidance_rules(temp_db)
+    engine = RuleEngine(temp_db)
+    claimed = {"claimed_task_is_source_work": True, "loaded_skills": ["restraint"]}
+
+    for server_name, tool_name in (
+        ("gobby-skills", "get_skill_file"),
+        ("gobby-skills", "get_skill"),
+        ("gobby-tasks", "close_task"),
+        ("gobby-memory", "search_memories"),
+    ):
+        response = await engine.evaluate(
+            _mcp_event(server_name, tool_name), session_id=SESSION_ID, variables=claimed
+        )
+        assert response.decision == "allow", f"{server_name}:{tool_name} was blocked"
+
+
+async def test_a_claim_outside_source_categories_never_reaches_the_gate(
+    temp_db: HubDatabase,
+) -> None:
+    _sync_only_guidance_rules(temp_db)
+    engine = RuleEngine(temp_db)
+    docs_claim = {"claimed_task_is_source_work": False, "loaded_skills": ["restraint"]}
+
+    read = await engine.evaluate(_read_event(), session_id=SESSION_ID, variables=docs_claim)
+    source_write = await engine.evaluate(
+        _write_event(), session_id=SESSION_ID, variables=docs_claim
+    )
+
+    # The category is the whole signal now: a docs or research claim owes nothing here
+    # even if it does touch a .py file, and require-task-before-edit still governs the
+    # write itself.
+    assert read.decision == "allow"
+    assert source_write.decision == "allow"

@@ -2,14 +2,19 @@ tags: [development-discipline, gobby, default]
 
 rules:
   require-development-discipline-skill:
-    description: "Block first source write until development discipline is loaded"
+    description: "Block source work until development discipline is loaded"
     event: before_tool
     enabled: true
     priority: 30
+    # The claimed task's category says this is source work, so the obligations are
+    # already owed and the first tool call that touches the checkout pays for them --
+    # early enough for the step 4 test judgment to still shape the design. MCP calls
+    # carry canonical_tool_kind 'mcp' and never trip this, which is what keeps the
+    # gate satisfiable: the skill load that clears it is itself an MCP call.
     when: >
       not skill_loaded('gobby:references/development/obligations.md')
-      and event.data.get('canonical_tool_kind') == 'write'
-      and event.data.get('canonical_file_path', '').endswith(('.py', '.pyi', '.ts', '.tsx', '.js', '.jsx', '.rs', '.go', '.java', '.kt', '.swift', '.rb', '.php', '.c', '.h', '.cpp', '.hpp', '.cs', '.ex', '.exs', '.dart', '.css', '.sql', '.sh'))
+      and variables.get('claimed_task_is_source_work')
+      and event.data.get('canonical_tool_kind') in ('read', 'search', 'execute', 'write')
     effects:
       - type: block
         reason: '{{ skill_fetch_directive("gobby:references/development/obligations.md") }}'
