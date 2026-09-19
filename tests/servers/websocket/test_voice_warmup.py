@@ -6,7 +6,9 @@ import asyncio
 import base64
 import json
 import logging
+import sys
 from collections.abc import Callable
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -862,3 +864,34 @@ class TestWarmupFailureBackoff:
         await task
         assert mixin._tts_warmup_failures == 2
         assert mixin._tts_warmup_next_retry_at >= before + 120.0  # 30 * 2^2
+
+
+class TestSttAvailabilityProbe:
+    def test_probe_locates_faster_whisper_without_importing_it(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The probe answers from the module spec. Importing the real package
+        costs seconds, and it ran on the event loop for every status request
+        (#22544)."""
+        package = tmp_path / "faster_whisper"
+        package.mkdir()
+        (package / "__init__.py").write_text(
+            "raise RuntimeError('the availability probe imported faster_whisper')\n",
+            encoding="utf-8",
+        )
+        monkeypatch.delitem(sys.modules, "faster_whisper", raising=False)
+        monkeypatch.syspath_prepend(str(tmp_path))
+        mixin = DummyVoiceMixin(VoiceConfig(enabled=True, stt_enabled=True))
+
+        assert mixin._get_stt_availability() == (True, "")
+
+    def test_probe_reports_a_missing_package(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setitem(sys.modules, "faster_whisper", None)
+        mixin = DummyVoiceMixin(VoiceConfig(enabled=True, stt_enabled=True))
+
+        available, reason = mixin._get_stt_availability()
+
+        assert available is False
+        assert reason == (
+            "daemon environment is missing required package faster-whisper; run uv sync"
+        )

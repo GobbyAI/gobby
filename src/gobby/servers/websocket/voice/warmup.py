@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import gc
-import importlib
 import logging
 import time
 from typing import TYPE_CHECKING, Any
+
+from gobby.voice.tts import _module_is_available
 
 if TYPE_CHECKING:
     from gobby.communications.voice import VoiceTranscriber
@@ -92,14 +93,14 @@ class VoiceWarmupMixin:
             return False, "Voice not enabled in config"
         if not voice_config.stt_enabled:
             return False, "STT disabled in config"
-        try:
-            importlib.import_module("faster_whisper")
+        # Locate the package instead of importing it: the cold import takes
+        # seconds, and this runs on the event loop for every status request.
+        if _module_is_available("faster_whisper"):
             return True, ""
-        except ImportError:
-            return (
-                False,
-                "daemon environment is missing required package faster-whisper; run uv sync",
-            )
+        return (
+            False,
+            "daemon environment is missing required package faster-whisper; run uv sync",
+        )
 
     def _get_tts(self) -> TTSProvider | None:
         """Get or create the TTS singleton (routes by provider config)."""
