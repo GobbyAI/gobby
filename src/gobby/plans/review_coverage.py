@@ -164,7 +164,9 @@ def review_coverage_input_schema() -> dict[str, dict[str, object]]:
             "type": "object",
             "description": (
                 "The exact derive_plan_review_manifest result, passed unmodified; "
-                "its transport-only ok flag is accepted."
+                "its transport-only ok flag is accepted. When the proxy offloaded that "
+                "result, pass it without manifest_entries: status, routing_decisions, "
+                "manifest_digest and entry_count, each unchanged."
             ),
             "properties": {
                 "ok": {
@@ -181,7 +183,10 @@ def review_coverage_input_schema() -> dict[str, dict[str, object]]:
                 "manifest_entries": {
                     "type": "array",
                     "items": {"type": "object"},
-                    "description": f"Present when status is {_SHADOW_VALID}.",
+                    "description": (
+                        f"Present when status is {_SHADOW_VALID}; omitted when the proxy "
+                        "offloaded the derivation, since manifest_digest binds the entries."
+                    ),
                 },
                 "manifest_digest": {"type": "string", "pattern": _SHA256_RE.pattern},
                 "entry_count": {"type": "integer", "minimum": 0},
@@ -233,6 +238,24 @@ def review_complexity(
     }
 
 
+def _accepted_shadow_echoes(
+    expected_shadow: Mapping[str, object],
+) -> tuple[dict[str, object], ...]:
+    """Return the shadow shapes a reviewer may echo for a canonical derivation.
+
+    The exact derivation always passes. The proxy offloads a derivation above its
+    result threshold and leaves the reviewer only its scalar fields, so the same
+    derivation without ``manifest_entries`` passes too: ``manifest_digest`` is the
+    SHA-256 of those canonical entries and binds them. No key of the submitted
+    shadow is projected away, so any other shape still mismatches.
+    """
+    exact = dict(expected_shadow)
+    compact = {key: value for key, value in exact.items() if key != "manifest_entries"}
+    if compact == exact:
+        return (exact,)
+    return (exact, compact)
+
+
 def validate_review_coverage(
     *,
     evidence_id: str,
@@ -252,7 +275,7 @@ def validate_review_coverage(
     if canonical_shadow.get("ok") is True:
         del canonical_shadow["ok"]
     expected_shadow = canonical_json_object(expected_shadow_manifest_status)
-    if canonical_shadow != expected_shadow:
+    if canonical_shadow not in _accepted_shadow_echoes(expected_shadow):
         raise ReviewEvidenceError(
             "shadow_manifest_mismatch",
             "shadow_manifest_status differs from canonical derivation",

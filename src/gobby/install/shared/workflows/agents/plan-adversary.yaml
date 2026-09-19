@@ -142,7 +142,9 @@ prompts:
     Call `derive_plan_review_manifest` during every round. Call
     `validate_plan_review_coverage` with the three lane results, candidate
     dispositions, and exact shadow-manifest status (the unmodified
-    `derive_plan_review_manifest` result, `ok` included) before approve/reject. Pass its
+    `derive_plan_review_manifest` result, `ok` included; when the proxy offloaded
+    that result, pass it without `manifest_entries`: `status`, `routing_decisions`,
+    `manifest_digest`, `entry_count`) before approve/reject. Pass its
     `coverage_attestation` to the lifecycle tool. Approval also passes the exact
     server-derived routing decisions and manifest entries.
     Pass the exact JSON object `validate_plan_review_coverage` returned,

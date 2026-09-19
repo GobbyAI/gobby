@@ -346,6 +346,80 @@ def test_coverage_rejects_shadow_manifest_mismatch(
     assert error.value.code == "shadow_manifest_mismatch"
 
 
+_COMPACT_SHADOW_KEYS = ("status", "routing_decisions", "manifest_digest", "entry_count")
+
+
+def _compact_shadow(shadow: dict[str, object]) -> dict[str, object]:
+    """The derivation as an offloaded envelope leaves it: every field but the entries."""
+    return {key: copy.deepcopy(shadow[key]) for key in _COMPACT_SHADOW_KEYS}
+
+
+@pytest.mark.parametrize("transport", [{}, {"ok": True}])
+def test_coverage_accepts_compact_shadow_manifest_echo(
+    tmp_path: Path, transport: dict[str, object]
+) -> None:
+    """A derivation echoed without manifest_entries passes because the digest binds them."""
+    document, lanes, dispositions, shadow = _coverage_case(tmp_path)
+    compact = {**transport, **_compact_shadow(shadow)}
+    published = _node(review_coverage_input_schema(), "shadow_manifest_status", "properties")
+    assert set(compact) <= set(published)
+
+    attestation = validate_review_coverage(
+        evidence_id="evidence-1",
+        project_root=tmp_path,
+        document=document,
+        plan_hash="a" * 64,
+        lane_results=lanes,
+        candidate_dispositions=dispositions,
+        shadow_manifest_status=compact,
+        expected_shadow_manifest_status=shadow,
+    )
+
+    assert attestation == _validate(tmp_path, document, lanes, dispositions, shadow)
+    assert attestation["shadow_manifest_status"] == {
+        "status": "valid",
+        "manifest_digest": shadow["manifest_digest"],
+        "entry_count": shadow["entry_count"],
+    }
+
+
+@pytest.mark.parametrize(
+    ("mutation", "dropped"),
+    [
+        ({"manifest_digest": "f" * 64}, ()),
+        ({"entry_count": 99}, ()),
+        ({"status": "invalid"}, ()),
+        ({"routing_decisions": {"1": {"implementation_domain": "backend"}}}, ()),
+        ({"ok": False}, ()),
+        ({"ok": True, "diagnostics": []}, ()),
+        ({}, ("manifest_digest",)),
+        ({}, ("entry_count",)),
+    ],
+)
+def test_coverage_rejects_compact_shadow_manifest_deviations(
+    tmp_path: Path, mutation: dict[str, object], dropped: tuple[str, ...]
+) -> None:
+    """Only the exact derivation or its entry-less echo passes; nothing is projected."""
+    document, lanes, dispositions, shadow = _coverage_case(tmp_path)
+    supplied = {**_compact_shadow(shadow), **mutation}
+    for key in dropped:
+        del supplied[key]
+
+    with pytest.raises(ReviewEvidenceError) as error:
+        validate_review_coverage(
+            evidence_id="evidence-1",
+            project_root=tmp_path,
+            document=document,
+            plan_hash="a" * 64,
+            lane_results=lanes,
+            candidate_dispositions=dispositions,
+            shadow_manifest_status=supplied,
+            expected_shadow_manifest_status=shadow,
+        )
+
+    assert error.value.code == "shadow_manifest_mismatch"
+
+
 def test_approval_rejects_invalid_shadow_manifest() -> None:
     attestation = coverage_attestation(
         evidence_id="evidence-1",

@@ -47,6 +47,7 @@ def test_plan_review_protocol_failure_omits_verdict() -> None:
     assert "protocol_failure with exact tool error and draft findings, no verdict" in body
     assert "derive_plan_review_manifest even on rejection" in body
     assert "the unmodified derive_plan_review_manifest result, ok included" in body
+    assert "that result without manifest_entries" in body
 
 
 def test_plan_review_finding_and_verdict_vocabulary() -> None:

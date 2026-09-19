@@ -81,7 +81,9 @@ prompts:
     `derive_plan_review_manifest(evidence_id, routing_decisions)`, then
     `validate_plan_review_coverage` with the three lane results, all candidate
     dispositions, and the exact shadow-manifest status (the unmodified
-    `derive_plan_review_manifest` result, `ok` included). Paste its
+    `derive_plan_review_manifest` result, `ok` included; when the proxy offloaded
+    that result, pass it without `manifest_entries`: `status`, `routing_decisions`,
+    `manifest_digest`, `entry_count`, never a paged re-assembly). Paste its
     `coverage_attestation` verbatim, `attestation_digest` included; a hand-built or
     re-keyed object fails finalization with `invalid_coverage_attestation` and
     voids the round. If validation cannot complete, omit `verdict` and return
