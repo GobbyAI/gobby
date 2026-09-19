@@ -99,9 +99,13 @@ class GuardHarness:
         *,
         session: Session | None = None,
         checkout: Path | None = None,
+        workdir: Path | None = None,
     ) -> HookEvent:
         selected_session = session or self.current_session
         selected_checkout = checkout or self.repo
+        tool_input = {"cmd": command}
+        if workdir is not None:
+            tool_input["workdir"] = str(workdir)
         return HookEvent(
             event_type=HookEventType.BEFORE_TOOL,
             session_id=selected_session.external_id,
@@ -115,7 +119,7 @@ class GuardHarness:
             project_id=self.project.id,
             data={
                 "tool_name": "functions.exec_command",
-                "tool_input": {"cmd": command},
+                "tool_input": tool_input,
             },
             metadata={
                 "_platform_session_id": selected_session.id,
@@ -129,8 +133,12 @@ class GuardHarness:
         *,
         checkout: Path | None = None,
         cwd: Path | None = None,
+        workdir: Path | None = None,
     ) -> HookEvent:
         selected_checkout = checkout or self.repo
+        tool_input = {"file_path": file_path}
+        if workdir is not None:
+            tool_input["workdir"] = str(workdir)
         return HookEvent(
             event_type=HookEventType.BEFORE_TOOL,
             session_id=self.current_session.external_id,
@@ -140,7 +148,7 @@ class GuardHarness:
             project_id=self.project.id,
             data={
                 "tool_name": "Edit",
-                "tool_input": {"file_path": file_path},
+                "tool_input": tool_input,
             },
             metadata={
                 "_platform_session_id": self.current_session.id,
@@ -553,7 +561,11 @@ async def test_tool_cwd_relative_dirty_foreign_edit_blocks(guard_harness: GuardH
     nested_file.write_text("dirty\n", encoding="utf-8")
 
     response = await guard_harness.handler._evaluate_rules(
-        guard_harness.edit_event("foreign.txt", cwd=nested)
+        guard_harness.edit_event(
+            "foreign.txt",
+            cwd=guard_harness.repo,
+            workdir=nested,
+        )
     )
 
     assert response.decision == "block"
@@ -699,7 +711,7 @@ async def test_unscoped_commit_blocks_foreign_staged_path_with_owner_diagnostic(
     _git(guard_harness.repo, "add", "--", "owned.txt", "foreign.txt")
 
     response = await guard_harness.handler._evaluate_rules(
-        guard_harness.event("git commit -m 'unsafe'")
+        guard_harness.event("git commit -m 'unsafe'", workdir=guard_harness.repo)
     )
 
     assert response.decision == "block"
@@ -718,6 +730,50 @@ async def test_unscoped_commit_blocks_foreign_staged_path_with_owner_diagnostic(
         "foreign.txt",
         "owned.txt",
     }
+
+
+@pytest.mark.asyncio
+async def test_commit_uses_tool_workdir_checkout(
+    guard_harness: GuardHarness,
+    tmp_path: Path,
+) -> None:
+    external_repo = tmp_path / "external-repo"
+    external_repo.mkdir()
+    _git(external_repo, "init", "-q")
+    _git(external_repo, "config", "user.email", "tests@gobby.local")
+    _git(external_repo, "config", "user.name", "Gobby Tests")
+    (external_repo / "foreign.txt").write_text("external base\n", encoding="utf-8")
+    _git(external_repo, "add", "--", "foreign.txt")
+    _git(external_repo, "commit", "-q", "-m", "external base")
+    (external_repo / "foreign.txt").write_text("external staged\n", encoding="utf-8")
+    _git(external_repo, "add", "--", "foreign.txt")
+
+    (guard_harness.repo / "foreign.txt").write_text("project staged\n", encoding="utf-8")
+    _git(guard_harness.repo, "add", "--", "foreign.txt")
+
+    response = await guard_harness.handler._evaluate_rules(
+        guard_harness.event("git commit -m external", workdir=external_repo)
+    )
+
+    assert response.decision == "allow"
+    assert _git(guard_harness.repo, "diff", "--cached", "--name-only") == "foreign.txt"
+
+
+@pytest.mark.asyncio
+async def test_commit_from_non_git_tool_workdir_falls_through(
+    guard_harness: GuardHarness,
+    tmp_path: Path,
+) -> None:
+    non_repo = tmp_path / "not-a-repository"
+    non_repo.mkdir()
+    (guard_harness.repo / "foreign.txt").write_text("project staged\n", encoding="utf-8")
+    _git(guard_harness.repo, "add", "--", "foreign.txt")
+
+    response = await guard_harness.handler._evaluate_rules(
+        guard_harness.event("git commit -m invalid", workdir=non_repo)
+    )
+
+    assert response.decision == "allow"
 
 
 @pytest.mark.asyncio
@@ -1179,6 +1235,10 @@ def test_parse_captures_git_c_and_work_tree() -> None:
         "git --work-tree=/wt/agent --git-dir=/main/.git commit -m x"
     )
     assert work_tree[0].work_tree == "/wt/agent"
+    assert work_tree[0].root_options == (
+        "--work-tree=/wt/agent",
+        "--git-dir=/main/.git",
+    )
     assert (
         resolve_commit_inspect_cwd(work_tree[0], event_cwd="/main", project_path="/main")
         == "/wt/agent"
@@ -1197,6 +1257,11 @@ def test_parse_captures_git_c_and_work_tree() -> None:
         resolve_commit_inspect_cwd(bare, event_cwd="/wt/agent", project_path="/main") == "/wt/agent"
     )
     assert resolve_commit_inspect_cwd(bare, event_cwd=None, project_path="/main") == "/main"
+
+    unrelated_options = parse_git_commit_invocations(
+        "git --exec-path=/tmp -c advice.detachedHead=false commit -m x"
+    )[0]
+    assert unrelated_options.root_options == ()
 
 
 @pytest.mark.asyncio
@@ -1225,3 +1290,43 @@ async def test_git_c_worktree_commit_does_not_inspect_primary_index(
     assert set(_git(guard_harness.repo, "diff", "--cached", "--name-only").splitlines()) == {
         "foreign.txt"
     }
+
+
+@pytest.mark.parametrize("override", ["chdir", "work-tree"])
+@pytest.mark.asyncio
+async def test_git_directory_override_uses_resolved_checkout_ownership(
+    guard_harness: GuardHarness,
+    tmp_path: Path,
+    override: str,
+) -> None:
+    worktree = tmp_path / "owned-worktree"
+    _git(
+        guard_harness.repo,
+        "worktree",
+        "add",
+        "-q",
+        "-b",
+        f"owned-worktree-{override}",
+        str(worktree),
+    )
+    SessionVariableManager(guard_harness.db).merge_variables(
+        guard_harness.foreign_session.id,
+        {
+            "task_edited_file_checkouts": {
+                guard_harness.foreign_task.id: {str(worktree): ["foreign.txt"]},
+            }
+        },
+    )
+    (worktree / "foreign.txt").write_text("foreign worktree change\n", encoding="utf-8")
+    _git(worktree, "add", "--", "foreign.txt")
+    if override == "chdir":
+        command = f"git -C {worktree} commit -m unsafe"
+    else:
+        git_dir = _git(worktree, "rev-parse", "--absolute-git-dir")
+        command = f"git --git-dir={git_dir} --work-tree={worktree} commit -m unsafe"
+
+    response = await guard_harness.handler._evaluate_rules(guard_harness.event(command))
+
+    assert response.decision == "block"
+    assert response.reason is not None
+    assert "foreign.txt" in response.reason

@@ -1,11 +1,11 @@
 header:
   plan_id: gcode-import-communities
-  plan_hash: 4a8f4fdd6039fd2b2dd82e28054120348492fe3f92acd578b23a0464b7c0c1cf
+  plan_hash: 7c9267d24b0c9d9024664c93f2e4a4960906169829a8e14c841d3e5bc58bba56
   root_task_ref: '22581'
   project_id: d45545c5-ded5-4335-b115-0245752edacf
-  generated_at: '2026-09-19T11:38:32Z'
+  generated_at: '2026-09-19T23:15:08Z'
   task_tree_source: db
-  task_tree_source_hash: 5d6d643efc429f0fb602e4c8e5b5676ee4d26d86967374f8aabf2081402acac1
+  task_tree_source_hash: 9304e80902345a2b3d7c163602331804a53318816cc20dc4e3ac67cee08957c0
   evidence_summary: []
   evidence: []
 rows:
@@ -352,23 +352,23 @@ rows:
   detail: ''
 - section_id: '3.1'
   item_id: 3.1.1
-  plan_node_hash: 0d82aa33c29cd9476d3942c24a50730817126ef9275a5bc7bf5a64d26838d5a9
+  plan_node_hash: 30b62fa487722dd744a4b1e5fd15369cbdc8cce6b54a658499694ed5f32faf27
   status: covered
   leaves:
   - leaf_task_ref: '#22594'
-    validation_criteria_snippet: '3.1.1: The new migration (442, or the next free
+    validation_criteria_snippet: '3.1.1: The new migration (443, or the next free
       number at landing) creates `code_communities` with the constraints, the `idx_cc_label_queue`
       index, machine-sco...'
-    matched_artifact_ref: crates/gcore/assets/schema/migrations/442_add_code_communities.sql
+    matched_artifact_ref: crates/gcore/assets/schema/migrations/443_add_code_communities.sql
   deferral_target: null
   detail: ''
 - section_id: '3.1'
   item_id: 3.1.2
-  plan_node_hash: a73868734607de6f920f11d8a30584aec08b01dfb895d9b84e1222a9c20daf25
+  plan_node_hash: 38d6829e6724a8e0b2dccfc56efd587d86b99bf51184b9831192e260f9c2a936
   status: covered
   leaves:
   - leaf_task_ref: '#22594'
-    validation_criteria_snippet: '3.1.1: The new migration (442, or the next free
+    validation_criteria_snippet: '3.1.1: The new migration (443, or the next free
       number at landing) creates `code_communities` with the constraints, the `idx_cc_label_queue`
       index, machine-sco...'
     matched_artifact_ref: src/gobby/storage/schema_expected_identity.json
@@ -380,7 +380,7 @@ rows:
   status: covered
   leaves:
   - leaf_task_ref: '#22594'
-    validation_criteria_snippet: '3.1.1: The new migration (442, or the next free
+    validation_criteria_snippet: '3.1.1: The new migration (443, or the next free
       number at landing) creates `code_communities` with the constraints, the `idx_cc_label_queue`
       index, machine-sco...'
     matched_artifact_ref: crates/gcore/src/schema/runner_tests.rs
@@ -392,7 +392,7 @@ rows:
   status: covered
   leaves:
   - leaf_task_ref: '#22594'
-    validation_criteria_snippet: '3.1.1: The new migration (442, or the next free
+    validation_criteria_snippet: '3.1.1: The new migration (443, or the next free
       number at landing) creates `code_communities` with the constraints, the `idx_cc_label_queue`
       index, machine-sco...'
     matched_artifact_ref: crates/gcode/security/managed_postgres_privileges.json
@@ -400,11 +400,11 @@ rows:
   detail: ''
 - section_id: '3.1'
   item_id: 3.1.5
-  plan_node_hash: c38502261af623049af6b2e0b04783b26828e9728e4fca9e1dec01c677dba972
+  plan_node_hash: 3e605fe48b19e224c8eb83d72eca0955aa535fbb56ece539074185b2fda747d9
   status: covered
   leaves:
   - leaf_task_ref: '#22594'
-    validation_criteria_snippet: '3.1.1: The new migration (442, or the next free
+    validation_criteria_snippet: '3.1.1: The new migration (443, or the next free
       number at landing) creates `code_communities` with the constraints, the `idx_cc_label_queue`
       index, machine-sco...'
     matched_artifact_ref: nothing pending
@@ -416,7 +416,7 @@ rows:
   status: covered
   leaves:
   - leaf_task_ref: '#22594'
-    validation_criteria_snippet: '3.1.1: The new migration (442, or the next free
+    validation_criteria_snippet: '3.1.1: The new migration (443, or the next free
       number at landing) creates `code_communities` with the constraints, the `idx_cc_label_queue`
       index, machine-sco...'
     matched_artifact_ref: tests/code_index/test_gcode_privilege_manifest.py::test_manifest_privileges_match_the_managed_relation_set
@@ -424,11 +424,11 @@ rows:
   detail: ''
 - section_id: '3.1'
   item_id: 3.1.7
-  plan_node_hash: 8172beb9cd41614284302b5f73efacafae51d49a5d860346f47ad6a46f677d3b
+  plan_node_hash: dd4e15c5a6070ea89c7847d983c37b866e465848e8b34f6c846a1b44620c8252
   status: covered
   leaves:
   - leaf_task_ref: '#22594'
-    validation_criteria_snippet: '3.1.1: The new migration (442, or the next free
+    validation_criteria_snippet: '3.1.1: The new migration (443, or the next free
       number at landing) creates `code_communities` with the constraints, the `idx_cc_label_queue`
       index, machine-sco...'
     matched_artifact_ref: landed as migration
