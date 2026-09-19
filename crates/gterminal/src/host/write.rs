@@ -375,7 +375,7 @@ fn deliver_native(slot: &TerminalSlot, input: NativeInput) -> Result<(), &'stati
         };
     }
     #[cfg(not(feature = "vt-engine"))]
-    let _ = input;
+    let _ = (slot, input);
     Ok(())
 }
 

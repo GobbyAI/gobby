@@ -18,6 +18,7 @@ use gobby_client::app::{
     close_project, close_project_confirmed, create_worktree, focus_agent, focus_project,
     open_new_worktree_dialog, open_open_worktree_dialog, open_remove_worktree_dialog,
     remove_worktree, route_modal_key, run_live_loop, sync_live_chrome, AttachState, ModalOutcome,
+    HOST_GRANT_UNAVAILABLE,
 };
 use gobby_client::daemon::{
     Answer, Daemon, DaemonError, DaemonEvent, EventReceiver, Generation, KillOutcome, LiveDaemon,
@@ -565,7 +566,9 @@ async fn loop_routes_input_and_frames() {
         .open_terminal("term-loop", "native", "epoch-loop")
         .expect("open terminal");
     ws.force_held(pane);
-    let mut source = ScriptedFrameSource::new(Transport::Direct);
+    // A proxy source, so the pane's keystrokes are the daemon's to carry; a
+    // direct pane types on its own frame socket instead (#22573).
+    let mut source = ScriptedFrameSource::new(Transport::Proxy);
     source.queue(ServerMessage::Frame(FrameData {
         cells: "HELLO"
             .chars()
@@ -1959,7 +1962,31 @@ async fn live_resize_propagates_geometry_by_policy() {
             let viewports_before = websocket_requests(&mock, "terminal_set_viewport").len();
             let resizes_before = websocket_requests(&mock, "terminal_resize").len();
             send_key(&input_tx, KeyCode::Char('x'), KeyModifiers::NONE).await;
-            wait_for_websocket_requests(&mock, "terminal_input", 1).await;
+            // The key lands on the pane's own frame socket, never on the
+            // daemon (#22573); waiting for it drives one loop iteration, and
+            // the resize that preceded it may arrive on the same socket first.
+            let mut direct_viewport = None;
+            timeout(Duration::from_secs(1), async {
+                loop {
+                    match direct_rx.recv().await {
+                        Some(ClientMessage::Input { data }) => {
+                            assert_eq!(data, b"x");
+                            break;
+                        }
+                        Some(ClientMessage::SetViewport { rows, cols }) => {
+                            direct_viewport = Some((rows, cols));
+                        }
+                        Some(_) => {}
+                        None => panic!("direct host closed before the key"),
+                    }
+                }
+            })
+            .await
+            .expect("the direct host receives the key");
+            assert!(
+                websocket_requests(&mock, "terminal_input").is_empty(),
+                "a direct pane's keystrokes never reach the daemon"
+            );
             assert_eq!(
                 websocket_requests(&mock, "terminal_set_viewport").len(),
                 viewports_before,
@@ -1970,16 +1997,20 @@ async fn live_resize_propagates_geometry_by_policy() {
                 resizes_before,
                 "an iteration at an unchanged geometry resends no size claim"
             );
-            let direct_viewport = timeout(Duration::from_secs(1), async {
-                loop {
-                    if let Some(ClientMessage::SetViewport { rows, cols }) = direct_rx.recv().await
-                    {
-                        break (rows, cols);
+            let direct_viewport = match direct_viewport {
+                Some(viewport) => viewport,
+                None => timeout(Duration::from_secs(1), async {
+                    loop {
+                        if let Some(ClientMessage::SetViewport { rows, cols }) =
+                            direct_rx.recv().await
+                        {
+                            break (rows, cols);
+                        }
                     }
-                }
-            })
-            .await
-            .expect("direct viewport after resize");
+                })
+                .await
+                .expect("direct viewport after resize"),
+            };
             drop(input_tx);
             direct_viewport
         };
@@ -2096,6 +2127,418 @@ async fn live_resize_propagates_geometry_by_policy() {
         result.expect("zero-size resize loop");
         mock.shutdown().await;
     }
+}
+
+/// A terminal host that speaks the frame protocol over a real Unix socket, the
+/// way gterm does. `received` is every client message after the handshake, and
+/// `to_client` injects server messages such as `InputRefused`.
+struct DirectHost {
+    socket_dir: tempfile::TempDir,
+    socket_path: std::path::PathBuf,
+    host_epoch: String,
+    received: mpsc::UnboundedReceiver<ClientMessage>,
+    to_client: mpsc::UnboundedSender<ServerMessage>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl DirectHost {
+    /// Listen on a fresh socket and answer one attach with `host_epoch`.
+    async fn start(host_epoch: &str) -> Self {
+        let socket_dir = tempfile::tempdir().expect("direct socket dir");
+        let socket_path = socket_dir.path().join("frames.sock");
+        let listener =
+            tokio::net::UnixListener::bind(&socket_path).expect("bind direct frame socket");
+        let (received_tx, received) = mpsc::unbounded_channel();
+        let (to_client, mut outbound) = mpsc::unbounded_channel::<ServerMessage>();
+        let epoch = host_epoch.to_string();
+        let task = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("direct client");
+            let _: ClientMessage = read_message_async(&mut stream, MAX_FRAME_SIZE)
+                .await
+                .expect("direct hello");
+            write_message_async(
+                &mut stream,
+                &ServerMessage::Welcome {
+                    host_epoch: epoch.clone(),
+                },
+            )
+            .await
+            .expect("direct welcome");
+            let _: ClientMessage = read_message_async(&mut stream, MAX_FRAME_SIZE)
+                .await
+                .expect("direct attach");
+            loop {
+                tokio::select! {
+                    message = read_message_async(&mut stream, MAX_FRAME_SIZE) => {
+                        match message {
+                            Ok(message) => {
+                                if received_tx.send(message).is_err() {
+                                    break;
+                                }
+                            }
+                            Err(_) => break,
+                        }
+                    }
+                    outgoing = outbound.recv() => {
+                        let Some(outgoing) = outgoing else { break };
+                        if write_message_async(&mut stream, &outgoing).await.is_err() {
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+        Self {
+            socket_dir,
+            socket_path,
+            host_epoch: host_epoch.to_string(),
+            received,
+            to_client,
+            task,
+        }
+    }
+
+    /// The roster `attach` block that tells gclient this terminal has a host
+    /// socket, so the attach asks for direct frames before proxy frames.
+    fn roster_attach(&self, terminal_id: &str) -> Value {
+        json!({
+            "backend": "native",
+            "frame_host_epoch": self.host_epoch,
+            "host_socket": self.socket_path.to_string_lossy(),
+            "host_terminal_id": terminal_id,
+        })
+    }
+
+    /// The `direct` locator the daemon returns with a direct attach result.
+    fn attach_locator(&self, terminal_id: &str) -> Value {
+        json!({
+            "host_epoch": self.host_epoch,
+            "host_terminal_id": terminal_id,
+            "frame_socket_path": self.socket_path.to_string_lossy(),
+            "pane": null,
+        })
+    }
+
+    /// Every client message the host has received so far, without waiting.
+    fn drain(&mut self) -> Vec<ClientMessage> {
+        let mut messages = Vec::new();
+        while let Ok(message) = self.received.try_recv() {
+            messages.push(message);
+        }
+        messages
+    }
+
+    /// Collect client messages until `predicate` accepts the batch.
+    async fn wait_for(
+        &mut self,
+        what: &str,
+        mut predicate: impl FnMut(&[ClientMessage]) -> bool,
+    ) -> Vec<ClientMessage> {
+        let mut seen = Vec::new();
+        timeout(Duration::from_secs(5), async {
+            loop {
+                if predicate(&seen) {
+                    return;
+                }
+                let Some(message) = self.received.recv().await else {
+                    panic!("direct host closed before {what}");
+                };
+                seen.push(message);
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("direct host never received {what}: {seen:?}"));
+        seen
+    }
+
+    async fn shutdown(self) {
+        drop(self.to_client);
+        self.task.abort();
+        let _ = self.task.await;
+        drop(self.socket_dir);
+    }
+}
+
+/// A live workspace whose single native pane is attached over `host`'s real
+/// frame socket, so `Pane::transport()` is `Direct` and the pane types on that
+/// socket instead of the daemon (#22573). Keep the returned home alive.
+async fn live_workspace_on_direct_host(
+    mock: &MockDaemon,
+    host: &DirectHost,
+    terminal_id: &str,
+) -> (Workspace<LiveDaemon>, tempfile::TempDir) {
+    let home = tempfile::tempdir().expect("gobby home");
+    std::fs::write(
+        home.path()
+            .join(gobby_core::local_token::LOCAL_CLI_TOKEN_FILENAME),
+        "local-token\n",
+    )
+    .expect("write local cli token");
+    mock.serve_direct_attach(host.attach_locator(terminal_id));
+    for _ in 0..2 {
+        mock.enqueue(
+            "GET",
+            "/api/terminals?",
+            200,
+            json!({
+                "items": [{
+                    "terminal_id": terminal_id,
+                    "backend": "native",
+                    "state": "live",
+                    "attach": host.roster_attach(terminal_id),
+                }],
+                "next_cursor": null,
+                "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
+            }),
+        );
+    }
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon);
+    workspace.set_gobby_home(home.path().to_path_buf());
+    workspace.select_project("project-1");
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("install the direct attachment");
+    let pane_id = workspace
+        .pane_for_terminal(terminal_id)
+        .expect("direct pane");
+    assert_eq!(
+        workspace.pane(pane_id).transport(),
+        Some(Transport::Direct),
+        "the roster advertised a host socket, so the attach must be direct"
+    );
+    (workspace, home)
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn direct_pane_keys_reach_the_host_not_the_daemon() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    let terminal_id = "terminal-direct";
+    let mut host = DirectHost::start("epoch-direct").await;
+    let (mut workspace, _home) = live_workspace_on_direct_host(&mock, &host, terminal_id).await;
+    let pane_id = workspace
+        .pane_for_terminal(terminal_id)
+        .expect("direct pane");
+    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    show_roster(&workspace, &mut chrome);
+    let (input_tx, input_rx) = mpsc::channel(16);
+
+    let driver = async {
+        // Startup focus takes the lease, and the mock's grant carries the
+        // host's input grant with it.
+        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        send_key(&input_tx, KeyCode::Char('x'), KeyModifiers::NONE).await;
+        send_key(&input_tx, KeyCode::Char('y'), KeyModifiers::NONE).await;
+        let typed = host
+            .wait_for("both keys", |seen| {
+                seen.iter()
+                    .filter(|message| matches!(message, ClientMessage::Input { .. }))
+                    .count()
+                    >= 2
+            })
+            .await;
+        assert!(
+            websocket_requests(&mock, "terminal_input").is_empty(),
+            "a direct pane's keystrokes never reach the daemon"
+        );
+        drop(input_tx);
+        typed
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, typed) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("direct typing loop");
+
+    let binds: Vec<&ClientMessage> = typed
+        .iter()
+        .filter(|message| matches!(message, ClientMessage::BindAttachment { .. }))
+        .collect();
+    assert_eq!(binds.len(), 1, "one bind per installed source: {typed:?}");
+    let attachment_id = workspace.pane(pane_id).attachment_id().to_string();
+    assert!(
+        matches!(binds[0], ClientMessage::BindAttachment { attachment_id: bound } if *bound == attachment_id),
+        "the bind names the pane's attachment: {:?}",
+        binds[0]
+    );
+    let keys: Vec<Vec<u8>> = typed
+        .iter()
+        .filter_map(|message| match message {
+            ClientMessage::Input { data } => Some(data.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(keys, vec![b"x".to_vec(), b"y".to_vec()]);
+    assert!(
+        typed
+            .iter()
+            .position(|message| matches!(message, ClientMessage::BindAttachment { .. }))
+            < typed
+                .iter()
+                .position(|message| matches!(message, ClientMessage::Input { .. })),
+        "the bind precedes the first key: {typed:?}"
+    );
+    assert!(
+        websocket_requests(&mock, "terminal_input").is_empty(),
+        "no keystroke reached the daemon"
+    );
+    assert_eq!(workspace.pane(pane_id).transport(), Some(Transport::Direct));
+    host.shutdown().await;
+    mock.shutdown().await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_granted_lease_without_a_host_grant_offers_take_back() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    let terminal_id = "terminal-ungranted";
+    let mut host = DirectHost::start("epoch-ungranted").await;
+    let (mut workspace, _home) = live_workspace_on_direct_host(&mock, &host, terminal_id).await;
+    let pane_id = workspace
+        .pane_for_terminal(terminal_id)
+        .expect("ungranted pane");
+    // The daemon hands out the writer lease and the terminal host never got the
+    // matching input grant. Twice: once for the startup focus, once for the
+    // take-back the keystroke below asks for.
+    mock.enqueue_take_control_reply_without_host_grant(1);
+    mock.enqueue_take_control_reply_without_host_grant(1);
+    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    show_roster(&workspace, &mut chrome);
+    let (input_tx, input_rx) = mpsc::channel(16);
+
+    let driver = async {
+        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        settle_live_event().await;
+        // Typing asks for the take-back the pane offered, and the host grant
+        // is still missing, so there is still nowhere to type.
+        send_key(&input_tx, KeyCode::Char('x'), KeyModifiers::NONE).await;
+        wait_for_websocket_requests(&mock, "terminal_take_control", 2).await;
+        settle_live_event().await;
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("ungranted loop");
+
+    let pane = workspace.pane(pane_id);
+    assert!(pane.is_observe(), "an ungranted pane cannot hold control");
+    assert!(pane.has_take_back(), "it offers take-back instead");
+    assert_eq!(pane.status_message(), Some(HOST_GRANT_UNAVAILABLE));
+    assert!(
+        websocket_requests(&mock, "terminal_input").is_empty(),
+        "gclient never falls back to daemon-mediated keys"
+    );
+    assert!(
+        host.drain()
+            .iter()
+            .all(|message| !matches!(message, ClientMessage::Input { .. })),
+        "and it types nothing at the host either"
+    );
+    assert!(
+        chrome
+            .alert_log
+            .iter()
+            .any(|toast| toast.title.contains(HOST_GRANT_UNAVAILABLE)),
+        "the refusal is visible: {:?}",
+        chrome.alert_log
+    );
+    host.shutdown().await;
+    mock.shutdown().await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn an_input_refusal_returns_the_pane_to_observing_and_keeps_the_stream() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    let terminal_id = "terminal-refused-input";
+    let mut host = DirectHost::start("epoch-refused-input").await;
+    let (mut workspace, _home) = live_workspace_on_direct_host(&mock, &host, terminal_id).await;
+    let pane_id = workspace
+        .pane_for_terminal(terminal_id)
+        .expect("refused pane");
+    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    show_roster(&workspace, &mut chrome);
+    let (input_tx, input_rx) = mpsc::channel(16);
+
+    let driver = async {
+        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        send_key(&input_tx, KeyCode::Char('x'), KeyModifiers::NONE).await;
+        host.wait_for("the key", |seen| {
+            seen.iter()
+                .any(|message| matches!(message, ClientMessage::Input { .. }))
+        })
+        .await;
+        // The daemon moved the grant to a peer, so the host refuses the next
+        // write while the frame stream keeps running.
+        host.to_client
+            .send(ServerMessage::InputRefused {
+                code: "input_not_granted".into(),
+            })
+            .expect("send refusal");
+        host.to_client
+            .send(semantic_frame("still streaming"))
+            .expect("send frame");
+        settle_live_event().await;
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("input refusal loop");
+
+    let pane = workspace.pane(pane_id);
+    assert!(pane.is_observe(), "a refused pane stops holding control");
+    assert!(pane.has_take_back());
+    assert_eq!(
+        pane.status_message(),
+        Some("terminal refused input (input_not_granted); take control again")
+    );
+    assert_eq!(
+        pane.transport(),
+        Some(Transport::Direct),
+        "the refusal is not a transport failure"
+    );
+    assert!(
+        pane.frame_source().is_some(),
+        "and the frame stream survives it"
+    );
+    assert!(pane.frames_rendered() > 0, "frames still arrive");
+    host.shutdown().await;
+    mock.shutdown().await;
 }
 
 #[tokio::test]
@@ -3903,6 +4346,10 @@ async fn bare_navigation_keys_reach_a_focused_terminal() {
     let pane = ws
         .open_terminal("term-typing", "native", "epoch-typing")
         .expect("open terminal");
+    // A proxy attachment, so every key lands in the daemon's write log where
+    // this test can read it back; a direct pane types on its own frame socket
+    // (#22573), which `direct_pane_keys_reach_the_host_not_the_daemon` covers.
+    ws.reattach_frames(pane).expect("proxy frame source");
     ws.force_held(pane);
 
     let mut chrome = Chrome::dark();
@@ -4150,11 +4597,13 @@ async fn mouse_forwarding_follows_pane_modes_and_passthrough() {
         let pane = workspace
             .pane_for_terminal(terminal_id)
             .expect("roster pane");
-        let mut source = ScriptedFrameSource::new(Transport::Direct);
+        // Proxy sources, because these reports are the daemon write protocol;
+        // a direct pane reports on its own frame socket (#22573).
+        let mut source = ScriptedFrameSource::new(Transport::Proxy);
         source.queue(reporting_frame("mouse app"));
         workspace
             .replace_frame_source(pane, PaneFrameSource::Scripted(source))
-            .expect("install scripted direct source");
+            .expect("install scripted proxy source");
         workspace
             .recv_pane_frame(pane)
             .await

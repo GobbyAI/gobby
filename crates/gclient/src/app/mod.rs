@@ -10,6 +10,7 @@ mod live_workspace;
 mod pane;
 pub mod project_tabs;
 pub mod run_loop;
+mod scripted_input;
 pub mod sidebar_model;
 pub mod viewer_state;
 mod window_state;
@@ -34,11 +35,12 @@ pub use live_loop::projects::{
 };
 pub use live_loop::run_live_loop;
 pub use live_loop::sync_live_chrome;
-pub use pane::{short_terminal_id, Backend, ControlState, Pane, PaneId, UNNAMED_PANE};
+pub use pane::{
+    short_terminal_id, Backend, ControlState, Pane, PaneId, HOST_GRANT_UNAVAILABLE, UNNAMED_PANE,
+};
 pub use viewer_state::{PaneInterner, ViewerState};
 pub use workspace_ops::WorkspaceModel;
 
-use crate::copy_mode::PASTE_MAX_BYTES;
 use crate::daemon::{
     Daemon, DaemonError, DaemonEvent, EventReceiver, Generation, LiveDaemon, RosterEntry,
     ScriptedDaemon, SidebarRows, Snapshot, TerminalRow,
@@ -473,6 +475,7 @@ impl Workspace {
         let pane = self.panes.get_mut(&id).expect("pane");
         pane.control = ControlState::Held;
         pane.take_back = false;
+        pane.host_input_granted = true;
         pane.set_lease_generation(pane.lease_generation().max(1));
         Ok(())
     }
@@ -495,91 +498,6 @@ impl Workspace {
         Ok(())
     }
 
-    pub fn send_keys(&mut self, id: PaneId, data: &str) -> Result<(), DaemonError> {
-        self.send_input(id, data.as_bytes())
-    }
-
-    pub fn send_input(&mut self, id: PaneId, data: &[u8]) -> Result<(), DaemonError> {
-        self.ensure_requests_allowed()?;
-        if !self.panes[&id].writable() {
-            let pane = self.panes.get_mut(&id).expect("pane");
-            if !pane.is_live() {
-                return Err(DaemonError::new(
-                    409,
-                    "stale_attachment",
-                    "attachment is not live",
-                ));
-            }
-            if matches!(
-                pane.control,
-                ControlState::LeaseLost | ControlState::UncertainReadOnly
-            ) {
-                return Err(DaemonError::new(
-                    403,
-                    "read_only",
-                    "pane requires explicit control recovery",
-                ));
-            }
-            if pane.pending_input.is_some() {
-                return Err(DaemonError::new(
-                    409,
-                    "control_pending",
-                    "a take-control request is already pending",
-                ));
-            }
-            pane.pending_input = Some(data.to_vec());
-            let attachment = pane.attachment_id().to_string();
-            let terminal_id = pane.terminal_id.clone();
-            return self.daemon.send_ws(json!({
-                "type": "terminal_take_control",
-                "terminal_id": terminal_id,
-                "attachment_id": attachment,
-                "takeover": false
-            }));
-        }
-        let pane = self.panes.get_mut(&id).expect("pane");
-        pane.client_write_seq += 1;
-        let seq = pane.client_write_seq;
-        pane.in_flight_write = Some(seq);
-        let attachment = pane.attachment_id().to_string();
-        let terminal_id = pane.terminal_id.clone();
-        let data = String::from_utf8_lossy(data);
-        self.daemon.send_ws(json!({
-            "type": "terminal_input",
-            "terminal_id": terminal_id,
-            "attachment_id": attachment,
-            "data": data,
-            "client_write_seq": seq
-        }))
-    }
-
-    pub fn paste_to_pty(&mut self, id: PaneId, text: &str) -> Result<(), DaemonError> {
-        self.ensure_requests_allowed()?;
-        if text.len() > PASTE_MAX_BYTES {
-            return Err(DaemonError::new(400, "paste_too_large", "paste_too_large"));
-        }
-        let pane = self.panes.get_mut(&id).expect("pane");
-        if pane.copy_search {
-            pane.search_buffer.push_str(text);
-            return Ok(());
-        }
-        if !pane.writable() {
-            return Err(DaemonError::new(403, "held", "paste refused"));
-        }
-        pane.client_write_seq += 1;
-        let seq = pane.client_write_seq;
-        pane.in_flight_write = Some(seq);
-        let attachment = pane.attachment_id().to_string();
-        let terminal_id = pane.terminal_id.clone();
-        self.daemon.send_ws(json!({
-            "type": "terminal_paste",
-            "terminal_id": terminal_id,
-            "attachment_id": attachment,
-            "text": text,
-            "client_write_seq": seq
-        }))
-    }
-
     pub fn paste_local(&mut self, id: PaneId, text: &str) -> Result<(), DaemonError> {
         let pane = self.panes.get_mut(&id).expect("pane");
         pane.search_buffer.push_str(text);
@@ -599,6 +517,7 @@ impl Workspace {
         let pane = self.panes.get_mut(&id).expect("pane");
         pane.control = ControlState::Held;
         pane.take_back = false;
+        pane.host_input_granted = true;
     }
 
     pub fn seed_attach_history(&mut self, id: PaneId, text: &str) {
@@ -934,6 +853,7 @@ impl<D: Daemon> Workspace<D> {
                 pane.attach_history = Some(text.clone());
                 pane.copy_seeded_from_history = true;
             }
+            ServerMessage::InputRefused { code } => pane.refuse_host_input(code),
             ServerMessage::ScrollOffsetApplied {
                 applied_rows,
                 max_rows,

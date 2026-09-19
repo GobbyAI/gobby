@@ -9,8 +9,10 @@ use tokio::time::Instant;
 
 use super::attach::{AttachState, ATTACH_RETRY_BASE};
 use crate::daemon::Generation;
-use crate::frame_source::{FrameSource, PaneFrameSource, ScriptedFrameSource, Transport};
-use gobby_terminal::protocol::FrameData;
+use crate::frame_source::{
+    FrameError, FrameSource, PaneFrameSource, ScriptedFrameSource, Transport,
+};
+use gobby_terminal::protocol::{ClientMessage, FrameData};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PaneId(pub u32);
@@ -63,6 +65,11 @@ impl fmt::Display for Backend {
         f.write_str(self.label())
     }
 }
+
+/// What a pane says when the daemon granted the writer lease but the terminal
+/// host never got the matching input grant. gclient does not type through the
+/// daemon (#22573), so the only honest offer is to take control again.
+pub const HOST_GRANT_UNAVAILABLE: &str = "terminal did not grant input; take control again";
 
 /// The last rung of the pane label ladder (D1): what a terminal is called once
 /// it has no name of its own and no foreground command the daemon could read.
@@ -123,6 +130,14 @@ pub struct Pane {
     pub required_created_flag: bool,
     pub in_flight_write: Option<u64>,
     pub(super) pending_input: Option<Vec<u8>>,
+    /// The daemon granted this attachment input at the terminal's host, so its
+    /// keystrokes belong on the frame stream rather than in a daemon request
+    /// (#22573). Every control result rewrites it; only `Held` panes read it.
+    pub host_input_granted: bool,
+    /// The attachment id already bound on the installed frame source. gterm
+    /// delivers input only to the bound holder, and a fresh source or a fresh
+    /// attachment has to bind again.
+    pub(super) host_bound_attachment: Option<String>,
     pub client_write_seq: u64,
     pub bracketed_paste: bool,
     pub search_buffer: String,
@@ -186,6 +201,8 @@ impl Pane {
             required_created_flag: false,
             in_flight_write: None,
             pending_input: None,
+            host_input_granted: false,
+            host_bound_attachment: None,
             client_write_seq: 0,
             bracketed_paste: false,
             search_buffer: String::new(),
@@ -348,6 +365,84 @@ impl Pane {
         self.is_live() && !self.terminating && self.control == ControlState::Held
     }
 
+    /// Frames arrive on a direct socket and the backend is one gclient can
+    /// write to. Whether it may type is [`Pane::direct_input`].
+    fn direct_native(&self) -> bool {
+        self.transport() == Some(Transport::Direct) && self.backend.is_native()
+    }
+
+    /// This pane types straight into its terminal's host: a direct frame
+    /// socket, a native backend, and a daemon-issued input grant (#22573).
+    pub fn direct_input(&self) -> bool {
+        self.direct_native() && self.host_input_granted
+    }
+
+    /// Type `data` into the host on the frame stream, binding this attachment
+    /// the first time. Never awaits: a full write channel drops the key and
+    /// names the backlog on the pane instead of stalling the render loop.
+    pub(super) fn send_host_input(&mut self, data: &[u8], paste: bool) -> Result<(), FrameError> {
+        let attachment_id = self.attachment_id().to_string();
+        let needs_bind = self.host_bound_attachment.as_deref() != Some(attachment_id.as_str());
+        let message = if paste {
+            ClientMessage::Paste {
+                text: String::from_utf8_lossy(data).into_owned(),
+            }
+        } else {
+            ClientMessage::Input {
+                data: data.to_vec(),
+            }
+        };
+        let source = self
+            .frame_source
+            .as_mut()
+            .ok_or_else(|| FrameError::Protocol("pane has no frame source".into()))?;
+        if needs_bind {
+            source.send_input(&ClientMessage::BindAttachment {
+                attachment_id: attachment_id.clone(),
+            })?;
+        }
+        let outcome = source.send_input(&message);
+        if needs_bind {
+            self.host_bound_attachment = Some(attachment_id);
+        }
+        match outcome {
+            Err(error @ FrameError::Backpressure) => {
+                self.status_message = Some(error.to_string());
+                Ok(())
+            }
+            other => other,
+        }
+    }
+
+    /// Record the host input grant that came with a granted writer lease. A
+    /// direct native pane the host did not grant cannot type there, and
+    /// gclient never falls back to daemon-mediated keys, so the pane returns
+    /// to observing and offers take-back. Reports whether the grant stands.
+    pub(super) fn apply_host_grant(&mut self, granted: Option<bool>) -> bool {
+        self.host_input_granted = granted.unwrap_or(false);
+        if self.host_input_granted || !self.direct_native() {
+            return true;
+        }
+        self.control = ControlState::Observe;
+        self.take_back = true;
+        self.pending_input = None;
+        self.status_message = Some(HOST_GRANT_UNAVAILABLE.to_string());
+        false
+    }
+
+    /// gterm refused a host write: `input_not_granted` once the daemon moved
+    /// the grant, `terminal_gone` once the PTY went away. The stream stays
+    /// open; only this pane's claim to type on it is gone.
+    pub(super) fn refuse_host_input(&mut self, code: &str) {
+        self.host_input_granted = false;
+        self.control = ControlState::Observe;
+        self.take_back = true;
+        self.pending_input = None;
+        self.status_message = Some(format!(
+            "terminal refused input ({code}); take control again"
+        ));
+    }
+
     pub fn frame_source(&self) -> Option<&PaneFrameSource> {
         self.frame_source.as_ref()
     }
@@ -405,5 +500,6 @@ impl Pane {
         }
         self.frame_source = Some(source);
         self.fallback_in_flight = false;
+        self.host_bound_attachment = None;
     }
 }

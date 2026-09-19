@@ -185,8 +185,10 @@ impl Workspace<LiveDaemon> {
             | FrameError::Protocol(_)
             | FrameError::Daemon(_) => self.recover_proxy_source(pane_id).await?,
             // A refused control request never reaches a frame source; nothing
-            // to recover.
-            FrameError::Refused(_) => {}
+            // to recover. A full host-input queue is the same: the stream is
+            // healthy and one keystroke was dropped, which `send_host_input`
+            // already put in the pane's status line (#22573).
+            FrameError::Refused(_) | FrameError::Backpressure => {}
             // No recovery path either, but not silent: the loop shows what
             // the source reported, so a host swap under a pane is visible.
             FrameError::HostEpochChanged { expected, actual } => {

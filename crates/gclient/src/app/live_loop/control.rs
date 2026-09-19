@@ -10,7 +10,7 @@ use crate::frame_source::{FrameError, FrameSource};
 use crate::ui::status::Toast;
 use crate::ui::Chrome;
 
-use super::super::{ControlState, PaneId, Workspace};
+use super::super::{ControlState, PaneId, Workspace, HOST_GRANT_UNAVAILABLE};
 
 /// Status shown when a key lands in a pane whose lease another viewer took.
 pub const LEASE_LOST_INPUT: &str =
@@ -121,6 +121,7 @@ async fn request_live_control(
         .get("granted")
         .and_then(Value::as_bool)
         .unwrap_or(false);
+    let host_input_granted = reply.get("host_input_granted").and_then(Value::as_bool);
     let refusal_reason = match reply.get("reason").and_then(Value::as_str) {
         Some("held") => HELD_BY_PEER.to_string(),
         Some(reason) => reason.to_string(),
@@ -138,11 +139,15 @@ async fn request_live_control(
             ControlState::Observe
         };
         pane.take_back = !granted;
-        if granted {
-            pane.pending_input.take()
-        } else {
+        if !granted {
             pane.pending_input = None;
             None
+        } else if pane.apply_host_grant(host_input_granted) {
+            pane.pending_input.take()
+        } else {
+            // The lease is ours and the host grant is not, so there is nowhere
+            // to type: take-back is the honest offer (#22573).
+            return Err(FrameError::Refused(HOST_GRANT_UNAVAILABLE.to_string()));
         }
     };
     if let Some(data) = pending {
@@ -243,6 +248,11 @@ pub(super) async fn send_live_write(
         let pane = workspace.panes.get_mut(&pane_id).expect("pane exists");
         if !pane.writable() {
             return Ok(());
+        }
+        // A direct native pane types on its own frame socket: no write
+        // sequence, no in-flight write, no daemon round trip per key (#22573).
+        if pane.direct_input() {
+            return pane.send_host_input(data, paste);
         }
         pane.client_write_seq += 1;
         pane.in_flight_write = Some(pane.client_write_seq);

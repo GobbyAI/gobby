@@ -93,7 +93,10 @@ fn src_scan_has_host_write() -> bool {
 
 #[test]
 fn focus_moves_control_through_the_daemon() {
-    assert!(!src_scan_has_host_write(), "crate must not host-write");
+    assert!(
+        !src_scan_has_host_write(),
+        "crate must not use the legacy host write verbs"
+    );
     let mut ws = Workspace::scripted();
     let a = ws
         .open_terminal("term-a", "native", "epoch-a")
@@ -112,10 +115,17 @@ fn focus_moves_control_through_the_daemon() {
         .contains(&"terminal_take_control".into()));
     ws.send_keys(a, "ls\n").expect("keys");
     assert!(
-        ws.daemon()
+        !ws.daemon()
             .ws_sent_types()
             .contains(&"terminal_input".into()),
-        "keystrokes go to the daemon"
+        "a held direct pane's keystrokes never reach the daemon (#22573)"
+    );
+    assert!(
+        ws.pane(a)
+            .scripted_source()
+            .expect("scripted source")
+            .sent_host_input(),
+        "they go to the terminal's own host instead"
     );
 
     ws.focus_pane(b).expect("focus b");

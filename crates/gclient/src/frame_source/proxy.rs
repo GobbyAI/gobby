@@ -190,6 +190,14 @@ impl FrameSource for ProxyFrameSource {
         self.daemon.notify(body).await.map_err(FrameError::from)
     }
 
+    /// A proxied pane has no socket to the host, so its keystrokes stay on the
+    /// daemon's `terminal_input` path (#22573); nothing routes host input here.
+    fn send_input(&mut self, _message: &ClientMessage) -> Result<(), FrameError> {
+        Err(FrameError::Protocol(
+            "proxied panes type through the daemon".into(),
+        ))
+    }
+
     async fn recv(&mut self) -> Result<ServerMessage, FrameError> {
         if let Some(message) = self.buffered.pop_front() {
             return Ok(message);

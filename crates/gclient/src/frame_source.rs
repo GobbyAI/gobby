@@ -27,6 +27,10 @@ use tokio::task::JoinHandle;
 use tokio::time::timeout;
 
 const DIRECT_FRAME_CAPACITY: usize = 256;
+/// Host writes queued before a key is reported as backpressure. A fast typist
+/// outruns a single socket write, and the old 16-slot channel could not absorb
+/// even one burst (#22573).
+const DIRECT_WRITE_CAPACITY: usize = 256;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -110,6 +114,11 @@ pub enum FrameError {
     /// "frame protocol failed" prefix that names the wrong layer (#22544).
     #[error("{0}")]
     Daemon(String),
+    /// The direct write channel is full: the host is not draining keystrokes
+    /// as fast as they arrive, so this key is dropped and the pane says so.
+    /// Typing must report a backlog, never block the render loop (#22573).
+    #[error("terminal input backlog; key dropped")]
+    Backpressure,
 }
 
 impl From<std::io::Error> for FrameError {
@@ -136,6 +145,10 @@ impl From<crate::daemon::DaemonError> for FrameError {
 #[allow(async_fn_in_trait)]
 pub trait FrameSource {
     async fn send(&mut self, message: &ClientMessage) -> Result<(), FrameError>;
+    /// Queue one host input verb -- `BindAttachment`, `Input` or `Paste` --
+    /// without awaiting anything. Keys are typed on the render loop's thread,
+    /// so this never waits on a socket, a daemon or a writer task (#22573).
+    fn send_input(&mut self, message: &ClientMessage) -> Result<(), FrameError>;
     async fn recv(&mut self) -> Result<ServerMessage, FrameError>;
     fn transport(&self) -> Transport;
 }
@@ -198,8 +211,17 @@ impl ScriptedFrameSource {
             .any(|message| matches!(message, ClientMessage::AttachTerminal { .. }))
     }
 
+    pub fn sent_messages(&self) -> &[ClientMessage] {
+        &self.sent
+    }
+
     pub fn sent_host_input(&self) -> bool {
-        false
+        self.sent.iter().any(|message| {
+            matches!(
+                message,
+                ClientMessage::Input { .. } | ClientMessage::Paste { .. }
+            )
+        })
     }
 
     pub fn sent_resize(&self) -> bool {
@@ -222,6 +244,11 @@ impl ScriptedFrameSource {
 impl FrameSource for ScriptedFrameSource {
     async fn send(&mut self, message: &ClientMessage) -> Result<(), FrameError> {
         ScriptedFrameSource::send(self, message)
+    }
+
+    fn send_input(&mut self, message: &ClientMessage) -> Result<(), FrameError> {
+        self.sent.push(message.clone());
+        Ok(())
     }
 
     async fn recv(&mut self) -> Result<ServerMessage, FrameError> {
@@ -262,6 +289,14 @@ impl FrameSource for PaneFrameSource {
             Self::Direct(source) => FrameSource::send(source, message).await,
             Self::Proxy(source) => FrameSource::send(source, message).await,
             Self::Scripted(source) => FrameSource::send(source, message).await,
+        }
+    }
+
+    fn send_input(&mut self, message: &ClientMessage) -> Result<(), FrameError> {
+        match self {
+            Self::Direct(source) => FrameSource::send_input(source, message),
+            Self::Proxy(source) => FrameSource::send_input(source, message),
+            Self::Scripted(source) => FrameSource::send_input(source, message),
         }
     }
 
@@ -515,7 +550,7 @@ impl UnixSocketFrameSource {
             pause_after: Arc::clone(&write_pause_after),
         };
         let (frame_tx, inbound) = mpsc::channel(DIRECT_FRAME_CAPACITY);
-        let (write_tx, write_rx) = mpsc::channel(16);
+        let (write_tx, write_rx) = mpsc::channel(DIRECT_WRITE_CAPACITY);
         let retired = Arc::new(Mutex::new(None));
         let (shutdown, _) = watch::channel(false);
         let reader_shutdown = shutdown.subscribe();
@@ -587,6 +622,9 @@ impl FrameSource for UnixSocketFrameSource {
             ClientMessage::SetViewport { .. }
                 | ClientMessage::SetScrollOffset { .. }
                 | ClientMessage::Detach
+                | ClientMessage::BindAttachment { .. }
+                | ClientMessage::Input { .. }
+                | ClientMessage::Paste { .. }
         ) {
             return Err(FrameError::Protocol(
                 "message is not valid after frame attachment".into(),
@@ -619,6 +657,35 @@ impl FrameSource for UnixSocketFrameSource {
         })?;
         guard.armed = false;
         outcome
+    }
+
+    fn send_input(&mut self, message: &ClientMessage) -> Result<(), FrameError> {
+        self.ensure_active()?;
+        if !matches!(
+            message,
+            ClientMessage::BindAttachment { .. }
+                | ClientMessage::Input { .. }
+                | ClientMessage::Paste { .. }
+        ) {
+            return Err(FrameError::Protocol(
+                "message is not a host input verb".into(),
+            ));
+        }
+        // The writer task owns the socket. Dropping the `done` receiver only
+        // means nobody waits for this write; a failed write still retires the
+        // source, which the next call or `recv` reports.
+        let (done, _) = oneshot::channel();
+        match self.outbound.try_send(WriteRequest {
+            message: message.clone(),
+            done,
+        }) {
+            Ok(()) => Ok(()),
+            Err(mpsc::error::TrySendError::Full(_)) => Err(FrameError::Backpressure),
+            Err(mpsc::error::TrySendError::Closed(_)) => Err(self
+                .retired_reason()
+                .unwrap_or(RetireReason::Eof)
+                .into_error()),
+        }
     }
 
     async fn recv(&mut self) -> Result<ServerMessage, FrameError> {
