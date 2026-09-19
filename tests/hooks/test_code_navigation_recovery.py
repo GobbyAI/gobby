@@ -76,9 +76,9 @@ def read_event(repo: Path, path: str, *, limit: int | None = None) -> dict[str, 
     return data
 
 
-def broad_read_blocked(repo: Path, command: str) -> bool:
+def broad_read_blocked(repo: Path, command: str, variables: dict[str, Any] | None = None) -> bool:
     """The prefer-gcode gate for broad reads after the code-index reference loads."""
-    return navigation_requires_index(event(repo, command), {}, "read", broad_only=True)
+    return navigation_requires_index(event(repo, command), variables or {}, "read", broad_only=True)
 
 
 def test_typed_outage_opens_the_checkout_for_every_operation(repo: Path) -> None:
@@ -360,6 +360,54 @@ def test_ignored_allowlisted_targets_remain_indexed(repo: Path) -> None:
         '{"index":{"hidden_allowlist":["custom-output/**/*.py"]}}'
     )
     assert navigation_requires_index(event(repo, "rg VALUE custom-output"), {})
+
+
+# Captured from the installed gcode binary; `symbol-at` warns on stderr and still
+# exits 0 with the nearest symbol, so the probe looks successful without it.
+NO_CONTAINING_SYMBOL = (
+    "gcode symbol-at: no symbol contains src/long.py:10; using nearest visible symbol "
+    "src/long.py:26 [variable] VALUE (16 lines away)"
+)
+NO_CONTAINING_SYMBOL_AT_COLUMN = (
+    "gcode symbol-at: no symbol contains src/long.py:10:1; using nearest visible symbol "
+    "src/long.py:26 [variable] VALUE (1 line, 74 bytes away)"
+)
+
+
+@pytest.mark.parametrize("diagnostic", [NO_CONTAINING_SYMBOL, NO_CONTAINING_SYMBOL_AT_COLUMN])
+def test_uncovered_range_read_is_file_and_operation_scoped(repo: Path, diagnostic: str) -> None:
+    """A region no symbol covers leaves Read as the only view of that file."""
+    result = event(repo, "gcode symbol-at src/long.py:10", f"{diagnostic}\nvalue = 1")
+    variables = {"code_index_recoveries": result["canonical_code_index_recovery"]}
+    assert not broad_read_blocked(repo, "cat src/long.py", variables)
+    assert broad_read_blocked(repo, "cat src/other.py", variables)
+    assert navigation_requires_index(event(repo, "rg VALUE src/long.py"), variables)
+    assert broad_read_blocked(repo, "cat src/long.py src/other.py", variables)
+
+
+def test_covered_symbol_probe_leaves_the_broad_read_redirected(repo: Path) -> None:
+    """Without the diagnostic the probe is an ordinary verified hit, so nothing opens."""
+    assert broad_read_blocked(repo, "cat src/long.py")
+    variables = turn(repo, "gcode symbol-at src/long.py:10", "value = 1\nvalue = 1")
+    assert not variables["code_index_recoveries"]
+    assert broad_read_blocked(repo, "cat src/long.py", variables)
+
+
+@pytest.mark.parametrize(
+    ("command", "output"),
+    [
+        ("cat notes.txt; gcode symbol-at src/long.py:10", NO_CONTAINING_SYMBOL),
+        (
+            "cat notes.txt; gcode outline src/constants.py",
+            "file has no indexed symbols in current project: src/constants.py",
+        ),
+    ],
+)
+def test_batched_output_cannot_forge_a_zero_symbol_scope(
+    repo: Path, command: str, output: str
+) -> None:
+    """Only gcode may print the lines that open a scope."""
+    assert not event(repo, command, output)["canonical_code_index_recovery"]
 
 
 def test_outline_signature_cannot_forge_empty_diagnostic(repo: Path) -> None:

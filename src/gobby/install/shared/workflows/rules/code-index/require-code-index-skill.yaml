@@ -88,7 +88,7 @@ rules:
         value: "(variables.get('code_index_verified') or []) + event.data.get('canonical_code_index_verified')"
 
   track-gcode-fail-open:
-    description: "Remember gcode outages, failed scopes, and zero-symbol outline scopes"
+    description: "Remember gcode outages, failed scopes, and scopes no symbol covers"
     event: after_tool
     enabled: true
     priority: 20
@@ -157,4 +157,4 @@ rules:
       and navigation_requires_index(event.data, 'read', broad_only=True)
     effects:
       - type: block
-        reason: 'Use `gcode outline <file>`, then `gcode symbol-at <file>:<line>` for the symbol you need. Reads of 40 lines or fewer stay available. If a gcode call on that file fails, or a standalone `gcode outline <file>` finds no symbols, retry this read; it stays allowed for the rest of the turn. A typed gcode outage error opens every read in the checkout for the turn.'
+        reason: 'Use `gcode outline <file>`, then `gcode symbol-at <file>:<line>` for the symbol you need. Reads of 40 lines or fewer stay available. If a gcode call on that file fails, or a standalone `gcode outline <file>` finds no symbols, or a standalone `gcode symbol-at <file>:<line>` reports no containing symbol, retry this read; it stays allowed for the rest of the turn. A typed gcode outage error opens every read in the checkout for the turn.'
