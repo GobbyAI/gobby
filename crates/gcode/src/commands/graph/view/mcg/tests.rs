@@ -9,11 +9,9 @@ use crate::commands::graph::view::{
     CandidateEndpoint, CandidateEndpointKind, ViewEdgeCandidate, VisibleFileMap, VisibleOwnerKey,
 };
 
-use crate::index::import_resolution::ImportResolutionContext;
+use crate::communities::identity::{ImportIdentity, identity_tests::identity_from};
 
-use super::identity::{
-    McgIdentity, McgSeedError, McgSeedSelector, close_endpoint, resolve_mcg_seed,
-};
+use super::identity::{McgSeedError, McgSeedSelector, close_endpoint, resolve_mcg_seed};
 use super::{McgHopFetch, assign_leiden_communities, walk_mcg};
 
 const MACHINE: &str = "machine-1";
@@ -70,8 +68,8 @@ fn candidate(source: CandidateEndpoint, target: CandidateEndpoint) -> ViewEdgeCa
     }
 }
 
-fn identity() -> McgIdentity {
-    McgIdentity {
+fn identity() -> ImportIdentity {
+    ImportIdentity {
         visible_files: HashSet::from([
             "collision".into(),
             "src/a.py".into(),
@@ -590,18 +588,6 @@ fn mcg_depth_two_closes_discovered_frontier_equivalence() {
     assert_eq!(node_ids(&from_file), node_ids(&from_relative));
 }
 
-fn identity_from(visible: &[&str], rows: &[(&str, &str)]) -> McgIdentity {
-    let visible = visible
-        .iter()
-        .map(|path| (*path).to_string())
-        .collect::<HashSet<_>>();
-    let imports = rows
-        .iter()
-        .map(|(source, module)| ((*source).to_string(), (*module).to_string()))
-        .collect::<Vec<_>>();
-    McgIdentity::from_resolution(&visible, &ImportResolutionContext::default(), &imports)
-}
-
 #[test]
 fn mcg_identity_resolves_relative_specifier_through_row_context() {
     let identity = identity_from(
@@ -662,34 +648,6 @@ fn mcg_identity_marks_colliding_relative_specifier_ambiguous() {
         }
         other => panic!("expected ambiguous seed, got {other:?}"),
     }
-}
-
-#[test]
-fn mcg_identity_build_handles_twenty_thousand_rows() {
-    const FILES: usize = 2_000;
-    let visible = (0..FILES)
-        .map(|index| format!("src/m{index}.py"))
-        .collect::<HashSet<_>>();
-    let mut imports = Vec::with_capacity(FILES * 10);
-    for index in 0..FILES {
-        for offset in 1..=10 {
-            imports.push((
-                format!("src/m{index}.py"),
-                format!("m{}", (index + offset) % FILES),
-            ));
-        }
-    }
-    let started = std::time::Instant::now();
-    let identity =
-        McgIdentity::from_resolution(&visible, &ImportResolutionContext::default(), &imports);
-    let elapsed = started.elapsed();
-    assert_eq!(identity.aliases["src/m0.py"], vec!["m0", "src.m0"]);
-    assert_eq!(identity.providers["m1999"], vec!["src/m1999.py"]);
-    assert_eq!(identity.aliases.len(), FILES);
-    assert!(
-        elapsed < std::time::Duration::from_secs(30),
-        "identity build took {elapsed:?}; the one-pass build must stay linear"
-    );
 }
 
 #[test]
