@@ -55,6 +55,10 @@ class FakeControlClient:
     drop_on_commit: bool = False
     claimed: bool = False
     authed: bool = False
+    # host_terminal_id -> attachment holding the frame-stream input grant.
+    input_grants: dict[str, str] = field(default_factory=dict)
+    grant_calls: list[tuple[str, str]] = field(default_factory=list)
+    revoke_calls: list[tuple[str, str | None]] = field(default_factory=list)
 
     async def dispatch(self, verb: str, **fields: Any) -> Any:
         """Route a raw control verb through the fake host surface."""
@@ -108,6 +112,24 @@ class FakeControlClient:
     async def kill(self, host_terminal_id: str) -> None:
         self._require_open()
         self.kill_calls.append(host_terminal_id)
+
+    async def grant_input(self, host_terminal_id: str, attachment_id: str) -> dict[str, Any]:
+        self._require_open()
+        self.grant_calls.append((host_terminal_id, attachment_id))
+        previous = self.input_grants.get(host_terminal_id)
+        self.input_grants[host_terminal_id] = attachment_id
+        return {"ok": True, "granted": True, "previous": previous}
+
+    async def revoke_input(
+        self, host_terminal_id: str, attachment_id: str | None = None
+    ) -> dict[str, Any]:
+        self._require_open()
+        self.revoke_calls.append((host_terminal_id, attachment_id))
+        holder = self.input_grants.get(host_terminal_id)
+        revoked = holder is not None and attachment_id in (None, holder)
+        if revoked:
+            del self.input_grants[host_terminal_id]
+        return {"ok": True, "revoked": revoked}
 
     async def close(self) -> None:
         # Tests reuse one client across adopt/replace/stop; do not latch closed.

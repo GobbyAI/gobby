@@ -1182,3 +1182,30 @@ async def test_partial_host_refusal_keeps_the_latch() -> None:
 
     assert excinfo.value.stage == "partial"
     assert "partial-text" in _unresolved(store, terminal_id)
+
+
+@pytest.mark.asyncio
+async def test_observe_operator_input_lifts_quarantine_once() -> None:
+    coordinator, _runtime, store, terminal = _counting_coordinator()
+    leases = coordinator.lease_registry
+    await leases.attach(terminal.id, "direct", attachment_id="att-1", terminal=terminal)
+    assert (await leases.take_control(terminal.id, "att-1")).granted
+    coordinator.quarantine(terminal.id, "wake:lost")
+    store.calls.clear()
+
+    # The row comes from the holder's attachment snapshot: no read per keystroke,
+    # one UPDATE per quarantine episode.
+    coordinator.observe_operator_input(terminal.id)
+    coordinator.observe_operator_input(terminal.id)
+    assert terminal.automatic_write_quarantined_at is None
+    assert terminal.automatic_write_quarantine_action_key is None
+    assert store.calls == ["clear_quarantine"]
+
+    # Without a holder snapshot the row is read from the store instead.
+    await leases.release_control("att-1")
+    store.set_automatic_write_quarantine(terminal.id, "wake:older")
+    store.calls.clear()
+    coordinator.observe_operator_input(terminal.id)
+    coordinator.observe_operator_input(terminal.id)
+    assert terminal.automatic_write_quarantined_at is None
+    assert store.calls == ["get", "clear_quarantine", "get"]

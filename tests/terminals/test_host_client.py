@@ -612,3 +612,48 @@ async def test_spawn_and_writes_share_the_connection_without_conflicting() -> No
     finally:
         await host.aclose()
         await client.close()
+
+
+@pytest.mark.asyncio
+async def test_grant_and_revoke_are_unledgered_round_trips() -> None:
+    reader = asyncio.StreamReader()
+    writer = _Writer()
+    client = HostClient(reader, writer)
+    try:
+        grant = asyncio.create_task(client.grant_input("ht-1", "att-1"))
+        request = await writer.next_write()
+        assert request["method"] == "grant_input"
+        assert request["host_terminal_id"] == "ht-1"
+        assert request["attachment_id"] == "att-1"
+        assert "operation_seq" not in request
+        reader.feed_data(
+            host_client.encode_control_line(
+                {"ok": True, "granted": True, "previous": "att-0", "id": request["id"]}
+            )
+        )
+        assert (await grant)["previous"] == "att-0"
+
+        revoke_all = asyncio.create_task(client.revoke_input("ht-1"))
+        request = await writer.next_write()
+        assert request["method"] == "revoke_input"
+        assert "attachment_id" not in request
+        assert "operation_seq" not in request
+        reader.feed_data(
+            host_client.encode_control_line({"ok": True, "revoked": False, "id": request["id"]})
+        )
+        assert (await revoke_all)["revoked"] is False
+
+        revoke_one = asyncio.create_task(client.revoke_input("ht-1", "att-1"))
+        request = await writer.next_write()
+        assert request["attachment_id"] == "att-1"
+        reader.feed_data(
+            host_client.encode_control_line(
+                {"ok": False, "error": "not_native", "id": request["id"]}
+            )
+        )
+        with pytest.raises(HostCommandError) as refused:
+            await revoke_one
+        assert refused.value.code == "not_native"
+        assert client.next_seq == 1
+    finally:
+        await client.close()

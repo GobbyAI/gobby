@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import secrets
 import threading
 from collections import OrderedDict, deque
@@ -23,6 +24,8 @@ from gobby.terminals.ws_protocol import (
 
 if TYPE_CHECKING:
     from gobby.storage.terminals import Terminal
+
+logger = logging.getLogger(__name__)
 
 LIFECYCLE_PUBLICATION_QUEUE_MAXSIZE = 256
 
@@ -46,6 +49,9 @@ class ControlResult:
     lease_generation: int
     displaced_attachment_id: str | None = None
     sizing: SizingDecision | None = None
+    # What the gterm input grant did on this transition: True granted to the
+    # holder, False the host refused or was unreachable, None no grant applies.
+    host_input_granted: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -143,6 +149,18 @@ class _Lease:
     sizing_owner: str | None = None
 
 
+@dataclass(frozen=True)
+class HolderChange:
+    """One writer-lease holder transition, reported under the terminal lock."""
+
+    terminal_id: str
+    terminal: Terminal | None
+    holder: _Attachment | None
+
+
+HolderObserver = Callable[[HolderChange], Awaitable[bool | None]]
+
+
 @dataclass(slots=True)
 class _LeaseLockCell:
     lock: asyncio.Lock
@@ -178,6 +196,7 @@ class TerminalLeaseRegistry:
         self._lifecycle_current: _LifecyclePublication | None = None
         self._lifecycle_closed = False
         self._lifecycle_error: LifecyclePublicationError | None = None
+        self._holder_observer: HolderObserver | None = None
 
     @property
     def lifecycle_worker(self) -> asyncio.Task[None] | None:
@@ -383,6 +402,22 @@ class TerminalLeaseRegistry:
     def generation(self, terminal_id: str) -> int:
         return self._lease(terminal_id).generation
 
+    def set_holder_observer(self, observer: HolderObserver | None) -> None:
+        """Install the one callback that follows every holder transition.
+
+        It runs under the terminal lock after the holder changed and before the
+        transition is answered, so the gterm input grant is never observed out
+        of order with the lease it mirrors.
+        """
+        self._holder_observer = observer
+
+    async def _notify_holder(
+        self, terminal_id: str, terminal: Terminal | None, holder: _Attachment | None
+    ) -> bool | None:
+        if self._holder_observer is None:
+            return None
+        return await self._holder_observer(HolderChange(terminal_id, terminal, holder))
+
     async def take_control(
         self,
         terminal_id: str,
@@ -398,12 +433,17 @@ class TerminalLeaseRegistry:
                 )
             lease = self._lease(terminal_id)
             if lease.holder == attachment_id:
-                return ControlResult(attachment_id, True, None, lease.generation)
+                # A repeated take is the holder's retry after a failed grant.
+                granted = await self._notify_holder(terminal_id, record.terminal, record)
+                return ControlResult(
+                    attachment_id, True, None, lease.generation, host_input_granted=granted
+                )
             if lease.holder is not None and not takeover:
                 return ControlResult(attachment_id, False, "held", lease.generation)
             displaced = lease.holder
             self._bump(lease)
             lease.holder = attachment_id
+            granted = await self._notify_holder(terminal_id, record.terminal, record)
             return ControlResult(
                 attachment_id,
                 True,
@@ -411,6 +451,7 @@ class TerminalLeaseRegistry:
                 lease.generation,
                 displaced_attachment_id=displaced,
                 sizing=self._reelect_sizing(terminal_id, lease),
+                host_input_granted=granted,
             )
 
     async def release_control(self, attachment_id: str) -> ControlResult:
@@ -426,12 +467,14 @@ class TerminalLeaseRegistry:
                 return ControlResult(attachment_id, False, "released", lease.generation)
             self._bump(lease)
             lease.holder = None
+            granted = await self._notify_holder(record.terminal_id, record.terminal, None)
             return ControlResult(
                 attachment_id,
                 False,
                 "released",
                 lease.generation,
                 sizing=self._reelect_sizing(record.terminal_id, lease),
+                host_input_granted=granted,
             )
 
     async def finalize(self, attachment_id: str, reason: str) -> FinalizedEvent | None:
@@ -447,6 +490,12 @@ class TerminalLeaseRegistry:
             if lease.holder == attachment_id:
                 self._bump(lease)
                 lease.holder = None
+                try:
+                    await self._notify_holder(terminal_id, record.terminal, None)
+                except Exception:
+                    # Finalize is cleanup after socket loss; the lease is already
+                    # released and the next take re-syncs the host grant.
+                    logger.exception("holder observer failed while finalizing %s", attachment_id)
             record.finalized = True
             record.writes.clear()
             sizing = self._reelect_sizing(terminal_id, lease)
