@@ -115,10 +115,10 @@ impl ImportIdentity {
 /// within each project, which is how [`crate::db::read_active_imports`] returns them.
 pub(crate) struct ProjectImports {
     pub identity: ImportIdentity,
-    #[expect(
-        dead_code,
-        reason = "the file import graph in plan 2.2 reads these rows instead of re-querying them"
-    )]
+    // `#[expect]` is wrong here: `cargo clippy --all-targets` compiles the test
+    // cfg too, where the threshold spike reads these rows, so the expectation is
+    // unfulfilled there. Plan 3.2 wires the lib read and drops the attribute.
+    #[allow(dead_code)]
     pub rows: Vec<(String, String)>,
 }
 
