@@ -1106,6 +1106,42 @@ def test_successful_top_level_and_segments_are_credited_individually() -> None:
     ]
 
 
+def test_a_criterion_naming_a_whole_chain_is_satisfied_by_that_successful_chain() -> None:
+    chain = "uv run ruff format src/ && uv run ruff check src/ && uv run mypy src/"
+    compound = replace(
+        _run(1, categories=("lint", "type_check"), command=chain),
+        validation_segments=(
+            TranscriptValidationSegment(
+                command="ruff format src/",
+                categories=("lint",),
+                segment_index=0,
+            ),
+            TranscriptValidationSegment(
+                command="ruff check src/",
+                categories=("lint",),
+                segment_index=1,
+            ),
+            TranscriptValidationSegment(
+                command="mypy src/",
+                categories=("type_check",),
+                segment_index=2,
+            ),
+        ),
+    )
+    tests = _run(2, command="uv run pytest tests/tasks/test_close_checklist.py -q")
+
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(validation_runs=(compound, tests)),
+        has_attributed_edits=True,
+        validation_criteria=f"Run `{chain}` clean after the final task edit.",
+    )
+
+    assert gate.status == "passed"
+    assert [record["status"] for record in gate.details["criterion_commands"]] == ["satisfied"]
+    assert gate.details["criterion_commands"][0]["execution"]["command"] == chain
+
+
 def test_wrapped_success_does_not_satisfy_validation_gate() -> None:
     command = "uv run pytest tests/tasks/test_close_checklist.py -q | tail -1"
 
