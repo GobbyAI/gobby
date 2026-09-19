@@ -1745,7 +1745,7 @@ definition and this sentence is its prose.
 
 ```yaml
 deferral:
-  task_ref: "#TBD"
+  task_ref: "#22606"
   deferred_from: "gcode-import-communities:D1"
   reason: "Memory community detection over memory_crossrefs waits for the gobby-memory crate from the Memory and search family (#21563, Stage 2 of the 1.0.0 epic) so the Rust kernel is reachable in-process; edge-supply and consumer decisions follow that move. This epic delivers only the reusable kernel entry point."
   owner: "memory-and-search family (#21563)"
