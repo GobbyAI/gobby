@@ -1,4 +1,5 @@
-//! Read-only frame protocol on `gterm-frames.sock`.
+//! Frame protocol on `gterm-frames.sock`: frames out, and PTY input in only
+//! for a stream whose bound attachment id holds the slot's input grant.
 
 use std::io::{self, Cursor};
 use std::os::fd::AsRawFd;
@@ -11,6 +12,7 @@ use tokio::net::UnixStream;
 use super::backpressure::FrameMailbox;
 use super::embed::{self, AttachOutcome};
 use super::state::HostState;
+use super::write::NativeInput;
 use crate::protocol::{
     check_client_version, read_message, validate_dimensions, write_message, ClientMessage,
     FramingError, ServerMessage, TmuxClientIdentity, VersionCheck, MAX_FRAME_SIZE,
@@ -232,6 +234,31 @@ pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
                             }
                         }
                     }
+                    ClientMessage::BindAttachment { attachment_id: holder } => {
+                        let bound = match attachment_id {
+                            Some(id) => state.bind_attachment(id, holder).await,
+                            None => Err("attach_required"),
+                        };
+                        if let Err(code) = bound {
+                            refuse_input(&mut writer, code).await;
+                        }
+                    }
+                    ClientMessage::Input { data } => {
+                        if let Err(code) = state
+                            .frame_input(attachment_id, NativeInput::Bytes(data))
+                            .await
+                        {
+                            refuse_input(&mut writer, code).await;
+                        }
+                    }
+                    ClientMessage::Paste { text } => {
+                        if let Err(code) = state
+                            .frame_input(attachment_id, NativeInput::Paste(text))
+                            .await
+                        {
+                            refuse_input(&mut writer, code).await;
+                        }
+                    }
                     ClientMessage::Detach => {
                         if let Some(id) = attachment_id.take() {
                             embed::detach_frame(&state, id).await;
@@ -298,6 +325,12 @@ pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
         }
     })
     .await;
+}
+
+/// Answers a refused `BindAttachment`/`Input`/`Paste` on the same stream. A
+/// refusal never closes the stream; a failed write surfaces on the next read.
+async fn refuse_input(writer: &mut tokio::net::unix::OwnedWriteHalf, code: &str) {
+    let _ = write_frame(writer, &ServerMessage::InputRefused { code: code.into() }).await;
 }
 
 async fn recv_opt(rx: &mut Option<FrameMailbox>) -> Option<ServerMessage> {

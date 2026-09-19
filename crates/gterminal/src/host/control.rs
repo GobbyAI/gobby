@@ -401,6 +401,8 @@ async fn dispatch(
         "resize" => state.resize(&request.extra).await,
         "write" => state.write(&request.extra).await,
         "write_batch" => state.write_batch(&request.extra).await,
+        "grant_input" => state.grant_input(&request.extra).await,
+        "revoke_input" => state.revoke_input(&request.extra).await,
         "snapshot" => state.snapshot(&request.extra).await,
         "subscribe_events" => {
             let (ack, rx) = state

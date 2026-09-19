@@ -6,11 +6,11 @@ mod host_support;
 
 use gobby_terminal::protocol::{
     read_message, write_message, ClientMessage, RenderEncoding, ServerMessage, MAX_CELLS,
-    MAX_FRAME_SIZE, PROTOCOL_VERSION, WORST_CELL_BYTES,
+    MAX_FRAME_SIZE, MAX_WRITE_BYTES, PROTOCOL_VERSION, WORST_CELL_BYTES,
 };
 use host_support::{
-    connect, recv_json, send_json, spawn_host, temp_socket_dir, wait_exit, wait_socket,
-    write_token, CONTROL_SOCKET, FRAMES_SOCKET,
+    connect, recv_json, rpc, send_json, spawn_host, temp_socket_dir, wait_exit, wait_socket,
+    wait_until, write_token, CONTROL_SOCKET, FRAMES_SOCKET,
 };
 use serde_json::json;
 use std::io::Write;
@@ -68,7 +68,7 @@ fn control_hello(dir: &std::path::Path, token: &str) -> UnixStream {
     stream
 }
 
-fn spawn_sleep(stream: &mut UnixStream, terminal_id: &str) -> String {
+fn spawn_prepared(stream: &mut UnixStream, terminal_id: &str, argv: &[&str]) -> serde_json::Value {
     send_json(
         stream,
         &json!({
@@ -88,7 +88,7 @@ fn spawn_sleep(stream: &mut UnixStream, terminal_id: &str) -> String {
             "spawn_key": "sk",
             "reservation_id": reservation_id,
             "reserve_key": "rk",
-            "argv": ["/bin/sleep", "30"],
+            "argv": argv,
             "cwd": "/",
             "rows": 24,
             "cols": 80,
@@ -97,7 +97,63 @@ fn spawn_sleep(stream: &mut UnixStream, terminal_id: &str) -> String {
     );
     let prepared = recv_json(stream);
     assert_eq!(prepared["ok"], true, "{prepared}");
-    prepared["host_terminal_id"].as_str().unwrap().to_string()
+    prepared
+}
+
+fn spawn_sleep(stream: &mut UnixStream, terminal_id: &str) -> String {
+    spawn_prepared(stream, terminal_id, &["/bin/sleep", "30"])["host_terminal_id"]
+        .as_str()
+        .unwrap()
+        .to_string()
+}
+
+fn commit_spawn(stream: &mut UnixStream, terminal_id: &str) {
+    send_json(
+        stream,
+        &json!({
+            "method": "spawn_commit",
+            "terminal_id": terminal_id,
+            "spawn_key": "sk",
+        }),
+    );
+    let committed = recv_json(stream);
+    assert_eq!(committed["ok"], true, "{committed}");
+}
+
+fn snapshot_text(stream: &mut UnixStream, host_terminal_id: &str) -> String {
+    send_json(
+        stream,
+        &json!({
+            "method": "snapshot",
+            "host_terminal_id": host_terminal_id,
+            "mode": "text",
+            "max_bytes": 4096,
+            "max_lines": 50,
+        }),
+    );
+    let snap = recv_json(stream);
+    assert_eq!(snap["ok"], true, "{snap}");
+    snap["text"].as_str().unwrap_or("").to_string()
+}
+
+/// Next non-render message: refusals and errors ride the same stream as frames.
+fn read_reply(stream: &mut UnixStream) -> ServerMessage {
+    loop {
+        match read_msg(stream) {
+            ServerMessage::Frame(_)
+            | ServerMessage::Terminal(_)
+            | ServerMessage::Graphics { .. }
+            | ServerMessage::AttachHistory { .. } => continue,
+            other => return other,
+        }
+    }
+}
+
+fn expect_refusal(stream: &mut UnixStream, expected: &str) {
+    match read_reply(stream) {
+        ServerMessage::InputRefused { code } => assert_eq!(code, expected),
+        other => panic!("expected InputRefused {expected}: {other:?}"),
+    }
 }
 
 #[test]
@@ -192,49 +248,152 @@ fn attach_viewport_and_observer_sizing() {
 }
 
 #[test]
-fn frame_channel_is_read_only() {
-    let token = "frame-ro";
+fn ungranted_input_is_refused_and_granted_input_writes() {
+    let token = "frame-input-grant";
     let (dir, mut child) = start_host(token);
     let mut ctrl = control_hello(dir.path(), token);
-    let host_terminal_id = spawn_sleep(&mut ctrl, "term-ro");
+    let prepared = spawn_prepared(
+        &mut ctrl,
+        "term-input",
+        &[
+            "/bin/sh",
+            "-c",
+            "read line; printf 'GOT:%s\\n' \"$line\"; exec /bin/sleep 30",
+        ],
+    );
+    child.track_pgid(prepared["pgid"].as_i64().unwrap() as i32);
+    let host_terminal_id = prepared["host_terminal_id"].as_str().unwrap().to_string();
+    commit_spawn(&mut ctrl, "term-input");
     let mut frames = connect(&dir.path().join(FRAMES_SOCKET));
     write_msg(&mut frames, &hello_frame(80, 24));
     let _ = read_msg(&mut frames);
+
+    // Nothing is attached on this stream yet.
+    write_msg(
+        &mut frames,
+        &ClientMessage::Input {
+            data: b"x".to_vec(),
+        },
+    );
+    expect_refusal(&mut frames, "attach_required");
+    write_msg(
+        &mut frames,
+        &ClientMessage::BindAttachment {
+            attachment_id: "att-1".into(),
+        },
+    );
+    expect_refusal(&mut frames, "attach_required");
+
     write_msg(
         &mut frames,
         &ClientMessage::AttachTerminal {
-            host_terminal_id,
+            host_terminal_id: host_terminal_id.clone(),
             reservation_id: None,
             locator: None,
         },
     );
-    match read_msg(&mut frames) {
+    match read_reply(&mut frames) {
         ServerMessage::Attached { .. } => {}
         other => panic!("expected attached: {other:?}"),
     }
+
+    // Legacy write verbs stay rejected as unknown.
     write_msg(
         &mut frames,
         &ClientMessage::LegacyInput {
             data: b"echo pwned\n".to_vec(),
         },
     );
-    match read_msg(&mut frames) {
+    match read_reply(&mut frames) {
         ServerMessage::Error { code, .. } => assert_eq!(code, "unknown_message"),
         other => panic!("{other:?}"),
     }
+
+    // Attached, nothing granted, nothing bound.
     write_msg(
         &mut frames,
-        &ClientMessage::LegacyResize {
-            cols: 12,
-            rows: 6,
-            cell_width_px: 0,
-            cell_height_px: 0,
+        &ClientMessage::Input {
+            data: b"nope\n".to_vec(),
         },
     );
-    match read_msg(&mut frames) {
-        ServerMessage::Error { code, .. } => assert_eq!(code, "unknown_message"),
-        other => panic!("{other:?}"),
-    }
+    expect_refusal(&mut frames, "input_not_granted");
+
+    let granted = rpc(
+        &mut ctrl,
+        "grant_input",
+        json!({"host_terminal_id": host_terminal_id, "attachment_id": "att-1"}),
+    );
+    assert_eq!(granted["ok"], true, "{granted}");
+    assert_eq!(granted["granted"], true, "{granted}");
+    assert!(granted["previous"].is_null(), "{granted}");
+
+    // Granted, but this stream has not bound the granted id.
+    write_msg(
+        &mut frames,
+        &ClientMessage::Input {
+            data: b"nope\n".to_vec(),
+        },
+    );
+    expect_refusal(&mut frames, "input_not_granted");
+
+    // Bound to an id other than the holder.
+    write_msg(
+        &mut frames,
+        &ClientMessage::BindAttachment {
+            attachment_id: "att-2".into(),
+        },
+    );
+    write_msg(
+        &mut frames,
+        &ClientMessage::Input {
+            data: b"nope\n".to_vec(),
+        },
+    );
+    expect_refusal(&mut frames, "input_not_granted");
+
+    // Bound to the holder: the child reads the line.
+    write_msg(
+        &mut frames,
+        &ClientMessage::BindAttachment {
+            attachment_id: "att-1".into(),
+        },
+    );
+    write_msg(
+        &mut frames,
+        &ClientMessage::Input {
+            data: b"hello\n".to_vec(),
+        },
+    );
+    wait_until("child echoes granted input", || {
+        snapshot_text(&mut ctrl, &host_terminal_id).contains("GOT:hello")
+    });
+    assert!(!snapshot_text(&mut ctrl, &host_terminal_id).contains("GOT:nope"));
+
+    // Over the write cap: refused, and the stream stays open.
+    write_msg(
+        &mut frames,
+        &ClientMessage::Input {
+            data: vec![b'a'; MAX_WRITE_BYTES + 1],
+        },
+    );
+    expect_refusal(&mut frames, "request_too_large");
+
+    let revoked = rpc(
+        &mut ctrl,
+        "revoke_input",
+        json!({"host_terminal_id": host_terminal_id, "attachment_id": "att-1"}),
+    );
+    assert_eq!(revoked["revoked"], true, "{revoked}");
+    write_msg(
+        &mut frames,
+        &ClientMessage::Input {
+            data: b"x".to_vec(),
+        },
+    );
+    expect_refusal(&mut frames, "input_not_granted");
+    write_msg(&mut frames, &ClientMessage::Paste { text: "x".into() });
+    expect_refusal(&mut frames, "input_not_granted");
+
     let src = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/src/protocol/wire_types.rs"

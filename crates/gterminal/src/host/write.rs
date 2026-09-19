@@ -7,8 +7,9 @@ use base64::Engine;
 use serde_json::{json, Map, Value};
 use tokio::time::{sleep_until, Instant};
 
+use super::events::InputActivity;
 use super::helpers::{err, named_key_bytes, s};
-use super::state::{HostState, Identity};
+use super::state::{HostState, Identity, Inner, TerminalSlot};
 use crate::protocol::MAX_WRITE_BYTES;
 
 pub const MAX_WRITE_BATCH_TARGETS: usize = 64;
@@ -51,45 +52,115 @@ impl HostState {
             Ok(bytes) => bytes,
             Err(_) => return err("invalid_encoding"),
         };
-        if raw.len() > MAX_WRITE_BYTES {
-            return err("request_too_large");
-        }
         let text = String::from_utf8_lossy(&raw).into_owned();
-        let inner = self.inner.lock().await;
-        let Some(identity) = inner.by_host_id.get(&host_terminal_id).cloned() else {
-            return err("not_found");
-        };
-        let Some(slot) = inner.terminals.get(&identity) else {
-            return err("not_found");
-        };
-        if slot.locator.is_some() {
-            return err("not_native");
-        }
-        #[cfg(feature = "vt-engine")]
-        if let Some(child) = slot.child.as_ref() {
-            let payload = match kind.as_str() {
-                "paste" => {
-                    drop(inner);
-                    return self.write_paste(&host_terminal_id, text).await;
+        let input = match kind.as_str() {
+            "paste" => NativeInput::Paste(text),
+            "key" => NativeInput::Bytes(named_key_bytes(&text)),
+            _ => {
+                let mut data = text.into_bytes();
+                if extra
+                    .get("submit")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+                {
+                    data.push(b'\n');
                 }
-                "key" => named_key_bytes(&text),
-                _ => {
-                    let mut data = text.into_bytes();
-                    if extra
-                        .get("submit")
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false)
-                    {
-                        data.push(b'\n');
-                    }
-                    data
-                }
-            };
-            let _ = child.runtime.try_send_bytes(bytes::Bytes::from(payload));
+                NativeInput::Bytes(data)
+            }
+        };
+        let mut inner = self.inner.lock().await;
+        let slot = match native_slot_mut(&mut inner, &host_terminal_id) {
+            Ok(slot) => slot,
+            Err(code) => return err(code),
+        };
+        match deliver_native(slot, input) {
+            // The control verb keeps its bounded-write contract: a saturated or
+            // closed PTY writer drops the bytes and still answers written.
+            Ok(()) | Err("pty_busy") | Err("terminal_gone") => {
+                json!({"ok": true, "written": true})
+            }
+            Err(code) => err(code),
         }
-        #[cfg(not(feature = "vt-engine"))]
-        let _ = (kind, text, slot);
-        json!({"ok": true, "written": true})
+    }
+
+    /// Grants one daemon attachment id the right to type on `host_terminal_id`
+    /// over the frame stream. Replaces any previous holder; unledgered.
+    pub async fn grant_input(&self, extra: &Map<String, Value>) -> Value {
+        let attachment_id = s(extra, "attachment_id");
+        if attachment_id.is_empty() {
+            return err("invalid_request");
+        }
+        let mut inner = self.inner.lock().await;
+        let slot = match native_slot_mut(&mut inner, &s(extra, "host_terminal_id")) {
+            Ok(slot) => slot,
+            Err(code) => return err(code),
+        };
+        let previous = slot.input_grant.replace(attachment_id);
+        json!({"ok": true, "granted": true, "previous": previous})
+    }
+
+    /// Clears the input grant on `host_terminal_id` when `attachment_id`
+    /// matches the holder, or unconditionally when it is omitted. Unledgered.
+    pub async fn revoke_input(&self, extra: &Map<String, Value>) -> Value {
+        let attachment_id = extra.get("attachment_id").and_then(Value::as_str);
+        let mut inner = self.inner.lock().await;
+        let slot = match native_slot_mut(&mut inner, &s(extra, "host_terminal_id")) {
+            Ok(slot) => slot,
+            Err(code) => return err(code),
+        };
+        let revoked = match attachment_id {
+            Some(holder) if slot.input_grant.as_deref() != Some(holder) => false,
+            _ => slot.input_grant.take().is_some(),
+        };
+        json!({"ok": true, "revoked": revoked})
+    }
+
+    /// Delivers `Input`/`Paste` from a frame stream whose attachment is
+    /// `attachment_id`. The error is the `InputRefused` code for the stream.
+    pub(crate) async fn frame_input(
+        &self,
+        attachment_id: Option<u64>,
+        input: NativeInput,
+    ) -> Result<(), &'static str> {
+        let Some(attachment_id) = attachment_id else {
+            return Err("attach_required");
+        };
+        let kind = input.kind();
+        let bytes = input.len();
+        let interrupt = input.interrupt();
+        let activity = {
+            let inner = self.inner.lock().await;
+            let attachment = inner
+                .attachments
+                .get(&attachment_id)
+                .ok_or("terminal_gone")?;
+            let identity = inner
+                .by_host_id
+                .get(&attachment.host_terminal_id)
+                .ok_or("terminal_gone")?;
+            let slot = inner.terminals.get(identity).ok_or("terminal_gone")?;
+            if slot.locator.is_some() {
+                return Err("not_native");
+            }
+            let holder = attachment
+                .client_attachment_id
+                .as_deref()
+                .ok_or("input_not_granted")?;
+            if slot.input_grant.as_deref() != Some(holder) {
+                return Err("input_not_granted");
+            }
+            deliver_native(slot, input)?;
+            InputActivity {
+                terminal_id: slot.identity.terminal_id.clone(),
+                host_terminal_id: slot.host_terminal_id.clone(),
+                attachment_id: holder.to_owned(),
+                kind,
+                bytes,
+                interrupt,
+            }
+        };
+        self.events.emit_input_activity(activity).await;
+        Ok(())
     }
 
     pub async fn write_batch(&self, extra: &Map<String, Value>) -> Value {
@@ -229,24 +300,83 @@ impl HostState {
         }
         json!({"ok": true, "results": results})
     }
+}
 
-    #[cfg(feature = "vt-engine")]
-    async fn write_paste(&self, host_terminal_id: &str, text: String) -> Value {
-        let inner = self.inner.lock().await;
-        let Some(identity) = inner.by_host_id.get(host_terminal_id).cloned() else {
-            return err("not_found");
-        };
-        let Some(slot) = inner.terminals.get(&identity) else {
-            return err("not_found");
-        };
-        if slot.locator.is_some() {
-            return err("not_native");
+/// Bytes or paste text bound for a native PTY, shared by the control `write`
+/// verb and the granted frame stream.
+pub(crate) enum NativeInput {
+    Bytes(Vec<u8>),
+    Paste(String),
+}
+
+impl NativeInput {
+    fn len(&self) -> usize {
+        match self {
+            Self::Bytes(bytes) => bytes.len(),
+            Self::Paste(text) => text.len(),
         }
-        if let Some(child) = slot.child.as_ref() {
-            let _ = child.runtime.try_send_paste(text);
-        }
-        json!({"ok": true, "written": true})
     }
+
+    fn kind(&self) -> &'static str {
+        match self {
+            Self::Bytes(_) => "input",
+            Self::Paste(_) => "paste",
+        }
+    }
+
+    /// `esc`/`ctrl_c` only when the whole `Input` payload is that one byte,
+    /// mirroring `is_interrupt_input` in the daemon's turn observer.
+    fn interrupt(&self) -> Option<&'static str> {
+        match self {
+            Self::Bytes(bytes) if bytes.as_slice() == b"\x1b" => Some("esc"),
+            Self::Bytes(bytes) if bytes.as_slice() == b"\x03" => Some("ctrl_c"),
+            _ => None,
+        }
+    }
+}
+
+/// Resolves a native slot by host id: `not_found` for unknown ids and
+/// `not_native` for tmux panes.
+fn native_slot_mut<'a>(
+    inner: &'a mut Inner,
+    host_terminal_id: &str,
+) -> Result<&'a mut TerminalSlot, &'static str> {
+    let identity = inner
+        .by_host_id
+        .get(host_terminal_id)
+        .cloned()
+        .ok_or("not_found")?;
+    let slot = inner.terminals.get_mut(&identity).ok_or("not_found")?;
+    if slot.locator.is_some() {
+        return Err("not_native");
+    }
+    Ok(slot)
+}
+
+/// Hands `input` to a native slot's PTY. The size cap and the vt-engine gate
+/// live here so the control verb and the frame stream refuse identically:
+/// `request_too_large` over `MAX_WRITE_BYTES`, `pty_busy` when the bounded
+/// writer is full, `terminal_gone` once the writer has closed.
+fn deliver_native(slot: &TerminalSlot, input: NativeInput) -> Result<(), &'static str> {
+    if input.len() > MAX_WRITE_BYTES {
+        return Err("request_too_large");
+    }
+    #[cfg(feature = "vt-engine")]
+    if let Some(child) = slot.child.as_ref() {
+        use tokio::sync::mpsc::error::TrySendError;
+        let sent = match input {
+            NativeInput::Bytes(bytes) => child.runtime.try_send_bytes(bytes::Bytes::from(bytes)),
+            NativeInput::Paste(text) => child.runtime.try_send_paste(text),
+        };
+        return match sent {
+            Ok(()) => Ok(()),
+            Err(TrySendError::Full(_)) => Err("pty_busy"),
+            Err(TrySendError::Closed(_)) => Err("terminal_gone"),
+        };
+    }
+    #[cfg(not(feature = "vt-engine"))]
+    let _ = input;
+    Ok(())
 }
 
 fn parse_batch_operations(

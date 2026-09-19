@@ -646,6 +646,7 @@ async fn insert_native_slot(state: &HostState, host_terminal_id: &str, rows: u16
         #[cfg(feature = "vt-engine")]
         truncated: false,
         user_attachments: HashSet::new(),
+        input_grant: None,
         locator: None,
         tmux_history_bytes: 0,
         history: None,

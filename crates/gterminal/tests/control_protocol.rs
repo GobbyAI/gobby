@@ -6,8 +6,8 @@ mod embed_support;
 mod host_support;
 
 use host_support::{
-    connect, recv_json, send_json, send_json_without_id, spawn_host, temp_socket_dir, wait_exit,
-    wait_socket, wait_until, write_token, CONTROL_SOCKET,
+    connect, recv_json, rpc, send_json, send_json_without_id, spawn_host, temp_socket_dir,
+    wait_exit, wait_socket, wait_until, write_token, CONTROL_SOCKET,
 };
 use serde_json::json;
 use std::collections::HashMap;
@@ -236,6 +236,15 @@ fn native_verbs_refuse_tmux_terminals() {
             "host_terminal_id": host_terminal_id,
             "reservation_id": "tmux-must-not-release",
             "reserve_key": "tmux-must-not-release",
+        }),
+        json!({
+            "method": "grant_input",
+            "host_terminal_id": host_terminal_id,
+            "attachment_id": "tmux-must-not-type",
+        }),
+        json!({
+            "method": "revoke_input",
+            "host_terminal_id": host_terminal_id,
         }),
     ];
     for request in requests {
@@ -759,6 +768,30 @@ fn control_surface_round_trip() {
     send_json(
         &mut stream,
         &json!({
+            "method": "grant_input",
+            "id": "g1",
+            "host_terminal_id": host_terminal_id,
+            "attachment_id": "att-surface",
+        }),
+    );
+    let granted = recv_json(&mut stream);
+    assert_eq!(granted["ok"], true, "{granted}");
+    assert_eq!(granted["granted"], true, "{granted}");
+    send_json(
+        &mut stream,
+        &json!({
+            "method": "revoke_input",
+            "id": "rv1",
+            "host_terminal_id": host_terminal_id,
+            "attachment_id": "att-surface",
+        }),
+    );
+    let revoked = recv_json(&mut stream);
+    assert_eq!(revoked["revoked"], true, "{revoked}");
+
+    send_json(
+        &mut stream,
+        &json!({
             "method": "write_batch",
             "id": "wb1",
             "operation_seq": 3,
@@ -858,6 +891,303 @@ fn control_surface_round_trip() {
     );
     let shutdown = recv_response_with_id(&mut stream, "sd");
     assert_eq!(shutdown["ok"], true);
+    assert!(wait_exit(&mut child, Duration::from_secs(5)).is_some());
+}
+
+/// Next non-render message on an ANSI frame stream.
+fn frame_reply(
+    stream: &mut std::os::unix::net::UnixStream,
+) -> gobby_terminal::protocol::ServerMessage {
+    use gobby_terminal::protocol::ServerMessage;
+    loop {
+        match embed_support::read_msg(stream) {
+            ServerMessage::Frame(_)
+            | ServerMessage::Terminal(_)
+            | ServerMessage::Graphics { .. }
+            | ServerMessage::AttachHistory { .. } => continue,
+            other => return other,
+        }
+    }
+}
+
+#[test]
+fn grant_input_binds_one_holder_and_emits_input_activity() {
+    use gobby_terminal::protocol::{ClientMessage, ServerMessage};
+
+    let dir = temp_socket_dir();
+    let token = "control-token-input-grant";
+    write_token(dir.path(), token);
+    std::fs::write(dir.path().join("local_cli_token"), embed_support::LOCAL).unwrap();
+    let (mut child, mut requests) = authed(dir.path(), token);
+    let mut events = connect(&dir.path().join(CONTROL_SOCKET));
+    send_json(
+        &mut events,
+        &json!({
+            "method": "hello",
+            "id": "grant-hello",
+            "protocol_version": 1,
+            "control_token": token,
+        }),
+    );
+    assert_eq!(recv_json(&mut events)["ok"], true);
+    send_json(
+        &mut events,
+        &json!({"method": "subscribe_events", "id": "grant-subscribe"}),
+    );
+    assert_eq!(recv_json(&mut events)["ok"], true);
+
+    send_json(
+        &mut requests,
+        &json!({
+            "method": "reserve_observer",
+            "id": "grant-reserve",
+            "terminal_id": "grant-terminal",
+            "reserve_key": "grant-terminal",
+        }),
+    );
+    let reserved = recv_json(&mut requests);
+    let reservation_id = reserved["reservation_id"].as_str().unwrap();
+    let prepared = seq_spawn(
+        &mut requests,
+        1,
+        json!({
+            "terminal_id": "grant-terminal",
+            "spawn_key": "grant-spawn",
+            "reservation_id": reservation_id,
+            "reserve_key": "grant-terminal",
+            "argv": ["/bin/cat"],
+            "cwd": dir.path().to_string_lossy(),
+            "rows": 24,
+            "cols": 80,
+            "commit_deadline_ms": 5000,
+        }),
+    );
+    assert_eq!(prepared["ok"], true, "{prepared}");
+    child.track_pgid(prepared["pgid"].as_i64().unwrap() as i32);
+    let host_terminal_id = prepared["host_terminal_id"].as_str().unwrap().to_string();
+    send_json(
+        &mut requests,
+        &json!({
+            "method": "spawn_commit",
+            "id": "grant-commit",
+            "terminal_id": "grant-terminal",
+            "spawn_key": "grant-spawn",
+        }),
+    );
+    assert_eq!(recv_json(&mut requests)["ok"], true);
+
+    let mut frames = connect_ansi_frames(&child);
+    embed_support::write_msg(
+        &mut frames,
+        &ClientMessage::AttachTerminal {
+            host_terminal_id: host_terminal_id.clone(),
+            reservation_id: None,
+            locator: None,
+        },
+    );
+    match frame_reply(&mut frames) {
+        ServerMessage::Attached { .. } => {}
+        other => panic!("expected attached: {other:?}"),
+    }
+
+    let first = rpc(
+        &mut requests,
+        "grant_input",
+        json!({"host_terminal_id": host_terminal_id, "attachment_id": "att-a"}),
+    );
+    assert_eq!(first["granted"], true, "{first}");
+    assert!(first["previous"].is_null(), "{first}");
+    let second = rpc(
+        &mut requests,
+        "grant_input",
+        json!({"host_terminal_id": host_terminal_id, "attachment_id": "att-b"}),
+    );
+    assert_eq!(second["granted"], true, "{second}");
+    assert_eq!(second["previous"], "att-a", "{second}");
+    let missing = rpc(
+        &mut requests,
+        "grant_input",
+        json!({"host_terminal_id": "missing-terminal", "attachment_id": "att-b"}),
+    );
+    assert_eq!(missing["error"], "not_found", "{missing}");
+    let unnamed = rpc(
+        &mut requests,
+        "grant_input",
+        json!({"host_terminal_id": host_terminal_id}),
+    );
+    assert_eq!(unnamed["error"], "invalid_request", "{unnamed}");
+
+    // The displaced holder cannot type.
+    embed_support::write_msg(
+        &mut frames,
+        &ClientMessage::BindAttachment {
+            attachment_id: "att-a".into(),
+        },
+    );
+    embed_support::write_msg(
+        &mut frames,
+        &ClientMessage::Input {
+            data: b"x".to_vec(),
+        },
+    );
+    match frame_reply(&mut frames) {
+        ServerMessage::InputRefused { code } => assert_eq!(code, "input_not_granted"),
+        other => panic!("expected refusal: {other:?}"),
+    }
+
+    // The holder types, and every accepted write is one payload-free event.
+    embed_support::write_msg(
+        &mut frames,
+        &ClientMessage::BindAttachment {
+            attachment_id: "att-b".into(),
+        },
+    );
+    let expect_activity = |events: &mut std::os::unix::net::UnixStream,
+                           kind: &str,
+                           bytes: u64,
+                           interrupt: serde_json::Value| {
+        let event = recv_json(events);
+        assert_eq!(event["event"], "input_activity", "{event}");
+        assert_eq!(event["terminal_id"], "grant-terminal", "{event}");
+        assert_eq!(event["host_terminal_id"], host_terminal_id, "{event}");
+        assert_eq!(event["attachment_id"], "att-b", "{event}");
+        assert_eq!(event["kind"], kind, "{event}");
+        assert_eq!(event["bytes"], bytes, "{event}");
+        assert_eq!(event["interrupt"], interrupt, "{event}");
+        assert!(event.get("data").is_none(), "{event}");
+        assert!(event.get("text").is_none(), "{event}");
+    };
+    let cases: [(ClientMessage, &str, u64, serde_json::Value); 4] = [
+        (
+            ClientMessage::Input {
+                data: b"x".to_vec(),
+            },
+            "input",
+            1,
+            serde_json::Value::Null,
+        ),
+        (
+            ClientMessage::Input {
+                data: b"\x1b".to_vec(),
+            },
+            "input",
+            1,
+            json!("esc"),
+        ),
+        (
+            ClientMessage::Input {
+                data: b"\x1b[A".to_vec(),
+            },
+            "input",
+            3,
+            serde_json::Value::Null,
+        ),
+        (
+            ClientMessage::Paste { text: "abc".into() },
+            "paste",
+            3,
+            serde_json::Value::Null,
+        ),
+    ];
+    for (message, kind, bytes, interrupt) in cases {
+        embed_support::write_msg(&mut frames, &message);
+        expect_activity(&mut events, kind, bytes, interrupt);
+    }
+
+    // A mismatched revoke keeps the grant; an unqualified revoke clears it.
+    let kept = rpc(
+        &mut requests,
+        "revoke_input",
+        json!({"host_terminal_id": host_terminal_id, "attachment_id": "att-a"}),
+    );
+    assert_eq!(kept["revoked"], false, "{kept}");
+    embed_support::write_msg(
+        &mut frames,
+        &ClientMessage::Input {
+            data: b"y".to_vec(),
+        },
+    );
+    expect_activity(&mut events, "input", 1, serde_json::Value::Null);
+    let cleared = rpc(
+        &mut requests,
+        "revoke_input",
+        json!({"host_terminal_id": host_terminal_id}),
+    );
+    assert_eq!(cleared["revoked"], true, "{cleared}");
+    let again = rpc(
+        &mut requests,
+        "revoke_input",
+        json!({"host_terminal_id": host_terminal_id}),
+    );
+    assert_eq!(again["revoked"], false, "{again}");
+    embed_support::write_msg(
+        &mut frames,
+        &ClientMessage::Input {
+            data: b"z".to_vec(),
+        },
+    );
+    match frame_reply(&mut frames) {
+        ServerMessage::InputRefused { code } => assert_eq!(code, "input_not_granted"),
+        other => panic!("expected refusal: {other:?}"),
+    }
+
+    // Neither verb touched the operation ledger: the next ledgered verb is seq 2.
+    send_json(
+        &mut requests,
+        &json!({
+            "method": "resize",
+            "id": "grant-resize",
+            "operation_seq": 2,
+            "host_terminal_id": host_terminal_id,
+            "rows": 30,
+            "cols": 100,
+        }),
+    );
+    let resized = recv_response_with_id(&mut requests, "grant-resize");
+    assert_eq!(resized["ok"], true, "{resized}");
+
+    // A fresh grant after the revoke starts with no previous holder. Ctrl-C
+    // classifies as an interrupt, and the PTY's SIGINT then ends cat.
+    let regranted = rpc(
+        &mut requests,
+        "grant_input",
+        json!({"host_terminal_id": host_terminal_id, "attachment_id": "att-b"}),
+    );
+    assert!(regranted["previous"].is_null(), "{regranted}");
+    embed_support::write_msg(
+        &mut frames,
+        &ClientMessage::Input {
+            data: b"\x03".to_vec(),
+        },
+    );
+    expect_activity(&mut events, "input", 1, json!("ctrl_c"));
+    let exited = recv_json(&mut events);
+    assert_eq!(exited["event"], "terminal_exited", "{exited}");
+    assert_eq!(exited["host_terminal_id"], host_terminal_id, "{exited}");
+
+    // Refused input never becomes an event.
+    events
+        .set_read_timeout(Some(Duration::from_millis(200)))
+        .unwrap();
+    let mut byte = [0_u8; 1];
+    let no_more = events.read(&mut byte).unwrap_err();
+    assert!(
+        matches!(
+            no_more.kind(),
+            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+        ),
+        "unexpected extra event: {no_more}"
+    );
+    events.set_read_timeout(None).unwrap();
+
+    send_json(
+        &mut requests,
+        &json!({"method": "host_shutdown", "id": "grant-shutdown", "grace_ms": 50}),
+    );
+    assert_eq!(
+        recv_response_with_id(&mut requests, "grant-shutdown")["ok"],
+        true
+    );
     assert!(wait_exit(&mut child, Duration::from_secs(5)).is_some());
 }
 

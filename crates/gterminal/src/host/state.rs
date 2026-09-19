@@ -94,6 +94,10 @@ pub(crate) struct TerminalSlot {
     #[cfg(feature = "vt-engine")]
     pub(crate) truncated: bool,
     pub(crate) user_attachments: HashSet<u64>,
+    /// Daemon attachment id allowed to type on the frame stream, set by the
+    /// `grant_input` control verb. Survives control disconnects; only
+    /// `revoke_input` or slot removal clears it.
+    pub(crate) input_grant: Option<String>,
     pub(crate) locator: Option<crate::protocol::PaneLocator>,
     pub(crate) tmux_history_bytes: u64,
     pub(crate) history: Option<crate::protocol::ServerMessage>,
@@ -111,6 +115,9 @@ pub struct Attachment {
     pub cols: u16,
     pub scroll: u32,
     pub reservation_id: Option<String>,
+    /// Daemon attachment id the stream bound with `BindAttachment`; compared
+    /// with the slot's `input_grant` before any `Input`/`Paste` is delivered.
+    pub client_attachment_id: Option<String>,
     pub mailbox: FrameMailbox,
     pub last_send: Instant,
     pub desynced: bool,
@@ -381,6 +388,7 @@ impl HostState {
                 total_bytes: 0,
                 truncated: false,
                 user_attachments: HashSet::new(),
+                input_grant: None,
                 locator: None,
                 tmux_history_bytes: 0,
                 history: None,
@@ -465,6 +473,7 @@ impl HostState {
                 cols,
                 scroll: 0,
                 reservation_id: reservation_id.clone(),
+                client_attachment_id: None,
                 mailbox: mailbox.clone(),
                 last_send: Instant::now(),
                 desynced: true,
@@ -511,6 +520,21 @@ impl HostState {
                 }
             }
         }
+    }
+
+    /// Names the daemon attachment id the frame attachment types as.
+    pub async fn bind_attachment(
+        &self,
+        attachment_id: u64,
+        client_attachment_id: String,
+    ) -> Result<(), &'static str> {
+        let mut inner = self.inner.lock().await;
+        let attachment = inner
+            .attachments
+            .get_mut(&attachment_id)
+            .ok_or("terminal_gone")?;
+        attachment.client_attachment_id = Some(client_attachment_id);
+        Ok(())
     }
 
     pub async fn set_viewport(

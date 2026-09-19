@@ -151,6 +151,7 @@ async fn attach_tmux(
             #[cfg(feature = "vt-engine")]
             truncated: false,
             user_attachments: HashSet::new(),
+            input_grant: None,
             locator: Some(locator.clone()),
             tmux_history_bytes: 0,
             history: None,
@@ -187,6 +188,7 @@ async fn attach_tmux(
             cols,
             scroll: 0,
             reservation_id: None,
+            client_attachment_id: None,
             mailbox: mailbox.clone(),
             last_send: std::time::Instant::now(),
             desynced: true,

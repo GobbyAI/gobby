@@ -201,7 +201,11 @@ impl PaneModes {
     }
 }
 
-/// Messages sent from the client to the host over the **read-only** frame socket.
+/// Messages sent from the client to the host over the frame socket. The stream
+/// is read-only until the daemon grants it input: `grant_input` names a daemon
+/// attachment id on the control socket, the client binds that id with
+/// [`ClientMessage::BindAttachment`], and only then do `Input` and `Paste`
+/// reach the PTY.
 ///
 /// Variant indices 1–3 are reserved so a hand-built fork-point `Input` /
 /// `ClipboardImage` / `Resize` payload cannot alias a live verb. The host
@@ -250,6 +254,19 @@ pub enum ClientMessage {
     /// Attachment-local rows-from-live-edge. Never reaches PTY input.
     SetScrollOffset {
         rows_from_live_edge: u32,
+    },
+    /// Names the daemon-issued attachment id this stream types as. Input is
+    /// delivered only while the slot's `grant_input` holder equals it.
+    BindAttachment {
+        attachment_id: String,
+    },
+    /// Raw PTY bytes for the bound attachment.
+    Input {
+        data: Vec<u8>,
+    },
+    /// Paste text for the bound attachment; bracketed when the pane asked for it.
+    Paste {
+        text: String,
     },
 }
 
@@ -510,6 +527,12 @@ pub enum ServerMessage {
     Attached {
         created: bool,
         host_terminal_id: String,
+    },
+    /// Typed refusal of `BindAttachment`, `Input` or `Paste`; the stream stays
+    /// open. Codes: `attach_required`, `input_not_granted`, `not_native`,
+    /// `request_too_large`, `pty_busy`, `terminal_gone`.
+    InputRefused {
+        code: String,
     },
 }
 

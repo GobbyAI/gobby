@@ -43,6 +43,7 @@ fn attachment() -> (Attachment, FrameMailbox) {
         cols: 3,
         scroll: 0,
         reservation_id: None,
+        client_attachment_id: None,
         mailbox: mailbox.clone(),
         last_send: Instant::now(),
         desynced: true,
