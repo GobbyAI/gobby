@@ -7,7 +7,13 @@ use ratatui::Frame;
 
 /// Paint the latest semantic frame from its origin, letterboxing a tmux pane
 /// that is smaller than the area it was given.
-pub fn render(frame: &mut Frame<'_>, area: Rect, pane: &Pane) {
+///
+/// `focused` decides whether this pane may place the terminal cursor.
+/// ratatui's `set_cursor_position` is last-write-wins across a frame, so a
+/// pane that answers it unconditionally is really bidding on paint order:
+/// with a split open the cursor ends up in whichever pane was drawn last,
+/// which is not where the user is typing.
+pub fn render(frame: &mut Frame<'_>, area: Rect, pane: &Pane, focused: bool) {
     let Some(grid) = pane.latest_frame() else {
         return;
     };
@@ -51,6 +57,9 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, pane: &Pane) {
         }
     }
 
+    if !focused {
+        return;
+    }
     if let Some(cursor) = &grid.cursor {
         if cursor.visible && cursor.x < width && cursor.y < height {
             frame.set_cursor_position((dst_x + cursor.x, dst_y + cursor.y));
@@ -133,11 +142,22 @@ mod tests {
         area: Rect,
         size: (u16, u16),
     ) -> Terminal<TestBackend> {
+        paint_pane(backend, frame, area, size, true)
+    }
+
+    /// `paint`, with a say in whether the pane is the focused one.
+    fn paint_pane(
+        backend: &str,
+        frame: FrameData,
+        area: Rect,
+        size: (u16, u16),
+        focused: bool,
+    ) -> Terminal<TestBackend> {
         let mut pane = Pane::new_detached(PaneId(1), "term-1", backend, "epoch");
         pane.latest_frame = Some(frame);
         let mut terminal = Terminal::new(TestBackend::new(size.0, size.1)).expect("test backend");
         terminal
-            .draw(|f| render(f, area, &pane))
+            .draw(|f| render(f, area, &pane, focused))
             .expect("draw frame");
         terminal
     }
@@ -228,6 +248,41 @@ mod tests {
         assert_eq!(
             letterboxed.get_cursor_position().expect("cursor"),
             (6, 4).into()
+        );
+    }
+
+    /// A frame has one cursor and ratatui keeps the last write, so with a
+    /// split open paint order decides where it lands unless the unfocused
+    /// panes decline it. The focused pane is painted FIRST here for that
+    /// reason: painted last it would win by accident, and this test would
+    /// pass against a `render` that claims the cursor unconditionally.
+    #[test]
+    fn only_the_focused_pane_places_the_cursor() {
+        let cursor = |x, y| {
+            Some(CursorState {
+                x,
+                y,
+                visible: true,
+                shape: Default::default(),
+            })
+        };
+        let mut focused = Pane::new_detached(PaneId(1), "term-1", "native", "epoch");
+        focused.latest_frame = Some(coordinate_frame(10, 4, cursor(2, 1)));
+        let mut other = Pane::new_detached(PaneId(2), "term-2", "native", "epoch");
+        other.latest_frame = Some(coordinate_frame(10, 4, cursor(3, 3)));
+
+        let mut terminal = Terminal::new(TestBackend::new(20, 4)).expect("test backend");
+        terminal
+            .draw(|f| {
+                render(f, Rect::new(0, 0, 10, 4), &focused, true);
+                render(f, Rect::new(10, 0, 10, 4), &other, false);
+            })
+            .expect("draw frame");
+
+        assert_eq!(
+            terminal.get_cursor_position().expect("cursor"),
+            (2, 1).into(),
+            "the unfocused pane drawn after the focused one took the cursor"
         );
     }
 }

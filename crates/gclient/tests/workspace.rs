@@ -545,9 +545,10 @@ async fn an_oversized_tmux_frame_renders_from_its_origin() {
         Terminal::new(TestBackend::new(area.width, area.height)).expect("test backend");
     terminal
         .draw(|frame| {
+            let focused = chrome.focused_pane();
             let mut content = |frame: &mut ratatui::Frame<'_>, body: Rect, id| {
                 painted = Some(body);
-                gobby_client::views::grid::render(frame, body, ws.pane(id));
+                gobby_client::views::grid::render(frame, body, ws.pane(id), focused == Some(id));
             };
             render_workspace_with(frame, &ws, &chrome, &mut content);
         })
