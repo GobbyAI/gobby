@@ -2,6 +2,7 @@
 
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
+use std::fmt;
 
 mod leiden;
 
@@ -92,6 +93,106 @@ pub fn analyze(graph: &AnalyticsGraph) -> GraphAnalytics {
         unexpected_links,
         hotspots,
     }
+}
+
+/// Input rejected by [`communities`]; [`analyze`] sanitizes the same conditions silently.
+///
+/// `Display` and `Error` are implemented by hand because a derived `thiserror::Error`
+/// would treat the `source` endpoint field as the error's cause.
+#[derive(Debug, Clone, PartialEq)]
+pub enum GraphInputError {
+    DuplicateNode {
+        id: String,
+    },
+    UnknownEndpoint {
+        source: String,
+        target: String,
+        kind: String,
+    },
+    InvalidWeight {
+        source: String,
+        target: String,
+        kind: String,
+        weight: f64,
+    },
+    SelfLoop {
+        id: String,
+        kind: String,
+    },
+}
+
+impl fmt::Display for GraphInputError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::DuplicateNode { id } => write!(f, "duplicate node id {id}"),
+            Self::UnknownEndpoint {
+                source,
+                target,
+                kind,
+            } => write!(
+                f,
+                "edge {source} -> {target} ({kind}) references an unknown node"
+            ),
+            Self::InvalidWeight {
+                source,
+                target,
+                kind,
+                weight,
+            } => write!(
+                f,
+                "edge {source} -> {target} ({kind}) has invalid weight {weight}"
+            ),
+            Self::SelfLoop { id, kind } => write!(f, "self-loop on {id} ({kind})"),
+        }
+    }
+}
+
+impl std::error::Error for GraphInputError {}
+
+/// Leiden communities only. Validates input instead of sanitizing it.
+///
+/// Checks duplicate node ids first, then each edge in order for an unknown
+/// endpoint, a self-loop, and a non-finite or non-positive weight. On success the
+/// partition is exactly what [`analyze`] reports for the same graph: an empty graph
+/// yields no communities and an edge-less graph one singleton per node.
+pub fn communities(graph: &AnalyticsGraph) -> Result<Vec<Community>, GraphInputError> {
+    validate_input(graph)?;
+    Ok(PreparedGraph::new(graph).communities().0)
+}
+
+fn validate_input(graph: &AnalyticsGraph) -> Result<(), GraphInputError> {
+    let mut ids = HashSet::with_capacity(graph.nodes.len());
+    for node in &graph.nodes {
+        if !ids.insert(node.id.as_str()) {
+            return Err(GraphInputError::DuplicateNode {
+                id: node.id.clone(),
+            });
+        }
+    }
+    for edge in &graph.edges {
+        if !ids.contains(edge.source.as_str()) || !ids.contains(edge.target.as_str()) {
+            return Err(GraphInputError::UnknownEndpoint {
+                source: edge.source.clone(),
+                target: edge.target.clone(),
+                kind: edge.kind.clone(),
+            });
+        }
+        if edge.source == edge.target {
+            return Err(GraphInputError::SelfLoop {
+                id: edge.source.clone(),
+                kind: edge.kind.clone(),
+            });
+        }
+        if !(edge.weight.is_finite() && edge.weight > 0.0) {
+            return Err(GraphInputError::InvalidWeight {
+                source: edge.source.clone(),
+                target: edge.target.clone(),
+                kind: edge.kind.clone(),
+                weight: edge.weight,
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Default coupling weight for an edge of the given relationship `kind`.
@@ -531,163 +632,5 @@ fn weight_for(node: &NodeRef, graph: &PreparedGraph) -> f64 {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn seeded_graph() -> AnalyticsGraph {
-        let nodes = ["a", "b", "c", "d", "e", "f"]
-            .into_iter()
-            .map(|id| AnalyticsNode {
-                id: id.to_string(),
-                kind: "symbol".to_string(),
-                weight: if id == "c" { 5.0 } else { 1.0 },
-            })
-            .collect();
-
-        let edges = [
-            ("a", "b", "calls"),
-            ("b", "c", "calls"),
-            ("c", "a", "imports"),
-            ("c", "d", "relates"),
-            ("d", "e", "calls"),
-            ("e", "f", "calls"),
-            ("f", "d", "imports"),
-        ]
-        .into_iter()
-        .map(|(source, target, kind)| AnalyticsEdge {
-            source: source.to_string(),
-            target: target.to_string(),
-            kind: kind.to_string(),
-            weight: weight_for_kind(kind),
-        })
-        .collect();
-
-        AnalyticsGraph { nodes, edges }
-    }
-
-    #[test]
-    fn graph_analytics_detects_seeded_graph_measures() {
-        let analytics = analyze(&seeded_graph());
-
-        assert_eq!(analytics.communities.len(), 2);
-        assert_eq!(
-            analytics
-                .communities
-                .iter()
-                .map(|community| community
-                    .nodes
-                    .iter()
-                    .map(|node| node.id.as_str())
-                    .collect::<Vec<_>>())
-                .collect::<Vec<_>>(),
-            vec![vec!["a", "b", "c"], vec!["d", "e", "f"]]
-        );
-
-        let centrality = analytics
-            .centrality
-            .iter()
-            .map(|score| (score.node.id.as_str(), score.degree, score.score))
-            .collect::<Vec<_>>();
-        assert_eq!(centrality[0], ("c", 3, 0.6));
-        assert_eq!(centrality[1], ("d", 3, 0.6));
-
-        assert_eq!(
-            analytics
-                .bridges
-                .iter()
-                .map(|node| node.id.as_str())
-                .collect::<Vec<_>>(),
-            vec!["c", "d"]
-        );
-        assert_eq!(
-            analytics
-                .god_nodes
-                .iter()
-                .map(|node| node.id.as_str())
-                .collect::<Vec<_>>(),
-            vec!["c", "d"]
-        );
-        assert_eq!(
-            analytics
-                .unexpected_links
-                .iter()
-                .map(|edge| (
-                    edge.source.as_str(),
-                    edge.target.as_str(),
-                    edge.kind.as_str()
-                ))
-                .collect::<Vec<_>>(),
-            vec![("c", "d", "relates")]
-        );
-        assert_eq!(
-            analytics
-                .hotspots
-                .iter()
-                .map(|hotspot| (hotspot.node.id.as_str(), hotspot.frequency, hotspot.weight))
-                .collect::<Vec<_>>(),
-            vec![("c", 3, 5.0), ("d", 3, 1.0)]
-        );
-    }
-
-    #[test]
-    fn weight_for_kind_covers_observed_aliases_case_insensitively() {
-        let cases = [
-            ("contains", 3.0),
-            ("member", 3.0),
-            ("extends", 2.5),
-            ("implements", 2.5),
-            ("inherits", 2.5),
-            ("INHERITS", 2.5),
-            ("import", 2.0),
-            ("imports", 2.0),
-            ("IMPORTS", 2.0),
-            ("call", 1.5),
-            ("calls", 1.5),
-            ("CALLS", 1.5),
-            ("cites", 1.5),
-            ("supports", 1.5),
-            ("references", 1.0),
-            ("uses", 1.0),
-            ("callers", 1.0),
-            ("links", 1.0),
-            ("neighbor", 1.0),
-            ("relates", 1.0),
-            ("changed", 1.0),
-            ("totally-unknown-kind", 1.0),
-        ];
-        for (kind, expected) in cases {
-            assert_eq!(weight_for_kind(kind), expected, "kind={kind}");
-        }
-    }
-
-    #[test]
-    fn analyze_empty_graph_does_not_panic() {
-        let analytics = analyze(&AnalyticsGraph {
-            nodes: Vec::new(),
-            edges: Vec::new(),
-        });
-        assert!(analytics.communities.is_empty());
-        assert!(analytics.centrality.is_empty());
-        assert!(analytics.bridges.is_empty());
-    }
-
-    #[test]
-    fn analyze_nodes_without_edges_yields_singleton_communities() {
-        let nodes = ["a", "b", "c"]
-            .into_iter()
-            .map(|id| AnalyticsNode {
-                id: id.to_string(),
-                kind: "symbol".to_string(),
-                weight: 1.0,
-            })
-            .collect();
-        let analytics = analyze(&AnalyticsGraph {
-            nodes,
-            edges: Vec::new(),
-        });
-        assert_eq!(analytics.communities.len(), 3);
-        for community in &analytics.communities {
-            assert_eq!(community.nodes.len(), 1);
-        }
-    }
-}
+#[path = "graph_analytics/tests.rs"]
+mod tests;
