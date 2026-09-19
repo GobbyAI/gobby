@@ -32,7 +32,9 @@ how the system behaves so you can work with it instead of being surprised by it.
    workaround for committing, validating, or closing.
 4. You found it, you fix it — in this session. Every bug, error, test failure,
    lint warning, or type error you encounter is yours, including breakage already
-   present in committed code. The found-work ladder, in order:
+   present in committed code. A drawn control that does nothing — a button, menu
+   item, or hit area with no effect — is a bug, not polish. The found-work ladder,
+   in order:
    1. Fix it now: track the finding with the claimed task's substeps, fix it,
       verify it, and name it in that Gobby task's close summary. Finding it is the
       authorization; this overrides any harness default that treats out-of-scope

@@ -28,6 +28,14 @@ from the current context epoch. Do not copy previous handoffs, logs, or complete
   No general lesson or improvement proposal is required.
 - `notes`: other necessary live working context.
 - `references`: sources needed to locate durable decisions, evidence, or working notes.
+- `found_work`: findings this epoch placed on the found-work ladder, as
+  `{finding, disposition, ref}` entries. `fixed` refs the `#N` task this session or
+  a spawned descendant claimed or closed; `escalated` refs the active owner session
+  after `send_message`; `filed-task` refs the `#N` rung-3 task this session created
+  with `needs-decision`, `needs-planning`, or `clean-window`. Entries render under
+  Notes. A consumed handoff with an entry not marked `fixed` arms the continuing
+  session's found-work gate. A finding with no disposition belongs in the ladder,
+  not the handoff.
 
 Never copy earlier reflections into a new handoff: this inflates apparent recurrence
 for future daily friction synthesis. Record a new occurrence only when friction
@@ -89,4 +97,4 @@ child's final handoff with `get_handoff(agent_run_id=...)`.
 
 Guide: [Creating and reading handoffs](../../../../../../../../docs/guides/sessions.md#creating-and-reading-handoffs).
 
-_Last verified: 2026-09-12_
+_Last verified: 2026-09-18_

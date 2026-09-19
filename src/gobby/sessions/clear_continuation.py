@@ -18,6 +18,7 @@ from gobby.sessions.compact_continuation import (
     schedule_handoff_compact_continuation,
 )
 from gobby.sessions.handoff import (
+    FOUND_WORK_VARIABLE,
     HANDOFF_PULL_PENDING_VARIABLE,
     PENDING_HANDOFF_VARIABLE,
     HandoffAttemptState,
@@ -199,6 +200,7 @@ def refresh_clear_attempt_content(
                 candidate = dict(candidate)
                 candidate["handoff_record_id"] = handoff_record_id
                 variables[name] = candidate
+            variables[FOUND_WORK_VARIABLE] = [entry.as_dict() for entry in handoff.found_work]
             conn.execute(
                 "UPDATE sessions SET handoff_markdown = %s, updated_at = %s WHERE id = %s",
                 (handoff.rendered_markdown, utc_now(), session_id),

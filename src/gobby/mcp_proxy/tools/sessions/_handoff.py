@@ -215,6 +215,8 @@ def register_handoff_tools(
             "found": True,
             "session_id": consumed.session_id,
             "handoff": consumed.markdown,
+            "found_work": [entry.as_dict() for entry in consumed.found_work],
+            "found_work_gate_armed": bool(consumed.open_found_work),
         }
 
     def feedback(observations: list[dict[str, Any]]) -> dict[str, Any]:

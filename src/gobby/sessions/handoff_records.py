@@ -15,6 +15,22 @@ from gobby.utils.datetime import utc_now
 
 HANDOFF_PAYLOAD_VERSION = 1
 HandoffBoundaryKind = Literal["compact", "clear", "agent_end"]
+FOUND_WORK_DISPOSITIONS = ("fixed", "escalated", "filed-task")
+
+
+@dataclass(frozen=True, slots=True)
+class FoundWorkEntry:
+    """One finding the handing-off session placed on the found-work ladder."""
+
+    finding: str
+    disposition: str
+    ref: str
+
+    def as_note(self) -> str:
+        return f"Found work: {self.finding} ({self.disposition} {self.ref})"
+
+    def as_dict(self) -> dict[str, str]:
+        return {"finding": self.finding, "disposition": self.disposition, "ref": self.ref}
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,6 +49,9 @@ class HandoffPayload:
     rendered_markdown: str
     content_sha256: str
     payload_version: int = HANDOFF_PAYLOAD_VERSION
+    # Structured form of the found-work notes. It rides the staging marker rather
+    # than a session_handoffs column, so rows rebuilt from storage carry ().
+    found_work: tuple[FoundWorkEntry, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,8 +82,13 @@ def build_handoff_payload(
     blockers: Sequence[str] = (),
     notes: Sequence[str] = (),
     references: Sequence[str] = (),
+    found_work: Sequence[FoundWorkEntry] = (),
 ) -> HandoffPayload:
-    """Normalize and render one canonical v1 handoff payload."""
+    """Normalize and render one canonical v1 handoff payload.
+
+    Found-work entries render as leading Notes, so the stored row and its
+    Markdown need no extra column.
+    """
     state = _nonblank(current_state, "current_state")
     normalized_next_steps = tuple(_nonblank_list(next_steps, "next_steps", required=True))
     normalized_accomplished = tuple(_nonblank_list(what_was_accomplished, "what_was_accomplished"))
@@ -72,7 +96,9 @@ def build_handoff_payload(
     normalized_problems = tuple(_nonblank_list(problems_encountered, "problems_encountered"))
     normalized_failed = tuple(_nonblank_list(what_didnt_work, "what_didnt_work"))
     normalized_blockers = tuple(_nonblank_list(blockers, "blockers"))
-    normalized_notes = tuple(_nonblank_list(notes, "notes"))
+    normalized_notes = tuple(
+        _nonblank_list((*(entry.as_note() for entry in found_work), *notes), "notes")
+    )
     normalized_references = tuple(dict.fromkeys(_nonblank_list(references, "references")))
 
     sections: list[str] = ["## Current State", "", state, "", "## Next Steps", ""]
@@ -114,6 +140,7 @@ def build_handoff_payload(
         references=normalized_references,
         rendered_markdown=markdown,
         content_sha256=hashlib.sha256(markdown.encode("utf-8")).hexdigest(),
+        found_work=tuple(found_work),
     )
 
 

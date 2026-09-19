@@ -22,6 +22,13 @@ problems_encountered and what_didnt_work record fresh friction observations,
 including resolved friction: attempt, obstacle, consequence or workaround. No general
 lesson is required. notes holds other necessary live context; references locates sources.
 
+found_work lists findings placed on the found-work ladder as {finding, disposition, ref}:
+fixed with the #N task this session or a spawned descendant claimed or closed,
+escalated with the active owner session ref after send_message, or filed-task with
+the rung-3 #N task this session created. An entry not marked fixed re-arms the
+continuing session's found-work gate; a finding with no disposition belongs in the
+ladder, not the handoff.
+
 Never copy earlier reflections into a new handoff; copied observations inflate
 apparent recurrence in future daily synthesis. Record another occurrence only when
 friction actually recurs. Unresolved blockers can carry forward without their history.

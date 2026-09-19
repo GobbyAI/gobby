@@ -757,6 +757,8 @@ async def test_plan_draft_round_trips_through_compaction_and_argumentless_get_ha
         "found": True,
         "session_id": session.id,
         "handoff": payload.rendered_markdown,
+        "found_work": [],
+        "found_work_gate_armed": False,
     }
     assert draft in delivered["handoff"]
     for item in (*key_decisions, *notes, *next_steps):
@@ -1241,6 +1243,7 @@ async def test_tool_schemas_expose_new_surface_and_legacy_names_are_absent(
         "blockers",
         "notes",
         "references",
+        "found_work",
         "clear_session",
     )
     assert properties["current_state"]["minLength"] == 1
@@ -1326,6 +1329,8 @@ async def test_get_handoff_result_stays_below_offload_threshold(
         "found": True,
         "session_id": session.id,
         "handoff": handoff.rendered_markdown,
+        "found_work": [],
+        "found_work_gate_armed": False,
     }
     assert len(json.dumps(result)) < 15_000
 

@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING, Any, Never
 from uuid import uuid4
 
 from gobby.sessions.handoff_records import (
+    FOUND_WORK_DISPOSITIONS,
+    FoundWorkEntry,
     HandoffPayload,
     build_handoff_payload,
     delete_undelivered_handoff,
@@ -19,6 +21,7 @@ from gobby.sessions.handoff_records import (
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.tasks.state_semantics import get_claimed_session_id
 from gobby.utils.datetime import utc_now
+from gobby.workflows.found_work_gate import arm_found_work_gate
 
 if TYPE_CHECKING:
     from gobby.storage.tasks import Task
@@ -28,6 +31,7 @@ HANDOFF_PULL_PENDING_VARIABLE = "handoff_pull_pending"
 HANDOFF_DISPATCH_GATE_VARIABLE = "context_compact_handoff_result"
 HANDOFF_UNAVAILABLE_VARIABLE = "context_compact_handoff_unavailable"
 HANDOFF_DELIVERY_FAILURES_VARIABLE = "context_compact_handoff_delivery_failures"
+FOUND_WORK_VARIABLE = "set_handoff_found_work"
 
 _OPTIONAL_FEEDBACK_FIELDS = ("suggestion", "disposition")
 
@@ -57,6 +61,8 @@ _FEEDBACK_SESSION_REF_RE = re.compile(
     r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-"
     r"[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}\b)"
 )
+_TASK_DISPOSITIONS = frozenset({"filed-task", "fixed"})
+_RUNG_THREE_LABELS = frozenset({"needs-decision", "needs-planning", "clean-window"})
 
 
 def build_handoff_continue_prompt() -> str:
@@ -110,6 +116,12 @@ class ConsumedHandoff:
     handoff_id: str
     attempt_id: str
     markdown: str
+    found_work: tuple[FoundWorkEntry, ...] = ()
+
+    @property
+    def open_found_work(self) -> tuple[FoundWorkEntry, ...]:
+        """Entries the ladder still holds open: everything not marked fixed."""
+        return tuple(entry for entry in self.found_work if entry.disposition != "fixed")
 
 
 def render_handoff_markdown(
@@ -146,9 +158,7 @@ def normalize_feedback_observations(
     descendant_session_ids: Collection[str] = (),
 ) -> list[FeedbackObservation]:
     """Validate feedback input without mutating storage."""
-    fixed_owner_session_ids = set(descendant_session_ids)
-    if session_id is not None:
-        fixed_owner_session_ids.add(session_id)
+    fixed_owner_session_ids = _fixed_owner_session_ids(session_id, descendant_session_ids)
     normalized: list[FeedbackObservation] = []
     for index, raw in enumerate(observations or ()):
         if not isinstance(raw, Mapping):
@@ -179,41 +189,16 @@ def normalize_feedback_observations(
         evidence = _nonblank(raw.get("evidence"), f"observations[{index}].evidence")
         disposition = optional["disposition"]
         task_match = FEEDBACK_TASK_REF_RE.search(evidence)
-        if disposition in {"filed-task", "fixed"} and task_match is None:
-            _raise_disposition_error(
-                index,
-                f"'{disposition}' requires a #N task ref in evidence",
-            )
-        if disposition == "escalated" and _FEEDBACK_SESSION_REF_RE.search(evidence) is None:
-            _raise_disposition_error(
-                index,
-                "'escalated' requires the active owner session ref "
-                "(#N, UUID, or <project>#N) in evidence",
-            )
-        if disposition in {"filed-task", "fixed"} and resolve_task is not None:
-            assert task_match is not None
-            task = resolve_task(task_match.group(0))
-            if task is None or session_id is None:
-                _raise_disposition_error(index, f"{task_match.group(0)} could not be resolved")
-            if disposition == "filed-task":
-                labels = set(task.labels or ())
-                if task.created_in_session_id != session_id or not labels.intersection(
-                    {"needs-decision", "needs-planning", "clean-window"}
-                ):
-                    _raise_disposition_error(
-                        index,
-                        "'filed-task' is rung 3 only: the referenced task must be created "
-                        "by this session and labeled needs-decision, needs-planning, or clean-window",
-                    )
-            elif (
-                get_claimed_session_id(task) not in fixed_owner_session_ids
-                and task.closed_in_session_id not in fixed_owner_session_ids
-            ):
-                _raise_disposition_error(
-                    index,
-                    "'fixed' requires a task claimed or closed by this session or by a "
-                    "spawned descendant session",
-                )
+        _validate_ladder_disposition(
+            f"observations[{index}]",
+            disposition,
+            task_ref=None if task_match is None else task_match.group(0),
+            session_ref_present=_FEEDBACK_SESSION_REF_RE.search(evidence) is not None,
+            ref_location="in evidence",
+            resolve_task=resolve_task,
+            session_id=session_id,
+            fixed_owner_session_ids=fixed_owner_session_ids,
+        )
         source = validate_feedback_source(
             _nonblank(raw.get("source"), f"observations[{index}].source"),
             field=f"observations[{index}].source",
@@ -253,9 +238,99 @@ def validate_feedback_source(source: str, *, field: str = "source") -> str:
     )
 
 
-def _raise_disposition_error(index: int, detail: str) -> Never:
+def normalize_found_work(
+    entries: Sequence[Mapping[str, Any]] | None,
+    *,
+    resolve_task: Callable[[str], Task | None] | None = None,
+    session_id: str | None = None,
+    descendant_session_ids: Collection[str] = (),
+) -> list[FoundWorkEntry]:
+    """Hold each handed-off finding to the ladder without mutating storage."""
+    fixed_owner_session_ids = _fixed_owner_session_ids(session_id, descendant_session_ids)
+    normalized: list[FoundWorkEntry] = []
+    for index, raw in enumerate(entries or ()):
+        field = f"found_work[{index}]"
+        if not isinstance(raw, Mapping):
+            raise ValueError(f"{field} must be an object")
+        finding = _nonblank(raw.get("finding"), f"{field}.finding")
+        disposition = raw.get("disposition")
+        if not isinstance(disposition, str) or disposition not in FOUND_WORK_DISPOSITIONS:
+            raise ValueError(
+                f"{field}.disposition must be one of {', '.join(FOUND_WORK_DISPOSITIONS)}: "
+                "a finding without a ladder disposition belongs in the ladder, not the handoff"
+            )
+        ref = _nonblank(raw.get("ref"), f"{field}.ref")
+        _validate_ladder_disposition(
+            field,
+            disposition,
+            task_ref=ref if FEEDBACK_TASK_REF_RE.fullmatch(ref) else None,
+            session_ref_present=_FEEDBACK_SESSION_REF_RE.fullmatch(ref) is not None,
+            ref_location="as ref",
+            resolve_task=resolve_task,
+            session_id=session_id,
+            fixed_owner_session_ids=fixed_owner_session_ids,
+        )
+        normalized.append(FoundWorkEntry(finding=finding, disposition=disposition, ref=ref))
+    return normalized
+
+
+def _fixed_owner_session_ids(
+    session_id: str | None, descendant_session_ids: Collection[str]
+) -> set[str]:
+    owners = set(descendant_session_ids)
+    if session_id is not None:
+        owners.add(session_id)
+    return owners
+
+
+def _validate_ladder_disposition(
+    field: str,
+    disposition: str | None,
+    *,
+    task_ref: str | None,
+    session_ref_present: bool,
+    ref_location: str,
+    resolve_task: Callable[[str], Task | None] | None,
+    session_id: str | None,
+    fixed_owner_session_ids: Collection[str],
+) -> None:
+    """Check one disposition's proof against the found-work ladder."""
+    if disposition in _TASK_DISPOSITIONS and task_ref is None:
+        _raise_disposition_error(field, f"'{disposition}' requires a #N task ref {ref_location}")
+    if disposition == "escalated" and not session_ref_present:
+        _raise_disposition_error(
+            field,
+            "'escalated' requires the active owner session ref "
+            f"(#N, UUID, or <project>#N) {ref_location}",
+        )
+    if disposition not in _TASK_DISPOSITIONS or resolve_task is None:
+        return
+    assert task_ref is not None
+    task = resolve_task(task_ref)
+    if task is None or session_id is None:
+        _raise_disposition_error(field, f"{task_ref} could not be resolved")
+    if disposition == "filed-task":
+        labels = set(task.labels or ())
+        if task.created_in_session_id != session_id or not labels.intersection(_RUNG_THREE_LABELS):
+            _raise_disposition_error(
+                field,
+                "'filed-task' is rung 3 only: the referenced task must be created "
+                "by this session and labeled needs-decision, needs-planning, or clean-window",
+            )
+    elif (
+        get_claimed_session_id(task) not in fixed_owner_session_ids
+        and task.closed_in_session_id not in fixed_owner_session_ids
+    ):
+        _raise_disposition_error(
+            field,
+            "'fixed' requires a task claimed or closed by this session or by a "
+            "spawned descendant session",
+        )
+
+
+def _raise_disposition_error(field: str, detail: str) -> Never:
     raise ValueError(
-        f"observations[{index}].disposition: Found-work ladder: {detail}. "
+        f"{field}.disposition: Found-work ladder: {detail}. "
         "Use 'fixed' for a referenced task this session claimed or closed; "
         "use 'escalated' after send_message to a referenced active owner session; "
         "use 'filed-task' only for a referenced rung-3 task carrying "
@@ -317,6 +392,8 @@ def stage_handoff_attempt(
     }
     if not clear_session:
         marker_updates[HANDOFF_PULL_PENDING_VARIABLE] = True
+    # Always written, so a restaged attempt cannot inherit an earlier attempt's list.
+    marker_updates[FOUND_WORK_VARIABLE] = [entry.as_dict() for entry in handoff.found_work]
     with db.transaction() as conn:
         session_row = conn.execute(
             "SELECT handoff_markdown, status, machine_id FROM sessions WHERE id = %s FOR UPDATE",
@@ -566,7 +643,9 @@ def consume_pending_handoff(db: HubDatabase, caller_session_id: str) -> Consumed
         )
         if consumed is not None:
             if expects_clear:
-                _clear_handoff_pull_pending(db, caller_session_id)
+                _finish_successor_pull(
+                    db, caller_session_id, arm_found_work=bool(consumed.open_found_work)
+                )
             return consumed
     return None
 
@@ -627,27 +706,51 @@ def _consume_candidate(
                 boundary_kind="compact",
                 continuation_session_id=continuation_session_id,
             )
+        found_work = _found_work_from_marker(variables.pop(FOUND_WORK_VARIABLE, None))
         variables.pop(PENDING_HANDOFF_VARIABLE, None)
         variables.pop(HANDOFF_PULL_PENDING_VARIABLE, None)
+        consumed = ConsumedHandoff(
+            session_id, handoff_id, attempt_id, str(handoff_row["rendered_markdown"]), found_work
+        )
+        if not expects_clear and consumed.open_found_work:
+            arm_found_work_gate(variables)
         _store_variables(conn, session_id, variables, exists=True)
-        markdown = str(handoff_row["rendered_markdown"])
-        return ConsumedHandoff(session_id, handoff_id, attempt_id, markdown)
+        return consumed
 
 
-def _clear_handoff_pull_pending(db: HubDatabase, session_id: str) -> None:
-    """Drop the successor's pull-deferral flag after a clear handoff is consumed."""
+def _found_work_from_marker(value: Any) -> tuple[FoundWorkEntry, ...]:
+    if not isinstance(value, list):
+        return ()
+    entries: list[FoundWorkEntry] = []
+    for item in value:
+        if not isinstance(item, Mapping):
+            continue
+        try:
+            entries.append(
+                FoundWorkEntry(
+                    _nonblank(item.get("finding"), "finding"),
+                    _nonblank(item.get("disposition"), "disposition"),
+                    _nonblank(item.get("ref"), "ref"),
+                )
+            )
+        except ValueError:
+            continue
+    return tuple(entries)
+
+
+def _finish_successor_pull(db: HubDatabase, session_id: str, *, arm_found_work: bool) -> None:
+    """Drop the successor's pull-deferral flag and arm its gate for open findings."""
     with db.transaction() as conn:
         variable_row = conn.execute(
             "SELECT variables FROM session_variables WHERE session_id = %s FOR UPDATE",
             (session_id,),
         ).fetchone()
-        if variable_row is None:
-            return
-        variables = _load_variables(variable_row["variables"])
-        if HANDOFF_PULL_PENDING_VARIABLE not in variables:
-            return
-        variables.pop(HANDOFF_PULL_PENDING_VARIABLE, None)
-        _store_variables(conn, session_id, variables, exists=True)
+        variables = _load_variables(variable_row["variables"] if variable_row else None)
+        changed = variables.pop(HANDOFF_PULL_PENDING_VARIABLE, None) is not None
+        if arm_found_work and arm_found_work_gate(variables):
+            changed = True
+        if changed:
+            _store_variables(conn, session_id, variables, exists=variable_row is not None)
 
 
 def _insert_feedback_rows(

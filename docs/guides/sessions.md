@@ -311,6 +311,15 @@ without their history. Existing memory guidance still applies; observations do n
 require a memory write. `notes` holds other necessary live context and `references`
 locates sources.
 
+`found_work` lists findings this epoch placed on the found-work ladder as
+`{finding, disposition, ref}` entries. `fixed` refs the `#N` task this session or a
+spawned descendant claimed or closed; `escalated` refs the active owner session after
+`send_message`; `filed-task` refs the `#N` rung-3 task this session created with
+`needs-decision`, `needs-planning`, or `clean-window`. Intake rejects any other
+disposition, a missing disposition, or a missing ref. Entries render under Notes, and
+`get_handoff` arms the reading session's found-work gate when an entry is not marked
+`fixed`, so the deferral is held to the ladder at the next stop.
+
 Prune cumulative history and superseded detail first. If necessary live detail still
 cannot fit, create or update a session-scoped Markdown working-context file and add
 its project-relative path to `references` before submitting. Keep immediate orientation
@@ -380,6 +389,10 @@ call_tool("gobby-sessions", "set_handoff", {
     "problems_encountered": ["Delivery state was previously implicit"],
     "what_didnt_work": ["Treating mutable Markdown as proof of delivery"],
     "references": ["#21140"],
+    "found_work": [
+        {"finding": "The clear dialog's Cancel button did nothing",
+         "disposition": "fixed", "ref": "#21140"}
+    ],
     "clear_session": False
 })
 ```

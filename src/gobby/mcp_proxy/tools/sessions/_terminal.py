@@ -16,6 +16,7 @@ from uuid import uuid4
 from gobby.agents.provider_capabilities import provider_capabilities
 from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.hooks.grok_pending_context import clear_queued_context
+from gobby.mcp_proxy.tools.sessions._handoff import build_feedback_task_resolver
 from gobby.mcp_proxy.tools.sessions._terminal_send_keys import (
     _authorize_send_keys_target as _authorize_send_keys_target,
 )
@@ -51,11 +52,14 @@ from gobby.mcp_proxy.tools.sessions._terminal_transcripts import (
 )
 from gobby.prompts.loader import PromptLoader
 from gobby.sessions.handoff import (
+    normalize_found_work,
     restore_handoff_attempt,
     stage_handoff_attempt,
     staged_handoff_tool_result,
 )
 from gobby.sessions.handoff_records import (
+    FOUND_WORK_DISPOSITIONS,
+    FoundWorkEntry,
     HandoffPayload,
     build_handoff_payload,
     record_handoff_delivery,
@@ -337,6 +341,27 @@ def register_terminal_tools(
         write_coordinator=write_coordinator,
     )
 
+    def _validated_found_work(entries: list[dict[str, Any]] | None) -> list[FoundWorkEntry]:
+        """Hold each handed-off finding to the ladder with the feedback tool's task rules."""
+        if not entries:
+            return []
+        from gobby.utils.session_context import get_current_session_id
+
+        session_id = get_current_session_id()
+        resolver = (
+            build_feedback_task_resolver(session_manager, task_manager, session_id)
+            if session_id
+            else None
+        )
+        return normalize_found_work(
+            entries,
+            resolve_task=resolver.resolve_task if resolver is not None else None,
+            session_id=session_id or None,
+            descendant_session_ids=(
+                resolver.descendant_session_ids if resolver is not None else ()
+            ),
+        )
+
     async def set_handoff(
         current_state: str,
         next_steps: list[str],
@@ -347,6 +372,7 @@ def register_terminal_tools(
         blockers: list[str] | None = None,
         notes: list[str] | None = None,
         references: list[str] | None = None,
+        found_work: list[dict[str, Any]] | None = None,
         clear_session: bool = False,
     ) -> dict[str, Any]:
         feedback_status = _require_handoff_prerequisites(clear_session=clear_session)
@@ -364,6 +390,7 @@ def register_terminal_tools(
                 blockers=blockers or (),
                 notes=notes or (),
                 references=references or (),
+                found_work=_validated_found_work(found_work),
             )
         except ValueError as exc:
             return {"success": False, "error": str(exc), "error_code": "invalid_handoff"}
@@ -694,6 +721,35 @@ def register_terminal_tools(
                     "type": "array",
                     "items": {"type": "string", "minLength": 1},
                     "default": [],
+                },
+                "found_work": {
+                    "type": "array",
+                    "default": [],
+                    "description": (
+                        "Findings this epoch placed on the found-work ladder. Each entry "
+                        "names the finding, its disposition, and the ref that proves it: "
+                        "'fixed' with the #N task this session or a spawned descendant "
+                        "claimed or closed; 'escalated' with the active owner session ref "
+                        "after send_message; 'filed-task' with the #N rung-3 task this "
+                        "session created carrying needs-decision, needs-planning, or "
+                        "clean-window. A finding without a disposition belongs in the "
+                        "ladder, not the handoff. Entries render under Notes; a consumed "
+                        "handoff with an entry not marked fixed arms the continuing "
+                        "session's found-work gate."
+                    ),
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "finding": {"type": "string", "minLength": 1},
+                            "disposition": {
+                                "type": "string",
+                                "enum": list(FOUND_WORK_DISPOSITIONS),
+                            },
+                            "ref": {"type": "string", "minLength": 1},
+                        },
+                        "required": ["finding", "disposition", "ref"],
+                        "additionalProperties": False,
+                    },
                 },
                 "clear_session": {"type": "boolean", "default": False},
             },

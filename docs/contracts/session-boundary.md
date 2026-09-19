@@ -14,6 +14,10 @@ marker. It accepts:
 - optional nonblank `what_was_accomplished`, `key_decisions`,
   `problems_encountered`, `what_didnt_work`, `blockers`, `notes`, and `references`
   entries;
+- optional `found_work` entries of `{finding, disposition, ref}`, each held to the
+  found-work ladder (`fixed` with a `#N` task this session or a descendant claimed
+  or closed, `escalated` with the owner session ref, `filed-task` with a rung-3 `#N`
+  task) and rendered under Notes;
 - `clear_session=false` for in-place compact or `true` for a bound clear successor.
 
 References are deduplicated in caller order. Rendered content is limited to 10,000
@@ -237,7 +241,9 @@ Manual `/clear` has no marker. Its new session is independent and receives no ha
 
 A successful read atomically removes the pending marker and returns persisted Markdown.
 Subsequent reads are empty. Missing, expired, malformed, or manually created boundaries
-fail open to the same empty result. No skill tier rides the handoff: the session-start
+fail open to the same empty result. A consumed handoff whose `found_work` carries an
+entry not marked `fixed` arms the reading session's found-work gate, on the compact
+row and on a clear successor alike. No skill tier rides the handoff: the session-start
 reset empties the loaded-skills and completed-reference ledgers and the rule gates demand each skill again at its
 first use.
 The persisted Markdown remains available to UI/API session reads.
