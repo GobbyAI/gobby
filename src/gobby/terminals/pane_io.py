@@ -8,9 +8,13 @@ raw tmux manager.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any, Protocol
 
+from gobby.agents.idle_detector import COMPOSER_PROBE_LINES, ComposerRead
 from gobby.terminals.composer import composer_clear_sequence
 from gobby.terminals.key_bytes import tmux_key_name
 from gobby.terminals.runtime import (
@@ -23,13 +27,23 @@ from gobby.terminals.runtime import (
 )
 
 __all__ = [
+    "COMPOSER_MATCH_CHARS",
+    "COMPOSER_NOT_CLEAN_ERROR_CODE",
     "DEFAULT_SNAPSHOT_LINES",
+    "SUBMIT_VERIFY_SECONDS",
+    "TEXT_NOT_SUBMITTED_ERROR_CODE",
+    "ComposerReader",
     "PaneIO",
     "RuntimePaneIO",
     "SendResult",
+    "SubmitResult",
     "TmuxPaneIO",
     "clear_composer",
     "live_runtime_pane",
+    "log_pane_failure",
+    "send_pane_key",
+    "submit_text",
+    "text_left_composer",
 ]
 
 logger = logging.getLogger(__name__)
@@ -40,6 +54,17 @@ SendResult = tuple[bool, str | None]
 # Lines a snapshot returns by default; senders compare pane output around a
 # submitted command with it, never the composer itself.
 DEFAULT_SNAPSHOT_LINES = 80
+
+#: Classifies a composer frame for a provider (``IdleDetector.composer_read``).
+ComposerReader = Callable[[str | None], ComposerRead]
+#: Leading characters that identify our own text on the composer's first row.
+#: A wrapped draft only shows its first row, so the whole text never matches.
+COMPOSER_MATCH_CHARS = 24
+#: How long a submitted text is given to leave the composer before the next rung.
+SUBMIT_VERIFY_SECONDS = 2.0
+_SUBMIT_VERIFY_POLL_SECONDS = 0.1
+COMPOSER_NOT_CLEAN_ERROR_CODE = "composer_not_clean"
+TEXT_NOT_SUBMITTED_ERROR_CODE = "command_not_submitted"
 
 
 class PaneIO(Protocol):
@@ -184,3 +209,138 @@ async def clear_composer(pane: PaneIO, cli_source: str | None) -> SendResult:
         if not ok:
             return False, reason
     return True, None
+
+
+def log_pane_failure(pane: PaneIO, session_id: str, action: str, reason: str | None) -> None:
+    logger.warning(
+        "Failed %s on %s target %s for session %s: %s",
+        action,
+        pane.backend,
+        pane.target,
+        session_id,
+        reason,
+        extra={
+            "event": "terminal_key_delivery_failed",
+            "action": action,
+            "backend": pane.backend,
+            "target": pane.target,
+            "session_id": session_id,
+        },
+    )
+
+
+async def send_pane_key(
+    pane: PaneIO,
+    key: NamedKey,
+    session_id: str,
+    *,
+    action: str,
+) -> SendResult:
+    """Send one named key and keep failures structured for MCP callers."""
+    ok, reason = await pane.send_key(key)
+    if not ok:
+        log_pane_failure(pane, session_id, action, reason)
+        return False, f"{reason} (session {session_id} while {action})"
+    return True, None
+
+
+@dataclass(frozen=True)
+class SubmitResult:
+    """Whether typed text reached the CLI, and why it did not."""
+
+    ok: bool
+    reason: str | None = None
+    error_code: str | None = None
+
+
+async def text_left_composer(
+    pane: PaneIO,
+    text: str,
+    composer_read: ComposerReader,
+    *,
+    window_seconds: float,
+    poll_seconds: float = _SUBMIT_VERIFY_POLL_SECONDS,
+) -> bool:
+    """Poll the composer until it stops holding ``text``.
+
+    Only a positive draft whose row starts with the text proves the CLI never took
+    it. ``empty`` says the Enter landed, and ``unknown`` — no frame, no snapshot, a
+    redraw the manifest cannot classify — proves nothing either way, so it passes
+    rather than report a delivered submission as a failure.
+    """
+    prefix = text[:COMPOSER_MATCH_CHARS]
+    elapsed = 0.0
+    while True:
+        read = composer_read(await pane.snapshot(COMPOSER_PROBE_LINES, mode="ansi"))
+        if read.state != "draft" or not read.line.startswith(prefix):
+            return True
+        if elapsed >= window_seconds:
+            return False
+        delay = min(poll_seconds, window_seconds - elapsed)
+        await asyncio.sleep(delay)
+        elapsed += delay
+
+
+async def submit_text(
+    pane: PaneIO,
+    text: str,
+    session_id: str,
+    *,
+    label: str,
+    cli_source: str | None,
+    composer_read: ComposerReader | None,
+    verify_seconds: float = SUBMIT_VERIFY_SECONDS,
+) -> SubmitResult:
+    """Type ``text`` into the drained composer and press Enter until it submits.
+
+    A Delivered Enter is not a submitted text: the CLI can take it as a literal
+    newline and leave the text on screen. So the composer is read back after every
+    Enter, and each rung of the recovery ladder runs only against a composer that
+    still positively holds our text. Both rungs are needed, and neither covers the
+    other (measured on a live native pane against Claude Code 2.1.278, gobby#22550):
+
+    * a second Enter, which is what a CLI that answered the first one with a paste
+      review gate ("review and press Enter to send") is waiting for — draining and
+      retyping only re-arms that gate, because the drain keys are the invisible
+      characters it strips;
+    * draining and retyping, which is the only thing that recovers an Enter the CLI
+      took as a literal newline — a bare Enter there just inserts another one.
+
+    The reads that detect the failure are also what space the next rung's writes
+    apart. Without a ``composer_read`` (no provider) the write outcome stays the
+    only available evidence.
+    """
+    for attempt in range(2):
+        if attempt:
+            logger.warning(
+                "Session %s still held %s in its composer after Enter; draining and retyping",
+                session_id,
+                label,
+            )
+            cleared, clear_reason = await clear_composer(pane, cli_source)
+            if not cleared:
+                log_pane_failure(pane, session_id, "clearing the composer", clear_reason)
+                return SubmitResult(
+                    False,
+                    f"composer could not be cleared before {label}: {clear_reason}",
+                    COMPOSER_NOT_CLEAN_ERROR_CODE,
+                )
+        ok, reason = await pane.type_text(text)
+        if not ok:
+            log_pane_failure(pane, session_id, f"typing {label}", reason)
+            return SubmitResult(False, reason)
+        for _ in range(2):
+            ok, reason = await send_pane_key(
+                pane, "enter", session_id, action=f"submitting {label}"
+            )
+            if not ok:
+                return SubmitResult(False, reason)
+            if composer_read is None:
+                return SubmitResult(True)
+            if await text_left_composer(pane, text, composer_read, window_seconds=verify_seconds):
+                return SubmitResult(True)
+    return SubmitResult(
+        False,
+        f"{label} was typed but stayed in the composer: the CLI never submitted it",
+        TEXT_NOT_SUBMITTED_ERROR_CODE,
+    )

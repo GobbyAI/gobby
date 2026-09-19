@@ -31,7 +31,6 @@ from gobby.mcp_proxy.tools.sessions._terminal_compaction import (
     _compact_interrupt_key,
     _detect_compaction_rejection,
     _fresh_output_delta,
-    _send_pane_key,
 )
 from gobby.mcp_proxy.tools.sessions._terminal_compaction import (
     _send_terminal_compaction_command as _send_terminal_compaction_command_impl,
@@ -116,7 +115,6 @@ __all__ = [
     "_resolve_session_for_compaction",
     "_authorize_send_keys_target",
     "_resolve_tmux_target",
-    "_send_pane_key",
     "_send_terminal_compaction_command",
     "asyncio",
     "manager_for_terminal_context",

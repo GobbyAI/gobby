@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
@@ -36,6 +37,8 @@ from gobby.sessions.handoff import build_handoff_continue_prompt
 from gobby.sessions.transcript_cursor import CodexRolloutCursor, TranscriptObservationError
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
+from gobby.terminals.composer import composer_clear_sequence
+from gobby.terminals.key_bytes import tmux_key_name
 from gobby.terminals.pane_io import TmuxPaneIO
 from gobby.terminals.runtime import Delivered, SnapshotMode
 from gobby.workflows.state_manager import SessionVariableManager
@@ -175,7 +178,7 @@ async def test_scheduled_task_is_retained_and_multiline_prompt_is_sent_once() ->
             return_value=tmux,
         ),
         patch(
-            "gobby.sessions.compact_continuation.HANDOFF_COMPACT_CONTINUE_SUBMIT_RETRY_DELAY_SECONDS",
+            "gobby.sessions.compact_continuation.SUBMIT_VERIFY_SECONDS",
             0.0,
         ),
     ):
@@ -183,7 +186,7 @@ async def test_scheduled_task_is_retained_and_multiline_prompt_is_sent_once() ->
         await send_started.wait()
 
         assert len(_HANDOFF_COMPACT_CONTINUATION_TASKS) == 1
-        assert tmux.sent_keys == [*_CODEX_DRAIN, ("%12", f"{prompt}\n", True)]
+        assert tmux.sent_keys == [*_CODEX_DRAIN, ("%12", prompt, True)]
         task = next(iter(_HANDOFF_COMPACT_CONTINUATION_TASKS))
 
         release_send.set()
@@ -294,7 +297,7 @@ async def test_codex_waits_for_fresh_compaction_marker_before_continuing(
     tmux = ReadinessTmux()
 
     with patch(
-        "gobby.sessions.compact_continuation.HANDOFF_COMPACT_CONTINUE_SUBMIT_RETRY_DELAY_SECONDS",
+        "gobby.sessions.compact_continuation.SUBMIT_VERIFY_SECONDS",
         0.0,
     ):
         await _continue_after_codex_compaction_ready(
@@ -310,7 +313,7 @@ async def test_codex_waits_for_fresh_compaction_marker_before_continuing(
     # first Enter already submitted).
     assert tmux.sent_keys == [
         *_CODEX_DRAIN,
-        ("%12", f"{prompt}\n", True),
+        ("%12", prompt, True),
         ("%12", "Enter", False),
     ]
     variables = SessionVariableManager(session_db).get_variables(SESSION_ID)
@@ -466,7 +469,7 @@ async def test_codex_detects_fresh_marker_when_old_marker_scrolls_out(
     tmux = RollingTmux()
 
     with patch(
-        "gobby.sessions.compact_continuation.HANDOFF_COMPACT_CONTINUE_SUBMIT_RETRY_DELAY_SECONDS",
+        "gobby.sessions.compact_continuation.SUBMIT_VERIFY_SECONDS",
         0.0,
     ):
         await _continue_after_codex_compaction_ready(
@@ -479,7 +482,7 @@ async def test_codex_detects_fresh_marker_when_old_marker_scrolls_out(
 
     assert tmux.sent_keys == [
         *_CODEX_DRAIN,
-        ("%12", f"{prompt}\n", True),
+        ("%12", prompt, True),
         ("%12", "Enter", False),
     ]
 
@@ -509,7 +512,7 @@ async def test_codex_ignores_compaction_marker_text_in_prose(
     tmux = ProseTmux()
 
     with patch(
-        "gobby.sessions.compact_continuation.HANDOFF_COMPACT_CONTINUE_SUBMIT_RETRY_DELAY_SECONDS",
+        "gobby.sessions.compact_continuation.SUBMIT_VERIFY_SECONDS",
         0.0,
     ):
         await _continue_after_codex_compaction_ready(
@@ -522,7 +525,7 @@ async def test_codex_ignores_compaction_marker_text_in_prose(
 
     assert tmux.sent_keys == [
         *_CODEX_DRAIN,
-        ("%12", f"{prompt}\n", True),
+        ("%12", prompt, True),
         ("%12", "Enter", False),
     ]
 
@@ -819,6 +822,7 @@ def test_reload_directive_normalized() -> None:
 
 _CLAUDE_READ = IdleDetector(BundledDetectionRegistry(), "claude").composer_read
 _PULL_PROMPT = "Continue the claimed task by calling get_handoff first."
+_CLAUDE_DRAIN = [("%12", tmux_key_name(key), False) for key in composer_clear_sequence("claude")]
 
 
 def _claude_frame(row: str) -> str:
@@ -826,42 +830,138 @@ def _claude_frame(row: str) -> str:
     return f"⏺ done\n{rule}\n{row}\n{rule}\n   Fable 5.1  12%\n"
 
 
+class _StickyComposerTmux(_FakeTmux):
+    """Tmux fake whose composer keeps the pull prompt until enough Enters land.
+
+    ``releases_after_enters=None`` never submits: the reported failure, where every
+    write reports Delivered and the prompt stays on screen.
+    """
+
+    def __init__(
+        self, releases_after_enters: int | None = None, prompt: str = _PULL_PROMPT
+    ) -> None:
+        super().__init__()
+        self.releases_after_enters = releases_after_enters
+        self.prompt = prompt
+
+    @property
+    def enters(self) -> int:
+        return sum(1 for _pane, key, literal in self.sent_keys if key == "Enter" and not literal)
+
+    @property
+    def typed(self) -> list[str]:
+        return [text for _pane, text, literal in self.sent_keys if literal]
+
+    async def snapshot_lines(
+        self, pane_id: str, lines: int = 5, *, mode: SnapshotMode = "text"
+    ) -> str | None:
+        if lines != COMPOSER_PROBE_LINES:
+            return await super().snapshot_lines(pane_id, lines, mode=mode)
+        self.composer_modes.append(mode)
+        released = (
+            self.releases_after_enters is not None and self.enters >= self.releases_after_enters
+        )
+        return _claude_frame("❯\xa0" if released else f"❯ {self.prompt}")
+
+
+async def _send_pull_prompt(
+    tmux: _FakeTmux, *, on_send_failure: Callable[[], None] | None = None
+) -> bool:
+    with patch("gobby.sessions.compact_continuation.SUBMIT_VERIFY_SECONDS", 0.0):
+        return await _send_handoff_compact_continuation(
+            TmuxPaneIO(tmux, "%12"),
+            _PULL_PROMPT,
+            SESSION_ID,
+            delay_seconds=0,
+            cli_source="claude",
+            on_send_failure=on_send_failure,
+            composer_read=_CLAUDE_READ,
+        )
+
+
 class TestPullPromptFallback:
     """The pull prompt survives a failed send and never submits an operator draft."""
 
     @pytest.mark.asyncio
+    async def test_a_clean_first_submit_sends_no_follow_up_enter(self) -> None:
+        tmux = _StickyComposerTmux(releases_after_enters=1)
+
+        assert await _send_pull_prompt(tmux) is True
+        assert tmux.enters == 1
+        assert tmux.typed == [_PULL_PROMPT]
+        assert tmux.composer_modes == ["ansi"]
+
+    @pytest.mark.asyncio
+    async def test_a_retained_prompt_is_submitted_by_the_second_enter(self) -> None:
+        tmux = _StickyComposerTmux(releases_after_enters=2)
+
+        assert await _send_pull_prompt(tmux) is True
+        assert tmux.enters == 2
+        assert tmux.typed == [_PULL_PROMPT]
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ("composer_text", "second_enter"),
+        "composer_text",
         [
-            (_claude_frame("❯\xa0"), False),
-            (_claude_frame(f"❯ {_PULL_PROMPT}"), True),
-            (_claude_frame("❯ the operator typed this"), False),
-            (_claude_frame("\x1b[39m❯\xa0\x1b[2mrun\x1b[0m \x1b[2mthe tests\x1b[0m"), False),
-            (None, True),
+            _claude_frame("❯ the operator typed this"),
+            _claude_frame("\x1b[39m❯\xa0\x1b[2mrun\x1b[0m \x1b[2mthe tests\x1b[0m"),
+            None,
         ],
     )
-    async def test_follow_up_enter_is_gated_on_the_composer_read(
-        self, composer_text: str | None, second_enter: bool
+    async def test_a_composer_that_is_not_our_prompt_counts_as_submitted(
+        self, composer_text: str | None
     ) -> None:
+        """A foreign draft or an unreadable frame never proves we failed to submit."""
         tmux = _FakeTmux()
         tmux.composer_text = composer_text
 
-        with patch(
-            "gobby.sessions.compact_continuation.HANDOFF_COMPACT_CONTINUE_SUBMIT_RETRY_DELAY_SECONDS",
-            0.0,
-        ):
-            sent = await _send_handoff_compact_continuation(
-                TmuxPaneIO(tmux, "%12"),
-                _PULL_PROMPT,
-                SESSION_ID,
-                delay_seconds=0,
-                cli_source="claude",
-                composer_read=_CLAUDE_READ,
-            )
+        assert await _send_pull_prompt(tmux) is True
+        assert sum(1 for _p, key, literal in tmux.sent_keys if key == "Enter" and not literal) == 1
 
-        assert sent is True
-        assert (("%12", "Enter", False) in tmux.sent_keys) is second_enter
-        assert tmux.composer_modes == ["ansi"]
+    @pytest.mark.asyncio
+    async def test_a_prompt_that_never_leaves_is_drained_then_reported(self) -> None:
+        tmux = _StickyComposerTmux()
+        failures: list[int] = []
+
+        assert await _send_pull_prompt(tmux, on_send_failure=lambda: failures.append(0)) is False
+        assert failures == [0]
+        # Every rung ran: two Enters, then a drain and retype, then two more.
+        assert tmux.typed == [_PULL_PROMPT, _PULL_PROMPT]
+        assert tmux.enters == 4
+        # The draft is ours, so it is drained before the durable fallback delivers it.
+        assert tmux.sent_keys[-len(_CLAUDE_DRAIN) :] == _CLAUDE_DRAIN
+
+    @pytest.mark.asyncio
+    async def test_an_unsubmitted_prompt_queues_itself_exactly_once(
+        self, session_db: HubDatabase
+    ) -> None:
+        prompt = build_handoff_continue_prompt()
+        mark_handoff_compact_continuation_pending(
+            session_db, SESSION_ID, prompt=prompt, attempt_id="attempt-11"
+        )
+        session = SimpleNamespace(
+            id=SESSION_ID, source="claude", terminal_context={"tmux_pane": "%12"}
+        )
+        tmux = _StickyComposerTmux(prompt=prompt)
+
+        with (
+            patch(
+                "gobby.sessions.compact_continuation.manager_for_terminal_context",
+                return_value=tmux,
+            ),
+            patch("gobby.sessions.compact_continuation.SUBMIT_VERIFY_SECONDS", 0.0),
+            patch(
+                "gobby.sessions.compact_continuation._composer_reader",
+                return_value=_CLAUDE_READ,
+            ),
+        ):
+            assert consume_and_schedule_handoff_compact_continuation(
+                session_db, pending_session_id=SESSION_ID, target_session=session
+            )
+            await asyncio.gather(*_HANDOFF_COMPACT_CONTINUATION_TASKS)
+
+        queued = InterSessionMessageManager(session_db).get_undelivered_messages(SESSION_ID)
+        assert [m.content for m in queued] == [prompt]
 
     @pytest.mark.asyncio
     async def test_scheduled_send_failure_queues_the_pull_prompt(
@@ -929,7 +1029,7 @@ async def test_schedule_continuation_resolves_native_terminal_without_tmux() -> 
     assert not schedule_handoff_compact_continuation(session, prompt, delay_seconds=0)
 
     with patch(
-        "gobby.sessions.compact_continuation.HANDOFF_COMPACT_CONTINUE_SUBMIT_RETRY_DELAY_SECONDS",
+        "gobby.sessions.compact_continuation.SUBMIT_VERIFY_SECONDS",
         0.0,
     ):
         assert schedule_handoff_compact_continuation(
@@ -943,6 +1043,6 @@ async def test_schedule_continuation_resolves_native_terminal_without_tmux() -> 
         await task
         await drain_asyncio_tasks()
 
-    assert ("text", prompt, True) in writes
+    assert ("text", prompt, False) in writes
     assert writes[-1] == ("key", "enter")
     assert not _HANDOFF_COMPACT_CONTINUATION_TASKS

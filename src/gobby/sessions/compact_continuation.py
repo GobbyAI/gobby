@@ -12,12 +12,11 @@ from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from gobby.agents.detection.registry import DetectionManifestRegistry
-from gobby.agents.idle_detector import COMPOSER_PROBE_LINES, ComposerRead, IdleDetector
+from gobby.agents.idle_detector import IdleDetector
 from gobby.sessions.compact_markers import (
     COMPACT_HANDOFF_MARKER_VARIABLE,
     HANDOFF_COMPACT_CONTINUE_FRESH_SECONDS,
     HANDOFF_COMPACT_CONTINUE_SEND_DELAY_SECONDS,
-    HANDOFF_COMPACT_CONTINUE_SUBMIT_RETRY_DELAY_SECONDS,
     HANDOFF_COMPACT_CONTINUE_VARIABLE,
 )
 from gobby.sessions.handoff import build_handoff_continue_prompt
@@ -27,20 +26,21 @@ from gobby.storage.hub.protocol import SessionVariableMutation
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.session_models import Session
 from gobby.terminals.lookup import manager_for_terminal_context
+from gobby.terminals.pane_io import (
+    SUBMIT_VERIFY_SECONDS,
+    ComposerReader,
+    clear_composer,
+    submit_text,
+)
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
     from gobby.terminals.pane_io import PaneIO
 
-# A follow-up Enter is only sent when the composer still shows the pull prompt;
-# this many leading characters identify it against an operator's own draft.
-_PULL_PROMPT_MATCH_CHARS = 24
-
 __all__ = [
     "COMPACT_HANDOFF_MARKER_VARIABLE",
     "HANDOFF_COMPACT_CONTINUE_FRESH_SECONDS",
     "HANDOFF_COMPACT_CONTINUE_SEND_DELAY_SECONDS",
-    "HANDOFF_COMPACT_CONTINUE_SUBMIT_RETRY_DELAY_SECONDS",
     "HANDOFF_COMPACT_CONTINUE_VARIABLE",
     "persist_pull_prompt_message",
 ]
@@ -239,9 +239,7 @@ def _continuation_pane(
     return TmuxPaneIO(manager_for_terminal_context(ctx), str(target))
 
 
-def _composer_reader(
-    db: HubDatabase | None, cli_source: str | None
-) -> Callable[[str | None], ComposerRead] | None:
+def _composer_reader(db: HubDatabase | None, cli_source: str | None) -> ComposerReader | None:
     if db is None or not cli_source:
         return None
     return IdleDetector(DetectionManifestRegistry(db), cli_source).composer_read
@@ -424,7 +422,7 @@ async def _send_handoff_compact_continuation(
     delay_seconds: float,
     cli_source: str | None = None,
     on_send_failure: Callable[[], None] | None = None,
-    composer_read: Callable[[str | None], ComposerRead] | None = None,
+    composer_read: ComposerReader | None = None,
 ) -> bool:
     sent = await _type_handoff_compact_continuation(
         pane,
@@ -433,6 +431,7 @@ async def _send_handoff_compact_continuation(
         delay_seconds=delay_seconds,
         cli_source=cli_source,
         composer_read=composer_read,
+        verify_seconds=SUBMIT_VERIFY_SECONDS,
     )
     if not sent and on_send_failure is not None:
         on_send_failure()
@@ -446,10 +445,18 @@ async def _type_handoff_compact_continuation(
     *,
     delay_seconds: float,
     cli_source: str | None,
-    composer_read: Callable[[str | None], ComposerRead] | None,
+    composer_read: ComposerReader | None,
+    verify_seconds: float,
 ) -> bool:
-    from gobby.terminals.pane_io import clear_composer
+    """Type the pull prompt and prove it left the composer, or report the failure.
 
+    The prompt gets the same verified-submit ladder as the compaction command that
+    precedes it: a Delivered Enter is not a submitted prompt, so the composer is read
+    back after every Enter. A prompt that never leaves is drained -- the draft is
+    ours, we cleared the box before typing it -- so the caller's durable fallback
+    delivers it exactly once. A drain that itself fails still reports the failure: a
+    duplicated prompt is a far smaller harm than a lost handoff.
+    """
     if delay_seconds > 0:
         await asyncio.sleep(delay_seconds)
     try:
@@ -463,44 +470,41 @@ async def _type_handoff_compact_continuation(
                 reason,
             )
             return False
-        ok, reason = await pane.type_text(f"{prompt}\n")
+        result = await submit_text(
+            pane,
+            prompt,
+            session_id,
+            label="the set_handoff continuation prompt",
+            cli_source=cli_source,
+            composer_read=composer_read,
+            verify_seconds=verify_seconds,
+        )
+        if result.ok:
+            return True
+        logger.warning(
+            "Failed to submit the set_handoff compact continuation prompt for session %s: %s",
+            session_id,
+            result.reason,
+            extra={
+                "event": "handoff_continuation_not_submitted",
+                "session_id": session_id,
+                "error_code": result.error_code,
+            },
+        )
+        cleared, clear_reason = await clear_composer(pane, cli_source)
+        if not cleared:
+            logger.warning(
+                "Composer still holds the unsubmitted continuation prompt for session %s: %s",
+                session_id,
+                clear_reason,
+            )
     except Exception:
         logger.warning(
             "Failed to send set_handoff compact continuation prompt for session %s",
             session_id,
             exc_info=True,
         )
-        return False
-    if not ok:
-        logger.warning(
-            "Failed to send set_handoff compact continuation prompt for session %s: %s",
-            session_id,
-            reason,
-        )
-        return False
-    # A composer still settling the bracketed paste can swallow the submitting
-    # Enter; this second Enter submits in that case and is a no-op on an
-    # already-submitted (empty) composer. Delivery already succeeded, so a
-    # retry failure is logged, never propagated.
-    await asyncio.sleep(HANDOFF_COMPACT_CONTINUE_SUBMIT_RETRY_DELAY_SECONDS)
-    if composer_read is not None and not await _follow_up_enter_wanted(pane, prompt, composer_read):
-        return True
-    try:
-        retry_ok, retry_reason = await pane.send_key("enter")
-    except Exception:
-        logger.warning(
-            "Failed follow-up Enter for set_handoff compact continuation %s",
-            session_id,
-            exc_info=True,
-        )
-        return True
-    if not retry_ok:
-        logger.warning(
-            "Follow-up Enter failed for set_handoff compact continuation %s: %s",
-            session_id,
-            retry_reason,
-        )
-    return True
+    return False
 
 
 async def _continue_after_codex_compaction_ready(
@@ -598,24 +602,6 @@ async def _continue_after_codex_compaction_ready(
         "Timed out waiting for Codex compact readiness for session %s",
         pending_session_id,
     )
-
-
-async def _follow_up_enter_wanted(
-    pane: Any,
-    prompt: str,
-    composer_read: Callable[[str | None], ComposerRead],
-) -> bool:
-    """Send the second Enter only when the composer still holds the pull prompt.
-
-    Empty means the first Enter landed; a draft that is not the prompt is the
-    operator's, typed after the pull went through; unknown keeps the blind Enter.
-    """
-    read = composer_read(await pane.snapshot(COMPOSER_PROBE_LINES, mode="ansi"))
-    if read.state == "empty":
-        return False
-    if read.state == "draft":
-        return read.line.startswith(prompt[:_PULL_PROMPT_MATCH_CHARS])
-    return True
 
 
 def _count_codex_compact_ready_status_lines(output: str) -> int:

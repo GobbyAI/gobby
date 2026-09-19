@@ -887,7 +887,7 @@ async def test_native_worker_receives_the_continuation_after_set_handoff_compact
         "gobby.mcp_proxy.tools.sessions._terminal._COMPACTION_REJECTION_SETTLE_SECONDS", 0.0
     )
     monkeypatch.setattr(
-        "gobby.sessions.compact_continuation.HANDOFF_COMPACT_CONTINUE_SUBMIT_RETRY_DELAY_SECONDS",
+        "gobby.sessions.compact_continuation.SUBMIT_VERIFY_SECONDS",
         0.0,
     )
 
@@ -934,7 +934,7 @@ async def test_native_worker_receives_the_continuation_after_set_handoff_compact
     assert scheduled is True
     # FakeRuntime records submit=True as a trailing newline; RuntimePaneIO strips the
     # newline it was given, so this entry is the prompt written and submitted natively.
-    assert ("text", f"{build_handoff_continue_prompt()}\n") in runtime.write_log[compact_writes:]
+    assert ("text", build_handoff_continue_prompt()) in runtime.write_log[compact_writes:]
     assert HANDOFF_COMPACT_CONTINUE_VARIABLE not in SessionVariableManager(hub_db).get_variables(
         SESSION_ID
     )
@@ -949,7 +949,7 @@ async def test_tmux_pane_session_still_receives_the_continuation_by_tmux(
     tmux.dispatch_keys = AsyncMock(return_value=True)
     tmux.snapshot_lines = AsyncMock(return_value=None)
     monkeypatch.setattr(
-        "gobby.sessions.compact_continuation.HANDOFF_COMPACT_CONTINUE_SUBMIT_RETRY_DELAY_SECONDS",
+        "gobby.sessions.compact_continuation.SUBMIT_VERIFY_SECONDS",
         0.0,
     )
     assert mark_handoff_compact_continuation_pending(hub_db, SESSION_ID, attempt_id=ATTEMPT_ID)
@@ -968,4 +968,4 @@ async def test_tmux_pane_session_still_receives_the_continuation_by_tmux(
         await _await_continuations()
 
     assert scheduled is True
-    tmux.dispatch_keys.assert_any_await("%12", f"{build_handoff_continue_prompt()}\n", literal=True)
+    tmux.dispatch_keys.assert_any_await("%12", build_handoff_continue_prompt(), literal=True)

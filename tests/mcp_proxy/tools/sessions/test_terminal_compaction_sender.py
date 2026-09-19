@@ -13,14 +13,13 @@ from gobby.mcp_proxy.tools.sessions import _terminal
 from gobby.mcp_proxy.tools.sessions._terminal_compaction import (
     _COMMAND_NOT_SUBMITTED_ERROR_CODE,
     _INTERRUPT_ATTEMPTS,
-    ComposerReader,
     _send_terminal_compaction_command,
 )
 from gobby.mcp_proxy.tools.sessions._terminal_handoff_delivery import (
     deliver_staged_compact_handoff,
 )
 from gobby.terminals.composer import composer_clear_sequence
-from gobby.terminals.pane_io import RuntimePaneIO, TmuxPaneIO
+from gobby.terminals.pane_io import ComposerReader, RuntimePaneIO, TmuxPaneIO
 from gobby.terminals.runtime import SnapshotMode
 from tests.agents.detection_test_support import BundledDetectionRegistry
 
@@ -73,7 +72,7 @@ class _UnsubmittedPane(_ComposerPane):
     """Claude pane that keeps the typed command after Enter, as a busy composer does.
 
     The composer empties once ``recovers_after`` Enters have been sent, which models
-    the drain-and-retype recovery landing; ``None`` never submits.
+    a CLI that was waiting for one more Enter; ``None`` never submits.
     """
 
     def __init__(self, recovers_after: int | None = None) -> None:
@@ -83,6 +82,19 @@ class _UnsubmittedPane(_ComposerPane):
     async def snapshot(self, lines: int = 12, *, mode: SnapshotMode = "text") -> str | None:
         enters = self.keys.count("enter")
         if not self.typed or (self.recovers_after is not None and enters >= self.recovers_after):
+            return _claude_frame("")
+        return _claude_frame(self.typed[-1])
+
+
+class _RetypeOnlyPane(_ComposerPane):
+    """Claude pane whose Enters are literal newlines until the command is retyped.
+
+    Models the other half of the ladder: more Enters never help, and only a drained
+    and retyped command submits.
+    """
+
+    async def snapshot(self, lines: int = 12, *, mode: SnapshotMode = "text") -> str | None:
+        if not self.typed or len(self.typed) > 1:
             return _claude_frame("")
         return _claude_frame(self.typed[-1])
 
@@ -163,8 +175,21 @@ async def test_composer_emptying_after_enter_submits_once() -> None:
 
 
 @pytest.mark.asyncio
-async def test_command_left_in_the_composer_is_retyped_then_submits() -> None:
+async def test_command_left_in_the_composer_gets_a_second_enter() -> None:
     pane = _UnsubmittedPane(recovers_after=2)
+
+    result, _mark, clear = await _send(
+        pane, lambda: True, command="/compact", composer_read=_CLAUDE_READ
+    )
+
+    assert result == (True, None, True, None)
+    assert pane.typed == ["/compact"]
+    assert pane.keys == ["escape", *composer_clear_sequence("claude"), "enter", "enter"]
+    clear.assert_not_called()
+
+
+async def test_command_the_second_enter_cannot_submit_is_retyped() -> None:
+    pane = _RetypeOnlyPane()
 
     result, _mark, clear = await _send(
         pane, lambda: True, command="/compact", composer_read=_CLAUDE_READ
@@ -175,6 +200,7 @@ async def test_command_left_in_the_composer_is_retyped_then_submits() -> None:
     assert pane.keys == [
         "escape",
         *composer_clear_sequence("claude"),
+        "enter",
         "enter",
         *composer_clear_sequence("claude"),
         "enter",
