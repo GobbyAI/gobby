@@ -14,7 +14,7 @@ use tokio::time::Instant;
 use crate::daemon::{Attention, Daemon, ProjectRow, RosterEntry, SidebarRows};
 use crate::ui::chrome::RowState;
 
-use super::{short_terminal_id, Pane, Workspace};
+use super::{Pane, Workspace, UNNAMED_PANE};
 
 /// How long a project's source status stays fresh while the sidebar is open.
 pub const GIT_REFRESH_INTERVAL: Duration = Duration::from_secs(10);
@@ -169,13 +169,33 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
                 .or(run.map(|(project, _)| project))
                 .or(inputs.focused_project)
                 .unwrap_or_default();
+            let provider = entry
+                .provider
+                .clone()
+                .or_else(|| run.and_then(|(_, run)| run.provider.clone()))
+                .or_else(|| session.and_then(|(_, session)| session.source.clone()))
+                .filter(|provider| !provider.is_empty());
+            // Each rung is filtered on its own: an empty session title means
+            // "unnamed", not "stop looking", so the run and tmux names below it
+            // still get their turn. The pane's own ladder ends the chain for a
+            // row that has one, and the two rungs after it cover a roster entry
+            // with no pane open — neither can be an id.
             let name = session
                 .and_then(|(_, session)| session.title.clone())
-                .or_else(|| run.and_then(|(_, run)| run.agent_name.clone()))
-                .or_else(|| entry.tmux_session_name.clone())
-                .or_else(|| pane.map(|pane| pane.display_name().to_string()))
                 .filter(|name| !name.is_empty())
-                .unwrap_or_else(|| short_terminal_id(&terminal.terminal_id).to_string());
+                .or_else(|| {
+                    run.and_then(|(_, run)| run.agent_name.clone())
+                        .filter(|name| !name.is_empty())
+                })
+                .or_else(|| {
+                    entry
+                        .tmux_session_name
+                        .clone()
+                        .filter(|name| !name.is_empty())
+                })
+                .or_else(|| pane.map(|pane| pane.display_name().to_string()))
+                .or_else(|| provider.clone())
+                .unwrap_or_else(|| UNNAMED_PANE.to_string());
             let machine_id = session
                 .and_then(|(_, session)| session.machine_id.clone())
                 .or_else(|| run.and_then(|(_, run)| run.machine_id.clone()))
@@ -188,12 +208,7 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
                 terminal_id: terminal.terminal_id.clone(),
                 backend: terminal.backend.clone(),
                 name,
-                provider: entry
-                    .provider
-                    .clone()
-                    .or_else(|| run.and_then(|(_, run)| run.provider.clone()))
-                    .or_else(|| session.and_then(|(_, session)| session.source.clone()))
-                    .unwrap_or_default(),
+                provider: provider.unwrap_or_default(),
                 model: entry
                     .model
                     .clone()
@@ -441,15 +456,58 @@ impl<D: Daemon> Workspace<D> {
     }
 
     pub(super) fn rebuild_sidebar(&mut self) {
+        // Rung 2 of the label ladder is both produced and consumed by the
+        // build: `build_agents` names an agent row from its pane's
+        // `display_name`, which asks the pane for its provider. Syncing after
+        // one build would answer that read with the previous build's provider,
+        // so a terminal whose session has just been bound would read `shell`
+        // until the next roster event. Build, sync, and build again only when
+        // the sync moved something; in the steady state nothing moves.
+        let model = self.build_sidebar();
+        self.sidebar = if self.sync_pane_providers(&model) {
+            self.build_sidebar()
+        } else {
+            model
+        };
+    }
+
+    fn build_sidebar(&self) -> SidebarModel {
         let panes: Vec<&Pane> = self.panes.values().collect();
-        self.sidebar = build(&SidebarInputs {
+        build(&SidebarInputs {
             local_machine: &self.local_machine,
             focused_project: self.project_id.as_deref(),
             rows: &self.sidebar_rows,
             roster: &self.attention.entries,
             panes: &panes,
             git_refreshed_at: self.git_refreshed_at,
-        });
+        })
+    }
+
+    /// Copy each agent's resolved provider onto the pane holding its terminal.
+    ///
+    /// Rung 2 of the label ladder is the provider of the bound session, which
+    /// lives on the roster rather than the terminal row, and `display_name`
+    /// takes only `&self`. The sidebar already joins roster entry, agent run
+    /// and session to resolve it, so the pane borrows that answer instead of
+    /// redoing the joins, and every rebuild refreshes it.
+    fn sync_pane_providers(&mut self, model: &SidebarModel) -> bool {
+        let mut resolved: HashMap<&str, &str> = HashMap::new();
+        for agent in &model.agents {
+            if !agent.provider.is_empty() {
+                resolved.insert(agent.terminal_id.as_str(), agent.provider.as_str());
+            }
+        }
+        let mut moved = false;
+        for pane in self.panes.values_mut() {
+            let provider = resolved
+                .get(pane.terminal_id.as_str())
+                .map(|provider| (*provider).to_string());
+            if pane.provider != provider {
+                pane.provider = provider;
+                moved = true;
+            }
+        }
+        moved
     }
 
     /// Upsert the roster entry an `attention_changed` event names. The event

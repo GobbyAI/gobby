@@ -255,6 +255,7 @@ async fn agent_row_click_jumps_and_labels_the_session() {
                         "backend": "tmux",
                         "state": "live",
                         "title": "zsh",
+                        "command": "zsh",
                         "attach": {"backend": "tmux", "pane_id": "%16"}
                     }
                 ],

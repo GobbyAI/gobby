@@ -458,7 +458,10 @@ mod tests {
         let other = if focused == alpha { beta } else { alpha };
 
         // A plain, observed, unnamed pane that is not focused, in an
-        // unzoomed tab.
+        // unzoomed tab. A scripted terminal is named after its id, so the
+        // "unnamed" half has to be said out loud: with a name there, the menu
+        // rightly offers to clear it, which the named case below covers.
+        ws.pane_mut(other).label = None;
         let menu = build_menu(&ws, &chrome, ContextMenuKind::Pane(other), (10, 5));
         assert_eq!(
             labels(&menu),

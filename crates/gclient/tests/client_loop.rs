@@ -6947,7 +6947,10 @@ async fn activate_daemon_hosted_terminal(
         }
         ExplicitActivation::Goto => {
             send_chord(input, KeyCode::Char('g'), KeyModifiers::NONE).await;
-            for ch in "daemon-h".chars() {
+            // Goto filters on the name the label ladder produced, which for a
+            // terminal hosting a coding session is its provider. `daemon-h`
+            // used to match here only because the ladder ended in a short id.
+            for ch in "codex".chars() {
                 send_key(input, KeyCode::Char(ch), KeyModifiers::NONE).await;
             }
             send_key(input, KeyCode::Enter, KeyModifiers::NONE).await;

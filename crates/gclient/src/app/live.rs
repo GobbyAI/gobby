@@ -100,6 +100,7 @@ impl Workspace<LiveDaemon> {
         pane.external = row_is_external(row);
         pane.title = row_title(row);
         pane.address = row_address(row);
+        pane.command = row_command(row);
         pane.session_id = row
             .fields
             .get("session_id")
@@ -736,6 +737,15 @@ fn row_title(row: &TerminalRow) -> String {
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_string()
+}
+
+/// The command in the terminal's foreground, as the daemon observed it when it
+/// served the row: `pane_current_command` for tmux, the foreground process
+/// group of the recorded shell pid for native. Absent on a row the daemon could
+/// not probe, which the label ladder answers with its literal last rung.
+fn row_command(row: &TerminalRow) -> Option<String> {
+    let command = row.fields.get("command")?.as_str()?;
+    (!command.is_empty()).then(|| command.to_string())
 }
 
 /// The terminal's address on its backend. Only tmux has one the user can act

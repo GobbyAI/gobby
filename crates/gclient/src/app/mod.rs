@@ -34,7 +34,7 @@ pub use live_loop::projects::{
 };
 pub use live_loop::run_live_loop;
 pub use live_loop::sync_live_chrome;
-pub use pane::{short_terminal_id, ControlState, Pane, PaneId};
+pub use pane::{short_terminal_id, ControlState, Pane, PaneId, UNNAMED_PANE};
 pub use viewer_state::{PaneInterner, ViewerState};
 pub use workspace_ops::WorkspaceModel;
 
@@ -371,9 +371,12 @@ impl Workspace {
         let id = PaneId(self.next_pane);
         self.next_pane += 1;
         let mut pane = Pane::new(id, terminal_id, backend, epoch);
-        // A scripted run has no daemon row to carry a title, and its terminal
-        // ids are names rather than UUIDs, so the id is the honest title here.
-        pane.title = terminal_id.to_string();
+        // A scripted run has no daemon row to name the terminal, and its ids
+        // are names rather than UUIDs — this path exists only on
+        // `Workspace<ScriptedDaemon>`. So the id is the name here, and it goes
+        // on the rung that means exactly that. `title` stays empty: nothing
+        // reported one, and it is the daemon's field to fill.
+        pane.label = Some(terminal_id.to_string());
         self.panes.insert(id, pane);
         self.order.push(id);
         if !self.roster_ids.iter().any(|t| t == terminal_id) {
