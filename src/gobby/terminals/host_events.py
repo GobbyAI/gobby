@@ -5,9 +5,12 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from gobby.terminals.host_protocol import HostListRow
+
+InputKind = Literal["input", "paste"]
+InterruptKind = Literal["esc", "ctrl_c"]
 
 
 @dataclass(frozen=True)
@@ -26,22 +29,65 @@ class TerminalExitedEvent:
     seq: int
 
 
-HostEvent = TerminalExitedEvent
+@dataclass(frozen=True)
+class InputActivityEvent:
+    """One accepted ``Input``/``Paste`` on a granted frame stream, without its payload."""
+
+    terminal_id: str
+    host_terminal_id: str
+    attachment_id: str
+    kind: InputKind
+    bytes: int
+    interrupt: InterruptKind | None
+    epoch: str
+    seq: int
+
+
+HostEvent = TerminalExitedEvent | InputActivityEvent
 GAP_BUFFER_ENTRIES = 4_096
 GAP_BUFFER_BYTES = 4 * 1024 * 1024
 
 
+def _input_kind(value: object) -> InputKind:
+    if value == "input":
+        return "input"
+    if value == "paste":
+        return "paste"
+    raise ValueError(f"unknown input_activity kind: {value!r}")
+
+
+def _interrupt_kind(value: object) -> InterruptKind | None:
+    if value is None:
+        return None
+    if value == "esc":
+        return "esc"
+    if value == "ctrl_c":
+        return "ctrl_c"
+    raise ValueError(f"unknown input_activity interrupt: {value!r}")
+
+
 def decode_host_event(payload: dict[str, Any]) -> HostEvent:
     event = str(payload.get("event", ""))
-    if event != "terminal_exited":
-        raise ValueError(f"unknown host event: {event}")
-    return TerminalExitedEvent(
-        terminal_id=str(payload["terminal_id"]),
-        host_terminal_id=str(payload["host_terminal_id"]),
-        exit_code=(int(payload["exit_code"]) if payload.get("exit_code") is not None else None),
-        epoch=str(payload["epoch"]),
-        seq=int(payload["seq"]),
-    )
+    if event == "terminal_exited":
+        return TerminalExitedEvent(
+            terminal_id=str(payload["terminal_id"]),
+            host_terminal_id=str(payload["host_terminal_id"]),
+            exit_code=(int(payload["exit_code"]) if payload.get("exit_code") is not None else None),
+            epoch=str(payload["epoch"]),
+            seq=int(payload["seq"]),
+        )
+    if event == "input_activity":
+        return InputActivityEvent(
+            terminal_id=str(payload["terminal_id"]),
+            host_terminal_id=str(payload["host_terminal_id"]),
+            attachment_id=str(payload["attachment_id"]),
+            kind=_input_kind(payload["kind"]),
+            bytes=int(payload["bytes"]),
+            interrupt=_interrupt_kind(payload.get("interrupt")),
+            epoch=str(payload["epoch"]),
+            seq=int(payload["seq"]),
+        )
+    raise ValueError(f"unknown host event: {event}")
 
 
 class HostEventStream(AsyncIterator[HostEvent]):

@@ -58,6 +58,7 @@ class TerminalControlMixin:
                 "granted": result.granted,
                 "reason": result.reason,
                 "lease_generation": result.lease_generation,
+                "host_input_granted": result.host_input_granted,
             },
         )
 
@@ -75,5 +76,6 @@ class TerminalControlMixin:
                 "granted": result.granted,
                 "reason": result.reason,
                 "lease_generation": result.lease_generation,
+                "host_input_granted": result.host_input_granted,
             },
         )

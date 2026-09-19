@@ -27,6 +27,7 @@ from gobby.terminals.host_client import (
     encode_control_line,
 )
 from gobby.terminals.host_protocol import HostListRow, frames_socket_path
+from gobby.terminals.input_grants import sync_host_input_grant
 from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.native_runtime import (
     NativeBatchFailure,
@@ -103,6 +104,8 @@ class FakeHostClient:
     commit_deadline_ms: int = 30_000
     commit_deadlines: list[int] = field(default_factory=list)
     commit_error: HostCommandError | None = None
+    grants: list[tuple[str, str, str | None]] = field(default_factory=list)
+    grant_error: HostCommandError | None = None
     socket_dir: Path = Path("/tmp/gobby-test-host")
     reconnects: list[tuple[Path, str | None]] = field(default_factory=list)
 
@@ -267,6 +270,22 @@ class FakeHostClient:
         await self.ensure_connected()
         self.resizes.append((rows, cols))
         del host_terminal_id
+
+    async def grant_input(self, host_terminal_id: str, attachment_id: str) -> dict[str, Any]:
+        await self.ensure_connected()
+        if self.grant_error is not None:
+            raise self.grant_error
+        self.grants.append(("grant_input", host_terminal_id, attachment_id))
+        return {"ok": True, "granted": True, "previous": None}
+
+    async def revoke_input(
+        self, host_terminal_id: str, attachment_id: str | None = None
+    ) -> dict[str, Any]:
+        await self.ensure_connected()
+        if self.grant_error is not None:
+            raise self.grant_error
+        self.grants.append(("revoke_input", host_terminal_id, attachment_id))
+        return {"ok": True, "revoked": True}
 
     async def snapshot(
         self, host_terminal_id: str, *, mode: str = "text", max_bytes: int = 0, max_lines: int = 0
@@ -1123,3 +1142,71 @@ async def test_each_observer_bind_gets_its_own_frame_stream() -> None:
         server.close()
         await server.wait_closed()
         shutil.rmtree(socket_dir, ignore_errors=True)
+
+
+@dataclass(frozen=True)
+class _Holder:
+    attachment_id: str
+    frame_delivery: str
+
+
+@pytest.mark.asyncio
+async def test_grant_and_revoke_map_the_row_to_its_host_terminal() -> None:
+    runtime, host = _runtime()
+    row = _native_terminal(host, host_terminal_id="ht-9")
+    await runtime.grant_input(row, "att-1")
+    await runtime.revoke_input(row, "att-1")
+    await runtime.revoke_input(row)
+    assert host.grants == [
+        ("grant_input", "ht-9", "att-1"),
+        ("revoke_input", "ht-9", "att-1"),
+        ("revoke_input", "ht-9", None),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_grant_refusals_pass_through_the_runtime() -> None:
+    runtime, host = _runtime()
+    row = _native_terminal(host)
+    for code in ("not_native", "not_found"):
+        host.grant_error = HostCommandError(code)
+        with pytest.raises(HostCommandError) as refused:
+            await runtime.grant_input(row, "att-1")
+        assert refused.value.code == code
+    assert host.grants == []
+
+
+@pytest.mark.asyncio
+async def test_sync_host_input_grant_follows_the_holder() -> None:
+    runtime, host = _runtime()
+    row = _native_terminal(host, host_terminal_id="ht-3")
+    direct = _Holder("att-direct", "direct")
+    assert await sync_host_input_grant(runtime, row, direct) is True
+    assert await sync_host_input_grant(runtime, row, _Holder("att-web", "proxy")) is None
+    assert await sync_host_input_grant(runtime, row, None) is None
+    assert host.grants == [
+        ("grant_input", "ht-3", "att-direct"),
+        ("revoke_input", "ht-3", None),
+        ("revoke_input", "ht-3", None),
+    ]
+    host.grants.clear()
+
+    # Only native rows can hold a grant; tmux and unknown rows never reach the host.
+    assert (
+        await sync_host_input_grant(runtime, make_memory_terminal(backend="tmux"), direct) is None
+    )
+    assert await sync_host_input_grant(runtime, None, direct) is None
+    assert host.grants == []
+
+    # Host refusals and outages answer False for a grant and stay quiet for a revoke.
+    for code in ("not_native", "not_found"):
+        host.grant_error = HostCommandError(code)
+        assert await sync_host_input_grant(runtime, row, direct) is False
+        assert await sync_host_input_grant(runtime, row, None) is None
+    host.grant_error = None
+    stale = _native_terminal(host)
+    stale.host_epoch = "epoch-before-respawn"
+    assert await sync_host_input_grant(runtime, stale, direct) is False
+    host.available = False
+    assert await sync_host_input_grant(runtime, row, direct) is False
+    assert host.grants == []
