@@ -438,3 +438,43 @@ async def test_snapshot_requires_the_host_to_echo_the_requested_mode() -> None:
         assert (await task)["text"] == "\x1b[31mred"
     finally:
         await client.close()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_mutating_requests_never_share_an_operation_seq() -> None:
+    """Overlapping writes must not both take the sequence the host executes once.
+
+    The sequence space is per connection while the write coordinator locks per
+    terminal, so two terminals writing at once used to read the same ``next_seq``
+    and the host refused the loser ``operation_conflict``.
+    """
+    reader = asyncio.StreamReader()
+    writer = _Writer()
+    client = HostClient(reader, writer)
+    try:
+        first = asyncio.create_task(
+            client.write(host_terminal_id="ht-1", kind="key", data=b"enter")
+        )
+        first_req = await writer.next_write()
+        assert first_req["operation_seq"] == 1
+
+        second = asyncio.create_task(client.resize("ht-2", rows=40, cols=120))
+        await asyncio.sleep(0)
+        # The second request waits for the first reply rather than pipelining
+        # behind it against a sequence the host has not recorded yet.
+        assert writer.write_queue.empty()
+
+        reader.feed_data(
+            host_client.encode_control_line({"ok": True, "written": True, "id": first_req["id"]})
+        )
+        await first
+        assert client.next_seq == 2
+
+        second_req = await writer.next_write()
+        assert second_req["method"] == "resize"
+        assert second_req["operation_seq"] == 2
+        reader.feed_data(host_client.encode_control_line({"ok": True, "id": second_req["id"]}))
+        await second
+        assert client.next_seq == 3
+    finally:
+        await client.close()

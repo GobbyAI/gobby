@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
 
 from gobby.terminals.dimensions import InvalidTerminalDimensionsError
+from gobby.terminals.host_client import HostCommandError
 from gobby.terminals.leases import SizingDecision, TerminalLeaseRegistry
+
+logger = logging.getLogger(__name__)
 
 
 class TerminalSizingMixin:
@@ -82,7 +86,22 @@ class TerminalSizingMixin:
         # no longer prove the pin is in place: re-pin even at the same geometry.
         if row.backend != "tmux" and (row.rows, row.cols) == (rows, cols):
             return
-        await runtime.resize(row, rows, cols)
+        try:
+            await runtime.resize(row, rows, cols)
+        except HostCommandError as exc:
+            # An exited pane or a draining host refuses typed. Killing the
+            # WebSocket handler here drops the client's resize reply and leaves
+            # its grid drawn at a size the pane never took; the recorded dims
+            # stay stale instead, so the next resize retries rather than
+            # short-circuiting on matching geometry.
+            logger.warning(
+                "Terminal %s resize to %sx%s refused by the host: %s",
+                terminal_id,
+                rows,
+                cols,
+                exc.error,
+            )
+            return
         manager.set_dims(row.id, rows, cols)
 
     async def _handle_terminal_set_viewport(self, websocket: Any, data: dict[str, Any]) -> None:

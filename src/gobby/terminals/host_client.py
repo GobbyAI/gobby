@@ -163,6 +163,7 @@ class HostClient:
         self._control_token: str | None = None
         self._protocol_version = CONTROL_PROTOCOL_VERSION
         self.next_seq = 1
+        self._operation_lock = asyncio.Lock()
         self._commit_write_states: dict[asyncio.Task[Any], bool] = {}
 
     @classmethod
@@ -351,6 +352,24 @@ class HostClient:
                 ) from exc
             raise HostUnavailableError(str(exc) or "gterm host unavailable") from exc
 
+    async def _mutating_roundtrip(
+        self, request: dict[str, Any], *, operation_seq: int | None = None
+    ) -> dict[str, Any]:
+        """Serialize one state-changing request across this connection.
+
+        The host keys its ledger on a per-connection monotonic ``operation_seq``
+        and runs every mutating verb through a single ordered dispatcher, so
+        pipelining buys no concurrency, while two callers that read ``next_seq``
+        before either reply lands take the same sequence and the host refuses the
+        loser ``operation_conflict``. Allocation, send, reply, and the advance or
+        retain decision therefore all happen under one lock, which is also what
+        makes the ``_UNCONSUMED_SEQ_ERRORS`` retain safe: nothing else can have
+        taken the sequence being kept.
+        """
+        async with self._operation_lock:
+            request["operation_seq"] = self.next_seq if operation_seq is None else operation_seq
+            return await self._roundtrip(request)
+
     async def hello(self, protocol_version: int, control_token: str) -> HelloResult:
         payload = await self._roundtrip(
             {
@@ -409,9 +428,11 @@ class HostClient:
         }
 
     async def spawn(self, **fields: Any) -> dict[str, Any]:
-        seq = int(fields.pop("operation_seq", self.next_seq))
-        request = {"method": "spawn", "operation_seq": seq, **fields}
-        return await self._roundtrip(request)
+        raw_seq = fields.pop("operation_seq", None)
+        return await self._mutating_roundtrip(
+            {"method": "spawn", **fields},
+            operation_seq=None if raw_seq is None else int(raw_seq),
+        )
 
     async def spawn_commit(self, terminal_id: str, spawn_key: str, commit_deadline_ms: int) -> None:
         task = asyncio.current_task()
@@ -443,10 +464,8 @@ class HostClient:
         submit: bool = False,
         operation_seq: int | None = None,
     ) -> dict[str, Any]:
-        seq = self.next_seq if operation_seq is None else operation_seq
         payload: dict[str, Any] = {
             "method": "write",
-            "operation_seq": seq,
             "host_terminal_id": host_terminal_id,
             "kind": kind,
             "encoding": "utf8-b64",
@@ -454,7 +473,7 @@ class HostClient:
         }
         if kind == "text":
             payload["submit"] = submit
-        return await self._roundtrip(payload)
+        return await self._mutating_roundtrip(payload, operation_seq=operation_seq)
 
     async def write_batch(self, targets: Sequence[HostBatchTarget]) -> list[dict[str, Any]]:
         """Write ordered operations to bounded native targets in one roundtrip."""
@@ -504,9 +523,8 @@ class HostClient:
                     "operations": operations,
                 }
             )
-        seq = self.next_seq
-        result = await self._roundtrip(
-            {"method": "write_batch", "operation_seq": seq, "targets": encoded_targets}
+        result = await self._mutating_roundtrip(
+            {"method": "write_batch", "targets": encoded_targets}
         )
         raw_results = result.get("results")
         if not isinstance(raw_results, list) or len(raw_results) != len(targets):
@@ -534,22 +552,18 @@ class HostClient:
         return decoded
 
     async def kill(self, host_terminal_id: str, grace_ms: int = 50) -> None:
-        seq = self.next_seq
-        await self._roundtrip(
+        await self._mutating_roundtrip(
             {
                 "method": "kill",
-                "operation_seq": seq,
                 "host_terminal_id": host_terminal_id,
                 "grace_ms": grace_ms,
             }
         )
 
     async def resize(self, host_terminal_id: str, rows: int, cols: int) -> None:
-        seq = self.next_seq
-        await self._roundtrip(
+        await self._mutating_roundtrip(
             {
                 "method": "resize",
-                "operation_seq": seq,
                 "host_terminal_id": host_terminal_id,
                 "rows": rows,
                 "cols": cols,
@@ -631,7 +645,10 @@ class HostClient:
         )
 
     async def reconnect(self, socket_path: Path, expected_epoch: str | None = None) -> str:
-        async with self._lifecycle_lock:
+        # The operation lock is taken first, in the same order _mutating_roundtrip
+        # takes it, so no request can hold a sequence allocated against the old
+        # connection while this resets the sequence space for the new one.
+        async with self._operation_lock, self._lifecycle_lock:
             await self._close_generation("control connection replaced")
             try:
                 reader, writer = await asyncio.open_unix_connection(

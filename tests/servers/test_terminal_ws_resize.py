@@ -14,6 +14,7 @@ from gobby.servers.websocket.proxy_relay import ProxyAttachment
 from gobby.servers.websocket.terminal_sizing import TerminalSizingMixin
 from gobby.servers.websocket.terminal_ws import TerminalWsMixin
 from gobby.servers.websocket.terminal_ws_control import TerminalControlMixin
+from gobby.terminals.host_client import HostCommandError
 from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.tmux_runtime import TmuxTerminalRuntime
 from tests.terminals.fakes import MemoryTerminalStore, make_memory_terminal
@@ -177,4 +178,46 @@ async def test_web_viewer_pins_tmux_window_only_while_holding_the_lease(
     # The row still records 24x80 after the release; typing again must re-pin.
     await server._handle_terminal_take_control(websocket, control)
     assert commands == pin + unpin + pin
+    await server.lease_registry.shutdown_lifecycle_publication()
+
+
+class _RefusingRuntime:
+    """Host runtime whose resize is refused typed, as an exited pane is."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def resize(self, _row: Any, _rows: int, _cols: int) -> None:
+        self.calls += 1
+        raise HostCommandError("not_found")
+
+
+class _NativeSizingServer(_SizingServer):
+    def _runtime_for(self, backend: str) -> Any | None:
+        return self.runtime if backend == "native" else None
+
+
+@pytest.mark.asyncio
+async def test_typed_resize_refusal_answers_instead_of_killing_the_handler() -> None:
+    """A refused resize must not escape and drop the client's reply.
+
+    Unhandled it reached `server._handle_connection`, so gclient kept drawing a
+    grid the pane never took and timed out waiting for the resize result.
+    """
+    row = make_memory_terminal(terminal_id="term-1", backend="native")
+    runtime = _RefusingRuntime()
+    server = _NativeSizingServer(row, runtime)
+    attachment = await server.lease_registry.attach("term-1", viewer="gclient")
+
+    await server._handle_terminal_resize(
+        object(),
+        {"attachment_id": attachment.attachment_id, "rows": 40, "cols": 120},
+    )
+
+    assert runtime.calls == 1
+    stored = server.terminal_manager.get("term-1")
+    assert stored is not None
+    # Dims stay stale so the next resize retries rather than short-circuiting
+    # on geometry the pane never accepted.
+    assert (stored.rows, stored.cols) != (40, 120)
     await server.lease_registry.shutdown_lifecycle_publication()
