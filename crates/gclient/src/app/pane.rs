@@ -10,9 +10,15 @@ use gobby_terminal::protocol::FrameData;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PaneId(pub u32);
 
-/// The chrome's last-resort name for a terminal, used where no pane owns the
-/// row yet. A terminal id is a UUID, and four of them truncated into a sidebar
-/// are four identical rows, so only the leading segment is worth showing.
+/// The last rung of the pane label ladder (D1): what a terminal is called once
+/// it has no name of its own, no session bound to it, and no foreground command
+/// the daemon could read. A literal, so no rung of the ladder can be an id.
+pub const UNNAMED_PANE: &str = "shell";
+
+/// A UUID reduced to its leading segment, for the surfaces whose subject *is*
+/// an id: the destroy-orphans dialog, where a dead row has nothing else left to
+/// tell it apart, and machine and session ids with no name yet. Never a pane
+/// label — `display_name` is the ladder that keeps ids out of the chrome.
 pub fn short_terminal_id(terminal_id: &str) -> &str {
     match terminal_id.char_indices().nth(8) {
         Some((split, _)) => &terminal_id[..split],
@@ -48,6 +54,14 @@ pub struct Pane {
     /// entries are keyed by session, not by terminal, so this is what points
     /// a blocked session at the row the user can act on.
     pub session_id: Option<String>,
+    /// The provider of the session bound to this terminal — `claude`, `codex`,
+    /// `droid`. Rung 2 of the label ladder, resolved from the roster rather
+    /// than the terminal row, which is why it is refreshed with the sidebar.
+    pub provider: Option<String>,
+    /// The command in this terminal's foreground, as the daemon observed it:
+    /// `zsh` at an idle prompt, `nvim` or `cargo` while a job holds it. Rung 3
+    /// of the label ladder, and the last rung with any information in it.
+    pub command: Option<String>,
     pub expected_host_epoch: String,
     pub control: ControlState,
     // Chrome consumes this presentation mirror directly. AttachState remains
@@ -106,6 +120,8 @@ impl Pane {
             label: None,
             address: None,
             session_id: None,
+            provider: None,
+            command: None,
             expected_host_epoch: epoch,
             control: ControlState::Observe,
             live: true,
@@ -156,21 +172,26 @@ impl Pane {
         pane
     }
 
-    /// What every chrome surface calls this terminal. The user's label first,
-    /// then the daemon's title, then the backend address for a row that has
-    /// not reported one, then a short id — never the raw UUID, which says
-    /// nothing and crowds out the state and backend tokens that share the row.
+    /// What every chrome surface calls this terminal, by the D1 ladder: the
+    /// name the user gave the pane, then the provider of the session bound to
+    /// it, then the command in its foreground, then the literal `shell`.
+    ///
+    /// The last rung is a literal so no rung can ever be an id. `title` is not
+    /// a rung: the daemon fills it from `window_name or pane_title or
+    /// session_name`, which yields `zsh` for one pane and `75`, `[tmux]` or a
+    /// whole session banner for the next, and `gobby-codex-d0` for a spawned
+    /// agent that rung 2 renders as `codex`.
     pub fn display_name(&self) -> &str {
-        if let Some(label) = self.label.as_deref() {
+        if let Some(label) = self.label.as_deref().filter(|name| !name.is_empty()) {
             return label;
         }
-        if !self.title.is_empty() {
-            return &self.title;
+        if let Some(provider) = self.provider.as_deref().filter(|name| !name.is_empty()) {
+            return provider;
         }
-        match self.address.as_deref() {
-            Some(address) => address,
-            None => short_terminal_id(&self.terminal_id),
+        if let Some(command) = self.command.as_deref().filter(|name| !name.is_empty()) {
+            return command;
         }
+        UNNAMED_PANE
     }
 
     pub fn is_observe(&self) -> bool {
