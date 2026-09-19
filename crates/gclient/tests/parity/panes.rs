@@ -291,15 +291,8 @@ parity_tests! {
                 render_pane_borders(&chrome, &pane_infos, &split_borders, &titles, frame)
             });
 
-            // Deliberate divergence from herdr, at the operator's direction:
-            // herdr accents this centre junction because pane 1 has focus, but
-            // four pane frames meet in it and a terminal cell cannot be half
-            // accent, so accenting it outlines three panes that do not have
-            // focus. The divider cell below keeps the accent -- only pane 1 and
-            // its right neighbour meet there, and without it pane 1 would have
-            // no right side at all.
             assert_eq!(cell(&terminal, 2, 2).symbol(), "┼");
-            assert_eq!(cell(&terminal, 2, 2).style().fg, Some(palette().overlay0));
+            assert_eq!(cell(&terminal, 2, 2).style().fg, Some(palette().accent));
             assert_eq!(cell(&terminal, 2, 1).symbol(), "│");
             assert_eq!(cell(&terminal, 2, 1).style().fg, Some(palette().accent));
         }

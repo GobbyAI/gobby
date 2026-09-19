@@ -270,10 +270,9 @@ pub fn render_pane_borders(
         {
             continue;
         }
-        let focused = !is_junction(line)
-            && pane_infos
-                .iter()
-                .any(|info| info.is_focused && line_touches_pane(x, y, info, pane_gaps));
+        let focused = pane_infos
+            .iter()
+            .any(|info| info.is_focused && line_touches_pane(x, y, info, pane_gaps));
         let symbol = line_cell_symbol(line);
         if symbol.is_empty() {
             continue;
@@ -404,15 +403,10 @@ fn line_touches_pane(x: u16, y: u16, info: &PaneInfo, pane_gaps: bool) -> bool {
 
     let shared_right = rect.x.saturating_add(rect.width);
     let shared_bottom = rect.y.saturating_add(rect.height);
-    own_border || (in_rows && x == shared_right) || (in_cols && y == shared_bottom)
-}
-
-/// Three or more arms in one cell means more than one pane frame runs through
-/// it: the shared divider, plus the edges that leave it into a neighbour. A
-/// terminal cell cannot be half accent, so a junction stays neutral rather than
-/// outlining a pane that does not have focus.
-fn is_junction(line: LineCell) -> bool {
-    u8::from(line.up) + u8::from(line.down) + u8::from(line.left) + u8::from(line.right) >= 3
+    own_border
+        || (in_rows && x == shared_right)
+        || (in_cols && y == shared_bottom)
+        || (x == shared_right && y == shared_bottom)
 }
 
 fn render_pane_border_titles(
@@ -560,50 +554,6 @@ mod tests {
             assert!(text.contains(needle), "frame lacks {needle:?}:\n{text}");
         }
         assert!(!text.contains('!'));
-    }
-
-    #[test]
-    fn focus_accent_stops_short_of_the_neighbours_own_edges() {
-        let (ws, mut chrome) = scripted();
-        // Shared dividers: `apply_pane_chrome` drops the left pane's RIGHT
-        // border, so the divider column is the right pane's LEFT wall. Focus
-        // claims it -- otherwise the focused pane has no right side at all --
-        // but its two ends are junctions whose side arms are the neighbour's
-        // own top and bottom edges.
-        chrome.prefs.pane_gaps = false;
-        let area = Rect::new(0, 0, 120, 40);
-        chrome.compute_view(&ws, area);
-        let leftmost = chrome.view.pane_infos[0].id;
-        chrome.set_focus_slot(leftmost);
-        chrome.compute_view(&ws, area);
-
-        let rect = chrome.view.pane_infos[0].rect;
-        assert!(chrome.view.pane_infos[0].is_focused);
-        assert!(!chrome.view.pane_infos[0].borders.contains(Borders::RIGHT));
-
-        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
-        terminal
-            .draw(|frame| render_panes(frame, &ws, &chrome, &mut |_, _, _| {}))
-            .unwrap();
-        let buf = terminal.backend().buffer().clone();
-        let at = |x: u16, y: u16| {
-            let cell = &buf[(x, y)];
-            (cell.symbol().to_string(), cell.fg)
-        };
-
-        let divider = rect.x + rect.width;
-        let bottom = rect.y + rect.height - 1;
-        let accent = chrome.palette.accent;
-        let neutral = chrome.palette.overlay0;
-
-        assert_eq!(at(divider, rect.y), ("┬".to_string(), neutral));
-        assert_eq!(at(divider, bottom), ("┴".to_string(), neutral));
-        assert_eq!(
-            at(divider, rect.y + rect.height / 2),
-            ("│".to_string(), accent)
-        );
-        assert_eq!(at(rect.x, rect.y), ("┌".to_string(), accent));
-        assert_eq!(at(rect.x, bottom), ("└".to_string(), accent));
     }
 
     #[test]
