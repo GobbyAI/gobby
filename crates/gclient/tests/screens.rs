@@ -1,6 +1,6 @@
 //! 4.2.1: committed screen goldens for the whole gclient chrome.
 //!
-//! Four scripted workspace states render through the real `render_workspace`
+//! Five scripted workspace states render through the real `render_workspace`
 //! into a 120x40 `TestBackend`, then serialise one line per row: the glyphs,
 //! then the run-length-encoded style of every cell with each colour normalised
 //! to its `theme::Palette` role name.
@@ -41,11 +41,12 @@ const UPDATE_ENV: &str = "GOBBY_UPDATE_SCREENS";
 type ScriptedState = fn() -> (Workspace, Chrome);
 
 /// The scripted states, in the order the plan names them.
-const STATES: [(&str, ScriptedState); 4] = [
+const STATES: [(&str, ScriptedState); 5] = [
     ("empty_workspace", empty_workspace),
     ("projects_agents", projects_agents),
     ("split_live", split_live),
     ("help_dialog", help_dialog),
+    ("label_ladder", label_ladder),
 ];
 
 // ---------------------------------------------------------------- the states
@@ -136,6 +137,58 @@ fn split_live() -> (Workspace, Chrome) {
     chrome.open_tab(alpha, "second");
     chrome.activate_tab(0);
     assert!(chrome.focus_pane(beta), "focus term-beta");
+    (ws, chrome)
+}
+
+/// Rungs 2, 3 and 4 of the label ladder, in the chrome that draws them.
+///
+/// Every other state names its panes by rung 1: a scripted terminal is opened
+/// under a name and keeps it. This one takes those names away so the
+/// rungs below get their turn — `term-alpha` hosts a `codex` session,
+/// `term-beta` has `nvim` in its foreground, and `term-gamma` has nothing left
+/// to say and falls to the literal. Focus sits on `term-gamma` so the status
+/// line carries that literal too, and no row here can be an id.
+///
+/// The second reconcile is the roster refresh that follows an attach, and it
+/// is the only point at which a provider can reach a pane: the first one ran
+/// before any pane existed.
+fn label_ladder() -> (Workspace, Chrome) {
+    let mut ws = Workspace::scripted();
+    ws.daemon_mut().set_sidebar_rows(project_rows());
+    ws.daemon_mut().set_roster(json!({
+        "epoch": "e1",
+        "seq": 1,
+        "entries": [{
+            "entry_id": "run:term-alpha",
+            "terminal": {"terminal_id": "term-alpha", "backend": "native"},
+            "provider": "codex"
+        }]
+    }));
+    ws.select_project("proj-alpha");
+    ws.reconcile_subscribe_first().expect("install roster");
+    for terminal_id in ["term-alpha", "term-beta", "term-gamma"] {
+        ws.open_terminal(terminal_id, "native", "epoch")
+            .expect("open terminal");
+    }
+    for (terminal_id, command) in [
+        ("term-alpha", None),
+        ("term-beta", Some("nvim")),
+        ("term-gamma", None),
+    ] {
+        let id = ws.pane_for_terminal(terminal_id).expect("scripted pane");
+        let pane = ws.pane_mut(id);
+        pane.label = None;
+        pane.command = command.map(str::to_string);
+    }
+    ws.reconcile_subscribe_first().expect("refresh roster");
+
+    let mut chrome = Chrome::dark();
+    for terminal_id in ["term-alpha", "term-beta", "term-gamma"] {
+        let pane = ws.pane_for_terminal(terminal_id).expect("scripted pane");
+        chrome.open_pane(pane, "alpha");
+    }
+    let gamma = ws.pane_for_terminal("term-gamma").expect("term-gamma pane");
+    assert!(chrome.focus_pane(gamma), "focus term-gamma");
     (ws, chrome)
 }
 
