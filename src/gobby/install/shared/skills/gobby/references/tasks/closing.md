@@ -13,7 +13,15 @@ Finish in this order:
    credited. Pipelines such as `| tail`, `;` command sequences, trailing output
    such as `echo`, fallbacks, backgrounding, subshells, and obscuring wrappers
    are not; one of them anywhere voids every check in that call. Recover with a
-   direct rerun of each validation as its own call.
+   direct rerun of each validation as its own call. Changed Python tests also
+   require a clean `gobby test-types audit` against the test-types baseline with
+   `--fail-on-new`, credited from one invocation whose explicit targets lexically
+   cover every changed test: a file target covers itself, a directory target covers
+   its descendants, `tests/` is the whole-tree fallback, a rename needs source and
+   destination, and a deleted test is covered by auditing its parent directory.
+   Coverage is judged per invocation and never unioned across runs, so one file per
+   call never adds up. Beyond that baseline and `--fail-on-new`, only the
+   output-only flags `--format`, `--output` and `--min-severity` keep credit.
 3. Stage only task paths and commit with a task reference. Use
    `git commit --only -m '[<project_name>-#<task_number>] fix: describe the change' -- <task paths>`.
 4. Call `close_task` once with `task_id`, `commit_sha`, `changes_summary`, and
@@ -54,4 +62,4 @@ validator-only and is never a shortcut for the implementing session.
 
 Guide: [Close](../../../../../../../../docs/guides/tasks.md#close).
 
-_Last verified: 2026-09-16_
+_Last verified: 2026-09-19_

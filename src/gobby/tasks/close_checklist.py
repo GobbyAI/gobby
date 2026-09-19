@@ -45,6 +45,11 @@ _TEST_TYPES_AUDIT_COMMAND = (
     "uv run gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json --fail-on-new"
 )
 _TEST_TYPES_BASELINE = ".gobby/test-types-baseline.json"
+# Flags that change only how the audit reports. ``--min-severity`` cannot weaken the
+# ratchet: its default is already the loosest choice, so an explicit value is at least
+# as strict. Everything else -- ``--write-baseline``, ``--allow-failing-baseline``,
+# ``--mypy-command`` -- changes what the audit enforces and still voids credit.
+_TEST_TYPES_OUTPUT_ONLY_FLAGS = frozenset({"--format", "--output", "--min-severity"})
 _GENERIC_COMMAND_WORDS = frozenset(
     {"uv", "run", "npx", "npm", "python", "python3", "bash", "sh", "git", "check", "test", "ci"}
 )
@@ -534,6 +539,13 @@ def _test_types_command_targets(command: str) -> tuple[str, ...] | None:
             baselines.append(argument.partition("=")[2])
         elif argument == "--fail-on-new":
             fail_on_new += 1
+        elif argument in _TEST_TYPES_OUTPUT_ONLY_FLAGS:
+            # Consume the flag's value so it is never mistaken for a target.
+            index += 1
+            if index >= len(arguments):
+                return None
+        elif argument.partition("=")[0] in _TEST_TYPES_OUTPUT_ONLY_FLAGS:
+            pass  # `--flag=value` carries its value inline.
         elif argument.startswith("-"):
             return None
         else:

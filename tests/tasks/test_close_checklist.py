@@ -676,6 +676,106 @@ def test_noncanonical_test_types_audits_do_not_satisfy_guard(
 
 
 @pytest.mark.parametrize(
+    "normalized_command",
+    [
+        "gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json "
+        "--fail-on-new --format json",
+        "gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json "
+        "--fail-on-new --format=json",
+        "gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json "
+        "--fail-on-new --min-severity low",
+        "gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json "
+        "--fail-on-new --output .gobby/audit.txt",
+        "gobby test-types audit --format json --output .gobby/audit.json "
+        "--min-severity low --baseline .gobby/test-types-baseline.json --fail-on-new "
+        "tests/tasks/test_close_checklist.py",
+    ],
+)
+def test_output_only_flags_keep_test_types_audit_credit(normalized_command: str) -> None:
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(
+            validation_runs=(
+                _audit_run(
+                    1,
+                    command=f"uv run {normalized_command}",
+                    normalized_command=normalized_command,
+                ),
+                _run(2),
+            )
+        ),
+        has_attributed_edits=True,
+        changed_paths=("tests/tasks/test_close_checklist.py",),
+    )
+
+    assert gate.status == "passed"
+    assert gate.details["test_types_audit_uncovered_paths"] == []
+    assert gate.details["latest_test_types_audit"]["outcome"] == "success"
+
+
+@pytest.mark.parametrize(
+    "normalized_command",
+    [
+        # An output-only flag left without its value is a malformed invocation.
+        "gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json "
+        "--fail-on-new --format",
+        # `--mypy-command` changes what the audit enforces, so it is not output-only.
+        "gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json "
+        "--fail-on-new --mypy-command 'mypy --no-error-summary'",
+        # A near-miss spelling must not be credited by prefix.
+        "gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json "
+        "--fail-on-new --format-json",
+    ],
+)
+def test_nonoutput_flags_still_void_test_types_audit_credit(normalized_command: str) -> None:
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(
+            validation_runs=(
+                _audit_run(
+                    1,
+                    command=f"uv run {normalized_command}",
+                    normalized_command=normalized_command,
+                ),
+                _run(2),
+            )
+        ),
+        has_attributed_edits=True,
+        changed_paths=("tests/tasks/test_close_checklist.py",),
+    )
+
+    assert gate.status == "failed"
+    assert gate.details["latest_test_types_audit"] is None
+
+
+def test_output_only_flag_value_is_not_read_as_an_audit_target() -> None:
+    """The consumed `--output` value must not stand in for a missing test target."""
+    normalized_command = (
+        "gobby test-types audit --output tests/tasks --baseline "
+        ".gobby/test-types-baseline.json --fail-on-new"
+    )
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(
+            validation_runs=(
+                _audit_run(
+                    1,
+                    command=f"uv run {normalized_command}",
+                    normalized_command=normalized_command,
+                ),
+                _run(2),
+            )
+        ),
+        has_attributed_edits=True,
+        changed_paths=("tests/tasks/test_close_checklist.py",),
+    )
+
+    assert gate.status == "failed"
+    assert gate.details["latest_test_types_audit"] is None
+    assert gate.details["test_types_audit_targets"] == []
+
+
+@pytest.mark.parametrize(
     "command",
     [
         "GOBBY_TEST_PROTECT=1 uv run gobby test-types audit tests/ "
