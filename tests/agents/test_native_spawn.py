@@ -130,8 +130,10 @@ async def test_is_live_requires_epoch_and_reconnect_has_arguments(tmp_path: Any)
     sent = (list(client.resizes), list(client.kills))
     with pytest.raises(HostEpochChangedError, match="host_epoch_changed"):
         await runtime.resize(terminal, 32, 102)
-    with pytest.raises(HostEpochChangedError, match="host_epoch_changed"):
-        await runtime.terminate(terminal, 0.05)
+    # No host can address a PTY whose epoch is gone, so terminate reaps the
+    # recorded process group instead of raising (#22530); this row has no
+    # recorded process, so it settles without reaching the host either way.
+    await runtime.terminate(terminal, 0.05)
     assert (client.resizes, client.kills) == sent
 
 

@@ -438,3 +438,172 @@ async def test_snapshot_requires_the_host_to_echo_the_requested_mode() -> None:
         assert (await task)["text"] == "\x1b[31mred"
     finally:
         await client.close()
+
+
+class _LedgerHost:
+    """The gterm host's per-connection operation ledger, answered over a fake socket.
+
+    Mirrors ``OperationLedger::decide`` (``crates/gterminal/src/host/ledger.rs``)
+    and the single ordered dispatch queue ``handle_connection`` feeds for mutating
+    methods (``crates/gterminal/src/host/control.rs``): one decision at a time
+    against a monotonic sequence, and a sequence replayed under a different
+    request fingerprint is refused ``operation_conflict``.
+    """
+
+    _MUTATING = frozenset({"spawn", "kill", "resize", "write", "write_batch"})
+
+    def __init__(self, reader: asyncio.StreamReader, writer: _Writer) -> None:
+        self._reader = reader
+        self._writer = writer
+        self.high_seq = 0
+        self.entries: dict[int, tuple[str, dict[str, Any]]] = {}
+        self.executed: list[str] = []
+        self.errors: list[str] = []
+        self.task = asyncio.create_task(self._serve())
+
+    async def aclose(self) -> None:
+        self.task.cancel()
+        await asyncio.gather(self.task, return_exceptions=True)
+
+    @staticmethod
+    def _fingerprint(request: dict[str, Any]) -> str:
+        extra = {k: v for k, v in request.items() if k not in {"id", "method", "operation_seq"}}
+        return json.dumps(extra, sort_keys=True)
+
+    async def _serve(self) -> None:
+        try:
+            while True:
+                request = json.loads(await self._writer.write_queue.get())
+                reply = (
+                    self._decide(request)
+                    if request.get("method") in self._MUTATING
+                    else {"ok": True}
+                )
+                self._reader.feed_data(
+                    host_client.encode_control_line({**reply, "id": request["id"]})
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # Nothing awaits this task, so a fault here would leave every
+            # roundtrip pending forever. EOF fails them and the test reports
+            # the fault instead of hanging.
+            self._reader.feed_eof()
+            raise
+
+    def _decide(self, request: dict[str, Any]) -> dict[str, Any]:
+        seq = request["operation_seq"]
+        fingerprint = self._fingerprint(request)
+        recorded = self.entries.get(seq)
+        if recorded is not None:
+            if recorded[0] != fingerprint:
+                self.errors.append("operation_conflict")
+                return {"ok": False, "error": "operation_conflict"}
+            return recorded[1]
+        if seq > self.high_seq + 1:
+            self.errors.append("operation_gap")
+            return {"ok": False, "error": "operation_gap"}
+        if seq <= self.high_seq:
+            self.errors.append("operation_expired")
+            return {"ok": False, "error": "operation_expired"}
+        outcome: dict[str, Any] = {"ok": True}
+        self.entries[seq] = (fingerprint, outcome)
+        self.high_seq = seq
+        self.executed.append(f"{request['method']}:{seq}")
+        return outcome
+
+
+@pytest.mark.asyncio
+async def test_concurrent_mutations_never_claim_the_same_operation_seq() -> None:
+    """A second state-changing request waits for the sequence the first claimed.
+
+    ``next_seq`` only advances when the host answers, so two requests built while
+    one was in flight used to carry the same sequence, and the host refused the
+    loser ``operation_conflict``.
+    """
+    reader = asyncio.StreamReader()
+    writer = _Writer()
+    client = HostClient(reader, writer)
+    try:
+        first = asyncio.create_task(
+            client.write(host_terminal_id="ht-1", kind="text", data=b"prompt")
+        )
+        second = asyncio.create_task(
+            client.write(host_terminal_id="ht-2", kind="key", data=b"enter")
+        )
+        first_request = await writer.next_write()
+        assert first_request["operation_seq"] == 1
+        # Both tasks have taken their first step by the time the first request
+        # reaches the wire, so an empty queue is the second one still waiting.
+        assert writer.write_queue.empty(), "second write claimed an unresolved sequence"
+
+        reader.feed_data(host_client.encode_control_line({"ok": True, "id": first_request["id"]}))
+        await first
+        second_request = await writer.next_write()
+        assert second_request["operation_seq"] == 2
+        reader.feed_data(host_client.encode_control_line({"ok": True, "id": second_request["id"]}))
+        await second
+        assert client.next_seq == 3
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_a_spawn_in_flight_does_not_block_a_snapshot() -> None:
+    """Read-only calls stay concurrent; only the ledger's methods serialize.
+
+    The Codex composer readiness poll snapshots while other terminals write, and
+    the host dispatches non-mutating methods off its ordered queue.
+    """
+    reader = asyncio.StreamReader()
+    writer = _Writer()
+    client = HostClient(reader, writer)
+    try:
+        spawn = asyncio.create_task(client.spawn(terminal_id="t-1", spawn_key="k-1"))
+        spawn_request = await writer.next_write()
+        assert spawn_request["operation_seq"] == 1
+
+        snapshot = asyncio.create_task(client.snapshot("ht-1", mode="text"))
+        snapshot_request = await writer.next_write()
+        assert snapshot_request["method"] == "snapshot"
+        assert "operation_seq" not in snapshot_request
+        reader.feed_data(
+            host_client.encode_control_line(
+                {"ok": True, "mode": "text", "text": "› Ask Codex", "id": snapshot_request["id"]}
+            )
+        )
+        assert (await snapshot)["text"] == "› Ask Codex"
+
+        reader.feed_data(host_client.encode_control_line({"ok": True, "id": spawn_request["id"]}))
+        await spawn
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_spawn_and_writes_share_the_connection_without_conflicting() -> None:
+    """The reported failure: a spawn and other terminals' writes raced the ledger.
+
+    Every caller shares one control connection, so a spawn prompt write, another
+    terminal's periodic Enter and a resize all read the same unadvanced
+    ``next_seq``; the host executed one and refused the rest.
+    """
+    reader = asyncio.StreamReader()
+    writer = _Writer()
+    client = HostClient(reader, writer)
+    host = _LedgerHost(reader, writer)
+    try:
+        results = await asyncio.gather(
+            client.spawn(terminal_id="t-1", spawn_key="k-1", argv=["codex"]),
+            client.write(host_terminal_id="ht-1", kind="text", data=b"prompt", submit=False),
+            client.write(host_terminal_id="ht-2", kind="key", data=b"enter"),
+            client.resize("ht-3", 24, 80),
+            return_exceptions=True,
+        )
+        assert [result for result in results if isinstance(result, BaseException)] == []
+        assert host.errors == []
+        assert host.executed == ["spawn:1", "write:2", "write:3", "resize:4"]
+        assert client.next_seq == 5
+    finally:
+        await host.aclose()
+        await client.close()

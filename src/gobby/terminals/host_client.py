@@ -151,6 +151,7 @@ class HostClient:
         self._pid_alive = pid_alive
         self._write_lock = asyncio.Lock()
         self._lifecycle_lock = asyncio.Lock()
+        self._operation_lock = asyncio.Lock()
         self._pending: dict[str, tuple[int, asyncio.Future[dict[str, Any]]]] = {}
         self._generation = 1
         self._next_request_id = 1
@@ -197,6 +198,27 @@ class HostClient:
             return
         if raw >= self.next_seq:
             self.next_seq = raw + 1
+
+    async def _sequenced_roundtrip(
+        self,
+        method: str,
+        fields: dict[str, Any],
+        *,
+        operation_seq: int | None = None,
+    ) -> dict[str, Any]:
+        """Issue one state-changing request at a time, holding the seq it claims.
+
+        ``next_seq`` only advances once the host answers, so a second request
+        built while the first is in flight claims the same sequence. The host
+        has already recorded that sequence against the first request's
+        fingerprint and refuses the newcomer ``operation_conflict``. The host
+        dispatches ``spawn``/``kill``/``resize``/``write``/``write_batch`` from
+        one per-connection queue regardless, so serializing them here costs no
+        throughput and keeps the ledger's sequence space contiguous.
+        """
+        async with self._operation_lock:
+            seq = self.next_seq if operation_seq is None else operation_seq
+            return await self._roundtrip({"method": method, "operation_seq": seq, **fields})
 
     @staticmethod
     def require_ping(payload: dict[str, Any]) -> dict[str, Any]:
@@ -409,9 +431,10 @@ class HostClient:
         }
 
     async def spawn(self, **fields: Any) -> dict[str, Any]:
-        seq = int(fields.pop("operation_seq", self.next_seq))
-        request = {"method": "spawn", "operation_seq": seq, **fields}
-        return await self._roundtrip(request)
+        raw = fields.pop("operation_seq", None)
+        return await self._sequenced_roundtrip(
+            "spawn", fields, operation_seq=None if raw is None else int(raw)
+        )
 
     async def spawn_commit(self, terminal_id: str, spawn_key: str, commit_deadline_ms: int) -> None:
         task = asyncio.current_task()
@@ -443,10 +466,7 @@ class HostClient:
         submit: bool = False,
         operation_seq: int | None = None,
     ) -> dict[str, Any]:
-        seq = self.next_seq if operation_seq is None else operation_seq
         payload: dict[str, Any] = {
-            "method": "write",
-            "operation_seq": seq,
             "host_terminal_id": host_terminal_id,
             "kind": kind,
             "encoding": "utf8-b64",
@@ -454,7 +474,7 @@ class HostClient:
         }
         if kind == "text":
             payload["submit"] = submit
-        return await self._roundtrip(payload)
+        return await self._sequenced_roundtrip("write", payload, operation_seq=operation_seq)
 
     async def write_batch(self, targets: Sequence[HostBatchTarget]) -> list[dict[str, Any]]:
         """Write ordered operations to bounded native targets in one roundtrip."""
@@ -504,10 +524,7 @@ class HostClient:
                     "operations": operations,
                 }
             )
-        seq = self.next_seq
-        result = await self._roundtrip(
-            {"method": "write_batch", "operation_seq": seq, "targets": encoded_targets}
-        )
+        result = await self._sequenced_roundtrip("write_batch", {"targets": encoded_targets})
         raw_results = result.get("results")
         if not isinstance(raw_results, list) or len(raw_results) != len(targets):
             raise HostDecodeError("write_batch response missing per-target results")
@@ -534,26 +551,13 @@ class HostClient:
         return decoded
 
     async def kill(self, host_terminal_id: str, grace_ms: int = 50) -> None:
-        seq = self.next_seq
-        await self._roundtrip(
-            {
-                "method": "kill",
-                "operation_seq": seq,
-                "host_terminal_id": host_terminal_id,
-                "grace_ms": grace_ms,
-            }
+        await self._sequenced_roundtrip(
+            "kill", {"host_terminal_id": host_terminal_id, "grace_ms": grace_ms}
         )
 
     async def resize(self, host_terminal_id: str, rows: int, cols: int) -> None:
-        seq = self.next_seq
-        await self._roundtrip(
-            {
-                "method": "resize",
-                "operation_seq": seq,
-                "host_terminal_id": host_terminal_id,
-                "rows": rows,
-                "cols": cols,
-            }
+        await self._sequenced_roundtrip(
+            "resize", {"host_terminal_id": host_terminal_id, "rows": rows, "cols": cols}
         )
 
     async def snapshot(
