@@ -1,5 +1,6 @@
 """Tests for the WebSocket server wrapper."""
 
+import logging
 from types import MappingProxyType
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -182,3 +183,41 @@ async def test_start_passes_warning_level_websockets_logger() -> None:
     assert serve_call is not None
     serve_kwargs = serve_call.kwargs
     assert serve_kwargs["logger"] is websockets_logger
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("threshold", "warns"), [(0.0, True), (60.0, False)])
+async def test_slow_handler_is_logged_with_its_message_type(
+    threshold: float,
+    warns: bool,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Dispatch on one connection is serial, so a slow handler delays every
+    message behind it; the warning names the type that held the line, and a
+    handler inside the budget logs nothing (#22544)."""
+    monkeypatch.setattr("gobby.servers.websocket.server.SLOW_WEBSOCKET_HANDLER_SECONDS", threshold)
+    server = WebSocketServer(
+        config=WebSocketConfig(),
+        mcp_manager=MagicMock(),
+        auth_callback=AsyncMock(return_value="test-user"),
+    )
+    handled: list[dict[str, Any]] = []
+
+    async def handler(_websocket: Any, data: dict[str, Any]) -> None:
+        handled.append(data)
+
+    server._dispatch_table = {"slow_kind": handler}
+    with caplog.at_level(logging.WARNING, logger="gobby.servers.websocket.server"):
+        await server._handle_message(MagicMock(), '{"type":"slow_kind"}')
+
+    assert handled == [{"type": "slow_kind"}]
+    warnings = [
+        record.getMessage() for record in caplog.records if record.levelno == logging.WARNING
+    ]
+    if not warns:
+        assert warnings == []
+        return
+    assert len(warnings) == 1
+    assert warnings[0].startswith("websocket handler slow_kind took ")
+    assert warnings[0].endswith("s; later messages on this connection waited")

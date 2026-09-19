@@ -104,6 +104,12 @@ pub enum FrameError {
     /// the loop shows, so it carries no failure prefix.
     #[error("{0}")]
     Refused(String),
+    /// A daemon request failed on the way to a frame source. The message is
+    /// the daemon error's own sentence (which request timed out, that the
+    /// daemon is away), shown as the status line as-is rather than behind a
+    /// "frame protocol failed" prefix that names the wrong layer (#22544).
+    #[error("{0}")]
+    Daemon(String),
 }
 
 impl From<std::io::Error> for FrameError {
@@ -123,7 +129,7 @@ impl From<FramingError> for FrameError {
 
 impl From<crate::daemon::DaemonError> for FrameError {
     fn from(error: crate::daemon::DaemonError) -> Self {
-        Self::Protocol(error.to_string())
+        Self::Daemon(error.to_string())
     }
 }
 

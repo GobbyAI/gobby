@@ -64,7 +64,10 @@ async fn one_deadline_spans_send_and_body() {
         .await
         .expect("the call gave up at the shared deadline")
         .expect("join the call");
-    assert!(matches!(result, Err(DaemonError::Timeout)), "{result:?}");
+    assert!(
+        matches!(result, Err(DaemonError::Timeout { .. })),
+        "{result:?}"
+    );
     assert!(
         started.elapsed() < REQUEST_DEADLINE + REQUEST_DEADLINE / 2,
         "one deadline across headers and body: {:?}",

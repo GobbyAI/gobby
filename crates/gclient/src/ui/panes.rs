@@ -204,7 +204,10 @@ fn render_pane_note(frame: &mut Frame, area: Rect, pane: &Pane, p: &Palette) {
             ))
         }
         None if pane.frame_source().is_some() => Some("waiting for frames".to_string()),
-        _ => None,
+        // No source and no frame: the pane is detached, and its status says
+        // why (a refusal or a deferred attach) so the body is not just blank.
+        None => pane.status_message().map(str::to_string),
+        Some(_) => None,
     };
     if let Some(text) = body {
         let rect = Rect::new(

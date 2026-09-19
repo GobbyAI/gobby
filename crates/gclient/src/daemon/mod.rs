@@ -54,8 +54,11 @@ pub enum DaemonError {
     ControlRequestInFlight,
     #[error("The attachment's control scope has an indeterminate result.")]
     ControlScopeIndeterminate,
-    #[error("Daemon request timed out.")]
-    Timeout,
+    /// The daemon did not answer inside the request deadline. `request`
+    /// names what was asked (a WebSocket message type, `METHOD /path`, or a
+    /// lifecycle step) so the status line and the log say which one.
+    #[error("Daemon did not answer {request} in time.")]
+    Timeout { request: String },
     #[error("Workspace op refused: {}", .0.reason)]
     Workspace(WorkspaceError),
 }
@@ -81,7 +84,7 @@ impl DaemonError {
             Self::NotFound => 404,
             Self::Unavailable { .. } | Self::GoingAway => 503,
             Self::ControlRequestInFlight | Self::ControlScopeIndeterminate => 409,
-            Self::Timeout => 408,
+            Self::Timeout { .. } => 408,
             Self::Workspace(_) => 400,
             Self::Protocol { detail } => detail
                 .strip_prefix("status=")
@@ -101,13 +104,19 @@ impl DaemonError {
             Self::Protocol { .. } => "protocol",
             Self::ControlRequestInFlight => "control_request_in_flight",
             Self::ControlScopeIndeterminate => "control_scope_indeterminate",
-            Self::Timeout => "timeout",
+            Self::Timeout { .. } => "timeout",
             Self::Workspace(_) => "workspace_error",
         }
     }
 
     pub(crate) fn unavailable() -> Self {
         Self::Unavailable { retry_after: None }
+    }
+
+    pub(crate) fn timeout(request: impl Into<String>) -> Self {
+        Self::Timeout {
+            request: request.into(),
+        }
     }
 }
 

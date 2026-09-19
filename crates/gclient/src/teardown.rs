@@ -387,7 +387,7 @@ pub async fn shutdown<W: ShutdownWorkspace, D: Daemon>(
             .into_iter()
             .find_map(Result::err)
             .map_or(Ok(()), Err),
-        Err(_) => Err(DaemonError::Timeout),
+        Err(_) => Err(DaemonError::timeout("shutdown cleanup")),
     };
     if let Err(error) = cleanup_result {
         tracing::warn!(%error, "gclient remote cleanup did not finish before daemon close");
@@ -428,6 +428,6 @@ async fn close_with_first_poll<D: Daemon>(
         Some(result) => result,
         None => timeout_at(deadline, close)
             .await
-            .map_err(|_| DaemonError::Timeout)?,
+            .map_err(|_| DaemonError::timeout("close"))?,
     }
 }

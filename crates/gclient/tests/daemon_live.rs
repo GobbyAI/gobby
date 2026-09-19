@@ -556,7 +556,9 @@ async fn every_method_has_success_and_typed_failure() {
         close_timeout_daemon
             .close(Instant::now() - Duration::from_millis(1))
             .await,
-        Err(DaemonError::Timeout)
+        Err(DaemonError::Timeout {
+            request: "close".into()
+        })
     );
     close_timeout_mock.shutdown().await;
 }
@@ -1117,7 +1119,9 @@ async fn correlation_maps_drain_on_every_terminal_path() {
     for control in controls {
         assert_eq!(
             control.await.expect("control deadline task"),
-            Err(DaemonError::Timeout)
+            Err(DaemonError::Timeout {
+                request: "terminal_take_control".into()
+            })
         );
     }
     assert_eq!(daemon.pending_counts(), (50, 50, 0));
@@ -1130,12 +1134,19 @@ async fn correlation_maps_drain_on_every_terminal_path() {
     tokio::time::advance(Duration::from_millis(1)).await;
     tokio::task::yield_now().await;
     for write in writes {
-        assert_eq!(write.await.expect("write task"), Err(DaemonError::Timeout));
+        assert_eq!(
+            write.await.expect("write task"),
+            Err(DaemonError::Timeout {
+                request: "terminal_input".into()
+            })
+        );
     }
     for request in requests {
         assert_eq!(
             request.await.expect("request deadline task"),
-            Err(DaemonError::Timeout)
+            Err(DaemonError::Timeout {
+                request: "terminal_kill".into()
+            })
         );
     }
     assert_eq!(daemon.pending_counts(), (0, 0, 0));
@@ -1360,10 +1371,10 @@ async fn correlation_maps_drain_on_every_terminal_path() {
     assert_eq!(daemon.pending_counts().2, 1);
     tokio::time::advance(Duration::from_millis(1)).await;
     tokio::task::yield_now().await;
-    assert_eq!(
+    assert!(matches!(
         timed_control.await.expect("timed control task"),
-        Err(DaemonError::Timeout)
-    );
+        Err(DaemonError::Timeout { .. })
+    ));
     assert_eq!(daemon.pending_counts(), (0, 0, 0));
     assert_eq!(
         daemon
@@ -2036,13 +2047,13 @@ async fn late_control_reply_cannot_settle_a_newer_request() {
     )
     .await;
     assert!(!timed.is_finished());
-    assert_eq!(
+    assert!(matches!(
         timeout(CONTROL_REQUEST_DEADLINE + Duration::from_secs(1), timed)
             .await
             .expect("exact deadline elapses")
             .expect("exact deadline task"),
-        Err(DaemonError::Timeout)
-    );
+        Err(DaemonError::Timeout { .. })
+    ));
     assert_eq!(daemon.pending_counts().2, 0);
     assert_eq!(
         daemon

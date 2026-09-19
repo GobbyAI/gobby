@@ -9,15 +9,27 @@ enum ProxyAttachOutcome {
     Refused { code: String, reason: String },
 }
 
+/// Refusals the daemon expects to clear on their own: the terminal host is
+/// still starting, or a host step outran its budget. The pane retries these
+/// instead of staying refused until the next reconnect (#22544).
+fn attach_refusal_is_transient(code: &str) -> bool {
+    matches!(
+        code,
+        "host_not_ready" | "host_open_timeout" | "proxy_start_timeout"
+    )
+}
+
 impl Workspace<LiveDaemon> {
     pub(super) async fn attach_ready_panes(&mut self) -> Result<(), DaemonError> {
         let snapshot = self.daemon.subscribe().0;
         if !snapshot.ready {
             return Ok(());
         }
+        let now = tokio::time::Instant::now();
         for pane_id in self.order.clone() {
             if self.attached_generation.get(&pane_id) == Some(&snapshot.generation)
                 || self.panes[&pane_id].attached_generation() == Some(snapshot.generation)
+                || self.panes[&pane_id].attach_retry_pending(now)
             {
                 continue;
             }
@@ -170,7 +182,8 @@ impl Workspace<LiveDaemon> {
             | FrameError::Lag
             | FrameError::Cancelled
             | FrameError::Io(_)
-            | FrameError::Protocol(_) => self.recover_proxy_source(pane_id).await?,
+            | FrameError::Protocol(_)
+            | FrameError::Daemon(_) => self.recover_proxy_source(pane_id).await?,
             // A refused control request never reaches a frame source; nothing
             // to recover.
             FrameError::HostEpochChanged { .. } | FrameError::Other(_) | FrameError::Refused(_) => {
@@ -363,11 +376,13 @@ impl Workspace<LiveDaemon> {
                 Ok(())
             }
             Ok(ProxyAttachOutcome::Refused { code, reason }) => {
-                self.panes
-                    .get_mut(&pane_id)
-                    .expect("pane exists")
-                    .refuse_attach(&code, &reason);
-                self.attached_generation.insert(pane_id, generation);
+                let pane = self.panes.get_mut(&pane_id).expect("pane exists");
+                if attach_refusal_is_transient(&code) {
+                    pane.defer_attach(&code, &reason, tokio::time::Instant::now());
+                } else {
+                    pane.refuse_attach(&code, &reason);
+                    self.attached_generation.insert(pane_id, generation);
+                }
                 self.clear_fallback_flight(pane_id);
                 Ok(())
             }
@@ -380,13 +395,29 @@ impl Workspace<LiveDaemon> {
                 self.clear_fallback_flight(pane_id);
                 Ok(())
             }
+            // No verdict: the daemon did not answer, or the reply was
+            // unusable. The pane keeps its place and says so; the live loop
+            // retries after the backoff instead of the whole attach pass
+            // (and, at startup, the client) failing on one pane.
             Err(error) => {
                 self.clear_fallback_flight(pane_id);
-                Err(DaemonError::Protocol {
-                    detail: error.to_string(),
-                })
+                self.panes
+                    .get_mut(&pane_id)
+                    .expect("pane exists")
+                    .defer_attach(
+                        "attach_failed",
+                        &error.to_string(),
+                        tokio::time::Instant::now(),
+                    );
+                Ok(())
             }
         }
+    }
+
+    /// Whether any pane's deferred attach is due; the live loop's render
+    /// tick runs `attach_ready_panes` when it is.
+    pub(super) fn attach_retry_due(&self, now: tokio::time::Instant) -> bool {
+        self.panes.values().any(|pane| pane.attach_retry_due(now))
     }
 
     fn install_proxy_source(

@@ -370,6 +370,12 @@ pub async fn run_live_loop<B: Backend>(
             _ = render_tick.tick() => {
                 chrome.ticker = chrome.ticker.wrapping_add(1);
                 workspace.submit_expired_detaches(&mut supervisor, Instant::now());
+                if workspace.attach_retry_due(Instant::now()) {
+                    if let Err(error) = workspace.attach_ready_panes().await {
+                        chrome.status_message = Some(error.to_string());
+                    }
+                    sync_live_chrome(workspace, chrome);
+                }
                 if !chrome.sidebar.collapsed {
                     workspace.request_git_refresh_if_due();
                 }
@@ -811,8 +817,15 @@ mod tests {
     fn sidebar_banner_clears_on_the_next_successful_refetch() {
         let mut status = None;
         let mut shown = false;
-        settle_sidebar_banner(&mut status, &mut shown, Some(&DaemonError::Timeout));
-        assert_eq!(status.as_deref(), Some("Daemon request timed out."));
+        settle_sidebar_banner(
+            &mut status,
+            &mut shown,
+            Some(&DaemonError::timeout("GET /api/terminals")),
+        );
+        assert_eq!(
+            status.as_deref(),
+            Some("Daemon did not answer GET /api/terminals in time.")
+        );
         assert!(shown);
         settle_sidebar_banner(&mut status, &mut shown, None);
         assert_eq!(status, None);

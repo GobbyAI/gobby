@@ -306,7 +306,7 @@ impl LiveDaemon {
         loop {
             let event = timeout_at(deadline, events.recv())
                 .await
-                .map_err(|_| DaemonError::Timeout)?;
+                .map_err(|_| request_timed_out("subscribe"))?;
             match event {
                 Ok(DaemonEvent::Message(message))
                     if super::message_kind(&message) == Some("subscribe_success") =>
@@ -402,6 +402,9 @@ impl LiveDaemon {
         super::encode_message(&message).map_err(|error| DaemonError::Protocol {
             detail: error.to_string(),
         })?;
+        let request = super::message_kind(&message)
+            .unwrap_or("message")
+            .to_string();
         let key = route_key(&message).ok_or_else(|| DaemonError::Protocol {
             detail: "request has no correlation key".into(),
         })?;
@@ -430,15 +433,15 @@ impl LiveDaemon {
             }),
         )
         .await
-        .map_err(|_| DaemonError::Timeout)?
+        .map_err(|_| request_timed_out(&request))?
         .map_err(|_| DaemonError::Unavailable { retry_after: None })?;
         timeout_at(deadline, written_rx)
             .await
-            .map_err(|_| DaemonError::Timeout)?
+            .map_err(|_| request_timed_out(&request))?
             .map_err(|_| DaemonError::Unavailable { retry_after: None })?;
         let reply = timeout_at(deadline, reply_rx)
             .await
-            .map_err(|_| DaemonError::Timeout)?
+            .map_err(|_| request_timed_out(&request))?
             .map_err(|_| DaemonError::Unavailable { retry_after: None })??;
         guard.armed = false;
         Ok(reply)
@@ -448,6 +451,9 @@ impl LiveDaemon {
         super::encode_message(&message).map_err(|error| DaemonError::Protocol {
             detail: error.to_string(),
         })?;
+        let request = super::message_kind(&message)
+            .unwrap_or("message")
+            .to_string();
         let outbound = {
             let state = self.inner.state();
             if state.closed {
@@ -480,11 +486,11 @@ impl LiveDaemon {
             }),
         )
         .await
-        .map_err(|_| DaemonError::Timeout)?
+        .map_err(|_| request_timed_out(&request))?
         .map_err(|_| DaemonError::Unavailable { retry_after: None })?;
         timeout_at(deadline, written_rx)
             .await
-            .map_err(|_| DaemonError::Timeout)?
+            .map_err(|_| request_timed_out(&request))?
             .map_err(|_| DaemonError::Unavailable { retry_after: None })
     }
 }
@@ -816,15 +822,15 @@ impl Daemon for LiveDaemon {
         self.inner
             .fail_waiters(DaemonError::Unavailable { retry_after: None });
         if deadline <= Instant::now() {
-            return Err(DaemonError::Timeout);
+            return Err(DaemonError::timeout("close"));
         }
         let close_result = if let Some(outbound) = outbound {
             let (done, done_rx) = oneshot::channel();
             match timeout_at(deadline, outbound.send(Outbound::Close { done })).await {
-                Err(_) => Err(DaemonError::Timeout),
+                Err(_) => Err(DaemonError::timeout("close")),
                 Ok(Err(_)) => Ok(()),
                 Ok(Ok(())) => match timeout_at(deadline, done_rx).await {
-                    Err(_) => Err(DaemonError::Timeout),
+                    Err(_) => Err(DaemonError::timeout("close")),
                     Ok(_) => Ok(()),
                 },
             }
@@ -834,7 +840,7 @@ impl Daemon for LiveDaemon {
         close_result?;
         if let Some(handle) = resources.reader.as_mut() {
             if timeout_at(deadline, &mut *handle).await.is_err() {
-                return Err(DaemonError::Timeout);
+                return Err(DaemonError::timeout("close"));
             }
         }
         if let Some((done, abort)) = reconnect {
@@ -844,7 +850,7 @@ impl Daemon for LiveDaemon {
             abort.abort();
             timeout_at(deadline, done.notified())
                 .await
-                .map_err(|_| DaemonError::Timeout)?;
+                .map_err(|_| DaemonError::timeout("close"))?;
         }
         self.inner.closed_tx.send_replace(true);
         resources.armed = false;
@@ -929,4 +935,12 @@ fn required_string(value: &Value, field: &str) -> Result<String, DaemonError> {
         .ok_or_else(|| DaemonError::Protocol {
             detail: format!("missing string field {field}"),
         })
+}
+
+/// A request that outlived its deadline. Logged here because the loop turns
+/// the error into one status line and nothing else records which request
+/// went unanswered (#22544).
+fn request_timed_out(request: &str) -> DaemonError {
+    tracing::warn!(request, "daemon request timed out");
+    DaemonError::timeout(request)
 }

@@ -223,3 +223,170 @@ async fn destroy_orphans_dialog_buttons_answer_a_click() {
     );
     assert!(chrome.dialog.is_some(), "the dialog stays open");
 }
+
+/// The attach deadline (5s) plus the base retry backoff (5s) plus slack.
+const RETRY_WAIT: Duration = Duration::from_secs(15);
+
+async fn wait_for_websocket_requests_within(
+    mock: &MockDaemon,
+    kind: &str,
+    expected: usize,
+    budget: Duration,
+) {
+    let mut poll = tokio::time::interval(Duration::from_millis(20));
+    timeout(budget, async {
+        loop {
+            poll.tick().await;
+            if websocket_requests(mock, kind).len() >= expected {
+                break;
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("timed out waiting for {expected} {kind} requests"));
+}
+
+fn screen_text(terminal: &Terminal<TestBackend>) -> String {
+    let buffer = terminal.backend().buffer();
+    let width = usize::from(buffer.area.width);
+    buffer
+        .content()
+        .chunks(width)
+        .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The daemon never answers the attach (#22544). After the request deadline
+/// the pane is not blank: it names the unanswered request and the retry, the
+/// loop keeps running instead of exiting, and nothing calls it a protocol
+/// failure.
+#[tokio::test]
+async fn a_timed_out_request_names_itself_and_keeps_the_pane() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.suppress_ws("terminal_attach");
+    let (mut workspace, _home) = single_terminal_loop(&mock).await;
+    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    chrome.keymap = Keymap::defaults(HERDR_PREFIX);
+    let (input_tx, input_rx) = mpsc::channel(256);
+
+    let driver = async {
+        // The startup attach is withheld; its deadline passes before the
+        // loop notices the closed input, so the exit is the input's.
+        wait_for_websocket_requests(&mock, "terminal_attach", 1).await;
+        drop(input_tx);
+    };
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("a timed-out attach does not end the loop");
+    assert_eq!(workspace.exit_reason(), Some("terminal input closed"));
+
+    let pane = workspace
+        .pane_for_terminal("terminal-a")
+        .expect("terminal pane");
+    let status = workspace
+        .pane(pane)
+        .status_message()
+        .unwrap_or_default()
+        .to_string();
+    assert!(status.contains("attach_failed"), "{status:?}");
+    assert!(
+        status.contains("terminal_attach"),
+        "the status names the unanswered request: {status:?}"
+    );
+    assert!(
+        status.contains("retry in 5s"),
+        "the status names the retry: {status:?}"
+    );
+    assert!(
+        !status.contains("frame protocol failed"),
+        "a timeout is not a protocol failure: {status:?}"
+    );
+    assert!(!workspace.pane(pane).is_live());
+    let banner = chrome.status_message.clone().unwrap_or_default();
+    assert!(
+        !banner.contains("frame protocol failed"),
+        "the banner never blames the frame protocol: {banner:?}"
+    );
+
+    // The pane body carries the note instead of staying blank.
+    let area = Rect::new(0, 0, 140, 30);
+    chrome.compute_view(&workspace, area);
+    let mut screen = Terminal::new(TestBackend::new(140, 30)).expect("test terminal");
+    screen
+        .draw(|frame| {
+            render_workspace(frame, &workspace, &chrome);
+        })
+        .expect("draw the workspace");
+    let text = screen_text(&screen);
+    assert!(
+        text.contains("attach_failed") && text.contains("terminal_attach"),
+        "the pane body says why it is empty:\n{text}"
+    );
+    mock.shutdown().await;
+}
+
+/// A deferred attach is tried again after the backoff and lands once the
+/// daemon answers (#22544): one unanswered attach, one retry, a live pane.
+#[tokio::test]
+async fn a_deferred_attach_retries_after_the_backoff() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.suppress_ws("terminal_attach");
+    let (mut workspace, _home) = single_terminal_loop(&mock).await;
+    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    chrome.keymap = Keymap::defaults(HERDR_PREFIX);
+    let (input_tx, input_rx) = mpsc::channel(256);
+
+    let driver = async {
+        wait_for_websocket_requests(&mock, "terminal_attach", 1).await;
+        // The mock decided to withhold the first reply as it recorded the
+        // request, with no await between; from here on attaches are
+        // answered, so only the retry can land.
+        mock.allow_ws("terminal_attach");
+        wait_for_websocket_requests_within(&mock, "terminal_attach", 2, RETRY_WAIT).await;
+        // The geometry pass runs after the retry installed the attachment,
+        // so its resize is the first request the loop can only send then.
+        wait_for_websocket_requests_within(&mock, "terminal_resize", 1, Duration::from_secs(2))
+            .await;
+        drop(input_tx);
+    };
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+
+    assert_eq!(
+        websocket_requests(&mock, "terminal_attach").len(),
+        2,
+        "one unanswered attach and one retry"
+    );
+    let pane = workspace
+        .pane_for_terminal("terminal-a")
+        .expect("terminal pane");
+    assert!(
+        workspace.pane(pane).is_live(),
+        "the retry attached the pane: {:?}",
+        workspace.pane(pane).status_message()
+    );
+    assert_eq!(workspace.pane(pane).status_message(), None);
+    mock.shutdown().await;
+}

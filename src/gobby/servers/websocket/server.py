@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 import threading
+import time
 from collections.abc import Callable, Coroutine
 from contextvars import ContextVar
 from datetime import UTC, datetime
@@ -46,6 +47,12 @@ from gobby.terminals.workspace_ops import WorkspaceOps
 from gobby.utils.json_helpers import json_dumps
 
 logger = logging.getLogger(__name__)
+
+# Messages on one connection are handled one at a time, so a handler that runs
+# this long delays every message queued behind it. The warning names the
+# message type so a client's request timeout can be traced to the handler that
+# held the connection (#22544).
+SLOW_WEBSOCKET_HANDLER_SECONDS = 1.0
 websockets_logger = logging.getLogger("websockets.server")
 
 
@@ -461,10 +468,18 @@ class WebSocketServer(
                 else None
             )
             token = self._runtime_bundle_context.set((True, bundle))
+            started = time.monotonic()
             try:
                 await handler(websocket, data)
             finally:
                 self._runtime_bundle_context.reset(token)
+                elapsed = time.monotonic() - started
+                if elapsed >= SLOW_WEBSOCKET_HANDLER_SECONDS:
+                    logger.warning(
+                        "websocket handler %s took %.2fs; later messages on this connection waited",
+                        msg_type,
+                        elapsed,
+                    )
         else:
             logger.warning("Unknown message type: %s", msg_type)
             await self._send_error(websocket, f"Unknown message type: {msg_type}")

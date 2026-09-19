@@ -188,16 +188,17 @@ impl RestClient {
         url: Url,
         body: Option<Value>,
     ) -> Result<Response, DaemonError> {
+        let label = format!("{method} {}", url.path());
         let mut request = self.client.request(method, url).bearer_auth(&self.token);
         if let Some(body) = body {
             request = request.json(&body);
         }
         let response = timeout_at(deadline, request.send())
             .await
-            .map_err(|_| DaemonError::Timeout)?
+            .map_err(|_| DaemonError::timeout(&label))?
             .map_err(|error| {
                 if error.is_timeout() {
-                    DaemonError::Timeout
+                    DaemonError::timeout(&label)
                 } else {
                     DaemonError::Unavailable { retry_after: None }
                 }
@@ -215,15 +216,16 @@ impl RestClient {
         body: Option<Value>,
     ) -> Result<T, DaemonError> {
         let deadline = Instant::now() + REQUEST_DEADLINE;
+        let label = format!("{method} {}", url.path());
         let response = self.send(deadline, method, url, body).await?;
         // The client's total timeout can end the body read first; it is the
         // same deadline, so it reports the same way.
         timeout_at(deadline, response.json())
             .await
-            .map_err(|_| DaemonError::Timeout)?
+            .map_err(|_| DaemonError::timeout(&label))?
             .map_err(|error| {
                 if error.is_timeout() {
-                    DaemonError::Timeout
+                    DaemonError::timeout(&label)
                 } else {
                     protocol(error)
                 }

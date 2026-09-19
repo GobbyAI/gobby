@@ -1085,7 +1085,12 @@ async fn live_daemon_expired_close_latches_before_returning() {
 
     let generation = daemon.generation();
     let result = Daemon::close(&daemon, Instant::now()).await;
-    assert_eq!(result, Err(DaemonError::Timeout));
+    assert_eq!(
+        result,
+        Err(DaemonError::Timeout {
+            request: "close".into()
+        })
+    );
     assert!(matches!(
         daemon.reconnect(generation).await,
         Err(DaemonError::Unavailable { .. })

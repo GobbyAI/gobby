@@ -1,8 +1,11 @@
 //! Per-pane attach, lease, and copy-mode state.
 
 use std::collections::HashSet;
+use std::time::Duration;
 
-use super::attach::AttachState;
+use tokio::time::Instant;
+
+use super::attach::{AttachState, ATTACH_RETRY_BASE};
 use crate::daemon::Generation;
 use crate::frame_source::{FrameSource, PaneFrameSource, ScriptedFrameSource, Transport};
 use gobby_terminal::protocol::FrameData;
@@ -91,6 +94,13 @@ pub struct Pane {
     /// session someone else started, which closing must never kill.
     pub external: bool,
     pub(super) attach: AttachState,
+    /// When the live loop tries a deferred attach again: set by
+    /// `defer_attach` after the daemon did not answer or refused for a
+    /// reason that clears on its own, cleared when an attach begins.
+    pub(super) attach_retry_at: Option<Instant>,
+    /// The wait before the next retry; doubles per failure and resets when
+    /// an attachment installs.
+    pub(super) attach_retry_delay: Duration,
     pub(super) tombstones: HashSet<String>,
     pub(super) status_message: Option<String>,
     pub(super) terminating: bool,
@@ -150,6 +160,8 @@ impl Pane {
                 generation: Generation(0),
                 lease_generation: 0,
             },
+            attach_retry_at: None,
+            attach_retry_delay: ATTACH_RETRY_BASE,
             tombstones: HashSet::new(),
             status_message: None,
             terminating: false,

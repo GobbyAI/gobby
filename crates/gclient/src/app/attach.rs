@@ -9,6 +9,10 @@ use std::time::Duration;
 use tokio::time::Instant;
 
 pub const DETACH_DEADLINE: Duration = Duration::from_secs(2);
+/// The wait before a deferred attach is tried again; each failure doubles it
+/// up to `ATTACH_RETRY_MAX` (#22544).
+pub const ATTACH_RETRY_BASE: Duration = Duration::from_secs(5);
+pub const ATTACH_RETRY_MAX: Duration = Duration::from_secs(60);
 
 #[derive(Debug)]
 pub enum AttachState {
@@ -44,6 +48,7 @@ impl Pane {
             transport,
             generation,
         };
+        self.attach_retry_at = None;
         self.live = false;
         self.control = ControlState::Observe;
         self.pending_input = None;
@@ -70,6 +75,8 @@ impl Pane {
         self.take_back = false;
         self.pending_input = None;
         self.status_message = None;
+        self.attach_retry_at = None;
+        self.attach_retry_delay = ATTACH_RETRY_BASE;
         self.install_frame_source(source);
     }
 
@@ -144,6 +151,27 @@ impl Pane {
         self.in_flight_write = None;
         self.status_message = Some(format!("{code}: {reason}"));
         let _ = self.take_frame_source();
+    }
+
+    /// An attach that failed without a verdict: the daemon did not answer,
+    /// or refused for a reason that clears on its own (a host still
+    /// starting). The pane says why and when it tries again, and the live
+    /// loop retries once `attach_retry_at` passes, doubling the wait each
+    /// time so a daemon that stays away is not asked every tick (#22544).
+    pub(super) fn defer_attach(&mut self, code: &str, reason: &str, now: Instant) {
+        let delay = self.attach_retry_delay;
+        let reason = reason.trim_end_matches('.');
+        self.refuse_attach(code, &format!("{reason}; retry in {}s", delay.as_secs()));
+        self.attach_retry_at = Some(now + delay);
+        self.attach_retry_delay = (delay * 2).min(ATTACH_RETRY_MAX);
+    }
+
+    pub(super) fn attach_retry_due(&self, now: Instant) -> bool {
+        self.attach_retry_at.is_some_and(|at| at <= now)
+    }
+
+    pub(super) fn attach_retry_pending(&self, now: Instant) -> bool {
+        self.attach_retry_at.is_some_and(|at| at > now)
     }
 
     pub(super) fn clear_control(&mut self, reason: impl Into<String>) {

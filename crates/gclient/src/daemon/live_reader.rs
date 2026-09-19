@@ -108,7 +108,7 @@ pub(super) async fn connect_socket(
     );
     let (socket, _) = tokio::select! {
         result = connection => result
-            .map_err(|_| DaemonError::Timeout)?
+            .map_err(|_| DaemonError::timeout("connect"))?
             .map_err(|error| match error {
                 tokio_tungstenite::tungstenite::Error::Http(response)
                     if matches!(response.status().as_u16(), 401 | 403) =>

@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Literal, cast
 from unittest.mock import MagicMock
 
 import pytest
 
+from gobby.servers.websocket import terminal_ws
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.terminals import AttachLocator, TerminalManager
 from gobby.terminals import TerminalRuntime, TerminalRuntimeRegistry
@@ -24,9 +26,11 @@ _Kind = Literal[
     "locator_raises",
     "locator_invalid",
     "opener_raises",
+    "opener_hangs",
     "frame_none",
     "frame_unusable",
     "start_proxy_raises",
+    "start_proxy_hangs",
     "attach_raises",
 ]
 
@@ -59,6 +63,12 @@ async def _raising_opener(_locator: AttachLocator) -> object:
     raise OSError("frame host down")
 
 
+async def _hanging_opener(_locator: AttachLocator) -> object:
+    """A host whose frame socket never accepts: the open outlives its budget."""
+    await asyncio.Event().wait()
+    raise AssertionError("unreachable")
+
+
 async def _none_opener(_locator: AttachLocator) -> object | None:
     return None
 
@@ -88,6 +98,14 @@ class _ExplodingFrame:
 
     async def close(self) -> None:
         self.closed = True
+
+
+class _HangingFrame(_ExplodingFrame):
+    """Frame whose handshake never answers: the start outlives its budget."""
+
+    async def handshake(self, locator: AttachLocator, *, encoding: str) -> None:
+        del locator, encoding
+        await asyncio.Event().wait()
 
 
 class _AttachExplodingFrame(_ExplodingFrame):
@@ -126,13 +144,17 @@ def _configure(
     )
     if kind == "opener_raises":
         server.open_proxy_frame = _raising_opener
+    elif kind == "opener_hangs":
+        server.open_proxy_frame = _hanging_opener
     elif kind == "frame_none":
         server.open_proxy_frame = _none_opener
-    elif kind in {"frame_unusable", "start_proxy_raises", "attach_raises"}:
+    elif kind in {"frame_unusable", "start_proxy_raises", "start_proxy_hangs", "attach_raises"}:
         if kind == "frame_unusable":
             frame: _ExplodingFrame | _UnusableFrame = _UnusableFrame()
         elif kind == "start_proxy_raises":
             frame = _ExplodingFrame()
+        elif kind == "start_proxy_hangs":
+            frame = _HangingFrame()
         else:
             frame = _AttachExplodingFrame()
 
@@ -159,12 +181,22 @@ def _configure(
             "attach_locator did not return an AttachLocator",
         ),
         ("opener_raises", "host_unavailable", "opening the proxy frame connection failed"),
+        (
+            "opener_hangs",
+            "host_open_timeout",
+            "opening the proxy frame connection did not finish in time",
+        ),
         ("frame_none", "frame_invalid", "proxy frame opener returned an unusable frame"),
         ("frame_unusable", "frame_invalid", "proxy frame opener returned an unusable frame"),
         (
             "start_proxy_raises",
             "proxy_start_failed",
             "proxy frame handshake or relay start failed",
+        ),
+        (
+            "start_proxy_hangs",
+            "proxy_start_timeout",
+            "proxy frame handshake did not finish in time",
         ),
         (
             "attach_raises",
@@ -180,7 +212,12 @@ async def test_proxy_attach_failures_are_typed_and_finalized(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # The hanging cases outlive their budgets; every other case finishes at
+    # once, so a tiny budget changes nothing for them (#22544).
+    monkeypatch.setattr(terminal_ws, "PROXY_FRAME_OPEN_SECONDS", 0.01)
+    monkeypatch.setattr(terminal_ws, "PROXY_START_SECONDS", 0.01)
     terminal_id = _live_row(temp_db, sample_project)
     server = _ws_server()
     frame = _configure(server, temp_db, kind)
