@@ -365,6 +365,11 @@ class HostClient:
         retain decision therefore all happen under one lock, which is also what
         makes the ``_UNCONSUMED_SEQ_ERRORS`` retain safe: nothing else can have
         taken the sequence being kept.
+
+        This is the invariant the protocol was designed around and the client
+        never implemented -- .gobby/plans/completed/herdr-terminal-client.md:1152,
+        "State-changing requests are serialized per connection and the client
+        issues at most one at a time."
         """
         async with self._operation_lock:
             request["operation_seq"] = self.next_seq if operation_seq is None else operation_seq
