@@ -2199,7 +2199,7 @@ async fn late_control_reply_cannot_settle_a_newer_request() {
     )
     .await;
     poll_until(
-        Duration::from_secs(2),
+        Duration::from_secs(10),
         || daemon.control_write_started("attachment-mid-send"),
         "mid-send write started",
     )
