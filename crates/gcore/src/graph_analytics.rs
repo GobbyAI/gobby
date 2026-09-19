@@ -160,6 +160,15 @@ pub fn communities(graph: &AnalyticsGraph) -> Result<Vec<Community>, GraphInputE
     Ok(PreparedGraph::new(graph).communities().0)
 }
 
+/// Degree centrality only. Validates input exactly like [`communities`].
+///
+/// On success the scores are exactly what [`analyze`] reports as `centrality` for the
+/// same graph, without paying for the Leiden pass or the bridge search.
+pub fn centrality(graph: &AnalyticsGraph) -> Result<Vec<CentralityScore>, GraphInputError> {
+    validate_input(graph)?;
+    Ok(PreparedGraph::new(graph).centrality())
+}
+
 fn validate_input(graph: &AnalyticsGraph) -> Result<(), GraphInputError> {
     let mut ids = HashSet::with_capacity(graph.nodes.len());
     for node in &graph.nodes {

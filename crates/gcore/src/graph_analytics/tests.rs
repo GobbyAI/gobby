@@ -263,6 +263,27 @@ fn communities_without_edges_is_all_singletons() {
 }
 
 #[test]
+fn centrality_matches_analyze_centrality() {
+    let graph = seeded_graph();
+    let expected = analyze(&graph).centrality;
+    let actual = centrality(&graph).expect("seeded graph is valid input");
+    assert!(!actual.is_empty());
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn centrality_rejects_the_same_input_as_communities() {
+    let graph = graph_of(&["a"], &[("a", "a", "calls", 1.0)]);
+    assert_eq!(
+        centrality(&graph),
+        Err(GraphInputError::SelfLoop {
+            id: "a".to_string(),
+            kind: "calls".to_string(),
+        })
+    );
+}
+
+#[test]
 fn graph_input_error_display_names_the_offending_input() {
     let cases = [
         (
