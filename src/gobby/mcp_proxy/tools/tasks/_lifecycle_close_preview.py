@@ -11,7 +11,7 @@ from gobby.mcp_proxy.tools.tasks._close_evaluation_support import (
     format_git_since,
 )
 from gobby.storage.tasks import LocalTaskManager, Task
-from gobby.tasks.close_checklist import CloseGateResult
+from gobby.tasks.close_checklist import CloseChecklist, CloseGateResult
 from gobby.utils.daemon_git import normalize_commit_sha
 
 # Internal carriers, never part of a close response: ``validation_commands`` travels
@@ -19,6 +19,24 @@ from gobby.utils.daemon_git import normalize_commit_sha
 # and ``stable_facts`` is the persisted review's fingerprint input, repeating
 # ``commit_shas`` and the scope inventory the checklist already carries.
 _INTERNAL_EXTRA_KEYS = frozenset({"validation_commands", "stable_facts"})
+
+# The canonical ordered checklist. An evaluation that stops early walks this to
+# report every gate it never reached as skipped instead of leaving it unmentioned.
+CLOSE_GATE_ORDER: tuple[tuple[int, str], ...] = (
+    (1, "task_exists"),
+    (2, "session_context"),
+    (3, "repository_path"),
+    (4, "children_closed"),
+    (5, "criteria_present"),
+    (6, "changes_summary_present"),
+    (7, "linked_commits"),
+    (8, "task_scope"),
+    (9, "uncommitted_task_edits"),
+    (10, "validation_commands"),
+    (11, "acceptance_artifacts"),
+    (12, "tdd_evidence"),
+    (13, "criteria_review"),
+)
 
 
 @dataclass
@@ -55,8 +73,13 @@ class CloseEvaluation:
     extra: dict[str, Any] = field(default_factory=dict)
 
     @property
+    def checklist(self) -> CloseChecklist:
+        """The deterministic gate results recorded so far, in checklist order."""
+        return CloseChecklist(tuple(self.gates))
+
+    @property
     def ready(self) -> bool:
-        return self.error is None and all(gate.passed for gate in self.gates)
+        return self.error is None and self.checklist.ready
 
     def pass_gate(
         self,
@@ -116,6 +139,40 @@ class CloseEvaluation:
             gate.name, error, gate.message, action=action, reasons=None, actions=None
         )
         return self
+
+    def skip_gate(self, item: int, name: str, *, blocked_by: str) -> None:
+        """Record a gate a failed prerequisite left unevaluable, naming that gate.
+
+        An unevaluable gate is never a failure: reporting one would send the caller
+        after a blocker that a dependency, not the deliverable, produced.
+        """
+        self.pass_gate(
+            item,
+            name,
+            f"Not evaluated because gate {blocked_by} failed.",
+            skipped=True,
+        )
+
+    def block_remaining(self) -> CloseEvaluation:
+        """End the checklist, skipping every gate this evaluation never reached.
+
+        The failure that stopped the run is the one named, so a caller reading the
+        skipped tail knows which blocker to clear before those gates say anything.
+        """
+        failures = self.checklist.all_failures
+        if not failures:
+            return self
+        blocked_by = failures[-1].name
+        evaluated = {gate.item for gate in self.gates}
+        for item, name in CLOSE_GATE_ORDER:
+            if item not in evaluated:
+                self.skip_gate(item, name, blocked_by=blocked_by)
+        return self
+
+    def failed_gate(self, *names: str) -> str | None:
+        """Name the first of these gates this evaluation recorded as failed."""
+        failed = {gate.name for gate in self.gates if gate.status == "failed"}
+        return next((name for name in names if name in failed), None)
 
     def collect_failure(
         self,
@@ -183,6 +240,8 @@ class CloseEvaluation:
             "closed": closed,
             "task_id": self.task_id or self.requested_task_id,
             "commit_shas": list(self.commit_shas),
+            # Every gate, so one call names every blocker instead of one per retry.
+            "gates": self.checklist.summary(),
         }
         if self.error:
             blocking_reasons = self.blocking_reasons

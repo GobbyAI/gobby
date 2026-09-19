@@ -33,6 +33,10 @@ Finish in this order:
 6. After `closed=true` or a closure notification, call `review_task_memories`
    with the task and summary; change memory only for valuable durable knowledge.
 
+A blocked call reports the whole checklist at once. Fix every gate reported
+`failed` before retrying; a gate reported `skipped` names the gate that blocked it
+and is unevaluated, never satisfied.
+
 `preview=true` closes when ready. The checklist requires criteria and summary,
 linked commits for attributed edits, no uncommitted attributed files,
 category-appropriate transcript validation, and one bounded criteria review.

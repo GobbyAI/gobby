@@ -7,9 +7,9 @@ from typing import Literal, cast
 import pytest
 
 from gobby.tasks.close_checklist import (
+    CloseChecklist,
     CloseGateResult,
     evaluate_validation_commands,
-    first_failed_gate,
 )
 from gobby.tasks.command_equivalence import scope_difference
 from gobby.tasks.transcript_evidence import merge_transcript_evidence
@@ -1551,16 +1551,62 @@ def test_unknown_outcome_never_satisfies_or_blocks_and_names_cure() -> None:
     assert "definitive exit status" in gate.message
 
 
-def test_first_failed_gate_stops_ordered_checklist() -> None:
-    checklist = first_failed_gate(
+def test_all_failures_reports_every_blocker_and_keeps_the_first_for_the_reason() -> None:
+    """One evaluation names every failed gate; the first stays the headline reason."""
+    checklist = CloseChecklist(
         (
-            CloseGateResult(1, "task", "passed", "exists"),
-            CloseGateResult(2, "session", "failed", "missing"),
-            CloseGateResult(3, "repo", "passed", "exists"),
+            CloseGateResult(1, "task_exists", "passed", "exists"),
+            CloseGateResult(6, "changes_summary_present", "failed", "summary missing"),
+            CloseGateResult(7, "linked_commits", "passed", "linked"),
+            CloseGateResult(9, "uncommitted_task_edits", "failed", "src/a.py is dirty"),
+            CloseGateResult(
+                11, "acceptance_artifacts", "skipped", "Not evaluated because gate X failed."
+            ),
         )
     )
 
     assert checklist.ready is False
-    assert [gate.item for gate in checklist.gates] == [1, 2]
+    assert [gate.name for gate in checklist.all_failures] == [
+        "changes_summary_present",
+        "uncommitted_task_edits",
+    ]
     assert checklist.first_failure is not None
-    assert checklist.first_failure.name == "session"
+    assert checklist.first_failure.name == "changes_summary_present"
+
+
+def test_all_failures_is_empty_when_only_skips_remain() -> None:
+    """A skipped gate is unevaluated, so it never becomes a blocker to fix."""
+    checklist = CloseChecklist(
+        (
+            CloseGateResult(1, "task_exists", "passed", "exists"),
+            CloseGateResult(12, "tdd_evidence", "skipped", "Not evaluated because gate X failed."),
+        )
+    )
+
+    assert checklist.all_failures == ()
+    assert checklist.first_failure is None
+    assert checklist.ready is True
+
+
+def test_checklist_summary_drops_the_detail_payloads() -> None:
+    """Concise responses carry every gate status without gate 10's kilobytes of detail."""
+    checklist = CloseChecklist(
+        (
+            CloseGateResult(
+                10,
+                "validation_commands",
+                "failed",
+                "No clean test run.",
+                details={"unresolved_failure_categories": ["test"]},
+            ),
+        )
+    )
+
+    assert checklist.summary() == [
+        {
+            "item": 10,
+            "name": "validation_commands",
+            "status": "failed",
+            "message": "No clean test run.",
+        }
+    ]

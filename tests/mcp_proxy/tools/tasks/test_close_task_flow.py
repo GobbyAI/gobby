@@ -28,7 +28,10 @@ from gobby.mcp_proxy.tools.tasks._close_evaluation_support import (
 )
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_close import _commit_close, _evaluate_close
-from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import CloseEvaluation
+from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import (
+    CLOSE_GATE_ORDER,
+    CloseEvaluation,
+)
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_tool import register_close_task
 from gobby.mcp_proxy.tools.tasks._lifecycle_validation import ValidationResult
 from gobby.mcp_proxy.tools.tasks._notifications import _notification_tasks as notifications
@@ -266,7 +269,18 @@ async def test_missing_criteria_stops_before_llm() -> None:
         )
 
     assert evaluation.error == "missing_validation_criteria"
-    assert [gate.item for gate in evaluation.gates] == [1, 2, 3, 4, 5]
+    assert [gate.item for gate in evaluation.gates] == list(range(1, 14))
+    statuses = {gate.name: gate.status for gate in evaluation.gates}
+    assert statuses["criteria_present"] == "failed"
+    # Gates 11, 12 and 13 resolve what the criteria name, so without criteria they are
+    # unevaluated rather than satisfied, and each names the gate that blocked it.
+    criteria_fed = [
+        gate
+        for gate in evaluation.gates
+        if gate.name in {"acceptance_artifacts", "tdd_evidence", "criteria_review"}
+    ]
+    assert [gate.status for gate in criteria_fed] == ["skipped", "skipped", "skipped"]
+    assert all("criteria_present" in gate.message for gate in criteria_fed)
     review.assert_not_awaited()
 
 
@@ -671,8 +685,12 @@ async def test_unlinked_tagged_commit_on_head_fails_gate_seven_before_review() -
 
     assert evaluation.ready is False
     assert evaluation.error == "unlinked_tagged_commits"
-    assert [gate.item for gate in evaluation.gates] == list(range(1, 8))
-    assert evaluation.gates[-1].status == "failed"
+    assert [gate.item for gate in evaluation.gates] == list(range(1, 14))
+    statuses = {gate.item: gate.status for gate in evaluation.gates}
+    assert statuses[7] == "failed"
+    commit_fed = [gate for gate in evaluation.gates if gate.item in {11, 12, 13}]
+    assert [gate.status for gate in commit_fed] == ["skipped", "skipped", "skipped"]
+    assert all("linked_commits" in gate.message for gate in commit_fed)
     assert "abc999" in (evaluation.message or "")
     assert "link_commit(task_id, commit_sha)" in (evaluation.action or "")
     assert "auto_link_commits(task_id, since='2026-07-27T12:00:00+00:00')" in (
@@ -681,7 +699,8 @@ async def test_unlinked_tagged_commit_on_head_fails_gate_seven_before_review() -
     assert evaluation.extra["unlinked_tagged_commit_shas"] == ["abc999"]
     assert evaluation.extra["other_ref_tagged_commit_shas"] == ["def888"]
     assert tagged_scan.call_args.kwargs["commit_shas"] == ["abc123"]
-    derive_transcript.assert_not_awaited()
+    # The commit-independent gates still run so one response carries every blocker.
+    derive_transcript.assert_awaited_once()
     review.assert_not_awaited()
 
 
@@ -738,8 +757,9 @@ async def test_named_acceptance_test_keeps_tdd_gate_when_task_requires_tdd() -> 
 
     assert evaluation.ready is False
     assert evaluation.error == "tdd_evidence_missing"
-    assert evaluation.gates[-1].name == "tdd_evidence"
-    assert evaluation.gates[-1].status == "failed"
+    tdd_gate = next(gate for gate in evaluation.gates if gate.item == 12)
+    assert tdd_gate.name == "tdd_evidence"
+    assert tdd_gate.status == "failed"
     tdd_check.assert_called_once()
 
 
@@ -868,19 +888,25 @@ async def test_scope_justification_controls_downstream_close_evidence(
 
     response = evaluation.response(preview=True)
     assert evaluation.error == "task_scope_mismatch"
-    assert [gate.item for gate in evaluation.gates] == list(range(1, 9))
+    assert [gate.item for gate in evaluation.gates] == list(range(1, 14))
     # The diagnostic payload carries the scope inventory once, in the gate that owns it.
     assert "out_of_scope_paths" not in response
     gate = next(entry for entry in response["checklist"] if entry["name"] == "task_scope")
     assert gate["details"]["out_of_scope_paths"] == ["src/gobby/service.py"]
     assert response["blocking_reasons"] == [f"task_scope: {justification_error}"]
     assert "scope_justification" in response["required_actions"][0]
-    dirty_paths.assert_not_awaited()
-    validation_paths.assert_not_called()
-    transcript.assert_not_awaited()
+    # A partial commit set can only under-report out-of-scope paths, so the scope
+    # blocker leaves every later deterministic gate evaluable and they all still run.
+    dirty_paths.assert_awaited_once()
+    validation_paths.assert_called_once()
+    transcript.assert_awaited_once()
+    acceptance.assert_awaited_once()
+    tdd.assert_called_once()
+    # Only gate 13 and the diff it reads wait behind the blocker.
+    review_gate = next(entry for entry in evaluation.gates if entry.item == 13)
+    assert review_gate.status == "skipped"
+    assert "task_scope" in review_gate.message
     diff.assert_not_awaited()
-    acceptance.assert_not_awaited()
-    tdd.assert_not_called()
     review.assert_not_awaited()
 
 
@@ -1682,6 +1708,7 @@ async def test_dirty_attributed_edit_is_collected_before_acceptance() -> None:
         findings=(),
         evidence_files=(),
     )
+    acceptance = AsyncMock(return_value=artifacts)
     review = AsyncMock()
 
     with (
@@ -1703,7 +1730,7 @@ async def test_dirty_attributed_edit_is_collected_before_acceptance() -> None:
         patch.object(lifecycle, "active_validation_backoff", return_value=None),
         patch.object(lifecycle, "_derive_close_transcript_evidence", transcript),
         patch.object(lifecycle, "collect_commit_diff_text", return_value="diff"),
-        patch.object(lifecycle, "evaluate_acceptance_artifacts", return_value=artifacts),
+        patch.object(lifecycle, "evaluate_acceptance_artifacts", acceptance),
         patch.object(lifecycle, "evaluate_criteria_review", review),
         patch(
             "gobby.workflows.task_claim_state.target_task_has_edits",
@@ -1725,8 +1752,183 @@ async def test_dirty_attributed_edit_is_collected_before_acceptance() -> None:
         )
 
     assert evaluation.error == "uncommitted_task_edits"
-    assert evaluation.gates[-1].item == 11
+    assert [gate.item for gate in evaluation.gates] == list(range(1, 14))
+    assert next(gate for gate in evaluation.gates if gate.item == 9).status == "failed"
     transcript.assert_awaited_once()
+    acceptance.assert_awaited_once()
+    # Gate 13 is the only gate that waits: it spends a paid validator run.
+    review_gate = evaluation.gates[-1]
+    assert (review_gate.item, review_gate.status) == (13, "skipped")
+    assert "uncommitted_task_edits" in review_gate.message
+    review.assert_not_awaited()
+
+
+def test_close_gate_order_is_the_contiguous_numbered_checklist() -> None:
+    """block_remaining walks this table, so a gap would silently drop a gate."""
+    assert [item for item, _ in CLOSE_GATE_ORDER] == list(range(1, 14))
+    assert len({name for _, name in CLOSE_GATE_ORDER}) == len(CLOSE_GATE_ORDER)
+
+
+@pytest.mark.asyncio
+async def test_every_independent_deterministic_blocker_lands_in_one_response() -> None:
+    """Four independent gates fail, so one call names all four.
+
+    Eight feedback observations described fixing one blocker, retrying, and meeting
+    the next. The gates below share no inputs, so each verdict stands on its own.
+    """
+    task = _task()
+    ctx = _ctx(task, validator=object())
+    scope = TaskScopeEvaluation(
+        declared_paths=("tests/",),
+        actual_paths=("src/a.py",),
+        out_of_scope_paths=("src/a.py",),
+        justification_error="Task changes exceed the declared scope.",
+    )
+    review = AsyncMock()
+
+    with (
+        patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
+        patch.object(lifecycle, "resolve_task_repo_path", return_value="/repo"),
+        patch.object(close_finalization, "_claimed_session_window_start", return_value=None),
+        patch.object(close_finalization, "_committable_task_paths", return_value={"src/a.py"}),
+        patch.object(lifecycle_validation, "task_dirty_paths_async", return_value={"src/a.py"}),
+        patch.object(lifecycle, "resolve_close_commit_shas", return_value=(["abc123"], None)),
+        patch.object(
+            lifecycle,
+            "validate_commit_requirements",
+            return_value=ValidationResult(can_close=True),
+        ),
+        patch.object(lifecycle, "active_validation_backoff", return_value=None),
+        patch.object(lifecycle, "evaluate_task_scope", AsyncMock(return_value=scope)),
+        patch.object(
+            lifecycle,
+            "_derive_close_transcript_evidence",
+            AsyncMock(return_value=TranscriptEvidence()),
+        ),
+        patch.object(
+            lifecycle,
+            "evaluate_acceptance_artifacts",
+            AsyncMock(
+                return_value=AcceptanceArtifactResult(
+                    passed=True, tests=(), findings=(), evidence_files=()
+                )
+            ),
+        ),
+        patch.object(lifecycle, "evaluate_criteria_review", review),
+        patch("gobby.workflows.task_claim_state.target_task_has_edits", return_value=True),
+        patch(
+            "gobby.workflows.task_claim_state.task_edited_file_set",
+            return_value={"src/a.py"},
+        ),
+    ):
+        evaluation = await _evaluate_close(
+            ctx,
+            task_id=task.id,
+            reason="completed",
+            changes_summary="",
+            commit_sha="abc123",
+            project_path=None,
+            response_detail="concise",
+        )
+
+    failures = evaluation.checklist.all_failures
+    assert [gate.name for gate in failures] == [
+        "changes_summary_present",
+        "task_scope",
+        "uncommitted_task_edits",
+        "validation_commands",
+    ]
+    response = evaluation.response(preview=True)
+    # The reason stays the first failure for readability; the gate list carries the rest.
+    assert response["error"] == "missing_changes_summary"
+    assert response["message"] == evaluation.checklist.gates[5].message
+    assert len(response["blocking_reasons"]) == 4
+    assert [entry["item"] for entry in response["gates"]] == list(range(1, 14))
+    assert [entry["item"] for entry in response["gates"] if entry["status"] == "failed"] == [
+        6,
+        8,
+        9,
+        10,
+    ]
+    # A concise response carries the statuses without the gate detail payloads.
+    assert "details" not in response["gates"][0]
+    assert response["gates"][-1]["status"] == "skipped"
+    assert "changes_summary_present" in response["gates"][-1]["message"]
+    review.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_commit_dependent_gates_report_skipped_instead_of_a_borrowed_failure() -> None:
+    """An unlinked commit set makes gates 11 and 12 unevaluable, never failed.
+
+    Gate 11 resolves each named test body out of the last linked commit, so running it
+    here would report a missing test that only the missing commit made unresolvable.
+    """
+    task = _task(criteria="Acceptance: `tests/test_example.py::test_example` passes.")
+    ctx = _ctx(task, validator=object())
+    acceptance = AsyncMock()
+    review = AsyncMock()
+
+    with (
+        patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
+        patch.object(lifecycle, "resolve_task_repo_path", return_value="/repo"),
+        patch.object(close_finalization, "_claimed_session_window_start", return_value=None),
+        patch.object(close_finalization, "_committable_task_paths", return_value={"src/a.py"}),
+        patch.object(lifecycle_validation, "task_dirty_paths_async", return_value=set()),
+        patch.object(lifecycle, "resolve_close_commit_shas", return_value=([], None)),
+        patch.object(
+            lifecycle,
+            "validate_commit_requirements",
+            return_value=ValidationResult(
+                can_close=False,
+                error_type="commit_required",
+                message="Link a commit for the attributed task edits.",
+            ),
+        ),
+        patch.object(lifecycle, "active_validation_backoff", return_value=None),
+        patch.object(
+            lifecycle,
+            "evaluate_task_scope",
+            AsyncMock(return_value=TaskScopeEvaluation((), (), ())),
+        ),
+        patch.object(
+            lifecycle,
+            "_derive_close_transcript_evidence",
+            AsyncMock(
+                return_value=_successful_transcript(
+                    task, command="uv run pytest tests/test_example.py -q"
+                )
+            ),
+        ),
+        patch.object(lifecycle, "evaluate_acceptance_artifacts", acceptance),
+        patch.object(lifecycle, "evaluate_criteria_review", review),
+        patch("gobby.workflows.task_claim_state.target_task_has_edits", return_value=True),
+        patch(
+            "gobby.workflows.task_claim_state.task_edited_file_set",
+            return_value={"src/a.py"},
+        ),
+    ):
+        evaluation = await _evaluate_close(
+            ctx,
+            task_id=task.id,
+            reason="completed",
+            changes_summary="Implemented and tested.",
+            commit_sha=None,
+            project_path=None,
+            response_detail="diagnostic",
+        )
+
+    assert evaluation.error == "commit_required"
+    statuses = {gate.item: gate.status for gate in evaluation.gates}
+    assert statuses[7] == "failed"
+    # The commit-independent gates still deliver their own verdicts.
+    assert statuses[9] == "passed"
+    assert statuses[10] == "passed"
+    unevaluable = [gate for gate in evaluation.gates if gate.item in {11, 12, 13}]
+    assert [gate.status for gate in unevaluable] == ["skipped", "skipped", "skipped"]
+    assert all("linked_commits" in gate.message for gate in unevaluable)
+    assert [gate.name for gate in evaluation.checklist.all_failures] == ["linked_commits"]
+    acceptance.assert_not_awaited()
     review.assert_not_awaited()
 
 
@@ -1806,7 +2008,9 @@ async def test_worked_task_with_a_closed_child_keeps_its_leaf_gates(
 
     assert evaluation.skip_leaf_checks is False
     assert evaluation.error == "missing_validation_criteria"
-    assert [gate.item for gate in evaluation.gates] == [1, 2, 3, 4, 5]
+    assert [gate.item for gate in evaluation.gates] == list(range(1, 14))
+    criteria_gate = next(gate for gate in evaluation.gates if gate.item == 5)
+    assert criteria_gate.status == "failed", "a structural parent would have skipped gate 5"
 
 
 @pytest.mark.asyncio
