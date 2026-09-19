@@ -55,9 +55,9 @@ rules:
         mask_quoted: true
         command_pattern: *review_gated_git
         reason: |
-          The code-review skill is loaded, but no `ocr delegate rule` review has
-          run since the last commit or merge. Run its pre-commit self-review on
-          the staged changes:
+          Run the code-review skill's pre-commit self-review on the staged
+          changes: the skill is loaded, but no `ocr delegate rule` review has
+          run since the last commit or merge.
 
           1. `ocr delegate preview --format json`, then intersect
              `reviewable_files` with `git diff --cached --name-only`.

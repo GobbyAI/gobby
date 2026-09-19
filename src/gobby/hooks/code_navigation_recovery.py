@@ -73,6 +73,13 @@ _EMPTY_OUTLINE_DIAGNOSTICS = (
     "file type has no AST parser support; `gcode outline` is AST-only:",
     "file not indexed in current project:",
 )
+# `gcode symbol-at` exits 0 with the nearest symbol when none contains the requested
+# line, warning on stderr first (crates/gcode/src/commands/symbol_at.rs:419):
+# "gcode symbol-at: no symbol contains src/x.py:10; using nearest visible symbol
+# src/x.py:26 [variable] NAME (16 lines away)". An import block, constant table, or
+# data literal in an otherwise-indexed file has no symbol to retrieve, so that line
+# is the only signal that the range is reachable through Read alone.
+_NO_CONTAINING_SYMBOL_DIAGNOSTIC = "gcode symbol-at: no symbol contains "
 # Separator arguments that could print a forged JSON line through escapes or expansion.
 _SEPARATOR_UNSAFE_CHARS = frozenset("{\\$`")
 # Whole-file reads are only verified narrow inside this byte budget; bigger
@@ -294,7 +301,11 @@ def annotate_navigation_outcome(data: dict[str, Any]) -> None:
     recovery: list[dict[str, Any]] = []
     if _OUTAGE_ERROR_CODES.intersection(codes) and _output_is_gcode_only(data):
         recovery = [{"action": "outage", "paths": _outage_roots(data, segments)}]
-    elif failed or (len(segments) == 1 and _is_empty_outline(segments[0], text)):
+    elif failed or (
+        len(segments) == 1
+        and _no_covering_symbol(segments[0], text)
+        and _output_is_gcode_only(data)
+    ):
         recovery = attempts
     data["canonical_code_index_attempts"] = attempts
     data["canonical_code_index_verified"] = [] if failed or not text.strip() else attempts
@@ -347,7 +358,7 @@ def _gcode_error_codes(text: str) -> list[str]:
 
 
 def _output_is_gcode_only(data: Mapping[str, Any]) -> bool:
-    """Only gcode may print the lines that open a checkout; other output could forge them.
+    """Only gcode may print the lines that open a scope; other output could forge them.
 
     head/tail qualify only as filters (options and counts): a file operand prints file text.
     """
@@ -379,9 +390,14 @@ def _outage_roots(data: Mapping[str, Any], segments: list[Mapping[str, Any]]) ->
     return sorted(str(root) for root in roots if root is not None)
 
 
-def _is_empty_outline(segment: Mapping[str, Any], text: str) -> bool:
-    """A successful outline without symbols leaves Read as the only source view."""
-    if segment.get("canonical_code_index_command") != "gcode outline":
+def _no_covering_symbol(segment: Mapping[str, Any], text: str) -> bool:
+    """A successful navigation that exposes no covering symbol leaves Read as the
+    only source view: an outline without symbols, or a symbol-at probe reporting
+    that no symbol contains the requested line."""
+    command = segment.get("canonical_code_index_command")
+    if command == "gcode symbol-at":
+        return any(line.startswith(_NO_CONTAINING_SYMBOL_DIAGNOSTIC) for line in text.splitlines())
+    if command != "gcode outline":
         return False
     if any(line.startswith(_EMPTY_OUTLINE_DIAGNOSTICS) for line in text.splitlines()):
         return True

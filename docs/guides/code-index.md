@@ -416,8 +416,12 @@ Both rules fail open when `gcode` cannot serve the request:
   a plain `echo`, or `head`/`tail` trimming piped output, so no other output can
   forge it.
 - A standalone `gcode outline <file>` that finds no symbols opens reads of that
-  file. Batched with other commands, the diagnostic could come from another
-  command's output, so it does not count.
+  file, and so does a standalone `gcode symbol-at <file>:<line>` that reports no
+  containing symbol. `symbol-at` still exits 0 with the nearest symbol there, so
+  the stderr warning is the only signal that a long import block, constant table,
+  or data literal has no symbol to retrieve. Both need the same output-only-gcode
+  company as a typed outage: batched with anything else, either diagnostic could
+  come from another command's output, so it does not count.
 
 Rules are runtime state, not just template files. Check installed rule state in
 the rules engine before claiming a rule is disabled.

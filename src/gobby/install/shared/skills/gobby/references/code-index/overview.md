@@ -18,7 +18,9 @@ cannot adequately serve the operation, and state the reason before falling back.
 Ordinary turns do not repeat the warning; clear or compact resets the teaching gate.
 Once loaded, source reads over 40 lines redirect to `gcode outline`, then
 `gcode symbol-at path/to/file:line`. A failed gcode call on that file, or a
-typed outage, reopens the read for the turn.
+typed outage, reopens the read for the turn. So does a standalone probe that
+finds nothing to retrieve: an outline with no symbols, or a `symbol-at` that
+reports no containing symbol for a range no symbol covers.
 
 | Topic | Load when |
 | --- | --- |
@@ -47,4 +49,4 @@ operator maintenance. Test mutations against isolated fixtures.
 
 Guide: [Code index](../../../../../../../../docs/guides/code-index.md).
 
-_Last verified: 2026-09-12_
+_Last verified: 2026-09-19_
