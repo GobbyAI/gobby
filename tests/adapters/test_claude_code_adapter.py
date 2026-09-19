@@ -664,6 +664,11 @@ class TestBashFailureDetection:
 
         assert event.metadata["is_failure"] is False
         assert event.data["tool_output"]["stdout"].endswith("110 passed in 1.56s")
+        # Claude stamps tool_use_id on every tool hook; it must keep flowing into
+        # the lifecycle correlation fields.
+        assert event.data["tool_use_id"] == "toolu_01WRLH44F8z3QpBzB1CfkiAM"
+        assert event.request_id == "toolu_01WRLH44F8z3QpBzB1CfkiAM"
+        assert event.wait_token == "toolu_01WRLH44F8z3QpBzB1CfkiAM"
 
 
 class TestNormalizeEventData:

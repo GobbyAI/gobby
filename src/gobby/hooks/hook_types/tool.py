@@ -1,4 +1,14 @@
-"""Tool execution hook models: pre-tool-use, post-tool-use, post-tool-use-failure."""
+"""Tool execution hook models: pre-tool-use, post-tool-use, post-tool-use-failure.
+
+Claude Code builds every hook payload by spreading one base object --
+``session_id``, ``transcript_path``, ``scratchpad_dir``, ``prompt_id``,
+``permission_mode``, ``agent_id``, ``agent_type``, ``effort`` -- so the tool
+hooks declare those fields as optional alongside their own. Verified by
+extracting the payload builder from the Claude Code 2.1.275 binary. Other
+providers send only a subset. ``HookInput`` sets ``extra="allow"`` and logs no
+unknown-field warning, so an undeclared field still reaches ``HookEvent.data``;
+that silence is why the declared models drifted behind the payload unnoticed.
+"""
 
 from typing import Any
 
@@ -18,6 +28,15 @@ class PreToolUseInput(HookInput):
     external_id: str = Field(..., min_length=1, description="Unique session identifier")
     tool_name: str = Field(..., min_length=1, description="Name of tool about to be used")
     tool_input: dict[str, Any] = Field(default_factory=dict, description="Tool input parameters")
+    tool_use_id: str | None = Field(default=None, description="Claude tool use identifier")
+    transcript_path: str | None = Field(default=None, description="Path to transcript file")
+    scratchpad_dir: str | None = Field(default=None, description="Provider scratchpad directory")
+    cwd: str | None = Field(default=None, description="Current working directory")
+    prompt_id: str | None = Field(default=None, description="Provider prompt/turn identifier")
+    permission_mode: str | None = Field(default=None, description="Active permission mode")
+    agent_id: str | None = Field(default=None, description="Agent ID of the issuing subagent")
+    agent_type: str | None = Field(default=None, description="Agent type of the issuing subagent")
+    effort: str | None = Field(default=None, description="Active reasoning effort level")
     machine_id: str | None = Field(default=None, description="Unique machine identifier")
 
 
@@ -74,7 +93,15 @@ class PostToolUseInput(HookInput):
     external_id: str = Field(..., min_length=1, description="Unique session identifier")
     tool_name: str = Field(..., min_length=1, description="Name of tool that was executed")
     tool_input: dict[str, Any] = Field(default_factory=dict, description="Tool input parameters")
+    tool_use_id: str | None = Field(default=None, description="Claude tool use identifier")
     transcript_path: str | None = Field(default=None, description="Path to transcript file")
+    scratchpad_dir: str | None = Field(default=None, description="Provider scratchpad directory")
+    cwd: str | None = Field(default=None, description="Current working directory")
+    prompt_id: str | None = Field(default=None, description="Provider prompt/turn identifier")
+    permission_mode: str | None = Field(default=None, description="Active permission mode")
+    agent_id: str | None = Field(default=None, description="Agent ID of the issuing subagent")
+    agent_type: str | None = Field(default=None, description="Agent type of the issuing subagent")
+    effort: str | None = Field(default=None, description="Active reasoning effort level")
     machine_id: str | None = Field(default=None, description="Unique machine identifier")
 
 

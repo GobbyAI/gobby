@@ -347,6 +347,24 @@ fields where possible.
 | `mcp_server` | Extracted MCP server name when a tool call targets MCP |
 | `mcp_tool` | Extracted MCP tool name when a tool call targets MCP |
 | `is_error` | Normalized tool failure flag |
+| `tool_use_id` | Provider tool-call identifier; becomes `HookEvent.request_id` and `wait_token` |
+| `transcript_path` | Path to the provider transcript file |
+| `scratchpad_dir` | Provider-managed scratchpad directory for the session |
+| `prompt_id` | Provider prompt/turn identifier; becomes `HookEvent.provider_turn_key` |
+| `permission_mode` | Active permission mode |
+| `agent_id` | Issuing subagent's identifier; absent on main-agent events |
+| `agent_type` | Issuing subagent's type |
+| `effort` | Active reasoning effort level |
+
+Claude Code builds *every* hook payload by spreading one base object of
+`{session_id, transcript_path, scratchpad_dir, prompt_id, permission_mode,
+agent_id, agent_type, effort}`; tool hooks add `tool_use_id` on top of it.
+Verified 2026-09-18 by extracting the payload builder from the Claude Code
+2.1.275 binary. Other providers send only a subset.
+
+Hook input models set `extra="allow"` and emit no unknown-field warning, so a
+field the models do not declare still reaches `HookEvent.data` silently. Treat
+this table, not a model definition, as the statement of what arrives.
 
 Shell-like tools normalize to `Bash`. Common Qwen/AGY tool names also map to
 Claude-style names such as `Read`, `Write`, `Edit`, `Glob`, and `Grep`.
@@ -356,6 +374,11 @@ Claude-style names such as `Read`, `Write`, `Edit`, `Glob`, and `Grep`.
 These are provider payload fragments, not complete HTTP requests. Wrap them in
 the versioned, authenticated envelope above for an actual transport request;
 normally the installed ghook does that work.
+
+The fragments are illustrative: they show the fields a reader needs for the
+surrounding explanation, not every key the installed CLI sends, and a provider
+that adds fields will leave them behind. Capture a live payload, or check the
+Common Payload Fields table above, before concluding a field is absent.
 
 ### Claude Code
 
@@ -379,13 +402,26 @@ normally the installed ghook does that work.
   "hook_type": "pre-tool-use",
   "input_data": {
     "session_id": "claude-session-123",
+    "transcript_path": "/path/to/transcript.jsonl",
+    "scratchpad_dir": "/path/to/scratchpad",
+    "prompt_id": "prompt-uuid",
+    "permission_mode": "default",
+    "agent_id": "agent-uuid",
+    "agent_type": "general-purpose",
+    "effort": "high",
+    "cwd": "/path/to/project",
     "tool_name": "Bash",
     "tool_input": {
       "command": "git status --short"
-    }
+    },
+    "tool_use_id": "toolu_01WRLH44F8z3QpBzB1CfkiAM"
   }
 }
 ```
+
+`agent_id` and `agent_type` identify the issuing subagent and are absent when
+the main agent makes the call, which makes `agent_id` the discriminator for
+scoping per-agent state across a `Task` subagent's tool calls.
 
 ```json
 {
