@@ -213,7 +213,7 @@ def _pane_of(target: WorkspaceTarget, reference: str) -> tuple[WorkspaceTab, Wor
 def _require_local(node: Machine) -> None:
     """Refuse another node's rows: its in-flight spawns are invisible to this daemon's sweep."""
     if node.id != require_machine_id():
-        name = node.id if node.ref is None else f"n{node.ref}"
+        name = node.id if node.ref is None else str(node.ref)
         raise WorkspaceOpError(
             "invalid_op",
             f"Workspace ops on node {name} ({node.hostname or 'unnamed'}) run on that node",
@@ -221,24 +221,27 @@ def _require_local(node: Machine) -> None:
 
 
 def _pane_ref(node: Machine, workspace: Workspace, tab: WorkspaceTab, pane: WorkspacePane) -> str:
-    prefix = "" if node.ref is None else f"n{node.ref}:"
-    return f"{prefix}w{workspace.ref}:t{tab.ref}:p{pane.ref}"
+    """The pane's ``node:workspace:tab:pane`` address; a pane ref always carries its node."""
+    if node.ref is None:
+        raise WorkspaceOpError("invalid_op", f"Node {node.id} has no ref to address panes by")
+    return f"{node.ref}:{workspace.ref}:{tab.ref}:{pane.ref}"
 
 
 def _identity_env(
     node: Machine, workspace: Workspace, tab: WorkspaceTab, pane: WorkspacePane
 ) -> dict[str, str]:
     """Spawn-time pane identity; the runtime adds GOBBY_TERMINAL_ID on top."""
-    env = {
+    # Built first because it refuses a node with no ref, which is what makes
+    # `node.ref` below a number rather than the string "None".
+    pane_ref = _pane_ref(node, workspace, tab, pane)
+    return {
         GOBBY_NODE_ID: node.id,
         GOBBY_WORKSPACE_ID: workspace.id,
         GOBBY_TAB_ID: tab.id,
         GOBBY_PANE_ID: pane.id,
-        GOBBY_PANE_REF: _pane_ref(node, workspace, tab, pane),
+        GOBBY_PANE_REF: pane_ref,
+        GOBBY_NODE_REF: str(node.ref),
     }
-    if node.ref is not None:
-        env[GOBBY_NODE_REF] = f"n{node.ref}"
-    return env
 
 
 class WorkspaceOps:

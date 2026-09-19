@@ -28,7 +28,7 @@ GOBBY_SESSION_ID = "GOBBY_SESSION_ID"
 
 # Terminal and pane identity, scoped to the process it names. The native
 # runtime sets GOBBY_TERMINAL_ID on every spawn; workspace pane spawns add the
-# pane names (GOBBY_PANE_REF is `n1:w1:t2:p3`). The daemon pops all of them
+# pane names (GOBBY_PANE_REF is `0:0:1:2`). The daemon pops all of them
 # from its own environment at startup so no child inherits a pane's identity.
 GOBBY_TERMINAL_ID = "GOBBY_TERMINAL_ID"
 GOBBY_NODE_ID = "GOBBY_NODE_ID"

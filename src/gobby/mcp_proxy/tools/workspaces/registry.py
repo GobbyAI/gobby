@@ -32,7 +32,7 @@ from gobby.utils.session_context import get_request_principal, get_session_conte
 
 type OpsResolver = Callable[[], WorkspaceOps | None]
 
-_NODE = "Optional `node` (n#, hostname, label, or id) resolves refs on that machine."
+_NODE = "Optional `node` (ref, hostname, label, or id) resolves refs on that machine."
 
 
 async def current_actor() -> str:
@@ -85,7 +85,7 @@ def create_workspaces_registry(
     """Create the gobby-workspaces registry over the shared ops the resolver returns."""
     registry = InternalToolRegistry(
         name="gobby-workspaces",
-        description="Workspaces, tabs, and panes addressed by n#:w#:t#:p# refs",
+        description="Workspaces, tabs, and panes addressed by node:workspace:tab:pane refs",
     )
 
     def ops() -> WorkspaceOps:

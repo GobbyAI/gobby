@@ -85,29 +85,29 @@ def test_refs_are_lowest_free_and_reused(
 
     default, created = manager.create(node.id)
     scratch, _created = manager.create(node.id, "scratch")
-    assert created and (default.name, default.ref, scratch.ref) == ("default", 1, 2)
+    assert created and (default.name, default.ref, scratch.ref) == ("default", 0, 1)
     existing, created_again = manager.create(node.id)
     assert (existing.id, created_again) == (default.id, False)
     manager.close(default.id)
-    assert manager.create(node.id, "notes")[0].ref == 1
+    assert manager.create(node.id, "notes")[0].ref == 0
 
     first = manager.create_tab(scratch.id, pane_id=_pane_id(), project_id=project_id)
     second = manager.create_tab(scratch.id, pane_id=_pane_id(), project_id=project_id)
-    assert [first.tabs[0].ref, second.tabs[0].ref] == [1, 2]
+    assert [first.tabs[0].ref, second.tabs[0].ref] == [0, 1]
     manager.close_tab(first.tabs[0].id)
     third = manager.create_tab(scratch.id, pane_id=_pane_id(), project_id=project_id)
-    assert third.tabs[0].ref == 1
+    assert third.tabs[0].ref == 0
 
     root = third.panes[0]
     split_a = manager.add_pane(_pane_id(), beside=root.id, axis="vertical").panes[0]
     split_b = manager.add_pane(_pane_id(), beside=split_a.id, axis="horizontal").panes[0]
-    assert [root.ref, split_a.ref, split_b.ref] == [1, 2, 3]
+    assert [root.ref, split_a.ref, split_b.ref] == [0, 1, 2]
     manager.remove_pane(split_a.id)
-    assert manager.add_pane(_pane_id(), beside=root.id, axis="vertical").panes[0].ref == 2
+    assert manager.add_pane(_pane_id(), beside=root.id, axis="vertical").panes[0].ref == 1
 
     moved = manager.move_pane(split_b.id, tab_id=second.tabs[0].id).panes[0]
-    assert (moved.tab_id, moved.ref) == (second.tabs[0].id, 2)
-    assert manager.add_pane(_pane_id(), beside=root.id, axis="vertical").panes[0].ref == 3
+    assert (moved.tab_id, moved.ref) == (second.tabs[0].id, 1)
+    assert manager.add_pane(_pane_id(), beside=root.id, axis="vertical").panes[0].ref == 2
 
 
 def test_workspace_manager_resolves_every_reference_form(
@@ -117,25 +117,25 @@ def test_workspace_manager_resolves_every_reference_form(
     workspace, _created = manager.create(node.id, "main")
     created = manager.create_tab(workspace.id, pane_id=_pane_id(), project_id=sample_project["id"])
     tab, pane = created.tabs[0], created.panes[0]
-    node_ref = f"n{node.ref}"
+    node_ref = str(node.ref)
 
     workspace_ids = (workspace.id, None, None)
     tab_ids = (workspace.id, tab.id, None)
     pane_ids = (workspace.id, tab.id, pane.id)
     assert _target_ids(manager.resolve_reference(workspace.id)) == workspace_ids
     assert _target_ids(manager.resolve_reference("main")) == workspace_ids
-    assert _target_ids(manager.resolve_reference("w1", node=node_ref)) == workspace_ids
-    assert _target_ids(manager.resolve_reference(f"{node_ref}:w1")) == workspace_ids
+    assert _target_ids(manager.resolve_reference("0", node=node_ref)) == workspace_ids
+    assert _target_ids(manager.resolve_reference(f"{node_ref}:0")) == workspace_ids
     assert _target_ids(manager.resolve_reference(tab.id)) == tab_ids
-    assert _target_ids(manager.resolve_reference(f"{node_ref}:w1:t1")) == tab_ids
+    assert _target_ids(manager.resolve_reference(f"{node_ref}:0:0")) == tab_ids
     assert _target_ids(manager.resolve_reference(pane.id)) == pane_ids
-    assert _target_ids(manager.resolve_reference(f"{node_ref}:w1:t1:p1")) == pane_ids
+    assert _target_ids(manager.resolve_reference(f"{node_ref}:0:0:0")) == pane_ids
     assert manager.resolve_reference("main").node.ref == node.ref
 
-    for malformed in ("w0", "n1:t1", "w1:p1", f"{node_ref}:w1:t1:p1:x"):
+    for malformed in ("0:", "a:0", "0:0:0:0:0", f"{node_ref}:0:0:0:x"):
         with pytest.raises(InvalidWorkspaceRefError):
             manager.resolve_reference(malformed)
-    for missing in ("w9", "absent", f"{node_ref}:w1:t7", str(uuid.uuid4())):
+    for missing in ("9", "absent", f"{node_ref}:0:7", str(uuid.uuid4())):
         with pytest.raises(WorkspaceNotFoundError):
             manager.resolve_reference(missing)
 
@@ -177,7 +177,7 @@ def test_pane_and_tab_mutations_rewrite_layouts(
     existing = manager.create_tab(target.id, pane_id=_pane_id(), project_id=project_id).tabs[0]
     moved = manager.move_tab(tab.id, workspace_id=target.id, position=0)
     moved_tab = next(row for row in moved.tabs if row.id == tab.id)
-    assert (moved_tab.workspace_id, moved_tab.ref) == (target.id, 2)
+    assert (moved_tab.workspace_id, moved_tab.ref) == (target.id, 1)
     assert [row.id for row in manager.list_tabs(target.id)] == [tab.id, existing.id]
     assert manager.list_tabs(workspace.id) == []
 
@@ -196,11 +196,11 @@ def test_workspace_rename_focus_hints_and_close(
     tab, pane = created.tabs[0], created.panes[0]
 
     assert manager.rename(workspace.id, "main").name == "main"
-    for bad_name in ("taken", "w3", "n1:w1", " ", str(uuid.uuid4())):
+    for bad_name in ("taken", "3", "0:0", " ", str(uuid.uuid4())):
         with pytest.raises(InvalidWorkspaceOpError):
             manager.rename(workspace.id, bad_name)
     with pytest.raises(InvalidWorkspaceOpError):
-        manager.create(node.id, "t2")
+        manager.create(node.id, "2")
 
     hinted, hinted_tab = manager.set_focus_hints(
         workspace.id, project_id=sample_project["id"], tab_id=tab.id, pane_id=pane.id

@@ -25,7 +25,7 @@ def test_current_terminal_context_collects_supported_identity(
     monkeypatch.setenv("TERM_PROGRAM", "iTerm.app")
     monkeypatch.setenv("TERM_SESSION_ID", "w0t0p0")
     monkeypatch.setenv("GOBBY_TERMINAL_ID", "7f0c6a52-1d7e-4c3b-9a55-0b5ad1f7e2c4")
-    monkeypatch.setenv("GOBBY_PANE_REF", "n1:w1:t2:p3")
+    monkeypatch.setenv("GOBBY_PANE_REF", "0:0:1:2")
     monkeypatch.setenv("UNRELATED_SECRET", "excluded")
 
     with (
@@ -54,7 +54,7 @@ def test_current_terminal_context_collects_supported_identity(
         "term_program": "iTerm.app",
         "term_session_id": "w0t0p0",
         "gobby_terminal_id": "7f0c6a52-1d7e-4c3b-9a55-0b5ad1f7e2c4",
-        "gobby_pane_ref": "n1:w1:t2:p3",
+        "gobby_pane_ref": "0:0:1:2",
     }
 
 
@@ -67,14 +67,14 @@ def test_serialize_terminal_context_is_compact_allowlisted_json() -> None:
             "tmux_window_id": "@7",
             "term_program": "iTerm.app",
             "gobby_terminal_id": "7f0c6a52-1d7e-4c3b-9a55-0b5ad1f7e2c4",
-            "gobby_pane_ref": "n1:w1:t2:p3",
+            "gobby_pane_ref": "0:0:1:2",
             "unknown": "excluded",
         }
     )
 
     assert serialized == (
         '{"parent_pid":4321,"tmux_pane":"%4","tmux_window_id":"@7","term_program":"iTerm.app",'
-        '"gobby_terminal_id":"7f0c6a52-1d7e-4c3b-9a55-0b5ad1f7e2c4","gobby_pane_ref":"n1:w1:t2:p3"}'
+        '"gobby_terminal_id":"7f0c6a52-1d7e-4c3b-9a55-0b5ad1f7e2c4","gobby_pane_ref":"0:0:1:2"}'
     )
     assert json.loads(serialized) == {
         "parent_pid": 4321,
@@ -82,5 +82,5 @@ def test_serialize_terminal_context_is_compact_allowlisted_json() -> None:
         "tmux_window_id": "@7",
         "term_program": "iTerm.app",
         "gobby_terminal_id": "7f0c6a52-1d7e-4c3b-9a55-0b5ad1f7e2c4",
-        "gobby_pane_ref": "n1:w1:t2:p3",
+        "gobby_pane_ref": "0:0:1:2",
     }

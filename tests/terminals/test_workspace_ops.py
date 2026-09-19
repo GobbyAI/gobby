@@ -205,7 +205,7 @@ def _autonomous_session(h: _Harness, parent: Session) -> Session:
 def _pane_ref(h: _Harness, workspace_ref: int, tab_ref: int, pane_ref: int) -> str:
     node = h.workspaces.resolve_node()
     assert node.ref is not None
-    return f"n{node.ref}:w{workspace_ref}:t{tab_ref}:p{pane_ref}"
+    return f"{node.ref}:{workspace_ref}:{tab_ref}:{pane_ref}"
 
 
 async def _raises(code: str, operation: Awaitable[object]) -> WorkspaceOpError:
@@ -230,7 +230,7 @@ async def test_split_spawns_with_pane_identity_env_and_rolls_back(harness: _Harn
     assert request.cwd == h.checkout
     assert dict(request.env or {}) == {
         GOBBY_NODE_ID: node.id,
-        GOBBY_NODE_REF: f"n{node.ref}",
+        GOBBY_NODE_REF: str(node.ref),
         GOBBY_WORKSPACE_ID: workspace.id,
         GOBBY_TAB_ID: tab.id,
         GOBBY_PANE_ID: pane.id,
@@ -334,7 +334,7 @@ async def test_adopt_close_and_move_semantics(harness: _Harness) -> None:
 
     # pane.move across tabs collapses the source split and takes the lowest free ref.
     owned = (await h.ops.pane_split(OPERATOR, external_pane.id, "horizontal")).panes[0]
-    assert owned.ref == 3
+    assert owned.ref == 2
     destination = await h.ops.tab_create(OPERATOR, workspace.id, h.project_id)
     destination_tab, destination_pane = destination.tabs[0], destination.panes[0]
     moved = await h.ops.pane_move(
@@ -343,7 +343,7 @@ async def test_adopt_close_and_move_semantics(harness: _Harness) -> None:
     tabs = {row.id: row for row in moved.tabs}
     assert layout_pane_ids(tabs[tab.id].layout) == [agent_pane.id, external_pane.id]
     assert layout_pane_ids(tabs[destination_tab.id].layout) == [destination_pane.id, owned.id]
-    assert (moved.panes[0].tab_id, moved.panes[0].ref) == (destination_tab.id, 2)
+    assert (moved.panes[0].tab_id, moved.panes[0].ref) == (destination_tab.id, 1)
 
     # pane.close kills an owned live terminal and releases an adopted one.
     await h.ops.pane_close(OPERATOR, owned.id)
@@ -511,7 +511,7 @@ async def test_ops_publish_events_and_raise_typed_errors(harness: _Harness) -> N
     outsider = _session(h, "typed-outsider", LocalProjectManager(h.db).create(name="typed").id)
     failures = [
         await _raises("not_found", h.ops.pane_rename(OPERATOR, str(uuid.uuid4()), "x")),
-        await _raises("invalid_ref", h.ops.pane_rename(OPERATOR, "w1:t1:bogus", "x")),
+        await _raises("invalid_ref", h.ops.pane_rename(OPERATOR, "0:0:0:bogus", "x")),
         await _raises("invalid_ref", h.ops.pane_rename(OPERATOR, pane.tab_id, "x")),
         await _raises("invalid_op", h.ops.pane_split(OPERATOR, pane.id, "diagonal")),
         await _raises(
@@ -714,7 +714,7 @@ async def test_remote_workspace_refuses_mutations_and_is_never_swept(harness: _H
 
     refused: list[Callable[[], Awaitable[object]]] = [
         partial(h.ops.workspace_create, OPERATOR, "remote", node="remote-node"),
-        partial(h.ops.workspace_rename, OPERATOR, f"n{remote.ref}:w{workspace.ref}", "renamed"),
+        partial(h.ops.workspace_rename, OPERATOR, f"{remote.ref}:{workspace.ref}", "renamed"),
         partial(h.ops.workspace_close, OPERATOR, workspace.id),
         partial(
             h.ops.workspace_set_focus_hints,
@@ -741,7 +741,7 @@ async def test_remote_workspace_refuses_mutations_and_is_never_swept(harness: _H
     ]
     for operation in refused:
         refusal = await _raises("invalid_op", operation())
-        assert f"n{remote.ref}" in str(refusal)
+        assert f"node {remote.ref}" in str(refusal)
     assert [row.id for row in h.workspaces.list_panes(workspace.id)] == [pane.id]
     assert [row.id for row in h.workspaces.list_tabs(local.id)] == [local_tab.id]
     assert h.native.create_calls == spawns

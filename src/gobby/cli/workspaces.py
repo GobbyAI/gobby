@@ -2,8 +2,9 @@
 
 `gobby workspaces`, `gobby panes`, and `gobby nodes` call the daemon's
 gobby-workspaces registry over HTTP with the local CLI token, which the MCP route
-classifies as the `operator` actor. Rows are addressed by ref (`n2:w1:t1:p2`) or id;
-`--node` names the node for refs that carry no `n#`, and defaults to the daemon's own.
+classifies as the `operator` actor. Rows are addressed by ref (`2:0:0:1`) or id;
+`--node` names the node for a lone workspace ref or a name, and defaults to the
+daemon's own.
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ from gobby.cli.utils_config import get_daemon_url
 from gobby.utils.json_helpers import json_dumps
 from gobby.utils.local_token import daemon_auth_headers
 
-_NODE_PREFIX = re.compile(r"n\d+:")
+_NODE_PREFIX = re.compile(r"\d+:")
 _SPLIT_DIRECTION = "panes split takes exactly one of --right, --left, --above, --below"
 _MOVE_DIRECTION = "panes move takes one direction: --right, --left, --above, or --below"
 _DEFAULT_TIMEOUT = 30.0
@@ -149,10 +150,10 @@ def _emit(result: dict[str, Any], json_format: bool) -> bool:
     return True
 
 
-def _pane_line(pane: dict[str, Any]) -> str:
+def _pane_line(tab_ref: str, pane: dict[str, Any]) -> str:
     label = f"  {pane['label']}" if pane.get("label") else ""
     terminal = pane.get("terminal_id") or "spawning"
-    return f"  p{pane['ref']}  {terminal}{label}"
+    return f"  {tab_ref}:{pane['ref']}  {terminal}{label}"
 
 
 @click.group()
@@ -171,7 +172,7 @@ def nodes() -> None:
 
 
 @workspaces.command("list")
-@click.option("--node", "node", help="Node ref (n#), id, hostname, or label")
+@click.option("--node", "node", help="Node ref (a number), id, hostname, or label")
 @click.option("--json", "json_format", is_flag=True, help="Output as JSON")
 def list_workspaces(node: str | None, json_format: bool) -> None:
     """List a node's workspaces."""
@@ -184,14 +185,14 @@ def list_workspaces(node: str | None, json_format: bool) -> None:
         click.echo("No workspaces found.")
         return
 
-    click.echo(f"Node n{result.get('node_ref')}: {len(rows)} workspace(s)")
+    click.echo(f"Node {result.get('node_ref')}: {len(rows)} workspace(s)")
     for row in rows:
-        click.echo(f"w{row['ref']}  {row['name']}  {row['id']}")
+        click.echo(f"{row['ref']}  {row['name']}  {row['id']}")
 
 
 @workspaces.command("show")
 @click.argument("workspace")
-@click.option("--node", "node", help="Node ref (n#), id, hostname, or label")
+@click.option("--node", "node", help="Node ref (a number), id, hostname, or label")
 @click.option("--json", "json_format", is_flag=True, help="Output as JSON")
 def show_workspace(workspace: str, node: str | None, json_format: bool) -> None:
     """Show WORKSPACE with its tabs and panes."""
@@ -202,20 +203,22 @@ def show_workspace(workspace: str, node: str | None, json_format: bool) -> None:
         return
 
     row = _row(result, "workspace")
-    click.echo(f"Workspace n{row.get('node_ref')}:w{row['ref']}  {row['name']}")
+    workspace_ref = f"{row.get('node_ref')}:{row['ref']}"
+    click.echo(f"Workspace {workspace_ref}  {row['name']}")
     panes_by_tab: dict[str, list[dict[str, Any]]] = {}
     for pane in _rows(result, "panes"):
         panes_by_tab.setdefault(str(pane["tab_id"]), []).append(pane)
     for tab in _rows(result, "tabs"):
         title = f"  {tab['title']}" if tab.get("title") else ""
-        click.echo(f"t{tab['ref']}{title}  project {tab['project_id']}")
+        tab_ref = f"{workspace_ref}:{tab['ref']}"
+        click.echo(f"{tab_ref}{title}  project {tab['project_id']}")
         for pane in panes_by_tab.get(str(tab["id"]), []):
-            click.echo(_pane_line(pane))
+            click.echo(_pane_line(tab_ref, pane))
 
 
 @workspaces.command("create")
 @click.argument("name")
-@click.option("--node", "node", help="Node ref (n#), id, hostname, or label")
+@click.option("--node", "node", help="Node ref (a number), id, hostname, or label")
 @click.option("--json", "json_format", is_flag=True, help="Output as JSON")
 def create_workspace(name: str, node: str | None, json_format: bool) -> None:
     """Return the workspace named NAME, creating it on first use."""
@@ -224,12 +227,12 @@ def create_workspace(name: str, node: str | None, json_format: bool) -> None:
         return
 
     row = _row(result, "workspace")
-    click.echo(f"Workspace w{row['ref']}: {row['name']}")
+    click.echo(f"Workspace {row['ref']}: {row['name']}")
 
 
 @workspaces.command("delete")
 @click.argument("workspace")
-@click.option("--node", "node", help="Node ref (n#), id, hostname, or label")
+@click.option("--node", "node", help="Node ref (a number), id, hostname, or label")
 @click.option("--json", "json_format", is_flag=True, help="Output as JSON")
 def delete_workspace(workspace: str, node: str | None, json_format: bool) -> None:
     """Close WORKSPACE and kill the terminals it owns."""
@@ -242,7 +245,7 @@ def delete_workspace(workspace: str, node: str | None, json_format: bool) -> Non
         return
 
     row = _row(result, "workspace")
-    click.echo(f"Closed workspace w{row['ref']}: {row['name']}")
+    click.echo(f"Closed workspace {row['ref']}: {row['name']}")
 
 
 @panes.command("split")
@@ -252,7 +255,7 @@ def delete_workspace(workspace: str, node: str | None, json_format: bool) -> Non
 @click.option("--above", is_flag=True, help="Open the new pane above")
 @click.option("--below", is_flag=True, help="Open the new pane below")
 @click.option("--terminal", "terminal_id", help="Adopt this live terminal instead of spawning")
-@click.option("--node", "node", help="Node ref (n#), id, hostname, or label")
+@click.option("--node", "node", help="Node ref (a number), id, hostname, or label")
 @click.option("--json", "json_format", is_flag=True, help="Output as JSON")
 def split_pane(
     pane: str,
@@ -292,12 +295,12 @@ def split_pane(
     if not _emit(result, json_format):
         return
 
-    click.echo(f"Pane p{added[0]['ref']}  {added[0]['id']}")
+    click.echo(f"Pane {added[0]['ref']}  {added[0]['id']}")
 
 
 @panes.command("close")
 @click.argument("pane")
-@click.option("--node", "node", help="Node ref (n#), id, hostname, or label")
+@click.option("--node", "node", help="Node ref (a number), id, hostname, or label")
 @click.option("--json", "json_format", is_flag=True, help="Output as JSON")
 def close_pane(pane: str, node: str | None, json_format: bool) -> None:
     """Close PANE and kill the terminal it owns."""
@@ -310,9 +313,9 @@ def close_pane(pane: str, node: str | None, json_format: bool) -> None:
         return
 
     for row in _rows(result, "removed_panes"):
-        click.echo(f"Closed pane p{row['ref']}")
+        click.echo(f"Closed pane {row['ref']}")
     for row in _rows(result, "removed_tabs"):
-        click.echo(f"Closed empty tab t{row['ref']}")
+        click.echo(f"Closed empty tab {row['ref']}")
 
 
 @panes.command("move")
@@ -322,7 +325,7 @@ def close_pane(pane: str, node: str | None, json_format: bool) -> None:
 @click.option("--left", help="Place PANE left of this pane")
 @click.option("--above", help="Place PANE above this pane")
 @click.option("--below", help="Place PANE below this pane")
-@click.option("--node", "node", help="Node ref (n#), id, hostname, or label")
+@click.option("--node", "node", help="Node ref (a number), id, hostname, or label")
 @click.option("--json", "json_format", is_flag=True, help="Output as JSON")
 def move_pane(
     pane: str,
@@ -368,13 +371,13 @@ def move_pane(
         return
 
     for row in _rows(result, "panes"):
-        click.echo(f"Moved pane p{row['ref']} into tab {tab}")
+        click.echo(f"Moved pane {row['ref']} into tab {tab}")
 
 
 @panes.command("swap")
 @click.argument("pane")
 @click.argument("other")
-@click.option("--node", "node", help="Node ref (n#), id, hostname, or label")
+@click.option("--node", "node", help="Node ref (a number), id, hostname, or label")
 @click.option("--json", "json_format", is_flag=True, help="Output as JSON")
 def swap_panes(pane: str, other: str, node: str | None, json_format: bool) -> None:
     """Swap PANE and OTHER in their tab."""
@@ -384,13 +387,13 @@ def swap_panes(pane: str, other: str, node: str | None, json_format: bool) -> No
     if not _emit(result, json_format):
         return
 
-    click.echo(f"Swapped {pane} and {other} in tab t{_row(result, 'tab')['ref']}")
+    click.echo(f"Swapped {pane} and {other} in tab {_row(result, 'tab')['ref']}")
 
 
 @panes.command("rename")
 @click.argument("ref")
 @click.argument("name", required=False)
-@click.option("--node", "node", help="Node ref (n#), id, hostname, or label")
+@click.option("--node", "node", help="Node ref (a number), id, hostname, or label")
 @click.option("--json", "json_format", is_flag=True, help="Output as JSON")
 def rename_workspace_item(ref: str, name: str | None, node: str | None, json_format: bool) -> None:
     """Rename what REF names; omit NAME to clear a tab title or pane label."""
@@ -400,14 +403,10 @@ def rename_workspace_item(ref: str, name: str | None, node: str | None, json_for
     if not _emit(result, json_format):
         return
 
-    for key, prefix, field in (
-        ("workspace", "w", "name"),
-        ("tab", "t", "title"),
-        ("pane", "p", "label"),
-    ):
+    for key, field in (("workspace", "name"), ("tab", "title"), ("pane", "label")):
         row = result.get(key)
         if isinstance(row, dict):
-            click.echo(f"Renamed {key} {prefix}{row['ref']}: {row.get(field) or '(cleared)'}")
+            click.echo(f"Renamed {key} {row['ref']}: {row.get(field) or '(cleared)'}")
             return
 
 
@@ -417,7 +416,7 @@ def rename_workspace_item(ref: str, name: str | None, node: str | None, json_for
 @click.option("--submit", is_flag=True, help="Press Enter after the text")
 @click.option("--key", "as_key", is_flag=True, help="Send TEXT as a key name (enter, c-c)")
 @click.option("--idempotency-key", "idempotency_key", help="Reuse to retry a write safely")
-@click.option("--node", "node", help="Node ref (n#), id, hostname, or label")
+@click.option("--node", "node", help="Node ref (a number), id, hostname, or label")
 @click.option("--json", "json_format", is_flag=True, help="Output as JSON")
 def send_pane_input(
     pane: str,
@@ -466,7 +465,7 @@ def send_pane_input(
 @panes.command("read")
 @click.argument("pane")
 @click.option("--lines", type=int, help="Screen lines to return (default 50)")
-@click.option("--node", "node", help="Node ref (n#), id, hostname, or label")
+@click.option("--node", "node", help="Node ref (a number), id, hostname, or label")
 @click.option("--json", "json_format", is_flag=True, help="Output as JSON")
 def read_pane(pane: str, lines: int | None, node: str | None, json_format: bool) -> None:
     """Read the last lines of PANE's screen."""
@@ -486,7 +485,7 @@ def read_pane(pane: str, lines: int | None, node: str | None, json_format: bool)
 @click.argument("pattern")
 @click.option("--timeout", "timeout_seconds", type=float, help="Seconds to wait (capped at 300)")
 @click.option("--poll-interval", "poll_interval", type=float, help="Seconds between reads")
-@click.option("--node", "node", help="Node ref (n#), id, hostname, or label")
+@click.option("--node", "node", help="Node ref (a number), id, hostname, or label")
 @click.option("--json", "json_format", is_flag=True, help="Output as JSON")
 def wait_for_pane_output(
     pane: str,
@@ -534,4 +533,4 @@ def list_nodes(node: str | None, json_format: bool) -> None:
     for row in rows:
         local = "  local" if row.get("local") else ""
         label = f"  {row['label']}" if row.get("label") else ""
-        click.echo(f"n{row['ref']}  {row.get('hostname')}{label}{local}")
+        click.echo(f"{row['ref']}  {row.get('hostname')}{label}{local}")

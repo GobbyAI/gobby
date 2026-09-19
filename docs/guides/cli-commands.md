@@ -804,10 +804,11 @@ gobby nodes list [--node NODE] [--json]
 ```
 
 These groups call the daemon's `gobby-workspaces` registry with the local CLI
-token, so they act as the `operator`. A node (`n#`) holds workspaces (`w#`) whose
-tabs (`t#`) hold panes (`p#`): address a row by ref, such as `n2:w1:t1:p2`, or by
-id. `--node` takes a node ref, id, hostname, or label and defaults to the daemon's
-own node; a ref that names its own node overrides it. The same rows back the
+token, so they act as the `operator`. A node holds workspaces whose tabs hold
+panes, and every ref is a number counting from zero: address a row by ref, such
+as `2:0:0:1` for node 2's first workspace, first tab, second pane, or by id.
+`--node` takes a node ref, id, hostname, or label and defaults to the daemon's
+own node; a ref with a node in it overrides `--node`. The same rows back the
 `gclient` window ([Workspaces](gclient-user-guide.md#workspaces) in its user
 guide), the `gobby-workspaces` MCP registry ([mcp-tools.md](mcp-tools.md)), and
 the [workspace messages](../contracts/gterm-protocols.md#workspace-messages) on
