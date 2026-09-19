@@ -516,7 +516,7 @@ mod tests {
             NavigatorTarget::Attention("run:term-alpha".into())
         );
         assert_eq!(rows[2].detail, "needs you · run");
-        assert!(rows[1].detail.starts_with("idle · native"));
+        assert!(rows[1].detail.starts_with("idle · gclient"));
     }
 
     #[test]
@@ -563,7 +563,7 @@ mod tests {
             "term-alpha",
             "term-beta",
             "needs you",
-            "idle · native",
+            "idle · gclient",
         ] {
             assert!(text.contains(needle), "missing {needle:?}:\n{text}");
         }

@@ -11,7 +11,7 @@
 
 use crate::app::sidebar_model::ProjectEntry;
 use crate::theme::Palette;
-use crate::ui::chrome::{Chrome, RowState, WorkspaceView};
+use crate::ui::chrome::{terminal_address, Chrome, RowState, WorkspaceView};
 use crate::ui::sidebar::machine_admits;
 use crate::ui::status::{control_indicator, state_dot, state_label, state_label_color};
 use crate::ui::text::{display_width, truncate_end};
@@ -221,10 +221,10 @@ pub(crate) fn terminal_detail<W: WorkspaceView>(ws: &W, terminal_id: &str, p: &P
     match ws.pane_for_terminal(terminal_id).map(|id| ws.pane(id)) {
         Some(pane) => {
             let (glyph, label, _) = control_indicator(pane.control, pane.take_back, p);
-            // The address rides with the backend that owns it, which is what
-            // keeps two panes sharing a title (`zsh`, `zsh`) tellable apart.
-            match pane.address.as_deref() {
-                Some(address) => format!("{} {address} {glyph} {label}", pane.backend),
+            // The address leads, so it is what the navigator query matches
+            // and what keeps two panes sharing a name (`zsh`, `zsh`) apart.
+            match terminal_address(ws, terminal_id) {
+                Some(address) => format!("{address} {} {glyph} {label}", pane.backend),
                 None => format!("{} {glyph} {label}", pane.backend),
             }
         }
@@ -253,8 +253,15 @@ fn nest_prefix(row: &SidebarRow) -> &'static str {
 /// a machine row is the same shape without the indent; an agent row is the
 /// herdr composition: state dot, the label always bold, `needs you` after
 /// a blocked one, with its tokens on `row_second_line`; a group row is the
-/// dim project name and a rule.
-pub fn row_line<'a>(row: &'a SidebarRow, width: u16, chrome: &Chrome) -> Line<'a> {
+/// dim project name and a rule. An agent title wider than its budget
+/// scrolls on the shared marquee clock, `max_travel` being the longest
+/// overrun among the rows drawn with it (`row_travel`).
+pub fn row_line<'a>(
+    row: &'a SidebarRow,
+    width: u16,
+    chrome: &Chrome,
+    max_travel: usize,
+) -> Line<'a> {
     let p = &chrome.palette;
     let (glyph, glyph_color) = state_dot(row.state, p);
     let glyph = (glyph, Style::default().fg(glyph_color));
@@ -326,15 +333,20 @@ pub fn row_line<'a>(row: &'a SidebarRow, width: u16, chrome: &Chrome) -> Line<'a
                 .then(|| (state_label(row.state), label_style))
                 .into_iter()
                 .collect();
-            let label = if row.active || row.selected {
+            let label = if chrome.prefs.reduced_motion {
+                row.label.clone()
+            } else {
                 // As on every row, the word drops before the title loses a
                 // cell; a title over-long even alone tickers instead.
                 if display_width(&row.label) > title_budget(&trailing, budget) {
                     trailing.clear();
                 }
-                ticker_window(&row.label, title_budget(&trailing, budget), chrome.ticker)
-            } else {
-                row.label.clone()
+                ticker_window(
+                    &row.label,
+                    title_budget(&trailing, budget),
+                    chrome.ticker,
+                    max_travel,
+                )
             };
             spans.extend(fitted_spans(
                 glyph,
@@ -409,29 +421,38 @@ fn title_budget(trailing: &[(&str, Style)], max_width: usize) -> usize {
     max_width.saturating_sub(2 + tokens)
 }
 
-/// The `budget`-cell window of `text` the ticker shows at `ticker`: the
+/// Cells an agent row's title overruns its marquee budget by at `width`,
+/// zero when it fits or the row never scrolls. The longest overrun among
+/// the rows drawn together sets their shared period.
+pub fn row_travel(row: &SidebarRow, width: u16) -> usize {
+    if row.kind != RowKind::Agent {
+        return 0;
+    }
+    let budget = usize::from(width).saturating_sub(1 + display_width(nest_prefix(row)));
+    let budget = title_budget(&[], budget);
+    if budget < 4 {
+        return 0;
+    }
+    display_width(&row.label).saturating_sub(budget)
+}
+
+/// The `budget`-cell window of `text` the marquee shows at `ticker`: the
 /// whole text while it fits, else a slice that rests at the start for
-/// `TICKER_PAUSE` steps, walks one cell per `TICKER_STEP` ticks to the end,
-/// rests, and walks back; at tick 0 it is the start of the text. Under
-/// four cells nothing scrolls and the caller's truncation applies.
-pub fn ticker_window(text: &str, budget: usize, ticker: u64) -> String {
+/// `TICKER_PAUSE` steps, walks one cell per `TICKER_STEP` ticks to the end
+/// and parks there until the period ends, then jumps home. The period is
+/// the longest overrun drawn beside it (`max_travel`, at least its own)
+/// plus the two pauses, so every scrolling row moves and restarts as one
+/// object (D7). Under four cells nothing scrolls and the caller's
+/// truncation applies.
+pub fn ticker_window(text: &str, budget: usize, ticker: u64, max_travel: usize) -> String {
     let width = display_width(text);
     if width <= budget || budget < 4 {
         return text.to_string();
     }
     let travel = (width - budget) as u64;
     let step = ticker / TICKER_STEP;
-    let period = 2 * (travel + TICKER_PAUSE);
-    let phase = step % period;
-    let offset = if phase < TICKER_PAUSE {
-        0
-    } else if phase < TICKER_PAUSE + travel {
-        phase - TICKER_PAUSE
-    } else if phase < 2 * TICKER_PAUSE + travel {
-        travel
-    } else {
-        travel - (phase - 2 * TICKER_PAUSE - travel)
-    };
+    let period = travel.max(max_travel as u64) + 2 * TICKER_PAUSE;
+    let offset = (step % period).saturating_sub(TICKER_PAUSE).min(travel);
     let mut skipped = 0;
     let mut taken = 0;
     let mut window = String::new();

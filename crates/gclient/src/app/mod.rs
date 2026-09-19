@@ -34,7 +34,7 @@ pub use live_loop::projects::{
 };
 pub use live_loop::run_live_loop;
 pub use live_loop::sync_live_chrome;
-pub use pane::{short_terminal_id, ControlState, Pane, PaneId, UNNAMED_PANE};
+pub use pane::{short_terminal_id, Backend, ControlState, Pane, PaneId, UNNAMED_PANE};
 pub use viewer_state::{PaneInterner, ViewerState};
 pub use workspace_ops::WorkspaceModel;
 
@@ -100,6 +100,7 @@ pub struct Workspace<D: Daemon = ScriptedDaemon> {
     sidebar_rows: SidebarRows,
     sidebar: SidebarModel,
     git_refreshed_at: Instant,
+    roster_refreshed_at: Instant,
     pending_sidebar: PendingSidebar,
     sidebar_stamps: SidebarStamps,
     pending_attention: Option<attention::PendingAttention>,
@@ -189,6 +190,7 @@ impl Workspace {
             sidebar_rows: SidebarRows::default(),
             sidebar: SidebarModel::default(),
             git_refreshed_at: Instant::now(),
+            roster_refreshed_at: Instant::now(),
             pending_sidebar: PendingSidebar::default(),
             sidebar_stamps: SidebarStamps::default(),
             pending_attention: None,
@@ -370,7 +372,7 @@ impl Workspace {
     ) -> Result<PaneId, FrameError> {
         let id = PaneId(self.next_pane);
         self.next_pane += 1;
-        let mut pane = Pane::new(id, terminal_id, backend, epoch);
+        let mut pane = Pane::new(id, terminal_id, Backend::parse(backend), epoch);
         // A scripted run has no daemon row to name the terminal, and its ids
         // are names rather than UUIDs — this path exists only on
         // `Workspace<ScriptedDaemon>`. So the id is the name here, and it goes
@@ -414,7 +416,7 @@ impl Workspace {
     fn locator_for(&self, id: PaneId) -> AttachLocator {
         let pane = &self.panes[&id];
         AttachLocator {
-            backend: pane.backend.clone(),
+            backend: pane.backend.wire().to_string(),
             frame_host_epoch: pane.expected_host_epoch.clone(),
             host_terminal_id: pane.terminal_id.clone(),
             frame_socket_path: "/tmp/gterm-frames.sock".into(),
@@ -609,8 +611,7 @@ impl Workspace {
     pub fn set_scroll_offset(&mut self, id: PaneId, rows: u32) -> Result<(), FrameError> {
         self.ensure_requests_allowed()
             .map_err(|error| FrameError::Other(error.to_string()))?;
-        let backend = self.panes[&id].backend.clone();
-        if backend == "native" {
+        if self.panes[&id].backend.is_native() {
             self.panes
                 .get_mut(&id)
                 .expect("pane")

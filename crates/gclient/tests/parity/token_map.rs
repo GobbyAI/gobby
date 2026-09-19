@@ -33,6 +33,7 @@ fn state_dot_role(state: RowState, p: &Palette) -> Color {
     match state {
         RowState::Attention => p.peach,
         RowState::Orphaned => p.red,
+        RowState::Paused => p.yellow,
         RowState::Working => p.accent,
         RowState::Unseen => p.teal,
         RowState::Idle | RowState::Unknown => p.overlay0,
@@ -43,7 +44,7 @@ fn state_dot_role(state: RowState, p: &Palette) -> Color {
 /// the cue cell and title cell foregrounds.
 fn toast_title_row(kind: ThemeKind) -> (String, Color, Color) {
     let mut chrome = Chrome::new(Theme::new(kind));
-    chrome.toast = Some(Toast {
+    chrome.notify(Toast {
         kind: ToastKind::Info,
         title: "term-alpha".to_string(),
         body: None,

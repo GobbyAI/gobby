@@ -928,6 +928,78 @@ async fn stale_generation_reconnect_reopens_after_a_failed_handshake() {
     mock.shutdown().await;
 }
 
+/// A subscribe that is never answered fails the handshake on the deadline,
+/// and nothing closes the socket it opened. What retires that reader is the
+/// outbound channel: the next attempt installs its own sender, so the old
+/// reader's `recv` ends and it disconnects. However many handshakes it takes,
+/// one reader is left and each daemon event arrives once.
+#[tokio::test]
+async fn a_timed_out_subscribe_leaves_no_second_reader() {
+    let mock = MockDaemon::start("local-token").await;
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    mock.wait_for_websocket().await;
+    let observed = daemon.generation();
+
+    mock.suppress_ws("subscribe");
+    let failed = daemon.reconnect(observed).await;
+    assert!(
+        failed.is_err(),
+        "an unanswered subscribe fails the handshake: {failed:?}"
+    );
+    assert_eq!(
+        mock.websocket_handshakes(),
+        2,
+        "the failed attempt opened its own socket"
+    );
+    timeout(Duration::from_secs(1), async {
+        while mock.active_websockets() != 1 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the superseded reader drops the first socket");
+
+    mock.allow_ws("subscribe");
+    let reconnected = daemon
+        .reconnect(daemon.generation())
+        .await
+        .expect("the next attempt opens a connection");
+    assert!(reconnected > observed);
+    timeout(Duration::from_secs(1), async {
+        while mock.active_websockets() != 1 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the superseded reader drops its socket");
+
+    let (_, mut events) = daemon.subscribe();
+    mock.send_event_and_wait(json!({
+        "type": "terminal_event",
+        "event": "created",
+        "terminal_id": "terminal-a",
+        "daemon_epoch": "epoch-1",
+        "seq": 7,
+        "timestamp": "2026-01-03T00:00:00Z"
+    }))
+    .await;
+    let mut delivered = 0;
+    while let Ok(Ok(event)) = timeout(Duration::from_millis(200), events.recv()).await {
+        if matches!(event, DaemonEvent::Terminal { seq: 7, .. }) {
+            delivered += 1;
+        }
+    }
+    assert_eq!(delivered, 1, "one reader delivers the event once");
+
+    daemon
+        .close(Instant::now() + Duration::from_secs(1))
+        .await
+        .expect("close");
+    mock.shutdown().await;
+}
+
 fn count_ws_requests(mock: &MockDaemon, kind: &str) -> usize {
     mock.requests()
         .iter()
@@ -2624,5 +2696,47 @@ async fn abandoned_workspace_attach_cannot_retarget_the_filter() {
         .close(Instant::now() + Duration::from_secs(1))
         .await
         .expect("close");
+    mock.shutdown().await;
+}
+
+/// #22534: a launch with the daemon down connects-or-waits. The daemon that
+/// is not there yields a handle that is not ready and carries the connect
+/// error, the shape a lost connection leaves for the supervisor; a bad URL or
+/// a refused token still fails the launch.
+#[tokio::test]
+async fn connect_or_wait_tolerates_a_daemon_that_is_down() {
+    let closed = {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind closed port");
+        format!("http://{}", listener.local_addr().expect("closed address"))
+    };
+    let daemon = LiveDaemon::connect_or_wait(&closed, "token")
+        .await
+        .expect("a stopped daemon is a wait, not a failure");
+    assert!(!daemon.ready());
+    assert!(
+        matches!(
+            daemon.last_error(),
+            Some(DaemonError::Unavailable { retry_after: None })
+        ),
+        "the connect error is kept for the status line: {:?}",
+        daemon.last_error()
+    );
+    let (snapshot, _) = daemon.subscribe();
+    assert!(!snapshot.ready);
+    assert!(matches!(
+        snapshot.last_error,
+        Some(DaemonError::Unavailable { retry_after: None })
+    ));
+
+    let error = LiveDaemon::connect_or_wait("not a URL", "token")
+        .await
+        .expect_err("a malformed URL fails the launch");
+    assert!(matches!(error, DaemonError::Protocol { .. }), "{error:?}");
+
+    let mock = MockDaemon::start("right-token").await;
+    let error = LiveDaemon::connect_or_wait(mock.url(), "wrong-token")
+        .await
+        .expect_err("a refused token fails the launch");
+    assert!(matches!(error, DaemonError::Unauthorized), "{error:?}");
     mock.shutdown().await;
 }

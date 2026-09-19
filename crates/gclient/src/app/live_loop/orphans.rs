@@ -12,10 +12,12 @@ use std::collections::HashSet;
 
 use serde_json::Value;
 
+use crate::app::Backend;
 use crate::daemon::{Daemon, DaemonError, KillOutcome, LiveDaemon, SidebarRows, TerminalRow};
 use crate::frame_source::FrameError;
 use crate::ui::dialogs::project::plural;
 use crate::ui::dialogs::{Dialog, OrphanRow};
+use crate::ui::status::Toast;
 use crate::ui::{Chrome, Mode};
 
 use super::super::{short_terminal_id, Workspace};
@@ -58,7 +60,7 @@ fn orphan_row(row: &TerminalRow, sidebar: &SidebarRows) -> OrphanRow {
     };
     OrphanRow {
         terminal_id: row.id().to_string(),
-        backend: field("backend").unwrap_or("native").to_string(),
+        backend: Backend::parse(field("backend").unwrap_or_default()),
         name: field("name")
             .or_else(|| field("title"))
             .map_or_else(|| short_terminal_id(row.id()).to_string(), str::to_string),
@@ -119,7 +121,7 @@ pub fn agent_orphan<D: Daemon>(workspace: &Workspace<D>, terminal_id: &str) -> O
         .find(|agent| agent.terminal_id == terminal_id);
     OrphanRow {
         terminal_id: terminal_id.to_string(),
-        backend: agent.map_or_else(|| "native".to_string(), |agent| agent.backend.clone()),
+        backend: agent.map_or(Backend::Native, |agent| agent.backend),
         name: agent.map_or_else(
             || short_terminal_id(terminal_id).to_string(),
             |agent| agent.name.clone(),
@@ -130,7 +132,7 @@ pub fn agent_orphan<D: Daemon>(workspace: &Workspace<D>, terminal_id: &str) -> O
 }
 
 /// Fetch the candidates and open the dialog with every row checked; with
-/// none, say so in the status line instead.
+/// none, say so in a toast instead.
 pub async fn open_destroy_orphans_dialog(workspace: &Workspace<LiveDaemon>, chrome: &mut Chrome) {
     if workspace.exit_reason().is_some() || !workspace.daemon_ready() {
         return;
@@ -138,12 +140,12 @@ pub async fn open_destroy_orphans_dialog(workspace: &Workspace<LiveDaemon>, chro
     let rows = match fetch_orphans(workspace).await {
         Ok(rows) => rows,
         Err(error) => {
-            chrome.status_message = Some(format!("Orphaned terminals: {error}"));
+            chrome.notify(Toast::error(format!("Orphaned terminals: {error}")));
             return;
         }
     };
     if rows.is_empty() {
-        chrome.status_message = Some("No orphaned terminals.".to_string());
+        chrome.notify(Toast::info("No orphaned terminals."));
         return;
     }
     chrome.dialog = Some(Dialog::DestroyOrphans {
@@ -197,7 +199,7 @@ pub async fn kill_orphans<D: Daemon>(
     Ok(summary)
 }
 
-/// Destroy `targets`, report in the status line, and refresh the roster so
+/// Destroy `targets`, report in a toast, and refresh the roster so
 /// the sidebar drops the rows.
 pub async fn destroy_orphans(
     workspace: &mut Workspace<LiveDaemon>,
@@ -208,7 +210,7 @@ pub async fn destroy_orphans(
         return Ok(());
     }
     let summary = kill_orphans(workspace.daemon(), &targets).await?;
-    chrome.status_message = Some(summary.message());
+    chrome.notify(Toast::info(summary.message()));
     if summary.killed > 0 {
         workspace.fetch_roster().await?;
     }
@@ -228,7 +230,7 @@ mod tests {
     fn target(terminal_id: &str, name: &str) -> OrphanRow {
         OrphanRow {
             terminal_id: terminal_id.to_string(),
-            backend: "tmux".to_string(),
+            backend: Backend::Tmux,
             name: name.to_string(),
             owner: None,
             last_seen: None,
@@ -297,14 +299,14 @@ mod tests {
             [
                 OrphanRow {
                     terminal_id: "tmux-detached".to_string(),
-                    backend: "tmux".to_string(),
+                    backend: Backend::Tmux,
                     name: "scratch".to_string(),
                     owner: Some("#12".to_string()),
                     last_seen: Some("14:05".to_string()),
                 },
                 OrphanRow {
                     terminal_id: "native-orphan".to_string(),
-                    backend: "native".to_string(),
+                    backend: Backend::Native,
                     name: "shell".to_string(),
                     owner: None,
                     last_seen: None,

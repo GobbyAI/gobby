@@ -14,10 +14,14 @@ use tokio::time::Instant;
 use crate::daemon::{Attention, Daemon, ProjectRow, RosterEntry, SidebarRows};
 use crate::ui::chrome::RowState;
 
-use super::{Pane, Workspace, UNNAMED_PANE};
+use super::{Backend, Pane, Workspace, UNNAMED_PANE};
 
 /// How long a project's source status stays fresh while the sidebar is open.
 pub const GIT_REFRESH_INTERVAL: Duration = Duration::from_secs(10);
+
+/// How long the attention roster may go without a refetch. Events keep it
+/// current; this bounds how long a missed event can leave a glyph stale.
+pub const ROSTER_REFRESH_INTERVAL: Duration = Duration::from_secs(15);
 
 /// Projects the daemon keeps for bookkeeping; none of them is a workspace.
 const HIDDEN_PROJECT_NAMES: [&str; 3] = ["_orphaned", "_migrated", "_global"];
@@ -74,10 +78,13 @@ pub struct AgentEntry {
     pub project_id: String,
     pub machine_id: String,
     pub terminal_id: String,
-    pub backend: String,
+    pub backend: Backend,
     pub name: String,
     pub provider: String,
     pub model: Option<String>,
+    /// The model's provider-printed name, resolved daemon-side; the row
+    /// shows `model` when the daemon knew no better.
+    pub model_display_name: Option<String>,
     pub task_ref: Option<String>,
     /// The joined session's `ref`, `#12217`, when the entry is session keyed.
     pub session_ref: Option<String>,
@@ -178,8 +185,9 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
             // Each rung is filtered on its own: an empty session title means
             // "unnamed", not "stop looking", so the run and tmux names below it
             // still get their turn. The pane's own ladder ends the chain for a
-            // row that has one, and the two rungs after it cover a roster entry
-            // with no pane open — neither can be an id.
+            // row that has one, and the last rung covers a roster entry with
+            // no pane open — neither can be an id. The provider is no rung:
+            // it rides on the row's second line with the model.
             let name = session
                 .and_then(|(_, session)| session.title.clone())
                 .filter(|name| !name.is_empty())
@@ -194,7 +202,6 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
                         .filter(|name| !name.is_empty())
                 })
                 .or_else(|| pane.map(|pane| pane.display_name().to_string()))
-                .or_else(|| provider.clone())
                 .unwrap_or_else(|| UNNAMED_PANE.to_string());
             let machine_id = session
                 .and_then(|(_, session)| session.machine_id.clone())
@@ -206,13 +213,14 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
                 project_id: project_id.to_string(),
                 machine_id,
                 terminal_id: terminal.terminal_id.clone(),
-                backend: terminal.backend.clone(),
+                backend: terminal.backend,
                 name,
                 provider: provider.unwrap_or_default(),
                 model: entry
                     .model
                     .clone()
                     .or_else(|| run.and_then(|(_, run)| run.model.clone())),
+                model_display_name: entry.model_display_name.clone(),
                 task_ref: entry.task.as_ref().and_then(|task| task.reference.clone()),
                 session_ref: session.and_then(|(_, session)| session.reference.clone()),
                 session_id: entry
@@ -292,8 +300,9 @@ fn project_entry(row: &ProjectRow, inputs: &SidebarInputs, agents: &[AgentEntry]
 /// herdr `status_priority`: blocked over unseen over working over idle.
 pub fn urgency(state: RowState) -> u8 {
     match state {
-        RowState::Attention => 5,
-        RowState::Orphaned => 4,
+        RowState::Attention => 6,
+        RowState::Orphaned => 5,
+        RowState::Paused => 4,
         RowState::Unseen => 3,
         RowState::Working => 2,
         RowState::Idle => 1,
@@ -329,12 +338,12 @@ pub fn is_orphaned(terminal_state: Option<&str>) -> bool {
 
 /// `agent_state` for a built agent row and the pane the chrome found for it,
 /// so `row_state` tracks pane flags that changed after the last rebuild.
-pub fn agent_row_state(agent: &AgentEntry, pane: &Pane) -> RowState {
+pub fn agent_row_state(agent: &AgentEntry, pane: Option<&Pane>) -> RowState {
     resolve_state(
         agent.attention.is_some(),
         is_orphaned(agent.terminal_state.as_deref()),
         agent.lifecycle_status.as_deref(),
-        Some(pane),
+        pane,
     )
 }
 
@@ -350,12 +359,15 @@ fn resolve_state(
     if orphaned {
         return RowState::Orphaned;
     }
+    // awaiting_input, awaiting_approval, awaiting_handoff: the turn ended
+    // and the session sits until someone answers.
+    if lifecycle_status.is_some_and(|status| status.starts_with("awaiting_")) {
+        return RowState::Paused;
+    }
     let Some(pane) = pane else {
         return RowState::Idle;
     };
-    let running = lifecycle_status.is_some_and(|status| {
-        matches!(status, "running" | "active") || status.starts_with("awaiting_")
-    });
+    let running = lifecycle_status.is_some_and(|status| matches!(status, "running" | "active"));
     if pane.new_output && pane.live && running {
         RowState::Working
     } else if pane.new_output {
@@ -456,19 +468,7 @@ impl<D: Daemon> Workspace<D> {
     }
 
     pub(super) fn rebuild_sidebar(&mut self) {
-        // Rung 2 of the label ladder is both produced and consumed by the
-        // build: `build_agents` names an agent row from its pane's
-        // `display_name`, which asks the pane for its provider. Syncing after
-        // one build would answer that read with the previous build's provider,
-        // so a terminal whose session has just been bound would read `shell`
-        // until the next roster event. Build, sync, and build again only when
-        // the sync moved something; in the steady state nothing moves.
-        let model = self.build_sidebar();
-        self.sidebar = if self.sync_pane_providers(&model) {
-            self.build_sidebar()
-        } else {
-            model
-        };
+        self.sidebar = self.build_sidebar();
     }
 
     fn build_sidebar(&self) -> SidebarModel {
@@ -483,38 +483,14 @@ impl<D: Daemon> Workspace<D> {
         })
     }
 
-    /// Copy each agent's resolved provider onto the pane holding its terminal.
-    ///
-    /// Rung 2 of the label ladder is the provider of the bound session, which
-    /// lives on the roster rather than the terminal row, and `display_name`
-    /// takes only `&self`. The sidebar already joins roster entry, agent run
-    /// and session to resolve it, so the pane borrows that answer instead of
-    /// redoing the joins, and every rebuild refreshes it.
-    fn sync_pane_providers(&mut self, model: &SidebarModel) -> bool {
-        let mut resolved: HashMap<&str, &str> = HashMap::new();
-        for agent in &model.agents {
-            if !agent.provider.is_empty() {
-                resolved.insert(agent.terminal_id.as_str(), agent.provider.as_str());
-            }
-        }
-        let mut moved = false;
-        for pane in self.panes.values_mut() {
-            let provider = resolved
-                .get(pane.terminal_id.as_str())
-                .map(|provider| (*provider).to_string());
-            if pane.provider != provider {
-                pane.provider = provider;
-                moved = true;
-            }
-        }
-        moved
-    }
-
     /// Upsert the roster entry an `attention_changed` event names. The event
     /// carries the entry under `metadata` when the daemon built one, else its
     /// flat fields double as the entry; only an explicit `state` moves the
     /// blocked flag, so a metadata-only event keeps what the roster said.
     pub(super) fn note_attention_event(&mut self, payload: &Value) {
+        // The event carries the attention alone; lifecycle_status and the
+        // terminal state arrive with the roster, so ask for it again.
+        self.pending_sidebar.roster = true;
         let source = payload
             .get("metadata")
             .filter(|metadata| metadata.get("entry_id").is_some())

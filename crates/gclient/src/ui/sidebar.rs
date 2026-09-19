@@ -17,7 +17,9 @@ use crate::theme::Palette;
 use crate::ui::chrome::{Chrome, Mode, WorkspaceView};
 use crate::ui::hit::SidebarSection;
 use crate::ui::scrollbar::{render_scrollbar, should_show_scrollbar};
-use crate::ui::sidebar_rows::{project_rows, row_line, row_second_line, RowKind, SidebarRow};
+use crate::ui::sidebar_rows::{
+    project_rows, row_line, row_second_line, row_travel, RowKind, SidebarRow,
+};
 use crate::ui::status::state_dot;
 use crate::ui::text::{display_width, display_width_u16, truncate_end};
 use gobby_terminal::layout::ScrollMetrics;
@@ -38,9 +40,13 @@ pub use sessions::{
 pub const MACHINES_MAX_ROWS: u16 = 4;
 /// Every band is one row: the menu band, a section's band, the footer band.
 pub const BAND_ROWS: u16 = 1;
+/// The blank row above each section band (D6). It belongs to the rows
+/// above it, so the top-half cap on the machines and the cards is unchanged.
+pub const GAP_ROWS: u16 = 1;
 /// Rows the collapsed rail needs before it draws its rules: one machine
-/// row, two rules, one row per list and the toggle row.
-const RAIL_MIN_ROWS: u16 = 6;
+/// row, two rules with a blank row above each, one row per list and the
+/// toggle row.
+const RAIL_MIN_ROWS: u16 = 8;
 /// The menu band's controls.
 pub const MENU_LABEL: &str = "[Menu]";
 pub const NEW_LABEL: &str = "[+]";
@@ -79,17 +85,18 @@ pub struct SidebarHits {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SidebarLayout {
     pub menu: Rect,
-    /// The sections' rects, band and body, by `SidebarSection::index`.
+    /// The sections' rects, band, body and blank row, by
+    /// `SidebarSection::index`.
     pub sections: [Rect; 3],
     pub footer: Rect,
 }
 
 /// The expanded layout of `area`: the menu band on the first row and the
-/// footer band on the last; between them the machines band with up to
-/// `MACHINES_MAX_ROWS` of its `machine_rows`, the projects band with its
-/// `project_rows` while the two stay within the top half, and the sessions
-/// with everything left. A section short of its rows scrolls; one with no
-/// room at all is empty.
+/// footer band on the last; between them, each under a blank row, the
+/// machines band with up to `MACHINES_MAX_ROWS` of its `machine_rows`, the
+/// projects band with its `project_rows` while the two stay within the top
+/// half, and the sessions with everything left. A section short of its
+/// rows scrolls; one with no room at all is empty.
 pub fn sidebar_layout(area: Rect, machine_rows: u16, project_rows: u16) -> SidebarLayout {
     let content = Rect::new(area.x, area.y, area.width.saturating_sub(1), area.height);
     let mut layout = SidebarLayout::default();
@@ -106,12 +113,17 @@ pub fn sidebar_layout(area: Rect, machine_rows: u16, project_rows: u16) -> Sideb
         content.width,
         BAND_ROWS,
     );
-    let rows = content.height - 2 * BAND_ROWS;
+    // The blank row under the menu band comes off the top with the two
+    // bands; the machines and the cards keep their blank rows inside their
+    // shares, so the top-half cap holds.
+    let rows = (content.height - 2 * BAND_ROWS).saturating_sub(GAP_ROWS);
     let top = rows / 2;
-    let machines = (BAND_ROWS + machine_rows.min(MACHINES_MAX_ROWS)).min(top);
-    let projects = BAND_ROWS.saturating_add(project_rows).min(top - machines);
+    let machines = (BAND_ROWS + machine_rows.min(MACHINES_MAX_ROWS) + GAP_ROWS).min(top);
+    let projects = (BAND_ROWS + GAP_ROWS)
+        .saturating_add(project_rows)
+        .min(top - machines);
     let sessions = rows - machines - projects;
-    let mut y = layout.menu.bottom();
+    let mut y = layout.menu.bottom() + GAP_ROWS;
     for (index, height) in [machines, projects, sessions].into_iter().enumerate() {
         layout.sections[index] = Rect::new(content.x, y, content.width, height);
         y += height;
@@ -358,7 +370,7 @@ pub fn section_metrics<W: WorkspaceView>(
         .collect();
     project_list_metrics(
         &heights,
-        section_body_rect(area, false).height,
+        section_body_rect(area, section, false).height,
         chrome.sidebar.scroll(section),
     )
 }
@@ -459,10 +471,16 @@ pub(super) fn render_section_rows(
 ) {
     let p = &chrome.palette;
     let heights: Vec<u16> = rows.iter().map(SidebarRow::height).collect();
-    let viewport = section_body_rect(area, false).height;
+    let viewport = section_body_rect(area, section, false).height;
     let metrics = project_list_metrics(&heights, viewport, chrome.sidebar.scroll(section));
     let has_scrollbar = should_show_scrollbar(metrics);
-    let body = section_body_rect(area, has_scrollbar);
+    let body = section_body_rect(area, section, has_scrollbar);
+    // One marquee clock for the section: the longest overrun sets the period.
+    let max_travel = rows
+        .iter()
+        .map(|row| row_travel(row, body.width))
+        .max()
+        .unwrap_or(0);
     if body.width > 0 && body.height > 0 {
         let scroll = metrics
             .max_offset_from_bottom
@@ -481,7 +499,7 @@ pub(super) fn render_section_rows(
                 Style::default()
             };
             frame.render_widget(
-                Paragraph::new(row_line(row, body.width, chrome)).style(row_style),
+                Paragraph::new(row_line(row, body.width, chrome, max_travel)).style(row_style),
                 Rect::new(body.x, y, body.width, 1),
             );
             if height > 1 {
@@ -526,9 +544,9 @@ fn scrollbar_track(area: Rect, body: Rect) -> Rect {
     )
 }
 
-/// The rail's three lists and the rules between them: one row of machine
-/// dots, then the cards and the sessions sharing the rest, the remainder to
-/// the cards, above the toggle row. Under `RAIL_MIN_ROWS` the cards take
+/// The rail's three lists and the rules between them, a blank row above
+/// each rule: one row of machine dots, then the cards and the sessions
+/// sharing the rest, the remainder to the cards, above the toggle row. Under `RAIL_MIN_ROWS` the cards take
 /// every row and no rule is drawn.
 pub fn collapsed_sections(area: Rect) -> ([Rect; 3], [Option<u16>; 2]) {
     let content = Rect::new(area.x, area.y, area.width.saturating_sub(1), area.height);
@@ -541,13 +559,15 @@ pub fn collapsed_sections(area: Rect) -> ([Rect; 3], [Option<u16>; 2]) {
         rects[SidebarSection::Projects.index()] = content;
         return (rects, dividers);
     }
-    // The machine row, two rules and the toggle row come off the top.
-    let rest = content.height - 4;
+    // The machine row, the two rules with their blank rows and the toggle
+    // row come off the top.
+    let rest = content.height - 4 - 2 * GAP_ROWS;
     let (share, extra) = (rest / 2, rest % 2);
     let heights = [1, share + extra, share];
     let mut y = content.y;
     for (index, height) in heights.into_iter().enumerate() {
         if index > 0 {
+            y += GAP_ROWS;
             dividers[index - 1] = Some(y);
             y += 1;
         }
@@ -557,17 +577,31 @@ pub fn collapsed_sections(area: Rect) -> ([Rect; 3], [Option<u16>; 2]) {
     (rects, dividers)
 }
 
-/// The rows a section's list draws into inside its `area`: under the band.
-pub fn section_body_rect(area: Rect, has_scrollbar: bool) -> Rect {
+/// The rows a section's list draws into inside its `area`: under the band
+/// and above the section's blank row.
+pub fn section_body_rect(area: Rect, section: SidebarSection, has_scrollbar: bool) -> Rect {
     if area.width == 0 || area.height <= BAND_ROWS {
         return Rect::default();
     }
+    // A share too small for a row and the blank row keeps the row.
+    let rows = area.height - BAND_ROWS;
+    let gap = section_gap_rows(section);
+    let height = if rows > gap { rows - gap } else { rows };
     Rect::new(
         area.x,
         area.y + BAND_ROWS,
         area.width.saturating_sub(u16::from(has_scrollbar)),
-        area.height - BAND_ROWS,
+        height,
     )
+}
+
+/// The blank row a section keeps under its rows, above the next band. The
+/// sessions end at the footer band and keep none.
+pub fn section_gap_rows(section: SidebarSection) -> u16 {
+    match section {
+        SidebarSection::Machines | SidebarSection::Projects => GAP_ROWS,
+        SidebarSection::Sessions => 0,
+    }
 }
 
 /// The `»` cell: last row, centred in the rail's content columns.

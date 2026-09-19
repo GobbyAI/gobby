@@ -10,6 +10,7 @@ use crate::daemon::{Daemon, DaemonError, LayoutAxis, LiveDaemon, WorkspaceErrorC
 use crate::frame_source::FrameError;
 use crate::ui::chrome::Tab;
 use crate::ui::dialogs::RenameKind;
+use crate::ui::status::Toast;
 use crate::ui::Chrome;
 
 use super::super::Workspace;
@@ -43,7 +44,7 @@ pub(super) async fn send_workspace_op(
             Ok(true)
         }
         Err(DaemonError::Workspace(error)) => {
-            chrome.status_message = Some(error.reason);
+            chrome.notify(Toast::warning(error.reason));
             Ok(false)
         }
         Err(error) => Err(error.into()),

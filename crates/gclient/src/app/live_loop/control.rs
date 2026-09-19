@@ -7,6 +7,7 @@ use tokio::time::Instant;
 
 use crate::daemon::{Daemon, LiveDaemon};
 use crate::frame_source::{FrameError, FrameSource};
+use crate::ui::status::Toast;
 use crate::ui::Chrome;
 
 use super::super::{ControlState, PaneId, Workspace};
@@ -225,7 +226,7 @@ pub(super) async fn send_live_input(
         _ => None,
     };
     if let Some(refusal) = refusal {
-        chrome.status_message = Some(refusal.to_string());
+        chrome.notify(Toast::warning(refusal));
         return Ok(());
     }
     pane.pending_input = Some(data.to_vec());

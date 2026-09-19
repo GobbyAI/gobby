@@ -13,7 +13,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent,
 use gobby_client::app::run_loop::{
     run_scripted_loop, ReconnectAttempt, ReconnectSupervisor, RECONNECT_DELAYS, RENDER_TICK,
 };
-use gobby_client::app::sidebar_model::GIT_REFRESH_INTERVAL;
+use gobby_client::app::sidebar_model::{GIT_REFRESH_INTERVAL, ROSTER_REFRESH_INTERVAL};
 use gobby_client::app::{
     close_project, close_project_confirmed, create_worktree, focus_agent, focus_project,
     open_new_worktree_dialog, open_open_worktree_dialog, open_remove_worktree_dialog,
@@ -26,13 +26,14 @@ use gobby_client::daemon::{
     CONTROL_REQUEST_DEADLINE,
 };
 use gobby_client::frame_source::{
-    AttachLocator, PaneFrameSource, ScriptedFrameSource, Transport, UnixSocketFrameSource,
+    AttachLocator, FrameError, PaneFrameSource, ScriptedFrameSource, Transport,
+    UnixSocketFrameSource,
 };
 use gobby_client::key_input::KeyInput;
 use gobby_client::prefs::{prefs_path, save_prefs};
 use gobby_client::startup::{initial_project, Ready};
 use gobby_client::teardown::{RecordingBackend, TerminalGuard};
-use gobby_client::ui::chrome::Mode;
+use gobby_client::ui::chrome::{Mode, RowState};
 use gobby_client::ui::dialogs::{CloseScope, CloseTarget, Dialog, WorktreeChoice};
 use gobby_client::ui::hit::{hit_test, Hit};
 use gobby_client::ui::keymap::{default_prefix, Keymap, HERDR_PREFIX};
@@ -937,11 +938,10 @@ async fn focus_moves_control_and_settles_pending_input_once() {
     assert!(workspace.pane(pane_id).has_take_back());
     assert!(
         chrome
-            .status_message
-            .as_deref()
+            .last_alert()
             .is_some_and(|message| message.contains("held by peer")),
         "control refusal reason must remain visible: {:?}",
-        chrome.status_message
+        chrome.last_alert()
     );
     mock.shutdown().await;
 }
@@ -1384,11 +1384,10 @@ async fn lost_lease_refuses_typing_and_names_take_control() {
     assert!(workspace.pane(pane).is_lease_lost());
     assert!(
         chrome
-            .status_message
-            .as_deref()
+            .last_alert()
             .is_some_and(|message| message.contains("take control")),
         "the status names take control: {:?}",
-        chrome.status_message
+        chrome.last_alert()
     );
     mock.shutdown().await;
 }
@@ -1459,11 +1458,10 @@ async fn keys_during_a_pending_take_report_acquiring_control() {
     );
     assert!(
         chrome
-            .status_message
-            .as_deref()
+            .last_alert()
             .is_some_and(|message| message.contains("acquiring control")),
         "the status reports the pending take: {:?}",
-        chrome.status_message
+        chrome.last_alert()
     );
     mock.shutdown().await;
 }
@@ -2558,8 +2556,7 @@ async fn select_spawn_attach_terminate_loop() {
         assert_eq!(workspace.pane_count(), 0);
         assert!(websocket_requests(&mock, "terminal_attach").is_empty());
         assert!(chrome
-            .status_message
-            .as_deref()
+            .last_alert()
             .is_some_and(|message| message.contains("capacity exhausted")));
         mock.shutdown().await;
     }
@@ -3566,9 +3563,6 @@ async fn daemon_restart_keeps_panes_and_reattaches() {
     let (_, mut observed_events) = observed_daemon.subscribe();
     let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
     let mut chrome = Chrome::dark();
-    // A request that failed during the outage leaves its banner behind; the
-    // recovered handshake must clear it.
-    chrome.status_message = Some("Daemon request timed out.".to_string());
     show_roster(&workspace, &mut chrome);
     let (input_tx, input_rx) = mpsc::channel(16);
     // More failed handshakes than the delay ladder has rungs.
@@ -3646,10 +3640,6 @@ async fn daemon_restart_keeps_panes_and_reattaches() {
     );
     assert_ne!(workspace.pane(pane_id).attachment_id(), old_attachment);
     assert!(workspace.pane(pane_id).writable());
-    assert_eq!(
-        chrome.status_message, None,
-        "a recovered reconnect clears the stale failure banner"
-    );
     let attach_targets: Vec<String> = websocket_requests(&mock, "terminal_attach")
         .into_iter()
         .filter_map(|request| {
@@ -5130,14 +5120,17 @@ async fn ctrl_click_link_with(opener: &str) -> Chrome {
 #[tokio::test]
 async fn open_link_failure_surfaces_a_toast() {
     let opened = ctrl_click_link_with("true").await;
-    assert_eq!(
-        opened.toast, None,
+    assert!(
+        opened.alert_log.is_empty(),
         "an opener that launches raises no toast"
     );
 
     let opener = "/nonexistent/gclient-link-opener";
     let failed = ctrl_click_link_with(opener).await;
-    let toast = failed.toast.expect("a failed launch raises a toast");
+    let toast = failed
+        .alert_log
+        .last()
+        .expect("a failed launch raises a toast");
     assert!(
         matches!(toast.kind, ToastKind::Warning),
         "warning, not error: {toast:?}"
@@ -5241,7 +5234,7 @@ async fn wired_actions_split_focus_swap_and_switch_tabs() {
         HERDR_PREFIX,
     )
     .expect("test keymap");
-    chrome.toast = Some(Toast {
+    chrome.notify(Toast {
         kind: ToastKind::Info,
         title: "terminal-c".to_string(),
         body: None,
@@ -5365,7 +5358,7 @@ async fn wired_actions_split_focus_swap_and_switch_tabs() {
         "split stacked lands under the focused pane: {spawned:?} vs {a:?}"
     );
     assert!(
-        chrome.toast.is_none(),
+        chrome.toasts.is_empty(),
         "the notification target clears the toast"
     );
     assert_eq!(chrome.active_index(), 0);
@@ -6134,10 +6127,10 @@ async fn context_menu_dispatches_items_and_closes_outside() {
         settle_live_event().await;
 
         // Bare tab-bar space opens the global menu; clicking `reload config`
-        // (its sixth row, after `new project`) re-reads the prefs file.
+        // (its seventh row, after `alerts…`) re-reads the prefs file.
         press(MouseButton::Right, bare_cell).await;
-        hover(item_cell(bare_cell, 5)).await;
-        press(MouseButton::Left, item_cell(bare_cell, 5)).await;
+        hover(item_cell(bare_cell, 6)).await;
+        press(MouseButton::Left, item_cell(bare_cell, 6)).await;
         settle_live_event().await;
 
         // The tab's menu: `close tab` runs the confirm-close path.
@@ -6444,6 +6437,115 @@ async fn sidebar_model_follows_daemon_events() {
         agents,
         ["terminal-a"],
         "the sidebar model followed the roster"
+    );
+
+    // An attention event within the epoch carries only the attention; the
+    // refetch it queues brings the lifecycle_status the glyph is drawn from.
+    let mut waiting = sidebar_roster_entry("run:a", "run-a", "terminal-a");
+    waiting["lifecycle_status"] = json!("awaiting_input");
+    mock.enqueue(
+        "GET",
+        "/api/attention/roster",
+        200,
+        json!({"epoch": "attention-2", "seq": 2, "entries": [waiting]}),
+    );
+    send_daemon_event(
+        &mock,
+        &daemon,
+        json!({
+            "type": "agent_event",
+            "event": "attention_changed",
+            "epoch": "attention-2",
+            "seq": 2,
+            "entry_id": "run:a",
+            "state": "clear",
+        }),
+    )
+    .await;
+    workspace
+        .drain_live_events()
+        .await
+        .expect("drain attention event");
+    assert_eq!(
+        workspace.sidebar().agents[0].attention,
+        None,
+        "the event cleared the prompt"
+    );
+    assert_eq!(
+        gets("/api/attention/roster"),
+        4,
+        "the attention event queued a roster refetch"
+    );
+    assert_eq!(
+        workspace.sidebar().agents[0].lifecycle_status.as_deref(),
+        Some("awaiting_input"),
+        "the refetch reconciled the lifecycle status"
+    );
+    assert_eq!(workspace.sidebar().agents[0].state, RowState::Paused);
+
+    daemon
+        .close(Instant::now() + Duration::from_secs(1))
+        .await
+        .expect("close live daemon");
+    mock.shutdown().await;
+}
+
+/// 1.3: the roster refetch has a periodic backstop, so a missed event cannot
+/// leave a glyph stale for longer than `ROSTER_REFRESH_INTERVAL`.
+#[tokio::test]
+async fn roster_refresh_backstop_refetches_on_the_interval() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.enqueue("GET", "/api/projects", 200, sidebar_project_row());
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    mock.wait_for_websocket().await;
+    let mut workspace = Workspace::live(daemon.clone());
+    workspace.select_project("project-1");
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("subscribe-first reconcile");
+    let roster_gets = || {
+        mock.requests()
+            .into_iter()
+            .filter(|request| {
+                request.method == "GET" && request.target.starts_with("/api/attention/roster")
+            })
+            .count()
+    };
+    assert_eq!(roster_gets(), 1, "reconcile fetched the roster once");
+
+    workspace.request_roster_refresh_if_due();
+    assert!(
+        workspace.start_sidebar_refetch().is_none(),
+        "nothing is due right after a fetch"
+    );
+
+    tokio::time::pause();
+    tokio::time::advance(ROSTER_REFRESH_INTERVAL).await;
+    tokio::time::resume();
+    mock.enqueue(
+        "GET",
+        "/api/attention/roster",
+        200,
+        json!({"epoch": "attention-1", "seq": 2, "entries": []}),
+    );
+    workspace.request_roster_refresh_if_due();
+    let job = workspace
+        .start_sidebar_refetch()
+        .expect("the interval passed");
+    assert!(
+        workspace.start_sidebar_refetch().is_none(),
+        "a started refetch is not queued twice"
+    );
+    job.await.expect("roster refetched");
+    assert_eq!(roster_gets(), 2);
+
+    workspace.request_roster_refresh_if_due();
+    assert!(
+        workspace.start_sidebar_refetch().is_none(),
+        "the clock restarted with the refetch"
     );
 
     daemon
@@ -6947,9 +7049,8 @@ async fn activate_daemon_hosted_terminal(
         }
         ExplicitActivation::Goto => {
             send_chord(input, KeyCode::Char('g'), KeyModifiers::NONE).await;
-            // Goto filters on the name the label ladder produced, which for a
-            // terminal hosting a coding session is its provider. `daemon-h`
-            // used to match here only because the ladder ended in a short id.
+            // Goto filters on the row name, which is the terminal's command;
+            // the hosted terminal runs `codex`, the shown pane is a bare shell.
             for ch in "codex".chars() {
                 send_key(input, KeyCode::Char(ch), KeyModifiers::NONE).await;
             }
@@ -6992,7 +7093,13 @@ async fn assert_daemon_hosted_activation(path: ExplicitActivation) -> usize {
         } else {
             vec![SHOWN]
         };
-        mock.enqueue("GET", "/api/terminals?", 200, terminal_page(&ids));
+        let mut page = terminal_page(&ids);
+        for item in page["items"].as_array_mut().expect("terminal items") {
+            if item["terminal_id"] == HOSTED {
+                item["command"] = json!("codex");
+            }
+        }
+        mock.enqueue("GET", "/api/terminals?", 200, page);
         mock.enqueue("GET", "/api/attention/roster", 200, roster.clone());
     }
     if !path.starts_with_pane() {
@@ -8848,7 +8955,7 @@ async fn a_refused_placement_is_not_claimed_when_another_window_places_it() {
         "the empty bar spawned a shell and asked for its tab"
     );
     assert_eq!(
-        chrome.status_message.as_deref(),
+        chrome.last_alert(),
         Some("another window is moving the workspace")
     );
 
@@ -9057,12 +9164,11 @@ async fn closing_a_tab_the_daemon_already_reaped_stays_quiet() {
         ["mock-tab-4"],
         "the reaped tab left the bar and the spare tab shows"
     );
-    assert_eq!(
+    assert!(
         chrome
-            .status_message
-            .as_deref()
-            .filter(|message| message.contains("has id")),
-        None,
+            .alert_log
+            .iter()
+            .all(|toast| !toast.title.contains("has id")),
         "a not_found refusal of the follow-up tab.close is not an error"
     );
     mock.shutdown().await;
@@ -9160,12 +9266,11 @@ async fn an_unknown_pane_close_stays_quiet() {
         Some(&json!("terminal-gobby")),
         "the cycle landed on the owned pane, whose terminal the close kills"
     );
-    assert_eq!(
+    assert!(
         chrome
-            .status_message
-            .as_deref()
-            .filter(|message| message.contains("has id")),
-        None,
+            .alert_log
+            .iter()
+            .all(|toast| !toast.title.contains("has id")),
         "a not_found refusal of the follow-up pane.close is not an error"
     );
     mock.shutdown().await;
@@ -9206,9 +9311,9 @@ async fn a_busy_refusal_of_a_pane_close_still_shows() {
     );
     result.expect("live loop exits cleanly");
     assert_eq!(
-        chrome.status_message.as_deref(),
+        chrome.last_alert(),
         Some("another window is moving the workspace"),
-        "a busy refusal of pane.close reaches the status line"
+        "a busy refusal of pane.close raises an alert"
     );
     mock.shutdown().await;
 }
@@ -9709,5 +9814,227 @@ async fn opening_a_bare_terminal_row_in_a_new_tab_reveals_that_terminal() {
         "the item reveals the terminal the row names"
     );
     assert_ne!(second, first, "and moves focus off the starting pane");
+    mock.shutdown().await;
+}
+
+/// #22534: a launch that finds the daemon down opens the window and waits.
+/// The status line carries the condition, the supervisor connects when the
+/// daemon returns, and the first handshake runs the restore the launch
+/// skipped, so the window seeds its first shell then.
+#[tokio::test]
+async fn launch_with_the_daemon_down_waits_and_restores_when_it_returns() {
+    const SPAWNED: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    let home = tempfile::tempdir().expect("gobby home");
+    let address = {
+        let mock = MockDaemon::start("local-token").await;
+        let address = mock.url().trim_start_matches("http://").to_string();
+        mock.shutdown().await;
+        address
+    };
+    let daemon = LiveDaemon::connect_or_wait(format!("http://{address}"), "local-token")
+        .await
+        .expect("a stopped daemon is a wait, not a launch failure");
+    assert!(!daemon.ready());
+    let mut workspace = Workspace::live(daemon);
+    workspace.set_gobby_home(home.path().to_path_buf());
+    workspace.select_project("project-1");
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(1);
+
+    let driver = async {
+        // Two keys through a one-slot channel: the second send returns only
+        // once the loop took the first, which is after its launch reconcile
+        // failed against the closed port and the wait began.
+        send_key(&input_tx, KeyCode::Null, KeyModifiers::NONE).await;
+        send_key(&input_tx, KeyCode::Null, KeyModifiers::NONE).await;
+        let mock = MockDaemon::start_at("local-token", &address).await;
+        mock.enqueue(
+            "GET",
+            "/api/projects",
+            200,
+            json!([{
+                "id": "project-1",
+                "name": "gobby",
+                "display_name": "gobby",
+                "checkout": {"machine_id": "m-local", "root_path": "/repo"},
+                "session_count": 1,
+                "last_activity_at": null,
+            }]),
+        );
+        mock.enqueue("GET", "/api/terminals?", 200, terminal_page(&[]));
+        mock.enqueue("GET", "/api/terminals?", 200, terminal_page(&[SPAWNED]));
+        wait_for_websocket_requests(&mock, "workspace_attach", 1).await;
+        wait_for_websocket_requests(&mock, "terminal_create", 1).await;
+        wait_for_http_requests(&mock, "GET", "/api/terminals?", 2).await;
+        settle_live_event().await;
+        send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
+        send_key(&input_tx, KeyCode::Char('Q'), KeyModifiers::SHIFT).await;
+        mock
+    };
+    let mut switch = TerminalGuard::recording().0;
+    let (result, mock) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("a launch without a daemon never exits on its own");
+    assert_eq!(workspace.exit_reason(), Some("quit"));
+    assert!(
+        workspace.daemon_ready(),
+        "the returned daemon was handshaken"
+    );
+    assert_eq!(
+        websocket_requests(&mock, "terminal_create").len(),
+        1,
+        "the first handshake seeds the shell the launch could not"
+    );
+    assert_eq!(chrome.tabs().tabs.len(), 1);
+    mock.shutdown().await;
+}
+
+/// #22534: a source that reports a host epoch change has no recovery path,
+/// but the loop shows the report instead of swallowing it; the end of
+/// stream behind it still falls back to proxy.
+#[tokio::test]
+async fn host_epoch_change_on_a_pane_source_is_shown() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    let terminal_id = "terminal-epoch";
+    let (mut workspace, _) = live_workspace_with_scripted_direct(&mock, terminal_id, 2).await;
+    let pane_id = workspace
+        .pane_for_terminal(terminal_id)
+        .expect("epoch pane");
+    let mut source = ScriptedFrameSource::new(Transport::Direct);
+    source.queue_error(FrameError::HostEpochChanged {
+        expected: "host-a".into(),
+        actual: "host-b".into(),
+    });
+    workspace
+        .replace_frame_source(pane_id, PaneFrameSource::Scripted(source))
+        .expect("scripted source that reports an epoch change");
+    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    show_roster(&workspace, &mut chrome);
+    let (input_tx, input_rx) = mpsc::channel(16);
+    let driver = async {
+        wait_for_websocket_requests(&mock, "terminal_attach", 2).await;
+        wait_for_websocket_requests(&mock, "terminal_set_viewport", 2).await;
+        drop(input_tx);
+    };
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("epoch change loop");
+    let titles: Vec<&str> = chrome
+        .alert_log
+        .iter()
+        .map(|toast| toast.title.as_str())
+        .collect();
+    assert!(
+        titles.contains(&"frame host epoch changed from host-a to host-b"),
+        "the epoch change reaches the alert log: {titles:?}"
+    );
+    assert_eq!(
+        workspace.pane(pane_id).transport(),
+        Some(Transport::Proxy),
+        "the end of stream behind the report still falls back"
+    );
+    mock.shutdown().await;
+}
+
+/// #22534: a proxy fallback clears the pane's direct offer for the rest of
+/// the connection; the roster row a reconnect brings back re-arms it, so the
+/// attach after the handshake asks for direct again.
+#[tokio::test]
+async fn reconnect_rearms_direct_from_the_fresh_roster_row() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    let terminal_id = "terminal-rearm";
+    let (mut workspace, _) = live_workspace_with_scripted_direct(&mock, terminal_id, 2).await;
+    // The reconnect's roster read: the same terminal, now with a locator.
+    mock.enqueue(
+        "GET",
+        "/api/terminals?",
+        200,
+        json!({
+            "items": [{
+                "terminal_id": terminal_id,
+                "backend": "native",
+                "state": "live",
+                "attach": {
+                    "backend": "native",
+                    "frame_host_epoch": "host-epoch",
+                    "host_socket": "/nonexistent/gobby-frames.sock",
+                    "host_terminal_id": "ht-rearm",
+                    "socket_path": null,
+                    "pane_id": null,
+                    "server_pid": null,
+                    "server_start_time": null,
+                }
+            }],
+            "next_cursor": null,
+            "snapshot": {"daemon_epoch": "epoch-1", "seq": 2}
+        }),
+    );
+    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    show_roster(&workspace, &mut chrome);
+    let (input_tx, input_rx) = mpsc::channel(16);
+    let driver = async {
+        // The scripted source ends at once: proxy fallback, direct cleared.
+        wait_for_websocket_requests(&mock, "terminal_attach", 2).await;
+        wait_for_websocket_requests(&mock, "terminal_set_viewport", 2).await;
+        let before_reconnect = websocket_requests(&mock, "terminal_attach").len();
+        mock.drop_websockets();
+        timeout(Duration::from_secs(4), async {
+            loop {
+                let rearmed = websocket_requests(&mock, "terminal_attach")
+                    .iter()
+                    .skip(before_reconnect)
+                    .any(|request| request.get("frame_delivery") == Some(&json!("direct")));
+                if rearmed {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the reconnect's roster row re-arms direct");
+        drop(input_tx);
+        before_reconnect
+    };
+    let mut switch = TerminalGuard::recording().0;
+    let (result, before_reconnect) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("direct re-arm loop");
+    let attaches = websocket_requests(&mock, "terminal_attach");
+    assert!(
+        attaches[..before_reconnect]
+            .iter()
+            .all(|request| request.get("frame_delivery") == Some(&json!("proxy"))),
+        "every attach before the reconnect stayed proxy: {attaches:?}"
+    );
     mock.shutdown().await;
 }

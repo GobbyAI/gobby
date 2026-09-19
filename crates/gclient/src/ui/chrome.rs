@@ -19,7 +19,7 @@ use crate::ui::pane_layout;
 use crate::ui::settings::{ClientPrefs, SettingsState};
 use crate::ui::sidebar;
 use crate::ui::sidebar_rows;
-use crate::ui::status::Toast;
+use crate::ui::status::{ActiveToast, Toast};
 use gobby_terminal::layout::{self, Node, PaneInfo, SplitBorder, TileLayout};
 use gobby_terminal::selection::Selection;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -101,10 +101,12 @@ impl WorkspaceView for Workspace {
     }
 }
 
+pub mod alerts;
 pub mod labels;
 
 pub use labels::{
-    attention_label, attention_pane, attention_subject, row_state, terminal_label, RowState,
+    attention_label, attention_pane, attention_subject, row_state, terminal_address,
+    terminal_label, terminal_title, RowState,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -377,8 +379,10 @@ pub struct Chrome {
     pub keybind_help: KeybindHelpState,
     pub settings: SettingsState,
     pub dialog: Option<Dialog>,
-    pub toast: Option<Toast>,
-    pub status_message: Option<String>,
+    /// Toasts on screen, oldest first; `Chrome::notify` owns the stack.
+    pub toasts: Vec<ActiveToast>,
+    /// Every alert raised, oldest first; the [Menu] alert log shows it.
+    pub alert_log: Vec<Toast>,
     pub view: ViewState,
     pub keymap: Keymap,
     /// An outer tmux or a gclient pane owns the terminal: `keymap` was built
@@ -428,8 +432,8 @@ impl Chrome {
             keybind_help: KeybindHelpState::default(),
             settings: SettingsState::default(),
             dialog: None,
-            toast: None,
-            status_message: None,
+            toasts: Vec::new(),
+            alert_log: Vec::new(),
             view: ViewState::default(),
             keymap: Keymap::defaults(HERDR_PREFIX),
             nested: false,
@@ -682,14 +686,12 @@ impl Chrome {
         let mut tabs = Vec::new();
         for row in model.tabs_for_project(project_id) {
             let mut slots = HashMap::new();
-            let mut first_terminal = None;
             let root = project_node(&row.layout, &mut |pane_id: &str| {
                 let slot = self.viewer.panes.intern(pane_id);
                 if let Some(terminal_id) = model
                     .pane(pane_id)
                     .and_then(|pane| pane.terminal_id.as_deref())
                 {
-                    first_terminal.get_or_insert_with(|| terminal_id.to_string());
                     match ws.pane_for_terminal(terminal_id) {
                         Some(pane) => {
                             slots.insert(slot, pane);
@@ -714,10 +716,12 @@ impl Chrome {
                 })
                 .unwrap_or_else(|| first_slot(layout.root()));
             self.viewer.focus.insert(row.id.clone(), focus);
+            // A renamed tab keeps its name; otherwise the tab is named for its
+            // own address, which is stable where a borrowed pane name is not.
             let title = row.title.clone().unwrap_or_else(|| {
-                first_terminal
-                    .as_deref()
-                    .map_or_else(String::new, |terminal_id| terminal_label(ws, terminal_id))
+                model
+                    .tab_ref(&row.id)
+                    .map_or_else(String::new, |reference| format!("tab-{reference}"))
             });
             let mut tab = Tab::with_layout(title, layout, slots);
             tab.id = row.id.clone();

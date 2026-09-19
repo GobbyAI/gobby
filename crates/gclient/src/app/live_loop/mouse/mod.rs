@@ -471,6 +471,17 @@ mod tests {
     }
 
     #[test]
+    fn route_mouse_opens_the_alert_a_clicked_toast_carries() {
+        let (ws, mut chrome, (col, row), _, _) = split_chrome();
+        chrome.view.toast_hit_area = Some(Rect::new(col, row, 20, 3));
+        assert_eq!(
+            route_mouse(&ws, &mut chrome, &down(col, row, KeyModifiers::NONE)),
+            MouseOutcome::Action(Action::OpenNotificationTarget),
+            "a toast is a control: clicking it opens the row its alert named"
+        );
+    }
+
+    #[test]
     fn route_mouse_ignores_a_slot_whose_pane_left_the_roster() {
         let (_, mut chrome, _, _, (col, row)) = split_chrome();
         let empty = Workspace::scripted();

@@ -83,17 +83,17 @@ bytes under the negotiated keyboard protocol), `selection`
 
 The keep-set render tests of herdr `346411fa21afd297f5ed3b3fa56f9e3fbf7654b7` are ported
 under `tests/parity/` with row-text expectations unchanged; `tests/parity/upstream_tests.txt`
-is the pinned inventory (109 identities, SHA-256 `654b542316d6b354962c43f40a8d8a608904b10bcaee5f61202b88cf4fec3e14`).
+is the pinned inventory (107 identities, SHA-256 `3d45e028bfd2b75c5597c77d04fe74770105f64f6bdd81f83c1f206b853c8f84`).
 
 <!-- parity-table:start -->
 | herdr source | ported | not ported | gclient parity module |
 | --- | --- | --- | --- |
-| `src/ui.rs` | 29 | 6 | `tests/parity/chrome.rs` |
+| `src/ui.rs` | 28 | 7 | `tests/parity/chrome.rs` |
 | `src/ui/dialogs.rs` | 4 | 2 | `tests/parity/dialogs.rs` |
 | `src/ui/keybind_help.rs` | 2 | 0 | `tests/parity/chrome.rs` |
 | `src/ui/navigator.rs` | 5 | 0 | `tests/parity/navigator.rs` |
 | `src/ui/panes.rs` | 17 | 0 | `tests/parity/panes.rs` |
-| `src/ui/sidebar.rs` | 33 | 8 | `tests/parity/sidebar.rs` |
+| `src/ui/sidebar.rs` | 32 | 9 | `tests/parity/sidebar.rs` |
 | `src/ui/sidebar/tokens.rs` | 6 | 0 | `tests/parity/sidebar.rs` |
 | `src/ui/status.rs` | 4 | 0 | `tests/parity/status.rs` |
 | `src/ui/tab_surface.rs` | 2 | 1 | `tests/parity/chrome.rs` |
@@ -105,22 +105,25 @@ is the pinned inventory (109 identities, SHA-256 `654b542316d6b354962c43f40a8d8a
 | `src/ui/release_notes.rs` | 0 | 6 | dropped module |
 <!-- parity-table:end -->
 
-Not ported: pinned dropped-surface identities (17). These sit in kept modules but
+Not ported: pinned dropped-surface identities (19). These sit in kept modules but
 exercise worktree, git-space, or mobile surfaces gclient dropped (3.1), or the three
-surfaces gclient redesigned or omitted (D4): the toast is pinned to the bottom-right
-corner and never dodges the top-right diagnostic bar, there is no tab-bar position
-setting, sidebar rows are not drag-reorderable, and a roster row is named by its
+surfaces gclient redesigned or omitted (D4): the toast stack is pinned to the
+top-right corner of the pane area and there is no diagnostic bar to dodge, there is
+no tab-bar position setting, sidebar rows are not drag-reorderable, and a roster row is named by its
 terminal title, so the title outranks its trailing tokens instead of truncating to
-keep them (herdr's later token there is a tab name, which gclient rows do not carry).
+keep them, and an agent row carries no tab token at all: its `node:workspace:tab:pane`
+address names the tab, so herdr's tab-label visibility rule has nothing to show.
 
 - `src/ui.rs::configured_mobile_width_threshold_controls_layout_switch`
 - `src/ui.rs::desktop_tab_bar_position_controls_geometry_and_mode_bar_placement`
 - `src/ui.rs::desktop_toast_hit_area_still_offsets_for_config_diagnostic`
+- `src/ui.rs::desktop_toast_hit_area_uses_full_frame_not_terminal_area`
 - `src/ui.rs::mobile_background_tabs_use_mobile_terminal_area`
 - `src/ui.rs::mobile_config_diagnostic_keeps_command_visible`
 - `src/ui.rs::mobile_width_uses_header_and_full_width_terminal`
 - `src/ui/dialogs.rs::new_worktree_error_renders_fatal_stderr_line`
 - `src/ui/dialogs.rs::new_worktree_hit_test_geometry_matches_modal_size`
+- `src/ui/sidebar.rs::agent_panel_tab_label_visibility_tracks_tab_identity`
 - `src/ui/sidebar.rs::desktop_worktree_connector_uses_full_list_at_viewport_boundary`
 - `src/ui/sidebar.rs::desktop_worktree_tree_aligns_parents_and_marks_children`
 - `src/ui/sidebar.rs::linked_only_worktree_members_do_not_form_parentless_group`

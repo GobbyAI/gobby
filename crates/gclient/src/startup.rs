@@ -42,17 +42,17 @@ pub struct AttachTarget {
 }
 
 impl AttachTarget {
-    /// Combine `--node` and `--workspace`; a full `n#:w#` ref carries its own
-    /// node, which wins over `--node`.
+    /// Combine `--node` and `--workspace`; a full `node:workspace` ref carries
+    /// its own node, which wins over `--node`.
     pub fn from_flags(node: Option<&str>, workspace: Option<&str>) -> Self {
         let mut target = Self {
             node: node.map(str::to_string),
             workspace: workspace.map(str::to_string),
         };
         if let Some((head, rest)) = workspace.and_then(|reference| reference.split_once(':')) {
-            let is_node_ref = head.strip_prefix('n').is_some_and(|digits| {
-                !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())
-            });
+            // Refs are letterless and left-anchored: `2:1` is workspace 1 on
+            // node 2, so a numeric head names the node.
+            let is_node_ref = !head.is_empty() && head.bytes().all(|b| b.is_ascii_digit());
             if is_node_ref {
                 target.node = Some(head.to_string());
                 target.workspace = Some(rest.to_string());
@@ -496,14 +496,23 @@ pub fn prepare_at(
         prefs.mouse_capture = false;
     }
     let keymap = load_keymap(&prefs, gobby_home, env.nested())?;
-    let host = health.fetch_health(&env.daemon_url)?;
-    if !host
-        .as_ref()
-        .is_some_and(|host| host.running && host.protocol_version == Some(PROTOCOL_VERSION))
-    {
-        return Err(degraded_host(host.as_ref()));
-    }
-    let host_notice = host.as_ref().and_then(host_notice);
+    // A stopped daemon is a wait, not an exit: the loop's supervisor connects
+    // once it is back, so the probe's report becomes the launch notice. Every
+    // other probe failure still ends the launch before raw mode.
+    let (host, host_notice) = match health.fetch_health(&env.daemon_url) {
+        Ok(host) => {
+            if !host
+                .as_ref()
+                .is_some_and(|host| host.running && host.protocol_version == Some(PROTOCOL_VERSION))
+            {
+                return Err(degraded_host(host.as_ref()));
+            }
+            let notice = host.as_ref().and_then(host_notice);
+            (host, notice)
+        }
+        Err(error @ StartupError::Unreachable { .. }) => (None, Some(error.to_string())),
+        Err(error) => return Err(error),
+    };
     let nested = env.nested();
     Ok(Ready {
         daemon_url: env.daemon_url,
@@ -649,6 +658,11 @@ fn arm_session<B: ModeBackend>(
     ready: Ready,
     backend: B,
 ) -> Result<(Ready, TerminalGuard<B>), StartupError> {
+    // Before raw mode, so the scrollback keeps the notice once the
+    // alternate screen takes the terminal.
+    if let Some(notice) = &ready.host_notice {
+        eprintln!("{notice}");
+    }
     let mut guard = TerminalGuard::new(backend);
     guard.arm(ready.prefs.mouse_capture)?;
     Ok((ready, guard))

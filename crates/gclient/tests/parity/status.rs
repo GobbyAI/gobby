@@ -69,6 +69,7 @@ parity_tests! {
                 (RowState::Idle, "○", palette.overlay0),
                 (RowState::Unknown, "·", palette.overlay0),
                 (RowState::Orphaned, "◌", palette.red),
+                (RowState::Paused, "‖", palette.yellow),
             ] {
                 let (actual_symbol, actual_color) = state_dot(state, &palette);
                 assert_eq!(actual_symbol, symbol);
@@ -81,11 +82,11 @@ parity_tests! {
             let toast = toast();
 
             // herdr iterates its four configurable corners; gclient has no
-            // toast position setting and pins the bottom-right corner, so
-            // that is the one corner asserted here.
-            let bottom_right = toast_notification_rect(area, &toast).expect("toast rect");
-            assert_eq!(bottom_right.x + bottom_right.width, area.x + area.width);
-            assert_eq!(bottom_right.y + bottom_right.height, area.y + area.height);
+            // toast position setting and pins the top-right corner of the
+            // pane area (D3), so that is the one corner asserted here.
+            let top_right = toast_notification_rect(area, &toast).expect("toast rect");
+            assert_eq!(top_right.x + top_right.width, area.x + area.width);
+            assert_eq!(top_right.y, area.y);
         }
 
         fn toast_rect_uses_display_width_for_cjk_labels() {

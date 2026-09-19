@@ -100,13 +100,13 @@ pub enum FrameError {
     Protocol(String),
     #[error("frame source failed: {0}")]
     Other(String),
-    /// The daemon refused a control request; the message is the status line
-    /// the loop shows, so it carries no failure prefix.
+    /// The daemon refused a control request; the message is the toast the
+    /// loop shows, so it carries no failure prefix.
     #[error("{0}")]
     Refused(String),
     /// A daemon request failed on the way to a frame source. The message is
     /// the daemon error's own sentence (which request timed out, that the
-    /// daemon is away), shown as the status line as-is rather than behind a
+    /// daemon is away), shown as the toast as-is rather than behind a
     /// "frame protocol failed" prefix that names the wrong layer (#22544).
     #[error("{0}")]
     Daemon(String),
@@ -145,7 +145,7 @@ pub struct ScriptedFrameSource {
     transport: Transport,
     welcome_epoch: String,
     sent: Vec<ClientMessage>,
-    inbound: VecDeque<ServerMessage>,
+    inbound: VecDeque<Result<ServerMessage, FrameError>>,
 }
 
 impl ScriptedFrameSource {
@@ -183,8 +183,13 @@ impl ScriptedFrameSource {
         Ok(())
     }
 
+    /// The next `recv` fails with `error` instead of yielding a message.
+    pub fn queue_error(&mut self, error: FrameError) {
+        self.inbound.push_back(Err(error));
+    }
+
     pub fn queue(&mut self, message: ServerMessage) {
-        self.inbound.push_back(message);
+        self.inbound.push_back(Ok(message));
     }
 
     pub fn sent_attach(&self) -> bool {
@@ -220,7 +225,7 @@ impl FrameSource for ScriptedFrameSource {
     }
 
     async fn recv(&mut self) -> Result<ServerMessage, FrameError> {
-        self.inbound.pop_front().ok_or(FrameError::Eof)
+        self.inbound.pop_front().unwrap_or(Err(FrameError::Eof))
     }
 
     fn transport(&self) -> Transport {

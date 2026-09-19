@@ -77,7 +77,7 @@ fn daemon_url_overrides_bootstrap_before_raw_mode() {
     std::fs::write(&token_file, "task-token\n").expect("write token");
     let url = closed_port_url();
 
-    let output = Command::new(env!("CARGO_BIN_EXE_gclient"))
+    let output = detached_gclient()
         .args(["--daemon-url", &url, "--token-file"])
         .arg(&token_file)
         .current_dir(root.path())
@@ -85,7 +85,6 @@ fn daemon_url_overrides_bootstrap_before_raw_mode() {
         .expect("run gclient with explicit daemon URL");
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    assert!(!output.status.success(), "unreachable daemon succeeded");
     assert!(
         stderr.contains(&format!("daemon unreachable at {url}")),
         "explicit daemon URL was not probed: {stderr}"
@@ -96,7 +95,7 @@ fn daemon_url_overrides_bootstrap_before_raw_mode() {
     std::fs::create_dir(&controlled_home).expect("create controlled home");
     std::fs::write(controlled_home.join("local_cli_token"), "home-token\n")
         .expect("write home token");
-    let output = Command::new(env!("CARGO_BIN_EXE_gclient"))
+    let output = detached_gclient()
         .args(["--daemon-url", &url])
         .env("GOBBY_HOME", &controlled_home)
         .current_dir(root.path())
@@ -110,7 +109,7 @@ fn daemon_url_overrides_bootstrap_before_raw_mode() {
 
     let missing_home = root.path().join("missing-token-home");
     std::fs::create_dir(&missing_home).expect("create missing-token home");
-    let output = Command::new(env!("CARGO_BIN_EXE_gclient"))
+    let output = detached_gclient()
         .args(["--daemon-url", &url])
         .env("GOBBY_HOME", &missing_home)
         .current_dir(root.path())
@@ -139,7 +138,7 @@ fn daemon_url_overrides_bootstrap_before_raw_mode() {
         format!("daemon_url: '{url}/'\n"),
     )
     .expect("write bootstrap");
-    let output = Command::new(env!("CARGO_BIN_EXE_gclient"))
+    let output = detached_gclient()
         .env("GOBBY_HOME", &bootstrap_home)
         .env_remove("GOBBY_DAEMON_URL")
         .env_remove("GOBBY_PORT")
@@ -293,27 +292,23 @@ fn workspace_flags_default_to_the_local_default() {
     assert_eq!(attach(&["gclient"]), AttachTarget::default());
     assert_eq!(AttachTarget::default(), target(None, None));
 
-    let args =
-        parse_args(["gclient", "--node", "n5", "--workspace=n2:w1"]).expect("full ref parses");
-    assert_eq!(args.node.as_deref(), Some("n5"));
-    assert_eq!(args.workspace.as_deref(), Some("n2:w1"));
+    let args = parse_args(["gclient", "--node", "5", "--workspace=2:1"]).expect("full ref parses");
+    assert_eq!(args.node.as_deref(), Some("5"));
+    assert_eq!(args.workspace.as_deref(), Some("2:1"));
     assert_eq!(
-        attach(&["gclient", "--node", "n5", "--workspace=n2:w1"]),
-        target(Some("n2"), Some("w1")),
+        attach(&["gclient", "--node", "5", "--workspace=2:1"]),
+        target(Some("2"), Some("1")),
         "the ref's node wins over --node"
     );
     assert_eq!(
-        attach(&["gclient", "--node=n5", "--workspace", "w1"]),
-        target(Some("n5"), Some("w1"))
+        attach(&["gclient", "--node=5", "--workspace", "1"]),
+        target(Some("5"), Some("1"))
     );
     assert_eq!(
         attach(&["gclient", "--workspace", "default"]),
         target(None, Some("default"))
     );
-    assert_eq!(
-        attach(&["gclient", "--node", "n5"]),
-        target(Some("n5"), None)
-    );
+    assert_eq!(attach(&["gclient", "--node", "5"]), target(Some("5"), None));
 
     for argv in [
         vec!["gclient", "--node"],
@@ -332,7 +327,7 @@ fn workspace_flags_default_to_the_local_default() {
     let project_id = "77777777-7777-4777-8777-777777777777";
     let home = tempfile::tempdir().expect("temp gobby home");
     let cwd = tempfile::tempdir().expect("temp current dir");
-    let args = parse_args(["gclient", "--project", project_id, "--workspace", "n2:w1"])
+    let args = parse_args(["gclient", "--project", project_id, "--workspace", "2:1"])
         .expect("ready args parse");
     let ready = prepare_at(
         &args,
@@ -342,7 +337,7 @@ fn workspace_flags_default_to_the_local_default() {
         home.path(),
     )
     .expect("prepare with a workspace ref");
-    assert_eq!(ready.attach, target(Some("n2"), Some("w1")));
+    assert_eq!(ready.attach, target(Some("2"), Some("1")));
 
     let output = Command::new(env!("CARGO_BIN_EXE_gclient"))
         .arg("--help")
@@ -710,6 +705,24 @@ impl ModeBackend for CountingBackend {
     }
 }
 
+/// The binary in a session of its own, with no controlling terminal: a
+/// launch that reaches raw mode fails there instead of taking over the
+/// terminal running the tests.
+fn detached_gclient() -> Command {
+    use std::os::unix::process::CommandExt;
+
+    let mut command = Command::new(env!("CARGO_BIN_EXE_gclient"));
+    // SAFETY: setsid is async-signal-safe and touches nothing the parent
+    // shares with the child.
+    unsafe {
+        command.pre_exec(|| {
+            libc::setsid();
+            Ok(())
+        });
+    }
+    command
+}
+
 fn closed_port_url() -> String {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let addr = listener.local_addr().expect("addr");
@@ -773,32 +786,34 @@ fn host_args(url: &str, remote: bool) -> gobby_client::startup::CliArgs {
 }
 
 #[test]
-fn test_unreachable_daemon_before_raw_mode() {
+fn unreachable_daemon_launches_with_a_notice_and_waits() {
     let url = closed_port_url();
     let args = parse_args(["gclient"]).expect("parse");
     let (backend, enters) = CountingBackend::new();
-    let err = match start_session(args, env_at(&url), &HttpHealthClient::new(), backend) {
-        Err(err) => err,
-        Ok(_) => panic!("unreachable daemon succeeded"),
-    };
+    let (ready, guard) = start_session(args, env_at(&url), &HttpHealthClient::new(), backend)
+        .expect("a stopped daemon is a wait, not a launch failure");
     assert_eq!(
         enters.load(Ordering::SeqCst),
-        0,
-        "raw-mode must not run before the daemon probe fails"
+        1,
+        "the window opens and waits for the daemon"
     );
-    let message = err.to_string();
+    assert!(ready.host.is_none(), "no host state without a daemon");
+    let notice = ready
+        .host_notice
+        .expect("the probe's report becomes the notice");
     assert!(
-        message.contains("gobby start"),
-        "actionable recovery missing `gobby start`: {message}"
+        notice.contains(&format!("daemon unreachable at {url}")),
+        "notice names the probed URL: {notice}"
     );
     assert!(
-        message.contains("gobby status"),
-        "actionable recovery missing `gobby status`: {message}"
+        notice.contains("gobby start"),
+        "actionable recovery missing `gobby start`: {notice}"
     );
     assert!(
-        matches!(err, StartupError::Unreachable { .. }),
-        "distinct unreachable error, got {err:?}"
+        notice.contains("gobby status"),
+        "actionable recovery missing `gobby status`: {notice}"
     );
+    drop(guard);
 }
 
 #[test]
@@ -898,8 +913,8 @@ fn test_reports_degraded_host_state() {
 
     let views_source = include_str!("../src/views/mod.rs");
     assert!(
-        views_source.contains("chrome.status_message = ready.host_notice;"),
-        "host notice must reach the status bar"
+        views_source.contains("chrome.notify(Toast::info(notice));"),
+        "host notice must reach the alert log"
     );
 }
 

@@ -675,6 +675,44 @@ async fn wait_for_ws_request(mock: &MockDaemon, kind: &str) {
     .unwrap_or_else(|_| panic!("timed out waiting for {kind}"));
 }
 
+async fn wait_for_ws_request_count(mock: &MockDaemon, kind: &str, expected: usize) {
+    timeout(Duration::from_secs(1), async {
+        loop {
+            let count = mock
+                .requests()
+                .iter()
+                .filter(|request| {
+                    request
+                        .body
+                        .as_ref()
+                        .and_then(|body| body.get("type"))
+                        .and_then(Value::as_str)
+                        == Some(kind)
+                })
+                .count();
+            if count >= expected {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("timed out waiting for {expected} {kind} requests"));
+}
+
+async fn wait_for_trace_stage(trace: &Arc<Mutex<Vec<String>>>, stage: &str) {
+    timeout(Duration::from_secs(1), async {
+        loop {
+            if trace.lock().unwrap().iter().any(|entry| entry == stage) {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("timed out waiting for the {stage} trace"));
+}
+
 async fn send_key(input: &mpsc::Sender<RawInputEvent>, code: KeyCode, modifiers: KeyModifiers) {
     input
         .send(RawInputEvent::Key(TerminalKey::new(code, modifiers)))
@@ -832,17 +870,16 @@ enum LiveExitCause {
     Quit,
     Sigint,
     Sigterm,
-    Sighup,
+    SighupThenQuit,
     QuitDuringDaemonLoss,
 }
 
 impl LiveExitCause {
     fn reason(self) -> &'static str {
         match self {
-            Self::Quit | Self::QuitDuringDaemonLoss => "quit",
+            Self::Quit | Self::SighupThenQuit | Self::QuitDuringDaemonLoss => "quit",
             Self::Sigint => "SIGINT",
             Self::Sigterm => "SIGTERM",
-            Self::Sighup => "SIGHUP",
         }
     }
 }
@@ -896,7 +933,16 @@ async fn assert_live_exit_trace(cause: LiveExitCause, trace: Arc<Mutex<Vec<Strin
             }
             LiveExitCause::Sigint => send_process_signal("-INT"),
             LiveExitCause::Sigterm => send_process_signal("-TERM"),
-            LiveExitCause::Sighup => send_process_signal("-HUP"),
+            LiveExitCause::SighupThenQuit => {
+                // A hangup is ignored: the loop logs it, keeps routing
+                // input, and only the quit chord ends it.
+                send_process_signal("-HUP");
+                wait_for_trace_stage(&trace, "sighup-ignored").await;
+                send_key(&input_tx, KeyCode::Char('y'), KeyModifiers::NONE).await;
+                wait_for_ws_request_count(&mock, "terminal_input", 2).await;
+                send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
+                send_key(&input_tx, KeyCode::Char('Q'), KeyModifiers::SHIFT).await;
+            }
             LiveExitCause::QuitDuringDaemonLoss => {
                 mock.drop_websockets();
                 timeout(Duration::from_secs(1), async {
@@ -1111,20 +1157,24 @@ async fn every_exit_cause_uses_one_shutdown_seam() {
         LiveExitCause::Quit,
         LiveExitCause::Sigint,
         LiveExitCause::Sigterm,
-        LiveExitCause::Sighup,
+        LiveExitCause::SighupThenQuit,
         LiveExitCause::QuitDuringDaemonLoss,
     ] {
         assert_live_exit_trace(cause, Arc::clone(&trace)).await;
+        let mut expected = vec![
+            "latch-exit",
+            "release-held-leases",
+            "detach-attachments",
+            "cleanup-settled",
+            "daemon-close",
+            "restore-terminal",
+        ];
+        if matches!(cause, LiveExitCause::SighupThenQuit) {
+            expected.insert(0, "sighup-ignored");
+        }
         assert_eq!(
             std::mem::take(&mut *trace.lock().unwrap()),
-            [
-                "latch-exit",
-                "release-held-leases",
-                "detach-attachments",
-                "cleanup-settled",
-                "daemon-close",
-                "restore-terminal"
-            ],
+            expected,
             "{cause:?} must traverse the same shutdown seam exactly once"
         );
     }

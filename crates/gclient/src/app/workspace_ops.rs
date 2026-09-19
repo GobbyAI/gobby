@@ -122,15 +122,34 @@ impl WorkspaceModel {
         tabs
     }
 
-    /// The `n#:w#:t#:p#` ref of a pane.
-    pub fn pane_ref(&self, pane_id: &str) -> Option<String> {
-        let pane = self.panes.get(pane_id)?;
-        let tab = self.tabs.get(&pane.tab_id)?;
+    /// The tab's address, `node:workspace:tab`, zero-based and letterless:
+    /// position carries the meaning, as it does for a pane ref.
+    pub fn tab_ref(&self, tab_id: &str) -> Option<String> {
+        let tab = self.tabs.get(tab_id)?;
         let node = self.workspace.node_ref?;
         Some(format!(
-            "n{node}:w{}:t{}:p{}",
-            self.workspace.reference, tab.reference, pane.reference
+            "{node}:{}:{}",
+            self.workspace.reference, tab.reference
         ))
+    }
+
+    /// The pane's address, `node:workspace:tab:pane`.
+    pub fn pane_ref(&self, pane_id: &str) -> Option<String> {
+        let pane = self.panes.get(pane_id)?;
+        Some(format!(
+            "{}:{}",
+            self.tab_ref(&pane.tab_id)?,
+            pane.reference
+        ))
+    }
+
+    /// The address of the pane hosting a terminal, when the model places it.
+    pub fn pane_ref_for_terminal(&self, terminal_id: &str) -> Option<String> {
+        let pane = self
+            .panes
+            .values()
+            .find(|pane| pane.terminal_id.as_deref() == Some(terminal_id))?;
+        self.pane_ref(&pane.id)
     }
 }
 

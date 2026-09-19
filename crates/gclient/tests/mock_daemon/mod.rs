@@ -89,9 +89,13 @@ pub struct MockDaemon {
 
 impl MockDaemon {
     pub async fn start(token: &str) -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("bind mock daemon");
+        Self::start_at(token, "127.0.0.1:0").await
+    }
+
+    /// `start` on a chosen address: the daemon coming back on the port a
+    /// client already holds the URL of.
+    pub async fn start_at(token: &str, address: &str) -> Self {
+        let listener = TcpListener::bind(address).await.expect("bind mock daemon");
         let address = listener.local_addr().expect("mock address");
         let state = Arc::new(Mutex::new(MockState {
             token: token.to_string(),

@@ -146,7 +146,7 @@ impl Workspace<LiveDaemon> {
         let generation = self.daemon.subscribe().0.generation;
         let pane = self.panes.get_mut(&pane_id).expect("pane exists");
         if let Some(backend) = reply.get("backend").and_then(Value::as_str) {
-            pane.backend = backend.to_string();
+            pane.backend = Backend::parse(backend);
         }
         pane.expected_host_epoch = locator.frame_host_epoch.clone();
         let lease_generation = reply
@@ -186,8 +186,16 @@ impl Workspace<LiveDaemon> {
             | FrameError::Daemon(_) => self.recover_proxy_source(pane_id).await?,
             // A refused control request never reaches a frame source; nothing
             // to recover.
-            FrameError::HostEpochChanged { .. } | FrameError::Other(_) | FrameError::Refused(_) => {
+            FrameError::Refused(_) => {}
+            // No recovery path either, but not silent: the loop shows what
+            // the source reported, so a host swap under a pane is visible.
+            FrameError::HostEpochChanged { expected, actual } => {
+                return Err(FrameError::HostEpochChanged {
+                    expected: expected.clone(),
+                    actual: actual.clone(),
+                });
             }
+            FrameError::Other(detail) => return Err(FrameError::Other(detail.clone())),
         }
         Ok(())
     }
@@ -430,7 +438,7 @@ impl Workspace<LiveDaemon> {
         let generation = self.daemon.subscribe().0.generation;
         let pane = self.panes.get_mut(&pane_id).expect("pane exists");
         if let Some(backend) = reply.get("backend").and_then(Value::as_str) {
-            pane.backend = backend.to_string();
+            pane.backend = Backend::parse(backend);
         }
         let lease_generation = reply
             .get("lease_generation")
