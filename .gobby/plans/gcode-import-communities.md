@@ -1956,3 +1956,653 @@ warning, no match is `CompleteEmpty`); F-N4 and F-N6 together make 6.3.4 a nine-
 on its own symbol; F-N11 is recorded as a scope decision rather than a new target; F-08 is folded as
 prose defining `D1.1` plus a `deferred_from` key, because the validator rejects an
 `**Acceptance:**` block on a deferred section and the yaml list is the item's definition.
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Add `communities()` and `GraphInputError` to gcore graph analytics
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.1.1: `communities(&AnalyticsGraph)` returns the same partition
+    as `analyze` on the seeded graph and skips the other passes. symbol: `communities`.
+    file: `crates/gcore/src/graph_analytics.rs`.
+
+    1.1.2: `GraphInputError` is returned for duplicate node, unknown endpoint, invalid
+    weight, and self-loop instead of silent sanitizing. symbol: `GraphInputError`.
+    file: `crates/gcore/src/graph_analytics.rs`.
+
+    1.1.3: Empty and edge-less graphs behave as `analyze` does. test: `crates/gcore/src/graph_analytics/tests.rs::communities_without_edges_is_all_singletons`.
+
+    1.1.4: The pre-existing inline test module lives in `crates/gcore/src/graph_analytics/tests.rs`
+    under `#[path]` and `crates/gcore/src/graph_analytics.rs` declares no `#[cfg(test)]`
+    module. file: `crates/gcore/src/graph_analytics/tests.rs`.'
+  labels:
+  - covers:gcode-import-communities:1.1:1.1.1
+  - covers:gcode-import-communities:1.1:1.1.2
+  - covers:gcode-import-communities:1.1:1.1.3
+  - covers:gcode-import-communities:1.1:1.1.4
+  tdd: true
+  source_section: '1.1'
+  implementation_domain: backend
+- title: Add `centrality()` and stop `graph report` from running Leiden twice
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  validation_criteria: '1.2.1: `centrality(&AnalyticsGraph)` returns the same scores
+    as `analyze(...).centrality` on the seeded graph. test: `crates/gcore/src/graph_analytics/tests.rs::centrality_matches_analyze_centrality`.
+
+    1.2.2: No `analyze` call remains in `crates/gcode/src/graph/report/summary.rs`;
+    report hotspots and bridges are byte-identical before and after on the Gobby checkout.
+    file: `crates/gcode/src/graph/report/summary.rs`.
+
+    1.2.3: `gcode graph report` median wall time over five runs is recorded before
+    and after the `centrality()` swap with no regression. behavior: "median" in `docs/evidence/community-labels-2026-09/report-latency.md`.'
+  labels:
+  - covers:gcode-import-communities:1.2:1.2.1
+  - covers:gcode-import-communities:1.2:1.2.2
+  - covers:gcode-import-communities:1.2:1.2.3
+  tdd: true
+  source_section: '1.2'
+  implementation_domain: backend
+- title: Move `McgIdentity` to `communities::identity::ImportIdentity` with a connection-taking
+    loader
+  category: refactor
+  task_type: feature
+  depends_on: []
+  validation_criteria: '2.1.1: `ImportIdentity` lives in `crates/gcode/src/communities/identity.rs`
+    with `unique_provider` and `from_resolution` reachable crate-wide; `crates/gcode/src/commands/graph/view/mcg/identity.rs`
+    keeps only seed resolution. symbol: `ImportIdentity`. file: `crates/gcode/src/communities/identity.rs`.
+
+    2.1.2: `load_project_imports(conn, ctx)` returns the identity and the import rows
+    on a caller-supplied connection; `load_identity` is gone. symbol: `load_project_imports`.
+    file: `crates/gcode/src/communities/identity.rs`.
+
+    2.1.3: The moved identity tests pass unchanged in their new file. test: `crates/gcode/src/communities/identity_tests.rs::mcg_identity_build_handles_twenty_thousand_rows`.
+
+    2.1.4: Under an overlay context `load_project_imports` returns import rows for
+    every visible file, parent-only files included, with parent rows the overlay shadows
+    by `file_path` dropped. test: `crates/gcode/src/communities/identity_tests.rs::overlay_partition_covers_parent_only_files`.'
+  labels:
+  - covers:gcode-import-communities:2.1:2.1.1
+  - covers:gcode-import-communities:2.1:2.1.2
+  - covers:gcode-import-communities:2.1:2.1.3
+  - covers:gcode-import-communities:2.1:2.1.4
+  tdd: false
+  source_section: '2.1'
+  assigned_agent: backend-developer
+- title: 'Build the partition: graph, Leiden, splits, cohesion, deterministic labels,
+    signatures'
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  - '2.1'
+  validation_criteria: '2.2.1: `build_partition` produces one node per visible file
+    and one folded undirected edge per importer/provider pair, excluding external,
+    ambiguous, and self imports. symbol: `build_partition`. file: `crates/gcode/src/communities/partition.rs`.
+
+    2.2.2: Oversized and low-cohesion splits apply once each with Graphify''s constants
+    in integer math. test: `crates/gcode/src/communities/partition_tests.rs::cohesion_threshold_uses_integer_math`.
+
+    2.2.3: Cohesion, in-degree, and the 16-hex member signature are computed per community
+    and the signature matches Graphify''s shape. test: `crates/gcode/src/communities/partition_tests.rs::member_signature_matches_graphify_shape`.
+
+    2.2.4: Deterministic labels follow the dominant-directory rule with the in-degree
+    fallback for root files. test: `crates/gcode/src/communities/partition_tests.rs::label_prefers_deepest_majority_prefix`.
+
+    2.2.5: A provider outside the visible set surfaces as `PartitionError::ProviderNotVisible`;
+    kernel input errors surface as `PartitionError::InvalidGraph`. symbol: `PartitionError`.
+    file: `crates/gcode/src/communities/partition.rs`.
+
+    2.2.6: The partition is deterministic under row reordering. test: `crates/gcode/src/communities/partition_tests.rs::partition_is_invariant_to_row_order`.
+
+    2.2.7: The threshold spike ran on both corpora before close and `thresholds.md`
+    records, per corpus, the size distribution, the largest community''s share of
+    visible files against the 25% target as met or exceeded with the cause of any
+    exceedance, and the constants kept or replaced; an exceedance is a recorded outcome,
+    not a close blocker. behavior: "largest" in `docs/evidence/community-labels-2026-09/thresholds.md`.
+
+    2.2.8: Colliding deterministic labels receive ` #2`, ` #3` suffixes in partition
+    order so the largest community keeps the bare label. test: `crates/gcode/src/communities/partition_tests.rs::label_collision_gets_ordinal_suffix`.
+
+    2.2.9: `label_candidates` returns up to four distinct strings led by the deterministic
+    label. test: `crates/gcode/src/communities/partition_tests.rs::candidates_are_distinct_and_lead_with_deterministic`.
+
+    2.2.10: `partition_signature` changes when an import is added or removed between
+    existing members while every `member_signature` is unchanged. test: `crates/gcode/src/communities/partition_tests.rs::partition_signature_covers_edges`.
+
+    2.2.11: `thresholds.md` records that no `community-N` placeholder appears in any
+    stored label or view output on either corpus. behavior: "placeholder" in `docs/evidence/community-labels-2026-09/thresholds.md`.
+
+    2.2.12: `thresholds.md` records that communities of five or more files on Gobby
+    carry deterministic labels naming subsystems. behavior: "subsystems" in `docs/evidence/community-labels-2026-09/thresholds.md`.'
+  labels:
+  - covers:gcode-import-communities:2.2:2.2.1
+  - covers:gcode-import-communities:2.2:2.2.2
+  - covers:gcode-import-communities:2.2:2.2.3
+  - covers:gcode-import-communities:2.2:2.2.4
+  - covers:gcode-import-communities:2.2:2.2.5
+  - covers:gcode-import-communities:2.2:2.2.6
+  - covers:gcode-import-communities:2.2:2.2.7
+  - covers:gcode-import-communities:2.2:2.2.8
+  - covers:gcode-import-communities:2.2:2.2.9
+  - covers:gcode-import-communities:2.2:2.2.10
+  - covers:gcode-import-communities:2.2:2.2.11
+  - covers:gcode-import-communities:2.2:2.2.12
+  tdd: true
+  source_section: '2.2'
+  implementation_domain: backend
+- title: Remap ids against the stored partition and carry labels forward
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.2'
+  validation_criteria: '2.3.1: `assign_ids` matches greedily by Jaccard, overlap,
+    old id, new index and keeps an id on the larger child of a split and the larger
+    parent of a merge. test: `crates/gcode/src/communities/remap_tests.rs::split_keeps_id_on_larger_child_and_issues_fresh_id`.
+
+    2.3.2: Unmatched communities take ids above the watermark and a retired id is
+    never reissued. test: `crates/gcode/src/communities/remap_tests.rs::retired_ids_are_never_reissued`.
+
+    2.3.3: Label fields carry forward by the four-way rule and a model label with
+    a changed signature is carried as stale. symbol: `assign_ids`. file: `crates/gcode/src/communities/remap.rs`.
+
+    2.3.4: A deterministic row whose membership changed comes back with the four fields
+    `labeled_signature`, `label_confidence`, `label_model`, and `labeled_at` cleared
+    and `label_attempted_at` carried unchanged. test: `crates/gcode/src/communities/remap_tests.rs::gate_rejected_label_reopens_on_membership_change`.
+
+    2.3.5: `LabelSource` maps exactly to the text values `deterministic` and `model`
+    and round-trips them. symbol: `LabelSource`. file: `crates/gcode/src/communities.rs`.
+
+    2.3.6: `LabelCarry` carries every label column the four-way rule assigns, including
+    the recomputed `label_candidates`. symbol: `LabelCarry`. file: `crates/gcode/src/communities/remap.rs`.'
+  labels:
+  - covers:gcode-import-communities:2.3:2.3.1
+  - covers:gcode-import-communities:2.3:2.3.2
+  - covers:gcode-import-communities:2.3:2.3.3
+  - covers:gcode-import-communities:2.3:2.3.4
+  - covers:gcode-import-communities:2.3:2.3.5
+  - covers:gcode-import-communities:2.3:2.3.6
+  tdd: true
+  source_section: '2.3'
+  implementation_domain: backend
+- title: 'Migration 442: `code_communities`, the id watermark, and every derived carrier'
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '3.1.1: The new migration (442, or the next free number at
+    landing) creates `code_communities` with the constraints, the `idx_cc_label_queue`
+    index, machine-scoped RLS policies, and GRANTs above, and adds `community_id_watermark`
+    and `partition_signature` to `code_indexed_project_states`. file: `crates/gcore/assets/schema/migrations/442_add_code_communities.sql`.
+
+    3.1.2: `baseline.sql`, `catalog.manifest.json`, `assets.rs::MIGRATIONS`, `crates/gcore/src/grant/bundle.rs`,
+    `schema_contract.rs`, `gdaemon` `cli_contract.rs`, `schema_expected_identity.json`,
+    and the five goldens agree on the new latest version (442, or the next free number
+    at landing). file: `src/gobby/storage/schema_expected_identity.json`.
+
+    3.1.3: `GCODE_RLS_TABLES` lists twelve tables and the runner tests assert the
+    machine-scoped predicates on `code_communities`. file: `crates/gcore/src/schema/runner_tests.rs`.
+
+    3.1.4: The privilege manifest grants `code_communities` to the gcode capability
+    with the same scope declaration as `code_indexed_project_states`, and gcode''s
+    `schema.rs` contracts include the table and both new columns. file: `crates/gcode/security/managed_postgres_privileges.json`.
+
+    3.1.5: `uv run gobby restart` applies 442 on the live hub and `gdaemon schema
+    plan` reports nothing pending afterwards, as recorded in the apply log. behavior:
+    "nothing pending" in `docs/evidence/community-labels-2026-09/schema-apply.md`.
+
+    3.1.6: The managed-relation set assertion names `code_communities`. test: `tests/code_index/test_gcode_privilege_manifest.py::test_manifest_privileges_match_the_managed_relation_set`.
+
+    3.1.7: The migration number actually used replaces every occurrence of the provisional
+    442 named in Constraints in the same commit, and the apply log and V1 record it.
+    behavior: "landed as migration" in `docs/evidence/community-labels-2026-09/schema-apply.md`.'
+  labels:
+  - covers:gcode-import-communities:3.1:3.1.1
+  - covers:gcode-import-communities:3.1:3.1.2
+  - covers:gcode-import-communities:3.1:3.1.3
+  - covers:gcode-import-communities:3.1:3.1.4
+  - covers:gcode-import-communities:3.1:3.1.5
+  - covers:gcode-import-communities:3.1:3.1.6
+  - covers:gcode-import-communities:3.1:3.1.7
+  tdd: true
+  source_section: '3.1'
+  implementation_domain: backend
+- title: Persist the partition at index time and expose the read API
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.3'
+  - '3.1'
+  validation_criteria: '3.2.1: `gcode index` (full, incremental, hook, and overlay
+    runs) refreshes `code_communities` after project stats and before projection sync,
+    reading the prior rows under row locks and replacing them in the same transaction
+    that advances the watermark and writes the partition signature. symbol: `refresh_project_communities`.
+    file: `crates/gcode/src/communities.rs`.
+
+    3.2.2: A partition signature equal to the stored `partition_signature` skips the
+    write. test: `crates/gcode/src/communities/refresh_tests.rs::unchanged_partition_skips_write`.
+
+    3.2.3: A refresh failure degrades the outcome with `CommunityRefreshFailed` and
+    never fails the index run. test: `crates/gcode/src/communities/refresh_tests.rs::refresh_failure_degrades_index_outcome`.
+
+    3.2.4: `read_for_context` returns overlay rows first and parent rows as fallback,
+    with `label_stale` derived from the signatures. symbol: `read_for_context`. file:
+    `crates/gcode/src/communities.rs`.
+
+    3.2.5: `IndexOutcome.communities` is additive and absent when `None`; the `index`
+    contract keys and both pinned JSON copies include it. file: `crates/gcode/contract/gcode.contract.json`.
+
+    3.2.6: The privilege manifest''s source inventory lists `crates/gcode/src/db/communities.rs`.
+    file: `crates/gcode/security/managed_postgres_privileges.json`.
+
+    3.2.7: A label the daemon writes while a refresh is in flight is either carried
+    forward or left queued; it is never discarded. test: `crates/gcode/src/communities/refresh_tests.rs::label_written_during_refresh_is_not_lost`.
+
+    3.2.8: An overlay project''s first refresh seeds ids, watermark, and label fields
+    from the parent project. test: `crates/gcode/src/communities/refresh_tests.rs::overlay_refresh_seeds_prior_rows_from_parent`.
+
+    3.2.9: An import added or removed between existing members rewrites the rows with
+    new `internal_edges`, `cohesion`, `representatives`, and `boundary` although no
+    `member_signature` changed. test: `crates/gcode/src/communities/refresh_tests.rs::edge_change_without_membership_change_rewrites_rows`.
+
+    3.2.10: `read_for_context` returns a stale model-labeled row with `label` rewritten
+    to the deterministic label, `label_source` deterministic, `label_confidence` and
+    `label_model` `None`, and `label_stale` true, leaving the stored row unchanged.
+    test: `crates/gcode/src/communities/refresh_tests.rs::stale_model_label_reads_as_deterministic`.
+
+    3.2.11: The Q1.4 churn experiment ran on both corpora before close, with one row
+    seeded to `label_source=''model''` by direct `UPDATE` before the rename step so
+    the `label_stale` flip is observable, and its row diffs are recorded. behavior:
+    "member_signature" in `docs/evidence/community-labels-2026-09/churn.md`.
+
+    3.2.12: Incremental single-file index latency before and after this leaf is recorded
+    against the +250 ms p50 budget on both corpora. behavior: "p50" in `docs/evidence/community-labels-2026-09/refresh-latency.md`.
+
+    3.2.13: `invalidate` removes this machine''s `code_communities` rows in the same
+    transaction that removes its `code_indexed_project_states` row. test: `crates/gcode/src/communities/refresh_tests.rs::invalidate_removes_community_rows_with_project_state`.
+
+    3.2.14: An overlay''s first refresh commits rows under the overlay id even when
+    its partition equals the parent''s, because the skip compares against the overlay''s
+    own stored signature. test: `crates/gcode/src/communities/refresh_tests.rs::overlay_first_refresh_commits_when_partition_matches_parent`.
+
+    3.2.15: The overlay seed reads the parent''s rows under `FOR UPDATE` on the parent''s
+    state row in one READ COMMITTED transaction and observes a concurrent parent replace
+    only after it commits. test: `crates/gcode/src/communities/refresh_tests.rs::overlay_seed_locks_parent_state_row`.'
+  labels:
+  - covers:gcode-import-communities:3.2:3.2.1
+  - covers:gcode-import-communities:3.2:3.2.2
+  - covers:gcode-import-communities:3.2:3.2.3
+  - covers:gcode-import-communities:3.2:3.2.4
+  - covers:gcode-import-communities:3.2:3.2.5
+  - covers:gcode-import-communities:3.2:3.2.6
+  - covers:gcode-import-communities:3.2:3.2.7
+  - covers:gcode-import-communities:3.2:3.2.8
+  - covers:gcode-import-communities:3.2:3.2.9
+  - covers:gcode-import-communities:3.2:3.2.10
+  - covers:gcode-import-communities:3.2:3.2.11
+  - covers:gcode-import-communities:3.2:3.2.12
+  - covers:gcode-import-communities:3.2:3.2.13
+  - covers:gcode-import-communities:3.2:3.2.14
+  - covers:gcode-import-communities:3.2:3.2.15
+  tdd: true
+  source_section: '3.2'
+  implementation_domain: backend
+- title: Extract the graph-view CLI types into `crates/gcode/src/cli/graph_view.rs`
+  category: refactor
+  task_type: feature
+  depends_on: []
+  validation_criteria: '4.1.1: The graph-view CLI types and impls live in `crates/gcode/src/cli/graph_view.rs`
+    and `cli.rs` is under 700 lines with unchanged public paths. file: `crates/gcode/src/cli/graph_view.rs`.
+
+    4.1.2: Every existing projection test passes without edits and the moved types
+    keep their names. test: `crates/gcode/src/cli/tests/projection.rs::graph_view_requires_typed_compatible_selector`.'
+  labels:
+  - covers:gcode-import-communities:4.1:4.1.1
+  - covers:gcode-import-communities:4.1:4.1.2
+  tdd: false
+  source_section: '4.1'
+  assigned_agent: backend-developer
+- title: Label MCG nodes from stored rows and extend the view payload shapes
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.2'
+  validation_criteria: '4.2.1: MCG file and uniquely resolved module nodes carry the
+    stored community label; external and ambiguous modules carry none; no `graph_analytics`
+    import remains in `mcg.rs`. symbol: `label_communities`. file: `crates/gcode/src/commands/graph/view/mcg.rs`.
+
+    4.2.2: With no stored rows every node''s `community` is null and the payload carries
+    the missing-partition hint. test: `crates/gcode/src/commands/graph/view/mcg/tests.rs::mcg_without_stored_partition_hints_and_leaves_null`.
+
+    4.2.3: `ViewCommunity` carries id, label, size, cohesion, label_source, label_stale,
+    and view-scoped nodes; `build_view_payload` rejects membership outside `nodes[]`.
+    test: `crates/gcode/src/commands/graph/view/render_tests.rs::payload_rejects_unknown_community_member`.
+
+    4.2.4: `NodeKind::Community` exists with a null file and the `community:` key
+    prefix, `ViewEdge.count` is optional, and `analytics_graph_from_payload` is deleted.
+    symbol: `NodeKind`. file: `crates/gcode/src/commands/graph/view/render.rs`.
+
+    4.2.5: Mermaid output groups clustered nodes into one subgraph per community titled
+    by its label, with unclustered nodes at top level and edges after the blocks.
+    test: `crates/gcode/src/commands/graph/view/render_tests.rs::mermaid_groups_nodes_into_community_subgraphs`.'
+  labels:
+  - covers:gcode-import-communities:4.2:4.2.1
+  - covers:gcode-import-communities:4.2:4.2.2
+  - covers:gcode-import-communities:4.2:4.2.3
+  - covers:gcode-import-communities:4.2:4.2.4
+  - covers:gcode-import-communities:4.2:4.2.5
+  tdd: true
+  source_section: '4.2'
+  implementation_domain: backend
+- title: Add the communities view kind, `--min-size`, `--community`, the view module,
+    and contract v11
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.2'
+  - '4.1'
+  - '4.2'
+  validation_criteria: '4.3.1: `--view=communities` parses without a seed and accepts
+    `--min-size` and `--community`. test: `crates/gcode/src/cli/tests/projection.rs::communities_parses_without_seed`.
+
+    4.3.2: The list view emits one node per listed community, inter-community `IMPORTS`
+    edges with counts, one `communities[]` entry per listed row with empty `nodes`,
+    and valid Mermaid, reading stored rows only. symbol: `run_list`. file: `crates/gcode/src/commands/graph/view/communities.rs`.
+
+    4.3.3: The detail view resolves an integer id, a case-insensitive exact label,
+    an exact deterministic label, or a unique case-insensitive substring of `label`
+    or `label_deterministic`, never of members. test: `crates/gcode/src/commands/graph/view/communities/tests.rs::detail_resolves_id_label_and_unique_substring`.
+
+    4.3.4: Routing covers every view and seed combination including the seedless form.
+    test: `crates/gcode/src/commands/graph/view/tests.rs::run_routes_every_view_and_seed_combination`.
+
+    4.3.5: The contract advertises `communities`, `--min-size`, and `--community`
+    at version 11 in `contract.rs`, both pinned JSON copies, the Rust and Python pins,
+    and `docs/contracts/gcode-cli.md`. file: `tests/contracts/gcode.contract.json`.
+
+    4.3.6: The gcode crate version is 1.9.0. behavior: "1.9.0" in `crates/gcode/Cargo.toml`.
+
+    4.3.7: `--community <path>` resolves to the community whose members contain the
+    path. test: `crates/gcode/src/commands/graph/view/communities/tests.rs::detail_resolves_member_path`.
+
+    4.3.8: The detail view caps members at 50 and neighbors at 12 and sets `outgoing_truncated`/`incoming_truncated`
+    when it does. test: `crates/gcode/src/commands/graph/view/communities/tests.rs::detail_truncates_members_and_neighbors_with_flags`.
+
+    4.3.9: A path that belongs to no community is a typed exit-2 error naming it.
+    test: `crates/gcode/src/commands/graph/view/communities/tests.rs::detail_unknown_path_is_typed_error`.
+
+    4.3.10: An ambiguous substring is a typed exit-2 error listing up to five matches.
+    test: `crates/gcode/src/commands/graph/view/communities/tests.rs::detail_ambiguous_substring_is_typed_error`.
+
+    4.3.11: A project with no stored rows lists nothing and carries the missing-partition
+    hint. test: `crates/gcode/src/commands/graph/view/communities/tests.rs::list_without_rows_hints`.
+
+    4.3.12: `--view=communities` rejects other seeds, `--depth`, and row limits with
+    typed clap conflicts. test: `crates/gcode/src/cli/tests/projection.rs::communities_rejects_other_seeds_depth_and_row_limits`.
+
+    4.3.13: `--min-size` is rejected off communities and at zero. test: `crates/gcode/src/cli/tests/projection.rs::min_size_rejected_off_communities_and_at_zero`.
+
+    4.3.14: `docs/contracts/gcode-cli.md` states `contract_version`: 11 at its version
+    line and `docs/guides/gcode-user-guide.md` names the communities view kind with
+    its seedless form. behavior: "--view communities" in `docs/guides/gcode-user-guide.md`.
+
+    4.3.15: `gcode graph view --view communities` on the Gobby checkout completes
+    in under one second from stored rows over five runs. behavior: "under one second"
+    in `docs/evidence/community-labels-2026-09/view-latency.md`.
+
+    4.3.16: At every rung a selector that matches nothing, an unknown integer id included,
+    is a typed exit-2 error naming it, and more than one match, two rows sharing an
+    exact label included, is a typed exit-2 error listing up to five matches. test:
+    `crates/gcode/src/commands/graph/view/communities/tests.rs::detail_no_match_and_multi_match_are_typed_errors_at_every_rung`.'
+  labels:
+  - covers:gcode-import-communities:4.3:4.3.1
+  - covers:gcode-import-communities:4.3:4.3.2
+  - covers:gcode-import-communities:4.3:4.3.3
+  - covers:gcode-import-communities:4.3:4.3.4
+  - covers:gcode-import-communities:4.3:4.3.5
+  - covers:gcode-import-communities:4.3:4.3.6
+  - covers:gcode-import-communities:4.3:4.3.7
+  - covers:gcode-import-communities:4.3:4.3.8
+  - covers:gcode-import-communities:4.3:4.3.9
+  - covers:gcode-import-communities:4.3:4.3.10
+  - covers:gcode-import-communities:4.3:4.3.11
+  - covers:gcode-import-communities:4.3:4.3.12
+  - covers:gcode-import-communities:4.3:4.3.13
+  - covers:gcode-import-communities:4.3:4.3.14
+  - covers:gcode-import-communities:4.3:4.3.15
+  - covers:gcode-import-communities:4.3:4.3.16
+  tdd: true
+  source_section: '4.3'
+  implementation_domain: backend
+- title: Add the `## Import communities` section to `gcode graph report`
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.2'
+  - '4.3'
+  validation_criteria: '4.4.1: `gcode graph report` includes an `Import communities`
+    section and JSON key whose total and thin counts reconcile with the stored rows.
+    test: `crates/gcode/src/graph/report/tests.rs::report_communities_section_counts_reconcile`.
+
+    4.4.2: A project without stored communities degrades the optional input instead
+    of failing the report. test: `crates/gcode/src/graph/report/tests.rs::report_without_communities_degrades_optional_input`.
+
+    4.4.3: `graph_report_keys()` and both pinned JSON copies list `communities`. file:
+    `crates/gcode/src/contract/schema.rs`.'
+  labels:
+  - covers:gcode-import-communities:4.4:4.4.1
+  - covers:gcode-import-communities:4.4:4.4.2
+  - covers:gcode-import-communities:4.4:4.4.3
+  tdd: true
+  source_section: '4.4'
+  implementation_domain: backend
+- title: Add `EvidenceOperation::Communities` and `EvidenceItem::Community` to gcode
+    evidence
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.4'
+  validation_criteria: "5.1.1: `gcode evidence --request-json` accepts the flat internally\
+    \ tagged request `{\"schema_version\": 1, \"binding\": \u2026, \"operation\":\
+    \ \"communities\", \"communities\": {\u2026}, \"max_bytes\": \u2026}`, with the\
+    \ selector as a sibling of `operation`, and returns `Community` items in list\
+    \ and detail modes. symbol: `CommunitiesSelector`. file: `crates/gcode/src/evidence/contracts.rs`.\n\
+    5.1.2: `evidence_id` is derived from binding, community id, and member signature\
+    \ so it survives relabeling. test: `crates/gcode/src/evidence/tests.rs::communities_evidence_id_survives_relabel`.\n\
+    5.1.3: Zero stored rows on a never-refreshed project report `CompleteEmpty` with\
+    \ the `community_partition_missing` warning, below-threshold results report `CompleteEmpty`,\
+    \ and over-limit results report `TruncatedIndex`; no community data condition\
+    \ is an error. test: `crates/gcode/src/evidence/tests.rs::communities_without_rows_is_complete_empty_with_hint`.\n\
+    5.1.4: `EvidenceFacts::project_communities` is required and implemented for `CodewikiFacts`\
+    \ and `FakeFacts`. symbol: `EvidenceFacts`. file: `crates/gcode/src/evidence/mod.rs`.\n\
+    5.1.5: `evidence_keys()`, the evidence contract test, and both pinned JSON copies\
+    \ list the community item keys. file: `crates/gcode/src/contract/schema.rs`.\n\
+    5.1.6: `CommunityFact` is the row shape `project_communities` returns inside `ProjectCommunities`\
+    \ and carries the read-path label fields. symbol: `CommunityFact`. file: `crates/gcode/src/codewiki_facts/communities.rs`.\n\
+    5.1.7: A refreshed project with no stored communities reports `CompleteEmpty`\
+    \ without the missing-partition warning. test: `crates/gcode/src/evidence/tests.rs::communities_refreshed_but_empty_is_complete_empty`.\n\
+    5.1.8: Detail mode resolves `label` through 4.3's ladder over `label` and `label_deterministic`,\
+    \ never members, returns every match with the `community_selector_ambiguous` warning\
+    \ when more than one row matches, and reports `CompleteEmpty` for no match. test:\
+    \ `crates/gcode/src/evidence/tests.rs::communities_ambiguous_label_returns_every_match_with_warning`.\n\
+    5.1.9: `canonical_key` for a community item leads with its variant discriminator\
+    \ and zero-pads size and id, so community items sort after source and graph items\
+    \ and by size across a power of ten. test: `crates/gcode/src/evidence/tests.rs::communities_list_orders_by_size_then_id`."
+  labels:
+  - covers:gcode-import-communities:5.1:5.1.1
+  - covers:gcode-import-communities:5.1:5.1.2
+  - covers:gcode-import-communities:5.1:5.1.3
+  - covers:gcode-import-communities:5.1:5.1.4
+  - covers:gcode-import-communities:5.1:5.1.5
+  - covers:gcode-import-communities:5.1:5.1.6
+  - covers:gcode-import-communities:5.1:5.1.7
+  - covers:gcode-import-communities:5.1:5.1.8
+  - covers:gcode-import-communities:5.1:5.1.9
+  tdd: true
+  source_section: '5.1'
+  implementation_domain: backend
+- title: Admit, validate, and describe the `communities` operation in Ask
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.3'
+  - '5.1'
+  validation_criteria: '5.2.1: Ask admits `communities` in pipeline and interactive
+    modes and forwards a schema-1 request with normalized selector defaults. symbol:
+    `EvidenceAdmission._normalize_selector`. file: `src/gobby/ask/evidence.py`.
+
+    5.2.2: `CommunityEvidenceItem` is a member of the `EvidenceItem` union and manifest
+    validation accepts it. test: `tests/ask/test_validation.py::test_manifest_accepts_community_item`.
+
+    5.2.3: A citation that targets a community item is rejected with a diagnostic
+    naming the operation as non-citable. test: `tests/ask/test_validation.py::test_citation_of_community_item_is_rejected`.
+
+    5.2.4: The MCP tool literals, descriptions, `docs/contracts/ask.md`, and the `gcode
+    evidence` operations list describe the operation. behavior: "communities" in `docs/contracts/ask.md`.
+
+    5.2.5: The user guide''s evidence-operation enumeration names `communities`. behavior:
+    "communities" in `docs/guides/ask.md`.
+
+    5.2.6: The code-index ask reference and the code-index guide enumerate `communities`
+    with its non-citability sentence. behavior: "communities" in `src/gobby/install/shared/skills/gobby/references/code-index/ask.md`.'
+  labels:
+  - covers:gcode-import-communities:5.2:5.2.1
+  - covers:gcode-import-communities:5.2:5.2.2
+  - covers:gcode-import-communities:5.2:5.2.3
+  - covers:gcode-import-communities:5.2:5.2.4
+  - covers:gcode-import-communities:5.2:5.2.5
+  - covers:gcode-import-communities:5.2:5.2.6
+  tdd: true
+  source_section: '5.2'
+  implementation_domain: backend
+- title: Community label storage, model, and configuration
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.1'
+  validation_criteria: '6.1.1: `CodeIndexCommunityStorageMixin` queues by signature
+    mismatch with a cooloff and writes labels only when the member signature still
+    matches. test: `tests/code_index/test_code_index_storage.py::test_update_community_label_is_signature_guarded`.
+
+    6.1.2: `CodeIndexCommunityLabelConfig` exists with the fields above, `decisions_api_key`
+    classifies as a secret, and the runtime config contract, codec vectors, and audit
+    rows are regenerated. symbol: `CodeIndexCommunityLabelConfig`. file: `src/gobby/config/code_index.py`.
+
+    6.1.3: `StoredCommunity` round-trips a `code_communities` row. symbol: `StoredCommunity`.
+    file: `src/gobby/code_index/models.py`.'
+  labels:
+  - covers:gcode-import-communities:6.1:6.1.1
+  - covers:gcode-import-communities:6.1:6.1.2
+  - covers:gcode-import-communities:6.1:6.1.3
+  tdd: true
+  source_section: '6.1'
+  implementation_domain: backend
+- title: Generate and validate community names in the maintenance loop
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.2'
+  - '6.1'
+  validation_criteria: '6.2.1: The maintenance pass labels queued communities after
+    symbol summaries with keyword-only wiring that leaves existing call sites untouched.
+    symbol: `_label_unlabeled_communities`. file: `src/gobby/code_index/maintenance.py`.
+
+    6.2.2: Generated names pass schema validation and sanitation before any write,
+    and a name equal to a deterministic candidate is stored as deterministic with
+    `label_model` set to the generation profile and `labeled_signature` equal to the
+    member signature, so the row leaves the label queue. test: `tests/code_index/test_community_labeler.py::test_generated_name_equal_to_candidate_writes_deterministic`.
+
+    6.2.3: A generation failure stamps `label_attempted_at` and changes no label field.
+    test: `tests/code_index/test_community_labeler.py::test_generation_failure_stamps_attempt_only`.
+
+    6.2.4: Every labeling outcome emits one `code_index.community_label.outcome` log
+    event with a discriminator value. test: `tests/code_index/test_community_labeler.py::test_every_outcome_emits_one_log_event`.
+
+    6.2.5: With no `decisions_api_base` configured a validated name is written with
+    `label_source=''model''`, `label_confidence` NULL, `label_model` set to the generation
+    profile, and `labeled_signature` equal to the member signature. test: `tests/code_index/test_community_labeler.py::test_ungated_validated_name_writes_model_label`.
+
+    6.2.6: `GeneratedLabel` carries the validated name, the never-persisted rationale,
+    and the generation model. symbol: `GeneratedLabel`. file: `src/gobby/code_index/community_labeler.py`.
+
+    6.2.7: A schema rejection and a sanitation rejection each stamp `label_attempted_at`
+    and change no label field, so the row waits out the cooloff instead of regenerating
+    on the next pass. test: `tests/code_index/test_community_labeler.py::test_rejections_stamp_attempt_only`.'
+  labels:
+  - covers:gcode-import-communities:6.2:6.2.1
+  - covers:gcode-import-communities:6.2:6.2.2
+  - covers:gcode-import-communities:6.2:6.2.3
+  - covers:gcode-import-communities:6.2:6.2.4
+  - covers:gcode-import-communities:6.2:6.2.5
+  - covers:gcode-import-communities:6.2:6.2.6
+  - covers:gcode-import-communities:6.2:6.2.7
+  tdd: true
+  source_section: '6.2'
+  implementation_domain: backend
+- title: Gate generated names through a Jev `choice` decision
+  category: code
+  task_type: feature
+  depends_on:
+  - '6.2'
+  validation_criteria: '6.3.1: `DecisionsClient.choose` posts `{state, model, questions}`
+    with bearer auth, retries only on 429/529, and matches answers by key. test: `tests/llm/test_decisions_client.py::test_choose_posts_state_model_questions`.
+
+    6.3.2: A `generated` choice at or above the threshold writes the model label with
+    confidence and model; anything else writes the deterministic label with confidence,
+    model, and signature stamped; transport failure stamps the attempt only. test:
+    `tests/code_index/test_community_labeler.py::test_gate_admits_at_threshold_and_rejects_below`.
+
+    6.3.3: `docs/guides/llm-features.md` documents `code_index.community_label` and
+    the decisions gate. behavior: "community_label" in `docs/guides/llm-features.md`.
+
+    6.3.4: The outcome event''s discriminator admits exactly nine values, the five
+    from 6.2 plus `gate_admitted`, `gate_rejected`, `transport_failed`, and `write_superseded`,
+    where `write_superseded` stamps no field, and the exhaustiveness test covers all
+    nine. test: `tests/code_index/test_community_labeler.py::test_gate_outcomes_extend_the_discriminator_to_nine`.
+
+    6.3.5: The Q1.6 label-quality study ran with arms D, G, and J and `label-quality.md`
+    records the metrics against every bar and the ship decision the live config follows.
+    behavior: "ship" in `docs/evidence/community-labels-2026-09/label-quality.md`.
+
+    6.3.6: The wire-shape spike records one keyed request against the 1P base and
+    one against the OpenRouter alpha base before either is enabled. behavior: "alpha"
+    in `docs/evidence/community-labels-2026-09/decisions-wire-spike.md`.'
+  labels:
+  - covers:gcode-import-communities:6.3:6.3.1
+  - covers:gcode-import-communities:6.3:6.3.2
+  - covers:gcode-import-communities:6.3:6.3.3
+  - covers:gcode-import-communities:6.3:6.3.4
+  - covers:gcode-import-communities:6.3:6.3.5
+  - covers:gcode-import-communities:6.3:6.3.6
+  tdd: true
+  source_section: '6.3'
+  implementation_domain: backend
+- title: Update the code-index graphs reference and the Rust changelog
+  category: docs
+  task_type: feature
+  depends_on:
+  - '4.3'
+  - '4.4'
+  - '5.2'
+  - '6.3'
+  validation_criteria: '7.1.1: The graphs reference describes the persisted partition,
+    the seedless and detail view forms, and `label_stale`. behavior: "--view communities"
+    in `src/gobby/install/shared/skills/gobby/references/code-index/graphs.md`.
+
+    7.1.2: The changelog records every added and changed surface under Unreleased,
+    naming the migration number 3.1 landed under. behavior: "code_communities" in
+    `crates/CHANGELOG.md`.
+
+    7.1.3: The Q1.8 live smoke ran after the cutover and each command''s outcome is
+    recorded. behavior: "--view communities" in `docs/evidence/community-labels-2026-09/live-smoke.md`.'
+  labels:
+  - covers:gcode-import-communities:7.1:7.1.1
+  - covers:gcode-import-communities:7.1:7.1.2
+  - covers:gcode-import-communities:7.1:7.1.3
+  tdd: false
+  source_section: '7.1'
+  assigned_agent: tech-writer
+```
