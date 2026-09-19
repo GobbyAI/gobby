@@ -30,7 +30,7 @@ Usage: gclient [--project PROJECT] [--node NODE] [--workspace WORKSPACE] [--daem
 | `--node NODE` | The node that owns the workspace: a ref (`2`), a node id, a hostname, or a label. Defaults to the daemon's own node. |
 | `--daemon-url URL` | Daemon endpoint. Defaults to the local daemon's configured URL. |
 | `--token-file PATH` | Bearer token file. Defaults to `~/.gobby/local_cli_token`. |
-| `--frame-delivery auto\|direct\|proxy` | How terminal frames arrive. `auto` tries the local frame socket first and falls back to the daemon's WebSocket proxy per pane. |
+| `--frame-delivery auto\|direct\|proxy` | How terminal frames arrive, and with them your keystrokes. `auto` tries the local frame socket first and falls back to the daemon's WebSocket proxy per pane. Forcing `proxy` puts typing back on the daemon for every pane. |
 | `--no-mouse` | Leave mouse events to your terminal emulator. Same as turning off `mouse capture` in settings, for this run only. |
 | `--version`, `-V` | Print the version and exit. |
 | `--help`, `-h` | Print the usage line and exit. |
@@ -394,7 +394,31 @@ title.
 | `○ observe` | You are watching; the first keystroke takes control and is delivered once the lease is granted. |
 | `▲ take-back` | Someone else holds the lease. `prefix+shift+a` or the indicator asks for it back. |
 | `◌ lease lost` | The daemon revoked your lease, typically because another viewer took over. Typing is refused until you take control again. |
-| `◌ read-only` | A write's outcome is unknown after a disconnect. Typing is refused; take control again to continue. |
+| `◌ read-only` | A write's outcome is unknown after a disconnect. Typing is refused; take control again to continue. Only panes that type through the daemon can reach this state. |
+
+### Where your keystrokes go
+
+A local native pane you hold types straight to the terminal host over the same
+socket its frames arrive on. Nothing waits on the daemon between the key and the
+PTY, so a busy or slow daemon no longer stalls the window. The daemon still
+decides who may type: taking the lease makes it grant your attachment input on
+the host, and releasing it, losing it to a takeover, or detaching revokes that
+grant.
+
+Every other pane keeps typing through the daemon — tmux panes, remote panes,
+and any pane whose direct connection failed and fell back to `proxy`. Those
+are the panes that can show `◌ read-only`, because only a write the daemon
+acknowledges can have an unknown outcome. No indicator tells the two apart; a
+pane that typed instantly and then went sluggish fell back, and
+`~/.gobby/logs/gclient.log` records it.
+
+Three messages belong to the direct path:
+
+| Status line | What happened |
+| --- | --- |
+| `terminal did not grant input; take control again` | The daemon gave you the lease but the host did not accept the matching grant. The pane drops to take-back; asking again is the only honest offer, since there is no daemon path to fall back to. |
+| `terminal refused input (<code>); take control again` | The host refused a key, normally `input_not_granted` after your grant was revoked. Output keeps flowing; the pane returns to observing. |
+| `terminal input backlog; key dropped` | You typed faster than the terminal drained. That one keystroke is gone and is not retried, because a retried keystroke is the wrong keystroke. |
 
 Focusing a pane takes control of it automatically, whether you focus it by
 keyboard, by click, or through the navigator. Typing into an observed pane also
@@ -638,10 +662,12 @@ The client rides through the gap. When the daemon's connection drops:
    control of the focused pane, clears the stale failure banner, and refreshes
    the sidebar.
 
-Panes, tabs, and held control therefore survive `gobby restart`. A write whose
-outcome the daemon never confirmed leaves the pane `◌ read-only` until you take
-control again. If the host itself was drained or replaced, the affected terminals
-are gone and their panes disappear on the next roster refresh.
+Panes, tabs, and held control therefore survive `gobby restart`. On a pane that
+types through the daemon, a write whose outcome the daemon never confirmed leaves
+it `◌ read-only` until you take control again; a direct native pane has no such
+write to lose, and retaking control re-grants its input on the host. If the host
+itself was drained or replaced, the affected terminals are gone and their panes
+disappear on the next roster refresh.
 
 Launching with the daemon stopped waits the same way. The probe's report
 (`daemon unreachable at <url>`, with the `gobby start` hint) is printed to the
