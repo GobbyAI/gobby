@@ -63,6 +63,13 @@ WRITE_FAULT_NAME = "terminal_write_fault"
 # host becomes a typed refusal the client shows and retries rather than a
 # timeout it cannot name (#22544).
 HOST_STARTUP_ATTACH_WAIT_SECONDS = 2.5
+
+# The sweep fronts every terminal_list, and a websocket connection handles its
+# messages in order, so whatever the sweep waits for is what every later message
+# on that connection waits for. A hung tmux used to spend the full
+# TMUX_COMMAND_TIMEOUT_SECONDS there (observed: terminal_list took 10.22s).
+TMUX_SWEEP_BUDGET_SECONDS = 2.0
+
 # Opening the host's frame socket and the frame handshake each get this long.
 # Both are local I/O that finishes in milliseconds on a healthy host, and a
 # host that does not answer holds this connection's serial dispatch, so the
@@ -381,6 +388,9 @@ class TerminalWsMixin:
     async def _sweep_tmux_panes(self, manager: Any, machine_id: str) -> dict[str, Any]:
         """Mirror the tmux servers into ``terminals`` before listing; never fails the list.
 
+        Bounded by ``TMUX_SWEEP_BUDGET_SECONDS``: an unresponsive tmux drops this
+        list back to the database rather than holding the connection.
+
         A pane whose working directory is not inside a registered project is
         filed under the global project, so it shows up whichever project the
         web picker selects.
@@ -407,13 +417,22 @@ class TerminalWsMixin:
                     limit=1000,
                 )
             )
-            return await sweep_tmux_terminals(
-                manager,
-                tmux_managers,
-                machine_id=machine_id,
-                owners=pane_owners(sessions),
-                fallback_project_id=GLOBAL_PROJECT_ID,
+            return await asyncio.wait_for(
+                sweep_tmux_terminals(
+                    manager,
+                    tmux_managers,
+                    machine_id=machine_id,
+                    owners=pane_owners(sessions),
+                    fallback_project_id=GLOBAL_PROJECT_ID,
+                ),
+                timeout=TMUX_SWEEP_BUDGET_SECONDS,
             )
+        except TimeoutError:
+            logger.warning(
+                "tmux terminal discovery exceeded %.1fs; listing from the database",
+                TMUX_SWEEP_BUDGET_SECONDS,
+            )
+            return {}
         except Exception:
             logger.warning("tmux terminal discovery failed", exc_info=True)
             return {}

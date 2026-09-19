@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+import time
 import uuid
 from collections.abc import Iterator
 from pathlib import Path
@@ -19,9 +20,11 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.terminals import TerminalManager, tmux_locator_key
 from gobby.terminals.tmux_discovery import (
+    DEAD_PANE_RETENTION_SECONDS,
     PaneOwner,
     _project_for_path,
     pane_owners,
+    reap_expired_dead_panes,
     socket_path_for,
     sweep_tmux_terminals,
 )
@@ -45,9 +48,17 @@ class FakeTmux:
     def __init__(self, socket_name: str, panes: list[TmuxPaneInfo] | None) -> None:
         self.config = TmuxConfig(socket_name=socket_name)
         self.panes = panes
+        self.killed: list[str] = []
+        self.kill_error: Exception | None = None
 
     async def list_panes(self) -> list[TmuxPaneInfo] | None:
         return self.panes
+
+    async def kill_session(self, name: str, *, missing_ok: bool = False) -> bool:
+        if self.kill_error is not None:
+            raise self.kill_error
+        self.killed.append(name)
+        return True
 
 
 def pane(
@@ -60,6 +71,7 @@ def pane(
     pane_command: str | None = "zsh",
     pane_path: str | None = "/nowhere",
     pane_dead: bool = False,
+    pane_dead_time: int | None = None,
     server_pid: int = 6051,
 ) -> TmuxPaneInfo:
     return TmuxPaneInfo(
@@ -75,6 +87,7 @@ def pane(
         pane_dead=pane_dead,
         pane_command=pane_command,
         pane_path=pane_path,
+        pane_dead_time=pane_dead_time,
     )
 
 
@@ -347,3 +360,211 @@ def test_project_for_path_resolves_only_registered_projects(
     assert _project_for_path(manager, str(unknown)) is None
     assert _project_for_path(manager, None) is None
     assert _project_for_path(manager, str(tmp_path / "missing")) is None
+
+
+NOW = 1789789200.0
+LONG_DEAD = int(NOW - DEAD_PANE_RETENTION_SECONDS - 60)
+JUST_DEAD = int(NOW - 60)
+
+
+@pytest.mark.asyncio
+async def test_reaper_kills_a_gobby_session_dead_past_the_retention_window() -> None:
+    """The corpse a finished agent leaves behind goes once its capture window closes."""
+    tmux = FakeTmux(
+        "gobby",
+        [
+            pane(
+                GOBBY_SOCKET,
+                "%1",
+                session_name="gobby-old",
+                pane_dead=True,
+                pane_dead_time=LONG_DEAD,
+            )
+        ],
+    )
+
+    reaped = await reap_expired_dead_panes([(tmux, tmux.panes or [])], now=NOW)
+
+    assert (reaped, tmux.killed) == (1, ["gobby-old"])
+
+
+@pytest.mark.asyncio
+async def test_reaper_keeps_a_pane_still_inside_its_capture_window() -> None:
+    """``capture_full_pane`` reads the dead pane, so it has to outlive the run."""
+    tmux = FakeTmux(
+        "gobby",
+        [
+            pane(
+                GOBBY_SOCKET,
+                "%1",
+                session_name="gobby-fresh",
+                pane_dead=True,
+                pane_dead_time=JUST_DEAD,
+            )
+        ],
+    )
+
+    reaped = await reap_expired_dead_panes([(tmux, tmux.panes or [])], now=NOW)
+
+    assert (reaped, tmux.killed) == (0, [])
+
+
+@pytest.mark.asyncio
+async def test_reaper_spares_live_panes_and_sessions_gobby_did_not_spawn() -> None:
+    """A live agent and the user's own long-dead pane are both none of its business."""
+    gobby = FakeTmux(
+        "gobby",
+        [pane(GOBBY_SOCKET, "%1", session_name="gobby-running", pane_dead=False)],
+    )
+    user = FakeTmux(
+        "",
+        [
+            pane(
+                DEFAULT_SOCKET,
+                "%2",
+                session_name="my-shell",
+                pane_dead=True,
+                pane_dead_time=LONG_DEAD,
+            )
+        ],
+    )
+
+    reaped = await reap_expired_dead_panes(
+        [(gobby, gobby.panes or []), (user, user.panes or [])], now=NOW
+    )
+
+    assert (reaped, gobby.killed, user.killed) == (0, [], [])
+
+
+@pytest.mark.asyncio
+async def test_reaper_never_reaches_the_users_own_tmux_server() -> None:
+    """The prefix alone would match here; the socket is what keeps hands off."""
+    user = FakeTmux(
+        "",
+        [
+            pane(
+                DEFAULT_SOCKET,
+                "%1",
+                session_name="gobby-looks-like-ours",
+                pane_dead=True,
+                pane_dead_time=LONG_DEAD,
+            )
+        ],
+    )
+
+    reaped = await reap_expired_dead_panes([(user, user.panes or [])], now=NOW)
+
+    assert (reaped, user.killed) == (0, [])
+
+
+@pytest.mark.asyncio
+async def test_reaper_leaves_a_session_holding_any_live_pane() -> None:
+    """Killing the session would take the live pane with it."""
+    tmux = FakeTmux(
+        "gobby",
+        [
+            pane(
+                GOBBY_SOCKET,
+                "%1",
+                session_name="gobby-split",
+                pane_dead=True,
+                pane_dead_time=LONG_DEAD,
+            ),
+            pane(GOBBY_SOCKET, "%2", session_name="gobby-split", pane_dead=False),
+        ],
+    )
+
+    reaped = await reap_expired_dead_panes([(tmux, tmux.panes or [])], now=NOW)
+
+    assert (reaped, tmux.killed) == (0, [])
+
+
+@pytest.mark.asyncio
+async def test_reaper_skips_a_dead_pane_tmux_would_not_date() -> None:
+    """With no death timestamp there is no window to measure, so nothing is assumed."""
+    tmux = FakeTmux(
+        "gobby",
+        [
+            pane(
+                GOBBY_SOCKET,
+                "%1",
+                session_name="gobby-undated",
+                pane_dead=True,
+                pane_dead_time=None,
+            )
+        ],
+    )
+
+    reaped = await reap_expired_dead_panes([(tmux, tmux.panes or [])], now=NOW)
+
+    assert (reaped, tmux.killed) == (0, [])
+
+
+@pytest.mark.asyncio
+async def test_reaper_survives_a_failing_kill() -> None:
+    """The reap rides on ``terminal_list``; a stuck tmux must not fail the listing."""
+    tmux = FakeTmux(
+        "gobby",
+        [
+            pane(
+                GOBBY_SOCKET,
+                "%1",
+                session_name="gobby-stuck",
+                pane_dead=True,
+                pane_dead_time=LONG_DEAD,
+            )
+        ],
+    )
+    tmux.kill_error = TimeoutError("tmux command timed out after 10.0s")
+
+    reaped = await reap_expired_dead_panes([(tmux, tmux.panes or [])], now=NOW)
+
+    assert (reaped, tmux.killed) == (0, [])
+
+
+@pytest.mark.asyncio
+async def test_sweep_reaps_expired_dead_panes_after_mirroring(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    """End to end: the row expires and the tmux session it named is cleared too."""
+    manager = TerminalManager(temp_db)
+    corpse = pane(
+        GOBBY_SOCKET,
+        "%1",
+        session_name="gobby-old",
+        pane_dead=True,
+        pane_dead_time=int(time.time() - DEAD_PANE_RETENTION_SECONDS - 60),
+    )
+    row = manager.create_pending(
+        terminal_id=str(uuid.uuid4()),
+        project_id=sample_project["id"],
+        backend="tmux",
+        ownership="gobby",
+        spawn_key="gobby-old",
+    )
+    manager.promote_to_live(
+        row.id,
+        locator={
+            "socket_path": corpse.socket_path,
+            "server_pid": corpse.server_pid,
+            "server_start_time": corpse.server_start_time,
+            "pane_id": corpse.pane_id,
+        },
+        locator_key=key_of(corpse),
+        session_name="gobby-old",
+        title="finished agent",
+    )
+    tmux = FakeTmux("gobby", [corpse])
+
+    seen = await sweep_tmux_terminals(
+        manager,
+        [tmux],
+        machine_id=LOCAL_MACHINE_ID,
+        owners={},
+        fallback_project_id=sample_project["id"],
+    )
+
+    assert seen == {}
+    settled = manager.get(row.id)
+    assert settled is not None and settled.state == "exited"
+    assert tmux.killed == ["gobby-old"]

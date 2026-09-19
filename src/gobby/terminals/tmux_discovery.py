@@ -11,6 +11,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
+from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -30,6 +32,12 @@ from gobby.utils.project_context import get_project_context
 
 logger = logging.getLogger(__name__)
 
+# How long a Gobby-spawned pane stays reachable for post-mortem capture after the
+# CLI inside it exits. Agent panes carry ``remain-on-exit``, so the corpse is what
+# ``capture_full_pane`` reads; without a reaper it is also what outlives the run
+# forever.
+DEAD_PANE_RETENTION_SECONDS = 24 * 60 * 60
+
 
 @dataclass(frozen=True)
 class PaneOwner:
@@ -46,6 +54,8 @@ class PaneLister(Protocol):
     def config(self) -> TmuxConfig: ...
 
     async def list_panes(self) -> list[TmuxPaneInfo] | None: ...
+
+    async def kill_session(self, name: str, *, missing_ok: bool = False) -> bool: ...
 
 
 def socket_path_for(config: TmuxConfig) -> str:
@@ -105,12 +115,15 @@ async def sweep_tmux_terminals(
     socket the sweep could read is expired: a Gobby row outliving its tmux
     server would otherwise stay attachable forever.
 
+    Dead Gobby panes past the retention window are reaped once the mirror is
+    settled; see ``reap_expired_dead_panes``.
+
     The database and project-file work runs off the event loop. The sweep
     fronts every ``terminal_list``, and the loop it would otherwise hold is
     the one carrying keystrokes for every other terminal connection.
     """
     rows = await asyncio.to_thread(manager.list_live_by_machine, machine_id)
-    listings: list[tuple[str, list[TmuxPaneInfo]]] = []
+    collected: list[tuple[PaneLister, list[TmuxPaneInfo]]] = []
     for tmux in tmux_managers:
         try:
             panes = await tmux.list_panes()
@@ -119,8 +132,9 @@ async def sweep_tmux_terminals(
             continue
         if panes is None:
             continue
-        listings.append((socket_path_for(tmux.config), panes))
-    return await asyncio.to_thread(
+        collected.append((tmux, panes))
+    listings = [(socket_path_for(tmux.config), panes) for tmux, panes in collected]
+    seen = await asyncio.to_thread(
         _reconcile_panes,
         manager,
         rows,
@@ -129,6 +143,65 @@ async def sweep_tmux_terminals(
         owners=owners,
         fallback_project_id=fallback_project_id,
     )
+    await reap_expired_dead_panes(collected)
+    return seen
+
+
+async def reap_expired_dead_panes(
+    collected: Sequence[tuple[PaneLister, Sequence[TmuxPaneInfo]]],
+    *,
+    retention_seconds: float = DEAD_PANE_RETENTION_SECONDS,
+    now: float | None = None,
+) -> int:
+    """Kill Gobby-spawned tmux sessions whose panes have all been dead too long.
+
+    Agent sessions are created with ``remain-on-exit`` so ``capture-pane`` still
+    works after the CLI exits, and nothing else clears the corpse:
+    ``_reconcile_panes`` skips a dead pane, marks its row exited, and the pane,
+    its session and its ``pipe-pane`` child then outlive every cleanup path --
+    ``cleanup_terminal_tmux_sessions`` only reaches rows still pending, live or
+    orphaned. Waiting out ``retention_seconds`` keeps a run's post-mortem
+    capture available for a day before the session goes.
+
+    The user's own tmux server is never touched: only a socket Gobby named for
+    itself is reaped, and only sessions carrying that socket's
+    ``session_prefix``. A session with any live pane, or any dead pane tmux did
+    not date, is left alone -- and killing the session would take a live sibling
+    pane with it.
+    """
+    deadline = (time.time() if now is None else now) - retention_seconds
+    reaped = 0
+    for tmux, panes in collected:
+        if not (tmux.config.socket_name or tmux.config.socket_path):
+            # The default socket is the user's personal tmux server; Gobby
+            # spawns nothing there, so nothing there is Gobby's to kill.
+            continue
+        prefix = f"{tmux.config.session_prefix}-"
+        by_session: dict[str, list[TmuxPaneInfo]] = defaultdict(list)
+        for pane in panes:
+            if pane.session_name.startswith(prefix):
+                by_session[pane.session_name].append(pane)
+        for name, session_panes in by_session.items():
+            deaths = [
+                pane.pane_dead_time
+                for pane in session_panes
+                if pane.pane_dead and pane.pane_dead_time is not None
+            ]
+            if len(deaths) != len(session_panes) or max(deaths) > deadline:
+                continue
+            try:
+                killed = await tmux.kill_session(name, missing_ok=True)
+            except (TimeoutError, OSError):
+                logger.warning("reaping dead tmux session %s failed", name, exc_info=True)
+                continue
+            if killed:
+                reaped += 1
+                logger.info(
+                    "Reaped tmux session %s, dead since %s",
+                    name,
+                    max(deaths),
+                )
+    return reaped
 
 
 def _reconcile_panes(

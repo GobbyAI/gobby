@@ -137,6 +137,9 @@ class TmuxPaneInfo:
     pane_command: str | None
     pane_path: str | None
     session_attached: int = 0
+    # Unix timestamp tmux recorded when the pane's process exited. None while the
+    # pane is live, and on any dead pane tmux declined to date.
+    pane_dead_time: int | None = None
 
 
 _PANE_LIST_FORMAT = "\t".join(
@@ -154,6 +157,7 @@ _PANE_LIST_FORMAT = "\t".join(
         "#{pane_current_command}",
         "#{pane_current_path}",
         "#{session_attached}",
+        "#{pane_dead_time}",
     )
 )
 
@@ -445,7 +449,7 @@ class TmuxSessionManager:
     def _parse_pane_line(line: str) -> TmuxPaneInfo | None:
         """Parse one ``_PANE_LIST_FORMAT`` row; rows with a tab in a name are dropped."""
         parts = line.split("\t")
-        if len(parts) != 13:
+        if len(parts) != 14:
             return None
         (
             socket_path,
@@ -461,6 +465,7 @@ class TmuxSessionManager:
             pane_command,
             pane_path,
             session_attached,
+            pane_dead_time,
         ) = parts
         if not (
             socket_path
@@ -485,6 +490,7 @@ class TmuxSessionManager:
             pane_command=pane_command or None,
             pane_path=pane_path or None,
             session_attached=int(session_attached) if session_attached.isdigit() else 0,
+            pane_dead_time=int(pane_dead_time) if pane_dead_time.isdigit() else None,
         )
 
     async def has_session(self, name: str) -> bool:
