@@ -326,6 +326,7 @@ def activate_materialized_session(
     # the concrete HookEventHandlers assigns it. Match _session_end.py:192 so a
     # handler without the attribute takes the same skip path as one holding None.
     terminal_manager = getattr(handler, "terminal_manager", None)
+    pending_native_terminal_bind: tuple[str, str] | None = None
     if (
         terminal_manager is not None
         and isinstance(terminal_context, dict)
@@ -353,9 +354,7 @@ def activate_materialized_session(
             and not terminal_context.get("tmux_pane")
             and terminal_manager.bind_session(native_terminal_id, session_id, project_id) is None
         ):
-            handler.logger.info(
-                "native terminal %s not bound to session %s", native_terminal_id, session_id
-            )
+            pending_native_terminal_bind = (native_terminal_id, project_id)
 
     handler._setup_code_index(session_id, project_id)
 
@@ -399,6 +398,14 @@ def activate_materialized_session(
         project_id=project_id,
         terminal_context=terminal_context,
     )
+    # A reused native terminal can still be held by the live predecessor until
+    # context expiry; retry only the bind that the ownership guard refused.
+    if pending_native_terminal_bind is not None and terminal_manager is not None:
+        native_terminal_id, native_project_id = pending_native_terminal_bind
+        if terminal_manager.bind_session(native_terminal_id, session_id, native_project_id) is None:
+            handler.logger.info(
+                "native terminal %s not bound to session %s", native_terminal_id, session_id
+            )
     if session_obj:
         _schedule_tmux_window_rename_for_session(handler, session_obj)
 

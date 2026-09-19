@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from contextlib import ExitStack
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -9,6 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import psutil
 import pytest
 
 from gobby.hooks.effect_deadline import BlockingEffectDeadline
@@ -35,6 +37,7 @@ from gobby.sessions.handoff_records import build_handoff_payload
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.sessions import SessionManager
+from gobby.storage.terminals import TerminalManager, native_locator_key
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.fixtures.isolated_checkout import (
     IsolatedCheckoutFactory,
@@ -497,21 +500,41 @@ def _staged_clear(
     *,
     name: str,
     pane: str,
+    native: bool = False,
 ) -> _StagedClear:
     checkout = install_isolated_checkout_project(
         temp_db, tmp_path / name, name=name, monkeypatch=monkeypatch
     )
+    if native:
+        host_epoch = f"epoch-{name}"
+        host_terminal_id = f"host-{name}"
+        terminal = TerminalManager(temp_db).upsert_external(
+            machine_id=checkout.machine_id,
+            project_id=checkout.project.id,
+            backend="native",
+            locator={"host_terminal_id": host_terminal_id},
+            locator_key=native_locator_key(host_epoch, host_terminal_id),
+            host_epoch=host_epoch,
+        )
+        term: dict[str, object] = {
+            "gobby_terminal_id": terminal.id,
+            "host_terminal_id": host_terminal_id,
+            "parent_pid": os.getpid(),
+            "parent_create_time": psutil.Process().create_time(),
+        }
+    else:
+        term = {
+            "tmux_pane": pane,
+            "tmux_socket_path": "/tmp/tmux",
+            "parent_pid": 10324,
+            "parent_create_time": 1.0,
+        }
     staged = _StagedClear(
         sessions=SessionManager(temp_db),
         machine_id=checkout.machine_id,
         project_id=checkout.project.id,
         root=checkout.root_path,
-        term={
-            "tmux_pane": pane,
-            "tmux_socket_path": "/tmp/tmux",
-            "parent_pid": 10324,
-            "parent_create_time": 1.0,
-        },
+        term=term,
     )
     staged.predecessor_id = staged.register("pred-ext")
     stage_clear_attempt(
@@ -591,6 +614,42 @@ def test_context_reuse_expiry_runs_after_the_successor_binds(
     )
 
     assert seen == [(staged.predecessor_id, "expired")]
+
+
+def test_clear_successor_rebinds_native_terminal_after_context_reuse_expiry(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    staged = _staged_clear(
+        temp_db,
+        tmp_path,
+        monkeypatch,
+        name="native-rebind",
+        pane="",
+        native=True,
+    )
+    terminals = TerminalManager(temp_db)
+    terminal_id = staged.term["gobby_terminal_id"]
+    assert isinstance(terminal_id, str)
+    holder_id = staged.register("native-holder-ext")
+    assert terminals.bind_session(terminal_id, holder_id, staged.project_id) is not None
+    successor_id = staged.register("native-successor-ext")
+    handler = _handler(staged.sessions)
+    handler.terminal_manager = terminals
+
+    _activate_clear_successor(
+        staged,
+        handler,
+        successor_id,
+        staged.resolution(),
+        overrides={"expire_stale_terminal_sessions_for_context": None},
+    )
+
+    assert staged.status(holder_id) == "expired"
+    rebound = terminals.get_live_for_session(successor_id)
+    assert rebound is not None
+    assert rebound.id == terminal_id
 
 
 def test_awaiting_handoff_row_survives_context_reuse_expiry(
