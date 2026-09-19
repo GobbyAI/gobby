@@ -13,14 +13,21 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from gobby.agents.detection.registry import DetectionManifestRegistry
-from gobby.agents.idle_detector import COMPOSER_PROBE_LINES, ComposerRead, IdleDetector
-from gobby.terminals.pane_io import PaneIO, SendResult, clear_composer
+from gobby.agents.idle_detector import COMPOSER_PROBE_LINES, IdleDetector
+from gobby.terminals.pane_io import (
+    SUBMIT_VERIFY_SECONDS,
+    ComposerReader,
+    PaneIO,
+    SendResult,
+    clear_composer,
+    log_pane_failure,
+    send_pane_key,
+    submit_text,
+)
 from gobby.terminals.runtime import NamedKey
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
-
-ComposerReader = Callable[[str | None], ComposerRead]
 
 logger = logging.getLogger(__name__)
 
@@ -62,11 +69,9 @@ _COMPACTION_REJECTION_RETRIES = 1
 _COMPACTION_REJECTION_CAPTURE_LINES = 30
 # The typed command and its Enter are two writes, and a CLI still redrawing an
 # interrupted turn reads them as one input chunk and takes the Enter as a literal
-# newline. Both writes still report Delivered, so the composer is read back: poll it
-# this long for the command to leave, and drain/retype this many times before failing.
-_SUBMIT_VERIFY_SETTLE_SECONDS = 2.0
-_SUBMIT_VERIFY_POLL_SECONDS = 0.1
-_SUBMIT_RETRIES = 1
+# newline. Both writes still report Delivered, so `submit_text` reads the composer
+# back and polls it this long for the command to leave before its next rung.
+_SUBMIT_VERIFY_SETTLE_SECONDS = SUBMIT_VERIFY_SECONDS
 _COMPACTION_REJECTION_ERROR_CODE = "compaction_command_rejected"
 _COMMAND_NOT_SUBMITTED_ERROR_CODE = "command_not_submitted"
 _COMPOSER_NOT_CLEAN_ERROR_CODE = "composer_not_clean"
@@ -129,39 +134,6 @@ def _detect_compaction_rejection(
     }
 
 
-def _log_pane_failure(pane: PaneIO, session_id: str, action: str, reason: str | None) -> None:
-    logger.warning(
-        "Failed %s on %s target %s for session %s: %s",
-        action,
-        pane.backend,
-        pane.target,
-        session_id,
-        reason,
-        extra={
-            "event": "terminal_key_delivery_failed",
-            "action": action,
-            "backend": pane.backend,
-            "target": pane.target,
-            "session_id": session_id,
-        },
-    )
-
-
-async def _send_pane_key(
-    pane: PaneIO,
-    key: NamedKey,
-    session_id: str,
-    *,
-    action: str,
-) -> tuple[bool, str | None]:
-    """Send one named key and keep failures structured for MCP callers."""
-    ok, reason = await pane.send_key(key)
-    if not ok:
-        _log_pane_failure(pane, session_id, action, reason)
-        return False, f"{reason} (session {session_id} while {action})"
-    return True, None
-
-
 async def _wait_for_interrupt(
     observe_interrupt: Callable[[], bool | None],
     *,
@@ -193,7 +165,7 @@ async def _confirm_interrupt(
 ) -> tuple[bool, str | None, dict[str, Any] | None]:
     """Send the interrupt key until the CLI's transcript confirms the turn stopped."""
     for _attempt in range(_INTERRUPT_ATTEMPTS):
-        ok, reason = await _send_pane_key(
+        ok, reason = await send_pane_key(
             pane, key, session_id, action="sending compaction interrupt"
         )
         if not ok:
@@ -220,33 +192,6 @@ async def _confirm_interrupt(
     )
 
 
-async def _command_left_composer(
-    pane: PaneIO,
-    command: str,
-    composer_read: ComposerReader,
-    *,
-    window_seconds: float,
-    poll_seconds: float = _SUBMIT_VERIFY_POLL_SECONDS,
-) -> bool:
-    """Poll the composer until it stops holding ``command``.
-
-    Only a positive draft whose row starts with the command proves the CLI never
-    took it. ``empty`` says the Enter landed, and ``unknown`` — no frame, no
-    snapshot, a redraw the manifest cannot classify — proves nothing either way, so
-    it passes rather than report a delivered compaction as a failure.
-    """
-    elapsed = 0.0
-    while True:
-        read = composer_read(await pane.snapshot(COMPOSER_PROBE_LINES, mode="ansi"))
-        if read.state != "draft" or not read.line.startswith(command):
-            return True
-        if elapsed >= window_seconds:
-            return False
-        delay = min(poll_seconds, window_seconds - elapsed)
-        await asyncio.sleep(delay)
-        elapsed += delay
-
-
 async def _submit_command(
     pane: PaneIO,
     command: str,
@@ -256,52 +201,26 @@ async def _submit_command(
     composer_read: ComposerReader | None,
     verify_seconds: float,
 ) -> tuple[bool, str | None, dict[str, Any] | None]:
-    """Type ``command`` into the drained composer and press Enter until it submits.
+    """Submit ``command`` through the shared verified-submit ladder.
 
-    A Delivered Enter is not a submitted command: the CLI can take it as a literal
-    newline and leave the command on screen. So the composer is read back, and a
-    command still sitting there is drained and retyped — the reads that detect the
-    failure are also what space the retry's writes apart — before the delivery fails
-    with ``command_not_submitted``. Without a ``composer_read`` (no provider) the
-    write outcome stays the only available evidence.
+    Both halves of one handoff -- this command and the pull prompt that follows the
+    compaction -- run the same ladder, so they cannot drift apart.
     """
-    for attempt in range(1 + _SUBMIT_RETRIES):
-        if attempt:
-            logger.warning(
-                "Session %s still held %s in its composer after Enter; "
-                "draining and retyping (attempt %d of %d)",
-                session_id,
-                command,
-                attempt + 1,
-                1 + _SUBMIT_RETRIES,
-            )
-            cleared, clear_reason = await clear_composer(pane, cli_source)
-            if not cleared:
-                _log_pane_failure(pane, session_id, "clearing the composer", clear_reason)
-                return (
-                    False,
-                    f"composer could not be cleared before {command}: {clear_reason}",
-                    {"error_code": _COMPOSER_NOT_CLEAN_ERROR_CODE, "continuation_pending": False},
-                )
-        ok, reason = await pane.type_text(command)
-        if not ok:
-            _log_pane_failure(pane, session_id, "typing compaction command", reason)
-            return False, reason, None
-        ok, reason = await _send_pane_key(
-            pane, "enter", session_id, action="submitting compaction command"
-        )
-        if not ok:
-            return False, reason, None
-        if composer_read is None:
-            return True, None, None
-        if await _command_left_composer(
-            pane, command, composer_read, window_seconds=verify_seconds
-        ):
-            return True, None, None
+    result = await submit_text(
+        pane,
+        command,
+        session_id,
+        label=command,
+        cli_source=cli_source,
+        composer_read=composer_read,
+        verify_seconds=verify_seconds,
+    )
+    if result.ok or result.error_code is None:
+        return result.ok, result.reason, None
     return (
         False,
-        f"{command} was typed but stayed in the composer: the CLI never submitted it",
-        {"error_code": _COMMAND_NOT_SUBMITTED_ERROR_CODE, "continuation_pending": False},
+        result.reason,
+        {"error_code": result.error_code, "continuation_pending": False},
     )
 
 
@@ -318,7 +237,7 @@ async def _interrupt_turn(
         return await _confirm_interrupt(
             pane, key, session_id, observe_interrupt, attempt_seconds=settle_seconds
         )
-    ok, reason = await _send_pane_key(pane, key, session_id, action="sending compaction interrupt")
+    ok, reason = await send_pane_key(pane, key, session_id, action="sending compaction interrupt")
     if not ok:
         return False, reason, None
     if settle_seconds > 0:
@@ -391,7 +310,7 @@ async def _confirm_compaction_prompt(
         # The modal redraws the TUI rather than appending output, so match the screen.
         snapshot = await _capture_pane_snapshot(pane)
         if snapshot is not None and prompt in snapshot:
-            return await _send_pane_key(
+            return await send_pane_key(
                 pane, "enter", session_id, action="confirming compaction command"
             )
         if elapsed >= window_seconds:
@@ -555,7 +474,7 @@ async def _send_terminal_compaction_command(
         if not cleared:
             if continuation_pending:
                 clear_continuation_pending()
-            _log_pane_failure(pane, session_id, "clearing the composer", clear_reason)
+            log_pane_failure(pane, session_id, "clearing the composer", clear_reason)
             return (
                 False,
                 f"composer could not be cleared before {command}: {clear_reason}",
