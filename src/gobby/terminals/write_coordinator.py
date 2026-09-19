@@ -13,6 +13,7 @@ from datetime import datetime
 from typing import Literal, Protocol
 
 from gobby.storage.terminals import Terminal, UnresolvedWriteCapacityError
+from gobby.terminals.host_client import HostCommandError
 from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.native_runtime import (
     NativeBatchFailure,
@@ -555,19 +556,29 @@ class WriteCoordinator:
             # KeyError subclass propagate would leave the latch persisted and
             # suppress every later automatic write to this terminal.
             raise RuntimeUnavailableError(terminal.backend) from exc
-        if request.kind == "text":
-            return await runtime.write_text(terminal, request.payload, request.submit)
-        if request.kind == "key":
-            if not is_named_key(request.payload):
-                raise TerminalWriteError(stage="none")
-            return await runtime.write_key(terminal, request.payload)
-        if request.kind == "input":
-            data = request.payload.encode("utf-8")
-            if request.client_fd is not None:
-                await asyncio.to_thread(_write_client_input, request.client_fd, data)
-                return Delivered()
-            return await runtime.write_input(terminal, data)
-        return await runtime.write_paste(terminal, request.payload)
+        try:
+            if request.kind == "text":
+                return await runtime.write_text(terminal, request.payload, request.submit)
+            if request.kind == "key":
+                if not is_named_key(request.payload):
+                    raise TerminalWriteError(stage="none")
+                return await runtime.write_key(terminal, request.payload)
+            if request.kind == "input":
+                data = request.payload.encode("utf-8")
+                if request.client_fd is not None:
+                    await asyncio.to_thread(_write_client_input, request.client_fd, data)
+                    return Delivered()
+                return await runtime.write_input(terminal, data)
+            return await runtime.write_paste(terminal, request.payload)
+        except HostCommandError as exc:
+            # A typed host refusal is a write outcome, and the host reports the
+            # stage it reached. Left unconverted it matches no caller's
+            # TerminalWriteError arm: the latch stays persisted and suppresses
+            # every later automatic write, and the WebSocket write handler dies
+            # before answering the operator, so the keystroke is silently lost.
+            if exc.stage == "partial":
+                raise TerminalWriteError(stage="partial") from exc
+            raise TerminalWriteError(stage="none") from exc
 
 
 def _latches(request: WriteRequest) -> bool:

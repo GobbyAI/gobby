@@ -14,6 +14,7 @@ from gobby.storage.terminals import (
     Terminal,
     UnresolvedWriteCapacityError,
 )
+from gobby.terminals.host_client import HostCommandError
 from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.runtime import (
     AutomaticWriteQuarantined,
@@ -21,6 +22,7 @@ from gobby.terminals.runtime import (
     IndeterminateWrite,
     TerminalWriteError,
     UnregisteredBackendError,
+    WriteOutcome,
 )
 from gobby.terminals.write_coordinator import (
     SequenceDelay,
@@ -1120,3 +1122,63 @@ async def test_client_fd_write_failure_before_any_byte_is_stage_none() -> None:
     assert excinfo.value.stage == "none"
     assert isinstance(excinfo.value.__cause__, OSError)
     assert runtime.write_log == []
+
+
+@pytest.mark.asyncio
+async def test_typed_host_refusal_is_a_staged_write_error() -> None:
+    """A control-protocol refusal is a write outcome, not an escaping fault.
+
+    Unconverted it matched no caller's ``TerminalWriteError`` arm: the latch
+    stayed persisted and suppressed later automatic writes, and the WebSocket
+    write handler died before answering the operator.
+    """
+
+    class RefusingRuntime(FakeRuntime):
+        async def write_key(self, terminal: Terminal, key: str) -> WriteOutcome:
+            raise HostCommandError("not_found")
+
+    coordinator, _, store = _coordinator(RefusingRuntime(backend="native"), backend="native")
+    terminal_id = next(iter(store.rows))
+
+    with pytest.raises(TerminalWriteError) as excinfo:
+        await coordinator.write(
+            WriteRequest(
+                terminal_id=terminal_id,
+                action_key="refused-key",
+                origin="automatic",
+                kind="key",
+                payload="enter",
+            )
+        )
+
+    assert excinfo.value.stage == "none"
+    cause = excinfo.value.__cause__
+    assert isinstance(cause, HostCommandError)
+    assert cause.error == "not_found"
+    assert _unresolved(store, terminal_id) == {}
+
+
+@pytest.mark.asyncio
+async def test_partial_host_refusal_keeps_the_latch() -> None:
+    """The host reported bytes already on the wire, so the latch must survive."""
+
+    class PartialRuntime(FakeRuntime):
+        async def write_text(self, terminal: Terminal, text: str, submit: bool) -> WriteOutcome:
+            raise HostCommandError("write_failed", stage="partial")
+
+    coordinator, _, store = _coordinator(PartialRuntime(backend="native"), backend="native")
+    terminal_id = next(iter(store.rows))
+
+    with pytest.raises(TerminalWriteError) as excinfo:
+        await coordinator.write(
+            WriteRequest(
+                terminal_id=terminal_id,
+                action_key="partial-text",
+                origin="automatic",
+                kind="text",
+                payload="hello",
+            )
+        )
+
+    assert excinfo.value.stage == "partial"
+    assert "partial-text" in _unresolved(store, terminal_id)
