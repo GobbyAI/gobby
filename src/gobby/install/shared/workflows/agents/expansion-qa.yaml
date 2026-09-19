@@ -31,8 +31,11 @@ prompts:
     - It writes the manifest to coverage_manifest_path, saves QA results on the
       expansion run, and stores artifact pointers through task_artifacts
       (plan_file_path, plan_file_hash, expansion_run_id; preserving base_commit_sha).
-    - If recomputed plan content differs from task_artifacts.plan_file_hash, the
-      run fails mechanically with reason plan_hash_drift.
+    - If recomputed plan content differs from the active registered plan's hash
+      (task_artifacts.plan_file_hash for an unregistered plan), the run fails
+      mechanically with reason plan_hash_drift. gobby-plans:update_plan_hash is
+      the authorized refresh after a narrative change; a passing rerun then
+      rewrites the artifact pointer from the registry.
     - Any deliverable item with status missing or invalid rejects the run
       mechanically. Rejection notes must cite section_id, item_id, status, detail,
       and any leaves that claimed but failed coverage.

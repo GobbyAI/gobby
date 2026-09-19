@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 from gobby.storage.expansion_runs import LocalExpansionRunManager
+from gobby.storage.plans import LocalPlanManager, PlanNotFoundError
 from gobby.storage.tasks import LocalTaskManager, TaskArtifactManager
 
 if TYPE_CHECKING:
@@ -68,7 +69,21 @@ def run_expansion_qa_coverage(
     resolved_plan_path = _resolve_path(repo_root, plan_path)
     actual_plan_hash = _sha256_file(resolved_plan_path)
 
-    expected_hash = artifacts.plan_file_hash or plan_hash
+    # The registry is the authority once a plan is registered: gobby-plans:update_plan_hash
+    # is the sanctioned refresh after a narrative change such as a deferral-ref write-back,
+    # and this pass rewrites the task artifact pointer from it. The pointer written by an
+    # earlier pass only governs unregistered plans.
+    expected_hash = (
+        _registered_plan_hash(
+            task_manager.db,
+            plan_id=plan_id,
+            project_id=project_id,
+            plan_path=resolved_plan_path,
+            repo_root=repo_root,
+        )
+        or artifacts.plan_file_hash
+        or plan_hash
+    )
     if actual_plan_hash != expected_hash or plan_hash != expected_hash:
         return _fail_plan_hash_drift(
             task_manager=task_manager,
@@ -217,6 +232,26 @@ def _resolve_root_task(
 def _resolve_path(repo_root: Path, path_value: str) -> Path:
     path = Path(path_value)
     return path if path.is_absolute() else repo_root / path
+
+
+def _registered_plan_hash(
+    db: HubDatabase,
+    *,
+    plan_id: str,
+    project_id: str,
+    plan_path: Path,
+    repo_root: Path,
+) -> str | None:
+    """Return the active registry hash when a registered plan owns ``plan_path``."""
+    try:
+        record = LocalPlanManager(db).get_plan(plan_id, project_id=project_id)
+    except PlanNotFoundError:
+        return None
+    if record.state != "active" or not record.plan_hash:
+        return None
+    if _resolve_path(repo_root, record.plan_path).resolve() != plan_path.resolve():
+        return None
+    return record.plan_hash
 
 
 def _sha256_file(path: Path) -> str:
