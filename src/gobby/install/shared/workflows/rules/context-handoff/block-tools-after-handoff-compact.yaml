@@ -82,10 +82,31 @@ rules:
       and variables.get('context_compact_handoff_result').get('delivery_failed') is True
       and not (
         event.data.get('mcp_server') == 'gobby-sessions'
-        and event.data.get('mcp_tool') == 'set_handoff'
+        and event.data.get('mcp_tool') in ('set_handoff', 'feedback', 'get_handoff')
+      )
+      and not (
+        event.data.get('mcp_server') == 'gobby-memory'
+        and event.data.get('mcp_tool') == 'review_task_memories'
+      )
+      and not (
+        event.data.get('mcp_server') == 'gobby-agents'
+        and event.data.get('mcp_tool') in ('send_message', 'end_agent_run')
+      )
+      and not (
+        event.data.get('mcp_server') == 'gobby-skills'
+        and event.data.get('mcp_tool') == 'get_skill_file'
+        and (
+          (
+            ((tool_input.get('arguments') or tool_input) or {}).get('name') == 'gobby'
+            and ((tool_input.get('arguments') or tool_input) or {}).get('path') == 'references/sessions/handoffs.md'
+          )
+          or ((tool_input.get('arguments') or tool_input) or {}).get('cursor')
+        )
       )
     effects:
       - type: block
         reason: >-
           Terminal handoff delivery failed after set_handoff returned. Retry
-          gobby-sessions:set_handoff; no other tool is safe until delivery succeeds.
+          gobby-sessions:set_handoff. Only the prerequisites of that retry are
+          open: the memory review and feedback a handoff gate can demand, the
+          handoffs reference, schema discovery, and coordination messages.

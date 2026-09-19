@@ -447,42 +447,48 @@ async def test_context_limit_blocks_bash_with_self_contained_handoff_sequence(
     assert "set_handoff" in (blocked.reason or "")
 
 
-@pytest.mark.parametrize(
-    "tool_event",
-    [
-        pytest.param(
-            {"mcp_server": "gobby-sessions", "mcp_tool": "set_handoff"},
-            id="set-handoff",
-        ),
-        pytest.param(
-            {"mcp_server": "gobby-sessions", "mcp_tool": "feedback"},
-            id="feedback",
-        ),
-        pytest.param(
-            {"mcp_server": "gobby-sessions", "mcp_tool": "get_handoff"},
-            id="get-handoff",
-        ),
-        pytest.param(
-            {"mcp_server": "gobby-memory", "mcp_tool": "review_task_memories"},
-            id="review-task-memories",
-        ),
-        pytest.param(
-            {"mcp_server": "gobby-agents", "mcp_tool": "send_message"},
-            id="send-message",
-        ),
-        pytest.param(
-            {"mcp_server": "gobby-agents", "mcp_tool": "end_agent_run"},
-            id="end-agent-run",
-        ),
-        pytest.param({"tool_name": "get_tool_schema"}, id="bare-get-tool-schema"),
-        pytest.param({"tool_name": "list_tools"}, id="bare-list-tools"),
-        pytest.param(
-            {"tool_name": "mcp__gobby__get_tool_schema"},
-            id="proxy-get-tool-schema",
-        ),
-        pytest.param({"tool_name": "mcp__gobby__list_tools"}, id="proxy-list-tools"),
-    ],
-)
+# Both handoff gates must let these through. `require-handoff-at-context-limit`
+# and `retry-terminal-handoff-after-delivery-failure` each permit `set_handoff`
+# and block the rest, so anything a gate can demand *before* `set_handoff` has to
+# stay reachable under both. The retry gate once carved out `set_handoff` alone
+# and deadlocked against `review-closed-task-memories-before-handoff`, which
+# holds `set_handoff` until `review_task_memories` runs. One list, two gates.
+HANDOFF_PREREQUISITE_EVENTS = [
+    pytest.param(
+        {"mcp_server": "gobby-sessions", "mcp_tool": "set_handoff"},
+        id="set-handoff",
+    ),
+    pytest.param(
+        {"mcp_server": "gobby-sessions", "mcp_tool": "feedback"},
+        id="feedback",
+    ),
+    pytest.param(
+        {"mcp_server": "gobby-sessions", "mcp_tool": "get_handoff"},
+        id="get-handoff",
+    ),
+    pytest.param(
+        {"mcp_server": "gobby-memory", "mcp_tool": "review_task_memories"},
+        id="review-task-memories",
+    ),
+    pytest.param(
+        {"mcp_server": "gobby-agents", "mcp_tool": "send_message"},
+        id="send-message",
+    ),
+    pytest.param(
+        {"mcp_server": "gobby-agents", "mcp_tool": "end_agent_run"},
+        id="end-agent-run",
+    ),
+    pytest.param({"tool_name": "get_tool_schema"}, id="bare-get-tool-schema"),
+    pytest.param({"tool_name": "list_tools"}, id="bare-list-tools"),
+    pytest.param(
+        {"tool_name": "mcp__gobby__get_tool_schema"},
+        id="proxy-get-tool-schema",
+    ),
+    pytest.param({"tool_name": "mcp__gobby__list_tools"}, id="proxy-list-tools"),
+]
+
+
+@pytest.mark.parametrize("tool_event", HANDOFF_PREREQUISITE_EVENTS)
 @pytest.mark.asyncio
 async def test_context_limit_allows_handoff_prerequisite_tools(
     handler: WorkflowHookHandler,
@@ -502,6 +508,71 @@ async def test_context_limit_allows_handoff_prerequisite_tools(
     )
 
     assert allowed.decision == "allow"
+
+
+@pytest.mark.parametrize("tool_event", HANDOFF_PREREQUISITE_EVENTS)
+@pytest.mark.asyncio
+async def test_armed_retry_gate_allows_handoff_prerequisites(
+    handler: WorkflowHookHandler,
+    temp_db: HubDatabase,
+    tool_event: dict[str, str],
+) -> None:
+    """The armed retry gate must leave a legal move, not just a named one.
+
+    It tells the session to retry `set_handoff`, but another gate can hold
+    `set_handoff` until its own prerequisite runs -- `review_task_memories` for
+    a queued closure, the handoffs reference, a schema lease a compact cleared.
+    Permitting only `set_handoff` made those demands unsatisfiable and left the
+    session with nothing it could legally call.
+    """
+    SessionVariableManager(temp_db).merge_variables(
+        SESSION_ID,
+        {
+            "context_compact_handoff_result": {
+                "compacted": False,
+                "delivery_failed": True,
+                "retry_guidance": "Retry gobby-sessions:set_handoff now.",
+            }
+        },
+    )
+
+    allowed = await handler._evaluate_rules(
+        _arbitrary_tool_event(
+            tool_name=tool_event.get("tool_name", "Bash"),
+            mcp_server=tool_event.get("mcp_server"),
+            mcp_tool=tool_event.get("mcp_tool"),
+        )
+    )
+
+    assert allowed.decision == "allow"
+
+
+@pytest.mark.asyncio
+async def test_armed_retry_gate_still_blocks_ordinary_work(
+    handler: WorkflowHookHandler,
+    temp_db: HubDatabase,
+) -> None:
+    """The carve-outs are prerequisites, not an amnesty: the gate still gates."""
+    SessionVariableManager(temp_db).merge_variables(
+        SESSION_ID,
+        {
+            "context_compact_handoff_result": {
+                "compacted": False,
+                "delivery_failed": True,
+                "retry_guidance": "Retry gobby-sessions:set_handoff now.",
+            }
+        },
+    )
+
+    blocked = await handler._evaluate_rules(
+        _arbitrary_tool_event(
+            mcp_server="gobby-tasks",
+            mcp_tool="create_task",
+        )
+    )
+
+    assert blocked.decision == "block"
+    assert "Retry gobby-sessions:set_handoff" in (blocked.reason or "")
 
 
 @pytest.mark.parametrize(
