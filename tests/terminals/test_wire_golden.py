@@ -22,6 +22,7 @@ from gobby.terminals.host_client import (
     encode_control_line,
 )
 from gobby.terminals.host_control import HostControlClient
+from gobby.terminals.host_events import InputActivityEvent, decode_host_event
 
 pytestmark = pytest.mark.unit
 
@@ -57,6 +58,8 @@ def test_control_goldens_match_rust_emitter() -> None:
         "control_subscribe_events.json": "subscribe-1",
         "control_reserve_observer.json": "reserve-1",
         "control_release_observer.json": "release-1",
+        "control_grant_input.json": "grant-1",
+        "control_revoke_input.json": "revoke-1",
     }
     for name, request_id in request_ids.items():
         assert decode_control_line(_golden(name))["id"] == request_id
@@ -74,6 +77,33 @@ def test_control_goldens_match_rust_emitter() -> None:
         "epoch": "epoch-1",
         "seq": 42,
     }
+    input_activity = decode_control_line(_golden("control_input_activity.json"))
+    assert input_activity == {
+        "event": "input_activity",
+        "terminal_id": "t",
+        "host_terminal_id": "ht-1",
+        "attachment_id": "att-1",
+        "kind": "input",
+        "bytes": 1,
+        "interrupt": None,
+        "epoch": "epoch-1",
+        "seq": 43,
+    }
+    assert decode_host_event(input_activity) == InputActivityEvent(
+        terminal_id="t",
+        host_terminal_id="ht-1",
+        attachment_id="att-1",
+        kind="input",
+        bytes=1,
+        interrupt=None,
+        epoch="epoch-1",
+        seq=43,
+    )
+    assert decode_host_event(input_activity | {"kind": "paste", "interrupt": "ctrl_c"}) == (
+        InputActivityEvent("t", "ht-1", "att-1", "paste", 1, "ctrl_c", "epoch-1", 43)
+    )
+    with pytest.raises(ValueError, match="interrupt"):
+        decode_host_event(input_activity | {"interrupt": "sigint"})
 
 
 def test_control_client_matches_golden_corpus() -> None:
@@ -201,6 +231,22 @@ def test_control_client_matches_golden_corpus() -> None:
             "max_lines": 500,
         }
     ) == _golden("control_snapshot_text.json")
+    assert encode_control_line(
+        {
+            "id": "grant-1",
+            "method": "grant_input",
+            "host_terminal_id": "ht-1",
+            "attachment_id": "att-1",
+        }
+    ) == _golden("control_grant_input.json")
+    assert encode_control_line(
+        {
+            "id": "revoke-1",
+            "method": "revoke_input",
+            "host_terminal_id": "ht-1",
+            "attachment_id": "att-1",
+        }
+    ) == _golden("control_revoke_input.json")
     snapshot_result = decode_control_line(_golden("control_snapshot_result.json"))
     assert snapshot_result["ok"] is True
     assert snapshot_result["mode"] == "text"
@@ -274,6 +320,47 @@ async def test_legacy_control_client_adds_unique_request_ids() -> None:
 
     assert all(isinstance(request_id, str) for request_id in request_ids)
     assert len(set(request_ids)) == 2
+
+
+@pytest.mark.asyncio
+async def test_host_client_grant_and_revoke_match_golden_corpus() -> None:
+    """The live client emits the grant verbs byte-for-byte, and unledgered."""
+
+    class _Writer:
+        def __init__(self) -> None:
+            self.lines: asyncio.Queue[bytes] = asyncio.Queue()
+
+        def write(self, data: bytes) -> None:
+            self.lines.put_nowait(data)
+
+        async def drain(self) -> None:
+            return None
+
+        def close(self) -> None:
+            return None
+
+        async def wait_closed(self) -> None:
+            return None
+
+    reader = asyncio.StreamReader()
+    writer = _Writer()
+    client = HostClient(reader, writer)
+    try:
+        grant = asyncio.create_task(client.grant_input("ht-1", "att-1"))
+        sent = decode_control_line(await asyncio.wait_for(writer.lines.get(), timeout=1.0))
+        reader.feed_data(encode_control_line({"ok": True, "granted": True, "id": sent["id"]}))
+        assert (await grant)["granted"] is True
+        assert encode_control_line(sent | {"id": "grant-1"}) == _golden("control_grant_input.json")
+
+        revoke = asyncio.create_task(client.revoke_input("ht-1", "att-1"))
+        sent = decode_control_line(await asyncio.wait_for(writer.lines.get(), timeout=1.0))
+        reader.feed_data(encode_control_line({"ok": True, "revoked": True, "id": sent["id"]}))
+        assert (await revoke)["revoked"] is True
+        assert encode_control_line(sent | {"id": "revoke-1"}) == _golden(
+            "control_revoke_input.json"
+        )
+    finally:
+        await client.close()
 
 
 def test_control_spawn_carries_reservation_identity() -> None:

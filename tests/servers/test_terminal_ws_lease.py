@@ -14,7 +14,8 @@ from gobby.servers.websocket.server import WebSocketServer
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.terminals import AttachLocator, TerminalManager, native_locator_key
 from gobby.terminals import TerminalRuntimeRegistry
-from gobby.terminals.leases import TerminalLeaseRegistry
+from gobby.terminals.input_grants import sync_host_input_grant
+from gobby.terminals.leases import HolderChange, TerminalLeaseRegistry
 from gobby.terminals.runtime import Delivered, TerminalRuntime, WriteOutcome
 from gobby.terminals.write_coordinator import WriteCoordinator
 from tests.servers.test_tmux_mixin import MockWebSocket
@@ -45,6 +46,20 @@ class _NativeRuntime:
         del terminal
         self.inputs.append(data)
         return Delivered()
+
+
+class _GrantingRuntime(_NativeRuntime):
+    """Records the host grant calls the lease observer makes: (terminal, holder|None)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.grants: list[tuple[str, str | None]] = []
+
+    async def grant_input(self, terminal: Any, attachment_id: str) -> None:
+        self.grants.append((str(terminal.id), attachment_id))
+
+    async def revoke_input(self, terminal: Any, attachment_id: str | None = None) -> None:
+        self.grants.append((str(terminal.id), None))
 
 
 class _RuntimeRegistry(TerminalRuntimeRegistry):
@@ -691,3 +706,87 @@ async def test_finalize_revokes_authority_before_frame_close(
         frame.release_close.set()
         await cleanup
         await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
+async def test_direct_gclient_holder_is_granted_and_revoked_on_transitions(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    terminal_id = _live_row(temp_db, sample_project)
+    server = _ws_server()
+    runtime = _GrantingRuntime()
+    _configure(server, temp_db, _RuntimeRegistry(runtime))
+
+    async def follow(change: HolderChange) -> bool | None:
+        return await sync_host_input_grant(runtime, change.terminal, change.holder)
+
+    server.lease_registry.set_holder_observer(follow)
+    gclient = MockWebSocket()
+    server.clients[gclient] = {"subscriptions": {"*"}}
+    await _send(
+        server,
+        gclient,
+        {
+            "type": "terminal_attach",
+            "request_id": "g",
+            "terminal_id": terminal_id,
+            "frame_delivery": "direct",
+        },
+    )
+    direct = gclient.messages_of_type("terminal_attach_result")[-1]["attachment_id"]
+    take = {
+        "type": "terminal_take_control",
+        "terminal_id": terminal_id,
+        "attachment_id": direct,
+        "takeover": False,
+    }
+    await _send(server, gclient, take)
+    granted = gclient.messages_of_type("terminal_control_result")[-1]
+    assert granted["granted"] is True
+    assert granted["host_input_granted"] is True
+    assert runtime.grants == [(terminal_id, direct)]
+
+    # A web viewer takes over through the proxy path: the grant is revoked.
+    assert server.terminal_manager is not None
+    row = server.terminal_manager.get(terminal_id)
+    web = MockWebSocket()
+    server.clients[web] = {"subscriptions": {"*"}}
+    web_record = await server.lease_registry.attach(
+        terminal_id, "proxy", websocket=web, viewer="web", terminal=row
+    )
+    await _send(
+        server,
+        web,
+        {
+            "type": "terminal_take_control",
+            "terminal_id": terminal_id,
+            "attachment_id": web_record.attachment_id,
+            "takeover": True,
+        },
+    )
+    takeover = web.messages_of_type("terminal_control_result")[-1]
+    assert takeover["granted"] is True
+    assert takeover["host_input_granted"] is None
+    assert runtime.grants[-1] == (terminal_id, None)
+    assert gclient.messages_of_type("terminal_lease_lost")
+
+    # Releasing leaves nobody holding: revoked again, never granted.
+    await _send(
+        server,
+        web,
+        {
+            "type": "terminal_release_control",
+            "terminal_id": terminal_id,
+            "attachment_id": web_record.attachment_id,
+        },
+    )
+    released = web.messages_of_type("terminal_control_result")[-1]
+    assert released["reason"] == "released"
+    assert released["host_input_granted"] is None
+    assert runtime.grants == [(terminal_id, direct), (terminal_id, None), (terminal_id, None)]
+
+    # The direct viewer takes again, then loses its socket: grant, then revoke.
+    await _send(server, gclient, take)
+    assert gclient.messages_of_type("terminal_control_result")[-1]["host_input_granted"] is True
+    await server._cleanup_tmux_client(gclient)
+    assert runtime.grants[-2:] == [(terminal_id, direct), (terminal_id, None)]

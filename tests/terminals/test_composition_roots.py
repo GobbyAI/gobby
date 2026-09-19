@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import fields
 from pathlib import Path
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -222,3 +223,60 @@ def test_wiring_hands_one_workspace_manager_to_both_servers() -> None:
     assert server.workspace_manager is workspace_manager
     # Without a session manager no actor can be scoped, so the server serves no ops.
     assert server.workspace_ops is None
+
+
+def test_configure_terminals_installs_input_activity_sink() -> None:
+    from gobby.terminals.host_events import InputActivityEvent
+
+    class RecordingHost:
+        def __init__(self) -> None:
+            self.sinks: list[object] = []
+
+        def set_input_activity_sink(self, sink: object) -> None:
+            self.sinks.append(sink)
+
+    class RecordingObserver:
+        def __init__(self) -> None:
+            self.inputs: list[tuple[str, str, str]] = []
+
+        def record_mediated_input(self, terminal_id: str, payload: str, outcome: str) -> None:
+            self.inputs.append((terminal_id, payload, outcome))
+
+    class RecordingCoordinator:
+        def __init__(self) -> None:
+            self.observed: list[str] = []
+
+        def observe_operator_input(self, terminal_id: str) -> None:
+            self.observed.append(terminal_id)
+
+    ws_config = MagicMock(spec=WebSocketConfig)
+    ws_config.host = "localhost"
+    ws_config.port = 60888
+    ws_config.ping_interval = 30
+    ws_config.ping_timeout = 10
+    ws_config.max_message_size = 1024
+    server = WebSocketServer(ws_config, MagicMock(), AsyncMock(return_value="test-user"))
+    host = RecordingHost()
+    coordinator = RecordingCoordinator()
+    observer = RecordingObserver()
+    server.configure_terminals(
+        MagicMock(),
+        MagicMock(),
+        None,
+        host_manager=host,
+        lease_registry=MagicMock(),
+        write_coordinator=coordinator,
+    )
+    assert host.sinks == [server._observe_input_activity]
+    server.terminal_turn_observer = cast(Any, observer)
+
+    sink = server._observe_input_activity
+    sink(InputActivityEvent("t-1", "ht-1", "att-1", "input", 1, "ctrl_c", "epoch-1", 9))
+    sink(InputActivityEvent("t-1", "ht-1", "att-1", "input", 1, "esc", "epoch-1", 10))
+    sink(InputActivityEvent("t-2", "ht-2", "att-2", "paste", 3, None, "epoch-1", 11))
+    assert observer.inputs == [
+        ("t-1", "\x03", "delivered"),
+        ("t-1", "\x1b", "delivered"),
+        ("t-2", "", "delivered"),
+    ]
+    assert coordinator.observed == ["t-1", "t-1", "t-2"]
