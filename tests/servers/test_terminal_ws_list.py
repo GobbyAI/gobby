@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 import uuid
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -16,7 +17,7 @@ from gobby.storage.terminals import TerminalManager, tmux_locator_key
 from gobby.terminals.leases import TerminalLeaseRegistry
 from tests.fixtures.isolated_checkout import patch_local_machine_id
 from tests.servers.test_tmux_mixin import MockWebSocket
-from tests.storage.test_terminals import LOCAL_MACHINE_ID
+from tests.storage.test_terminals import LOCAL_MACHINE_ID, _create_pending
 
 pytestmark = pytest.mark.unit
 
@@ -248,3 +249,44 @@ async def test_list_rejects_unknown_states(server: WebSocketServer) -> None:
     for states in (["live", "zombie"], [], "live", [7]):
         page = await listed(server, {"request_id": "bad", "states": states})
         assert page == {"type": "terminal_error", "code": "invalid_states", "request_id": "bad"}
+
+
+@pytest.mark.asyncio
+async def test_list_names_the_foreground_command_for_both_backends(
+    server: WebSocketServer,
+    manager: TerminalManager,
+    sample_project: dict[str, Any],
+) -> None:
+    pane = seed_pane(manager, sample_project["id"], "%1", "75")
+    native = _create_pending(manager, sample_project["id"], backend="native")
+    recorded = manager.record_process(
+        native.id,
+        {"host_terminal_id": "ht-9", "pgid": 4242, "start_time": 1.0},
+        attempt_generation=native.attempt_generation,
+        attempt_started_at=native.attempt_started_at,
+    )
+    assert recorded is not None
+    promoted = manager.promote_to_live(
+        native.id,
+        locator={"host_terminal_id": "ht-9"},
+        locator_key="native:epoch-1:ht-9",
+        host_epoch="epoch-1",
+    )
+    assert promoted is not None
+    sweep = AsyncMock(return_value={pane.locator_key: pane_for(pane)})
+    table = "4242 5150 -zsh\n5150 5150 /usr/local/bin/nvim\n"
+    ps = MagicMock(
+        return_value=subprocess.CompletedProcess(args=["ps"], returncode=0, stdout=table, stderr="")
+    )
+
+    with (
+        patch("gobby.servers.websocket.terminal_ws.sweep_tmux_terminals", sweep),
+        patch("gobby.terminals.foreground.subprocess.run", ps),
+    ):
+        page = await listed(server, {"request_id": "commands"})
+
+    by_id = {item["terminal_id"]: item for item in page["items"]}
+    # tmux reports its pane's own current command; a native row is probed from
+    # the shell pid the host recorded, and both land on one field.
+    assert by_id[pane.id]["command"] == "vim"
+    assert by_id[promoted.id]["command"] == "nvim"

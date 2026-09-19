@@ -12,6 +12,7 @@ from gobby.servers.websocket.terminal_input import WriteOutcome, record_turn_obs
 from gobby.storage.projects import GLOBAL_PROJECT_ID
 from gobby.storage.sessions import LIVE_SESSION_STATUS_ORDER
 from gobby.storage.terminals import AttachLocator
+from gobby.terminals.foreground import foreground_commands, shell_pid
 from gobby.terminals.leases import (
     LifecyclePublicationError,
     SizingDecision,
@@ -57,9 +58,17 @@ def _list_states(raw: object) -> tuple[str, ...] | None:
 WRITE_FAULT_NAME = "terminal_write_fault"
 
 # Clients reconnect the moment HTTP serves, before the gterm host is adopted or
-# spawned; an attach waits this long for that decision. It matches gclient's
-# request deadline, so a longer wait would only outlive the client (#22002).
-HOST_STARTUP_ATTACH_WAIT_SECONDS = 5.0
+# spawned; an attach waits this long for that decision (#22002). With the two
+# host budgets below it stays under gclient's 5s request deadline, so a slow
+# host becomes a typed refusal the client shows and retries rather than a
+# timeout it cannot name (#22544).
+HOST_STARTUP_ATTACH_WAIT_SECONDS = 2.5
+# Opening the host's frame socket and the frame handshake each get this long.
+# Both are local I/O that finishes in milliseconds on a healthy host, and a
+# host that does not answer holds this connection's serial dispatch, so the
+# attach gives up and names the step that stalled.
+PROXY_FRAME_OPEN_SECONDS = 1.0
+PROXY_START_SECONDS = 1.0
 
 PROXY_ATTACH_FAILURE_REASONS: dict[str, str] = {
     "host_not_ready": "terminal host has not finished starting",
@@ -70,6 +79,8 @@ PROXY_ATTACH_FAILURE_REASONS: dict[str, str] = {
     "host_unavailable": "opening the proxy frame connection failed",
     "frame_invalid": "proxy frame opener returned an unusable frame",
     "proxy_start_failed": "proxy frame handshake or relay start failed",
+    "host_open_timeout": "opening the proxy frame connection did not finish in time",
+    "proxy_start_timeout": "proxy frame handshake did not finish in time",
 }
 
 
@@ -315,6 +326,10 @@ class TerminalWsMixin:
             cursor_id=cursor_id,
             limit=limit,
         )
+        native_commands = await asyncio.to_thread(
+            foreground_commands,
+            {row.id: pid for row in items if (pid := shell_pid(row)) is not None},
+        )
         serialized = []
         for row in items:
             item = inventory_item(row)
@@ -332,6 +347,11 @@ class TerminalWsMixin:
                         "attached_clients": pane.session_attached,
                     }
                 )
+            # tmux reports its own pane's foreground command; a native row's is
+            # probed from the shell pid the host recorded.
+            item["command"] = native_commands.get(row.id) or (
+                pane.pane_command if pane is not None else None
+            )
             serialized.append(item)
         item_cursors = [f"{row.created_at.isoformat()}|{row.id}" for row in items]
         next_cursor = None if not has_more else item_cursors[-1]
@@ -691,7 +711,9 @@ class TerminalWsMixin:
         if not callable(opener):
             return _log_proxy_attach_failure(row.id, "proxy_unavailable")
         try:
-            frame = await opener(locator)
+            frame = await asyncio.wait_for(opener(locator), PROXY_FRAME_OPEN_SECONDS)
+        except TimeoutError:
+            return _log_proxy_attach_failure(row.id, "host_open_timeout")
         except Exception:
             return _log_proxy_attach_failure(row.id, "host_unavailable", exc_info=True)
         if not frame or not callable(getattr(frame, "read_message", None)):
@@ -701,15 +723,21 @@ class TerminalWsMixin:
                 await _close_frame_quietly(frame)
             return _log_proxy_attach_failure(row.id, "frame_invalid")
         try:
-            await self._proxy().start_proxy(
-                websocket,
-                terminal_id=row.id,
-                attachment_id=record.attachment_id,
-                locator=locator,
-                frame=frame,
-                encoding=encoding,
-                terminal=row,
+            await asyncio.wait_for(
+                self._proxy().start_proxy(
+                    websocket,
+                    terminal_id=row.id,
+                    attachment_id=record.attachment_id,
+                    locator=locator,
+                    frame=frame,
+                    encoding=encoding,
+                    terminal=row,
+                ),
+                PROXY_START_SECONDS,
             )
+        except TimeoutError:
+            await _close_frame_quietly(frame)
+            return _log_proxy_attach_failure(row.id, "proxy_start_timeout")
         except Exception:
             await _close_frame_quietly(frame)
             return _log_proxy_attach_failure(row.id, "proxy_start_failed", exc_info=True)

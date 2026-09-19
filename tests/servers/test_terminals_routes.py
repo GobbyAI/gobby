@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import uuid
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
@@ -176,3 +177,59 @@ async def test_dimension_bounds_rejected(
     messages = [json.loads(call.args[0]) for call in ws.send.await_args_list]
     assert any(item.get("type") == "terminal_error" or item.get("code") for item in messages)
     assert _manager(temp_db).list_by_project(sample_project["id"]) == []
+
+
+def _native_live(manager: TerminalManager, project_id: str, pgid: int) -> Any:
+    """A live native row carrying the shell pid the host recorded for it."""
+    row = _create_pending(manager, project_id, backend="native")
+    recorded = manager.record_process(
+        row.id,
+        {"host_terminal_id": "ht-1", "pgid": pgid, "start_time": 1.0},
+        attempt_generation=row.attempt_generation,
+        attempt_started_at=row.attempt_started_at,
+    )
+    assert recorded is not None
+    promoted = manager.promote_to_live(
+        row.id,
+        locator={"host_terminal_id": "ht-1"},
+        locator_key="native:epoch-1:ht-1",
+        host_epoch="epoch-1",
+    )
+    assert promoted is not None
+    return promoted
+
+
+def test_a_native_row_reports_the_command_in_its_terminal_foreground(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    manager = _manager(temp_db)
+    native = _native_live(manager, sample_project["id"], pgid=4242)
+    tmux_row = _create_pending(manager, sample_project["id"])
+    promoted = manager.promote_to_live(
+        tmux_row.id,
+        locator={
+            "socket_path": _SOCKET,
+            "server_pid": 1,
+            "server_start_time": 2,
+            "pane_id": "%1",
+        },
+        locator_key=tmux_locator_key(
+            socket_path=_SOCKET, server_pid=1, server_start_time=2, pane_id="%1"
+        ),
+    )
+    assert promoted is not None
+    table = "4242 5150 -zsh\n5150 5150 /usr/local/bin/nvim\n"
+    run = MagicMock(
+        return_value=subprocess.CompletedProcess(args=["ps"], returncode=0, stdout=table, stderr="")
+    )
+
+    with patch("gobby.terminals.foreground.subprocess.run", run), _client(temp_db) as client:
+        listing = client.get("/api/terminals", params={"project_id": sample_project["id"]})
+        detail = client.get(f"/api/terminals/{native.id}")
+
+    rows = {row["id"]: row for row in listing.json()["items"]}
+    assert rows[native.id]["command"] == "nvim"
+    # A tmux row records no shell pid, so the key is present and empty rather
+    # than missing: the label ladder reads one field for every backend.
+    assert rows[promoted.id]["command"] is None
+    assert detail.json()["command"] == "nvim"
