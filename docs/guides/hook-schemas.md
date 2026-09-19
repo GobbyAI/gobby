@@ -255,6 +255,11 @@ integration, but they are not the installed terminal hook contract.
 Codex `PreToolUse` and `Stop` responses use `systemMessage` for context; Codex
 does not accept `additionalContext` for those hooks.
 
+Codex sends its active reasoning effort as a structured value such as
+`{"effort": {"level": "xhigh"}}`. The adapter canonicalizes that native shape
+to `{"effort": "xhigh"}` in `HookEvent.data`, workflow inputs, and WebSocket
+payloads.
+
 Codex also sends `Interrupt`, normalized as `interrupt`. This is interruption
 evidence, not a turn-end gate. ghook emits no stdout for this event, including
 disabled, unmanaged, malformed, timeout and stale-daemon response paths.
