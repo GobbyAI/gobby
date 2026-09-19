@@ -20,6 +20,7 @@ from gobby.storage.task_close_reviews import (
     TaskCloseReviewStaleTaskError,
     TaskCloseReviewStore,
     TerminalTaskCloseReviewStatus,
+    finalizing_in_process,
 )
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.tasks.agentic_close_review import (
@@ -313,93 +314,99 @@ async def submit_close_review(
             "review_status": current.status if current is not None else review.status,
         }
 
-    args = claimed.close_arguments
-    try:
-        evaluation = await evaluate_close(
-            ctx,
-            task_id=_required_string(args, "task_id"),
-            reason=_required_string(args, "reason"),
-            changes_summary=_optional_string(args, "changes_summary"),
-            commit_sha=_optional_string(args, "commit_sha"),
-            project_path=_optional_string(args, "project_path"),
-            response_detail=_response_detail(args),
-            override_justification=_optional_string(args, "override_justification"),
-            scope_justification=_optional_string(args, "scope_justification"),
-            closing_session_id=claimed.caller_session_id,
-            submitted_review=SubmittedCloseReview(
-                verdict=verdict,
-                review_fingerprint=claimed.review_fingerprint,
-                evidence_fingerprint=claimed.evidence_fingerprint,
-                diff_sha=claimed.diff_sha,
-                test_bodies_sha=claimed.test_bodies_sha,
-                stable_facts=claimed.stable_facts,
-            ),
-        )
-    except Exception as exc:
-        logger.warning("Task-close review finalization failed", exc_info=True)
-        return _finish_submission_error(store, claimed, str(exc))
+    # The set entry is this daemon's proof of liveness for the row: the
+    # reconciler leaves a `finalizing` review alone while a submission here
+    # holds it, and sweeps it once this block exits by any path.
+    with finalizing_in_process(claimed.id):
+        args = claimed.close_arguments
+        try:
+            evaluation = await evaluate_close(
+                ctx,
+                task_id=_required_string(args, "task_id"),
+                reason=_required_string(args, "reason"),
+                changes_summary=_optional_string(args, "changes_summary"),
+                commit_sha=_optional_string(args, "commit_sha"),
+                project_path=_optional_string(args, "project_path"),
+                response_detail=_response_detail(args),
+                override_justification=_optional_string(args, "override_justification"),
+                scope_justification=_optional_string(args, "scope_justification"),
+                closing_session_id=claimed.caller_session_id,
+                submitted_review=SubmittedCloseReview(
+                    verdict=verdict,
+                    review_fingerprint=claimed.review_fingerprint,
+                    evidence_fingerprint=claimed.evidence_fingerprint,
+                    diff_sha=claimed.diff_sha,
+                    test_bodies_sha=claimed.test_bodies_sha,
+                    stable_facts=claimed.stable_facts,
+                ),
+            )
+        except Exception as exc:
+            logger.warning("Task-close review finalization failed", exc_info=True)
+            return _finish_submission_error(store, claimed, str(exc))
 
-    if evaluation.error == "agentic_review_malformed":
-        message = evaluation.message or "Background close-review verdict is invalid."
-        store.restore_running(claimed.id, run_id, error=message)
-        return {
-            "success": False,
-            "error": "agentic_review_malformed",
-            "message": message,
-            "review_id": claimed.id,
-            "review_status": "running",
-            "closed": False,
-        }
-    if not evaluation.ready:
-        status: TerminalTaskCloseReviewStatus = (
-            "invalid" if evaluation.validation_status == "invalid" else _failure_status(evaluation)
+        if evaluation.error == "agentic_review_malformed":
+            message = evaluation.message or "Background close-review verdict is invalid."
+            store.restore_running(claimed.id, run_id, error=message)
+            return {
+                "success": False,
+                "error": "agentic_review_malformed",
+                "message": message,
+                "review_id": claimed.id,
+                "review_status": "running",
+                "closed": False,
+            }
+        if not evaluation.ready:
+            status: TerminalTaskCloseReviewStatus = (
+                "invalid"
+                if evaluation.validation_status == "invalid"
+                else _failure_status(evaluation)
+            )
+            result = evaluation.response(preview=bool(args.get("preview")))
+            payload = build_terminal_review_payload(
+                claimed,
+                status=status,
+                close_result=result,
+                message=evaluation.message,
+            )
+            store.finish(
+                claimed.id,
+                status=status,
+                result_payload=payload,
+                error=evaluation.message if status == "error" else None,
+            )
+            return _submission_result(claimed, payload)
+
+        close_result = await commit_close(
+            ctx,
+            evaluation,
+            reason=_required_string(args, "reason"),
+            changes_summary=_optional_string(args, "changes_summary") or "",
+            skip_validation=bool(args.get("skip_validation", False)),
+            override_justification=_optional_string(args, "override_justification"),
+            commit_sha=_optional_string(args, "commit_sha"),
         )
-        result = evaluation.response(preview=bool(args.get("preview")))
+        close_result.update(
+            {
+                "preview": bool(args.get("preview")),
+                "can_close": close_result.get("closed") is True,
+            }
+        )
+        status = (
+            "closed" if close_result.get("closed") is True else _commit_failure_status(close_result)
+        )
         payload = build_terminal_review_payload(
             claimed,
             status=status,
-            close_result=result,
-            message=evaluation.message,
+            close_result=close_result,
+            message=cast(str | None, close_result.get("message")),
         )
         store.finish(
             claimed.id,
             status=status,
             result_payload=payload,
-            error=evaluation.message if status == "error" else None,
+            error=cast(str | None, close_result.get("message")) if status == "error" else None,
         )
         return _submission_result(claimed, payload)
-
-    close_result = await commit_close(
-        ctx,
-        evaluation,
-        reason=_required_string(args, "reason"),
-        changes_summary=_optional_string(args, "changes_summary") or "",
-        skip_validation=bool(args.get("skip_validation", False)),
-        override_justification=_optional_string(args, "override_justification"),
-        commit_sha=_optional_string(args, "commit_sha"),
-    )
-    close_result.update(
-        {
-            "preview": bool(args.get("preview")),
-            "can_close": close_result.get("closed") is True,
-        }
-    )
-    status = (
-        "closed" if close_result.get("closed") is True else _commit_failure_status(close_result)
-    )
-    payload = build_terminal_review_payload(
-        claimed,
-        status=status,
-        close_result=close_result,
-        message=cast(str | None, close_result.get("message")),
-    )
-    store.finish(
-        claimed.id,
-        status=status,
-        result_payload=payload,
-        error=cast(str | None, close_result.get("message")) if status == "error" else None,
-    )
-    return _submission_result(claimed, payload)
 
 
 def pending_review_response(review: TaskCloseReview) -> dict[str, Any]:

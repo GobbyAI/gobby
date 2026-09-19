@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from gobby.agents.recovery_state import (
@@ -22,7 +22,7 @@ from gobby.storage.agents import (
 from gobby.storage.pipeline_subscribers import CompletionSubscriberManager
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.utils.datetime import utc_now
-from gobby.utils.machine_id import require_machine_id
+from gobby.utils.machine_id import get_machine_id, require_machine_id
 
 if TYPE_CHECKING:
     from gobby.runner import GobbyRunner
@@ -274,8 +274,10 @@ async def _reconcile_task_close_reviews(
             current = await _run_db(runner, store.get, review.id) or review
             reconciled += 1
 
-        if startup and current.status == "finalizing":
-            swept = await _terminalize_orphaned_finalizing(runner, db, store, current)
+        if current.status == "finalizing" and (startup or _finalizing_orphan_proven(current, run)):
+            swept = await _terminalize_orphaned_finalizing(
+                runner, db, store, current, run=run, startup=startup
+            )
             if swept is not None:
                 if swept.status != "finalizing":
                     reconciled += 1
@@ -321,22 +323,58 @@ async def _reconcile_task_close_reviews(
     return reconciled
 
 
+def _finalizing_orphan_proven(review: TaskCloseReview, run: Any) -> bool:
+    """Prove a `finalizing` review is abandoned without waiting for a restart.
+
+    `claim_finalizing` holds `finalizing` across `commit_close`'s git
+    subprocesses, so the status alone is reachable while a real
+    `submit_close_review` is still running; sweeping on that alone would let
+    the reconciler win the write and contradict a live caller. Three facts
+    together rule that out, and all three are required:
+
+    - The validator run belongs to this machine. `task_close_reviews` carries
+      no owner or lease column, so `agent_runs.machine_id` is the only scope
+      available and another machine's daemon is the only process that could
+      hold the row without appearing below.
+    - No submission in this process holds the id. The daemon finalizing a row
+      does so in-process, which makes that set an exact liveness oracle here.
+    - `updated_at`, stamped by `claim_finalizing`, is older than the grace
+      bound. This covers the sliver between the claim committing and the
+      submission registering itself, where the set is not yet populated.
+
+    `finish_orphaned_finalizing`'s compare-and-swap on `updated_at` remains the
+    final guard, so a row revived between this proof and the write is a no-op.
+    """
+    from gobby.storage.task_close_reviews import (
+        FINALIZING_ORPHAN_GRACE_SECONDS,
+        is_finalizing_in_process,
+    )
+
+    this_machine = get_machine_id()
+    if this_machine is None or getattr(run, "machine_id", None) != this_machine:
+        return False
+    if is_finalizing_in_process(review.id):
+        return False
+    return utc_now() - review.updated_at >= timedelta(seconds=FINALIZING_ORPHAN_GRACE_SECONDS)
+
+
 async def _terminalize_orphaned_finalizing(
     runner: GobbyRunner,
     db: Any,
     store: TaskCloseReviewStore,
     review: TaskCloseReview,
+    *,
+    run: Any,
+    startup: bool,
 ) -> TaskCloseReview | None:
     """Release a `finalizing` review the daemon abandoned mid-submission.
 
-    Startup-only by contract, and that scope is load-bearing rather than
-    cautious. `claim_finalizing` holds `finalizing` across `commit_close`'s git
-    subprocesses, so on the periodic tick this status is reachable while a real
-    `submit_close_review` is still running and the reconciler would win the
-    write and then contradict the caller. No in-process submit survives a
-    restart, so only at daemon start is every `finalizing` row provably
-    orphaned. Without this the row holds `uq_task_close_reviews_active_task`
-    forever and the task can never be closed again.
+    The caller must first prove the row is orphaned, because `finalizing` is
+    reachable while a real `submit_close_review` is still running. Daemon
+    startup is one proof: no in-process submit survives a restart. On a running
+    daemon the proof is `_finalizing_orphan_proven`. Without this sweep the row
+    holds `uq_task_close_reviews_active_task` forever and the task can never be
+    closed again.
 
     A verdict is never reapplied here: `commit_close` resolves project context
     from the process cwd, which in the daemon loop is the daemon's own, so a
@@ -356,16 +394,26 @@ async def _terminalize_orphaned_finalizing(
         review = await _run_db(runner, store.get, review.id) or review
         if review.status != "finalizing":
             return review
+    if not startup and not _finalizing_orphan_proven(review, run):
+        # The re-read above is what the compare-and-swap below is built on, so
+        # the proof has to hold against that row too: a submission that revived
+        # the review since the caller proved it owns the row.
+        return None
     # The captured submission distinguishes a verdict that reached the daemon
     # and died inside finalization from one that was never sent (#22404); the
     # terminal payload replaces it, so record the distinction before the write.
     logger.warning(
-        "Terminalizing task-close review %s orphaned in finalizing by a daemon restart "
+        "Terminalizing task-close review %s orphaned in finalizing by %s "
         "(submitted verdict captured: %s)",
         review.id,
+        "a daemon restart" if startup else "an abandoned submission",
         review.result_payload is not None,
     )
-    message = "Daemon restarted while the task-close verdict was being finalized."
+    message = (
+        "Daemon restarted while the task-close verdict was being finalized."
+        if startup
+        else "The task-close verdict was abandoned during finalization."
+    )
     payload = build_terminal_review_payload(
         review,
         status="error",

@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal, cast
@@ -37,6 +38,42 @@ TERMINAL_TASK_CLOSE_REVIEW_STATUSES: tuple[TerminalTaskCloseReviewStatus, ...] =
 VALIDATOR_RUN_ENDED_SUCCESS_ERROR = (
     "Task-close validator run ended with status success before finalization."
 )
+
+# How long a `finalizing` row must sit untouched before a running daemon may
+# treat it as abandoned. `claim_finalizing` stamps `updated_at` at the claim, so
+# this is the age of the finalization attempt itself. It only has to sit
+# comfortably above a real `commit_close` — git subprocesses and the closure
+# cascade, seconds in practice — because the in-process set below, not the
+# clock, is what proves liveness. The clock covers the sliver between the claim
+# committing and the submission registering itself.
+FINALIZING_ORPHAN_GRACE_SECONDS = 600
+
+_finalizing_in_process: set[str] = set()
+
+
+@contextmanager
+def finalizing_in_process(review_id: str) -> Iterator[None]:
+    """Hold `review_id` in this process's finalizing set for the block.
+
+    `claim_finalizing` keeps a row `finalizing` across `commit_close`, so the
+    status alone cannot tell a live submission from an abandoned one. The
+    daemon finalizing a row does so in-process, which makes this set an exact
+    liveness oracle for this daemon: a `finalizing` row whose id is absent is
+    held by no submission running here.
+
+    Releasing in `finally` is load-bearing. A submission that dies by exception
+    is exactly the strand being recovered, so it must leave the row sweepable.
+    """
+    _finalizing_in_process.add(review_id)
+    try:
+        yield
+    finally:
+        _finalizing_in_process.discard(review_id)
+
+
+def is_finalizing_in_process(review_id: str) -> bool:
+    """Report whether a submission in this process currently holds `review_id`."""
+    return review_id in _finalizing_in_process
 
 
 class TaskCloseReviewStaleTaskError(RuntimeError):
@@ -508,16 +545,20 @@ class TaskCloseReviewStore:
         result_payload: Mapping[str, Any],
         error: str,
     ) -> TaskCloseReview | None:
-        """Release a `finalizing` review a daemon restart abandoned mid-submission.
+        """Release a `finalizing` review whose submission was abandoned.
 
-        Callers must gate this on daemon startup. `finish_run_ended` excludes
-        `finalizing` because `claim_finalizing` holds that status across
-        `commit_close`'s git subprocesses, so on a periodic tick the status is
-        reachable while a real submission is still running. Only at startup is
-        every `finalizing` row provably orphaned, because no in-process submit
-        survives a restart; without this the row holds
+        Callers must first prove the row is orphaned. `finish_run_ended`
+        excludes `finalizing` because `claim_finalizing` holds that status
+        across `commit_close`'s git subprocesses, so the status is reachable
+        while a real submission is still running, and a reconciler write would
+        contradict that caller. Without this the row holds
         `uq_task_close_reviews_active_task` forever and every later
         `close_task` for its task returns `agentic_review_pending`.
+
+        Daemon startup is one such proof: no in-process submit survives a
+        restart. On a running daemon the proof is `is_finalizing_in_process`
+        plus `FINALIZING_ORPHAN_GRACE_SECONDS` against `updated_at`, scoped to
+        rows whose validator run belongs to this machine.
 
         The compare-and-swap on `updated_at` makes a lost race a clean no-op:
         `None` means some other transition already moved the row.
@@ -683,6 +724,7 @@ def _review_from_row(row: object) -> TaskCloseReview:
 
 __all__ = [
     "ACTIVE_TASK_CLOSE_REVIEW_STATUSES",
+    "FINALIZING_ORPHAN_GRACE_SECONDS",
     "INLINE_CRITERIA_VERDICT_KIND",
     "SUBMITTED_VERDICT_KIND",
     "TERMINAL_TASK_CLOSE_REVIEW_STATUSES",
@@ -692,4 +734,6 @@ __all__ = [
     "TaskCloseReviewStore",
     "TerminalTaskCloseReviewStatus",
     "VALIDATOR_RUN_ENDED_SUCCESS_ERROR",
+    "finalizing_in_process",
+    "is_finalizing_in_process",
 ]

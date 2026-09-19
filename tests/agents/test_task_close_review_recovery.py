@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import ExitStack
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -15,10 +16,12 @@ import gobby.runner_lifecycle_agents as lifecycle_agents
 import gobby.tasks.agentic_close_review as agentic_close_review
 import gobby.tasks.close_review_delivery as close_review_delivery
 from gobby.storage.task_close_reviews import (
+    FINALIZING_ORPHAN_GRACE_SECONDS,
     SUBMITTED_VERDICT_KIND,
     TaskCloseReview,
     TaskCloseReviewStatus,
     TaskCloseReviewStore,
+    finalizing_in_process,
 )
 
 pytestmark = pytest.mark.unit
@@ -26,6 +29,8 @@ pytestmark = pytest.mark.unit
 _CLOSED_TASK = SimpleNamespace(
     id="task", commits=["abc123"], closed_at=datetime(2026, 9, 8, tzinfo=UTC)
 )
+_THIS_MACHINE = "machine-under-test"
+_NOW = datetime(2026, 9, 19, 12, 0, tzinfo=UTC)
 
 
 @pytest.mark.asyncio
@@ -182,7 +187,6 @@ async def test_periodic_reconciliation_delivers_terminal_run_without_verdict(
         pytest.param("running", None, True, "error", ["finish_orphaned_finalizing"], id="orphaned"),
         pytest.param("cancelled", _CLOSED_TASK, True, "closed", ["finish"], id="run-ended-closed"),
         pytest.param(None, _CLOSED_TASK, True, "closed", ["finish"], id="missing-run-closed"),
-        pytest.param("running", None, False, "finalizing", [], id="periodic-tick"),
     ],
 )
 async def test_close_verdict_survives_daemon_restart(
@@ -214,17 +218,6 @@ async def test_close_verdict_survives_daemon_restart(
 
     assert store.review.status == expected_status
     assert store.writes == expected_writes
-    if not expected_writes:
-        # The periodic tick must never write to a finalizing review: that status
-        # is held across commit_close, so a live submit_close_review may still
-        # be running and would be contradicted by a reconciler write.
-        assert store.review.result_payload == {
-            "kind": SUBMITTED_VERDICT_KIND,
-            "verdict": {"valid": True},
-        }
-        assert store.delivered is False
-        wake.assert_not_awaited()
-        return
 
     # A terminal review releases uq_task_close_reviews_active_task, which is
     # what makes the task closable again.
@@ -240,6 +233,148 @@ async def test_close_verdict_survives_daemon_restart(
         assert payload["required_actions"]
         # The captured verdict is forensic only; it is never reapplied.
         assert "verdict" not in payload
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "machine_id,age_seconds,held_in_process,expected_status,expected_writes",
+    [
+        pytest.param(
+            _THIS_MACHINE,
+            FINALIZING_ORPHAN_GRACE_SECONDS + 1,
+            False,
+            "error",
+            ["finish_orphaned_finalizing"],
+            id="proven-orphan",
+        ),
+        pytest.param(
+            _THIS_MACHINE,
+            FINALIZING_ORPHAN_GRACE_SECONDS + 1,
+            True,
+            "finalizing",
+            [],
+            id="held-by-a-live-submission",
+        ),
+        pytest.param(
+            _THIS_MACHINE,
+            FINALIZING_ORPHAN_GRACE_SECONDS - 1,
+            False,
+            "finalizing",
+            [],
+            id="within-grace",
+        ),
+        pytest.param(
+            "another-machine",
+            FINALIZING_ORPHAN_GRACE_SECONDS + 1,
+            False,
+            "finalizing",
+            [],
+            id="foreign-machine",
+        ),
+    ],
+)
+async def test_periodic_tick_sweeps_only_a_proven_orphaned_finalizing_review(
+    monkeypatch: pytest.MonkeyPatch,
+    machine_id: str,
+    age_seconds: int,
+    held_in_process: bool,
+    expected_status: str,
+    expected_writes: list[str],
+) -> None:
+    """A running daemon recovers a stranded review only on all three proofs.
+
+    `finalizing` is held across `commit_close`, so the status alone never
+    authorizes a write: a live `submit_close_review` would be contradicted. The
+    in-process set, the machine scope, and the grace bound on `updated_at` are
+    jointly what make the row provably abandoned without a restart.
+    """
+    store = _Store(
+        replace(
+            _review(status="finalizing", run_id="run"),
+            result_payload={"kind": SUBMITTED_VERDICT_KIND, "verdict": {"valid": True}},
+            updated_at=_NOW - timedelta(seconds=age_seconds),
+        )
+    )
+    run = SimpleNamespace(id="run", status="running", machine_id=machine_id)
+    wake = AsyncMock(return_value={"ism_persisted": True})
+    _install(monkeypatch, store=store, run=run, subscribers=_Subscribers())
+    _install_delivery(monkeypatch, store=store, run=run, task=None)
+    monkeypatch.setattr(lifecycle_agents, "utc_now", lambda: _NOW)
+    monkeypatch.setattr(lifecycle_agents, "get_machine_id", lambda: _THIS_MACHINE)
+
+    with ExitStack() as stack:
+        if held_in_process:
+            stack.enter_context(finalizing_in_process(store.review.id))
+        await lifecycle_agents._reconcile_task_close_reviews(_runner(wake), startup=False)
+
+    assert store.review.status == expected_status
+    assert store.writes == expected_writes
+    if not expected_writes:
+        # An unproven row keeps its captured verdict and its active lock; the
+        # submission that owns it is the only writer allowed to finish it.
+        assert store.review.result_payload == {
+            "kind": SUBMITTED_VERDICT_KIND,
+            "verdict": {"valid": True},
+        }
+        assert store.review.active is True
+        assert store.delivered is False
+        wake.assert_not_awaited()
+        return
+
+    # The sweep releases uq_task_close_reviews_active_task and tells the caller
+    # to close again rather than replaying the dead verdict.
+    assert store.review.active is False
+    assert store.delivered is True
+    payload = wake.call_args.args[2]
+    assert payload["closed"] is False
+    assert payload["error_class"] == "retryable_infrastructure"
+    assert "verdict" not in payload
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("visible_to_reread", [True, False], ids=["re-proof", "compare-and-swap"])
+async def test_a_reviving_submission_wins_the_periodic_sweep_race(
+    monkeypatch: pytest.MonkeyPatch,
+    visible_to_reread: bool,
+) -> None:
+    """A submission that revives the row mid-sweep is never contradicted.
+
+    The proof is necessarily read outside the write, so two guards cover the
+    gap. A revival visible to the sweep's re-read fails the proof again; one
+    that lands after it fails the `updated_at` compare-and-swap in
+    `finish_orphaned_finalizing`. Either way the reconciler writes nothing.
+    """
+    stale = replace(
+        _review(status="finalizing", run_id="run"),
+        updated_at=_NOW - timedelta(seconds=FINALIZING_ORPHAN_GRACE_SECONDS + 1),
+    )
+    store = _Store(stale)
+    run = SimpleNamespace(id="run", status="running", machine_id=_THIS_MACHINE)
+    wake = AsyncMock(return_value={"ism_persisted": True})
+    _install(monkeypatch, store=store, run=run, subscribers=_Subscribers())
+    _install_delivery(monkeypatch, store=store, run=run, task=None)
+    monkeypatch.setattr(lifecycle_agents, "utc_now", lambda: _NOW)
+    monkeypatch.setattr(lifecycle_agents, "get_machine_id", lambda: _THIS_MACHINE)
+
+    revived = replace(stale, updated_at=_NOW)
+
+    def get_and_revive(_review_id: str) -> TaskCloseReview:
+        # Stand in for a concurrent claim landing during the sweep. The row the
+        # re-read observes is what decides which of the two guards catches it.
+        store.review = revived
+        return revived if visible_to_reread else stale
+
+    monkeypatch.setattr(store, "get", get_and_revive)
+
+    await lifecycle_agents._reconcile_task_close_reviews(_runner(wake), startup=False)
+
+    assert store.writes == []
+    assert store.review is revived
+    assert store.review.status == "finalizing"
+    wake.assert_not_awaited()
+    # Which guard caught it: the re-proof refuses to attempt the write at all,
+    # while a revival it cannot see is rejected by the compare-and-swap.
+    assert store.orphan_sweep_attempts == ([] if visible_to_reread else [stale.updated_at])
 
 
 @pytest.mark.asyncio
@@ -325,6 +460,7 @@ class _Store:
         self.finished_status: str | None = None
         self.delivered = False
         self.writes: list[str] = []
+        self.orphan_sweep_attempts: list[datetime] = []
 
     def list_reconcilable(self) -> list[TaskCloseReview]:
         return [self.review]
@@ -360,6 +496,7 @@ class _Store:
         result_payload: dict[str, Any],
         error: str,
     ) -> TaskCloseReview | None:
+        self.orphan_sweep_attempts.append(expected_updated_at)
         if self.review.status != "finalizing" or self.review.updated_at != expected_updated_at:
             return None
         self.writes.append("finish_orphaned_finalizing")
