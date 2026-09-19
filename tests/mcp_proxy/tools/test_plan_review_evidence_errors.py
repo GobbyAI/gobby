@@ -39,6 +39,12 @@ def _registry(service: MagicMock) -> InternalToolRegistry:
                 "ok": False,
                 "error": "invalid_evidence_row",
                 "message": "stored plan snapshot is not bytes",
+                "errors": [
+                    {
+                        "error": "invalid_evidence_row",
+                        "message": "stored plan snapshot is not bytes",
+                    }
+                ],
                 "retryable": False,
             },
         ),
@@ -159,6 +165,12 @@ def test_apply_plan_review_repairs_error_envelope() -> None:
         "ok": False,
         "error": "evidence_not_finalized",
         "message": "finalize the rejection checkpoint before applying repairs",
+        "errors": [
+            {
+                "error": "evidence_not_finalized",
+                "message": "finalize the rejection checkpoint before applying repairs",
+            }
+        ],
         "retryable": False,
     }
     service.apply_plan_review_repairs.assert_called_once_with("evidence-1", ["F1"])

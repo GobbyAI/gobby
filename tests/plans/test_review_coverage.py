@@ -3,14 +3,18 @@ from __future__ import annotations
 import copy
 import hashlib
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.mcp_proxy.tools.plans.review_evidence import register_review_evidence_tools
 from gobby.plans.manifest_emitter import derive_manifest_entries
 from gobby.plans.parser import Kind, PlanDocument, parse_plan
 from gobby.plans.review_coverage import (
     REVIEW_LANES,
     review_complexity,
+    review_coverage_input_schema,
     validate_coverage_attestation,
     validate_review_coverage,
 )
@@ -361,3 +365,261 @@ def test_attestation_rejects_completed_repository_lane() -> None:
 
     with pytest.raises(ReviewEvidenceError, match="canonical lane statuses"):
         validate_coverage_attestation(attestation, verdict="needs_review")
+
+
+def _node(root: object, *path: str) -> dict[str, object]:
+    """Walk the published schema, asserting each hop is an object."""
+    current = root
+    for key in path:
+        assert isinstance(current, dict), f"{key!r} is not reachable through an object"
+        current = current[key]
+    assert isinstance(current, dict)
+    return current
+
+
+def _enum(root: object, *path: str) -> list[str]:
+    values = _node(root, *path)["enum"]
+    assert isinstance(values, list)
+    assert all(isinstance(value, str) for value in values)
+    return [str(value) for value in values]
+
+
+def _lane(lanes: list[object], index: int) -> dict[str, object]:
+    lane = lanes[index]
+    assert isinstance(lane, dict)
+    return lane
+
+
+def _candidate(lanes: list[object], candidate_index: int) -> dict[str, object]:
+    """Read one candidate issue; _coverage_case hangs them all off the first lane."""
+    candidates = _lane(lanes, 0)["candidate_issues"]
+    assert isinstance(candidates, list)
+    candidate = candidates[candidate_index]
+    assert isinstance(candidate, dict)
+    return candidate
+
+
+def _items(dispositions: dict[str, object]) -> list[dict[str, object]]:
+    items = dispositions["items"]
+    assert isinstance(items, list)
+    assert all(isinstance(item, dict) for item in items)
+    return [dict(item) for item in items]
+
+
+def _codes(error: ReviewEvidenceError) -> list[str]:
+    return [str(entry["error"]) for entry in error.errors]
+
+
+_LANE_SCHEMA_PATH = ("lane_results", "items", "properties")
+_CANDIDATE_SCHEMA_PATH = (*_LANE_SCHEMA_PATH, "candidate_issues", "items")
+
+
+def test_published_lane_shapes_describe_an_accepted_payload(tmp_path: Path) -> None:
+    """Lane ids, statuses and citation shape come from the constants the validator uses."""
+    schema = review_coverage_input_schema()
+    lane_results = _node(schema, "lane_results")
+    lane_properties = _node(schema, *_LANE_SCHEMA_PATH)
+    status_description = _node(lane_properties, "status")["description"]
+    assert isinstance(status_description, str)
+    assert lane_results["minItems"] == len(REVIEW_LANES)
+    assert lane_results["maxItems"] == len(REVIEW_LANES)
+    assert _enum(lane_properties, "lane_id") == list(REVIEW_LANES)
+
+    document, lanes, dispositions, shadow = _coverage_case(tmp_path)
+    _validate(tmp_path, document, lanes, dispositions, shadow)
+
+    accepted = [_lane(lanes, index) for index in range(len(lanes))]
+    assert [str(lane["lane_id"]) for lane in accepted] == _enum(lane_properties, "lane_id")
+    for lane in accepted:
+        assert str(lane["status"]) in _enum(lane_properties, "status")
+        assert f"{lane['lane_id']}={lane['status']}" in status_description
+
+    citation_schema = _node(lane_properties, "source_citations", "items")
+    assert _node(lane_properties, "source_citations")["minItems"] == 1
+    assert citation_schema["required"] == ["path", "sha256"]
+    citations = accepted[0]["source_citations"]
+    assert isinstance(citations, list)
+    assert set(_node(citations[0])) <= set(_node(citation_schema, "properties"))
+    assert _node(lane_properties, "section_ids_checked")["type"] == "array"
+
+
+def test_published_candidate_properties_are_the_validator_closed_set(tmp_path: Path) -> None:
+    """The published property names are the same closed set the validator allows."""
+    candidate_schema = _node(review_coverage_input_schema(), *_CANDIDATE_SCHEMA_PATH)
+    published = _node(candidate_schema, "properties")
+    assert candidate_schema["required"] == list(published)
+
+    document, lanes, dispositions, shadow = _coverage_case(tmp_path)
+    assert set(_candidate(lanes, 0)) == set(published)
+    _validate(tmp_path, document, lanes, dispositions, shadow)
+
+    _candidate(lanes, 0)["unpublished_field"] = "value"
+    with pytest.raises(ReviewEvidenceError) as error:
+        _validate(tmp_path, document, lanes, dispositions, shadow)
+
+    assert error.value.code == "invalid_candidate"
+    assert "unpublished_field" in str(error.value)
+
+
+def test_published_confidence_bounds_are_the_enforced_bounds(tmp_path: Path) -> None:
+    """Both published bounds are accepted; a value past the maximum is not."""
+    confidence = _node(review_coverage_input_schema(), *_CANDIDATE_SCHEMA_PATH, "properties")
+    minimum = _node(confidence, "confidence")["minimum"]
+    maximum = _node(confidence, "confidence")["maximum"]
+    assert isinstance(minimum, int | float)
+    assert isinstance(maximum, int | float)
+
+    document, lanes, dispositions, shadow = _coverage_case(tmp_path, candidate_count=2)
+    _candidate(lanes, 0)["confidence"] = minimum
+    _candidate(lanes, 1)["confidence"] = maximum
+    _validate(tmp_path, document, lanes, dispositions, shadow)
+
+    _candidate(lanes, 1)["confidence"] = float(maximum) + 0.5
+    with pytest.raises(ReviewEvidenceError) as error:
+        _validate(tmp_path, document, lanes, dispositions, shadow)
+
+    assert error.value.code == "invalid_candidate"
+    assert "between 0 and 1" in str(error.value)
+
+
+def test_published_disposition_and_shadow_shapes_describe_an_accepted_payload(
+    tmp_path: Path,
+) -> None:
+    """Both disposition values and the shadow manifest's routing_decisions are published."""
+    schema = review_coverage_input_schema()
+    wrapper = _node(schema, "candidate_dispositions")
+    published_dispositions = _enum(
+        wrapper, "properties", "items", "items", "properties", "disposition"
+    )
+    shadow_schema = _node(schema, "shadow_manifest_status")
+    assert wrapper["required"] == [
+        "cross_lane_interaction_complete",
+        "adjacent_variant_complete",
+        "items",
+    ]
+    assert shadow_schema["required"] == ["status", "routing_decisions"]
+    assert _node(shadow_schema, "properties", "routing_decisions")["type"] == "object"
+    assert "manifest_entries" in _node(shadow_schema, "properties")
+
+    document, lanes, dispositions, shadow = _coverage_case(tmp_path, candidate_count=2)
+    dismissed = _items(dispositions)
+    dismissed[1] = {
+        "candidate_id": "candidate-2",
+        "disposition": published_dispositions[1],
+        "reason": "Not a defect",
+    }
+    dispositions["items"] = dismissed
+    attestation = _validate(tmp_path, document, lanes, dispositions, shadow)
+
+    assert {str(item["disposition"]) for item in dismissed} == set(published_dispositions)
+    assert attestation["disposition_counts"] == {
+        "total": 2,
+        "emitted_findings": 1,
+        "dismissed": 1,
+    }
+    assert str(shadow["status"]) in _enum(shadow_schema, "properties", "status")
+    required = shadow_schema["required"]
+    assert isinstance(required, list)
+    assert set(required) <= set(shadow)
+
+
+def test_lane_arm_reports_every_independent_error_at_once(tmp_path: Path) -> None:
+    """Four unrelated lane defects come back in one response, not one per submission."""
+    document, lanes, dispositions, shadow = _coverage_case(tmp_path)
+    _lane(lanes, 0)["source_citations"] = []
+    _candidate(lanes, 0)["confidence"] = 7
+    _lane(lanes, 1)["status"] = "completed"
+    _lane(lanes, 2)["section_ids_checked"] = []
+
+    with pytest.raises(ReviewEvidenceError) as error:
+        _validate(tmp_path, document, lanes, dispositions, shadow)
+
+    assert _codes(error.value) == [
+        "invalid_source_citation",
+        "invalid_candidate",
+        "invalid_lane_results",
+        "invalid_section_ids",
+    ]
+    payload = error.value.to_dict()
+    assert payload["error"] == "invalid_source_citation"
+    assert payload["errors"] == error.value.errors
+    assert "review lane runtime_invariants" in str(error.value.errors[3]["message"])
+
+
+def test_disposition_arm_reports_every_independent_error_at_once(tmp_path: Path) -> None:
+    """The disposition arm collects across the wrapper flags and every item."""
+    document, lanes, dispositions, shadow = _coverage_case(tmp_path, candidate_count=4)
+    dispositions["adjacent_variant_complete"] = False
+    items = _items(dispositions)
+    items[0]["disposition"] = "maybe"
+    items[1]["finding_id"] = "finding-dup"
+    items[2]["finding_id"] = "finding-dup"
+    items[3]["reason"] = ""
+    dispositions["items"] = items
+
+    with pytest.raises(ReviewEvidenceError) as error:
+        _validate(tmp_path, document, lanes, dispositions, shadow)
+
+    assert _codes(error.value) == [
+        "incomplete_dispositions",
+        "invalid_dispositions",
+        "duplicate_finding",
+        "invalid_candidate_disposition",
+    ]
+    assert error.value.to_dict()["error"] == "incomplete_dispositions"
+
+
+def test_a_non_array_items_reports_only_its_own_error(tmp_path: Path) -> None:
+    """A non-array items already explains the missing dispositions; it reports once."""
+    document, lanes, dispositions, shadow = _coverage_case(tmp_path)
+    dispositions["items"] = "not-an-array"
+
+    with pytest.raises(ReviewEvidenceError) as error:
+        _validate(tmp_path, document, lanes, dispositions, shadow)
+
+    assert _codes(error.value) == ["invalid_dispositions"]
+    assert "must be an array" in str(error.value)
+
+
+def test_a_single_failure_still_reports_one_entry(tmp_path: Path) -> None:
+    """Every ReviewEvidenceError carries an errors list, single failure included."""
+    document, lanes, dispositions, shadow = _coverage_case(tmp_path)
+    _lane(lanes, 1)["status"] = "completed"
+
+    with pytest.raises(ReviewEvidenceError) as error:
+        _validate(tmp_path, document, lanes, dispositions, shadow)
+
+    assert error.value.errors == [
+        {
+            "error": "invalid_lane_results",
+            "message": "review lane repository_blast_radius has a non-canonical status",
+        }
+    ]
+
+
+def test_registered_tool_schema_carries_the_derived_shapes() -> None:
+    """The MCP registration publishes the derived shapes, not bare objects."""
+    registry = InternalToolRegistry(name="test-review-coverage")
+    with patch(
+        "gobby.mcp_proxy.tools.plans.review_evidence.PlanReviewEvidenceService",
+        return_value=MagicMock(),
+    ):
+        register_review_evidence_tools(
+            registry,
+            MagicMock(),
+            resolve_project_id=lambda _project: "project-1",
+        )
+
+    schema = registry.get_schema("validate_plan_review_coverage")
+    assert schema is not None
+    registered = _node(schema, "inputSchema")
+    published = review_coverage_input_schema()
+    assert _node(registered, "properties", "evidence_id")["type"] == "string"
+    for name, shape in published.items():
+        assert _node(registered, "properties", name) == shape
+    assert registered["required"] == [
+        "evidence_id",
+        "lane_results",
+        "candidate_dispositions",
+        "shadow_manifest_status",
+    ]

@@ -8,11 +8,49 @@ the working tree and refuses drifted or out-of-tree citations.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from copy import deepcopy
 
 from gobby.plans.review_evidence_models import ReviewEvidenceError, canonical_json_object
 from gobby.utils.hashing import is_sha256
 
-_SPAN_FIELDS = {"line_start", "line_end"}
+_REQUIRED_CITATION_FIELDS = ("path", "sha256")
+_SPAN_FIELDS = ("line_start", "line_end")
+_CITATION_FIELD_SHAPES: dict[str, dict[str, object]] = {
+    "path": {
+        "type": "string",
+        "description": "Repository-relative path of a file this lane actually read.",
+    },
+    "sha256": {
+        "type": "string",
+        "description": "Lowercase hexadecimal SHA-256 of the cited file's current bytes.",
+    },
+    "line_start": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "Optional span start.",
+    },
+    "line_end": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "Optional span end; must not precede line_start.",
+    },
+}
+_CITATION_FIELDS = _REQUIRED_CITATION_FIELDS + _SPAN_FIELDS
+
+
+def source_citation_schema() -> dict[str, object]:
+    """Describe a citation exactly as :func:`validate_source_citation` accepts it."""
+    return {
+        "type": "object",
+        "description": (
+            "A repository file this lane read; coverage rehashes every cited path "
+            "against the working tree."
+        ),
+        "properties": {
+            field: deepcopy(_CITATION_FIELD_SHAPES[field]) for field in _CITATION_FIELDS
+        },
+        "required": list(_REQUIRED_CITATION_FIELDS),
+    }
 
 
 def validate_source_citation(
@@ -29,8 +67,8 @@ def validate_source_citation(
     citation = canonical_json_object(raw)
     _require_exact_citation_fields(
         citation,
-        required={"path", "sha256"},
-        allowed={"path", "sha256"} | _SPAN_FIELDS,
+        required=set(_REQUIRED_CITATION_FIELDS),
+        allowed=set(_CITATION_FIELDS),
         owner=owner,
     )
     path = citation["path"]

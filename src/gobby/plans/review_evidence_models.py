@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal, cast
@@ -23,17 +23,25 @@ class ReviewEvidenceError(ValueError):
         *,
         retryable: bool = False,
         details: Mapping[str, object] | None = None,
+        errors: Sequence[Mapping[str, object]] | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
         self.retryable = retryable
         self.details = dict(details or {})
+        # Validator arms that walk a list collect every independent failure and
+        # report them here. `code` and `message` stay the first failure, so a
+        # single-error caller reads exactly what it read before.
+        self.errors: list[dict[str, object]] = (
+            [dict(entry) for entry in errors] if errors else [{"error": code, "message": message}]
+        )
 
     def to_dict(self) -> dict[str, object]:
         return {
             "ok": False,
             "error": self.code,
             "message": str(self),
+            "errors": [dict(entry) for entry in self.errors],
             "retryable": self.retryable,
             **self.details,
         }
