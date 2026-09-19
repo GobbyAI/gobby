@@ -20,6 +20,10 @@ logger = logging.getLogger(__name__)
 
 # Label width for alignment in status sections
 _LW = 18
+# The managed native binaries, in install-set order. gterm and gclient were
+# absent here while the payload carried them, so a stale gclient reported
+# nothing at all: see #22551.
+_MANAGED_BIN_LABELS = ("gcode", "ghook", "gterm", "gclient")
 _CODING_CLI_LABELS = (
     ("agy", "AGY CLI"),
     ("claude", "Claude Code"),
@@ -413,16 +417,19 @@ def format_status_message(
         lines.append("Gobby:")
         if gobby.get("gobby"):
             lines.append(f"  {'gobby:':<{_LW}}{gobby['gobby']}")
-        if gobby.get("gcode"):
-            path_str = f" ({gobby['gcode_path']})" if gobby.get("gcode_path") else ""
-            lines.append(f"  {'gcode:':<{_LW}}{gobby['gcode']}{path_str}")
-        elif gobby.get("gcode") is None:
-            lines.append(f"  {'gcode:':<{_LW}}not installed")
-        if gobby.get("ghook"):
-            path_str = f" ({gobby['ghook_path']})" if gobby.get("ghook_path") else ""
-            lines.append(f"  {'ghook:':<{_LW}}{gobby['ghook']}{path_str}")
-        elif gobby.get("ghook") is None:
-            lines.append(f"  {'ghook:':<{_LW}}not installed")
+        for name in _MANAGED_BIN_LABELS:
+            version = gobby.get(name)
+            if version:
+                path = gobby.get(f"{name}_path")
+                detail = f"{version}{f' ({path})' if path else ''}"
+                # gclient and gterm carry a static crate version that does not
+                # move between builds, so the version alone cannot say whether
+                # the operator is running what they last edited.
+                if gobby.get(f"{name}_stale"):
+                    detail += "  [stale: rebuild and install]"
+                lines.append(f"  {f'{name}:':<{_LW}}{detail}")
+            elif version is None:
+                lines.append(f"  {f'{name}:':<{_LW}}not installed")
 
         lines.append("")
 

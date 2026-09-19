@@ -4,7 +4,9 @@ import hashlib
 import io
 import json
 import os
+import subprocess
 import tarfile
+import time
 from http.client import IncompleteRead
 from pathlib import Path
 from types import TracebackType
@@ -14,6 +16,7 @@ import pytest
 
 import gobby.install.bin_freshness_locks as freshness_locks
 from gobby.config.bin_freshness import BinFreshnessConfig
+from gobby.install import bin_freshness_promotion
 from gobby.install.bin_freshness_github import (
     GithubAPIError,
     GithubReleaseClient,
@@ -25,6 +28,8 @@ from gobby.install.bin_freshness_models import ManagedBinSpec, ReleaseAsset, man
 from gobby.install.bin_freshness_promotion import (
     clear_source_hash,
     file_sha256,
+    last_source_commit_time,
+    native_bin_predates_source,
     read_source_hash,
     workspace_binary_is_current,
     write_source_hash,
@@ -920,6 +925,163 @@ class TestWorkspaceBinaryFreshness:
         clear_source_hash(bin_dir, "gclient")
 
         assert read_source_hash(bin_dir, "gclient") is None
+
+
+class TestNativeBinPredatesSource:
+    """`workspace_binary_is_current` needs a build artifact; this does not.
+
+    The case it exists for is an operator who edited or pulled source and never
+    rebuilt, so there is no fresh artifact to compare against and the installed
+    binary is quietly behind the checkout.
+    """
+
+    def _checkout(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        *,
+        commit_times: dict[tuple[str, ...], float | None] | None = None,
+    ) -> tuple[list[tuple[str, ...]], Path]:
+        crates = tmp_path / "crates"
+        crates.mkdir()
+        monkeypatch.setattr(
+            bin_freshness_promotion, "_workspace_crates_root", lambda: crates, raising=True
+        )
+        asked: list[tuple[str, ...]] = []
+
+        def _fake_commit_time(root: Path, names: tuple[str, ...]) -> float | None:
+            assert root == crates
+            asked.append(names)
+            return (commit_times or {}).get(names, 1000.0)
+
+        monkeypatch.setattr(
+            bin_freshness_promotion, "last_source_commit_time", _fake_commit_time, raising=True
+        )
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        return asked, bin_dir
+
+    def _install(self, bin_dir: Path, name: str, *, mtime: float) -> Path:
+        binary = bin_dir / name
+        binary.write_bytes(b"binary")
+        os.utime(binary, (mtime, mtime))
+        return binary
+
+    def test_commit_after_the_install_is_stale(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _, bin_dir = self._checkout(
+            tmp_path, monkeypatch, commit_times={("gclient", "gcore"): 2000.0}
+        )
+        self._install(bin_dir, "gclient", mtime=1000.0)
+
+        assert native_bin_predates_source("gclient", bin_dir=bin_dir) is True
+
+    def test_install_after_the_last_commit_is_fresh(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _, bin_dir = self._checkout(
+            tmp_path, monkeypatch, commit_times={("gclient", "gcore"): 1000.0}
+        )
+        self._install(bin_dir, "gclient", mtime=2000.0)
+
+        assert native_bin_predates_source("gclient", bin_dir=bin_dir) is False
+
+    def test_gclient_watches_gcore_because_it_depends_on_it(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A gobby-core commit leaves an unrebuilt gclient just as stale."""
+        asked, bin_dir = self._checkout(tmp_path, monkeypatch)
+        self._install(bin_dir, "gclient", mtime=2000.0)
+
+        native_bin_predates_source("gclient", bin_dir=bin_dir)
+
+        assert asked == [("gclient", "gcore")]
+
+    def test_gterm_ignores_gcore_because_it_does_not_depend_on_it(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        asked, bin_dir = self._checkout(tmp_path, monkeypatch)
+        self._install(bin_dir, "gterm", mtime=2000.0)
+
+        native_bin_predates_source("gterm", bin_dir=bin_dir)
+
+        assert asked == [("gterminal",)]
+
+    def test_release_install_without_a_checkout_answers_nothing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A false 'stale' on a release install would be pure noise."""
+        _, bin_dir = self._checkout(tmp_path, monkeypatch)
+        self._install(bin_dir, "gclient", mtime=1000.0)
+        monkeypatch.setattr(
+            bin_freshness_promotion, "_workspace_crates_root", lambda: None, raising=True
+        )
+
+        assert native_bin_predates_source("gclient", bin_dir=bin_dir) is None
+
+    def test_unreadable_git_history_answers_nothing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _, bin_dir = self._checkout(
+            tmp_path, monkeypatch, commit_times={("gclient", "gcore"): None}
+        )
+        self._install(bin_dir, "gclient", mtime=1000.0)
+
+        assert native_bin_predates_source("gclient", bin_dir=bin_dir) is None
+
+    def test_uninstalled_binary_answers_nothing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _, bin_dir = self._checkout(tmp_path, monkeypatch)
+
+        assert native_bin_predates_source("gclient", bin_dir=bin_dir) is None
+
+    def test_stamped_set_member_is_not_tracked_here(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """gcode/gdaemon/ghook have the identity stamp; this is for the rest."""
+        _, bin_dir = self._checkout(tmp_path, monkeypatch)
+        self._install(bin_dir, "gcode", mtime=1000.0)
+
+        assert native_bin_predates_source("gcode", bin_dir=bin_dir) is None
+
+
+class TestLastSourceCommitTime:
+    """The git boundary the staleness check is built on, exercised for real."""
+
+    def _repo(self, tmp_path: Path) -> Path:
+        crates = tmp_path / "crates"
+        (crates / "gclient").mkdir(parents=True)
+        (crates / "gclient" / "lib.rs").write_text("fn main() {}")
+        for args in (
+            ["init", "-q"],
+            ["config", "user.email", "t@example.com"],
+            ["config", "user.name", "t"],
+            ["add", "-A"],
+            ["commit", "-qm", "seed"],
+        ):
+            subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True)
+        return crates
+
+    def test_reads_the_commit_time_of_the_named_crates(self, tmp_path: Path) -> None:
+        crates = self._repo(tmp_path)
+
+        committed_at = last_source_commit_time(crates, ("gclient",))
+
+        assert committed_at is not None
+        assert committed_at == pytest.approx(time.time(), abs=120)
+
+    def test_crate_with_no_history_answers_nothing(self, tmp_path: Path) -> None:
+        crates = self._repo(tmp_path)
+
+        assert last_source_commit_time(crates, ("never-committed",)) is None
+
+    def test_outside_a_git_repository_answers_nothing(self, tmp_path: Path) -> None:
+        crates = tmp_path / "crates"
+        (crates / "gclient").mkdir(parents=True)
+
+        assert last_source_commit_time(crates, ("gclient",)) is None
 
 
 TEST_MACHINE_ID = "8fa1247f-e924-4bd7-a54e-b9dd5704304a"

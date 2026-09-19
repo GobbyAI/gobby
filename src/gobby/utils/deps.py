@@ -21,6 +21,7 @@ import httpx
 import psycopg
 
 from gobby.config.bootstrap import BootstrapConfigError
+from gobby.install.bin_freshness_promotion import native_bin_predates_source
 from gobby.install.version_probe import probe_native_bin_version
 from gobby.storage.hub.managed import managed_grant_path
 from gobby.utils.dependency_requirements import collect_dependency_report
@@ -707,8 +708,10 @@ def collect_all_deps(db: HubDatabase, *, managed_services: bool) -> dict[str, An
             "ghook_path": _local_binary_path("ghook"),
             "gterm": get_gterm_version(),
             "gterm_path": _local_binary_path("gterm"),
+            "gterm_stale": native_bin_predates_source("gterm"),
             "gclient": get_gclient_version(),
             "gclient_path": _local_binary_path("gclient"),
+            "gclient_stale": native_bin_predates_source("gclient"),
             "impeccable": get_impeccable_version(),
         },
         "coding_clis": {

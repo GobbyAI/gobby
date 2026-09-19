@@ -369,6 +369,67 @@ class TestFormatStatusMessage:
         assert "Required Dependencies:" in result
         assert "tmux:" in result
 
+    def test_gobby_section_reports_every_managed_native_binary(self) -> None:
+        """gterm and gclient were carried in the payload and never rendered.
+
+        The operator ran a gclient three commits behind for hours while this
+        dashboard reported a healthy daemon and said nothing (#22551).
+        """
+        result = format_status_message(
+            running=True,
+            deps_info={
+                "gobby": {
+                    "gobby": "0.5.0",
+                    "gcode": "1.8.0",
+                    "gcode_path": "/bin/gcode",
+                    "ghook": "0.9.0",
+                    "ghook_path": "/bin/ghook",
+                    "gterm": "0.4.0",
+                    "gterm_path": "/bin/gterm",
+                    "gclient": "0.1.0",
+                    "gclient_path": "/bin/gclient",
+                }
+            },
+        )
+
+        assert "gterm:" in result
+        assert "gclient:" in result
+        assert "/bin/gclient" in result
+        assert "stale" not in result
+
+    def test_stale_marker_names_the_binary_that_predates_its_source(self) -> None:
+        result = format_status_message(
+            running=True,
+            deps_info={
+                "gobby": {
+                    "gcode": "1.8.0",
+                    "gterm": "0.4.0",
+                    "gterm_stale": False,
+                    "gclient": "0.1.0",
+                    "gclient_stale": True,
+                }
+            },
+        )
+
+        gclient_line = next(line for line in result.splitlines() if "gclient:" in line)
+        gterm_line = next(line for line in result.splitlines() if "gterm:" in line)
+        assert "stale" in gclient_line
+        assert "stale" not in gterm_line
+
+    def test_absent_managed_binary_reports_not_installed(self) -> None:
+        result = format_status_message(
+            running=True,
+            deps_info={"gobby": {"gcode": "1.8.0", "gterm": None, "gclient": None}},
+        )
+
+        lines = {
+            name: next(line for line in result.splitlines() if f"{name}:" in line)
+            for name in ("gcode", "gterm", "gclient")
+        }
+        assert "not installed" in lines["gterm"]
+        assert "not installed" in lines["gclient"]
+        assert "1.8.0" in lines["gcode"]
+
     def test_coding_clis_include_qwen_and_droid(self) -> None:
         result = format_status_message(
             running=True,
