@@ -1,7 +1,9 @@
 """Real database proofs for the restart/handoff admission boundary."""
 
+import logging
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
+from datetime import timedelta
 from uuid import uuid4
 
 import pytest
@@ -13,6 +15,7 @@ from gobby.sessions.handoff import (
 )
 from gobby.sessions.handoff_records import build_handoff_payload, record_handoff_delivery
 from gobby.sessions.handoff_shutdown import (
+    HANDOFF_IN_FLIGHT_MINUTES,
     HandoffShutdownBlocked,
     cancel_handoff_shutdown,
     guard_handoff_shutdown,
@@ -22,6 +25,7 @@ from gobby.sessions.handoff_shutdown import (
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
+from gobby.utils.datetime import utc_now
 from gobby.workflows.state_manager import SessionVariableManager
 
 
@@ -119,6 +123,61 @@ def test_abandoned_or_other_machine_handoff_does_not_block(
     SessionManager(temp_db).update(handoff_session, status="expired")
     with guard_handoff_shutdown(temp_db, machine_id):
         assert SessionVariableManager(temp_db).get_variables(handoff_session)["set_handoff_pending"]
+
+
+@pytest.mark.parametrize(
+    ("claimed", "minutes_ago", "blocks"),
+    [
+        pytest.param(True, HANDOFF_IN_FLIGHT_MINUTES - 1, True, id="recent-dispatch-blocks"),
+        pytest.param(True, HANDOFF_IN_FLIGHT_MINUTES + 1, False, id="stale-dispatch-skipped"),
+        pytest.param(False, HANDOFF_IN_FLIGHT_MINUTES + 1, False, id="stale-unclaimed-skipped"),
+    ],
+)
+def test_marker_blocks_only_while_its_delivery_can_still_be_in_flight(
+    temp_db: HubDatabase,
+    machine_id: str,
+    handoff_session: str,
+    caplog: pytest.LogCaptureFixture,
+    claimed: bool,
+    minutes_ago: int,
+    blocks: bool,
+) -> None:
+    """A compact pull left unsubmitted for hours must not fence every restart.
+
+    The compacted row returns to a live status, so the awaiting_handoff sweep
+    never expires it; only the marker's own age says the delivery is over.
+    """
+    handoff = build_handoff_payload(current_state="Ready", next_steps=["Continue"])
+    state = stage_handoff_attempt(
+        temp_db,
+        handoff_session,
+        attempt_id=uuid4().hex,
+        handoff=handoff,
+        clear_session=False,
+    )
+    variables = SessionVariableManager(temp_db)
+    marker = dict(variables.get_variables(handoff_session)["set_handoff_pending"])
+    # The delivery hook stamps dispatch_started_at when it claims the attempt; an
+    # attempt it never claimed only carries its staging time.
+    marker["dispatch_started_at" if claimed else "created_at"] = (
+        utc_now() - timedelta(minutes=minutes_ago)
+    ).isoformat()
+    variables.merge_variables(handoff_session, {"set_handoff_pending": marker})
+
+    with caplog.at_level(logging.WARNING, logger="gobby.sessions.handoff_shutdown"):
+        if blocks:
+            with pytest.raises(HandoffShutdownBlocked, match=state.attempt_id):
+                with guard_handoff_shutdown(temp_db, machine_id):
+                    pytest.fail("A delivery this recent may still be in flight")
+            assert state.attempt_id not in caplog.text
+        else:
+            with guard_handoff_shutdown(temp_db, machine_id):
+                assert SessionManager(temp_db).get(handoff_session) is not None
+            assert "handoff-shutdown#" in caplog.text
+            assert state.attempt_id in caplog.text
+    # Skipping never discards the handoff: the marker is still consumable afterwards.
+    consumed = consume_pending_handoff(temp_db, handoff_session)
+    assert consumed is not None and consumed.markdown == handoff.rendered_markdown
 
 
 def test_cli_shutdown_fence_rejects_new_stage_without_writes(

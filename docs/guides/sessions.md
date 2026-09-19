@@ -286,7 +286,11 @@ Leave optional fields empty when unneeded. Submit required feedback through
 Daemon stop and restart refuse while a live session has an unresolved handoff,
 including one delivered but not yet consumed by `get_handoff`. An expired clear
 predecessor remains protected while its live successor has not read the handoff.
-Abandoned markers on expired or deleted sessions do not block shutdown.
+Abandoned markers on expired or deleted sessions do not block shutdown, and
+neither does a stale one: a marker that last moved more than thirty minutes ago
+(the awaiting-handoff sweep window) is logged as a warning and skipped, because
+nothing automatic will consume it and `get_handoff` still reads it after the
+restart.
 `gobby stop --wait` and `gobby restart --wait` wait up to ten minutes for handoffs;
 `--force` does not bypass this protection. Once shutdown passes the check, new
 handoffs cannot stage until it finishes or is cancelled. A blocked restart names
