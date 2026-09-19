@@ -697,6 +697,98 @@ class TestRequireStepCompletion:
         assert variables["step_workflow_complete"] is False
         assert variables["stop_attempts"] == 1
 
+    @pytest.fixture
+    def close_review_retry_wait(
+        self,
+        db: HubDatabase,
+        sample_project: dict[str, Any],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> tuple[LocalTaskManager, Task]:
+        """Persist a task whose latest close review is parked on a retryable error."""
+        now = datetime(2026, 9, 18, 12, tzinfo=UTC)
+        monkeypatch.setattr(review_payloads, "utc_now", lambda: now)
+        monkeypatch.setattr(review_storage, "utc_now", lambda: now)
+        tasks = LocalTaskManager(db)
+        task = tasks.create_task(
+            validation_criteria="Spawned-agent step gate yields to the close review",
+            project_id=sample_project["id"],
+            title="Pending close review",
+        )
+        store = TaskCloseReviewStore(db)
+        review, _ = store.create_or_get_active(
+            task_id=task.id,
+            task_ref=f"#{task.seq_num}",
+            caller_session_id=SESSION_ID,
+            close_arguments={},
+            expected_task_updated_at=task.updated_at,
+            review_fingerprint="review",
+            evidence_fingerprint="evidence",
+            diff_sha="d" * 64,
+            test_bodies_sha="e" * 64,
+            stable_facts={},
+        )
+        store.finish(
+            review.id,
+            status="error",
+            result_payload=build_terminal_review_payload(
+                review, status="error", error_class="retryable_infrastructure"
+            ),
+        )
+        return tasks, task
+
+    @pytest.mark.asyncio
+    async def test_pending_close_review_yields_the_step_gate(
+        self,
+        db: HubDatabase,
+        close_review_retry_wait: tuple[LocalTaskManager, Task],
+    ) -> None:
+        """A spawned worker parked on its own claimed task's close review may yield."""
+        _sync_bundled(db)
+        tasks, task = close_review_retry_wait
+        variables: dict[str, object] = {
+            "is_spawned_agent": True,
+            "current_step": "implement",
+            "step_workflow_complete": False,
+            "task_claimed": True,
+            "claimed_tasks": {task.id: f"#{task.seq_num}"},
+            "stop_attempts": 0,
+            "_memory_initial_stop_checked": True,
+        }
+
+        response = await RuleEngine(db, task_manager=tasks).evaluate(
+            _make_event(HookEventType.STOP), SESSION_ID, variables
+        )
+
+        assert response.decision == "allow"
+        assert variables["current_step"] == "implement"
+        assert variables["step_workflow_complete"] is False
+
+    @pytest.mark.asyncio
+    async def test_unclaimed_spawned_agent_still_blocks_beside_a_parked_review(
+        self,
+        db: HubDatabase,
+        close_review_retry_wait: tuple[LocalTaskManager, Task],
+    ) -> None:
+        """An empty claim set grants no durable wait, so an incomplete step still blocks."""
+        _sync_bundled(db)
+        tasks, _task = close_review_retry_wait
+        variables: dict[str, object] = {
+            "is_spawned_agent": True,
+            "current_step": "implement",
+            "step_workflow_complete": False,
+            "claimed_tasks": {},
+            "stop_attempts": 0,
+            "_memory_initial_stop_checked": True,
+        }
+
+        response = await RuleEngine(db, task_manager=tasks).evaluate(
+            _make_event(HookEventType.STOP), SESSION_ID, variables
+        )
+
+        assert response.decision == "block"
+        assert "Step workflow not complete" in (response.reason or "")
+        assert "gobby-agents:end_agent_run" in (response.reason or "")
+
     def test_blocks_on_turn_end(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         """Should be a block effect on semantic turn_end."""
         _sync_bundled(db)
@@ -764,8 +856,7 @@ class TestRequireStepCompletion:
                 "str": str,
                 "int": int,
                 "bool": bool,
-                "has_active_agent_wait": lambda: False,
-                "has_active_coordination_wait": lambda: False,
+                "has_durable_stop_wait": lambda: False,
             },
         )
         assert body.when is not None
