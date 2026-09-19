@@ -11,6 +11,7 @@ import pytest
 from gobby.storage.terminals import (
     UNRESOLVED_WRITE_ACTION_KEY_MAX_BYTES,
     UNRESOLVED_WRITE_MAX_ENTRIES,
+    Terminal,
     UnresolvedWriteCapacityError,
 )
 from gobby.terminals.leases import TerminalLeaseRegistry
@@ -419,14 +420,99 @@ async def test_revalidate_before_persist() -> None:
     assert "op" not in _unresolved(store, terminal.id)
 
 
+class _CountingStore(MemoryTerminalStore):
+    """Memory store that records every coordinator-facing call."""
+
+    def __init__(self, terminal: Terminal) -> None:
+        super().__init__(terminal)
+        self.calls: list[str] = []
+
+    def get(self, terminal_id: str) -> Terminal | None:
+        self.calls.append("get")
+        return super().get(terminal_id)
+
+    def persist_unresolved_write(
+        self,
+        terminal_id: str,
+        action_key: str,
+        origin: str,
+        *,
+        daemon_epoch: str,
+        at: Any = None,
+        payload_fingerprint: str | None = None,
+    ) -> Terminal:
+        self.calls.append("persist")
+        return super().persist_unresolved_write(
+            terminal_id,
+            action_key,
+            origin,
+            daemon_epoch=daemon_epoch,
+            at=at,
+            payload_fingerprint=payload_fingerprint,
+        )
+
+    def clear_unresolved_write(self, terminal_id: str, action_key: str) -> Terminal:
+        self.calls.append("clear")
+        return super().clear_unresolved_write(terminal_id, action_key)
+
+    def clear_automatic_write_quarantine(self, terminal_id: str) -> Terminal:
+        self.calls.append("clear_quarantine")
+        return super().clear_automatic_write_quarantine(terminal_id)
+
+
+def _counting_coordinator() -> tuple[WriteCoordinator, FakeRuntime, _CountingStore, Terminal]:
+    terminal = make_memory_terminal()
+    store = _CountingStore(terminal)
+    runtime = FakeRuntime()
+    coordinator = WriteCoordinator(
+        cast(UnresolvedWriteStore, store),
+        runtime_registry(runtime),
+        lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
+    )
+    return coordinator, runtime, store, terminal
+
+
+def _operator_input(
+    terminal: Terminal,
+    generation: int,
+    seq: int,
+    *,
+    payload: str = "k",
+) -> WriteRequest:
+    return WriteRequest(
+        terminal_id=terminal.id,
+        action_key=f"ws:att-1:{seq}",
+        origin="operator",
+        kind="input",
+        payload=payload,
+        attachment_id="att-1",
+        expected_lease_generation=generation,
+        terminal=terminal,
+    )
+
+
 @pytest.mark.asyncio
-async def test_operator_latch_carries_daemon_epoch() -> None:
+async def test_operator_input_with_attached_terminal_touches_no_store() -> None:
+    coordinator, runtime, store, terminal = _counting_coordinator()
+    generation = await _grant(coordinator, terminal.id)
+    store.calls.clear()
+
+    outcome = await coordinator.write(_operator_input(terminal, generation, 1, payload="x"))
+
+    assert isinstance(outcome, Delivered)
+    assert runtime.write_log == [("input", b"x")]
+    assert store.calls == []
+    assert _unresolved(store, terminal.id) == {}
+
+
+@pytest.mark.asyncio
+async def test_operator_write_without_idempotency_key_never_latches() -> None:
     coordinator, runtime, store = _coordinator()
     terminal = next(iter(store.rows.values()))
     generation = await _grant(coordinator, terminal.id)
     runtime.outcome = IndeterminateWrite(detail="reply lost")
 
-    await coordinator.write(
+    outcome = await coordinator.write(
         WriteRequest(
             terminal_id=terminal.id,
             action_key="ws:att-1:1",
@@ -438,10 +524,48 @@ async def test_operator_latch_carries_daemon_epoch() -> None:
         )
     )
 
-    entry = _unresolved(store, terminal.id)["ws:att-1:1"]
-    assert entry["origin"] == "operator"
+    assert isinstance(outcome, IndeterminateWrite)
+    assert _unresolved(store, terminal.id) == {}
+
+    # A keyed send keeps its latch: that entry is what replay detection reads.
+    await coordinator.write(
+        WriteRequest(
+            terminal_id=terminal.id,
+            action_key="mcp-send-keys:session:key",
+            origin="daemon",
+            kind="text",
+            payload="hello",
+            idempotency_key="key",
+        )
+    )
+    entry = _unresolved(store, terminal.id)["mcp-send-keys:session:key"]
     assert entry["daemon_epoch"] == coordinator.lease_registry.daemon_epoch
-    assert isinstance(entry["at"], str)
+    assert isinstance(entry["payload_fingerprint"], str)
+
+
+@pytest.mark.asyncio
+async def test_operator_write_lifts_quarantine_once() -> None:
+    coordinator, _runtime, store, terminal = _counting_coordinator()
+    generation = await _grant(coordinator, terminal.id)
+    coordinator.quarantine(terminal.id, "wake:lost")
+    assert terminal.automatic_write_quarantined_at is not None
+    store.calls.clear()
+
+    await coordinator.write(_operator_input(terminal, generation, 1))
+    assert terminal.automatic_write_quarantined_at is None
+    assert terminal.automatic_write_quarantine_action_key is None
+    await coordinator.write(_operator_input(terminal, generation, 2))
+    await coordinator.write(_operator_input(terminal, generation, 3))
+    assert store.calls == ["clear_quarantine"]
+
+    # A quarantine already on the row when the attachment was granted, such as
+    # one left by a previous daemon, lifts the same way and only once.
+    store.set_automatic_write_quarantine(terminal.id, "wake:older")
+    store.calls.clear()
+    await coordinator.write(_operator_input(terminal, generation, 4))
+    await coordinator.write(_operator_input(terminal, generation, 5))
+    assert terminal.automatic_write_quarantined_at is None
+    assert store.calls == ["clear_quarantine"]
 
 
 @pytest.mark.asyncio

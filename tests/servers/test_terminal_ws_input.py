@@ -444,3 +444,41 @@ async def test_input_without_an_attach_client_stays_on_the_runtime() -> None:
 
     assert runtime.inputs == [b"\x1b[<64;13;12M"]
     assert websocket.messages_of_type("terminal_write_outcome")[-1]["outcome"] == "delivered"
+
+
+async def test_operator_write_uses_attach_snapshot() -> None:
+    terminal = make_memory_terminal()
+    runtime = _RecordingRuntime()
+    server, _ = await _server(terminal, runtime)
+    cast(Any, server)._start_proxy_attach = AsyncMock(return_value=None)
+    websocket = _WebSocket()
+
+    await TerminalWsMixin._handle_terminal_attach(
+        server, websocket, {"request_id": "attach-1", "terminal_id": terminal.id}
+    )
+    attach_result = websocket.messages_of_type("terminal_attach_result")[-1]
+    assert attach_result["success"] is True
+    attachment_id = attach_result["attachment_id"]
+    record = server._leases().get(attachment_id)
+    assert record is not None
+    assert record.terminal is terminal
+    granted = await server._leases().take_control(terminal.id, attachment_id, takeover=True)
+    assert granted.granted
+
+    coordinator_write = AsyncMock(wraps=server.write_coordinator.write)
+    server.write_coordinator.write = coordinator_write
+    manager = server.terminal_manager
+    assert manager is not None
+    row_reads = MagicMock(wraps=manager.get)
+    manager.get = row_reads
+
+    await server._handle_terminal_input(
+        websocket, _input_message(terminal, attachment_id, seq=1, data="a")
+    )
+
+    assert websocket.messages_of_type("terminal_write_outcome")[-1]["outcome"] == "delivered"
+    assert runtime.inputs == [b"a"]
+    awaited = coordinator_write.await_args
+    assert awaited is not None
+    assert awaited.args[0].terminal is terminal
+    assert row_reads.call_count == 0

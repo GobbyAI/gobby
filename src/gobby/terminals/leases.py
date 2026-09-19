@@ -10,7 +10,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from hashlib import sha256
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 from uuid import uuid4
 
 from gobby.terminals.dimensions import InvalidTerminalDimensionsError, validate_dimensions
@@ -20,6 +20,9 @@ from gobby.terminals.ws_protocol import (
     WRITE_SEQ_CAPACITY,
     SafeIntegerOverflowError,
 )
+
+if TYPE_CHECKING:
+    from gobby.storage.terminals import Terminal
 
 LIFECYCLE_PUBLICATION_QUEUE_MAXSIZE = 256
 
@@ -128,6 +131,9 @@ class _Attachment:
     write_high_water: int = -1
     writes: OrderedDict[int, _WriteRecord] = field(default_factory=OrderedDict)
     message_seq: int = 0
+    # The terminal row as it stood when the attachment was granted. Operator
+    # writes dispatch against it, so a keystroke never re-reads the row.
+    terminal: Terminal | None = None
 
 
 @dataclass
@@ -346,6 +352,7 @@ class TerminalLeaseRegistry:
         attachment_id: str | None = None,
         viewer: Viewer = "gclient",
         backend: str = "native",
+        terminal: Terminal | None = None,
     ) -> _Attachment:
         async with self.lock(terminal_id):
             delivery = "direct" if frame_delivery == "direct" else "proxy"
@@ -356,6 +363,7 @@ class TerminalLeaseRegistry:
                 frame_delivery=delivery,
                 viewer=viewer,
                 backend=backend,
+                terminal=terminal,
             )
             self._attachments[minted] = record
             self._lease(terminal_id)

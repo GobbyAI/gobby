@@ -202,6 +202,7 @@ class TerminalWsMixin:
             websocket=websocket,
             viewer=viewer,
             backend=str(row.backend),
+            terminal=row,
         )
         locator: AttachLocator | None = None
         if str(delivery) == "direct":
@@ -549,15 +550,19 @@ class TerminalWsMixin:
         finally:
             if isinstance(seq, int):
                 self._leases().complete_write(attachment_id, seq, outcome, reason)
-        record_turn_observation(
-            self,
-            terminal_id,
-            kind=kind,
-            payload=payload,
-            outcome=outcome,
-            seq=seq,
-        )
-        await self._write_outcome(websocket, data, outcome=outcome, reason=reason)
+        try:
+            await self._write_outcome(websocket, data, outcome=outcome, reason=reason)
+        finally:
+            # The observer looks the terminal row up for an interrupt key; the
+            # client's reply must not wait on that.
+            record_turn_observation(
+                self,
+                terminal_id,
+                kind=kind,
+                payload=payload,
+                outcome=outcome,
+                seq=seq,
+            )
 
     async def _deliver_operator_write(
         self,
@@ -586,6 +591,7 @@ class TerminalWsMixin:
             bridge = getattr(self, "_tmux_bridge", None)
             if kind == "input" and bridge is not None:
                 client_fd = await bridge.get_master_fd(attachment_id)
+            record = self._leases().get(attachment_id)
             result = await coordinator.write(
                 WriteRequest(
                     terminal_id=terminal_id,
@@ -596,6 +602,7 @@ class TerminalWsMixin:
                     attachment_id=attachment_id,
                     expected_lease_generation=generation,
                     client_fd=client_fd,
+                    terminal=None if record is None else record.terminal,
                 )
             )
         except RuntimeUnavailableError:

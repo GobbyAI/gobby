@@ -21,7 +21,7 @@ from tests.terminals.fakes import MemoryTerminalStore, make_memory_terminal
 
 
 class _SizingServer(TerminalSizingMixin, TerminalControlMixin, TerminalWsMixin):
-    def __init__(self, row: Any, runtime: TmuxTerminalRuntime) -> None:
+    def __init__(self, row: Any, runtime: Any) -> None:
         self.lease_registry = TerminalLeaseRegistry()
         self.terminal_manager = MemoryTerminalStore(row)
         self.runtime = runtime
@@ -153,7 +153,7 @@ async def test_web_viewer_pins_tmux_window_only_while_holding_the_lease(
     monkeypatch.setattr(TmuxSessionManager, "_run", run_tmux)
     runtime = TmuxTerminalRuntime(TmuxSessionManager(TmuxConfig(socket_name="gobby")))
     server = _SizingServer(row, runtime)
-    web = await server.lease_registry.attach("term-1", viewer="web")
+    web = await server.lease_registry.attach("term-1", viewer="web", backend="tmux")
     websocket = object()
     control = {"terminal_id": "term-1", "attachment_id": web.attachment_id}
     pin = [

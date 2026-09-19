@@ -77,6 +77,10 @@ class WriteRequest:
     # that client's PTY so tmux, not the pane's program, interprets mouse
     # reports and key bindings. ``send-keys`` to the pane cannot carry those.
     client_fd: int | None = None
+    # The row the attachment was granted against. With it present the
+    # coordinator dispatches without reading ``terminals``, which keeps an
+    # operator keystroke off Postgres entirely.
+    terminal: Terminal | None = None
 
 
 @dataclass(frozen=True)
@@ -130,6 +134,10 @@ class WriteCoordinator:
         self.lease_registry = lease_registry
         self._daemon_epoch = lease_registry.daemon_epoch
         self._attention_gate: Callable[[Terminal], Awaitable[None]] | None = None
+        # Terminals quarantined through this coordinator since their row was
+        # last read; lets an operator write lift a quarantine set after its
+        # attachment snapshot was taken without re-reading the row.
+        self._quarantined: set[str] = set()
 
     def runtime_for(self, terminal: Terminal) -> TerminalRuntime:
         return self._registry.resolve(terminal.backend)
@@ -161,7 +169,7 @@ class WriteCoordinator:
                 return blocked
             return await self._write_locked(
                 request,
-                latch=True,
+                latch=_latches(request),
                 on_dispatch=on_dispatch,
                 payload_fingerprint=payload_fingerprint,
             )
@@ -171,15 +179,18 @@ class WriteCoordinator:
         self._clear(terminal_id, action_key)
         terminal = self._store.get(terminal_id)
         if terminal is not None and terminal.automatic_write_quarantine_action_key == action_key:
+            self._quarantined.discard(terminal_id)
             self._store.clear_automatic_write_quarantine(terminal_id)
 
     async def clear_on_exit(self, terminal_id: str) -> None:
         """Terminal exit clears every unresolved key and the quarantine pair."""
         async with self.lease_registry.lock(terminal_id):
             self._store.clear_all_unresolved_writes(terminal_id)
+            self._quarantined.discard(terminal_id)
             self._store.clear_automatic_write_quarantine(terminal_id)
 
     def quarantine(self, terminal_id: str, action_key: str) -> None:
+        self._quarantined.add(terminal_id)
         self._store.set_automatic_write_quarantine(terminal_id, action_key)
 
     def retain_unresolved(self, terminal_id: str, action_key: str, origin: str) -> None:
@@ -401,7 +412,9 @@ class WriteCoordinator:
         on_dispatch: Callable[[], None] | None = None,
         payload_fingerprint: str | None = None,
     ) -> WriteOutcome:
-        terminal = self._require(request.terminal_id)
+        terminal = request.terminal
+        if terminal is None:
+            terminal = self._require(request.terminal_id)
         if request.origin == "attention" and self._attention_gate is not None:
             await self._attention_gate(terminal)
         self._revalidate_lease(
@@ -420,18 +433,17 @@ class WriteCoordinator:
         if on_dispatch is not None:
             on_dispatch()
         try:
-            outcome = await self._dispatch(request)
+            outcome = await self._dispatch(request, terminal)
         except TerminalWriteError as exc:
-            if exc.stage == "none":
+            if latch and exc.stage == "none":
                 self._clear(request.terminal_id, request.action_key)
             raise
         except Exception:
             raise
-        if not isinstance(outcome, IndeterminateWrite):
+        if latch and not isinstance(outcome, IndeterminateWrite):
             self._clear(request.terminal_id, request.action_key)
-        if isinstance(outcome, Delivered):
-            if request.origin == "operator":
-                self._store.clear_automatic_write_quarantine(request.terminal_id)
+        if isinstance(outcome, Delivered) and request.origin == "operator":
+            self._release_quarantine(terminal)
         return outcome
 
     def _idempotent_replay(
@@ -513,8 +525,28 @@ class WriteCoordinator:
             raise KeyError(terminal_id)
         return terminal
 
-    async def _dispatch(self, request: WriteRequest) -> WriteOutcome:
-        terminal = self._require(request.terminal_id)
+    def _release_quarantine(self, terminal: Terminal) -> None:
+        """Lift an automatic-write quarantine once the operator has typed.
+
+        The UPDATE runs only when a quarantine is visible, either on the row
+        this write dispatched against or set in-process since that row was
+        read, so a burst of keystrokes costs one round trip per quarantine
+        episode rather than one per key.
+        """
+        if terminal.automatic_write_quarantined_at is None and terminal.id not in self._quarantined:
+            return
+        self._quarantined.discard(terminal.id)
+        terminal.automatic_write_quarantined_at = None
+        terminal.automatic_write_quarantine_action_key = None
+        self._store.clear_automatic_write_quarantine(terminal.id)
+
+    async def _dispatch(
+        self,
+        request: WriteRequest,
+        terminal: Terminal | None = None,
+    ) -> WriteOutcome:
+        if terminal is None:
+            terminal = self._require(request.terminal_id)
         try:
             runtime = self.runtime_for(terminal)
         except UnregisteredBackendError as exc:
@@ -536,6 +568,19 @@ class WriteCoordinator:
                 return Delivered()
             return await runtime.write_input(terminal, data)
         return await runtime.write_paste(terminal, request.payload)
+
+
+def _latches(request: WriteRequest) -> bool:
+    """Whether one write needs the durable write-ahead latch.
+
+    The latch keeps a write whose outcome was lost from being repeated blind:
+    ``_blocked_automatic`` reads it for automatic keys and ``_idempotent_replay``
+    for keyed sends. An operator write without an idempotency key has neither
+    reader. Its replay guard is the in-memory ``client_write_seq`` ledger in the
+    lease registry, and a daemon restart ends the attachment itself, so latching
+    it would only add two Postgres round trips to every keystroke.
+    """
+    return request.origin != "operator" or request.idempotency_key is not None
 
 
 def _write_client_input(fd: int, data: bytes) -> None:
