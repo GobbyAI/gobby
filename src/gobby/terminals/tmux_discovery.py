@@ -8,6 +8,7 @@ finished — is only visible through a sweep of the tmux servers themselves.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from collections.abc import Iterable, Mapping, Sequence
@@ -21,6 +22,7 @@ from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_models import Session
 from gobby.storage.terminals import (
     ProjectOwnershipConflictError,
+    Terminal,
     TerminalManager,
     tmux_locator_key,
 )
@@ -102,8 +104,43 @@ async def sweep_tmux_terminals(
     promoted. A live row of either ownership whose pane is missing from a
     socket the sweep could read is expired: a Gobby row outliving its tmux
     server would otherwise stay attachable forever.
+
+    The database and project-file work runs off the event loop. The sweep
+    fronts every ``terminal_list``, and the loop it would otherwise hold is
+    the one carrying keystrokes for every other terminal connection.
     """
-    rows = manager.list_live_by_machine(machine_id)
+    rows = await asyncio.to_thread(manager.list_live_by_machine, machine_id)
+    listings: list[tuple[str, list[TmuxPaneInfo]]] = []
+    for tmux in tmux_managers:
+        try:
+            panes = await tmux.list_panes()
+        except (TimeoutError, OSError):
+            logger.warning("tmux pane listing failed", exc_info=True)
+            continue
+        if panes is None:
+            continue
+        listings.append((socket_path_for(tmux.config), panes))
+    return await asyncio.to_thread(
+        _reconcile_panes,
+        manager,
+        rows,
+        listings,
+        machine_id=machine_id,
+        owners=owners,
+        fallback_project_id=fallback_project_id,
+    )
+
+
+def _reconcile_panes(
+    manager: TerminalManager,
+    rows: Sequence[Terminal],
+    listings: Sequence[tuple[str, Sequence[TmuxPaneInfo]]],
+    *,
+    machine_id: str,
+    owners: Mapping[tuple[str, str], PaneOwner],
+    fallback_project_id: str,
+) -> dict[str, TmuxPaneInfo]:
+    """Mirror each listed socket's panes into ``rows``; blocking, so run off the loop."""
     by_key = {row.locator_key: row for row in rows if row.locator_key}
     pending_names = {
         name
@@ -115,15 +152,8 @@ async def sweep_tmux_terminals(
     seen: dict[str, TmuxPaneInfo] = {}
     swept_sockets: set[str] = set()
 
-    for tmux in tmux_managers:
-        try:
-            panes = await tmux.list_panes()
-        except (TimeoutError, OSError):
-            logger.warning("tmux pane listing failed", exc_info=True)
-            continue
-        if panes is None:
-            continue
-        swept_sockets.add(socket_path_for(tmux.config))
+    for socket_path, panes in listings:
+        swept_sockets.add(socket_path)
         for pane in panes:
             if pane.pane_dead:
                 continue

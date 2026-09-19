@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import subprocess
+import threading
 import uuid
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -192,6 +194,34 @@ async def test_list_still_answers_when_discovery_fails(
 
 
 @pytest.mark.asyncio
+async def test_list_keeps_the_event_loop_free_while_the_database_answers(
+    server: WebSocketServer, manager: TerminalManager, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The page query runs off the loop, so a slow database delays this reply
+    rather than every other connection's keystrokes (#22543)."""
+    query_started = threading.Event()
+    release_query = threading.Event()
+    page_query = manager.list_page
+
+    def list_page_once_released(*args: Any, **kwargs: Any) -> Any:
+        query_started.set()
+        release_query.wait(timeout=5)
+        return page_query(*args, **kwargs)
+
+    monkeypatch.setattr(manager, "list_page", list_page_once_released)
+    with patch(
+        "gobby.servers.websocket.terminal_ws.sweep_tmux_terminals", AsyncMock(return_value={})
+    ):
+        reply = asyncio.create_task(listed(server, {"request_id": "init"}))
+        assert await asyncio.to_thread(query_started.wait, 5), "the page query never ran"
+        assert not reply.done(), "the page query held the event loop"
+        release_query.set()
+        page = await reply
+
+    assert page["type"] == "terminal_list"
+    assert page["items"] == []
+
+
 async def test_list_without_a_terminal_manager_is_empty(server: WebSocketServer) -> None:
     server.terminal_manager = None
     page = await listed(server, {"request_id": uuid.uuid4().hex})

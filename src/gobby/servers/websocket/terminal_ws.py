@@ -318,7 +318,10 @@ class TerminalWsMixin:
             return
         machine_id = require_machine_id()
         panes = await self._sweep_tmux_panes(manager, machine_id)
-        items, has_more = manager.list_page(
+        # The page query, like the sweep, runs off the loop: a slow database
+        # then delays this reply instead of every other connection's input.
+        items, has_more = await asyncio.to_thread(
+            manager.list_page,
             None if project_id is None else [project_id, GLOBAL_PROJECT_ID],
             machine_id=machine_id,
             states=states,
@@ -397,7 +400,8 @@ class TerminalWsMixin:
             sessions = (
                 []
                 if session_manager is None
-                else session_manager.list(
+                else await asyncio.to_thread(
+                    session_manager.list,
                     statuses=LIVE_SESSION_STATUS_ORDER,
                     machine_id=machine_id,
                     limit=1000,

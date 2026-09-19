@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import threading
 import uuid
 from collections.abc import Iterator
 from pathlib import Path
@@ -125,6 +127,41 @@ async def test_sweep_mirrors_live_panes_on_both_sockets_idempotently(
 
 
 @pytest.mark.asyncio
+async def test_sweep_mirrors_panes_off_the_event_loop(
+    temp_db: HubDatabase, sample_project: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The per-pane upserts run off the loop, so a slow database delays the
+    sweep rather than every terminal connection the loop is serving (#22543)."""
+    manager = TerminalManager(temp_db)
+    upsert_started = threading.Event()
+    release_upsert = threading.Event()
+    upsert = manager.upsert_external
+
+    def upsert_once_released(*args: Any, **kwargs: Any) -> Any:
+        upsert_started.set()
+        release_upsert.wait(timeout=5)
+        return upsert(*args, **kwargs)
+
+    monkeypatch.setattr(manager, "upsert_external", upsert_once_released)
+    user_pane = pane(DEFAULT_SOCKET, "%1", session_name="75")
+    sweep = asyncio.create_task(
+        sweep_tmux_terminals(
+            manager,
+            [FakeTmux("", [user_pane])],
+            machine_id=LOCAL_MACHINE_ID,
+            owners={},
+            fallback_project_id=sample_project["id"],
+        )
+    )
+
+    assert await asyncio.to_thread(upsert_started.wait, 5), "the upsert never ran"
+    assert not sweep.done(), "the upsert held the event loop"
+    release_upsert.set()
+
+    assert set(await sweep) == {key_of(user_pane)}
+    assert set(live_external(manager)) == {key_of(user_pane)}
+
+
 async def test_sweep_leaves_gobby_owned_rows_to_their_lifecycle(
     temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
