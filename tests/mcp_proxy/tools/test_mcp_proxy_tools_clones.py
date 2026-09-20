@@ -1514,7 +1514,7 @@ class TestMergeCloneToTarget:
         lock.release()
 
         commands = [call.args[0] for call in mock_git_manager.run_git_command.call_args_list]
-        assert ["stash", "pop", "stash@{0}"] in commands
+        assert ["stash", "pop", "--index", "stash@{0}"] in commands
         assert ["branch", "-D", "clone-merge/feature/test"] in commands
         mock_git_manager.merge_branch.assert_called_once()
         mock_clone_storage.mark_merged.assert_called_once()
@@ -1829,7 +1829,7 @@ class TestMergeCloneToTarget:
 
         assert result["success"] is True
         pop_call = mock_git_manager.run_git_command.call_args_list[-1]
-        assert pop_call.args[0] == ["stash", "pop", "stash@{1}"]
+        assert pop_call.args[0] == ["stash", "pop", "--index", "stash@{1}"]
 
     @pytest.mark.asyncio
     async def test_merge_clone_stash_restore_failure_surfaces_after_success(

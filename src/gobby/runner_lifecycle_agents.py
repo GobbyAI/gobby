@@ -190,7 +190,7 @@ async def _reconcile_task_close_reviews(
                 or (run is not None and run.status not in TERMINAL_AGENT_RUN_STATUSES)
             )
         ):
-            message = "Task-close validator exceeded its durable deadline."
+            message = "Task-close reviewer exceeded its durable deadline."
             get_cleanup = getattr(
                 getattr(runner, "agent_lifecycle_monitor", None),
                 "get_cleanup_agent",
@@ -223,25 +223,37 @@ async def _reconcile_task_close_reviews(
                 )
             reconciled += 1
         elif review.status == "launching" and startup:
-            message = "Daemon restarted before the task-close validator launch was bound."
-            payload = build_terminal_review_payload(
-                review,
-                status="error",
-                message=message,
-                error_class="retryable_infrastructure",
-            )
-            current = (
-                await _run_db(
+            if run is not None and run.status == "queued":
+                restored = await _run_db(
                     runner,
-                    store.finish,
+                    store.restore_unlaunched,
                     review.id,
-                    status="error",
-                    result_payload=payload,
-                    error=message,
+                    run.id,
+                    error="Daemon restarted before queued reviewer launch.",
                 )
-                or review
-            )
-            reconciled += 1
+                if restored:
+                    current = await _run_db(runner, store.get, review.id) or review
+                    reconciled += 1
+            else:
+                message = "Daemon restarted before the task-close reviewer launch was bound."
+                payload = build_terminal_review_payload(
+                    review,
+                    status="error",
+                    message=message,
+                    error_class="retryable_infrastructure",
+                )
+                current = (
+                    await _run_db(
+                        runner,
+                        store.finish,
+                        review.id,
+                        status="error",
+                        result_payload=payload,
+                        error=message,
+                    )
+                    or review
+                )
+                reconciled += 1
         elif review.active and run is None and review.status != "launching":
             # A `finalizing` review whose run row was purged can still belong to
             # a task that did close. terminal_review_delivery reconstructs that
@@ -255,7 +267,7 @@ async def _reconcile_task_close_reviews(
             if reconstructed is not None:
                 current = await _run_db(runner, store.get, review.id) or review
             else:
-                message = "Persisted task-close validator run is missing."
+                message = "Persisted task-close reviewer run is missing."
                 payload = build_terminal_review_payload(review, status="error", message=message)
                 current = (
                     await _run_db(
@@ -320,7 +332,26 @@ async def _reconcile_task_close_reviews(
                         session_ids=[current.caller_session_id],
                     )
                 reconciled += 1
+    reconciled += await _promote_queued_close_reviews(runner)
     return reconciled
+
+
+async def _promote_queued_close_reviews(runner: GobbyRunner) -> int:
+    """Invoke the task registry's private promoter after recovery frees capacity."""
+    http_server = getattr(runner, "http_server", None)
+    manager = getattr(http_server, "_internal_manager", None)
+    registry = manager.get_registry("gobby-tasks") if manager is not None else None
+    promoter = registry.get_private_callback("promote_close_reviews") if registry else None
+    if not callable(promoter):
+        return 0
+    try:
+        promoted = await promoter()
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.exception("Queued task-close review promotion failed")
+        return 0
+    return len(promoted) if isinstance(promoted, list) else 0
 
 
 def _finalizing_orphan_proven(review: TaskCloseReview, run: Any) -> bool:
@@ -332,7 +363,7 @@ def _finalizing_orphan_proven(review: TaskCloseReview, run: Any) -> bool:
     the reconciler win the write and contradict a live caller. Three facts
     together rule that out, and all three are required:
 
-    - The validator run belongs to this machine. `task_close_reviews` carries
+    - The reviewer run belongs to this machine. `task_close_reviews` carries
       no owner or lease column, so `agent_runs.machine_id` is the only scope
       available and another machine's daemon is the only process that could
       hold the row without appearing below.
@@ -379,7 +410,7 @@ async def _terminalize_orphaned_finalizing(
     A verdict is never reapplied here: `commit_close` resolves project context
     from the process cwd, which in the daemon loop is the daemon's own, so a
     reconciler-driven reapply could evaluate a different commit set than the
-    validator reviewed. A fresh `close_task` re-derives every input.
+    reviewer inspected. A fresh `close_task` re-derives every input.
     """
     from gobby.tasks.agentic_close_review import (
         CLOSE_REVIEW_DAEMON_STOP_RETRY_SECONDS,

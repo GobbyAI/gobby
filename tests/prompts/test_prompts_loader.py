@@ -320,7 +320,6 @@ class TestBundledTemplates:
         [
             "expansion/system",
             "expansion/user",
-            "validation/validate",
             "validation/criteria",
             "external_validation/system",
             "external_validation/spawn",

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from gobby.mcp_proxy.tools.tasks import _lifecycle_close as lifecycle_close
@@ -15,11 +16,12 @@ async def complete_close_review(
     *,
     evaluation: CloseEvaluation,
     close_arguments: dict[str, Any],
+    evaluate_close: Callable[..., Awaitable[CloseEvaluation]],
     status: str,
     feedback: str,
 ) -> dict[str, Any]:
     """Apply a matching detached verdict without exercising review persistence."""
-    reviewed = await lifecycle_close._evaluate_close(
+    reviewed = await evaluate_close(
         ctx,
         task_id=close_arguments["task_id"],
         reason=close_arguments["reason"],
@@ -73,7 +75,9 @@ async def return_detached_response(
     *,
     evaluation: CloseEvaluation,
     close_arguments: dict[str, Any],
+    evaluate_close: Callable[..., Awaitable[CloseEvaluation]],
 ) -> dict[str, Any]:
+    del evaluate_close
     return evaluation.response(preview=bool(close_arguments["preview"]))
 
 
@@ -82,11 +86,13 @@ async def complete_valid_close_review(
     *,
     evaluation: CloseEvaluation,
     close_arguments: dict[str, Any],
+    evaluate_close: Callable[..., Awaitable[CloseEvaluation]],
 ) -> dict[str, Any]:
     return await complete_close_review(
         ctx,
         evaluation=evaluation,
         close_arguments=close_arguments,
+        evaluate_close=evaluate_close,
         status="valid",
         feedback="All criteria satisfied. Strict mypy and focused tests are clean.",
     )
@@ -97,11 +103,13 @@ async def complete_invalid_close_review(
     *,
     evaluation: CloseEvaluation,
     close_arguments: dict[str, Any],
+    evaluate_close: Callable[..., Awaitable[CloseEvaluation]],
 ) -> dict[str, Any]:
     return await complete_close_review(
         ctx,
         evaluation=evaluation,
         close_arguments=close_arguments,
+        evaluate_close=evaluate_close,
         status="invalid",
         feedback="The mypy criterion failed.",
     )

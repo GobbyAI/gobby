@@ -11,7 +11,7 @@ import pytest
 
 from gobby.servers.websocket import terminal_ws
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.terminals import AttachLocator, TerminalManager
+from gobby.storage.terminals import AttachLocator, HostEpochMismatchError, TerminalManager
 from gobby.terminals import TerminalRuntime, TerminalRuntimeRegistry
 from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.write_coordinator import WriteCoordinator
@@ -23,7 +23,9 @@ pytestmark = pytest.mark.unit
 _Kind = Literal[
     "no_runtime",
     "no_opener",
+    "row_exited",
     "locator_raises",
+    "locator_epoch_stale",
     "locator_invalid",
     "opener_raises",
     "opener_hangs",
@@ -128,6 +130,8 @@ def _configure(
     if kind != "no_runtime":
         if kind == "locator_raises":
             runtime: _LocatorRuntime = _LocatorRuntime(error=RuntimeError("locator boom"))
+        elif kind == "locator_epoch_stale":
+            runtime = _LocatorRuntime(error=HostEpochMismatchError("stale host epoch"))
         elif kind == "locator_invalid":
             runtime = _LocatorRuntime(result={"not": "a locator"})
         else:
@@ -163,7 +167,7 @@ def _configure(
 
         server.open_proxy_frame = _frame_opener
         return frame
-    elif kind in {"locator_raises", "locator_invalid"}:
+    elif kind in {"row_exited", "locator_raises", "locator_epoch_stale", "locator_invalid"}:
         server.open_proxy_frame = _unused_opener
     return None
 
@@ -174,7 +178,17 @@ def _configure(
     [
         ("no_runtime", "runtime_unavailable", "no terminal runtime for backend"),
         ("no_opener", "proxy_unavailable", "proxy frame opener is not available"),
+        (
+            "row_exited",
+            "terminal_exited",
+            "terminal row is exited or orphaned; nothing to attach",
+        ),
         ("locator_raises", "locator_failed", "attach_locator raised"),
+        (
+            "locator_epoch_stale",
+            "host_epoch_stale",
+            "terminal belongs to an earlier gterm host incarnation",
+        ),
         (
             "locator_invalid",
             "locator_invalid",
@@ -219,6 +233,8 @@ async def test_proxy_attach_failures_are_typed_and_finalized(
     monkeypatch.setattr(terminal_ws, "PROXY_FRAME_OPEN_SECONDS", 0.01)
     monkeypatch.setattr(terminal_ws, "PROXY_START_SECONDS", 0.01)
     terminal_id = _live_row(temp_db, sample_project)
+    if kind == "row_exited":
+        assert TerminalManager(temp_db).mark_exited(terminal_id) is not None
     server = _ws_server()
     frame = _configure(server, temp_db, kind)
     ws = MockWebSocket()
@@ -296,6 +312,47 @@ class _AfterStartupRuntime(_LocatorRuntime):
         assert self._host.waits, "attach_locator ran before the host startup wait"
         self.resolved += 1
         return await super().attach_locator(row)
+
+
+@pytest.mark.asyncio
+async def test_direct_attach_refuses_exited_row(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    terminal_id = _live_row(temp_db, sample_project)
+    manager = TerminalManager(temp_db)
+    assert manager.mark_exited(terminal_id) is not None
+    server = _ws_server()
+    host = _StartupHost(settled=True)
+    runtime = _AfterStartupRuntime(host)
+    registry = TerminalRuntimeRegistry()
+    registry.register(cast(TerminalRuntime, runtime))
+    leases = TerminalLeaseRegistry(daemon_epoch="test-epoch")
+    server.configure_terminals(
+        manager,
+        registry,
+        MagicMock(),
+        host_manager=host,
+        lease_registry=leases,
+        write_coordinator=WriteCoordinator(manager, registry, lease_registry=leases),
+    )
+    ws = MockWebSocket()
+    server.clients[ws] = {"subscriptions": {"*"}}
+    await _send(
+        server,
+        ws,
+        {
+            "type": "terminal_attach",
+            "request_id": "direct-exited",
+            "terminal_id": terminal_id,
+            "frame_delivery": "direct",
+        },
+    )
+    result = ws.messages_of_type("terminal_attach_result")[-1]
+    assert result["success"] is False
+    assert result["code"] == "terminal_exited"
+    assert result["reason"] == "terminal row is exited or orphaned; nothing to attach"
+    assert host.waits == []
+    assert runtime.resolved == 0
 
 
 @pytest.mark.asyncio

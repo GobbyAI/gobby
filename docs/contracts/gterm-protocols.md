@@ -31,6 +31,8 @@ Client → host:
   types as
 - `Input { data }` — bytes for the PTY, granted attachments only
 - `Paste { text }` — bracketed by the host, granted attachments only
+- `ReadText { start_rows_from_live_edge, start_col, end_rows_from_live_edge,
+  end_col }` — plain text from a native pane's retained screen
 - `Detach`
 
 Host → client:
@@ -40,6 +42,7 @@ Host → client:
 - `Frame(FrameData)` / `Terminal(TerminalFrame)` / `Graphics` / `AttachHistory`
 - `ScrollOffsetApplied { applied_rows, max_rows }`
 - `InputRefused { code }`
+- `TextRead { text, truncated }`
 - `TerminalExited` / `Error`
 
 `reservation_id` is required only for a daemon internal observer bind. User
@@ -49,11 +52,20 @@ same stream replaces that stream's attachment, and the host closes the stream
 when its terminal is removed or the reader lags out. Tmux attaches carry
 the pane `locator` (socket, server pid, start time, pane id). `Hello.tmux_identity`
 is the client's own pane, used to refuse recursive self-view. `FrameData.modes`
-carries cursor/mouse/keypad/copy-mode flags so a mode change with no cell change
-still produces a frame. Typed refusals include `self_view`, `capacity`,
+carries cursor, mouse, keypad, copy-mode, and kitty keyboard protocol flags so
+a mode change with no cell change still produces a frame. Typed refusals include
+`self_view`, `capacity`,
 `copy_mode`, and `stale`. Legacy herdr `Input` / `Resize` tags are rejected as
 `unknown_message` and never mutate a terminal: the live input verbs are appended
 after them, so a hand-built fork-point payload cannot alias one.
+
+`ReadText` coordinates count rows from the live edge (`0` is the bottom live
+row), independent of the configured scrollback viewport cap. The host orders the
+two points, reads through Ghostty's plain-text formatter, and returns at most 1
+MiB from the head with `truncated: true` when the result is larger. It returns an
+`Error` on the same open stream: `attach_required` before an attach, `not_native`
+for a tmux attachment, `terminal_gone` after the pane disappears, or
+`read_failed` when the emulator cannot read the retained screen.
 
 ### Granted input
 

@@ -38,7 +38,7 @@ if TYPE_CHECKING:
     from gobby.storage.sessions import SessionManager
 
 
-ACTIVE_AGENT_RUN_STATUSES = ("pending", "running")
+ACTIVE_AGENT_RUN_STATUSES = ("queued", "pending", "running")
 DELIVERABLE_SESSION_STATUSES = LIVE_SESSION_STATUS_ORDER
 MESSAGE_TARGETS = ("global", "project", "parent", "session", "agent", "build")
 AGENT_CROSS_PROJECT_AUTH_CACHE_TTL_SECONDS = 30.0

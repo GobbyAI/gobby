@@ -13,10 +13,28 @@ from gobby.tasks.criteria_contract import is_external_criterion
 
 VerdictStatus = Literal["valid", "invalid"]
 CriterionVerdictState = Literal["satisfied", "gap", "pending_external"]
+FindingSeverity = Literal["critical", "high", "medium", "low"]
+FindingCategory = Literal[
+    "bug",
+    "security",
+    "performance",
+    "maintainability",
+    "test",
+    "style",
+    "documentation",
+    "other",
+]
+
+FINDING_SEVERITY_ORDER: dict[FindingSeverity, int] = {
+    "low": 1,
+    "medium": 2,
+    "high": 3,
+    "critical": 4,
+}
 
 
 class CloseVerdictParseError(ValueError):
-    """The validator response did not contain a usable close verdict."""
+    """The reviewer response did not contain a usable close verdict."""
 
 
 @dataclass(frozen=True)
@@ -46,10 +64,33 @@ class CloseCriterionVerdict:
 
 
 @dataclass(frozen=True)
+class CloseFinding:
+    path: str
+    start_line: int
+    end_line: int
+    severity: FindingSeverity
+    category: FindingCategory
+    description: str
+    suggested_fix: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "path": self.path,
+            "start_line": self.start_line,
+            "end_line": self.end_line,
+            "severity": self.severity,
+            "category": self.category,
+            "description": self.description,
+            "suggested_fix": self.suggested_fix,
+        }
+
+
+@dataclass(frozen=True)
 class CloseVerdict:
     status: VerdictStatus
     criteria: tuple[CloseCriterionVerdict, ...]
     feedback: str
+    findings: tuple[CloseFinding, ...] = ()
 
     @property
     def valid(self) -> bool:
@@ -60,6 +101,7 @@ class CloseVerdict:
             "status": self.status,
             "criteria": [criterion.to_dict() for criterion in self.criteria],
             "feedback": self.feedback,
+            "findings": [finding.to_dict() for finding in self.findings],
         }
 
 
@@ -73,6 +115,7 @@ def parse_close_verdict(
     data = _coerce_payload(payload)
     status = _coerce_status(data.get("status"))
     feedback = _coerce_feedback(data.get("feedback"), status)
+    findings = _coerce_findings(data.get("findings"))
     raw_entries = data.get("criteria")
     entries = (
         [entry for entry in raw_entries if isinstance(entry, Mapping)]
@@ -122,14 +165,80 @@ def parse_close_verdict(
                 state=state,
             )
         )
-    return CloseVerdict(status=status, criteria=tuple(criteria), feedback=feedback)
+    return CloseVerdict(
+        status=status,
+        criteria=tuple(criteria),
+        feedback=feedback,
+        findings=findings,
+    )
+
+
+def _coerce_findings(value: object) -> tuple[CloseFinding, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise CloseVerdictParseError("Reviewer findings must be an array.")
+    findings: list[CloseFinding] = []
+    severities = set(FINDING_SEVERITY_ORDER)
+    categories = {
+        "bug",
+        "security",
+        "performance",
+        "maintainability",
+        "test",
+        "style",
+        "documentation",
+        "other",
+    }
+    for index, raw in enumerate(value, start=1):
+        if not isinstance(raw, Mapping):
+            raise CloseVerdictParseError(f"finding {index} must be an object")
+        path = raw.get("path")
+        start_line = raw.get("start_line")
+        end_line = raw.get("end_line")
+        severity = raw.get("severity")
+        category = raw.get("category")
+        description = raw.get("description")
+        suggested_fix = raw.get("suggested_fix")
+        if not isinstance(path, str) or not path.strip():
+            raise CloseVerdictParseError(f"finding {index} requires a non-empty path")
+        if isinstance(start_line, bool) or not isinstance(start_line, int) or start_line < 1:
+            raise CloseVerdictParseError(f"finding {index} requires start_line >= 1")
+        if isinstance(end_line, bool) or not isinstance(end_line, int) or end_line < start_line:
+            raise CloseVerdictParseError(f"finding {index} requires end_line >= start_line")
+        if not isinstance(severity, str) or severity not in severities:
+            raise CloseVerdictParseError(
+                f"finding {index} severity must be critical, high, medium, or low"
+            )
+        if not isinstance(category, str) or category not in categories:
+            raise CloseVerdictParseError(f"finding {index} has an unsupported category")
+        if not isinstance(description, str) or not description.strip():
+            raise CloseVerdictParseError(f"finding {index} requires a description")
+        if suggested_fix is not None and (
+            not isinstance(suggested_fix, str) or not suggested_fix.strip()
+        ):
+            raise CloseVerdictParseError(
+                f"finding {index} suggested_fix must be null or a non-empty string"
+            )
+        findings.append(
+            CloseFinding(
+                path=path.strip(),
+                start_line=start_line,
+                end_line=end_line,
+                severity=cast(FindingSeverity, severity),
+                category=cast(FindingCategory, category),
+                description=description.strip(),
+                suggested_fix=suggested_fix.strip() if isinstance(suggested_fix, str) else None,
+            )
+        )
+    return tuple(findings)
 
 
 def _coerce_payload(payload: object) -> Mapping[str, Any]:
     if isinstance(payload, Mapping):
         return payload
     if not isinstance(payload, str):
-        raise CloseVerdictParseError("Validator response was not a JSON object.")
+        raise CloseVerdictParseError("Reviewer response was not a JSON object.")
     text = payload.strip()
     if text.startswith("```"):
         text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
@@ -141,14 +250,14 @@ def _coerce_payload(payload: object) -> Mapping[str, Any]:
         end = text.rfind("}")
         if start < 0 or end <= start:
             raise CloseVerdictParseError(
-                "Validator response did not contain a JSON object."
+                "Reviewer response did not contain a JSON object."
             ) from None
         try:
             parsed = json.loads(text[start : end + 1])
         except json.JSONDecodeError as exc:
-            raise CloseVerdictParseError("Validator response contained malformed JSON.") from exc
+            raise CloseVerdictParseError("Reviewer response contained malformed JSON.") from exc
     if not isinstance(parsed, Mapping):
-        raise CloseVerdictParseError("Validator JSON response was not an object.")
+        raise CloseVerdictParseError("Reviewer JSON response was not an object.")
     return parsed
 
 
@@ -157,7 +266,7 @@ def _coerce_status(value: object) -> VerdictStatus:
         normalized = value.strip().casefold()
         if normalized in {"valid", "invalid"}:
             return cast(VerdictStatus, normalized)
-    raise CloseVerdictParseError("Validator response must contain status 'valid' or 'invalid'.")
+    raise CloseVerdictParseError("Reviewer response must contain status 'valid' or 'invalid'.")
 
 
 def _coerce_feedback(value: object, status: VerdictStatus) -> str:
@@ -277,9 +386,13 @@ def _normalize_text(value: str) -> str:
 
 __all__ = [
     "CloseCriterionVerdict",
+    "CloseFinding",
     "CloseVerdict",
     "CloseVerdictParseError",
     "CriterionVerdictState",
+    "FINDING_SEVERITY_ORDER",
+    "FindingCategory",
+    "FindingSeverity",
     "VerdictStatus",
     "parse_close_verdict",
 ]

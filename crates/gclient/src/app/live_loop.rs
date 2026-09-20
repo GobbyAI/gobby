@@ -13,10 +13,11 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 use tokio::time::Instant;
 
-use crate::copy_mode::{copy_selection, route_mouse_selection, PASTE_MAX_BYTES};
+use crate::copy_mode::{
+    apply_text_read, copy_or_request_selection, route_mouse_selection, PASTE_MAX_BYTES,
+};
 use crate::daemon::{Daemon, DaemonError, DaemonEvent, EventReceiver, Generation, LiveDaemon};
 use crate::frame_source::{FrameError, FrameSource};
-use crate::input::key_to_bytes_with_protocol;
 use crate::key_input::{key_input, resolve_chord, text_bytes, Resolution};
 use crate::teardown::MouseCaptureSwitch;
 use crate::ui::status::Toast;
@@ -303,6 +304,15 @@ pub async fn run_live_loop<B: Backend>(
                 }
             }
             frame = recv_workspace_frame(workspace) => {
+                if let Some((pane_id, Ok(gobby_terminal::protocol::ServerMessage::TextRead {
+                    text,
+                    ..
+                }))) = &frame
+                {
+                    let mut output = std::io::stdout();
+                    apply_text_read(chrome, *pane_id, text.clone(), &mut output)?;
+                    output.flush()?;
+                }
                 if let Some((pane_id, Err(error))) = frame {
                     let mut deferred_input = Vec::new();
                     let mut probe_prefix = prefix_armed;
@@ -690,12 +700,16 @@ async fn route_live_input(
     }
     if route_mouse_selection(workspace, chrome, event) {
         let mut output = std::io::stdout();
-        copy_selection(workspace, chrome, &mut output)?;
+        copy_or_request_selection(workspace, chrome, &mut output).await?;
         output.flush()?;
         chrome.mode = Mode::Terminal;
         return Ok(false);
     }
-    if let Some(input) = key_input(event, KeyboardProtocol::Legacy) {
+    let protocol = chrome
+        .focused_pane()
+        .map(|pane_id| workspace.pane(pane_id).keyboard_protocol())
+        .unwrap_or(KeyboardProtocol::Legacy);
+    if let Some(input) = key_input(event, protocol) {
         // Any keypress clears the toast stack (D3); the alert log keeps them.
         chrome.dismiss_toasts();
         if chrome.mode == Mode::Respond {
@@ -724,11 +738,8 @@ async fn route_live_input(
             Resolution::Unbound => {
                 *prefix_armed = false;
                 chrome.mode = Mode::Terminal;
-                if let (Some(pane_id), Some(bytes)) = (
-                    chrome.focused_pane(),
-                    key_to_bytes_with_protocol(input.key, KeyboardProtocol::Legacy),
-                ) {
-                    send_live_input(workspace, chrome, pane_id, &bytes, false).await?;
+                if let Some(pane_id) = chrome.focused_pane() {
+                    send_live_input(workspace, chrome, pane_id, &input.bytes, false).await?;
                 }
             }
         }

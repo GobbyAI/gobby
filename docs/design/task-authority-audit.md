@@ -27,7 +27,7 @@ Storage layers are plain SQL writes keyed on `task_id`.
   no liveness check on the owner and no consent record (see #20818).
 - `submit_close_review` — `_lifecycle_close_orchestration.py:282-308`:
   four-factor agent-run identity binding. Caller's ambient run must equal the
-  persisted `review.agent_run_id`; run must be the `task-close-validator` agent,
+  persisted `review.agent_run_id`; run must be the `task-close-reviewer` agent,
   taskless, parented by the requesting session, with the live calling session as
   its child. Finalization is single-shot via `claim_finalizing`. This is the
   call-time re-verification pattern reviewer flows should adopt.

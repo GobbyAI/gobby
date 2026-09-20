@@ -24,12 +24,16 @@ Finish in this order:
    output-only flags `--format`, `--output` and `--min-severity` keep credit.
 3. Stage only task paths and commit with a task reference. Use
    `git commit --only -m '[<project_name>-#<task_number>] fix: describe the change' -- <task paths>`.
-4. Call `close_task` once with `task_id`, `commit_sha`, `changes_summary`, and
+4. Call `close_task` with `task_id`, `commit_sha`, `changes_summary`, and
    `preview=true`. Include exact validation commands and results in the summary.
-5. Repair any deterministic blocker before retrying. If the response is
-   `agentic_review_required`, register `wait_for_agent` with `validator_run_id`
-   and yield. Do not poll or repeatedly call close while review is running. A
-   headless run refuses that wait; follow the refusal's `retry_guidance` instead.
+   Preview evaluates deterministic gates 1–12 only; it never mutates task state,
+   launches a reviewer, or closes the task, and reports gate 13 as `not_run` when
+   ready.
+5. Repair every deterministic blocker, then repeat the same close with
+   `preview=false`. If the response is `close_review_required`, register
+   `wait_for_agent` once with `reviewer_run_id` and yield. Do not poll or
+   repeatedly call close while review is queued or running. A headless run
+   refuses that wait; follow the refusal's `retry_guidance` instead.
 6. After `closed=true` or a closure notification, call `review_task_memories`
    with the task and summary; change memory only for valuable durable knowledge.
 
@@ -37,10 +41,12 @@ A blocked call reports the whole checklist at once. Fix every gate reported
 `failed` before retrying; a gate reported `skipped` names the gate that blocked it
 and is unevaluated, never satisfied.
 
-`preview=true` closes when ready. The checklist requires criteria and summary,
-linked commits for attributed edits, no uncommitted attributed files,
-category-appropriate transcript validation, and one bounded criteria review.
-Changed evidence earns a new review; retrying unchanged evidence reuses its verdict.
+`preview=true` is a deterministic-only readiness check and never closes. The
+checklist requires criteria and summary, prospective linked commits for
+attributed edits, no uncommitted attributed files, and category-appropriate
+transcript validation. The real close persists a taskless reviewer and returns
+its queued or running status. Evidence or review-policy drift makes an active
+verdict stale; there is no memoized one-shot close-review path.
 When `unlinked_tagged_commits` names additional commits, link those belonging to
 the task before retrying. Otherwise use `link_commit` only to keep a task open.
 On `task_scope_mismatch`, retry with a specific `scope_justification` explaining
@@ -60,9 +66,9 @@ workspace tools, before calling the task finished.
 No-work reasons are `duplicate`, `already_implemented`, `wont_fix`, `obsolete`,
 and `out_of_repo`. Explain the disposition; no commit is needed only when there
 were no attributed edits. A deliberately closed escalated task requires a
-meaningful `override_justification`; it skips only criteria review, not the other
+meaningful `override_justification`; it skips only close review, not the other
 gates. Do not escalate merely to get a close exception. `submit_close_review` is
-validator-only and is never a shortcut for the implementing session.
+reviewer-only and is never a shortcut for the implementing session.
 
 Guide: [Close](../../../../../../../../docs/guides/tasks.md#close).
 

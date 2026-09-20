@@ -372,6 +372,48 @@ fn frame_data_roundtrip_through_ratatui_buffer() {
 }
 
 #[test]
+fn pane_modes_round_trip_keyboard_flags() {
+    let buffer = ratatui::buffer::Buffer::empty(ratatui::layout::Rect::new(0, 0, 1, 1));
+    let mut frame = FrameData::from_ratatui_buffer(&buffer, None);
+    frame.modes.kitty_keyboard_flags = 5;
+    let message = ServerMessage::Frame(frame);
+    let mut bytes = Vec::new();
+
+    write_message(&mut bytes, &message).unwrap();
+    let decoded: ServerMessage = read_message(&mut bytes.as_slice(), MAX_FRAME_SIZE).unwrap();
+
+    assert_eq!(decoded, message);
+    let ServerMessage::Frame(frame) = decoded else {
+        panic!("expected frame")
+    };
+    assert_eq!(frame.modes.kitty_keyboard_flags, 5);
+}
+
+#[test]
+fn text_read_messages_round_trip() {
+    let client = ClientMessage::ReadText {
+        start_rows_from_live_edge: 42,
+        start_col: 3,
+        end_rows_from_live_edge: 7,
+        end_col: 19,
+    };
+    let server = ServerMessage::TextRead {
+        text: "old\nnew".into(),
+        truncated: true,
+    };
+
+    let mut bytes = Vec::new();
+    write_message(&mut bytes, &client).unwrap();
+    let decoded: ClientMessage = read_message(&mut bytes.as_slice(), MAX_FRAME_SIZE).unwrap();
+    assert_eq!(decoded, client);
+
+    let mut bytes = Vec::new();
+    write_message(&mut bytes, &server).unwrap();
+    let decoded: ServerMessage = read_message(&mut bytes.as_slice(), MAX_FRAME_SIZE).unwrap();
+    assert_eq!(decoded, server);
+}
+
+#[test]
 fn frame_data_rejects_mismatched_cell_count() {
     let frame = FrameData {
         cells: vec![

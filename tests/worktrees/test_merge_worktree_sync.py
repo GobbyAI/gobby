@@ -155,7 +155,7 @@ def _local_merge_side_effect(
             return _make_git_result(0, stdout="" if stash_list_calls == 1 else "stash@{0}")
         if args[:2] == ["stash", "push"]:
             return _make_git_result(0)
-        if args == ["stash", "pop"]:
+        if args[:3] == ["stash", "pop", "--index"]:
             return _make_git_result(0)
         if args == ["merge", f"refs/heads/{source}", "--no-ff", "--no-edit"]:
             merge_performed = merge_result is None or merge_result.returncode == 0
@@ -491,16 +491,19 @@ async def test_merge_worktree_rechecks_target_head_immediately_before_merge() ->
     from gobby.mcp_proxy.tools.worktrees._sync import create_sync_registry
 
     ctx = _make_registry_context()
-    regular_git = _local_merge_side_effect()
+    regular_git = _local_merge_side_effect(staged_stdout=".gobby/project.json\n")
     head_checks = 0
     merge_called = False
+    stash_called = False
 
     def moved_head_git(args, cwd=None, timeout=30, check=False):
-        nonlocal head_checks, merge_called
+        nonlocal head_checks, merge_called, stash_called
         if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
             head_checks += 1
             branch = "main" if head_checks == 1 else "unexpected"
             return _make_git_result(0, stdout=branch)
+        if args[:2] == ["stash", "push"]:
+            stash_called = True
         if args and args[0] == "merge" and args != ["merge", "--abort"]:
             merge_called = True
         return regular_git(args, cwd=cwd, timeout=timeout, check=check)
@@ -514,6 +517,7 @@ async def test_merge_worktree_rechecks_target_head_immediately_before_merge() ->
     assert "Target checkout moved" in result["error"]
     assert head_checks == 2
     assert merge_called is False
+    assert stash_called is False
 
 
 @pytest.mark.asyncio
@@ -571,7 +575,7 @@ async def test_merge_worktree_cancellation_waits_for_git_worker_before_unlock():
     lock.release()
     commands = [call.args[0] for call in ctx.git_manager._run_git.call_args_list]
     assert ["merge", "--abort"] in commands
-    assert ["stash", "pop", "stash@{0}"] in commands
+    assert ["stash", "pop", "--index", "stash@{0}"] in commands
 
 
 @pytest.mark.asyncio
@@ -650,7 +654,7 @@ async def test_merge_worktree_original_branch_restore_failure_is_surfaced_after_
             )
         if args == ["stash", "list", "--format=%gd%x00%H"]:
             return _make_git_result(0, stdout="stash@{0}\x00stash-ours\n")
-        if args == ["stash", "pop", "stash@{0}"]:
+        if args == ["stash", "pop", "--index", "stash@{0}"]:
             return _make_git_result(0)
         return regular_git(args, cwd=cwd, timeout=timeout, check=check)
 
@@ -664,7 +668,7 @@ async def test_merge_worktree_original_branch_restore_failure_is_surfaced_after_
     assert result["cleanup_warnings"][0]["step"] == "restore-branch"
 
     commands = [call.args[0] for call in ctx.git_manager._run_git.call_args_list]
-    assert ["stash", "pop", "stash@{0}"] in commands
+    assert ["stash", "pop", "--index", "stash@{0}"] in commands
     assert lock.locked() is False
 
 
@@ -721,7 +725,7 @@ async def test_merge_worktree_stash_cancellation_restores_exact_stash_before_unl
     await asyncio.wait_for(contender, timeout=2)
     lock.release()
     commands = [call.args[0] for call in ctx.git_manager._run_git.call_args_list]
-    assert ["stash", "pop", "stash@{0}"] in commands
+    assert ["stash", "pop", "--index", "stash@{0}"] in commands
     assert ["merge", "refs/heads/feat", "--no-ff", "--no-edit"] in commands
 
 
@@ -1276,7 +1280,7 @@ async def test_merge_worktree_stash_restores_on_success():
 
     # The later interleaved stash remains newest; restore our exact older entry.
     last_call_args = ctx.git_manager._run_git.call_args_list[-1]
-    assert last_call_args[0][0] == ["stash", "pop", "stash@{1}"]
+    assert last_call_args[0][0] == ["stash", "pop", "--index", "stash@{1}"]
 
 
 async def test_merge_worktree_stash_push_failure_aborts_before_merge():
@@ -1359,7 +1363,7 @@ async def test_merge_worktree_stash_restore_failure_is_surfaced() -> None:
             )
         if args == ["stash", "list", "--format=%gd%x00%H"]:
             return _make_git_result(0, stdout="stash@{0}\x00stash-ours\n")
-        if args == ["stash", "pop", "stash@{0}"]:
+        if args == ["stash", "pop", "--index", "stash@{0}"]:
             return _make_git_result(1, stderr="restore conflict")
         return cast(MagicMock, regular_git(args, cwd=cwd, timeout=timeout, check=check))
 

@@ -40,6 +40,12 @@ pub enum MenuAction {
     /// A keymap action, dispatched exactly as its chord would be once the
     /// menu's pane or tab is the focused one.
     Act(Action),
+    /// Close the terminal belonging to this pane, independent of focus.
+    CloseTerminal(PaneId),
+    /// Take the control lease for this pane, independent of focus.
+    TakeControl(PaneId),
+    /// Release the control lease for this pane, independent of focus.
+    ReleaseControl(PaneId),
     /// Exchange the menu's pane with the focused one.
     SwapWithFocused(PaneId),
     /// Drop the name the user gave the pane so it shows the daemon's again.
@@ -228,7 +234,7 @@ fn pane_items<W: WorkspaceView>(ws: &W, chrome: &Chrome, pane: PaneId) -> Vec<Me
             if zoomed { "unzoom" } else { "zoom" },
             MenuAction::Act(Action::Zoom),
         ),
-        control_item(state),
+        control_item(state, pane),
     ]);
     if let Some(entry_id) = blocked_entry(ws, pane) {
         items.push(item("respond", MenuAction::Respond(entry_id)));
@@ -324,9 +330,10 @@ fn agent_items<W: WorkspaceView>(ws: &W, entry_id: &str) -> Vec<MenuItem> {
         item("mark seen", MenuAction::MarkSeen(id())),
         attention_id(ws, entry_id).is_some(),
     ));
+    // Disabled no-pane rows never dispatch either `Act` placeholder.
     let control = pane.map_or_else(
         || item("take control", MenuAction::Act(Action::TakeControl)),
-        |pane| control_item(ws.pane(pane)),
+        |pane| control_item(ws.pane(pane), pane),
     );
     // An orphaned row has no host to close; the daemon can only destroy it.
     let close = match orphaned_terminal(ws, entry_id) {
@@ -335,7 +342,13 @@ fn agent_items<W: WorkspaceView>(ws: &W, entry_id: &str) -> Vec<MenuItem> {
             MenuAction::DestroyTerminal(terminal_id),
         ),
         None => enabled_if(
-            item("close terminal", MenuAction::Act(Action::CloseTerminal)),
+            item(
+                "close terminal",
+                pane.map_or(
+                    MenuAction::Act(Action::CloseTerminal),
+                    MenuAction::CloseTerminal,
+                ),
+            ),
             pane.is_some(),
         ),
     };
@@ -421,11 +434,10 @@ fn enabled_if(item: MenuItem, enabled: bool) -> MenuItem {
     MenuItem { enabled, ..item }
 }
 
-fn control_item(state: &crate::app::Pane) -> MenuItem {
+fn control_item(state: &crate::app::Pane, pane: PaneId) -> MenuItem {
     match state.control {
-        ControlState::Held => item("release control", MenuAction::Act(Action::ReleaseControl)),
-        _ if state.take_back => item("take control", MenuAction::Act(Action::TakeBack)),
-        _ => item("take control", MenuAction::Act(Action::TakeControl)),
+        ControlState::Held => item("release control", MenuAction::ReleaseControl(pane)),
+        _ => item("take control", MenuAction::TakeControl(pane)),
     }
 }
 
@@ -481,7 +493,7 @@ mod tests {
             ]
         );
         assert_eq!(menu.items[1].action, MenuAction::SwapWithFocused(other));
-        assert_eq!(menu.items[5].action, MenuAction::Act(Action::TakeControl));
+        assert_eq!(menu.items[5].action, MenuAction::TakeControl(other));
         assert_eq!(menu.items[7].action, MenuAction::TogglePassthrough(other));
         assert_eq!(menu.items[8].action, MenuAction::Act(Action::ClosePane));
         assert_eq!(
@@ -520,10 +532,7 @@ mod tests {
             ]
         );
         assert_eq!(menu.items[1].action, MenuAction::ClearPaneName(focused));
-        assert_eq!(
-            menu.items[5].action,
-            MenuAction::Act(Action::ReleaseControl)
-        );
+        assert_eq!(menu.items[5].action, MenuAction::ReleaseControl(focused));
         assert_eq!(menu.items[6].action, MenuAction::Respond(entry_id));
 
         let menu = build_menu(&ws, &chrome, ContextMenuKind::Tab(0), (3, 0));
@@ -878,8 +887,9 @@ mod tests {
             menu.items[3].action,
             MenuAction::MarkSeen("run:term-blocked".to_string())
         );
-        assert_eq!(menu.items[4].action, MenuAction::Act(Action::TakeControl));
-        assert_eq!(menu.items[5].action, MenuAction::Act(Action::CloseTerminal));
+        assert_eq!(menu.items[4].action, MenuAction::TakeControl(blocked));
+        assert_ne!(chrome.focused_pane(), Some(blocked));
+        assert_eq!(menu.items[5].action, MenuAction::CloseTerminal(blocked));
         assert!(menu.items.iter().all(|item| item.enabled));
         let menu = build_menu(&ws, &chrome, agent("run:term-held"), (3, 22));
         assert_eq!(
@@ -893,10 +903,7 @@ mod tests {
             ]
         );
         assert_eq!(enabled(&menu), [true, true, false, true, true]);
-        assert_eq!(
-            menu.items[3].action,
-            MenuAction::Act(Action::ReleaseControl)
-        );
+        assert_eq!(menu.items[3].action, MenuAction::ReleaseControl(held));
         let menu = build_menu(&ws, &chrome, agent("run:term-away"), (3, 24));
         assert_eq!(
             labels(&menu),
@@ -909,5 +916,55 @@ mod tests {
             ]
         );
         assert_eq!(enabled(&menu), [true, true, false, false, false]);
+    }
+
+    #[test]
+    fn agent_row_close_activates_with_the_row_pane_not_the_focused_one() {
+        use serde_json::json;
+
+        let mut ws = Workspace::scripted();
+        let blocked = ws
+            .open_terminal("term-blocked", "native", "epoch")
+            .expect("open term-blocked");
+        let held = ws
+            .open_terminal("term-held", "native", "epoch")
+            .expect("open term-held");
+        ws.daemon_mut().set_roster(json!({
+            "epoch": "attention-1",
+            "seq": 1,
+            "entries": [{
+                "entry_id": "run:term-blocked",
+                "terminal": {"terminal_id": "term-blocked", "backend": "native"},
+                "attention": {"attention_id": "att-1", "kind": "actionable"},
+            }],
+        }));
+        ws.reconcile_subscribe_first().expect("scripted roster");
+        ws.pane_mut(held).control = ControlState::Held;
+
+        let mut chrome = Chrome::dark();
+        chrome.open_pane(blocked, "blocked");
+        chrome.open_pane(held, "held");
+        assert_eq!(chrome.focused_pane(), Some(held));
+        open_menu(
+            &ws,
+            &mut chrome,
+            ContextMenuKind::Agent("run:term-blocked".to_string()),
+            (3, 20),
+        );
+        let menu = chrome.menu.as_mut().expect("agent menu");
+        menu.selected = menu
+            .items
+            .iter()
+            .position(|item| item.label == "close terminal")
+            .expect("close terminal item");
+
+        assert_eq!(
+            activate_menu(&mut chrome),
+            Some((
+                ContextMenuKind::Agent("run:term-blocked".to_string()),
+                MenuAction::CloseTerminal(blocked),
+            ))
+        );
+        assert_eq!(chrome.focused_pane(), Some(held));
     }
 }

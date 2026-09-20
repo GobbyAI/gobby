@@ -3,7 +3,6 @@
 import asyncio
 import json
 from copy import deepcopy
-from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -11,7 +10,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-import gobby.mcp_proxy.tools.tasks._lifecycle_close_orchestration as orchestration
 from gobby.build.service import DispatcherTickSummary
 from gobby.config.tasks import TaskValidationConfig
 from gobby.mcp_proxy.services.result_offload import _WRAPPER_MUTATION_RESERVE
@@ -93,11 +91,10 @@ async def test_reference_contract_3_2_2(
     errors = documentation_errors(load_audits())
     assert errors == [], "\n".join(errors)
     if scenario == "tasks":
-        validator_run_id = "a1b2c3d4-1234-4567-89ab-123456789abc"
-        task_launched_at = datetime(2026, 9, 8, 12, 0, tzinfo=UTC)
-        task_store = task_scenarios._Store(task_scenarios._review(status="launching", run_id=None))
+        reviewer_run_id = "a1b2c3d4-1234-4567-89ab-123456789abc"
+        task_store = task_scenarios._Store(task_scenarios._review(status="queued", run_id=None))
         task_registry = SimpleNamespace(
-            call=AsyncMock(return_value={"success": True, "run_id": validator_run_id})
+            call=AsyncMock(return_value={"success": True, "run_id": reviewer_run_id})
         )
         task_ctx = task_scenarios._ctx(
             registry=task_registry,
@@ -107,24 +104,31 @@ async def test_reference_contract_3_2_2(
                 close_review_validator_timeout_seconds=900,
             ),
         )
-        monkeypatch.setattr(orchestration, "TaskCloseReviewStore", lambda _db: task_store)
-        monkeypatch.setattr(orchestration, "utc_now", lambda: task_launched_at)
+        task_scenarios._patch_store(monkeypatch, task_store)
         task_evaluation = task_scenarios._evaluation()
         task_evaluation.extra["coordinator_owned_pending"] = True
         task_arguments = task_scenarios._arguments()
         task_result = await launch_close_review(
-            task_ctx, evaluation=task_evaluation, close_arguments=task_arguments
+            task_ctx,
+            evaluation=task_evaluation,
+            close_arguments=task_arguments,
+            evaluate_close=task_scenarios._revalidate(task_evaluation),
         )
         assert task_store.created_arguments == {
             **task_arguments,
-            "_review_deadline_at": "2026-09-08T12:15:00+00:00",
+            "_review_timeout_seconds": 900,
+            "_criterion_count": 3,
+            "_manifest_count": None,
+            "_excerpt_chars": None,
+            "_review_provider": "codex",
+            "_review_model": "gpt-5.6-terra",
         }
         assert "_review_deadline_at" not in task_arguments
         assert task_evaluation.task is not None
         assert task_store.expected_task_updated_at == task_evaluation.task.updated_at
         task_registry.call.assert_awaited_once()
         task_launch_args = task_registry.call.call_args.args[1]
-        assert task_launch_args["agent"] == "task-close-validator"
+        assert task_launch_args["agent"] == "task-close-reviewer"
         assert task_launch_args["task_id"] is None
         assert task_launch_args["isolation"] == "none"
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
@@ -140,15 +144,17 @@ async def test_reference_contract_3_2_2(
         assert task_result["success"] is True
         assert task_result["closed"] is False
         assert task_result["can_close"] is False
-        assert task_result["error"] == "agentic_review_required"
-        assert task_result["validator_run_id"] == validator_run_id
+        assert task_result["error"] == "close_review_required"
+        assert task_result["reviewer_run_id"] == reviewer_run_id
         assert task_result["review_status"] == "running"
+        assert task_result["criterion_count"] == 3
+        assert task_result["criterion_indexes"] == [1, 2, 3]
         assert "run_id" not in task_result
         assert "spawn_request" not in task_result
         assert "review_run_id" not in task_result
         assert "Do not poll agent runs or re-call close_task." in task_result["message"]
         assert "Oversized" not in task_result["message"]
-        assert task_result["criteria_review_duration_ms"] == 4.25
+        assert task_result["close_review_duration_ms"] == 4.25
     elif scenario == "planning-build":
         build_registry = build_scenarios._registry(temp_db)
         build_task = build_registry.get_tool("build_task")

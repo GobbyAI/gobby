@@ -496,6 +496,71 @@ fn set_scroll_offset_is_attachment_local() {
 }
 
 #[test]
+fn read_text_spans_native_scrollback_and_requires_an_attachment() {
+    let token = "frame-read-text";
+    let (dir, mut child) = start_host(token);
+    let mut ctrl = control_hello(dir.path(), token);
+    let prepared = spawn_prepared(
+        &mut ctrl,
+        "term-read-text",
+        &[
+            "/bin/sh",
+            "-c",
+            "i=1; while [ $i -le 40 ]; do printf 'read-%02d\\n' \"$i\"; i=$((i + 1)); done; exec /bin/sleep 30",
+        ],
+    );
+    child.track_pgid(prepared["pgid"].as_i64().unwrap() as i32);
+    let host_terminal_id = prepared["host_terminal_id"].as_str().unwrap().to_string();
+    commit_spawn(&mut ctrl, "term-read-text");
+    wait_until("child fills native scrollback", || {
+        snapshot_text(&mut ctrl, &host_terminal_id).contains("read-40")
+    });
+
+    let mut frames = connect(&dir.path().join(FRAMES_SOCKET));
+    write_msg(&mut frames, &hello_frame(80, 6));
+    let _ = read_msg(&mut frames);
+    let request = ClientMessage::ReadText {
+        start_rows_from_live_edge: 64,
+        start_col: 0,
+        end_rows_from_live_edge: 0,
+        end_col: 79,
+    };
+    write_msg(&mut frames, &request);
+    match read_reply(&mut frames) {
+        ServerMessage::Error { code, .. } => assert_eq!(code, "attach_required"),
+        other => panic!("expected attach_required: {other:?}"),
+    }
+
+    write_msg(
+        &mut frames,
+        &ClientMessage::AttachTerminal {
+            host_terminal_id: host_terminal_id.clone(),
+            reservation_id: None,
+            locator: None,
+        },
+    );
+    assert!(matches!(
+        read_reply(&mut frames),
+        ServerMessage::Attached { .. }
+    ));
+    write_msg(&mut frames, &request);
+    let ServerMessage::TextRead { text, truncated } = read_reply(&mut frames) else {
+        panic!("expected text read")
+    };
+    assert!(!truncated);
+    let first = text.find("read-01").expect("off-screen first line");
+    let last = text.find("read-40").expect("last line");
+    assert!(first < last, "{text:?}");
+
+    send_json(
+        &mut ctrl,
+        &json!({"method": "host_shutdown", "grace_ms": 20}),
+    );
+    let _ = recv_json(&mut ctrl);
+    let _ = wait_exit(&mut child, Duration::from_secs(5));
+}
+
+#[test]
 fn worst_case_keyframe_fits_max_frame_size() {
     use gobby_terminal::protocol::{CellData, FrameData};
     let cell = CellData {

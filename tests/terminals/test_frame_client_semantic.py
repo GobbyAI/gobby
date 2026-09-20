@@ -26,4 +26,11 @@ def test_semantic_frame_raw_is_retained() -> None:
 
     assert decoded["type"] == "frame"
     assert decoded["raw"] == payload
+    assert decoded["modes"]["kitty_keyboard_flags"] == 0
     assert decode_frame(len(payload).to_bytes(4, "little") + decoded["raw"]) == decoded
+
+
+def test_semantic_frame_decodes_kitty_keyboard_flags() -> None:
+    decoded = decode_frame((WIRE_GOLDEN / "frame_mouse_modes.bin").read_bytes())
+
+    assert decoded["modes"]["kitty_keyboard_flags"] == 5
