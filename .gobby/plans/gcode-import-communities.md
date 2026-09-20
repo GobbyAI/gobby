@@ -80,19 +80,22 @@ Decision record (confirmed with the user on 2026-09-10 and 2026-09-19):
 - gcode has zero text-generation call sites and never holds provider credentials
   (`AiRouting` is `{Daemon, Off}`; memory `959d8494`). Every model call in this plan
   lives in the Python daemon (P6). gcode reads label rows only.
-- A new table lands as one commit with every derived carrier and is live only after
-  `uv run gobby restart` (schema plan + apply) and `uv run gobby cutover` for the
-  coherent set `gcode`, `gdaemon`, `ghook` (`promote_workspace_binary_set`). Copying a
-  single binary by hand is refused as `mixed installed binary set`. Announce the
-  restart with a `global` `send_message` and wait for a quiet window.
-- Migration number: 3.1 is written against `441_add_coordination_reply_waits.sql` as the
-  latest migration at `1ee3db66d3`, so it names 442. Task #22572 (gobby#13891, workspace
-  ref re-basing) is landing its own `442_*.sql` concurrently. The number in this plan is
-  the next free migration number when 3.1 lands, not a decision: the executor re-resolves
-  every occurrence of the provisional number in this plan to that number in the same
-  commit as 3.1: the file name, `MIGRATIONS`, `latest_version`, `cli_contract.rs`, every
-  "442" in 3.1, the migration number 7.1 writes into `crates/CHANGELOG.md`, and Q1
-  step 3's "applies 442". V1 records the number actually used (3.1.7).
+- A new table lands as one commit with every derived carrier and is live only after one
+  coherent `uv run gobby cutover --path
+  /Users/josh/.gobby/worktrees/gobby/lane-22581-gcode-import-communities`, invoked from
+  the main checkout for the set `gcode`, `gdaemon`, `ghook`
+  (`promote_workspace_binary_set`). Copying a single binary by hand is refused as
+  `mixed installed binary set`. Announce the cutover with a `global` `send_message` and
+  wait for a quiet window.
+- Migration number: migration `442_zero_based_refs.sql` is the checked-in head, so 3.1
+  names 443. The number is live allocation state, not a reservation: immediately before
+  editing schema assets, the executor re-resolves the checked-in catalog, registered
+  head, and embedded identity. If another migration has landed, replace every live
+  occurrence of the provisional 443 in the same commit as 3.1: the file name,
+  `MIGRATIONS`, `latest_version`, `cli_contract.rs`, section 3.1, the number 7.1 writes
+  into `crates/CHANGELOG.md`, and Q1 step 3. Historical V1 review records remain
+  immutable; `schema-apply.md` and the later 7.1 changelog leaf record the number
+  actually used (3.1.7).
 - Hand-maintained production `.rs`/`.py` files stay under 1,000 lines. Sizes on 2026-09-19 at
   `7b6dc3bfd0`: `cli.rs` 827 (split in 4.1 before it grows), `graph_analytics.rs` 693
   (about 620 after 1.2: 1.1 moves the 161-line inline test module at :533-693 to
@@ -582,18 +585,17 @@ Verify: `cargo nextest run -p gobby-code -E 'test(remap)'`.
 **Goal**: `code_communities` exists with its carriers, `gcode index` refreshes it inside
 the checkout fence, and every read path has one API.
 
-### 3.1 Migration 442: `code_communities`, the id watermark, and every derived carrier [category: code]
+### 3.1 Migration 443: `code_communities`, the id watermark, and every derived carrier [category: code]
 `kind: deliverable`
 
 Targets:
-- `crates/gcore/assets/schema/migrations/442_add_code_communities.sql`
-- `crates/gcore/assets/schema/baseline.sql`
-- `crates/gcore/src/schema/assets.rs::*` — scope-reason: append the 442 entry to MIGRATIONS
-- `crates/gcore/assets/schema/catalog.manifest.json::*` — scope-reason: regenerate the catalog manifest for migration 442
+- `crates/gcore/assets/schema/migrations/443_add_code_communities.sql`
+- `crates/gcore/src/schema/assets.rs::*` — scope-reason: append the 443 entry to MIGRATIONS
+- `crates/gcore/assets/schema/catalog.manifest.json::*` — scope-reason: regenerate the catalog manifest for migration 443
 - `crates/gcore/src/grant/bundle.rs::*` — scope-reason: refresh the embedded schema identity goldens
 - `crates/gcore/tests/schema_contract.rs::*` — scope-reason: pin the new latest migration and table set
-- `crates/gdaemon/tests/cli_contract.rs::*` — scope-reason: update the latest_version assertion from 441 to 442
-- `src/gobby/storage/schema_expected_identity.json::*` — scope-reason: regenerate the expected schema identity for latest version 442
+- `crates/gdaemon/tests/cli_contract.rs::*` — scope-reason: update the latest_version assertion from 442 to 443
+- `src/gobby/storage/schema_expected_identity.json::*` — scope-reason: regenerate the expected schema identity for latest version 443
 - `tests/runtime_grants/golden/brokered_datastores.json::*` — scope-reason: regenerate the signed runtime-grant golden for the new schema identity
 - `tests/runtime_grants/golden/direct_datastores.json::*` — scope-reason: regenerate the signed runtime-grant golden for the new schema identity
 - `tests/runtime_grants/golden/old_client_new_grant.json::*` — scope-reason: regenerate the signed runtime-grant golden for the new schema identity
@@ -605,9 +607,10 @@ Targets:
 - `tests/code_index/test_gcode_privilege_manifest.py::*` — scope-reason: add code_communities to the exact managed-relation set asserted by test_manifest_privileges_match_the_managed_relation_set
 - `docs/evidence/community-labels-2026-09/schema-apply.md`
 
-Research context: `BASELINE_VERSION` is 420 (`crates/gcore/src/schema/assets.rs:4`);
-migrations run through 441 (`441_add_coordination_reply_waits.sql`); `MIGRATIONS` is
-`crates/gcore/src/schema/assets.rs:24`. `code_indexed_project_states`
+Research context: `BASELINE_VERSION` is 420 (`crates/gcore/src/schema/assets.rs:4`),
+and `baseline.sql` plus `BASELINE_CHECKSUM` are immutable; post-baseline schema changes
+land only as migrations. Migrations run through 442 (`442_zero_based_refs.sql`);
+`MIGRATIONS` is `crates/gcore/src/schema/assets.rs:24`. `code_indexed_project_states`
 (`baseline.sql:2197-2210`) is keyed `(machine_id, project_id)` and carries the
 machine-scoped six-policy RLS block this table mirrors (`baseline.sql:5852-5970`:
 `gobby_daemon_runtime_access`, `gobby_migration_owner_access`, and
@@ -616,10 +619,11 @@ machine-scoped six-policy RLS block this table mirrors (`baseline.sql:5852-5970`
 predicate), plus the two GRANTs at :6216-6218. `upsert_project_stats`
 (index api module, lines 383-475) names its `ON CONFLICT` column list
 explicitly, so the new columns survive it. `GCODE_RLS_TABLES` is `[&str; 11]` at
-`runner_tests.rs:64`. The privilege manifest's `relations[]` entries look like
+`runner_tests.rs:64` (migration 442 added no gcode RLS table, so the arity remains
+eleven before this change). The privilege manifest's `relations[]` entries look like
 `{"relation": "code_imports", "operations": ["SELECT","INSERT","UPDATE","DELETE"], "scope_column": "project_id"}`;
 mirror the `code_indexed_project_states` entry. `schema_expected_identity.json` records
-`latest_version: 441` and hashes; `crates/gdaemon/tests/cli_contract.rs:58` asserts 441.
+`latest_version: 442` and hashes; `crates/gdaemon/tests/cli_contract.rs:58` asserts 442.
 `tests/code_index/test_gcode_privilege_manifest.py::test_manifest_privileges_match_the_managed_relation_set`
 (:52) asserts `set(relations)` equals an exact fourteen-name literal set, and
 `test_manifest_covers_every_rust_database_call_at_head` (:41) compares the source
@@ -676,11 +680,11 @@ CREATE INDEX idx_cc_label_queue ON code_communities (machine_id, project_id)
 ```
 
 No query filters on `members`: every membership lookup is an in-memory scan over the rows
-`read_for_context` already returned. Mirror the same DDL, RLS block, and GRANTs into
-`baseline.sql`.
+`read_for_context` already returned. Put the DDL, RLS block, and GRANTs only in the new
+post-baseline migration; keep baseline@420 and `BASELINE_CHECKSUM` byte-identical.
 
 Carrier regeneration, all in this commit: `catalog.manifest.json` via
-`POSTGRES_TEST_DSN=<test dsn> UPDATE_GCORE_SCHEMA_MANIFEST=1 cargo test -p gobby-core --features postgres --test catalog_manifest_freshness`;
+`GOBBY_SCHEMA_TEST_DATABASE_URL=<test dsn> UPDATE_GCORE_SCHEMA_MANIFEST=1 cargo test -p gobby-core --features postgres --test catalog_manifest_freshness`;
 `schema_expected_identity.json` via
 `uv run python scripts/generate_schema_expected_identity.py --gdaemon target/release/gdaemon`
 after `cargo build --release -p gobby-daemon`; the five signed golden files
@@ -690,13 +694,17 @@ and `crates/gcore/src/grant/bundle.rs` through their existing regeneration paths
 entry, and `community_id_watermark` and `partition_signature` on the
 `code_indexed_project_states` contract.
 
-Live: `uv run gobby restart` (plans and applies 442), then `uv run gobby cutover` for the
-coherent set, after a `global` announcement, before 3.2 starts: 3.2's refresh writes a
-table the installed binaries must already know. Record the `gdaemon schema plan` output
-before and after the apply (nothing pending afterwards) in `docs/evidence/community-labels-2026-09/schema-apply.md`,
-with the line "landed as migration <N>" naming the number the substitution resolved to.
+Live: after committing every schema input and building the lane's release `gdaemon`,
+record its pre-apply schema plan. After a `global` announcement and a quiet window, run
+`uv run gobby cutover --path
+/Users/josh/.gobby/worktrees/gobby/lane-22581-gcode-import-communities` once from the main
+checkout, before 3.2 starts: 3.2's refresh writes a table the installed binaries must
+already know. Record the pre- and post-cutover `gdaemon schema plan` output (nothing
+pending afterwards) and installed `~/.gobby/bin/` hashes in
+`docs/evidence/community-labels-2026-09/schema-apply.md`, with the line "landed as
+migration <N>" naming the number the substitution resolved to.
 
-Granularity: eighteen target files, three of them hand-maintained Rust. A schema change
+Granularity: seventeen target files, three of them hand-maintained Rust. A schema change
 and its carriers cannot land partially (every carrier test fails until all agree), so
 this stays one leaf by construction.
 
@@ -707,13 +715,13 @@ Verify: `cargo nextest run -p gobby-core --features postgres`, `cargo nextest ru
 
 **Acceptance:**
 
-- 3.1.1 - The new migration (442, or the next free number at landing) creates `code_communities` with the constraints, the `idx_cc_label_queue` index, machine-scoped RLS policies, and GRANTs above, and adds `community_id_watermark` and `partition_signature` to `code_indexed_project_states`. file: `crates/gcore/assets/schema/migrations/442_add_code_communities.sql`.
-- 3.1.2 - `baseline.sql`, `catalog.manifest.json`, `assets.rs::MIGRATIONS`, `crates/gcore/src/grant/bundle.rs`, `schema_contract.rs`, `gdaemon` `cli_contract.rs`, `schema_expected_identity.json`, and the five goldens agree on the new latest version (442, or the next free number at landing). file: `src/gobby/storage/schema_expected_identity.json`.
+- 3.1.1 - The new migration (443, or the next free number at landing) creates `code_communities` with the constraints, the `idx_cc_label_queue` index, machine-scoped RLS policies, and GRANTs above, and adds `community_id_watermark` and `partition_signature` to `code_indexed_project_states`. file: `crates/gcore/assets/schema/migrations/443_add_code_communities.sql`.
+- 3.1.2 - `catalog.manifest.json`, `assets.rs::MIGRATIONS`, `crates/gcore/src/grant/bundle.rs`, `schema_contract.rs`, `gdaemon` `cli_contract.rs`, `schema_expected_identity.json`, and the five goldens agree on the new latest version (443, or the next free number at landing), while baseline@420 and `BASELINE_CHECKSUM` remain unchanged. file: `src/gobby/storage/schema_expected_identity.json`.
 - 3.1.3 - `GCODE_RLS_TABLES` lists twelve tables and the runner tests assert the machine-scoped predicates on `code_communities`. file: `crates/gcore/src/schema/runner_tests.rs`.
 - 3.1.4 - The privilege manifest grants `code_communities` to the gcode capability with the same scope declaration as `code_indexed_project_states`, and gcode's `schema.rs` contracts include the table and both new columns. file: `crates/gcode/security/managed_postgres_privileges.json`.
-- 3.1.5 - `uv run gobby restart` applies 442 on the live hub and `gdaemon schema plan` reports nothing pending afterwards, as recorded in the apply log. behavior: "nothing pending" in `docs/evidence/community-labels-2026-09/schema-apply.md`.
+- 3.1.5 - One coherent `uv run gobby cutover --path /Users/josh/.gobby/worktrees/gobby/lane-22581-gcode-import-communities` from the main checkout applies 443 on the live hub and `gdaemon schema plan` reports nothing pending afterwards, as recorded in the apply log. behavior: "nothing pending" in `docs/evidence/community-labels-2026-09/schema-apply.md`.
 - 3.1.6 - The managed-relation set assertion names `code_communities`. test: `tests/code_index/test_gcode_privilege_manifest.py::test_manifest_privileges_match_the_managed_relation_set`.
-- 3.1.7 - The migration number actually used replaces every occurrence of the provisional 442 named in Constraints in the same commit, and the apply log and V1 record it. behavior: "landed as migration" in `docs/evidence/community-labels-2026-09/schema-apply.md`.
+- 3.1.7 - The migration number actually used replaces every live occurrence of the provisional 443 named in Constraints in the same commit, and the apply log plus the later 7.1 changelog leaf record it without editing historical V1. behavior: "landed as migration" in `docs/evidence/community-labels-2026-09/schema-apply.md`.
 
 ### 3.2 Persist the partition at index time and expose the read API [category: code] (depends: 2.3, 3.1)
 `kind: deliverable`
@@ -1684,8 +1692,8 @@ that `label_stale` means the model label predates the current membership and the
 deterministic label is shown; MCG Mermaid output groups nodes into one subgraph per
 community. `crates/CHANGELOG.md` Unreleased: Added — gcode
 `--view=communities`, `--min-size`, `--community`, the `code_communities` table
-(naming the migration number 3.1 actually landed under, provisionally 442, per the
-Constraints substitution), the `communities` evidence operation, the report section; Added —
+(naming the migration number 3.1 actually landed under from `schema-apply.md`), the
+`communities` evidence operation, the report section; Added —
 gobby-core `graph_analytics::communities`, `centrality`, `GraphInputError`; Changed —
 MCG labels are persisted and content-derived, `community-N` ids removed, Mermaid
 subgraphs per community, contract 11, gcode 1.9.0.
@@ -1763,10 +1771,14 @@ deferral:
 2. Python gates: `uv run ruff check src/`, `uv run mypy src/`, and the focused pytest
    modules named in 5.2, 6.1, 6.2, 6.3 with `DATABASE_URL` pointed at the test hub and
    `GOBBY_TEST_PROTECT=1`.
-3. Install: `cargo build --release -p gobby-code -p gobby-daemon -p gobby-hooks`, announce
-   with a `global` `send_message`, `uv run gobby restart` (applies the new migration: 442, or
-   the number 3.1 landed under), `uv run gobby cutover`
-   for the coherent set. Read binary hashes from `~/.gobby/bin/`, never `target/release/`.
+3. Install: commit every schema input; build the lane's release `gdaemon`; record its
+   schema plan showing the current database head and one pending migration; announce
+   with a `global` `send_message`; then, from the main checkout, run one coherent
+   `uv run gobby cutover --path
+   /Users/josh/.gobby/worktrees/gobby/lane-22581-gcode-import-communities` (applies the
+   new migration: 443, or the number 3.1 landed under). Record the installed post-cutover
+   plan with zero pending migrations and read binary hashes from `~/.gobby/bin/`, never
+   `target/release/`.
 4. Determinism and churn (Gobby checkout and the frozen Game Goblins baseline
    `0216f1e33f05…` under `/Users/josh/Projects/wiki-bakeoff-code-2026-09/`): two `gcode index`
    runs on unchanged input produce byte-identical `code_communities` rows and skip the
@@ -2129,19 +2141,20 @@ prose defining `D1.1` plus a `deferred_from` key, because the validator rejects 
   tdd: true
   source_section: '2.3'
   implementation_domain: backend
-- title: 'Migration 442: `code_communities`, the id watermark, and every derived carrier'
+- title: 'Migration 443: `code_communities`, the id watermark, and every derived carrier'
   category: code
   task_type: feature
   depends_on: []
-  validation_criteria: '3.1.1: The new migration (442, or the next free number at
+  validation_criteria: '3.1.1: The new migration (443, or the next free number at
     landing) creates `code_communities` with the constraints, the `idx_cc_label_queue`
     index, machine-scoped RLS policies, and GRANTs above, and adds `community_id_watermark`
-    and `partition_signature` to `code_indexed_project_states`. file: `crates/gcore/assets/schema/migrations/442_add_code_communities.sql`.
+    and `partition_signature` to `code_indexed_project_states`. file: `crates/gcore/assets/schema/migrations/443_add_code_communities.sql`.
 
-    3.1.2: `baseline.sql`, `catalog.manifest.json`, `assets.rs::MIGRATIONS`, `crates/gcore/src/grant/bundle.rs`,
+    3.1.2: `catalog.manifest.json`, `assets.rs::MIGRATIONS`, `crates/gcore/src/grant/bundle.rs`,
     `schema_contract.rs`, `gdaemon` `cli_contract.rs`, `schema_expected_identity.json`,
-    and the five goldens agree on the new latest version (442, or the next free number
-    at landing). file: `src/gobby/storage/schema_expected_identity.json`.
+    and the five goldens agree on the new latest version (443, or the next free number
+    at landing), while baseline@420 and `BASELINE_CHECKSUM` remain unchanged. file:
+    `src/gobby/storage/schema_expected_identity.json`.
 
     3.1.3: `GCODE_RLS_TABLES` lists twelve tables and the runner tests assert the
     machine-scoped predicates on `code_communities`. file: `crates/gcore/src/schema/runner_tests.rs`.
@@ -2150,15 +2163,17 @@ prose defining `D1.1` plus a `deferred_from` key, because the validator rejects 
     with the same scope declaration as `code_indexed_project_states`, and gcode''s
     `schema.rs` contracts include the table and both new columns. file: `crates/gcode/security/managed_postgres_privileges.json`.
 
-    3.1.5: `uv run gobby restart` applies 442 on the live hub and `gdaemon schema
-    plan` reports nothing pending afterwards, as recorded in the apply log. behavior:
-    "nothing pending" in `docs/evidence/community-labels-2026-09/schema-apply.md`.
+    3.1.5: One coherent `uv run gobby cutover --path /Users/josh/.gobby/worktrees/gobby/lane-22581-gcode-import-communities`
+    from the main checkout applies 443 on the live hub and `gdaemon schema plan` reports
+    nothing pending afterwards, as recorded in the apply log. behavior: "nothing pending"
+    in `docs/evidence/community-labels-2026-09/schema-apply.md`.
 
     3.1.6: The managed-relation set assertion names `code_communities`. test: `tests/code_index/test_gcode_privilege_manifest.py::test_manifest_privileges_match_the_managed_relation_set`.
 
-    3.1.7: The migration number actually used replaces every occurrence of the provisional
-    442 named in Constraints in the same commit, and the apply log and V1 record it.
-    behavior: "landed as migration" in `docs/evidence/community-labels-2026-09/schema-apply.md`.'
+    3.1.7: The migration number actually used replaces every live occurrence of the
+    provisional 443 named in Constraints in the same commit, and the apply log plus
+    the later 7.1 changelog leaf record it without editing historical V1. behavior:
+    "landed as migration" in `docs/evidence/community-labels-2026-09/schema-apply.md`.'
   labels:
   - covers:gcode-import-communities:3.1:3.1.1
   - covers:gcode-import-communities:3.1:3.1.2
