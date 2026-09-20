@@ -173,6 +173,21 @@ impl PaneRuntime {
         self.terminal.extract_selection(selection)
     }
 
+    pub fn read_text_screen(
+        &self,
+        start_rows_from_live_edge: u32,
+        start_col: u16,
+        end_rows_from_live_edge: u32,
+        end_col: u16,
+    ) -> Option<String> {
+        self.terminal.read_text_screen(
+            start_rows_from_live_edge,
+            start_col,
+            end_rows_from_live_edge,
+            end_col,
+        )
+    }
+
     pub fn render(&self, frame: &mut ratatui::Frame, area: ratatui::layout::Rect, show_cursor: bool) {
         self.terminal.render(frame, area, show_cursor);
     }

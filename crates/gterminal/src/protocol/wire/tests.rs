@@ -390,6 +390,30 @@ fn pane_modes_round_trip_keyboard_flags() {
 }
 
 #[test]
+fn text_read_messages_round_trip() {
+    let client = ClientMessage::ReadText {
+        start_rows_from_live_edge: 42,
+        start_col: 3,
+        end_rows_from_live_edge: 7,
+        end_col: 19,
+    };
+    let server = ServerMessage::TextRead {
+        text: "old\nnew".into(),
+        truncated: true,
+    };
+
+    let mut bytes = Vec::new();
+    write_message(&mut bytes, &client).unwrap();
+    let decoded: ClientMessage = read_message(&mut bytes.as_slice(), MAX_FRAME_SIZE).unwrap();
+    assert_eq!(decoded, client);
+
+    let mut bytes = Vec::new();
+    write_message(&mut bytes, &server).unwrap();
+    let decoded: ServerMessage = read_message(&mut bytes.as_slice(), MAX_FRAME_SIZE).unwrap();
+    assert_eq!(decoded, server);
+}
+
+#[test]
 fn frame_data_rejects_mismatched_cell_count() {
     let frame = FrameData {
         cells: vec![

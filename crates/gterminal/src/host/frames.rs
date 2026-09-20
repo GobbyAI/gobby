@@ -15,7 +15,7 @@ use super::state::HostState;
 use super::write::NativeInput;
 use crate::protocol::{
     check_client_version, read_message, validate_dimensions, write_message, ClientMessage,
-    FramingError, ServerMessage, TmuxClientIdentity, VersionCheck, MAX_FRAME_SIZE,
+    FramingError, ServerMessage, TmuxClientIdentity, VersionCheck, MAX_FRAME_SIZE, MAX_WRITE_BYTES,
 };
 
 const PEER_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
@@ -259,6 +259,33 @@ pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
                             refuse_input(&mut writer, code).await;
                         }
                     }
+                    ClientMessage::ReadText {
+                        start_rows_from_live_edge,
+                        start_col,
+                        end_rows_from_live_edge,
+                        end_col,
+                    } => {
+                        let result = match attachment_id {
+                            Some(id) => state
+                                .read_text(
+                                    id,
+                                    start_rows_from_live_edge,
+                                    start_col,
+                                    end_rows_from_live_edge,
+                                    end_col,
+                                )
+                                .await,
+                            None => Err("attach_required"),
+                        };
+                        let reply = match result {
+                            Ok(text) => text_read_message(text),
+                            Err(code) => ServerMessage::Error {
+                                code: code.into(),
+                                message: None,
+                            },
+                        };
+                        let _ = write_frame(&mut writer, &reply).await;
+                    }
                     ClientMessage::Detach => {
                         if let Some(id) = attachment_id.take() {
                             embed::detach_frame(&state, id).await;
@@ -331,6 +358,18 @@ pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
 /// refusal never closes the stream; a failed write surfaces on the next read.
 async fn refuse_input(writer: &mut tokio::net::unix::OwnedWriteHalf, code: &str) {
     let _ = write_frame(writer, &ServerMessage::InputRefused { code: code.into() }).await;
+}
+
+fn text_read_message(mut text: String) -> ServerMessage {
+    let truncated = text.len() > MAX_WRITE_BYTES;
+    if truncated {
+        let mut end = MAX_WRITE_BYTES;
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        text.truncate(end);
+    }
+    ServerMessage::TextRead { text, truncated }
 }
 
 async fn recv_opt(rx: &mut Option<FrameMailbox>) -> Option<ServerMessage> {
@@ -441,5 +480,16 @@ mod tests {
                 .expect("decode frame after cancellation"),
             ClientMessage::Detach
         ));
+    }
+
+    #[test]
+    fn text_reads_keep_a_utf8_head_within_the_write_ceiling() {
+        let text = format!("{}🦀", "a".repeat(MAX_WRITE_BYTES - 1));
+        let ServerMessage::TextRead { text, truncated } = text_read_message(text) else {
+            panic!("expected text read")
+        };
+        assert!(truncated);
+        assert_eq!(text.len(), MAX_WRITE_BYTES - 1);
+        assert!(text.ends_with('a'));
     }
 }

@@ -625,6 +625,7 @@ impl FrameSource for UnixSocketFrameSource {
                 | ClientMessage::BindAttachment { .. }
                 | ClientMessage::Input { .. }
                 | ClientMessage::Paste { .. }
+                | ClientMessage::ReadText { .. }
         ) {
             return Err(FrameError::Protocol(
                 "message is not valid after frame attachment".into(),

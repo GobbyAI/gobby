@@ -270,6 +270,13 @@ pub enum ClientMessage {
     Paste {
         text: String,
     },
+    /// Read plain text from the attached native pane's retained screen.
+    ReadText {
+        start_rows_from_live_edge: u32,
+        start_col: u16,
+        end_rows_from_live_edge: u32,
+        end_col: u16,
+    },
 }
 
 impl ClientMessage {
@@ -535,6 +542,11 @@ pub enum ServerMessage {
     /// `request_too_large`, `pty_busy`, `terminal_gone`.
     InputRefused {
         code: String,
+    },
+    /// Plain text read from a native pane's retained screen.
+    TextRead {
+        text: String,
+        truncated: bool,
     },
 }
 
