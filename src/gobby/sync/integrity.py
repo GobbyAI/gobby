@@ -149,16 +149,14 @@ def _active_bundled_content_owner_sessions(
     if not isinstance(project_id, str) or not isinstance(checkout_root, str):
         return {}
 
-    from gobby.utils.session_context import get_current_session_id
     from gobby.workflows.commit_guard import (
         DirtyEditOwnershipInspectionError,
-        foreign_owned_dirty_paths,
+        active_owned_dirty_paths,
     )
 
     try:
-        foreign_owners = foreign_owned_dirty_paths(
+        active_owners = active_owned_dirty_paths(
             database,
-            session_id=get_current_session_id() or "",
             project_id=project_id,
             checkout_root=checkout_root,
             paths=paths,
@@ -171,7 +169,7 @@ def _active_bundled_content_owner_sessions(
         return {}
     return {
         path: tuple(owner.session_ref for owner in owners)
-        for path, owners in foreign_owners.items()
+        for path, owners in active_owners.items()
         if owners
     }
 

@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+from types import SimpleNamespace
+from typing import cast
 from unittest.mock import patch
 
 import pytest
@@ -17,11 +19,13 @@ from gobby.install.manifest import (
     write_bundled_content_manifest,
 )
 from gobby.storage.definitions._shared import compute_definition_hash
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.sync.integrity import (
     BUNDLED_SYNC_CONTENT_TYPES,
     CONTENT_TYPE_DIRS,
     DIRTY_BUNDLED_CONTENT_OVERRIDE_ENV,
     IntegrityResult,
+    _active_bundled_content_owner_sessions,
     _to_shared_relative_path,
     dirty_bundled_content_refusal,
     get_dirty_content_types,
@@ -83,6 +87,34 @@ class TestDirtyBundledContentRefusal:
         assert f"modified: {dirty_path} (held by sessions gobby#42, gobby#43)" in refusal
         assert f"untracked: {untracked_path}" in refusal
         assert f"{DIRTY_BUNDLED_CONTENT_OVERRIDE_ENV}=1" in refusal
+
+    def test_owner_lookup_includes_the_current_session(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        path = "src/gobby/install/shared/skills/demo/SKILL.md"
+        observed: dict[str, object] = {}
+
+        monkeypatch.setattr(
+            "gobby.utils.project_context.get_project_context",
+            lambda _path: {"id": "project-id", "project_path": "/checkout"},
+        )
+
+        def active_owners(
+            _database: HubDatabase, **kwargs: object
+        ) -> dict[str, tuple[SimpleNamespace, ...]]:
+            observed.update(kwargs)
+            return {path: (SimpleNamespace(session_ref="gobby#13994"),)}
+
+        monkeypatch.setattr("gobby.workflows.commit_guard.active_owned_dirty_paths", active_owners)
+
+        owners = _active_bundled_content_owner_sessions(cast(HubDatabase, object()), {path})
+
+        assert owners == {path: ("gobby#13994",)}
+        assert observed == {
+            "project_id": "project-id",
+            "checkout_root": "/checkout",
+            "paths": {path},
+        }
 
     def test_only_the_exact_override_skips_integrity_verification(
         self, monkeypatch: pytest.MonkeyPatch
