@@ -20,8 +20,10 @@ from gobby.storage.definitions._shared import compute_definition_hash
 from gobby.sync.integrity import (
     BUNDLED_SYNC_CONTENT_TYPES,
     CONTENT_TYPE_DIRS,
+    DIRTY_BUNDLED_CONTENT_OVERRIDE_ENV,
     IntegrityResult,
     _to_shared_relative_path,
+    dirty_bundled_content_refusal,
     get_dirty_content_types,
     verify_bundled_integrity,
 )
@@ -53,6 +55,67 @@ class TestIntegrityResult:
         assert result.git_available is True
         assert result.checked is False
         assert result.source == "none"
+
+
+class TestDirtyBundledContentRefusal:
+    """Startup and restart share one explicit dirty-content escape hatch."""
+
+    def test_refusal_lists_dirty_untracked_paths_and_active_owners(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        dirty_path = "src/gobby/install/shared/skills/demo/SKILL.md"
+        untracked_path = "src/gobby/install/shared/prompts/new.md"
+        result = IntegrityResult(
+            dirty_files=[dirty_path],
+            untracked_files=[untracked_path],
+        )
+        monkeypatch.setattr(
+            "gobby.sync.integrity.verify_bundled_integrity", lambda _install_dir: result
+        )
+        monkeypatch.setattr(
+            "gobby.sync.integrity._active_bundled_content_owner_sessions",
+            lambda _database, _paths: {dirty_path: ("gobby#42", "gobby#43")},
+        )
+
+        refusal = dirty_bundled_content_refusal(Path("/checkout/install"), database=None)
+
+        assert refusal is not None
+        assert f"modified: {dirty_path} (held by sessions gobby#42, gobby#43)" in refusal
+        assert f"untracked: {untracked_path}" in refusal
+        assert f"{DIRTY_BUNDLED_CONTENT_OVERRIDE_ENV}=1" in refusal
+
+    def test_only_the_exact_override_skips_integrity_verification(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def unexpected_verification(_install_dir: Path) -> IntegrityResult:
+            pytest.fail("the explicit override must skip verification")
+
+        monkeypatch.setattr(
+            "gobby.sync.integrity.verify_bundled_integrity", unexpected_verification
+        )
+
+        assert (
+            dirty_bundled_content_refusal(
+                Path("/checkout/install"),
+                environ={DIRTY_BUNDLED_CONTENT_OVERRIDE_ENV: "1"},
+            )
+            is None
+        )
+
+    def test_other_override_values_do_not_bypass_the_refusal(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        result = IntegrityResult(dirty_files=["src/gobby/install/shared/skills/demo/SKILL.md"])
+        monkeypatch.setattr(
+            "gobby.sync.integrity.verify_bundled_integrity", lambda _install_dir: result
+        )
+
+        refusal = dirty_bundled_content_refusal(
+            Path("/checkout/install"),
+            environ={DIRTY_BUNDLED_CONTENT_OVERRIDE_ENV: "true"},
+        )
+
+        assert refusal is not None
 
 
 class TestBundledContentManifest:

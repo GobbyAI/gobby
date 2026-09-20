@@ -4,17 +4,19 @@ Detects modifications to bundled YAML/MD files (workflows, skills, prompts,
 rules, agents) by checking git status of the shared content directory or a
 packaged raw-byte manifest when git is unavailable.
 
-In dev mode (``is_dev_mode()``), integrity checks are skipped entirely —
-file edits are expected. In production mode, any git-tracked modifications,
-manifest hash mismatches, or untracked protected files are flagged as tampered.
+Explicit development sync accepts local edits, while daemon startup and restart
+preflight use this module to prevent those edits from being published to the
+shared registry accidentally.
 """
 
 from __future__ import annotations
 
 import logging
+import os
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from gobby.install.manifest import (
     hash_file_bytes,
@@ -23,9 +25,13 @@ from gobby.install.manifest import (
 )
 from gobby.utils.git import run_git_command
 
+if TYPE_CHECKING:
+    from gobby.storage.hub.protocol import HubDatabase
+
 logger = logging.getLogger(__name__)
 
 IntegritySource = Literal["git", "manifest", "none"]
+DIRTY_BUNDLED_CONTENT_OVERRIDE_ENV = "GOBBY_ALLOW_DIRTY_BUNDLED_CONTENT"
 
 BUNDLED_SYNC_CONTENT_TYPES: set[str] = {
     "skills",
@@ -78,6 +84,96 @@ class IntegrityResult:
     def all_clean(self) -> bool:
         """True when no dirty or untracked files were found."""
         return not self.dirty_files and not self.untracked_files
+
+
+def dirty_bundled_content_refusal(
+    install_dir: Path,
+    *,
+    database: HubDatabase | None = None,
+    environ: Mapping[str, str] | None = None,
+) -> str | None:
+    """Return a startup refusal for dirty bundled inputs, or ``None``.
+
+    The override intentionally applies only when its value is exactly ``"1"``.
+    Ownership attribution is best effort: the integrity result remains a refusal
+    even when the hub cannot identify an active session for a changed path.
+    """
+    env = os.environ if environ is None else environ
+    if env.get(DIRTY_BUNDLED_CONTENT_OVERRIDE_ENV) == "1":
+        return None
+
+    result = verify_bundled_integrity(install_dir)
+    paths = sorted(set(result.dirty_files) | set(result.untracked_files))
+    if not paths:
+        return None
+
+    owner_sessions = _active_bundled_content_owner_sessions(database, set(paths))
+
+    def render(changed_paths: list[str]) -> str:
+        rendered: list[str] = []
+        for path in changed_paths:
+            owners = owner_sessions.get(path)
+            if not owners:
+                rendered.append(path)
+                continue
+            owner_label = "session" if len(owners) == 1 else "sessions"
+            rendered.append(f"{path} (held by {owner_label} {', '.join(owners)})")
+        return ", ".join(rendered)
+
+    changes: list[str] = []
+    if result.dirty_files:
+        changes.append(f"modified: {render(result.dirty_files)}")
+    if result.untracked_files:
+        changes.append(f"untracked: {render(result.untracked_files)}")
+    return (
+        "Refusing to publish dirty bundled content ("
+        f"{'; '.join(changes)}). Commit, restore, or remove the listed files, or set "
+        f"{DIRTY_BUNDLED_CONTENT_OVERRIDE_ENV}=1 to override deliberately."
+    )
+
+
+def _active_bundled_content_owner_sessions(
+    database: HubDatabase | None, paths: set[str]
+) -> dict[str, tuple[str, ...]]:
+    """Resolve active task-session owners for changed source-checkout paths."""
+    if database is None or not paths:
+        return {}
+
+    from gobby.utils.project_context import get_project_context
+
+    project_context = get_project_context(Path.cwd())
+    if project_context is None:
+        return {}
+    project_id = project_context.get("id")
+    checkout_root = project_context.get("project_path")
+    if not isinstance(project_id, str) or not isinstance(checkout_root, str):
+        return {}
+
+    from gobby.utils.session_context import get_current_session_id
+    from gobby.workflows.commit_guard import (
+        DirtyEditOwnershipInspectionError,
+        foreign_owned_dirty_paths,
+    )
+
+    try:
+        foreign_owners = foreign_owned_dirty_paths(
+            database,
+            session_id=get_current_session_id() or "",
+            project_id=project_id,
+            checkout_root=checkout_root,
+            paths=paths,
+        )
+    except DirtyEditOwnershipInspectionError:
+        logger.warning(
+            "Dirty bundled-content ownership inspection failed; reporting paths without owners",
+            exc_info=True,
+        )
+        return {}
+    return {
+        path: tuple(owner.session_ref for owner in owners)
+        for path, owners in foreign_owners.items()
+        if owners
+    }
 
 
 def verify_bundled_integrity(install_dir: Path) -> IntegrityResult:
