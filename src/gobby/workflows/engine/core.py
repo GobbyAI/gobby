@@ -309,6 +309,8 @@ class RuleEngine(
                     eval_context = {}
                 eval_context.setdefault("foreign_dirty_edit_conflict", "")
                 eval_context.setdefault("foreign_staged_commit_conflict", "")
+                eval_context.setdefault("foreign_landing_merge", False)
+                eval_context.setdefault("session_owned_reviewable_paths", None)
                 # Gate-keeping default: an uninspected commit is reviewable.
                 eval_context.setdefault("commit_has_reviewable_paths", True)
                 eval_context.setdefault("found_work_shirk", False)

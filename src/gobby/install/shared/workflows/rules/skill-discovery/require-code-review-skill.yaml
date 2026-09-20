@@ -29,8 +29,21 @@ rules:
         command_pattern: &review_gated_git "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?git(?:\\s+(?:-C\\s+\\S+|-c\\s+\\S+|--git-dir(?:=|\\s+)\\S+|--work-tree(?:=|\\s+)\\S+|--namespace(?:=|\\s+)\\S+|--exec-path(?:=|\\s+)\\S+|--no-pager|--paginate|-p|--bare|--literal-pathspecs|--no-optional-locks))*\\s+(?:commit|merge|cherry-pick|revert)(?![\\w-])(?!(?:\\s+-\\S+)*\\s+--(?:abort|quit)(?![\\w-]))"
         reason: |
           {{ skill_fetch_directive("code-review") }}
-          Then run its pre-commit self-review on the staged changes, fix every
-          critical or high finding, and retry the command.
+          Then run its pre-commit self-review only on paths attributed to this
+          session, fix every critical or high finding, and retry the command.
+          {% if session_owned_reviewable_paths %}
+          The exact review target is:
+          {% for path in session_owned_reviewable_paths %}
+          - `{{ path }}`
+          {% endfor %}
+          {% elif session_owned_reviewable_paths is not none %}
+          Gobby found no reviewable paths owned by this session. Do not review
+          or modify another session's staged paths; resolve that ownership
+          conflict first.
+          {% else %}
+          Gobby could not determine an exact owned path set for this Git
+          operation. Do not include another session's staged paths.
+          {% endif %}
 
   require-code-review-self-review:
     description: "Block each later review-gated Git operation until a fresh ocr rule review"
@@ -60,9 +73,23 @@ rules:
           run since the last commit or merge.
 
           1. `ocr delegate preview --format json`, then intersect
-             `reviewable_files` with `git diff --cached --name-only`.
-          2. `ocr delegate rule --format json <staged reviewable paths>`.
-          3. Judge each path with `git diff --cached -- <path>`.
+             `reviewable_files` with only the session-owned targets below.
+          2. `ocr delegate rule --format json <owned reviewable paths>`.
+          3. Judge only those paths with the matching Git diff.
+
+          {% if session_owned_reviewable_paths %}
+          Session-owned review targets:
+          {% for path in session_owned_reviewable_paths %}
+          - `{{ path }}`
+          {% endfor %}
+          {% elif session_owned_reviewable_paths is not none %}
+          Gobby found no reviewable paths owned by this session. Do not review
+          or modify another session's staged paths; resolve that ownership
+          conflict first.
+          {% else %}
+          Gobby could not determine an exact owned path set for this Git
+          operation. Do not include another session's staged paths.
+          {% endif %}
 
           Fix every critical or high finding, stage the fix, and retry the
           command. Run the review in its own call: a review chained onto the Git
@@ -104,6 +131,7 @@ rules:
         event.metadata.get('is_failure', False)
         or event.data.get('is_error', False)
       )
+      and not foreign_landing_merge
       and shell_command_consumes_code_review(tool_input.get('command'))
     effects:
       - type: set_variable

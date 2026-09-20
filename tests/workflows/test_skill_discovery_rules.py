@@ -3176,6 +3176,7 @@ class TestCodeReviewFreshnessConditions:
         variables: dict[str, Any] | None = None,
         is_failure: bool | None = None,
         commit_has_reviewable_paths: bool = True,
+        foreign_landing_merge: bool = False,
     ) -> bool:
         tool_input = {"command": command}
         context = {
@@ -3187,6 +3188,7 @@ class TestCodeReviewFreshnessConditions:
             "tool_input": tool_input,
             "source": "interactive",
             "commit_has_reviewable_paths": commit_has_reviewable_paths,
+            "foreign_landing_merge": foreign_landing_merge,
         }
         allowed_funcs = build_condition_helpers(context=context)
         evaluator = SafeExpressionEvaluator(context=context, allowed_funcs=allowed_funcs)
@@ -3256,8 +3258,19 @@ class TestCodeReviewFreshnessConditions:
         "command",
         ["git merge --no-ff task-1", "git cherry-pick abc1234", "git revert --no-edit abc1234"],
     )
-    def test_merges_spend_freshness_like_commits(self, command: str) -> None:
+    def test_authored_operations_spend_freshness(self, command: str) -> None:
         assert self._eval(self.CLEAR, command, is_failure=False) is True
+
+    def test_foreign_landing_merge_preserves_freshness(self) -> None:
+        assert (
+            self._eval(
+                self.CLEAR,
+                "git merge --no-ff task-1",
+                is_failure=False,
+                foreign_landing_merge=True,
+            )
+            is False
+        )
 
 
 class TestRequirePlanSkillCondition:

@@ -594,7 +594,11 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                     variables, target_task_id
                 )
 
-                eval_context: dict[str, Any] = {"foreign_dirty_edit_conflict": ""}
+                eval_context: dict[str, Any] = {
+                    "foreign_dirty_edit_conflict": "",
+                    "foreign_landing_merge": False,
+                    "session_owned_reviewable_paths": None,
+                }
                 if (
                     event.event_type == HookEventType.BEFORE_TOOL
                     and session_id
@@ -636,10 +640,29 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                 # session-less commit too.
                 eval_context["commit_has_reviewable_paths"] = True
                 if event.event_type == HookEventType.BEFORE_TOOL and project_path:
-                    from gobby.workflows.code_review_scope import commit_has_reviewable_paths
+                    from gobby.workflows.code_review_scope import inspect_commit_review_scope
 
-                    eval_context["commit_has_reviewable_paths"] = await commit_has_reviewable_paths(
-                        event, project_path
+                    review_scope = await inspect_commit_review_scope(
+                        event,
+                        project_path,
+                        variables,
+                    )
+                    eval_context["commit_has_reviewable_paths"] = review_scope.has_reviewable_paths
+                    owned_paths = review_scope.session_owned_reviewable_paths
+                    eval_context["session_owned_reviewable_paths"] = (
+                        list(owned_paths) if owned_paths is not None else None
+                    )
+
+                if event.event_type == HookEventType.AFTER_TOOL and session_id and event.project_id:
+                    from gobby.workflows.code_review_freshness import is_foreign_landing_merge
+                    from gobby.workflows.observer_utils import _extract_shell_command
+
+                    eval_context["foreign_landing_merge"] = await asyncio.to_thread(
+                        is_foreign_landing_merge,
+                        self.rule_engine.db,
+                        _extract_shell_command(event),
+                        session_id=session_id,
+                        project_id=event.project_id,
                     )
 
                 # Snapshot BEFORE observers to capture both observer and rule changes in the diff
