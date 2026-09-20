@@ -20,6 +20,7 @@ from gobby.agents.spawn_executor_providers import (
     prepare_droid_spawn,
     prepare_grok_spawn,
     prepare_qwen_spawn,
+    seed_heuristic_title_from_prompt,
 )
 from gobby.agents.spawn_executor_support import (
     _CODEX_GOBBY_MCP_TOOL_TIMEOUT_SEC,
@@ -223,6 +224,11 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
         if plan.inject_persona and request.session_manager is not None:
             from gobby.workflows.state_manager import SessionVariableManager
 
+            await asyncio.to_thread(
+                seed_heuristic_title_from_prompt,
+                request,
+                plan.child_session_id,
+            )
             await asyncio.to_thread(
                 SessionVariableManager(request.session_manager._storage.db).merge_variables,
                 plan.child_session_id,
