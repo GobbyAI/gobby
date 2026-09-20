@@ -10,7 +10,12 @@ from typing import Any, Literal
 from uuid import UUID
 
 from gobby.agents.constants import GOBBY_TERMINAL_ID
-from gobby.storage.terminals import AttachLocator, Terminal, native_locator_key
+from gobby.storage.terminals import (
+    AttachLocator,
+    Terminal,
+    native_attach_locator,
+    native_locator_key,
+)
 from gobby.terminals.dimensions import validate_dimensions
 from gobby.terminals.frame_client import FrameClient
 from gobby.terminals.host_client import (
@@ -765,16 +770,12 @@ class NativeTerminalRuntime:
         return None
 
     async def attach_locator(self, terminal: Terminal) -> AttachLocator:
-        locator = terminal.locator or {}
-        host_id = locator.get("host_terminal_id")
         directory = self._socket_dir()
-        return AttachLocator(
-            backend="native",
-            frame_host_epoch=str(
-                terminal.host_epoch or getattr(self._client, "host_epoch", "") or ""
-            ),
+        live = str(getattr(self._client, "host_epoch", "") or "") or str(terminal.host_epoch or "")
+        return native_attach_locator(
+            terminal,
+            live_host_epoch=live,
             host_socket=None if directory is None else str(frames_socket_path(directory)),
-            host_terminal_id=None if host_id is None else str(host_id),
         )
 
     async def reconnect(self) -> str:
