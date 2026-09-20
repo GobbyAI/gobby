@@ -20,8 +20,9 @@ def _lead(value: Any) -> str:
         return text
     prefix = text[: LEAD_CHARS - 1]
     boundary = prefix.rfind(" ")
-    if boundary > 0:
-        prefix = prefix[:boundary]
+    if boundary <= 0:
+        return "…"
+    prefix = prefix[:boundary]
     return f"{prefix}…"
 
 
