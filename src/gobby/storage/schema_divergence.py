@@ -229,7 +229,11 @@ def collect_schema_heads(database: HubDatabase | None) -> SchemaHeads:
     )
 
 
-def schema_apply_refusal(database: HubDatabase | None) -> str | None:
+def schema_apply_refusal(
+    database: HubDatabase | None,
+    *,
+    expected_identity: dict[str, int | str] | None = None,
+) -> str | None:
     """Name the divergence that would make a schema apply fail, or None.
 
     This is deliberately narrower than ``verify_schema``, which compares the live
@@ -242,7 +246,9 @@ def schema_apply_refusal(database: HubDatabase | None) -> str | None:
     installed = installed_schema_identity()
     if installed is not None:
         try:
-            expected = expected_schema_identity()
+            expected = (
+                expected_identity if expected_identity is not None else expected_schema_identity()
+            )
         except SchemaContractError as exc:
             logger.debug("Packaged schema identity is unreadable: %s", exc)
             return None
@@ -253,7 +259,11 @@ def schema_apply_refusal(database: HubDatabase | None) -> str | None:
                 f"v{expected['latest_version']} ({str(expected['latest_checksum'])[:12]})"
             )
 
-    checkout = _checkout_version()
+    checkout = (
+        int(expected_identity["latest_version"])
+        if expected_identity is not None
+        else _checkout_version()
+    )
     live = None if database is None else live_schema_version(database)
     if checkout is not None and live is not None and live > checkout:
         return f"live hub schema v{live} is newer than this checkout (v{checkout})"

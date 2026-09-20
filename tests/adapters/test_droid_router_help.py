@@ -21,7 +21,7 @@ def router_prompt() -> str:
         "Skills provide specialized capabilities and domain knowledge. "
         "The user has selected the following skill for immediate execution. "
         "Begin following the skill's instructions now.\n"
-        '<skill filePath="/home/user/.factory/skills/gobby/SKILL.md">\n'
+        '<skill filePath="/home/user/.agents/skills/gobby/SKILL.md">\n'
         "<name>gobby</name>\n"
         "<description>Router contract for provider-aware Gobby help. (personal)</description>\n"
         f"{body}\n</skill>\n</system-notification>"

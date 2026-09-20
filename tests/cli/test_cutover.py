@@ -166,6 +166,7 @@ def _invoke_cli(
     run_cutover: Callable[..., None],
     *,
     dirty: list[str] | None = None,
+    identity: dict[str, int | str] | None = None,
     extra_args: tuple[str, ...] = (),
 ) -> Result:
     workspace = tmp_path / "workspace"
@@ -173,7 +174,7 @@ def _invoke_cli(
     (workspace / "Cargo.toml").write_text("[workspace]\n", encoding="utf-8")
     pin = workspace / "src" / "gobby" / "storage" / "schema_expected_identity.json"
     pin.parent.mkdir(parents=True)
-    pin.write_text("{}", encoding="utf-8")
+    pin.write_text(json.dumps(identity or _identity(420)), encoding="utf-8")
     monkeypatch.setattr(cutover_module, "run_cutover", run_cutover)
     monkeypatch.setattr(cutover_module, "_dirty_schema_inputs", lambda _root: list(dirty or []))
     monkeypatch.setenv("GOBBY_NATIVE_BIN_DIR", str(tmp_path / "managed-bin"))
@@ -190,6 +191,61 @@ def test_cli_targets_the_native_bin_dir(monkeypatch: pytest.MonkeyPatch, tmp_pat
 
     assert result.exit_code == 0, result.output
     assert observed == [tmp_path / "managed-bin"]
+
+
+def test_cli_preflights_candidate_against_selected_workspace_pin(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    expected = _identity(443)
+    candidate = tmp_path / "candidate-gdaemon"
+    observed: list[dict[str, int | str]] = []
+
+    def restart_start_refusal(
+        _ctx: object,
+        _candidate: Path,
+        *,
+        expected_identity: dict[str, int | str],
+    ) -> None:
+        observed.append(expected_identity)
+
+    def run_cutover(_root: Path, _bin_dir: Path, **kwargs: object) -> None:
+        start_refusal = kwargs["start_refusal"]
+        assert callable(start_refusal)
+        assert start_refusal(candidate) is None
+
+    monkeypatch.setattr(cutover_module, "restart_start_refusal", restart_start_refusal)
+    result = _invoke_cli(tmp_path, monkeypatch, run_cutover, identity=expected)
+
+    assert result.exit_code == 0, result.output
+    assert observed == [expected]
+
+
+def test_cli_restarts_against_selected_workspace_pin(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    expected = _identity(443)
+    observed: list[dict[str, int | str]] = []
+
+    def restart(
+        *,
+        verbose: bool,
+        docker_flag: bool,
+        expected_identity: dict[str, int | str],
+    ) -> None:
+        assert verbose is False
+        assert docker_flag is False
+        observed.append(expected_identity)
+
+    def run_cutover(
+        _root: Path, _bin_dir: Path, *, restart_daemon: Callable[[], None], **_kwargs: object
+    ) -> None:
+        restart_daemon()
+
+    monkeypatch.setattr(cutover_module, "restart", restart)
+    result = _invoke_cli(tmp_path, monkeypatch, run_cutover, identity=expected)
+
+    assert result.exit_code == 0, result.output
+    assert observed == [expected]
 
 
 def test_cli_reports_daemon_restart_exit_code(

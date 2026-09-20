@@ -606,6 +606,27 @@ def test_schema_apply_refusal_is_silent_without_a_readable_hub(
     assert schema_divergence.schema_apply_refusal(None) is None
 
 
+def test_schema_apply_refusal_uses_explicit_cutover_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    packaged = schema_contract.expected_schema_identity()
+    cutover = {
+        **packaged,
+        "latest_version": int(packaged["latest_version"]) + 1,
+        "latest_checksum": "f" * 64,
+        "assets_root_hash": "e" * 64,
+    }
+    monkeypatch.setattr(schema_divergence, "resolve_native_bin", lambda name: "/bin/gdaemon")
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: _completed(json.dumps(cutover)))
+
+    refusal = schema_divergence.schema_apply_refusal(
+        _database_returning(int(packaged["latest_version"])),
+        expected_identity=cutover,
+    )
+
+    assert refusal is None
+
+
 def test_restart_refuses_before_stopping_when_the_schema_plan_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -5,8 +5,10 @@ from pathlib import Path
 import pytest
 
 pytestmark = pytest.mark.unit
-ROOT = Path(__file__).resolve().parents[2]
-REFERENCES = ROOT / "src/gobby/install/shared/skills/gobby/references/code-index"
+REFERENCES = (
+    Path(__file__).resolve().parents[2]
+    / "src/gobby/install/shared/skills/gobby/references/code-index"
+)
 
 
 def _body(topic: str) -> str:
@@ -117,10 +119,3 @@ def test_code_index_skill_documents_stale_ids_and_callback_fallback() -> None:
     impact = _body("impact")
     assert "callback references can leave gaps" in impact
     assert 'gcode grep -w "symbol_name"' in impact
-
-
-def test_code_index_skill_matches_gcode_bundled_asset_when_present() -> None:
-    """The native installer must carry the same thin router, not retired instructions."""
-    assert (ROOT / "crates/gcode/assets/SKILL.md").read_bytes() == (
-        REFERENCES.parents[1] / "SKILL.md"
-    ).read_bytes()

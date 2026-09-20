@@ -32,7 +32,7 @@ from .shared import (
     install_global_hooks,
     install_shared_content,
 )
-from .skill_install import install_router_skills_as_cli_skills
+from .skill_install import install_router_skills_as_cli_skills, retire_router_skill_directory
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +56,13 @@ def _factory_dir(project_path: Path, mode: str) -> Path:
     if mode == "global":
         return Path.home() / ".factory"
     return project_path / ".factory"
+
+
+def _agents_dir(project_path: Path, mode: str) -> Path:
+    """Return the shared agent-skill directory for the requested install scope."""
+    if mode == "global":
+        return Path.home() / ".agents"
+    return project_path / ".agents"
 
 
 def _droid_hooks_file(project_path: Path, mode: str) -> Path:
@@ -330,7 +337,10 @@ def install_droid(
     )
     cli = install_cli_content("droid", droid_path)
     result["commands_installed"] = cli.get("commands", [])
-    result["skills_installed"] = install_router_skills_as_cli_skills(droid_path / "skills")
+    agents_skill_dir = _agents_dir(project_path, mode) / "skills" / "gobby"
+    result["skills_installed"] = install_router_skills_as_cli_skills(agents_skill_dir.parent)
+    if result["skills_installed"]:
+        retire_router_skill_directory(droid_path / "skills" / "gobby", agents_skill_dir)
     result["plugins_installed"] = shared.get("plugins", [])
 
     mcp_result = configure_mcp_server_json(

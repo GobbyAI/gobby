@@ -374,6 +374,38 @@ async def test_broadcast_translated_codex_tool_event_with_structured_effort(
     assert not any("Failed to broadcast event" in record.message for record in caplog.records)
 
 
+async def test_broadcast_event_normalizes_structured_effort(
+    mock_websocket_server: MagicMock,
+    default_config: DaemonConfig,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Direct hook events normalize provider-structured effort before validation."""
+    from datetime import UTC, datetime
+
+    caplog.set_level("WARNING", logger="gobby.hooks.broadcaster")
+    if "pre-tool-use" not in default_config.hook_extensions.websocket.broadcast_events:
+        default_config.hook_extensions.websocket.broadcast_events.append("pre-tool-use")
+    event = HookEvent(
+        event_type=HookEventType.BEFORE_TOOL,
+        session_id="codex-session",
+        source=SessionSource.CODEX,
+        timestamp=datetime.now(UTC),
+        data={
+            "external_id": "codex-session",
+            "tool_name": "Bash",
+            "tool_input": {"command": "pwd"},
+            "effort": {"level": " xhigh "},
+        },
+    )
+
+    await HookEventBroadcaster(mock_websocket_server, default_config).broadcast_event(event)
+
+    mock_websocket_server.broadcast.assert_called_once()
+    payload = mock_websocket_server.broadcast.call_args.args[0]
+    assert payload["data"]["effort"] == "xhigh"
+    assert not any("Failed to broadcast event" in record.message for record in caplog.records)
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("event_type", "event_data", "expected_event_type"),
