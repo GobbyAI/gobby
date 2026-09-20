@@ -42,7 +42,7 @@ Outcome: one live epic tree mirroring the path, a rewritten ROADMAP.md carrying 
 - #21363 is recreated nightly by title, so nothing may depend on it; use a manual checkpoint leaf instead.
 - #19600 carries `covers:m0-shared-datastores-bridge:4.1:*` and is that active plan's only open deliverable: it stays at `19585.19590.19600`; #19585 adopts whole. Closing #19585 auto-archives the M0 plan only when the acceptance actually passes.
 - #17488 is `root_task_ref` of the active strategy plan `two-daemon-hub` and is the `task_ref` of the deferred obligation `hub-owned-files-home` D3 (line 67 of the completed plan). The plan-coverage deferral rule accepts only `completed`/`already_implemented`/`duplicate`; escalated closes need `override_justification` (`_lifecycle_close.py:153`). So #17488 closes `duplicate` of a new leaf that carries the D3.1 obligation verbatim, then `gobby-plans archive_plan plan_id=two-daemon-hub`, then the `task_ref` in `.gobby/plans/completed/hub-owned-files-home.md` is re-pointed to the leaf.
-- Tools: `create_task`, `update_task` (reparent/retitle/description/task_type), `add_label`/`remove_label`, `add_dependency`/`remove_dependency`, `de_escalate_task(task_id, reason)`, `close_task(reason, changes_summary, override_justification, preview=true)`, `check_dependency_cycles`, `get_dependency_tree`; `gobby-plans:archive_plan`.
+- Tools: `create_task`, `update_task` (reparent/retitle/description/task_type), `add_label`/`remove_label`, `add_dependency`/`remove_dependency`, `de_escalate_task(task_id, reason)`, `close_task(reason, changes_summary, override_justification, preview=false)`, `check_dependency_cycles`, `get_dependency_tree`; `gobby-plans:archive_plan`.
 
 ## Part A — Task tree
 
@@ -152,7 +152,7 @@ Edges: `S4.1a blocked_by S1.2, S1.4, S1.6, S4.2, FW.2`; `S4.1b blocked_by S2.7, 
 
 | Task | Action |
 |---|---|
-| #17488 | After all six children are reparented out or closed: append backlink to description; `add_dependency(#17488, S4.8, related)`; `close_task(reason="duplicate", changes_summary=…, override_justification=…, preview=true)`; then `gobby-plans:archive_plan plan_id=two-daemon-hub`; then edit `.gobby/plans/completed/hub-owned-files-home.md` D3 `task_ref` → S4.8. |
+| #17488 | After all six children are reparented out or closed: append backlink to description; `add_dependency(#17488, S4.8, related)`; `close_task(reason="duplicate", changes_summary=…, override_justification=…, preview=false)`; then `gobby-plans:archive_plan plan_id=two-daemon-hub`; then edit `.gobby/plans/completed/hub-owned-files-home.md` D3 `task_ref` → S4.8. |
 | #17435 | Reparent #19652 → S4.6 leaf and #20438 → under S4.1; close `obsolete` (no plan label, no deferral label). |
 | #19647 | `de_escalate_task`, then close `obsolete` citing ROADMAP decision 7; edges removed from #17436, #17769, #20202 first. |
 | #17438 fleet (+ #19582) | `update_task(parent_task_id="")`; `add_label gobby-pro`. Off-spine (ROADMAP 0.7.0+). |

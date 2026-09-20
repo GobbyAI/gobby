@@ -1974,7 +1974,7 @@ class TestRequireCommitBeforeStatus:
         assert "preview" not in body.when
 
     @pytest.mark.asyncio
-    async def test_conditional_close_preview_requires_commit_for_edits(self, db) -> None:
+    async def test_close_preview_requires_commit_for_edits(self, db) -> None:
         variables = _status_gate_variables(
             active_task_id="task-1",
             task_edited_files={"task-1": ["src/owned.py"]},

@@ -408,7 +408,7 @@ def _review(*, status: str) -> TaskCloseReview:
         task_ref="#42",
         caller_session_id="parent",
         agent_run_id="run",
-        close_arguments={"preview": True},
+        close_arguments={"preview": False},
         review_fingerprint="close",
         evidence_fingerprint="evidence",
         status=cast(TaskCloseReviewStatus, status),

@@ -1,4 +1,4 @@
-"""Checklist evaluation and conditional-close flow contracts."""
+"""Checklist evaluation, readiness preview, and close flow contracts."""
 
 from __future__ import annotations
 
@@ -947,7 +947,7 @@ async def test_blocked_preview_returns_diagnostics_without_commit() -> None:
 
 
 @pytest.mark.asyncio
-async def test_ready_preview_commits_same_evaluation() -> None:
+async def test_ready_preview_returns_same_evaluation_without_commit() -> None:
     ctx = _ctx(_task())
     evaluation = CloseEvaluation("task")
     evaluation.pass_gate(1, "task_exists", "Task exists.")
@@ -974,14 +974,56 @@ async def test_ready_preview_commits_same_evaluation() -> None:
             },
         )
 
-    assert result["closed"] is True
+    assert result["closed"] is False
     assert result["preview"] is True
+    assert result["can_close"] is True
     launch.assert_not_awaited()
     evaluate.assert_awaited_once()
-    commit.assert_awaited_once()
-    awaited = commit.await_args
-    assert awaited is not None
-    assert awaited.args[1] is evaluation
+    commit.assert_not_awaited()
+
+
+async def test_ready_leaf_preview_does_not_launch_validator() -> None:
+    ctx = _ctx(_task())
+    evaluation = CloseEvaluation("task", response_detail="diagnostic")
+    for item, name in CLOSE_GATE_ORDER[:-1]:
+        evaluation.pass_gate(item, name, f"Gate {item} passed.")
+    evaluation.fail(
+        13,
+        "criteria_review",
+        "agentic_review_required",
+        "A task-close validator is required.",
+    )
+    evaluate = AsyncMock(return_value=evaluation)
+    commit = AsyncMock()
+    launch = AsyncMock()
+    registry = InternalToolRegistry("gobby-tasks")
+    register_close_task(registry, ctx)
+
+    with (
+        patch.object(close_tool, "_evaluate_close", evaluate),
+        patch.object(close_tool, "_commit_close", commit),
+        patch.object(close_tool, "active_review_response", return_value=None),
+        patch.object(close_tool, "launch_close_review", launch),
+    ):
+        result = await registry.call(
+            "close_task",
+            {
+                "task_id": "task",
+                "changes_summary": "Implemented.",
+                "preview": True,
+                "response_detail": "diagnostic",
+            },
+        )
+
+    assert result["error"] == "agentic_review_required"
+    assert result["closed"] is False
+    assert result["preview"] is True
+    assert result["can_close"] is False
+    assert [gate["status"] for gate in result["gates"][:12]] == ["passed"] * 12
+    assert result["gates"][12]["status"] == "not_run"
+    assert result["checklist"][12]["passed"] is False
+    launch.assert_not_awaited()
+    commit.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -1021,7 +1063,7 @@ async def test_concurrent_ordinary_closes_share_review_without_closing_or_releas
         "review_fingerprint": "review-fingerprint",
         "evidence_fingerprint": "evidence-fingerprint",
         "task_id": task.id,
-        "close_arguments": {"preview": True},
+        "close_arguments": {"preview": False},
     }
     launching_review = SimpleNamespace(**review_fields, status="launching")
     running_review = SimpleNamespace(**review_fields, status="running")
@@ -1049,7 +1091,7 @@ async def test_concurrent_ordinary_closes_share_review_without_closing_or_releas
                     "task_id": task.id,
                     "changes_summary": "Implemented and tested.",
                     "commit_sha": "abc123",
-                    "preview": True,
+                    "preview": False,
                 },
             )
         )
@@ -1060,7 +1102,7 @@ async def test_concurrent_ordinary_closes_share_review_without_closing_or_releas
                 "task_id": task.id,
                 "changes_summary": "Implemented and tested.",
                 "commit_sha": "abc123",
-                "preview": True,
+                "preview": False,
             },
         )
         release_spawn.set()
@@ -1172,7 +1214,7 @@ async def test_ordinary_close_detaches_real_validation_and_preserves_persisted_c
                 "task_id": task.id,
                 "changes_summary": "Implemented and tested.",
                 "commit_sha": "abc123",
-                "preview": True,
+                "preview": False,
             },
         )
 
@@ -1202,7 +1244,11 @@ def test_close_task_schema_has_automated_review_surface() -> None:
     submit_schema = registry.get_schema("submit_close_review")
 
     assert close_schema is not None
+    assert "deterministic gates only" in close_schema["description"]
     assert "review_run_id" not in close_schema["inputSchema"]["properties"]
+    preview_schema = close_schema["inputSchema"]["properties"]["preview"]
+    assert "without launching" in preview_schema["description"]
+    assert "not_run" in preview_schema["description"]
     assert submit_schema is not None
     assert submit_schema["inputSchema"]["required"] == ["review_id", "verdict"]
 

@@ -408,7 +408,7 @@ _ARGUMENTS = {
     "scope_justification": None,
     "commit_sha": "abc",
     "project_path": "/repo",
-    "preview": True,
+    "preview": False,
     "response_detail": "diagnostic",
 }
 

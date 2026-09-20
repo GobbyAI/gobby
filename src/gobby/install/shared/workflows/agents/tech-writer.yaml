@@ -47,7 +47,7 @@ prompts:
     Handoff:
     Inspect the assigned task's stage manifest. If the current development row has
     no review gate, commit the documentation changes, call close_task with
-    preview=true, the commit_sha, and changes_summary, then repair every blocker
+    preview=false, the commit_sha, and changes_summary, then repair every blocker
     until it closes.
     If review is enabled, commit the changes and
     call submit_for_review with `stage_name="development"` so rule_qa can dispatch
@@ -158,7 +158,7 @@ step_workflow:
       status_message: |
         Implement the docs leaf. Commit changes, then inspect the assigned task
         manifest. If development review is disabled, call close_task with
-        preview=true, commit_sha, and changes_summary, then repair every blocker
+        preview=false, commit_sha, and changes_summary, then repair every blocker
         until it closes; otherwise submit_for_review(stage_name="development") for QA.
         Message the parent with target=parent.
         Sending the parent a task_blocker message ends this run after delivery;

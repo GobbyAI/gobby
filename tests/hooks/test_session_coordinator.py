@@ -143,7 +143,7 @@ def _install_running_close_review(
         task_id=task.id,
         task_ref=f"#{task.seq_num}",
         caller_session_id=caller_session_id,
-        close_arguments={"preview": True},
+        close_arguments={"preview": False},
         expected_task_updated_at=task.updated_at,
         review_fingerprint="review",
         evidence_fingerprint="evidence",

@@ -243,7 +243,7 @@ async def test_task_update_before_review_launch_returns_stale_without_spawning(
 
     assert result["success"] is False
     assert result["closed"] is False
-    assert result["preview"] is True
+    assert result["preview"] is False
     assert result["error"] == "stale_task_state"
     assert result["stale_state"] is True
     assert result["required_actions"] == [
@@ -1318,7 +1318,7 @@ def _arguments() -> dict[str, Any]:
         "scope_justification": None,
         "commit_sha": "abc",
         "project_path": "/repo",
-        "preview": True,
+        "preview": False,
         "response_detail": "concise",
     }
 

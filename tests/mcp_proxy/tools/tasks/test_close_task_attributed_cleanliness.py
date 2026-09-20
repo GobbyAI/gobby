@@ -293,7 +293,7 @@ async def _close_task(
                         "task_id": harness.task.id,
                         "changes_summary": "Implemented and exercised target-scoped close proof.",
                         "commit_sha": harness.commit_sha,
-                        "preview": True,
+                        "preview": False,
                     },
                 ),
             )

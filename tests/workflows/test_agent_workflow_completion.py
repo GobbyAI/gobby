@@ -1140,7 +1140,7 @@ class TestAgentWorkflowCompletion:
             _after_tool_event(
                 mcp_server="gobby-tasks",
                 mcp_tool="close_task",
-                tool_arguments={"task_id": "#21595", "preview": True},
+                tool_arguments={"task_id": "#21595", "preview": False},
                 tool_output=closed_output,
             ),
             session_id=AGENT_SESSION_ID,
@@ -1157,7 +1157,7 @@ class TestAgentWorkflowCompletion:
             _after_tool_event(
                 mcp_server="gobby-tasks",
                 mcp_tool="close_task",
-                tool_arguments={"task_id": "#21596", "preview": True},
+                tool_arguments={"task_id": "#21596", "preview": False},
                 tool_output=closed_output,
             ),
             session_id=AGENT_SESSION_ID,

@@ -1033,7 +1033,7 @@ async def test_stuck_check_skips_session_awaiting_close_review(
         task_id=task.id,
         task_ref=f"#{task.seq_num}",
         caller_session_id=sample_session["id"],
-        close_arguments={"preview": True},
+        close_arguments={"preview": False},
         expected_task_updated_at=task.updated_at,
         review_fingerprint="review",
         evidence_fingerprint="evidence",

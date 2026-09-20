@@ -88,7 +88,7 @@ def test_core_is_compact_and_keeps_creation_and_exact_close_sequence() -> None:
     positions = [content.index(step) for step in steps]
     assert positions == sorted(positions)
     assert "exact validation commands and results" in content
-    assert "`preview=true` closes when ready" in content
+    assert "`preview=true` is a read-only deterministic readiness check" in content
     assert "review_task_memories" in content[positions[-1] :]
     assert "Repeat the same `close_task` call without `preview`" not in content
     overview = (SKILL_DIR / "overview.md").read_text()
@@ -216,17 +216,17 @@ def test_wait_guidance_is_event_driven_in_agent_and_task_contracts() -> None:
     assert "Do not poll or repeatedly call close" in closing
 
 
-def test_guides_document_single_call_conditional_close() -> None:
+def test_guides_distinguish_preview_from_real_close() -> None:
     for path in (TASKS_GUIDE_PATH, SKILL_PATH):
         content = path.read_text()
         assert "preview=true" in content
-        assert "closes" in content
+        assert "preview=false" in content
+        assert "read-only deterministic" in content
         assert "agentic_review_required" in content
         assert "review_task_memories" in content
-        assert "preview=false" not in content
 
 
-def test_lifecycle_scenario_closes_with_one_conditional_call() -> None:
+def test_lifecycle_scenario_closes_with_one_real_close_call() -> None:
     result = run_recorded_skill_scenario(LIFECYCLE_SCENARIO_PATH)
 
     assert result.loaded.action_names == (
@@ -234,11 +234,11 @@ def test_lifecycle_scenario_closes_with_one_conditional_call() -> None:
         "edit",
         "run_validation",
         "commit",
-        "preview_close",
+        "close_task",
         "review_memory",
         "respond",
     )
-    assert "conditionally closed" in result.loaded.combined_text
+    assert "committed, closed" in result.loaded.combined_text
 
 
 def test_ownership_and_handoff_pressure_scenario_stays_inside_one_task() -> None:

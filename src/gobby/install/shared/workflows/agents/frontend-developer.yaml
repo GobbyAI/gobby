@@ -55,7 +55,7 @@ prompts:
 
     Handoff:
     Inspect the assigned task's stage manifest. If the current development row has
-    no review gate, commit the implementation, run close_task with preview=true,
+    no review gate, commit the implementation, run close_task with preview=false,
     and repair every blocker until that call closes the task. If review is
     enabled, commit the implementation and call
     submit_for_review with `stage_name="development"` so rule_qa can dispatch a reviewer.
@@ -209,7 +209,7 @@ step_workflow:
       status_message: |
         Implement the frontend leaf. Commit changes, then inspect the assigned
         task manifest. If development review is disabled, call close_task with
-        preview=true and commit_sha, then repair every blocker until it closes;
+        preview=false and commit_sha, then repair every blocker until it closes;
         otherwise submit_for_review(stage_name="development") for QA.
         Message the parent with target=parent.
         Sending the parent a task_blocker message ends this run after delivery;

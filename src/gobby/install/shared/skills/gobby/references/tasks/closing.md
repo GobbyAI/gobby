@@ -25,7 +25,7 @@ Finish in this order:
 3. Stage only task paths and commit with a task reference. Use
    `git commit --only -m '[<project_name>-#<task_number>] fix: describe the change' -- <task paths>`.
 4. Call `close_task` once with `task_id`, `commit_sha`, `changes_summary`, and
-   `preview=true`. Include exact validation commands and results in the summary.
+   `preview=false`. Include exact validation commands and results in the summary.
 5. Repair any deterministic blocker before retrying. If the response is
    `agentic_review_required`, register `wait_for_agent` with `validator_run_id`
    and yield. Do not poll or repeatedly call close while review is running. A
@@ -37,9 +37,12 @@ A blocked call reports the whole checklist at once. Fix every gate reported
 `failed` before retrying; a gate reported `skipped` names the gate that blocked it
 and is unevaluated, never satisfied.
 
-`preview=true` closes when ready. The checklist requires criteria and summary,
-linked commits for attributed edits, no uncommitted attributed files,
-category-appropriate transcript validation, and one bounded criteria review.
+`preview=true` is a read-only deterministic readiness check. It never launches
+the criteria reviewer or closes the task. When gates 1-12 pass, gate 13 reports
+`not_run`; call again with `preview=false` only when the real close should proceed.
+The checklist requires criteria and summary, linked commits for attributed edits,
+no uncommitted attributed files, category-appropriate transcript validation, and
+one bounded criteria review.
 Changed evidence earns a new review; retrying unchanged evidence reuses its verdict.
 When `unlinked_tagged_commits` names additional commits, link those belonging to
 the task before retrying. Otherwise use `link_commit` only to keep a task open.

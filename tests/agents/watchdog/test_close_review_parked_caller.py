@@ -242,7 +242,7 @@ class _Harness:
                 "changes_summary": "Implemented.",
                 "commit_sha": "abc",
                 "project_path": "/repo",
-                "preview": True,
+                "preview": False,
             },
         )
 

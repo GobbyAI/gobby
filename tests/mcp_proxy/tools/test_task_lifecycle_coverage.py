@@ -24,6 +24,7 @@ from gobby.storage.tasks._stage_states import StageState
 from gobby.storage.tasks._stage_types import StageState5
 from gobby.tasks.close_checklist import CloseGateResult
 from gobby.tasks.close_verdict import CloseCriterionVerdict, CloseVerdict
+from gobby.tasks.transcript_evidence_models import TranscriptEvidence
 from gobby.tasks.validation import PreparedCloseReview
 from gobby.utils.session_context import session_context_for_test
 from tests.mcp_proxy.tools.close_review_test_support import (
@@ -164,6 +165,10 @@ def _stub_project_manager() -> Iterator[None]:
         patch(
             "gobby.storage.project_checkouts.require_root",
             return_value=TEST_REPO_PATH,
+        ),
+        patch(
+            "gobby.sessions.machine_scope.get_machine_id",
+            return_value=_CHECKOUT_MACHINE,
         ),
         patch(
             "gobby.mcp_proxy.tools.tasks._context.SessionManager",
@@ -313,12 +318,12 @@ class TestCloseTask:
                 {
                     "task_id": parent.id,
                     "changes_summary": "All subtasks completed",
-                    "preview": True,
+                    "preview": False,
                     "response_detail": "diagnostic",
                 },
             )
             assert result["success"] is True
-            assert result["preview"] is True
+            assert result["preview"] is False
             assert result["can_close"] is True
             assert result["closed"] is True
             assert any(
@@ -482,12 +487,16 @@ class TestCloseTask:
             patch(
                 "gobby.mcp_proxy.tools.tasks._lifecycle_close.validate_commit_requirements"
             ) as mock_vcr,
+            patch.object(
+                lifecycle_close,
+                "_derive_close_transcript_evidence",
+                AsyncMock(return_value=TranscriptEvidence()),
+            ),
             patch("gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"),
             patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSM,
             patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVM,
         ):
-            mock_sm = MagicMock()
-            mock_sm.resolve_session_reference.return_value = "resolved-session"
+            mock_sm = _checkout_session_manager("resolved-session")
             MockSM.return_value = mock_sm
             MockSVM.return_value.get_variables.return_value = {
                 "task_edited_files": {task.id: ["src/owned.py"]},
@@ -657,6 +666,11 @@ class TestCloseTask:
                 ),
             ),
             patch.object(
+                lifecycle_close,
+                "_derive_close_transcript_evidence",
+                AsyncMock(return_value=TranscriptEvidence()),
+            ),
+            patch.object(
                 close_tool,
                 "launch_close_review",
                 new=complete_valid_close_review,
@@ -762,6 +776,11 @@ class TestCloseTask:
                     status="skipped",
                     message="Validation commands skipped for this test.",
                 ),
+            ),
+            patch.object(
+                lifecycle_close,
+                "_derive_close_transcript_evidence",
+                AsyncMock(return_value=TranscriptEvidence()),
             ),
             patch.object(
                 close_tool,

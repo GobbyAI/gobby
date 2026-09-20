@@ -113,17 +113,19 @@ call_tool(server_name="gobby-tasks", tool_name="close_task", arguments={
     "task_id": "#14390",
     "commit_sha": "abc1234",
     "changes_summary": "Refreshed the task guide for stage manifests and MCP-first task flow.",
-    "preview": True,
+    "preview": False,
 })
 ```
 
-The conditional call evaluates an ordered checklist: task/session/repository
+The close call evaluates an ordered checklist: task/session/repository
 context, closed children, criteria and summary, linked commits, clean
 task-attributed files, transcript-visible validation, then one bounded criteria
 review. It returns per-item results, resolved commit SHAs, a transcript evidence
 summary, and the verdict. Blocked calls remain read-only and name the first
-repair action. A ready `preview=true` call reuses that evaluation, links the
-commit, and closes in the same call.
+repair action. Use `preview=true` for a read-only deterministic check: it never
+launches the reviewer or closes the task, and reports gate 13 as `not_run` when
+gates 1-12 pass. Use `preview=false` when the call should proceed through review
+and close when ready.
 
 If the response is `agentic_review_required`, register
 `gobby-agents:wait_for_agent` with the returned `validator_run_id` and yield.
@@ -335,7 +337,7 @@ call_tool(server_name="gobby-tasks", tool_name="close_task", arguments={
     "task_id": "#14390",
     "commit_sha": "abc1234",
     "changes_summary": "Updated the task guide against current MCP and stage behavior.",
-    "preview": True,
+    "preview": False,
 })
 # Repair deterministic blockers before retrying. Wait for background reviews.
 ```

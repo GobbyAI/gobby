@@ -61,6 +61,13 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             scope_justification=scope_justification,
         )
         if evaluation.error == "agentic_review_required":
+            if preview:
+                evaluation.mark_gate_not_run(
+                    13,
+                    "criteria_review",
+                    message="Not run because preview evaluates deterministic gates only.",
+                )
+                return evaluation.response(preview=True)
             return await launch_close_review(
                 ctx,
                 evaluation=evaluation,
@@ -68,6 +75,8 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             )
         if not evaluation.ready:
             return evaluation.response(preview=preview)
+        if preview:
+            return evaluation.response(preview=True)
         result = await _commit_close(
             ctx,
             evaluation,
@@ -102,7 +111,8 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             "a claimed ancestor, which its owner closes through its own gates. "
             "A blocked call reports every deterministic gate in one response: each gate "
             "that failed, and each one a failed prerequisite left unevaluated as skipped. "
-            "preview=true returns diagnostics when blocked and still closes when ready."
+            "preview=true evaluates deterministic gates only and never launches a review or "
+            "closes the task."
         ),
         input_schema={
             "type": "object",
@@ -136,7 +146,10 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                 "preview": {
                     "type": "boolean",
                     "default": False,
-                    "description": "Close when ready; otherwise return every gate's status.",
+                    "description": (
+                        "Evaluate deterministic gates without launching the criteria reviewer "
+                        "or closing the task. Gate 13 is reported as not_run when gates 1-12 pass."
+                    ),
                 },
                 "response_detail": {
                     "type": "string",

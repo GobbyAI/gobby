@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
 from gobby.mcp_proxy.tools.tasks._close_evaluation_support import (
@@ -152,6 +152,14 @@ class CloseEvaluation:
             f"Not evaluated because gate {blocked_by} failed.",
             skipped=True,
         )
+
+    def mark_gate_not_run(self, item: int, name: str, *, message: str) -> None:
+        """Mark one recorded gate as deliberately unevaluated without calling it skipped."""
+        for index, gate in enumerate(self.gates):
+            if gate.item == item and gate.name == name:
+                self.gates[index] = replace(gate, status="not_run", message=message)
+                return
+        raise ValueError(f"Gate {item} ({name}) was not recorded")
 
     def block_remaining(self) -> CloseEvaluation:
         """End the checklist, skipping every gate this evaluation never reached.

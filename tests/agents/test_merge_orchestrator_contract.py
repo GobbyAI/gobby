@@ -446,11 +446,11 @@ async def test_survey_empty_campaign_can_close_already_implemented(
                 "task_id": "#14063",
                 "reason": "already_implemented",
                 "changes_summary": "All phase work already landed through child tasks.",
-                "preview": True,
+                "preview": False,
             },
             tool_output={
                 "success": True,
-                "result": {"preview": True, "closed": True},
+                "result": {"preview": False, "closed": True},
             },
         ),
         session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
@@ -462,7 +462,7 @@ async def test_survey_empty_campaign_can_close_already_implemented(
     assert instance.variables["report_complete"] is True
 
 
-async def test_survey_blocked_conditional_close_does_not_advance(
+async def test_survey_blocked_close_does_not_advance(
     db: HubDatabase,
 ) -> None:
     manager = _install_workflow(db, current_step="survey")
@@ -476,12 +476,12 @@ async def test_survey_blocked_conditional_close_does_not_advance(
                 "task_id": "#14063",
                 "reason": "already_implemented",
                 "changes_summary": "All phase work already landed through child tasks.",
-                "preview": True,
+                "preview": False,
             },
             tool_output={
                 "success": True,
                 "result": {
-                    "preview": True,
+                    "preview": False,
                     "can_close": False,
                     "closed": False,
                 },
@@ -521,9 +521,9 @@ async def test_plan_empty_campaign_can_close_already_implemented(
                 "task_id": "#14063",
                 "reason": "already_implemented",
                 "changes_summary": "Merge plan is empty because child merges already landed.",
-                "preview": True,
+                "preview": False,
             },
-            tool_output={"success": True, "preview": True, "closed": True},
+            tool_output={"success": True, "preview": False, "closed": True},
         ),
         session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
         variables=variables,
@@ -556,9 +556,9 @@ async def test_report_can_close_already_implemented_and_terminate(
                 "task_id": "#14063",
                 "reason": "already_implemented",
                 "changes_summary": "No merge commit required for this parent phase.",
-                "preview": True,
+                "preview": False,
             },
-            tool_output={"success": True, "preview": True, "closed": True},
+            tool_output={"success": True, "preview": False, "closed": True},
         ),
         session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
         variables=variables,

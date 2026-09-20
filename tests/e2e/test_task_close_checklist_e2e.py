@@ -191,7 +191,7 @@ def _close(client: MCPTestClient, task_id: str, commit_sha: str) -> dict[str, An
     )
 
 
-def test_ready_codex_task_closes_with_one_llm_call(
+def test_ready_codex_task_preview_is_read_only_without_validator(
     daemon_instance: DaemonInstance,
     mcp_client: MCPTestClient,
     cli_events: CLIEventSimulator,
@@ -225,11 +225,20 @@ def test_ready_codex_task_closes_with_one_llm_call(
     started = time.monotonic()
     result = _close(mcp_client, task_id, commit_sha)
 
-    assert result["closed"] is True, result
-    assert result["can_close"] is True
+    assert result["closed"] is False, result
+    assert result["can_close"] is False
+    assert result["error"] == "agentic_review_required"
+    assert result["gates"][-1]["name"] == "criteria_review"
+    assert result["gates"][-1]["status"] == "not_run"
+    run_counts = postgres_db.fetchone(
+        "SELECT COUNT(*) AS count FROM agent_runs WHERE parent_session_id = %s",
+        (session_id,),
+    )
+    assert run_counts is not None
+    assert run_counts["count"] == 0
     assert time.monotonic() - started < 120
-    assert validation_llm_server.validation_calls == 1
-    assert len(validation_llm_server.requests) == 1
+    assert validation_llm_server.validation_calls == 0
+    assert validation_llm_server.requests == []
 
 
 def test_dirty_task_file_blocks_before_llm(
@@ -336,7 +345,7 @@ def test_epic_closes_without_llm_or_invalid_skipped_status(
             "close_task",
             {
                 "task_id": task_id,
-                "preview": True,
+                "preview": False,
                 "response_detail": "diagnostic",
             },
         )

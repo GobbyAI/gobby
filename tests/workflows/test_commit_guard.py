@@ -172,7 +172,7 @@ class GuardHarness:
                     "arguments": {
                         "task_id": f"#{self.foreign_task.seq_num}",
                         "commit_sha": "abc123",
-                        "preview": True,
+                        "preview": False,
                     },
                 },
             },

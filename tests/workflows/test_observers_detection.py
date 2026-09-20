@@ -333,7 +333,7 @@ class TestDetectPlanModeFromContext:
 
 
 class TestDetectTaskClaimCloseTaskBehavior:
-    def test_successful_conditional_close_removes_from_claimed_tasks(
+    def test_successful_close_removes_from_claimed_tasks(
         self,
         variables,
         make_after_tool_event,
@@ -353,13 +353,13 @@ class TestDetectTaskClaimCloseTaskBehavior:
             tool_input={
                 "server_name": "gobby-tasks",
                 "tool_name": "close_task",
-                "arguments": {"task_id": "task-123", "preview": True},
+                "arguments": {"task_id": "task-123", "preview": False},
             },
             tool_output={
                 "success": True,
                 "result": {
                     "id": "task-123",
-                    "preview": True,
+                    "preview": False,
                     "can_close": True,
                     "closed": True,
                 },
@@ -1419,7 +1419,7 @@ class TestDetectCommitLink:
 
         assert "task_has_commits" not in variables
 
-    def test_successful_close_task_preview_sets_task_has_commits(
+    def test_successful_close_task_sets_task_has_commits(
         self, variables, make_after_tool_event
     ) -> None:
         event = make_after_tool_event(
@@ -1430,12 +1430,12 @@ class TestDetectCommitLink:
                 "arguments": {
                     "task_id": "#123",
                     "commit_sha": "abc123",
-                    "preview": True,
+                    "preview": False,
                 },
             },
             tool_output={
                 "success": True,
-                "preview": True,
+                "preview": False,
                 "can_close": True,
                 "closed": True,
             },
