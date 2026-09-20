@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 
-use gobby_core::graph_analytics::{GraphAnalytics, analyze};
+use gobby_core::graph_analytics::{CentralityScore, GraphInputError, centrality};
 
 use crate::graph::code_graph::GraphPayload;
 
@@ -40,19 +40,26 @@ pub(super) fn summarize_graph(
     }
 }
 
+/// `ReportDegradation::input` for hotspots the analytics kernel refused to score.
+pub(super) const CODE_GRAPH_INPUT: &str = "CODE_GRAPH";
+
 pub(super) fn summarize_hotspots(
     nodes: &[ReportNode],
     edges: &[ReportCodeEdge],
     top_n: usize,
-) -> GraphReportHotspots {
-    gcore_hotspots_for_code_graph(nodes, edges, top_n)
+) -> Result<GraphReportHotspots, ReportDegradation> {
+    gcore_hotspots_for_code_graph(nodes, edges, top_n).map_err(|error| ReportDegradation {
+        input: CODE_GRAPH_INPUT.to_string(),
+        required: false,
+        detail: format!("hotspots skipped: {error}"),
+    })
 }
 
 fn gcore_hotspots_for_code_graph(
     nodes: &[ReportNode],
     edges: &[ReportCodeEdge],
     top_n: usize,
-) -> GraphReportHotspots {
+) -> Result<GraphReportHotspots, GraphInputError> {
     let graph = GraphPayload::analytics_graph_from_parts(
         nodes
             .iter()
@@ -65,29 +72,21 @@ fn gcore_hotspots_for_code_graph(
             )
         }),
     );
-    let analytics = analyze(&graph);
+    let scores = centrality(&graph)?;
     let edge_degree = edge_degree_stats(edges);
 
-    GraphReportHotspots {
-        high_degree_files: analytics_top_hotspots(nodes, &analytics, &edge_degree, top_n, |node| {
+    Ok(GraphReportHotspots {
+        high_degree_files: analytics_top_hotspots(nodes, &scores, &edge_degree, top_n, |node| {
             node.node_type == "file"
         }),
-        high_degree_symbols: analytics_top_hotspots(
-            nodes,
-            &analytics,
-            &edge_degree,
-            top_n,
-            |node| is_symbol_node(&node.node_type),
-        ),
-        high_degree_modules: analytics_top_hotspots(
-            nodes,
-            &analytics,
-            &edge_degree,
-            top_n,
-            |node| node.node_type == "module",
-        ),
-        incoming_call_hotspots: gcore_incoming_call_hotspots(nodes, edges, top_n),
-    }
+        high_degree_symbols: analytics_top_hotspots(nodes, &scores, &edge_degree, top_n, |node| {
+            is_symbol_node(&node.node_type)
+        }),
+        high_degree_modules: analytics_top_hotspots(nodes, &scores, &edge_degree, top_n, |node| {
+            node.node_type == "module"
+        }),
+        incoming_call_hotspots: gcore_incoming_call_hotspots(nodes, edges, top_n)?,
+    })
 }
 
 fn edge_degree_stats(edges: &[ReportCodeEdge]) -> HashMap<&str, DegreeStats> {
@@ -103,7 +102,7 @@ fn gcore_incoming_call_hotspots(
     nodes: &[ReportNode],
     edges: &[ReportCodeEdge],
     top_n: usize,
-) -> Vec<GraphHotspot> {
+) -> Result<Vec<GraphHotspot>, GraphInputError> {
     let node_by_id = nodes
         .iter()
         .map(|node| (node.id.as_str(), node))
@@ -130,9 +129,8 @@ fn gcore_incoming_call_hotspots(
             )
         }),
     );
-    let analytics = analyze(&graph);
-    let mut hotspots = analytics
-        .centrality
+    let scores = centrality(&graph)?;
+    let mut hotspots = scores
         .iter()
         .filter_map(|score| {
             let node = node_by_id.get(score.node.id.as_str()).copied()?;
@@ -152,12 +150,12 @@ fn gcore_incoming_call_hotspots(
         .collect::<Vec<_>>();
     sort_hotspots(&mut hotspots);
     hotspots.truncate(top_n);
-    hotspots
+    Ok(hotspots)
 }
 
 fn analytics_top_hotspots(
     nodes: &[ReportNode],
-    analytics: &GraphAnalytics,
+    scores: &[CentralityScore],
     edge_degree: &HashMap<&str, DegreeStats>,
     top_n: usize,
     include: impl Fn(&ReportNode) -> bool,
@@ -166,8 +164,7 @@ fn analytics_top_hotspots(
         .iter()
         .map(|node| (node.id.as_str(), node))
         .collect::<HashMap<_, _>>();
-    let mut hotspots = analytics
-        .centrality
+    let mut hotspots = scores
         .iter()
         .filter_map(|score| {
             let node = node_by_id.get(score.node.id.as_str()).copied()?;

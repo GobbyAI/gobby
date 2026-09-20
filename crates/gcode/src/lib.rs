@@ -1,6 +1,7 @@
 pub(crate) mod bm25_health;
 pub mod codewiki_facts;
 mod commands;
+mod communities;
 mod config;
 pub mod contract;
 mod db;

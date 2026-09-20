@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use super::generation::generate_report_from_snapshot;
 use super::render::render_markdown;
-use super::summary::{summarize_bridge_edges, summarize_hotspots};
+use super::summary::{CODE_GRAPH_INPUT, summarize_bridge_edges, summarize_hotspots};
 use super::types::{
     BridgeEdgeInput, BridgeReportSummary, ConfidenceRange, GraphHotspot, GraphReportHotspots,
     NamedCount, ReportCodeEdge, ReportGraphSnapshot, ReportNode,
@@ -75,7 +75,7 @@ fn graph_report_hotspots_use_shared_centrality_degree() {
         ReportCodeEdge::new("src/lib.rs", "sym:handler", "DEFINES"),
     ];
 
-    let hotspots = summarize_hotspots(&nodes, &edges, DEFAULT_TOP_LIMIT);
+    let hotspots = summarize_hotspots(&nodes, &edges, DEFAULT_TOP_LIMIT).expect("valid code graph");
 
     assert_eq!(hotspots.high_degree_files[0].degree, 1);
     assert_eq!(hotspots.high_degree_files[0].outgoing, 2);
@@ -117,7 +117,8 @@ fn graph_report_hotspots_and_bridge_summary_match_pinned_output() {
     };
 
     assert_eq!(
-        summarize_hotspots(&snapshot.nodes, &snapshot.code_edges, DEFAULT_TOP_LIMIT),
+        summarize_hotspots(&snapshot.nodes, &snapshot.code_edges, DEFAULT_TOP_LIMIT)
+            .expect("valid code graph"),
         expected_graph_hotspots()
     );
     assert_eq!(
@@ -315,6 +316,36 @@ fn report_degradation_contract() {
         report
             .markdown
             .contains("- `RELATES_TO_CODE`: bridge \\*edge\\* \\<timed out\\>")
+    );
+}
+
+#[test]
+fn invalid_code_graph_input_degrades_hotspots() {
+    let report = generate_report_from_snapshot(
+        "project-1",
+        "2026-05-28T00:00:00Z",
+        ReportGraphSnapshot {
+            nodes: vec![
+                ReportNode::new("sym:handler", "handler", "function"),
+                ReportNode::new("sym:handler", "handler", "function"),
+            ],
+            code_edges: vec![],
+            ..ReportGraphSnapshot::default()
+        },
+    );
+
+    assert_eq!(report.hotspots, GraphReportHotspots::default());
+    assert_eq!(report.degradation_details.len(), 1);
+    assert_eq!(report.degradation_details[0].input, CODE_GRAPH_INPUT);
+    assert!(!report.degradation_details[0].required);
+    assert_eq!(
+        report.degradation_details[0].detail,
+        "hotspots skipped: duplicate node id sym:handler"
+    );
+    assert!(
+        report
+            .markdown
+            .contains("- `CODE_GRAPH`: hotspots skipped: duplicate node id sym:handler")
     );
 }
 

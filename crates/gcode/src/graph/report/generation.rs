@@ -14,8 +14,8 @@ use super::summary::{
 };
 use super::time::now_iso8601;
 use super::types::{
-    BridgeEdgeInput, ProjectGraphReport, ProjectGraphReportError, ProjectGraphReportOptions,
-    ReportDegradation, ReportGraphSnapshot,
+    BridgeEdgeInput, GraphReportHotspots, ProjectGraphReport, ProjectGraphReportError,
+    ProjectGraphReportOptions, ReportDegradation, ReportGraphSnapshot,
 };
 
 #[cfg(test)]
@@ -96,9 +96,13 @@ fn generate_report_from_snapshot_with_options(
         .summary
         .clone()
         .unwrap_or_else(|| summarize_graph(&snapshot.nodes, &snapshot.code_edges));
-    let hotspots = snapshot.hotspots.clone().unwrap_or_else(|| {
-        summarize_hotspots(&snapshot.nodes, &snapshot.code_edges, options.top_n)
-    });
+    let (hotspots, hotspot_degradation) = match snapshot.hotspots.clone() {
+        Some(hotspots) => (hotspots, None),
+        None => match summarize_hotspots(&snapshot.nodes, &snapshot.code_edges, options.top_n) {
+            Ok(hotspots) => (hotspots, None),
+            Err(degradation) => (GraphReportHotspots::default(), Some(degradation)),
+        },
+    };
     let unresolved_targets = snapshot.unresolved_targets.clone().unwrap_or_else(|| {
         target_frequencies(
             &snapshot.code_edges,
@@ -125,6 +129,7 @@ fn generate_report_from_snapshot_with_options(
             ),
         };
     let bridge_summary = summarize_bridge_edges(&bridge_edges);
+    degradation_details.extend(hotspot_degradation);
     degradation_details.sort_by(|left, right| left.input.cmp(&right.input));
 
     let suggested_investigation_questions = suggested_questions(
