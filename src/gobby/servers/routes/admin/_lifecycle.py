@@ -341,8 +341,9 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
                             "protected_runs": protected_runs,
                         }
 
-            await _prepare_handoff_shutdown(server, machine_id)
-            admission_prepared = True
+            if not force:
+                await _prepare_handoff_shutdown(server, machine_id)
+                admission_prepared = True
 
             service_managed = await asyncio.to_thread(_should_restart_via_service_manager)
             logger.info(
