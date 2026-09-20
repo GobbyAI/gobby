@@ -866,4 +866,29 @@ impl GhosttyPaneTerminal {
             .ok()
             .and_then(|mut core| ghostty_extract_selection(&mut core, selection).ok())
     }
+
+    pub fn read_text_screen(
+        &self,
+        start_rows_from_live_edge: u32,
+        start_col: u16,
+        end_rows_from_live_edge: u32,
+        end_col: u16,
+    ) -> Option<String> {
+        self.core.lock().ok().and_then(|core| {
+            let last_row = u32::try_from(core.terminal.total_rows().ok()?.checked_sub(1)?).ok()?;
+            let first = (
+                last_row.saturating_sub(start_rows_from_live_edge),
+                start_col,
+            );
+            let second = (
+                last_row.saturating_sub(end_rows_from_live_edge),
+                end_col,
+            );
+            let ((start_row, start_col), (end_row, end_col)) =
+                if first <= second { (first, second) } else { (second, first) };
+            core.terminal
+                .read_text_screen((start_col, start_row), (end_col, end_row), false)
+                .ok()
+        })
+    }
 }

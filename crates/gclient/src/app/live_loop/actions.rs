@@ -5,7 +5,7 @@ use std::io::{self, Write};
 use std::process::{Command, Stdio};
 
 use crate::app::ViewerState;
-use crate::copy_mode::copy_selection;
+use crate::copy_mode::copy_or_request_selection;
 use crate::daemon::{Daemon, KillOutcome, LiveDaemon, SpawnOutcome, SpawnRequest};
 use crate::frame_source::FrameError;
 use crate::prefs::{load_prefs, prefs_path};
@@ -183,7 +183,7 @@ pub(super) async fn apply_live_mouse_outcome(
         }
         MouseOutcome::Copy => {
             let mut output = std::io::stdout();
-            copy_selection(workspace, chrome, &mut output)?;
+            copy_or_request_selection(workspace, chrome, &mut output).await?;
             output.flush()?;
         }
         MouseOutcome::OpenLink(url) => {

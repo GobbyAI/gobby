@@ -121,9 +121,25 @@ fn golden_corpus_bytes_and_fragmented_reads() {
         },
     );
     write_bin(
+        "read_text.bin",
+        &ClientMessage::ReadText {
+            start_rows_from_live_edge: 31,
+            start_col: 2,
+            end_rows_from_live_edge: 4,
+            end_col: 17,
+        },
+    );
+    write_bin(
         "frame_input_refused.bin",
         &ServerMessage::InputRefused {
             code: "input_not_granted".into(),
+        },
+    );
+    write_bin(
+        "text_read.bin",
+        &ServerMessage::TextRead {
+            text: "retained text".into(),
+            truncated: false,
         },
     );
     let frame = FrameData {
