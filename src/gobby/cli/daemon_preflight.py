@@ -16,8 +16,10 @@ import click
 
 from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap
 from gobby.install.bin_set_coherence import BinarySetCoherenceError, probe_set_member_identity
+from gobby.paths import get_install_dir
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.schema_contract import SchemaContractError, expected_schema_identity, plan_schema
+from gobby.sync.integrity import dirty_bundled_content_refusal
 from gobby.utils.dev import worktree_daemon_refusal
 
 logger = logging.getLogger(__name__)
@@ -56,6 +58,9 @@ def restart_start_refusal(
         if refusal:
             return refusal
     elif refusal := _candidate_identity_refusal(gdaemon, expected_identity=expected_identity):
+        return refusal
+
+    if refusal := dirty_bundled_content_refusal(get_install_dir(), database=database):
         return refusal
 
     url = _hub_url(database)

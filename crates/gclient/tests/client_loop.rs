@@ -683,6 +683,61 @@ async fn loop_routes_input_and_frames() {
     assert!(screen.contains("HELLO"), "rendered grid: {screen:?}");
 }
 
+async fn scripted_ctrl_enter_bytes(kitty_keyboard_flags: u16) -> Vec<u8> {
+    let mut workspace = Workspace::scripted();
+    let pane = workspace
+        .open_terminal(
+            "term-keyboard-protocol",
+            "native",
+            "epoch-keyboard-protocol",
+        )
+        .expect("open terminal");
+    workspace.force_held(pane);
+    let mut source = ScriptedFrameSource::new(Transport::Direct);
+    let ServerMessage::Frame(mut frame) = semantic_frame("READY") else {
+        unreachable!("semantic_frame builds a frame")
+    };
+    frame.modes.kitty_keyboard_flags = kitty_keyboard_flags;
+    source.queue(ServerMessage::Frame(frame));
+    workspace
+        .replace_frame_source(pane, PaneFrameSource::Scripted(source))
+        .expect("scripted source");
+    workspace
+        .recv_pane_frame(pane)
+        .await
+        .expect("keyboard mode frame");
+
+    let mut chrome = Chrome::dark();
+    chrome.open_pane(pane, "keyboard protocol");
+    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
+    let (input_tx, input_rx) = mpsc::channel(8);
+    send_key(&input_tx, KeyCode::Enter, KeyModifiers::CONTROL).await;
+    send_chord(&input_tx, KeyCode::Char('Q'), KeyModifiers::SHIFT).await;
+    drop(input_tx);
+
+    run_scripted_loop(&mut workspace, &mut terminal, &mut chrome, input_rx)
+        .await
+        .expect("loop exits cleanly");
+
+    workspace
+        .pane(pane)
+        .scripted_source()
+        .expect("scripted source remains attached")
+        .sent_messages()
+        .iter()
+        .find_map(|message| match message {
+            ClientMessage::Input { data } => Some(data.clone()),
+            _ => None,
+        })
+        .expect("pane input")
+}
+
+#[tokio::test]
+async fn loop_encodes_ctrl_enter_with_the_pane_keyboard_protocol() {
+    assert_eq!(scripted_ctrl_enter_bytes(1).await, b"\x1b[13;5u");
+    assert_eq!(scripted_ctrl_enter_bytes(0).await, b"\r");
+}
+
 #[tokio::test]
 async fn input_encoder_covers_named_keys() {
     use gobby_terminal::input::KeyboardProtocol;
@@ -740,13 +795,13 @@ async fn input_encoder_covers_named_keys() {
                 TerminalKey::new(KeyCode::Char('x'), KeyModifiers::ALT),
                 "\u{1b}x",
             ),
-            // Physical-key metadata is not part of crossterm's KeyEvent. This
-            // case distinguishes the required crate::input path from calling
-            // gobby_terminal's TerminalKey encoder directly in the loop.
+            // Physical-key metadata is not part of crossterm's KeyEvent. The
+            // pane path must keep the richer TerminalKey so its shifted
+            // codepoint reaches the terminal encoder.
             (
                 TerminalKey::new(KeyCode::Char('1'), KeyModifiers::SHIFT)
                     .with_shifted_codepoint('!' as u32),
-                "1",
+                "!",
             ),
         ];
         for (index, (key, _)) in live_cases.iter().enumerate() {
@@ -10197,12 +10252,8 @@ async fn clicking_a_bare_terminal_row_focuses_that_terminal() {
 
 /// Right-click close on a bare terminal row acts on that row's terminal.
 ///
-/// `focus_menu_target` retargets focus to the menu's subject before the action
-/// runs, which is how every untargeted row action reaches the right pane. It
-/// retargets through `agent_pane`, so while that answered `None` for a bare
-/// terminal row the retarget silently did nothing and `Action::CloseTerminal`
-/// fell through to `chrome.focused_pane()` -- killing whatever the user
-/// happened to be looking at instead of the row they clicked.
+/// The menu action carries the row's pane, so closing does not depend on the
+/// pane becoming focused before dispatch.
 #[tokio::test]
 async fn closing_a_bare_terminal_row_kills_that_row_not_the_focused_pane() {
     let mock = MockDaemon::start("local-token").await;
@@ -10297,6 +10348,126 @@ async fn closing_a_bare_terminal_row_kills_that_row_not_the_focused_pane() {
             .collect::<Vec<_>>(),
         vec![json!("terminal-b")],
         "close acts on the row under the menu, never on the focused pane"
+    );
+    mock.shutdown().await;
+}
+
+/// Closing an agent whose pane is absent from the active tab set never closes
+/// the pane the operator is using.
+#[tokio::test]
+async fn closing_an_unshown_agent_row_kills_that_row_not_the_focused_pane() {
+    const SHOWN: &str = "terminal-a";
+    const UNSHOWN: &str = "terminal-b";
+    const ENTRY: &str = "run:terminal-b";
+
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    let roster = json!({
+        "epoch": "attention-1",
+        "seq": 1,
+        "entries": [
+            sidebar_roster_entry("run:terminal-a", "run-a", SHOWN),
+            sidebar_roster_entry(ENTRY, "run-b", UNSHOWN),
+        ],
+    });
+    for _ in 0..4 {
+        mock.enqueue("GET", "/api/projects", 200, sidebar_project_row());
+    }
+    for _ in 0..2 {
+        mock.enqueue(
+            "GET",
+            "/api/terminals?",
+            200,
+            terminal_page(&[SHOWN, UNSHOWN]),
+        );
+        mock.enqueue("GET", "/api/attention/roster", 200, roster.clone());
+    }
+    mock.enqueue("GET", "/api/terminals?", 200, terminal_page(&[SHOWN]));
+    mock.seed_workspace("project-1", &[(&[SHOWN], SHOWN)]);
+
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon);
+    workspace.select_project("project-1");
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("install initial rows");
+    let shown = workspace.pane_for_terminal(SHOWN).expect("shown pane");
+    assert!(
+        workspace.pane_for_terminal(UNSHOWN).is_some(),
+        "unshown pane is attached before the close"
+    );
+
+    // A real draw is required to populate the sidebar row hit areas. Open only
+    // the seeded pane so this probe preserves the unshown-pane condition.
+    let area = Rect::new(0, 0, 120, 40);
+    let mut probe = Chrome::dark();
+    probe.open_pane(shown, SHOWN);
+    probe.compute_view(&workspace, area);
+    let mut probe_terminal = Terminal::new(TestBackend::new(120, 40)).expect("probe terminal");
+    let mut hits = None;
+    probe_terminal
+        .draw(|frame| hits = Some(render_workspace(frame, &workspace, &probe)))
+        .expect("draw probe frame");
+    probe.view.apply_hits(hits.expect("probe frame drawn"));
+    let anchor = probe
+        .view
+        .agent_hit_areas
+        .iter()
+        .find(|(entry, _)| entry == ENTRY)
+        .map(|(_, rect)| (rect.x + 1, rect.y))
+        .expect("unshown agent row drawn");
+
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(32);
+    let driver = async {
+        wait_for_http_requests(&mock, "GET", "/api/attention/roster", 2).await;
+        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        let press = |button, (column, row): (u16, u16)| {
+            send_mouse(
+                &input_tx,
+                MouseEventKind::Down(button),
+                column,
+                row,
+                KeyModifiers::NONE,
+            )
+        };
+        press(MouseButton::Right, anchor).await;
+        // Unblocked row: focus, open in new tab, mark seen, take control, close.
+        press(MouseButton::Left, (anchor.0 + 2, anchor.1 + 1 + 4)).await;
+        wait_for_websocket_requests(&mock, "terminal_kill", 1).await;
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    let killed: Vec<Value> = websocket_requests(&mock, "terminal_kill")
+        .into_iter()
+        .map(|body| body.get("terminal_id").cloned().unwrap_or(Value::Null))
+        .collect();
+    assert_eq!(killed, [json!(UNSHOWN)]);
+    assert_eq!(workspace.pane_for_terminal(SHOWN), Some(shown));
+    assert!(
+        workspace.pane_for_terminal(UNSHOWN).is_none(),
+        "closed row's pane is gone"
+    );
+    assert_eq!(chrome.focused_pane(), Some(shown));
+    assert!(
+        workspace_ops(&mock, "tab.create").is_empty(),
+        "closing an unshown terminal never creates a tab for it"
     );
     mock.shutdown().await;
 }

@@ -135,17 +135,6 @@ class TaskValidationConfig(FeatureDefaultConfig):
         default=True,
         description="Enable automated task validation",
     )
-    system_prompt: str = Field(
-        default=(
-            "You are a QA validator. Output only the raw JSON object — markdown, "
-            "explanations, or code blocks break the parser."
-        ),
-        description="System prompt for task validation",
-    )
-    prompt_path: str | None = Field(
-        default=None,
-        description="Path to custom validation prompt template (e.g., 'validation/validate')",
-    )
     criteria_prompt_path: str | None = Field(
         default=None,
         description="Path to custom criteria generation prompt template (e.g., 'validation/criteria')",
@@ -172,16 +161,6 @@ class TaskValidationConfig(FeatureDefaultConfig):
         default=256_000,
         description="Maximum rendered character count for the task-close criteria-review prompt.",
     )
-    close_review_prompt_budget_chars: int = Field(
-        default=50_000,
-        description=(
-            "Working character budget for the task-close criteria-review prompt. Diff "
-            "evidence is truncated per file to fit, keeping every changed file "
-            "represented, declaring omitted spans, and always retaining lines that "
-            "match strings named by the criteria. close_review_prompt_max_chars "
-            "remains the hard failure cap."
-        ),
-    )
     close_review_total_timeout_seconds: float = Field(
         default=120.0,
         gt=0,
@@ -201,8 +180,19 @@ class TaskValidationConfig(FeatureDefaultConfig):
         default=1200.0,
         gt=0,
         description=(
-            "Wall-clock bound on a spawned task-close validator and its durable review deadline."
+            "Wall-clock bound on a spawned task-close reviewer and its durable review deadline."
         ),
+    )
+    close_review_min_severity: Literal["critical", "high", "medium", "low"] = Field(
+        default="low",
+        description=(
+            "Minimum close-review code-finding severity that blocks closure. "
+            "Criterion gaps always block regardless of this setting."
+        ),
+    )
+    close_review_max_concurrency_per_project: int = Field(
+        default=3,
+        description="Maximum launching, running, or finalizing close reviewers per project.",
     )
     # Escalation settings
     escalation_enabled: bool = Field(
@@ -231,7 +221,7 @@ class TaskValidationConfig(FeatureDefaultConfig):
         "max_iterations",
         "close_validation_escalation_threshold",
         "close_review_prompt_max_chars",
-        "close_review_prompt_budget_chars",
+        "close_review_max_concurrency_per_project",
     )
     @classmethod
     def validate_positive_int(cls, v: int) -> int:

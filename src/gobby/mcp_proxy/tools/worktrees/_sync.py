@@ -502,90 +502,95 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                         "target_branch": merge_target,
                     }
 
-            # Stash dirty .gobby/ sync files and retain the exact object identity.
-            stash_marker = new_stash_marker("merge-worktree")
-            stash_head_before = await run_to_completion(
-                resolved_git_mgr.run_git_command(
-                    ["stash", "list", "-1", "--format=%H"],
-                    cwd=merge_cwd,
-                    timeout=10,
+            # Fast-forward landing preserves staged entries without modifying the target.
+            # Avoid stashing when a staged .gobby/ path selected that landing.
+            if not any(
+                path == ".gobby" or path.startswith(".gobby/") for path in target_staged_paths
+            ):
+                # Stash dirty .gobby/ sync files and retain the exact object identity.
+                stash_marker = new_stash_marker("merge-worktree")
+                stash_head_before = await run_to_completion(
+                    resolved_git_mgr.run_git_command(
+                        ["stash", "list", "-1", "--format=%H"],
+                        cwd=merge_cwd,
+                        timeout=10,
+                    )
                 )
-            )
-            if stash_head_before.returncode != 0:
-                detail = (
-                    stash_head_before.stderr
-                    or stash_head_before.stdout
-                    or "git stash identity lookup failed"
+                if stash_head_before.returncode != 0:
+                    detail = (
+                        stash_head_before.stderr
+                        or stash_head_before.stdout
+                        or "git stash identity lookup failed"
+                    )
+                    return {
+                        "success": False,
+                        "error": f"Failed to inspect target checkout stash identity: {detail}",
+                        "step": "stash",
+                        "worktree_path": wt_path,
+                        "project_path": repo_path,
+                        "target_worktree_path": target_worktree_path,
+                        "source_branch": effective_source,
+                        "target_branch": merge_target,
+                    }
+                stash_push = await run_to_completion(
+                    resolved_git_mgr.run_git_command(
+                        ["stash", "push", "--keep-index", "-m", stash_marker, "--", ".gobby/"],
+                        cwd=merge_cwd,
+                        timeout=10,
+                    )
                 )
-                return {
-                    "success": False,
-                    "error": f"Failed to inspect target checkout stash identity: {detail}",
-                    "step": "stash",
-                    "worktree_path": wt_path,
-                    "project_path": repo_path,
-                    "target_worktree_path": target_worktree_path,
-                    "source_branch": effective_source,
-                    "target_branch": merge_target,
-                }
-            stash_push = await run_to_completion(
-                resolved_git_mgr.run_git_command(
-                    ["stash", "push", "-m", stash_marker, "--", ".gobby/"],
-                    cwd=merge_cwd,
-                    timeout=10,
+                if stash_push.returncode != 0:
+                    detail = stash_push.stderr or stash_push.stdout or "git stash push failed"
+                    return {
+                        "success": False,
+                        "error": f"Failed to stash target checkout .gobby files: {detail}",
+                        "step": "stash",
+                        "worktree_path": wt_path,
+                        "project_path": repo_path,
+                        "target_worktree_path": target_worktree_path,
+                        "source_branch": effective_source,
+                        "target_branch": merge_target,
+                    }
+                stash_head_after = await run_to_completion(
+                    resolved_git_mgr.run_git_command(
+                        ["stash", "list", "--format=%H%x00%gs"],
+                        cwd=merge_cwd,
+                        timeout=10,
+                    )
                 )
-            )
-            if stash_push.returncode != 0:
-                detail = stash_push.stderr or stash_push.stdout or "git stash push failed"
-                return {
-                    "success": False,
-                    "error": f"Failed to stash target checkout .gobby files: {detail}",
-                    "step": "stash",
-                    "worktree_path": wt_path,
-                    "project_path": repo_path,
-                    "target_worktree_path": target_worktree_path,
-                    "source_branch": effective_source,
-                    "target_branch": merge_target,
-                }
-            stash_head_after = await run_to_completion(
-                resolved_git_mgr.run_git_command(
-                    ["stash", "list", "--format=%H%x00%gs"],
-                    cwd=merge_cwd,
-                    timeout=10,
-                )
-            )
-            if stash_head_after.returncode != 0:
-                detail = (
-                    stash_head_after.stderr
-                    or stash_head_after.stdout
-                    or "git stash identity lookup failed"
-                )
-                return {
-                    "success": False,
-                    "error": f"Failed to identify target checkout stash: {detail}",
-                    "step": "stash",
-                    "worktree_path": wt_path,
-                    "project_path": repo_path,
-                    "target_worktree_path": target_worktree_path,
-                    "source_branch": effective_source,
-                    "target_branch": merge_target,
-                }
-            before_oid = stash_head_before.stdout.strip() or None
-            after_oid = stash_head_after.stdout.partition("\0")[0].strip() or None
-            recovery.stash_oid = stash_oid_for_marker(stash_head_after.stdout, stash_marker)
-            if recovery.stash_oid is None and after_oid != before_oid:
-                return {
-                    "success": False,
-                    "error": (
-                        "Stash head changed after push but the operation-owned "
-                        "stash marker was not found"
-                    ),
-                    "step": "stash",
-                    "worktree_path": wt_path,
-                    "project_path": repo_path,
-                    "target_worktree_path": target_worktree_path,
-                    "source_branch": effective_source,
-                    "target_branch": merge_target,
-                }
+                if stash_head_after.returncode != 0:
+                    detail = (
+                        stash_head_after.stderr
+                        or stash_head_after.stdout
+                        or "git stash identity lookup failed"
+                    )
+                    return {
+                        "success": False,
+                        "error": f"Failed to identify target checkout stash: {detail}",
+                        "step": "stash",
+                        "worktree_path": wt_path,
+                        "project_path": repo_path,
+                        "target_worktree_path": target_worktree_path,
+                        "source_branch": effective_source,
+                        "target_branch": merge_target,
+                    }
+                before_oid = stash_head_before.stdout.strip() or None
+                after_oid = stash_head_after.stdout.partition("\0")[0].strip() or None
+                recovery.stash_oid = stash_oid_for_marker(stash_head_after.stdout, stash_marker)
+                if recovery.stash_oid is None and after_oid != before_oid:
+                    return {
+                        "success": False,
+                        "error": (
+                            "Stash head changed after push but the operation-owned "
+                            "stash marker was not found"
+                        ),
+                        "step": "stash",
+                        "worktree_path": wt_path,
+                        "project_path": repo_path,
+                        "target_worktree_path": target_worktree_path,
+                        "source_branch": effective_source,
+                        "target_branch": merge_target,
+                    }
 
             merge_head_result = await run_to_completion(
                 resolved_git_mgr.run_git_command(

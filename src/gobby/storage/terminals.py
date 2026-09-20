@@ -246,6 +246,26 @@ class Terminal:
         )
 
 
+def native_attach_locator(
+    row: Terminal,
+    *,
+    live_host_epoch: str,
+    host_socket: str | None,
+) -> AttachLocator:
+    """Build a native attach locator after validating the live host identity."""
+    if row.host_epoch != live_host_epoch:
+        raise HostEpochMismatchError("Live host epoch does not match the terminal row")
+    host_terminal_id = None
+    if row.locator is not None:
+        host_terminal_id = str(row.locator["host_terminal_id"])
+    return AttachLocator(
+        backend="native",
+        frame_host_epoch=str(row.host_epoch),
+        host_socket=host_socket,
+        host_terminal_id=host_terminal_id,
+    )
+
+
 def _native_locator(locator: Mapping[str, object]) -> dict[str, str]:
     if "host_socket" in locator:
         raise ValueError("native locator must not include host_socket")
@@ -659,16 +679,10 @@ class TerminalManager(TerminalSettlementMixin):
         stored = row.locator or {}
         host_socket = str(Path(socket_dir) / FRAMES_SOCKET_NAME)
         if row.backend == "native":
-            if row.host_epoch != live_host_epoch:
-                raise HostEpochMismatchError("Live host epoch does not match the terminal row")
-            host_terminal_id = None
-            if row.locator is not None:
-                host_terminal_id = str(row.locator["host_terminal_id"])
-            return AttachLocator(
-                backend="native",
-                frame_host_epoch=str(row.host_epoch),
+            return native_attach_locator(
+                row,
+                live_host_epoch=live_host_epoch,
                 host_socket=host_socket,
-                host_terminal_id=host_terminal_id,
             )
         pid = stored.get("server_pid")
         start = stored.get("server_start_time")

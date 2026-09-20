@@ -8,7 +8,7 @@ from gobby.mcp_proxy.tools.spawn_agent import _spawn_guards
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
-from gobby.tasks.agentic_close_review import TASK_CLOSE_VALIDATOR_AGENT
+from gobby.tasks.agentic_close_review import TASK_CLOSE_REVIEWER_AGENT
 from gobby.utils.session_context import session_context_for_test
 
 
@@ -34,7 +34,7 @@ def test_validator_runs_excluded_from_active_count(
         parent_session_id=parent.id,
         provider="codex",
         prompt="validate close",
-        agent_name=TASK_CLOSE_VALIDATOR_AGENT,
+        agent_name=TASK_CLOSE_REVIEWER_AGENT,
     )
 
     assert _spawn_guards._count_active_agents(temp_db, project_id) == 1

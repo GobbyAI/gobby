@@ -65,6 +65,8 @@ def run_startup_content_sync(runner: GobbyRunner) -> None:
     Non-dev startup skips the aggregator and user-template import. The narrow
     disposition migration always runs before hook service starts.
     """
+    from gobby.paths import get_install_dir
+    from gobby.sync.integrity import dirty_bundled_content_refusal
     from gobby.sync_registry import (
         migrate_rule_delivery_dispositions,
         sync_bundled_content_to_db,
@@ -74,6 +76,8 @@ def run_startup_content_sync(runner: GobbyRunner) -> None:
 
     runner._dev_mode = is_dev_mode(Path.cwd())
     if runner._dev_mode:
+        if refusal := dirty_bundled_content_refusal(get_install_dir(), database=runner.database):
+            raise RuntimeError(refusal)
         sync_result = sync_bundled_content_to_db(runner.database)
         total = sync_result["total_synced"]
         if total > 0:

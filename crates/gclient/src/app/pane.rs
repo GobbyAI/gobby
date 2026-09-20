@@ -12,6 +12,7 @@ use crate::daemon::Generation;
 use crate::frame_source::{
     FrameError, FrameSource, PaneFrameSource, ScriptedFrameSource, Transport,
 };
+use gobby_terminal::input::KeyboardProtocol;
 use gobby_terminal::protocol::{ClientMessage, FrameData};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -534,6 +535,27 @@ impl Pane {
         self.frame_source.as_ref()
     }
 
+    pub async fn request_text(
+        &mut self,
+        start_rows_from_live_edge: u32,
+        start_col: u16,
+        end_rows_from_live_edge: u32,
+        end_col: u16,
+    ) -> Result<(), FrameError> {
+        let source = self
+            .frame_source
+            .as_mut()
+            .ok_or_else(|| FrameError::Other("pane has no frame source".into()))?;
+        source
+            .send(&ClientMessage::ReadText {
+                start_rows_from_live_edge,
+                start_col,
+                end_rows_from_live_edge,
+                end_col,
+            })
+            .await
+    }
+
     pub(super) fn frame_source_mut(&mut self) -> Option<&mut PaneFrameSource> {
         self.frame_source.as_mut()
     }
@@ -559,6 +581,13 @@ impl Pane {
 
     pub fn latest_frame(&self) -> Option<&FrameData> {
         self.latest_frame.as_ref()
+    }
+
+    pub fn keyboard_protocol(&self) -> KeyboardProtocol {
+        KeyboardProtocol::from_kitty_flags(
+            self.latest_frame()
+                .map_or(0, |frame| frame.modes.kitty_keyboard_flags),
+        )
     }
 
     pub fn viewport(&self) -> (u16, u16) {

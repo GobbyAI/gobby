@@ -173,6 +173,21 @@ impl PaneRuntime {
         self.terminal.extract_selection(selection)
     }
 
+    pub fn read_text_screen(
+        &self,
+        start_rows_from_live_edge: u32,
+        start_col: u16,
+        end_rows_from_live_edge: u32,
+        end_col: u16,
+    ) -> Option<String> {
+        self.terminal.read_text_screen(
+            start_rows_from_live_edge,
+            start_col,
+            end_rows_from_live_edge,
+            end_col,
+        )
+    }
+
     pub fn render(&self, frame: &mut ratatui::Frame, area: ratatui::layout::Rect, show_cursor: bool) {
         self.terminal.render(frame, area, show_cursor);
     }
@@ -222,6 +237,11 @@ impl PaneRuntime {
                     .unwrap_or(false),
                 alternate_on: core.terminal.active_screen().ok()
                     == Some(crate::ghostty::ActiveScreen::Alternate),
+                kitty_keyboard_flags: core
+                    .terminal
+                    .kitty_keyboard_flags()
+                    .map(u16::from)
+                    .unwrap_or(0),
                 ..Default::default()
             };
         }
@@ -418,6 +438,25 @@ impl PaneRuntime {
 mod frame_modes_tests {
     use super::PaneRuntime;
     use crate::protocol::{MouseTracking, PaneModes};
+
+    #[test]
+    fn frame_data_reports_kitty_keyboard_flags() {
+        let (pane, _rx) = PaneRuntime::test_with_channel(4, 2);
+        let before = pane.frame_data(4, 2);
+
+        pane.terminal
+            .ghostty
+            .core
+            .lock()
+            .unwrap()
+            .terminal
+            .write(b"\x1b[>1u");
+
+        let after = pane.frame_data(4, 2);
+        assert_eq!(after.cells, before.cells);
+        assert_eq!(after.cursor, before.cursor);
+        assert_eq!(after.modes.kitty_keyboard_flags, 1);
+    }
 
     #[test]
     fn frame_data_reports_mouse_modes() {

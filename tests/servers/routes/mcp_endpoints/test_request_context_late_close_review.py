@@ -19,12 +19,12 @@ from gobby.servers.routes.dependencies import get_server
 from gobby.servers.routes.mcp.endpoints import execution, request_context
 from gobby.storage.agents import AgentRun, AgentRunStatus
 from gobby.storage.task_close_reviews import (
-    VALIDATOR_RUN_ENDED_SUCCESS_ERROR,
+    REVIEWER_RUN_ENDED_SUCCESS_ERROR,
     TaskCloseReview,
     TaskCloseReviewStatus,
     TaskCloseReviewStore,
 )
-from gobby.tasks.agentic_close_review import TASK_CLOSE_VALIDATOR_AGENT
+from gobby.tasks.agentic_close_review import TASK_CLOSE_REVIEWER_AGENT
 from gobby.utils.session_context import (
     AGENT_RUN_ID_HEADER,
     SeededContextTokens,
@@ -59,7 +59,7 @@ async def review_client(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Review
         machine_id="test-machine",
         provider="codex",
         prompt="Validate close evidence.",
-        agent_name=TASK_CLOSE_VALIDATOR_AGENT,
+        agent_name=TASK_CLOSE_REVIEWER_AGENT,
         status="success",
         created_at=now,
         updated_at=now,
@@ -75,7 +75,7 @@ async def review_client(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Review
         evidence_fingerprint="evidence",
         status="error",
         result_payload=None,
-        error=VALIDATOR_RUN_ENDED_SUCCESS_ERROR,
+        error=REVIEWER_RUN_ENDED_SUCCESS_ERROR,
         launched_at=now,
         completed_at=now,
         delivered_at=now,

@@ -336,6 +336,50 @@ async def test_reconciliation_ignores_hidden_and_unregistered_projects(
 
 
 @pytest.mark.asyncio
+async def test_reconciliation_skips_missing_checkout_and_continues(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    missing_root = tmp_path / "missing-repo"
+    missing = install_isolated_checkout_project(
+        temp_db,
+        missing_root,
+        name="missing-project",
+        monkeypatch=monkeypatch,
+    )
+    missing_root.rename(tmp_path / "moved-repo")
+
+    valid_root = tmp_path / "valid-repo"
+    valid_worktree = tmp_path / "valid-worktree"
+    _create_repository(valid_root)
+    _create_stray_worktree(valid_root, valid_worktree, "task/valid")
+    valid = install_isolated_checkout_project(
+        temp_db,
+        valid_root,
+        name="valid-project",
+        machine_id=missing.machine_id,
+    )
+
+    caplog.set_level(logging.DEBUG, logger=reconciliation.__name__)
+    result = await reconcile_isolation_registry(temp_db, machine_id=missing.machine_id)
+
+    assert result == IsolationReconciliationResult(worktrees_adopted=1)
+    adopted = LocalWorktreeManager(temp_db).get_by_path(str(valid_worktree.resolve()))
+    assert adopted is not None
+    assert adopted.project_id == valid.project.id
+    assert any(
+        record.message.startswith("Skipping worktree reconciliation for missing-project")
+        for record in caplog.records
+    )
+    assert any(
+        record.message.startswith("Skipping clone reconciliation for missing-project")
+        for record in caplog.records
+    )
+
+
+@pytest.mark.asyncio
 async def test_reconciliation_uses_machine_scoped_advisory_lock(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

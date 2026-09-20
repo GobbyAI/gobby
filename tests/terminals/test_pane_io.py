@@ -258,8 +258,11 @@ class _ScriptedPane:
 async def _submit(
     pane: _ScriptedPane, monkeypatch: pytest.MonkeyPatch, *, verify_seconds: float = 0.0
 ) -> SubmitResult:
+    async def no_sleep(_seconds: float) -> None:
+        return None
+
     monkeypatch.setattr("gobby.terminals.pane_io.SUBMIT_ENTER_GAP_SECONDS", 0.0)
-    monkeypatch.setattr("gobby.terminals.pane_io._SUBMIT_VERIFY_POLL_SECONDS", 0.0)
+    monkeypatch.setattr("gobby.terminals.pane_io.asyncio.sleep", no_sleep)
     return await submit_text(
         cast(PaneIO, pane),
         _TEXT,
@@ -322,25 +325,42 @@ async def test_an_unreadable_composer_trusts_the_delivered_write_and_enter(
 
 
 @pytest.mark.asyncio
-async def test_a_draft_the_first_enter_left_behind_is_retyped_and_submitted(
+async def test_held_draft_is_submitted_by_a_second_enter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     pane = _ScriptedPane([ComposerRead("draft", _TEXT), ComposerRead("empty")])
 
     assert (await _submit(pane, monkeypatch)).ok is True
-    assert pane.typed == [f"{_TEXT}\n", f"{_TEXT}\n"]
-    assert pane.keys == ["enter", *composer_clear_sequence("claude"), "enter"]
+    assert pane.typed == [f"{_TEXT}\n"]
+    assert pane.keys == ["enter", "enter"]
 
 
 @pytest.mark.asyncio
-async def test_a_draft_that_survives_the_whole_ladder_is_retyped_then_reported(
+async def test_held_draft_after_the_retry_budget_reports_command_not_submitted(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     pane = _ScriptedPane([ComposerRead("draft", _TEXT)])
+    monkeypatch.setattr("gobby.terminals.pane_io.SUBMIT_HELD_RETRY_SECONDS", 0.02)
 
-    result = await _submit(pane, monkeypatch)
+    result = await _submit(pane, monkeypatch, verify_seconds=0.01)
 
     assert result.ok is False
     assert result.error_code == TEXT_NOT_SUBMITTED_ERROR_CODE
-    assert pane.typed == [f"{_TEXT}\n", f"{_TEXT}\n"]
-    assert pane.keys == ["enter", *composer_clear_sequence("claude"), "enter"]
+    assert pane.typed == [f"{_TEXT}\n"]
+    assert pane.keys == ["enter", "enter"]
+
+
+@pytest.mark.asyncio
+async def test_an_unreadable_composer_after_a_held_read_trusts_the_enter(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    pane = _ScriptedPane([ComposerRead("draft", _TEXT), ComposerRead("unknown")])
+
+    with caplog.at_level(logging.WARNING, logger="gobby.terminals.pane_io"):
+        result = await _submit(pane, monkeypatch)
+
+    assert result.ok is True
+    assert pane.typed == [f"{_TEXT}\n"]
+    assert pane.keys == ["enter", "enter"]
+    assert "re-sending Enter" in caplog.text
+    assert "could not be read after submitting the prompt" in caplog.text

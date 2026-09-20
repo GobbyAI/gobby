@@ -127,6 +127,7 @@ async def spawn_agent_impl(
     prelaunch_authority: Callable[[str], None] | None = None,
     extra_write_paths: list[str] | None = None,
     write_paths_reason: str | None = None,
+    reserved_run_id: str | None = None,
 ) -> dict[str, Any]:
     """Core spawn_agent implementation used by the MCP tool and direct callers."""
     try:
@@ -609,7 +610,7 @@ async def spawn_agent_impl(
     )
     enhanced_prompt = context_handler.build_context_prompt(prompt, isolation_ctx)
 
-    run_id = str(uuid.uuid4())
+    run_id = reserved_run_id or str(uuid.uuid4())
     prepared_spawn = None
     spawn_request = None
 

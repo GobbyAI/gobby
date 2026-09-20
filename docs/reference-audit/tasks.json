@@ -1108,20 +1108,6 @@
     },
     {
       "surface": "cli",
-      "command": "gobby tasks validate",
-      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/backups.md",
-      "implementation": {
-        "path": "src/gobby/cli/tasks/ai.py",
-        "symbol": "validate_task_cmd"
-      },
-      "verification": [
-        "cli-declarations",
-        "focused-task-tests"
-      ],
-      "audience": "operator-only"
-    },
-    {
-      "surface": "cli",
       "command": "gobby tasks advance",
       "reference": "src/gobby/install/shared/skills/gobby/references/tasks/implementation.md",
       "implementation": {

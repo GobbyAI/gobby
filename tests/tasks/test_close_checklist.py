@@ -1845,7 +1845,7 @@ async def test_every_independent_deterministic_blocker_lands_in_one_response() -
                 )
             ),
         ),
-        patch.object(lifecycle, "evaluate_criteria_review", review),
+        patch.object(lifecycle, "evaluate_close_review", review),
         patch("gobby.workflows.task_claim_state.target_task_has_edits", return_value=True),
         patch(
             "gobby.workflows.task_claim_state.task_edited_file_set",
@@ -1934,7 +1934,7 @@ async def test_commit_dependent_gates_report_skipped_instead_of_a_borrowed_failu
             AsyncMock(return_value=transcript),
         ),
         patch.object(lifecycle, "evaluate_acceptance_artifacts", acceptance),
-        patch.object(lifecycle, "evaluate_criteria_review", review),
+        patch.object(lifecycle, "evaluate_close_review", review),
         patch("gobby.workflows.task_claim_state.target_task_has_edits", return_value=True),
         patch(
             "gobby.workflows.task_claim_state.task_edited_file_set",

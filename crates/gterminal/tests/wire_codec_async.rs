@@ -137,6 +137,12 @@ fn client_messages() -> Vec<ClientMessage> {
         ClientMessage::SetScrollOffset {
             rows_from_live_edge: 11,
         },
+        ClientMessage::ReadText {
+            start_rows_from_live_edge: 31,
+            start_col: 2,
+            end_rows_from_live_edge: 4,
+            end_col: 17,
+        },
     ]
 }
 
@@ -195,6 +201,10 @@ fn server_messages() -> Vec<ServerMessage> {
         ServerMessage::Attached {
             created: true,
             host_terminal_id: "host-1".into(),
+        },
+        ServerMessage::TextRead {
+            text: "retained text".into(),
+            truncated: false,
         },
     ]
 }

@@ -12,7 +12,6 @@ from gobby.mcp_proxy.tools.tasks import _lifecycle_close_tool as close_tool
 from gobby.mcp_proxy.tools.tasks import create_task_registry as _create_task_registry
 from gobby.storage.project_checkouts import CheckoutNotFoundError
 from gobby.storage.tasks import Task
-from gobby.tasks.close_verdict import CloseVerdict
 from gobby.tasks.validation import PreparedCloseReview
 from gobby.utils.session_context import session_context_for_test
 from tests.mcp_proxy.tools.close_review_test_support import complete_valid_close_review
@@ -93,17 +92,9 @@ def create_task_registry(
         assert not args
         assert "task_validator_resolver" not in kwargs
         validator = AsyncMock()
-        validator.validate_task.return_value = CloseVerdict(
-            status="valid",
-            criteria=(),
-            feedback="Every criterion is satisfied by admissible evidence.",
-        )
         validator.prepare_task_review = MagicMock(
             side_effect=lambda **kwargs: PreparedCloseReview(
-                prompt="prompt",
                 criteria=(kwargs["validation_criteria"],),
-                prompt_chars=1_024,
-                prompt_limit=256_000,
                 review_fingerprint="close",
                 evidence_fingerprint="evidence",
                 diff_sha="diff",

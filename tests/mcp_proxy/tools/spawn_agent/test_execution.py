@@ -174,6 +174,133 @@ async def test_parent_claim_transfer_failure_cleans_up_spawn(
     cleanup.assert_awaited_once()
 
 
+@pytest.mark.asyncio
+async def test_auto_claimed_task_titles_child_session(
+    isolation_context: IsolationContext,
+) -> None:
+    from gobby.mcp_proxy.tools.spawn_agent._execution import finalize_executed_spawn
+
+    parent_session_id = "21000000-0000-4000-8000-000000000001"
+    child_session_id = "21000000-0000-4000-8000-000000000002"
+    other_session_id = "21000000-0000-4000-8000-000000000003"
+    task_id = "21000000-0000-4000-8000-000000000004"
+    unclaimed_task = SimpleNamespace(
+        claimed_by_session_id=None,
+        closed_at=None,
+        escalated_at=None,
+    )
+    claimed_task = SimpleNamespace(
+        claimed_by_session_id=child_session_id,
+        closed_at=None,
+        escalated_at=None,
+        seq_num=22633,
+        title="Spawned Codex sessions get task titles",
+    )
+    task_manager = MagicMock()
+    task_manager.get_task.return_value = unclaimed_task
+    task_manager.claim_task.return_value = claimed_task
+    runner = MagicMock()
+    spawn_result = SimpleNamespace(
+        success=True,
+        child_session_id=child_session_id,
+        terminal_id=None,
+        pid=None,
+        error=None,
+    )
+    call_order: list[str] = []
+
+    with (
+        patch("gobby.mcp_proxy.tools.spawn_agent._execution._persist_spawn_runtime"),
+        patch(
+            "gobby.mcp_proxy.tools.spawn_agent._execution.start_run_or_cleanup",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+        patch("gobby.runner_broadcasting.fire_agent_event"),
+        patch(
+            "gobby.mcp_proxy.tools.spawn_agent._execution._link_auto_claimed_session",
+            side_effect=lambda *_args: call_order.append("link"),
+        ) as link_claim,
+        patch(
+            "gobby.mcp_proxy.tools.spawn_agent._execution.update_title_for_claim",
+            side_effect=lambda *_args: call_order.append("title"),
+        ) as update_title,
+        patch(
+            "gobby.mcp_proxy.tools.spawn_agent._execution.build_spawn_response",
+            return_value={"success": True},
+        ),
+    ):
+        result = await finalize_executed_spawn(
+            runner=runner,
+            run_id="run-auto-claim-title",
+            spawn_result=spawn_result,
+            spawn_request=None,
+            isolation_ctx=isolation_context,
+            effective_isolation="none",
+            base_commit_sha=None,
+            handler=SimpleNamespace(commit_environment=None),
+            spawn_config=MagicMock(),
+            completion_registry=None,
+            cleanup_isolation_on_failure=False,
+            task_manager=task_manager,
+            parent_session_id=parent_session_id,
+            effective_provider="codex",
+            resolved_task_id=task_id,
+            task_seq_num=22633,
+            db=None,
+            agent_body=None,
+            effective_initial_variables={},
+            reasoning=MagicMock(),
+        )
+
+        assert result == {"success": True}
+        assert call_order == ["link", "title"]
+        link_claim.assert_called_once_with(task_manager, child_session_id, task_id)
+        update_title.assert_called_once_with(
+            runner.session_manager,
+            child_session_id,
+            claimed_task,
+        )
+
+        task_manager.get_task.return_value = SimpleNamespace(
+            claimed_by_session_id=other_session_id,
+            closed_at=None,
+            escalated_at=None,
+        )
+        task_manager.claim_task.reset_mock()
+        link_claim.reset_mock()
+        update_title.reset_mock()
+        call_order.clear()
+
+        result = await finalize_executed_spawn(
+            runner=runner,
+            run_id="run-owned-by-other-session",
+            spawn_result=spawn_result,
+            spawn_request=None,
+            isolation_ctx=isolation_context,
+            effective_isolation="none",
+            base_commit_sha=None,
+            handler=SimpleNamespace(commit_environment=None),
+            spawn_config=MagicMock(),
+            completion_registry=None,
+            cleanup_isolation_on_failure=False,
+            task_manager=task_manager,
+            parent_session_id=parent_session_id,
+            effective_provider="codex",
+            resolved_task_id=task_id,
+            task_seq_num=22633,
+            db=None,
+            agent_body=None,
+            effective_initial_variables={},
+            reasoning=MagicMock(),
+        )
+
+        assert result == {"success": True}
+        task_manager.claim_task.assert_not_called()
+        link_claim.assert_not_called()
+        update_title.assert_not_called()
+
+
 class TestSpawnAgentIsolation:
     """Tests for spawn_agent isolation parameter."""
 

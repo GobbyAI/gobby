@@ -583,6 +583,50 @@ impl HostState {
             max_rows,
         })
     }
+
+    pub async fn read_text(
+        &self,
+        attachment_id: u64,
+        start_rows_from_live_edge: u32,
+        start_col: u16,
+        end_rows_from_live_edge: u32,
+        end_col: u16,
+    ) -> Result<String, &'static str> {
+        let inner = self.inner.lock().await;
+        let host_id = &inner
+            .attachments
+            .get(&attachment_id)
+            .ok_or("terminal_gone")?
+            .host_terminal_id;
+        let identity = inner.by_host_id.get(host_id).ok_or("terminal_gone")?;
+        let slot = inner.terminals.get(identity).ok_or("terminal_gone")?;
+        if slot.locator.is_some() {
+            return Err("not_native");
+        }
+        #[cfg(feature = "vt-engine")]
+        return slot
+            .child
+            .as_ref()
+            .ok_or("terminal_gone")?
+            .runtime
+            .read_text_screen(
+                start_rows_from_live_edge,
+                start_col,
+                end_rows_from_live_edge,
+                end_col,
+            )
+            .ok_or("read_failed");
+        #[cfg(not(feature = "vt-engine"))]
+        {
+            let _ = (
+                start_rows_from_live_edge,
+                start_col,
+                end_rows_from_live_edge,
+                end_col,
+            );
+            Err("terminal_gone")
+        }
+    }
 }
 
 impl TerminalSlot {

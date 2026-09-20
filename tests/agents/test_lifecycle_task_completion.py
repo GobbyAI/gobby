@@ -6,6 +6,7 @@ import asyncio
 from dataclasses import dataclass
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
 
 import pytest
 
@@ -23,7 +24,11 @@ from gobby.hooks.session_coordinator import SessionCoordinator
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
-from gobby.storage.task_close_reviews import TaskCloseReviewStore, TerminalTaskCloseReviewStatus
+from gobby.storage.task_close_reviews import (
+    QueuedAgentRunSpec,
+    TaskCloseReviewStore,
+    TerminalTaskCloseReviewStatus,
+)
 from gobby.storage.tasks import LocalTaskManager
 from tests.agents.terminal_fixtures import make_live_terminal
 from tests.fixtures.isolated_checkout import patch_local_machine_id
@@ -656,7 +661,7 @@ def _review_caller(
     parent_session: dict[str, Any],
     sample_project: dict[str, Any],
 ) -> _ReviewCaller:
-    """A live Grok caller whose running close review is bound to its validator."""
+    """A live Grok caller whose running close review is bound to its reviewer."""
     task_manager = LocalTaskManager(temp_db)
     caller_session = session_manager.register(
         external_id="expired-close-review-caller",
@@ -665,8 +670,8 @@ def _review_caller(
         project_id=sample_project["id"],
         parent_session_id=parent_session["id"],
     )
-    validator_session = session_manager.register(
-        external_id="expired-close-review-validator",
+    reviewer_session = session_manager.register(
+        external_id="expired-close-review-reviewer",
         machine_id=LOCAL_MACHINE_ID,
         source="codex",
         project_id=sample_project["id"],
@@ -689,13 +694,7 @@ def _review_caller(
     live_caller = agent_run_manager.get(caller.id)
     assert live_caller is not None
     make_live_terminal(live_caller, db=agent_run_manager.db, session_name=f"gobby-test-{caller.id}")
-    validator = agent_run_manager.create(
-        parent_session_id=caller_session.id,
-        provider="codex",
-        prompt="review",
-        child_session_id=validator_session.id,
-    )
-    agent_run_manager.start(validator.id)
+    reviewer_run_id = str(uuid4())
     store = TaskCloseReviewStore(temp_db)
     review, _created = store.create_or_get_active(
         task_id=task.id,
@@ -708,8 +707,42 @@ def _review_caller(
         diff_sha="a" * 64,
         test_bodies_sha="b" * 64,
         stable_facts={},
+        review_id=str(uuid4()),
+        run=QueuedAgentRunSpec(
+            id=reviewer_run_id,
+            machine_id=LOCAL_MACHINE_ID,
+            provider="codex",
+            model=None,
+            agent_name="task-close-reviewer",
+            prompt="review",
+            timeout_seconds=1200,
+            requested_reasoning_effort=None,
+        ),
     )
-    assert store.bind_run(review.id, validator.id) is not None
+    promoted = store.claim_queued(project_id=str(sample_project["id"]), max_concurrency=3)
+    assert review.id in {item.id for item in promoted}
+    activated = agent_run_manager.activate_queued(
+        reviewer_run_id,
+        child_session_id=reviewer_session.id,
+        provider="codex",
+        prompt="review",
+        workflow_name="task-close-reviewer",
+        agent_name="task-close-reviewer",
+        model=None,
+        is_local=True,
+        requested_reasoning_effort=None,
+        effective_reasoning_effort=None,
+        reasoning_required=False,
+        reasoning_status="not_requested",
+        reasoning_message=None,
+        timeout_seconds=1200,
+        resume_metadata_json=None,
+        worktree_id=None,
+        clone_id=None,
+    )
+    assert activated is not None
+    assert agent_run_manager.start(reviewer_run_id) is not None
+    assert store.bind_run(review.id, reviewer_run_id) is not None
     return _ReviewCaller(
         task_manager=task_manager,
         task_id=task.id,

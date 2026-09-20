@@ -412,6 +412,11 @@ acknowledges can have an unknown outcome. No indicator tells the two apart; a
 pane that typed instantly and then went sluggish fell back, and
 `~/.gobby/logs/gclient.log` records it.
 
+Key encoding follows the focused pane's latest terminal mode. When an application
+enables the kitty keyboard protocol, modified Enter and other extended keys reach
+it as distinct keys; a pane that has not enabled the protocol keeps legacy terminal
+encoding, where modified Enter is indistinguishable from Enter.
+
 Three messages belong to the direct path:
 
 | Status line | What happened |
@@ -469,11 +474,14 @@ opening the terminal.
 The status line names the active mode. `esc` leaves every mode.
 
 **Copy mode (`prefix+[`).** Mouse selection is the copy gesture: left-drag over
-pane text and release to copy the selection to your clipboard through OSC 52. Any
-other key leaves copy mode and goes to the terminal. Outside copy mode the same
-gesture works in the focused pane whenever its application is not tracking the
-mouse; `shift+drag` forces it even when the application is. Double-click selects
-a word, triple-click a line, each copying immediately.
+pane text, scroll while selecting to extend through native scrollback, and
+release to copy the whole selection to your clipboard through OSC 52. Any other
+key leaves copy mode and goes to the terminal. Outside copy mode the same gesture
+works in the focused pane whenever its application is not tracking the mouse;
+`shift+drag` forces it even when the application is. Double-click selects a word,
+triple-click a line, each copying immediately. Direct native attachments read the
+off-screen range from gterm; proxy attachments and tmux panes copy the visible
+frame or attach history available to the client.
 
 **Resize mode (`prefix+r`).** `h` / `j` / `k` / `l` or the arrow keys move the
 focused pane's border one step. `enter` or `esc` leaves. Dragging a split border

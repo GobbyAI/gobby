@@ -173,6 +173,8 @@ pub struct PaneModes {
     pub scroll_region_upper: u16,
     pub scroll_region_lower: u16,
     pub pane_in_mode: bool,
+    #[serde(default)]
+    pub kitty_keyboard_flags: u16,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -267,6 +269,13 @@ pub enum ClientMessage {
     /// Paste text for the bound attachment; bracketed when the pane asked for it.
     Paste {
         text: String,
+    },
+    /// Read plain text from the attached native pane's retained screen.
+    ReadText {
+        start_rows_from_live_edge: u32,
+        start_col: u16,
+        end_rows_from_live_edge: u32,
+        end_col: u16,
     },
 }
 
@@ -533,6 +542,11 @@ pub enum ServerMessage {
     /// `request_too_large`, `pty_busy`, `terminal_gone`.
     InputRefused {
         code: String,
+    },
+    /// Plain text read from a native pane's retained screen.
+    TextRead {
+        text: String,
+        truncated: bool,
     },
 }
 

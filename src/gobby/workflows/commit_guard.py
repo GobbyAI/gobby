@@ -608,6 +608,43 @@ async def _dirty_owned_paths_releasing_clean(
     return dirty
 
 
+def _owned_dirty_paths(
+    db: HubDatabase,
+    *,
+    project_id: str,
+    checkout_root: str,
+    paths: AbstractSet[str],
+    exclude_session_id: str | None,
+) -> dict[str, tuple[ForeignPathOwner, ...]]:
+    try:
+        owners = _active_path_owners(
+            db,
+            project_id=project_id,
+            checkout_root=checkout_root,
+            exclude_session_id=exclude_session_id,
+        )
+    except (psycopg.OperationalError, PoolTimeout) as exc:
+        raise DirtyEditOwnershipInspectionError("database ownership inspection failed") from exc
+    return {path: owners[path] for path in paths if path in owners}
+
+
+def active_owned_dirty_paths(
+    db: HubDatabase,
+    *,
+    project_id: str,
+    checkout_root: str,
+    paths: AbstractSet[str],
+) -> dict[str, tuple[ForeignPathOwner, ...]]:
+    """Resolve all active task-session attribution for the given dirty paths."""
+    return _owned_dirty_paths(
+        db,
+        project_id=project_id,
+        checkout_root=checkout_root,
+        paths=paths,
+        exclude_session_id=None,
+    )
+
+
 def foreign_owned_dirty_paths(
     db: HubDatabase,
     *,
@@ -616,21 +653,18 @@ def foreign_owned_dirty_paths(
     checkout_root: str,
     paths: AbstractSet[str],
 ) -> dict[str, tuple[ForeignPathOwner, ...]]:
-    """Resolve which of the given paths carry another active session's open-task attribution.
+    """Resolve active task-session attribution excluding the caller.
 
     Raises DirtyEditOwnershipInspectionError for expected infrastructure failures so
     callers choose their own fail-open or fail-closed posture at the boundary.
     """
-    try:
-        owners = _active_foreign_path_owners(
-            db,
-            session_id=session_id,
-            project_id=project_id,
-            checkout_root=checkout_root,
-        )
-    except (psycopg.OperationalError, PoolTimeout) as exc:
-        raise DirtyEditOwnershipInspectionError("database ownership inspection failed") from exc
-    return {path: owners[path] for path in paths if path in owners}
+    return _owned_dirty_paths(
+        db,
+        project_id=project_id,
+        checkout_root=checkout_root,
+        paths=paths,
+        exclude_session_id=session_id,
+    )
 
 
 async def foreign_owned_dirty_paths_async(
