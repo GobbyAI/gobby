@@ -683,6 +683,61 @@ async fn loop_routes_input_and_frames() {
     assert!(screen.contains("HELLO"), "rendered grid: {screen:?}");
 }
 
+async fn scripted_ctrl_enter_bytes(kitty_keyboard_flags: u16) -> Vec<u8> {
+    let mut workspace = Workspace::scripted();
+    let pane = workspace
+        .open_terminal(
+            "term-keyboard-protocol",
+            "native",
+            "epoch-keyboard-protocol",
+        )
+        .expect("open terminal");
+    workspace.force_held(pane);
+    let mut source = ScriptedFrameSource::new(Transport::Direct);
+    let ServerMessage::Frame(mut frame) = semantic_frame("READY") else {
+        unreachable!("semantic_frame builds a frame")
+    };
+    frame.modes.kitty_keyboard_flags = kitty_keyboard_flags;
+    source.queue(ServerMessage::Frame(frame));
+    workspace
+        .replace_frame_source(pane, PaneFrameSource::Scripted(source))
+        .expect("scripted source");
+    workspace
+        .recv_pane_frame(pane)
+        .await
+        .expect("keyboard mode frame");
+
+    let mut chrome = Chrome::dark();
+    chrome.open_pane(pane, "keyboard protocol");
+    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
+    let (input_tx, input_rx) = mpsc::channel(8);
+    send_key(&input_tx, KeyCode::Enter, KeyModifiers::CONTROL).await;
+    send_chord(&input_tx, KeyCode::Char('Q'), KeyModifiers::SHIFT).await;
+    drop(input_tx);
+
+    run_scripted_loop(&mut workspace, &mut terminal, &mut chrome, input_rx)
+        .await
+        .expect("loop exits cleanly");
+
+    workspace
+        .pane(pane)
+        .scripted_source()
+        .expect("scripted source remains attached")
+        .sent_messages()
+        .iter()
+        .find_map(|message| match message {
+            ClientMessage::Input { data } => Some(data.clone()),
+            _ => None,
+        })
+        .expect("pane input")
+}
+
+#[tokio::test]
+async fn loop_encodes_ctrl_enter_with_the_pane_keyboard_protocol() {
+    assert_eq!(scripted_ctrl_enter_bytes(1).await, b"\x1b[13;5u");
+    assert_eq!(scripted_ctrl_enter_bytes(0).await, b"\r");
+}
+
 #[tokio::test]
 async fn input_encoder_covers_named_keys() {
     use gobby_terminal::input::KeyboardProtocol;
@@ -740,13 +795,13 @@ async fn input_encoder_covers_named_keys() {
                 TerminalKey::new(KeyCode::Char('x'), KeyModifiers::ALT),
                 "\u{1b}x",
             ),
-            // Physical-key metadata is not part of crossterm's KeyEvent. This
-            // case distinguishes the required crate::input path from calling
-            // gobby_terminal's TerminalKey encoder directly in the loop.
+            // Physical-key metadata is not part of crossterm's KeyEvent. The
+            // pane path must keep the richer TerminalKey so its shifted
+            // codepoint reaches the terminal encoder.
             (
                 TerminalKey::new(KeyCode::Char('1'), KeyModifiers::SHIFT)
                     .with_shifted_codepoint('!' as u32),
-                "1",
+                "!",
             ),
         ];
         for (index, (key, _)) in live_cases.iter().enumerate() {

@@ -49,8 +49,9 @@ same stream replaces that stream's attachment, and the host closes the stream
 when its terminal is removed or the reader lags out. Tmux attaches carry
 the pane `locator` (socket, server pid, start time, pane id). `Hello.tmux_identity`
 is the client's own pane, used to refuse recursive self-view. `FrameData.modes`
-carries cursor/mouse/keypad/copy-mode flags so a mode change with no cell change
-still produces a frame. Typed refusals include `self_view`, `capacity`,
+carries cursor, mouse, keypad, copy-mode, and kitty keyboard protocol flags so
+a mode change with no cell change still produces a frame. Typed refusals include
+`self_view`, `capacity`,
 `copy_mode`, and `stale`. Legacy herdr `Input` / `Resize` tags are rejected as
 `unknown_message` and never mutate a terminal: the live input verbs are appended
 after them, so a hand-built fork-point payload cannot alias one.

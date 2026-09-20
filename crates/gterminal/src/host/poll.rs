@@ -89,6 +89,7 @@ pub fn parse_poll_batch(batch: &str) -> Option<ParsedPoll> {
         cursor_blinking: flag(24),
         cursor_colour: fields[25].to_string(),
         mouse_utf8: flag(26),
+        kitty_keyboard_flags: 0,
     };
     let pane_dead = fields[27] == "1";
     let title_len_line = rest.strip_prefix("GTERM_TITLE_LEN=")?;

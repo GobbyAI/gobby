@@ -106,6 +106,29 @@ mod tests {
     }
 
     #[test]
+    fn ctrl_enter_encodes_csi_u_under_kitty_protocol() {
+        let kitty = KeyboardProtocol::Kitty { flags: 1 };
+        for (modifiers, expected) in [
+            (KeyModifiers::NONE, b"\r".as_slice()),
+            (KeyModifiers::SHIFT, b"\x1b[13;2u".as_slice()),
+            (KeyModifiers::CONTROL, b"\x1b[13;5u".as_slice()),
+        ] {
+            let input = key_input(&key(KeyCode::Enter, modifiers), kitty).expect("key input");
+            assert_eq!(input.bytes, expected);
+        }
+
+        for modifiers in [
+            KeyModifiers::NONE,
+            KeyModifiers::SHIFT,
+            KeyModifiers::CONTROL,
+        ] {
+            let input = key_input(&key(KeyCode::Enter, modifiers), KeyboardProtocol::Legacy)
+                .expect("key input");
+            assert_eq!(input.bytes, b"\r");
+        }
+    }
+
+    #[test]
     fn armed_prefix_mode_ignores_direct_and_prefix_chords_alike() {
         let keymap = Keymap::defaults(HERDR_PREFIX);
         let up = key_input(

@@ -12,6 +12,7 @@ use crate::daemon::Generation;
 use crate::frame_source::{
     FrameError, FrameSource, PaneFrameSource, ScriptedFrameSource, Transport,
 };
+use gobby_terminal::input::KeyboardProtocol;
 use gobby_terminal::protocol::{ClientMessage, FrameData};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -559,6 +560,13 @@ impl Pane {
 
     pub fn latest_frame(&self) -> Option<&FrameData> {
         self.latest_frame.as_ref()
+    }
+
+    pub fn keyboard_protocol(&self) -> KeyboardProtocol {
+        KeyboardProtocol::from_kitty_flags(
+            self.latest_frame()
+                .map_or(0, |frame| frame.modes.kitty_keyboard_flags),
+        )
     }
 
     pub fn viewport(&self) -> (u16, u16) {

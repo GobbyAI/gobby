@@ -467,6 +467,7 @@ fn frame_modes_expose_mouse_tracking() {
         mouse_all: true,
         mouse_sgr: true,
         alternate_on: true,
+        kitty_keyboard_flags: 5,
         ..Default::default()
     };
     let message = ServerMessage::Frame(frame);
@@ -479,4 +480,5 @@ fn frame_modes_expose_mouse_tracking() {
     };
     assert_eq!(frame.modes.mouse_tracking(), MouseTracking::AnyMotion);
     assert!(frame.modes.mouse_sgr && frame.modes.alternate_on);
+    assert_eq!(frame.modes.kitty_keyboard_flags, 5);
 }

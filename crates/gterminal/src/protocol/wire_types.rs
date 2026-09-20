@@ -173,6 +173,8 @@ pub struct PaneModes {
     pub scroll_region_upper: u16,
     pub scroll_region_lower: u16,
     pub pane_in_mode: bool,
+    #[serde(default)]
+    pub kitty_keyboard_flags: u16,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

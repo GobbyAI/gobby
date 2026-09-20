@@ -412,6 +412,11 @@ acknowledges can have an unknown outcome. No indicator tells the two apart; a
 pane that typed instantly and then went sluggish fell back, and
 `~/.gobby/logs/gclient.log` records it.
 
+Key encoding follows the focused pane's latest terminal mode. When an application
+enables the kitty keyboard protocol, modified Enter and other extended keys reach
+it as distinct keys; a pane that has not enabled the protocol keeps legacy terminal
+encoding, where modified Enter is indistinguishable from Enter.
+
 Three messages belong to the direct path:
 
 | Status line | What happened |
