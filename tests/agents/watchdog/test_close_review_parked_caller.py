@@ -42,6 +42,7 @@ from gobby.storage.pipeline_subscribers import CompletionSubscriberManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.task_close_reviews import TaskCloseReviewStore
 from gobby.storage.tasks import LocalTaskManager
+from gobby.storage.terminals import TerminalManager, native_locator_key
 from gobby.tasks.agentic_close_review import TASK_CLOSE_REVIEWER_AGENT
 from gobby.utils.session_context import (
     reset_current_agent_run_id,
@@ -50,6 +51,7 @@ from gobby.utils.session_context import (
 )
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
+from tests.agents.terminal_fixtures import make_pending_terminal
 from tests.agents.test_lifecycle_monitor import (
     DETECTION_REGISTRY,
     _fake_terminal_services,
@@ -634,6 +636,55 @@ async def _sweep_after_caller_ends(harness: _Harness) -> int:
         patch.object(harness.monitor._cleanup_handler, "post_terminal_cleanup", new=AsyncMock()),
     ):
         return await harness.monitor.check_completed_task_agents()
+
+
+async def _sweep_after_caller_terminal_exits(harness: _Harness) -> int:
+    pending = make_pending_terminal(harness.caller_run, "native", db=harness.db)
+    terminals = TerminalManager(harness.db)
+    host_epoch = "parked-caller-terminal-loss"
+    live = terminals.promote_to_live(
+        pending.id,
+        locator={"host_terminal_id": pending.id},
+        locator_key=native_locator_key(host_epoch, pending.id),
+        host_epoch=host_epoch,
+    )
+    assert live is not None
+    assert terminals.mark_exited(live.id) is not None
+    with (
+        patch.object(
+            harness.monitor._cleanup_handler,
+            "_run_capture_policy",
+            new=AsyncMock(return_value=(False, None)),
+        ),
+        patch.object(harness.monitor._cleanup_handler, "post_terminal_cleanup", new=AsyncMock()),
+    ):
+        return await harness.monitor.check_completed_task_agents()
+
+
+async def test_terminal_loss_fails_invalid_verdict_caller(harness: _Harness) -> None:
+    launched = await harness.close_task()
+    [reviewer_run_id] = harness.spawned
+    submitted = await harness.reviewer_submits(reviewer_run_id, launched["review_id"], "invalid")
+    assert submitted["review_status"] == "invalid"
+
+    handled = await _sweep_after_caller_terminal_exits(harness)
+
+    caller = harness.runs.get(harness.caller_run.id)
+    assert handled == 1
+    assert caller is not None
+    assert caller.status == "error"
+    assert "review_status=invalid" in (caller.error or "")
+
+
+async def test_terminal_loss_does_not_fail_active_review(harness: _Harness) -> None:
+    await harness.close_task()
+
+    handled = await _sweep_after_caller_terminal_exits(harness)
+
+    caller = harness.runs.get(harness.caller_run.id)
+    assert handled == 0
+    assert caller is not None
+    assert caller.status == "running"
 
 
 async def test_ended_caller_fails_on_an_invalid_verdict_it_cannot_retry(

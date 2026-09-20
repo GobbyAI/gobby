@@ -12,8 +12,148 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 import gobby.agents.run_completion as run_completion
+from gobby.storage.agents import AgentRun, LocalAgentRunManager
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions import SessionManager
+from gobby.storage.terminals import TerminalManager, native_locator_key
+from tests.agents.terminal_fixtures import make_pending_terminal
 
 pytestmark = pytest.mark.unit
+
+
+def _caller_run(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, object],
+) -> AgentRun:
+    parent = session_manager.register(
+        external_id="caller-liveness-parent",
+        machine_id="21000000-0000-4000-8000-000000000001",
+        source="codex",
+        project_id=str(sample_project["id"]),
+    )
+    caller = session_manager.register(
+        external_id="caller-liveness-child",
+        machine_id="21000000-0000-4000-8000-000000000001",
+        source="codex",
+        project_id=str(sample_project["id"]),
+        parent_session_id=parent.id,
+        agent_depth=1,
+    )
+    run = LocalAgentRunManager(temp_db).create(
+        parent_session_id=parent.id,
+        child_session_id=caller.id,
+        provider="codex",
+        prompt="test caller liveness",
+    )
+    session_manager.update_terminal_pickup_metadata(caller.id, agent_run_id=run.id)
+    return run
+
+
+def _live_native_terminal(temp_db: HubDatabase, run: AgentRun) -> tuple[TerminalManager, str]:
+    pending = make_pending_terminal(run, "native", db=temp_db)
+    manager = TerminalManager(temp_db)
+    host_epoch = "caller-liveness-epoch"
+    host_terminal_id = pending.id
+    live = manager.promote_to_live(
+        pending.id,
+        locator={"host_terminal_id": host_terminal_id},
+        locator_key=native_locator_key(host_epoch, host_terminal_id),
+        host_epoch=host_epoch,
+    )
+    assert live is not None
+    return manager, live.id
+
+
+def test_caller_with_exited_terminal_is_not_live(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, object],
+) -> None:
+    run = _caller_run(temp_db, session_manager, sample_project)
+    assert run.child_session_id is not None
+    assert run_completion._caller_session_is_live(temp_db, run.child_session_id)
+
+    terminals, terminal_id = _live_native_terminal(temp_db, run)
+    assert run_completion._caller_session_is_live(temp_db, run.child_session_id)
+
+    assert terminals.mark_exited(terminal_id) is not None
+    assert not run_completion._caller_session_is_live(temp_db, run.child_session_id)
+
+
+def test_caller_with_orphaned_terminal_is_not_live(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, object],
+) -> None:
+    run = _caller_run(temp_db, session_manager, sample_project)
+    assert run.child_session_id is not None
+    terminals, terminal_id = _live_native_terminal(temp_db, run)
+
+    assert terminals.mark_orphaned(terminal_id) is not None
+    assert not run_completion._caller_session_is_live(temp_db, run.child_session_id)
+
+
+def test_ended_caller_outcome_fires_when_caller_terminal_exited(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, object],
+) -> None:
+    run = _caller_run(temp_db, session_manager, sample_project)
+    assert run.child_session_id is not None
+    terminals, terminal_id = _live_native_terminal(temp_db, run)
+    assert terminals.mark_exited(terminal_id) is not None
+    run.task_id = "task-1"
+    review = SimpleNamespace(
+        active=False,
+        status="error",
+        caller_session_id=run.child_session_id,
+        task_ref="#22630",
+        id="review-terminal-error",
+    )
+
+    with (
+        patch("gobby.storage.task_close_reviews.TaskCloseReviewStore") as store,
+        patch.object(run_completion, "bound_task_is_closed", return_value=False),
+    ):
+        store.return_value.get_latest_agentic_for_task_caller.return_value = review
+        outcome = run_completion.ended_caller_close_review_outcome(temp_db, run)
+
+    assert outcome is not None
+    assert outcome[0] == "fail"
+    assert "review_status=error" in outcome[1]
+
+
+def test_active_review_owns_caller_even_when_terminal_exited(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, object],
+) -> None:
+    run = _caller_run(temp_db, session_manager, sample_project)
+    assert run.child_session_id is not None
+    terminals, terminal_id = _live_native_terminal(temp_db, run)
+    assert terminals.mark_exited(terminal_id) is not None
+    run.task_id = "task-1"
+    review = SimpleNamespace(
+        active=True,
+        status="running",
+        caller_session_id=run.child_session_id,
+        task_ref="#22630",
+        id="review-active",
+    )
+
+    with (
+        patch("gobby.storage.task_close_reviews.TaskCloseReviewStore") as store,
+        patch.object(run_completion, "bound_task_is_closed", return_value=False),
+    ):
+        store.return_value.get_latest_agentic_for_task_caller.return_value = review
+        outcome = run_completion.ended_caller_close_review_outcome(temp_db, run)
+
+    store.return_value.get_latest_agentic_for_task_caller.assert_called_once_with(
+        task_id="task-1",
+        caller_session_id=run.child_session_id,
+    )
+    assert outcome is None
 
 
 def test_ended_caller_outcome_waits_when_caller_liveness_is_unreadable() -> None:
