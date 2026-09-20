@@ -650,6 +650,144 @@
     },
     {
       "activation": "live",
+      "default": 10,
+      "description": "Max communities to label per maintenance pass",
+      "key": "code_index.community_label.batch_size",
+      "machineExport": false,
+      "namespace": "code_index",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [
+        {
+          "candidate": "codex/gpt-5.6-luna",
+          "reasoning_effort": null
+        },
+        {
+          "candidate": "claude/haiku",
+          "reasoning_effort": null
+        }
+      ],
+      "description": "Ordered provider/model candidates with optional reasoning pins, for example [{'candidate': 'codex/gpt-5.6-sol', 'reasoning_effort': 'xhigh'}, {'candidate': 'claude/haiku'}].",
+      "key": "code_index.community_label.candidates",
+      "machineExport": false,
+      "namespace": "code_index",
+      "secrecy": "none",
+      "type": [
+        "string"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Optional Decisions API base URL for label gating",
+      "key": "code_index.community_label.decisions_api_base",
+      "machineExport": false,
+      "namespace": "code_index",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Secret reference for the Decisions API key",
+      "key": "code_index.community_label.decisions_api_key",
+      "machineExport": false,
+      "namespace": "code_index",
+      "secrecy": "reference",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 0.5,
+      "description": "Minimum Decisions API confidence for a model label",
+      "key": "code_index.community_label.decisions_min_confidence",
+      "machineExport": false,
+      "namespace": "code_index",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "jev-latest",
+      "description": "Decisions API model used for label gating",
+      "key": "code_index.community_label.decisions_model",
+      "machineExport": false,
+      "namespace": "code_index",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 30,
+      "description": "Decisions API request timeout in seconds",
+      "key": "code_index.community_label.decisions_timeout_seconds",
+      "machineExport": false,
+      "namespace": "code_index",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Enable LLM-generated import-community labels",
+      "key": "code_index.community_label.enabled",
+      "machineExport": false,
+      "namespace": "code_index",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 2,
+      "description": "Maximum concurrent community label LLM calls",
+      "key": "code_index.community_label.max_concurrency",
+      "machineExport": false,
+      "namespace": "code_index",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 120,
+      "description": "Maximum tokens for each community label generation",
+      "key": "code_index.community_label.max_tokens",
+      "machineExport": false,
+      "namespace": "code_index",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "feature_low",
+      "description": "Provider-agnostic capability profile requested by this feature.",
+      "key": "code_index.community_label.profile",
+      "machineExport": false,
+      "namespace": "code_index",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
       "default": 1,
       "description": "Days to retain unreferenced indexed content and recent Git history",
       "key": "code_index.content_retention_days",
