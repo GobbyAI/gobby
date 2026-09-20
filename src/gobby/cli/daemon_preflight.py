@@ -23,7 +23,12 @@ from gobby.utils.dev import worktree_daemon_refusal
 logger = logging.getLogger(__name__)
 
 
-def restart_start_refusal(ctx: click.Context, gdaemon: Path | None = None) -> str | None:
+def restart_start_refusal(
+    ctx: click.Context,
+    gdaemon: Path | None = None,
+    *,
+    expected_identity: dict[str, int | str] | None = None,
+) -> str | None:
     """Name the reason the start half would fail, or None.
 
     ``gdaemon=None`` proves the installed set, which is what ``restart`` will start.
@@ -45,7 +50,7 @@ def restart_start_refusal(ctx: click.Context, gdaemon: Path | None = None) -> st
         database = _open_hub(ctx)
         if refusal := schema_apply_refusal(database):
             return refusal
-    elif refusal := _candidate_identity_refusal(gdaemon):
+    elif refusal := _candidate_identity_refusal(gdaemon, expected_identity=expected_identity):
         return refusal
 
     url = _hub_url(database)
@@ -59,11 +64,17 @@ def restart_start_refusal(ctx: click.Context, gdaemon: Path | None = None) -> st
     return None
 
 
-def _candidate_identity_refusal(gdaemon: Path) -> str | None:
-    """Fail closed: anything the probe or the checkout pin cannot read is a refusal."""
+def _candidate_identity_refusal(
+    gdaemon: Path,
+    *,
+    expected_identity: dict[str, int | str] | None = None,
+) -> str | None:
+    """Fail closed: anything the probe or expected pin cannot read is a refusal."""
     try:
         candidate = probe_set_member_identity(gdaemon, "gdaemon")
-        expected = expected_schema_identity()
+        expected = (
+            expected_identity if expected_identity is not None else expected_schema_identity()
+        )
     except (BinarySetCoherenceError, SchemaContractError) as exc:
         return f"candidate gdaemon cannot be verified: {exc}"
     if candidate != expected:
