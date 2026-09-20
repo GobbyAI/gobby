@@ -292,9 +292,9 @@ neither does a stale one: a marker that last moved more than thirty minutes ago
 nothing automatic will consume it and `get_handoff` still reads it after the
 restart.
 `gobby stop --wait` and `gobby restart --wait` wait up to ten minutes for handoffs;
-`--force` does not bypass this protection. Once shutdown passes the check, new
-handoffs cannot stage until it finishes or is cancelled. A blocked restart names
-the sessions and attempts to finish; it never consumes or discards their content.
+`--force` bypasses this protection without consuming or discarding handoff content.
+Once a non-forced shutdown passes the check, new handoffs cannot stage until it
+finishes or is cancelled. A blocked restart names the sessions and attempts to finish.
 
 Load `gobby:references/sessions/handoffs.md` before authoring `set_handoff` or
 cooperative `end_agent_run` content. A before-tool block teaches this requirement;

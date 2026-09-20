@@ -78,10 +78,7 @@ def test_wait_timeout_refuses_shutdown() -> None:
     assert messages == []
 
 
-@pytest.mark.parametrize("force", [False, True])
-def test_stop_refuses_handoff_even_with_force(
-    force: bool, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_stop_refuses_handoff_without_force(capsys: pytest.CaptureFixture[str]) -> None:
     with (
         patch("gobby.cli.daemon.stop_singleton_gate", return_value=("proceed", None)),
         patch("gobby.cli.daemon.fetch_protected_runs", return_value=[]),
@@ -93,8 +90,30 @@ def test_stop_refuses_handoff_even_with_force(
         patch("gobby.cli.daemon.stop_daemon_util") as stop,
         patch("gobby.cli.daemon.service_stop") as service_stop,
     ):
-        result = _do_stop(MagicMock(), docker_flag=False, force=force)
+        result = _do_stop(MagicMock(), docker_flag=False)
     assert result is False
     stop.assert_not_called()
     service_stop.assert_not_called()
     assert "Refusing to stop: unresolved #12332" in capsys.readouterr().err
+
+
+def test_stop_force_bypasses_handoff_protection(capsys: pytest.CaptureFixture[str]) -> None:
+    runtime = MagicMock(spec=CliRuntime)
+    with (
+        patch("gobby.cli.daemon.stop_singleton_gate", return_value=("proceed", None)),
+        patch("gobby.cli.daemon.fetch_protected_runs", return_value=[]),
+        patch("gobby.cli.runtime.get_cli_runtime", return_value=runtime),
+        patch(
+            "gobby.cli._daemon_handoffs.guard_handoff_shutdown",
+            side_effect=HandoffShutdownBlocked("unresolved #12332"),
+        ) as guard,
+        patch("gobby.cli.daemon.get_service_status", return_value={}),
+        patch("gobby.cli.daemon.stop_daemon_util", return_value=True) as stop,
+    ):
+        result = _do_stop(MagicMock(), docker_flag=False, force=True)
+
+    assert result is True
+    assert "unresolved #12332" not in capsys.readouterr().err
+    runtime.require_database.assert_not_called()
+    guard.assert_not_called()
+    stop.assert_called_once()

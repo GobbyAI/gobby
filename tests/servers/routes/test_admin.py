@@ -785,7 +785,7 @@ class TestAdminRoutes:
         assert data["config"]["server"]["version"] == "1.0.0"
         assert data["config"]["features"]["session_manager"] is True
 
-    @pytest.mark.parametrize("path", ["shutdown", "restart", "restart?force=true"])
+    @pytest.mark.parametrize("path", ["shutdown", "restart"])
     def test_lifecycle_refuses_pending_handoff_without_shutdown_side_effects(
         self, path: str, client: TestClient, mock_server: MagicMock
     ) -> None:
@@ -797,6 +797,8 @@ class TestAdminRoutes:
                 "project_id": "pending-project",
                 "project_name": "gobby",
                 "attempt_id": "queued-handoff",
+                "dispatch_started_at": None,
+                "created_at": None,
             }
         ]
         with (
@@ -955,7 +957,7 @@ class TestAdminRoutes:
         new_callable=AsyncMock,
         return_value=False,
     )
-    def test_restart_endpoint_force_bypasses_active_protected_runs(
+    def test_restart_endpoint_force_bypasses_protected_runs_and_pending_handoffs(
         self,
         _mock_to_thread: AsyncMock,
         mock_spawn: MagicMock,
@@ -974,6 +976,16 @@ class TestAdminRoutes:
             )
         )
         mock_server._runner.cron_scheduler = scheduler
+        conn = mock_server.session_manager.db.transaction.return_value.__enter__.return_value
+        conn.execute.return_value.fetchall.return_value = [
+            {
+                "seq_num": 12332,
+                "id": "pending-session",
+                "project_id": "pending-project",
+                "project_name": "gobby",
+                "attempt_id": "queued-handoff",
+            }
+        ]
 
         with patch("gobby.runner_maintenance.write_shutdown_source"):
             response = client.post("/api/admin/restart?force=true")
@@ -981,6 +993,7 @@ class TestAdminRoutes:
         assert response.status_code == 200
         assert response.json()["status"] == "restarting"
         scheduler.list_protected_runs.assert_not_called()
+        mock_server.session_manager.db.transaction.assert_not_called()
         mock_spawn.assert_called_once()
         assert mock_server._runner._shutdown_requested is True
 
