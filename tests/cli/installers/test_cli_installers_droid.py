@@ -16,6 +16,7 @@ from gobby.cli.installers.droid import (
     install_droid,
     uninstall_droid,
 )
+from gobby.cli.utils import get_install_dir
 from gobby.install.shared.hooks import validate_settings
 
 pytestmark = pytest.mark.unit
@@ -50,6 +51,10 @@ def _load_json(path: Path) -> dict[str, Any]:
     return payload
 
 
+def _current_router() -> bytes:
+    return (get_install_dir() / "shared" / "skills" / "gobby" / "SKILL.md").read_bytes()
+
+
 def test_install_droid_global_writes_hooks_and_mcp(
     project_path: Path,
     droid_env: Path,
@@ -60,6 +65,10 @@ def test_install_droid_global_writes_hooks_and_mcp(
     assert tuple(result["hooks_installed"]) == DROID_PASCAL_HOOK_NAMES
     assert result["trust"]["skipped"] is True
     assert result["trust"]["files_written"] == []
+    assert result["skills_installed"] == ["gobby/"]
+    assert (droid_env / ".agents" / "skills" / "gobby" / "SKILL.md").read_bytes() == (
+        _current_router()
+    )
 
     hooks_file = droid_env / ".factory" / "hooks.json"
     hooks = _load_json(hooks_file)
@@ -89,6 +98,10 @@ def test_install_droid_project_mode_writes_project_hooks(
     assert result["success"] is True
     assert (project_path / ".factory" / "hooks.json").exists()
     assert (project_path / ".factory" / "mcp.json").exists()
+    assert result["skills_installed"] == ["gobby/"]
+    assert (project_path / ".agents" / "skills" / "gobby" / "SKILL.md").read_bytes() == (
+        _current_router()
+    )
 
 
 def test_install_droid_preserves_existing_mcp_servers(
@@ -141,13 +154,123 @@ def test_install_droid_is_idempotent_and_preserves_file_text(
     first = install_droid(project_path, mode="global")
     hooks_file = droid_env / ".factory" / "hooks.json"
     original_text = hooks_file.read_text()
+    skill_file = droid_env / ".agents" / "skills" / "gobby" / "SKILL.md"
+    original_skill = skill_file.read_bytes()
 
     second = install_droid(project_path, mode="global")
 
     assert first["success"] is True
     assert second["success"] is True
     assert second["already_configured"] is True
+    assert second["skills_installed"] == ["gobby/"]
     assert hooks_file.read_text() == original_text
+    assert skill_file.read_bytes() == original_skill
+
+
+def test_install_droid_retires_current_legacy_factory_router(
+    project_path: Path,
+    droid_env: Path,
+) -> None:
+    legacy = droid_env / ".factory" / "skills" / "gobby"
+    legacy.mkdir(parents=True)
+    (legacy / "SKILL.md").write_bytes(_current_router())
+
+    result = install_droid(project_path, mode="global")
+
+    assert result["skills_installed"] == ["gobby/"]
+    assert not legacy.exists()
+
+
+def test_install_droid_retires_known_legacy_router_and_preserves_custom_files(
+    project_path: Path,
+    droid_env: Path,
+) -> None:
+    legacy = droid_env / ".factory" / "skills" / "gobby"
+    legacy.mkdir(parents=True)
+    fixture = Path(__file__).parent / "fixtures" / "gobby-e0eed4ddaf.md"
+    (legacy / "SKILL.md").write_bytes(fixture.read_bytes())
+    notes = legacy / "notes.md"
+    notes.write_text("keep")
+
+    result = install_droid(project_path, mode="global")
+
+    assert result["skills_installed"] == ["gobby/"]
+    assert not (legacy / "SKILL.md").exists()
+    assert notes.read_text() == "keep"
+
+
+def test_install_droid_preserves_custom_legacy_router(
+    project_path: Path,
+    droid_env: Path,
+) -> None:
+    legacy = droid_env / ".factory" / "skills" / "gobby" / "SKILL.md"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text("user instructions")
+
+    result = install_droid(project_path, mode="global")
+
+    assert result["skills_installed"] == ["gobby/"]
+    assert legacy.read_text() == "user instructions"
+
+
+def test_install_droid_preserves_nonempty_custom_legacy_directory(
+    project_path: Path,
+    droid_env: Path,
+) -> None:
+    legacy = droid_env / ".factory" / "skills" / "gobby"
+    legacy.mkdir(parents=True)
+    notes = legacy / "notes.md"
+    notes.write_text("keep")
+
+    result = install_droid(project_path, mode="global")
+
+    assert result["skills_installed"] == ["gobby/"]
+    assert notes.read_text() == "keep"
+
+
+@pytest.mark.parametrize("link_kind", ["directory", "file"])
+def test_install_droid_preserves_legacy_symlinks(
+    project_path: Path,
+    droid_env: Path,
+    link_kind: str,
+) -> None:
+    external = droid_env / "external-router"
+    external.mkdir()
+    external_router = external / "SKILL.md"
+    external_router.write_bytes(_current_router())
+    legacy = droid_env / ".factory" / "skills" / "gobby"
+    legacy.parent.mkdir(parents=True)
+    if link_kind == "directory":
+        legacy.symlink_to(external, target_is_directory=True)
+        link = legacy
+    else:
+        legacy.mkdir()
+        link = legacy / "SKILL.md"
+        link.symlink_to(external_router)
+
+    result = install_droid(project_path, mode="global")
+
+    assert result["skills_installed"] == ["gobby/"]
+    assert link.is_symlink()
+    assert external_router.read_bytes() == _current_router()
+
+
+def test_install_droid_preserves_legacy_router_when_canonical_install_fails(
+    project_path: Path,
+    droid_env: Path,
+) -> None:
+    canonical = droid_env / ".agents" / "skills" / "gobby" / "SKILL.md"
+    canonical.parent.mkdir(parents=True)
+    canonical.write_text("user instructions")
+    legacy = droid_env / ".factory" / "skills" / "gobby" / "SKILL.md"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_bytes(_current_router())
+
+    result = install_droid(project_path, mode="global")
+
+    assert result["skills_installed"] == []
+    assert canonical.read_text() == "user instructions"
+    assert legacy.read_bytes() == _current_router()
 
 
 def test_install_droid_creates_backup_when_rewriting_existing_hooks(

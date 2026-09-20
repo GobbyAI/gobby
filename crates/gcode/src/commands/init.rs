@@ -5,7 +5,6 @@ use crate::db;
 use crate::index::api;
 use crate::index_lock::{self, IndexLockPolicy, IndexLockResult};
 use crate::output::{self, Format};
-use crate::skill;
 
 pub fn run(project_root: &Path, format: Format, quiet: bool) -> anyhow::Result<()> {
     // Primary index writes are fenced on this machine's registered checkout,
@@ -21,31 +20,6 @@ pub fn run(project_root: &Path, format: Format, quiet: bool) -> anyhow::Result<(
         config::ProjectIdentitySource::ProjectJson => "gobby",
         config::ProjectIdentitySource::IsolatedOverlay => "existing",
     };
-
-    // Install AI CLI skills (skip if Gobby manages this project)
-    let mut installed_skills: Vec<String> = Vec::new();
-    if status != "gobby" {
-        for target in skill::supported_targets() {
-            match skill::install_skill(project_root, target) {
-                Ok(path) if !path.is_empty() => {
-                    if !quiet {
-                        eprintln!(
-                            "Installed gcode skill for {} → {}",
-                            target.display_name, path
-                        );
-                    }
-                    installed_skills.push(target.display_name.to_string());
-                }
-                Err(e) if !quiet => {
-                    eprintln!(
-                        "Warning: failed to install skill for {}: {}",
-                        target.display_name, e
-                    );
-                }
-                _ => {}
-            }
-        }
-    }
 
     // Auto-index the registered project through a daemon-issued grant to the
     // migrated PostgreSQL hub.
@@ -96,7 +70,7 @@ pub fn run(project_root: &Path, format: Format, quiet: bool) -> anyhow::Result<(
 
     match format {
         Format::Json => {
-            let mut result = serde_json::json!({
+            let result = serde_json::json!({
                 "project_id": project_id,
                 "project_root": project_root.to_string_lossy(),
                 "status": status,
@@ -104,9 +78,6 @@ pub fn run(project_root: &Path, format: Format, quiet: bool) -> anyhow::Result<(
                 "symbols_found": index_result.symbols_indexed,
                 "duration_ms": index_result.durations.total_ms,
             });
-            if !installed_skills.is_empty() {
-                result["skills_installed"] = serde_json::json!(installed_skills);
-            }
             output::print_json(&result)
         }
         Format::Text => {
