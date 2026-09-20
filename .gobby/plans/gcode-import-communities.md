@@ -211,7 +211,7 @@ centrality-only entry for the report.
 
 Targets:
 - `crates/gcore/src/graph_analytics.rs::*` — scope-reason: add the communities entry point and typed input error beside the existing analyze façade, and move the inline test module to a #[path] sibling
-- `crates/gcore/src/graph_analytics/tests.rs`
+- `crates/gcore/src/graph_analytics/tests.rs::*` — scope-reason: the landed extraction and new analytics tests intentionally cover the whole test module
 
 Research context: `analyze` (`graph_analytics.rs:78-95`) runs Tarjan bridges,
 centrality, god nodes, unexpected links, and hotspots; `PreparedGraph` (:127-133) and
@@ -271,7 +271,7 @@ Verify: `cargo fmt -p gobby-core -- --check`, `cargo clippy -p gobby-core --feat
 
 Targets:
 - `crates/gcore/src/graph_analytics.rs::*` — scope-reason: add the centrality entry point sharing the validation of communities
-- `crates/gcore/src/graph_analytics/tests.rs`
+- `crates/gcore/src/graph_analytics/tests.rs::*` — scope-reason: the landed centrality parity cases and shared fixtures intentionally cover the whole test module
 - `crates/gcode/src/graph/report/summary.rs::*` — scope-reason: replace both analyze calls with centrality in gcore_hotspots_for_code_graph and gcore_incoming_call_hotspots
 - `docs/evidence/community-labels-2026-09/report-latency.md`
 
@@ -313,8 +313,8 @@ both reach. No schema, no I/O beyond loading import rows.
 
 Targets:
 - `crates/gcode/src/communities.rs`
-- `crates/gcode/src/communities/identity.rs`
-- `crates/gcode/src/communities/identity_tests.rs`
+- `crates/gcode/src/communities/identity.rs::*` — scope-reason: the landed identity move and connection-taking loader own the complete new module
+- `crates/gcode/src/communities/identity_tests.rs::*` — scope-reason: the landed moved and overlay identity cases own the complete new test module
 - `crates/gcode/src/lib.rs::*` — scope-reason: declare the new communities module beside the other crate modules
 - `crates/gcode/src/commands/graph/view/mcg/identity.rs::*` — scope-reason: remove McgIdentity, providers_for, unique_provider, and from_resolution; keep the seed types
 - `crates/gcode/src/commands/graph/view/mcg/fetch.rs::*` — scope-reason: replace load_identity with communities::identity::load_project_imports on the connection run already opens
@@ -378,9 +378,9 @@ Verify: `cargo nextest run -p gobby-code -E 'test(identity) | test(mcg)'`, `carg
 
 Targets:
 - `crates/gcode/src/communities.rs`
-- `crates/gcode/src/communities/partition.rs`
-- `crates/gcode/src/communities/labels.rs`
-- `crates/gcode/src/communities/partition_tests.rs`
+- `crates/gcode/src/communities/partition.rs::*` — scope-reason: the landed partition kernel owns the complete new module
+- `crates/gcode/src/communities/labels.rs::*` — scope-reason: the landed deterministic labeling helpers own the complete new module
+- `crates/gcode/src/communities/partition_tests.rs::*` — scope-reason: the landed partition, signature, and labeling cases own the complete new test module
 - `docs/evidence/community-labels-2026-09/thresholds.md`
 
 Research context: inputs are `ImportIdentity` and the `(source, module)` rows from 2.1.
@@ -721,7 +721,7 @@ Verify: `cargo nextest run -p gobby-core --features postgres`, `cargo nextest ru
 - 3.1.4 - The privilege manifest grants `code_communities` to the gcode capability with the same scope declaration as `code_indexed_project_states`, and gcode's `schema.rs` contracts include the table and both new columns. file: `crates/gcode/security/managed_postgres_privileges.json`.
 - 3.1.5 - One coherent `uv run gobby cutover --path /Users/josh/.gobby/worktrees/gobby/lane-22581-gcode-import-communities` from the main checkout applies 443 on the live hub and `gdaemon schema plan` reports nothing pending afterwards, as recorded in the apply log. behavior: "nothing pending" in `docs/evidence/community-labels-2026-09/schema-apply.md`.
 - 3.1.6 - The managed-relation set assertion names `code_communities`. test: `tests/code_index/test_gcode_privilege_manifest.py::test_manifest_privileges_match_the_managed_relation_set`.
-- 3.1.7 - The migration number actually used replaces every live occurrence of the provisional 443 named in Constraints in the same commit, and the apply log plus the later 7.1 changelog leaf record it without editing historical V1. behavior: "landed as migration" in `docs/evidence/community-labels-2026-09/schema-apply.md`.
+- 3.1.7 - The migration number actually used replaces every live occurrence of the provisional 443 named in Constraints in the same commit; the apply log records it now, and the later 7.1 changelog leaf is bound to read that landed number from the apply log without editing historical V1. behavior: "landed as migration" in `docs/evidence/community-labels-2026-09/schema-apply.md`.
 
 ### 3.2 Persist the partition at index time and expose the read API [category: code] (depends: 2.3, 3.1)
 `kind: deliverable`
@@ -2171,9 +2171,10 @@ prose defining `D1.1` plus a `deferred_from` key, because the validator rejects 
     3.1.6: The managed-relation set assertion names `code_communities`. test: `tests/code_index/test_gcode_privilege_manifest.py::test_manifest_privileges_match_the_managed_relation_set`.
 
     3.1.7: The migration number actually used replaces every live occurrence of the
-    provisional 443 named in Constraints in the same commit, and the apply log plus
-    the later 7.1 changelog leaf record it without editing historical V1. behavior:
-    "landed as migration" in `docs/evidence/community-labels-2026-09/schema-apply.md`.'
+    provisional 443 named in Constraints in the same commit; the apply log records
+    it now, and the later 7.1 changelog leaf is bound to read that landed number from
+    the apply log without editing historical V1. behavior: "landed as migration" in
+    `docs/evidence/community-labels-2026-09/schema-apply.md`.'
   labels:
   - covers:gcode-import-communities:3.1:3.1.1
   - covers:gcode-import-communities:3.1:3.1.2
