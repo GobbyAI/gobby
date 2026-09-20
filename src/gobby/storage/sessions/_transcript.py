@@ -12,6 +12,8 @@ from gobby.utils.machine_id import get_machine_id
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
 
+_TRANSCRIPT_PROCESSING_FAILURE_LIMIT = 3
+
 
 class _ManagerState(Protocol):
     db: HubDatabase
@@ -38,7 +40,7 @@ class _TranscriptMixin:
             SELECT * FROM sessions LEFT JOIN (SELECT id AS project_id, name AS project_name FROM projects) AS session_projects USING (project_id)
             WHERE status = 'expired'
             AND transcript_processed = FALSE
-            AND transcript_processing_failure_count < 3
+            AND transcript_processing_failure_count < {_TRANSCRIPT_PROCESSING_FAILURE_LIMIT}
             AND machine_id = %s
             {cursor_clause}
             ORDER BY created_at ASC, id ASC
@@ -129,7 +131,7 @@ class _TranscriptMixin:
         error: str,
         expected_session: Session | None = None,
     ) -> None:
-        """Count only known deterministic failures; infrastructure errors never quarantine."""
+        """Record a deterministic failure; missing sources quarantine until source recovery."""
         if error_code not in {
             "missing_source",
             "unsupported_source",
@@ -138,15 +140,32 @@ class _TranscriptMixin:
         }:
             raise ValueError(f"Not a deterministic transcript failure: {error_code}")
         guard, params = _source_guard(expected_session)
+        # Polling cannot make an absent source appear. The recovery trigger clears
+        # quarantine when source identity or transcript_path changes.
+        failure_count = (
+            "GREATEST(transcript_processing_failure_count, %s)"
+            if error_code == "missing_source"
+            else "transcript_processing_failure_count + 1"
+        )
+        failure_params: tuple[object, ...] = (
+            (_TRANSCRIPT_PROCESSING_FAILURE_LIMIT,) if error_code == "missing_source" else ()
+        )
         with self.db.transaction() as conn:
             conn.execute(
                 f"""UPDATE sessions SET
-                    transcript_processing_failure_count = transcript_processing_failure_count + 1,
+                    transcript_processing_failure_count = {failure_count},
                     transcript_processing_last_error_code = %s,
                     transcript_processing_last_error = %s,
                     transcript_processing_last_failed_at = %s
                 WHERE id = %s AND status = 'expired' AND transcript_processed = FALSE {guard}""",
-                (error_code, error[:2000], utc_now(), session_id, *params),
+                (
+                    *failure_params,
+                    error_code,
+                    error[:2000],
+                    utc_now(),
+                    session_id,
+                    *params,
+                ),
             )
 
 

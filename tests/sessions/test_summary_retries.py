@@ -215,16 +215,15 @@ async def test_poison_fairness_equal_timestamps_wrap_and_new_arrivals(
             assert 0 < len(attempted) - before <= 2
         assert attempted == [s.id for s in ordered]
         await lifecycle._process_pending_transcripts(lifecycle._capture_active())
-        assert attempted[5:] == [s.id for s in ordered[:2]]
+        assert attempted == [s.id for s in ordered]
         newcomer = register(lifecycle, project.id, "new-arrival")
         with temp_db.transaction() as conn:
             conn.execute(
                 "UPDATE sessions SET created_at = %s WHERE id = %s",
                 (datetime(2025, 1, 1, tzinfo=UTC), newcomer.id),
             )
-        for _ in range(3):
-            await lifecycle._process_pending_transcripts(lifecycle._capture_active())
-        assert newcomer.id in attempted
+        await lifecycle._process_pending_transcripts(lifecycle._capture_active())
+        assert attempted == [s.id for s in ordered] + [newcomer.id]
 
 
 async def test_quarantine_keeps_missing_sessions_unprocessed(
@@ -234,8 +233,10 @@ async def test_quarantine_keeps_missing_sessions_unprocessed(
 ) -> None:
     project = isolated_checkout_factory(temp_db, "quarantine").project
     session = register(lifecycle, project.id, "missing")
-    for _ in range(4):
-        assert await lifecycle._process_pending_transcripts(lifecycle._capture_active()) == 0
+    with patch.object(lifecycle, "_process_session_transcript", new_callable=AsyncMock) as parse:
+        for _ in range(2):
+            assert await lifecycle._process_pending_transcripts(lifecycle._capture_active()) == 0
+        parse.assert_awaited_once_with(session.id, None)
     saved = lifecycle.session_manager.get(session.id)
     assert saved is not None
     assert saved.transcript_processing_failure_count == 3
@@ -561,7 +562,7 @@ async def test_stale_generation_preserves_replacement_summary(
     assert saved is not None
     assert saved.summary_markdown == replacement
     assert saved.summary_source_context_hash == "replacement-hash"
-    assert saved.transcript_processing_failure_count == (0 if change in {"active", "paused"} else 1)
+    assert saved.transcript_processing_failure_count == (0 if change in {"active", "paused"} else 3)
     assert not processed(lifecycle, session.id)
 
 
