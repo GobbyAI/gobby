@@ -61,7 +61,7 @@ const PRIOR_BASELINE_VERSION: i32 = 419;
 const PRIOR_BASELINE_CHECKSUM: &str =
     "a361cb10d591e82aeb0e1ce04eb09e64e468ef571dcd3ae492eccb16cbb4ce81";
 
-const GCODE_RLS_TABLES: [&str; 11] = [
+const GCODE_RLS_TABLES: [&str; 12] = [
     "code_indexed_projects",
     "code_indexed_project_states",
     "code_indexed_file_states",
@@ -73,6 +73,7 @@ const GCODE_RLS_TABLES: [&str; 11] = [
     "code_content_chunks",
     "code_index_projection_cleanup_pending",
     "code_index_prune_dirty_projects",
+    "code_communities",
 ];
 
 struct ScratchDatabase {
@@ -212,6 +213,7 @@ fn assert_gcode_rls_policies(client: &mut Client) -> anyhow::Result<()> {
                 "code_indexed_project_states",
                 "code_indexed_file_states",
                 "code_index_prune_dirty_projects",
+                "code_communities",
             ]
             .contains(&table)
             {

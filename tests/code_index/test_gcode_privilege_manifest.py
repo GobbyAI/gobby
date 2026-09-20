@@ -70,6 +70,7 @@ def test_manifest_privileges_match_the_managed_relation_set() -> None:
         "code_content_chunks",
         "code_index_projection_cleanup_pending",
         "code_index_prune_dirty_projects",
+        "code_communities",
     }
     assert relations["projects"]["operations"] == ["SELECT"]
     assert relations["projects"]["columns"] == ["id", "name", "deleted_at"]

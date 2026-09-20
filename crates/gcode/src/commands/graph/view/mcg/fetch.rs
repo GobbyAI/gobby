@@ -9,17 +9,16 @@ use crate::codewiki_facts::{
     CodewikiFacts, GraphAvailability, GraphBounds, GraphEdge, GraphEdgeKind, GraphOutcome,
     GraphScopeMode, MAX_DECLARED_EDGE_LIMIT, PublicEdge, ScopeSelector,
 };
+use crate::communities::identity::{ImportIdentity, load_project_imports};
 use crate::config::Context;
-use crate::index::import_resolution::build_import_resolution_context;
 use crate::output::Format;
-use crate::visibility;
 
 use super::super::render::{ViewSeed, build_view_payload, print_view};
 use super::super::{
     CandidateEndpoint, CandidateEndpointKind, ViewEdgeCandidate, hint_for_availability,
     local_machine_id, non_empty, visible_map_for_candidates,
 };
-use super::identity::{McgIdentity, McgSeedSelector, close_endpoint, resolve_mcg_seed};
+use super::identity::{McgSeedSelector, close_endpoint, resolve_mcg_seed};
 use super::{McgHopFetch, assign_leiden_communities, walk_mcg};
 
 /// Import edge → walk candidate. The module endpoint's `file` is the unique
@@ -28,7 +27,7 @@ use super::{McgHopFetch, assign_leiden_communities, walk_mcg};
 fn import_edge_to_candidate(
     edge: &GraphEdge,
     machine_id: &str,
-    identity: &McgIdentity,
+    identity: &ImportIdentity,
 ) -> ViewEdgeCandidate {
     ViewEdgeCandidate {
         source: CandidateEndpoint {
@@ -58,7 +57,7 @@ fn import_edge_to_candidate(
 
 fn fetch_mcg_hop(
     facts: &CodewikiFacts,
-    identity: &McgIdentity,
+    identity: &ImportIdentity,
     files: &[CandidateEndpoint],
     modules: &[CandidateEndpoint],
     exclude: &HashSet<PublicEdge>,
@@ -109,24 +108,6 @@ fn user_limit(limit: Option<usize>) -> usize {
     limit.unwrap_or(MAX_DECLARED_EDGE_LIMIT)
 }
 
-fn load_identity(ctx: &Context) -> anyhow::Result<McgIdentity> {
-    let mut conn = crate::db::connect_readonly(&ctx.database_url)?;
-    let visible = visibility::visible_tree(&mut conn, ctx)?
-        .into_iter()
-        .map(|file| file.file_path)
-        .collect::<HashSet<_>>();
-    let imports = crate::db::read_active_imports(&mut conn, &ctx.project_id)?
-        .into_iter()
-        .map(|row| (row.file_path, row.module_name))
-        .collect::<Vec<_>>();
-    let candidates = visible
-        .iter()
-        .map(|path| ctx.project_root.join(path))
-        .collect::<Vec<_>>();
-    let resolver = build_import_resolution_context(&ctx.project_root, &candidates);
-    Ok(McgIdentity::from_resolution(&visible, &resolver, &imports))
-}
-
 pub(crate) fn run(
     ctx: &Context,
     args: &GraphViewArgs,
@@ -155,7 +136,8 @@ pub(crate) fn run(
         );
     }
 
-    let identity = load_identity(ctx)?;
+    let mut conn = crate::db::connect_readonly(&ctx.database_url)?;
+    let identity = load_project_imports(&mut conn, ctx)?.identity;
     let resolved = resolve_mcg_seed(selector, &identity)?;
     let seed = ViewSeed {
         id: resolved.input.clone(),
@@ -197,8 +179,8 @@ mod tests {
     use std::collections::{HashMap, HashSet};
 
     use crate::codewiki_facts::{GraphEdge, GraphEdgeKind};
+    use crate::communities::identity::ImportIdentity;
 
-    use super::super::identity::McgIdentity;
     use super::import_edge_to_candidate;
 
     fn import_edge(target: &str) -> GraphEdge {
@@ -221,7 +203,7 @@ mod tests {
 
     #[test]
     fn mcg_import_edge_candidate_uses_identity_provider_not_target_file() {
-        let identity = McgIdentity {
+        let identity = ImportIdentity {
             visible_files: HashSet::from(["src/consumer.py".into(), "src/p.py".into()]),
             providers: HashMap::from([
                 ("p".into(), vec!["src/p.py".into()]),

@@ -2718,6 +2718,88 @@ class TestCodexHooksAdapterTranslateToHookEvent:
         assert hook_event is not None
         assert hook_event.event_type == HookEventType.AFTER_TOOL
 
+    def test_translate_post_tool_use_normalizes_nested_exec_command(self) -> None:
+        """Qualified nested exec results remain canonical shell events."""
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
+
+        command = "ocr delegate rule --format json src/a.py"
+        hook_event = CodexHooksAdapter().translate_to_hook_event(
+            {
+                "hook_type": "PostToolUse",
+                "input_data": {
+                    "session_id": "codex-session-123",
+                    "cwd": "/project",
+                    "tool_name": "functions.exec_command",
+                    "tool_input": {"cmd": command},
+                    "tool_response": {"exit_code": 0, "output": "reviewed"},
+                },
+                "source": "codex",
+            }
+        )
+
+        assert hook_event is not None
+        assert hook_event.event_type == HookEventType.AFTER_TOOL
+        assert hook_event.data["tool_name"] == "Bash"
+        assert hook_event.data["tool_input"]["command"] == command
+        assert hook_event.data["tool_outcome"]["status"] == "succeeded"
+
+    @pytest.mark.parametrize(
+        ("exit_code", "expected_status"),
+        [(0, "succeeded"), (7, "failed")],
+    )
+    def test_translate_post_tool_use_reads_command_execution_outcome(
+        self, tmp_path: Path, exit_code: int, expected_status: str
+    ) -> None:
+        """Codex Bash hooks recover the authoritative exit code from the transcript."""
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
+
+        command = "ocr delegate rule --format json src/a.py"
+        command_output = json.dumps({"schema_version": "1", "groups": []})
+        tool_use_id = "exec-authoritative"
+        transcript_path = tmp_path / "rollout.jsonl"
+        transcript_path.write_text(
+            json.dumps(
+                {
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "item_completed",
+                        "item": {
+                            "type": "CommandExecution",
+                            "id": tool_use_id,
+                            "command": ["/bin/zsh", "-lc", command],
+                            "status": "completed",
+                            "stdout": command_output,
+                            "stderr": "",
+                            "exit_code": exit_code,
+                        },
+                    },
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        hook_event = CodexHooksAdapter().translate_to_hook_event(
+            {
+                "hook_type": "PostToolUse",
+                "input_data": {
+                    "session_id": "codex-session-123",
+                    "cwd": "/project",
+                    "tool_name": "Bash",
+                    "tool_input": {"command": command},
+                    "tool_response": command_output,
+                    "tool_use_id": tool_use_id,
+                    "transcript_path": str(transcript_path),
+                },
+                "source": "codex",
+            }
+        )
+
+        assert hook_event is not None
+        assert hook_event.data["tool_output"] == json.loads(command_output)
+        assert hook_event.data["tool_outcome"]["status"] == expected_status
+        assert hook_event.data["tool_outcome"]["exit_code"] == exit_code
+
     def test_translate_user_prompt_submit(self) -> None:
         """Translate UserPromptSubmit to BEFORE_AGENT."""
         from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter

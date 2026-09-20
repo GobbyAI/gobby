@@ -1,26 +1,10 @@
 //! File/module seed identity and equivalence-class closure for MCG.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt;
 
-use crate::index::import_resolution::ImportResolutionContext;
+use crate::communities::identity::ImportIdentity;
 
 use super::super::{CandidateEndpoint, CandidateEndpointKind};
-
-/// Module-name ↔ file identity for the MCG walk.
-///
-/// `providers[module]` lists the visible files a module name can resolve to
-/// across the whole project; `aliases[file]` lists the module names whose only
-/// provider is that file. Alias membership is global: a relative specifier that
-/// resolves to different files from different importers is ambiguous and
-/// belongs to no file's equivalence class, because stored `IMPORTS` targets are
-/// `CodeModule` nodes keyed by name and admit every consumer of that name.
-#[derive(Clone, Debug)]
-pub(crate) struct McgIdentity {
-    pub visible_files: HashSet<String>,
-    pub providers: HashMap<String, Vec<String>>,
-    pub aliases: HashMap<String, Vec<String>>,
-}
 
 #[derive(Clone, Debug)]
 pub(crate) struct McgSeed {
@@ -75,7 +59,7 @@ impl std::error::Error for McgSeedError {}
 
 pub(crate) fn resolve_mcg_seed(
     selector: McgSeedSelector<'_>,
-    identity: &McgIdentity,
+    identity: &ImportIdentity,
 ) -> Result<McgSeed, McgSeedError> {
     let seed = selector.value();
     if matches!(selector, McgSeedSelector::File(_)) {
@@ -106,7 +90,7 @@ pub(crate) fn resolve_mcg_seed(
 
 pub(crate) fn close_endpoint(
     endpoint: &CandidateEndpoint,
-    identity: &McgIdentity,
+    identity: &ImportIdentity,
 ) -> Vec<CandidateEndpoint> {
     match endpoint.kind {
         CandidateEndpointKind::File => identity
@@ -134,93 +118,7 @@ pub(crate) fn close_endpoint(
     }
 }
 
-impl McgIdentity {
-    fn providers_for(&self, module: &str) -> Vec<String> {
-        self.providers
-            .get(module)
-            .into_iter()
-            .flatten()
-            .filter(|file| self.visible_files.contains(*file))
-            .cloned()
-            .collect()
-    }
-
-    /// The single visible file providing `module`, or `None` when the name is
-    /// unknown or resolves to several files.
-    pub(super) fn unique_provider(&self, module: &str) -> Option<String> {
-        match self.providers_for(module).as_slice() {
-            [file] => Some(file.clone()),
-            _ => None,
-        }
-    }
-
-    /// One-shot identity build: `O(|rows| + |visible| + index)` resolver work.
-    ///
-    /// Every distinct module name (import targets plus the path-derived names of
-    /// each visible file) gets its importer-independent candidates once; every
-    /// distinct `(importer, module)` row adds the importer-aware candidates.
-    pub(super) fn from_resolution(
-        visible: &HashSet<String>,
-        resolver: &ImportResolutionContext,
-        imports: &[(String, String)],
-    ) -> Self {
-        let rows = imports
-            .iter()
-            .map(|(source, module)| (source.as_str(), module.as_str()))
-            .collect::<HashSet<_>>();
-        let derived =
-            resolver.path_derived_module_names_for_files(visible.iter().map(String::as_str));
-        let modules = rows
-            .iter()
-            .map(|(_, module)| *module)
-            .chain(derived.values().flatten().map(String::as_str))
-            .collect::<HashSet<_>>();
-
-        let mut providers: HashMap<String, BTreeSet<String>> = HashMap::new();
-        for module in modules {
-            providers.entry(module.to_string()).or_default().extend(
-                resolver
-                    .importer_independent_candidates(module)
-                    .into_iter()
-                    .filter(|file| visible.contains(file)),
-            );
-        }
-        for (source, module) in &rows {
-            providers.entry((*module).to_string()).or_default().extend(
-                resolver
-                    .importer_candidates(module, source)
-                    .into_iter()
-                    .filter(|file| visible.contains(file)),
-            );
-        }
-
-        let mut aliases = visible
-            .iter()
-            .map(|file| (file.clone(), Vec::new()))
-            .collect::<HashMap<String, Vec<String>>>();
-        for (module, files) in &providers {
-            if let [file] = files.iter().collect::<Vec<_>>().as_slice() {
-                aliases
-                    .entry((*file).clone())
-                    .or_default()
-                    .push(module.clone());
-            }
-        }
-        for names in aliases.values_mut() {
-            names.sort();
-        }
-        Self {
-            visible_files: visible.clone(),
-            providers: providers
-                .into_iter()
-                .map(|(module, files)| (module, files.into_iter().collect()))
-                .collect(),
-            aliases,
-        }
-    }
-}
-
-fn closed_file_seed(file: &str, kind: &str, identity: &McgIdentity) -> McgSeed {
+fn closed_file_seed(file: &str, kind: &str, identity: &ImportIdentity) -> McgSeed {
     let modules = identity
         .aliases
         .get(file)
