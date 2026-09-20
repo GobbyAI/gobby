@@ -121,6 +121,15 @@ def _read_installed_pin(bin_dir: Path) -> dict[str, int | str]:
         raise CutoverError(f"installed schema identity pin is unreadable: {exc}") from exc
 
 
+def _read_workspace_pin(root: Path) -> dict[str, int | str]:
+    pin_path = root / _PIN_PATH
+    try:
+        parsed: object = json.loads(pin_path.read_text(encoding="utf-8"))
+        return validate_identity(parsed)
+    except (OSError, json.JSONDecodeError, SchemaIdentityError) as exc:
+        raise CutoverError(f"workspace schema identity pin is unreadable: {exc}") from exc
+
+
 def _render_identity(identity: dict[str, int | str]) -> str:
     contract = json.dumps(identity, sort_keys=True, separators=(",", ":"))
     return f"v{identity['latest_version']} {contract}"
@@ -206,11 +215,16 @@ def cutover(ctx: click.Context, workspace: Path, allow_dirty: bool) -> None:
                 + ", ".join(dirty)
                 + "; commit or stash them, or pass --allow-dirty"
             )
+        expected_identity = _read_workspace_pin(root)
         run_cutover(
             root,
             bin_dir,
             restart_daemon=restart_daemon,
-            start_refusal=lambda candidate: restart_start_refusal(ctx, candidate),
+            start_refusal=lambda candidate: restart_start_refusal(
+                ctx,
+                candidate,
+                expected_identity=expected_identity,
+            ),
         )
     except CutoverError as exc:
         raise click.ClickException(str(exc)) from exc
