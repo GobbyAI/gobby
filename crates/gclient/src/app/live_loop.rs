@@ -13,7 +13,9 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 use tokio::time::Instant;
 
-use crate::copy_mode::{copy_selection, route_mouse_selection, PASTE_MAX_BYTES};
+use crate::copy_mode::{
+    apply_text_read, copy_or_request_selection, route_mouse_selection, PASTE_MAX_BYTES,
+};
 use crate::daemon::{Daemon, DaemonError, DaemonEvent, EventReceiver, Generation, LiveDaemon};
 use crate::frame_source::{FrameError, FrameSource};
 use crate::key_input::{key_input, resolve_chord, text_bytes, Resolution};
@@ -302,6 +304,15 @@ pub async fn run_live_loop<B: Backend>(
                 }
             }
             frame = recv_workspace_frame(workspace) => {
+                if let Some((pane_id, Ok(gobby_terminal::protocol::ServerMessage::TextRead {
+                    text,
+                    ..
+                }))) = &frame
+                {
+                    let mut output = std::io::stdout();
+                    apply_text_read(chrome, *pane_id, text.clone(), &mut output)?;
+                    output.flush()?;
+                }
                 if let Some((pane_id, Err(error))) = frame {
                     let mut deferred_input = Vec::new();
                     let mut probe_prefix = prefix_armed;
@@ -689,7 +700,7 @@ async fn route_live_input(
     }
     if route_mouse_selection(workspace, chrome, event) {
         let mut output = std::io::stdout();
-        copy_selection(workspace, chrome, &mut output)?;
+        copy_or_request_selection(workspace, chrome, &mut output).await?;
         output.flush()?;
         chrome.mode = Mode::Terminal;
         return Ok(false);

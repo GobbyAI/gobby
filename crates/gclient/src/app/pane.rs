@@ -535,6 +535,27 @@ impl Pane {
         self.frame_source.as_ref()
     }
 
+    pub async fn request_text(
+        &mut self,
+        start_rows_from_live_edge: u32,
+        start_col: u16,
+        end_rows_from_live_edge: u32,
+        end_col: u16,
+    ) -> Result<(), FrameError> {
+        let source = self
+            .frame_source
+            .as_mut()
+            .ok_or_else(|| FrameError::Other("pane has no frame source".into()))?;
+        source
+            .send(&ClientMessage::ReadText {
+                start_rows_from_live_edge,
+                start_col,
+                end_rows_from_live_edge,
+                end_col,
+            })
+            .await
+    }
+
     pub(super) fn frame_source_mut(&mut self) -> Option<&mut PaneFrameSource> {
         self.frame_source.as_mut()
     }

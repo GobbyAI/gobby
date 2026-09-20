@@ -20,6 +20,7 @@ from gobby.mcp_proxy.tools.spawn_agent._response import (
 )
 from gobby.mcp_proxy.tools.spawn_agent._runtime import _persist_spawn_runtime
 from gobby.mcp_proxy.tools.spawn_agent._step_state import apply_claimed_step_update
+from gobby.sessions.title_lifecycle import update_title_for_claim
 from gobby.tasks.state_semantics import get_claimed_session_id, is_task_actionable
 
 logger = logging.getLogger(__name__)
@@ -38,6 +39,14 @@ def _link_auto_claimed_session(task_manager: Any, session_id: str, task_id: str)
         SessionTaskManager(task_manager.db).link_task(session_id, task_id, "claimed")
     except Exception as exc:
         logger.debug("Best-effort auto-claim session linking failed: %s", exc)
+
+
+def _title_auto_claimed_session(session_manager: Any, session_id: str, task: Any) -> None:
+    """Apply the task title after spawn-time auto-claiming."""
+    try:
+        update_title_for_claim(session_manager, session_id, task)
+    except Exception as exc:
+        logger.debug("Best-effort auto-claim session titling failed: %s", exc)
 
 
 def _clear_parent_claim_session_variables(
@@ -254,6 +263,12 @@ async def finalize_executed_spawn(
                             task_manager,
                             spawn_result.child_session_id,
                             resolved_task_id,
+                        )
+                        await asyncio.to_thread(
+                            _title_auto_claimed_session,
+                            runner.session_manager,
+                            spawn_result.child_session_id,
+                            claimed_task,
                         )
                         if transferred_parent_claim:
                             await asyncio.to_thread(

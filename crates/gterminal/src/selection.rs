@@ -161,8 +161,7 @@ impl Selection {
         }
     }
 
-    #[cfg(feature = "vt-engine")]
-    pub(crate) fn ordered_cells(&self) -> ((u32, u16), (u32, u16)) {
+    pub fn ordered_cells(&self) -> ((u32, u16), (u32, u16)) {
         self.ordered()
     }
 
