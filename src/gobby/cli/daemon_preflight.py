@@ -48,7 +48,12 @@ def restart_start_refusal(
         if refusal := binary_set_apply_refusal():
             return refusal
         database = _open_hub(ctx)
-        if refusal := schema_apply_refusal(database):
+        refusal = (
+            schema_apply_refusal(database)
+            if expected_identity is None
+            else schema_apply_refusal(database, expected_identity=expected_identity)
+        )
+        if refusal:
             return refusal
     elif refusal := _candidate_identity_refusal(gdaemon, expected_identity=expected_identity):
         return refusal
