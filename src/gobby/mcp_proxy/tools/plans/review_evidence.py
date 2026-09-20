@@ -139,6 +139,7 @@ def register_review_evidence_tools(
             "required": ["evidence_id"],
         },
         func=get_plan_review_snapshot,
+        read_only=True,
     )
 
     def bind_evidence_run(evidence_id: str, run_id: str) -> dict[str, object]:
@@ -220,6 +221,7 @@ def register_review_evidence_tools(
             "required": ["evidence_id", "plan_path"],
         },
         func=verify_plan_unchanged,
+        read_only=True,
     )
 
     def derive_plan_review_manifest(
@@ -244,6 +246,7 @@ def register_review_evidence_tools(
             "required": ["evidence_id", "routing_decisions"],
         },
         func=derive_plan_review_manifest,
+        read_only=True,
     )
 
     async def derive_plan_handoff_manifest(
@@ -276,6 +279,7 @@ def register_review_evidence_tools(
             "required": ["plan_path", "routing_decisions"],
         },
         func=derive_plan_handoff_manifest,
+        read_only=True,
     )
 
     async def apply_plan_handoff_manifest(
@@ -360,6 +364,7 @@ def register_review_evidence_tools(
             ],
         },
         func=validate_plan_review_coverage,
+        read_only=True,
     )
 
     def apply_plan_review_manifest(
@@ -421,6 +426,7 @@ def register_review_evidence_tools(
             "required": ["evidence_id"],
         },
         func=render_plan_changelog_round,
+        read_only=True,
     )
 
     def append_plan_changelog_round(

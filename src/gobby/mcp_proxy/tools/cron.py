@@ -48,6 +48,7 @@ def create_cron_registry(
 
     @registry.tool(
         name="list_cron_jobs",
+        read_only=True,
         description="List cron jobs with optional filtering by project and enabled state.",
     )
     def list_cron_jobs(
@@ -158,6 +159,7 @@ def create_cron_registry(
 
     @registry.tool(
         name="get_cron_job",
+        read_only=True,
         description="Get details of a specific cron job by ID.",
     )
     def get_cron_job(job_id: str) -> dict[str, Any]:
@@ -322,6 +324,7 @@ def create_cron_registry(
 
     @registry.tool(
         name="list_cron_runs",
+        read_only=True,
         description="List run history for a cron job.",
     )
     def list_cron_runs(

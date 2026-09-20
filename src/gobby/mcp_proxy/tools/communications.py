@@ -174,7 +174,9 @@ def create_communications_registry(
             logger.exception("Communications tool error")
             return {"success": False, "error": str(e)}
 
-    @registry.tool(description="List configured communication channels and their status.")
+    @registry.tool(
+        description="List configured communication channels and their status.", read_only=True
+    )
     def list_channels() -> dict[str, Any]:
         """List all configured communication channels."""
         try:
@@ -201,7 +203,7 @@ def create_communications_registry(
             logger.exception("Communications tool error")
             return {"success": False, "error": str(e)}
 
-    @registry.tool(description="Get message history for a channel.")
+    @registry.tool(description="Get message history for a channel.", read_only=True)
     def get_messages(
         channel: str | None = None,
         session_id: str | None = None,
@@ -370,7 +372,9 @@ def create_communications_registry(
         except (LookupError, ValueError) as e:
             return {"success": False, "error": str(e)}
 
-    @registry.tool(description="List event subscriptions with exact administrative filters.")
+    @registry.tool(
+        description="List event subscriptions with exact administrative filters.", read_only=True
+    )
     def list_event_subscriptions(
         channel: str | None = None,
         project: str | None = None,
@@ -399,7 +403,7 @@ def create_communications_registry(
         except (LookupError, ValueError) as e:
             return {"success": False, "error": str(e)}
 
-    @registry.tool(description="Get one event subscription by ID.")
+    @registry.tool(description="Get one event subscription by ID.", read_only=True)
     def get_event_subscription(subscription_id: str) -> dict[str, Any]:
         """Get an event subscription."""
         try:
@@ -511,7 +515,7 @@ def create_communications_registry(
             logger.exception("Communications tool error")
             return {"success": False, "error": str(e)}
 
-    @registry.tool(description="List identity mappings with optional filters.")
+    @registry.tool(description="List identity mappings with optional filters.", read_only=True)
     def list_identities(
         session_id: str | None = None, channel: str | None = None
     ) -> dict[str, Any]:

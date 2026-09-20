@@ -78,6 +78,7 @@ def create_clone_cleanup_registry(ctx: CloneRegistryContext) -> InternalToolRegi
             },
         },
         func=detect_stale_clones,
+        read_only=True,
     )
 
     async def _cleanup_stale_clones_impl(

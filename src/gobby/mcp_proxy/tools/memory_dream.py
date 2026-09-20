@@ -70,6 +70,7 @@ def register_memory_dream_tools(
 
     @registry.tool(
         name="memory_dream_status",
+        read_only=True,
         description="Return status, durable checkpoint, and summary for a memory dream run.",
     )
     async def memory_dream_status(run_id: str) -> dict[str, Any]:
@@ -80,6 +81,7 @@ def register_memory_dream_tools(
 
     @registry.tool(
         name="memory_dream_decisions",
+        read_only=True,
         description="Read a page of proposed Dream decisions, effective actions, snapshots and outcomes.",
     )
     async def memory_dream_decisions(

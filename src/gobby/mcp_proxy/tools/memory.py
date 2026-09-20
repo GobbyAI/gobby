@@ -361,6 +361,7 @@ def create_memory_registry(
 
     @registry.tool(
         name="list_memories",
+        read_only=True,
         description="List all memories with optional filtering. Supports tag-based filtering.",
     )
     def list_memories(
@@ -416,6 +417,7 @@ def create_memory_registry(
 
     @registry.tool(
         name="get_memory",
+        read_only=True,
         description="Get details of a specific memory by ID.",
     )
     def get_memory(memory_id: str) -> dict[str, Any]:
@@ -456,6 +458,7 @@ def create_memory_registry(
 
     @registry.tool(
         name="get_related_memories",
+        read_only=True,
         description="Get memories related to a specific memory via cross-references.",
     )
     async def get_related_memories(
@@ -505,6 +508,7 @@ def create_memory_registry(
 
     @registry.tool(
         name="memory_stats",
+        read_only=True,
         description="Get statistics about the memory system.",
     )
     async def memory_stats() -> dict[str, Any]:
@@ -519,6 +523,7 @@ def create_memory_registry(
 
     @registry.tool(
         name="search_knowledge_graph",
+        read_only=True,
         description="Search the knowledge graph backend for entities matching a query.",
     )
     async def search_knowledge_graph(

@@ -317,6 +317,7 @@ def create_ops_artifact_registry(ctx: RegistryContext) -> InternalToolRegistry:
             "required": ["task_id"],
         },
         func=get_artifacts,
+        read_only=True,
     )
 
     return registry

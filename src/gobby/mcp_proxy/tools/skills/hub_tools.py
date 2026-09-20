@@ -13,6 +13,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
 
     @registry.tool(
         name="list_hubs",
+        read_only=True,
         description="List all configured skill hubs. Returns hub names and types.",
     )
     def list_hubs() -> dict[str, Any]:
@@ -56,6 +57,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
 
     @registry.tool(
         name="search_hub",
+        read_only=True,
         description="Search for skills across configured hubs. Returns ranked results from all or specific hubs.",
     )
     async def search_hub(

@@ -543,6 +543,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             "required": ["task_id"],
         },
         func=get_task,
+        read_only=True,
     )
 
     def update_task(
@@ -907,6 +908,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             },
         },
         func=list_tasks,
+        read_only=True,
     )
 
     return registry

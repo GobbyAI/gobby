@@ -628,6 +628,11 @@ class HookManagerFactory:
             task_manager=storage.task,
             config_runtime=config_runtime,
             skill_script_materializer=get_skill_script_materializer(database),
+            internal_manager=(
+                getattr(tool_proxy_getter(), "internal_manager", None)
+                if tool_proxy_getter is not None
+                else None
+            ),
         )
 
         pipeline_executor = None

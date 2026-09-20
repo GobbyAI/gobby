@@ -368,6 +368,7 @@ def add_messaging_tools(
 
     @registry.tool(
         name="get_inter_session_message",
+        read_only=True,
         description=(
             "Retrieve one complete stored inter-session message by ID. "
             "The calling session must be the sender or recipient."
@@ -411,6 +412,7 @@ def add_messaging_tools(
 
     @registry.tool(
         name="get_inter_session_messages",
+        read_only=True,
         description=(
             "Read-only query of inter-session message history. "
             "Returns sent and/or received messages without marking them "

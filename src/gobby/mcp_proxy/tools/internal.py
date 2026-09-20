@@ -93,7 +93,11 @@ def normalize_internal_success_result(result: Any) -> Any:
 
 @dataclass
 class InternalTool:
-    """Represents an internal tool with its metadata and implementation."""
+    """Represents an internal tool with its metadata and implementation.
+
+    ``read_only`` means the handler performs no storage write, process or terminal
+    side effect, and registers no subscription.
+    """
 
     name: str
     description: str
@@ -101,6 +105,7 @@ class InternalTool:
     func: Callable[..., Any]
     brief: str | None = None
     output_schema: dict[str, Any] | None = None
+    read_only: bool = False
 
 
 class InternalToolRegistry:
@@ -131,6 +136,7 @@ class InternalToolRegistry:
         func: Callable[..., Any],
         brief: str | None = None,
         output_schema: dict[str, Any] | None = None,
+        read_only: bool = False,
     ) -> None:
         """
         Register a tool with the registry.
@@ -141,6 +147,7 @@ class InternalToolRegistry:
             input_schema: JSON Schema for the tool's input parameters
             func: The callable that implements the tool (sync or async)
             brief: Optional custom brief for list_tools (overrides auto-generation)
+            read_only: Whether the handler has no externally visible mutation or subscription
         """
         self._tools[name] = InternalTool(
             name=name,
@@ -149,6 +156,7 @@ class InternalToolRegistry:
             func=func,
             brief=brief,
             output_schema=output_schema,
+            read_only=read_only,
         )
         logger.debug("Registered internal tool '%s' on '%s'", name, self.name)
 
@@ -157,6 +165,7 @@ class InternalToolRegistry:
         name: str | None = None,
         description: str | None = None,
         brief: str | None = None,
+        read_only: bool = False,
     ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
         """
         Decorator to register a function as a tool.
@@ -165,6 +174,7 @@ class InternalToolRegistry:
             name: Optional tool name (defaults to function name)
             description: Optional description (defaults to docstring)
             brief: Optional custom brief for list_tools (overrides auto-generation)
+            read_only: Whether the handler has no externally visible mutation or subscription
 
         Returns:
             Decorator function
@@ -224,6 +234,7 @@ class InternalToolRegistry:
                 input_schema=input_schema,
                 func=func,
                 brief=brief,
+                read_only=read_only,
             )
             return func
 

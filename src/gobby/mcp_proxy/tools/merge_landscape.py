@@ -308,6 +308,7 @@ def register_merge_landscape_tools(
 
     @registry.tool(
         name="analyze_merge_landscape",
+        read_only=True,
         description=(
             "List unmerged worktrees with branch, base, divergence stats, files "
             "touched, last commit time, and the originating task ref. Used by "
@@ -411,6 +412,7 @@ def register_merge_landscape_tools(
 
     @registry.tool(
         name="predict_conflicts",
+        read_only=True,
         description=(
             "Run `git merge-tree` simulations between worktree branches to predict "
             "which pairs will conflict. Returns conflict file lists per pair, plus "
@@ -768,6 +770,7 @@ def register_merge_landscape_tools(
 
     @registry.tool(
         name="inspect_merge_state",
+        read_only=True,
         description=(
             "Detect whether a worktree is mid-merge, mid-cherry-pick, or "
             "mid-rebase, and list any unresolved files. Use to recover orphaned "

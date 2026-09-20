@@ -118,6 +118,7 @@ def create_stage_read_registry(ctx: RegistryContext) -> InternalToolRegistry:
             "required": ["ok", "task_id", "stages"],
         },
         func=get_task_stages,
+        read_only=True,
     )
 
     def list_stages_registry(include_deleted: bool = False) -> dict[str, Any]:
@@ -145,6 +146,7 @@ def create_stage_read_registry(ctx: RegistryContext) -> InternalToolRegistry:
             "required": ["ok", "entries"],
         },
         func=list_stages_registry,
+        read_only=True,
     )
 
     def get_task_type_defaults(task_type: str) -> dict[str, Any]:
@@ -186,6 +188,7 @@ def create_stage_read_registry(ctx: RegistryContext) -> InternalToolRegistry:
             "required": ["ok"],
         },
         func=get_task_type_defaults,
+        read_only=True,
     )
 
     return registry
