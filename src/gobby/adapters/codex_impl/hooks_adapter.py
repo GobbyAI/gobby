@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import copy
+import json
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gobby.adapters.base import (
@@ -30,11 +32,65 @@ from gobby.adapters.degradation import (
 )
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.sessions.reasoning_effort import observed_reasoning_effort
+from gobby.sessions.transcripts.codex_items import normalize_command_execution
 
 if TYPE_CHECKING:
     from gobby.hooks.hook_manager import HookManager
 
 logger = logging.getLogger(__name__)
+
+_TRANSCRIPT_READ_CHUNK_BYTES = 64 * 1024
+
+
+def _command_execution_result(input_data: dict[str, Any]) -> dict[str, Any] | None:
+    """Recover the authoritative Codex command result for one hook payload."""
+    transcript_path = input_data.get("transcript_path")
+    tool_use_id = input_data.get("tool_use_id")
+    if not isinstance(transcript_path, str) or not isinstance(tool_use_id, str):
+        return None
+
+    try:
+        with Path(transcript_path).open("rb") as transcript:
+            transcript.seek(0, 2)
+            position = transcript.tell()
+            pending = b""
+            while position > 0:
+                read_size = min(_TRANSCRIPT_READ_CHUNK_BYTES, position)
+                position -= read_size
+                transcript.seek(position)
+                records = (transcript.read(read_size) + pending).split(b"\n")
+                pending = records[0]
+                for record in reversed(records[1:]):
+                    result = _result_from_command_execution_record(record, tool_use_id)
+                    if result is not None:
+                        return result
+            return _result_from_command_execution_record(pending, tool_use_id)
+    except OSError:
+        return None
+
+
+def _result_from_command_execution_record(record: bytes, tool_use_id: str) -> dict[str, Any] | None:
+    if not record.strip():
+        return None
+    try:
+        data = json.loads(record)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    payload = data.get("payload") if isinstance(data, dict) else None
+    if not isinstance(payload, dict) or payload.get("type") != "item_completed":
+        return None
+    item = payload.get("item")
+    if not isinstance(item, dict) or item.get("id") != tool_use_id:
+        return None
+    outcome = normalize_command_execution(item)
+    if outcome is None or outcome.exit_code is None:
+        return None
+    return {
+        "exit_code": outcome.exit_code,
+        "success": outcome.success,
+        "output": outcome.output,
+        "outcome_provenance": "codex.event_msg.command_execution",
+    }
 
 
 class CodexHooksAdapter(BaseAdapter):
@@ -79,9 +135,27 @@ class CodexHooksAdapter(BaseAdapter):
         session_id = input_data.get("session_id", "")
         raw_tool_input = input_data.get("tool_input")
 
-        # Normalize event data (same as Claude — reuse shared normalization)
-        from gobby.hooks.normalization import normalize_tool_fields
+        from gobby.hooks.normalization import (
+            is_shell_tool,
+            normalize_tool_fields,
+            normalize_tool_outcome,
+        )
 
+        if hook_type == "PostToolUse" and is_shell_tool(input_data.get("tool_name")):
+            command_result = _command_execution_result(input_data)
+            if command_result is not None:
+                input_data = {
+                    **input_data,
+                    "tool_result": command_result,
+                }
+                normalize_tool_outcome(
+                    input_data,
+                    explicit_success=command_result["exit_code"] == 0,
+                    provenance="codex.event_msg.command_execution",
+                )
+                input_data["_tool_outcome_locked"] = True
+
+        # Normalize event data (same as Claude — reuse shared normalization)
         normalized_data = normalize_tool_fields(dict(input_data))
         effort = observed_reasoning_effort(normalized_data)
         if effort is None:
