@@ -250,7 +250,7 @@ def test_task_close_validator_definition_submits_then_terminates() -> None:
     assert "gobby-agents:end_agent_run" in step["allowed_mcp_tools"]
     assert "gobby-agents:send_message" not in step["allowed_mcp_tools"]
     assert "submit_close_review" in body["prompts"]["agent"]
-    assert body["version"] == "1.10"
+    assert body["version"] == "1.11"
     assert "First apply the stated closure_reason" in body["prompts"]["agent"]
     assert '"state": "satisfied|gap|pending_external"' in body["prompts"]["agent"]
     assert "criterion beginning `Live:` case-insensitively" in body["prompts"]["agent"]
@@ -271,6 +271,13 @@ def test_task_close_validator_definition_submits_then_terminates() -> None:
     assert "run, never ask for a run to be repeated" in guidance
     assert "never reject a criterion because" in guidance
     assert "your own sandbox cannot reproduce it" in guidance
+    # A retry reads the task row after an earlier verdict was persisted. Those
+    # fields are history, not fresh deterministic evidence; treating them as
+    # current creates a self-reinforcing invalid-review loop.
+    assert "A launched review means deterministic gates 1-12 passed" in guidance
+    assert "validation_status, validation_feedback, and validation_fail_count" in guidance
+    assert "prior review history" in guidance
+    assert "must not use them as current gate evidence" in guidance
     assert "receipt or artifact that must result" not in guidance
 
 

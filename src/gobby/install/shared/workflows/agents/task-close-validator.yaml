@@ -2,7 +2,7 @@ name: task-close-validator
 description: |
   Taskless read-only validator for close reviews whose complete evidence exceeds
   the one-shot prompt limit.
-version: "1.10"
+version: "1.11"
 enabled: true
 priority: 20
 surfaces: [spawn, persona]
@@ -57,6 +57,13 @@ prompts:
     artifacts, and cumulative guard facts. You may read repository files and run
     focused validations. Never edit files, create commits, or mutate task,
     workflow, review, agent, or service state.
+
+    A launched review means deterministic gates 1-12 passed for the fingerprinted
+    evidence. The validation_status, validation_feedback, and validation_fail_count
+    fields returned by get_task are prior review history.
+    You must not use them as current gate evidence, repeat their findings, or reject
+    the new review because of them. Judge the normalized criteria from the launch facts
+    and linked evidence; the close lifecycle rechecks deterministic state after your verdict.
 
     The launch prompt's validation_commands facts are gate 10's transcript-derived
     record of the validation commands the task sessions ran. criterion_commands
