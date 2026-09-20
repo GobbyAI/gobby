@@ -17,7 +17,7 @@ from gobby.storage.task_close_reviews import (
 from gobby.tasks.validation import NO_WORK_CLOSE_REASONS
 from gobby.utils.datetime import utc_now
 
-TASK_CLOSE_VALIDATOR_AGENT = "task-close-validator"
+TASK_CLOSE_REVIEWER_AGENT = "task-close-reviewer"
 CLOSE_REVIEW_RETRY_SECONDS = 900
 # A daemon stop or restart is over in seconds and the daemon is already back up
 # by the time the caller reads its payload, so that cause carries its own short
@@ -25,12 +25,12 @@ CLOSE_REVIEW_RETRY_SECONDS = 900
 CLOSE_REVIEW_DAEMON_STOP_RETRY_SECONDS = 60
 
 
-def validator_spawn_overrides(
+def reviewer_spawn_overrides(
     validation_config: TaskValidationConfig | None,
     *,
     unjudged_attempts: int = 0,
 ) -> dict[str, str | None]:
-    """Return spawn overrides so the validator runs on the ``gobby_tasks.validation`` model.
+    """Return spawn overrides so the reviewer runs on the ``gobby_tasks.validation`` model.
 
     The candidate list is ordered, so ``unjudged_attempts`` — how many earlier
     attempts on this task ended without judging the evidence — is how far down
@@ -72,15 +72,16 @@ def build_agentic_review_prompt(
     validation_commands: Mapping[str, object] | None = None,
     prior_requirements: str | None = None,
     coordinator_owned_pending: bool = False,
+    close_review_min_severity: str = "low",
 ) -> str:
-    """Build the fixed taskless validator prompt for one persisted review intent.
+    """Build the fixed taskless reviewer prompt for one persisted review intent.
 
     ``validation_commands`` is gate 10's transcript-derived run record. The
-    validator has no other access to it; without it the validator re-derives
+    reviewer has no other access to it; without it the reviewer re-derives
     its own evidence standard and asks for receipts gate 10 already holds.
 
     ``criterion_count`` is the normalized criterion count the verdict parser
-    enforces. The validator reads the task's raw criteria text, which splits
+    enforces. The reviewer reads the task's raw criteria text, which splits
     into more criteria than its visible numbering suggests whenever it carries
     nested bullets, so the exact index list travels with the prompt (#22373).
     """
@@ -94,6 +95,7 @@ def build_agentic_review_prompt(
         f"deterministic_evidence_fingerprint={evidence_fingerprint}; "
         f"criterion_count={criterion_count}; "
         f"criterion_indexes={json.dumps(list(range(1, criterion_count + 1)))}. "
+        f"close_review_min_severity={json.dumps(close_review_min_severity)}. "
         "The task's validation criteria normalize to exactly those criterion indexes, "
         "including every criterion produced from a nested bullet. Report each index in "
         "criterion_indexes exactly once; a verdict whose index set differs is rejected as "
@@ -265,7 +267,7 @@ def build_terminal_review_payload(
 __all__ = [
     "CLOSE_REVIEW_DAEMON_STOP_RETRY_SECONDS",
     "CLOSE_REVIEW_RETRY_SECONDS",
-    "TASK_CLOSE_VALIDATOR_AGENT",
+    "TASK_CLOSE_REVIEWER_AGENT",
     "build_agentic_review_prompt",
     "build_terminal_review_payload",
 ]

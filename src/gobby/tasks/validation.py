@@ -1,31 +1,15 @@
-"""Bounded LLM criteria review for the task-close checklist."""
+"""Structured evidence preparation for the task-close reviewer."""
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
-import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
 
 from gobby.config.tasks import TaskValidationConfig
-from gobby.llm import LLMService
-from gobby.prompts import PromptLoader
-from gobby.storage.hub.protocol import HubDatabase
-from gobby.tasks.close_verdict import CloseVerdict, parse_close_verdict
-from gobby.tasks.close_verdict_memo import CloseVerdictMemo
 from gobby.tasks.criteria_contract import split_validation_criteria
-from gobby.tasks.generation_schemas import TASK_CLOSE_VALIDATION_SCHEMA
 from gobby.tasks.validation_evidence import build_close_diff_evidence
-
-# The diff evidence is never squeezed below this many characters, no matter how
-# large the other prompt artifacts are: a starved reviewer rejects complete work.
-_MIN_DIFF_EVIDENCE_CHARS = 10_000
-
-logger = logging.getLogger(__name__)
-
-_NO_PRIOR_REQUIREMENTS = "No requirements were stated by a prior rejected review."
 
 # Closure reasons that require no repository change: the criteria review judges
 # the disposition justification instead of literal criterion satisfaction.
@@ -62,33 +46,11 @@ def stable_checklist_facts(checklist_facts: Mapping[str, object]) -> dict[str, o
     }
 
 
-class ValidationPromptTooLarge(ValueError):
-    """The full criteria and complete manifest cannot fit in the prompt contract."""
-
-    def __init__(
-        self,
-        message: str,
-        *,
-        prompt_chars: int | None = None,
-        prompt_limit: int | None = None,
-        review_fingerprint: str = "",
-        evidence_fingerprint: str = "",
-    ) -> None:
-        super().__init__(message)
-        self.prompt_chars = prompt_chars
-        self.prompt_limit = prompt_limit
-        self.review_fingerprint = review_fingerprint
-        self.evidence_fingerprint = evidence_fingerprint
-
-
 @dataclass(frozen=True, slots=True)
 class PreparedCloseReview:
-    """Rendered close-review evidence with stable submission fingerprints."""
+    """Structured close-review evidence with stable submission fingerprints."""
 
-    prompt: str
     criteria: tuple[str, ...]
-    prompt_chars: int
-    prompt_limit: int
     review_fingerprint: str
     evidence_fingerprint: str
     diff_sha: str
@@ -98,126 +60,11 @@ class PreparedCloseReview:
     excerpt_chars: int
 
 
-def render_prior_requirements(verdict: CloseVerdict | None) -> str:
-    if verdict is None:
-        return _NO_PRIOR_REQUIREMENTS
-    requirements: list[str] = []
-    for criterion in verdict.criteria:
-        if criterion.satisfied or not (criterion.gap or criterion.required_evidence):
-            continue
-        parts = [f"Criterion {criterion.index}: {criterion.criterion}"]
-        if criterion.gap:
-            parts.append(f"Gap: {criterion.gap}")
-        if criterion.required_evidence:
-            parts.append(f"Required evidence: {criterion.required_evidence}")
-        requirements.append("\n".join(parts))
-    return "\n\n".join(requirements) or _NO_PRIOR_REQUIREMENTS
-
-
-def _ensure_prompt_within_limit(prepared: PreparedCloseReview) -> None:
-    if prepared.prompt_chars <= prepared.prompt_limit:
-        return
-    raise ValidationPromptTooLarge(
-        f"Task-close criteria-review prompt is {prepared.prompt_chars} characters, "
-        f"exceeding the configured limit of {prepared.prompt_limit} characters at "
-        "gobby-tasks.validation.close_review_prompt_max_chars. The background "
-        "task-close-validator is required.",
-        prompt_chars=prepared.prompt_chars,
-        prompt_limit=prepared.prompt_limit,
-        review_fingerprint=prepared.review_fingerprint,
-        evidence_fingerprint=prepared.evidence_fingerprint,
-    )
-
-
 class TaskValidator:
-    """Run one bounded criteria-vs-work coherence review."""
+    """Prepare immutable evidence for the daemon-managed close reviewer."""
 
-    def __init__(
-        self,
-        config: TaskValidationConfig,
-        llm_service: LLMService,
-        db: HubDatabase,
-    ) -> None:
+    def __init__(self, config: TaskValidationConfig) -> None:
         self.config = config
-        self.llm_service = llm_service
-        self._loader = PromptLoader(db=db)
-
-    async def validate_task(
-        self,
-        *,
-        task_id: str,
-        title: str,
-        changes_summary: str,
-        validation_criteria: str,
-        diff_text: str | None,
-        checklist_facts: Mapping[str, object],
-        closure_reason: str = "completed",
-        description: str = "",
-        test_bodies: str = "Named acceptance tests: none.",
-        verdict_memo: CloseVerdictMemo | None = None,
-    ) -> CloseVerdict:
-        """Review all criteria once per evidence state, not once per attempt."""
-        prepared = self.prepare_task_review(
-            title=title,
-            changes_summary=changes_summary,
-            validation_criteria=validation_criteria,
-            diff_text=diff_text,
-            checklist_facts=checklist_facts,
-            closure_reason=closure_reason,
-            description=description,
-            test_bodies=test_bodies,
-        )
-        _ensure_prompt_within_limit(prepared)
-
-        if verdict_memo is not None:
-            # Off the loop: the memo reaches psycopg synchronously, and this
-            # runs on the daemon's event loop thread inside close_task (#20866).
-            memoized = await asyncio.to_thread(
-                verdict_memo.get,
-                review_fingerprint=prepared.review_fingerprint,
-                evidence_fingerprint=prepared.evidence_fingerprint,
-            )
-            if memoized is not None:
-                logger.debug(
-                    "Serving the memoized close criteria verdict for task %s "
-                    "(review=%s evidence=%s)",
-                    task_id,
-                    prepared.review_fingerprint[:12],
-                    prepared.evidence_fingerprint[:12],
-                )
-                return memoized
-
-        logger.debug(
-            "Running bounded close criteria review for task %s "
-            "(prompt_chars=%d manifest_files=%d excerpt_chars=%d)",
-            task_id,
-            prepared.prompt_chars,
-            prepared.manifest_count,
-            prepared.excerpt_chars,
-        )
-        payload = await self.llm_service.call_json_feature(
-            self.config,
-            prepared.prompt,
-            system_prompt=self.config.system_prompt,
-            json_schema=TASK_CLOSE_VALIDATION_SCHEMA,
-            caller="tasks.close_checklist",
-            # Without this the chain is bounded only per candidate, so a
-            # provider fallback pays the whole latency again; expiry raises
-            # FeatureGenerationUnavailableError, which the close gate already
-            # routes into validation backoff and escalation (#20866).
-            total_timeout_seconds=self.config.close_review_total_timeout_seconds,
-        )
-        verdict = parse_close_verdict(payload, list(prepared.criteria))
-        if verdict_memo is not None:
-            # Off the loop for the same reason as the lookup above: this one
-            # writes, and it also prunes the task's superseded memo rows.
-            await asyncio.to_thread(
-                verdict_memo.put,
-                review_fingerprint=prepared.review_fingerprint,
-                evidence_fingerprint=prepared.evidence_fingerprint,
-                verdict=verdict,
-            )
-        return verdict
 
     def prepare_task_review(
         self,
@@ -230,9 +77,8 @@ class TaskValidator:
         closure_reason: str = "completed",
         description: str = "",
         test_bodies: str = "Named acceptance tests: none.",
-        prior_verdict: CloseVerdict | None = None,
     ) -> PreparedCloseReview:
-        """Render and fingerprint a review without calling the generation provider."""
+        """Fingerprint the task and evidence without invoking a generation provider."""
         if not self.config.enabled:
             raise RuntimeError("Task-close criteria review is disabled.")
 
@@ -240,79 +86,59 @@ class TaskValidator:
         if not criteria:
             raise ValueError("Task-close criteria review requires explicit validation criteria.")
 
-        criteria_text = "\n".join(
-            f"{index}. {criterion}" for index, criterion in enumerate(criteria, start=1)
-        )
-        facts_text = json.dumps(checklist_facts, sort_keys=True, separators=(",", ":"), default=str)
-        # The reviewer reads every fact; only the deliverable-identifying subset
-        # keys the fingerprints, so transcript growth cannot stale a verdict.
-        stable_facts = stable_checklist_facts(checklist_facts)
-        stable_facts_text = json.dumps(
-            stable_facts, sort_keys=True, separators=(",", ":"), default=str
-        )
-        prior_requirements = render_prior_requirements(prior_verdict)
-
-        def render(evidence_text: str, requirements_text: str, facts: str = facts_text) -> str:
-            return self._loader.render(
-                self.config.prompt_path or "validation/validate",
-                {
-                    "title": title,
-                    "description": description,
-                    "closure_reason": closure_reason.strip() or "completed",
-                    "criteria_text": criteria_text,
-                    "changes_summary": changes_summary.strip(),
-                    "diff_evidence": evidence_text,
-                    "test_bodies": test_bodies,
-                    "checklist_facts": facts,
-                    "prior_requirements": requirements_text,
-                },
-            )
-
+        # Gate facts are available to the reviewer at launch; only the
+        # deliverable-identifying subset keys the fingerprints, so transcript
+        # growth cannot stale a verdict.
+        review_policy = {
+            "close_review_min_severity": self.config.close_review_min_severity,
+            "close_review_max_concurrency_per_project": (
+                self.config.close_review_max_concurrency_per_project
+            ),
+        }
+        stable_facts = {
+            **stable_checklist_facts(checklist_facts),
+            "review_policy": review_policy,
+        }
         diff_evidence = build_close_diff_evidence(diff_text, criteria=validation_criteria)
         complete_evidence_sha = diff_evidence.sha256
         test_bodies_sha = hashlib.sha256(test_bodies.encode()).hexdigest()
-        fingerprint_prompt = render(
-            diff_evidence.text, _NO_PRIOR_REQUIREMENTS, facts=stable_facts_text
-        )
-        prompt = render(diff_evidence.text, prior_requirements)
-        budget = min(
-            self.config.close_review_prompt_budget_chars,
-            self.config.close_review_prompt_max_chars,
-        )
-        if len(prompt) > budget:
-            # Artifact budget: the criteria, summary, test bodies, and facts are
-            # never truncated (criteria routinely reference their exact strings),
-            # so the diff evidence absorbs the whole cut — structurally, per
-            # file, and never below its own floor.
-            overhead = len(prompt) - len(diff_evidence.text)
-            diff_budget = max(budget - overhead, _MIN_DIFF_EVIDENCE_CHARS)
-            diff_evidence = build_close_diff_evidence(
-                diff_text,
-                criteria=validation_criteria,
-                budget_chars=diff_budget,
-            )
-            prompt = render(diff_evidence.text, prior_requirements)
         evidence_fingerprint = hashlib.sha256(
             json.dumps(
                 {
                     "diff": complete_evidence_sha,
                     "tests": test_bodies,
                     "facts": stable_facts,
+                    "policy": review_policy,
                 },
                 sort_keys=True,
                 separators=(",", ":"),
                 default=str,
             ).encode()
         ).hexdigest()
-        # Prior requirements are reviewer-produced continuity context. Keep them
-        # out of the memo key so an unchanged caller evidence state still hits
-        # its exact verdict after that verdict becomes the latest prior review.
-        review_fingerprint = hashlib.sha256(fingerprint_prompt.encode()).hexdigest()
+        review_fingerprint = hashlib.sha256(
+            json.dumps(
+                {
+                    "task": {
+                        "title": title,
+                        "description": description,
+                        "closure_reason": closure_reason.strip() or "completed",
+                        "criteria": criteria,
+                        "changes_summary": changes_summary.strip(),
+                    },
+                    "evidence": {
+                        "diff_sha": complete_evidence_sha,
+                        "test_bodies_sha": test_bodies_sha,
+                        "stable_facts": stable_facts,
+                    },
+                    "policy": review_policy,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            ).encode()
+        ).hexdigest()
         return PreparedCloseReview(
-            prompt=prompt,
             criteria=tuple(criteria),
-            prompt_chars=len(prompt),
-            prompt_limit=self.config.close_review_prompt_max_chars,
             review_fingerprint=review_fingerprint,
             evidence_fingerprint=evidence_fingerprint,
             diff_sha=complete_evidence_sha,
@@ -325,6 +151,4 @@ class TaskValidator:
 
 __all__ = [
     "TaskValidator",
-    "ValidationPromptTooLarge",
-    "render_prior_requirements",
 ]

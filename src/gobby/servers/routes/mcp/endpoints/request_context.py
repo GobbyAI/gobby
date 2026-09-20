@@ -21,10 +21,10 @@ from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.projects import GLOBAL_PROJECT_ID
 from gobby.storage.session_resolution import resolve_session_reference
 from gobby.storage.task_close_reviews import (
-    VALIDATOR_RUN_ENDED_SUCCESS_ERROR,
+    REVIEWER_RUN_ENDED_SUCCESS_ERROR,
     TaskCloseReviewStore,
 )
-from gobby.tasks.agentic_close_review import TASK_CLOSE_VALIDATOR_AGENT
+from gobby.tasks.agentic_close_review import TASK_CLOSE_REVIEWER_AGENT
 from gobby.utils.session_context import (
     AGENT_RUN_ID_HEADER,
     TERMINAL_CONTEXT_HEADER,
@@ -340,7 +340,7 @@ async def _bind_agent_run_context(
                 and run.status == "success"
                 and tokens.resolved_session_id is not None
                 and run.child_session_id == tokens.resolved_session_id
-                and run.agent_name == TASK_CLOSE_VALIDATOR_AGENT
+                and run.agent_name == TASK_CLOSE_REVIEWER_AGENT
                 and run.task_id is None
                 and isinstance(arguments, dict)
                 and isinstance(arguments.get("review_id"), str)
@@ -379,7 +379,7 @@ def _owns_recoverable_close_review(db: HubDatabase, run: AgentRun, review_id: st
         return False
     recoverable = (
         review.status in {"running", "finalizing"}
-        or (review.status == "error" and review.error == VALIDATOR_RUN_ENDED_SUCCESS_ERROR)
+        or (review.status == "error" and review.error == REVIEWER_RUN_ENDED_SUCCESS_ERROR)
         or (
             review.status in {"closed", "invalid", "external_pending"}
             and review.result_payload is not None

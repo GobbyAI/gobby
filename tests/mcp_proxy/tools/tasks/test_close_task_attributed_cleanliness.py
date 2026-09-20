@@ -273,7 +273,7 @@ async def _close_evidence(
             AsyncMock(return_value=transcript),
         ),
         patch.object(lifecycle, "evaluate_acceptance_artifacts", return_value=acceptance),
-        patch.object(lifecycle, "evaluate_criteria_review", review_mock),
+        patch.object(lifecycle, "evaluate_close_review", review_mock),
     ):
         yield review_mock
 
@@ -283,20 +283,31 @@ async def _close_task(
     *,
     review: AsyncMock | None = None,
 ) -> dict[str, Any]:
+    changes_summary = "Implemented and exercised target-scoped close proof."
     async with _close_evidence(harness, review=review):
         with session_context_for_test(harness.session_id):
-            return cast(
-                dict[str, Any],
-                await harness.registry.call(
-                    "close_task",
-                    {
-                        "task_id": harness.task.id,
-                        "changes_summary": "Implemented and exercised target-scoped close proof.",
-                        "commit_sha": harness.commit_sha,
-                        "preview": True,
-                    },
-                ),
+            evaluation = await lifecycle._evaluate_close(
+                harness.context,
+                task_id=harness.task.id,
+                reason="completed",
+                changes_summary=changes_summary,
+                commit_sha=harness.commit_sha,
+                project_path=None,
+                response_detail="concise",
             )
+            if not evaluation.ready:
+                return evaluation.response(preview=False)
+            result = await close_finalization.commit_close(
+                harness.context,
+                evaluation,
+                reason="completed",
+                changes_summary=changes_summary,
+                skip_validation=False,
+                override_justification=None,
+                commit_sha=harness.commit_sha,
+            )
+            result.update({"preview": False, "can_close": result.get("closed") is True})
+            return result
 
 
 @pytest.mark.asyncio

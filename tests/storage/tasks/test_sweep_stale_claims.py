@@ -33,11 +33,12 @@ from gobby.storage.sessions._contested_expiry import (
     read_session_variables,
     record_contested_terminal_expiry,
 )
-from gobby.storage.task_close_reviews import TaskCloseReviewStore
+from gobby.storage.task_close_reviews import QueuedAgentRunSpec, TaskCloseReviewStore
 from gobby.storage.tasks._automation import list_automation_candidates, sweep_stale_claims
 from gobby.storage.tasks._manager import LocalTaskManager
 from gobby.storage.tasks._models import Isolation, Task
 from gobby.terminal_ownership import PaneOwnershipDecision, resolve_pane_ownership
+from gobby.utils.machine_id import require_machine_id
 from tests.storage.tasks._stage_test_helpers import (
     create_task,
     initialize_manifest,
@@ -380,10 +381,21 @@ def test_sweep_keeps_a_claim_while_its_close_review_is_active(
             diff_sha="a" * 64,
             test_bodies_sha="b" * 64,
             stable_facts={},
+            review_id=str(uuid.uuid4()),
+            run=QueuedAgentRunSpec(
+                id=str(uuid.uuid4()),
+                machine_id=require_machine_id(),
+                provider="codex",
+                model=None,
+                agent_name="task-close-reviewer",
+                prompt="Review close evidence.",
+                timeout_seconds=1200,
+                requested_reasoning_effort=None,
+            ),
         )
         assert created
         if settle:
-            store.finish(review.id, status="error", result_payload={}, error="validator died")
+            store.finish(review.id, status="error", result_payload={}, error="reviewer died")
 
     reclaimed = sweep_stale_claims(temp_db, project_id=sample_project["id"])
 

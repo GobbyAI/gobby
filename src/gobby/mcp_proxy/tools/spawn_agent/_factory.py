@@ -340,6 +340,7 @@ def create_spawn_agent_registry(
         droid_mode: Literal["exec", "interactive"] = "exec",
         extra_write_paths: list[str] | None = None,
         write_paths_reason: str | None = None,
+        reserved_run_id: str | None = None,
     ) -> dict[str, Any]:
         """
         Spawn a subagent with the specified configuration.
@@ -415,6 +416,28 @@ def create_spawn_agent_registry(
         )
         if agent_body is None and agent != "default":
             return {"success": False, "error": f"Agent '{agent}' not found"}
+
+        if reserved_run_id is not None:
+            from uuid import UUID
+
+            from gobby.storage.agents import LocalAgentRunManager
+            from gobby.tasks.agentic_close_review import TASK_CLOSE_REVIEWER_AGENT
+
+            if agent != TASK_CLOSE_REVIEWER_AGENT or task_id is not None or db is None:
+                return {"success": False, "error": "reserved_run_id is reviewer-internal"}
+            try:
+                reserved_run_id = str(UUID(reserved_run_id))
+            except ValueError:
+                return {"success": False, "error": "reserved_run_id is invalid"}
+            queued_run = await asyncio.to_thread(LocalAgentRunManager(db).get, reserved_run_id)
+            if (
+                queued_run is None
+                or queued_run.status != "queued"
+                or queued_run.parent_session_id != resolved_parent_session_id
+                or queued_run.agent_name != TASK_CLOSE_REVIEWER_AGENT
+                or queued_run.prompt != prompt
+            ):
+                return {"success": False, "error": "reserved queued reviewer run mismatch"}
 
         # Compose prompt — hooks inject agent instructions via session_start,
         # so no preamble prepend needed here.
@@ -586,6 +609,7 @@ def create_spawn_agent_registry(
             droid_mode=droid_mode,
             extra_write_paths=extra_write_paths,
             write_paths_reason=write_paths_reason,
+            reserved_run_id=reserved_run_id,
         )
 
         return result

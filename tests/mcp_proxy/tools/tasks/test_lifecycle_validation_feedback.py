@@ -1,370 +1,147 @@
-"""Feedback and accounting contracts for bounded criteria review."""
+"""Close-review verdict accounting and severity-threshold contracts."""
 
 from __future__ import annotations
 
-import json
 from types import SimpleNamespace
-from typing import Any, cast
-from unittest.mock import AsyncMock, MagicMock
+from typing import cast
 
 import pytest
 
 from gobby.config.tasks import TaskValidationConfig
-from gobby.llm import LLMService
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
-from gobby.mcp_proxy.tools.tasks._lifecycle_validation import (
-    account_criteria_verdict,
-    evaluate_criteria_review,
-)
+from gobby.mcp_proxy.tools.tasks._lifecycle_validation import account_criteria_verdict
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.task_close_reviews import TaskCloseReviewStore
 from gobby.storage.tasks import LocalTaskManager, Task
-from gobby.tasks.close_verdict import CloseCriterionVerdict, CloseVerdict
-from gobby.tasks.close_verdict_memo import CloseVerdictMemo, TaskCloseVerdictMemo
-from gobby.tasks.criteria_contract import split_validation_criteria
-from gobby.tasks.validation import TaskValidator, ValidationPromptTooLarge
-from gobby.tasks.validation_history import ValidationHistoryManager
+from gobby.tasks.close_verdict import (
+    FINDING_SEVERITY_ORDER,
+    CloseCriterionVerdict,
+    CloseFinding,
+    CloseVerdict,
+    FindingSeverity,
+)
 
 pytestmark = pytest.mark.integration
-
-_SESSION_ID = "00000000-0000-4000-8000-0000000009f1"
-
-
-class _Validator:
-    def __init__(self, outcome: CloseVerdict | Exception) -> None:
-        self.outcome = outcome
-        self.calls = 0
-        self.last_kwargs: dict[str, object] = {}
-
-    async def validate_task(self, **kwargs: object) -> CloseVerdict:
-        self.calls += 1
-        self.last_kwargs = kwargs
-        if isinstance(self.outcome, Exception):
-            raise self.outcome
-        return self.outcome
 
 
 def _task(manager: LocalTaskManager, project_id: str) -> Task:
     return manager.create_task(
         project_id=project_id,
-        title="Feedback leaf",
-        category="docs",
-        validation_criteria="The guide documents the checklist.",
+        title="Account close-review verdict",
+        category="code",
+        validation_criteria="The implementation is correct.",
     )
 
 
-async def _evaluate(
-    task: Task,
-    manager: LocalTaskManager,
-    validator: _Validator | TaskValidator,
-    reason: str = "completed",
-    verdict_memo: CloseVerdictMemo | None = None,
-    checklist_facts: dict[str, object] | None = None,
-) -> Any:
-    ctx = cast(RegistryContext, SimpleNamespace(task_manager=manager))
-    return await evaluate_criteria_review(
+def _ctx(manager: LocalTaskManager) -> RegistryContext:
+    return cast(RegistryContext, SimpleNamespace(task_manager=manager))
+
+
+def _criterion(*, gap: bool = False) -> CloseCriterionVerdict:
+    return CloseCriterionVerdict(
+        index=1,
+        criterion="The implementation is correct.",
+        satisfied=not gap,
+        gap="Criterion evidence is incomplete." if gap else None,
+    )
+
+
+def _finding(severity: FindingSeverity) -> CloseFinding:
+    return CloseFinding(
+        path="src/review.py",
+        start_line=10,
+        end_line=12,
+        severity=severity,
+        category="bug",
+        description=f"{severity} code finding",
+    )
+
+
+def test_criterion_gap_blocks_at_the_highest_severity_threshold(
+    temp_db: HubDatabase,
+    sample_project: dict[str, object],
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    task = _task(manager, str(sample_project["id"]))
+    verdict = CloseVerdict(status="invalid", criteria=(_criterion(gap=True),), feedback="gap")
+
+    result = account_criteria_verdict(
         task=task,
-        task_validator=cast(TaskValidator, validator),
-        ctx=ctx,
+        verdict=verdict,
+        ctx=_ctx(manager),
         resolved_id=task.id,
-        changes_summary="Documented the checklist.",
-        diff_text="diff --git a/docs/guide.md b/docs/guide.md",
-        checklist_facts=checklist_facts or {"validation_commands": "skipped:category"},
-        validation_config=None,
-        reason=reason,
-        verdict_memo=verdict_memo,
+        validation_config=TaskValidationConfig(close_review_min_severity="critical"),
+        reset_reason="close_review_valid",
     )
-
-
-def _render_context(
-    _path: str,
-    context: dict[str, Any] | None = None,
-    strict: bool = False,
-) -> str:
-    del strict
-    return json.dumps(context or {}, sort_keys=True, default=str)
-
-
-def _memo_validator(temp_db: HubDatabase) -> tuple[TaskValidator, AsyncMock]:
-    """A real validator over a rendered prompt, with only the provider faked."""
-    llm_service = MagicMock(spec=LLMService)
-    llm_service.call_json_feature = AsyncMock(
-        return_value={
-            "status": "valid",
-            "criteria": [{"index": 1, "satisfied": True, "gap": None}],
-            "feedback": "Documentation criterion is satisfied.",
-        }
-    )
-    validator = TaskValidator(TaskValidationConfig(), llm_service, db=temp_db)
-    # The bundled prompt template is not seeded into the test hub, and the
-    # memo keys on the rendered prompt, so render the context itself.
-    cast(Any, validator._loader).render = _render_context
-    return validator, llm_service.call_json_feature
-
-
-@pytest.mark.asyncio
-async def test_valid_verdict_preserves_feedback_without_mutating_task(
-    temp_db: HubDatabase,
-    sample_project: dict[str, Any],
-) -> None:
-    manager = LocalTaskManager(temp_db)
-    task = _task(manager, sample_project["id"])
-    validator = _Validator(
-        CloseVerdict(
-            status="valid",
-            criteria=(
-                CloseCriterionVerdict(
-                    1,
-                    "The guide documents the checklist.",
-                    True,
-                    None,
-                ),
-            ),
-            feedback="Documentation criterion is satisfied.",
-        )
-    )
-
-    result = await _evaluate(task, manager, validator)
-
-    assert result.can_close is True
-    assert result.validation_feedback == "Documentation criterion is satisfied."
-    assert result.reset_reason == "llm_valid"
-    assert validator.calls == 1
-    assert validator.last_kwargs["closure_reason"] == "completed"
-    refreshed = manager.get_task(task.id)
-    assert refreshed is not None and refreshed.validation_status == task.validation_status
-
-
-@pytest.mark.asyncio
-async def test_no_work_reason_threads_through_to_the_validator(
-    temp_db: HubDatabase,
-    sample_project: dict[str, Any],
-) -> None:
-    manager = LocalTaskManager(temp_db)
-    task = _task(manager, sample_project["id"])
-    validator = _Validator(
-        CloseVerdict(
-            status="valid",
-            criteria=(
-                CloseCriterionVerdict(
-                    1,
-                    "The guide documents the checklist.",
-                    True,
-                    None,
-                ),
-            ),
-            feedback="Obsolescence justification is coherent.",
-        )
-    )
-
-    result = await _evaluate(task, manager, validator, reason="obsolete")
-
-    assert result.can_close is True
-    assert validator.last_kwargs["closure_reason"] == "obsolete"
-
-
-@pytest.mark.asyncio
-async def test_invalid_verdict_returns_first_gap_and_increments_once(
-    temp_db: HubDatabase,
-    sample_project: dict[str, Any],
-) -> None:
-    manager = LocalTaskManager(temp_db)
-    task = _task(manager, sample_project["id"])
-    validator = _Validator(
-        CloseVerdict(
-            status="invalid",
-            criteria=(
-                CloseCriterionVerdict(
-                    1,
-                    "The guide documents the checklist.",
-                    False,
-                    "Add the category matrix to the guide.",
-                ),
-            ),
-            feedback="One criterion remains incomplete.",
-        )
-    )
-
-    result = await _evaluate(task, manager, validator)
 
     assert result.can_close is False
-    assert result.extra["blocking_reasons"] == ["Add the category matrix to the guide."]
-    assert result.extra["validation_fail_count"] == 1
-    refreshed = manager.get_task(task.id)
-    assert refreshed is not None and refreshed.validation_fail_count == 1
-    history = ValidationHistoryManager(temp_db).get_iteration_history(task.id)
-    assert [(item.iteration, item.status) for item in history] == [(1, "invalid")]
-
-
-def test_pending_external_verdict_keeps_failure_count_unchanged(
-    temp_db: HubDatabase,
-    sample_project: dict[str, Any],
-) -> None:
-    manager = LocalTaskManager(temp_db)
-    task = _task(manager, sample_project["id"])
-    verdict = CloseVerdict(
-        status="valid",
-        criteria=(
-            CloseCriterionVerdict(
-                1,
-                "The guide documents the checklist.",
-                True,
-                None,
-                state="satisfied",
-            ),
-            CloseCriterionVerdict(
-                2,
-                "Live: restart the daemon.",
-                False,
-                None,
-                state="pending_external",
-            ),
-        ),
-        feedback="Implementation criteria passed.",
-    )
-    ctx = cast(RegistryContext, SimpleNamespace(task_manager=manager))
-
-    result = account_criteria_verdict(
-        task=task,
-        verdict=verdict,
-        ctx=ctx,
-        resolved_id=task.id,
-        validation_config=None,
-        reset_reason="agentic_valid",
-    )
-
-    assert result.error_type == "external_pending"
-    assert result.validation_status == "pending"
-    assert result.extra["pending_external_criteria"] == ["Live: restart the daemon."]
-    refreshed = manager.get_task(task.id)
-    assert refreshed is not None
-    assert refreshed.validation_status == "pending"
-    assert refreshed.validation_fail_count == 0
-    history = ValidationHistoryManager(temp_db).get_iteration_history(task.id)
-    assert [(item.iteration, item.status) for item in history] == [(1, "pending")]
-
-
-def test_implementer_gap_remains_invalid_with_external_criterion_pending(
-    temp_db: HubDatabase,
-    sample_project: dict[str, Any],
-) -> None:
-    manager = LocalTaskManager(temp_db)
-    task = _task(manager, sample_project["id"])
-    verdict = CloseVerdict(
-        status="valid",
-        criteria=(
-            CloseCriterionVerdict(
-                1,
-                "The guide documents the checklist.",
-                False,
-                "Document the checklist.",
-                state="gap",
-            ),
-            CloseCriterionVerdict(
-                2,
-                "Live: restart the daemon.",
-                False,
-                None,
-                state="pending_external",
-            ),
-        ),
-        feedback="Implementation remains incomplete.",
-    )
-    ctx = cast(RegistryContext, SimpleNamespace(task_manager=manager))
-
-    result = account_criteria_verdict(
-        task=task,
-        verdict=verdict,
-        ctx=ctx,
-        resolved_id=task.id,
-        validation_config=None,
-        reset_reason="agentic_valid",
-    )
-
     assert result.error_type == "validation_failed"
-    assert result.extra["blocking_reasons"] == ["Document the checklist."]
-    assert result.extra["pending_external_criteria"] == ["Live: restart the daemon."]
-    refreshed = manager.get_task(task.id)
-    assert refreshed is not None and refreshed.validation_fail_count == 1
+    assert result.extra["blocking_reasons"] == ["Criterion evidence is incomplete."]
 
 
-@pytest.mark.asyncio
-async def test_unchanged_evidence_reuses_the_persisted_verdict(
+@pytest.mark.parametrize("minimum", ["critical", "high", "medium", "low"])
+@pytest.mark.parametrize("finding_severity", ["critical", "high", "medium", "low"])
+def test_code_findings_respect_configured_severity_and_remain_visible(
     temp_db: HubDatabase,
-    sample_project: dict[str, Any],
+    sample_project: dict[str, object],
+    minimum: FindingSeverity,
+    finding_severity: FindingSeverity,
 ) -> None:
     manager = LocalTaskManager(temp_db)
-    task = _task(manager, sample_project["id"])
-    validator, call_json_feature = _memo_validator(temp_db)
-    memo = TaskCloseVerdictMemo(
-        TaskCloseReviewStore(temp_db),
-        task_id=task.id,
-        task_ref=f"#{task.seq_num}",
-        caller_session_id=_SESSION_ID,
-        close_arguments={"reason": "completed"},
-        criteria=split_validation_criteria(task.validation_criteria or ""),
+    task = _task(manager, str(sample_project["id"]))
+    expected_blocking = FINDING_SEVERITY_ORDER[finding_severity] >= FINDING_SEVERITY_ORDER[minimum]
+    verdict = CloseVerdict(
+        status="invalid" if expected_blocking else "valid",
+        criteria=(_criterion(),),
+        feedback="reviewed",
+        findings=(_finding(finding_severity),),
     )
 
-    first = await _evaluate(task, manager, validator, verdict_memo=memo)
-    refreshed = manager.get_task(task.id)
-    assert refreshed is not None
-    second = await _evaluate(refreshed, manager, validator, verdict_memo=memo)
+    result = account_criteria_verdict(
+        task=task,
+        verdict=verdict,
+        ctx=_ctx(manager),
+        resolved_id=task.id,
+        validation_config=TaskValidationConfig(close_review_min_severity=minimum),
+        reset_reason="close_review_valid",
+    )
 
-    assert first.can_close is True
-    assert second.can_close is True
-    assert second.extra["verdict"] == first.extra["verdict"]
-    assert call_json_feature.await_count == 1
+    assert result.can_close is (not expected_blocking)
+    assert result.extra["verdict"]["findings"][0]["severity"] == finding_severity
+    if expected_blocking:
+        assert result.error_type == "validation_failed"
+        assert any(
+            f"{finding_severity} bug finding" in reason
+            for reason in result.extra["blocking_reasons"]
+        )
+    else:
+        assert result.error_type is None
+        assert "blocking_reasons" not in result.extra
 
 
-@pytest.mark.asyncio
-async def test_new_commit_evidence_invalidates_the_persisted_verdict(
+def test_pending_external_stays_pending_without_gaps_or_blocking_findings(
     temp_db: HubDatabase,
-    sample_project: dict[str, Any],
+    sample_project: dict[str, object],
 ) -> None:
     manager = LocalTaskManager(temp_db)
-    task = _task(manager, sample_project["id"])
-    validator, call_json_feature = _memo_validator(temp_db)
-    memo = TaskCloseVerdictMemo(
-        TaskCloseReviewStore(temp_db),
-        task_id=task.id,
-        task_ref=f"#{task.seq_num}",
-        caller_session_id=_SESSION_ID,
-        close_arguments={"reason": "completed"},
-        criteria=split_validation_criteria(task.validation_criteria or ""),
+    task = _task(manager, str(sample_project["id"]))
+    criterion = CloseCriterionVerdict(
+        index=1,
+        criterion="Live: coordinator verifies the service",
+        satisfied=False,
+        gap=None,
+        state="pending_external",
+    )
+    verdict = CloseVerdict(status="valid", criteria=(criterion,), feedback="pending")
+
+    result = account_criteria_verdict(
+        task=task,
+        verdict=verdict,
+        ctx=_ctx(manager),
+        resolved_id=task.id,
+        validation_config=TaskValidationConfig(),
+        reset_reason="close_review_valid",
     )
 
-    await _evaluate(task, manager, validator, verdict_memo=memo)
-    refreshed = manager.get_task(task.id)
-    assert refreshed is not None
-    await _evaluate(
-        refreshed,
-        manager,
-        validator,
-        verdict_memo=memo,
-        checklist_facts={"validation_commands": "skipped:category", "commit_shas": ["deadbee"]},
-    )
-
-    assert call_json_feature.await_count == 2
-
-
-@pytest.mark.asyncio
-async def test_prompt_too_large_is_actionable_without_failure_accounting(
-    temp_db: HubDatabase,
-    sample_project: dict[str, Any],
-) -> None:
-    manager = LocalTaskManager(temp_db)
-    task = _task(manager, sample_project["id"])
-    message = (
-        "Task-close criteria-review prompt is 32001 characters, exceeding the configured limit "
-        "of 32000 characters at gobby-tasks.validation.close_review_prompt_max_chars. Split the "
-        "task into smaller tasks and preserve every validation criterion."
-    )
-    validator = _Validator(ValidationPromptTooLarge(message))
-
-    result = await _evaluate(task, manager, validator)
-
-    assert result.error_type == "validation_prompt_too_large"
-    assert result.message == message
-    refreshed = manager.get_task(task.id)
-    assert refreshed is not None and refreshed.validation_fail_count == 0
-    assert ValidationHistoryManager(temp_db).get_iteration_history(task.id) == []
+    assert result.can_close is False
+    assert result.error_type == "external_pending"
+    assert result.extra["pending_external_criteria"] == [criterion.criterion]

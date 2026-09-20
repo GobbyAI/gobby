@@ -239,7 +239,7 @@ def test_close_response_omits_bulk_review_evidence(
     evaluation.extra = {
         "validation_commands": {"latest_runs": ["x" * 100_000]},
         "stable_facts": {"attributed_paths": ["a.py"]},
-        "criteria_review_duration_ms": 3,
+        "close_review_duration_ms": 3,
     }
     response = evaluation.response(preview=not closed, closed=closed)
     # Both are internal carriers: validation_commands travels to the validator
@@ -247,7 +247,7 @@ def test_close_response_omits_bulk_review_evidence(
     # the persisted review's fingerprint input.
     assert "validation_commands" not in response
     assert "stable_facts" not in response
-    assert response["criteria_review_duration_ms"] == 3
+    assert response["close_review_duration_ms"] == 3
     assert len(json.dumps(response)) < 1_000
 
 
@@ -370,7 +370,7 @@ def test_gate_recorded_empty_blockers_are_not_refilled_from_the_message() -> Non
     evaluation = CloseEvaluation("#7")
     evaluation.fail(
         13,
-        "criteria_review",
+        "close_review",
         "external_pending",
         "Coordinator-owned live criteria remain pending verification.",
         reasons=[],

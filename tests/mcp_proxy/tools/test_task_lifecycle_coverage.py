@@ -24,6 +24,7 @@ from gobby.storage.tasks._stage_states import StageState
 from gobby.storage.tasks._stage_types import StageState5
 from gobby.tasks.close_checklist import CloseGateResult
 from gobby.tasks.close_verdict import CloseCriterionVerdict, CloseVerdict
+from gobby.tasks.transcript_evidence_models import TranscriptEvidence
 from gobby.tasks.validation import PreparedCloseReview
 from gobby.utils.session_context import session_context_for_test
 from tests.mcp_proxy.tools.close_review_test_support import (
@@ -159,7 +160,11 @@ def _stub_project_manager() -> Iterator[None]:
         ),
         patch(
             "gobby.storage.project_checkouts.require_local_machine_id",
-            return_value="21000000-0000-4000-8000-000000000001",
+            return_value=_CHECKOUT_MACHINE,
+        ),
+        patch(
+            "gobby.sessions.machine_scope.get_machine_id",
+            return_value=_CHECKOUT_MACHINE,
         ),
         patch(
             "gobby.storage.project_checkouts.require_root",
@@ -201,17 +206,9 @@ def _create_registry(
     """Create registry with patches for context managers."""
     if task_validator is None:
         task_validator = AsyncMock()
-        task_validator.validate_task.return_value = CloseVerdict(
-            status="valid",
-            criteria=(CloseCriterionVerdict(1, "Focused tests pass.", True, None),),
-            feedback="Focused validation passed.",
-        )
     task_validator.prepare_task_review = MagicMock(
         side_effect=lambda **kwargs: PreparedCloseReview(
-            prompt="prompt",
             criteria=(kwargs["validation_criteria"],),
-            prompt_chars=1_024,
-            prompt_limit=256_000,
             review_fingerprint="close",
             evidence_fingerprint="evidence",
             diff_sha="diff",
@@ -280,10 +277,10 @@ class TestCloseTask:
         assert "not found" in result["message"]
 
     @pytest.mark.asyncio
-    async def test_close_epic_all_children_closed_no_commit_needed(
+    async def test_preview_epic_all_children_closed_needs_no_commit(
         self, mock_task_manager: MagicMock
     ) -> None:
-        """Closing a parent task (epic) with all children closed succeeds without commits."""
+        """Preview proves a ready epic without mutating it or requiring commits."""
         parent = _make_task(task_type="epic", commits=None)
         child = _make_task(
             id="child-0000-0000-0000-000000000001",
@@ -317,20 +314,18 @@ class TestCloseTask:
                     "response_detail": "diagnostic",
                 },
             )
-            assert result["success"] is True
+            assert result["success"] is False
             assert result["preview"] is True
             assert result["can_close"] is True
-            assert result["closed"] is True
+            assert result["closed"] is False
             assert any(
                 gate["name"] == "children_closed" and gate["passed"] for gate in result["checklist"]
             )
-            # commit check should NOT have been called
             mock_vcr.assert_not_called()
 
         assert "error" not in result
-        assert result.get("success", True) is not False
-        mock_task_manager.close_task.assert_called_once()
-        mock_epic_terminal.assert_called_once()
+        mock_task_manager.close_task.assert_not_called()
+        mock_epic_terminal.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_close_epic_open_children_blocked(self, mock_task_manager: MagicMock) -> None:
@@ -485,10 +480,13 @@ class TestCloseTask:
             patch("gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"),
             patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSM,
             patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVM,
+            patch.object(
+                lifecycle_close,
+                "_derive_close_transcript_evidence",
+                AsyncMock(return_value=TranscriptEvidence()),
+            ),
         ):
-            mock_sm = MagicMock()
-            mock_sm.resolve_session_reference.return_value = "resolved-session"
-            MockSM.return_value = mock_sm
+            MockSM.return_value = _checkout_session_manager("resolved-session")
             MockSVM.return_value.get_variables.return_value = {
                 "task_edited_files": {task.id: ["src/owned.py"]},
             }
@@ -2025,7 +2023,7 @@ class TestCloseTaskSessionContextGuard:
                 {"task_id": task.id, "changes_summary": "done"},
             )
 
-        assert result["error"] == "agentic_review_required"
+        assert result["error"] == "close_review_required"
         assert result["closed"] is False
         assert task.claimed_by_session_id == claimed_session
         task_validator.validate_task.assert_not_awaited()

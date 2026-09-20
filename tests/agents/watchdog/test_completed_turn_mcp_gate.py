@@ -167,7 +167,7 @@ async def test_toolless_run_in_mcp_only_step_fails_without_reprompts() -> None:
 
 @pytest.mark.asyncio
 async def test_all_tools_step_gated_on_mcp_progress_fails_without_reprompts() -> None:
-    """The task-close-validator shape: every native tool allowed, MCP-only exit.
+    """The task-close-reviewer shape: every native tool allowed, MCP-only exit.
 
     Run 7f9c1bfa reprompted to the watchdog cap for ~30 minutes holding an
     `max_active_agents` slot, because the guard keyed on `allowed_tools` alone

@@ -189,11 +189,14 @@ already-created registry continue to use the live per-epoch configuration contra
 | gobby-tasks.validation.profile | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField select | live | keep | automation-workflows |  |
 | gobby-tasks.validation.candidates | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text input fallback for array | mismatched-type | fix | automation-workflows | array items=string map= |
 | gobby-tasks.validation.enabled | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | automation-workflows |  |
-| gobby-tasks.validation.system_prompt | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | keep | automation-workflows |  |
-| gobby-tasks.validation.prompt_path | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | keep | automation-workflows |  |
+| gobby-tasks.validation.system_prompt | (removed) | (removed) | dead | drop | (none) | removed with the duplicate one-shot close-validation path |
+| gobby-tasks.validation.prompt_path | (removed) | (removed) | dead | drop | (none) | removed with the duplicate one-shot close-validation path |
 | gobby-tasks.validation.criteria_prompt_path | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | keep | automation-workflows |  |
 | gobby-tasks.validation.criteria_system_prompt | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | keep | automation-workflows |  |
 | gobby-tasks.validation.max_iterations | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | automation-workflows |  |
+| gobby-tasks.validation.close_review_prompt_max_chars | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | automation-workflows |  |
+| gobby-tasks.validation.close_review_min_severity | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField select | live | keep | automation-workflows |  |
+| gobby-tasks.validation.close_review_max_concurrency_per_project | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | automation-workflows |  |
 | gobby-tasks.validation.escalation_enabled | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | automation-workflows |  |
 | gobby-tasks.validation.escalation_notify | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField select | live | keep | automation-workflows |  |
 | gobby-tasks.validation.escalation_webhook_url | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | keep | automation-workflows |  |

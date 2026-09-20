@@ -5,6 +5,7 @@ from __future__ import annotations
 import threading
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from uuid import uuid4
 
 import pytest
 
@@ -12,17 +13,23 @@ import gobby.storage.task_close_reviews as review_storage
 import gobby.tasks.agentic_close_review as review_payloads
 from gobby.storage.agents import AgentRunTerminalReason, LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import ensure_system_session, system_session_id
 from gobby.storage.task_close_reviews import (
-    VALIDATOR_RUN_ENDED_SUCCESS_ERROR,
+    REVIEWER_RUN_ENDED_SUCCESS_ERROR,
+    QueuedAgentRunSpec,
+    TaskCloseReview,
     TaskCloseReviewStaleTaskError,
     TaskCloseReviewStore,
     TerminalTaskCloseReviewStatus,
 )
+from gobby.storage.tasks import LocalTaskManager, Task
+from gobby.utils.machine_id import require_machine_id
 
 
 @pytest.fixture(autouse=True)
 def _task_row(temp_db: HubDatabase, sample_project: dict[str, Any]) -> None:
+    ensure_system_session(temp_db)
     with temp_db.transaction() as conn:
         conn.execute(
             """
@@ -39,6 +46,16 @@ def _task_row(temp_db: HubDatabase, sample_project: dict[str, Any]) -> None:
                 _TASK_UPDATED_AT,
                 _TASK_UPDATED_AT,
             ),
+        )
+        conn.execute(
+            """
+            INSERT INTO sessions (
+                id, external_id, machine_id, source, project_id, title,
+                status, agent_depth
+            )
+            VALUES (%s, %s, %s, 'test', %s, 'Other close caller', 'active', 0)
+            """,
+            (_OTHER_SESSION_ID, "test-close-caller", require_machine_id(), sample_project["id"]),
         )
 
 
@@ -106,22 +123,24 @@ def test_concurrent_update_before_review_creation_returns_stale(
 def test_review_lifecycle_preserves_arguments_payload_and_delivery(temp_db: HubDatabase) -> None:
     store = TaskCloseReviewStore(temp_db)
     review, _created = store.create_or_get_active(**_intent())
+    review = _promote(store, review)
 
-    running = store.bind_run(review.id, _RUN_ID)
+    running = store.bind_run(review.id, review.agent_run_id or "")
     assert running is not None and running.status == "running"
-    assert running.close_arguments == _ARGUMENTS
+    assert {key: running.close_arguments[key] for key in _ARGUMENTS} == _ARGUMENTS
+    assert running.close_arguments["_review_deadline_at"]
     assert running.diff_sha == "d" * 64
     assert running.test_bodies_sha == "e" * 64
     assert running.stable_facts == {"commit_shas": ["abc123"]}
-    assert store.get_by_run(_RUN_ID) == running
+    assert store.get_by_run(review.agent_run_id or "") == running
 
-    finalizing = store.claim_finalizing(review.id, _RUN_ID)
+    finalizing = store.claim_finalizing(review.id, review.agent_run_id or "")
     assert finalizing is not None and finalizing.status == "finalizing"
-    assert store.restore_running(review.id, _RUN_ID, error="malformed") is True
+    assert store.restore_running(review.id, review.agent_run_id or "", error="malformed") is True
     restored = store.get(review.id)
     assert restored is not None and restored.status == "running"
 
-    finalizing = store.claim_finalizing(review.id, _RUN_ID)
+    finalizing = store.claim_finalizing(review.id, review.agent_run_id or "")
     assert finalizing is not None
     payload = {
         "event": "task_close_review_completed",
@@ -143,19 +162,20 @@ def test_review_lifecycle_preserves_arguments_payload_and_delivery(temp_db: HubD
 def test_claim_finalizing_from_run_ended_error(temp_db: HubDatabase) -> None:
     store = TaskCloseReviewStore(temp_db)
     review, _created = store.create_or_get_active(**_intent())
-    running = store.bind_run(review.id, _RUN_ID)
+    review = _promote(store, review)
+    running = store.bind_run(review.id, review.agent_run_id or "")
     assert running is not None
-    prior_payload = {"status": "error", "message": VALIDATOR_RUN_ENDED_SUCCESS_ERROR}
+    prior_payload = {"status": "error", "message": REVIEWER_RUN_ENDED_SUCCESS_ERROR}
     errored = store.finish(
         review.id,
         status="error",
         result_payload=prior_payload,
-        error=VALIDATOR_RUN_ENDED_SUCCESS_ERROR,
+        error=REVIEWER_RUN_ENDED_SUCCESS_ERROR,
     )
     assert errored is not None
     assert store.mark_delivered(review.id) is True
 
-    claimed = store.claim_finalizing(review.id, _RUN_ID)
+    claimed = store.claim_finalizing(review.id, review.agent_run_id or "")
 
     assert claimed is not None
     assert claimed.status == "finalizing"
@@ -168,7 +188,8 @@ def test_claim_finalizing_from_run_ended_error(temp_db: HubDatabase) -> None:
 def test_claim_finalizing_does_not_reopen_other_terminal_errors(temp_db: HubDatabase) -> None:
     store = TaskCloseReviewStore(temp_db)
     review, _created = store.create_or_get_active(**_intent())
-    running = store.bind_run(review.id, _RUN_ID)
+    review = _promote(store, review)
+    running = store.bind_run(review.id, review.agent_run_id or "")
     assert running is not None
     errored = store.finish(
         review.id,
@@ -178,7 +199,7 @@ def test_claim_finalizing_does_not_reopen_other_terminal_errors(temp_db: HubData
     )
     assert errored is not None
 
-    assert store.claim_finalizing(review.id, _RUN_ID) is None
+    assert store.claim_finalizing(review.id, review.agent_run_id or "") is None
     current = store.get(review.id)
     assert current is not None and current.status == "error"
 
@@ -186,14 +207,15 @@ def test_claim_finalizing_does_not_reopen_other_terminal_errors(temp_db: HubData
 def test_late_claim_yields_to_newer_active_review(temp_db: HubDatabase) -> None:
     store = TaskCloseReviewStore(temp_db)
     old_review, _created = store.create_or_get_active(**_intent())
-    assert store.bind_run(old_review.id, _RUN_ID) is not None
-    prior_payload = {"status": "error", "message": VALIDATOR_RUN_ENDED_SUCCESS_ERROR}
+    old_review = _promote(store, old_review)
+    assert store.bind_run(old_review.id, old_review.agent_run_id or "") is not None
+    prior_payload = {"status": "error", "message": REVIEWER_RUN_ENDED_SUCCESS_ERROR}
     assert (
         store.finish(
             old_review.id,
             status="error",
             result_payload=prior_payload,
-            error=VALIDATOR_RUN_ENDED_SUCCESS_ERROR,
+            error=REVIEWER_RUN_ENDED_SUCCESS_ERROR,
         )
         is not None
     )
@@ -205,9 +227,10 @@ def test_late_claim_yields_to_newer_active_review(temp_db: HubDatabase) -> None:
         }
     )
     assert created is True
-    assert store.bind_run(newer.id, "00000000-0000-4000-8000-000000000099") is not None
+    newer = _promote(store, newer)
+    assert store.bind_run(newer.id, newer.agent_run_id or "") is not None
 
-    assert store.claim_finalizing(old_review.id, _RUN_ID) is None
+    assert store.claim_finalizing(old_review.id, old_review.agent_run_id or "") is None
 
     old_current = store.get(old_review.id)
     active = store.get_active_for_task(old_review.task_id)
@@ -222,9 +245,10 @@ def test_late_claim_yields_to_newer_active_review(temp_db: HubDatabase) -> None:
 def test_run_end_finish_does_not_overwrite_finalizing(temp_db: HubDatabase) -> None:
     store = TaskCloseReviewStore(temp_db)
     review, _created = store.create_or_get_active(**_intent())
-    running = store.bind_run(review.id, _RUN_ID)
+    review = _promote(store, review)
+    running = store.bind_run(review.id, review.agent_run_id or "")
     assert running is not None
-    finalizing = store.claim_finalizing(review.id, _RUN_ID)
+    finalizing = store.claim_finalizing(review.id, review.agent_run_id or "")
     assert finalizing is not None
 
     unchanged = store.finish_run_ended(
@@ -239,109 +263,12 @@ def test_run_end_finish_does_not_overwrite_finalizing(temp_db: HubDatabase) -> N
     assert unchanged.error is None
 
 
-def test_memoized_verdict_is_served_per_evidence_state(temp_db: HubDatabase) -> None:
-    store = TaskCloseReviewStore(temp_db)
-    verdict = {"status": "valid", "criteria": [], "feedback": "Complete."}
-
-    assert (
-        store.get_memoized_verdict(
-            task_id=_TASK_ID,
-            review_fingerprint="review",
-            evidence_fingerprint="evidence",
-        )
-        is None
-    )
-
-    store.memoize_verdict(
-        task_id=_TASK_ID,
-        task_ref="#42",
-        caller_session_id=_SESSION_ID,
-        close_arguments=_ARGUMENTS,
-        review_fingerprint="review",
-        evidence_fingerprint="evidence",
-        verdict=verdict,
-        valid=True,
-    )
-
-    assert (
-        store.get_memoized_verdict(
-            task_id=_TASK_ID,
-            review_fingerprint="review",
-            evidence_fingerprint="evidence",
-        )
-        == verdict
-    )
-    # A new commit or a fresh task-attributed edit moves the evidence
-    # fingerprint, which is what makes the exact lookup miss.
-    assert (
-        store.get_memoized_verdict(
-            task_id=_TASK_ID,
-            review_fingerprint="review",
-            evidence_fingerprint="evidence-after-a-new-commit",
-        )
-        is None
-    )
-
-    later = {"status": "invalid", "criteria": [], "feedback": "Criterion 2 is unmet."}
-    store.memoize_verdict(
-        task_id=_TASK_ID,
-        task_ref="#42",
-        caller_session_id=_SESSION_ID,
-        close_arguments=_ARGUMENTS,
-        review_fingerprint="review",
-        evidence_fingerprint="evidence-after-a-new-commit",
-        verdict=later,
-        valid=False,
-    )
-
-    # Prior evidence states remain available only through their exact keys.
-    assert (
-        store.get_memoized_verdict(
-            task_id=_TASK_ID,
-            review_fingerprint="review",
-            evidence_fingerprint="evidence-after-a-new-commit",
-        )
-        == later
-    )
-    assert (
-        store.get_memoized_verdict(
-            task_id=_TASK_ID,
-            review_fingerprint="review",
-            evidence_fingerprint="evidence",
-        )
-        == verdict
-    )
-
-
-def test_memo_rows_stay_out_of_the_agentic_review_lifecycle(temp_db: HubDatabase) -> None:
-    store = TaskCloseReviewStore(temp_db)
-    store.memoize_verdict(
-        task_id=_TASK_ID,
-        task_ref="#42",
-        caller_session_id=_SESSION_ID,
-        close_arguments=_ARGUMENTS,
-        review_fingerprint="review",
-        evidence_fingerprint="evidence",
-        verdict={"status": "invalid", "criteria": [], "feedback": "Criterion 3 is unmet."},
-        valid=False,
-    )
-
-    # The memo is a completed record, so it must not hold the task's
-    # one-active-review lock, and it must never be delivered as a wake.
-    assert store.get_active_for_task(_TASK_ID) is None
-    assert store.list_reconcilable() == []
-
-    launched, created = store.create_or_get_active(**_intent())
-    assert created is True
-    assert store.get_active_for_task(_TASK_ID) == launched
-
-
 def test_unjudged_attempts_count_every_review_that_never_reached_a_verdict(
     temp_db: HubDatabase,
 ) -> None:
     # The count decides how far along the validator candidate list the next
-    # attempt starts, so it must separate "the validator never answered" from
-    # "the validator judged the evidence and said no".
+    # attempt starts, so it must separate "the reviewer never answered" from
+    # "the reviewer judged the evidence and said no".
     ensure_system_session(temp_db)
     runs = LocalAgentRunManager(temp_db)
     store = TaskCloseReviewStore(temp_db)
@@ -353,11 +280,10 @@ def test_unjudged_attempts_count_every_review_that_never_reached_a_verdict(
         terminal_reason: AgentRunTerminalReason | None = None,
     ) -> None:
         review, _ = store.create_or_get_active(**_intent())
-        run = runs.create(
-            parent_session_id=system_session_id(),
-            provider="codex",
-            prompt="validate",
-        )
+        review = _promote(store, review)
+        run = runs.get(review.agent_run_id or "")
+        assert run is not None
+        _activate_run(runs, run.id)
         store.bind_run(review.id, run.id)
         if run_failed:
             runs.fail(run.id, error="run ended", terminal_reason=terminal_reason)
@@ -385,7 +311,7 @@ def test_unjudged_attempts_count_every_review_that_never_reached_a_verdict(
     attempt(status="error", run_failed=True, terminal_reason=None)
     assert store.count_unjudged_attempts(_TASK_ID) == 3
 
-    # A validator that ran and rejected the close is evidence about the work,
+    # A reviewer that ran and rejected the close is evidence about the work,
     # not about the runtime — it must not push the next attempt elsewhere.
     attempt(status="invalid", run_failed=False)
     assert store.count_unjudged_attempts(_TASK_ID) == 3
@@ -396,8 +322,8 @@ def test_unjudged_attempts_count_every_review_that_never_reached_a_verdict(
 
 
 _TASK_ID = "00000000-0000-4000-8000-000000000801"
-_SESSION_ID = "00000000-0000-4000-8000-000000000802"
 _RUN_ID = "00000000-0000-4000-8000-000000000803"
+_OTHER_SESSION_ID = "00000000-0000-4000-8000-000000000804"
 _TASK_UPDATED_AT = datetime(2026, 9, 8, tzinfo=UTC)
 _ARGUMENTS = {
     "task_id": "#42",
@@ -413,11 +339,12 @@ _ARGUMENTS = {
 }
 
 
-def _intent() -> dict[str, Any]:
+def _intent(*, caller_session_id: str | None = None) -> dict[str, Any]:
+    run_id = str(uuid4())
     return {
         "task_id": _TASK_ID,
         "task_ref": "#42",
-        "caller_session_id": _SESSION_ID,
+        "caller_session_id": caller_session_id or system_session_id(),
         "close_arguments": _ARGUMENTS,
         "expected_task_updated_at": _TASK_UPDATED_AT,
         "review_fingerprint": "review",
@@ -425,7 +352,130 @@ def _intent() -> dict[str, Any]:
         "diff_sha": "d" * 64,
         "test_bodies_sha": "e" * 64,
         "stable_facts": {"commit_shas": ["abc123"]},
+        "review_id": str(uuid4()),
+        "run": QueuedAgentRunSpec(
+            id=run_id,
+            machine_id=require_machine_id(),
+            provider="codex",
+            model="gpt-test",
+            agent_name="task-close-reviewer",
+            prompt="Review the task close evidence.",
+            timeout_seconds=1200,
+            requested_reasoning_effort=None,
+        ),
     }
+
+
+def _promote(
+    store: TaskCloseReviewStore, review: review_storage.TaskCloseReview
+) -> review_storage.TaskCloseReview:
+    row = store.db.fetchone("SELECT project_id FROM tasks WHERE id = %s", (review.task_id,))
+    assert row is not None
+    promoted = store.claim_queued(project_id=str(row["project_id"]), max_concurrency=3)
+    match = next((item for item in promoted if item.id == review.id), None)
+    assert match is not None
+    return match
+
+
+def _activate_run(runs: LocalAgentRunManager, run_id: str) -> None:
+    activated = runs.activate_queued(
+        run_id,
+        child_session_id=system_session_id(),
+        provider="codex",
+        prompt="Review the task close evidence.",
+        workflow_name="task-close-reviewer",
+        agent_name="task-close-reviewer",
+        model="gpt-test",
+        is_local=True,
+        requested_reasoning_effort=None,
+        effective_reasoning_effort=None,
+        reasoning_required=False,
+        reasoning_status="not_requested",
+        reasoning_message=None,
+        timeout_seconds=1200,
+        resume_metadata_json=None,
+        worktree_id=None,
+        clone_id=None,
+    )
+    assert activated is not None
+    assert runs.start(run_id) is not None
+
+
+def _enqueue_task(store: TaskCloseReviewStore, task: Task) -> TaskCloseReview:
+    review_id = str(uuid4())
+    run_id = str(uuid4())
+    review, created = store.create_or_get_active(
+        task_id=task.id,
+        task_ref=f"#{task.seq_num}",
+        caller_session_id=system_session_id(),
+        close_arguments={"preview": False, "_review_timeout_seconds": 90},
+        expected_task_updated_at=task.updated_at,
+        review_fingerprint=f"review-{task.id}",
+        evidence_fingerprint=f"evidence-{task.id}",
+        diff_sha="d" * 64,
+        test_bodies_sha="e" * 64,
+        stable_facts={},
+        review_id=review_id,
+        run=QueuedAgentRunSpec(
+            id=run_id,
+            machine_id=require_machine_id(),
+            provider="codex",
+            model="gpt-test",
+            agent_name="task-close-reviewer",
+            prompt="Review the task close evidence.",
+            timeout_seconds=90,
+        ),
+    )
+    assert created is True
+    return review
+
+
+def test_queue_promotes_fifo_with_three_slots_and_project_isolation(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    tasks = LocalTaskManager(temp_db)
+    store = TaskCloseReviewStore(temp_db)
+    primary_tasks = [
+        tasks.create_task(
+            str(sample_project["id"]),
+            f"Queued close review {index}",
+            validation_criteria="The queued close review is exercised.",
+        )
+        for index in range(5)
+    ]
+    other_project = LocalProjectManager(temp_db).create(name=f"review-queue-{uuid4()}")
+    other_task = tasks.create_task(
+        other_project.id,
+        "Other project close review",
+        validation_criteria="The isolated project queue is exercised.",
+    )
+    primary_reviews = [_enqueue_task(store, task) for task in primary_tasks]
+    other_review = _enqueue_task(store, other_task)
+
+    assert store.list_queued_project_ids() == [str(sample_project["id"]), other_project.id]
+    assert all("_review_deadline_at" not in review.close_arguments for review in primary_reviews)
+
+    first_wave = store.claim_queued(
+        project_id=str(sample_project["id"]),
+        max_concurrency=3,
+    )
+    assert [review.id for review in first_wave] == [review.id for review in primary_reviews[:3]]
+    assert all(review.launched_at is not None for review in first_wave)
+    assert all("_review_deadline_at" in review.close_arguments for review in first_wave)
+    assert store.claim_queued(project_id=str(sample_project["id"]), max_concurrency=3) == []
+
+    other_wave = store.claim_queued(project_id=other_project.id, max_concurrency=3)
+    assert [review.id for review in other_wave] == [other_review.id]
+
+    store.finish(
+        first_wave[0].id,
+        status="error",
+        result_payload={"error": "test slot release"},
+        error="test slot release",
+    )
+    next_wave = store.claim_queued(project_id=str(sample_project["id"]), max_concurrency=3)
+    assert [review.id for review in next_wave] == [primary_reviews[3].id]
 
 
 @pytest.mark.parametrize("elapsed,expected", [(899.999, True), (900, False), (900.001, False)])
@@ -449,8 +499,8 @@ def test_infrastructure_wait_survives_reconstruction_until_exact_expiry(
     assert payload["closed"] is False
     monkeypatch.setattr(review_storage, "utc_now", lambda: now + timedelta(seconds=elapsed))
     restarted = TaskCloseReviewStore(temp_db)
-    assert restarted.has_retry_wait(_TASK_ID, caller_session_id=_SESSION_ID) is expected
-    assert restarted.has_retry_wait(_TASK_ID, caller_session_id=_RUN_ID) is False
+    assert restarted.has_retry_wait(_TASK_ID, caller_session_id=system_session_id()) is expected
+    assert restarted.has_retry_wait(_TASK_ID, caller_session_id=_OTHER_SESSION_ID) is False
     persisted = restarted.get(review.id)
     assert persisted is not None and persisted.result_payload == payload
     with temp_db.transaction() as conn:
@@ -468,17 +518,17 @@ def test_retry_supersedes_wait_durably(temp_db: HubDatabase, retry: str) -> None
         error_class="retryable_infrastructure",
     )
     store.finish(review.id, status="error", result_payload=payload)
-    assert store.has_retry_wait(_TASK_ID, caller_session_id=_SESSION_ID) is True
+    assert store.has_retry_wait(_TASK_ID, caller_session_id=system_session_id()) is True
     if retry == "entry":
-        store.supersede_retry_wait(_TASK_ID, caller_session_id=_SESSION_ID)
+        store.supersede_retry_wait(_TASK_ID, caller_session_id=system_session_id())
     else:
         intent = _intent()
         if retry == "different-caller":
-            intent["caller_session_id"] = _RUN_ID
+            intent = _intent(caller_session_id=_OTHER_SESSION_ID)
         newer, created = store.create_or_get_active(**intent)
         assert created is True and newer.active
     restarted = TaskCloseReviewStore(temp_db)
-    assert restarted.has_retry_wait(_TASK_ID, caller_session_id=_SESSION_ID) is False
+    assert restarted.has_retry_wait(_TASK_ID, caller_session_id=system_session_id()) is False
     previous = restarted.get(review.id)
     assert previous is not None and previous.result_payload == payload
     if retry == "entry":
@@ -496,7 +546,7 @@ def test_noninfrastructure_results_never_grant_wait(
     store.finish(review.id, status=status, result_payload=payload)
     assert payload["error_class"] == (None if status == "closed" else "action_required")
     assert payload["retry_after"] is None
-    assert store.has_retry_wait(_TASK_ID, caller_session_id=_SESSION_ID) is False
+    assert store.has_retry_wait(_TASK_ID, caller_session_id=system_session_id()) is False
 
 
 @pytest.mark.parametrize("retry_after", [None, 123, "not-a-date"])
@@ -511,4 +561,4 @@ def test_malformed_retry_metadata_fails_closed(temp_db: HubDatabase, retry_after
             "retry_after": retry_after,
         },
     )
-    assert store.has_retry_wait(_TASK_ID, caller_session_id=_SESSION_ID) is False
+    assert store.has_retry_wait(_TASK_ID, caller_session_id=system_session_id()) is False

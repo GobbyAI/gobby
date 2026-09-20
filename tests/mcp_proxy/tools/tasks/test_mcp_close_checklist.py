@@ -257,7 +257,7 @@ async def _evaluate(
             acceptance_evaluator or AsyncMock(return_value=artifacts),
         ),
         patch.object(lifecycle, "collect_commit_diff_text", return_value="diff"),
-        patch.object(lifecycle, "evaluate_criteria_review", review),
+        patch.object(lifecycle, "evaluate_close_review", review),
         patch("gobby.workflows.task_claim_state.target_task_has_edits", return_value=has_edits),
         patch(
             "gobby.workflows.task_claim_state.task_edited_file_set",
