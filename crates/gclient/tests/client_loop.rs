@@ -100,8 +100,14 @@ fn workspace_ops(mock: &MockDaemon, op: &str) -> Vec<Value> {
         .collect()
 }
 
+/// How long a mock-visible signal may take to appear. Generous on purpose: the
+/// control grant is answered beside the loop now, so a step can cost several
+/// scheduler hops and round trips, and eighty of these tests share the machine.
+/// It bounds liveness only — every assertion is on content, not on this budget.
+const WAIT_BUDGET: Duration = Duration::from_secs(10);
+
 async fn wait_for_websocket_requests(mock: &MockDaemon, kind: &str, expected: usize) {
-    timeout(Duration::from_secs(1), async {
+    timeout(WAIT_BUDGET, async {
         loop {
             if websocket_requests(mock, kind).len() >= expected {
                 break;
@@ -110,11 +116,27 @@ async fn wait_for_websocket_requests(mock: &MockDaemon, kind: &str, expected: us
         }
     })
     .await
-    .unwrap_or_else(|_| panic!("timed out waiting for {expected} {kind} requests"));
+    .unwrap_or_else(|_| {
+        let actual = websocket_requests(mock, kind).len();
+        let seen: Vec<_> = mock
+            .requests()
+            .into_iter()
+            .filter(|request| request.method == "WS")
+            .filter_map(|request| request.body)
+            .map(|body| {
+                (
+                    body.get("type").cloned(),
+                    body.get("terminal_id").cloned(),
+                    body.get("attachment_id").cloned(),
+                )
+            })
+            .collect();
+        panic!("timed out waiting for {expected} {kind} requests; saw {actual}; ws={seen:?}")
+    });
 }
 
 async fn wait_for_http_requests(mock: &MockDaemon, method: &str, path: &str, expected: usize) {
-    timeout(Duration::from_secs(1), async {
+    timeout(WAIT_BUDGET, async {
         loop {
             let count = mock
                 .requests()
@@ -763,6 +785,11 @@ async fn input_encoder_covers_named_keys() {
     mock.shutdown().await;
 }
 
+/// Focus moves the lease in one gesture: the pane left behind releases without
+/// detaching, and the pane gained takes it over rather than asking and offering
+/// a second button. A peer that takes the lease back makes typing wait on the
+/// person again, and the key typed while their take-back is in flight is
+/// written exactly once (#22573).
 #[tokio::test]
 async fn focus_moves_control_and_settles_pending_input_once() {
     let mock = MockDaemon::start("local-token").await;
@@ -827,6 +854,11 @@ async fn focus_moves_control_and_settles_pending_input_once() {
                     != Some(initially_focused.as_str())
             })
             .expect("focused pane take-control request");
+        assert_eq!(
+            focused_request.get("takeover"),
+            Some(&json!(true)),
+            "focus is the whole gesture: it takes the grant over"
+        );
         let focused_terminal_id = focused_request
             .get("terminal_id")
             .and_then(Value::as_str)
@@ -837,6 +869,11 @@ async fn focus_moves_control_and_settles_pending_input_once() {
             .and_then(Value::as_str)
             .expect("focused attachment")
             .to_string();
+
+        // A write is the proof the grant landed: the request alone is not,
+        // because it is answered beside the loop now.
+        send_key(&input_tx, KeyCode::Char('a'), KeyModifiers::NONE).await;
+        wait_for_websocket_requests(&mock, "terminal_input", 1).await;
 
         mock.send_event_and_wait(json!({
             "type": "terminal_lease_lost",
@@ -850,7 +887,7 @@ async fn focus_moves_control_and_settles_pending_input_once() {
         .await;
         settle_live_event().await;
 
-        // A lost lease refuses typing until control is taken explicitly.
+        // A lost lease waits on the person: typing says so and starts nothing.
         send_key(&input_tx, KeyCode::Char('x'), KeyModifiers::NONE).await;
         settle_live_event().await;
         assert_eq!(
@@ -858,65 +895,35 @@ async fn focus_moves_control_and_settles_pending_input_once() {
             2,
             "typing into a lost lease starts no request"
         );
-        assert!(websocket_requests(&mock, "terminal_input").is_empty());
-        // The take-back is refused: the pane observes with a take-back offer.
-        mock.enqueue_take_control_reply(false, 2, Some("held by peer"));
-        send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
-        send_key(&input_tx, KeyCode::Char('A'), KeyModifiers::SHIFT).await;
-        wait_for_websocket_requests(&mock, "terminal_take_control", 3).await;
-        settle_live_event().await;
-
-        // Typing into the observed pane takes control; a stale grant leaves
-        // the key pending.
-        mock.enqueue_take_control_reply(true, 1, None);
-        send_key(&input_tx, KeyCode::Char('x'), KeyModifiers::NONE).await;
-        wait_for_websocket_requests(&mock, "terminal_take_control", 4).await;
-        assert!(
-            websocket_requests(&mock, "terminal_input").is_empty(),
-            "a stale grant cannot settle the pending key"
-        );
-        send_key(&input_tx, KeyCode::Char('z'), KeyModifiers::NONE).await;
-        settle_live_event().await;
-        assert_eq!(
-            websocket_requests(&mock, "terminal_take_control").len(),
-            4,
-            "further keys must not start another request while input is pending"
-        );
-
-        mock.enqueue_take_control_reply(true, 2, None);
-        send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
-        send_key(&input_tx, KeyCode::Char('A'), KeyModifiers::SHIFT).await;
-        wait_for_websocket_requests(&mock, "terminal_take_control", 5).await;
-        wait_for_websocket_requests(&mock, "terminal_input", 1).await;
-        let writes = websocket_requests(&mock, "terminal_input");
-        assert_eq!(writes.len(), 1, "the pending key must be written once");
-        assert_eq!(writes[0].get("data"), Some(&json!("x")));
-
-        mock.send_event_and_wait(json!({
-            "type": "terminal_lease_lost",
-            "terminal_id": focused_terminal_id,
-            "attachment_id": attachment_id,
-            "holder": "peer",
-            "lease_generation": 3,
-            "daemon_epoch": "epoch-1",
-            "seq": 3
-        }))
-        .await;
-        settle_live_event().await;
-        // Typing sends nothing again; the explicit take-back is refused and
-        // the pane keeps its take-back offer.
-        send_key(&input_tx, KeyCode::Char('y'), KeyModifiers::NONE).await;
-        settle_live_event().await;
-        assert_eq!(websocket_requests(&mock, "terminal_take_control").len(), 5);
-        mock.enqueue_take_control_reply(false, 3, Some("held by peer"));
-        send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
-        send_key(&input_tx, KeyCode::Char('A'), KeyModifiers::SHIFT).await;
-        wait_for_websocket_requests(&mock, "terminal_take_control", 6).await;
-        tokio::task::yield_now().await;
         assert_eq!(
             websocket_requests(&mock, "terminal_input").len(),
             1,
-            "a refused take-back writes nothing"
+            "typing into a lost lease writes nothing"
+        );
+
+        // The take-back is granted, and the key typed while it was in flight
+        // is written once it lands.
+        mock.enqueue_take_control_reply(true, 2, None);
+        send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
+        send_key(&input_tx, KeyCode::Char('A'), KeyModifiers::SHIFT).await;
+        send_key(&input_tx, KeyCode::Char('z'), KeyModifiers::NONE).await;
+        wait_for_websocket_requests(&mock, "terminal_take_control", 3).await;
+        wait_for_websocket_requests(&mock, "terminal_input", 2).await;
+        settle_live_event().await;
+        let written: Vec<String> = websocket_requests(&mock, "terminal_input")
+            .iter()
+            .map(|request| {
+                request
+                    .get("data")
+                    .and_then(Value::as_str)
+                    .expect("write data")
+                    .to_string()
+            })
+            .collect();
+        assert_eq!(
+            written,
+            ["a", "z"],
+            "the key queued behind the take-back is written once"
         );
         drop(input_tx);
         focused_terminal_id
@@ -937,14 +944,13 @@ async fn focus_moves_control_and_settles_pending_input_once() {
     let pane_id = workspace
         .pane_for_terminal(&focused_terminal_id)
         .expect("focused terminal pane");
-    assert!(workspace.pane(pane_id).is_observe());
-    assert!(workspace.pane(pane_id).has_take_back());
     assert!(
-        chrome
-            .last_alert()
-            .is_some_and(|message| message.contains("held by peer")),
-        "control refusal reason must remain visible: {:?}",
-        chrome.last_alert()
+        workspace.pane(pane_id).writable(),
+        "the pane that won its take-back can type"
+    );
+    assert!(
+        !workspace.pane(pane_id).has_take_back(),
+        "a granted take-back leaves no second button behind"
     );
     mock.shutdown().await;
 }
@@ -1395,10 +1401,12 @@ async fn lost_lease_refuses_typing_and_names_take_control() {
     mock.shutdown().await;
 }
 
-/// Keys typed while a take-control request is still pending are dropped,
-/// and the status line says control is being acquired.
+/// Keys and a paste typed while the grant a take asked for is still in flight
+/// are queued and written in the order they were typed. Nothing is dropped, and
+/// nothing announces an acquiring-control mode: queued input is the behavior,
+/// not a ceremony (#22573).
 #[tokio::test]
-async fn keys_during_a_pending_take_report_acquiring_control() {
+async fn keys_and_a_paste_during_a_pending_grant_flush_in_typed_order() {
     let mock = MockDaemon::start("local-token").await;
     let (mut workspace, _home) = single_terminal_loop(&mock).await;
     let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
@@ -1412,9 +1420,8 @@ async fn keys_during_a_pending_take_report_acquiring_control() {
             .and_then(Value::as_str)
             .expect("focused attachment")
             .to_string();
-        // A lost lease and a refused take-back leave the pane observing at
-        // lease generation 2; typing then takes control, and a stale grant
-        // leaves the key pending.
+        // A peer takes the lease, so the pane waits on the person again: this
+        // is the window where the first word used to be lost.
         mock.send_event_and_wait(json!({
             "type": "terminal_lease_lost",
             "terminal_id": "terminal-a",
@@ -1426,15 +1433,20 @@ async fn keys_during_a_pending_take_report_acquiring_control() {
         }))
         .await;
         settle_live_event().await;
-        mock.enqueue_take_control_reply(false, 2, Some("held by peer"));
+
+        mock.enqueue_take_control_reply(true, 2, None);
         send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
         send_key(&input_tx, KeyCode::Char('A'), KeyModifiers::SHIFT).await;
+        // Typed into the pane while the grant that take asked for is still out.
+        send_key(&input_tx, KeyCode::Char('h'), KeyModifiers::NONE).await;
+        input_tx
+            .send(RawInputEvent::Paste("ello".to_string()))
+            .await
+            .expect("live loop input");
+        send_key(&input_tx, KeyCode::Char('!'), KeyModifiers::NONE).await;
         wait_for_websocket_requests(&mock, "terminal_take_control", 2).await;
-        mock.enqueue_take_control_reply(true, 1, None);
-        send_key(&input_tx, KeyCode::Char('x'), KeyModifiers::NONE).await;
-        wait_for_websocket_requests(&mock, "terminal_take_control", 3).await;
-        send_key(&input_tx, KeyCode::Char('z'), KeyModifiers::NONE).await;
-        settle_live_event().await;
+        wait_for_websocket_requests(&mock, "terminal_input", 2).await;
+        wait_for_websocket_requests(&mock, "terminal_paste", 1).await;
         drop(input_tx);
     };
 
@@ -1452,19 +1464,42 @@ async fn keys_during_a_pending_take_report_acquiring_control() {
     result.expect("live loop exits cleanly");
     assert_eq!(
         websocket_requests(&mock, "terminal_take_control").len(),
-        3,
-        "a pending take starts no second request"
+        2,
+        "the keys behind one grant ask for no further ones"
     );
-    assert!(
-        websocket_requests(&mock, "terminal_input").is_empty(),
-        "neither key is written before the grant"
+    // Keys and pastes travel as different messages, so the write sequence is
+    // what proves they reached the terminal in the order they were typed.
+    let mut writes: Vec<(u64, String)> = websocket_requests(&mock, "terminal_input")
+        .iter()
+        .chain(websocket_requests(&mock, "terminal_paste").iter())
+        .map(|request| {
+            let seq = request
+                .get("client_write_seq")
+                .and_then(Value::as_u64)
+                .expect("write sequence");
+            let text = request
+                .get("data")
+                .or_else(|| request.get("text"))
+                .and_then(Value::as_str)
+                .expect("write payload")
+                .to_string();
+            (seq, text)
+        })
+        .collect();
+    writes.sort_by_key(|(seq, _)| *seq);
+    let typed: Vec<&str> = writes.iter().map(|(_, text)| text.as_str()).collect();
+    assert_eq!(
+        typed,
+        ["h", "ello", "!"],
+        "every key and the paste land once, in the order they were typed"
     );
     assert!(
         chrome
-            .last_alert()
-            .is_some_and(|message| message.contains("acquiring control")),
-        "the status reports the pending take: {:?}",
-        chrome.last_alert()
+            .alert_log
+            .iter()
+            .all(|toast| !toast.title.contains("acquiring control")),
+        "queueing announces nothing: {:?}",
+        chrome.alert_log
     );
     mock.shutdown().await;
 }
@@ -3718,6 +3753,16 @@ async fn daemon_loss_renders_read_only_until_recovery() {
         tokio::time::resume();
         wait_for_websocket_requests(&mock, "terminal_set_viewport", 2).await;
         wait_for_websocket_requests(&mock, "terminal_take_control", 2).await;
+        // The request reaching the socket is not the grant landing: it is
+        // answered beside the loop now. The daemon client dropping its pending
+        // control request is the proof the reply came back (#22573).
+        for _ in 0..1_024 {
+            if observed_daemon.pending_counts().2 == 0 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(observed_daemon.pending_counts().2, 0);
         let mut initial_generation_disconnects = 1;
         while let Ok(event) = observed_events.try_recv() {
             if matches!(
@@ -4170,6 +4215,13 @@ async fn control_tombstone_retires_the_attachment() {
             .expect("initial control attachment")
             .to_string();
 
+        // The grant is applied beside the loop now, so a request on the socket
+        // is not proof the pane holds control yet, and an explicit take while
+        // one is still in flight is a no-op. A key that reaches the daemon is
+        // the proof: it only gets there once the pane is writable (#22573).
+        send_key(&input_tx, KeyCode::Char('x'), KeyModifiers::NONE).await;
+        wait_for_websocket_requests(&mock, "terminal_input", 1).await;
+
         mock.suppress_ws("terminal_take_control");
         tokio::time::pause();
         send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
@@ -4207,6 +4259,11 @@ async fn control_tombstone_retires_the_attachment() {
         tokio::time::resume();
         wait_for_websocket_requests(&mock, "terminal_set_viewport", 2).await;
         wait_for_websocket_requests(&mock, "terminal_take_control", 3).await;
+        // Again a key rather than the request: the recovered pane is writable
+        // once the grant is applied, and only a write proves that happened
+        // before the loop exits (#22573).
+        send_key(&input_tx, KeyCode::Char('y'), KeyModifiers::NONE).await;
+        wait_for_websocket_requests(&mock, "terminal_input", 2).await;
         drop(input_tx);
         old_attachment
     };
@@ -4558,6 +4615,61 @@ async fn pane_click_focuses_and_takes_control_unless_alt() {
     mock.shutdown().await;
 }
 
+/// A control wish recorded during a disconnect survives until the workspace
+/// can send it, so input queued behind the focus change still has a grant to
+/// flush it (#22573).
+#[tokio::test]
+async fn pending_control_survives_until_the_daemon_is_ready() {
+    let mock = MockDaemon::start("local-token").await;
+    for _ in 0..2 {
+        mock.enqueue(
+            "GET",
+            "/api/terminals?",
+            200,
+            json!({
+                "items": [
+                    {"terminal_id": "terminal-a", "backend": "native", "state": "live"}
+                ],
+                "next_cursor": null,
+                "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
+            }),
+        );
+    }
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon);
+    workspace.select_project("project-1");
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("install initial attachment");
+    let pane = workspace
+        .pane_for_terminal("terminal-a")
+        .expect("roster pane");
+
+    workspace.request_control(pane, true);
+    workspace.observe_daemon_disconnect(
+        workspace.daemon().generation(),
+        DaemonError::Unavailable { retry_after: None },
+    );
+    let (control_tx, _control_rx) = tokio::sync::mpsc::unbounded_channel();
+    workspace.start_control_request(&control_tx);
+    assert!(
+        workspace.awaiting_control(pane),
+        "an unavailable daemon must not consume the pending request"
+    );
+    assert!(websocket_requests(&mock, "terminal_take_control").is_empty());
+
+    workspace
+        .reconnect_daemon_ws()
+        .await
+        .expect("restore workspace readiness");
+    workspace.start_control_request(&control_tx);
+    wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+    mock.shutdown().await;
+}
+
 /// 3.3: a pane whose app tracks the mouse gets SGR reports for its presses
 /// and releases; a press in another such pane focuses it and takes the lease
 /// before the report; a pane left observed by alt+click gets nothing; a
@@ -4597,13 +4709,18 @@ async fn mouse_forwarding_follows_pane_modes_and_passthrough() {
         let pane = workspace
             .pane_for_terminal(terminal_id)
             .expect("roster pane");
-        // Proxy sources, because these reports are the daemon write protocol;
-        // a direct pane reports on its own frame socket (#22573).
-        let mut source = ScriptedFrameSource::new(Transport::Proxy);
-        source.queue(reporting_frame("mouse app"));
-        workspace
-            .replace_frame_source(pane, PaneFrameSource::Scripted(source))
-            .expect("install scripted proxy source");
+        let attachment_id = workspace.pane(pane).attachment_id().to_string();
+        // Keep the daemon-backed proxy alive after this first frame. A
+        // one-frame scripted source returns EOF immediately after the frame
+        // and races attachment recovery against the mouse reports.
+        mock.send_event_and_wait(json!({
+            "type": "terminal_frame",
+            "terminal_id": terminal_id,
+            "attachment_id": attachment_id,
+            "encoding": "bincode-b64",
+            "payload": encode_frame(&reporting_frame("mouse app")),
+        }))
+        .await;
         workspace
             .recv_pane_frame(pane)
             .await

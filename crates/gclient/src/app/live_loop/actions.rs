@@ -23,7 +23,7 @@ use ratatui::layout::Rect;
 use super::super::attention::open_response_dialog;
 use super::super::{PaneId, Workspace};
 use super::control::{
-    focus_live_pane, observe_live_pane, release_live_control, send_live_write,
+    focus_live_pane, observe_live_pane, release_live_control, send_live_report,
     set_live_scroll_offset, take_live_control,
 };
 use super::menu::{apply_local_menu_action, ContextMenuKind, MenuAction};
@@ -171,12 +171,12 @@ pub(super) async fn apply_live_mouse_outcome(
             spawn_live_terminal(workspace, chrome, placement).await?;
         }
         MouseOutcome::Write { pane, bytes } => {
-            send_live_write(workspace, pane, &bytes, false).await?;
+            send_live_report(workspace, pane, &bytes).await?;
         }
         MouseOutcome::FocusWrite { pane, bytes } => {
             chrome.focus_pane(pane);
             focus_live_pane(workspace, pane).await?;
-            send_live_write(workspace, pane, &bytes, false).await?;
+            send_live_report(workspace, pane, &bytes).await?;
         }
         MouseOutcome::Scroll { pane, rows } => {
             set_live_scroll_offset(workspace, pane, rows).await?;
@@ -443,7 +443,7 @@ pub(super) async fn handle_live_action(
         }
         Action::TakeControl | Action::TakeBack => {
             if let Some(pane_id) = chrome.focused_pane() {
-                take_live_control(workspace, pane_id).await?;
+                take_live_control(workspace, pane_id);
             }
         }
         Action::Respond => open_response_dialog(workspace, chrome, None).await?,

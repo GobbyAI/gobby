@@ -357,7 +357,8 @@ pub fn render_status_line<W: WorkspaceView>(
     let pane = chrome.focused_pane().map(|id| ws.pane(id));
     match pane {
         Some(pane) => {
-            let (glyph, label, color) = control_indicator(pane.control, pane.take_back, p);
+            let (glyph, label, color) =
+                control_indicator(pane.displayed_control(), pane.take_back, p);
             let text = format!(" [{glyph} {label}]");
             indicator = Some(Rect::new(
                 area.x,

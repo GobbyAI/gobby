@@ -26,7 +26,7 @@ pub type PaneContent<'a> = dyn FnMut(&mut Frame, Rect, PaneId) + 'a;
 /// The border is the one place the address is left out — it is the first thing
 /// a narrow pane truncates away, and the status bar carries it unconditionally.
 pub fn pane_title(pane: &Pane) -> String {
-    let (glyph, label) = control_glyph_label(pane.control, pane.take_back);
+    let (glyph, label) = control_glyph_label(pane.displayed_control(), pane.take_back);
     format!(
         "{} · {} · {glyph} {label}",
         pane.display_name(),

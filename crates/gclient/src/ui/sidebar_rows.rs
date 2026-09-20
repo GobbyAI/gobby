@@ -220,7 +220,7 @@ fn ordered_projects<'a>(projects: &'a [ProjectEntry], order: &[String]) -> Vec<&
 pub(crate) fn terminal_detail<W: WorkspaceView>(ws: &W, terminal_id: &str, p: &Palette) -> String {
     match ws.pane_for_terminal(terminal_id).map(|id| ws.pane(id)) {
         Some(pane) => {
-            let (glyph, label, _) = control_indicator(pane.control, pane.take_back, p);
+            let (glyph, label, _) = control_indicator(pane.displayed_control(), pane.take_back, p);
             // The address leads, so it is what the navigator query matches
             // and what keeps two panes sharing a name (`zsh`, `zsh`) apart.
             match terminal_address(ws, terminal_id) {

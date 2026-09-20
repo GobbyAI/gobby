@@ -294,7 +294,7 @@ pub(super) fn down<W: WorkspaceView>(
             let pane = ws.pane(pane);
             MouseOutcome::Action(if pane.take_back {
                 Action::TakeBack
-            } else if pane.control == ControlState::Held {
+            } else if pane.control == ControlState::Held || pane.is_acquiring() {
                 Action::ReleaseControl
             } else {
                 Action::TakeControl

@@ -515,20 +515,40 @@ Implementation:
   lease_control --test copy_paste --test frame_source_live`, `cargo clippy -p
   gobby-client --all-targets`.
 
+Amended 2026-09-19 for the tmux contract (gobby#13927):
+
+- `Pane::pending_input` is an ordered queue of `PendingInput::{Keys, Paste}` capped at
+  256 KiB rather than one staged buffer, so a paste cannot overtake the keys typed
+  before it. Over-cap says so: `too much typed while acquiring control`.
+- `focus_live_pane` records `request_control(pane, takeover: true)` instead of awaiting
+  a polite take; `Workspace::start_control_request` spawns the round trip and the loop
+  applies the reply in its own select branch, above input because a `biased` select
+  returns at the first ready branch. Replies arrive on an unbounded channel, so one
+  pane's pending grant never delays another's. Each request is stamped, and
+  `apply_control_outcome` ignores a reply whose focus has moved on.
+- `release_live_control` releases a pane whose grant is still in flight (otherwise the
+  lease leaks) and discards that pane's queue.
+- Forwarded mouse reports go through `send_live_report`, which queues behind a pending
+  grant but never asks for one: an alt+clicked pane stays observing under the pointer.
+- `ACQUIRING_CONTROL` and the normal-path take-back affordance are removed.
+
 Consumers unchanged:
-- `crates/gclient/src/app/live_loop/actions.rs` — no-edit-reason: Both mouse write arms call send_live_write, which routes direct panes to the host internally, so the call sites stay as they are.
+- none: `crates/gclient/src/app/live_loop/actions.rs` moved both mouse write arms onto `send_live_report` for the queueing rule above.
 
 **Acceptance:**
 
 - 2.1.1 - Direct native panes send `BindAttachment` once per installed source and then `Input`/`Paste` on the frame stream without awaiting any daemon reply. symbol: `send_live_write`.
 - 2.1.2 - The frame source exposes a non-awaiting `send_input` with typed backpressure. symbol: `FrameSource`. file: `crates/gclient/src/frame_source.rs`.
-- 2.1.3 - A granted lease whose host grant is missing shows take-back instead of typing into the daemon. symbol: `request_live_control`.
+- 2.1.3 - A granted lease whose host grant is missing shows take-back instead of typing into the daemon. symbol: `apply_control_outcome`.
 - 2.1.4 - `InputRefused` flips the pane to observe with the code in the status line and keeps the stream. symbol: `recover_live_frame_error`.
 - 2.1.5 - The scripted workspace path lives in the split module and mirrors the direct branch. file: `crates/gclient/src/app/scripted_input.rs`.
 - 2.1.6 - Client loop tests assert host input for direct panes and no daemon input messages. test: `crates/gclient/tests/client_loop.rs::direct_pane_keys_reach_the_host_not_the_daemon`.
 - 2.1.7 - Live frame source test proves grant, input echo and revoke against a real gterm. test: `crates/gclient/tests/frame_source_live.rs::granted_direct_input_echoes_and_revoke_refuses`.
+- 2.1.8 - Focus records the control request it needs and the loop starts it beside the select, so no click and no key awaits a daemon reply, and a grant already in flight for one pane never delays another's. symbol: `start_control_request`.
+- 2.1.9 - Focus takes the grant over in one gesture, and keys, pastes and forwarded mouse reports produced before it lands are flushed in typed order rather than dropped or announced. symbol: `apply_control_outcome`. test: `crates/gclient/tests/client_loop.rs::keys_and_a_paste_during_a_pending_grant_flush_in_typed_order`.
+- 2.1.10 - A reply whose focus has moved on moves nothing, a pane that gives control up discards what it queued, and a pane left observing by alt+click is not taken back by a pointer report. symbol: `send_live_report`. test: `crates/gclient/tests/client_loop.rs::mouse_forwarding_follows_pane_modes_and_passthrough`.
 
-**Granularity:** seven items and eleven production files because the render-loop
+**Granularity:** ten items and eleven production files because the render-loop
 change, the frame-source write side and the control-result handling form one behaviour
 (a key typed into a held direct pane reaches the PTY without the daemon) that cannot be
 tested in halves.
@@ -583,15 +603,33 @@ spawned worker or close validator, `uv run gobby restart --wait` from the main
 checkout, relaunch gclient, and have Josh type fast into a native pane while a close
 validator is running. Pass: no window freeze, no `read-only` flip, keys echo at
 terminal speed, `~/.gobby/logs/gclient.log` shows no `terminal_input` requests, and
-`daemon.log` shows `input_activity` events consumed. Then take control from the web
-terminal and confirm the gclient pane shows take-back and its next key is refused with
-`input_not_granted`. This also settles #22557's live criterion.
+`daemon.log` shows `input_activity` events consumed.
+
+Then the tmux criterion Josh set through gobby#13927: with a second viewer holding a
+pane from the web terminal, click that pane in gclient and start typing immediately.
+Pass: the click alone reclaims input, the first keystroke is not dropped and not
+delayed behind a visible prompt, no read-only or take-back step appears on the way,
+and the whole typed string arrives in the order it was typed — including a paste
+dropped in before the grant lands. The pane indicator stays `● held` throughout;
+`▲ take-back` may appear only when the daemon actually refuses the take. Finally
+confirm the exceptional path still works: revoke the host grant and check the pane
+shows take-back with `terminal did not grant input; take control again`.
+
+This also settles #22557's live criterion.
 
 ## V1 Plan Changelog
 `kind: framing`
 
 - 2026-09-19: first narrative draft (gobby#13879), awaiting Josh's confirmation of
   decisions 1 to 7 in 0.1; no enhancement or adversarial review run yet.
+- 2026-09-19: Josh ruled through gobby#13927 that gclient must behave like tmux, so
+  2.1 and 4.1 changed (gobby#13879). Focus takes the grant over in one gesture; the
+  daemon round trip is charged to the focus change and never to a key; keys, pastes
+  and forwarded mouse reports produced before the grant lands are queued in typed
+  order and flushed on it, capped at 256 KiB; the normal-path take-back affordance
+  and the `acquiring control` status are gone. Only genuine exceptions surface —
+  hard read-only with a reason, and an uncertain write outcome. Moving focus away
+  before the grant lands discards that pane's queue rather than replaying it later.
 
 ## M1 Task Manifest
 `kind: manifest`
