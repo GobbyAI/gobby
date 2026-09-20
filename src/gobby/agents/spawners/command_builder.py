@@ -30,7 +30,8 @@ def build_cli_command(
 
     Supports three modes:
     - "agent": Autonomous subagent (auto-approve, single-shot prompt)
-    - "interactive": Multi-turn web chat (stream-json I/O, no prompt)
+    - "interactive": Multi-turn provider session. Droid uses its terminal UI;
+      stream-capable providers use structured I/O without a positional prompt.
     - "headless": Single-turn headless query (not used for web chat)
 
     Each CLI has different syntax for passing prompts and handling permissions:
@@ -167,21 +168,23 @@ def build_cli_command(
         command.extend(["-c", "check_for_update_on_startup=false"])
 
     elif cli == "droid":
-        # Droid exec flags, verified against `droid exec --help` on v0.219.0.
-        # No `--input-format`: the prompt is positional and nothing writes this
-        # pane's stdin, and 0.219.0 rejects `--input-format stream-json` unless a
-        # matching `--output-format` is given (MetaError from assertValidOptions),
-        # which killed every terminal Droid spawn before startup (#22402).
-        command.append("exec")
+        # Agent mode is the one-shot `droid exec` path. Interactive mode uses the
+        # terminal UI so AskUser, permission dialogs, interrupts, and replacement
+        # prompts remain available to the managed terminal controller.
+        if mode != "interactive":
+            command.append("exec")
         if resume_session_id:
-            command.extend(["--session-id", resume_session_id])
-        if working_directory:
+            command.extend(
+                ["--resume" if mode == "interactive" else "--session-id", resume_session_id]
+            )
+        if working_directory and mode != "interactive":
             command.extend(["--cwd", working_directory])
         if model:
             command.extend(["--model", model])
         if reasoning_effort and reasoning_effort != "auto" and reasoning_flag == "reasoning-effort":
             command.extend(["--reasoning-effort", reasoning_effort])
-        command.extend(["--auto", "high" if auto_approve else "low"])
+        if mode != "interactive":
+            command.extend(["--auto", "high" if auto_approve else "low"])
 
     elif cli == "agy":
         # Terminal spawn uses the 1.1.7/1.1.3 recorded TUI flags, not print-mode
@@ -210,7 +213,7 @@ def build_cli_command(
         command.append(resume_session_id)
 
     # Prompt only in agent/headless mode (interactive mode uses stdin)
-    if prompt and mode != "interactive" and not prompt_consumed:
+    if prompt and (mode != "interactive" or cli == "droid") and not prompt_consumed:
         command.append(prompt)
 
     return command, env

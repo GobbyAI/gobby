@@ -337,6 +337,7 @@ def create_spawn_agent_registry(
         project_path: str | None = None,
         notify_parent_on_completion: bool = True,
         terminal_backend: Literal["tmux", "native"] | None = None,
+        droid_mode: Literal["exec", "interactive"] = "exec",
         extra_write_paths: list[str] | None = None,
         write_paths_reason: str | None = None,
     ) -> dict[str, Any]:
@@ -370,6 +371,7 @@ def create_spawn_agent_registry(
             extra_write_paths: Explicit external directories authorized for this run
             write_paths_reason: Required authorization reason for nonempty external roots
             notify_parent_on_completion: Whether to notify the parent when the agent completes
+            droid_mode: Use Droid's one-shot exec runner or interactive terminal UI
 
         Returns:
             Dict with success status, run_id, child_session_id, isolation metadata
@@ -581,6 +583,7 @@ def create_spawn_agent_registry(
             daemon_config=config_resolver() if config_resolver is not None else None,
             code_index=code_index,
             terminal_backend=terminal_backend,
+            droid_mode=droid_mode,
             extra_write_paths=extra_write_paths,
             write_paths_reason=write_paths_reason,
         )

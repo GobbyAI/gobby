@@ -142,6 +142,7 @@ class SpawnRequest:
     write_coordinator: WriteCoordinator | None = None
     backend: Literal["tmux", "native"] | None = None
     terminal_backend: Literal["tmux", "native"] = "tmux"
+    droid_mode: Literal["exec", "interactive"] = "exec"
     retry_terminal_id: str | None = None
     cancel_event: asyncio.Event | None = None
 

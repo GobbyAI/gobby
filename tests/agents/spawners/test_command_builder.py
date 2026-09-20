@@ -293,6 +293,28 @@ class TestBuildCliCommand:
             "hello",
         ]
 
+    def test_droid_interactive_mode_uses_terminal_ui_with_prompt_last(self) -> None:
+        cmd, _env = build_cli_command(
+            "droid",
+            prompt="hello",
+            working_directory="/repo",
+            model="glm-5.3-flash",
+            reasoning_effort="high",
+            auto_approve=True,
+            sandbox_args=["--sandbox-flag"],
+            mode="interactive",
+        )
+
+        assert cmd == [
+            "droid",
+            "--model",
+            "glm-5.3-flash",
+            "--reasoning-effort",
+            "high",
+            "--sandbox-flag",
+            "hello",
+        ]
+
     def test_generic_sandbox_args(self) -> None:
         cmd, _env = build_cli_command("claude", prompt="hello", sandbox_args=["--sandbox"])
         # sandbox args come before prompt

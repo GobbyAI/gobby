@@ -242,7 +242,7 @@ _CLI_INSTALL_META: dict[str, tuple[str, str, str | None]] = {
     "qwen": ("Qwen CLI", "~/.qwen/settings.json", "~/.qwen/settings.json"),
     "agy": ("AGY CLI", "~/.gemini/config/hooks.json", "~/.gemini/config/mcp_config.json"),
     "codex": ("Codex", "~/.codex/hooks.json", None),
-    "droid": ("Droid CLI", "~/.factory/hooks/hooks.json", "~/.factory/mcp.json"),
+    "droid": ("Droid CLI", "~/.factory/hooks.json", "~/.factory/mcp.json"),
 }
 
 

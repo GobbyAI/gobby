@@ -320,6 +320,67 @@ class TestDroidTranslateToHookEvent:
         assert stale.event_type is HookEventType.NOTIFICATION
         assert stale.turn_disposition == "unknown"
 
+    def test_live_cancelled_idle_prompt_uses_turn_outcome_and_message(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        transcript = tmp_path / "droid.jsonl"
+        transcript.write_text(
+            "".join(
+                json.dumps(record) + "\n"
+                for record in (
+                    {"type": "message", "id": "turn-current", "parentId": None},
+                    {
+                        "type": "message",
+                        "id": "tool-result",
+                        "parentId": "turn-current",
+                    },
+                    {
+                        "type": "message",
+                        "id": "notification-message",
+                        "parentId": "tool-result",
+                    },
+                    {
+                        "type": "agent_turn_outcome",
+                        "turnId": "turn-current",
+                        "reason": "cancelled",
+                    },
+                )
+            ),
+            encoding="utf-8",
+        )
+
+        event = DroidAdapter().translate_to_hook_event(
+            {
+                "hook_type": "Notification",
+                "input_data": {
+                    "session_id": "droid-session",
+                    "notification_type": "idle_prompt",
+                    "message": "Agent stopped by user and is waiting for input",
+                    "message_id": "notification-message",
+                    "transcript_path": str(transcript),
+                },
+            }
+        )
+
+        assert event.event_type is HookEventType.INTERRUPT
+        assert event.turn_disposition == "user_interrupted"
+
+        stale = DroidAdapter().translate_to_hook_event(
+            {
+                "hook_type": "Notification",
+                "input_data": {
+                    "session_id": "droid-session",
+                    "notification_type": "idle_prompt",
+                    "message": "Agent stopped by user and is waiting for input",
+                    "message_id": "unrelated-message",
+                    "transcript_path": str(transcript),
+                },
+            }
+        )
+        assert stale.event_type is HookEventType.NOTIFICATION
+        assert stale.turn_disposition == "unknown"
+
 
 class TestDroidTranslateFromHookResponse:
     def test_allow_decision_omits_empty_hook_specific_output(self) -> None:

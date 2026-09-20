@@ -1,0 +1,242 @@
+{
+  "schema_version": 1,
+  "provider": "droid",
+  "version": "0.223.0",
+  "capture_date": "2026-09-19",
+  "binary_sha256": "efed63e905bcc6f7e17d9deaf6542b4a4d5cff7dcb3a7a4315a31c471050f925",
+  "provenance": {
+    "launcher": "gobby-agents:spawn_agent",
+    "managed_provider": "droid",
+    "direct_binary_invocation": false,
+    "hook_harness": "temporary project hook before ghook",
+    "workspace": "<WORKSPACE>",
+    "transcript_root": "<TRANSCRIPT>",
+    "source_docs": [
+      "https://docs.factory.ai/changelog/release-notes",
+      "https://docs.factory.ai/harness/hooks",
+      "https://docs.factory.ai/harness/skills"
+    ],
+    "notes": [
+      "Each case came from a distinct managed Droid session.",
+      "Slices end at the stated bound; later rule, teardown, and cleanup events are excluded.",
+      "The binary hash matched before and after capture."
+    ]
+  },
+  "cases": {
+    "normal_answer": {
+      "run_id": "66485b48-fff7-44ef-b450-06afb15e6cbc",
+      "child_session_id": "27ed00bc-ea71-4af9-a770-dd5803066b33",
+      "external_session_id": "0cd2735b-2adc-4dc0-95f5-7db66b1b5a54",
+      "nonce": "n22301",
+      "droid_mode": "exec",
+      "bounds": {"start": "2026-09-20T03:11:22.764Z", "end": "2026-09-20T03:11:29.240301Z"},
+      "hook_slice": [
+        {"at": "2026-09-20T03:11:29.240301Z", "event": "Stop"}
+      ],
+      "transcript_slice": [
+        {"id": "40e9d4dd-cf3e-46db-afeb-81ee136415d8", "at": "2026-09-20T03:11:22.764Z", "kind": "prompt", "marker": "GOBBY_TL_CASE:normal_answer:n22301"},
+        {"id": "306d0e3a-21ef-461e-b57f-74dc25e7c5a8", "at": "2026-09-20T03:11:28.446Z", "kind": "assistant_text", "text": "GOBBY_TL_NORMAL_OK"}
+      ],
+      "positive_evidence": ["exact assistant answer", "bounded Stop"],
+      "negative_evidence": ["no idle_prompt in bounded slice"]
+    },
+    "prose_question": {
+      "run_id": "0cf1674e-fae3-471b-9e32-fe10b766b97e",
+      "child_session_id": "3ea1e910-2168-4adc-b6b0-afa401d11ea2",
+      "external_session_id": "02bd2cc7-5071-4c58-b5c4-04d0d366b404",
+      "nonce": "n22302",
+      "droid_mode": "exec",
+      "bounds": {"start": "2026-09-20T03:20:44.230Z", "end": "2026-09-20T03:20:46.521587Z"},
+      "hook_slice": [
+        {"at": "2026-09-20T03:20:46.521587Z", "event": "Stop"}
+      ],
+      "transcript_slice": [
+        {"id": "4b0614fb-6e22-42eb-b9f7-1bd33c4c1557", "at": "2026-09-20T03:20:44.230Z", "kind": "prompt", "marker": "GOBBY_TL_CASE:prose_question:n22302"},
+        {"id": "3edad3ab-0824-4249-ae72-43bde43169b7", "at": "2026-09-20T03:20:46.349Z", "kind": "assistant_text", "text": "Should I continue?"}
+      ],
+      "positive_evidence": ["plain-text question", "bounded Stop"],
+      "negative_evidence": ["no elicitation_dialog in bounded slice"]
+    },
+    "structured_question": {
+      "run_id": "d4ec5798-e965-4047-a8e9-4e2ec96e0692",
+      "child_session_id": "4262f7f9-5506-43b0-93d8-b73e999d5d29",
+      "external_session_id": "8e35ae97-5b5e-464b-9ad9-9fa823b1d072",
+      "nonce": "n22303i",
+      "droid_mode": "interactive",
+      "bounds": {"start": "2026-09-20T03:32:29.002602Z", "end": "2026-09-20T03:32:40.690Z"},
+      "tool_id": "chatcmpl-tool-a8b045038f74c424",
+      "hook_slice": [
+        {"at": "2026-09-20T03:32:29.002602Z", "event": "UserPromptSubmit"},
+        {"at": "2026-09-20T03:32:39.374171Z", "event": "PreToolUse", "tool_name": "AskUser"},
+        {"at": "2026-09-20T03:32:40.625286Z", "event": "Notification", "notification_type": "elicitation_dialog", "message": "Factory CLI is asking the user 1 question(s)"}
+      ],
+      "transcript_slice": [
+        {"id": "afd7b7c3-c383-4492-ad89-dad6eedbe076", "at": "2026-09-20T03:32:39.171Z", "kind": "tool_use", "tool_id": "chatcmpl-tool-a8b045038f74c424", "tool_name": "AskUser"},
+        {"id": "1461340a-dddc-41d1-96d5-8506cab37569", "parent_id": "afd7b7c3-c383-4492-ad89-dad6eedbe076", "at": "2026-09-20T03:32:40.485Z", "kind": "hook", "event": "PreToolUse", "hook_tool_call_id": "chatcmpl-tool-a8b045038f74c424"},
+        {"id": "07ad4187-e556-4c82-992f-8aede5ee3c33", "parent_id": "afd7b7c3-c383-4492-ad89-dad6eedbe076", "at": "2026-09-20T03:32:40.690Z", "kind": "hook", "event": "Notification"}
+      ],
+      "positive_evidence": ["elicitation_dialog", "PreToolUse hook correlates the current transcript tool ID"],
+      "negative_evidence": ["no Stop in bounded slice"]
+    },
+    "permission_wait": {
+      "run_id": "f2eef877-3721-4742-b15b-8c5b602c80ab",
+      "child_session_id": "400fcf3c-4dbe-4891-94dc-0705816a4a69",
+      "external_session_id": "11197dd7-1655-460e-8626-ce8e4623bc14",
+      "nonce": "n22304g",
+      "droid_mode": "interactive",
+      "bounds": {"start": "2026-09-20T03:45:29.877546Z", "end": "2026-09-20T03:45:37.748Z"},
+      "tool_id": "chatcmpl-tool-8ceb2591cc5e02e5",
+      "hook_slice": [
+        {"at": "2026-09-20T03:45:35.533778Z", "event": "PreToolUse", "phase": "received", "tool_name": "Execute"},
+        {"at": "2026-09-20T03:45:35.535045Z", "event": "PreToolUse", "phase": "responded", "permission_decision": "ask", "permission_reason": "Gobby lifecycle capture permission n22304g"},
+        {"at": "2026-09-20T03:45:37.661330Z", "event": "Notification", "notification_type": "permission_prompt"}
+      ],
+      "transcript_slice": [
+        {"id": "9aacdb93-9eba-4ea5-90f6-bc82e8e5e7e3", "at": "2026-09-20T03:45:35.353Z", "kind": "tool_use", "tool_id": "chatcmpl-tool-8ceb2591cc5e02e5", "tool_name": "Execute"},
+        {"id": "5cf373fe-eae7-45e4-897a-70d95bbaa674", "parent_id": "9aacdb93-9eba-4ea5-90f6-bc82e8e5e7e3", "at": "2026-09-20T03:45:37.525Z", "kind": "hook", "event": "PreToolUse", "hook_tool_call_id": "chatcmpl-tool-8ceb2591cc5e02e5"},
+        {"id": "3e631926-8892-4be9-8173-78508dc406c4", "parent_id": "9aacdb93-9eba-4ea5-90f6-bc82e8e5e7e3", "at": "2026-09-20T03:45:37.748Z", "kind": "hook", "event": "Notification"}
+      ],
+      "positive_evidence": ["PreToolUse response requested permission", "permission_prompt displayed"],
+      "negative_evidence": ["no PostToolUse in bounded slice", "no Stop in bounded slice"]
+    },
+    "approval": {
+      "run_id": "b6f90c58-0456-4c99-8f4f-8a2d3e0c608f",
+      "child_session_id": "9b6602bf-9179-4429-9284-5bf55e9c9141",
+      "external_session_id": "83ebe49f-4585-411e-828b-bce386846206",
+      "nonce": "n22305i",
+      "droid_mode": "interactive",
+      "bounds": {"start": "2026-09-20T03:46:24.069423Z", "end": "2026-09-20T03:47:04.471Z"},
+      "tool_id": "chatcmpl-tool-9fd09252617b58d3",
+      "hook_slice": [
+        {"at": "2026-09-20T03:46:34.316099Z", "event": "PreToolUse", "phase": "responded", "permission_decision": "ask"},
+        {"at": "2026-09-20T03:46:39.384494Z", "event": "Notification", "notification_type": "permission_prompt"},
+        {"at": "2026-09-20T03:47:01.674318Z", "event": "PostToolUse", "tool_name": "Execute", "tool_response": "GOBBY_TL_ASK_n22305i\n\n[Process exited with code 0]"}
+      ],
+      "transcript_slice": [
+        {"id": "a6673f5b-578d-483c-ab1d-698b66dc90ad", "at": "2026-09-20T03:46:39.239Z", "kind": "hook", "event": "PreToolUse", "hook_tool_call_id": "chatcmpl-tool-9fd09252617b58d3"},
+        {"id": "6e6c05db-de78-4bca-b533-4818bba4dbda", "at": "2026-09-20T03:46:42.181Z", "kind": "hook", "event": "Notification"},
+        {"id": "daa919b0-4581-4d2e-9e38-2740964e3683", "at": "2026-09-20T03:47:04.465Z", "kind": "hook", "event": "PostToolUse", "hook_tool_call_id": "chatcmpl-tool-9fd09252617b58d3"},
+        {"id": "fc77dd36-cfcf-4dd9-9c9c-44586896e702", "at": "2026-09-20T03:47:04.471Z", "kind": "tool_result", "tool_id": "chatcmpl-tool-9fd09252617b58d3", "is_error": false, "content": "GOBBY_TL_ASK_n22305i\n\n[Process exited with code 0]"}
+      ],
+      "terminal_actions": [
+        {"keys": ["enter"]}
+      ],
+      "positive_evidence": ["permission_prompt displayed", "matching PostToolUse and successful tool result"],
+      "negative_evidence": []
+    },
+    "denial": {
+      "run_id": "18eb09e4-22e3-4307-bfc7-31ce7fbd8745",
+      "child_session_id": "22c3e599-a917-44b7-9432-dc7621487e65",
+      "external_session_id": "e53ea2e4-452e-4925-beaa-e38e3bcad644",
+      "nonce": "n22306i",
+      "droid_mode": "interactive",
+      "bounds": {"start": "2026-09-20T03:47:55.785171Z", "end": "2026-09-20T03:48:29.532Z"},
+      "tool_id": "chatcmpl-tool-a47d1d24db186ec0",
+      "hook_slice": [
+        {"at": "2026-09-20T03:48:07.145003Z", "event": "PreToolUse", "phase": "responded", "permission_decision": "ask"},
+        {"at": "2026-09-20T03:48:07.514966Z", "event": "Notification", "notification_type": "permission_prompt"}
+      ],
+      "transcript_slice": [
+        {"id": "3576865d-f4fd-4238-9707-29d5d4cbe078", "at": "2026-09-20T03:48:07.397Z", "kind": "hook", "event": "PreToolUse", "hook_tool_call_id": "chatcmpl-tool-a47d1d24db186ec0"},
+        {"id": "9138e084-d50e-48a7-8140-9337d0820f16", "at": "2026-09-20T03:48:07.630Z", "kind": "hook", "event": "Notification"},
+        {"id": "291439e2-4f3f-4ed8-837b-862006b0def4", "at": "2026-09-20T03:48:29.532Z", "kind": "tool_result", "tool_id": "chatcmpl-tool-a47d1d24db186ec0", "is_error": true, "content": "Tool execution cancelled by user"}
+      ],
+      "terminal_actions": [{"keys": ["down", "down", "enter"]}],
+      "positive_evidence": ["matching denied tool result"],
+      "negative_evidence": ["no whole-turn cancellation marker in bounded slice"]
+    },
+    "user_interruption": {
+      "run_id": "66609122-fde8-43a9-8080-61c422fa03d4",
+      "child_session_id": "a495c9cc-0d67-4e12-b8ac-b8d73c9f65d6",
+      "external_session_id": "0fb4e416-71bb-4ffa-bfa8-9d002c6afb83",
+      "nonce": "n22307l",
+      "droid_mode": "interactive",
+      "bounds": {"start": "2026-09-20T04:05:13.046605Z", "end": "2026-09-20T04:05:49.844647Z"},
+      "tool_id": "chatcmpl-tool-8eb973242f941512",
+      "provider_turn_id": "4e8b74e5-c38d-473c-861f-604abfa6a022",
+      "hook_slice": [
+        {"at": "2026-09-20T04:05:24.550769Z", "event": "PreToolUse", "tool_name": "Execute"},
+        {"at": "2026-09-20T04:05:25.195474Z", "event": "Notification", "notification_type": "permission_prompt"},
+        {"at": "2026-09-20T04:05:49.267330Z", "event": "Stop"},
+        {"at": "2026-09-20T04:05:49.844647Z", "event": "Notification", "notification_type": "idle_prompt", "message_id": "ad26ec86-0bdc-4414-82f6-0545bd907559", "message": "Agent stopped by user and is waiting for input"}
+      ],
+      "transcript_slice": [
+        {"id": "eda5b3f6-89aa-43c0-90fe-ce47ba8e42fd", "parent_id": "4e8b74e5-c38d-473c-861f-604abfa6a022", "at": "2026-09-20T04:05:24.418Z", "kind": "tool_use", "tool_id": "chatcmpl-tool-8eb973242f941512", "tool_name": "Execute"},
+        {"id": "23cc5f83-c8a7-4ab8-bb5e-9e920acbcc5e", "parent_id": "eda5b3f6-89aa-43c0-90fe-ce47ba8e42fd", "at": "2026-09-20T04:05:49.144Z", "kind": "tool_result", "tool_id": "chatcmpl-tool-8eb973242f941512", "is_error": true, "content": "Error: Tool execution cancelled by user"},
+        {"id": "ad26ec86-0bdc-4414-82f6-0545bd907559", "parent_id": "23cc5f83-c8a7-4ab8-bb5e-9e920acbcc5e", "at": "2026-09-20T04:05:49.692Z", "kind": "notification_message"},
+        {"id": "e6ea337a-cbc6-4dd7-9418-2290e6099505", "at": "2026-09-20T04:05:49.708Z", "kind": "cancellation_text", "text": "Request cancelled by user"},
+        {"id": "1f28a3ff-280f-4c5f-b786-00748dc8e6bb", "at": "2026-09-20T04:05:49.715Z", "kind": "cancellation_text", "text": "Request interrupted by user"},
+        {"kind": "agent_turn_outcome", "turn_id": "4e8b74e5-c38d-473c-861f-604abfa6a022", "reason": "cancelled", "result_kind": "text"}
+      ],
+      "terminal_actions": [
+        {"keys": ["escape"]},
+        {"keys": ["ctrl_c"]}
+      ],
+      "positive_evidence": ["idle_prompt states the agent was stopped by the user", "matching agent_turn_outcome reason is cancelled"],
+      "negative_evidence": ["Stop is present and is overridden by later explicit cancellation evidence"]
+    },
+    "non_user_failure": {
+      "run_id": "ffa1b1e7-0d02-40af-9eb8-a35c1b6c4c5b",
+      "child_session_id": "6662731f-cadf-496c-8461-2ec9cc80f072",
+      "external_session_id": "e0b87270-0b49-4044-88a7-fb8f1375f3cf",
+      "nonce": "n22308i",
+      "droid_mode": "interactive",
+      "bounds": {"start": "2026-09-20T04:06:53.348887Z", "end": "2026-09-20T04:07:05.316104Z"},
+      "tool_id": "chatcmpl-tool-973358ee51dffeb5",
+      "provider_turn_id": "55f9f0a0-fdb2-43bb-abda-8c536e8f558b",
+      "hook_slice": [
+        {"at": "2026-09-20T04:07:00.878664Z", "event": "PreToolUse", "phase": "received", "tool_name": "Execute"},
+        {"at": "2026-09-20T04:07:00.880575Z", "event": "PreToolUse", "phase": "responded", "continue": false, "stop_reason": "GOBBY_TL_NON_USER_FAILURE:n22308i"},
+        {"at": "2026-09-20T04:07:05.316104Z", "event": "Stop"}
+      ],
+      "transcript_slice": [
+        {"id": "3e6570e3-9503-4232-aa64-1cdc783d74e6", "at": "2026-09-20T04:07:05.165Z", "kind": "hook", "event": "PreToolUse", "hook_tool_call_id": "chatcmpl-tool-973358ee51dffeb5"},
+        {"kind": "agent_turn_outcome", "turn_id": "55f9f0a0-fdb2-43bb-abda-8c536e8f558b", "reason": "completed", "result_kind": "text"}
+      ],
+      "positive_evidence": ["hook continued false with deterministic non-user stopReason"],
+      "negative_evidence": ["no user input after prompt", "no whole-turn cancellation marker in bounded slice"]
+    },
+    "replacement_prompt_race": {
+      "run_id": "938a76ce-5e63-47c9-9b4a-39cabed4483b",
+      "child_session_id": "3951753d-fa65-49c1-8103-d6374d5a4dce",
+      "external_session_id": "cdc722c8-7504-46d6-a6de-a9e90c6a0f03",
+      "nonce": "n22309i",
+      "droid_mode": "interactive",
+      "bounds": {"start": "2026-09-20T04:08:28.988852Z", "end": "2026-09-20T04:09:05.291Z"},
+      "tool_id": "chatcmpl-tool-afa0b50588bfa56c",
+      "hook_slice": [
+        {"at": "2026-09-20T04:08:34.491984Z", "event": "PreToolUse", "phase": "holding"},
+        {"at": "2026-09-20T04:08:51.937816Z", "event": "PreToolUse", "phase": "responded", "permission_decision": "deny", "permission_reason": "GOBBY_TL_STALE_RESULT:n22309i"}
+      ],
+      "transcript_slice": [
+        {"id": "a6e210b2-01be-4a57-9ff1-9276874df3f5", "at": "2026-09-20T04:08:51.953Z", "kind": "hook", "event": "PreToolUse", "hook_tool_call_id": "chatcmpl-tool-afa0b50588bfa56c"},
+        {"id": "ac7caef7-8174-4ec2-bc5c-b96d82e89b4b", "at": "2026-09-20T04:08:51.957Z", "kind": "tool_result", "tool_id": "chatcmpl-tool-afa0b50588bfa56c", "is_error": true, "content": "Error: GOBBY_TL_STALE_RESULT:n22309i"},
+        {"id": "50ad3e96-7398-4265-88ba-cf92d5435288", "at": "2026-09-20T04:08:59.472Z", "kind": "hook", "event": "PostToolUse", "additional_context_marker": "GOBBY_TL_REPLACEMENT:n22309i"},
+        {"id": "2a64afc9-36b6-40bd-bbc2-c8609fc6bd15", "at": "2026-09-20T04:09:05.291Z", "kind": "assistant_text", "text": "GOBBY_TL_REPLACEMENT_OK_n22309i"}
+      ],
+      "message_action": {"surface": "gobby-agents:send_message", "message_id": "4fb217b9-2425-4f2e-965a-889ae495f214", "marker": "GOBBY_TL_REPLACEMENT:n22309i"},
+      "positive_evidence": ["replacement message arrived after stale denial", "new turn produced the exact replacement answer"],
+      "negative_evidence": ["stale result did not end the replacement turn"]
+    },
+    "session_exit": {
+      "run_id": "bbf72e4d-00ca-4be5-8a7f-239d7205e37f",
+      "child_session_id": "2a9232d5-543f-4c48-8d37-7cf2668ead42",
+      "external_session_id": "2e1e193d-fff2-478d-8d2b-cb308af9ad37",
+      "nonce": "n22310i",
+      "droid_mode": "interactive",
+      "bounds": {"start": "2026-09-20T04:09:49.425549Z", "end": "2026-09-20T04:10:16.985Z"},
+      "hook_slice": [
+        {"at": "2026-09-20T04:09:58.245279Z", "event": "Stop"},
+        {"at": "2026-09-20T04:10:16.847854Z", "event": "SessionEnd", "reason": "other", "message_count": 16, "session_duration_ms": 30129.982666015625}
+      ],
+      "transcript_slice": [
+        {"id": "311914c5-c7ed-45ba-95c5-51cc261b9ce7", "at": "2026-09-20T04:09:52.518Z", "kind": "prompt", "marker": "GOBBY_TL_CASE:session_exit:n22310i"},
+        {"id": "a39194d9-ee88-47e5-acb0-92c36fb7178e", "at": "2026-09-20T04:09:58.106Z", "kind": "assistant_text", "text": "GOBBY_TL_SESSION_EXIT_READY_n22310i"},
+        {"id": "c0d47bb4-c609-4c81-ab97-cc9eaad221a6", "at": "2026-09-20T04:10:16.985Z", "kind": "hook", "event": "SessionEnd"}
+      ],
+      "terminal_actions": [{"keys": ["/exit", "enter"]}],
+      "positive_evidence": ["fresh managed run ended naturally", "SessionEnd reason is exactly other"],
+      "negative_evidence": ["no stop_agent request"]
+    }
+  }
+}

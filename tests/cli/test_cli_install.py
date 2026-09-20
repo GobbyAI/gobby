@@ -445,7 +445,7 @@ class TestInstallCommand:
                     "plugins_installed": [],
                     "mcp_configured": True,
                 },
-                ("Installed 1 hooks",),
+                ("Installed 1 hooks", "Configuration: ~/.factory/hooks.json"),
             ),
             (
                 "agy",

@@ -515,6 +515,7 @@ async def prepare_droid_spawn(request: SpawnRequest) -> ProviderSpawnPlan | Spaw
         model=request.model,
         reasoning_effort=request.effective_reasoning_effort,
         sandbox_args=launch.provider_args or None,
+        mode="interactive" if request.droid_mode == "interactive" else "agent",
     )
     await asyncio.to_thread(
         _record_resume_launch_details,

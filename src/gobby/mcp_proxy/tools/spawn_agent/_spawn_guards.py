@@ -7,20 +7,138 @@ import contextlib
 import logging
 import uuid
 from collections.abc import AsyncIterator, Mapping
-from typing import Any
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
 from gobby.config.build import load_build_config
 from gobby.dispatch.constants import DISPATCH_TTL_SECONDS, MAX_ACTIVE_AGENTS
+from gobby.mcp_proxy.tools.tasks import resolve_task_id_for_mcp
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.tasks.agentic_close_review import TASK_CLOSE_VALIDATOR_AGENT
+from gobby.tasks.state_semantics import (
+    get_claimed_session_id,
+    is_task_actionable,
+    is_task_reviewable,
+)
 from gobby.utils.session_context import get_current_session_id
 
-from ._idempotency import active_task_spawn_response
+from ._idempotency import active_task_spawn_response, non_actionable_task_spawn_response
+from ._runtime import _normalize_string_list
+from ._step_state import (
+    preclaimed_task_instruction,
+    spawn_starts_after_claim,
+    task_coordination_instruction,
+)
+
+if TYPE_CHECKING:
+    from gobby.storage.tasks import LocalTaskManager
+    from gobby.workflows.definitions import AgentDefinitionBody
 
 logger = logging.getLogger(__name__)
 
 
 _SLOT_LOCKS: dict[str, asyncio.Lock] = {}
+
+
+@dataclass(frozen=True, slots=True)
+class SpawnTaskContext:
+    """Resolved task metadata and prompt policy for one spawn request."""
+
+    prompt: str
+    resolved_task_id: str | None = None
+    task_title: str | None = None
+    task_seq_num: int | None = None
+    task_category: str | None = None
+    task_additional_skills: list[str] | None = None
+    claimed_session_id: str | None = None
+    refusal: dict[str, Any] | None = None
+
+
+async def resolve_spawn_task_context(
+    *,
+    prompt: str,
+    task_id: str | None,
+    task_manager: LocalTaskManager | None,
+    project_id: str,
+    allow_closed_task: bool,
+    agent_body: AgentDefinitionBody | None,
+    initial_variables: dict[str, Any] | None,
+) -> SpawnTaskContext:
+    """Resolve task ownership, admission, metadata, and task-specific prompt policy."""
+    resolved_task_id: str | None = None
+    task_title: str | None = None
+    task_seq_num: int | None = None
+    task_category: str | None = None
+    task_additional_skills: list[str] | None = None
+    claimed_session_id: str | None = None
+    resolved_task: Any | None = None
+
+    if task_id and task_manager:
+        try:
+            resolved_task_id = await asyncio.to_thread(
+                resolve_task_id_for_mcp, task_manager, task_id, project_id
+            )
+            resolved_task = await asyncio.to_thread(task_manager.get_task, resolved_task_id)
+            if resolved_task:
+                task_title = resolved_task.title
+                task_seq_num = resolved_task.seq_num
+                task_category = getattr(resolved_task, "category", None)
+                if resolved_task.additional_skills is not None:
+                    task_additional_skills = _normalize_string_list(resolved_task.additional_skills)
+                claimed_session_id = get_claimed_session_id(resolved_task)
+        except Exception as exc:
+            # Continuing task-less would leave the child unable to edit while spawn reports
+            # success, so reject a task assignment that cannot be resolved (#22402).
+            logger.warning("Failed to resolve task_id %s: %s", task_id, exc)
+            return SpawnTaskContext(
+                prompt=prompt,
+                refusal={
+                    "success": False,
+                    "skipped": True,
+                    "task_id": task_id,
+                    "error": (
+                        f"Task {task_id} could not be resolved; refusing to spawn agent: {exc}"
+                    ),
+                },
+            )
+
+    if resolved_task_id and resolved_task is not None and not is_task_actionable(resolved_task):
+        if not (allow_closed_task and is_task_reviewable(resolved_task)):
+            return SpawnTaskContext(
+                prompt=prompt,
+                refusal=non_actionable_task_spawn_response(
+                    resolved_task,
+                    task_ref=task_id,
+                    resolved_task_id=resolved_task_id,
+                ),
+            )
+
+    task_will_be_owned_by_child = bool(
+        resolved_task_id
+        and resolved_task is not None
+        and is_task_actionable(resolved_task)
+        and claimed_session_id is None
+    )
+    if agent_body is not None and spawn_starts_after_claim(
+        agent_body.step_workflow,
+        task_owned_by_child=task_will_be_owned_by_child,
+    ):
+        assert resolved_task_id is not None
+        task_ref = f"#{task_seq_num}" if task_seq_num else resolved_task_id
+        prompt = f"{prompt}\n\n{preclaimed_task_instruction(task_ref)}"
+    initial_task_ref = initial_variables.get("assigned_task_id") if initial_variables else None
+    if resolved_task_id is not None or isinstance(initial_task_ref, str):
+        prompt = f"{prompt}\n\n{task_coordination_instruction()}"
+
+    return SpawnTaskContext(
+        prompt=prompt,
+        resolved_task_id=resolved_task_id,
+        task_title=task_title,
+        task_seq_num=task_seq_num,
+        task_category=task_category,
+        task_additional_skills=task_additional_skills,
+        claimed_session_id=claimed_session_id,
+    )
 
 
 class TaskSpawnLease:

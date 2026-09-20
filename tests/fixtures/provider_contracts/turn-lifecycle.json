@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "capture_date": "2026-09-06",
+  "capture_date": "2026-09-19",
   "providers": [
     {
       "provider": "claude",
@@ -40,20 +40,20 @@
     },
     {
       "provider": "droid",
-      "version": "0.190.0",
-      "official_source": "Factory Droid hooks and transcript contract, release 0.190.0",
-      "capture_command": "droid --output-format stream-json",
+      "version": "0.223.0",
+      "official_source": "Factory Droid hooks documentation and sanitized turn-lifecycle-0.223.0.json source capture, release 0.223.0",
+      "capture_command": "gobby-agents:spawn_agent(provider=\"droid\", droid_mode=\"exec|interactive\")",
       "cases": {
-        "normal_answer": {"raw_events": ["UserPromptSubmit(turn_id=d1)", "Stop(turn_id=d1)"], "evidence": "bounded hook sequence", "required_absent": ["idle_prompt(cancelled=true)"], "expected": {"disposition": "completed", "wait_kind": null, "status": "paused", "distinction": "normal_completion"}},
-        "prose_question": {"raw_events": ["assistant: Should I continue?", "Stop(turn_id=d2)"], "evidence": "plain text followed by Stop", "required_absent": ["elicitation_notification"], "expected": {"disposition": "completed", "wait_kind": null, "status": "paused", "distinction": "prose_question"}},
-        "structured_question": {"raw_events": ["elicitation_notification(tool_call_id=q3)"], "evidence": "notification matches transcript tool q3", "required_absent": ["Stop"], "expected": {"disposition": "unknown", "wait_kind": "input", "status": "awaiting_input", "distinction": "displayed_interaction"}},
-        "permission_wait": {"raw_events": ["permission_notification(tool_call_id=p4)"], "evidence": "notification matches transcript tool p4", "required_absent": ["Stop"], "expected": {"disposition": "unknown", "wait_kind": "approval", "status": "awaiting_approval", "distinction": "displayed_interaction"}},
-        "approval": {"raw_events": ["permission_notification(tool_call_id=p5)", "PostToolUse(tool_call_id=p5)"], "evidence": "matching tool resumed", "required_absent": [], "expected": {"disposition": "unknown", "wait_kind": null, "status": "active", "distinction": "approved_resolution"}},
-        "denial": {"raw_events": ["permission_notification(tool_call_id=p6)", "transcript:tool_result(p6,denied)"], "evidence": "matching denial result", "required_absent": ["transcript:turn_cancelled"], "expected": {"disposition": "unknown", "wait_kind": null, "status": "paused", "distinction": "denied_resolution"}},
-        "user_interruption": {"raw_events": ["idle_prompt(reason=cancelled,turn_id=d7)", "transcript:turn_cancelled(turn_id=d7)"], "evidence": "cancel idle prompt plus transcript cancellation", "required_absent": ["Stop"], "expected": {"disposition": "user_interrupted", "wait_kind": null, "status": "interrupted", "distinction": "whole_turn_interruption"}},
-        "non_user_failure": {"raw_events": ["idle_prompt(reason=error,turn_id=d8)", "transcript:tool_failed(turn_id=d8)"], "evidence": "idle error lacks cancellation marker", "required_absent": ["transcript:turn_cancelled"], "expected": {"disposition": "ended_non_user", "wait_kind": null, "status": "paused", "distinction": "failure"}},
-        "replacement_prompt_race": {"raw_events": ["permission_notification(tool_call_id=old)", "UserPromptSubmit(turn_id=d10)", "transcript:tool_result(old,denied)"], "evidence": "older transcript cursor", "required_absent": [], "expected": {"disposition": "unknown", "wait_kind": null, "status": "active", "distinction": "stale_event", "stale_ignored": true}},
-        "session_exit": {"raw_events": ["SessionEnd(reason=process_exit)"], "evidence": "bounded process exit", "required_absent": ["transcript:turn_cancelled"], "expected": {"disposition": "ended_non_user", "wait_kind": null, "status": "paused", "distinction": "session_exit"}}
+        "normal_answer": {"raw_events": ["transcript:assistant_text(GOBBY_TL_NORMAL_OK)", "Stop(session_id=0cd2735b-2adc-4dc0-95f5-7db66b1b5a54)"], "evidence": "bounded source-capture slice", "required_absent": ["idle_prompt"], "expected": {"disposition": "completed", "wait_kind": null, "status": "paused", "distinction": "normal_completion"}},
+        "prose_question": {"raw_events": ["transcript:assistant_text(Should I continue?)", "Stop(session_id=02bd2cc7-5071-4c58-b5c4-04d0d366b404)"], "evidence": "plain text followed by bounded Stop", "required_absent": ["elicitation_dialog"], "expected": {"disposition": "completed", "wait_kind": null, "status": "paused", "distinction": "prose_question"}},
+        "structured_question": {"raw_events": ["PreToolUse(AskUser,tool_call_id=chatcmpl-tool-a8b045038f74c424)", "Notification(type=elicitation_dialog)"], "evidence": "notification and transcript hook share the current tool parent", "required_absent": ["Stop"], "expected": {"disposition": "unknown", "wait_kind": "input", "status": "awaiting_input", "distinction": "displayed_interaction"}},
+        "permission_wait": {"raw_events": ["PreToolUse(permissionDecision=ask,tool_call_id=chatcmpl-tool-8ceb2591cc5e02e5)", "Notification(type=permission_prompt)"], "evidence": "ask response and displayed prompt match the current transcript tool", "required_absent": ["PostToolUse", "Stop"], "expected": {"disposition": "unknown", "wait_kind": "approval", "status": "awaiting_approval", "distinction": "displayed_interaction"}},
+        "approval": {"raw_events": ["Notification(type=permission_prompt)", "PostToolUse(tool_call_id=chatcmpl-tool-9fd09252617b58d3)"], "evidence": "matching successful tool resumed", "required_absent": [], "expected": {"disposition": "unknown", "wait_kind": null, "status": "active", "distinction": "approved_resolution"}},
+        "denial": {"raw_events": ["Notification(type=permission_prompt)", "transcript:tool_result(chatcmpl-tool-a47d1d24db186ec0,denied)"], "evidence": "matching tool-local denial result", "required_absent": ["transcript:agent_turn_outcome(reason=cancelled)"], "expected": {"disposition": "unknown", "wait_kind": null, "status": "paused", "distinction": "denied_resolution"}},
+        "user_interruption": {"raw_events": ["Stop(turn_id=4e8b74e5-c38d-473c-861f-604abfa6a022)", "Notification(type=idle_prompt,message=Agent stopped by user and is waiting for input)", "transcript:agent_turn_outcome(turn_id=4e8b74e5-c38d-473c-861f-604abfa6a022,reason=cancelled)"], "evidence": "explicit idle cancellation and matching transcript outcome override the earlier generic Stop", "required_absent": [], "expected": {"disposition": "user_interrupted", "wait_kind": null, "status": "interrupted", "distinction": "whole_turn_interruption"}},
+        "non_user_failure": {"raw_events": ["PreToolUse(continue=false,stopReason=GOBBY_TL_NON_USER_FAILURE:n22308i)", "Stop(turn_id=55f9f0a0-fdb2-43bb-abda-8c536e8f558b)", "transcript:agent_turn_outcome(turn_id=55f9f0a0-fdb2-43bb-abda-8c536e8f558b,reason=completed)"], "evidence": "deterministic hook stopReason without user input or cancellation", "required_absent": ["transcript:agent_turn_outcome(reason=cancelled)"], "expected": {"disposition": "ended_non_user", "wait_kind": null, "status": "paused", "distinction": "failure"}},
+        "replacement_prompt_race": {"raw_events": ["PreToolUse(tool_call_id=chatcmpl-tool-afa0b50588bfa56c,held=true)", "transcript:tool_result(chatcmpl-tool-afa0b50588bfa56c,GOBBY_TL_STALE_RESULT:n22309i)", "transcript:assistant_text(GOBBY_TL_REPLACEMENT_OK_n22309i)"], "evidence": "replacement answer followed the stale result", "required_absent": [], "expected": {"disposition": "unknown", "wait_kind": null, "status": "active", "distinction": "stale_event", "stale_ignored": true}},
+        "session_exit": {"raw_events": ["SessionEnd(reason=other)"], "evidence": "bounded natural session exit", "required_absent": ["transcript:agent_turn_outcome(reason=cancelled)"], "expected": {"disposition": "ended_non_user", "wait_kind": null, "status": "paused", "distinction": "session_exit"}}
       }
     },
     {

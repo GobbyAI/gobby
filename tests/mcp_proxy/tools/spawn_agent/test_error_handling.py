@@ -163,7 +163,7 @@ class TestSpawnAgentImplErrorBranches:
                 },
             ),
             patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.resolve_task_id_for_mcp",
+                "gobby.mcp_proxy.tools.spawn_agent._spawn_guards.resolve_task_id_for_mcp",
                 side_effect=TaskNotFoundError("Task #99999 not found in project"),
             ),
             patch(
@@ -942,7 +942,7 @@ test"""
                 },
             ),
             patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.resolve_task_id_for_mcp",
+                "gobby.mcp_proxy.tools.spawn_agent._spawn_guards.resolve_task_id_for_mcp",
                 return_value="task-1",
             ),
             patch(

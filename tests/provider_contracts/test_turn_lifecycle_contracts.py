@@ -12,7 +12,7 @@ FIXTURE = Path(__file__).parents[1] / "fixtures" / "provider_contracts" / "turn-
 PINNED_VERSIONS = {
     "claude": "2.1.263",
     "codex": "0.153.2",
-    "droid": "0.190.0",
+    "droid": "0.223.0",
     "grok": "1.0.13",
     "qwen": "0.23.0",
     "agy": "1.1.27",
