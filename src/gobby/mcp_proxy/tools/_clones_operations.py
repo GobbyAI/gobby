@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import subprocess  # nosec B404 # exceptions from CloneGitManager's fixed git argv
+from pathlib import Path
 from typing import Any, Literal
 
+from gobby.agents.cargo_target import cleanup_checkout_cargo_target_dir
 from gobby.clones import git as clone_git
 from gobby.mcp_proxy.tools._clones_context import CloneRegistryContext
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -118,6 +120,19 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
             return {
                 "success": False,
                 "error": f"Failed to delete clone files: {delete_error}",
+            }
+
+        cargo_error = await asyncio.to_thread(
+            cleanup_checkout_cargo_target_dir,
+            Path(clone_path),
+            clone.project_id,
+        )
+        if cargo_error is not None:
+            return {
+                "success": False,
+                "error_code": "cargo_target_cleanup_failed",
+                "error": f"Clone files were deleted, but Cargo target cleanup failed: {cargo_error}",
+                "files_deleted": True,
             }
 
         try:

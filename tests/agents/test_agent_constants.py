@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from gobby.agents.cargo_target import checkout_cargo_target_dir
 from gobby.agents.constants import (
     ALL_TERMINAL_ENV_VARS,
     CARGO_HOME,
@@ -116,11 +117,13 @@ class TestGetTerminalEnvVars:
     ) -> None:
         """Function returns all required environment variables."""
         monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
+        checkout = tmp_path / "checkout"
         result = get_terminal_env_vars(
             session_id="sess-child",
             parent_session_id="sess-parent",
             agent_run_id="run-123",
             project_id="proj-abc",
+            checkout_root=checkout,
         )
 
         assert result[GOBBY_SESSION_ID] == "sess-child"
@@ -134,9 +137,9 @@ class TestGetTerminalEnvVars:
         assert uv_cache_parts[-1] == _expected_cache_leaf("sess-child", "sess-child")
         shared_cargo_home = tmp_path / "cache" / "cargo-home"
         assert result[CARGO_HOME] == str(shared_cargo_home)
-        shared_target = tmp_path / "cache" / "cargo-target" / "proj-abc"
-        assert result[CARGO_TARGET_DIR] == str(shared_target)
-        assert shared_target.is_dir()
+        checkout_target = checkout_cargo_target_dir(checkout, "proj-abc")
+        assert result[CARGO_TARGET_DIR] == str(checkout_target)
+        assert checkout_target.is_dir()
 
     def test_includes_run_bound_agent_token(
         self,
@@ -202,7 +205,7 @@ class TestGetTerminalEnvVars:
         """Every spawned agent gets one Cargo home under Gobby home, not a per-session one.
 
         Cargo fingerprints embed dependency source paths, so a per-session home
-        would invalidate every dependency in the shared CARGO_TARGET_DIR.
+        would invalidate every dependency in checkout-specific CARGO_TARGET_DIRs.
         """
         monkeypatch.setattr("gobby.agents.constants.get_gobby_home", lambda: tmp_path)
 
@@ -211,6 +214,31 @@ class TestGetTerminalEnvVars:
 
         assert first == second
         assert Path(first) == tmp_path / "cache" / "cargo-home"
+
+    def test_cargo_target_is_checkout_specific_while_home_is_shared(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "home"))
+        first_checkout = tmp_path / "main"
+        second_checkout = tmp_path / "worktree"
+
+        first = get_terminal_env_vars(
+            session_id="first",
+            parent_session_id="parent",
+            agent_run_id="run-first",
+            project_id="project",
+            checkout_root=first_checkout,
+        )
+        second = get_terminal_env_vars(
+            session_id="second",
+            parent_session_id="parent",
+            agent_run_id="run-second",
+            project_id="project",
+            checkout_root=second_checkout,
+        )
+
+        assert first[CARGO_HOME] == second[CARGO_HOME]
+        assert first[CARGO_TARGET_DIR] != second[CARGO_TARGET_DIR]
 
     def test_cargo_home_never_touches_operator_cargo_dir(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path

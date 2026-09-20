@@ -316,6 +316,7 @@ def prepare_terminal_spawn(
             bind_run=bind_fresh_run,
             worktree_id=worktree_id,
             clone_id=clone_id,
+            checkout_root=workspace_path,
         )
         prompt_file = prepared.prompt_file
         return _issue_prelaunch_credential(
@@ -365,6 +366,7 @@ def prepare_terminal_resume(
     resume_metadata_json: dict[str, Any],
     worktree_id: str | None,
     clone_id: str | None,
+    workspace_path: str,
     credential_manager: ManagedCredentialManager | None = None,
 ) -> PreparedSpawn:
     """Prepare a successor run against an existing durable child session."""
@@ -435,6 +437,7 @@ def prepare_terminal_resume(
             bind_run=bind_successor_run,
             worktree_id=worktree_id,
             clone_id=clone_id,
+            checkout_root=workspace_path,
         )
     return _issue_prelaunch_credential(
         session_manager,
@@ -531,6 +534,7 @@ def _prepare_run_for_session(
     bind_run: Callable[[str], None],
     worktree_id: str | None,
     clone_id: str | None,
+    checkout_root: str | None = None,
 ) -> PreparedSpawn:
     """Create and bind a run, then construct its terminal identity."""
     from gobby.storage.agents import LocalAgentRunManager
@@ -579,6 +583,7 @@ def _prepare_run_for_session(
             parent_session_id=parent_session_id,
             agent_run_id=agent_run_id,
             project_id=project_id,
+            checkout_root=checkout_root,
             workflow_name=workflow_name,
             agent_depth=session_depth,
             max_agent_depth=max_agent_depth,

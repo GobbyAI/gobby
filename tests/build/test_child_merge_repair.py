@@ -5,6 +5,7 @@ import shutil
 import subprocess
 from pathlib import Path
 from typing import Literal
+from unittest.mock import patch
 
 import pytest
 
@@ -12,6 +13,7 @@ from gobby.build.dispatch_tick import DispatcherTickSummary
 from gobby.build.options import BuildOptions
 from gobby.build.service import build
 from gobby.build.workspace_git import _workspace_path
+from gobby.build.workspace_services import _cleanup_removed_workspace_target
 from gobby.build.workspaces import (
     BuildWorkspaceError,
     _integration_branch,
@@ -19,11 +21,11 @@ from gobby.build.workspaces import (
     ensure_epic_integration_workspaces,
     ensure_task_parent_integration_workspace,
 )
-from gobby.storage.clones import LocalCloneManager
+from gobby.storage.clones import Clone, LocalCloneManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager, Project
 from gobby.storage.tasks import LocalTaskManager
-from gobby.storage.worktrees import LocalWorktreeManager
+from gobby.storage.worktrees import LocalWorktreeManager, Worktree
 
 pytestmark = pytest.mark.unit
 
@@ -636,6 +638,50 @@ async def test_epic_integration_workspace_recreates_missing_path(
     assert recreated.id != stale.id
     assert Path(recreated.worktree_path).is_dir()
     assert parent_artifacts.integration_workspace_id == recreated.id
+
+
+@pytest.mark.parametrize("backend", ["worktree", "clone"])
+async def test_removed_workspace_target_cleanup_failure_preserves_record(
+    backend: Literal["worktree", "clone"],
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / f"repo-{backend}"
+    repo.mkdir()
+    _init_repo(repo)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    project = _checkout_project(temp_db, repo, monkeypatch, name=f"cleanup-{backend}")
+
+    record: Worktree | Clone
+    if backend == "worktree":
+        worktree_storage = LocalWorktreeManager(temp_db)
+        record = worktree_storage.create(
+            project_id=project.id,
+            branch_name="task/missing",
+            worktree_path=str(tmp_path / "missing-worktree"),
+            base_branch="main",
+        )
+    else:
+        clone_storage = LocalCloneManager(temp_db)
+        record = clone_storage.create(
+            project_id=project.id,
+            branch_name="task/missing",
+            clone_path=str(tmp_path / "missing-clone"),
+            base_branch="main",
+        )
+
+    with patch(
+        "gobby.build.workspace_services.cleanup_checkout_cargo_target_dir",
+        return_value="permission denied",
+    ):
+        with pytest.raises(BuildWorkspaceError, match="cargo_target_cleanup_failed"):
+            await _cleanup_removed_workspace_target(record)
+
+    if backend == "worktree":
+        assert worktree_storage.get(record.id) is not None
+    else:
+        assert clone_storage.get(record.id) is not None
 
 
 async def test_epic_integration_workspace_recreates_invalid_git_path(

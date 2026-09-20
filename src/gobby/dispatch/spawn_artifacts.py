@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
+from gobby.agents.cargo_target import cleanup_checkout_cargo_target_dir
 from gobby.build.workspaces import (
     BuildWorkspaceError,
     ensure_epic_integration_workspaces,
@@ -317,6 +318,15 @@ def _worktree_artifact_is_stale(
     if worktree.task_id != task.id:
         return True
     if not Path(worktree.worktree_path).is_dir():
+        cargo_error = cleanup_checkout_cargo_target_dir(
+            Path(worktree.worktree_path),
+            worktree.project_id,
+        )
+        if cargo_error is not None:
+            raise DispatchSpawnFailed(
+                "cargo_target_cleanup_failed: Worktree files were already absent, but Cargo "
+                f"target cleanup failed: {cargo_error}"
+            )
         storage.delete(worktree.id)
         return True
     return False
@@ -341,6 +351,15 @@ def _clone_artifact_is_stale(
     if clone.task_id != task.id:
         return True
     if not Path(clone.clone_path).is_dir():
+        cargo_error = cleanup_checkout_cargo_target_dir(
+            Path(clone.clone_path),
+            clone.project_id,
+        )
+        if cargo_error is not None:
+            raise DispatchSpawnFailed(
+                "cargo_target_cleanup_failed: Clone files were already absent, but Cargo target "
+                f"cleanup failed: {cargo_error}"
+            )
         storage.delete(clone.id)
         return True
     return False

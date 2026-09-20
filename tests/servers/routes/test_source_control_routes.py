@@ -1276,10 +1276,10 @@ class TestDeleteWorktree:
         assert response.status_code == 404
 
     def test_delete_success_no_git_manager(
-        self, client: TestClient, mock_server: MagicMock
+        self, client: TestClient, mock_server: MagicMock, tmp_path: Path
     ) -> None:
         wt = MagicMock()
-        wt.worktree_path = "/tmp/wt"
+        wt.worktree_path = str(tmp_path / "missing-worktree")
         wt.project_id = "proj-1"
 
         mock_storage = MagicMock()
@@ -1294,6 +1294,29 @@ class TestDeleteWorktree:
         assert data["success"] is True
         assert data["id"] == "wt-1"
         assert data["git_deleted"] is True  # defaults to True when no git_manager
+
+    def test_delete_live_path_without_git_manager_preserves_files_and_record(
+        self, client: TestClient, mock_server: MagicMock, tmp_path: Path
+    ) -> None:
+        worktree_path = tmp_path / "live-worktree"
+        worktree_path.mkdir()
+        wt = MagicMock()
+        wt.worktree_path = str(worktree_path)
+        wt.project_id = "proj-1"
+
+        mock_storage = MagicMock()
+        mock_storage.get.return_value = wt
+        mock_server.services.worktree_storage = mock_storage
+        mock_server.services.git_manager = None
+
+        with patch("gobby.worktrees.deletion.cleanup_checkout_cargo_target_dir") as cleanup_target:
+            response = client.delete("/api/source-control/worktrees/wt-1")
+
+        assert response.status_code == 409
+        assert response.json()["detail"]["success"] is False
+        assert worktree_path.is_dir()
+        cleanup_target.assert_not_called()
+        mock_storage.delete.assert_not_called()
 
     @pytest.mark.parametrize("merged_into", [None, "0.5.0"])
     def test_delete_success_with_git_manager(
@@ -1328,6 +1351,7 @@ class TestDeleteWorktree:
                 "gobby.worktrees.git.WorktreeGitManager",
             ) as mock_wgm_cls,
             patch("gobby.worktrees.deletion.emit_worktree_event") as emit_event,
+            patch("gobby.worktrees.deletion.Path.exists", return_value=True),
         ):
             mock_wgm_cls.return_value.delete_worktree = AsyncMock(return_value=mock_git_result)
 
@@ -1384,6 +1408,7 @@ class TestDeleteWorktree:
             patch(
                 "gobby.worktrees.git.WorktreeGitManager",
             ) as mock_wgm_cls,
+            patch("gobby.worktrees.deletion.Path.exists", return_value=True),
         ):
             mock_wgm_cls.return_value.delete_worktree = AsyncMock(return_value=mock_git_result)
 
@@ -1415,6 +1440,7 @@ class TestDeleteWorktree:
             patch(
                 "gobby.worktrees.git.WorktreeGitManager",
             ) as mock_wgm_cls,
+            patch("gobby.worktrees.deletion.Path.exists", return_value=True),
         ):
             mock_wgm_cls.return_value.delete_worktree.side_effect = RuntimeError("git failed")
 

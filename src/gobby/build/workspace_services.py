@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import shutil
 from pathlib import Path
 from typing import cast
 
+from gobby.agents.cargo_target import cleanup_checkout_cargo_target_dir
 from gobby.build.workspace_common import BuildWorkspaceError, WorkspaceBackend
 from gobby.build.workspace_git import (
     _branch_exists,
@@ -137,6 +139,7 @@ class _WorkspaceServices:
             if recovered:
                 if existing is not None:
                     await _remove_invalid_workspace_dir(existing.worktree_path, expected_path=path)
+                    await _cleanup_removed_workspace_target(existing)
                     self.worktree_storage.delete(existing.id)
             else:
                 self._validate_record(existing, branch_name=branch_name, backend="worktree")
@@ -160,6 +163,7 @@ class _WorkspaceServices:
                 )
                 if recovered:
                     await _remove_invalid_workspace_dir(existing.worktree_path, expected_path=path)
+                    await _cleanup_removed_workspace_target(existing)
                     self.worktree_storage.delete(existing.id)
                     existing = None
             if existing is not None and await _is_promotable_workspace(
@@ -236,6 +240,7 @@ class _WorkspaceServices:
             if recovered:
                 if existing is not None:
                     await _remove_invalid_workspace_dir(existing.clone_path, expected_path=path)
+                    await _cleanup_removed_workspace_target(existing)
                     self.clone_storage.delete(existing.id)
             else:
                 self._validate_record(existing, branch_name=branch_name, backend="clone")
@@ -263,6 +268,7 @@ class _WorkspaceServices:
                 )
                 if recovered:
                     await _remove_invalid_workspace_dir(existing.clone_path, expected_path=path)
+                    await _cleanup_removed_workspace_target(existing)
                     self.clone_storage.delete(existing.id)
                     existing = None
             if existing is not None and await _is_promotable_workspace(existing, task.id, "clone"):
@@ -378,3 +384,17 @@ async def _remove_invalid_workspace_dir(raw_path: str | None, *, expected_path: 
     if await _is_git_workspace_dir(path):
         return
     shutil.rmtree(path)
+
+
+async def _cleanup_removed_workspace_target(record: Worktree | Clone) -> None:
+    raw_path = record.worktree_path if isinstance(record, Worktree) else record.clone_path
+    cargo_error = await asyncio.to_thread(
+        cleanup_checkout_cargo_target_dir,
+        Path(raw_path),
+        record.project_id,
+    )
+    if cargo_error is not None:
+        raise BuildWorkspaceError(
+            "cargo_target_cleanup_failed: Workspace files were already removed or absent, but "
+            f"Cargo target cleanup failed: {cargo_error}"
+        )

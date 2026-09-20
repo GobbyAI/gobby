@@ -9,6 +9,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
+from gobby.agents.cargo_target import cleanup_checkout_cargo_target_dir
 from gobby.agents.completion_subscribers import subscribe_agent_completion
 from gobby.agents.external_write_grants import GRANT_KEY, apply_write_grant, authorize_write_grant
 from gobby.agents.isolation import (
@@ -490,6 +491,20 @@ async def spawn_agent_impl(
         if not existing_worktree:
             return {"success": False, "error": f"Worktree {worktree_id} not found"}
         if not Path(existing_worktree.worktree_path).is_dir():
+            cargo_error = await asyncio.to_thread(
+                cleanup_checkout_cargo_target_dir,
+                Path(existing_worktree.worktree_path),
+                existing_worktree.project_id,
+            )
+            if cargo_error is not None:
+                return {
+                    "success": False,
+                    "error_code": "cargo_target_cleanup_failed",
+                    "error": (
+                        "Worktree directory was already missing, but Cargo target cleanup "
+                        f"failed: {cargo_error}"
+                    ),
+                }
             worktree_storage.delete(worktree_id)
             return {
                 "success": False,
@@ -540,6 +555,20 @@ async def spawn_agent_impl(
         if not existing_clone:
             return {"success": False, "error": f"Clone {clone_id} not found"}
         if not Path(existing_clone.clone_path).is_dir():
+            cargo_error = await asyncio.to_thread(
+                cleanup_checkout_cargo_target_dir,
+                Path(existing_clone.clone_path),
+                existing_clone.project_id,
+            )
+            if cargo_error is not None:
+                return {
+                    "success": False,
+                    "error_code": "cargo_target_cleanup_failed",
+                    "error": (
+                        "Clone directory was already missing, but Cargo target cleanup failed: "
+                        f"{cargo_error}"
+                    ),
+                }
             clone_storage.delete(clone_id)
             return {
                 "success": False,

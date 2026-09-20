@@ -359,6 +359,7 @@ async def resume_agent_run(
             resume_metadata_json=metadata,
             worktree_id=_metadata_str(resume_metadata, "worktree_id"),
             clone_id=_metadata_str(resume_metadata, "clone_id"),
+            workspace_path=cwd,
         )
     except (ValueError, psycopg.Error) as exc:
         error = f"resume_preflight_failed:{type(exc).__name__}"

@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from pathlib import Path
 from typing import Any
 
+from gobby.agents.cargo_target import cleanup_checkout_cargo_target_dir
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.worktrees._context import RegistryContext
 from gobby.mcp_proxy.tools.worktrees._helpers import resolve_project_context
@@ -137,6 +140,7 @@ def create_cleanup_registry(ctx: RegistryContext) -> InternalToolRegistry:
         expired = ctx.worktree_storage.find_expired(project_id=resolved_project_id)
 
         results = []
+        cleanup_succeeded = True
         for wt in stale:
             result: dict[str, Any] = {
                 "id": wt.id,
@@ -170,6 +174,16 @@ def create_cleanup_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 result["git_deleted"] = git_result.success
                 if not git_result.success:
                     result["git_error"] = git_result.error or "Unknown error"
+                else:
+                    cargo_error = await asyncio.to_thread(
+                        cleanup_checkout_cargo_target_dir,
+                        Path(wt.worktree_path),
+                        wt.project_id,
+                    )
+                    if cargo_error is not None:
+                        cleanup_succeeded = False
+                        result["error_code"] = "cargo_target_cleanup_failed"
+                        result["cargo_target_error"] = cargo_error
 
             results.append(result)
 
@@ -208,14 +222,24 @@ def create_cleanup_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 )
                 result["git_deleted"] = git_result.success
                 if git_result.success:
-                    ctx.worktree_storage.delete(wt.id)
+                    cargo_error = await asyncio.to_thread(
+                        cleanup_checkout_cargo_target_dir,
+                        Path(wt.worktree_path),
+                        wt.project_id,
+                    )
+                    if cargo_error is None:
+                        ctx.worktree_storage.delete(wt.id)
+                    else:
+                        cleanup_succeeded = False
+                        result["error_code"] = "cargo_target_cleanup_failed"
+                        result["cargo_target_error"] = cargo_error
                 else:
                     result["git_error"] = git_result.error or "Unknown error"
 
             results.append(result)
 
         return {
-            "success": True,
+            "success": cleanup_succeeded,
             "dry_run": dry_run,
             "cleaned": results,
             "count": len(results),

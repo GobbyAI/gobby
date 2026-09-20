@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby.agents.cargo_target import checkout_cargo_target_dir
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.utils.project_context import (
@@ -933,10 +934,10 @@ class TestEnsureProjectJsonForIsolation:
         assert target_project_json.read_bytes() == original
         assert list(target_project_json.parent.glob(".project.json.*")) == []
 
-    async def test_cargo_checkout_links_shared_target(
+    async def test_cargo_checkout_links_checkout_target(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A Cargo isolated checkout gets a target symlink into the shared build dir."""
+        """A Cargo isolated checkout gets a checkout-specific target symlink."""
         monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "home"))
         repo = tmp_path / "repo"
         (repo / ".gobby").mkdir(parents=True)
@@ -949,7 +950,7 @@ class TestEnsureProjectJsonForIsolation:
 
         link = target / "target"
         assert link.is_symlink()
-        assert os.readlink(link) == str(tmp_path / "home" / "cache" / "cargo-target" / "proj-1")
+        assert os.readlink(link) == str(checkout_cargo_target_dir(target, "proj-1"))
         assert link.is_dir()
 
     async def test_non_cargo_checkout_gets_no_target_link(
