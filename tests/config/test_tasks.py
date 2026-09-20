@@ -245,11 +245,9 @@ class TestTaskValidationConfigDefaults:
         assert "tool_loop_enabled" not in TaskValidationConfig.model_fields
         assert "tool_loop_preview_bytes" not in TaskValidationConfig.model_fields
         assert "tool_loop_max_calls" not in TaskValidationConfig.model_fields
-        assert config.prompt_path is None
         assert config.max_iterations == 10
         assert config.close_validation_escalation_threshold == 5
         assert config.close_review_prompt_max_chars == 256_000
-        assert config.close_review_prompt_budget_chars == 50_000
         assert config.require_clean_attributed_paths_on_close is True
         assert config.close_review_validator_timeout_seconds == 1200.0
         assert config.escalation_enabled is True
@@ -273,12 +271,6 @@ class TestTaskValidationConfigCustom:
 
         config = TaskValidationConfig(close_review_prompt_max_chars=24_000)
         assert config.close_review_prompt_max_chars == 24_000
-
-    def test_custom_close_review_prompt_budget(self) -> None:
-        from gobby.config.tasks import TaskValidationConfig
-
-        config = TaskValidationConfig(close_review_prompt_budget_chars=30_000)
-        assert config.close_review_prompt_budget_chars == 30_000
 
     def test_custom_close_review_validator_timeout(self) -> None:
         from gobby.config.tasks import TaskValidationConfig
@@ -327,14 +319,6 @@ class TestTaskValidationConfigValidation:
 
         with pytest.raises(ValidationError) as exc_info:
             TaskValidationConfig(close_review_prompt_max_chars=value)
-        assert "positive" in str(exc_info.value).lower()
-
-    @pytest.mark.parametrize("value", [0, -1])
-    def test_close_review_prompt_budget_must_be_positive(self, value: int) -> None:
-        from gobby.config.tasks import TaskValidationConfig
-
-        with pytest.raises(ValidationError) as exc_info:
-            TaskValidationConfig(close_review_prompt_budget_chars=value)
         assert "positive" in str(exc_info.value).lower()
 
     @pytest.mark.parametrize("value", [0, -1])

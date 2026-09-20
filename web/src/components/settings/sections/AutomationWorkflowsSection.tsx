@@ -53,12 +53,12 @@ const VALIDATION_PATHS = [
   "gobby-tasks.validation.profile",
   "gobby-tasks.validation.candidates",
   "gobby-tasks.validation.enabled",
-  "gobby-tasks.validation.system_prompt",
-  "gobby-tasks.validation.prompt_path",
   "gobby-tasks.validation.criteria_prompt_path",
   "gobby-tasks.validation.criteria_system_prompt",
   "gobby-tasks.validation.max_iterations",
   "gobby-tasks.validation.close_review_prompt_max_chars",
+  "gobby-tasks.validation.close_review_min_severity",
+  "gobby-tasks.validation.close_review_max_concurrency_per_project",
   "gobby-tasks.validation.escalation_enabled",
   "gobby-tasks.validation.escalation_notify",
   "gobby-tasks.validation.escalation_webhook_url",
@@ -276,20 +276,6 @@ function ValidationGroup({ fields }: { fields: SettingsSectionFields }) {
         addLabel="Add candidate"
         placeholder="claude/sonnet"
       />
-      <TextAreaConfigField
-        fields={fields}
-        path="gobby-tasks.validation.system_prompt"
-        label="Validation system prompt"
-        ariaLabel="Validation system prompt"
-        rows={3}
-      />
-      <TextConfigField
-        fields={fields}
-        path="gobby-tasks.validation.prompt_path"
-        label="Validation prompt path"
-        ariaLabel="Validation prompt path"
-        nullable
-      />
       <TextConfigField
         fields={fields}
         path="gobby-tasks.validation.criteria_prompt_path"
@@ -315,6 +301,18 @@ function ValidationGroup({ fields }: { fields: SettingsSectionFields }) {
         path="gobby-tasks.validation.close_review_prompt_max_chars"
         label="Close-review prompt limit (characters)"
         ariaLabel="Close-review prompt limit (characters)"
+      />
+      <SchemaSelectField
+        fields={fields}
+        path="gobby-tasks.validation.close_review_min_severity"
+        label="Minimum blocking finding severity"
+        ariaLabel="Minimum blocking finding severity"
+      />
+      <NumberConfigField
+        fields={fields}
+        path="gobby-tasks.validation.close_review_max_concurrency_per_project"
+        label="Concurrent close reviewers per project"
+        ariaLabel="Concurrent close reviewers per project"
       />
       <SwitchConfigField
         fields={fields}

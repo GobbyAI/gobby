@@ -8,17 +8,17 @@ import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
-from gobby.ai.text_generation import is_feature_generation_infrastructure_error
 from gobby.config.tasks import TaskValidationConfig
-from gobby.failure_categories import FailureCategory, classify_exception
+from gobby.failure_categories import FailureCategory
 from gobby.mcp_proxy.tools._task_query_pagination import collect_task_query_pages
 from gobby.mcp_proxy.tools.tasks._escalation_coordinator import coordinate_task_escalation
 from gobby.storage.tasks import Task, TaskAlreadyEscalatedError, TaskStaleStateError
 from gobby.storage.tasks._validation_backoff import TaskValidationBackoffStore
-from gobby.tasks.close_verdict import CloseVerdict, CloseVerdictParseError
-from gobby.tasks.close_verdict_memo import CloseVerdictMemo
+from gobby.tasks.close_verdict import (
+    FINDING_SEVERITY_ORDER,
+    CloseVerdict,
+)
 from gobby.tasks.state_semantics import get_claimed_session_id, is_task_closed
-from gobby.tasks.validation import ValidationPromptTooLarge
 from gobby.tasks.validation_history import ValidationHistoryManager
 from gobby.utils.daemon_git import normalize_commit_sha
 from gobby.utils.datetime import utc_now
@@ -29,12 +29,11 @@ from gobby.workflows.commit_guard import (
 from gobby.workflows.task_dirty_state import task_dirty_paths_async
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Sequence
     from collections.abc import Set as AbstractSet
 
     from gobby.mcp_proxy.tools.tasks._context import RegistryContext
     from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import CloseEvaluation
-    from gobby.tasks.validation import TaskValidator
 
 logger = logging.getLogger(__name__)
 
@@ -359,7 +358,13 @@ def account_criteria_verdict(
         if criterion.verdict_state == "pending_external"
     ]
     gap_verdicts = [criterion for criterion in verdict.criteria if criterion.verdict_state == "gap"]
-    if pending_external and not gap_verdicts:
+    min_severity = validation_config.close_review_min_severity if validation_config else "low"
+    blocking_findings = [
+        finding
+        for finding in verdict.findings
+        if FINDING_SEVERITY_ORDER[finding.severity] >= FINDING_SEVERITY_ORDER[min_severity]
+    ]
+    if pending_external and not gap_verdicts and not blocking_findings:
         message = (
             "Implementation criteria passed; coordinator-owned live criteria remain pending: "
             f"{', '.join(pending_external)}"
@@ -393,7 +398,7 @@ def account_criteria_verdict(
             validation_feedback=message,
         )
 
-    if not gap_verdicts and verdict.valid:
+    if not gap_verdicts and not blocking_findings and verdict.valid:
         _record_validation_iteration(
             task,
             ctx,
@@ -472,6 +477,11 @@ def account_criteria_verdict(
         if criterion.gap or criterion.required_evidence
     ]
     requirements = gaps or [verdict.feedback]
+    requirements.extend(
+        f"{finding.severity} {finding.category} finding at "
+        f"{finding.path}:{finding.start_line}-{finding.end_line}: {finding.description}"
+        for finding in blocking_findings
+    )
     return ValidationResult(
         can_close=False,
         error_type="validation_failed",
@@ -482,79 +492,6 @@ def account_criteria_verdict(
         failure_category=FailureCategory.CODE,
         validation_status="invalid",
         validation_feedback=verdict.feedback,
-    )
-
-
-async def evaluate_criteria_review(
-    *,
-    task: Task,
-    task_validator: TaskValidator,
-    ctx: RegistryContext,
-    resolved_id: str,
-    changes_summary: str,
-    diff_text: str | None,
-    checklist_facts: Mapping[str, object],
-    validation_config: TaskValidationConfig | None,
-    reason: str = "completed",
-    description: str = "",
-    test_bodies: str = "Named acceptance tests: none.",
-    verdict_memo: CloseVerdictMemo | None = None,
-) -> ValidationResult:
-    """Run and account for one bounded criteria review per unique evidence state."""
-    backoff = active_validation_backoff(task, ctx)
-    if backoff is not None:
-        return backoff
-    try:
-        verdict = await task_validator.validate_task(
-            task_id=task.id,
-            title=task.title,
-            changes_summary=changes_summary,
-            validation_criteria=task.validation_criteria or "",
-            diff_text=diff_text,
-            checklist_facts=checklist_facts,
-            closure_reason=reason,
-            description=description,
-            test_bodies=test_bodies,
-            verdict_memo=verdict_memo,
-        )
-    except ValidationPromptTooLarge as exc:
-        return ValidationResult(
-            can_close=False,
-            error_type="validation_prompt_too_large",
-            message=str(exc),
-            extra={
-                "prompt_chars": exc.prompt_chars,
-                "prompt_limit": exc.prompt_limit,
-                "review_fingerprint": exc.review_fingerprint,
-                "evidence_fingerprint": exc.evidence_fingerprint,
-            },
-        )
-    except CloseVerdictParseError as exc:
-        return record_validation_infrastructure_failure(
-            task,
-            ctx,
-            resolved_id=resolved_id,
-            message=f"Validation provider returned an unusable response: {exc}",
-            failure_category=FailureCategory.PROVIDER,
-        )
-    except Exception as exc:
-        if not is_feature_generation_infrastructure_error(exc):
-            raise
-        return record_validation_infrastructure_failure(
-            task,
-            ctx,
-            resolved_id=resolved_id,
-            message=f"Validation generation unavailable: {exc}",
-            failure_category=classify_exception(exc),
-        )
-
-    return account_criteria_verdict(
-        task=task,
-        verdict=verdict,
-        ctx=ctx,
-        resolved_id=resolved_id,
-        validation_config=validation_config,
-        reset_reason="llm_valid",
     )
 
 
@@ -598,7 +535,6 @@ __all__ = [
     "account_criteria_verdict",
     "active_validation_backoff",
     "determine_close_outcome",
-    "evaluate_criteria_review",
     "record_validation_infrastructure_failure",
     "validate_commit_requirements",
     "validate_uncommitted_task_edits",

@@ -122,6 +122,14 @@ class InternalToolRegistry:
         self.name = name
         self.description = description
         self._tools: dict[str, InternalTool] = {}
+        self._private_callbacks: dict[str, Callable[..., Any]] = {}
+
+    def set_private_callback(self, name: str, callback: Callable[..., Any]) -> None:
+        """Attach daemon-only orchestration without exposing another MCP tool."""
+        self._private_callbacks[name] = callback
+
+    def get_private_callback(self, name: str) -> Callable[..., Any] | None:
+        return self._private_callbacks.get(name)
 
     def register(
         self,

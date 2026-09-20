@@ -1,4 +1,4 @@
-"""Durable state for oversized task-close validator reviews."""
+"""Durable state for queued task-close reviewer runs."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal, cast
-from uuid import uuid4
 
 from psycopg.errors import UniqueViolation
 
@@ -16,12 +15,13 @@ from gobby.storage.agents import DELIBERATE_STOP_TERMINAL_REASONS
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.datetime import parse_stored_datetime, utc_now
 
-ActiveTaskCloseReviewStatus = Literal["launching", "running", "finalizing"]
+ActiveTaskCloseReviewStatus = Literal["queued", "launching", "running", "finalizing"]
 TerminalTaskCloseReviewStatus = Literal["closed", "invalid", "external_pending", "stale", "error"]
 TaskCloseReviewStatus = ActiveTaskCloseReviewStatus | TerminalTaskCloseReviewStatus
 TaskCloseReviewErrorClass = Literal["retryable_infrastructure", "action_required"]
 
 ACTIVE_TASK_CLOSE_REVIEW_STATUSES: tuple[ActiveTaskCloseReviewStatus, ...] = (
+    "queued",
     "launching",
     "running",
     "finalizing",
@@ -35,8 +35,8 @@ TERMINAL_TASK_CLOSE_REVIEW_STATUSES: tuple[TerminalTaskCloseReviewStatus, ...] =
     "error",
 )
 
-VALIDATOR_RUN_ENDED_SUCCESS_ERROR = (
-    "Task-close validator run ended with status success before finalization."
+REVIEWER_RUN_ENDED_SUCCESS_ERROR = (
+    "Task-close reviewer run ended with status success before finalization."
 )
 
 # How long a `finalizing` row must sit untouched before a running daemon may
@@ -80,6 +80,20 @@ class TaskCloseReviewStaleTaskError(RuntimeError):
     """Raised when review launch loses its task timestamp precondition."""
 
 
+@dataclass(frozen=True, slots=True)
+class QueuedAgentRunSpec:
+    """Agent-run identity persisted atomically with a queued close review."""
+
+    id: str
+    machine_id: str
+    provider: str
+    model: str | None
+    agent_name: str
+    prompt: str
+    timeout_seconds: float
+    requested_reasoning_effort: str | None = None
+
+
 _COLUMNS = """
     id, task_id, task_ref, caller_session_id, agent_run_id,
     close_arguments, review_fingerprint, evidence_fingerprint,
@@ -87,23 +101,23 @@ _COLUMNS = """
     result_payload, error, launched_at, completed_at, delivered_at,
     created_at, updated_at
 """
+_QUALIFIED_COLUMNS = """
+    r.id, r.task_id, r.task_ref, r.caller_session_id, r.agent_run_id,
+    r.close_arguments, r.review_fingerprint, r.evidence_fingerprint,
+    r.diff_sha, r.test_bodies_sha, r.stable_facts, r.status,
+    r.result_payload, r.error, r.launched_at, r.completed_at, r.delivered_at,
+    r.created_at, r.updated_at
+"""
 
-# Marks a row that records an inline bounded review rather than a delegated
-# background one. Such a row is born terminal and already delivered, so it
-# holds no active-review lock and never reaches wake delivery; the kind tag is
-# what keeps the memo lookup from ever reading an agentic row's payload, whose
-# shape is a terminal review envelope rather than a bare verdict (#20866).
-INLINE_CRITERIA_VERDICT_KIND = "inline_criteria_verdict"
-
-# Marks the verdict a background validator submitted, captured on arrival while
+# Marks the verdict a background reviewer submitted, captured on arrival while
 # the review is still `finalizing`. It is forensic only and carries a kind of
-# its own so the memo lookup above can never read it as a reusable verdict.
+# its own so the terminal envelope stays distinguishable from other payloads.
 SUBMITTED_VERDICT_KIND = "submitted_close_verdict"
 
 
 @dataclass(frozen=True, slots=True)
 class TaskCloseReview:
-    """One durable close request and its validator lifecycle."""
+    """One durable close request and its reviewer lifecycle."""
 
     id: str
     task_id: str
@@ -203,9 +217,10 @@ class TaskCloseReviewStore:
         diff_sha: str,
         test_bodies_sha: str,
         stable_facts: Mapping[str, object],
+        review_id: str,
+        run: QueuedAgentRunSpec,
     ) -> tuple[TaskCloseReview, bool]:
-        """Create a launch, return the active review, or reject stale task state."""
-        review_id = str(uuid4())
+        """Atomically enqueue a review and its durable waitable agent run."""
         now = datetime.now(UTC)
         active = list(ACTIVE_TASK_CLOSE_REVIEW_STATUSES)
         with self.db.transaction() as conn:
@@ -220,16 +235,19 @@ class TaskCloseReviewStore:
                 INSERT INTO task_close_reviews (
                     id, task_id, task_ref, caller_session_id, close_arguments,
                     review_fingerprint, evidence_fingerprint,
-                    diff_sha, test_bodies_sha, stable_facts, status,
+                    diff_sha, test_bodies_sha, stable_facts, status, agent_run_id,
                     created_at, updated_at
                 )
                 SELECT
                     %s, %s, %s, %s, %s::jsonb, %s, %s,
-                    %s, %s, %s::jsonb, 'launching', %s, %s
+                    %s, %s, %s::jsonb, 'queued', %s, %s, %s
                 FROM launch_task
                 ON CONFLICT (task_id)
                 WHERE status = ANY (
-                    ARRAY['launching'::text, 'running'::text, 'finalizing'::text]
+                    ARRAY[
+                        'queued'::text, 'launching'::text,
+                        'running'::text, 'finalizing'::text
+                    ]
                 )
                 DO NOTHING
                 RETURNING {_COLUMNS}
@@ -247,11 +265,34 @@ class TaskCloseReviewStore:
                     diff_sha,
                     test_bodies_sha,
                     _json(stable_facts),
+                    run.id,
                     now,
                     now,
                 ),
             ).fetchone()
             created = row is not None
+            if created:
+                conn.execute(
+                    """
+                    INSERT INTO agent_runs (
+                        id, machine_id, parent_session_id, agent_name,
+                        provider, model, requested_reasoning_effort,
+                        status, prompt, timeout_seconds
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, 'queued', %s, %s)
+                    """,
+                    (
+                        run.id,
+                        run.machine_id,
+                        caller_session_id,
+                        run.agent_name,
+                        run.provider,
+                        run.model,
+                        run.requested_reasoning_effort,
+                        run.prompt,
+                        run.timeout_seconds,
+                    ),
+                )
             if row is None:
                 task_row = conn.execute(
                     "SELECT updated_at FROM tasks WHERE id = %s FOR UPDATE",
@@ -276,83 +317,106 @@ class TaskCloseReviewStore:
             raise RuntimeError(f"Active close review for task {task_id} disappeared")
         return _review_from_row(row), created
 
-    def get_memoized_verdict(
-        self,
-        *,
-        task_id: str,
-        review_fingerprint: str,
-        evidence_fingerprint: str,
-    ) -> dict[str, Any] | None:
-        """Return the verdict already reviewed for this exact evidence state."""
+    def list_queued_project_ids(self) -> list[str]:
+        """Return projects with queued reviews in promotion order."""
         with self.db.transaction() as conn:
-            row = conn.execute(
+            rows = conn.execute(
                 """
-                SELECT result_payload
-                FROM task_close_reviews
-                WHERE task_id = %s
-                  AND review_fingerprint = %s
-                  AND evidence_fingerprint = %s
-                  AND result_payload->>'kind' = %s
-                ORDER BY created_at DESC
-                LIMIT 1
-                """,
-                (task_id, review_fingerprint, evidence_fingerprint, INLINE_CRITERIA_VERDICT_KIND),
-            ).fetchone()
-        if not isinstance(row, Mapping):
-            return None
-        payload = _json_object(row["result_payload"])
-        verdict = (payload or {}).get("verdict")
-        return dict(verdict) if isinstance(verdict, Mapping) else None
+                SELECT t.project_id, MIN(r.created_at) AS first_queued_at
+                FROM task_close_reviews r
+                JOIN tasks t ON t.id = r.task_id
+                WHERE r.status = 'queued'
+                GROUP BY t.project_id
+                ORDER BY first_queued_at, t.project_id
+                """
+            ).fetchall()
+        return [str(row["project_id"]) for row in rows]
 
-    def memoize_verdict(
+    def claim_queued(
         self,
         *,
-        task_id: str,
-        task_ref: str,
-        caller_session_id: str,
-        close_arguments: Mapping[str, Any],
-        review_fingerprint: str,
-        evidence_fingerprint: str,
-        verdict: Mapping[str, Any],
-        valid: bool,
-    ) -> None:
-        """Record one bounded verdict so this evidence state is never re-reviewed.
+        project_id: str,
+        max_concurrency: int,
+    ) -> list[TaskCloseReview]:
+        """Promote FIFO reviews while a project has execution capacity."""
+        if max_concurrency <= 0:
+            raise ValueError("max_concurrency must be positive")
+        now = datetime.now(UTC)
+        claimed: list[TaskCloseReview] = []
+        with self.db.transaction() as conn:
+            project = conn.execute(
+                "SELECT id FROM projects WHERE id = %s FOR UPDATE",
+                (project_id,),
+            ).fetchone()
+            if project is None:
+                return []
+            active = conn.execute(
+                """
+                SELECT COUNT(*) AS count
+                FROM task_close_reviews r
+                JOIN tasks t ON t.id = r.task_id
+                WHERE t.project_id = %s
+                  AND r.status = ANY(%s)
+                """,
+                (project_id, ["launching", "running", "finalizing"]),
+            ).fetchone()
+            active_count = int(active["count"]) if isinstance(active, Mapping) else 0
+            slots = max_concurrency - active_count
+            if slots <= 0:
+                return []
+            rows = conn.execute(
+                f"""
+                SELECT {_QUALIFIED_COLUMNS}
+                FROM task_close_reviews r
+                JOIN tasks t ON t.id = r.task_id
+                WHERE t.project_id = %s AND r.status = 'queued'
+                ORDER BY r.created_at, r.id
+                LIMIT %s
+                FOR UPDATE OF r SKIP LOCKED
+                """,  # nosec B608 - static column fragment
+                (project_id, slots),
+            ).fetchall()
+            for row in rows:
+                review = _review_from_row(row)
+                timeout = review.close_arguments.get("_review_timeout_seconds")
+                timeout_seconds = float(timeout) if isinstance(timeout, int | float) else 1200.0
+                deadline = datetime.fromtimestamp(now.timestamp() + timeout_seconds, UTC)
+                close_arguments = {
+                    **review.close_arguments,
+                    "_review_deadline_at": deadline.isoformat(),
+                }
+                promoted = conn.execute(
+                    f"""
+                    UPDATE task_close_reviews
+                    SET status = 'launching', close_arguments = %s::jsonb,
+                        launched_at = %s, updated_at = %s
+                    WHERE id = %s AND status = 'queued'
+                    RETURNING {_COLUMNS}
+                    """,  # nosec B608 - static column fragment
+                    (_json(close_arguments), now, now, review.id),
+                ).fetchone()
+                if promoted is not None:
+                    claimed.append(_review_from_row(promoted))
+        return claimed
 
-        The row is written terminal, completed, and delivered in one statement:
-        no lifecycle transition applies to a review that already happened
-        inline, and the partial active-status unique index does not cover
-        terminal rows.
-
-        Each memo remains available to its exact fingerprint pair, ensuring
-        an unchanged attempt never invokes the reviewer again.
-        """
+    def restore_unlaunched(self, review_id: str, run_id: str, *, error: str) -> bool:
+        """Return an interrupted promotion to the durable FIFO queue."""
         now = datetime.now(UTC)
         with self.db.transaction() as conn:
-            conn.execute(
+            cursor = conn.execute(
                 """
-                INSERT INTO task_close_reviews (
-                    id, task_id, task_ref, caller_session_id, close_arguments,
-                    review_fingerprint, evidence_fingerprint, status, result_payload,
-                    completed_at, delivered_at, created_at, updated_at
-                )
-                VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s::jsonb, %s, %s, %s, %s)
+                UPDATE task_close_reviews
+                SET status = 'queued', launched_at = NULL, error = %s,
+                    close_arguments = close_arguments - '_review_deadline_at', updated_at = %s
+                WHERE id = %s AND agent_run_id = %s AND status = 'launching'
+                  AND EXISTS (
+                      SELECT 1 FROM agent_runs
+                      WHERE id = %s AND status = 'queued'
+                  )
                 """,
-                (
-                    str(uuid4()),
-                    task_id,
-                    task_ref,
-                    caller_session_id,
-                    _json(close_arguments),
-                    review_fingerprint,
-                    evidence_fingerprint,
-                    "closed" if valid else "invalid",
-                    _json({"kind": INLINE_CRITERIA_VERDICT_KIND, "verdict": dict(verdict)}),
-                    now,
-                    now,
-                    now,
-                    now,
-                ),
+                (error, now, review_id, run_id, run_id),
             )
+        return bool(getattr(cursor, "rowcount", 0))
 
     def get(self, review_id: str) -> TaskCloseReview | None:
         return self._get("id = %s", (review_id,))
@@ -395,9 +459,9 @@ class TaskCloseReviewStore:
         return _review_from_row(row) if row is not None else None
 
     def count_unjudged_attempts(self, task_id: str) -> int:
-        """Count this task's reviews whose validator never judged the evidence.
+        """Count this task's reviews whose reviewer never judged the evidence.
 
-        A validator that died instead of answering says nothing about the close,
+        A reviewer that died instead of answering says nothing about the close,
         so the next attempt has to move along the configured candidate list;
         relaunching onto the same runtime just reproduces the failure. The
         classification cannot be trusted to name the cause — a provider that
@@ -428,11 +492,12 @@ class TaskCloseReviewStore:
             row = conn.execute(
                 f"""
                 UPDATE task_close_reviews
-                SET agent_run_id = %s, status = 'running', launched_at = %s, updated_at = %s
-                WHERE id = %s AND status = 'launching'
+                SET agent_run_id = %s, status = 'running',
+                    launched_at = COALESCE(launched_at, %s), updated_at = %s
+                WHERE id = %s AND agent_run_id = %s AND status = 'launching'
                 RETURNING {_COLUMNS}
                 """,  # nosec B608 - static column fragment
-                (run_id, now, now, review_id),
+                (run_id, now, now, review_id, run_id),
             ).fetchone()
         return _review_from_row(row) if row is not None else None
 
@@ -479,7 +544,7 @@ class TaskCloseReviewStore:
                       )
                     RETURNING {_COLUMNS}
                     """,  # nosec B608 - static column fragment
-                    (captured, now, review_id, run_id, VALIDATOR_RUN_ENDED_SUCCESS_ERROR),
+                    (captured, now, review_id, run_id, REVIEWER_RUN_ENDED_SUCCESS_ERROR),
                 ).fetchone()
             except UniqueViolation as exc:
                 savepoint.rollback()
@@ -491,7 +556,7 @@ class TaskCloseReviewStore:
         return _review_from_row(row) if row is not None else None
 
     def restore_running(self, review_id: str, run_id: str, *, error: str) -> bool:
-        """Return a malformed submission to running so the validator can correct it."""
+        """Return a malformed submission to running so the reviewer can correct it."""
         now = datetime.now(UTC)
         with self.db.transaction() as conn:
             cursor = conn.execute(
@@ -558,7 +623,7 @@ class TaskCloseReviewStore:
         Daemon startup is one such proof: no in-process submit survives a
         restart. On a running daemon the proof is `is_finalizing_in_process`
         plus `FINALIZING_ORPHAN_GRACE_SECONDS` against `updated_at`, scoped to
-        rows whose validator run belongs to this machine.
+        rows whose reviewer run belongs to this machine.
 
         The compare-and-swap on `updated_at` makes a lost race a clean no-op:
         `None` means some other transition already moved the row.
@@ -725,7 +790,7 @@ def _review_from_row(row: object) -> TaskCloseReview:
 __all__ = [
     "ACTIVE_TASK_CLOSE_REVIEW_STATUSES",
     "FINALIZING_ORPHAN_GRACE_SECONDS",
-    "INLINE_CRITERIA_VERDICT_KIND",
+    "QueuedAgentRunSpec",
     "SUBMITTED_VERDICT_KIND",
     "TERMINAL_TASK_CLOSE_REVIEW_STATUSES",
     "ActiveTaskCloseReviewStatus",
@@ -733,7 +798,7 @@ __all__ = [
     "TaskCloseReviewStatus",
     "TaskCloseReviewStore",
     "TerminalTaskCloseReviewStatus",
-    "VALIDATOR_RUN_ENDED_SUCCESS_ERROR",
+    "REVIEWER_RUN_ENDED_SUCCESS_ERROR",
     "finalizing_in_process",
     "is_finalizing_in_process",
 ]

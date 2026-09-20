@@ -1,10 +1,4 @@
-"""Tests for validation CLI commands.
-
-TDD Red Phase: These tests define expected behavior for validation CLI
-commands that don't yet exist or need extension.
-
-Task: gt-34841b
-"""
+"""Validation history and escalation CLI contracts."""
 
 import json
 from collections.abc import Iterator
@@ -15,7 +9,6 @@ from click.testing import CliRunner
 
 from gobby.cli import cli
 from gobby.config import DaemonConfig
-from gobby.tasks.close_verdict import CloseCriterionVerdict, CloseVerdict
 
 pytestmark = pytest.mark.unit
 
@@ -36,267 +29,14 @@ def _isolated_cli_runtime() -> Iterator[None]:
         yield
 
 
+def test_one_shot_validate_command_is_removed() -> None:
+    result = CliRunner().invoke(cli, ["tasks", "validate"])
+
+    assert result.exit_code == 2
+    assert "No such command 'validate'" in result.output
+
+
 @pytest.mark.unit
-class TestValidateCommandWithNewFlags:
-    """Tests for gobby tasks validate with enhanced validation flags."""
-
-    @pytest.fixture
-    def runner(self) -> CliRunner:
-        """Create a CLI test runner."""
-        return CliRunner()
-
-    @pytest.fixture
-    def mock_task(self):
-        """Create a mock task."""
-        task = MagicMock()
-        task.id = "gt-test123"
-        task.seq_num = 1
-        task.title = "Test task"
-        task.description = "Test description"
-        task.closed_at = None
-        task.is_escalated = False
-        task.stages = ({"stage_name": "development", "position": 0, "state": "in_progress"},)
-        task.project_id = "proj-123"
-        task.validation_criteria = "Tests pass"
-        task.validation_fail_count = 0
-        task.commits = []
-        return task
-
-    def test_validate_help_omits_removed_retry_flags(self, runner: CliRunner) -> None:
-        result = runner.invoke(cli, ["tasks", "validate", "--help"])
-        assert result.exit_code == 0
-        assert "--max-iterations" not in result.output
-        assert "--recurring" not in result.output
-
-    def test_validate_rejects_removed_max_iterations_option(self, runner: CliRunner) -> None:
-        result = runner.invoke(
-            cli,
-            ["tasks", "validate", "gt-test123", "--max-iterations", "0"],
-        )
-
-        assert result.exit_code == 2
-        assert "No such option '--max-iterations'" in result.output
-
-    def test_validate_help_shows_history_flag(self, runner: CliRunner) -> None:
-        """Test that validate --help shows --history flag."""
-        result = runner.invoke(cli, ["tasks", "validate", "--help"])
-        assert result.exit_code == 0
-        assert "--history" in result.output
-
-    def test_validate_help_describes_bounded_review(self, runner: CliRunner) -> None:
-        result = runner.invoke(cli, ["tasks", "validate", "--help"])
-        assert result.exit_code == 0
-        assert "bounded criteria review" in result.output
-
-    @patch("gobby.cli.tasks.ai.get_task_manager")
-    @patch("gobby.cli.tasks.ai.resolve_task_id")
-    @patch("gobby.tasks.validation.TaskValidator")
-    def test_validate_runs_one_read_only_criteria_review(
-        self,
-        mock_validator_cls: MagicMock,
-        mock_resolve: MagicMock,
-        mock_get_manager: MagicMock,
-        runner: CliRunner,
-        mock_task: MagicMock,
-    ) -> None:
-        mock_resolve.return_value = mock_task
-        mock_manager = MagicMock()
-        mock_manager.list_tasks.return_value = []
-        mock_get_manager.return_value = mock_manager
-        verdict = CloseVerdict(
-            status="valid",
-            criteria=(CloseCriterionVerdict(1, "Tests pass", True, None),),
-            feedback="Criteria are satisfied.",
-        )
-
-        async def async_result(*args: object, **kwargs: object) -> CloseVerdict:
-            del args, kwargs
-            return verdict
-
-        mock_validator_cls.return_value.validate_task.side_effect = async_result
-
-        with (
-            patch("gobby.cli.runtime.get_cli_runtime") as cli_runtime,
-            patch("gobby.cli.runtime.require_cli_database", return_value=MagicMock()),
-        ):
-            cli_runtime.return_value.config = DaemonConfig()
-            result = runner.invoke(
-                cli,
-                [
-                    "tasks",
-                    "validate",
-                    "gt-test123",
-                    "--summary",
-                    "test changes",
-                ],
-            )
-
-        assert result.exit_code == 0, (result.output, result.exception)
-        assert "Validation Status: VALID" in result.output
-        assert "full checklist" in result.output
-        mock_validator_cls.return_value.validate_task.assert_called_once()
-        mock_manager.update_task.assert_not_called()
-        mock_manager.escalate_task.assert_not_called()
-
-    @patch("gobby.cli.tasks.ai.get_task_manager")
-    @patch("gobby.cli.tasks.ai.resolve_task_id")
-    @patch("gobby.tasks.validation.TaskValidator")
-    def test_invalid_verdict_prints_actionable_gap(
-        self,
-        mock_validator_cls: MagicMock,
-        mock_resolve: MagicMock,
-        mock_get_manager: MagicMock,
-        runner: CliRunner,
-        mock_task: MagicMock,
-    ) -> None:
-        mock_resolve.return_value = mock_task
-        mock_manager = MagicMock()
-        mock_manager.list_tasks.return_value = []
-        mock_get_manager.return_value = mock_manager
-        verdict = CloseVerdict(
-            status="invalid",
-            criteria=(
-                CloseCriterionVerdict(
-                    1,
-                    "Tests pass",
-                    False,
-                    "Run the focused test suite.",
-                ),
-            ),
-            feedback="One criterion remains incomplete.",
-        )
-
-        async def validate(*args: object, **kwargs: object) -> CloseVerdict:
-            del args, kwargs
-            return verdict
-
-        mock_validator_cls.return_value.validate_task.side_effect = validate
-        with (
-            patch("gobby.cli.runtime.get_cli_runtime") as cli_runtime,
-            patch("gobby.cli.runtime.require_cli_database", return_value=MagicMock()),
-        ):
-            cli_runtime.return_value.config = DaemonConfig()
-            result = runner.invoke(
-                cli,
-                ["tasks", "validate", mock_task.id, "--summary", "test changes"],
-            )
-
-        assert result.exit_code == 0, (result.output, result.exception)
-        assert "Validation Status: INVALID" in result.output
-        assert "Criterion 1: Run the focused test suite." in result.output
-        mock_manager.update_task.assert_not_called()
-
-    @patch("gobby.cli.tasks.ai.get_task_manager")
-    @patch("gobby.cli.tasks.ai.resolve_task_id")
-    @patch("gobby.tasks.validation.TaskValidator")
-    def test_provider_error_is_reported_without_task_accounting(
-        self,
-        mock_validator_cls: MagicMock,
-        mock_resolve: MagicMock,
-        mock_get_manager: MagicMock,
-        runner: CliRunner,
-        mock_task: MagicMock,
-    ) -> None:
-        mock_task.validation_fail_count = 3
-        mock_resolve.return_value = mock_task
-        mock_manager = MagicMock()
-        mock_manager.list_tasks.return_value = []
-        mock_get_manager.return_value = mock_manager
-
-        async def validate(*args: object, **kwargs: object) -> CloseVerdict:
-            del args, kwargs
-            raise RuntimeError("provider unavailable")
-
-        mock_validator_cls.return_value.validate_task.side_effect = validate
-        with (
-            patch("gobby.cli.runtime.get_cli_runtime") as cli_runtime,
-            patch("gobby.cli.runtime.require_cli_database", return_value=MagicMock()),
-        ):
-            cli_runtime.return_value.config = DaemonConfig()
-            result = runner.invoke(
-                cli,
-                ["tasks", "validate", mock_task.id, "--summary", "test changes"],
-            )
-
-        assert result.exit_code == 1
-        assert "Validation error: provider unavailable" in result.output
-        mock_manager.update_task.assert_not_called()
-        mock_manager.escalate_task.assert_not_called()
-
-    @patch("gobby.cli.tasks.ai.get_task_manager")
-    @patch("gobby.cli.tasks.ai.resolve_task_id")
-    @patch("gobby.tasks.validation.TaskValidator")
-    def test_valid_verdict_never_prints_blocked_text(
-        self,
-        mock_validator_cls: MagicMock,
-        mock_resolve: MagicMock,
-        mock_get_manager: MagicMock,
-        runner: CliRunner,
-        mock_task: MagicMock,
-    ) -> None:
-        mock_resolve.return_value = mock_task
-        mock_manager = MagicMock()
-        mock_manager.list_tasks.return_value = []
-        mock_get_manager.return_value = mock_manager
-
-        async def validate(*args: object, **kwargs: object) -> CloseVerdict:
-            del args, kwargs
-            return CloseVerdict(
-                status="valid",
-                criteria=(CloseCriterionVerdict(1, "Tests pass", True, None),),
-                feedback="All checks passed.",
-            )
-
-        mock_validator_cls.return_value.validate_task.side_effect = validate
-        with (
-            patch("gobby.cli.runtime.get_cli_runtime") as cli_runtime,
-            patch("gobby.cli.runtime.require_cli_database", return_value=MagicMock()),
-        ):
-            cli_runtime.return_value.config = DaemonConfig()
-            result = runner.invoke(
-                cli,
-                ["tasks", "validate", mock_task.id, "--summary", "test changes"],
-            )
-
-        assert result.exit_code == 0, (result.output, result.exception)
-        assert "Validation Status: VALID" in result.output
-        assert "Feedback:\nAll checks passed." in result.output
-        assert "blocked" not in result.output.casefold()
-
-    @patch("gobby.cli.tasks.ai.get_task_manager")
-    @patch("gobby.cli.tasks.ai.resolve_task_id")
-    def test_validate_with_history_flag_shows_history(
-        self,
-        mock_resolve: MagicMock,
-        mock_get_manager: MagicMock,
-        runner: CliRunner,
-        mock_task: MagicMock,
-    ) -> None:
-        """Test validate --history shows validation history."""
-        mock_resolve.return_value = mock_task
-        mock_manager = MagicMock()
-        mock_get_manager.return_value = mock_manager
-
-        result = runner.invoke(
-            cli,
-            ["tasks", "validate", "gt-test123", "--history"],
-        )
-
-        # Should show history output, not require --summary
-        assert result.exit_code == 0
-        # History output should contain iteration or history info
-        assert "history" in result.output.lower() or "iteration" in result.output.lower()
-
-    def test_validate_rejects_removed_recurring_option(self, runner: CliRunner) -> None:
-        result = runner.invoke(
-            cli,
-            ["tasks", "validate", "gt-test123", "--recurring"],
-        )
-
-        assert result.exit_code == 2
-        assert "No such option '--recurring'" in result.output
-
-
 class TestDeEscalateCommand:
     """Tests for gobby tasks de-escalate command."""
 
@@ -760,45 +500,6 @@ class TestListTasksEscalatedFilter:
         assert "recurring_issues" in result.output
 
 
-class TestValidateFlagCombinations:
-    """Tests for validate command flag combinations."""
-
-    @pytest.fixture
-    def runner(self) -> CliRunner:
-        """Create a CLI test runner."""
-        return CliRunner()
-
-    def test_history_flag_does_not_require_summary(self, runner: CliRunner) -> None:
-        """Test that --history bypasses --summary requirement.
-
-        When using --history, we're viewing validation history data,
-        not running a new validation, so --summary is not required.
-        """
-        result = runner.invoke(
-            cli,
-            ["tasks", "validate", "gt-test123", "--history"],
-        )
-        # Should not ask for --summary when just viewing history
-        assert "summary" not in result.output.lower() or result.exit_code != 2
-
-    def test_removed_retry_flags_cannot_be_combined(self, runner: CliRunner) -> None:
-        result = runner.invoke(
-            cli,
-            [
-                "tasks",
-                "validate",
-                "gt-test123",
-                "--max-iterations",
-                "3",
-                "--summary",
-                "test changes",
-            ],
-        )
-
-        assert result.exit_code == 2
-        assert "No such option '--max-iterations'" in result.output
-
-
 class TestValidateTaskNotFound:
     """Tests for validation commands with non-existent tasks."""
 
@@ -806,26 +507,6 @@ class TestValidateTaskNotFound:
     def runner(self) -> CliRunner:
         """Create a CLI test runner."""
         return CliRunner()
-
-    @patch("gobby.cli.tasks.ai.get_task_manager")
-    def test_validate_history_task_not_found(
-        self,
-        mock_get_manager: MagicMock,
-        runner: CliRunner,
-    ) -> None:
-        """Test validate --history with non-existent task."""
-        mock_manager = MagicMock()
-        mock_manager.get_task.side_effect = ValueError("not found")
-        mock_manager.find_tasks_by_prefix.return_value = []
-        mock_get_manager.return_value = mock_manager
-
-        result = runner.invoke(
-            cli,
-            ["tasks", "validate", "gt-nonexistent", "--history"],
-        )
-
-        assert result.exit_code == 1
-        assert "not found" in result.output.lower()
 
     @patch("gobby.cli.tasks.crud.get_task_manager")
     def test_validation_history_task_not_found(

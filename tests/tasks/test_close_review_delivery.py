@@ -1,4 +1,4 @@
-"""Terminal delivery projection tests for task-close validator runs."""
+"""Terminal delivery projection tests for task-close reviewer runs."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ pytestmark = pytest.mark.unit
         ("success", None, False, "action_required"),
     ],
 )
-def test_failed_validator_run_terminalizes_review_and_clears_lock(
+def test_failed_reviewer_run_terminalizes_review_and_clears_lock(
     monkeypatch: pytest.MonkeyPatch,
     run_status: str,
     terminal_reason: str | None,

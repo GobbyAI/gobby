@@ -14,7 +14,7 @@ from gobby.config.build import load_build_config
 from gobby.dispatch.constants import DISPATCH_TTL_SECONDS, MAX_ACTIVE_AGENTS
 from gobby.mcp_proxy.tools.tasks import resolve_task_id_for_mcp
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
-from gobby.tasks.agentic_close_review import TASK_CLOSE_VALIDATOR_AGENT
+from gobby.tasks.agentic_close_review import TASK_CLOSE_REVIEWER_AGENT
 from gobby.tasks.state_semantics import (
     get_claimed_session_id,
     is_task_actionable,
@@ -346,9 +346,9 @@ def _count_active_agents(
 ) -> int:
     parent_filter = "AND ar.parent_session_id = %s" if parent_session_id else ""
     params = (
-        (project_id, TASK_CLOSE_VALIDATOR_AGENT, parent_session_id)
+        (project_id, TASK_CLOSE_REVIEWER_AGENT, parent_session_id)
         if parent_session_id
-        else (project_id, TASK_CLOSE_VALIDATOR_AGENT)
+        else (project_id, TASK_CLOSE_REVIEWER_AGENT)
     )
     row = db.fetchone(
         f"""
