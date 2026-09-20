@@ -31,8 +31,8 @@ use super::modal_input::{apply_rename, open_alerts_dialog, persist_prefs, ModalO
 use super::mouse::{MouseOutcome, Placement};
 use super::orphans::{agent_orphan, destroy_orphans, open_destroy_orphans_dialog};
 use super::projects::{
-    close_project, close_project_confirmed, create_worktree, focus_agent, focus_project,
-    focus_terminal, mark_agent_seen, open_agent_in_new_tab, open_new_project_dialog,
+    close_live_terminal, close_project, close_project_confirmed, create_worktree, focus_agent,
+    focus_project, focus_terminal, mark_agent_seen, open_agent_in_new_tab, open_new_project_dialog,
     open_new_worktree_dialog, open_open_worktree_dialog, open_remove_worktree_dialog,
     open_worktree, remove_worktree, rename_project, reveal_agent, submit_new_project,
 };
@@ -339,6 +339,17 @@ async fn apply_live_menu_action(
             let target = agent_orphan(workspace, &terminal_id);
             destroy_orphans(workspace, chrome, vec![target]).await?;
         }
+        MenuAction::CloseTerminal(pane) => {
+            close_live_terminal(workspace, chrome, pane).await?;
+        }
+        MenuAction::TakeControl(pane) => {
+            focus_menu_target(workspace, chrome, &kind).await?;
+            take_live_control(workspace, pane);
+        }
+        MenuAction::ReleaseControl(pane) => {
+            focus_menu_target(workspace, chrome, &kind).await?;
+            release_live_control(workspace, pane).await?;
+        }
         _ => {
             if !apply_daemon_menu_action(workspace, chrome, &action).await? {
                 apply_local_menu_action(workspace, chrome, &action);
@@ -409,17 +420,7 @@ pub(super) async fn handle_live_action(
         Action::NewProject => open_new_project_dialog(chrome),
         Action::CloseTerminal => {
             if let Some(pane_id) = chrome.focused_pane() {
-                // An external pane is a terminal the user attached rather than
-                // one gclient spawned, so closing it is a detach: release the
-                // lease and drop the pane, the way `close_live_pane` already
-                // does. Killing it would destroy a tmux pane gclient never
-                // created.
-                if workspace.pane(pane_id).external {
-                    close_live_pane(workspace, chrome).await?;
-                } else {
-                    terminate_live_terminal(workspace, pane_id).await?;
-                    sync_live_chrome(workspace, chrome);
-                }
+                close_live_terminal(workspace, chrome, pane_id).await?;
             }
         }
         Action::ClosePane => close_live_pane(workspace, chrome).await?,
