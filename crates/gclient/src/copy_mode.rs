@@ -16,8 +16,7 @@ pub const PASTE_MAX_BYTES: usize = 1024 * 1024;
 /// Soft-wrap marker preserved in tmux `capture-pane -J` history payloads.
 pub const SOFT_WRAP: char = '\u{23CE}';
 
-/// Join visual wraps so a wide grapheme stays on its logical line.
-pub fn extract_logical_line(text: &str, wrap_cols: usize) -> String {
+fn join_visual_lines(text: &str, wrap_cols: usize, preserve_hard_breaks: bool) -> String {
     let mut logical = String::new();
     for visual in text.split_inclusive('\n') {
         let has_newline = visual.ends_with('\n');
@@ -26,13 +25,21 @@ pub fn extract_logical_line(text: &str, wrap_cols: usize) -> String {
         let explicitly_wrapped = line.ends_with(SOFT_WRAP);
         let line = line.strip_suffix(SOFT_WRAP).unwrap_or(line);
         logical.push_str(line);
-        if !has_newline
-            || !(explicitly_wrapped || (wrap_cols > 0 && UnicodeWidthStr::width(line) >= wrap_cols))
-        {
-            break;
+        let soft_wrapped =
+            explicitly_wrapped || (wrap_cols > 0 && UnicodeWidthStr::width(line) >= wrap_cols);
+        if has_newline && !soft_wrapped {
+            if !preserve_hard_breaks {
+                break;
+            }
+            logical.push('\n');
         }
     }
     logical.replace(SOFT_WRAP, "")
+}
+
+/// Join visual wraps so a wide grapheme stays on its logical line.
+pub fn extract_logical_line(text: &str, wrap_cols: usize) -> String {
+    join_visual_lines(text, wrap_cols, false)
 }
 
 /// Write finalized selected text as one OSC 52 clipboard transfer.
@@ -85,7 +92,7 @@ pub fn finalized_selection_text<D: Daemon>(
             }
         }
         selected.pop();
-        extract_logical_line(&selected, usize::from(frame.width))
+        join_visual_lines(&selected, usize::from(frame.width), true)
     } else {
         extract_logical_line(pane.attach_history()?, usize::from(pane.viewport().1))
     };

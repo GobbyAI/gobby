@@ -59,7 +59,7 @@ async fn client_copy_path_emits_finalized_selection_as_osc52() {
         .expect("open terminal");
     let mut source = ScriptedFrameSource::new(Transport::Direct);
     source.queue(ServerMessage::Frame(FrameData {
-        cells: "copy"
+        cells: "copymore"
             .chars()
             .map(|symbol| CellData {
                 symbol: symbol.to_string(),
@@ -71,7 +71,7 @@ async fn client_copy_path_emits_finalized_selection_as_osc52() {
             })
             .collect(),
         width: 4,
-        height: 1,
+        height: 2,
         cursor: None,
         hyperlinks: Vec::new(),
         graphics: Vec::new(),
@@ -92,33 +92,33 @@ async fn client_copy_path_emits_finalized_selection_as_osc52() {
         .find(|info| info.id == slot)
         .expect("pane geometry")
         .inner_rect;
-    let mouse = |kind, column| {
+    let mouse = |kind, column, row| {
         RawInputEvent::Mouse(MouseEvent {
             kind,
             column: inner.x + column,
-            row: inner.y,
+            row: inner.y + row,
             modifiers: KeyModifiers::NONE,
         })
     };
     assert!(!route_mouse_selection(
         &ws,
         &mut chrome,
-        &mouse(MouseEventKind::Down(MouseButton::Left), 0),
+        &mouse(MouseEventKind::Down(MouseButton::Left), 1, 0),
     ));
     assert!(!route_mouse_selection(
         &ws,
         &mut chrome,
-        &mouse(MouseEventKind::Drag(MouseButton::Left), 3),
+        &mouse(MouseEventKind::Drag(MouseButton::Left), 2, 1),
     ));
     assert!(route_mouse_selection(
         &ws,
         &mut chrome,
-        &mouse(MouseEventKind::Up(MouseButton::Left), 3),
+        &mouse(MouseEventKind::Up(MouseButton::Left), 2, 1),
     ));
 
     let mut output = Vec::new();
     assert!(copy_finalized_selection(&ws, &chrome, &mut output).expect("copy selection"));
-    assert_eq!(output, b"\x1b]52;c;Y29weQ==\x07");
+    assert_eq!(output, b"\x1b]52;c;b3B5Cm1vcg==\x07");
 }
 
 #[test]
