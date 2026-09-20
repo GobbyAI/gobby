@@ -203,7 +203,12 @@ def cutover(ctx: click.Context, workspace: Path, allow_dirty: bool) -> None:
 
     def restart_daemon() -> None:
         try:
-            ctx.invoke(restart, verbose=False, docker_flag=False)
+            ctx.invoke(
+                restart,
+                verbose=False,
+                docker_flag=False,
+                expected_identity=expected_identity,
+            )
         except SystemExit as exc:
             if exc.code not in (None, 0):
                 raise CutoverError(f"daemon restart failed (exit {exc.code})") from exc

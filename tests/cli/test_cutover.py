@@ -220,6 +220,34 @@ def test_cli_preflights_candidate_against_selected_workspace_pin(
     assert observed == [expected]
 
 
+def test_cli_restarts_against_selected_workspace_pin(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    expected = _identity(443)
+    observed: list[dict[str, int | str]] = []
+
+    def restart(
+        *,
+        verbose: bool,
+        docker_flag: bool,
+        expected_identity: dict[str, int | str],
+    ) -> None:
+        assert verbose is False
+        assert docker_flag is False
+        observed.append(expected_identity)
+
+    def run_cutover(
+        _root: Path, _bin_dir: Path, *, restart_daemon: Callable[[], None], **_kwargs: object
+    ) -> None:
+        restart_daemon()
+
+    monkeypatch.setattr(cutover_module, "restart", restart)
+    result = _invoke_cli(tmp_path, monkeypatch, run_cutover, identity=expected)
+
+    assert result.exit_code == 0, result.output
+    assert observed == [expected]
+
+
 def test_cli_reports_daemon_restart_exit_code(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

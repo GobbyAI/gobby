@@ -744,13 +744,19 @@ def restart(
     force: bool,
     wait: bool,
     drain_terminals: bool,
+    expected_identity: dict[str, int | str] | None = None,
 ) -> None:
     """Restart the Gobby daemon (stop then start)."""
     if verbose:
         setup_logging(True)
 
     # Check before stopping: refusing after the stop would leave no daemon.
-    if refusal := restart_start_refusal(ctx):
+    refusal = (
+        restart_start_refusal(ctx)
+        if expected_identity is None
+        else restart_start_refusal(ctx, expected_identity=expected_identity)
+    )
+    if refusal:
         _step(f"Refusing to restart: {refusal}", error=True)
         _step("The running daemon was left alone.")
         sys.exit(1)
