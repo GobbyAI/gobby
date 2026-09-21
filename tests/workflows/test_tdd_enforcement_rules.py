@@ -238,6 +238,54 @@ async def test_named_rust_acceptance_file_is_tracked_before_source_writes(
     assert after_test.decision == "allow"
 
 
+@pytest.mark.asyncio
+async def test_multi_file_patch_with_acceptance_and_source_is_blocked(
+    db: HubDatabase,
+) -> None:
+    _sync_bundled(db)
+    with db.transaction() as conn:
+        conn.execute("UPDATE rule_definitions SET enabled = FALSE")
+        conn.execute(
+            "UPDATE rule_definitions SET enabled = TRUE WHERE name = %s",
+            ("enforce-tdd-block",),
+        )
+    engine = RuleEngine(db)
+    acceptance_path = "crates/gcode/src/communities/remap_acceptance.rs"
+    source_path = "crates/gcode/src/communities/remap.rs"
+    patch = (
+        "*** Begin Patch\n"
+        f"*** Update File: {acceptance_path}\n"
+        "@@\n"
+        "-fn old_test() {}\n"
+        "+fn new_test() {}\n"
+        f"*** Update File: {source_path}\n"
+        "@@\n"
+        "-pub fn old_remap() {}\n"
+        "+pub fn new_remap() {}\n"
+        "*** End Patch\n"
+    )
+    event = HookEvent(
+        event_type=HookEventType.BEFORE_TOOL,
+        session_id="test-session",
+        source=SessionSource.CODEX,
+        timestamp=datetime.now(UTC),
+        cwd="/repo",
+        data={"tool_name": "apply_patch", "tool_input": patch},
+        metadata={"project_path": "/repo"},
+    )
+    variables: dict[str, object] = {
+        "enforce_tdd": False,
+        "claimed_task_requires_tdd": True,
+        "claimed_task_acceptance_test_paths": [acceptance_path],
+        "tdd_tests_written": [],
+        "project": {"path": "/repo"},
+    }
+
+    result = await engine.evaluate(event, session_id="test-session", variables=variables)
+
+    assert result.decision == "block"
+
+
 def test_named_acceptance_path_overrides_test_convention_classifier() -> None:
     acceptance_path = "crates/gcode/src/communities/remap_acceptance.rs"
     event_data = {

@@ -535,8 +535,8 @@ def build_condition_helpers(
 
     from .condition_helpers import (
         _event_and_tool_paths,
+        _is_tdd_code_path,
         all_tasks_have_label,
-        first_tdd_code_path,
         first_tdd_test_path,
         is_gobby_build_command,
         is_validation_command,
@@ -567,29 +567,35 @@ def build_condition_helpers(
             "project_path"
         ) or _get_project_path(ctx)
 
-    def _claimed_acceptance_test_path(event_data: Any, tool_input: Any) -> str:
+    def _is_claimed_acceptance_test_path(path: str) -> str:
         variables = _get_variables(ctx)
         acceptance_paths = variables.get("claimed_task_acceptance_test_paths", [])
         if not isinstance(acceptance_paths, list | tuple):
             return ""
+        for acceptance_path in acceptance_paths:
+            if not isinstance(acceptance_path, str) or not acceptance_path:
+                continue
+            if tdd_gate_open(
+                {
+                    "claimed_task_acceptance_test_paths": [acceptance_path],
+                    "tdd_tests_written": [path],
+                },
+                _tdd_project_path(),
+            ):
+                return acceptance_path
+        return ""
+
+    def _claimed_acceptance_test_path(event_data: Any, tool_input: Any) -> str:
         for path in _event_and_tool_paths(event_data, tool_input):
-            for acceptance_path in acceptance_paths:
-                if not isinstance(acceptance_path, str) or not acceptance_path:
-                    continue
-                if tdd_gate_open(
-                    {
-                        "claimed_task_acceptance_test_paths": [acceptance_path],
-                        "tdd_tests_written": [path],
-                    },
-                    _tdd_project_path(),
-                ):
-                    return acceptance_path
+            if acceptance_path := _is_claimed_acceptance_test_path(path):
+                return acceptance_path
         return ""
 
     def _first_tdd_code_path(event_data: Any, tool_input: Any) -> str:
-        if _claimed_acceptance_test_path(event_data, tool_input):
-            return ""
-        return first_tdd_code_path(event_data, tool_input)
+        for path in _event_and_tool_paths(event_data, tool_input):
+            if not _is_claimed_acceptance_test_path(path) and _is_tdd_code_path(path, tool_input):
+                return path
+        return ""
 
     def _first_tdd_test_path(event_data: Any, tool_input: Any) -> str:
         return _claimed_acceptance_test_path(event_data, tool_input) or first_tdd_test_path(
