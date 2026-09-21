@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, Self, cast
+from time import perf_counter
+from typing import TYPE_CHECKING, Any, Literal, Self
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -16,10 +18,14 @@ from gobby.agents.attention_metadata import validate_metadata_text, validate_met
 from gobby.agents.prompt_detector import PromptDetector
 from gobby.agents.tmux.text_injection import AttentionInjectionError
 from gobby.servers.routes.configuration_context import require_config_snapshot
-from gobby.storage.agents import AgentRun, LocalAgentRunManager
-from gobby.storage.attention import AttentionRosterSnapshot, AttentionState
-from gobby.storage.session_models import Session
+from gobby.storage.attention import (
+    AttentionRosterRow,
+    AttentionRosterSnapshot,
+    AttentionRosterTerminal,
+    AttentionState,
+)
 from gobby.storage.sessions import LIVE_SESSION_STATUS_ORDER
+from gobby.storage.terminals import attach_locator_for_terminal
 from gobby.terminals.runtime import (
     Delivered,
     IndeterminateWrite,
@@ -33,6 +39,9 @@ if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
 
 AttentionKey = Literal["enter", "escape", "tab", "up", "down"]
+ATTENTION_ROSTER_CACHE_TTL_SECONDS = 1.0
+
+logger = logging.getLogger(__name__)
 
 
 class AttentionAnswer(BaseModel):
@@ -141,6 +150,20 @@ class _TrackedEntryLock:
     users: int = 0
 
 
+@dataclass(slots=True)
+class _RosterCache:
+    lock: asyncio.Lock
+    cursor: tuple[str, int] | None = None
+    created_at: float = 0.0
+    payload: dict[str, object] | None = None
+
+
+@dataclass(slots=True)
+class _RosterProfile:
+    executor_wait_seconds: float = 0.0
+    query_seconds: float = 0.0
+
+
 PaneResolver = Callable[[AttentionState], Awaitable[AttentionPane | None]]
 AttentionInjector = Callable[[AttentionPane, AttentionAnswer], Awaitable[None]]
 
@@ -162,6 +185,7 @@ def create_attention_router(
     else:
         detector_root = None
     locks: dict[str, _TrackedEntryLock] = {}
+    roster_cache = _RosterCache(lock=asyncio.Lock())
 
     async def resolve_pane(state: AttentionState) -> AttentionPane | None:
         if pane_resolver is not None:
@@ -211,14 +235,69 @@ def create_attention_router(
     async def roster() -> dict[str, object]:
         if manager is None:
             raise HTTPException(status_code=503, detail={"code": "attention_unavailable"})
-        metadata_store = getattr(server.services, "attention_metadata_store", None)
-        metadata_snapshot = getattr(metadata_store, "snapshot", None)
-        snapshot = await manager.snapshot_async(
-            server.services.run_db,
-            metadata_snapshot=metadata_snapshot if callable(metadata_snapshot) else None,
-        )
-        entries = await _load_roster_entries(server, snapshot)
-        return {"epoch": snapshot.epoch, "seq": snapshot.seq, "entries": entries}
+        started_at = perf_counter()
+        profile = _RosterProfile()
+        async with roster_cache.lock:
+            async with manager.ordering.lock:
+                cursor = (manager.epoch, manager.seq)
+                cache_checked_at = perf_counter()
+                if (
+                    roster_cache.payload is not None
+                    and roster_cache.cursor == cursor
+                    and cache_checked_at - roster_cache.created_at
+                    < ATTENTION_ROSTER_CACHE_TTL_SECONDS
+                ):
+                    _log_roster_profile(
+                        profile,
+                        cache_hit=True,
+                        assembly_seconds=0.0,
+                        total_seconds=perf_counter() - started_at,
+                        entry_count=_entry_count(roster_cache.payload),
+                    )
+                    return roster_cache.payload
+
+            async def profiled_run_db(
+                function: Callable[..., Any], *args: Any, **kwargs: Any
+            ) -> Any:
+                return await _profiled_run_db(
+                    server.services.run_db,
+                    profile,
+                    function,
+                    *args,
+                    **kwargs,
+                )
+
+            metadata_store = getattr(server.services, "attention_metadata_store", None)
+            metadata_snapshot = getattr(metadata_store, "snapshot", None)
+            snapshot = await manager.snapshot_async(
+                profiled_run_db,
+                metadata_snapshot=metadata_snapshot if callable(metadata_snapshot) else None,
+            )
+            rows = await profiled_run_db(
+                manager.load_roster_rows,
+                require_machine_id(),
+                live_session_statuses=LIVE_SESSION_STATUS_ORDER,
+            )
+            assembly_started_at = perf_counter()
+            entries = _load_roster_entries(server, snapshot, rows)
+            assembly_seconds = perf_counter() - assembly_started_at
+            payload: dict[str, object] = {
+                "epoch": snapshot.epoch,
+                "seq": snapshot.seq,
+                "entries": entries,
+            }
+            if (manager.epoch, manager.seq) == (snapshot.epoch, snapshot.seq):
+                roster_cache.cursor = (snapshot.epoch, snapshot.seq)
+                roster_cache.created_at = perf_counter()
+                roster_cache.payload = payload
+            _log_roster_profile(
+                profile,
+                cache_hit=False,
+                assembly_seconds=assembly_seconds,
+                total_seconds=perf_counter() - started_at,
+                entry_count=len(entries),
+            )
+            return payload
 
     @router.post("/{entry_id}/metadata")
     async def set_metadata(
@@ -229,6 +308,8 @@ def create_attention_router(
         if metadata_store is None:
             raise HTTPException(status_code=503, detail={"code": "attention_unavailable"})
         metadata = metadata_store.set(entry_id, request.text, request.ttl_ms)
+        async with roster_cache.lock:
+            roster_cache.payload = None
         return {"status": "updated", "entry_id": entry_id, "metadata": metadata}
 
     @router.post("/{entry_id}/seen")
@@ -376,14 +457,19 @@ async def _resolve_prompt_detector(
     if detector_root.provider_id is not None:
         return detector_root
     services = server.services
-    if state.run_id is not None:
-        for run in await _list_active_runs(services):
-            if run.id == state.run_id:
-                return detector_root.for_provider(run.provider)
-    if state.session_id is not None:
-        for session in await _list_live_sessions(services):
-            if session.id == state.session_id:
-                return detector_root.for_provider(session.source)
+    manager = services.attention_manager
+    if manager is None:
+        return None
+    rows = await services.run_db(
+        manager.load_roster_rows,
+        require_machine_id(),
+        live_session_statuses=LIVE_SESSION_STATUS_ORDER,
+    )
+    for row in rows:
+        if (row.kind == "run" and row.source_id == state.run_id) or (
+            row.kind == "session" and row.source_id == state.session_id
+        ):
+            return detector_root.for_provider(row.provider)
     return None
 
 
@@ -480,43 +566,88 @@ async def _retire_and_redetect(
     )
 
 
-async def _load_roster_entries(
+async def _profiled_run_db(
+    run_db: Callable[..., Awaitable[Any]],
+    profile: _RosterProfile,
+    function: Callable[..., Any],
+    *args: Any,
+    **kwargs: Any,
+) -> Any:
+    """Run one database operation while separating executor wait from query time."""
+    query_seconds = 0.0
+
+    def measured() -> Any:
+        nonlocal query_seconds
+        query_started_at = perf_counter()
+        try:
+            return function(*args, **kwargs)
+        finally:
+            query_seconds = perf_counter() - query_started_at
+
+    wait_started_at = perf_counter()
+    try:
+        return await run_db(measured)
+    finally:
+        elapsed = perf_counter() - wait_started_at
+        profile.query_seconds += query_seconds
+        profile.executor_wait_seconds += max(0.0, elapsed - query_seconds)
+
+
+def _log_roster_profile(
+    profile: _RosterProfile,
+    *,
+    cache_hit: bool,
+    assembly_seconds: float,
+    total_seconds: float,
+    entry_count: int,
+) -> None:
+    logger.debug(
+        "Attention roster profile cache_hit=%s entries=%d executor_wait_ms=%.3f "
+        "query_ms=%.3f assembly_ms=%.3f total_ms=%.3f",
+        cache_hit,
+        entry_count,
+        profile.executor_wait_seconds * 1000,
+        profile.query_seconds * 1000,
+        assembly_seconds * 1000,
+        total_seconds * 1000,
+    )
+
+
+def _entry_count(payload: Mapping[str, object]) -> int:
+    entries = payload.get("entries")
+    return len(entries) if isinstance(entries, list) else 0
+
+
+def _load_roster_entries(
     server: HTTPServer,
     snapshot: AttentionRosterSnapshot,
+    rows: Sequence[AttentionRosterRow],
 ) -> list[dict[str, object]]:
-    """Join cursor-bounded attention with live run and session identity."""
+    """Join cursor-bounded attention with one bounded identity query."""
     services = server.services
-    runs_result, sessions_result = await asyncio.gather(
-        _list_active_runs(services),
-        _list_live_sessions(services),
-    )
-    runs = list(runs_result)
-    sessions = list(sessions_result)
+    runs = [row for row in rows if row.kind == "run"]
+    sessions = [row for row in rows if row.kind == "session"]
     attention = {state.entry_id: state for state in snapshot.states}
-    task_cache: dict[str, dict[str, str | None] | None] = {}
-    task_ids = {run.task_id for run in runs if run.task_id is not None}
-    await asyncio.gather(
-        *(_load_task_payload(services, task_id, task_cache) for task_id in task_ids)
-    )
     entries: list[dict[str, object]] = []
-    active_agent_sessions = {
-        run.child_session_id for run in runs if run.child_session_id is not None
-    }
+    active_agent_sessions = {run.session_id for run in runs if run.session_id is not None}
 
     for run in runs:
-        entry_id = f"run:{run.id}"
+        entry_id = f"run:{run.source_id}"
+        task = None
+        if run.task_id is not None and run.task_ref is not None:
+            task = {"id": run.task_id, "ref": run.task_ref, "stage": run.task_stage}
         entries.append(
             {
                 "entry_id": entry_id,
-                "run_id": run.id,
-                "session_id": run.child_session_id,
-                "lifecycle_status": run.status,
+                "run_id": run.source_id,
+                "session_id": run.session_id,
+                "lifecycle_status": run.lifecycle_status,
                 "attention": _serialize_attention(attention.get(entry_id)),
-                "task": task_cache.get(run.task_id) if run.task_id is not None else None,
+                "task": task,
                 "provider": run.provider,
                 "model": run.model,
                 "model_display_name": _model_display_name(services, run.provider, run.model),
-                "terminal": _run_terminal_block(server, run),
+                "terminal": _terminal_block(server, run.terminal),
                 "tmux": _run_tmux_payload(server, run),
                 "last_activity_at": _serialize_timestamp(run.updated_at),
                 **_metadata_payload(snapshot, entry_id),
@@ -524,27 +655,27 @@ async def _load_roster_entries(
         )
 
     for session in sessions:
-        if session.id in active_agent_sessions:
+        if session.source_id in active_agent_sessions:
             continue
         terminal_context = session.terminal_context
-        if not isinstance(terminal_context, Mapping):
-            terminal_context = {}
-        terminal = _session_terminal_block(server, session)
+        terminal = _terminal_block(server, session.terminal)
         pane = terminal_context.get("tmux_pane")
         if terminal is None and (not isinstance(pane, str) or not pane):
             continue
-        entry_id = f"session:{session.id}"
+        entry_id = f"session:{session.source_id}"
         entries.append(
             {
                 "entry_id": entry_id,
                 "run_id": None,
-                "session_id": session.id,
-                "lifecycle_status": session.status,
+                "session_id": session.session_id,
+                "lifecycle_status": session.lifecycle_status,
                 "attention": _serialize_attention(attention.get(entry_id)),
                 "task": None,
-                "provider": session.source,
+                "provider": session.provider,
                 "model": session.model,
-                "model_display_name": _model_display_name(services, session.source, session.model),
+                "model_display_name": _model_display_name(
+                    services, session.provider, session.model
+                ),
                 "terminal": terminal,
                 "tmux": _session_tmux_payload(terminal_context),
                 "last_activity_at": _serialize_timestamp(session.updated_at),
@@ -563,68 +694,6 @@ def _model_display_name(services: Any, provider: str | None, model: str | None) 
     return None if capability is None else capability.display_name
 
 
-async def _list_active_runs(services: Any) -> list[AgentRun]:
-    manager = LocalAgentRunManager(services.database)
-    runs: list[AgentRun] = []
-    offset = 0
-    while True:
-        page = await services.run_db(
-            manager.list_active_for_machine,
-            require_machine_id(),
-            limit=500,
-            offset=offset,
-        )
-        runs.extend(page)
-        if len(page) < 500:
-            return runs
-        offset += len(page)
-
-
-async def _list_live_sessions(services: Any) -> list[Session]:
-    session_manager = services.session_manager
-    if session_manager is None:
-        return []
-    sessions: list[Session] = []
-    cursor_updated_at: str | None = None
-    cursor_id: str | None = None
-    while True:
-        result = await services.run_db(
-            session_manager.list,
-            statuses=list(LIVE_SESSION_STATUS_ORDER),
-            limit=500,
-            cursor_updated_at=cursor_updated_at,
-            cursor_id=cursor_id,
-        )
-        page = cast(list[Session], list(result))
-        sessions.extend(page)
-        if len(page) < 500:
-            return sessions
-        cursor_updated_at = _serialize_timestamp(page[-1].updated_at)
-        cursor_id = page[-1].id
-
-
-async def _load_task_payload(
-    services: Any,
-    task_id: str | None,
-    cache: dict[str, dict[str, str | None] | None],
-) -> dict[str, str | None] | None:
-    if task_id is None:
-        return None
-    if task_id in cache:
-        return cache[task_id]
-    task = await services.run_db(services.task_manager.get_task, task_id)
-    if task is None:
-        cache[task_id] = None
-        return None
-    brief = task.to_brief()
-    state = brief.get("state")
-    current_stage = state.get("current_stage") if isinstance(state, Mapping) else None
-    stage = current_stage.get("name") if isinstance(current_stage, Mapping) else None
-    payload = {"id": task.id, "ref": brief.get("ref"), "stage": stage}
-    cache[task_id] = payload
-    return payload
-
-
 def _serialize_attention(state: AttentionState | None) -> dict[str, object] | None:
     if state is None or state.state is None:
         return None
@@ -640,69 +709,46 @@ def _serialize_attention(state: AttentionState | None) -> dict[str, object] | No
     }
 
 
-def _run_terminal_block(server: HTTPServer, run: Any) -> dict[str, object] | None:
-    terminal_id = getattr(run, "terminal_id", None)
-    if not isinstance(terminal_id, str) or not terminal_id:
+def _terminal_block(
+    server: HTTPServer,
+    terminal: AttentionRosterTerminal | None,
+) -> dict[str, object] | None:
+    if terminal is None:
         return None
     manager = getattr(server.services, "terminal_manager", None)
     if manager is None:
         return None
-    row = manager.get(terminal_id)
-    if row is None:
-        return None
     try:
-        attach = manager.attach_locator(
-            terminal_id,
-            live_host_epoch=row.host_epoch or "",
+        attach = attach_locator_for_terminal(
+            terminal,
+            live_host_epoch=terminal.host_epoch or "",
             socket_dir=Path.home() / ".gobby",
         )
     except Exception:
         attach = None
     return {
-        "terminal_id": terminal_id,
-        "backend": row.backend,
-        "state": row.state,
+        "terminal_id": terminal.id,
+        "backend": terminal.backend,
+        "state": terminal.state,
         "attach": None if attach is None else asdict(attach),
     }
 
 
-def _session_terminal_block(server: HTTPServer, session: Any) -> dict[str, object] | None:
-    manager = getattr(server.services, "terminal_manager", None)
-    if manager is None:
+def _run_tmux_payload(
+    server: HTTPServer,
+    run: AttentionRosterRow,
+) -> dict[str, object] | None:
+    if run.terminal_id is None:
         return None
-    row = manager.get_live_for_session(session.id)
-    if row is None:
-        return None
-    try:
-        attach = manager.attach_locator(
-            row.id,
-            live_host_epoch=row.host_epoch or "",
-            socket_dir=Path.home() / ".gobby",
-        )
-    except Exception:
-        attach = None
-    return {
-        "terminal_id": row.id,
-        "backend": row.backend,
-        "state": row.state,
-        "attach": None if attach is None else asdict(attach),
-    }
-
-
-def _run_tmux_payload(server: HTTPServer, run: Any) -> dict[str, object] | None:
-    terminal_id = getattr(run, "terminal_id", None)
-    if not isinstance(terminal_id, str) or not terminal_id:
-        return None
-    manager = getattr(server.services, "terminal_manager", None)
-    row = None if manager is None else manager.get(terminal_id)
-    session_name = None if row is None else row.session_name
+    terminal = getattr(run, "terminal", None)
+    session_name = None if terminal is None else terminal.session_name
     tmux_config = require_config_snapshot(server).active.tmux
     socket_path = getattr(tmux_config, "socket_path", None)
     return {
         "socket_path": socket_path if isinstance(socket_path, str) and socket_path else None,
         "session_name": session_name,
         "pane_pid": run.pid,
-        "terminal_id": terminal_id,
+        "terminal_id": run.terminal_id,
     }
 
 

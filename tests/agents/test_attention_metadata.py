@@ -20,7 +20,11 @@ from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.servers.routes.attention import create_attention_router
 from gobby.servers.websocket.broadcast import BroadcastMixin
 from gobby.storage.agents import AgentRun
-from gobby.storage.attention import AttentionOrderingCoordinator, AttentionStateManager
+from gobby.storage.attention import (
+    AttentionOrderingCoordinator,
+    AttentionRosterRow,
+    AttentionStateManager,
+)
 from gobby.storage.hub.protocol import HubDatabase
 
 from .detection_test_support import BundledDetectionRegistry
@@ -77,7 +81,10 @@ async def _run_db(function: Callable[..., Any], *args: Any, **kwargs: Any) -> An
     return function(*args, **kwargs)
 
 
-def test_expires_at_contract(temp_db: HubDatabase) -> None:
+def test_expires_at_contract(
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     clock = _Clock()
     manager = AttentionStateManager(temp_db, epoch="epoch-1")
     store = AttentionMetadataStore(
@@ -96,6 +103,28 @@ def test_expires_at_contract(temp_db: HubDatabase) -> None:
         model="gpt-5",
         terminal_context={"tmux_pane": "%1"},
         updated_at=clock.wall(),
+    )
+    monkeypatch.setattr(
+        manager,
+        "load_roster_rows",
+        lambda *_args, **_kwargs: [
+            AttentionRosterRow(
+                kind="session",
+                source_id=session.id,
+                session_id=session.id,
+                lifecycle_status=session.status,
+                task_id=None,
+                task_ref=None,
+                task_stage=None,
+                provider=session.source,
+                model=session.model,
+                pid=None,
+                updated_at=session.updated_at,
+                terminal_context=session.terminal_context,
+                terminal_id=None,
+                terminal=None,
+            )
+        ],
     )
     server = SimpleNamespace(
         services=SimpleNamespace(
