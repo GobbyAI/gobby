@@ -399,7 +399,7 @@ class ProxyHub:
                 if await self._emit_native_history(record) is not None:
                     return
             while True:
-                message = await record.frame.read_message()
+                message = await record.frame.read_relay_message()
                 mapped = _map_host_frame(
                     message,
                     record.terminal_id,

@@ -133,6 +133,9 @@ class FakeProxyFrame:
             raise item
         return item
 
+    async def read_relay_message(self) -> dict[str, Any]:
+        return await self.read_message()
+
     async def set_viewport(self, rows: int, cols: int) -> None:
         self.viewports.append((rows, cols))
 
