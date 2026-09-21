@@ -19,7 +19,7 @@ from gobby.utils.datetime import utc_now
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.tools.internal import InternalToolRegistry
-    from gobby.sessions.mailbox import WakeDispatcherProtocol
+    from gobby.sessions.mailbox_delivery import WakeDispatcherProtocol
     from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.inter_session_messages import InterSessionMessageManager
     from gobby.storage.sessions import SessionManager
@@ -333,10 +333,15 @@ def add_messaging_tools(
             if not brief or not send_result.success:
                 return response
 
+            wake_declines = [
+                result
+                for result in send_result.wake_results
+                if result.get("delivered") is not True and result.get("decline_reason")
+            ]
             wake_failures = [
                 result
                 for result in send_result.wake_results
-                if result.get("delivered") is not True and "skipped" not in result
+                if result.get("delivered") is not True and not result.get("decline_reason")
             ]
             has_failures = bool(
                 send_result.failed_broadcasts or failed_ws_broadcasts or wake_failures
@@ -345,7 +350,13 @@ def add_messaging_tools(
                 "success": True,
                 "target": send_result.target,
                 "recipient_count": len(send_result.recipient_session_ids),
-                "delivery_status": "sent_with_failures" if has_failures else "sent",
+                "delivery_status": (
+                    "sent_with_failures"
+                    if has_failures
+                    else "sent_with_declined_wakes"
+                    if wake_declines
+                    else "sent"
+                ),
                 "message_ids": send_result.message_ids,
             }
             if send_result.target_id is not None:
@@ -358,6 +369,8 @@ def add_messaging_tools(
                 brief_response["failed_ws_broadcasts"] = failed_ws_broadcasts
             if wake_failures:
                 brief_response["wake_failures"] = wake_failures
+            if wake_declines:
+                brief_response["wake_declines"] = wake_declines
             return brief_response
 
         except Exception as e:
