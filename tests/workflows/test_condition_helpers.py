@@ -29,11 +29,11 @@ from gobby.workflows.condition_helpers import (
     task_needs_human_review,
     task_tree_complete,
     task_type_in,
-    tdd_gate_open,
     touches_claude_memory_path,
     touches_docker_policy_path,
     touches_ui_design_path,
 )
+from gobby.workflows.safe_evaluator import build_condition_helpers
 
 pytestmark = pytest.mark.unit
 
@@ -748,8 +748,9 @@ class TestTddPathHelpers:
             "claimed_task_acceptance_test_paths": ["tests/test_app.py"],
             "tdd_tests_written": ["/repo/tests/test_app.py"],
         }
+        gate = build_condition_helpers(context={"project": {"path": "/repo"}})["tdd_gate_open"]
 
-        assert tdd_gate_open(variables) is True
+        assert gate(variables) is True
 
     def test_first_tdd_code_path_uses_canonical_paths(self) -> None:
         event_data = {

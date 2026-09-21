@@ -15,6 +15,7 @@ from gobby.workflows.claimed_task_extra_skills import (
     missing_claimed_task_extra_skills,
     refresh_claimed_task_extra_skills,
 )
+from gobby.workflows.condition_helpers import tdd_gate_open
 
 pytestmark = pytest.mark.unit
 
@@ -136,6 +137,15 @@ def test_claim_exposes_expansion_prefixed_acceptance_test_paths() -> None:
     assert state["claimed_task_acceptance_test_paths"] == [
         "tests/workflows/test_claimed_task_extra_skills.py"
     ]
+
+
+def test_tdd_gate_rejects_nested_relative_written_path() -> None:
+    variables = {
+        "claimed_task_acceptance_test_paths": ["tests/test_app.py"],
+        "tdd_tests_written": ["vendor/tests/test_app.py"],
+    }
+
+    assert tdd_gate_open(variables, "/repo") is False
 
 
 def test_multiple_claims_dedupe_without_reordering() -> None:
