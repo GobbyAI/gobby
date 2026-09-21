@@ -891,6 +891,7 @@ async def spawn_agent_impl(
                     completion_registry=completion_registry,
                     cleanup_isolation_on_failure=cleanup_isolation_on_failure,
                     task_manager=task_manager,
+                    session_manager=session_manager,
                     parent_session_id=parent_session_id,
                     effective_provider=effective_provider,
                     resolved_task_id=resolved_task_id,

@@ -139,6 +139,7 @@ async def test_parent_claim_transfer_failure_cleans_up_spawn(
         result = await finalize_executed_spawn(
             runner=MagicMock(),
             run_id="run-parent-transfer-failure",
+            session_manager=MagicMock(),
             spawn_result=spawn_result,
             spawn_request=None,
             isolation_ctx=isolation_context,
@@ -199,6 +200,7 @@ async def test_auto_claimed_task_titles_child_session(
     task_manager = MagicMock()
     task_manager.get_task.return_value = unclaimed_task
     task_manager.claim_task.return_value = claimed_task
+    session_manager = MagicMock()
     runner = MagicMock()
     spawn_result = SimpleNamespace(
         success=True,
@@ -233,6 +235,7 @@ async def test_auto_claimed_task_titles_child_session(
         result = await finalize_executed_spawn(
             runner=runner,
             run_id="run-auto-claim-title",
+            session_manager=session_manager,
             spawn_result=spawn_result,
             spawn_request=None,
             isolation_ctx=isolation_context,
@@ -257,7 +260,7 @@ async def test_auto_claimed_task_titles_child_session(
         assert call_order == ["link", "title"]
         link_claim.assert_called_once_with(task_manager, child_session_id, task_id)
         update_title.assert_called_once_with(
-            runner.session_manager,
+            session_manager,
             child_session_id,
             claimed_task,
         )
@@ -275,6 +278,7 @@ async def test_auto_claimed_task_titles_child_session(
         result = await finalize_executed_spawn(
             runner=runner,
             run_id="run-owned-by-other-session",
+            session_manager=session_manager,
             spawn_result=spawn_result,
             spawn_request=None,
             isolation_ctx=isolation_context,
@@ -299,6 +303,98 @@ async def test_auto_claimed_task_titles_child_session(
         task_manager.claim_task.assert_not_called()
         link_claim.assert_not_called()
         update_title.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_auto_claim_survives_runner_without_session_manager(
+    isolation_context: IsolationContext,
+) -> None:
+    """A task-bound spawn must not roll back when the runner lacks ``session_manager``.
+
+    ``AgentRunner`` exposes sessions through ``child_session_manager`` only, so the
+    title step has to use the session manager the tool receives explicitly.
+    """
+    from gobby.mcp_proxy.tools.spawn_agent._execution import finalize_executed_spawn
+
+    parent_session_id = "21000000-0000-4000-8000-000000000001"
+    child_session_id = "21000000-0000-4000-8000-000000000002"
+    task_id = "21000000-0000-4000-8000-000000000004"
+    claimed_task = SimpleNamespace(
+        claimed_by_session_id=child_session_id,
+        closed_at=None,
+        escalated_at=None,
+        seq_num=22652,
+        title="Task-bound spawns keep their claim",
+    )
+    task_manager = MagicMock()
+    task_manager.get_task.return_value = SimpleNamespace(
+        claimed_by_session_id=None,
+        closed_at=None,
+        escalated_at=None,
+    )
+    task_manager.claim_task.return_value = claimed_task
+    session_manager = MagicMock()
+    # The real AgentRunner shape as finalize sees it: run storage, no session_manager.
+    runner = SimpleNamespace(run_storage=MagicMock())
+    assert not hasattr(runner, "session_manager")
+    spawn_result = SimpleNamespace(
+        success=True,
+        child_session_id=child_session_id,
+        terminal_id=None,
+        pid=None,
+        error=None,
+    )
+
+    with (
+        patch("gobby.mcp_proxy.tools.spawn_agent._execution._persist_spawn_runtime"),
+        patch(
+            "gobby.mcp_proxy.tools.spawn_agent._execution.start_run_or_cleanup",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+        patch("gobby.runner_broadcasting.fire_agent_event"),
+        patch("gobby.mcp_proxy.tools.spawn_agent._execution._link_auto_claimed_session"),
+        patch(
+            "gobby.mcp_proxy.tools.spawn_agent._execution.update_title_for_claim"
+        ) as update_title,
+        patch(
+            "gobby.mcp_proxy.tools.spawn_agent._execution.cleanup_failed_spawn",
+            new_callable=AsyncMock,
+        ) as cleanup,
+        patch(
+            "gobby.mcp_proxy.tools.spawn_agent._execution.build_spawn_response",
+            return_value={"success": True, "status": "starting"},
+        ),
+    ):
+        result = await finalize_executed_spawn(
+            runner=runner,
+            run_id="run-without-runner-session-manager",
+            session_manager=session_manager,
+            spawn_result=spawn_result,
+            spawn_request=None,
+            isolation_ctx=isolation_context,
+            effective_isolation="worktree",
+            base_commit_sha=None,
+            handler=SimpleNamespace(commit_environment=None),
+            spawn_config=MagicMock(),
+            completion_registry=None,
+            cleanup_isolation_on_failure=True,
+            task_manager=task_manager,
+            parent_session_id=parent_session_id,
+            effective_provider="codex",
+            resolved_task_id=task_id,
+            task_seq_num=22652,
+            db=None,
+            agent_body=None,
+            effective_initial_variables={},
+            reasoning=MagicMock(),
+        )
+
+    assert result == {"success": True, "status": "starting"}
+    task_manager.claim_task.assert_called_once_with(task_id, session_id=child_session_id)
+    task_manager.release_task_claim.assert_not_called()
+    update_title.assert_called_once_with(session_manager, child_session_id, claimed_task)
+    cleanup.assert_not_awaited()
 
 
 class TestSpawnAgentIsolation:
@@ -1725,6 +1821,7 @@ async def test_spawn_failure_provenance_is_persisted_before_cleanup(
         response = await finalize_executed_spawn(
             runner=SimpleNamespace(run_storage=runs),
             run_id=run.id,
+            session_manager=None,
             spawn_result=result,
             spawn_request=None,
             isolation_ctx=isolation_context,

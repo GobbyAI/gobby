@@ -99,6 +99,7 @@ async def finalize_executed_spawn(
     completion_registry: Any,
     cleanup_isolation_on_failure: bool,
     task_manager: Any,
+    session_manager: Any,
     parent_session_id: str,
     effective_provider: str,
     resolved_task_id: str | None,
@@ -266,7 +267,7 @@ async def finalize_executed_spawn(
                         )
                         await asyncio.to_thread(
                             _title_auto_claimed_session,
-                            runner.session_manager,
+                            session_manager,
                             spawn_result.child_session_id,
                             claimed_task,
                         )
