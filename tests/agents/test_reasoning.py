@@ -171,7 +171,7 @@ def test_auto_without_metadata_omits_effort() -> None:
     assert result.reasoning_required is True
 
 
-def test_spawn_auto_omits_effort_despite_native_default(
+def test_spawn_auto_resolves_native_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
@@ -183,6 +183,48 @@ def test_spawn_auto_omits_effort_despite_native_default(
     result = resolve_spawn_reasoning(
         provider="codex",
         model="gpt-5.6-luna",
+        requested_effort="auto",
+        reasoning_required=False,
+    )
+
+    assert result.requested_effort == "auto"
+    assert result.effective_effort == "medium"
+    assert result.status == "applied"
+
+
+def test_codex_spawn_auto_uses_concrete_fallback_without_model_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        reasoning,
+        "_get_capability_resolver",
+        lambda: _resolver("codex", "known-model"),
+    )
+
+    result = resolve_spawn_reasoning(
+        provider="codex",
+        model="unknown-model",
+        requested_effort="auto",
+        reasoning_required=False,
+    )
+
+    assert result.requested_effort == "auto"
+    assert result.effective_effort == "medium"
+    assert result.status == "unverified"
+
+
+def test_non_codex_spawn_auto_keeps_provider_default_implicit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        reasoning,
+        "_get_capability_resolver",
+        lambda: _resolver("claude", "claude-sonnet-5", default_effort="high"),
+    )
+
+    result = resolve_spawn_reasoning(
+        provider="claude",
+        model="claude-sonnet-5",
         requested_effort="auto",
         reasoning_required=False,
     )

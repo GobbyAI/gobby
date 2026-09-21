@@ -12,6 +12,8 @@ from gobby.providers.capabilities.resolve import (
 )
 
 AUTO_REASONING_EFFORT = "auto"
+# Capability metadata overrides this when the selected Codex model advertises its default.
+CODEX_AUTO_FALLBACK_EFFORT = "medium"
 ReasoningStatus = Literal[
     "not_requested",
     "applied",
@@ -97,10 +99,20 @@ def resolve_spawn_reasoning(
 
     required = bool(reasoning_required)
     transport_supports_effort = provider_supports_terminal_reasoning(provider)
-    resolution = _get_capability_resolver().resolve_reasoning(
+    resolver = _get_capability_resolver()
+    resolved_request = normalized_request
+    if provider == "codex" and normalized_request == AUTO_REASONING_EFFORT:
+        resolved_request = CODEX_AUTO_FALLBACK_EFFORT
+        capability = resolver.find_model(provider, model or "")
+        if capability is not None:
+            default_effort = normalize_reasoning_effort(capability.default_effort)
+            if default_effort is not None and default_effort != AUTO_REASONING_EFFORT:
+                resolved_request = default_effort
+
+    resolution = resolver.resolve_reasoning(
         provider,
         model or "",
-        normalized_request,
+        resolved_request,
         transport_supports_effort=transport_supports_effort,
     )
     if resolution.status is CapabilityReasoningStatus.REJECTED:
