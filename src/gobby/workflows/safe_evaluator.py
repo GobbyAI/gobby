@@ -566,7 +566,11 @@ def build_condition_helpers(
             "normalize_path": lambda p: p.replace("\\", "/"),
             "first_tdd_code_path": first_tdd_code_path,
             "first_tdd_test_path": first_tdd_test_path,
-            "tdd_gate_open": lambda variables: tdd_gate_open(variables, _get_project_path(ctx)),
+            "tdd_gate_open": lambda variables: tdd_gate_open(
+                variables,
+                _event_field(ctx.get("event"), "metadata", {}).get("project_path")
+                or _get_project_path(ctx),
+            ),
             "is_gobby_build_command": is_gobby_build_command,
             "is_validation_command": is_validation_command,
             "wrapped_validation_command": lambda command: wrapped_validation_command(

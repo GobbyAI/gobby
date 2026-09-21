@@ -16,6 +16,7 @@ from gobby.workflows.claimed_task_extra_skills import (
     refresh_claimed_task_extra_skills,
 )
 from gobby.workflows.condition_helpers import tdd_gate_open
+from gobby.workflows.safe_evaluator import build_condition_helpers
 
 pytestmark = pytest.mark.unit
 
@@ -146,6 +147,21 @@ def test_tdd_gate_rejects_nested_relative_written_path() -> None:
     }
 
     assert tdd_gate_open(variables, "/repo") is False
+
+
+def test_tdd_gate_uses_event_worktree_path_over_registered_project_path() -> None:
+    variables = {
+        "claimed_task_acceptance_test_paths": ["tests/test_app.py"],
+        "tdd_tests_written": ["/worktrees/task/tests/test_app.py"],
+    }
+    context = {
+        "event": SimpleNamespace(metadata={"project_path": "/worktrees/task"}),
+        "project": {"path": "/primary/checkout"},
+    }
+
+    gate = build_condition_helpers(context=context)["tdd_gate_open"]
+
+    assert gate(variables) is True
 
 
 def test_multiple_claims_dedupe_without_reordering() -> None:
