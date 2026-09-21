@@ -304,6 +304,25 @@ class ConcurrentGraphGateway(GcodeGateway):
         return {"success": True}
 
 
+class CoordinatedTransportFailGateway:
+    def __init__(self, leading_path: str) -> None:
+        self.leading_path = leading_path
+        self.vector_calls: list[str] = []
+        self.leading_exhausted = asyncio.Event()
+
+    async def vector_sync_file(
+        self, project_root: Path, file_path: str, *, timeout: float | None = None
+    ) -> dict[str, Any]:
+        self.vector_calls.append(file_path)
+        if file_path != self.leading_path:
+            await self.leading_exhausted.wait()
+        elif self.vector_calls.count(file_path) == 3:
+            self.leading_exhausted.set()
+        raise GcodeEmbeddingTransportError(
+            ("gcode", "vector", "sync-file", file_path), 1, INCIDENT_STDERR
+        )
+
+
 class BusyProjectionGateway(GcodeGateway):
     def __init__(self, busy_projection: str) -> None:
         self.busy_projection = busy_projection
@@ -346,15 +365,13 @@ def _make_storage(root: Path, files: list[IndexedFile]) -> MagicMock:
     return storage
 
 
-def _config(
-    *,
-    embedding_enabled: bool = True,
-    graph_enabled: bool = False,
-) -> CodeIndexConfig:
-    return CodeIndexConfig(
-        embedding_enabled=embedding_enabled,
-        graph_enabled=graph_enabled,
-    )
+def _config(**overrides: Any) -> CodeIndexConfig:
+    values: dict[str, Any] = {
+        "embedding_enabled": True,
+        "graph_enabled": False,
+    }
+    values.update(overrides)
+    return CodeIndexConfig(**values)
 
 
 @pytest.mark.asyncio
@@ -380,6 +397,64 @@ async def test_sync_pass_runs_disjoint_files_concurrently(tmp_path: Path) -> Non
     assert gateway.max_active == 2
     assert set(gateway.calls) == set(paths)
     assert storage.mark_graph_synced.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_sync_pass_bounds_concurrency_to_config(tmp_path: Path) -> None:
+    paths = [f"src/f{i}.py" for i in range(5)]
+    _write_files(tmp_path, paths)
+    files = [_indexed_file(path, vectors_synced=True, graph_synced=False) for path in paths]
+    storage = _make_storage(tmp_path, files)
+    gateway = ConcurrentGraphGateway()
+
+    sync_task = asyncio.create_task(
+        _sync_pass(
+            storage=storage,
+            gcode_gateway=gateway,
+            config=_config(
+                embedding_enabled=False,
+                graph_enabled=True,
+                sync_worker_concurrency=2,
+            ),
+            batch_size=50,
+        )
+    )
+    await asyncio.wait_for(gateway.both_started.wait(), timeout=1.0)
+    gateway.release.set()
+    await asyncio.wait_for(sync_task, timeout=1.0)
+
+    assert gateway.max_active == 2
+    assert set(gateway.calls) == set(paths)
+    assert storage.mark_graph_synced.call_count == 5
+
+
+@pytest.mark.asyncio
+async def test_vector_retry_aborts_once_breaker_opens(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = ["src/leading.py", "src/sibling.py"]
+    _write_files(tmp_path, paths)
+    files = [_indexed_file(path) for path in paths]
+    storage = _make_storage(tmp_path, files)
+    gateway = CoordinatedTransportFailGateway(paths[0])
+    breaker = make_breaker(failure_threshold=1)
+    monkeypatch.setattr(
+        "gobby.code_index.sync_worker._VECTOR_SYNC_RETRY_BACKOFF_SECONDS",
+        (0.0, 0.0),
+    )
+
+    await _sync_pass(
+        storage=storage,
+        gcode_gateway=cast(Any, gateway),
+        config=_config(sync_worker_concurrency=2),
+        batch_size=50,
+        vector_breaker=breaker,
+    )
+
+    assert gateway.vector_calls.count(paths[0]) == 3
+    assert gateway.vector_calls.count(paths[1]) == 1
+    assert breaker.state is BreakerState.OPEN
 
 
 @pytest.mark.asyncio

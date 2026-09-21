@@ -47,6 +47,7 @@ def test_code_index_config_still_rejects_unknown_fields() -> None:
         pytest.param("sync_worker_interval_seconds", -0.1, id="negative-sync-interval"),
         pytest.param("sync_worker_batch_size", 0, id="zero-sync-batch"),
         pytest.param("sync_worker_batch_size", -1, id="negative-sync-batch"),
+        pytest.param("sync_worker_concurrency", 0, id="zero-sync-concurrency"),
     ],
 )
 def test_code_index_config_rejects_non_positive_worker_limits(
