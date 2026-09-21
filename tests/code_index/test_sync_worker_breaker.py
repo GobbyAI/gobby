@@ -17,13 +17,19 @@ from gobby.code_index.gcode_gateway import (
     GcodeCommandError,
     GcodeDaemonConfigUnavailableError,
     GcodeEmbeddingTransportError,
+    GcodeFalkorTransportError,
     GcodeGateway,
     GcodeIndexedFileNotFoundError,
     _classify_gcode_command_error,
 )
 from gobby.code_index.models import IndexedFile, IndexedProject
 from gobby.code_index.sync_breaker import BreakerState, SyncCircuitBreaker
-from gobby.code_index.sync_worker import _sync_pass, sync_worker_loop
+from gobby.code_index.sync_worker import (
+    _sync_graph_file_with_retry,
+    _sync_pass,
+    _sync_vector_file_with_retry,
+    sync_worker_loop,
+)
 from gobby.config.code_index import CodeIndexConfig
 from tests.code_index.conftest import PROJECT_ID
 
@@ -281,6 +287,21 @@ class RetryingVectorGateway:
         return {"success": True}
 
 
+class RetryingGraphGateway:
+    def __init__(self, failures: list[GcodeCommandError | None]) -> None:
+        self.failures = failures
+        self.graph_calls: list[str] = []
+
+    async def graph_sync_file(
+        self, project_root: Path, file_path: str, *, timeout: float | None = None
+    ) -> dict[str, Any]:
+        self.graph_calls.append(file_path)
+        failure = self.failures.pop(0) if self.failures else None
+        if failure is not None:
+            raise failure
+        return {"success": True}
+
+
 class ConcurrentGraphGateway(GcodeGateway):
     def __init__(self) -> None:
         self.calls: list[str] = []
@@ -455,6 +476,100 @@ async def test_vector_retry_aborts_once_breaker_opens(
     assert gateway.vector_calls.count(paths[0]) == 3
     assert gateway.vector_calls.count(paths[1]) == 1
     assert breaker.state is BreakerState.OPEN
+
+
+@pytest.mark.asyncio
+async def test_vector_retry_aborts_for_open_but_not_half_open_breaker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = "src/vector.py"
+    file = _indexed_file(path)
+    monkeypatch.setattr(
+        "gobby.code_index.sync_worker._VECTOR_SYNC_RETRY_BACKOFF_SECONDS",
+        (0.0, 0.0),
+    )
+
+    open_breaker = make_breaker(failure_threshold=1)
+    open_breaker.record_failure()
+    open_gateway = RetryingVectorGateway(
+        [GcodeEmbeddingTransportError(("gcode", "vector", "sync-file"), 1, INCIDENT_STDERR)]
+    )
+    with pytest.raises(GcodeEmbeddingTransportError):
+        await _sync_vector_file_with_retry(
+            cast(Any, open_gateway),
+            tmp_path,
+            file,
+            breakers=(open_breaker,),
+        )
+    assert open_gateway.vector_calls == [path]
+
+    clock = FakeClock()
+    half_open_breaker = make_breaker(clock, failure_threshold=1)
+    half_open_breaker.record_failure()
+    clock.now = 30.0
+    assert half_open_breaker.should_attempt() is True
+    assert half_open_breaker.state is BreakerState.HALF_OPEN
+    half_open_gateway = RetryingVectorGateway(
+        [
+            GcodeEmbeddingTransportError(("gcode", "vector", "sync-file"), 1, INCIDENT_STDERR)
+            for _ in range(3)
+        ]
+    )
+    with pytest.raises(GcodeEmbeddingTransportError):
+        await _sync_vector_file_with_retry(
+            cast(Any, half_open_gateway),
+            tmp_path,
+            file,
+            breakers=(half_open_breaker,),
+        )
+    assert half_open_gateway.vector_calls == [path] * 3
+
+
+@pytest.mark.asyncio
+async def test_graph_retry_aborts_for_open_but_not_half_open_breaker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = "src/graph.py"
+    file = _indexed_file(path)
+    stderr = "Error: FalkorDB graph query failed: Resource temporarily unavailable (os error 35)"
+    monkeypatch.setattr(
+        "gobby.code_index.sync_worker._GRAPH_SYNC_RETRY_BACKOFF_SECONDS",
+        (0.0, 0.0),
+    )
+
+    open_breaker = make_breaker(failure_threshold=1)
+    open_breaker.record_failure()
+    open_gateway = RetryingGraphGateway(
+        [GcodeFalkorTransportError(("gcode", "graph", "sync-file"), 1, stderr)]
+    )
+    with pytest.raises(GcodeFalkorTransportError):
+        await _sync_graph_file_with_retry(
+            cast(Any, open_gateway),
+            tmp_path,
+            file,
+            breakers=(open_breaker,),
+        )
+    assert open_gateway.graph_calls == [path]
+
+    clock = FakeClock()
+    half_open_breaker = make_breaker(clock, failure_threshold=1)
+    half_open_breaker.record_failure()
+    clock.now = 30.0
+    assert half_open_breaker.should_attempt() is True
+    assert half_open_breaker.state is BreakerState.HALF_OPEN
+    half_open_gateway = RetryingGraphGateway(
+        [GcodeFalkorTransportError(("gcode", "graph", "sync-file"), 1, stderr) for _ in range(3)]
+    )
+    with pytest.raises(GcodeFalkorTransportError):
+        await _sync_graph_file_with_retry(
+            cast(Any, half_open_gateway),
+            tmp_path,
+            file,
+            breakers=(half_open_breaker,),
+        )
+    assert half_open_gateway.graph_calls == [path] * 3
 
 
 @pytest.mark.asyncio

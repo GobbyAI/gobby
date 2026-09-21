@@ -483,6 +483,11 @@ class TestWakeTmuxSenders:
 class TestSetMockDefault:
     """Tests for test helper default assignment behavior."""
 
+    def test_applies_code_index_sync_worker_concurrency_default(self) -> None:
+        config = apply_safe_runner_config_defaults(MagicMock())
+
+        assert config.code_index.sync_worker_concurrency == 4
+
     def test_preserves_asyncmock_overrides(self) -> None:
         """Existing AsyncMock attributes are not replaced by default values."""
         obj = MagicMock()
