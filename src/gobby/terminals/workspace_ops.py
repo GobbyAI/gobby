@@ -93,7 +93,13 @@ IDEMPOTENCY_KEY_PATTERN = re.compile(r"[A-Za-z0-9._:-]{1,128}\Z")
 _ACTIVE_STATES = frozenset({"pending", "live"})
 
 WorkspaceOpErrorCode = Literal[
-    "not_found", "invalid_ref", "invalid_op", "terminal_failed", "busy", "forbidden"
+    "not_found",
+    "invalid_ref",
+    "invalid_op",
+    "terminal_failed",
+    "busy",
+    "forbidden",
+    "shutdown_in_progress",
 ]
 WorkspaceEventKind = Literal[
     "workspace.created",

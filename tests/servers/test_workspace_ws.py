@@ -21,7 +21,7 @@ from gobby.storage.machines import LocalMachineManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.terminals import TerminalManager
 from gobby.storage.workspaces import WorkspaceManager, WorkspaceNotFoundError
-from gobby.terminals.leases import TerminalLeaseRegistry
+from gobby.terminals.leases import LifecyclePublicationError, TerminalLeaseRegistry
 from gobby.terminals.runtime import PreparedSpawn, TerminalSpawnRequest
 from gobby.terminals.workspace_ops import WorkspaceEvent, WorkspaceOpError, WorkspaceOps
 from gobby.terminals.write_coordinator import WriteCoordinator
@@ -221,6 +221,72 @@ async def test_attach_creates_default_on_the_local_node(stack: _Stack) -> None:
     missing = {"type": "workspace_attach", "workspace": "missing"}
     assert await _error(stack.server, observer, missing) == "not_found"
     assert observer.subscriptions == set()
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        pytest.param({"type": "workspace_attach"}, id="attach"),
+        pytest.param(
+            {"type": "workspace_op", "op": "workspace.create"},
+            id="mutation",
+        ),
+    ],
+)
+async def test_workspace_requests_refuse_after_lifecycle_publication_stops(
+    stack: _Stack,
+    message: dict[str, Any],
+) -> None:
+    websocket = _client(stack, set())
+    await stack.server.lease_registry.shutdown_lifecycle_publication()
+    stack.server.shutdown_in_progress = lambda: True
+
+    reply = await _request(stack.server, websocket, message)
+
+    assert reply["type"] == "workspace_error"
+    assert reply["code"] == "shutdown_in_progress"
+    assert reply["reason"] == "Daemon is shutting down"
+
+
+async def test_attach_translates_lifecycle_close_when_shutdown_starts_mid_request(
+    stack: _Stack,
+) -> None:
+    websocket = _client(stack, set())
+    shutdown_states = iter((False, True))
+    stack.server.shutdown_in_progress = lambda: next(shutdown_states)
+    publication_stopped = LifecyclePublicationError("lifecycle publication stopped")
+
+    with patch.object(
+        stack.server,
+        "_read_workspace",
+        AsyncMock(side_effect=publication_stopped),
+    ):
+        reply = await _request(stack.server, websocket, {"type": "workspace_attach"})
+
+    assert reply["type"] == "workspace_error"
+    assert reply["code"] == "shutdown_in_progress"
+    assert reply["reason"] == "Daemon is shutting down"
+
+
+async def test_attach_propagates_lifecycle_publication_fault_while_running(
+    stack: _Stack,
+) -> None:
+    websocket = _client(stack, set())
+    stack.server.shutdown_in_progress = lambda: False
+    publication_fault = LifecyclePublicationError("publisher failed")
+
+    with (
+        patch.object(
+            stack.server,
+            "_read_workspace",
+            AsyncMock(side_effect=publication_fault),
+        ),
+        pytest.raises(LifecyclePublicationError, match="publisher failed"),
+    ):
+        await stack.server._handle_message(
+            websocket,
+            json.dumps({"type": "workspace_attach", "request_id": "req-fault"}),
+        )
 
 
 async def test_ops_round_trip_and_errors_are_typed(stack: _Stack) -> None:
