@@ -1071,9 +1071,10 @@ def test_gclient_reaches_workspace(daemon_instance: DaemonInstance) -> None:
         # First run opens one shell of its own and focuses it
         # (crates/gclient/tests/client_loop.rs::
         # first_run_opens_one_shell_and_never_auto_opens), so the status line
-        # reports a focused pane and its transport, never the no-pane copy.
+        # names that pane by its backend, never the no-pane copy.
         client.wait_for(
-            lambda screen: " │ direct" in screen.lines[-1] or " │ proxy" in screen.lines[-1],
+            lambda screen: " No pane." not in screen.lines[-1]
+            and (" │ gclient" in screen.lines[-1] or " │ tmux" in screen.lines[-1]),
             description="bottom status bar naming the first-run pane",
         )
         assert client.poll() is None
@@ -1225,8 +1226,91 @@ async def _adopt(daemon: DaemonInstance, terminal_id: str) -> str:
         await session.close()
 
 
+async def _placed_address(
+    daemon: DaemonInstance, terminal_id: str, *, timeout: float = 15.0
+) -> str:
+    """Wait for the address of a terminal the client placed itself.
+
+    A terminal gclient spawns arrives in a pane of the focused tab already, so
+    it has an address without being adopted and `_adopt` would refuse it a
+    second pane.
+    """
+    session = WsSession(daemon)
+    await session.connect()
+    try:
+        deadline = time.monotonic() + timeout
+        attempt = 0
+        while True:
+            request_id = f"placed-{attempt}-{terminal_id[:8]}"
+            await session.send({"type": "workspace_snapshot", "request_id": request_id})
+            snapshot = await session.wait_for(
+                lambda item, wanted=request_id: item.get("type") == "workspace_snapshot"
+                and item.get("request_id") == wanted,
+                timeout=10.0,
+                description="workspace snapshot",
+            )
+            home = snapshot["workspace"]
+            tabs = {tab["id"]: tab for tab in snapshot["tabs"]}
+            for pane in snapshot["panes"]:
+                if pane["terminal_id"] == terminal_id:
+                    tab = tabs[pane["tab_id"]]
+                    return f"{home['node_ref']}:{home['ref']}:{tab['ref']}:{pane['ref']}"
+            if time.monotonic() >= deadline:
+                raise AssertionError(f"no workspace pane holds {terminal_id}")
+            attempt += 1
+            await asyncio.sleep(0.2)
+    finally:
+        await session.close()
+
+
+async def _first_run_shell(daemon: DaemonInstance, *, besides: set[str]) -> str:
+    """Wait for the shell gclient opens for itself on first run.
+
+    It opens exactly one, and only while the workspace is still empty
+    (crates/gclient/tests/client_loop.rs::
+    first_run_opens_one_shell_and_never_auto_opens), so a test that adopts a
+    terminal into that workspace first would race the shell away.
+    """
+    with _http(daemon) as http:
+        row = await asyncio.to_thread(
+            wait_for_condition,
+            lambda: next((item for item in _list_items(http) if item["id"] not in besides), None),
+            timeout=15.0,
+            description="first-run shell registered",
+        )
+    assert isinstance(row, dict)
+    return str(row["id"])
+
+
 async def _screen(client: GclientDriver, text: str, *, timeout: float = 15.0) -> None:
     await asyncio.to_thread(client.expect, text, timeout=timeout)
+
+
+async def _delivery(wire: ClientWire, delivery: str, *, timeout: float = 15.0) -> dict[str, Any]:
+    """Wait for a live attachment with this frame delivery, and return it.
+
+    The status line carried the delivery until #22538 gave that segment to the
+    backend enum (`render_status_line`, crates/gclient/src/ui/status.rs), so
+    `direct` and `proxy` are words on the wire now rather than on the screen.
+    """
+
+    def attached() -> dict[str, Any] | None:
+        return next(
+            (
+                item
+                for item in reversed(wire.received)
+                if item.get("type") == "terminal_attach_result"
+                and item.get("frame_delivery") == delivery
+                and item.get("success") is True
+            ),
+            None,
+        )
+
+    result = await asyncio.to_thread(
+        wait_for_condition, attached, timeout=timeout, description=f"{delivery} attachment"
+    )
+    assert isinstance(result, dict)
+    return result
 
 
 async def _activate_terminal(client: GclientDriver, selector: str) -> None:
@@ -1273,7 +1357,7 @@ async def test_gclient_renders_tmux_row_through_host(daemon_instance: DaemonInst
         async with _running_gclient(daemon_instance, local_url=wire.url) as client:
             await _activate_terminal(client, await _adopt(daemon_instance, terminal_id))
             await _screen(client, "GCLIENT-ROW-OK")
-            await _screen(client, "direct")
+            await _delivery(wire, "direct")
             assert client.poll() is None
 
 
@@ -1286,7 +1370,7 @@ async def test_gclient_renders_native_row_direct_and_types(daemon_instance: Daem
         async with _running_gclient(daemon_instance, local_url=wire.url) as client:
             await _activate_terminal(client, await _adopt(daemon_instance, terminal_id))
             await _screen(client, "GCLIENT-SHELL-READY")
-            await _screen(client, "direct")
+            await _delivery(wire, "direct")
             await _take_and_echo(client, "GCLIENT-NATIVE-OK")
             client.send(
                 "printf 'GCLIENT-SLEEP-%s\\n' RUNNING; sleep 30 && echo SLEEP-'COMPLETED'\r"
@@ -1313,7 +1397,7 @@ async def test_gclient_remote_session_uses_proxy(daemon_instance: DaemonInstance
         async with _running_gclient(daemon_instance, remote_url=wire.url) as client:
             await _activate_terminal(client, await _adopt(daemon_instance, terminal_id))
             await _screen(client, "GCLIENT-SHELL-READY")
-            await _screen(client, "proxy")
+            await _delivery(wire, "proxy")
             await _take_and_echo(client, "GCLIENT-PROXY-OK")
             attaches = [item for item in wire.sent if item.get("frame_delivery") == "proxy"]
             assert attaches
@@ -1366,10 +1450,11 @@ async def test_gclient_direct_failure_falls_back_to_proxy(daemon_instance: Daemo
     try:
         async with server, wire.running():
             async with _running_gclient(daemon_instance, local_url=wire.url) as client:
+                await _first_run_shell(daemon_instance, besides={terminal_id})
                 address = await _adopt(daemon_instance, terminal_id)
                 await _activate_terminal(client, address)
                 await _screen(client, "GCLIENT-SHELL-READY")
-                await _screen(client, "direct")
+                await _delivery(wire, "direct")
                 old = next(
                     item["attachment_id"]
                     for item in wire.received
@@ -1381,7 +1466,7 @@ async def test_gclient_direct_failure_falls_back_to_proxy(daemon_instance: Daemo
                 target_writer = writers[0]
                 target_writer.close()  # Only this direct stream; the host keeps running.
                 await target_writer.wait_closed()
-                await _screen(client, "proxy")
+                await _delivery(wire, "proxy")
                 await _take_and_echo(client, "GCLIENT-FALLBACK-OK")
                 assert "Sessions" in client.screen.text
                 assert address in client.screen.text
@@ -1468,11 +1553,10 @@ async def test_gclient_spawns_and_terminates_a_terminal(daemon_instance: DaemonI
             '[bindings]\nnew_terminal = "prefix+i"\n', encoding="utf-8"
         )
         async with _running_gclient(daemon_instance) as client:
+            startup_ids = {await _first_run_shell(daemon_instance, besides={survivor_id})}
             survivor = await _adopt(daemon_instance, survivor_id)
             await _activate_terminal(client, survivor)
             await _screen(client, "GCLIENT-SURVIVOR-READY")
-            startup_ids = {row["id"] for row in _list_items(http)} - {survivor_id}
-            assert len(startup_ids) == 1
             killer = WsSession(daemon_instance)
             await killer.connect()
             try:
@@ -1502,7 +1586,7 @@ async def test_gclient_spawns_and_terminates_a_terminal(daemon_instance: DaemonI
             )
             assert isinstance(row, dict)
             spawned_id = row["id"]
-            spawned_address = await _adopt(daemon_instance, spawned_id)
+            spawned_address = await _placed_address(daemon_instance, spawned_id)
             await _screen(client, spawned_address)
             if spawned_address not in client.screen.lines[-1]:
                 await asyncio.to_thread(client.chord, "\t")
