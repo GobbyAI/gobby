@@ -53,6 +53,7 @@ from gobby.tasks.validation import TaskValidator
 from gobby.utils.machine_id import require_machine_id
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.state_manager import SessionVariableManager
+from tests._timing import wait_for_awaitable_or_background_task
 
 pytestmark = pytest.mark.unit
 
@@ -1060,8 +1061,24 @@ async def test_concurrent_ordinary_closes_share_review_without_closing_or_releas
             return_value=run_manager,
         ),
     ):
-        first_close = asyncio.create_task(
-            registry.call(
+        async with asyncio.timeout(5), asyncio.TaskGroup() as task_group:
+            first_close = task_group.create_task(
+                registry.call(
+                    "close_task",
+                    {
+                        "task_id": task.id,
+                        "changes_summary": "Implemented and tested.",
+                        "commit_sha": "abc123",
+                        "preview": False,
+                    },
+                )
+            )
+            await wait_for_awaitable_or_background_task(
+                spawn_started.wait(),
+                first_close,
+                description="task-close reviewer spawn",
+            )
+            pending_result = await registry.call(
                 "close_task",
                 {
                     "task_id": task.id,
@@ -1070,19 +1087,8 @@ async def test_concurrent_ordinary_closes_share_review_without_closing_or_releas
                     "preview": False,
                 },
             )
-        )
-        await spawn_started.wait()
-        pending_result = await registry.call(
-            "close_task",
-            {
-                "task_id": task.id,
-                "changes_summary": "Implemented and tested.",
-                "commit_sha": "abc123",
-                "preview": False,
-            },
-        )
-        release_spawn.set()
-        result = await first_close
+            release_spawn.set()
+        result = first_close.result()
 
     assert result["error"] == "close_review_required"
     assert result["closed"] is False
