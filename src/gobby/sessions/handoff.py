@@ -22,6 +22,9 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.tasks.state_semantics import get_claimed_session_id
 from gobby.utils.datetime import utc_now
 from gobby.workflows.found_work_gate import arm_found_work_gate
+from gobby.workflows.reserved_variables import (
+    HANDOFF_TURN_END_PENDING_VARIABLE as HANDOFF_TURN_END_PENDING_VARIABLE,
+)
 
 if TYPE_CHECKING:
     from gobby.storage.tasks import Task
@@ -390,6 +393,7 @@ def stage_handoff_attempt(
         "clear_session": clear_session,
         "created_at": utc_now().isoformat(),
     }
+    marker_updates[HANDOFF_TURN_END_PENDING_VARIABLE] = True
     if not clear_session:
         marker_updates[HANDOFF_PULL_PENDING_VARIABLE] = True
     # Always written, so a restaged attempt cannot inherit an earlier attempt's list.
@@ -610,7 +614,13 @@ def restore_staged_handoff(
         handoff_record_id=handoff_record_id,
         prior_handoff_markdown=marker.get("prior_handoff_markdown"),
         prior_markers={},
-        missing_markers=frozenset({PENDING_HANDOFF_VARIABLE, HANDOFF_PULL_PENDING_VARIABLE}),
+        missing_markers=frozenset(
+            {
+                PENDING_HANDOFF_VARIABLE,
+                HANDOFF_PULL_PENDING_VARIABLE,
+                HANDOFF_TURN_END_PENDING_VARIABLE,
+            }
+        ),
         prior_status=(
             marker.get("prior_status") if isinstance(marker.get("prior_status"), str) else None
         ),
@@ -709,6 +719,7 @@ def _consume_candidate(
         found_work = _found_work_from_marker(variables.pop(FOUND_WORK_VARIABLE, None))
         variables.pop(PENDING_HANDOFF_VARIABLE, None)
         variables.pop(HANDOFF_PULL_PENDING_VARIABLE, None)
+        variables.pop(HANDOFF_TURN_END_PENDING_VARIABLE, None)
         consumed = ConsumedHandoff(
             session_id, handoff_id, attempt_id, str(handoff_row["rendered_markdown"]), found_work
         )

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -12,6 +12,8 @@ from gobby.sessions.handoff import (
     FEEDBACK_FREQUENCIES,
     FEEDBACK_KINDS,
     FEEDBACK_SOURCE_SURFACES,
+    HANDOFF_TURN_END_PENDING_VARIABLE,
+    PENDING_HANDOFF_VARIABLE,
     consume_pending_handoff,
     normalize_feedback_observations,
     write_feedback_batch,
@@ -201,6 +203,22 @@ def register_handoff_tools(
                 "session_id": delivered.session_id,
                 "boundary_kind": "agent_end",
                 "handoff": delivered.payload.rendered_markdown,
+            }
+        variables = SessionVariableManager(session_manager.db).get_variables(session_id)
+        pending_marker = variables.get(PENDING_HANDOFF_VARIABLE)
+        if variables.get(HANDOFF_TURN_END_PENDING_VARIABLE) is True and isinstance(
+            pending_marker, Mapping
+        ):
+            return {
+                "success": True,
+                "found": False,
+                "delivery_pending": True,
+                "session_id": session_id,
+                "handoff": "",
+                "message": (
+                    "set_handoff delivery is in flight; end the turn and call get_handoff "
+                    "after the continuation prompt"
+                ),
             }
         consumed = consume_pending_handoff(session_manager.db, session_id)
         if consumed is None:

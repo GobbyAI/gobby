@@ -25,6 +25,7 @@ from gobby.sessions.clear_continuation import (
 from gobby.sessions.handoff import (
     HANDOFF_DISPATCH_GATE_VARIABLE,
     HANDOFF_PULL_PENDING_VARIABLE,
+    HANDOFF_TURN_END_PENDING_VARIABLE,
     PENDING_HANDOFF_VARIABLE,
     claim_staged_handoff_delivery,
     consume_pending_handoff,
@@ -565,6 +566,7 @@ def test_handoff_consumes_once_for_compact_and_clear_successor(
     )
     sv_mgr = SessionVariableManager(temp_db)
     assert sv_mgr.get_variables(predecessor.id).get(HANDOFF_PULL_PENDING_VARIABLE) is True
+    assert sv_mgr.get_variables(predecessor.id)[HANDOFF_TURN_END_PENDING_VARIABLE] is True
     compact = consume_pending_handoff(temp_db, predecessor.id)
     assert compact is not None and compact.markdown == handoff.rendered_markdown
     compact_receipt = temp_db.fetchone(
@@ -574,6 +576,7 @@ def test_handoff_consumes_once_for_compact_and_clear_successor(
     assert compact_receipt is not None
     assert compact_receipt["boundary_kind"] == "compact"
     assert HANDOFF_PULL_PENDING_VARIABLE not in sv_mgr.get_variables(predecessor.id)
+    assert HANDOFF_TURN_END_PENDING_VARIABLE not in sv_mgr.get_variables(predecessor.id)
     assert consume_pending_handoff(temp_db, predecessor.id) is None
 
     clear_state = stage_handoff_attempt(
@@ -584,6 +587,7 @@ def test_handoff_consumes_once_for_compact_and_clear_successor(
         clear_session=True,
     )
     assert HANDOFF_PULL_PENDING_VARIABLE not in sv_mgr.get_variables(predecessor.id)
+    assert sv_mgr.get_variables(predecessor.id)[HANDOFF_TURN_END_PENDING_VARIABLE] is True
     successor_id = session_manager.register_session(
         external_id="clear-successor",
         machine_id=MACHINE_ID,
@@ -601,6 +605,7 @@ def test_handoff_consumes_once_for_compact_and_clear_successor(
     sv_mgr.merge_variables(successor_id, {HANDOFF_PULL_PENDING_VARIABLE: True})
     cleared = consume_pending_handoff(temp_db, successor_id)
     assert cleared is not None and cleared.session_id == predecessor.id
+    assert HANDOFF_TURN_END_PENDING_VARIABLE not in sv_mgr.get_variables(predecessor.id)
     assert HANDOFF_PULL_PENDING_VARIABLE not in sv_mgr.get_variables(successor_id)
     assert consume_pending_handoff(temp_db, successor_id) is None
 
@@ -747,6 +752,18 @@ async def test_plan_draft_round_trips_through_compaction_and_argumentless_get_ha
     assert json.loads(str(authored["notes_json"])) == list(notes)
     assert authored["rendered_markdown"] == payload.rendered_markdown
 
+    record_handoff_delivery(
+        temp_db,
+        handoff_id=attempt.handoff_record_id,
+        attempt_id=attempt_id,
+        boundary_kind="compact",
+        continuation_session_id=session.id,
+    )
+    SessionVariableManager(temp_db).set_variable(
+        session.id,
+        HANDOFF_TURN_END_PENDING_VARIABLE,
+        False,
+    )
     registry = create_session_messages_registry(session_manager=session_manager, db=temp_db)
     with session_context_for_test(session.id):
         delivered = await registry.call("get_handoff", {})
@@ -784,6 +801,76 @@ async def test_plan_draft_round_trips_through_compaction_and_argumentless_get_ha
     assert receipt["continuation_session_id"] == session.id
 
 
+@pytest.mark.asyncio
+async def test_get_handoff_does_not_consume_while_delivery_pending(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+) -> None:
+    session = _registered_session(session_manager)
+    payload = build_handoff_payload(
+        current_state="Ready for compaction.",
+        next_steps=["Resume after the continuation prompt."],
+    )
+    attempt_id = "8" * 32
+    staged = stage_handoff_attempt(
+        temp_db,
+        session.id,
+        attempt_id=attempt_id,
+        handoff=payload,
+        clear_session=False,
+    )
+    registry = create_session_messages_registry(session_manager=session_manager, db=temp_db)
+
+    with session_context_for_test(session.id):
+        pending = await registry.call("get_handoff", {})
+
+    assert pending == {
+        "success": True,
+        "found": False,
+        "delivery_pending": True,
+        "session_id": session.id,
+        "handoff": "",
+        "message": (
+            "set_handoff delivery is in flight; end the turn and call get_handoff "
+            "after the continuation prompt"
+        ),
+    }
+    variables = SessionVariableManager(temp_db).get_variables(session.id)
+    assert variables[PENDING_HANDOFF_VARIABLE]["attempt_id"] == attempt_id
+    assert variables[HANDOFF_TURN_END_PENDING_VARIABLE] is True
+
+    record_handoff_delivery(
+        temp_db,
+        handoff_id=staged.handoff_record_id,
+        attempt_id=attempt_id,
+        boundary_kind="compact",
+        continuation_session_id=session.id,
+    )
+    SessionVariableManager(temp_db).set_variable(
+        session.id,
+        HANDOFF_TURN_END_PENDING_VARIABLE,
+        False,
+    )
+    with session_context_for_test(session.id):
+        delivered = await registry.call("get_handoff", {})
+        consumed = await registry.call("get_handoff", {})
+
+    assert delivered == {
+        "success": True,
+        "found": True,
+        "session_id": session.id,
+        "handoff": payload.rendered_markdown,
+        "found_work": [],
+        "found_work_gate_armed": False,
+    }
+    assert consumed == {
+        "success": True,
+        "found": False,
+        "session_id": None,
+        "handoff": "",
+    }
+
+
 def test_failed_attempt_restores_handoff_and_deletes_only_staged_content(
     temp_db: HubDatabase,
     session_manager: SessionManager,
@@ -808,9 +895,11 @@ def test_failed_attempt_restores_handoff_and_deletes_only_staged_content(
     )
     sv_mgr = SessionVariableManager(temp_db)
     assert sv_mgr.get_variables(session.id).get(HANDOFF_PULL_PENDING_VARIABLE) is True
+    assert sv_mgr.get_variables(session.id)[HANDOFF_TURN_END_PENDING_VARIABLE] is True
 
     assert restore_handoff_attempt(temp_db, state) is True
     assert HANDOFF_PULL_PENDING_VARIABLE not in sv_mgr.get_variables(session.id)
+    assert HANDOFF_TURN_END_PENDING_VARIABLE not in sv_mgr.get_variables(session.id)
     row = temp_db.fetchone(
         "SELECT handoff_markdown FROM sessions WHERE id = %s",
         (session.id,),
@@ -1128,6 +1217,7 @@ def test_clear_delivery_compensation_restores_status_and_clears_markers(
     variables = SessionVariableManager(temp_db).get_variables(session.id)
     assert PENDING_HANDOFF_VARIABLE not in variables
     assert CLEAR_ATTEMPT_VARIABLE not in variables
+    assert HANDOFF_TURN_END_PENDING_VARIABLE not in variables
     assert variables[HANDOFF_DISPATCH_GATE_VARIABLE] == failure
 
 
@@ -1312,12 +1402,24 @@ async def test_get_handoff_result_stays_below_offload_threshold(
 ) -> None:
     session = _registered_session(session_manager)
     handoff = build_handoff_payload(current_state="H" * 8_000, next_steps=["Continue"])
-    stage_handoff_attempt(
+    staged = stage_handoff_attempt(
         temp_db,
         session.id,
         attempt_id="d" * 32,
         handoff=handoff,
         clear_session=False,
+    )
+    record_handoff_delivery(
+        temp_db,
+        handoff_id=staged.handoff_record_id,
+        attempt_id="d" * 32,
+        boundary_kind="compact",
+        continuation_session_id=session.id,
+    )
+    SessionVariableManager(temp_db).set_variable(
+        session.id,
+        HANDOFF_TURN_END_PENDING_VARIABLE,
+        False,
     )
     registry = create_session_messages_registry(session_manager=session_manager, db=temp_db)
 

@@ -46,6 +46,7 @@ from gobby.workflows.engine.event_utils import (
     _is_write_like_event_data,
 )
 from gobby.workflows.engine.proxy_hooks import ProxyHookInvocation
+from gobby.workflows.reserved_variables import HANDOFF_TURN_END_PENDING_VARIABLE
 
 if TYPE_CHECKING:
     from gobby.storage.workflow_audit import WorkflowAuditManager
@@ -356,21 +357,24 @@ class EvaluationMixin:
         )
         return self._render_template(reason, ctx, allowed_funcs)
 
-    async def _suppress_interrupt_turn_end_blocks(
+    async def _suppress_turn_end_blocks(
         self,
         evaluation: EvaluationContext,
         block_gates: list[BlockGate],
+        *,
+        audit_rule_name: str,
+        cause: str,
     ) -> list[BlockGate]:
         rule_names = list(dict.fromkeys(gate.rule_name for gate in block_gates))
         message = (
-            f"Suppressed {len(block_gates)} turn_end stop gate(s) for interrupt-initiated turn "
+            f"Suppressed {len(block_gates)} turn_end stop gate(s) for {cause} "
             f"(session {evaluation.session_id}): {', '.join(rule_names)}"
         )
         logger.info(message)
         event_type = evaluation.event.event_type
         event_name = event_type.value if isinstance(event_type, HookEventType) else str(event_type)
         record_rule_evaluation(
-            rule_name="interrupt-initiated-turn",
+            rule_name=audit_rule_name,
             result="allow",
             event=event_name,
             session_id=evaluation.session_id,
@@ -380,7 +384,7 @@ class EvaluationMixin:
             self.workflow_audit,
             session_id=evaluation.session_id,
             current_step=evaluation.variables.get("current_step"),
-            rule_id="interrupt-initiated-turn",
+            rule_id=audit_rule_name,
             condition=None,
             result="allow",
             reason=message,
@@ -398,10 +402,16 @@ class EvaluationMixin:
     ) -> list[BlockGate]:
         block_gates: list[BlockGate] = []
         metric_records: list[MetricsEventRecord] = []
-        suppress_turn_end_blocks = (
-            _is_turn_end_event(evaluation.event.event_type)
-            and evaluation.variables.get("turn_interrupt_initiated") is True
-        )
+        turn_end_suppression: tuple[str, str] | None = None
+        if _is_turn_end_event(evaluation.event.event_type):
+            if evaluation.variables.get(HANDOFF_TURN_END_PENDING_VARIABLE) is True:
+                turn_end_suppression = (
+                    "pending-terminal-handoff-delivery",
+                    "pending terminal handoff delivery",
+                )
+            elif evaluation.variables.get("turn_interrupt_initiated") is True:
+                turn_end_suppression = ("interrupt-initiated-turn", "interrupt-initiated turn")
+        suppress_turn_end_blocks = turn_end_suppression is not None
 
         for row, body in rules:
             # Pre-filter: skip rule if tools field doesn't match current tool
@@ -626,8 +636,14 @@ class EvaluationMixin:
             except Exception as e:
                 logger.debug("Metrics recording failed: %s", e, exc_info=True)
 
-        if suppress_turn_end_blocks and block_gates:
-            return await self._suppress_interrupt_turn_end_blocks(evaluation, block_gates)
+        if turn_end_suppression is not None and block_gates:
+            audit_rule_name, cause = turn_end_suppression
+            return await self._suppress_turn_end_blocks(
+                evaluation,
+                block_gates,
+                audit_rule_name=audit_rule_name,
+                cause=cause,
+            )
         return block_gates
 
     def _assemble_response(
@@ -639,6 +655,13 @@ class EvaluationMixin:
         block_gates: list[BlockGate],
         include_rule_outputs: bool = True,
     ) -> HookResponse:
+        if (
+            _is_turn_end_event(evaluation.event.event_type)
+            and evaluation.variables.get(HANDOFF_TURN_END_PENDING_VARIABLE) is True
+        ):
+            override_decision = "allow"
+            override_reason = None
+
         block_reason: str | None = None
         feedback_gates = _unique_block_gate_feedback(block_gates)
         if len(feedback_gates) > 1:

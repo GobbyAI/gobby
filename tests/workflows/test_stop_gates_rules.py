@@ -105,6 +105,7 @@ STOP_GATES_RULES = {
     "block-terminal-validation-failure",
     "block-unclaimed-found-work",
     "require-epic-tree-close",
+    "rearm-close-gates-on-session-start",
     "require-task-close",
     "require-step-completion",
 }
