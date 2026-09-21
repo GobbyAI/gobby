@@ -14,7 +14,8 @@ from urllib.parse import urlparse
 from gobby.utils.daemon_git import GitFailed, GitOk, GitTimeout, daemon_git
 
 _ARTIFACT_REF_RE = re.compile(
-    r"^\s*(?:>\s*)?(?:[-*+]\s+|\d+[.)]\s+)?"
+    r"^\s*(?:>\s*)?(?:(?:[-*+]\s+|\d+[.)]\s+)"
+    r"(?:[A-Za-z0-9]+(?:\.[A-Za-z0-9]+)+:\s+)?)?"
     r"(?:\*\*)?(?P<kind>test|file)(?:\*\*)?:"
     r"(?:\s*`(?P<quoted>[^`]+)`|\s+(?P<bare>[^\s,;]+))",
     re.IGNORECASE | re.MULTILINE,

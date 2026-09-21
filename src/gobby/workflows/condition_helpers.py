@@ -166,15 +166,20 @@ def first_tdd_test_path(
 def tdd_gate_open(variables: Mapping[str, Any]) -> bool:
     """Return whether a qualifying test write has opened the production-write gate."""
     written = {
-        path for path in variables.get("tdd_tests_written", []) if isinstance(path, str) and path
+        _normalize_condition_path(path).rstrip("/")
+        for path in variables.get("tdd_tests_written", [])
+        if isinstance(path, str) and path
     }
     acceptance_paths = [
-        path
+        _normalize_condition_path(path).rstrip("/")
         for path in variables.get("claimed_task_acceptance_test_paths", [])
         if isinstance(path, str) and path
     ]
     if acceptance_paths:
-        return any(path in written for path in acceptance_paths)
+        return any(
+            path in written or any(candidate.endswith(f"/{path}") for candidate in written)
+            for path in acceptance_paths
+        )
     return bool(written)
 
 

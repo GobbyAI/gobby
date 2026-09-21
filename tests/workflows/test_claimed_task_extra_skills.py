@@ -116,6 +116,28 @@ def test_claim_exposes_tdd_gate_state() -> None:
     assert stale_variables["claimed_task_acceptance_test_paths"] == []
 
 
+def test_claim_exposes_expansion_prefixed_acceptance_test_paths() -> None:
+    manager = MagicMock()
+    manager.get_task.return_value = _task(
+        labels=["tdd:required"],
+        validation_criteria=(
+            "Acceptance artifacts:\n"
+            "- 2.3.1: test: "
+            "`tests/workflows/test_claimed_task_extra_skills.py::test_expanded`\n"
+            "- 2.3.2: file: `src/gobby/tasks/acceptance_artifacts.py`"
+        ),
+    )
+
+    state = build_claimed_task_extra_skill_state(
+        {"claimed_tasks": {"task-1": "#1"}},
+        manager,
+    )
+
+    assert state["claimed_task_acceptance_test_paths"] == [
+        "tests/workflows/test_claimed_task_extra_skills.py"
+    ]
+
+
 def test_multiple_claims_dedupe_without_reordering() -> None:
     manager = MagicMock()
     tasks = {

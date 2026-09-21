@@ -29,6 +29,7 @@ from gobby.workflows.condition_helpers import (
     task_needs_human_review,
     task_tree_complete,
     task_type_in,
+    tdd_gate_open,
     touches_claude_memory_path,
     touches_docker_policy_path,
     touches_ui_design_path,
@@ -742,6 +743,14 @@ def _rust_store_file(tmp_path: Path) -> str:
 
 
 class TestTddPathHelpers:
+    def test_tdd_gate_matches_absolute_written_path_to_relative_acceptance_path(self) -> None:
+        variables = {
+            "claimed_task_acceptance_test_paths": ["tests/test_app.py"],
+            "tdd_tests_written": ["/repo/tests/test_app.py"],
+        }
+
+        assert tdd_gate_open(variables) is True
+
     def test_first_tdd_code_path_uses_canonical_paths(self) -> None:
         event_data = {
             "canonical_file_paths": ["tests/test_app.py", "src/app.py"],
