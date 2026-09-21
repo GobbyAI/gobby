@@ -80,6 +80,33 @@ def test_one_active_review_per_task_and_terminal_unlock(temp_db: HubDatabase) ->
     assert fresh.id != first.id
 
 
+def test_concurrent_same_snapshot_reuses_review_after_commit_persistence(
+    temp_db: HubDatabase,
+) -> None:
+    store = TaskCloseReviewStore(temp_db)
+    first, created = store.create_or_get_active(**{**_intent(), "commit_shas": ("abc123",)})
+    assert created is True
+
+    task_row = temp_db.fetchone(
+        """
+        SELECT commits @> jsonb_build_array(%s::text) AS has_commit, updated_at
+        FROM tasks
+        WHERE id = %s
+        """,
+        ("abc123", _TASK_ID),
+    )
+    assert task_row is not None
+    assert task_row["has_commit"] is True
+    assert task_row["updated_at"] == _TASK_UPDATED_AT
+
+    repeated, repeated_created = store.create_or_get_active(
+        **{**_intent(), "commit_shas": ("abc123",)}
+    )
+
+    assert repeated_created is False
+    assert repeated.id == first.id
+
+
 def test_concurrent_update_before_review_creation_returns_stale(
     temp_db: HubDatabase,
 ) -> None:

@@ -1049,12 +1049,15 @@ async def test_concurrent_ordinary_closes_share_review_without_closing_or_releas
     running_review = replace(queued_review, status="running")
     store = MagicMock()
     review_results = iter([(queued_review, True), (launching_review, False)])
+    snapshot_updated_at = task.updated_at
 
     def create_or_get_active(**kwargs: object) -> tuple[TaskCloseReview, bool]:
+        assert kwargs["expected_task_updated_at"] == snapshot_updated_at
         review, created = next(review_results)
         if created:
             commit_shas = cast(list[str], kwargs["commit_shas"])
             task.commits = list(dict.fromkeys([*(task.commits or []), *commit_shas]))
+            assert task.updated_at == snapshot_updated_at
         return review, created
 
     store.create_or_get_active.side_effect = create_or_get_active

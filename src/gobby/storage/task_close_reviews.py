@@ -278,13 +278,12 @@ class TaskCloseReviewStore:
                         """
                         UPDATE tasks
                            SET commits = COALESCE(commits, '[]'::jsonb)
-                                         || jsonb_build_array(%s::text),
-                               updated_at = %s
+                                         || jsonb_build_array(%s::text)
                          WHERE id = %s
                            AND NOT COALESCE(commits, '[]'::jsonb)
                                    @> jsonb_build_array(%s::text)
                         """,
-                        (commit_sha, now, task_id, commit_sha),
+                        (commit_sha, task_id, commit_sha),
                     )
                 conn.execute(
                     """
