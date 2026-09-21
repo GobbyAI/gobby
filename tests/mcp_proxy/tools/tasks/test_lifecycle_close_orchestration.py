@@ -281,6 +281,40 @@ async def test_task_update_before_review_launch_returns_stale_without_spawning(
 
 
 @pytest.mark.asyncio
+async def test_promoted_review_refuses_unpersisted_evaluation_commit(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    task = manager.create_task(
+        sample_project["id"],
+        "Refuse review with invisible commit",
+        validation_criteria="Focused tests pass.",
+    )
+    review = _review(status="launching", run_id=_FIRST_REVIEW_RUN_ID)
+    store = _Store(review)
+    registry = SimpleNamespace(call=AsyncMock())
+    ctx = _ctx(registry=registry)
+    ctx.task_manager = manager
+    _patch_store(monkeypatch, store)
+    evaluation = _evaluation()
+    evaluation.task = task
+    evaluation.task_id = task.id
+    evaluation.commit_shas = ["abc123"]
+
+    result = await orchestration._launch_promoted_review(ctx, review, evaluation)
+
+    assert result["success"] is False
+    assert result["error"] == "close_review_commit_links_missing"
+    assert "abc123" in result["message"]
+    registry.call.assert_not_awaited()
+    persisted = manager.get_task(task.id)
+    assert persisted is not None
+    assert persisted.commits is None
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "reason", ["completed", "obsolete", "duplicate", "wont_fix", "out_of_repo"]
 )
@@ -571,7 +605,10 @@ async def test_launch_omits_model_overrides_without_validation_config(
     ctx = cast(
         RegistryContext,
         SimpleNamespace(
-            task_manager=SimpleNamespace(db=object()),
+            task_manager=SimpleNamespace(
+                db=object(),
+                get_task=lambda _task_id: replace(cast(Task, _evaluation().task), commits=["abc"]),
+            ),
             agent_registry=registry,
             validation_config=None,
         ),
@@ -1420,7 +1457,10 @@ def _ctx(
     return cast(
         RegistryContext,
         SimpleNamespace(
-            task_manager=SimpleNamespace(db=object()),
+            task_manager=SimpleNamespace(
+                db=object(),
+                get_task=lambda _task_id: replace(cast(Task, _evaluation().task), commits=["abc"]),
+            ),
             agent_registry=registry,
             validation_config=validation_config,
         ),
@@ -1509,6 +1549,7 @@ def _persisted_review_intent(
         "task_id": task.id,
         "task_ref": f"#{task.seq_num}",
         "caller_session_id": caller_session_id,
+        "commit_shas": (),
         "close_arguments": _arguments(),
         "expected_task_updated_at": task.updated_at,
         "review_fingerprint": "review",

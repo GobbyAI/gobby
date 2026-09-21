@@ -1134,7 +1134,14 @@ async def test_ordinary_close_detaches_real_validation_and_preserves_persisted_c
     claimed = manager.claim_task(task.id, session.id)
     validator = TaskValidator(TaskValidationConfig())
 
+    commit_sha = "abc123"
+    worktree_path = f"{sample_git_project['repo_path']}-worker"
+
     async def spawn_reviewer(_tool: str, arguments: dict[str, Any]) -> dict[str, object]:
+        persisted_at_launch = manager.get_task(task.id)
+        assert persisted_at_launch is not None
+        assert persisted_at_launch.commits == [commit_sha]
+        assert arguments["project_path"] == worktree_path
         return {"success": True, "run_id": arguments["reserved_run_id"]}
 
     agent_call = AsyncMock(side_effect=spawn_reviewer)
@@ -1160,13 +1167,13 @@ async def test_ordinary_close_detaches_real_validation_and_preserves_persisted_c
         patch.object(
             lifecycle,
             "resolve_task_repo_path",
-            return_value=sample_git_project["repo_path"],
+            return_value=worktree_path,
         ),
         patch.object(close_finalization, "_claimed_session_window_start", return_value=None),
         patch.object(close_finalization, "_linked_commit_paths", return_value=frozenset()),
         patch.object(close_finalization, "_committable_task_paths", return_value=set()),
         patch.object(lifecycle_validation, "task_dirty_paths_async", return_value=set()),
-        patch.object(lifecycle, "resolve_close_commit_shas", return_value=(["abc123"], None)),
+        patch.object(lifecycle, "resolve_close_commit_shas", return_value=([commit_sha], None)),
         patch.object(
             lifecycle,
             "validate_commit_requirements",
@@ -1186,7 +1193,8 @@ async def test_ordinary_close_detaches_real_validation_and_preserves_persisted_c
             {
                 "task_id": task.id,
                 "changes_summary": "Implemented and tested.",
-                "commit_sha": "abc123",
+                "commit_sha": commit_sha,
+                "project_path": worktree_path,
                 "preview": False,
             },
         )
@@ -1202,6 +1210,8 @@ async def test_ordinary_close_detaches_real_validation_and_preserves_persisted_c
     assert result["prompt_chars"] < result["prompt_limit"]
     assert 0 <= result["close_review_duration_ms"] < 50
     persisted = manager.get_task(task.id)
+    assert persisted is not None
+    assert persisted.commits == [commit_sha]
     assert persisted.closed_at is None
     assert persisted.claimed_by_session_id == session.id
     stored_review = TaskCloseReviewStore(temp_db).get(result["review_id"])
