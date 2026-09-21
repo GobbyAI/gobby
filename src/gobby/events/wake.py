@@ -24,14 +24,16 @@ from gobby.events.live_wake import (
     ComposerProbe,
     composer_occupied_result,
     normalize_live_wake_result,
-    parse_tmux_pane,
-    parse_tmux_session,
-    parse_tmux_socket_path,
     wake_debounced_result,
     wake_failure,
     wake_state_failure,
 )
 from gobby.events.wake_notifications import persist_completion_notification
+from gobby.events.wake_terminal_resolution import (
+    LiveTerminalResolver,
+    SessionTerminalRoute,
+    resolve_session_terminal_route,
+)
 
 if TYPE_CHECKING:
     from gobby.storage.agents import LocalAgentRunManager
@@ -86,10 +88,6 @@ class TmuxPaneSender(Protocol):
     ) -> Coroutine[Any, Any, None]: ...
 
 
-class LiveTerminalLookup(Protocol):
-    def get_live_for_session(self, session_id: str) -> Any | None: ...
-
-
 # sdk_resumer signature: (sdk_session_id: str, message: str) -> None
 SdkResumer = Callable[[str, str], Coroutine[Any, Any, None]]
 
@@ -133,7 +131,7 @@ class WakeDispatcher:
         sdk_resumer: SdkResumer | None = None,
         agent_run_manager: LocalAgentRunManager | None = None,
         web_chat_session_registry: WebChatSessionRegistryProtocol | None = None,
-        terminal_manager: LiveTerminalLookup | None = None,
+        terminal_manager: LiveTerminalResolver | None = None,
         run_db: RunDb | None = None,
         lifecycle_refresh: LifecycleRefresh | None = None,
         composer_probe: ComposerProbe | None = None,
@@ -173,7 +171,7 @@ class WakeDispatcher:
         """Wire the live web-chat registry after server initialization."""
         self._web_chat_session_registry = registry
 
-    def set_terminal_manager(self, manager: LiveTerminalLookup | None) -> None:
+    def set_terminal_manager(self, manager: LiveTerminalResolver | None) -> None:
         """Wire the terminal row lookup once the composition root has built it."""
         self._terminal_manager = manager
 
@@ -304,7 +302,6 @@ class WakeDispatcher:
             }
 
         agent_depth = getattr(session, "agent_depth", 0) or 0
-        terminal_context = getattr(session, "terminal_context", None)
         session_type = getattr(session, "session_type", None)
         status = getattr(session, "status", None)
         state_failure = wake_state_failure(session_id, status)
@@ -325,7 +322,8 @@ class WakeDispatcher:
         # backend-neutral gate; the raw tmux keys and SDK resume stay the
         # fallbacks for a session Gobby holds no row for, where there is no
         # backend to resolve a runtime from.
-        terminal = await self._live_terminal_for_session(session_id)
+        terminal_route = await self._terminal_route_for_session(session)
+        terminal = terminal_route.managed_terminal
         if terminal is not None and self._tmux_sender is not None:
             if not self._should_send_live_wake(session_id, session):
                 return wake_debounced_result(session_id, method="terminal")
@@ -339,14 +337,14 @@ class WakeDispatcher:
 
         # Interactive session → nudge its tmux pane after durable message storage.
         if agent_depth == 0:
-            if not terminal_context:
+            if not terminal_route.has_terminal_context:
                 return wake_failure(
                     session_id,
                     method=None,
                     error_code="no_live_wake_channel",
                     error_message="Session has no terminal_context for live wake",
                 )
-            tmux_pane = parse_tmux_pane(terminal_context)
+            tmux_pane = terminal_route.tmux_pane
             if not tmux_pane:
                 return wake_failure(
                     session_id,
@@ -363,7 +361,7 @@ class WakeDispatcher:
                 )
             if not self._should_send_live_wake(session_id, session):
                 return wake_debounced_result(session_id, method="tmux_pane")
-            tmux_socket_path = parse_tmux_socket_path(terminal_context)
+            tmux_socket_path = terminal_route.tmux_socket_path
             current, state_failure = await self._preflight_live_side_effect(session_id)
             if state_failure is not None:
                 return state_failure
@@ -422,107 +420,105 @@ class WakeDispatcher:
         if not self._should_send_live_wake(session_id, session):
             return wake_debounced_result(session_id, method="live_wake")
 
-        if terminal_context and self._tmux_sender:
-            wake_identity = parse_tmux_session(terminal_context)
-            if wake_identity:
-                current, state_failure = await self._preflight_live_side_effect(session_id)
-                if state_failure is not None:
-                    return state_failure
-                if current is not None:
-                    session = current
-                blocked = await self._composer_blocks_wake(
-                    session_id, session, None, method="tmux", priority=priority
+        wake_identity = terminal_route.tmux_session
+        if wake_identity and self._tmux_sender:
+            current, state_failure = await self._preflight_live_side_effect(session_id)
+            if state_failure is not None:
+                return state_failure
+            if current is not None:
+                session = current
+            blocked = await self._composer_blocks_wake(
+                session_id, session, None, method="tmux", priority=priority
+            )
+            if blocked is not None:
+                return blocked
+            try:
+                await self._tmux_sender(
+                    wake_identity,
+                    CONTINUE_WAKE_MESSAGE,
+                    submit=True,
+                    clear_before_submit=True,
+                    cli_source=getattr(session, "source", None),
                 )
-                if blocked is not None:
-                    return blocked
-                try:
-                    await self._tmux_sender(
-                        wake_identity,
-                        CONTINUE_WAKE_MESSAGE,
-                        submit=True,
-                        clear_before_submit=True,
-                        cli_source=getattr(session, "source", None),
-                    )
-                    self._record_live_wake(session_id, session)
+                self._record_live_wake(session_id, session)
+                return {
+                    "session_id": session_id,
+                    "delivered": True,
+                    "method": "tmux",
+                }
+            except Exception as exc:
+                from gobby.terminals.runtime import (
+                    AutomaticWriteDeclined,
+                    IndeterminateWrite,
+                )
+
+                if isinstance(exc, IndeterminateWrite):
                     return {
                         "session_id": session_id,
-                        "delivered": True,
+                        "delivered": False,
                         "method": "tmux",
+                        "indeterminate": True,
+                        "error_message": exc.detail,
                     }
-                except Exception as exc:
-                    from gobby.terminals.runtime import (
-                        AutomaticWriteDeclined,
-                        IndeterminateWrite,
-                    )
-
-                    if isinstance(exc, IndeterminateWrite):
-                        return {
-                            "session_id": session_id,
-                            "delivered": False,
-                            "method": "tmux",
-                            "indeterminate": True,
-                            "error_message": exc.detail,
-                        }
-                    if isinstance(exc, AutomaticWriteDeclined):
-                        logger.debug(
-                            "tmux wake declined for session %s (tmux=%s): %s, trying SDK resume",
-                            session_id,
-                            wake_identity,
-                            exc.reason,
-                        )
-                    else:
-                        logger.warning(
-                            "tmux wake failed for session %s (tmux=%s), trying SDK resume",
-                            session_id,
-                            wake_identity,
-                            exc_info=True,
-                        )
-
-        if terminal_context and self._tmux_pane_sender:
-            tmux_pane = parse_tmux_pane(terminal_context)
-            if tmux_pane:
-                tmux_socket_path = parse_tmux_socket_path(terminal_context)
-                current, state_failure = await self._preflight_live_side_effect(session_id)
-                if state_failure is not None:
-                    return state_failure
-                if current is not None:
-                    session = current
-                blocked = await self._composer_blocks_wake(
-                    session_id, session, None, method="tmux_pane", priority=priority
-                )
-                if blocked is not None:
-                    return blocked
-                try:
-                    await self._tmux_pane_sender(
-                        tmux_pane,
-                        CONTINUE_WAKE_MESSAGE,
-                        tmux_socket_path,
-                        submit=True,
-                        clear_before_submit=True,
-                        cli_source=getattr(session, "source", None),
-                    )
-                    self._record_live_wake(session_id, session)
-                    return {
-                        "session_id": session_id,
-                        "delivered": True,
-                        "method": "tmux_pane",
-                    }
-                except TmuxExpectedTextInjectionError as exc:
-                    logger.info(
-                        "tmux pane wake skipped for terminal agent session %s (pane=%s), "
-                        "trying SDK resume: %s",
+                if isinstance(exc, AutomaticWriteDeclined):
+                    logger.debug(
+                        "tmux wake declined for session %s (tmux=%s): %s, trying SDK resume",
                         session_id,
-                        tmux_pane,
-                        str(exc) or type(exc).__name__,
+                        wake_identity,
+                        exc.reason,
                     )
-                except Exception:
+                else:
                     logger.warning(
-                        "tmux pane wake failed for terminal agent session %s (pane=%s), "
-                        "trying SDK resume",
+                        "tmux wake failed for session %s (tmux=%s), trying SDK resume",
                         session_id,
-                        tmux_pane,
+                        wake_identity,
                         exc_info=True,
                     )
+
+        tmux_pane = terminal_route.tmux_pane
+        if tmux_pane and self._tmux_pane_sender:
+            tmux_socket_path = terminal_route.tmux_socket_path
+            current, state_failure = await self._preflight_live_side_effect(session_id)
+            if state_failure is not None:
+                return state_failure
+            if current is not None:
+                session = current
+            blocked = await self._composer_blocks_wake(
+                session_id, session, None, method="tmux_pane", priority=priority
+            )
+            if blocked is not None:
+                return blocked
+            try:
+                await self._tmux_pane_sender(
+                    tmux_pane,
+                    CONTINUE_WAKE_MESSAGE,
+                    tmux_socket_path,
+                    submit=True,
+                    clear_before_submit=True,
+                    cli_source=getattr(session, "source", None),
+                )
+                self._record_live_wake(session_id, session)
+                return {
+                    "session_id": session_id,
+                    "delivered": True,
+                    "method": "tmux_pane",
+                }
+            except TmuxExpectedTextInjectionError as exc:
+                logger.info(
+                    "tmux pane wake skipped for terminal agent session %s (pane=%s), "
+                    "trying SDK resume: %s",
+                    session_id,
+                    tmux_pane,
+                    str(exc) or type(exc).__name__,
+                )
+            except Exception:
+                logger.warning(
+                    "tmux pane wake failed for terminal agent session %s (pane=%s), "
+                    "trying SDK resume",
+                    session_id,
+                    tmux_pane,
+                    exc_info=True,
+                )
 
         # SDK agent → try resume via sdk_session_id
         if self._sdk_resumer:
@@ -567,24 +563,24 @@ class WakeDispatcher:
             error_message="No live wake channel is available for this session",
         )
 
-    async def _live_terminal_for_session(self, session_id: str) -> Any | None:
-        """Resolve the managed terminal row hosting this session, if Gobby owns one."""
+    async def _terminal_route_for_session(self, session: Any) -> SessionTerminalRoute:
+        """Resolve managed ownership before retaining raw tmux fallbacks."""
         manager = self._terminal_manager
         if manager is None:
-            return None
+            return resolve_session_terminal_route(session, None)
 
-        def read_terminal() -> Any | None:
-            return manager.get_live_for_session(session_id)
+        def read_terminal() -> SessionTerminalRoute:
+            return resolve_session_terminal_route(session, manager)
 
         try:
-            return await self._run_db(read_terminal)
+            return cast(SessionTerminalRoute, await self._run_db(read_terminal))
         except Exception:
             logger.warning(
                 "live terminal lookup failed for session %s",
-                session_id,
+                getattr(session, "id", None),
                 exc_info=True,
             )
-            return None
+            return resolve_session_terminal_route(session, None)
 
     async def _preflight_live_side_effect(
         self,

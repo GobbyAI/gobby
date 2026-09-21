@@ -47,6 +47,9 @@ from .materialize import (
 )
 from .profile import seed_user_profile_content
 from .terminal_runtime import (
+    discover_and_bind_external_terminal,
+    expire_stale_terminal_sessions_for_context,
+    retry_native_terminal_bind,
     session_start_is_native_subagent_child,
     session_start_is_nested_cli_child,
 )
@@ -579,6 +582,28 @@ def handle_pre_created_session(
         )
         if refreshed is not None:
             session_obj = refreshed
+
+    stored_terminal_context = getattr(session_obj, "terminal_context", None)
+    effective_terminal_context = (
+        stored_terminal_context if isinstance(stored_terminal_context, dict) else terminal_context
+    )
+    pending_native_terminal_bind = discover_and_bind_external_terminal(
+        handler,
+        session_id=session_obj.id,
+        project_id=session_obj.project_id,
+        terminal_context=effective_terminal_context,
+    )
+    expire_stale_terminal_sessions_for_context(
+        handler,
+        session_id=session_obj.id,
+        project_id=session_obj.project_id,
+        terminal_context=effective_terminal_context,
+    )
+    retry_native_terminal_bind(
+        handler,
+        session_id=session_obj.id,
+        pending_bind=pending_native_terminal_bind,
+    )
 
     if tmux_pane_added or (
         isinstance(getattr(session_obj, "terminal_context", None), dict)

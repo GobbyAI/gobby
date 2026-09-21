@@ -92,7 +92,8 @@ async def dispatch_live_wakes(
             ):
                 fallback.append((session_id, session))
                 continue
-            terminal = await dispatcher._live_terminal_for_session(session_id)
+            terminal_route = await dispatcher._terminal_route_for_session(session)
+            terminal = terminal_route.managed_terminal
             if terminal is None or getattr(terminal, "backend", None) != "native":
                 fallback.append((session_id, session))
                 continue

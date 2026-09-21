@@ -20,6 +20,7 @@ EXACT_PANE_OWNER_COMMAND_SOURCES = {
     "agy": "agy",
     "claude": "claude",
 }
+NativeTerminalBind = tuple[str, str]
 
 
 def _row_value(row: Any, key: str) -> Any:
@@ -92,6 +93,60 @@ def session_start_is_native_subagent_child(
     if owner is None:
         return False
     return session_has_active_native_subagent(session_manager.db, owner.id)
+
+
+def discover_and_bind_external_terminal(
+    handler: Any,
+    *,
+    session_id: str | None,
+    project_id: str | None,
+    terminal_context: dict[str, Any] | None,
+) -> NativeTerminalBind | None:
+    """Discover the external terminal and bind an eligible native host row."""
+    terminal_manager = getattr(handler, "terminal_manager", None)
+    if terminal_manager is None or not session_id or not project_id or not terminal_context:
+        return None
+
+    from gobby.storage.terminals import ProjectOwnershipConflictError
+    from gobby.terminals.discovery import seed_external_terminal
+
+    try:
+        seed_external_terminal(
+            terminal_manager,
+            project_id=project_id,
+            session_id=session_id,
+            terminal_context=terminal_context,
+        )
+    except ProjectOwnershipConflictError:
+        handler.logger.info("external terminal discovery conflict for session %s", session_id)
+
+    # A tmux pane started inside gterm is the innermost terminal. Its managed
+    # tmux row owns delivery while the outer native row remains unbound.
+    native_terminal_id = terminal_context.get("gobby_terminal_id")
+    if (
+        not isinstance(native_terminal_id, str)
+        or not native_terminal_id
+        or terminal_context.get("tmux_pane")
+    ):
+        return None
+    if terminal_manager.bind_session(native_terminal_id, session_id, project_id) is None:
+        return native_terminal_id, project_id
+    return None
+
+
+def retry_native_terminal_bind(
+    handler: Any,
+    *,
+    session_id: str,
+    pending_bind: NativeTerminalBind | None,
+) -> None:
+    """Retry a native bind after stale same-context session owners expire."""
+    terminal_manager = getattr(handler, "terminal_manager", None)
+    if pending_bind is None or terminal_manager is None:
+        return
+    terminal_id, project_id = pending_bind
+    if terminal_manager.bind_session(terminal_id, session_id, project_id) is None:
+        handler.logger.info("native terminal %s not bound to session %s", terminal_id, session_id)
 
 
 def expire_stale_terminal_sessions_for_context(

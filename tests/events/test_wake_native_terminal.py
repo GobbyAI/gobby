@@ -44,6 +44,7 @@ WAKE_SEQUENCE = [
 @dataclass
 class FakeSession:
     id: str
+    project_id: str | None = None
     agent_depth: int = 0
     terminal_context: object | None = None
     status: str = "paused"
@@ -133,6 +134,30 @@ async def test_native_backed_interactive_session_wakes_through_its_terminal_row(
     # FakeRuntime ignores Terminal.backend, so the tmux runtime staying untouched
     # is the only thing separating a routed write from a bound one.
     assert managed_chain.tmux.write_log == []
+    pane_sender.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_native_context_id_wakes_through_unbound_terminal_row(
+    managed_chain: ManagedChain,
+) -> None:
+    managed_chain.row.session_id = None
+    pane_sender = AsyncMock()
+    session_manager = _session_manager({"gobby_terminal_id": managed_chain.row.id})
+    session_manager.get.return_value.project_id = managed_chain.row.project_id
+    dispatcher = WakeDispatcher(
+        session_manager=session_manager,
+        ism_manager=MagicMock(),
+        tmux_sender=_send_tmux_session_wake,
+        tmux_pane_sender=pane_sender,
+        terminal_manager=managed_chain.store,
+    )
+
+    result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
+
+    assert result["delivered"] is True
+    assert result["method"] == "terminal"
+    assert managed_chain.native.write_log == WAKE_SEQUENCE
     pane_sender.assert_not_awaited()
 
 
@@ -561,7 +586,7 @@ async def test_failed_terminal_wake_is_structured_and_does_not_fall_back_to_the_
 async def test_terminal_row_lookup_failure_degrades_to_the_tmux_pane() -> None:
     """A lookup error must not cost a tmux-hosted session the wake it used to get."""
     failing_manager = MagicMock()
-    failing_manager.get_live_for_session.side_effect = RuntimeError("hub down")
+    failing_manager.resolve_live_for_session.side_effect = RuntimeError("hub down")
     pane_sender = AsyncMock()
     dispatcher = WakeDispatcher(
         session_manager=_session_manager({"tmux_pane": "%12"}),
