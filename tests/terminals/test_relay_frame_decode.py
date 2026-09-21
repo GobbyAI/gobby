@@ -69,7 +69,19 @@ def _semantic_frame(cell_count: int = 1024) -> bytes:
     return _frame(_uvarint(1) + frame_data)
 
 
-def test_relay_decoder_preserves_semantic_and_ansi_output() -> None:
+async def _read_relay_frame(raw: bytes, *, chunk_size: int = 7) -> dict[str, Any]:
+    reader = asyncio.StreamReader()
+    client = FrameClient(reader, _Writer())
+    reading = asyncio.create_task(client.read_relay_message())
+    for offset in range(0, len(raw), chunk_size):
+        reader.feed_data(raw[offset : offset + chunk_size])
+        await asyncio.sleep(0)
+    reader.feed_eof()
+    return await reading
+
+
+@pytest.mark.asyncio
+async def test_relay_decoder_preserves_semantic_and_ansi_output() -> None:
     terminal_id = "terminal-1"
     attachment_id = "attachment-1"
     semantic = _semantic_frame(cell_count=300)
@@ -89,7 +101,7 @@ def test_relay_decoder_preserves_semantic_and_ansi_output() -> None:
 
     for raw, encoding in ((semantic, "semantic_frame"), (ansi, "terminal_ansi")):
         full = _map_host_frame(decode_frame(raw), terminal_id, attachment_id, encoding)
-        relay = _map_host_frame(decode_relay_frame(raw), terminal_id, attachment_id, encoding)
+        relay = _map_host_frame(await _read_relay_frame(raw), terminal_id, attachment_id, encoding)
         assert relay == full
     assert cast(dict[str, Any], relay)["data"] == ansi_text
 
@@ -102,8 +114,9 @@ def test_relay_decoder_preserves_semantic_and_ansi_output() -> None:
     ],
     ids=["error", "terminal_exited"],
 )
-def test_relay_decoder_preserves_lifecycle_frames(raw: bytes) -> None:
-    assert decode_relay_frame(raw) == decode_frame(raw)
+@pytest.mark.asyncio
+async def test_relay_decoder_preserves_lifecycle_frames(raw: bytes) -> None:
+    assert await _read_relay_frame(raw) == decode_frame(raw)
 
 
 @pytest.mark.asyncio
@@ -116,14 +129,7 @@ async def test_relay_reader_preserves_fragmentation_and_cancellation() -> None:
         + _bool(False)
         + _bytes("こんにちは".encode())
     )
-    reader = asyncio.StreamReader()
-    client = FrameClient(reader, _Writer())
-    reading = asyncio.create_task(client.read_relay_message())
-    for offset in range(0, len(raw), 3):
-        reader.feed_data(raw[offset : offset + 3])
-        await asyncio.sleep(0)
-    reader.feed_eof()
-    assert await reading == decode_relay_frame(raw)
+    assert await _read_relay_frame(raw, chunk_size=3) == decode_relay_frame(raw)
 
     blocked_reader = asyncio.StreamReader()
     blocked = asyncio.create_task(FrameClient(blocked_reader, _Writer()).read_relay_message())
