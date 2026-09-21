@@ -129,17 +129,25 @@ fn session_rows_point_at_their_terminal() {
 fn session_rows_render_session_effort_without_a_stray_separator() {
     let mut ws = Workspace::scripted();
     ws.daemon_mut().set_sidebar_rows(SidebarRows {
+        projects: vec![ProjectRow {
+            id: "proj-alpha".to_string(),
+            name: "alpha".to_string(),
+            display_name: "alpha".to_string(),
+            ..ProjectRow::default()
+        }],
         sessions: [(
             "proj-alpha".to_string(),
             vec![
                 SessionRow {
                     id: "sess-effort".to_string(),
+                    reference: Some("#77".to_string()),
                     title: Some("effort session".to_string()),
                     reasoning_effort: Some("high".to_string()),
                     ..SessionRow::default()
                 },
                 SessionRow {
                     id: "sess-bare".to_string(),
+                    reference: Some("#78".to_string()),
                     title: Some("bare session".to_string()),
                     ..SessionRow::default()
                 },
@@ -178,6 +186,18 @@ fn session_rows_render_session_effort_without_a_stray_separator() {
 
     assert_eq!(rows[0].tokens, ["codex", "gpt-5 high"]);
     assert_eq!(rows[1].tokens, ["codex", "gpt-5"]);
+    assert_eq!(rows[0].title_prefix, "#77: ");
+    assert_eq!(rows[0].label, "effort session");
+
+    let mut all = Chrome::dark();
+    all.sidebar.all_sessions = true;
+    let rows = session_rows(&ws, &all);
+    let effort = rows
+        .iter()
+        .find(|row| row.id == "session:sess-effort")
+        .expect("effort row");
+    assert_eq!(effort.title_prefix, "alpha#77: ");
+    assert_eq!(effort.label, "effort session");
 }
 
 #[test]
@@ -284,10 +304,17 @@ fn agent_lines_carry_needs_you_and_nest_under_their_session() {
 
 #[test]
 fn marquee_shares_one_period_and_parks_shorter_titles() {
-    assert_eq!(ticker_window("abcdefghij", 12, 500, 0), "abcdefghij");
-    assert_eq!(ticker_window("abcdefghij", 3, 500, 0), "abcdefghij");
+    assert_eq!(
+        ticker_window("abcdefghij", 12, 500, 0, TitleScrolling::Left),
+        "abcdefghij"
+    );
+    assert_eq!(
+        ticker_window("abcdefghij", 3, 500, 0, TitleScrolling::Left),
+        "ab…"
+    );
     // Alone, a four-cell overrun rests, walks, parks and jumps home.
-    let at = |step: u64| ticker_window("abcdefghij", 6, step * TICKER_STEP, 0);
+    let at =
+        |step: u64| ticker_window("abcdefghij", 6, step * TICKER_STEP, 0, TitleScrolling::Left);
     assert_eq!(at(0), "abcdef");
     assert_eq!(at(TICKER_PAUSE - 1), "abcdef");
     assert_eq!(at(TICKER_PAUSE + 2), "cdefgh");
@@ -296,14 +323,22 @@ fn marquee_shares_one_period_and_parks_shorter_titles() {
     assert_eq!(at(2 * TICKER_PAUSE + 4), "abcdef");
     // Beside a ten-cell overrun it parks until that one has arrived, so
     // both restart together (D7).
-    let beside = |step: u64| ticker_window("abcdefghij", 6, step * TICKER_STEP, 10);
+    let beside = |step: u64| {
+        ticker_window(
+            "abcdefghij",
+            6,
+            step * TICKER_STEP,
+            10,
+            TitleScrolling::Left,
+        )
+    };
     assert_eq!(beside(TICKER_PAUSE + 4), "efghij");
     assert_eq!(beside(2 * TICKER_PAUSE + 9), "efghij");
     assert_eq!(beside(2 * TICKER_PAUSE + 10), "abcdef");
 }
 
 #[test]
-fn every_overflowing_row_tickers_unless_motion_is_reduced() {
+fn every_overflowing_row_uses_the_selected_scroll_direction() {
     let mut chrome = Chrome::dark();
     chrome.ticker = (TICKER_PAUSE + 2) * TICKER_STEP;
     let row = SidebarRow {
@@ -321,7 +356,32 @@ fn every_overflowing_row_tickers_unless_motion_is_reduced() {
     assert_eq!(line_text(&row_line(&row, 9, &chrome, 10)), " ○ cdefgh");
     chrome.ticker = (TICKER_PAUSE + 8) * TICKER_STEP;
     assert_eq!(line_text(&row_line(&row, 9, &chrome, 10)), " ○ efghij");
-    // Under reduced motion the title truncates like any other.
-    chrome.prefs.reduced_motion = true;
+    // Off truncates like any other title.
+    chrome.prefs.title_scrolling = TitleScrolling::Off;
     assert_eq!(line_text(&row_line(&row, 9, &chrome, 10)), " ○ abcde…");
+
+    // Right uses the same clock in the opposite direction.
+    chrome.prefs.title_scrolling = TitleScrolling::Right;
+    chrome.ticker = 0;
+    assert_eq!(line_text(&row_line(&row, 9, &chrome, 0)), " ○ efghij");
+    chrome.ticker = (TICKER_PAUSE + 2) * TICKER_STEP;
+    assert_eq!(line_text(&row_line(&row, 9, &chrome, 0)), " ○ cdefgh");
+}
+
+#[test]
+fn agent_address_prefix_stays_fixed_while_unicode_title_scrolls() {
+    let mut chrome = Chrome::dark();
+    let row = SidebarRow {
+        id: "session:one".into(),
+        title_prefix: "#13936: ".into(),
+        label: "修复 workspace chrome".into(),
+        kind: RowKind::Agent,
+        ..SidebarRow::default()
+    };
+    let first = line_text(&row_line(&row, 20, &chrome, row_travel(&row, 20)));
+    chrome.ticker = (TICKER_PAUSE + 2) * TICKER_STEP;
+    let later = line_text(&row_line(&row, 20, &chrome, row_travel(&row, 20)));
+    assert!(first.contains("#13936: "), "{first}");
+    assert!(later.contains("#13936: "), "{later}");
+    assert_ne!(first, later);
 }

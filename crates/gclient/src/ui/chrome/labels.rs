@@ -114,8 +114,8 @@ pub fn attention_label<W: WorkspaceView>(ws: &W, entry_id: &str) -> String {
 
 /// Where a terminal sits: its pane's workspace address (`0:0:1:2`) when the
 /// workspace model places it, else the tmux pane id of an external tmux pane.
-/// Every row and the status line carry it, because it is what tells two
-/// otherwise identical terminals apart.
+/// Session rows carry it, because it is what tells two otherwise identical
+/// terminals apart.
 pub fn terminal_address<W: WorkspaceView>(ws: &W, terminal_id: &str) -> Option<String> {
     ws.workspace_model()
         .and_then(|model| model.pane_ref_for_terminal(terminal_id))
@@ -123,18 +123,6 @@ pub fn terminal_address<W: WorkspaceView>(ws: &W, terminal_id: &str) -> Option<S
             ws.pane_for_terminal(terminal_id)
                 .and_then(|pane| ws.pane(pane).address.clone())
         })
-}
-
-/// The status line's title for a terminal: `provider · name` for one running
-/// a Gobby session, else the pane's own name.
-pub fn terminal_title<W: WorkspaceView>(ws: &W, terminal_id: &str) -> String {
-    match agent_for_terminal(ws, terminal_id) {
-        Some(agent) if !agent.provider.is_empty() => {
-            format!("{} · {}", agent.provider, agent_label(agent))
-        }
-        Some(agent) => agent_label(agent),
-        None => terminal_label(ws, terminal_id),
-    }
 }
 
 /// The one name every chrome surface shows for a terminal. Roster and attention

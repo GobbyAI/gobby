@@ -67,6 +67,41 @@ pub enum AgentSort {
     Priority,
 }
 
+/// How an over-long title moves through its window, on the one ticker the
+/// Sessions rows and the pane headers share: off (it truncates), or the
+/// direction it travels to reveal its tail.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TitleScrolling {
+    Off,
+    #[default]
+    Left,
+    Right,
+}
+
+impl TitleScrolling {
+    const ALL: [TitleScrolling; 3] = [Self::Off, Self::Left, Self::Right];
+
+    /// The prefs-file spelling, which the settings row shows.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Left => "left",
+            Self::Right => "right",
+        }
+    }
+
+    /// The value `delta` steps away, wrapping at either end.
+    pub fn stepped(self, delta: isize) -> Self {
+        let current = Self::ALL
+            .iter()
+            .position(|value| *value == self)
+            .unwrap_or(0);
+        let next = (current as isize + delta).rem_euclid(Self::ALL.len() as isize);
+        Self::ALL[next as usize]
+    }
+}
+
 impl AgentSort {
     /// The prefs-file spelling, which the settings row and the sidebar
     /// header show.
@@ -112,8 +147,8 @@ pub struct ClientPrefs {
     pub project_order: Vec<String>,
     /// Labels the user gave project cards, by project id.
     pub project_labels: BTreeMap<String, String>,
-    /// Sidebar titles never scroll; an over-long title truncates instead.
-    pub reduced_motion: bool,
+    /// Direction used by the shared pane/sidebar title ticker.
+    pub title_scrolling: TitleScrolling,
 }
 
 impl Default for ClientPrefs {
@@ -134,7 +169,7 @@ impl Default for ClientPrefs {
             sidebar_collapsed: false,
             project_order: Vec::new(),
             project_labels: BTreeMap::new(),
-            reduced_motion: false,
+            title_scrolling: TitleScrolling::Left,
         }
     }
 }
@@ -162,7 +197,7 @@ pub enum SettingsRow {
     SidebarWidth,
     RightClickPassthrough,
     AgentSort,
-    ReducedMotion,
+    TitleScrolling,
 }
 
 impl SettingsRow {
@@ -177,7 +212,7 @@ impl SettingsRow {
         SettingsRow::SidebarWidth,
         SettingsRow::RightClickPassthrough,
         SettingsRow::AgentSort,
-        SettingsRow::ReducedMotion,
+        SettingsRow::TitleScrolling,
     ];
 }
 
@@ -200,7 +235,7 @@ fn row_label(row: SettingsRow) -> &'static str {
         SettingsRow::SidebarWidth => "sidebar width",
         SettingsRow::RightClickPassthrough => "right-click passthrough",
         SettingsRow::AgentSort => "agent sort",
-        SettingsRow::ReducedMotion => "reduced motion",
+        SettingsRow::TitleScrolling => "title scrolling",
     }
 }
 
@@ -228,7 +263,7 @@ fn row_value(row: SettingsRow, prefs: &ClientPrefs) -> String {
             prefs.right_click_passthrough_modifier.label().to_string()
         }
         SettingsRow::AgentSort => prefs.agent_sort.label().to_string(),
-        SettingsRow::ReducedMotion => on_off(prefs.reduced_motion).to_string(),
+        SettingsRow::TitleScrolling => prefs.title_scrolling.label().to_string(),
     }
 }
 
@@ -395,8 +430,11 @@ mod tests {
         assert_eq!(row_value(SettingsRow::AgentSort, &prefs), "grouped");
         prefs.agent_sort = prefs.agent_sort.toggled();
         assert_eq!(row_value(SettingsRow::AgentSort, &prefs), "priority");
-        assert_eq!(row_value(SettingsRow::ReducedMotion, &prefs), "off");
-        prefs.reduced_motion = true;
-        assert_eq!(row_value(SettingsRow::ReducedMotion, &prefs), "on");
+        assert_eq!(row_value(SettingsRow::TitleScrolling, &prefs), "left");
+        prefs.title_scrolling = TitleScrolling::Right;
+        assert_eq!(row_value(SettingsRow::TitleScrolling, &prefs), "right");
+        assert_eq!(TitleScrolling::Right.stepped(1), TitleScrolling::Off);
+        assert_eq!(TitleScrolling::Off.stepped(-1), TitleScrolling::Right);
+        assert_eq!(TitleScrolling::Off.stepped(1), TitleScrolling::Left);
     }
 }

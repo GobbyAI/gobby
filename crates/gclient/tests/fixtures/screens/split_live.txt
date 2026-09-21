@@ -2,8 +2,8 @@
 # 120x40, dark theme, colours normalised to theme::Palette roles
 00 | [Menu]              [+] │ alpha     second    +                                                                        |
 00 : -/accent*1 panel_bg/accent+b*6 -/accent*14 panel_bg/accent+b*3 -/accent*1 surface_dim/panel_bg*1 panel_bg/accent+b*9 -/panel_bg*1 overlay1/surface0*10 overlay1/panel_bg*3 -/panel_bg*71
-01 |                         │┌ term-alpha · gclient · ○ observe ───────────┐┌ ▸ term-beta · gclient · ○ observe ──────────┐|
-01 : -/panel_bg*25 surface_dim/panel_bg*1 overlay0/panel_bg*47 accent/panel_bg*1 accent/panel_bg+b*35 accent/panel_bg*11
+01 |                         │┌ term-alpha ─────────────────────────────────┐┌ ▸ term-beta ────────────────────────────────┐|
+01 : -/panel_bg*25 surface_dim/panel_bg*1 overlay0/panel_bg*47 accent/panel_bg*1 accent/panel_bg+b*13 accent/panel_bg*33
 02 | Machines                ││                                             ││                                             │|
 02 : -/surface0*1 subtext0/surface0+b*8 -/surface0*16 surface_dim/panel_bg*1 overlay0/panel_bg*1 -/panel_bg*45 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*45 accent/panel_bg*1
 03 | ⍾ scripted · local      ││                                             ││                                             │|
@@ -76,7 +76,7 @@
 36 : -/panel_bg*25 surface_dim/panel_bg*1 overlay0/panel_bg*1 -/panel_bg*45 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*45 accent/panel_bg*1
 37 |                         ││                                             ││                                             │|
 37 : -/panel_bg*25 surface_dim/panel_bg*1 overlay0/panel_bg*1 -/panel_bg*45 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*45 accent/panel_bg*1
-38 |                         │└─────────────────────────────────────────────┘└─────────────────────────────────────────────┘|
-38 : -/panel_bg*25 surface_dim/panel_bg*1 overlay0/panel_bg*47 accent/panel_bg*47
-39 |                     [«] │ [○ observe] │ gclient │ prefix ctrl+b │ term-beta                                            |
-39 : -/surface0*21 overlay0/surface0*3 -/surface0*1 surface_dim/panel_bg*1 subtext0/surface_dim+b*12 subtext0/surface_dim*26 text/surface_dim*12 -/surface_dim*44
+38 |                         │└──────────────────────────────────── gclient ┘└────────────────────────── gclient · Focused ┘|
+38 : -/panel_bg*25 surface_dim/panel_bg*1 overlay0/panel_bg*47 accent/panel_bg*27 accent/panel_bg+b*19 accent/panel_bg*1
+39 |                     [«] │ prefix ctrl+b                                                                                |
+39 : -/surface0*21 overlay0/surface0*3 -/surface0*1 surface_dim/panel_bg*1 -/surface_dim*1 subtext0/surface_dim*13 -/surface_dim*80

@@ -9,7 +9,8 @@ use crate::ui::settings::SettingsHits;
 use crate::ui::sidebar::SidebarHits;
 use crate::ui::tabs::TabBarHits;
 use crate::ui::{
-    context_menu, dialogs, keybind_help, navigator, panes, settings, sidebar, status, tab_surface,
+    context_menu, dialogs, keybind_help, navigator, pane_chrome, panes, settings, sidebar, status,
+    tab_surface,
 };
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
@@ -54,9 +55,13 @@ pub fn render_workspace_with<W: WorkspaceView>(
     };
 
     let status_rect = chrome.view.status_rect;
-    if !status_rect.is_empty() {
-        hits.control_indicator = status::render_status_line(frame, status_rect, ws, chrome);
-    }
+    let status_indicator = if status_rect.is_empty() {
+        None
+    } else {
+        status::render_status_line(frame, status_rect, ws, chrome)
+    };
+    hits.control_indicator =
+        status_indicator.or_else(|| pane_chrome::control_indicator_hit_area(ws, chrome));
 
     // Ambient notifications sit above panes, but below interactive overlays.
     hits.toast = render_notifications(frame, chrome);

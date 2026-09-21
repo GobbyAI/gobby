@@ -92,7 +92,9 @@ fn at(view: &ViewState, x: u16, y: u16) -> Hit {
 
 #[test]
 fn hit_test_covers_split_live_layout() {
-    let (ws, mut chrome) = split_live();
+    let (mut ws, mut chrome) = split_live();
+    let focused = chrome.focused_pane().expect("focused pane");
+    ws.pane_mut(focused).take_back = true;
     rendered(&ws, &mut chrome);
     let view = &chrome.view;
 
@@ -189,11 +191,13 @@ fn hit_test_covers_split_live_layout() {
     };
     assert_eq!(at(view, lane.x, lane.y), scrollbar);
 
-    // Status line: the control indicator, then the rest of the row.
+    // Only a genuine exceptional pane state is a control, on the pane's
+    // bottom edge; the global status row stays plain status.
     let status = view.status_rect;
     let indicator = view.control_indicator_hit_area.expect("indicator drawn");
-    assert_eq!(at(view, indicator.x, status.y), Hit::ControlIndicator);
-    assert_eq!(at(view, indicator.right(), status.y), Hit::Status);
+    assert_ne!(indicator.y, status.y);
+    assert_eq!(at(view, indicator.x, indicator.y), Hit::ControlIndicator);
+    assert_eq!(at(view, status.x, status.y), Hit::Status);
 
     // Nothing inside the frame is unowned; everything outside is.
     assert_eq!(at(view, WIDTH, 0), Hit::Empty);

@@ -235,10 +235,18 @@ fn carve_matches_upstream_map_and_renders_data() {
         })
         .unwrap();
     let st = screen(&terminal);
+    // The focused pane's border carries its title and metadata, so the
+    // status line keeps to the global prefix.
     assert!(
-        st.contains("observe") && st.contains("term-alpha"),
-        "status lacks control state and focused terminal:\n{st}"
+        st.contains("prefix ctrl+b"),
+        "status lacks the prefix:\n{st}"
     );
+    for pane_local in ["term-alpha", "gclient", "observe"] {
+        assert!(
+            !st.contains(pane_local),
+            "status duplicates {pane_local:?}:\n{st}"
+        );
+    }
 }
 
 #[test]
@@ -270,7 +278,7 @@ fn render_workspace_composes_imported_chrome() {
             "term-beta",
             "needs you",
             "second",
-            "observe",
+            "gclient · Focused",
             "close",
         ] {
             assert!(

@@ -414,7 +414,7 @@ fn step_settings_row<W: WorkspaceView>(ws: &W, chrome: &mut Chrome, delta: isize
             prefs.right_click_passthrough_modifier = PASSTHROUGH_CYCLE[next as usize];
         }
         SettingsRow::AgentSort => prefs.agent_sort = prefs.agent_sort.toggled(),
-        SettingsRow::ReducedMotion => prefs.reduced_motion = !prefs.reduced_motion,
+        SettingsRow::TitleScrolling => prefs.title_scrolling = prefs.title_scrolling.stepped(delta),
     }
     persist_prefs(ws.gobby_home(), chrome);
 }

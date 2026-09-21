@@ -12,6 +12,7 @@
 use crate::app::sidebar_model::ProjectEntry;
 use crate::theme::Palette;
 use crate::ui::chrome::{terminal_address, Chrome, RowState, WorkspaceView};
+use crate::ui::settings::TitleScrolling;
 use crate::ui::sidebar::machine_admits;
 use crate::ui::status::{control_indicator, state_dot, state_label, state_label_color};
 use crate::ui::text::{display_width, truncate_end};
@@ -23,6 +24,8 @@ use unicode_width::UnicodeWidthChar;
 pub const TICKER_STEP: u64 = 8;
 /// Cells' worth of ticks the ticker rests at either end of its run.
 pub const TICKER_PAUSE: u64 = 12;
+/// Narrowest window that scrolls; a narrower title truncates instead.
+pub const TICKER_MIN_WINDOW: usize = 4;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum RowKind {
@@ -43,6 +46,8 @@ pub enum RowKind {
 #[derive(Debug, Clone, Default)]
 pub struct SidebarRow {
     pub id: String,
+    /// Stable address shown before an agent title. Only `label` tickers.
+    pub title_prefix: String,
     pub label: String,
     pub kind: RowKind,
     pub state: RowState,
@@ -333,23 +338,26 @@ pub fn row_line<'a>(
                 .then(|| (state_label(row.state), label_style))
                 .into_iter()
                 .collect();
-            let label = if chrome.prefs.reduced_motion {
-                row.label.clone()
-            } else {
-                // As on every row, the word drops before the title loses a
-                // cell; a title over-long even alone tickers instead.
-                if display_width(&row.label) > title_budget(&trailing, budget) {
-                    trailing.clear();
-                }
-                ticker_window(
-                    &row.label,
-                    title_budget(&trailing, budget),
-                    chrome.ticker,
-                    max_travel,
-                )
-            };
-            spans.extend(fitted_spans(
+            // As on every row, the state word drops before the title loses a
+            // cell. The session/project address never moves; only the title
+            // window after it does.
+            if display_width(&row.title_prefix) + display_width(&row.label)
+                > title_budget(&trailing, budget)
+            {
+                trailing.clear();
+            }
+            let label_budget =
+                title_budget(&trailing, budget).saturating_sub(display_width(&row.title_prefix));
+            let label = ticker_window(
+                &row.label,
+                label_budget,
+                chrome.ticker,
+                max_travel,
+                chrome.prefs.title_scrolling,
+            );
+            spans.extend(agent_spans(
                 glyph,
+                (&row.title_prefix, title_style),
                 (&label, title_style),
                 &trailing,
                 p,
@@ -429,8 +437,8 @@ pub fn row_travel(row: &SidebarRow, width: u16) -> usize {
         return 0;
     }
     let budget = usize::from(width).saturating_sub(1 + display_width(nest_prefix(row)));
-    let budget = title_budget(&[], budget);
-    if budget < 4 {
+    let budget = title_budget(&[], budget).saturating_sub(display_width(&row.title_prefix));
+    if budget < TICKER_MIN_WINDOW {
         return 0;
     }
     display_width(&row.label).saturating_sub(budget)
@@ -439,28 +447,46 @@ pub fn row_travel(row: &SidebarRow, width: u16) -> usize {
 /// The `budget`-cell window of `text` the marquee shows at `ticker`: the
 /// whole text while it fits, else a slice that rests at the start for
 /// `TICKER_PAUSE` steps, walks one cell per `TICKER_STEP` ticks to the end
-/// and parks there until the period ends, then jumps home. The period is
-/// the longest overrun drawn beside it (`max_travel`, at least its own)
-/// plus the two pauses, so every scrolling row moves and restarts as one
-/// object (D7). Under four cells nothing scrolls and the caller's
-/// truncation applies.
-pub fn ticker_window(text: &str, budget: usize, ticker: u64, max_travel: usize) -> String {
+/// and parks there until the period ends, then jumps home; `Right` runs the
+/// same path mirrored, from the end back to the start. The period is the
+/// longest overrun drawn beside it (`max_travel`, at least its own) plus
+/// the two pauses, so every scrolling title, sidebar row and pane header
+/// alike, moves and restarts as one object (D7). A scrolling window is
+/// exactly `budget` cells: a wide character cut by either edge leaves its
+/// cell blank. `Off`, or a budget under `TICKER_MIN_WINDOW`, truncates.
+pub fn ticker_window(
+    text: &str,
+    budget: usize,
+    ticker: u64,
+    max_travel: usize,
+    direction: TitleScrolling,
+) -> String {
     let width = display_width(text);
-    if width <= budget || budget < 4 {
-        return text.to_string();
+    if width <= budget || budget < TICKER_MIN_WINDOW || direction == TitleScrolling::Off {
+        return truncate_end(text, budget);
     }
     let travel = (width - budget) as u64;
     let step = ticker / TICKER_STEP;
     let period = travel.max(max_travel as u64) + 2 * TICKER_PAUSE;
-    let offset = (step % period).saturating_sub(TICKER_PAUSE).min(travel);
+    let walked = (step % period).saturating_sub(TICKER_PAUSE).min(travel);
+    let offset = match direction {
+        TitleScrolling::Off | TitleScrolling::Left => walked,
+        TitleScrolling::Right => travel - walked,
+    } as usize;
     let mut skipped = 0;
     let mut taken = 0;
     let mut window = String::new();
     for ch in text.chars() {
         let cell = ch.width().unwrap_or(0);
-        if skipped < offset as usize {
+        // A zero-width mark belongs to the character before it, so one
+        // after a character left of the window stays out with it.
+        if skipped < offset || (cell == 0 && window.is_empty()) {
             skipped += cell;
             continue;
+        }
+        if window.is_empty() && skipped > offset {
+            taken = skipped - offset;
+            window.push_str(&" ".repeat(taken));
         }
         if taken + cell > budget {
             break;
@@ -468,7 +494,42 @@ pub fn ticker_window(text: &str, budget: usize, ticker: u64, max_travel: usize) 
         taken += cell;
         window.push(ch);
     }
+    window.push_str(&" ".repeat(budget - taken));
     window
+}
+
+fn agent_spans(
+    glyph: (&str, Style),
+    prefix: (&str, Style),
+    title: (&str, Style),
+    trailing: &[(&str, Style)],
+    p: &Palette,
+    max_width: usize,
+) -> Vec<Span<'static>> {
+    let separator_style = Style::default().fg(p.overlay0).add_modifier(Modifier::DIM);
+    let mut spans = vec![Span::styled(glyph.0.to_string(), glyph.1)];
+    let mut remaining = max_width.saturating_sub(display_width(glyph.0));
+    if remaining == 0 {
+        return spans;
+    }
+    spans.push(Span::styled(" ", separator_style));
+    remaining = remaining.saturating_sub(1);
+    let prefix_text = truncate_end(prefix.0, remaining);
+    remaining = remaining.saturating_sub(display_width(&prefix_text));
+    spans.push(Span::styled(prefix_text, prefix.1));
+    let title_text = truncate_end(title.0, remaining);
+    remaining = remaining.saturating_sub(display_width(&title_text));
+    spans.push(Span::styled(title_text, title.1));
+    for (text, style) in trailing {
+        let width = 3 + display_width(text);
+        if text.is_empty() || width > remaining {
+            continue;
+        }
+        spans.push(Span::styled(" · ", separator_style));
+        spans.push(Span::styled((*text).to_string(), *style));
+        remaining -= width;
+    }
+    spans
 }
 
 /// An agent row's second line: its tokens under the label, ` · ` apart, in
