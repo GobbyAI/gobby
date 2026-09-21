@@ -103,6 +103,7 @@ async def _send_native_wake_batch(targets: list[NativeWakeTarget]) -> list[dict[
                     "error": outcome.reason,
                     "error_code": outcome.reason,
                     "error_message": f"automatic write declined: {outcome.reason}",
+                    "decline_reason": outcome.reason,
                 }
             )
         elif isinstance(outcome, NativeBatchFailure):
@@ -421,6 +422,7 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
     from gobby.agents.tmux import configure_tmux
     from gobby.events.completion_registry import CompletionEventRegistry
     from gobby.events.wake import WakeDispatcher
+    from gobby.events.wake_recovery import WakeReplayCoordinator
     from gobby.storage.agents import LocalAgentRunManager
     from gobby.storage.attention import AttentionStateManager
     from gobby.storage.inter_session_messages import InterSessionMessageManager
@@ -515,6 +517,12 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
         run_db=runner.db_executor.run,
         lifecycle_refresh=refresh_wake_lifecycle,
         composer_probe=probe_composer,
+    )
+    runner.wake_replay_coordinator = WakeReplayCoordinator(
+        message_manager=ism_manager,
+        session_manager=runner.session_manager,
+        dispatcher=runner.wake_dispatcher,
+        run_db=runner.db_executor.run,
     )
 
     runner.completion_registry = CompletionEventRegistry(

@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
+from gobby.sessions.tmux_context import get_tmux_socket_path, parse_terminal_context_value
 from gobby.storage.sessions import LIVE_SESSION_STATUSES, PROTECTED_SESSION_STATUSES
 
 if TYPE_CHECKING:
@@ -14,6 +15,64 @@ if TYPE_CHECKING:
 ComposerProbe = Callable[[Any, Any | None], Awaitable["ComposerRead"]]
 
 COMPOSER_OCCUPIED = "composer_occupied"
+
+
+def parse_tmux_session(terminal_context: Any) -> str | None:
+    ctx = parse_terminal_context_value(terminal_context)
+    if not ctx:
+        return None
+    value = ctx.get("tmux_session")
+    return value if isinstance(value, str) and value else None
+
+
+def parse_tmux_pane(terminal_context: Any) -> str | None:
+    ctx = parse_terminal_context_value(terminal_context)
+    if not ctx:
+        return None
+    value = ctx.get("tmux_pane")
+    return value if isinstance(value, str) and value else None
+
+
+def parse_tmux_socket_path(terminal_context: Any) -> str | None:
+    ctx = parse_terminal_context_value(terminal_context)
+    return get_tmux_socket_path(ctx) if ctx else None
+
+
+def normalize_live_wake_result(result: dict[str, Any]) -> dict[str, Any]:
+    """Attach the stable reason contract for designed non-delivery outcomes."""
+    normalized = dict(result)
+    if normalized.get("delivered") is not True and "decline_reason" not in normalized:
+        skipped = normalized.get("skipped")
+        if isinstance(skipped, str) and skipped:
+            normalized["decline_reason"] = skipped
+    return normalized
+
+
+def wake_failure(
+    session_id: str,
+    *,
+    method: str | None,
+    error_code: str,
+    error_message: str,
+) -> dict[str, Any]:
+    return {
+        "session_id": session_id,
+        "delivered": False,
+        "method": method,
+        "error": error_code,
+        "error_code": error_code,
+        "error_message": error_message,
+    }
+
+
+def wake_debounced_result(session_id: str, *, method: str) -> dict[str, Any]:
+    return {
+        "session_id": session_id,
+        "delivered": False,
+        "method": method,
+        "skipped": "debounced",
+        "decline_reason": "debounced",
+    }
 
 
 def wake_state_failure(session_id: str, status: str | None) -> dict[str, Any] | None:
@@ -53,5 +112,6 @@ def composer_occupied_result(session_id: str, *, method: str) -> dict[str, Any]:
         "delivered": False,
         "method": method,
         "skipped": COMPOSER_OCCUPIED,
+        "decline_reason": COMPOSER_OCCUPIED,
         "ism_persisted": True,
     }

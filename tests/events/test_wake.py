@@ -107,6 +107,7 @@ class TestWakeDispatch:
             "method": None,
             "skipped": f"session_{status}",
             "error_code": f"session_{status}",
+            "decline_reason": f"session_{status}",
         }
         assert dispatcher._last_live_wake == {}
         terminal_manager.get_live_for_session.assert_not_called()
@@ -146,6 +147,7 @@ class TestWakeDispatch:
             "delivered": False,
             "method": "next_call_context",
             "skipped": "session_active",
+            "decline_reason": "session_active",
             "ism_persisted": True,
         }
         tmux_sender.assert_not_awaited()
@@ -1381,6 +1383,7 @@ class TestComposerGate:
             "delivered": False,
             "method": "tmux_pane",
             "skipped": "composer_occupied",
+            "decline_reason": "composer_occupied",
             "ism_persisted": True,
         }
         pane_sender.assert_not_awaited()

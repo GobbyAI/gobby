@@ -626,6 +626,9 @@ async def init_subsystems(
     # spawned) before the slow recovery steps below (#22002).
     await _start_terminal_host(runner, tracker)
     await _run_agent_hook_replay_barrier(runner)
+    wake_replay_coordinator = getattr(runner, "wake_replay_coordinator", None)
+    if wake_replay_coordinator is not None:
+        await wake_replay_coordinator.open()
     reconciled_runs = (
         await reconcile_agent_runs_after_restart(runner)
         if getattr(runner, "agent_runner", None) is not None

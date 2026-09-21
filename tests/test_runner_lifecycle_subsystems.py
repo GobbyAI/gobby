@@ -246,6 +246,7 @@ async def test_terminal_host_starts_before_agent_and_mcp_recovery(
     mocks = {name: record(name) for name in steps}
     for name, mock in mocks.items():
         monkeypatch.setattr(lifecycle_subsystems, name, mock)
+    runner.wake_replay_coordinator = SimpleNamespace(open=record("wake_replay_open"))
     monkeypatch.setattr(lifecycle_subsystems, "_maybe_start_ui_dev_server", lambda _runner: None)
 
     await lifecycle_subsystems.init_subsystems(
@@ -259,6 +260,7 @@ async def test_terminal_host_starts_before_agent_and_mcp_recovery(
     assert order == [
         "_start_terminal_host",
         "_run_agent_hook_replay_barrier",
+        "wake_replay_open",
         "_connect_mcp_servers",
     ]
     mocks["_start_terminal_host"].assert_awaited_once_with(runner, tracker)

@@ -7,6 +7,7 @@ import logging
 from contextlib import AsyncExitStack
 from typing import TYPE_CHECKING, Any
 
+from gobby.events.live_wake import wake_debounced_result, wake_failure
 from gobby.events.wake import NativeWakeTarget
 
 if TYPE_CHECKING:
@@ -58,7 +59,7 @@ async def dispatch_live_wakes(
                 sessions[session_id] = await dispatcher._run_db(read_session)
             except Exception as exc:
                 logger.warning("Session lookup failed before batch wake", exc_info=True)
-                results[session_id] = dispatcher._live_wake_failure(
+                results[session_id] = wake_failure(
                     session_id,
                     method=None,
                     error_code="session_lookup_failed",
@@ -73,7 +74,7 @@ async def dispatch_live_wakes(
                 continue
             session = sessions[session_id]
             if session is None:
-                results[session_id] = dispatcher._live_wake_failure(
+                results[session_id] = wake_failure(
                     session_id,
                     method=None,
                     error_code="session_not_found",
@@ -96,9 +97,7 @@ async def dispatch_live_wakes(
                 fallback.append((session_id, session))
                 continue
             if not dispatcher._should_send_live_wake(session_id, session):
-                results[session_id] = dispatcher._live_wake_debounced_result(
-                    session_id, method="terminal"
-                )
+                results[session_id] = wake_debounced_result(session_id, method="terminal")
                 continue
             current, state_failure = await dispatcher._preflight_live_side_effect(session_id)
             if state_failure is not None:
@@ -158,7 +157,7 @@ async def _send_native(
         logger.warning("Native terminal wake batch failed", exc_info=True)
         detail = str(exc) or type(exc).__name__
         raw_results = [
-            dispatcher._live_wake_failure(
+            wake_failure(
                 target.session_id,
                 method="terminal",
                 error_code="native_wake_batch_failed",
@@ -176,7 +175,7 @@ async def _send_native(
     for target in targets:
         result = by_session.get(target.session_id)
         if result is None:
-            result = dispatcher._live_wake_failure(
+            result = wake_failure(
                 target.session_id,
                 method="terminal",
                 error_code="native_wake_result_missing",
@@ -203,7 +202,7 @@ async def _send_fallback(
         raise
     except Exception as exc:
         logger.warning("Wake dispatch failed for session %s", session_id, exc_info=True)
-        return dispatcher._live_wake_failure(
+        return wake_failure(
             session_id,
             method=None,
             error_code="wake_dispatch_failed",

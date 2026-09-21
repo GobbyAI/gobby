@@ -486,7 +486,7 @@ async def test_quarantined_terminal_wake_is_a_structured_decline_without_traceba
     assert result["error_code"] == "automatic_write_quarantined"
     assert managed_chain.native.write_log == []
     assert not [record for record in caplog.records if record.levelno >= logging.WARNING]
-    assert [record for record in caplog.records if "declined" in record.getMessage()]
+    assert not [record for record in caplog.records if "declined" in record.getMessage()]
     pane_sender.assert_not_awaited()
 
 

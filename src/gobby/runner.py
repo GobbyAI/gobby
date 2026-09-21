@@ -41,6 +41,7 @@ if TYPE_CHECKING:
     from gobby.events.completion_registry import CompletionEventRegistry
     from gobby.events.coordination_waits import CoordinationWaitService
     from gobby.events.wake import WakeDispatcher
+    from gobby.events.wake_recovery import WakeReplayCoordinator
     from gobby.feedback.service import FeedbackReviewService
     from gobby.llm import LLMService
     from gobby.mcp_proxy.manager import MCPClientManager
@@ -206,6 +207,7 @@ class GobbyRunner:
 
     # Phase 3: orchestration (init_orchestration)
     wake_dispatcher: WakeDispatcher
+    wake_replay_coordinator: WakeReplayCoordinator
     coordination_wait_service: CoordinationWaitService | None = None
     completion_registry: CompletionEventRegistry
     workflow_loader: PipelineLoader | None

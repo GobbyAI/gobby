@@ -11,6 +11,7 @@ import uuid
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -664,6 +665,47 @@ class TestInterSessionMessageManagerDeliveryClaims:
         assert manager.get_message(recent.id) is not None
         assert manager.get_message(undelivered.id) is not None
 
+    def test_ordered_marked_undelivered_recipient_and_row_queries(self, mailbox) -> None:
+        manager, sender, recipient, foreign = mailbox
+        first = manager.create_message(
+            from_session=sender.id,
+            to_session=recipient.id,
+            content="first",
+            metadata_json='{"wake_requested": true}',
+        )
+        manager.create_message(
+            from_session=sender.id,
+            to_session=recipient.id,
+            content="nonwake",
+            metadata_json='{"wake_requested": false}',
+        )
+        second = manager.create_message(
+            from_session=sender.id,
+            to_session=recipient.id,
+            content="second",
+            metadata_json='{"wake_requested": true}',
+        )
+        foreign_wake = manager.create_message(
+            from_session=sender.id,
+            to_session=foreign.id,
+            content="foreign",
+            metadata_json='{"wake_requested": true}',
+        )
+        delivered = manager.create_message(
+            from_session=sender.id,
+            to_session=recipient.id,
+            content="delivered",
+            metadata_json='{"wake_requested": true}',
+        )
+        manager.mark_delivered(delivered.id, recipient.id)
+
+        assert [message.id for message in manager.get_undelivered_wake_messages(recipient.id)] == [
+            first.id,
+            second.id,
+        ]
+        assert manager.get_undelivered_wake_recipients() == [recipient.id, foreign.id]
+        assert manager.get_undelivered_wake_messages(foreign.id) == [foreign_wake]
+
 
 class TestInterSessionMessageManagerListMessages:
     """Tests for list_messages read-only query method."""
@@ -781,7 +823,7 @@ class TestInterSessionMessageManagerListMessages:
         msgs = mgr.list_messages(str(uuid.uuid4()), direction="all")
         assert msgs == []
 
-    def test_invalid_direction_raises_clear_error(self, setup) -> None:
+    def test_invalid_direction_raises_clear_error(self, setup: Any) -> None:
         """Invalid directions are rejected instead of silently returning all messages."""
         with pytest.raises(ValueError, match="Invalid direction 'bogus'"):
             setup.manager.list_messages(setup.beta.id, direction="bogus")
