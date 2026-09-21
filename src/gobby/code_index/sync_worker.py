@@ -98,6 +98,7 @@ async def _sync_vector_file_with_retry(
     file: IndexedFile,
     *,
     timeout: float | None = None,
+    breakers: tuple[SyncCircuitBreaker | None, ...] = (),
 ) -> bool:
     attempts = len(_VECTOR_SYNC_RETRY_BACKOFF_SECONDS) + 1
     for attempt in range(1, attempts + 1):
@@ -118,7 +119,9 @@ async def _sync_vector_file_with_retry(
                     attempts - 1,
                     error,
                 )
-            if attempt == attempts:
+            if attempt == attempts or any(
+                breaker is not None and breaker.state is BreakerState.OPEN for breaker in breakers
+            ):
                 raise
             await asyncio.sleep(_VECTOR_SYNC_RETRY_BACKOFF_SECONDS[attempt - 1])
 
@@ -131,6 +134,7 @@ async def _sync_graph_file_with_retry(
     file: IndexedFile,
     *,
     timeout: float | None = None,
+    breakers: tuple[SyncCircuitBreaker | None, ...] = (),
 ) -> bool:
     attempts = len(_GRAPH_SYNC_RETRY_BACKOFF_SECONDS) + 1
     for attempt in range(1, attempts + 1):
@@ -151,7 +155,9 @@ async def _sync_graph_file_with_retry(
                     attempts - 1,
                     error,
                 )
-            if attempt == attempts:
+            if attempt == attempts or any(
+                breaker is not None and breaker.state is BreakerState.OPEN for breaker in breakers
+            ):
                 raise
             await asyncio.sleep(_GRAPH_SYNC_RETRY_BACKOFF_SECONDS[attempt - 1])
 
@@ -347,6 +353,8 @@ async def _sync_pass(
 ) -> None:
     """Single sync pass across all indexed projects."""
     projects = await _run_db(run_db, storage.list_indexed_projects)
+    concurrency = max(1, int(config.sync_worker_concurrency))
+    semaphore = asyncio.Semaphore(concurrency)
     vectors_wanted = config.embedding_enabled and gcode_gateway is not None
     if vector_breaker is not None and not vector_breaker.pending_allowed():
         vectors_wanted = False
@@ -377,25 +385,26 @@ async def _sync_pass(
             project_id: str = project.id,
             project_root: Path = root,
         ) -> bool:
-            try:
-                return await _sync_file(
-                    storage=storage,
-                    gcode_gateway=gcode_gateway,
-                    config=config,
-                    project_id=project_id,
-                    root=project_root,
-                    file=file,
-                    run_db=run_db,
-                    vector_breaker=vector_breaker,
-                    gateway_breaker=gateway_breaker,
-                )
-            except Exception as e:
-                logger.exception(
-                    "Sync worker: failed to sync %s: %s",
-                    file.file_path,
-                    e,
-                )
-                return False
+            async with semaphore:
+                try:
+                    return await _sync_file(
+                        storage=storage,
+                        gcode_gateway=gcode_gateway,
+                        config=config,
+                        project_id=project_id,
+                        root=project_root,
+                        file=file,
+                        run_db=run_db,
+                        vector_breaker=vector_breaker,
+                        gateway_breaker=gateway_breaker,
+                    )
+                except Exception as e:
+                    logger.exception(
+                        "Sync worker: failed to sync %s: %s",
+                        file.file_path,
+                        e,
+                    )
+                    return False
 
         relevant_breakers = tuple(
             breaker
@@ -463,6 +472,7 @@ async def _sync_file(
                     project_root=root,
                     file=current,
                     timeout=config.sync_worker_projection_timeout_seconds,
+                    breakers=(gateway_breaker, vector_breaker),
                 )
             except GcodeDaemonConfigUnavailableError:
                 _record_breaker_outcomes(armed, failed=(gateway_breaker,))
@@ -555,6 +565,7 @@ async def _sync_file(
                                 project_root=root,
                                 file=current,
                                 timeout=config.sync_worker_projection_timeout_seconds,
+                                breakers=(gateway_breaker,),
                             )
                         except GcodeDaemonConfigUnavailableError:
                             _record_breaker_outcomes(armed, failed=(gateway_breaker,))

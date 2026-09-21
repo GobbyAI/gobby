@@ -917,6 +917,17 @@
     },
     {
       "activation": "live",
+      "default": 4,
+      "description": "Maximum concurrent per-file projection sync commands",
+      "key": "code_index.sync_worker_concurrency",
+      "machineExport": false,
+      "namespace": "code_index",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
       "default": 5.0,
       "description": "Sync worker poll interval in seconds",
       "key": "code_index.sync_worker_interval_seconds",
