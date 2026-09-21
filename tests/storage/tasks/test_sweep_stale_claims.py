@@ -374,6 +374,7 @@ def test_sweep_keeps_a_claim_while_its_close_review_is_active(
             task_id=task.id,
             task_ref=f"#{task.seq_num}",
             caller_session_id=SESS_DEAD,
+            commit_shas=(),
             close_arguments={"task_id": task.id, "reason": "completed"},
             expected_task_updated_at=row["updated_at"],
             review_fingerprint="review",

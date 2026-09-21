@@ -1123,6 +1123,7 @@ async def test_exhausted_capacity_recovery_terminalizes_close_review_and_wakes_s
             task_id=task.id,
             task_ref=f"#{task.seq_num}",
             caller_session_id=parent_session["id"],
+            commit_shas=(),
             close_arguments={"preview": False},
             expected_task_updated_at=task.updated_at,
             review_fingerprint="review",
