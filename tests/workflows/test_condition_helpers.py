@@ -33,6 +33,7 @@ from gobby.workflows.condition_helpers import (
     touches_docker_policy_path,
     touches_ui_design_path,
 )
+from gobby.workflows.safe_evaluator import build_condition_helpers
 
 pytestmark = pytest.mark.unit
 
@@ -742,6 +743,15 @@ def _rust_store_file(tmp_path: Path) -> str:
 
 
 class TestTddPathHelpers:
+    def test_tdd_gate_matches_absolute_written_path_to_relative_acceptance_path(self) -> None:
+        variables = {
+            "claimed_task_acceptance_test_paths": ["tests/test_app.py"],
+            "tdd_tests_written": ["/repo/tests/test_app.py"],
+        }
+        gate = build_condition_helpers(context={"project": {"path": "/repo"}})["tdd_gate_open"]
+
+        assert gate(variables) is True
+
     def test_first_tdd_code_path_uses_canonical_paths(self) -> None:
         event_data = {
             "canonical_file_paths": ["tests/test_app.py", "src/app.py"],

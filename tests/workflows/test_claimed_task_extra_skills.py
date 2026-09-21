@@ -15,6 +15,8 @@ from gobby.workflows.claimed_task_extra_skills import (
     missing_claimed_task_extra_skills,
     refresh_claimed_task_extra_skills,
 )
+from gobby.workflows.condition_helpers import tdd_gate_open
+from gobby.workflows.safe_evaluator import build_condition_helpers
 
 pytestmark = pytest.mark.unit
 
@@ -114,6 +116,52 @@ def test_claim_exposes_tdd_gate_state() -> None:
     }
     assert stale_variables["claimed_task_requires_tdd"] is False
     assert stale_variables["claimed_task_acceptance_test_paths"] == []
+
+
+def test_claim_exposes_expansion_prefixed_acceptance_test_paths() -> None:
+    manager = MagicMock()
+    manager.get_task.return_value = _task(
+        labels=["tdd:required"],
+        validation_criteria=(
+            "Acceptance artifacts:\n"
+            "- 2.3.1: test: "
+            "`tests/workflows/test_claimed_task_extra_skills.py::test_expanded`\n"
+            "- 2.3.2: file: `src/gobby/tasks/acceptance_artifacts.py`"
+        ),
+    )
+
+    state = build_claimed_task_extra_skill_state(
+        {"claimed_tasks": {"task-1": "#1"}},
+        manager,
+    )
+
+    assert state["claimed_task_acceptance_test_paths"] == [
+        "tests/workflows/test_claimed_task_extra_skills.py"
+    ]
+
+
+def test_tdd_gate_rejects_nested_relative_written_path() -> None:
+    variables = {
+        "claimed_task_acceptance_test_paths": ["tests/test_app.py"],
+        "tdd_tests_written": ["vendor/tests/test_app.py"],
+    }
+
+    assert tdd_gate_open(variables, "/repo") is False
+
+
+def test_tdd_gate_uses_event_worktree_path_over_registered_project_path() -> None:
+    variables = {
+        "claimed_task_acceptance_test_paths": ["tests/test_app.py"],
+        "tdd_tests_written": ["/worktrees/task/tests/test_app.py"],
+    }
+    context = {
+        "event": SimpleNamespace(metadata={"project_path": "/worktrees/task"}),
+        "project": {"path": "/primary/checkout"},
+    }
+
+    gate = build_condition_helpers(context=context)["tdd_gate_open"]
+
+    assert gate(variables) is True
 
 
 def test_multiple_claims_dedupe_without_reordering() -> None:
