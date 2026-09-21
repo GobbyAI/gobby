@@ -282,6 +282,13 @@ class RuleEffect(BaseModel):
             fields = ", ".join(missing)
             raise ValueError(f"RuleEffect(type='{self.type}') requires: {fields}")
 
+        if self.type in {"mcp_call", "run_command"}:
+            if self.timeout_seconds is not None and not self.timeout_seconds > 0:
+                raise ValueError(
+                    f"RuleEffect(type='{self.type}') timeout_seconds must be > 0 "
+                    f"(got {self.timeout_seconds!r})"
+                )
+
         if self.type == "run_command":
             if not self.command:
                 raise ValueError("RuleEffect(type='run_command') requires a non-empty command")
@@ -291,12 +298,6 @@ class RuleEffect(BaseModel):
                 raise ValueError("run_command skill must be non-empty")
             if self.script is not None:
                 validate_skill_script_path(self.script)
-            if self.timeout_seconds is not None and not self.timeout_seconds > 0:
-                raise ValueError(
-                    "RuleEffect(type='run_command') timeout_seconds must be > 0 "
-                    f"(got {self.timeout_seconds!r})"
-                )
-
         if self.type == "proxy_hook":
             if self.timeout_seconds is not None and not self.timeout_seconds > 0:
                 raise ValueError(
@@ -378,6 +379,7 @@ class RuleEffect(BaseModel):
                 "block_on_failure",
                 "block_on_success",
                 "success_variable",
+                "timeout_seconds",
                 *selector_fields,
             },
             "observe": {"category", "message", *selector_fields},

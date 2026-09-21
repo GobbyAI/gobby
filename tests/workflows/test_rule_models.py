@@ -166,6 +166,30 @@ class TestRuleEffect:
         assert effect.tool == "recall_with_synthesis"
         assert effect.arguments == {"limit": 5}
 
+    def test_mcp_call_effect_accepts_positive_timeout(self) -> None:
+        from gobby.workflows.definitions import RuleEffect
+
+        effect = RuleEffect(
+            type="mcp_call",
+            server="gobby-memory",
+            tool="surface_memories",
+            timeout_seconds=2.0,
+        )
+
+        assert effect.timeout_seconds == 2.0
+
+    @pytest.mark.parametrize("timeout_seconds", [0.0, -1.0])
+    def test_mcp_call_effect_rejects_non_positive_timeout(self, timeout_seconds: float) -> None:
+        from gobby.workflows.definitions import RuleEffect
+
+        with pytest.raises(ValidationError, match="timeout_seconds must be > 0"):
+            RuleEffect(
+                type="mcp_call",
+                server="gobby-memory",
+                tool="surface_memories",
+                timeout_seconds=timeout_seconds,
+            )
+
     def test_mcp_call_background(self) -> None:
         from gobby.workflows.definitions import RuleEffect
 

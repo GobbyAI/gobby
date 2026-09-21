@@ -2536,6 +2536,92 @@ class TestInlineMcpCallDispatch:
         assert len(response.metadata.get("mcp_calls", [])) == 0
 
     @pytest.mark.asyncio
+    async def test_inline_dispatch_timeout_cancels_and_continues(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
+        _insert_rule(
+            manager,
+            "inject-skill-timeout",
+            RuleDefinitionBody(
+                event=RuleTriggerEvent.BEFORE_TOOL,
+                effects=[
+                    RuleEffect(
+                        type="mcp_call",
+                        server="gobby-skills",
+                        tool="get_skill",
+                        arguments={"name": "python"},
+                        inject_result=True,
+                        timeout_seconds=0.01,
+                    ),
+                    RuleEffect(type="set_variable", variable="completed", value=True),
+                ],
+            ),
+        )
+        cancelled = asyncio.Event()
+
+        async def stalled_dispatcher(
+            server: str, tool: str, args: dict[str, Any], event: Any
+        ) -> dict[str, Any]:
+            try:
+                await asyncio.Event().wait()
+                return {"success": True}
+            finally:
+                cancelled.set()
+
+        engine = RuleEngine(db, mcp_dispatcher=stalled_dispatcher)
+        variables: dict[str, Any] = {}
+
+        response = await engine.evaluate(
+            _make_event(data={"tool_name": "Read"}),
+            session_id=SESSION_ID,
+            variables=variables,
+        )
+
+        assert response.decision == "allow"
+        assert variables["completed"] is True
+        assert cancelled.is_set()
+
+    @pytest.mark.asyncio
+    async def test_inline_dispatch_timeout_honors_block_on_failure(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
+        _insert_rule(
+            manager,
+            "inject-skill-timeout-block",
+            RuleDefinitionBody(
+                event=RuleTriggerEvent.BEFORE_TOOL,
+                effects=[
+                    RuleEffect(
+                        type="mcp_call",
+                        server="gobby-skills",
+                        tool="get_skill",
+                        arguments={"name": "python"},
+                        inject_result=True,
+                        block_on_failure=True,
+                        timeout_seconds=0.01,
+                    )
+                ],
+            ),
+        )
+
+        async def stalled_dispatcher(
+            server: str, tool: str, args: dict[str, Any], event: Any
+        ) -> dict[str, Any]:
+            await asyncio.Event().wait()
+            return {"success": True}
+
+        engine = RuleEngine(db, mcp_dispatcher=stalled_dispatcher)
+
+        response = await engine.evaluate(
+            _make_event(data={"tool_name": "Read"}),
+            session_id=SESSION_ID,
+            variables={},
+        )
+
+        assert response.decision == "block"
+        assert "timed out after 0.01s" in (response.reason or "")
+
+    @pytest.mark.asyncio
     async def test_inline_dispatch_exception_without_block_flag_continues(
         self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
@@ -2575,7 +2661,6 @@ class TestInlineMcpCallDispatch:
         assert response.decision == "allow"
         assert variables.get("injected") is True
 
-    @pytest.mark.asyncio
     @pytest.mark.asyncio
     async def test_inline_dispatch_failure_honors_block_on_failure(
         self, db: HubDatabase, manager: RuleDefinitionManager
@@ -2679,6 +2764,7 @@ class TestInlineMcpCallDispatch:
                         server="gobby-memory",
                         tool="recall",
                         arguments={"limit": 5},
+                        timeout_seconds=1.5,
                     ),
                 ],
             ),
@@ -2700,6 +2786,7 @@ class TestInlineMcpCallDispatch:
         # Should be deferred, not dispatched inline
         assert call_count == 0
         assert len(response.metadata.get("mcp_calls", [])) == 1
+        assert response.metadata["mcp_calls"][0]["timeout_seconds"] == 1.5
 
     @pytest.mark.asyncio
     async def test_no_dispatcher_falls_back_to_deferred(
