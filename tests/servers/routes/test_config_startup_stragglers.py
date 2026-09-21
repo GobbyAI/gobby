@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
 from typing import cast
 from unittest.mock import MagicMock, PropertyMock
 
@@ -9,6 +8,7 @@ from fastapi import HTTPException
 
 from gobby.config.runtime import ConfigRuntime
 from gobby.servers.routes.attention import _run_tmux_payload
+from gobby.storage.attention import AttentionRosterRow
 
 
 def _starting_server() -> MagicMock:
@@ -21,7 +21,22 @@ def _starting_server() -> MagicMock:
 
 def test_attention_roster_tmux_payload_startup_returns_retryable_503() -> None:
     server = _starting_server()
-    run = SimpleNamespace(terminal_id="agent", pid=123)
+    run = AttentionRosterRow(
+        kind="run",
+        source_id="agent-run",
+        session_id=None,
+        lifecycle_status="running",
+        task_id=None,
+        task_ref=None,
+        task_stage=None,
+        provider="codex",
+        model=None,
+        pid=123,
+        updated_at=None,
+        terminal_context={},
+        terminal_id="agent",
+        terminal=None,
+    )
 
     with pytest.raises(HTTPException) as raised:
         _run_tmux_payload(server, run)

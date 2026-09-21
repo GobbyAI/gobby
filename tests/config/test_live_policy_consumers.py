@@ -29,6 +29,7 @@ from gobby.servers.routes.configuration_validation_detection import (
 from gobby.servers.routes.rules import create_rules_router
 from gobby.servers.routes.sessions.core import register_core_routes
 from gobby.servers.tool_approvals import get_global_approval_rules
+from gobby.storage.attention import AttentionRosterRow, AttentionRosterTerminal
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
@@ -210,10 +211,29 @@ async def test_voice_and_route_consumers_use_runtime(monkeypatch: pytest.MonkeyP
 
     runtime.snapshot_reads = 0
     stale_config = DaemonConfig(tmux={"socket_path": "/tmp/stale.sock"})
-    # The run carries a terminal id; the tmux session name lives on the terminal row,
-    # so the payload needs the terminal manager to reach it.
-    terminal_manager = SimpleNamespace(
-        get=lambda terminal_id: SimpleNamespace(session_name=f"gobby-{terminal_id}")
+    run = AttentionRosterRow(
+        kind="run",
+        source_id="agent-run",
+        session_id=None,
+        lifecycle_status="running",
+        task_id=None,
+        task_ref=None,
+        task_stage=None,
+        provider="codex",
+        model=None,
+        pid=42,
+        updated_at=None,
+        terminal_context={},
+        terminal_id="agent-session",
+        terminal=AttentionRosterTerminal(
+            id="agent-session",
+            backend="tmux",
+            state="live",
+            machine_id="machine",
+            host_epoch=None,
+            session_name="gobby-agent-session",
+            locator=None,
+        ),
     )
     attention_server = cast(
         Any,
@@ -221,14 +241,10 @@ async def test_voice_and_route_consumers_use_runtime(monkeypatch: pytest.MonkeyP
             services=SimpleNamespace(
                 config=stale_config,
                 config_runtime=runtime,
-                terminal_manager=terminal_manager,
             )
         ),
     )
-    payload = _run_tmux_payload(
-        attention_server,
-        SimpleNamespace(terminal_id="agent-session", pid=42),
-    )
+    payload = _run_tmux_payload(attention_server, run)
 
     assert payload == {
         "socket_path": "/tmp/live-policy.sock",
