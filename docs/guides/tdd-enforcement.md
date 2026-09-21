@@ -97,7 +97,7 @@ through its label, additional skill, validation criteria, or session policy.
 It covers every hand-maintained source extension used by the monolith guard:
 Python, TypeScript/JavaScript, CSS, Rust, and shell. Test-convention paths in any
 language are recognized by one shared classifier. For Rust, that includes
-`src/<module>/tests.rs` module-test files.
+`src/<module>/tests.rs` and `src/**/*_tests.rs` module-test files.
 
 A Rust Edit or Write is also test writing when it touches only `#[cfg(test)]`
 code: the gate compares the file before and after the change with every
