@@ -17,6 +17,7 @@ from gobby.hooks.envelope_dedupe import (
     renew_envelope_processing_lease,
 )
 from gobby.hooks.fifo_lock import CrossLoopFifoLock
+from gobby.hooks.phase_timing import HookPhaseTimings, hook_phase_timing_scope
 from gobby.hooks.receipt_effects import (
     STAGED_EFFECTS_FIELD,
     take_worker_staging,
@@ -137,6 +138,7 @@ async def run_adapter_hook(
     hook_manager: Any,
     *,
     timeout_seconds: float | None,
+    phase_timings: HookPhaseTimings | None = None,
 ) -> dict[str, Any]:
     """Run blocking hook work in the bounded adapter executor.
 
@@ -156,6 +158,7 @@ async def run_adapter_hook(
     admission = _reserve_session_admission(session_id) if session_id else None
     admitted = False
     executor_future: Future[dict[str, Any]] | None = None
+    timings = phase_timings or HookPhaseTimings()
 
     def run_adapter() -> dict[str, Any]:
         nonlocal started_at, finished_at
@@ -165,7 +168,7 @@ async def run_adapter_hook(
         # executor; both inherit this context, so they share this delivery's
         # staging buffer and nothing they stage survives into the next delivery
         # that lands on those shared threads (#21427).
-        with worker_staging_scope():
+        with worker_staging_scope(), hook_phase_timing_scope(timings):
             try:
                 result = cast(dict[str, Any], adapter.handle_native(payload, hook_manager))
                 staged = take_worker_staging()
@@ -231,6 +234,8 @@ async def run_adapter_hook(
         if admission is not None and executor_future is None:
             _end_session_admission(admission, admitted=admitted)
         admission_wait, queue_duration, execution_duration = durations()
+        timings.add("admission_wait", admission_wait)
+        timings.add("executor_queue", queue_duration)
         input_data = payload.get("input_data")
         payload_session_id = input_data.get("session_id") if isinstance(input_data, dict) else None
         logger.debug(

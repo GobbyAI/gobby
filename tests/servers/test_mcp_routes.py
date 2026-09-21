@@ -3459,6 +3459,41 @@ class TestHooksEndpoints:
         assert response.json()["continue"] is True
         mock_handle_native.assert_called_once()
 
+    def test_execute_hook_logs_dominant_phase_when_slow(
+        self, session_storage: SessionManager
+    ) -> None:
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        server.app.state.hook_manager = _mock_hook_manager()
+
+        with (
+            TestClient(server.app) as client,
+            patch(
+                "gobby.adapters.claude_code.ClaudeCodeAdapter.handle_native",
+                return_value={"continue": True},
+            ),
+            patch("gobby.servers.routes.mcp.hooks.SLOW_HOOK_THRESHOLD_SECONDS", 0.0),
+            patch("gobby.servers.routes.mcp.hooks.logger.warning") as warning,
+        ):
+            response = client.post(
+                "/api/hooks/execute",
+                json=_hook_envelope(hook_type="session-start", source="claude"),
+            )
+
+        assert response.status_code == 200
+        slow_warnings = [
+            entry
+            for entry in warning.call_args_list
+            if entry.args and entry.args[0] == "Slow hook execution dominated by %s"
+        ]
+        assert len(slow_warnings) == 1
+        extra = slow_warnings[0].kwargs["extra"]
+        assert extra["dominant_phase"] in extra["hook_phase_durations_seconds"]
+        assert extra["dominant_phase_seconds"] >= 0
+
     def test_execute_hook_claude_envelope_source(self, session_storage: SessionManager) -> None:
         """Envelope-shaped Claude requests should normalize to the flat adapter payload."""
         server = create_http_server(
@@ -3884,6 +3919,34 @@ class TestHooksEndpoints:
         assert peak_workers <= worker_limit
         assert active_workers == 0
         assert await asyncio.wait_for(asyncio.to_thread(lambda: True), timeout=0.2)
+
+    @pytest.mark.asyncio
+    async def test_adapter_executor_propagates_phase_collector_to_worker(self) -> None:
+        from gobby.hooks.adapter_execution import run_adapter_hook
+        from gobby.hooks.phase_timing import HookPhaseTimings, measure_hook_phase
+
+        timings = HookPhaseTimings()
+
+        def handle_native(*_args: object, **_kwargs: object) -> dict[str, bool]:
+            with measure_hook_phase("handler_body"):
+                return {"continue": True}
+
+        adapter = MagicMock()
+        adapter.handle_native.side_effect = handle_native
+
+        response = await run_adapter_hook(
+            adapter,
+            {"_platform_session_id": "timed-session"},
+            MagicMock(),
+            timeout_seconds=1.0,
+            phase_timings=timings,
+        )
+
+        durations = timings.snapshot()
+        assert response == {"continue": True}
+        assert durations["admission_wait"] >= 0
+        assert durations["executor_queue"] >= 0
+        assert durations["handler_body"] > 0
 
     @pytest.mark.asyncio
     async def test_session_hook_flood_holds_one_adapter_worker(self) -> None:

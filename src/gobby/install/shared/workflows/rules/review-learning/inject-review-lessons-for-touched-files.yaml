@@ -25,3 +25,4 @@ rules:
           limit: 3
         background: false
         inject_result: true
+        timeout_seconds: 2.0

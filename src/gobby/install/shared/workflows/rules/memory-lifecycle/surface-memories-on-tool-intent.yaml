@@ -26,6 +26,7 @@ rules:
           trigger: spawn_agent
         background: false
         inject_result: true
+        timeout_seconds: 2.0
 
   surface-memories-before-claiming-create:
     description: "Surface memories for a task title when create_task also claims it"
@@ -48,6 +49,7 @@ rules:
           trigger: task
         background: false
         inject_result: true
+        timeout_seconds: 2.0
 
   surface-memories-after-claim:
     description: "Surface memories for the claimed task's subject after a successful claim"
@@ -90,6 +92,7 @@ rules:
           trigger: task
         background: false
         inject_result: true
+        timeout_seconds: 2.0
 
   surface-memories-after-handoff:
     description: "Surface memories for the handoff text a session just read"
@@ -124,3 +127,4 @@ rules:
           trigger: handoff
         background: false
         inject_result: true
+        timeout_seconds: 2.0

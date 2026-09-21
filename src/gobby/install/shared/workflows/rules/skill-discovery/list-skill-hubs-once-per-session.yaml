@@ -17,4 +17,5 @@ rules:
         arguments: {}
         background: false
         inject_result: true
+        timeout_seconds: 2.0
         success_variable: skill_discovery_instructions_shown
