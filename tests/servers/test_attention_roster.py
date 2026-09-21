@@ -9,6 +9,7 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from functools import partial
+from itertools import count
 from time import perf_counter
 from types import SimpleNamespace
 from typing import Any, cast
@@ -483,6 +484,11 @@ def test_roster_cold_path_is_bounded_and_cursor_invalidates_cache(
 
     server = _server(temp_db, manager)
     server.services.run_db = counted_run_db
+    ticks = count()
+    monkeypatch.setattr(
+        "gobby.servers.routes.attention.perf_counter",
+        lambda: next(ticks) / 1000,
+    )
     caplog.set_level(logging.DEBUG, logger="gobby.servers.routes.attention")
 
     with _client(server) as client:
@@ -505,10 +511,18 @@ def test_roster_cold_path_is_bounded_and_cursor_invalidates_cache(
     assert epoch_invalidated.json()["epoch"] == "bounded-cache-next"
     invalidated_entries = {entry["entry_id"]: entry for entry in invalidated.json()["entries"]}
     assert invalidated_entries["run:run-1"]["attention"]["attention_id"] == state.attention_id
-    messages = [record.getMessage() for record in caplog.records]
-    assert any("cache_hit=False" in message and "query_ms=" in message for message in messages)
-    assert any(
-        "cache_hit=True" in message and "executor_wait_ms=" in message for message in messages
+    profiles = [
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("Attention roster profile ")
+    ]
+    assert profiles[0] == (
+        "Attention roster profile cache_hit=False entries=50 executor_wait_ms=4.000 "
+        "query_ms=2.000 assembly_ms=1.000 total_ms=13.000"
+    )
+    assert profiles[1] == (
+        "Attention roster profile cache_hit=True entries=50 executor_wait_ms=0.000 "
+        "query_ms=0.000 assembly_ms=0.000 total_ms=2.000"
     )
 
 
