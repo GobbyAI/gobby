@@ -281,6 +281,107 @@ async def test_task_update_before_review_launch_returns_stale_without_spawning(
 
 
 @pytest.mark.asyncio
+async def test_close_task_persists_commit_before_promoted_review_launch(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    task = manager.create_task(
+        sample_project["id"],
+        "Persist commit before promoted review",
+        validation_criteria="Focused tests pass.",
+    )
+    session = SessionManager(temp_db).register(
+        external_id=f"close-review-promoted-{uuid4()}",
+        machine_id=require_machine_id(),
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    commit_sha = "abc123"
+    evaluation_count = 0
+
+    async def evaluate(_ctx: RegistryContext, **kwargs: Any) -> CloseEvaluation:
+        nonlocal evaluation_count
+        evaluation_count += 1
+        assert kwargs["commit_sha"] == commit_sha
+        persisted = manager.get_task(task.id)
+        assert persisted is not None
+        evaluation = _evaluation()
+        evaluation.task = persisted
+        evaluation.task_id = task.id
+        evaluation.resolved_session_id = session.id
+        evaluation.commit_shas = [commit_sha]
+        evaluation.extra.update({"diff_sha": "d" * 64, "test_bodies_sha": "e" * 64})
+        return evaluation
+
+    async def spawn_reviewer(tool: str, arguments: dict[str, Any]) -> dict[str, object]:
+        assert tool == "spawn_agent"
+        persisted = manager.get_task(task.id)
+        assert persisted is not None
+        assert persisted.commits == [commit_sha]
+        return {"success": True, "run_id": arguments["reserved_run_id"]}
+
+    agent_registry = SimpleNamespace(call=AsyncMock(side_effect=spawn_reviewer))
+    ctx = _ctx(registry=agent_registry)
+    ctx.task_manager = manager
+    monkeypatch.setattr(close_tool, "_evaluate_close", evaluate)
+    registry = InternalToolRegistry("tasks")
+    close_tool.register_close_task(registry, ctx)
+
+    result = await registry.call(
+        "close_task",
+        {
+            "task_id": task.id,
+            "changes_summary": "Implemented and tested.",
+            "commit_sha": commit_sha,
+            "project_path": "/repo",
+            "preview": False,
+        },
+    )
+
+    assert result["error"] == "close_review_required"
+    assert result["commit_shas"] == [commit_sha]
+    assert result["review_status"] == "running"
+    assert evaluation_count == 2
+    agent_registry.call.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_promoted_review_refuses_unpersisted_evaluation_commit(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    task = manager.create_task(
+        sample_project["id"],
+        "Refuse review with invisible commit",
+        validation_criteria="Focused tests pass.",
+    )
+    review = _review(status="launching", run_id=_FIRST_REVIEW_RUN_ID)
+    store = _Store(review)
+    registry = SimpleNamespace(call=AsyncMock())
+    ctx = _ctx(registry=registry)
+    ctx.task_manager = manager
+    _patch_store(monkeypatch, store)
+    evaluation = _evaluation()
+    evaluation.task = task
+    evaluation.task_id = task.id
+    evaluation.commit_shas = ["abc123"]
+
+    result = await orchestration._launch_promoted_review(ctx, review, evaluation)
+
+    assert result["success"] is False
+    assert result["error"] == "close_review_commit_links_missing"
+    assert "abc123" in result["message"]
+    registry.call.assert_not_awaited()
+    persisted = manager.get_task(task.id)
+    assert persisted is not None
+    assert persisted.commits is None
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "reason", ["completed", "obsolete", "duplicate", "wont_fix", "out_of_repo"]
 )
@@ -571,7 +672,10 @@ async def test_launch_omits_model_overrides_without_validation_config(
     ctx = cast(
         RegistryContext,
         SimpleNamespace(
-            task_manager=SimpleNamespace(db=object()),
+            task_manager=SimpleNamespace(
+                db=object(),
+                get_task=lambda _task_id: replace(cast(Task, _evaluation().task), commits=["abc"]),
+            ),
             agent_registry=registry,
             validation_config=None,
         ),
@@ -1420,7 +1524,10 @@ def _ctx(
     return cast(
         RegistryContext,
         SimpleNamespace(
-            task_manager=SimpleNamespace(db=object()),
+            task_manager=SimpleNamespace(
+                db=object(),
+                get_task=lambda _task_id: replace(cast(Task, _evaluation().task), commits=["abc"]),
+            ),
             agent_registry=registry,
             validation_config=validation_config,
         ),
@@ -1509,6 +1616,7 @@ def _persisted_review_intent(
         "task_id": task.id,
         "task_ref": f"#{task.seq_num}",
         "caller_session_id": caller_session_id,
+        "commit_shas": (),
         "close_arguments": _arguments(),
         "expected_task_updated_at": task.updated_at,
         "review_fingerprint": "review",

@@ -700,6 +700,7 @@ def _review_caller(
         task_id=task.id,
         task_ref=f"#{task.seq_num}",
         caller_session_id=caller_session.id,
+        commit_shas=(),
         close_arguments={"preview": True},
         expected_task_updated_at=task.updated_at,
         review_fingerprint="review",

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, cast
@@ -157,6 +158,7 @@ async def launch_close_review(
             task_id=task.id,
             task_ref=task_ref,
             caller_session_id=evaluation.resolved_session_id,
+            commit_shas=evaluation.commit_shas,
             close_arguments=persisted_arguments,
             expected_task_updated_at=task.updated_at,
             review_fingerprint=review_fingerprint,
@@ -234,6 +236,21 @@ async def _launch_promoted_review(
     task = evaluation.task
     if task is None or review.agent_run_id is None:
         return _finish_launch_error(store, review, "Promoted close review lost its identity.")
+    persisted_task = await asyncio.to_thread(ctx.task_manager.get_task, task.id)
+    if persisted_task is None:
+        return _finish_launch_error(store, review, "Promoted close review lost its task.")
+    persisted_commits = set(persisted_task.commits or [])
+    missing_commits = [sha for sha in evaluation.commit_shas if sha not in persisted_commits]
+    if missing_commits:
+        return _finish_launch_error(
+            store,
+            review,
+            "Promoted close review commit links are not visible on the task: "
+            f"{', '.join(missing_commits)}. No reviewer was launched.",
+            error="close_review_commit_links_missing",
+        )
+    evaluation.task = persisted_task
+    task = persisted_task
     validation_config = ctx.validation_config or TaskValidationConfig()
     validator_timeout_seconds = validation_config.close_review_validator_timeout_seconds
     close_arguments = review.close_arguments
