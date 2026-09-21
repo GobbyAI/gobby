@@ -80,6 +80,9 @@ pub struct AgentEntry {
     pub terminal_id: String,
     pub backend: Backend,
     pub name: String,
+    /// Persisted session title before the row-label fallback ladder. Pane
+    /// headers use this exact rung, then fall back to their own label/name.
+    pub session_title: Option<String>,
     pub provider: String,
     pub model: Option<String>,
     /// The model's provider-printed name, resolved daemon-side; the row
@@ -188,9 +191,11 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
             // row that has one, and the last rung covers a roster entry with
             // no pane open — neither can be an id. The provider is no rung:
             // it rides on the row's second line with the model.
-            let name = session
+            let session_title = session
                 .and_then(|(_, session)| session.title.clone())
-                .filter(|name| !name.is_empty())
+                .filter(|name| !name.is_empty());
+            let name = session_title
+                .clone()
                 .or_else(|| {
                     run.and_then(|(_, run)| run.agent_name.clone())
                         .filter(|name| !name.is_empty())
@@ -215,6 +220,7 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
                 terminal_id: terminal.terminal_id.clone(),
                 backend: terminal.backend,
                 name,
+                session_title,
                 provider: provider.unwrap_or_default(),
                 model: entry
                     .model

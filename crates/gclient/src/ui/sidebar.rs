@@ -470,17 +470,11 @@ pub(super) fn render_section_rows(
     hits: &mut SidebarHits,
 ) {
     let p = &chrome.palette;
-    let heights: Vec<u16> = rows.iter().map(SidebarRow::height).collect();
-    let viewport = section_body_rect(area, section, false).height;
-    let metrics = project_list_metrics(&heights, viewport, chrome.sidebar.scroll(section));
+    let (metrics, body) = section_list(area, section, rows, chrome);
     let has_scrollbar = should_show_scrollbar(metrics);
-    let body = section_body_rect(area, section, has_scrollbar);
-    // One marquee clock for the section: the longest overrun sets the period.
-    let max_travel = rows
-        .iter()
-        .map(|row| row_travel(row, body.width))
-        .max()
-        .unwrap_or(0);
+    // One marquee clock for every scrolling title, pane headers included:
+    // the longest overrun sets the period (`ViewState::title_travel`).
+    let max_travel = chrome.view.title_travel.max(list_travel(rows, body));
     if body.width > 0 && body.height > 0 {
         let scroll = metrics
             .max_offset_from_bottom
@@ -532,6 +526,40 @@ pub(super) fn render_section_rows(
         render_scrollbar(frame, metrics, track, p.surface_dim, p.overlay0, "▕");
         hits.scrollbars[section.index()] = Some(track);
     }
+}
+
+/// `rows` in `section`'s `area`: their scroll metrics, and the body they
+/// draw into, less the scrollbar lane when they overflow.
+fn section_list(
+    area: Rect,
+    section: SidebarSection,
+    rows: &[SidebarRow],
+    chrome: &Chrome,
+) -> (ScrollMetrics, Rect) {
+    let heights: Vec<u16> = rows.iter().map(SidebarRow::height).collect();
+    let viewport = section_body_rect(area, section, false).height;
+    let metrics = project_list_metrics(&heights, viewport, chrome.sidebar.scroll(section));
+    let body = section_body_rect(area, section, should_show_scrollbar(metrics));
+    (metrics, body)
+}
+
+fn list_travel(rows: &[SidebarRow], body: Rect) -> usize {
+    rows.iter()
+        .map(|row| row_travel(row, body.width))
+        .max()
+        .unwrap_or(0)
+}
+
+/// The longest overrun of a Sessions title drawn in the section `area`, the
+/// only rows that scroll, for `ViewState::title_travel`. The rail draws no
+/// titles.
+pub fn sessions_title_travel<W: WorkspaceView>(ws: &W, chrome: &Chrome, area: Rect) -> usize {
+    if chrome.sidebar.collapsed {
+        return 0;
+    }
+    let rows = session_rows(ws, chrome);
+    let (_, body) = section_list(area, SidebarSection::Sessions, &rows, chrome);
+    list_travel(&rows, body)
 }
 
 /// The scrollbar lane: the section's last column beside `body`.

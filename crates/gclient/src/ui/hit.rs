@@ -132,6 +132,12 @@ pub fn hit_test(view: &ViewState, column: u16, row: u16) -> Hit {
     if view.sidebar_rect.contains(at) {
         return sidebar_hit(view, at);
     }
+    if view
+        .control_indicator_hit_area
+        .is_some_and(|indicator| indicator.contains(at))
+    {
+        return Hit::ControlIndicator;
+    }
     if let Some(index) = split_border_at(view, at) {
         return Hit::SplitBorder(index);
     }
@@ -157,14 +163,7 @@ pub fn hit_test(view: &ViewState, column: u16, row: u16) -> Hit {
         return Hit::PaneBorder(info.id);
     }
     if view.status_rect.contains(at) {
-        let on_indicator = view
-            .control_indicator_hit_area
-            .is_some_and(|indicator| indicator.contains(at));
-        return if on_indicator {
-            Hit::ControlIndicator
-        } else {
-            Hit::Status
-        };
+        return Hit::Status;
     }
     Hit::Empty
 }

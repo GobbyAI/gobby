@@ -1208,12 +1208,13 @@ switch_project = "ctrl+1..9"
                     // when the right pane gave up its name so the label ladder
                     // reaches this frame (#22536), and again when every band
                     // gained a blank row above it and the rows took the pane
-                    // address and backend tokens (#22572):
+                    // address and backend tokens (#22572), and again when pane
+                    // chrome moved to the pane edges (#22617):
                     // 4.1.3 requires a glyph change to fail here, so this
                     // digest moves only alongside a deliberate render change.
                     assert_eq!(
                         frame_digest(&terminal),
-                        "3ee3627b495a55cea980b3ad02f51338addc586ea634f273f0e3615f7412fde8"
+                        "7beb73355fb6b6dc02d45126b40f6a7d3d805d9d5e7a390544aa8a46418ab1ee"
                     );
                 });
         }
@@ -1274,6 +1275,9 @@ fn rendered_hits_match_drawn_cells() {
     }));
     ws.open_terminal("term-alpha", "native", "epoch")
         .expect("open term-alpha");
+    // A peer took the lease: the pane state the control indicator offers.
+    let alpha = ws.pane_for_terminal("term-alpha").expect("term-alpha pane");
+    ws.pane_mut(alpha).take_back = true;
     for n in 2..=20 {
         ws.open_terminal(&format!("t{n:02}"), "native", "epoch")
             .expect("open scripted terminal");
@@ -1372,10 +1376,15 @@ fn rendered_hits_match_drawn_cells() {
         }
     }
 
+    // Each tab shows one pane and no border, so the pane's metadata leads
+    // the status line, where its Read-only is the take-control button.
     let indicator = view.control_indicator_hit_area.expect("control indicator");
     assert_eq!(indicator.y, view.status_rect.y);
-    assert_eq!(hit_text(&terminal, indicator), " [○ observe]");
-    assert_eq!(usize::from(indicator.width), display_width(" [○ observe]"));
+    assert_eq!(hit_text(&terminal, indicator), " gclient · Read-only");
+    assert_eq!(
+        usize::from(indicator.width),
+        display_width(" gclient · Read-only")
+    );
 }
 
 #[test]
@@ -1401,7 +1410,7 @@ fn rendered_settings_hits_match_drawn_rows() {
         "sidebar width",
         "right-click passthrough",
         "agent sort",
-        "reduced motion",
+        "title scrolling",
     ];
     for (index, rect) in &view.settings_row_hit_areas {
         let text = hit_text(&terminal, *rect);

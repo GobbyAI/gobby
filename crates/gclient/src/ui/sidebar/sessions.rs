@@ -51,6 +51,29 @@ pub fn agent_label(agent: &AgentEntry) -> String {
     }
 }
 
+fn agent_title(agent: &AgentEntry) -> String {
+    let Some(reference) = agent.session_ref.as_deref() else {
+        return agent.name.clone();
+    };
+    let Some(at) = agent.name.find(reference) else {
+        return agent.name.clone();
+    };
+    let title = agent.name[at + reference.len()..]
+        .trim_start_matches(':')
+        .trim();
+    if title.is_empty() {
+        agent.name.clone()
+    } else {
+        title.to_string()
+    }
+}
+
+fn short_session_ref(reference: &str) -> &str {
+    reference
+        .rfind('#')
+        .map_or(reference, |at| &reference[at..])
+}
+
 /// The filter after `current`: local, then every machine, then each remote
 /// machine the model knows, then local again.
 pub fn next_machine_filter(model: &SidebarModel, current: Option<&str>) -> Option<String> {
@@ -311,10 +334,25 @@ fn agent_candidate<W: WorkspaceView>(ws: &W, chrome: &Chrome, visible: Visible<'
     .flatten()
     .filter(|token| !token.is_empty())
     .collect();
+    let title_prefix = agent
+        .session_ref
+        .as_deref()
+        .map_or_else(String::new, |reference| {
+            let project = chrome.sidebar.all_sessions.then(|| {
+                project_label(ws, chrome, &agent.project_id)
+                    .unwrap_or_else(|| agent.project_id.clone())
+            });
+            format!(
+                "{}{reference}: ",
+                project.as_deref().unwrap_or_default(),
+                reference = short_session_ref(reference)
+            )
+        });
     Candidate {
         row: SidebarRow {
             id: agent.entry_id.clone(),
-            label: agent_label(agent),
+            title_prefix,
+            label: agent_title(agent),
             kind: RowKind::Agent,
             state,
             tokens,

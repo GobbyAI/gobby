@@ -5480,12 +5480,12 @@ async fn a_scroll_reply_echoing_its_own_offset_never_lowers_the_ceiling() {
     mock.shutdown().await;
 }
 
-/// 2.5.1: the status line's control indicator is a button for the focused
-/// pane's lease. A click while the pane is held releases control, a click
-/// while it is observed takes control, and once the daemon reports the lease
-/// lost the same click accepts the pending take-back.
+/// 2.5.1: a lone pane has no border, so its metadata leads the status line,
+/// and only an exception there is a button. A click on the focused pane's
+/// `Focused` does nothing; once the daemon reports the lease lost, the same
+/// cells read `Read-only` and a click accepts the pending take-back.
 #[tokio::test]
-async fn control_indicator_click_toggles_control() {
+async fn control_indicator_click_takes_back_only_a_lost_lease() {
     let mock = MockDaemon::start("local-token").await;
     mock.use_unique_attachment_ids();
     for _ in 0..2 {
@@ -5515,7 +5515,7 @@ async fn control_indicator_click_toggles_control() {
     let attachment = workspace.pane(pane).attachment_id().to_string();
 
     // Mirror the loop's one-pane chrome to learn where the status line is
-    // drawn; the indicator leads it.
+    // drawn; the borderless pane's metadata leads it.
     let area = Rect::new(0, 0, 120, 40);
     let mut probe = Chrome::dark();
     probe.open_pane(pane, "terminal-lease");
@@ -5566,35 +5566,19 @@ async fn control_indicator_click_toggles_control() {
         };
         let lease = (Some("terminal-lease".to_string()), Some(attachment.clone()));
 
-        // Startup focus took the lease, so the first click releases it.
+        // Startup focus took the lease. Focus is a condition, not a button:
+        // a click on it neither releases the lease nor asks again.
         wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
         click().await;
-        wait_for_websocket_requests(&mock, "terminal_release_control", 1).await;
         settle_live_event().await;
-        assert_eq!(
-            lease_requests("terminal_release_control"),
-            vec![lease.clone()],
-            "a click on a held pane releases its lease"
+        assert!(
+            lease_requests("terminal_release_control").is_empty(),
+            "a click on Focused releases nothing"
         );
         assert_eq!(
             lease_requests("terminal_take_control").len(),
             1,
-            "the release click takes nothing"
-        );
-
-        // The pane is observed now, so the next click takes the lease back.
-        click().await;
-        wait_for_websocket_requests(&mock, "terminal_take_control", 2).await;
-        settle_live_event().await;
-        assert_eq!(
-            lease_requests("terminal_take_control")[1],
-            lease,
-            "a click on an observed pane takes its lease"
-        );
-        assert_eq!(
-            lease_requests("terminal_release_control").len(),
-            1,
-            "the take click releases nothing"
+            "a click on Focused takes nothing"
         );
 
         // A peer takes the lease; the daemon offers a take-back, and the
@@ -5610,18 +5594,23 @@ async fn control_indicator_click_toggles_control() {
         }))
         .await;
         settle_live_event().await;
+        // A click routes against the frame last drawn, and the loop draws on
+        // its render tick: let one pass so Read-only is on screen to click.
+        tokio::time::pause();
+        tokio::time::advance(RENDER_TICK * 2).await;
+        settle_live_event().await;
+        tokio::time::resume();
         mock.enqueue_take_control_reply(true, 2, None);
         click().await;
-        wait_for_websocket_requests(&mock, "terminal_take_control", 3).await;
+        wait_for_websocket_requests(&mock, "terminal_take_control", 2).await;
         settle_live_event().await;
         assert_eq!(
-            lease_requests("terminal_take_control")[2],
+            lease_requests("terminal_take_control")[1],
             lease,
-            "a click with a take-back pending accepts it"
+            "a click on Read-only accepts the take-back"
         );
-        assert_eq!(
-            lease_requests("terminal_release_control").len(),
-            1,
+        assert!(
+            lease_requests("terminal_release_control").is_empty(),
             "accepting a take-back releases nothing"
         );
         drop(input_tx);

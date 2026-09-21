@@ -76,7 +76,7 @@
 36 : -/panel_bg+d*2 accent/panel_bg*1 -/panel_bg*114 accent/panel_bg*1 -/panel_bg+d*1 accent/panel_bg+d*1
 37 |  │ search / · scroll j/k/↑↓/pgup/pgdn · close esc/enter                                                             │ │|
 37 : -/panel_bg+d*2 accent/panel_bg*1 overlay0/panel_bg*8 text/panel_bg*1 overlay0/panel_bg*10 text/panel_bg*16 overlay0/panel_bg*9 text/panel_bg*9 -/panel_bg*61 accent/panel_bg*1 -/panel_bg+d*1 accent/panel_bg+d*1
-38 |  └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘─┘|
-38 : -/panel_bg+d*2 accent/panel_bg*116 accent/panel_bg+d*2
-39 |                     [«] │ [○ observe] │ gclient │ prefix ctrl+b │ keys │ term-beta                                     |
-39 : -/surface0+d*21 overlay0/surface0+d*3 -/surface0+d*1 surface_dim/panel_bg+d*1 subtext0/surface_dim+bd*12 subtext0/surface_dim+d*26 accent/surface_dim+d*7 text/surface_dim+d*12 -/surface_dim+d*37
+38 |  └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘ ┘|
+38 : -/panel_bg+d*2 accent/panel_bg*116 accent/panel_bg+bd*1 accent/panel_bg+d*1
+39 |                     [«] │ prefix ctrl+b │ keys                                                                         |
+39 : -/surface0+d*21 overlay0/surface0+d*3 -/surface0+d*1 surface_dim/panel_bg+d*1 -/surface_dim+d*1 subtext0/surface_dim+d*13 accent/surface_dim+d*7 -/surface_dim+d*73

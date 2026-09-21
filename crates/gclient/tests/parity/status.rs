@@ -122,11 +122,11 @@ parity_tests! {
     }
 }
 
-/// 2.5.2 (gclient-only, outside the keep-set): the status line draws the
-/// focused pane's control indicator as a button. Glyph and label sit in
-/// brackets, the pointer resting on it underlines the whole button, the
-/// colour is the state's own token, and no state is told apart by hue
-/// alone: every state has its own glyph and label.
+/// 2.5.2 (gclient-only, outside the keep-set): a focused pane with no border
+/// keeps its metadata at the head of the status line, and only an exception
+/// there is a button. Focus is a condition; Read-only and Uncertain take
+/// control back on a press, the pointer resting on them underlines their
+/// words, and the words, not the hue, tell the states apart.
 #[test]
 fn control_indicator_is_a_button() {
     let palette = palette();
@@ -139,20 +139,30 @@ fn control_indicator_is_a_button() {
     ws.reconcile_subscribe_first().expect("install roster");
     ws.open_terminal("term-alpha", "native", "epoch")
         .expect("open terminal");
+    let pane = ws.pane_for_terminal("term-alpha").expect("term-alpha pane");
     let mut chrome = Chrome::dark();
-    chrome.open_pane(
-        ws.pane_for_terminal("term-alpha").expect("term-alpha pane"),
-        "alpha",
-    );
+    chrome.open_pane(pane, "alpha");
 
     let mut indicator = None;
-    let idle = render(80, 1, |frame| {
+    let focused = render(80, 1, |frame| {
         indicator = render_status_line(frame, frame.area(), &ws, &chrome);
     });
-    let indicator = indicator.expect("a focused pane draws the indicator");
-    let button = vec![" [○ observe]".to_string()];
+    assert_eq!(indicator, None, "focus is not a button");
+    assert_eq!(
+        rect_rows(&focused, Rect::new(0, 0, 18, 1)),
+        vec![" gclient · Focused".to_string()]
+    );
+
+    ws.pane_mut(pane).control = ControlState::LeaseLost;
+    ws.pane_mut(pane).take_back = true;
+    let lost = render(80, 1, |frame| {
+        indicator = render_status_line(frame, frame.area(), &ws, &chrome);
+    });
+    let indicator = indicator.expect("an exception draws the indicator");
+    let button = vec![" gclient · Read-only".to_string()];
+    let words = || indicator.x + 1..indicator.right();
     let underlined = |terminal: &Terminal<TestBackend>| -> Vec<bool> {
-        (indicator.x..indicator.right())
+        words()
             .map(|x| {
                 cell(terminal, x, indicator.y)
                     .modifier
@@ -160,19 +170,15 @@ fn control_indicator_is_a_button() {
             })
             .collect()
     };
-    assert_eq!(
-        rect_rows(&idle, indicator),
-        button,
-        "brackets frame the button"
-    );
+    assert_eq!(rect_rows(&lost, indicator), button);
     assert!(
-        underlined(&idle).iter().all(|cell| !cell),
+        underlined(&lost).iter().all(|cell| !cell),
         "nothing is underlined until the pointer rests on the button"
     );
     assert_eq!(
-        cell(&idle, indicator.x + 1, indicator.y).fg,
-        palette.subtext0,
-        "the colour stays the state's own token"
+        cell(&lost, indicator.x + 1, indicator.y).fg,
+        palette.yellow,
+        "the colour is the warning token"
     );
 
     chrome.hover = Some(Hit::ControlIndicator);
@@ -181,7 +187,7 @@ fn control_indicator_is_a_button() {
     });
     assert!(
         underlined(&hovered).iter().all(|cell| *cell),
-        "hover underlines the whole button"
+        "hover underlines the whole label"
     );
     assert_eq!(
         rect_rows(&hovered, indicator),
@@ -189,6 +195,17 @@ fn control_indicator_is_a_button() {
         "hover changes no text"
     );
 
+    ws.pane_mut(pane).take_back = false;
+    ws.pane_mut(pane).control = ControlState::UncertainReadOnly;
+    let uncertain = render(80, 1, |frame| {
+        render_status_line(frame, frame.area(), &ws, &chrome);
+    });
+    assert!(
+        rect_rows(&uncertain, Rect::new(0, 0, 20, 1))[0].starts_with(" gclient · Uncertain"),
+        "Uncertain reads apart from Read-only"
+    );
+
+    // The sidebar's per-row control glyphs still read without hue.
     let states = [
         (ControlState::Observe, false),
         (ControlState::Held, false),
