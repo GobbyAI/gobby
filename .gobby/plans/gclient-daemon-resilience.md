@@ -98,11 +98,16 @@ Josh, 2026-09-20:
    capacity redesign.
 4. gterm is not changed and its binary is not rebuilt, which also sidesteps the
    `--features vt-engine --bin gterm` trap (memory `b59e4ce9`).
-5. Keystrokes stay off the daemon (memory `b59e4ce9`). Nothing here optimises the
-   daemon keystroke path.
+5. Only direct-native `Input` and `Paste` bypass the daemon: gclient sends them on
+   the bound gterm frame stream under a daemon-issued grant (memory `b59e4ce9`).
+   The daemon remains authoritative for leases, workspace layout and workspace
+   mutation (memory `be35449d`). tmux, web and proxied input remain
+   daemon-mediated. D1a's removal of the per-key terminal-row lookup is the sole
+   daemon-input-path optimisation in scope; routing and authority do not change.
 6. Josh, 2026-09-21: P1 is the vehicle for reducing gclient's blocking dependency
-on the daemon. The split-right incident is evidence for the priority, not a proven
-root cause; the plan must leave a stack-level diagnostic for the next occurrence.
+   on the daemon. The split-right incident is evidence for the priority, not a
+   proven root cause; the plan must leave a stack-level diagnostic for the next
+   occurrence.
 
 Coordinator decision (gobby#14018, 2026-09-20): the near-ceiling gclient files are
 decomposed first in one behaviour-neutral refactor leaf (R1) so that every later
@@ -119,19 +124,21 @@ handler fixes) have landed, because P1-P3 rewrite `live_loop.rs`, `live.rs`,
 `live_attach.rs`, `control.rs` and `actions.rs`, and P4 touches `terminal_ws.py`.
 The coordinator gobby#14018 holds the epic until then.
 
-Clean cutover. No implementation leaf promotes a live binary by itself. After all
-P1-P4 commits and focused validation are green, announce the cutover with one
-`global` `gobby-agents:send_message` and wait until no spawned worker or close
-validator is live. Rebuild the coherent `gcode`/`gdaemon`/`ghook` set whenever its
-Rust inputs changed and promote it only through
+Shared clean-cutover gate. No implementation leaf promotes a live binary by itself.
+After all P1-P4 commits and focused validation are green, announce the cutover with
+one `global` `gobby-agents:send_message` and wait until no spawned worker or close
+validator is live. Any change to the gcore runtime-config carrier counts as an
+input change to the coherent `gcode`/`gdaemon`/`ghook` trio. Rebuild that complete
+trio and promote it only through
 `src/gobby/install/bin_set_coherence.py::promote_workspace_binary_set`; then build
 gclient with `cargo build --release -p gobby-client` and promote it separately
 through
 `src/gobby/cli/install_setup_gclient.py::install_gclient_from_submodule`, because
 `promote_workspace_binary_set` rejects gclient (memory `8303e661`). Restart the
 Python daemon from the main checkout and restart each validation gclient so it execs
-the new inode. gterm stays untouched in the planned work. If implementation evidence
-forces a gterm change, use the same announced quiet window, build with
+the new inode. Read the installed identity stamp and hashes from `~/.gobby/bin/`,
+never from `target/release/`. gterm stays untouched in the planned work. If
+implementation evidence forces a gterm change, use the same announced quiet window, build with
 `cargo build --release -p gobby-terminal --features vt-engine --bin gterm`, promote
 through `src/gobby/cli/install_setup_gterm.py::install_gterm_from_submodule`, and
 rerun the direct-pane checks. **Restraint rung 2:** reuse the repository's native
@@ -168,8 +175,8 @@ Implementer traps for P1 (recorded from the research pass):
 Out of scope: the Postgres capacity model (`docs/contracts/database-concurrency-v1.json`)
 and what consumed the direct-connection reserve during the 04:58 exhaustion; any
 change to gterm, `PROTOCOL_VERSION`, the lease model, or the daemon keystroke path
-for tmux, web and proxied panes beyond the per-key SELECT removal; re-adding an
-event-loop lag watchdog; reducing `REQUEST_DEADLINE`.
+for tmux, web and proxied panes beyond D1a's per-key terminal-row SELECT removal;
+re-adding an event-loop lag watchdog; reducing `REQUEST_DEADLINE`.
 
 ## P1: gclient loop never awaits the daemon
 `kind: framing`
@@ -254,6 +261,10 @@ the `mod live_api;` line only.
 behaviour-neutral, the crate must compile as a whole, and one green
 `cargo nextest run -p gobby-client` run is the whole verification. Splitting it
 would create per-file chores with no independent outcome.
+
+**Cutover:** R1 changes gclient and does not promote independently; after all
+leaves pass, it participates in the single shared clean-cutover gate in
+Constraints.
 
 **Research context:** Observed: `live.rs` holds `impl Workspace<LiveDaemon>` blocks
 whose functions gcode indexes as bare names (`fetch_roster`, `apply_live_event`);
@@ -382,6 +393,10 @@ proxy sources it returns the message for the job. Key `Geometry(pane)`, latest w
 the job sends viewport then resize so per-pane order holds. A direct `SetViewport`
 that hits backpressure reports `Backpressure` on the status line, not a toast.
 
+**Cutover:** A1 changes gclient and does not promote independently; after all
+leaves pass, it participates in the single shared clean-cutover gate in
+Constraints.
+
 **Research context:** Observed: `run_live_loop`
 (`crates/gclient/src/app/live_loop.rs`, ~176-481) is the biased select; the
 post-select code awaits `send_focus_hints_if_changed`
@@ -413,8 +428,10 @@ Planned verification: `cargo nextest run -p gobby-client --test loop_liveness`,
   `crates/gclient/tests/loop_liveness.rs::resize_burst_sends_at_most_one_resize_per_pane_in_flight`.
 - A1.5 - The coalescer keeps one in flight and the latest pending. test:
   `crates/gclient/src/app/live_loop/jobs/tests.rs::coalescer_keeps_one_in_flight_and_latest_pending`.
-- A1.6 - A direct source accepts `SetViewport` through `send_input`. symbol:
-  `UnixSocketFrameSource::send_input`.
+- A1.6 - A direct source accepts `SetViewport`; when its bounded writer is full,
+  the latest viewport is refused with `Backpressure`, the status line reports it,
+  and frames, ticks and input on another pane keep progressing. test:
+  `crates/gclient/tests/loop_liveness.rs::direct_set_viewport_backpressure_is_visible_and_never_stalls_the_loop`.
 
 ### A2 Typed input and control path [category: code] (depends: A1)
 `kind: deliverable`
@@ -446,11 +463,19 @@ The functions in `crates/gclient/src/app/live_loop/control.rs` become sync:
 `Scroll(pane)` for proxy sources and calls `send_input` for direct ones;
 `apply_control_outcome` and `apply_live_write_outcome` stay sync appliers;
 `move_live_focus` and `send_live_input` are sync. `Pane` gains `writer:
-Option<UnboundedSender<(u64, Value)>>` and `release_pending: bool`; a per-pane writer
-task drains the queue sequentially and reports one `Write` outcome per message, so
-typed order on proxied and tmux panes holds and `client_write_seq` is still assigned
-on the loop. Release-before-take on a focus move: `start_control_request` drains
-every `release_pending` pane into the spawned control task ahead of the take.
+Option<Sender<QueuedWrite>>`, queued-byte accounting and `release_pending: bool`;
+a per-pane writer task drains the queue sequentially and reports one `Write`
+outcome per message, so typed order on proxied and tmux panes holds and
+`client_write_seq` is still assigned on the loop. The channel is nonblocking and
+bounded at 256 messages and 1 MiB of queued payload per pane, reusing
+`PASTE_MAX_BYTES` as the byte ceiling. `try_send` rejects the newest input with
+`Backpressure` when either cap would be exceeded; it never drops, coalesces or
+reorders already accepted `Input` or `Paste` messages. A successful later enqueue
+clears the one-shot queue-full status. Release-before-take on a focus move:
+`start_control_request` drains every `release_pending` pane into the spawned control
+task ahead of the take. **Restraint rung 2:** reuse Tokio's bounded channel, the
+existing payload ceiling and the existing backpressure surface; add no queue
+framework or retry policy.
 
 `crates/gclient/src/app/live.rs` is at 986 lines and `crates/gclient/src/app/mod.rs`
 at 927: the control-request machinery (`request_control`, `awaiting_control`,
@@ -470,6 +495,10 @@ refusal toast moves to the `WorkspaceOp` outcome apply in `jobs_apply.rs`.
 **Granularity:** nine production files in one leaf because the sync conversion of
 `control.rs` changes the signature of every caller and the crate must compile in
 one commit; the callers cannot be separate leaves.
+
+**Cutover:** A2 changes gclient and does not promote independently; after all
+leaves pass, it participates in the single shared clean-cutover gate in
+Constraints.
 
 **Research context:** Observed: `send_live_input` (`control.rs` ~223-262) returns
 early when `!workspace.daemon_ready()` before checking `pane.writable()`; C1 later
@@ -503,8 +532,16 @@ carries the same fact). Planned verification: `cargo nextest run -p gobby-client
 - A2.6 - `send_workspace_op` no longer exists; every op sender is sync and the
   refusal toast is raised at apply. file:
   `crates/gclient/src/app/live_loop/workspace_actions.rs`.
+- A2.7 - Holding an attention-response request never stalls rendering; the
+  response outcome applies exactly once after release. test:
+  `crates/gclient/tests/loop_liveness.rs::a_held_attention_response_never_stalls_frames_or_applies_twice`.
+- A2.8 - Flooding a pane while `terminal_input` is held keeps its queue at or
+  below 256 messages and 1 MiB, rejects only the newest over-cap messages with
+  `Backpressure`, preserves accepted FIFO order after release, and leaves another
+  direct pane's input plus rendering live. test:
+  `crates/gclient/tests/loop_liveness.rs::a_held_terminal_input_flood_is_bounded_ordered_and_nonblocking`.
 
-### A3 Attach, recovery and open-unresolved as jobs [category: code] (depends: A2)
+### A3 Attach and recovery as jobs [category: code] (depends: A2)
 `kind: deliverable`
 
 Targets:
@@ -512,7 +549,6 @@ Targets:
 - `crates/gclient/src/app/live_attach/handshake.rs`
 - `crates/gclient/src/app/live_loop.rs::*` — scope-reason: the frame branch shrinks to classify plus issue; `FrameRecovery`, `deferred_input` and the inner select are deleted
 - `crates/gclient/src/app/attach.rs::Pane::begin_attaching`
-- `crates/gclient/src/app/live_workspace.rs::open_unresolved_terminals`
 - `crates/gclient/src/app/live_loop/jobs.rs`
 - `crates/gclient/src/app/live_loop/jobs_apply.rs`
 - `crates/gclient/tests/loop_liveness.rs`
@@ -532,8 +568,8 @@ gains `plan_attaches(now) -> Vec<AttachIssue>` and `apply_attach_result(..)` wit
 gate: pane exists, `Attaching{request_id, generation}` matches, attachment not
 tombstoned; a superseded result that carries a source is dropped and its attachment
 detached so the daemon does not hold a dangling attachment. `Pane::begin_attaching`
-sets `status_message = "attaching (direct|proxy)…"`. `open_unresolved_terminals`
-issues `Opened` jobs. C3's direct-first retry later lands inside `recover_job`.
+sets `status_message = "attaching (direct|proxy)…"`. C3's direct-first retry later
+lands inside `recover_job`.
 
 Frame recovery also becomes observable. The issue side emits one structured
 `tracing::warn!` when a real frame error starts recovery; the apply side emits one
@@ -557,6 +593,16 @@ render tick calls `plan_attaches` instead of `attach_ready_panes().await`; an in
 `attach_ready_panes()` (plan, await job, apply) stays for `reconcile_subscribe_first`
 and the existing tests.
 
+**Granularity:** A3 owns one attach/recovery state machine across six production
+files. The independently issuable `open_unresolved_terminals` path is split into
+A3b, so it can be implemented, tested and closed without coupling its event trigger
+to frame recovery. The handshake and its logging stay together because the same
+job/apply seam owns start, terminal outcome and stale-result disposal.
+
+**Cutover:** A3 changes gclient and does not promote independently; after all
+leaves pass, it participates in the single shared clean-cutover gate in
+Constraints.
+
 **Research context:** Observed: `attach_ready_panes` (`live_attach.rs` ~23-65)
 awaits `request_direct_source` then `begin_live_proxy_attach` per pane on the render
 tick; `recover_live_frame_error` (~174-203) routes every non-finalized error to
@@ -570,10 +616,9 @@ evidence. A3 removes the await from the loop and adds the start/give-up/completi
 records at the job/apply boundary.
 `AttachState` and `Pane::begin_attaching`/`install_attachment`/`begin_detaching`/
 `retire_attachment` live in `crates/gclient/src/app/attach.rs`; `DETACH_DEADLINE` is
-2 s. `open_unresolved_terminals` (`live_workspace.rs` ~79-100) awaits per terminal.
-Rejected: awaiting the attach inside the branch with a timeout (still parks the
-loop). Planned verification: `cargo nextest run -p gobby-client --test loop_liveness
---test frame_delivery --test reconciliation --test frame_source_live`.
+2 s. Rejected: awaiting the attach inside the branch with a timeout (still parks
+the loop). Planned verification: `cargo nextest run -p gobby-client --test
+loop_liveness --test frame_delivery --test reconciliation --test frame_source_live`.
 
 **Acceptance:**
 
@@ -593,7 +638,56 @@ pane, terminal, attachment, generation, stage, error class and elapsed time, whi
 successful replacement closes the attempt. test:
 `crates/gclient/tests/loop_liveness.rs::frame_errors_and_recovery_giveups_are_logged_with_pane_context`.
 
-### A4 Actions and event-driven refetches as jobs [category: code] (depends: A3, C3)
+### A3b Open unresolved terminals as jobs [category: code] (depends: A3)
+`kind: deliverable`
+
+Targets:
+- `crates/gclient/src/app/live_workspace.rs::*` — scope-reason: retains the inline helper and adds a sync planner for missing-terminal open jobs
+- `crates/gclient/src/app/live_events.rs`
+- `crates/gclient/src/app/live_loop.rs::*` — scope-reason: `handle_live_event` plans missing opens and routes `Opened` outcomes
+- `crates/gclient/src/app/live_loop/unresolved.rs`
+- `crates/gclient/src/app/live_loop/jobs.rs`
+- `crates/gclient/src/app/live_loop/jobs_apply.rs`
+- `crates/gclient/tests/loop_liveness.rs`
+
+The existing async `open_unresolved_terminals` stays for inline reconcile and test
+callers. A sync `plan_unresolved_opens` sibling snapshots the missing terminal ids;
+the live loop calls it after a workspace event and issues one keyed `Opened` job per
+terminal. `apply_live_event` no longer awaits an open. A repeated event coalesces on
+`Terminal(id)`, and an outcome applies only when that terminal is still unresolved
+in the current daemon generation.
+
+`crates/gclient/src/app/live_loop.rs` is at 879 production lines after the current
+checkout's prior edits: move unresolved-job issuance and outcome routing into new
+`crates/gclient/src/app/live_loop/unresolved.rs`; `live_loop.rs` gains only the
+module declaration and bounded calls.
+
+**Cutover:** A3b changes gclient and does not promote independently; after all
+leaves pass, it participates in the single shared clean-cutover gate in
+Constraints.
+
+**Research context:** Observed: `open_unresolved_terminals`
+(`crates/gclient/src/app/live_workspace.rs` ~79-100) collects missing terminals and
+awaits `open_live_terminal` serially. Its two current callers are `drain_receiver`
+and the `DaemonEvent::Workspace` arm in `apply_live_event` (both in
+`crates/gclient/src/app/live.rs` before R1, then `live_events.rs`). The former is an
+inline reconcile path and keeps the async helper; only the live-event path enters
+the nonblocking job seam. Planned verification: `cargo nextest run -p gobby-client
+--test loop_liveness --test reconciliation --test workspace`.
+
+**Acceptance:**
+
+- A3b.1 - A held unresolved-terminal open keeps frames, ticks and direct input
+  progressing, installs the terminal once after release, and coalesces repeated
+  workspace events. test:
+  `crates/gclient/tests/loop_liveness.rs::a_held_open_unresolved_terminal_job_is_coalesced_and_nonblocking`.
+- A3b.2 - The inline reconcile helper remains available while the live workspace
+  event path issues `Opened` jobs without awaiting. symbol:
+  `open_unresolved_terminals`.
+- A3b.3 - Unresolved-job issuance and apply helpers live outside the near-ceiling
+  loop module. file: `crates/gclient/src/app/live_loop/unresolved.rs`.
+
+### A4 Actions and event-driven refetches as jobs [category: code] (depends: A3b)
 `kind: deliverable`
 
 Targets:
@@ -635,6 +729,10 @@ rather than growth in `live_loop.rs`; `handle_live_event` only sets and drains f
 paths all consume the `Spawned`/`Terminated`/`Roster` outcome family introduced
 here; each test in the acceptance list exercises one path end to end.
 
+**Cutover:** A4 changes gclient and does not promote independently; after all
+leaves pass, it participates in the single shared clean-cutover gate in
+Constraints.
+
 **Research context:** Observed: `apply_live_event` (`live.rs` ~550-682 before R1)
 awaits `fetch_roster` on `Lagged` and on roster-changing events; `spawn_live_shell`
 (`actions.rs` ~927-953 before R1) awaits `terminal_create`, placement op, roster and
@@ -668,6 +766,10 @@ second action queue.
 reply is held keeps direct input, frame ingest and rendering live; the placement is
 applied only after its own job settles. test:
 `crates/gclient/tests/loop_liveness.rs::split_right_with_a_held_control_or_create_reply_keeps_the_window_live`.
+- A4.7 - Holding orphan inventory leaves the dialog and window live; after release,
+  orphan kills fan out concurrently and `DestroySummary` preserves one result per
+  requested orphan regardless of completion order. test:
+  `crates/gclient/tests/loop_liveness.rs::held_orphan_fetch_and_kill_fanout_are_nonblocking_and_complete`.
 
 ### A5 Launch and reconnect reconcile as a job [category: code] (depends: A4)
 `kind: deliverable`
@@ -698,6 +800,10 @@ delegates. `ReconnectSupervisor` is unchanged.
 body is a move out of `live.rs` and `live_loop.rs` into
 `crates/gclient/src/app/live_reconcile.rs`; `mod.rs` gains the module line only.
 
+**Cutover:** A5 changes gclient and does not promote independently; after all
+leaves pass, it participates in the single shared clean-cutover gate in
+Constraints.
+
 **Research context:** Observed: `reconnect_daemon_ws` (`live.rs` ~735-743) clears
 control on every pane then awaits `reconcile_subscribe_first`;
 `handle_reconnect_outcome` (`live_loop.rs` ~621-656) and `reconcile_ready` (~508-511)
@@ -714,6 +820,12 @@ reconciliation --test ws_golden`.
   `crates/gclient/tests/loop_liveness.rs::a_reconcile_from_a_stale_generation_is_dropped`.
 - A5.3 - The reconcile runs as one job and applies through the staleness gate.
   file: `crates/gclient/src/app/live_reconcile.rs`.
+- A5.4 - A bounded final audit enumerates launch/reconcile, control, input,
+  daemon-event, frame-recovery, sidebar, resize/tick attach, focus-hint, geometry,
+  attention, unresolved-open, roster/orphan and lifecycle-action paths; every
+  daemon-touching `run_live_loop` branch or post-select helper maps to a held-request
+  case that advances frames, ticks and unaffected direct input. test:
+  `crates/gclient/tests/loop_liveness.rs::every_run_live_loop_daemon_path_is_issued_without_awaiting`.
 
 ## P2: daemon health and load shedding
 `kind: framing`
@@ -725,7 +837,7 @@ beyond a `request_id` on `ping`. Every P2 production deliverable changes the
 gclient binary and therefore uses the shared clean-cutover gate after merge; none
 promotes independently.
 
-### B1 Daemon health from in-flight age [category: code] (depends: A3)
+### B1 Daemon health from in-flight age [category: code] (depends: A5)
 `kind: deliverable`
 
 Targets:
@@ -761,6 +873,10 @@ derivation are a move into new `crates/gclient/src/app/live_loop/health.rs` rath
 than growth in `crates/gclient/src/daemon/live.rs`, `crates/gclient/src/app/live_loop.rs`
 or `crates/gclient/src/ui/chrome.rs`, which gain only the field, the impl method and
 the trait method.
+
+**Cutover:** B1 changes gclient and does not promote independently; after all
+leaves pass, it participates in the single shared clean-cutover gate in
+Constraints.
 
 **Research context:** Observed: `LiveState` (`crates/gclient/src/daemon/live.rs`
 ~48-67) keeps `requests`, `writes` and `controls` maps of `ReplySender` keyed by
@@ -817,6 +933,10 @@ keepalive.
 a move into `crates/gclient/src/app/live_loop/health.rs`, not growth in
 `live_loop.rs`.
 
+**Cutover:** B2 changes gclient and the running Python daemon and does not promote
+or restart either independently; after all leaves pass, it participates in the
+single shared clean-cutover gate in Constraints.
+
 **Research context:** Observed: `_handle_ping` (`src/gobby/servers/websocket/handlers/core.py`
 ~154-171) replies `{"type": "pong", "latency": ...}` with no `request_id`;
 `LiveDaemon::request` (`crates/gclient/src/daemon/live.rs` ~440-487) correlates on
@@ -857,6 +977,10 @@ in `crates/gclient/src/app/live_sidebar.rs` after R1 and derive `DaemonHealth`
 from `LiveDaemon::oldest_inflight_age` and `daemon_ready` through the B1 helper;
 the loop tick is untouched.
 
+**Cutover:** B3 changes gclient and does not promote independently; after all
+leaves pass, it participates in the single shared clean-cutover gate in
+Constraints.
+
 **Research context:** Observed: `GIT_REFRESH_INTERVAL` and `ROSTER_REFRESH_INTERVAL`
 are constants in `crates/gclient/src/app/sidebar_model.rs` (~20-24);
 `request_git_refresh_if_due` and `request_roster_refresh_if_due` (`live.rs` ~376-393
@@ -886,7 +1010,7 @@ attachment can keep typing through a daemon outage and reconfirm its lease on
 reconnect. Every P3 production deliverable changes the gclient binary and therefore
 uses the shared clean-cutover gate after merge; none promotes independently.
 
-### C1 Keep control on disconnect for direct-granted panes [category: code] (depends: B3)
+### C1 Keep control on disconnect for direct-granted panes [category: code] (depends: B3, A5)
 `kind: deliverable`
 
 Targets:
@@ -909,9 +1033,16 @@ as today. Keystrokes keep flowing on the bound frame stream because
 `send_live_input` tests `pane.direct_input()` before `daemon_ready`. The contract's
 "A surviving grant does not mean typing survives a daemon outage" paragraph is
 rewritten to the new contract: a bound direct attachment keeps typing; the lease is
-reconfirmed on reconnect; a take by another client during the outage is impossible
-because the daemon that issues leases is the thing that is down. The guide's
+reconfirmed on reconnect; D3b's `ws_close` cleanup finalizes daemon-side attachment
+and lease state without revoking the current direct-native host grant. Explicit
+release, detach, takeover, terminal removal and non-direct cleanup still revoke.
+A take by another client during the outage is impossible because the daemon that
+issues leases is the thing that is down. The guide's
 status-string table and `Daemon restarts and reconnects` section follow.
+
+**Cutover:** C1 changes gclient and does not promote independently; after all
+leaves pass, it participates in the single shared clean-cutover gate in
+Constraints.
 
 **Research context:** Observed: `observe_daemon_disconnect` sets `daemon_ready =
 false` and calls `pane.clear_control(error.to_string())` for every pane;
@@ -956,6 +1087,10 @@ by another attachment drops the pane to Observe with take-back exactly as today.
 The daemon's grant of the new attachment id replaces the old grant in gterm, so
 nothing else is needed host-side. `lease_unconfirmed` clears on `granted`.
 
+**Cutover:** C2 changes gclient and does not promote independently; after all
+leaves pass, it participates in the single shared clean-cutover gate in
+Constraints.
+
 **Research context:** Observed: `restore_focused`
 (`crates/gclient/src/app/live_loop/projects.rs` ~253-266) retakes only the focused
 pane; `request_control`/`start_control_request` (in `live_control.rs` after A2)
@@ -988,6 +1123,10 @@ connect `frame_socket_path`, `AttachTerminal{host_terminal_id}`,
 id. Only a connect failure or a gterm refusal (`not_found`, `capacity`) falls
 through to the daemon path with the existing `Pane::defer_attach` backoff. The
 contract's frame-protocol section and the guide's reconnect section state the order.
+
+**Cutover:** C3 changes gclient and does not promote independently; after all
+leaves pass, it participates in the single shared clean-cutover gate in
+Constraints.
 
 **Research context:** Observed: `UnixSocketFrameSource::connect` and
 `from_stream` (`crates/gclient/src/frame_source.rs` ~437-587) open the frames socket
@@ -1310,10 +1449,14 @@ Targets:
 - `src/gobby/terminals/host_client.py::HostClient.grant_input`
 - `src/gobby/terminals/host_client.py::HostClient.revoke_input`
 - `src/gobby/terminals/host_client.py::HostClient.connect`
+- `src/gobby/terminals/host_client.py::HostClient.reconnect`
 - `src/gobby/terminals/host_process.py`
+- `src/gobby/terminals/native_runtime.py::*` — scope-reason: grant/revoke/reconnect orchestration moves to the new helper module and the runtime methods become delegates
+- `src/gobby/terminals/native_input_grants.py`
 - `src/gobby/config/terminal_host.py::TerminalHostConfig`
 - `crates/gcore/assets/config/runtime_config_contract.json::*` — scope-reason: regenerated derived carrier for the new config field
 - `tests/terminals/test_host_client.py::*` — scope-reason: adds the deadline tests beside the round-trip tests
+- `tests/terminals/test_native_runtime.py::*` — scope-reason: adds the aggregate grant/revoke deadline and double-stall cleanup tests
 - `tests/config/test_terminal_host_config.py::*` — scope-reason: adds the new field's default and bounds
 
 Consumers unchanged:
@@ -1323,7 +1466,7 @@ Consumers unchanged:
 - `src/gobby/terminals/host_event_reader.py` — no-edit-reason: opens its own `HostClient` for the event stream with the default deadline.
 - `tests/terminals/host_fakes.py` — no-edit-reason: fakes `grant_input`/`revoke_input` with unchanged signatures.
 - `tests/agents/test_spawn_executor.py` — no-edit-reason: calls `HostClient.connect` through fakes; the deadline keyword is optional.
-- `tests/e2e/test_terminal_client_stack.py` — no-edit-reason: calls `HostClient.connect` with the default deadline.
+- `tests/agents/test_native_spawn.py` — no-edit-reason: its reconnect fake keeps the unchanged optional-deadline interface.
 - `src/gobby/app_context.py` — no-edit-reason: reads `TerminalHostConfig`; the new field has a default.
 - `src/gobby/config/app.py` — no-edit-reason: nests `TerminalHostConfig`; the new field has a default.
 - `src/gobby/runner.py` — no-edit-reason: reads `TerminalHostConfig`; the new field has a default.
@@ -1332,21 +1475,39 @@ Consumers unchanged:
 - `tests/terminals/test_host_shutdown_preservation.py` — no-edit-reason: constructs `TerminalHostConfig` with defaults.
 - `tests/test_runner_lifecycle_processes.py` — no-edit-reason: constructs `TerminalHostConfig` with defaults.
 
-`HostClient._roundtrip` gains `deadline_seconds` with a default taken from a new
-`TerminalHostConfig.control_timeout_seconds` (5.0), passed at
-`HostClient.connect` from the manager's connect site (in `host_process.py` after
-D1d); `spawn_commit` keeps `commit_deadline_ms`; `grant_input` and `revoke_input`
-pass 1.5 s so they finish inside gclient's 2 s `CONTROL_REQUEST_DEADLINE`. On
-timeout an `asyncio.timeout` scope cancels the pending future (so `_begin_request`'s
-existing done callback removes it from `_pending`) and raises
-`HostUnavailableError("timed out")`, which `sync_host_input_grant` already maps to
-`host_input_granted=False` and the client already answers with take-back. D3b
-separately removes the terminal lease lock from the external wait; the timeout
-remains the bound on the gterm control operation and on the per-terminal host-sync
-queue. The config field is a `src/gobby/config/` change, so the runtime config
-contract carrier is regenerated in the same commit. **Restraint rung 3:** use
-stdlib `asyncio.timeout` around the existing future and its cancellation cleanup;
-add no retry framework.
+`HostClient._roundtrip` accepts one absolute event-loop deadline, defaulted from a
+new `TerminalHostConfig.control_timeout_seconds` (5.0) stored by
+`HostClient.connect`; its timeout scope begins before the lifecycle/writer lock and
+`_begin_request`, so lock acquisition, write/drain and reply wait share one budget.
+`spawn_commit` keeps `commit_deadline_ms`.
+
+`NativeTerminalRuntime.grant_input` and `revoke_input` each compute one absolute
+1.5 s deadline before `_ensure`. That same deadline covers ensure, first round trip,
+reconnect, retry, writer lock/drain and reply. `_reconnect_epoch`,
+`HostClient.reconnect`, `grant_input`, `revoke_input` and `_roundtrip` receive only
+the remaining time/absolute deadline; no phase or retry resets it. Expiry cancels
+the active pending future, lets `_begin_request`'s existing done callback remove it
+from `_pending`, and raises `HostUnavailableError("timed out")`. Thus the complete
+operation stays below gclient's 2 s `CONTROL_REQUEST_DEADLINE`, including when both
+attempts stall. `sync_host_input_grant` already maps that error to
+`host_input_granted=False`.
+
+`src/gobby/terminals/native_runtime.py` is at 851 lines: move the grant/revoke and
+reconnect deadline orchestration into new
+`src/gobby/terminals/native_input_grants.py`; the three targeted runtime methods
+delegate with the runtime/client/terminal inputs and do not grow the near-ceiling
+module.
+
+D3b separately removes the lease lock from the external wait. The config field is
+a `src/gobby/config/` change, so the runtime config contract carrier is regenerated
+in the same commit. That gcore carrier dirties the coherent
+`gcode`/`gdaemon`/`ghook` trio. D3 does not promote independently: after every leaf
+passes, one batched global quiet-window gate rebuilds and promotes the trio through
+`promote_workspace_binary_set`, promotes gclient separately through
+`install_gclient_from_submodule`, restarts from the main checkout, and reads the
+installed identity and hashes from `~/.gobby/bin/`. **Restraint rung 3:** use stdlib
+absolute timeout scopes and the existing pending-future cleanup; add no retry or
+deadline framework.
 
 **Research context:** Observed: `HostClient._roundtrip`
 (`src/gobby/terminals/host_client.py` ~317-353) does `payload = await future` with
@@ -1357,7 +1518,8 @@ no deadline; `grant_input` (~624-632) and `revoke_input` (~634-644) call it;
 planning draft's `control_timeout_seconds = 5.0` is a new field, not an existing
 one); `take_control` (`src/gobby/terminals/leases.py` ~421-455) holds `self.lock`
 across `_notify_holder`; `NativeTerminalRuntime.grant_input` (~697-706) retries once
-with a reconnect. Planned verification:
+with a reconnect and `revoke_input` (~713-722) does the same;
+`_reconnect_epoch` (~846-851) has no timeout argument. Planned verification:
 `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test
 GOBBY_TEST_PROTECT=1 uv run pytest tests/terminals/test_host_client.py
 tests/config/test_terminal_host_config.py tests/terminals/test_native_runtime.py
@@ -1368,49 +1530,80 @@ tests/servers/test_terminal_ws_lease.py`; `uv run mypy src/`.
 - D3.1 - A round trip past its deadline raises `HostUnavailableError("timed out")`
   and drops the pending future. test:
   `tests/terminals/test_host_client.py::test_roundtrip_times_out_with_host_unavailable`.
-- D3.2 - Grant and revoke use a 1.5 s deadline. test:
-  `tests/terminals/test_host_client.py::test_grant_and_revoke_use_the_control_deadline`.
+- D3.2 - Grant and revoke use one absolute 1.5 s budget across ensure, attempt,
+  reconnect and retry. With both attempts stalled, virtual elapsed time is 1.5 s,
+  wall time stays below 2 s, and every HostClient pending entry is removed. test:
+  `tests/terminals/test_native_runtime.py::test_grant_and_revoke_double_stall_share_one_deadline_and_clear_pending`.
 - D3.3 - `control_timeout_seconds` defaults to 5.0 and is exported to the runtime
   config contract. test:
   `tests/config/test_terminal_host_config.py::test_control_timeout_seconds_default`.
+- D3.4 - Validation treats the regenerated gcore carrier as an input change to the
+  coherent trio and records the batched installed identity/hashes from
+  `~/.gobby/bin/` plus separate gclient promotion. file:
+  `crates/gcore/assets/config/runtime_config_contract.json`.
 
-### D3b Host grant reconciliation never holds the terminal lease lock [category: code] (depends: D2, D3)
+### D3b Host grant reconciliation never holds the terminal lease lock [category: code] (depends: D2, D3, C2)
 `kind: deliverable`
 
 Targets:
 - `src/gobby/terminals/leases.py::*` — scope-reason: `HolderChange`, holder-sync cells/tasks, `_notify_holder`, `take_control`, `release_control` and `finalize` move every host observer await outside the lease lock
 - `tests/terminals/test_lease_authority.py::*` — scope-reason: adds transition, race and cancellation coverage for the two lock domains
 - `tests/servers/test_terminal_ws_lease.py::*` — scope-reason: adds the unanswered real HostClient grant diagnostic shared with D2
+- `tests/e2e/test_terminal_client_stack.py::*` — scope-reason: adds the real WebSocketServer, HostClient and gterm daemon-restart continuity test
 
 Consumers unchanged:
 - `src/gobby/terminals/input_grants.py` — no-edit-reason: `sync_host_input_grant` keeps the same runtime/terminal/holder signature and error mapping.
 
 Every holder mutation stays atomic under `lock(terminal_id)`, captures a
-`HolderChange` with the resulting lease generation, then releases that lock before
-starting `_notify_holder`. Host notifications serialize under a separate
-per-terminal holder-sync lock. After acquiring that lock, `_notify_holder` briefly
-reacquires the lease lock to compare the captured generation and holder with the
-current lease, skips a stale change, releases the lease lock, and only then awaits
-the gterm observer. If an older sync already owns the holder-sync lock when a newer
-lease mutation commits, the newer sync queues behind it and is therefore the last
-host effect; if the newer mutation wins the sync lock first, the older generation is
-skipped. Repeated take, first take/takeover, release and finalize all use this one
-seam; the four existing observer awaits at observed lines 437, 446, 470 and 494 are
-removed from their lease-lock scopes.
+`HolderChange` with the resulting lease generation and host-grant disposition, then
+releases that lock before starting `_notify_holder`. Host notifications serialize
+under a separate per-terminal holder-sync lock. After acquiring that lock,
+`_notify_holder` briefly reacquires the lease lock to compare the captured
+generation, holder and disposition with the current lease, skips a stale change,
+releases the lease lock, and only then awaits the gterm observer.
+
+The disposition is explicit. Repeated take, first take/takeover, explicit release,
+explicit detach, terminal removal and cleanup of a non-direct holder synchronize
+the resulting holder and therefore revoke or replace an old grant as appropriate.
+`finalize(reason="ws_close")` for the current direct-native holder still finalizes
+the attachment, clears daemon-side holder/write/sizing state and bumps the
+generation, but records `PreserveCurrentDirectGrant` and makes no revoke call. That
+is the only preservation case. A later C2 take replaces the surviving grant with
+the new attachment id. The lease's latest generation retains this disposition so a
+cancellation recovery cannot turn the preserve transition into a revoke.
+
+If an older sync already owns the holder-sync lock when a newer lease mutation
+commits, the newer sync queues behind it and is therefore the last host effect; if
+the newer mutation wins the sync lock first, the older generation is skipped. The
+four existing observer awaits at observed lines 437, 446, 470 and 494 are removed
+from their lease-lock scopes.
 
 The lane directly awaits `_sync_committed_holder(change)` outside the lease lock so
 the D2 await-chain dump reaches `_notify_holder`, `sync_host_input_grant` and
 `HostClient._roundtrip`. If lane cancellation interrupts that await, the wrapper
 synchronously creates a registry-owned `reconcile_latest_holder(terminal_id)` task
 before re-raising `CancelledError`; the task is kept in a strong-reference set until
-its done callback removes it. It snapshots the current generation/holder under the
-lease lock, releases it, then uses the same holder-sync lock to apply the latest
-host state. Socket-close `finalize` therefore converges to revoke even when the
-cancelled take had already written its grant. No lease mutation, write admission or
-sizing decision waits on gterm. **Restraint rung 2:** reuse the registry's existing
+its done callback removes it. `reconcile_latest_holder` acquires the holder-sync
+lock first, then snapshots the current generation, holder and disposition under the
+lease lock, releases only the lease lock, and applies or preserves that latest host
+state while still owning the holder-sync lock. If a newer normal sync wins the
+holder-sync lock first, recovery snapshots the newer state after it; if recovery
+wins first, a later mutation queues and writes last. No pre-lock snapshot can be
+applied after a newer host effect. No lease mutation, write admission or sizing
+decision waits on gterm. **Restraint rung 2:** reuse the registry's existing
 per-terminal lock-cell pattern and holder observer; introduce one separate sync
 lock plus cancellation-recovery task set because the external effect cannot safely
 share the lease-state lock.
+
+Before changing `leases.py`, the D3b executor adds the real unanswered-grant harness
+to `tests/servers/test_terminal_ws_lease.py` and runs it on the D2+D3 predecessor.
+The retained task-validation checkpoint must contain the D2 watchdog await chain
+`TerminalLeaseRegistry._notify_holder → sync_host_input_grant →
+HostClient._roundtrip` and `lock_held(terminal_id) == true`. A mismatch blocks D3b
+implementation and the shared cutover while the premise is corrected from the
+captured evidence; it does not block plan expansion and it does not prove the
+historical 2026-09-21 incident. After the repair, the same real seam must show the
+chain with `lock_held == false` and bounded progress.
 
 **Research context:** gcode verified `TerminalLeaseRegistry.take_control`
 (`src/gobby/terminals/leases.py` 421-455), `release_control` (457-478) and
@@ -1424,26 +1617,41 @@ therefore includes repeated take, takeover, release, finalize and cancellation,
 not only the two reported line locations. Planned verification:
 `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test
 GOBBY_TEST_PROTECT=1 uv run pytest tests/terminals/test_lease_authority.py
-tests/servers/test_terminal_ws_lease.py tests/terminals/test_host_client.py`;
+tests/servers/test_terminal_ws_lease.py tests/terminals/test_host_client.py` plus the
+isolated native backend case in `tests/e2e/test_terminal_client_stack.py`;
 `uv run mypy src/`.
 
 **Acceptance:**
 
-- D3b.1 - The holder observer sees `lock_held(terminal_id) == false` for repeated
-take, first take/takeover, release and finalize. test:
-`tests/terminals/test_lease_authority.py::test_every_holder_transition_notifies_outside_the_lease_lock`.
+- D3b.1 - The transition matrix sees `lock_held(terminal_id) == false`; direct
+  `ws_close` preserves the current host grant, while repeated/first take, takeover,
+  explicit release, detach, terminal removal and non-direct cleanup replace or
+  revoke it. test:
+  `tests/terminals/test_lease_authority.py::test_holder_transition_matrix_applies_preserve_and_revoke_policies_outside_the_lease_lock`.
 - D3b.2 - A stalled older grant cannot overwrite a newer takeover or final revoke;
 after the stall releases, the last host notification matches the latest generation.
 test:
 `tests/terminals/test_lease_authority.py::test_stalled_holder_sync_converges_to_the_latest_generation`.
-- D3b.3 - Cancelling the websocket lane after the lease mutation does not cancel
-host reconciliation, and socket-close finalize still revokes. test:
-`tests/terminals/test_lease_authority.py::test_cancelled_take_keeps_committed_host_sync_and_finalize_revokes`.
+- D3b.3 - With a real WebSocketServer, HostClient and gterm, restarting the isolated
+  daemon finalizes its websocket state without revoking the direct grant; `Input`
+  typed after cleanup starts and while the reconnect take is paused still reaches
+  the PTY, then C2 replaces the grant and an explicit detach refuses later input.
+  test:
+  `tests/e2e/test_terminal_client_stack.py::test_direct_native_input_survives_daemon_restart_until_lease_retake`.
 - D3b.4 - An actual `HostClient` grant whose writer never receives a reply produces
 the D2 watchdog stack containing `_roundtrip`, times out by 1.5 s, clears its
 pending request, and does not block another connection lane or the lease-state lock.
 test:
 `tests/servers/test_terminal_ws_lease.py::test_unanswered_host_grant_is_diagnosed_bounded_and_lock_free`.
+- D3b.5 - In the barrier race where the newer normal sync wins the holder-sync lock
+  before recovery, recovery snapshots only after acquiring that lock and the final
+  host state still matches the newest generation. test:
+  `tests/terminals/test_lease_authority.py::test_reconcile_latest_holder_snapshots_under_the_sync_lock_after_newer_sync_wins`.
+- D3b.6 - Task validation retains the pre-repair watchdog chain with
+  `lock_held == true` and the post-repair chain with `lock_held == false`; absence
+  of the pre-repair chain stops D3b and cutover without claiming historical cause.
+  test:
+  `tests/servers/test_terminal_ws_lease.py::test_unanswered_host_grant_causal_checkpoint`.
 
 ### D4 Pool exhaustion diagnosis [category: code]
 `kind: deliverable`
@@ -1489,7 +1697,7 @@ tests/telemetry/test_logging.py`.
 - D4.2 - `psycopg.pool` warnings reach the daemon log. test:
   `tests/telemetry/test_logging.py::test_psycopg_pool_warnings_reach_the_daemon_log`.
 
-### E1 Drop the undrained host event subscription [category: code]
+### E1 Drop the undrained host event subscription [category: code] (depends: D3)
 `kind: deliverable`
 
 Targets:
@@ -1542,22 +1750,27 @@ Render characterisations in `crates/gclient/tests/parity/chrome.rs` and
 `crates/gclient/tests/fixtures/screens/*.txt` change only if status-line text
 changes (B1, C1); regenerate with `GOBBY_UPDATE_SCREENS=1` in the same commit.
 
-Freeze hypothesis, isolated and falsifiable: run
-`tests/servers/test_terminal_ws_lease.py::test_unanswered_host_grant_is_diagnosed_bounded_and_lock_free`
-with the isolated hub. Its unanswered gterm control writer must make the D2 watchdog
-capture a stack containing `TerminalLeaseRegistry._notify_holder`,
-`sync_host_input_grant` and `HostClient._roundtrip`, while another connection lane
-and the lease-state lock still progress; D3 then ends the host wait by 1.5 s and
-clears `_pending`. That result proves the proposed chain is reproducible, not that it
-caused the historical 2026-09-21 freeze. A stack without that chain refutes the
-hypothesis and blocks expansion until this premise is corrected from the captured
-evidence. **Restraint rung 2:** use the real handler/lease/HostClient test seam and
-the D2 watchdog; add no production fault-injection switch.
+Freeze hypothesis, isolated causal checkpoint: after D2 and D3 pass but before any
+D3b edit, run
+`tests/servers/test_terminal_ws_lease.py::test_unanswered_host_grant_causal_checkpoint`
+with the isolated hub. Retain the D2 watchdog stack containing
+`TerminalLeaseRegistry._notify_holder`, `sync_host_input_grant` and
+`HostClient._roundtrip` plus `lock_held(terminal_id) == true` in D3b's task
+validation evidence. If the chain or lock state differs, stop D3b and the shared
+cutover and correct the implementation premise from that evidence; expansion has
+already occurred and is not the gate. After D3b, run
+`test_unanswered_host_grant_is_diagnosed_bounded_and_lock_free`: the same chain must
+show `lock_held == false`, another lane and lease-state operation must progress, and
+D3 must end the complete host operation within 1.5 s with `_pending` empty. These
+checkpoints reproduce and remove the proposed mechanism; neither proves that it
+caused the historical 2026-09-21 incident. **Restraint rung 2:** use the real
+handler/lease/HostClient seam and D2 watchdog; add no production fault-injection
+switch.
 
-Clean-cutover window: send one `global` announcement, wait for no live spawned
-worker or close validator, rebuild all changed native binaries, and promote any
-rebuilt coherent `gcode`/`gdaemon`/`ghook` set through
-`promote_workspace_binary_set`. Promote rebuilt gclient through
+Clean-cutover window: send one `global` announcement and wait for no live spawned
+worker or close validator. D3's gcore runtime-config carrier dirties the coherent
+set, so rebuild all three of `gcode`/`gdaemon`/`ghook` and promote them together
+through `promote_workspace_binary_set`. Build and promote gclient separately through
 `install_gclient_from_submodule` (never pass gclient to the coherent-set function),
 restart the Python daemon from the main checkout, then restart the validation
 gclient so it execs the new inode. If implementation changed gterm, build it with
@@ -1566,9 +1779,16 @@ gclient so it execs the new inode. If implementation changed gterm, build it wit
 identity/hash evidence from `~/.gobby/bin/`, not `target/release/`.
 
 gclient live, the freeze: with the promoted binaries and a direct pane held, run
-`kill -STOP <daemon pid>` for 5 s while typing: keystrokes appear immediately, the
-status line shows `Daemon slow` then `Daemon unreachable.`, the window keeps
-rendering, no pane changes state; `kill -CONT` recovers without take-back. Then run
+`kill -STOP <daemon pid>` at t=0, immediately focus another project to issue its
+scoped `terminal_list` roster request, and keep the daemon stopped for at least 6 s
+after that request. The held request must be observable as `Daemon slow` by t=1 s;
+if it is not, the request did not issue and the check restarts. It reaches
+`REQUEST_DEADLINE` at t=5 s, at which point the status becomes
+`Daemon unreachable.`, a reconnect attempt is scheduled, and the direct pane stays
+Held with an unconfirmed lease. Throughout t=0-6 s, keystrokes appear immediately,
+frames and ticks advance, and proxied input does not claim success. Run
+`kill -CONT <daemon pid>` only after t=6 s and verify reconnect clears the banner
+and reconfirms the direct lease without take-back. Then run
 the announced `uv run gobby restart --wait` while typing in a direct pane: typing
 never stops; after reconnect the pane shows Held again with the lease reconfirmed; a
 proxied pane drops to observe and comes back on take. Trigger one mock frame error
@@ -1594,3 +1814,15 @@ protocol contract (no `gobby docs` CLI exists). Never run the full pytest suite.
 - 2026-09-21: made the split-right freeze hypothesis falsifiable; added lane stack
 watchdogs, lock-free host-grant reconciliation, frame-recovery logging, and the
 shared native-binary clean-cutover gate.
+- 2026-09-21: resolved GDR-R1-F01 through F11 with corrected ordering, restart-grant
+  continuity, aggregate deadlines, lock ordering, path-complete tests and bounded input.
+
+Round 1 adversarial review (plan-adversary-taskless run 47e9dd2e, 2026-09-21 10:1x): needs_review, 11 blocking findings, 2 candidates dismissed. The coordinator (the assistant gobby#14069, under delegated planning-lane authority from the orchestrator gobby#14018) accepted all 11.
+
+GDR-R1-F01 (C1 creation order), F02 (the direct grant is revoked on ws_close across restart), F03 (aggregate host-grant deadline), F04 (reconcile_latest_holder lock order), F05 (A3 granularity decision), F06 (P1 path acceptance parity), F07 (Decision Record direct-input authority boundary), F08 (freeze-hypothesis falsification order), F09 (SIGSTOP health timing), F10 (D3 binary cutover self-contained), F11 (bounded proxied-input queue).
+
+F02 resolution direction: keep direct typing uninterrupted across a daemon restart (Josh 2026-09-21: 'seriously reduce blocking dependency on the daemon in gclient'). ws_close finalize must not revoke the current direct host grant; explicit release, detach, takeover and terminal removal still revoke. The revision goes to the planner under #22663.
+
+```json plan-review-round
+{"evidence_id":"4406027e-ff69-44c5-8820-35a005a20a7f","plan_hash":"04c1c42eb897f6f2d63000b09244f7ab10bfac11ee839bf3a4c8bf82a039dcee","round_number":1,"round_result":{"coverage_attestation":{"adjacent_variant_complete":true,"attestation_digest":"c6ff1b2bfd0589ec6a75bb75c21893a61975cc90b2529ae6c07c3e05e51a1f7a","cross_lane_interaction_complete":true,"disposition_counts":{"dismissed":2,"emitted_findings":11,"total":13},"evidence_id":"4406027e-ff69-44c5-8820-35a005a20a7f","lanes":[{"candidate_count":8,"lane_id":"requirements_traceability","status":"completed"},{"candidate_count":1,"lane_id":"repository_blast_radius","status":"delegated-verified"},{"candidate_count":4,"lane_id":"runtime_invariants","status":"completed"}],"shadow_manifest_status":{"entry_count":22,"manifest_digest":"8c306493dde84d775551d311d0c522b34eff15a2ed296253145d5cc21c32be9f","status":"valid"},"source_digest":"342770e1fc2598507eef652557787071dcb9076fc031e2d761fd0c5e20701996","version":1},"findings":[{"category":"bad-sequencing","check_key":"live-reconcile-creation-order","description":"C1 targets crates/gclient/src/app/live_reconcile.rs, but that file is created by A5. The current graph is C1→C2→C3→A4→A5, so C1 runs before its target exists and P1 is unnecessarily serialized behind P2/P3.","finding_id":"GDR-R1-F01","fix":"Remove C3 from A4's dependencies so A5 follows A4 and creates live_reconcile.rs; then make C1 depend on B3 and A5, leaving C2 and C3 after C1. Update the affected headings and manifest edges.","location":".gobby/plans/gclient-daemon-resilience.md:596,672-699,889-904","prevention":"Topologically walk every new-file target and verify its creating deliverable precedes every consumer; justify each cross-phase edge with the exact produced interface.","principle":"Each deliverable must be executable against the repository state produced by its declared predecessors, and dependency edges must encode real prerequisites.","root_cause":"A4 was made dependent on C3 even though it consumes no C3 interface, which places C1 before A5 even though C1 targets the file A5 creates.","section_id":"C1","severity":"blocking"},{"category":"unhandled-edge","check_key":"restart-grant-survival","description":"A graceful daemon restart revokes the direct gterm grant before gclient can re-take it. The next direct Input is refused, so the plan cannot satisfy 'typing never stops' while D3b.3 requires socket-close finalize to revoke.","finding_id":"GDR-R1-F02","fix":"Choose and specify one coherent contract. To preserve uninterrupted direct typing, make ws_close finalize daemon-side state without revoking the current direct host grant, while explicit release, detach, takeover, terminal removal, and non-direct cleanup still revoke; revise D3b.3 and add a real WebSocketServer/HostClient/gterm restart test that types after cleanup starts and before C2 completes. Otherwise narrow C1/Q1 to admit interruption and take-back.","location":".gobby/plans/gclient-daemon-resilience.md:902-914,1401-1441; src/gobby/servers/websocket/tmux.py:110-122; src/gobby/terminals/leases.py:480-529; src/gobby/terminals/input_grants.py:49-79","prevention":"Trace disconnect behavior end to end through client, websocket cleanup, lease finalization, host reconciliation, and gterm admission before promising continuity.","principle":"A claimed outage invariant must hold across both client state and authoritative server cleanup transitions.","root_cause":"C1 reasons only about gclient retaining Held, while current websocket cleanup finalizes the attachment and synchronizes holder=None to gterm as revoke; D3b.3 explicitly preserves that revoke.","section_id":"C1","severity":"blocking"},{"category":"unhandled-edge","check_key":"host-grant-aggregate-deadline","description":"grant_input/revoke_input can wait 1.5 seconds, reconnect without a bound, then wait another 1.5 seconds. The operation can exceed gclient's 2-second CONTROL_REQUEST_DEADLINE and block D3b's per-terminal host-sync lane longer than the plan claims.","finding_id":"GDR-R1-F03","fix":"Target NativeTerminalRuntime.grant_input/revoke_input and apply one absolute sub-2-second budget across ensure, first attempt, reconnect, retry, writer lock/drain, and reply wait, passing only remaining time downstream. Add a test where both attempts stall and assert total elapsed time remains below the client deadline and all HostClient pending entries clear.","location":".gobby/plans/gclient-daemon-resilience.md:1335-1364,1368-1375,1442-1446; src/gobby/terminals/native_runtime.py:702-722,846-851","prevention":"For every timeout claim, enumerate all awaited phases and retries and test wall-clock time through the highest-level operation.","principle":"A deadline promised to an upstream caller must bound the complete operation, including reconnect and retry, not each individual attempt.","root_cause":"D3 adds a 1.5-second HostClient round-trip timeout but leaves NativeTerminalRuntime's reconnect-and-retry behavior outside that budget.","section_id":"D3","severity":"blocking"},{"category":"unhandled-edge","check_key":"reconcile-latest-lock-order","description":"A newer mutation can commit and win the holder-sync lock, apply the new holder, and release it; the recovery task can then acquire the lock and apply its older pre-lock snapshot last.","finding_id":"GDR-R1-F04","fix":"Specify that reconcile_latest_holder acquires the per-terminal holder-sync lock first, then snapshots the current generation/holder under the lease lock, releases only the lease lock, and performs the host await. Add a barrier-driven race test where the newer normal sync wins first and final host state still matches the newest generation.","location":".gobby/plans/gclient-daemon-resilience.md:1401-1413,1435-1441","prevention":"For every two-lock recovery path, enumerate both lock-acquisition races and prove the final external write corresponds to the newest committed generation.","principle":"Recovery that promises latest-state convergence must linearize its snapshot with the serializer for the external effect.","root_cause":"reconcile_latest_holder snapshots generation/holder under the lease lock before acquiring the holder-sync lock.","section_id":"D3b","severity":"blocking"},{"category":"gobby-format","check_key":"granularity-decision","description":"A3 exceeds the plan-coverage granularity threshold but lacks the required decision; unlike A2 and A4, it does not explain why all targeted production changes must land together.","finding_id":"GDR-R1-F05","fix":"Add a bounded Granularity paragraph proving the seven-file change is one compile/runtime seam, or split open_unresolved job conversion and/or recovery logging into independently closeable deliverables with explicit dependencies and acceptance.","location":".gobby/plans/gclient-daemon-resilience.md:507-594","prevention":"Count distinct production files for every deliverable after target expansion and add the required bounded Granularity decision before review.","principle":"A deliverable touching more than six distinct hand-maintained production files must record why the work is inseparable or be split into independently closable leaves.","root_cause":"A3 combines handshake/recovery, loop integration, unresolved-terminal opening, outcome application, and logging across seven production files without a Granularity decision.","section_id":"A3","severity":"blocking"},{"category":"traceability","check_key":"p1-path-acceptance-parity","description":"Acceptance does not directly cover SetViewport backpressure status, attention-response job conversion, open_unresolved_terminals job conversion, or orphan fetch/kill fan-out with DestroySummary. Existing tests can pass while those paths remain blocking or behavior regresses.","finding_id":"GDR-R1-F06","fix":"Add named held-request liveness/behavior tests for each uncovered path and a bounded final audit proving every run_live_loop branch and post-select helper issues daemon work without awaiting it.","location":".gobby/plans/gclient-daemon-resilience.md:374-383,403-417,464-468,503-505,535-536,578-594,617-628,654-670","prevention":"Build a requirement-to-acceptance matrix for every run_live_loop branch and post-select helper before declaring P1 complete.","principle":"Every behavior and changed path needed for the primary goal must have artifact-backed acceptance that can fail if that path still awaits the daemon or loses its promised outcome.","root_cause":"Implementation prose and Targets were expanded without matching acceptance for several newly converted paths.","section_id":"A1","severity":"blocking"},{"category":"traceability","check_key":"direct-input-authority-boundary","description":"The Decision Record does not preserve b59e4ce9/be35449d precisely: the daemon still owns leases, layout, and workspaces; tmux/web/proxy input remains daemon-mediated; only direct-native keystrokes bypass it. D1a's per-key SELECT removal also contradicts 'Nothing here optimises the daemon keystroke path.'","finding_id":"GDR-R1-F07","fix":"Rewrite the decision boundary verbatim in architectural terms and name D1a's existing per-key lookup removal as the sole daemon-input-path optimization in scope.","location":".gobby/plans/gclient-daemon-resilience.md:91-102,168-172","prevention":"Transcribe owner decisions as an explicit matrix of transport, authority, and in-scope exceptions.","principle":"A plan must state owner decisions at their exact authority boundary and must not contradict its own scoped exception.","root_cause":"The shorthand 'Keystrokes stay off the daemon' omits that only direct-native Input/Paste bypass it, while the next sentence denies optimization of a daemon keystroke path that D1a explicitly optimizes.","section_id":"Decision Record","severity":"blocking"},{"category":"weak-testability","check_key":"freeze-hypothesis-falsification-order","description":"The final D3b test can show an unanswered HostClient wait and prove lock-free bounded recovery, but it cannot prove or refute the original claim that the wait occurred while the lease lock was held.","finding_id":"GDR-R1-F08","fix":"Add an explicit checkpoint after D2/D3 but before D3b that captures the watchdog chain and lock-held=true against the pre-D3b behavior; retain that evidence, then run the final D3b test for lock-held=false and bounded progress. Rephrase Q1 so a mismatch blocks D3b/cutover, not expansion, and do not claim proof of the historical incident.","location":".gobby/plans/gclient-daemon-resilience.md:1377-1446,1545-1555","prevention":"Place causal checkpoints before the mutation that removes the hypothesized condition, and distinguish historical attribution from final regression proof.","principle":"A diagnostic can falsify a historical mechanism only if it observes the mechanism before the repair removes the relevant state.","root_cause":"Q1 assigns falsification to the post-D3b lock-free test and says a mismatch blocks expansion even though the test exists only after expansion and implementation.","section_id":"D3b","severity":"blocking"},{"category":"weak-testability","check_key":"sigstop-health-timing","description":"The five-second SIGSTOP run may produce neither Daemon slow nor Daemon unreachable, so it cannot deterministically validate B1/B2/C1.","finding_id":"GDR-R1-F09","fix":"Issue and observe a known daemon request immediately before/during SIGSTOP and hold it past REQUEST_DEADLINE, or keep SIGSTOP active for more than the 15-second idle interval plus the 5-second request deadline. Record exact timing and expected status transitions.","location":".gobby/plans/gclient-daemon-resilience.md:792-839,1568-1576","prevention":"For timing validations, state the triggering request, start condition, timeout budget, and expected transition timestamps.","principle":"A live validation must force the event it claims to observe and allow enough time for every configured interval and deadline.","root_cause":"The validation stops the daemon for 5 seconds while idle keepalive starts only after 15 seconds; direct typing intentionally sends no daemon request.","section_id":"B2","severity":"blocking"},{"category":"traceability","check_key":"binary-cutover-self-contained","description":"D3 is not decision-complete about cutover: its gcore carrier change must force a coherent gcode/gdaemon/ghook rebuild and promotion in addition to the separately promoted gclient, but neither D3 nor its acceptance says so.","finding_id":"GDR-R1-F10","fix":"State in D3 that the gcore carrier dirties the coherent trio; after all leaves pass, one global quiet-window announcement must rebuild/promote gcode/gdaemon/ghook through promote_workspace_binary_set, promote gclient separately, restart from the main checkout, and read identity/hashes from ~/.gobby/bin. Add the same explicit shared-gate reference to every binary-touching deliverable without promoting per leaf.","location":".gobby/plans/gclient-daemon-resilience.md:122-138,1308-1317,1355-1364,1557-1566","prevention":"For every binary-touching deliverable, name the binaries dirtied by each target and point to the exact batched announcement/build/promotion/installed-hash gate.","principle":"A binary-affecting deliverable must state its complete cutover obligation, including generated crate inputs and the installed artifact set, while shared promotion remains batched.","root_cause":"D3 changes crates/gcore/assets/config/runtime_config_contract.json but the shared gate conditionally says to rebuild the coherent trio only when 'Rust inputs' changed, leaving the JSON carrier and D3's required installed set ambiguous.","section_id":"D3","severity":"blocking"},{"category":"unhandled-edge","check_key":"proxied-input-queue-bound","description":"When the daemon stalls, gclient remains responsive only by accumulating an unbounded per-keystroke queue, creating a memory-exhaustion failure path. The existing pre-grant input path is bounded, so this is a regression in resilience.","finding_id":"GDR-R1-F11","fix":"Use a bounded, nonblocking per-pane queue with an explicit byte/message cap and defined Backpressure/refusal/coalescing policy that preserves ordering. Add a held terminal_input flood test proving rendering/direct input remain live and queued memory stays within the cap.","location":".gobby/plans/gclient-daemon-resilience.md:442-453,486-505","prevention":"Audit every async queue introduced for capacity, overload policy, and a sustained-stall test.","principle":"Removing a blocking await must not replace bounded backpressure with unbounded memory growth under the same stalled dependency.","root_cause":"A2 uses a per-pane UnboundedSender for every proxied/tmux write and defines no byte/message cap or overload behavior.","section_id":"A2","severity":"blocking"}],"reviewer_session":"e7d3ec52-52ab-40cf-abe4-0935bd7cf4e0","round":1,"verdict":"needs_review"},"session_id":"26de7dbf-1f31-455c-ade4-993cc7c42cf6"}
+```
