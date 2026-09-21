@@ -38,7 +38,7 @@ from gobby.mcp_proxy.tools.tasks._task_scope import TaskScopeEvaluation
 from gobby.sessions.machine_scope import RemoteSessionOwnershipError
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
-from gobby.storage.task_close_reviews import TaskCloseReviewStore
+from gobby.storage.task_close_reviews import TaskCloseReview, TaskCloseReviewStore
 from gobby.storage.tasks import LocalTaskManager, Task, TaskHasOpenChildrenError
 from gobby.tasks.acceptance_artifacts import AcceptanceArtifactResult, AcceptanceTest
 from gobby.tasks.close_checklist import evaluate_validation_commands
@@ -984,6 +984,8 @@ async def test_ready_preview_returns_same_evaluation_without_committing() -> Non
 @pytest.mark.asyncio
 async def test_concurrent_ordinary_closes_share_review_without_closing_or_releasing_claim() -> None:
     task = _task()
+    caller_session_id = task.claimed_by_session_id
+    assert caller_session_id is not None
     spawn_started = asyncio.Event()
     release_spawn = asyncio.Event()
 
@@ -1013,14 +1015,13 @@ async def test_concurrent_ordinary_closes_share_review_without_closing_or_releas
             "close_review_duration_ms": 4.25,
         }
     )
-    review_fields = {
-        "id": "review-id",
-        "agent_run_id": "00000000-0000-4000-8000-000000000778",
-        "caller_session_id": task.claimed_by_session_id,
-        "review_fingerprint": "review-fingerprint",
-        "evidence_fingerprint": "evidence-fingerprint",
-        "task_id": task.id,
-        "close_arguments": {
+    queued_review = TaskCloseReview(
+        id="review-id",
+        task_id=task.id,
+        task_ref=task.id,
+        caller_session_id=caller_session_id,
+        agent_run_id="00000000-0000-4000-8000-000000000778",
+        close_arguments={
             "task_id": task.id,
             "reason": "completed",
             "changes_summary": "Implemented and tested.",
@@ -1030,16 +1031,33 @@ async def test_concurrent_ordinary_closes_share_review_without_closing_or_releas
             "response_detail": "concise",
             "_criterion_count": 1,
         },
-        "terminal": False,
-    }
-    queued_review = SimpleNamespace(**review_fields, status="queued")
-    launching_review = SimpleNamespace(**review_fields, status="launching")
-    running_review = SimpleNamespace(**review_fields, status="running")
+        review_fingerprint="review-fingerprint",
+        evidence_fingerprint="evidence-fingerprint",
+        status="queued",
+        result_payload=None,
+        error=None,
+        launched_at=None,
+        completed_at=None,
+        delivered_at=None,
+        created_at=datetime(2026, 7, 27, 12, tzinfo=UTC),
+        updated_at=datetime(2026, 7, 27, 12, tzinfo=UTC),
+        diff_sha="diff-sha",
+        test_bodies_sha="test-bodies-sha",
+        stable_facts={},
+    )
+    launching_review = replace(queued_review, status="launching")
+    running_review = replace(queued_review, status="running")
     store = MagicMock()
-    store.create_or_get_active.side_effect = [
-        (queued_review, True),
-        (launching_review, False),
-    ]
+    review_results = iter([(queued_review, True), (launching_review, False)])
+
+    def create_or_get_active(**kwargs: object) -> tuple[TaskCloseReview, bool]:
+        review, created = next(review_results)
+        if created:
+            commit_shas = cast(list[str], kwargs["commit_shas"])
+            task.commits = list(dict.fromkeys([*(task.commits or []), *commit_shas]))
+        return review, created
+
+    store.create_or_get_active.side_effect = create_or_get_active
     store.claim_queued.side_effect = [[launching_review], []]
     store.get.return_value = running_review
     store.count_unjudged_attempts.return_value = 0
