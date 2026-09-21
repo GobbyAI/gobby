@@ -137,6 +137,39 @@ async def test_run_returns_typed_success_and_failure(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_run_posix_spawn_uses_fast_path_eligible_arguments(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_fake_git(tmp_path)
+    loop_thread = threading.get_ident()
+    popen_calls: list[tuple[tuple[str, ...], dict[str, Any], int]] = []
+    real_popen = subprocess.Popen
+
+    def recording_popen(argv: tuple[str, ...], **kwargs: Any) -> subprocess.Popen[bytes]:
+        popen_calls.append((argv, kwargs, threading.get_ident()))
+        return real_popen(argv, **kwargs)
+
+    monkeypatch.setattr("gobby.utils.daemon_git.subprocess.Popen", recording_popen)
+
+    result = await DaemonGitService().run_posix_spawn(
+        ["rev-parse", "HEAD"],
+        cwd=tmp_path,
+        timeout=2.0,
+        env=_git_env(tmp_path),
+    )
+
+    assert isinstance(result, GitOk)
+    assert len(popen_calls) == 1
+    argv, kwargs, popen_thread = popen_calls[0]
+    assert argv == (str(tmp_path / "git"), "-C", str(tmp_path), "rev-parse", "HEAD")
+    assert popen_thread != loop_thread
+    assert "cwd" not in kwargs
+    assert "start_new_session" not in kwargs
+    assert "preexec_fn" not in kwargs
+
+
+@pytest.mark.asyncio
 async def test_stream_bytes_spools_and_preserves_raw_output(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -274,12 +307,13 @@ async def test_disjoint_reads_overlap() -> None:
             self,
             argv: tuple[str, ...],
             *,
-            cwd: str,
+            cwd: str | None,
             timeout: float,
             env: dict[str, str] | None,
             input_text: str | None,
+            start_new_session: bool = True,
         ) -> GitOk:
-            del cwd, timeout, env, input_text
+            del cwd, timeout, env, input_text, start_new_session
             started.add(argv)
             if len(started) == 2:
                 both_started.set()

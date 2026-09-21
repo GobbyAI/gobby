@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import shutil
 import signal
 import subprocess  # nosec B404 - argv-only Git process boundary
 import tempfile
@@ -130,6 +131,7 @@ class _ProcessControl:
     spawn_finished_at: float | None = None
     kill_started_at: float | None = None
     pid: int | None = None
+    kill_process_group: bool = True
 
     def begin_preparing(self) -> None:
         with self.lock:
@@ -168,15 +170,16 @@ class _ProcessControl:
         with self.lock:
             return time.monotonic() - self.kill_started_at if self.kill_started_at else 0.0
 
-    def attach(self, process: _GitProcess) -> None:
+    def attach(self, process: _GitProcess, *, kill_process_group: bool = True) -> None:
         with self.lock:
             self.process = process
             self.pid = process.pid
+            self.kill_process_group = kill_process_group
             self.phase = "running"
             self.spawn_finished_at = time.monotonic()
             kill_requested = self.kill_requested
         if kill_requested:
-            _kill_process_group(process)
+            _kill_process(process, group=kill_process_group)
 
     def begin_consuming(self) -> bool:
         """Claim the consumer phase unless the caller already gave up."""
@@ -199,7 +202,7 @@ class _ProcessControl:
             phase = self.phase
             process = self.process if self.phase == "running" else None
         if process is not None:
-            _kill_process_group(process)
+            _kill_process(process, group=self.kill_process_group)
         return phase
 
     def mark_finished(self) -> None:
@@ -242,6 +245,43 @@ class DaemonGitService:
             timeout=timeout,
             env=effective_env,
             input_text=input_text,
+        )
+
+    async def run_posix_spawn(
+        self,
+        args: Sequence[str],
+        *,
+        cwd: str | Path,
+        timeout: float = 10.0,
+        env: Mapping[str, str] | None = None,
+        input_text: str | None = None,
+    ) -> GitResult:
+        """Run Git through Popen's ``posix_spawn``-eligible path.
+
+        Git's ``-C`` option preserves repository-relative behavior without a
+        Popen ``cwd``. The absolute executable and lack of a new session meet
+        CPython's fast-path guard on supported platforms.
+        """
+        argv = ("git", *args)
+        if timeout <= 0:
+            return GitTimeout("timeout", argv, timeout)
+        try:
+            resolved_cwd = os.path.abspath(os.fspath(cwd))
+        except (OSError, TypeError, ValueError) as exc:
+            return GitFailed("failed", argv, None, "", str(exc))
+        effective_env = dict(env) if env is not None else git_subprocess_env()
+        search_env = effective_env if effective_env is not None else os.environ
+        executable = shutil.which("git", path=os.pathsep.join(os.get_exec_path(search_env)))
+        if executable is None:
+            return GitFailed("failed", argv, None, "", "git executable not found")
+        spawn_argv = (executable, "-C", resolved_cwd, *args)
+        return await self._execute(
+            spawn_argv,
+            cwd=None,
+            timeout=timeout,
+            env=effective_env,
+            input_text=input_text,
+            start_new_session=False,
         )
 
     async def stream_bytes(
@@ -349,10 +389,11 @@ class DaemonGitService:
         self,
         argv: tuple[str, ...],
         *,
-        cwd: str,
+        cwd: str | None,
         timeout: float,
         env: dict[str, str] | None,
         input_text: str | None,
+        start_new_session: bool = True,
     ) -> GitResult:
         def worker(
             loop: asyncio.AbstractEventLoop,
@@ -367,6 +408,7 @@ class DaemonGitService:
                 cwd=cwd,
                 env=env,
                 input_text=input_text,
+                start_new_session=start_new_session,
             )
 
         return await self._execute_worker(argv, cwd=cwd, timeout=timeout, worker=worker)
@@ -375,7 +417,7 @@ class DaemonGitService:
         self,
         argv: tuple[str, ...],
         *,
-        cwd: str,
+        cwd: str | None,
         timeout: float,
         worker: _GitWorker,
     ) -> GitResult:
@@ -442,9 +484,10 @@ def _run_git_worker(
     control: _ProcessControl,
     argv: tuple[str, ...],
     *,
-    cwd: str,
+    cwd: str | None,
     env: dict[str, str] | None,
     input_text: str | None,
+    start_new_session: bool = True,
 ) -> None:
     """Own one process from spawn through communication and leader reap."""
     process: subprocess.Popen[bytes] | None = None
@@ -455,16 +498,25 @@ def _run_git_worker(
         )
         process_env = env if env is not None else git_subprocess_env()
         control.begin_spawn()
-        process = subprocess.Popen(  # nosec B603 B607 - fixed executable, argv-only args
-            argv,
-            cwd=cwd,
-            stdin=subprocess.PIPE if input_text is not None else None,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            env=process_env,
-            start_new_session=True,
-        )
-        control.attach(process)
+        if start_new_session:
+            process = subprocess.Popen(  # nosec B603 B607 - fixed executable, argv-only args
+                argv,
+                cwd=cwd,
+                stdin=subprocess.PIPE if input_text is not None else None,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=process_env,
+                start_new_session=True,
+            )
+        else:
+            process = subprocess.Popen(  # nosec B603 - absolute executable, argv-only args
+                argv,
+                stdin=subprocess.PIPE if input_text is not None else None,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=process_env,
+            )
+        control.attach(process, kill_process_group=start_new_session)
         stdout_bytes, stderr_bytes = process.communicate(input_bytes)
         stdout = stdout_bytes.decode("utf-8", errors="surrogateescape")
         stderr = stderr_bytes.decode("utf-8", errors="surrogateescape")
@@ -474,7 +526,7 @@ def _run_git_worker(
             result = GitFailed("failed", argv, process.returncode, stdout, stderr)
     except Exception as exc:
         if process is not None:
-            _kill_process_group(process)
+            _kill_process(process, group=start_new_session)
             process.wait()
         result = GitFailed("failed", argv, None, "", str(exc))
     finally:
@@ -537,7 +589,7 @@ def _stream_git_worker(
                 result = GitFailed("failed", argv, process.returncode, "", stderr)
     except Exception as exc:
         if process is not None:
-            _kill_process_group(process)
+            _kill_process(process, group=True)
             process.wait()
         result = GitFailed("failed", argv, None, "", str(exc))
     finally:
@@ -607,15 +659,16 @@ async def _await_worker_cleanup(
             return cancelled
 
 
-def _kill_process_group(process: _GitProcess) -> None:
-    """Kill the complete session-owned process group; the worker reaps its leader."""
-    try:
-        os.killpg(process.pid, signal.SIGKILL)
-        return
-    except ProcessLookupError:
-        return
-    except (AttributeError, PermissionError):
-        pass
+def _kill_process(process: _GitProcess, *, group: bool) -> None:
+    """Kill an owned process or its session-owned group; the worker reaps its leader."""
+    if group:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+            return
+        except ProcessLookupError:
+            return
+        except (AttributeError, PermissionError):
+            pass
 
     try:
         process.kill()
