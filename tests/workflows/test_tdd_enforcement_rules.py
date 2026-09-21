@@ -18,6 +18,7 @@ from gobby.hooks.normalization import normalize_tool_fields
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody
+from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
 from gobby.workflows.sync_rules import sync_bundled_rules
 from gobby.workflows.templates import TemplateEngine
@@ -142,78 +143,99 @@ def test_block_holds_until_named_acceptance_test_is_written(
 
 @pytest.mark.parametrize("absolute", [False, True], ids=["relative", "absolute"])
 @pytest.mark.parametrize("tool_name", ["Write", "Edit", "apply_patch"])
-def test_named_rust_acceptance_file_is_tracked_before_source_writes(
+@pytest.mark.asyncio
+async def test_named_rust_acceptance_file_is_tracked_before_source_writes(
     db: HubDatabase,
-    manager: RuleDefinitionManager,
     *,
     absolute: bool,
     tool_name: str,
 ) -> None:
     _sync_bundled(db)
-    block_row = manager.get_by_name("enforce-tdd-block")
-    track_row = manager.get_by_name("enforce-tdd-track-tests")
-    assert block_row is not None
-    assert track_row is not None
-    block = RuleDefinitionBody.model_validate(block_row.definition_json)
-    track = RuleDefinitionBody.model_validate(track_row.definition_json)
+    with db.transaction() as conn:
+        conn.execute("UPDATE rule_definitions SET enabled = FALSE")
+        conn.execute(
+            "UPDATE rule_definitions SET enabled = TRUE WHERE name IN (%s, %s)",
+            ("enforce-tdd-block", "enforce-tdd-track-tests"),
+        )
+    engine = RuleEngine(db)
     acceptance_path = "crates/gcode/src/communities/remap_tests.rs"
     source_path = "crates/gcode/src/communities/remap.rs"
     tool_path = f"/repo/{acceptance_path}" if absolute else acceptance_path
-    if tool_name == "apply_patch":
-        tool_input: object = (
-            "*** Begin Patch\n"
-            f"*** Update File: {tool_path}\n"
-            "@@\n"
-            "-fn old_test() {}\n"
-            "+fn new_test() {}\n"
-            "*** End Patch\n"
-        )
-    elif tool_name == "Edit":
-        tool_input = {
-            "file_path": tool_path,
-            "old_string": "fn old_test() {}",
-            "new_string": "fn new_test() {}",
-        }
-    else:
-        tool_input = {"file_path": tool_path, "content": "fn new_test() {}\n"}
-    event_data: dict[str, Any] = {"tool_name": tool_name, "tool_input": tool_input}
-    normalize_tool_fields(event_data)
-    variables: dict[str, object] = {
-        "enforce_tdd": False,
-        "claimed_task_requires_tdd": True,
-        "claimed_task_acceptance_test_paths": [acceptance_path],
-        "tdd_tests_written": [],
-    }
 
-    def evaluate(
-        body: RuleDefinitionBody,
-        data: dict[str, Any],
-    ) -> tuple[bool, SafeExpressionEvaluator]:
-        context: dict[str, object] = {
-            "variables": variables,
-            "event": type("E", (), {"data": data})(),
-            "tool_input": data["tool_input"],
+    def acceptance_event(event_type: HookEventType) -> HookEvent:
+        if tool_name == "apply_patch":
+            tool_input: object = (
+                "*** Begin Patch\n"
+                f"*** Update File: {tool_path}\n"
+                "@@\n"
+                "-fn old_test() {}\n"
+                "+fn new_test() {}\n"
+                "*** End Patch\n"
+            )
+        elif tool_name == "Edit":
+            tool_input = {
+                "file_path": tool_path,
+                "old_string": "fn old_test() {}",
+                "new_string": "fn new_test() {}",
+            }
+        else:
+            tool_input = {"file_path": tool_path, "content": "fn new_test() {}\n"}
+        return HookEvent(
+            event_type=event_type,
+            session_id="test-session",
+            source=SessionSource.CODEX if tool_name == "apply_patch" else SessionSource.CLAUDE,
+            timestamp=datetime.now(UTC),
+            cwd="/repo",
+            data={"tool_name": tool_name, "tool_input": tool_input},
+            metadata={"project_path": "/repo"},
+        )
+
+    def source_event() -> HookEvent:
+        return HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id="test-session",
+            source=SessionSource.CLAUDE,
+            timestamp=datetime.now(UTC),
+            cwd="/repo",
+            data={
+                "tool_name": "Write",
+                "tool_input": {"file_path": source_path, "content": "pub fn remap() {}\n"},
+            },
+            metadata={"project_path": "/repo"},
+        )
+
+    def tdd_variables() -> dict[str, object]:
+        return {
+            "enforce_tdd": False,
+            "claimed_task_requires_tdd": True,
+            "claimed_task_acceptance_test_paths": [acceptance_path],
+            "tdd_tests_written": [],
             "project": {"path": "/repo"},
         }
-        allowed_funcs = build_condition_helpers(context=context)
-        evaluator = SafeExpressionEvaluator(context=context, allowed_funcs=allowed_funcs)
-        assert body.when is not None
-        return evaluator.evaluate(body.when), evaluator
 
-    source_data: dict[str, Any] = {
-        "tool_name": "Write",
-        "tool_input": {"file_path": source_path, "content": "pub fn remap() {}\n"},
-    }
-    normalize_tool_fields(source_data)
-    assert evaluate(block, source_data)[0] is True
-    assert evaluate(block, event_data)[0] is False
-    tracked, evaluator = evaluate(track, event_data)
-    assert tracked is True
-    effect = track.resolved_effects[0]
-    assert effect.value is not None
-    variables["tdd_tests_written"] = evaluator.evaluate_value(effect.value)
+    unopened_variables = tdd_variables()
+    blocked = await engine.evaluate(
+        source_event(), session_id="test-session", variables=unopened_variables
+    )
+    assert blocked.decision == "block"
+
+    variables = tdd_variables()
+    before_test = await engine.evaluate(
+        acceptance_event(HookEventType.BEFORE_TOOL),
+        session_id="test-session",
+        variables=variables,
+    )
+    assert before_test.decision == "allow"
+    await engine.evaluate(
+        acceptance_event(HookEventType.AFTER_TOOL),
+        session_id="test-session",
+        variables=variables,
+    )
     assert variables["tdd_tests_written"] == [acceptance_path]
-    assert evaluate(block, source_data)[0] is False
+    after_test = await engine.evaluate(
+        source_event(), session_id="test-session", variables=variables
+    )
+    assert after_test.decision == "allow"
 
 
 def test_named_acceptance_path_overrides_test_convention_classifier() -> None:
