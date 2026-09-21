@@ -239,22 +239,23 @@ def create_attention_router(
         profile = _RosterProfile()
         async with roster_cache.lock:
             async with manager.ordering.lock:
-                cursor = (manager.epoch, manager.seq)
-                cache_checked_at = perf_counter()
-                if (
-                    roster_cache.payload is not None
-                    and roster_cache.cursor == cursor
-                    and cache_checked_at - roster_cache.created_at
-                    < ATTENTION_ROSTER_CACHE_TTL_SECONDS
-                ):
-                    _log_roster_profile(
-                        profile,
-                        cache_hit=True,
-                        assembly_seconds=0.0,
-                        total_seconds=perf_counter() - started_at,
-                        entry_count=_entry_count(roster_cache.payload),
-                    )
-                    return roster_cache.payload
+                with manager.ordering.synchronized():
+                    cursor = (manager.epoch, manager.seq)
+                    cache_checked_at = perf_counter()
+                    if (
+                        roster_cache.payload is not None
+                        and roster_cache.cursor == cursor
+                        and cache_checked_at - roster_cache.created_at
+                        < ATTENTION_ROSTER_CACHE_TTL_SECONDS
+                    ):
+                        _log_roster_profile(
+                            profile,
+                            cache_hit=True,
+                            assembly_seconds=0.0,
+                            total_seconds=perf_counter() - started_at,
+                            entry_count=_entry_count(roster_cache.payload),
+                        )
+                        return roster_cache.payload
 
             async def profiled_run_db(
                 function: Callable[..., Any], *args: Any, **kwargs: Any

@@ -560,6 +560,70 @@ async def test_warm_roster_cache_check_uses_attention_ordering_lock(
     assert tracking_lock.entries == 1
 
 
+@pytest.mark.asyncio
+async def test_warm_roster_cache_return_is_ordered_with_worker_thread_mutation(
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = AttentionStateManager(temp_db, epoch="ordered-cache")
+    monkeypatch.setattr(manager, "load_roster_rows", lambda *_args, **_kwargs: [])
+    server = _server(temp_db, manager)
+    app = FastAPI()
+    app.include_router(create_attention_router(cast(HTTPServer, server)))
+    cache_checked = threading.Event()
+    mutation_entered = threading.Event()
+    allow_mutation = threading.Event()
+    mutation_done = threading.Event()
+    errors: list[BaseException] = []
+    mutation_entered_before_return = False
+
+    def mutate_from_worker() -> None:
+        try:
+            assert cache_checked.wait(timeout=2)
+            with manager.ordering.synchronized():
+                mutation_entered.set()
+                assert allow_mutation.wait(timeout=2)
+                _open(manager)
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            mutation_done.set()
+
+    def pause_after_warm_cache_check(
+        _profile: object,
+        *,
+        cache_hit: bool,
+        **_kwargs: object,
+    ) -> None:
+        nonlocal mutation_entered_before_return
+        if not cache_hit:
+            return
+        cache_checked.set()
+        mutation_entered_before_return = mutation_entered.wait(timeout=0.25)
+        allow_mutation.set()
+        if mutation_entered_before_return:
+            assert mutation_done.wait(timeout=2)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        cold = await client.get("/api/attention/roster")
+        monkeypatch.setattr(
+            "gobby.servers.routes.attention._log_roster_profile",
+            pause_after_warm_cache_check,
+        )
+        worker = threading.Thread(target=mutate_from_worker)
+        worker.start()
+        warm = await client.get("/api/attention/roster")
+        worker.join(timeout=2)
+        fresh = await client.get("/api/attention/roster")
+
+    assert not worker.is_alive()
+    assert errors == []
+    assert not mutation_entered_before_return
+    assert cold.status_code == warm.status_code == fresh.status_code == 200
+    assert warm.json()["seq"] == cold.json()["seq"] == 0
+    assert fresh.json()["seq"] == manager.seq == 1
+
+
 def test_bounded_roster_query_joins_task_payload(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
