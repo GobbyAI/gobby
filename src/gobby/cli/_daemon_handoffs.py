@@ -11,8 +11,12 @@ from gobby.utils.machine_id import require_machine_id
 
 @contextmanager
 def protect_pending_handoffs(
-    runtime: CliRuntime, *, wait: bool, report: Callable[[str], None]
+    runtime: CliRuntime, *, force: bool = False, wait: bool, report: Callable[[str], None]
 ) -> Iterator[None]:
+    if force:
+        yield
+        return
+
     db = runtime.require_database(apply_migrations=False)
     machine_id = require_machine_id()
     deadline = time.monotonic() + 600

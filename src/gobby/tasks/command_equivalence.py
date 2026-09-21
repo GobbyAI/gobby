@@ -138,7 +138,7 @@ def target_covers(success: str, failure: str) -> bool:
 
 
 def command_covers(executed: str, required: str) -> bool:
-    """Credit broader explicit targets only for known tools with identical flags."""
+    """Credit scope-preserving command forms for explicitly allowlisted runners."""
     actual = canonical_command(executed)
     expected = canonical_command(required)
     if actual is None or expected is None:
@@ -151,7 +151,7 @@ def command_covers(executed: str, required: str) -> bool:
         )
     if actual == expected:
         return True
-    actual_scope = _path_scope(actual)
+    actual_scope = _path_scope(actual, allow_scope_widening=True)
     expected_scope = _path_scope(expected)
     if actual_scope is None or expected_scope is None:
         return False
@@ -170,7 +170,7 @@ def scope_difference(executed: str, required: str) -> str:
     expected = canonical_command(required)
     if actual is None or expected is None:
         return "shell expansion or command structure differs"
-    actual_scope = _path_scope(actual)
+    actual_scope = _path_scope(actual, allow_scope_widening=True)
     expected_scope = _path_scope(expected)
     if actual_scope is None or expected_scope is None:
         no_paths: list[str] = []
@@ -216,7 +216,10 @@ _VALUELESS_OPTIONS = frozenset(
         "--strict",
         "--fail-on-new",
         "--no-incremental",
+        "--no-error-summary",
+        "--no-fail-fast",
         "--no-header",
+        "--all-targets",
         "--",
     }
 )
@@ -227,8 +230,34 @@ _PYTEST_REPORTING_OPTIONS = frozenset(
     {"-q", "-qq", "-v", "-vv", "-x", "--no-header", "--tb", "--color", "--durations", "--maxfail"}
 )
 
+# Compare runner names exactly. Adding a flag to a different runner requires an
+# explicit safety decision instead of a shared string-normalization rule.
+_PATH_SCOPE_RUNNERS = (
+    ("cargo", "nextest", "run"),
+    ("cargo", "clippy"),
+    ("gobby", "test-types", "audit"),
+    ("gobby", "test-quality", "audit"),
+    ("ruff", "check"),
+    ("ruff", "format"),
+    ("pytest",),
+    ("mypy",),
+)
+_RUNNER_REPORTING_OPTIONS: dict[tuple[str, ...], frozenset[str]] = {
+    ("cargo", "nextest", "run"): frozenset(
+        {"--status-level", "--failure-output", "--no-fail-fast"}
+    ),
+    ("ruff", "check"): frozenset({"--output-format"}),
+    ("mypy",): frozenset({"--no-error-summary"}),
+}
+# These flags prove a strict superset only when they appear on the executed command.
+_EXECUTED_SCOPE_WIDENING_OPTIONS: dict[tuple[str, ...], frozenset[str]] = {
+    ("cargo", "clippy"): frozenset({"--all-targets"}),
+}
 
-def _path_scope(command: str) -> tuple[list[str], list[str]] | None:
+
+def _path_scope(
+    command: str, *, allow_scope_widening: bool = False
+) -> tuple[list[str], list[str]] | None:
     parsed = parse_validation_shell(command)
     if len(parsed.segments) != 1:
         return None
@@ -236,29 +265,25 @@ def _path_scope(command: str) -> tuple[list[str], list[str]] | None:
     start = 2 if tokens[:2] == ["uv", "run"] else 0
     if tokens[start : start + 2] in (["python", "-m"], ["python3", "-m"]):
         start += 2
-    executable = tokens[start] if start < len(tokens) else ""
-    if executable not in {"pytest", "mypy", "ruff", "gobby"}:
+    runner = _path_scope_runner(tokens, start)
+    if runner is None:
         return None
-    end = start + 1
-    if executable == "ruff":
-        if tokens[end : end + 1] not in (["check"], ["format"]):
-            return None
-        end += 1
-    if executable == "gobby":
-        if tokens[end : end + 2] not in (["test-types", "audit"], ["test-quality", "audit"]):
-            return None
-        end += 2
-    options: list[list[str]] = []
+    runner_words, end = runner
+    raw_options: list[tuple[list[str], bool]] = []
     paths: list[str] = []
     # Unknown options are retained with their following word. This intentionally
     # declines broad-scope credit rather than interpreting an option value as a path.
     takes_value = False
+    after_separator = False
     for token in tokens[end:]:
         if takes_value:
-            options[-1].append(token)
+            raw_options[-1][0].append(token)
             takes_value = False
+        elif token == "--":
+            raw_options.append(([token], after_separator))
+            after_separator = True
         elif token.startswith("-"):
-            options.append([token])
+            raw_options.append(([token], after_separator))
             # A short option with attached characters (-ra, -kname) carries its own value.
             attached = len(token) > 2 and token[1] != "-"
             takes_value = not attached and "=" not in token and token not in _VALUELESS_OPTIONS
@@ -268,12 +293,47 @@ def _path_scope(command: str) -> tuple[list[str], list[str]] | None:
                 return None
             paths.append(path)
         else:
-            options.append([token])
-    if executable == "pytest":
-        options = [option for option in options if not _pytest_reporting_option(option[0])]
+            raw_options.append(([token], after_separator))
+    options = [
+        option
+        for option, is_after_separator in raw_options
+        if not _ignorable_runner_option(
+            runner_words,
+            option[0],
+            allow_scope_widening=allow_scope_widening,
+            is_after_separator=is_after_separator,
+        )
+    ]
     # Distinct options compare in any order; repeats of one option keep their order.
     options.sort(key=lambda option: option[0].split("=", 1)[0])
     return tokens[:end] + [shlex.join(option) for option in options], paths
+
+
+def _path_scope_runner(tokens: list[str], start: int) -> tuple[tuple[str, ...], int] | None:
+    for runner in _PATH_SCOPE_RUNNERS:
+        end = start + len(runner)
+        if tuple(tokens[start:end]) == runner:
+            return runner, end
+    return None
+
+
+def _ignorable_runner_option(
+    runner: tuple[str, ...],
+    option: str,
+    *,
+    allow_scope_widening: bool,
+    is_after_separator: bool,
+) -> bool:
+    if is_after_separator:
+        return False
+    if runner == ("pytest",) and _pytest_reporting_option(option):
+        return True
+    name = option.split("=", 1)[0]
+    if name in _RUNNER_REPORTING_OPTIONS.get(runner, frozenset()):
+        return True
+    return allow_scope_widening and name in _EXECUTED_SCOPE_WIDENING_OPTIONS.get(
+        runner, frozenset()
+    )
 
 
 def _pytest_reporting_option(option: str) -> bool:

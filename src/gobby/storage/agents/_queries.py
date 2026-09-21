@@ -137,14 +137,14 @@ class _AgentRunQueryMixin:
         Task-owned parked runs are relaunched by the dispatcher; these have no
         dispatch owner and are retried by the lifecycle monitor instead.
 
-        Task-close validators are excluded here in SQL rather than by the
+        Task-close reviewers are excluded here in SQL rather than by the
         caller: nothing rebinds `task_close_reviews.agent_run_id` to a
-        successor, so `_authenticate_submission` rejects any resumed validator
+        successor, so `_authenticate_submission` rejects any resumed reviewer
         and the relaunch is pure waste. Filtering after the query would still
         spend one of the `limit` candidate slots and burn the run's
         `daemon_stop_resume_failure_count` budget (#22404).
         """
-        from gobby.tasks.agentic_close_review import TASK_CLOSE_VALIDATOR_AGENT
+        from gobby.tasks.agentic_close_review import TASK_CLOSE_REVIEWER_AGENT
 
         if max_age_hours <= 0:
             raise ValueError("max_age_hours must be positive")
@@ -172,7 +172,7 @@ class _AgentRunQueryMixin:
                       AND s.status NOT IN ('expired', 'deleted')
               )
             """,
-            (machine_id, TASK_CLOSE_VALIDATOR_AGENT, max_age_hours),
+            (machine_id, TASK_CLOSE_REVIEWER_AGENT, max_age_hours),
             order_by="ORDER BY ar.completed_at ASC NULLS FIRST, ar.updated_at ASC",
             limit=limit,
         )
@@ -404,7 +404,7 @@ class _AgentRunQueryMixin:
     ) -> list[AgentRun]:
         """List active runs under the requested explicit scope."""
         params: list[object] = []
-        where_clause = "WHERE ar.status IN ('running', 'pending')"
+        where_clause = "WHERE ar.status IN ('queued', 'running', 'pending')"
         if machine_id is not None:
             where_clause += " AND ar.machine_id = %s"
             params.append(machine_id)
@@ -456,7 +456,7 @@ class _AgentRunQueryMixin:
     def get_by_session(self: _AgentRunQueryHost, session_id: str) -> AgentRun | None:
         """Get active agent run by child session ID."""
         runs = self._fetch_runs_with_live_stats(
-            "WHERE ar.child_session_id = %s AND ar.status IN ('running', 'pending')",
+            "WHERE ar.child_session_id = %s AND ar.status IN ('queued', 'running', 'pending')",
             (session_id,),
             order_by="ORDER BY ar.created_at DESC",
             limit=1,

@@ -410,6 +410,57 @@ def test_developer_agents_support_toolchain_allowlists_and_additional_skills(
     "agent_name",
     ["backend-developer", "frontend-developer", "fullstack-developer", "tech-writer"],
 )
+def test_direct_close_agents_preview_then_wait_for_reviewer(agent_name: str) -> None:
+    agent = _agent(agent_name)
+    implement = _step(agent, "implement")
+    guidance = f"{agent['prompts']['agent']}\n{implement['status_message']}"
+
+    assert "preview=true" in guidance
+    assert "preview=false" in guidance
+    assert "wait_for_agent once" in guidance
+    assert "reviewer_run_id" in guidance
+    assert "get_task" in guidance
+
+    get_task_handlers = [
+        handler
+        for handler in implement["on_mcp_success"]
+        if handler.get("server") == "gobby-tasks" and handler.get("tool") == "get_task"
+    ]
+    assert len(get_task_handlers) == 1
+    assert "is_closed" in str(get_task_handlers[0].get("when"))
+    assert get_task_handlers[0]["variable"] == "implementation_complete"
+
+
+def test_merge_orchestrator_no_work_close_waits_for_reviewer() -> None:
+    agent = _agent("merge-orchestrator")
+    execute = _step(agent, "execute")
+    guidance = agent["prompts"]["agent"]
+
+    assert 'reason="already_implemented", preview=true' in guidance
+    assert "repeat with preview=false" in guidance
+    assert "wait once on" in guidance
+    assert "reviewer_run_id" in guidance
+    assert "read the task with get_task" in guidance
+    assert {"gobby-tasks:get_task", "gobby-agents:wait_for_agent"}.issubset(
+        _allowed_mcp_tools(execute)
+    )
+
+    get_task_handlers = [
+        handler
+        for handler in execute["on_mcp_success"]
+        if handler.get("server") == "gobby-tasks" and handler.get("tool") == "get_task"
+    ]
+    assert {handler["variable"] for handler in get_task_handlers} == {
+        "execution_complete",
+        "report_complete",
+    }
+    assert all("is_closed" in str(handler.get("when")) for handler in get_task_handlers)
+
+
+@pytest.mark.parametrize(
+    "agent_name",
+    ["backend-developer", "frontend-developer", "fullstack-developer", "tech-writer"],
+)
 def test_task_assigned_agents_document_parent_reply_paths(agent_name: str) -> None:
     status = " ".join(_step(_agent(agent_name), "implement")["status_message"].split())
 

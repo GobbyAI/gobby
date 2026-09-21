@@ -20,7 +20,7 @@ from gobby.tasks.validation import PreparedCloseReview, TaskValidator
 
 @dataclass(frozen=True, slots=True)
 class SubmittedCloseReview:
-    """Authenticated validator verdict plus the intent fingerprints it must match."""
+    """Authenticated reviewer verdict plus the intent fingerprints it must match."""
 
     verdict: Mapping[str, object]
     review_fingerprint: str
@@ -219,16 +219,14 @@ async def evaluate_close_criteria(
 
     return ValidationResult(
         can_close=False,
-        error_type="agentic_review_required",
+        error_type="close_review_required",
         message=(
-            "Complete close evidence requires a daemon-managed task-close validator; "
+            "Complete close evidence requires a daemon-managed task-close reviewer; "
             "its verdict is applied and delivered automatically."
         ),
         extra={
-            "prompt_chars": prepared.prompt_chars,
-            "prompt_limit": prepared.prompt_limit,
-            # The validator judges the normalized criteria, not the raw text it
-            # reads, so the launch carries the exact index set it must return.
+            # The reviewer judges normalized criteria, so the launch carries
+            # the exact index set it must return.
             "criterion_count": len(prepared.criteria),
             "review_fingerprint": prepared.review_fingerprint,
             "deterministic_evidence_fingerprint": prepared.evidence_fingerprint,
@@ -238,8 +236,8 @@ async def evaluate_close_criteria(
             "manifest_count": prepared.manifest_count,
             "excerpt_chars": prepared.excerpt_chars,
             "coordinator_owned_pending": spawned_agent_caller,
-            # Gate 10's run record travels to the validator launch prompt; the
-            # taskless validator cannot read the transcript itself.
+            # Gate 10's run record travels to the reviewer launch prompt; the
+            # taskless reviewer cannot read the transcript itself.
             "validation_commands": checklist_facts.get("validation_commands"),
         },
     )

@@ -25,7 +25,7 @@ HEADLESS_WAIT_GUIDANCE = (
 # both arrive through the hook that attaches pending notifications to tool results.
 HEADLESS_AGENT_WAIT_GUIDANCE = (
     "Do not call a wait_for_* tool again in this run, and do not end the turn. A run this "
-    "session spawned, and a task-close validator, report their result as a completion "
+    "session spawned, and a task-close reviewer, report their result as a completion "
     "notification attached to a later tool result. Finish any remaining work, then keep "
     "the turn open with short bounded shell waits, each under a minute, until it arrives."
 )

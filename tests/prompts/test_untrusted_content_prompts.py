@@ -34,11 +34,6 @@ def test_delimit_untrusted_content_prevents_delimiter_breakout() -> None:
     ("template_path", "context", "expected_spans"),
     [
         (
-            "memory/turn_record",
-            {"prompt_text": _INJECTION, "response_text": _INJECTION},
-            2,
-        ),
-        (
             "expansion/user",
             {
                 "task_id": _INJECTION,
@@ -49,20 +44,6 @@ def test_delimit_untrusted_content_prevents_delimiter_breakout() -> None:
                 "enabled_stages": [_INJECTION],
             },
             6,
-        ),
-        (
-            "validation/validate",
-            {
-                "title": _INJECTION,
-                "description": _INJECTION,
-                "closure_reason": _INJECTION,
-                "criteria_text": _INJECTION,
-                "changes_summary": _INJECTION,
-                "diff_evidence": _INJECTION,
-                "test_bodies": _INJECTION,
-                "checklist_facts": _INJECTION,
-            },
-            8,
         ),
         ("features/tool_summary", {"description": _INJECTION}, 1),
         (

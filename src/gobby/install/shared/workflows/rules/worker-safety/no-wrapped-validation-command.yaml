@@ -20,4 +20,5 @@ rules:
           close-gate credit is earned only by an unwrapped run, so a pipe such as
           `| tail`, a `;` sequence, a `||` fallback, a backgrounding `&`, or a
           trailing `echo` anywhere in the call voids every check in it. Rerun the
-          command directly, for example `uv run mypy src/`.
+          command directly, for example `cargo nextest run -p gobby-client
+          --status-level fail`.

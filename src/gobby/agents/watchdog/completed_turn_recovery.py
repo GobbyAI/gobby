@@ -93,7 +93,7 @@ def step_progress_requires_gobby_mcp(step_context: StepWorkflowContext | None) -
     Two shapes qualify. A step whose allowed tools are Gobby proxy tools only,
     and a step whose sole declared route forward is an ``on_mcp_success``
     handler — the latter can permit every native tool and still be unable to
-    progress, which is how `task-close-validator` (`allowed_tools: all`, exit
+    progress, which is how `task-close-reviewer` (`allowed_tools: all`, exit
     condition set only by `gobby-agents:end_agent_run`) wedges.
     """
     if step_context is None:

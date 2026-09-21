@@ -37,7 +37,7 @@ from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.clones import LocalCloneManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import LIVE_SESSION_STATUS_ORDER, SessionManager
-from gobby.storage.task_close_reviews import TaskCloseReviewStore
+from gobby.storage.task_close_reviews import QueuedAgentRunSpec, TaskCloseReviewStore
 from gobby.storage.tasks import LocalTaskManager, TaskDispatchMutexManager
 from tests.agents.terminal_fixtures import make_live_terminal
 from tests.fixtures.agent_definitions import make_agent_definition
@@ -64,7 +64,8 @@ def _stub_agent_sandbox_reaping(monkeypatch: pytest.MonkeyPatch) -> None:
 PROJECT_ID = "eeeeeeee-0000-4000-8000-000000000001"
 PARENT_SESSION_ID = "eeeeeeee-0000-4000-8000-000000000002"
 CHILD_SESSION_ID = "eeeeeeee-0000-4000-8000-000000000003"
-VALIDATOR_SESSION_ID = "eeeeeeee-0000-4000-8000-000000000004"
+REVIEWER_SESSION_ID = "eeeeeeee-0000-4000-8000-000000000004"
+MACHINE_ID = "21000000-0000-4000-8000-000000000001"
 
 
 def _run_absent_tmux(command: list[str], **_kwargs: object) -> SimpleNamespace:
@@ -90,7 +91,7 @@ def _create_session_row(db: HubDatabase, session_id: str) -> None:
         (
             session_id,
             f"ext-{session_id}",
-            "21000000-0000-4000-8000-000000000001",
+            MACHINE_ID,
             "claude",
             PROJECT_ID,
         ),
@@ -136,7 +137,7 @@ def _install_running_close_review(
     *,
     task: Any,
     caller_session_id: str,
-    validator_run_id: str,
+    reviewer_run_id: str,
 ) -> str:
     store = TaskCloseReviewStore(db)
     review, _created = store.create_or_get_active(
@@ -150,8 +151,43 @@ def _install_running_close_review(
         diff_sha="d" * 64,
         test_bodies_sha="e" * 64,
         stable_facts={},
+        review_id=str(uuid.uuid4()),
+        run=QueuedAgentRunSpec(
+            id=reviewer_run_id,
+            machine_id=MACHINE_ID,
+            provider="codex",
+            model=None,
+            agent_name="task-close-reviewer",
+            prompt="review close evidence",
+            timeout_seconds=1200,
+            requested_reasoning_effort=None,
+        ),
     )
-    bound = store.bind_run(review.id, validator_run_id)
+    promoted = store.claim_queued(project_id=PROJECT_ID, max_concurrency=3)
+    assert review.id in {item.id for item in promoted}
+    run_manager = LocalAgentRunManager(db)
+    activated = run_manager.activate_queued(
+        reviewer_run_id,
+        child_session_id=REVIEWER_SESSION_ID,
+        provider="codex",
+        prompt="review close evidence",
+        workflow_name="task-close-reviewer",
+        agent_name="task-close-reviewer",
+        model=None,
+        is_local=True,
+        requested_reasoning_effort=None,
+        effective_reasoning_effort=None,
+        reasoning_required=False,
+        reasoning_status="not_requested",
+        reasoning_message=None,
+        timeout_seconds=1200,
+        resume_metadata_json=None,
+        worktree_id=None,
+        clone_id=None,
+    )
+    assert activated is not None
+    assert run_manager.start(reviewer_run_id) is not None
+    bound = store.bind_run(review.id, reviewer_run_id)
     assert bound is not None
     return review.id
 
@@ -170,7 +206,7 @@ def _close_review_caller(db: HubDatabase) -> _CloseReviewCaller:
     """A Grok caller on its implement step, parked on a running close review."""
     _create_session_row(db, PARENT_SESSION_ID)
     _create_session_row(db, CHILD_SESSION_ID)
-    _create_session_row(db, VALIDATOR_SESSION_ID)
+    _create_session_row(db, REVIEWER_SESSION_ID)
     _install_step_workflow(db, CHILD_SESSION_ID, "implement")
     task_manager = LocalTaskManager(db)
     task = task_manager.create_task(
@@ -192,19 +228,12 @@ def _close_review_caller(db: HubDatabase) -> _CloseReviewCaller:
         task_id=task.id,
     )
     run_manager.start(caller.id)
-    validator = run_manager.create(
-        parent_session_id=CHILD_SESSION_ID,
-        provider="codex",
-        prompt="review close evidence",
-        agent_name="task-close-validator",
-        child_session_id=VALIDATOR_SESSION_ID,
-    )
-    run_manager.start(validator.id)
+    reviewer_run_id = str(uuid.uuid4())
     review_id = _install_running_close_review(
         db,
         task=task,
         caller_session_id=CHILD_SESSION_ID,
-        validator_run_id=validator.id,
+        reviewer_run_id=reviewer_run_id,
     )
     return _CloseReviewCaller(
         run_manager=run_manager,

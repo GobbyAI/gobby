@@ -14,8 +14,16 @@ _INDEX_INSTRUCTION = (
 
 
 def _lead(value: Any) -> str:
-    """Collapse one field onto a single line and cut it to the lead length."""
-    return " ".join(str(value or "").split())[:LEAD_CHARS]
+    """Collapse one field onto one line and truncate only between words."""
+    text = " ".join(str(value or "").split())
+    if len(text) <= LEAD_CHARS:
+        return text
+    prefix = text[: LEAD_CHARS - 1]
+    boundary = prefix.rfind(" ")
+    if boundary <= 0:
+        return "…"
+    prefix = prefix[:boundary]
+    return f"{prefix}…"
 
 
 def format_memory_index(trigger: str, memories: list[dict[str, Any]]) -> str:

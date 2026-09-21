@@ -362,7 +362,18 @@ def _caller_session_is_live(db: HubDatabase, session_id: str) -> bool:
     try:
         with db.transaction() as conn:
             row = conn.execute(
-                "SELECT status FROM sessions WHERE id = %s",
+                """
+                SELECT s.status,
+                       EXISTS (
+                           SELECT 1
+                           FROM agent_runs ar
+                           JOIN terminals t ON t.id = ar.terminal_id
+                           WHERE ar.id = s.agent_run_id
+                             AND t.state IN ('exited', 'orphaned')
+                       ) AS terminal_gone
+                FROM sessions s
+                WHERE s.id = %s
+                """,
                 (session_id,),
             ).fetchone()
     except Exception:
@@ -372,7 +383,8 @@ def _caller_session_is_live(db: HubDatabase, session_id: str) -> bool:
     if not isinstance(row, Mapping):
         return False
     status = row["status"]
-    return isinstance(status, str) and status in LIVE_SESSION_STATUSES
+    terminal_gone = row["terminal_gone"]
+    return isinstance(status, str) and status in LIVE_SESSION_STATUSES and not bool(terminal_gone)
 
 
 def _task_completion_state(db: HubDatabase, task_id: str | None) -> TaskCompletionState:

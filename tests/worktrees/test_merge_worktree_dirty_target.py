@@ -27,6 +27,15 @@ def _git(cwd: Path, *args: str) -> str:
     return result.stdout.strip()
 
 
+def _index_snapshot(repo: Path, path: str) -> tuple[str, str, bytes]:
+    """Capture staged entry metadata, staged bytes, and worktree bytes for one path."""
+    return (
+        _git(repo, "ls-files", "--stage", "--", path),
+        _git(repo, "diff", "--cached", "--binary", "--", path),
+        (repo / path).read_bytes(),
+    )
+
+
 def _repo_with_feature(tmp_path: Path) -> tuple[Path, Path, WorktreeGitManager, MagicMock]:
     repo = tmp_path / "repo"
     source_path = tmp_path / "feature-worktree"
@@ -82,6 +91,21 @@ async def test_unrelated_staged_target_file_lands_by_fast_forward(tmp_path: Path
     ctx.worktree_storage.mark_merged.assert_called_once_with("wt-real")
 
 
+@pytest.mark.asyncio
+async def test_unrelated_staged_gobby_file_lands_with_index_fidelity(tmp_path: Path) -> None:
+    repo, _, git_manager, ctx = _repo_with_feature(tmp_path)
+    gobby_path = ".gobby/project.json"
+    (repo / gobby_path).write_bytes(b'{"local":"staged"}\n')
+    _git(repo, "add", gobby_path)
+    before = _index_snapshot(repo, gobby_path)
+
+    result = await _merge(ctx, git_manager)
+
+    assert result["success"] is True
+    assert result["landing"] == "fast-forward"
+    assert _index_snapshot(repo, gobby_path) == before
+
+
 async def test_target_only_history_does_not_create_false_dirty_overlap(tmp_path: Path) -> None:
     repo, _, git_manager, ctx = _repo_with_feature(tmp_path)
     _commit_file(repo, "target-only.txt", "committed on target\n")
@@ -126,6 +150,10 @@ async def test_sync_into_branch_conflict_is_reported_and_aborted(tmp_path: Path)
     _git(repo, "commit", "-m", "target conflict")
     (repo / "staged.txt").write_text("staged\n", encoding="utf-8")
     _git(repo, "add", "staged.txt")
+    gobby_path = ".gobby/project.json"
+    (repo / gobby_path).write_bytes(b'{"local":"staged"}\n')
+    _git(repo, "add", gobby_path)
+    before = _index_snapshot(repo, gobby_path)
 
     result = await _merge(ctx, git_manager)
 
@@ -134,7 +162,8 @@ async def test_sync_into_branch_conflict_is_reported_and_aborted(tmp_path: Path)
     assert result["conflicted_files"] == ["conflict.txt"]
     assert result["step"] == "sync-into-branch"
     assert _git(source_path, "status", "--porcelain") == ""
-    assert _git(repo, "diff", "--cached", "--name-only") == "staged.txt"
+    assert _git(repo, "diff", "--cached", "--name-only") == ".gobby/project.json\nstaged.txt"
+    assert _index_snapshot(repo, gobby_path) == before
 
 
 @pytest.mark.parametrize("failure_step", ["merge", "stash-list", "stash-pop", "restore-branch"])

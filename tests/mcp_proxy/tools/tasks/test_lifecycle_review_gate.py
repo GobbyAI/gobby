@@ -32,10 +32,7 @@ _LAUNCH_FACTS: dict[str, object] = {
 
 def _prepared(stable_facts: dict[str, object]) -> PreparedCloseReview:
     return PreparedCloseReview(
-        prompt="prompt",
         criteria=("Criterion.",),
-        prompt_chars=6,
-        prompt_limit=100,
         review_fingerprint="review",
         evidence_fingerprint="evidence",
         diff_sha="diff",

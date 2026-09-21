@@ -1,8 +1,8 @@
 """A caller parked in ``wait_for_agent`` on its close review survives lifecycle sweeps.
 
 End-to-end over the real seams: ``launch_close_review`` persists the review and
-spawns the validator run; the caller parks through the real ``wait_for_agent``
-tool; the idle and stuck watchdogs leave the parked caller alone; the validator
+spawns the reviewer run; the caller parks through the real ``wait_for_agent``
+tool; the idle and stuck watchdogs leave the parked caller alone; the reviewer
 submits its verdict through ``submit_close_review``; terminal delivery resolves
 the durable review payload and wakes the caller; a valid verdict leaves time for
 cooperative ``end_agent_run`` while abandoned callers retain a bounded fallback.
@@ -42,7 +42,8 @@ from gobby.storage.pipeline_subscribers import CompletionSubscriberManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.task_close_reviews import TaskCloseReviewStore
 from gobby.storage.tasks import LocalTaskManager
-from gobby.tasks.agentic_close_review import TASK_CLOSE_VALIDATOR_AGENT
+from gobby.storage.terminals import TerminalManager, native_locator_key
+from gobby.tasks.agentic_close_review import TASK_CLOSE_REVIEWER_AGENT
 from gobby.utils.session_context import (
     reset_current_agent_run_id,
     session_context_for_test,
@@ -50,6 +51,7 @@ from gobby.utils.session_context import (
 )
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
+from tests.agents.terminal_fixtures import make_pending_terminal
 from tests.agents.test_lifecycle_monitor import (
     DETECTION_REGISTRY,
     _fake_terminal_services,
@@ -104,9 +106,9 @@ class _Harness:
                 agent_depth=1,
             ).id
         )
-        self.validator_session = str(
+        self.reviewer_session = str(
             session_manager.register(
-                external_id="task-close-validator-session",
+                external_id="task-close-reviewer-session",
                 machine_id=str(session["machine_id"]),
                 source="claude",
                 project_id=self.project_id,
@@ -151,7 +153,7 @@ class _Harness:
             RegistryContext,
             SimpleNamespace(
                 task_manager=self.task_manager,
-                agent_registry=SimpleNamespace(call=self._spawn_validator),
+                agent_registry=SimpleNamespace(call=self._spawn_reviewer),
                 validation_config=None,
             ),
         )
@@ -173,18 +175,31 @@ class _Harness:
         self.wakes.append((session_id, message, result))
         return {"ism_persisted": True}
 
-    async def _spawn_validator(self, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    async def _spawn_reviewer(self, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
         assert tool == "spawn_agent"
-        assert arguments["agent"] == TASK_CLOSE_VALIDATOR_AGENT
+        assert arguments["agent"] == TASK_CLOSE_REVIEWER_AGENT
         assert arguments["notify_parent_on_completion"] is True
-        run = self.runs.create(
-            parent_session_id=arguments["parent_session_id"],
-            provider="claude",
+        run_id = str(arguments["reserved_run_id"])
+        run = self.runs.activate_queued(
+            run_id,
+            child_session_id=self.reviewer_session,
+            provider=str(arguments.get("provider") or "claude"),
             prompt=arguments["prompt"],
+            workflow_name=None,
             agent_name=arguments["agent"],
-            child_session_id=self.validator_session,
-            run_id=_rid(f"validator-run-{len(self.spawned)}"),
+            model=str(arguments["model"]) if arguments.get("model") else None,
+            is_local=False,
+            requested_reasoning_effort=None,
+            effective_reasoning_effort=None,
+            reasoning_required=False,
+            reasoning_status="not_requested",
+            reasoning_message=None,
+            timeout_seconds=float(arguments["timeout"]),
+            resume_metadata_json=None,
+            worktree_id=None,
+            clone_id=None,
         )
+        assert run is not None
         self.runs.start(run.id)
         self.spawned.append(run.id)
         await asyncio.to_thread(
@@ -215,9 +230,9 @@ class _Harness:
             }
         )
         if ready:
-            evaluation.pass_gate(14, "criteria_review", "valid")
+            evaluation.pass_gate(13, "close_review", "valid")
         else:
-            evaluation.error = "agentic_review_required"
+            evaluation.error = "close_review_required"
         return evaluation
 
     def _reviewed(self, status: str) -> CloseEvaluation:
@@ -233,6 +248,9 @@ class _Harness:
 
     async def close_task(self) -> dict[str, Any]:
         """The caller's close_task once the deterministic gates report oversized evidence."""
+        evaluate: Callable[..., Awaitable[CloseEvaluation]] = AsyncMock(
+            return_value=self._evaluation(ready=False)
+        )
         return await launch_close_review(
             self.ctx,
             evaluation=self._evaluation(ready=False),
@@ -242,8 +260,9 @@ class _Harness:
                 "changes_summary": "Implemented.",
                 "commit_sha": "abc",
                 "project_path": "/repo",
-                "preview": True,
+                "preview": False,
             },
+            evaluate_close=evaluate,
         )
 
     async def wait_for_agent(self, run_id: str) -> dict[str, Any]:
@@ -251,8 +270,8 @@ class _Harness:
             result = await self.agents._tools["wait_for_agent"].func(run_id)
         return cast(dict[str, Any], result)
 
-    async def validator_submits(self, run_id: str, review_id: str, status: str) -> dict[str, Any]:
-        """The validator's submit_close_review under its own run and session identity."""
+    async def reviewer_submits(self, run_id: str, review_id: str, status: str) -> dict[str, Any]:
+        """The reviewer's submit_close_review under its own run and session identity."""
         evaluate: Callable[..., Awaitable[CloseEvaluation]] = AsyncMock(
             return_value=self._reviewed(status)
         )
@@ -272,7 +291,7 @@ class _Harness:
 
         token = set_current_agent_run_id(run_id)
         try:
-            with session_context_for_test(self.validator_session):
+            with session_context_for_test(self.reviewer_session):
                 return await submit_close_review(
                     self.ctx,
                     review_id=review_id,
@@ -287,7 +306,7 @@ class _Harness:
         finally:
             reset_current_agent_run_id(token)
 
-    async def validator_run_ends(self, run_id: str) -> dict[str, bool] | None:
+    async def reviewer_run_ends(self, run_id: str) -> dict[str, bool] | None:
         """The runner's terminal path: resolve the durable review payload and notify."""
         self.runs.complete(run_id, result="verdict submitted")
 
@@ -382,18 +401,18 @@ async def test_closed_task_waits_for_verdict_and_cooperative_structured_handoff(
     harness: _Harness,
 ) -> None:
     launched = await harness.close_task()
-    assert launched["error"] == "agentic_review_required"
-    validator_run_id = launched["validator_run_id"]
-    assert validator_run_id == harness.spawned[0]
+    assert launched["error"] == "close_review_required"
+    reviewer_run_id = launched["reviewer_run_id"]
+    assert reviewer_run_id == harness.spawned[0]
     subscribers = CompletionSubscriberManager(harness.db)
-    assert subscribers.get_completion_subscribers(validator_run_id) == [harness.caller_session]
+    assert subscribers.get_completion_subscribers(reviewer_run_id) == [harness.caller_session]
 
-    waited = await harness.wait_for_agent(validator_run_id)
+    waited = await harness.wait_for_agent(reviewer_run_id)
     assert waited["success"] is True
     assert waited["completed"] is False
     assert waited["notification_registered"] is True
     assert harness.completion_registry.is_awaiting(harness.caller_session) is True
-    assert subscribers.get_completion_subscribers(validator_run_id) == [harness.caller_session]
+    assert subscribers.get_completion_subscribers(reviewer_run_id) == [harness.caller_session]
 
     # Parked: the bare prompt reads idle and the detector reports stagnation, yet
     # neither watchdog touches the caller across repeated ticks.
@@ -402,7 +421,7 @@ async def test_closed_task_waits_for_verdict_and_cooperative_structured_handoff(
     caller = harness.runs.get(harness.caller_run.id)
     assert caller is not None and caller.status == "running"
 
-    submitted = await harness.validator_submits(validator_run_id, launched["review_id"], "valid")
+    submitted = await harness.reviewer_submits(reviewer_run_id, launched["review_id"], "valid")
     assert submitted["success"] is True
     assert submitted["review_status"] == "closed"
     assert submitted["terminal_payload"]["event"] == "task_close_review_completed"
@@ -410,20 +429,20 @@ async def test_closed_task_waits_for_verdict_and_cooperative_structured_handoff(
     caller = harness.runs.get(harness.caller_run.id)
     assert caller is not None and caller.status == "running"
 
-    delivery = await harness.validator_run_ends(validator_run_id)
+    delivery = await harness.reviewer_run_ends(reviewer_run_id)
     assert delivery == {harness.caller_session: True}
     [(woken_session, _message, delivered)] = harness.wakes
     assert woken_session == harness.caller_session
     assert delivered["event"] == "task_close_review_completed"
     assert (delivered["status"], delivered["closed"]) == ("closed", True)
-    assert delivered["run_id"] == validator_run_id
+    assert delivered["run_id"] == reviewer_run_id
     assert harness.completion_registry.is_awaiting(harness.caller_session) is False
     assert await harness.monitor.check_completed_task_agents() == 0
     caller = harness.runs.get(harness.caller_run.id)
     assert caller is not None and caller.status == "running"
 
     # The verdict was consumed and the caller gets a cooperative completion turn.
-    resolved = await harness.wait_for_agent(validator_run_id)
+    resolved = await harness.wait_for_agent(reviewer_run_id)
     assert resolved["completed"] is True
     assert resolved["notification_registered"] is False
 
@@ -444,15 +463,15 @@ async def test_closed_task_waits_for_verdict_and_cooperative_structured_handoff(
 
 async def test_abandoned_closed_task_uses_stagnation_fallback(harness: _Harness) -> None:
     launched = await harness.close_task()
-    [validator_run_id] = harness.spawned
-    await harness.wait_for_agent(validator_run_id)
-    submitted = await harness.validator_submits(
-        validator_run_id,
+    [reviewer_run_id] = harness.spawned
+    await harness.wait_for_agent(reviewer_run_id)
+    submitted = await harness.reviewer_submits(
+        reviewer_run_id,
         launched["review_id"],
         "valid",
     )
     assert submitted["review_status"] == "closed"
-    await harness.validator_run_ends(validator_run_id)
+    await harness.reviewer_run_ends(reviewer_run_id)
     assert await harness.monitor.check_completed_task_agents() == 0
 
     harness.age_close_review_delivery()
@@ -486,9 +505,9 @@ async def test_caller_retries_close_task_after_an_invalid_verdict(harness: _Harn
     await harness.wait_for_agent(first_run_id)
     assert await harness.watchdogs_tick() == (0, 0, [], 0)
 
-    submitted = await harness.validator_submits(first_run_id, first["review_id"], "invalid")
+    submitted = await harness.reviewer_submits(first_run_id, first["review_id"], "invalid")
     assert submitted["review_status"] == "invalid"
-    await harness.validator_run_ends(first_run_id)
+    await harness.reviewer_run_ends(first_run_id)
     [(woken_session, _message, delivered)] = harness.wakes
     assert woken_session == harness.caller_session
     assert (delivered["status"], delivered["closed"]) == ("invalid", False)
@@ -502,7 +521,7 @@ async def test_caller_retries_close_task_after_an_invalid_verdict(harness: _Harn
     # A retry while the first review is terminal launches a fresh validator, and the
     # caller parks again on the new run.
     retry = await harness.close_task()
-    assert retry["error"] == "agentic_review_required"
+    assert retry["error"] == "close_review_required"
     assert retry["review_id"] != first["review_id"]
     assert "run_id" not in retry
     retry_run_id = harness.spawned[-1]
@@ -526,7 +545,7 @@ async def test_passive_wait_exemption_requires_live_subscription_including_obser
     harness: _Harness,
 ) -> None:
     launched = await harness.close_task()
-    run_id = cast(str, launched["validator_run_id"])
+    run_id = cast(str, launched["reviewer_run_id"])
     await harness.wait_for_agent(run_id)
 
     assert await harness.monitor._parked_on_completion(harness.caller_session, PASSIVE_WAIT)
@@ -619,12 +638,61 @@ async def _sweep_after_caller_ends(harness: _Harness) -> int:
         return await harness.monitor.check_completed_task_agents()
 
 
+async def _sweep_after_caller_terminal_exits(harness: _Harness) -> int:
+    pending = make_pending_terminal(harness.caller_run, "native", db=harness.db)
+    terminals = TerminalManager(harness.db)
+    host_epoch = "parked-caller-terminal-loss"
+    live = terminals.promote_to_live(
+        pending.id,
+        locator={"host_terminal_id": pending.id},
+        locator_key=native_locator_key(host_epoch, pending.id),
+        host_epoch=host_epoch,
+    )
+    assert live is not None
+    assert terminals.mark_exited(live.id) is not None
+    with (
+        patch.object(
+            harness.monitor._cleanup_handler,
+            "_run_capture_policy",
+            new=AsyncMock(return_value=(False, None)),
+        ),
+        patch.object(harness.monitor._cleanup_handler, "post_terminal_cleanup", new=AsyncMock()),
+    ):
+        return await harness.monitor.check_completed_task_agents()
+
+
+async def test_terminal_loss_fails_invalid_verdict_caller(harness: _Harness) -> None:
+    launched = await harness.close_task()
+    [reviewer_run_id] = harness.spawned
+    submitted = await harness.reviewer_submits(reviewer_run_id, launched["review_id"], "invalid")
+    assert submitted["review_status"] == "invalid"
+
+    handled = await _sweep_after_caller_terminal_exits(harness)
+
+    caller = harness.runs.get(harness.caller_run.id)
+    assert handled == 1
+    assert caller is not None
+    assert caller.status == "error"
+    assert "review_status=invalid" in (caller.error or "")
+
+
+async def test_terminal_loss_does_not_fail_active_review(harness: _Harness) -> None:
+    await harness.close_task()
+
+    handled = await _sweep_after_caller_terminal_exits(harness)
+
+    caller = harness.runs.get(harness.caller_run.id)
+    assert handled == 0
+    assert caller is not None
+    assert caller.status == "running"
+
+
 async def test_ended_caller_fails_on_an_invalid_verdict_it_cannot_retry(
     harness: _Harness,
 ) -> None:
     launched = await harness.close_task()
-    [validator_run_id] = harness.spawned
-    submitted = await harness.validator_submits(validator_run_id, launched["review_id"], "invalid")
+    [reviewer_run_id] = harness.spawned
+    submitted = await harness.reviewer_submits(reviewer_run_id, launched["review_id"], "invalid")
     assert submitted["review_status"] == "invalid"
 
     handled = await _sweep_after_caller_ends(harness)
@@ -640,8 +708,8 @@ async def test_ended_caller_completes_on_a_valid_verdict_before_delivery(
     harness: _Harness,
 ) -> None:
     launched = await harness.close_task()
-    [validator_run_id] = harness.spawned
-    submitted = await harness.validator_submits(validator_run_id, launched["review_id"], "valid")
+    [reviewer_run_id] = harness.spawned
+    submitted = await harness.reviewer_submits(reviewer_run_id, launched["review_id"], "valid")
     assert submitted["review_status"] == "closed"
 
     handled = await _sweep_after_caller_ends(harness)
