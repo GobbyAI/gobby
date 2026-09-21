@@ -3462,6 +3462,8 @@ class TestHooksEndpoints:
     def test_execute_hook_logs_dominant_phase_when_slow(
         self, session_storage: SessionManager
     ) -> None:
+        from gobby.hooks.phase_timing import HOOK_PHASES
+
         server = create_http_server(
             port=60887,
             test_mode=True,
@@ -3476,6 +3478,7 @@ class TestHooksEndpoints:
                 return_value={"continue": True},
             ),
             patch("gobby.servers.routes.mcp.hooks.SLOW_HOOK_THRESHOLD_SECONDS", 0.0),
+            patch("gobby.hooks.phase_timing.observe_histogram") as observe,
             patch("gobby.servers.routes.mcp.hooks.logger.warning") as warning,
         ):
             response = client.post(
@@ -3484,6 +3487,10 @@ class TestHooksEndpoints:
             )
 
         assert response.status_code == 200
+        assert observe.call_count == len(HOOK_PHASES)
+        assert {entry.kwargs["attributes"]["phase"] for entry in observe.call_args_list} == set(
+            HOOK_PHASES
+        )
         slow_warnings = [
             entry
             for entry in warning.call_args_list
