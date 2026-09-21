@@ -7,7 +7,7 @@ import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import TypeAdapter
 
@@ -45,6 +45,10 @@ class TornConfigSnapshotError(ConfigRepositoryError):
     """Stored row metadata cannot belong to the captured global revision."""
 
 
+UnknownKeyPolicy = Literal["raise", "skip"]
+"""``raise`` fails closed on a residual stored key; ``skip`` omits and names it."""
+
+
 @dataclass(frozen=True, slots=True)
 class SecretBinding:
     """Secret reference and payload captured in one database snapshot."""
@@ -62,6 +66,8 @@ class ConfigReadSnapshot:
     overrides: MappingProxyType[str, object]
     row_revisions: MappingProxyType[str, int]
     secret_bindings: MappingProxyType[str, SecretBinding]
+    # Stored keys the registry no longer knows, omitted under ``unknown_keys="skip"``.
+    unknown_keys: tuple[str, ...] = ()
 
 
 def decode_config_value(key: str, raw_value: str) -> object:
@@ -96,8 +102,17 @@ class ConfigRepository:
             self._secret_store = SecretStore(self.db)
         return self._secret_store
 
-    def read(self, *, resolve_secrets: bool = True) -> ConfigReadSnapshot:
-        """Read a complete configuration snapshot in one read-only transaction."""
+    def read(
+        self,
+        *,
+        resolve_secrets: bool = True,
+        unknown_keys: UnknownKeyPolicy = "raise",
+    ) -> ConfigReadSnapshot:
+        """Read a complete configuration snapshot in one read-only transaction.
+
+        ``unknown_keys="skip"`` keeps read-only callers usable while a stored key
+        waits for the migration that drops it; every other reader fails closed.
+        """
         ambient = ambient_transaction(self.db)
         if ambient is not None:
             revision, rows = self._read_coherent(ambient)
@@ -106,6 +121,7 @@ class ConfigRepository:
                 revision,
                 rows,
                 resolve_secrets=resolve_secrets,
+                unknown_keys=unknown_keys,
             )
         with self.db.transaction() as transaction:
             transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
@@ -116,6 +132,7 @@ class ConfigRepository:
                 revision,
                 rows,
                 resolve_secrets=resolve_secrets,
+                unknown_keys=unknown_keys,
             )
 
     def read_bounded(
@@ -214,13 +231,21 @@ class ConfigRepository:
         rows: list[Row],
         *,
         resolve_secrets: bool = True,
+        unknown_keys: UnknownKeyPolicy = "raise",
     ) -> ConfigReadSnapshot:
         overrides: dict[str, object] = {}
         row_revisions: dict[str, int] = {}
         bindings: dict[str, SecretBinding] = {}
+        skipped: list[str] = []
         for row in rows:
             key = str(row["key"])
-            spec = self._resolve(key)
+            try:
+                spec = self._resolve(key)
+            except UnknownStoredConfigKeyError:
+                if unknown_keys == "raise":
+                    raise
+                skipped.append(key)
+                continue
             row_revision = int(row["revision"])
             self._validate_row_revision(key, row_revision, revision)
             value = decode_config_value(key, str(row["value"]))
@@ -239,6 +264,7 @@ class ConfigRepository:
             overrides=MappingProxyType(overrides),
             row_revisions=MappingProxyType(row_revisions),
             secret_bindings=MappingProxyType(bindings),
+            unknown_keys=tuple(skipped),
         )
 
     def runtime_candidate(
@@ -351,6 +377,7 @@ __all__ = [
     "ConfigRepositoryError",
     "SecretBinding",
     "TornConfigSnapshotError",
+    "UnknownKeyPolicy",
     "UnknownStoredConfigKeyError",
     "decode_config_value",
     "registry_is_secret",

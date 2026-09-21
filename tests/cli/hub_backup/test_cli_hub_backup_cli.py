@@ -990,8 +990,8 @@ class TestEpoch:
             def __init__(self, _db: object) -> None:
                 pass
 
-            def read(self, *, resolve_secrets: bool = True) -> Any:
-                return SimpleNamespace(overrides={}, secret_bindings={})
+            def read(self, *, resolve_secrets: bool = True, unknown_keys: str = "raise") -> Any:
+                return SimpleNamespace(overrides={}, secret_bindings={}, unknown_keys=())
 
             def runtime_candidate(
                 self, _overrides: dict[str, object], _secret_bindings: object

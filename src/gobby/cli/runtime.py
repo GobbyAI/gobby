@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from contextlib import ExitStack
 from copy import deepcopy
@@ -12,11 +13,13 @@ import click
 
 from gobby.config.app import DaemonConfig
 from gobby.config.bootstrap import load_bootstrap
-from gobby.storage.config_repository import ConfigRepository
+from gobby.storage.config_repository import ConfigRepository, UnknownKeyPolicy
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.hub.runtime import runtime_hub_database
 from gobby.storage.projects import LocalProjectManager
 from gobby.utils.project_context import get_project_context
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(init=False)
@@ -64,9 +67,13 @@ class CliRuntime:
         Read-only commands must stay usable while the checkout's schema pin, the
         installed gdaemon, and the live hub disagree — the window in which they are
         most needed. Nothing here writes, so the safety the identity gate protects is
-        untouched.
+        untouched. Stored keys the registry no longer knows are skipped with a
+        warning: the restart's stop half runs here before its start half can apply
+        the migration that drops them.
         """
-        return self._overlay_bootstrap(self.require_config(apply_migrations=False))
+        return self._overlay_bootstrap(
+            self.require_config(apply_migrations=False, unknown_keys="skip")
+        )
 
     def _overlay_bootstrap(self, projection: DaemonConfig) -> DaemonConfig:
         config = deepcopy(projection)
@@ -80,12 +87,29 @@ class CliRuntime:
         config.postgres_pool = bootstrap.postgres_pool
         return config
 
-    def require_config(self, *, apply_migrations: bool = True) -> DaemonConfig:
-        """Return configuration, controlling migrations on its first database open."""
+    def require_config(
+        self,
+        *,
+        apply_migrations: bool = True,
+        unknown_keys: UnknownKeyPolicy = "raise",
+    ) -> DaemonConfig:
+        """Return configuration, controlling migrations on its first database open.
+
+        The first read fixes the cached projection: ``restart`` reads tolerantly in
+        its stop half and its start half reuses that projection for ports and log
+        paths, while the runner it launches applies the pending migrations and reads
+        strictly on its own.
+        """
         if self._config is None:
             database = self.require_database(apply_migrations=apply_migrations)
             repository = self.config_repository_factory(database)
-            snapshot = repository.read(resolve_secrets=True)
+            snapshot = repository.read(resolve_secrets=True, unknown_keys=unknown_keys)
+            if snapshot.unknown_keys:
+                logger.warning(
+                    "Ignoring stored configuration keys the registry no longer knows "
+                    "until the pending schema migration drops them: %s",
+                    ", ".join(snapshot.unknown_keys),
+                )
             self._config = repository.runtime_candidate(
                 dict(snapshot.overrides), snapshot.secret_bindings
             )
