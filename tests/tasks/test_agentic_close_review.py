@@ -237,6 +237,9 @@ def test_task_close_reviewer_definition_submits_then_terminates() -> None:
     body = yaml.safe_load(path.read_text())
     assert body["name"] == TASK_CLOSE_REVIEWER_AGENT
     assert body["isolation"] == "none"
+    assert body["provider"] == "codex"
+    assert body["model"] == "gpt-5.6-terra"
+    assert body["reasoning_effort"] == "medium"
     blocked = set(body["blocked_mcp_tools"])
     assert {
         "gobby-tasks:close_task",
