@@ -19,10 +19,10 @@ use crate::ui::{Chrome, Mode};
 use super::super::sidebar_model::{ProjectEntry, WorktreeEntry};
 use super::super::{PaneId, Workspace};
 use super::actions::{
-    activate_live_tab, open_live_rename, spawn_live_shell, spawn_live_terminal, sync_live_chrome,
-    terminate_live_terminal,
+    activate_live_tab, close_live_pane, open_live_rename, spawn_live_shell, spawn_live_terminal,
+    sync_live_chrome, terminate_live_terminal,
 };
-use super::control::focus_live_pane;
+use super::control::{focus_live_pane, release_live_control};
 use super::menu::attention_id;
 use super::modal_input::{close_modal, edit_text, ModalOutcome};
 use super::mouse::Placement;
@@ -115,6 +115,28 @@ pub(super) async fn focus_terminal(
         place_live_terminal(workspace, chrome, Placement::SplitRight, terminal_id, None).await?;
     }
     focus_live_pane(workspace, pane).await
+}
+
+/// Close `pane_id` without deriving the target from the chrome's focus.
+pub(super) async fn close_live_terminal(
+    workspace: &mut Workspace<LiveDaemon>,
+    chrome: &mut Chrome,
+    pane_id: PaneId,
+) -> Result<(), FrameError> {
+    // An external pane is a terminal the user attached rather than one
+    // gclient spawned, so closing it is a detach. A shown pane also leaves
+    // its slot; an unshown pane only needs its control lease released.
+    if workspace.pane(pane_id).external {
+        if chrome.focus_pane(pane_id) {
+            close_live_pane(workspace, chrome).await?;
+        } else {
+            release_live_control(workspace, pane_id).await?;
+        }
+        return Ok(());
+    }
+    terminate_live_terminal(workspace, pane_id).await?;
+    sync_live_chrome(workspace, chrome);
+    Ok(())
 }
 
 /// Tell the daemon the entry's prompt was seen, with the attention id the

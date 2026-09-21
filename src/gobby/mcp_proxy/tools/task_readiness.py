@@ -491,6 +491,7 @@ def create_readiness_registry(
             },
         },
         func=list_ready_tasks,
+        read_only=True,
     )
 
     # --- list_blocked_tasks ---
@@ -546,6 +547,7 @@ def create_readiness_registry(
             },
         },
         func=list_blocked_tasks,
+        read_only=True,
     )
 
     # --- suggest_next_task ---
@@ -762,6 +764,7 @@ def create_readiness_registry(
             },
         },
         func=suggest_next_task,
+        read_only=True,
     )
 
     return registry

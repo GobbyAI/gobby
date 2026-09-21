@@ -88,7 +88,7 @@ UV_CACHE_DIR = "UV_CACHE_DIR"
 # Cargo home path for Rust validation commands run by sandboxed spawned agents.
 CARGO_HOME = "CARGO_HOME"
 
-# Shared per-project cargo build directory (see gobby.agents.cargo_target).
+# Checkout-specific Cargo build directory (see gobby.agents.cargo_target).
 CARGO_TARGET_DIR = "CARGO_TARGET_DIR"
 
 # How long Claude Code may block its first turn waiting for an `--mcp-config`
@@ -144,9 +144,9 @@ def shared_agent_cargo_home_dir() -> Path:
 
     Cargo fingerprints embed dependency source paths under
     ``$CARGO_HOME/registry/src``, so a per-session home invalidates every
-    dependency in the deliberately shared ``CARGO_TARGET_DIR`` and makes each
-    agent rebuild the whole graph. This lives beside that shared target
-    directory under Gobby home; the operator's own ``~/.cargo`` is untouched.
+    dependency in each checkout's ``CARGO_TARGET_DIR`` and makes agents rebuild
+    the whole graph. This lives beside the checkout-specific target roots under
+    Gobby home; the operator's own ``~/.cargo`` is untouched.
     """
     return get_gobby_home() / "cache" / "cargo-home"
 
@@ -176,6 +176,7 @@ def get_terminal_env_vars(
     parent_session_id: str,
     agent_run_id: str,
     project_id: str,
+    checkout_root: str | Path | None = None,
     workflow_name: str | None = None,
     agent_depth: int = 1,
     max_agent_depth: int = 5,
@@ -192,6 +193,7 @@ def get_terminal_env_vars(
         parent_session_id: The parent session ID for context resolution.
         agent_run_id: The agent run record ID.
         project_id: The project ID.
+        checkout_root: Checkout whose Cargo artifacts the child owns.
         workflow_name: Optional workflow to activate.
         agent_depth: Current nesting depth (default: 1).
         max_agent_depth: Maximum allowed depth (default: 5).
@@ -203,7 +205,7 @@ def get_terminal_env_vars(
     Returns:
         Dict of environment variable name to value.
     """
-    from gobby.agents.cargo_target import ensure_shared_cargo_target_dir
+    from gobby.agents.cargo_target import ensure_checkout_cargo_target_dir
     from gobby.agents.spawn_cache_policy import build_spawn_cache_env
     from gobby.utils.daemon_url import daemon_url
 
@@ -216,7 +218,10 @@ def get_terminal_env_vars(
         GOBBY_AGENT_DEPTH: str(agent_depth),
         GOBBY_MAX_AGENT_DEPTH: str(max_agent_depth),
         **build_spawn_cache_env(session_id),
-        CARGO_TARGET_DIR: ensure_shared_cargo_target_dir(project_id),
+        CARGO_TARGET_DIR: ensure_checkout_cargo_target_dir(
+            Path(checkout_root) if checkout_root is not None else Path.cwd(),
+            project_id,
+        ),
     }
     if operator_token:
         env[GOBBY_AGENT_API_TOKEN] = issue_agent_api_token(

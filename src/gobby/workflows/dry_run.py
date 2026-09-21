@@ -71,6 +71,7 @@ class WorkflowStepTrace:
     blocked_tools: list[str]
     allowed_mcp_tools: list[str] | str
     blocked_mcp_tools: list[str]
+    mcp_tool_exemptions: list[str]
     transitions: list[dict[str, str]]
     on_mcp_success: list[str]
     on_mcp_error: list[str]
@@ -84,6 +85,7 @@ class WorkflowStepTrace:
             "blocked_tools": self.blocked_tools,
             "allowed_mcp_tools": self.allowed_mcp_tools,
             "blocked_mcp_tools": self.blocked_mcp_tools,
+            "mcp_tool_exemptions": self.mcp_tool_exemptions,
             "transitions": self.transitions,
             "on_mcp_success": self.on_mcp_success,
             "on_mcp_error": self.on_mcp_error,

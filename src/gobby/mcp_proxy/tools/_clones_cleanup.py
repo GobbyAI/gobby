@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from typing import Any
 
+from gobby.agents.cargo_target import cleanup_checkout_cargo_target_dir
 from gobby.mcp_proxy.tools._clones_context import CloneRegistryContext
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.clones import CloneStatus
@@ -76,6 +78,7 @@ def create_clone_cleanup_registry(ctx: CloneRegistryContext) -> InternalToolRegi
             },
         },
         func=detect_stale_clones,
+        read_only=True,
     )
 
     async def _cleanup_stale_clones_impl(
@@ -152,6 +155,20 @@ def create_clone_cleanup_registry(ctx: CloneRegistryContext) -> InternalToolRegi
                     result_item["files_deleted"] = git_result.success
 
                 if delete_error is None:
+                    cargo_error = await asyncio.to_thread(
+                        cleanup_checkout_cargo_target_dir,
+                        Path(c.clone_path),
+                        c.project_id,
+                    )
+                    if cargo_error is not None:
+                        delete_error = (
+                            "Clone files were deleted, but Cargo target cleanup failed: "
+                            f"{cargo_error}"
+                        )
+                        result_item["error_code"] = "cargo_target_cleanup_failed"
+                        result_item["cargo_target_error"] = cargo_error
+
+                if delete_error is None:
                     try:
                         deleted = ctx.clone_storage.delete(c.id)
                     except Exception as error:
@@ -166,16 +183,17 @@ def create_clone_cleanup_registry(ctx: CloneRegistryContext) -> InternalToolRegi
                 else:
                     result_item["delete_error"] = delete_error
                     cleanup_succeeded = False
-                    try:
-                        restored = ctx.clone_storage.update(
-                            c.id,
-                            status=CloneStatus.STALE.value,
-                        )
-                    except Exception as error:
-                        result_item["record_restore_error"] = str(error)
-                    else:
-                        result_item["record_terminal"] = False
-                        result_item["record_restored"] = restored is not None
+                    if result_item.get("error_code") != "cargo_target_cleanup_failed":
+                        try:
+                            restored = ctx.clone_storage.update(
+                                c.id,
+                                status=CloneStatus.STALE.value,
+                            )
+                        except Exception as error:
+                            result_item["record_restore_error"] = str(error)
+                        else:
+                            result_item["record_terminal"] = False
+                            result_item["record_restored"] = restored is not None
 
             results.append(result_item)
 

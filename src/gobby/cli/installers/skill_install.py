@@ -204,3 +204,49 @@ def install_router_skills_as_cli_skills(target_skills_dir: Path) -> list[str]:
             logger.error("Failed to copy router skill %s: %s", skill_name, e)
 
     return installed
+
+
+def retire_router_skill_directory(legacy_skill_dir: Path, current_skill_dir: Path) -> bool:
+    """Retire a verified Gobby router while preserving custom filesystem state."""
+    if legacy_skill_dir.is_symlink():
+        _preserve_custom(legacy_skill_dir)
+        return False
+    if not legacy_skill_dir.exists():
+        return False
+    if not legacy_skill_dir.is_dir():
+        _preserve_custom(legacy_skill_dir)
+        return False
+
+    legacy_router = legacy_skill_dir / "SKILL.md"
+    current_router = current_skill_dir / "SKILL.md"
+    if legacy_router.is_symlink():
+        _preserve_custom(legacy_router)
+        return False
+    if not legacy_router.exists():
+        return False
+    if not legacy_router.is_file():
+        _preserve_custom(legacy_router)
+        return False
+
+    try:
+        legacy_content = legacy_router.read_bytes()
+        current_content = current_router.read_bytes()
+    except OSError as exc:
+        logger.warning("Preserved legacy router %s: %s", legacy_router, exc)
+        return False
+
+    if (
+        legacy_content != current_content
+        and hashlib.sha256(legacy_content).hexdigest() not in _BUNDLED_GOBBY_HASHES
+    ):
+        _preserve_custom(legacy_router)
+        return False
+
+    try:
+        legacy_router.unlink()
+        if not any(legacy_skill_dir.iterdir()):
+            legacy_skill_dir.rmdir()
+    except OSError as exc:
+        logger.warning("Failed to retire legacy router %s: %s", legacy_router, exc)
+        return False
+    return True

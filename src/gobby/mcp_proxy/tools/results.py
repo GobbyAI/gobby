@@ -136,6 +136,7 @@ def create_results_registry(
         },
         output_schema={"type": "object"},
         func=search_tool_result,
+        read_only=True,
     )
 
     def get_tool_result(
@@ -200,6 +201,7 @@ def create_results_registry(
         },
         output_schema={"type": "object"},
         func=get_tool_result,
+        read_only=True,
     )
 
     return registry

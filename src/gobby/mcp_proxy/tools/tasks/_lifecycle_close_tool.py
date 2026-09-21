@@ -10,6 +10,7 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_close import _commit_close, _evaluat
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_orchestration import (
     active_review_response,
     launch_close_review,
+    promote_close_reviews,
     supersede_close_retry_wait,
 )
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_orchestration import (
@@ -33,10 +34,11 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
         preview: bool = False,
         response_detail: Literal["concise", "diagnostic"] = "concise",
     ) -> dict[str, Any]:
-        active = active_review_response(ctx, task_id)
-        if active is not None:
-            return active
-        supersede_close_retry_wait(ctx, task_id)
+        if not preview:
+            active = active_review_response(ctx, task_id)
+            if active is not None:
+                return active
+            supersede_close_retry_wait(ctx, task_id)
         close_arguments = {
             "task_id": task_id,
             "reason": reason,
@@ -59,12 +61,16 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             response_detail=response_detail,
             override_justification=override_justification,
             scope_justification=scope_justification,
+            run_close_review=not preview,
         )
-        if evaluation.error == "agentic_review_required":
+        if preview:
+            return evaluation.response(preview=True)
+        if evaluation.error == "close_review_required":
             return await launch_close_review(
                 ctx,
                 evaluation=evaluation,
                 close_arguments=close_arguments,
+                evaluate_close=_evaluate_close,
             )
         if not evaluation.ready:
             return evaluation.response(preview=preview)
@@ -102,7 +108,7 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             "a claimed ancestor, which its owner closes through its own gates. "
             "A blocked call reports every deterministic gate in one response: each gate "
             "that failed, and each one a failed prerequisite left unevaluated as skipped. "
-            "preview=true returns diagnostics when blocked and still closes when ready."
+            "preview=true evaluates gates 1-12 only, never launches a reviewer, and never closes."
         ),
         input_schema={
             "type": "object",
@@ -136,7 +142,9 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                 "preview": {
                     "type": "boolean",
                     "default": False,
-                    "description": "Close when ready; otherwise return every gate's status.",
+                    "description": (
+                        "Evaluate deterministic gates 1-12 without launching review or closing."
+                    ),
                 },
                 "response_detail": {
                     "type": "string",
@@ -151,8 +159,8 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
     registry.register(
         name="submit_close_review",
         description=(
-            "Validator-only submission for a persisted oversized task-close review. "
-            "The authenticated task-close-validator run reruns deterministic gates and "
+            "Reviewer-only submission for a persisted task-close review. "
+            "The authenticated task-close-reviewer run reruns deterministic gates and "
             "atomically applies the current verdict."
         ),
         input_schema={
@@ -166,6 +174,11 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
         },
         func=submit_close_review,
     )
+
+    async def promote_queued_close_reviews() -> list[str]:
+        return await promote_close_reviews(ctx, evaluate_close=_evaluate_close)
+
+    registry.set_private_callback("promote_close_reviews", promote_queued_close_reviews)
 
 
 __all__ = ["register_close_task"]

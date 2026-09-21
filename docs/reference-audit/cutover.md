@@ -9,10 +9,11 @@ no compatibility wrappers. The remaining bundle contains the router, `annotate`,
 and 40 reusable standalone skills. Gusto is the 41st retained standalone skill in
 this installation: its project-owned row is not part of the distributed bundle.
 
-The native `gcode init` carrier now installs the same `gobby` router as the Python
-provider installers. It removes only the byte-identical known predecessor; custom
-routers, custom plugin manifests, and other predecessor-directory files survive.
-Its retired content remains only in an isolated upgrade test fixture.
+Provider installers own `gobby` router distribution. The native `gcode init`
+carrier was retired in #22614. Droid uses `.agents/skills/gobby` as its canonical
+carrier and removes `.factory/skills/gobby/SKILL.md` only after successful canonical
+installation and byte-verified Gobby ownership. Custom files, symlinks, directories,
+and failed migrations survive.
 
 ## Isolated verification
 

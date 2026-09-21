@@ -35,7 +35,7 @@ fn apply_kill_result(ws: &mut Workspace, message: &Value) -> Result<(), DaemonEr
             if let Some(pane) = ws.panes.get_mut(&id) {
                 pane.terminating = true;
                 pane.control = ControlState::Observe;
-                pane.pending_input = None;
+                pane.clear_pending_input();
             }
         }
     } else {
@@ -75,7 +75,7 @@ fn apply_lease_lost(ws: &mut Workspace, message: &Value) -> Result<(), DaemonErr
         pane.set_lease_generation(gen);
         pane.control = ControlState::LeaseLost;
         pane.take_back = true;
-        pane.pending_input = None;
+        pane.clear_pending_input();
     }
     Ok(())
 }
@@ -93,7 +93,8 @@ fn apply_control_result(ws: &mut Workspace, message: &Value) -> Result<(), Daemo
         .and_then(Value::as_bool)
         .unwrap_or(false);
     let host_input_granted = message.get("host_input_granted").and_then(Value::as_bool);
-    let mut pending = None;
+    let mut pending = Vec::new();
+    let mut pane_id = None;
     if let Some(pane) = ws.pane_for_attachment_mut(attachment) {
         if gen < pane.lease_generation() {
             return Ok(());
@@ -110,14 +111,22 @@ fn apply_control_result(ws: &mut Workspace, message: &Value) -> Result<(), Daemo
             // and gclient never falls back to daemon-mediated keys (#22573),
             // so `apply_host_grant` hands the pane back to take-back instead.
             if pane.apply_host_grant(host_input_granted) {
-                pending = pane.pending_input.take().map(|data| (pane.id, data));
+                pane_id = Some(pane.id);
+                pending = pane.take_pending_input();
             }
         } else {
-            pane.pending_input = None;
+            pane.clear_pending_input();
         }
     }
-    if let Some((pane_id, data)) = pending {
-        ws.send_input(pane_id, &data)?;
+    if let Some(pane_id) = pane_id {
+        // Everything typed since the take-control request went out, in the
+        // order it was typed (#22573).
+        for input in pending {
+            match input.parts() {
+                (data, false) => ws.send_input(pane_id, data)?,
+                (data, true) => ws.paste_to_pty(pane_id, &String::from_utf8_lossy(data))?,
+            }
+        }
     }
     Ok(())
 }

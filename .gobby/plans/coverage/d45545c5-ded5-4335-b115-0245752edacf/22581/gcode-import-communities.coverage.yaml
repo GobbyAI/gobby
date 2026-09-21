@@ -1,11 +1,11 @@
 header:
   plan_id: gcode-import-communities
-  plan_hash: 7c9267d24b0c9d9024664c93f2e4a4960906169829a8e14c841d3e5bc58bba56
+  plan_hash: 545a5b8c0c129051132ac4701585fb0d681e94d6e9d1ac101b25e59222d1bd47
   root_task_ref: '22581'
   project_id: d45545c5-ded5-4335-b115-0245752edacf
-  generated_at: '2026-09-19T23:15:08Z'
+  generated_at: '2026-09-20T03:35:34Z'
   task_tree_source: db
-  task_tree_source_hash: 9304e80902345a2b3d7c163602331804a53318816cc20dc4e3ac67cee08957c0
+  task_tree_source_hash: 07419779af0b243d7dc187be128e2c3e37ef6dbdb1592f5bd1cdf8f853acc340
   evidence_summary: []
   evidence: []
 rows:
@@ -424,7 +424,7 @@ rows:
   detail: ''
 - section_id: '3.1'
   item_id: 3.1.7
-  plan_node_hash: dd4e15c5a6070ea89c7847d983c37b866e465848e8b34f6c846a1b44620c8252
+  plan_node_hash: 844cfafabb30aceac417435e582de7a426e95992736b10671948e19376f65ea7
   status: covered
   leaves:
   - leaf_task_ref: '#22594'

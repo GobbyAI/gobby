@@ -11,6 +11,7 @@ import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.receipt_effects import apply_acknowledged_receipt, take_worker_staging
+from gobby.memory.surface_format import LEAD_CHARS, format_memory_index
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.state_manager import SessionVariableManager
@@ -120,6 +121,33 @@ def test_index_line_format(engine: RuleEngine) -> None:
     )
     assert lines[-1] == "</memory-index>"
     assert "0.7312" not in formatted
+
+
+def test_index_truncates_only_after_a_whole_word() -> None:
+    formatted = format_memory_index(
+        "task",
+        [_hit("002c13ae-4b1f-4d4a-9a1e-6f0d2a3b4c5d", content="complete " * 20)],
+    )
+
+    content = formatted.splitlines()[1].split("] ", 1)[1].split(" | when:", 1)[0]
+    assert content == f"{' '.join(['complete'] * 17)}…"
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "x" * (LEAD_CHARS + 1),
+        f"{'x' * LEAD_CHARS} trailing words",
+    ],
+)
+def test_index_omits_an_overlong_first_word_instead_of_splitting_it(content: str) -> None:
+    formatted = format_memory_index(
+        "task",
+        [_hit("002c13ae-4b1f-4d4a-9a1e-6f0d2a3b4c5d", content=content)],
+    )
+
+    rendered = formatted.splitlines()[1].split("] ", 1)[1].split(" | when:", 1)[0]
+    assert rendered == "…"
 
 
 def test_index_omits_the_when_clause_without_a_rationale(engine: RuleEngine) -> None:

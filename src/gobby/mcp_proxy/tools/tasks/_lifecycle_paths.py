@@ -194,6 +194,7 @@ def register_release_task_paths(
         ),
         input_schema={"type": "object", "properties": {}},
         func=inspect_task_path_ownership,
+        read_only=True,
     )
 
     async def release_task_paths(

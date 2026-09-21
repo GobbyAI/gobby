@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 
@@ -10,9 +11,11 @@ import pytest
 
 from gobby.config.app import DaemonConfig
 from gobby.config.bootstrap import BootstrapConfig
+from gobby.runner import GobbyRunner
 from gobby.runner_init.storage import (
     _warn_missing_terminal_dependency,
     bootstrap_overlaid_config,
+    run_startup_content_sync,
 )
 from gobby.storage.hub.protocol import HubDatabase
 
@@ -122,3 +125,58 @@ def test_real_runtime_candidate_through_overlay_matches_daemon_startup(
     assert merged.websocket.port == 61112
     assert merged.database_url == "postgresql://gobby:pw@db.example:5432/hub"
     assert merged.voice.enabled is True
+
+
+def test_dev_startup_refuses_dirty_bundled_content_before_sync(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    def dirty_refusal(path: Path, *, database: object) -> str:
+        calls.append(f"integrity:{path}")
+        return "dirty bundled content"
+
+    def unexpected_sync(*_args: object, **_kwargs: object) -> dict[str, object]:
+        pytest.fail("dirty bundled content must not be synced")
+
+    monkeypatch.setattr("gobby.utils.dev.is_dev_mode", lambda _path: True)
+    monkeypatch.setattr("gobby.paths.get_install_dir", lambda: Path("/checkout/install"))
+    monkeypatch.setattr("gobby.sync.integrity.dirty_bundled_content_refusal", dirty_refusal)
+    monkeypatch.setattr("gobby.sync_registry.sync_bundled_content_to_db", unexpected_sync)
+
+    runner = cast(GobbyRunner, SimpleNamespace(database=object()))
+    with pytest.raises(RuntimeError, match="dirty bundled content"):
+        run_startup_content_sync(runner)
+
+    assert runner._dev_mode is True
+    assert calls == ["integrity:/checkout/install"]
+
+
+def test_dev_startup_checks_clean_bundled_content_before_sync(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    def clean_refusal(path: Path, *, database: object) -> None:
+        calls.append(f"integrity:{path}")
+        return None
+
+    def sync(*_args: object, **_kwargs: object) -> dict[str, object]:
+        calls.append("sync")
+        return {"total_synced": 0}
+
+    def migrate(*_args: object, **_kwargs: object) -> dict[str, object]:
+        calls.append("migrate")
+        return {"success": True}
+
+    monkeypatch.setattr("gobby.utils.dev.is_dev_mode", lambda _path: True)
+    monkeypatch.setattr("gobby.paths.get_install_dir", lambda: Path("/checkout/install"))
+    monkeypatch.setattr("gobby.sync.integrity.dirty_bundled_content_refusal", clean_refusal)
+    monkeypatch.setattr("gobby.sync_registry.sync_bundled_content_to_db", sync)
+    monkeypatch.setattr("gobby.sync_registry.migrate_rule_delivery_dispositions", migrate)
+
+    runner = cast(GobbyRunner, SimpleNamespace(database=object()))
+    run_startup_content_sync(runner)
+
+    assert runner._dev_mode is True
+    assert calls == ["integrity:/checkout/install", "sync", "migrate"]

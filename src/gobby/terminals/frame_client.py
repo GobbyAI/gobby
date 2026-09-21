@@ -205,6 +205,7 @@ def _decode_modes(reader: _Reader) -> dict[str, Any]:
         "scroll_region_upper": reader.uvarint(),
         "scroll_region_lower": reader.uvarint(),
         "pane_in_mode": reader.boolean(),
+        "kitty_keyboard_flags": reader.uvarint(),
     }
 
 

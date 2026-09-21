@@ -177,6 +177,7 @@ def create_search_registry(ctx: RegistryContext) -> InternalToolRegistry:
             "required": ["query"],
         },
         func=search_tasks,
+        read_only=True,
     )
 
     return registry

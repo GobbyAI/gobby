@@ -401,6 +401,51 @@ async def test_cleanup_missing_isolation_records_removes_dead_paths(
     assert clones.get(existing_clone.id) is not None
 
 
+async def test_missing_record_cleanup_retries_cargo_target_before_record_delete(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = _install_project(temp_db, tmp_path / "repo", monkeypatch)
+    worktrees = LocalWorktreeManager(temp_db)
+    clones = LocalCloneManager(temp_db)
+    missing_worktree = worktrees.create(
+        project_id=project.id,
+        branch_name="task/missing-worktree",
+        worktree_path=str(tmp_path / "missing-worktree"),
+    )
+    missing_clone = clones.create(
+        project_id=project.id,
+        branch_name="task/missing-clone",
+        clone_path=str(tmp_path / "missing-clone"),
+    )
+    monkeypatch.setattr(
+        "gobby.runner_maintenance.isolation.cleanup_checkout_cargo_target_dir",
+        lambda *_args: "permission denied",
+    )
+
+    failed = await _cleanup_missing_isolation_records(worktrees, clones)
+
+    assert failed == {"worktrees": 0, "clones": 0}
+    assert worktrees.get(missing_worktree.id) is not None
+    assert clones.get(missing_clone.id) is not None
+
+    clones.mark_cleanup(missing_clone.id)
+    assert clones.get(missing_clone.id) is None
+    assert [row.id for row in clones.list_cleanup_pending()] == [missing_clone.id]
+
+    monkeypatch.setattr(
+        "gobby.runner_maintenance.isolation.cleanup_checkout_cargo_target_dir",
+        lambda *_args: None,
+    )
+    retried = await _cleanup_missing_isolation_records_async(worktrees, clones, run_db=None)
+
+    assert retried == {"worktrees": 1, "clones": 1}
+    assert worktrees.get(missing_worktree.id) is None
+    assert clones.get(missing_clone.id) is None
+    assert clones.list_cleanup_pending() == []
+
+
 @pytest.mark.asyncio
 async def test_expired_isolation_loop_uses_bounded_db_runner(
     temp_db: HubDatabase,

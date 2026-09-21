@@ -42,6 +42,9 @@ def plan_calls(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, Path | None]]
 def _every_gate_passes(monkeypatch: pytest.MonkeyPatch) -> None:
     """Default each gate to "no refusal" so a test states only what it exercises."""
     monkeypatch.setattr(daemon_preflight, "worktree_daemon_refusal", lambda: None)
+    monkeypatch.setattr(
+        daemon_preflight, "dirty_bundled_content_refusal", lambda *_args, **_kwargs: None
+    )
     monkeypatch.setattr(schema_divergence, "binary_set_apply_refusal", lambda *_a, **_k: None)
     monkeypatch.setattr(schema_divergence, "schema_apply_refusal", lambda _database: None)
     monkeypatch.setattr(daemon_preflight, "_open_hub", lambda _ctx: None)
@@ -89,6 +92,31 @@ def test_schema_divergence_refusal_short_circuits_before_the_plan(
 
     assert daemon_preflight.restart_start_refusal(ctx) == "live hub schema v9 is newer"
     assert plan_calls == []
+
+
+def test_dirty_bundled_content_refusal_short_circuits_before_the_plan(
+    ctx: click.Context, plan_calls: list[tuple[str, Path | None]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    checked: list[tuple[Path, object | None]] = []
+    install_dir = Path("/checkout/src/gobby/install")
+
+    def dirty_refusal(path: Path, *, database: object | None = None) -> str:
+        checked.append((path, database))
+        return "dirty bundled content"
+
+    monkeypatch.setattr(daemon_preflight, "get_install_dir", lambda: install_dir)
+    monkeypatch.setattr(daemon_preflight, "dirty_bundled_content_refusal", dirty_refusal)
+
+    assert daemon_preflight.restart_start_refusal(ctx) == "dirty bundled content"
+    assert checked == [(install_dir, None)]
+    assert plan_calls == []
+
+
+def test_clean_bundled_content_preserves_existing_preflight(
+    ctx: click.Context, plan_calls: list[tuple[str, Path | None]]
+) -> None:
+    assert daemon_preflight.restart_start_refusal(ctx) is None
+    assert plan_calls == [(_BOOTSTRAP_URL, None)]
 
 
 def test_plan_failure_becomes_a_refusal_carrying_gdaemon_stderr(

@@ -17,6 +17,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
 
     @registry.tool(
         name="list_skills",
+        read_only=True,
         description="List all skills with lightweight metadata. Supports filtering by category and enabled status. Internal methodology skills (frontmatter `internal: true`) are hidden by default; pass include_internal=true to surface them.",
     )
     async def list_skills(

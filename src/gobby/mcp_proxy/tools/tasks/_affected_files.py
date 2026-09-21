@@ -275,6 +275,7 @@ def create_ops_affected_files_registry(ctx: "RegistryContext") -> InternalToolRe
             "required": ["task_id"],
         },
         func=get_affected_files,
+        read_only=True,
     )
 
     # --- find_file_overlaps ---
@@ -322,6 +323,7 @@ def create_ops_affected_files_registry(ctx: "RegistryContext") -> InternalToolRe
             "required": ["task_ids"],
         },
         func=find_file_overlaps,
+        read_only=True,
     )
 
     # --- wire_affected_files_from_run ---

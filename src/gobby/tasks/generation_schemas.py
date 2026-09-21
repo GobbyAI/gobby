@@ -124,8 +124,47 @@ TASK_CLOSE_VALIDATION_SCHEMA: dict[str, Any] = {
             },
         },
         "feedback": {"type": "string"},
+        "findings": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "start_line": {"type": "integer", "minimum": 1},
+                    "end_line": {"type": "integer", "minimum": 1},
+                    "severity": {
+                        "type": "string",
+                        "enum": ["critical", "high", "medium", "low"],
+                    },
+                    "category": {
+                        "type": "string",
+                        "enum": [
+                            "bug",
+                            "security",
+                            "performance",
+                            "maintainability",
+                            "test",
+                            "style",
+                            "documentation",
+                            "other",
+                        ],
+                    },
+                    "description": {"type": "string"},
+                    "suggested_fix": {"type": ["string", "null"]},
+                },
+                "required": [
+                    "path",
+                    "start_line",
+                    "end_line",
+                    "severity",
+                    "category",
+                    "description",
+                ],
+                "additionalProperties": False,
+            },
+        },
     },
-    "required": ["status", "criteria", "feedback"],
+    "required": ["status", "criteria", "feedback", "findings"],
     "additionalProperties": False,
 }
 

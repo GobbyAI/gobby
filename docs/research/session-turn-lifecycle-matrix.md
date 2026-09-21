@@ -11,15 +11,17 @@ missing scenario, an unpinned provider, or an unsupported normalized outcome.
 | --- | --- | --- | --- | --- |
 | Claude Code | 2.1.263 | `Stop` | `AskUserQuestion`, elicitation, `PermissionRequest`, `ExitPlanMode`, and typed notification fallbacks, correlated by interaction ID | Current transcript interrupt marker; the bounded sequence has no `Stop` |
 | Codex | 0.153.2 | Native `Stop`; app-server `turn/completed` completed or failed | Request-user-input, approval/MCP requests, and `thread/status/changed` wait flags | Native `Interrupt`; app-server interrupted status; rollout `turn_aborted` |
-| Droid | 0.190.0 | `Stop` | Typed permission or elicitation notification correlated with a current transcript tool ID | Cancel-specific `idle_prompt` and a current transcript cancellation marker together |
+| Droid | 0.223.0 | `Stop` | Typed permission or elicitation notification correlated with a current transcript tool ID | Current `idle_prompt` message says the agent was stopped by the user and the matching transcript has `agent_turn_outcome(reason=cancelled)`; this explicit pair overrides the generic `Stop` emitted just before it |
 | Grok | 1.0.30 | `Stop(reason=end_turn)` and other non-user terminal reasons | `pending_interaction` kinds, correlated by exact interaction and `promptId` | Current `StopCancelled(reason=user_interrupt,cancelledBy=user)`; session `events.jsonl` (beside the registered `updates.jsonl`) appends `turn_ended` with `outcome=cancelled` within milliseconds of Ctrl+C (`cancellation_context.trigger=ctrl_c`). Esc never cancels a Grok turn; Ctrl+C on an empty composer does, and `/compact` is rejected while a turn runs (#22358) |
 | Qwen Code | 0.23.0 | `Stop` | Correlated `PermissionRequest` and displayed typed notification | Exact boolean `PostToolUseFailure.is_interrupt is True`; otherwise a Gobby-mediated key plus current output |
 | AGY | 1.1.27 | `Stop` | Structured `ask_question` plus characterized permission, plan, and artifact screens | Gobby-mediated Esc/Ctrl-C plus current-version interruption output; the bounded sequence has no `Stop` |
 
-The fixture was normalized on 2026-09-06 from the listed release contracts and
+The fixture was normalized on 2026-09-19 from the listed release contracts and
 bounded, redacted event/pane slices. It records the command used for each provider,
-the raw event order, positive evidence, and required absent events. AGY is pinned to
-1.1.27; older 1.1.24 characterization is not used for lifecycle decisions.
+the raw event order, positive evidence, and required absent events. Droid's ten
+bounded source slices are preserved in
+`tests/fixtures/provider_contracts/droid/turn-lifecycle-0.223.0.json`. AGY is pinned
+to 1.1.27; older 1.1.24 characterization is not used for lifecycle decisions.
 
 ## Normalized Evidence
 
@@ -70,6 +72,12 @@ and contains no `Stop`. AGY 1.1.27's in-flight Esc/Ctrl-C slice contains the
 Waiting slices likewise end at a displayed interaction and assert the absence of a
 terminal event. These conclusions are bounded to the complete fixture slices; an
 unrelated later event cannot be retroactively attached to them.
+
+Droid 0.223.0 is an explicit exception to the no-`Stop` interrupt shape: its
+bounded slice contains `Stop`, then `idle_prompt`, then a matching transcript
+`agent_turn_outcome(reason=cancelled)`. The later, current-turn cancellation
+evidence wins; the generic `Stop` is retained in the source artifact rather than
+discarded or rewritten.
 
 Qwen and AGY terminal keys can bypass Gobby when sent directly through tmux. Such
 input has no trustworthy provenance, so the session remains `active` unless a hook

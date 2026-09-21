@@ -71,7 +71,7 @@ def _non_gobby_dirty_paths(status_output: str) -> set[str]:
 
 
 async def staged_paths(runner: GitCommandRunner, cwd: str | Path) -> set[str]:
-    """Return staged paths outside .gobby/ for one checkout."""
+    """Return every staged path for one checkout."""
     result = await runner.run_git_command(
         ["diff", "--name-only", "--cached"],
         cwd=cwd,
@@ -80,11 +80,7 @@ async def staged_paths(runner: GitCommandRunner, cwd: str | Path) -> set[str]:
     if result.returncode != 0:
         detail = result.stderr or result.stdout or f"git exited with status {result.returncode}"
         raise RuntimeError(f"Failed to inspect staged target paths: {detail.strip()}")
-    return {
-        path.strip()
-        for path in result.stdout.splitlines()
-        if path.strip() and not _status_path_is_gobby_only(path.strip())
-    }
+    return {path.strip() for path in result.stdout.splitlines() if path.strip()}
 
 
 def _qualified_branch_ref(ref: str, label: str) -> str:

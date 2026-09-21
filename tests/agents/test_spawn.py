@@ -13,7 +13,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from gobby.agents.constants import UV_CACHE_DIR
+from gobby.agents.cargo_target import checkout_cargo_target_dir
+from gobby.agents.constants import CARGO_HOME, CARGO_TARGET_DIR, UV_CACHE_DIR
 from gobby.agents.session import ChildSessionConfig
 from gobby.agents.spawn import (
     PreparedSpawn,
@@ -284,6 +285,26 @@ class TestPrepareTerminalSpawnMetadata:
         assert uv_cache.parts[-3:-1] == ("gobby", "uv-cache")
         assert uv_cache.parts[-1].startswith("child-sess-1-")
         assert uv_cache.is_dir()
+
+    def test_env_uses_spawn_checkout_cargo_target(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "home"))
+        workspace = tmp_path / "worktree"
+        sm = _make_session_manager()
+
+        result = prepare_terminal_spawn(
+            session_manager=sm,
+            parent_session_id="parent-1",
+            project_id="proj-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
+            workspace_path=str(workspace),
+        )
+
+        assert result.env_vars[CARGO_TARGET_DIR] == str(
+            checkout_cargo_target_dir(workspace, "proj-1")
+        )
+        assert result.env_vars[CARGO_HOME] == str(tmp_path / "home" / "cache" / "cargo-home")
 
     def test_env_includes_managed_tool_bin_path(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path

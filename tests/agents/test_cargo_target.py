@@ -1,17 +1,19 @@
-"""Shared per-project cargo target directory and checkout links."""
+"""Checkout-specific Cargo target directories and links."""
 
 from __future__ import annotations
 
+import hashlib
 import os
 from pathlib import Path
 
 import pytest
 
 from gobby.agents.cargo_target import (
-    ensure_shared_cargo_target_dir,
+    checkout_cargo_target_dir,
+    cleanup_checkout_cargo_target_dir,
+    ensure_checkout_cargo_target_dir,
     exclude_checkout_target,
     link_checkout_cargo_target,
-    shared_cargo_target_dir,
 )
 
 pytestmark = pytest.mark.unit
@@ -32,8 +34,26 @@ def cargo_checkout(tmp_path: Path) -> Path:
     return checkout
 
 
-def test_shared_dir_lives_under_gobby_home_cache(gobby_home: Path) -> None:
-    assert shared_cargo_target_dir("proj-1") == gobby_home / "cache" / "cargo-target" / "proj-1"
+def test_checkout_dir_is_deterministic_under_project_cache(
+    gobby_home: Path, cargo_checkout: Path
+) -> None:
+    canonical = cargo_checkout.resolve()
+    suffix = hashlib.sha256(os.fsencode(canonical)).hexdigest()[:16]
+
+    first = checkout_cargo_target_dir(cargo_checkout, "proj-1")
+    second = checkout_cargo_target_dir(cargo_checkout, "proj-1")
+
+    assert first == second
+    assert first == gobby_home / "cache" / "cargo-target-v2" / "proj-1" / (f"checkout-{suffix}")
+
+
+def test_checkout_dirs_are_distinct(gobby_home: Path, tmp_path: Path) -> None:
+    first = tmp_path / "main"
+    second = tmp_path / "worktree"
+    first.mkdir()
+    second.mkdir()
+
+    assert checkout_cargo_target_dir(first, "proj-1") != checkout_cargo_target_dir(second, "proj-1")
 
 
 @pytest.mark.parametrize(
@@ -45,14 +65,23 @@ def test_shared_dir_lives_under_gobby_home_cache(gobby_home: Path) -> None:
         ("x" * 100, "x" * 80),
     ],
 )
-def test_shared_dir_sanitizes_project_id(gobby_home: Path, project_id: str, leaf: str) -> None:
-    assert shared_cargo_target_dir(project_id).name == leaf
+def test_checkout_dir_sanitizes_project_id(
+    gobby_home: Path, cargo_checkout: Path, project_id: str, leaf: str
+) -> None:
+    assert checkout_cargo_target_dir(cargo_checkout, project_id).parent.name == leaf
 
 
-def test_ensure_creates_shared_dir(gobby_home: Path) -> None:
-    path = ensure_shared_cargo_target_dir("proj-1")
+def test_checkout_dir_sanitizes_checkout_name(gobby_home: Path, tmp_path: Path) -> None:
+    checkout = tmp_path / "a checkout:name"
+    checkout.mkdir()
 
-    assert path == str(gobby_home / "cache" / "cargo-target" / "proj-1")
+    assert checkout_cargo_target_dir(checkout, "proj-1").name.startswith("a-checkout-name-")
+
+
+def test_ensure_creates_checkout_dir(gobby_home: Path, cargo_checkout: Path) -> None:
+    path = ensure_checkout_cargo_target_dir(cargo_checkout, "proj-1")
+
+    assert path == str(checkout_cargo_target_dir(cargo_checkout, "proj-1"))
     assert Path(path).is_dir()
 
 
@@ -60,10 +89,10 @@ def test_link_created_for_cargo_checkout(gobby_home: Path, cargo_checkout: Path)
     assert link_checkout_cargo_target(cargo_checkout, "proj-1") is True
 
     link = cargo_checkout / "target"
-    shared = gobby_home / "cache" / "cargo-target" / "proj-1"
+    checkout_target = checkout_cargo_target_dir(cargo_checkout, "proj-1")
     assert link.is_symlink()
-    assert os.readlink(link) == str(shared)
-    assert shared.is_dir()
+    assert os.readlink(link) == str(checkout_target)
+    assert checkout_target.is_dir()
 
 
 def test_link_is_idempotent(gobby_home: Path, cargo_checkout: Path) -> None:
@@ -73,6 +102,34 @@ def test_link_is_idempotent(gobby_home: Path, cargo_checkout: Path) -> None:
     assert link_checkout_cargo_target(cargo_checkout, "proj-1") is True
 
     assert os.lstat(cargo_checkout / "target") == first_stat
+
+
+def test_legacy_link_is_atomically_migrated_without_artifacts(
+    gobby_home: Path,
+    cargo_checkout: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    legacy = gobby_home / "cache" / "cargo-target" / "proj-1"
+    legacy.mkdir(parents=True)
+    (legacy / "contaminated").write_text("old", encoding="utf-8")
+    target = cargo_checkout / "target"
+    os.symlink(legacy, target, target_is_directory=True)
+    replacements: list[tuple[Path, Path]] = []
+    real_replace = os.replace
+
+    def record_replace(source: Path, destination: Path) -> None:
+        replacements.append((source, destination))
+        real_replace(source, destination)
+
+    monkeypatch.setattr("gobby.agents.cargo_target.os.replace", record_replace)
+
+    assert link_checkout_cargo_target(cargo_checkout, "proj-1") is True
+
+    desired = checkout_cargo_target_dir(cargo_checkout, "proj-1")
+    assert os.readlink(target) == str(desired)
+    assert replacements and replacements[0][1] == target
+    assert not (desired / "contaminated").exists()
+    assert (legacy / "contaminated").read_text(encoding="utf-8") == "old"
 
 
 def test_non_cargo_checkout_untouched(gobby_home: Path, tmp_path: Path) -> None:
@@ -98,7 +155,7 @@ def test_existing_real_target_dir_left_alone(
 
     assert not target.is_symlink()
     assert (target / "debug" / "artifact").read_text(encoding="utf-8") == "built"
-    assert any("move it aside" in record.getMessage() for record in caplog.records)
+    assert any("existing target directory" in record.getMessage() for record in caplog.records)
 
 
 def test_foreign_symlink_left_alone(gobby_home: Path, cargo_checkout: Path, tmp_path: Path) -> None:
@@ -110,6 +167,52 @@ def test_foreign_symlink_left_alone(gobby_home: Path, cargo_checkout: Path, tmp_
     assert link_checkout_cargo_target(cargo_checkout, "proj-1") is False
 
     assert os.readlink(target) == str(elsewhere)
+
+
+def test_cleanup_removes_only_derived_checkout_target(
+    gobby_home: Path, cargo_checkout: Path
+) -> None:
+    target = checkout_cargo_target_dir(cargo_checkout, "proj-1")
+    (target / "debug").mkdir(parents=True)
+
+    assert cleanup_checkout_cargo_target_dir(cargo_checkout, "proj-1") is None
+    assert not target.exists()
+    assert cleanup_checkout_cargo_target_dir(cargo_checkout, "proj-1") is None
+
+
+def test_cleanup_refuses_symlinked_cache_target(
+    gobby_home: Path, cargo_checkout: Path, tmp_path: Path
+) -> None:
+    target = checkout_cargo_target_dir(cargo_checkout, "proj-1")
+    target.parent.mkdir(parents=True)
+    foreign = tmp_path / "foreign-cache"
+    foreign.mkdir()
+    os.symlink(foreign, target, target_is_directory=True)
+
+    error = cleanup_checkout_cargo_target_dir(cargo_checkout, "proj-1")
+
+    assert error == f"Refusing to remove symlinked Cargo target path: {target}"
+    assert target.is_symlink()
+    assert foreign.is_dir()
+
+
+def test_cleanup_refuses_symlinked_project_cache_root(
+    gobby_home: Path, cargo_checkout: Path, tmp_path: Path
+) -> None:
+    project_root = gobby_home / "cache" / "cargo-target-v2" / "proj-1"
+    project_root.parent.mkdir(parents=True)
+    foreign = tmp_path / "foreign-project-cache"
+    target = checkout_cargo_target_dir(cargo_checkout, "proj-1")
+    (foreign / target.name).mkdir(parents=True)
+    sentinel = foreign / target.name / "sentinel"
+    sentinel.write_text("keep", encoding="utf-8")
+    os.symlink(foreign, project_root, target_is_directory=True)
+
+    error = cleanup_checkout_cargo_target_dir(cargo_checkout, "proj-1")
+
+    assert error == f"Refusing to remove Cargo target below symlinked project cache: {project_root}"
+    assert project_root.is_symlink()
+    assert sentinel.read_text(encoding="utf-8") == "keep"
 
 
 def test_symlink_failure_is_logged_not_raised(

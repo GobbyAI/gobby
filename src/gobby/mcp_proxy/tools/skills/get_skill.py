@@ -420,6 +420,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
 
     @registry.tool(
         name="get_skill_files",
+        read_only=True,
         description=(
             "List one byte-bounded page of skill files. Continue with the returned "
             "next_after_path value."
@@ -453,6 +454,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
 
     @registry.tool(
         name="get_skill_file",
+        read_only=True,
         description=(
             "Get one exact skill file using a brief projection by default. "
             "Follow next_cursor until null."

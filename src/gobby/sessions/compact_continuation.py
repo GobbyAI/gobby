@@ -453,10 +453,10 @@ async def _type_handoff_compact_continuation(
 
     The prompt gets the same verified-submit ladder as the compaction command that
     precedes it: a Delivered Enter is not a submitted prompt, so the composer is read
-    back after every Enter. A prompt that never leaves is drained -- the draft is
-    ours, we cleared the box before typing it -- so the caller's durable fallback
-    delivers it exactly once. A drain that itself fails still reports the failure: a
-    duplicated prompt is a far smaller harm than a lost handoff.
+    back after every Enter. A held prompt gets bare-Enter retries without being
+    retyped. If it never leaves, the caller drains the draft before its durable
+    fallback delivers it exactly once. A drain that itself fails still reports the
+    failure: a duplicated prompt is a far smaller harm than a lost handoff.
     """
     if delay_seconds > 0:
         await asyncio.sleep(delay_seconds)

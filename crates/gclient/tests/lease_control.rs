@@ -57,12 +57,6 @@ async fn send_key(input: &mpsc::Sender<RawInputEvent>, code: KeyCode, modifiers:
         .expect("live loop input");
 }
 
-async fn settle_live_event() {
-    for _ in 0..16 {
-        tokio::task::yield_now().await;
-    }
-}
-
 /// One live terminal pinned into a project, as `client_loop.rs` sets it up.
 async fn single_terminal_loop(mock: &MockDaemon) -> (Workspace<LiveDaemon>, tempfile::TempDir) {
     mock.use_unique_attachment_ids();
@@ -90,12 +84,15 @@ async fn single_terminal_loop(mock: &MockDaemon) -> (Workspace<LiveDaemon>, temp
 /// Focus asks politely and is refused because another viewer holds the
 /// lease; the pane offers take-back and the status line says so without a
 /// failure prefix. `prefix+shift+a` then sends a takeover, which the daemon
-/// grants, and the pane is held.
-#[tokio::test]
-async fn take_back_displaces_the_holder_with_takeover() {
+/// Clicking or focusing a pane is the whole gesture (#22573): the take it
+/// sends already displaces whoever holds the lease, so a person never presses
+/// take-back to type in a pane they just chose. The key typed straight after
+/// focus proves the grant landed, which is also the signal this assertion
+/// waits on.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn focus_displaces_the_holder_in_one_gesture() {
     let mock = MockDaemon::start("local-token").await;
     let (mut workspace, _home) = single_terminal_loop(&mock).await;
-    mock.enqueue_take_control_reply(false, 1, Some("held"));
     let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
     let mut chrome = Chrome::dark();
     chrome.keymap = Keymap::defaults(HERDR_PREFIX);
@@ -103,11 +100,8 @@ async fn take_back_displaces_the_holder_with_takeover() {
 
     let driver = async {
         wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
-        settle_live_event().await;
-        send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
-        send_key(&input_tx, KeyCode::Char('A'), KeyModifiers::SHIFT).await;
-        wait_for_websocket_requests(&mock, "terminal_take_control", 2).await;
-        settle_live_event().await;
+        send_key(&input_tx, KeyCode::Char('x'), KeyModifiers::NONE).await;
+        wait_for_websocket_requests(&mock, "terminal_input", 1).await;
         drop(input_tx);
     };
 
@@ -125,35 +119,98 @@ async fn take_back_displaces_the_holder_with_takeover() {
     result.expect("live loop exits cleanly");
 
     let takes = websocket_requests(&mock, "terminal_take_control");
-    assert_eq!(takes.len(), 2, "one polite focus take and one take-back");
+    assert_eq!(
+        takes.len(),
+        1,
+        "focus asks once and needs no second gesture"
+    );
     assert_eq!(
         takes[0].get("takeover"),
-        Some(&json!(false)),
-        "focus never displaces the holder"
-    );
-    assert_eq!(
-        takes[1].get("takeover"),
         Some(&json!(true)),
-        "take-back displaces the holder"
+        "focus displaces the holder"
     );
+    let pane = workspace
+        .pane_for_terminal("terminal-a")
+        .expect("terminal pane");
+    assert!(workspace.pane(pane).is_held(), "the granted take holds it");
+    assert!(
+        !workspace.pane(pane).has_take_back(),
+        "no take-back on the ordinary path"
+    );
+}
+
+/// A daemon that refuses the take outright is the exceptional state that keeps
+/// take-back: the pane says who holds it instead of typing into nothing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_refused_take_keeps_take_back_and_names_the_holder() {
+    let mock = MockDaemon::start("local-token").await;
+    let (mut workspace, _home) = single_terminal_loop(&mock).await;
+    mock.enqueue_take_control_reply(false, 1, Some("held"));
+    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    chrome.keymap = Keymap::defaults(HERDR_PREFIX);
+    let (input_tx, input_rx) = mpsc::channel(256);
+    let observed_daemon = workspace.daemon().clone();
+
+    let driver = async {
+        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        // The refused take is applied off the loop. Wait for its daemon future
+        // to finish before queuing take-back; the biased loop will then apply
+        // that outcome before this input and make the test independent of
+        // scheduler timing.
+        for _ in 0..1_024 {
+            if observed_daemon.pending_counts().2 == 0 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(observed_daemon.pending_counts().2, 0);
+        send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
+        send_key(&input_tx, KeyCode::Char('A'), KeyModifiers::SHIFT).await;
+        wait_for_websocket_requests(&mock, "terminal_take_control", 2).await;
+        send_key(&input_tx, KeyCode::Char('x'), KeyModifiers::NONE).await;
+        wait_for_websocket_requests(&mock, "terminal_input", 1).await;
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+
+    let takes = websocket_requests(&mock, "terminal_take_control");
+    assert_eq!(takes.len(), 2, "the refusal, then the take-back");
+    assert_eq!(takes[1].get("takeover"), Some(&json!(true)));
     let pane = workspace
         .pane_for_terminal("terminal-a")
         .expect("terminal pane");
     assert!(
         workspace.pane(pane).is_held(),
-        "the granted takeover holds the pane"
+        "the granted take-back holds the pane"
     );
-    assert!(!workspace.pane(pane).has_take_back());
-    let status = chrome.last_alert().unwrap_or_default().to_string();
+    let alerts: Vec<&str> = chrome
+        .alert_log
+        .iter()
+        .map(|toast| toast.title.as_str())
+        .collect();
     assert!(
-        status.contains("take back"),
-        "the refusal names take back: {status:?}"
+        alerts.iter().any(|alert| alert.contains("take back")),
+        "the refusal names take back: {alerts:?}"
     );
     assert!(
-        !status.contains("frame protocol failed"),
-        "a refusal is not a protocol failure: {status:?}"
+        !alerts
+            .iter()
+            .any(|alert| alert.contains("frame protocol failed")),
+        "a refusal is not a protocol failure: {alerts:?}"
     );
-    mock.shutdown().await;
 }
 
 fn orphan(terminal_id: &str) -> OrphanRow {

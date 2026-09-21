@@ -759,6 +759,7 @@ def register_terminal_tools(
 
     @registry.tool(
         name="capture_output",
+        read_only=True,
         description=(
             "Take a one-shot diagnostic snapshot of the last N lines of a session's "
             "terminal output. Useful for inspecting permission dialogs, trust prompts, "

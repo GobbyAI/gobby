@@ -42,7 +42,7 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_review_gate import (
     SubmittedCloseReview,
 )
 from gobby.mcp_proxy.tools.tasks._lifecycle_review_gate import (
-    evaluate_close_criteria as evaluate_criteria_review,
+    evaluate_close_criteria as evaluate_close_review,
 )
 from gobby.mcp_proxy.tools.tasks._lifecycle_validation import (
     active_validation_backoff,
@@ -128,7 +128,7 @@ def _apply_escalated_close_gate(
     if not (override_justification or "").strip():
         evaluation.fail(
             13,
-            "criteria_review",
+            "close_review",
             "task_escalated",
             "Escalated tasks require override_justification for deliberate closure.",
             action=(
@@ -139,7 +139,7 @@ def _apply_escalated_close_gate(
         )
         return
     evaluation.validation_reset_reason = "escalated_deliberate_close"
-    evaluation.pass_gate(13, "criteria_review", _DELIBERATE_CLOSE_SKIP, skipped=True)
+    evaluation.pass_gate(13, "close_review", _DELIBERATE_CLOSE_SKIP, skipped=True)
 
 
 async def _evaluate_close(
@@ -155,6 +155,7 @@ async def _evaluate_close(
     closing_session_id: str | None = None,
     override_justification: str | None = None,
     scope_justification: str | None = None,
+    run_close_review: bool = True,
 ) -> CloseEvaluation:
     """Evaluate the checklist once without close or commit-link mutation."""
     evaluation = CloseEvaluation(task_id, response_detail=response_detail)
@@ -303,7 +304,7 @@ async def _evaluate_close(
             return evaluation
         evaluation.pass_gate(
             13,
-            "criteria_review",
+            "close_review",
             "Skipped for an epic or structural parent.",
             skipped=True,
         )
@@ -714,7 +715,18 @@ async def _evaluate_close(
     if blocker is not None:
         # Gate 13 spends a paid validator run, so it is the one gate that never starts
         # while a deterministic blocker is still on the checklist.
-        evaluation.skip_gate(13, "criteria_review", blocked_by=blocker.name)
+        evaluation.skip_gate(13, "close_review", blocked_by=blocker.name)
+        return evaluation
+
+    if not run_close_review:
+        evaluation.not_run_gate(
+            13,
+            "close_review",
+            "Not run during deterministic close preview.",
+        )
+        evaluation.error = "close_review_required"
+        evaluation.message = "Deterministic gates passed; a real close requires independent review."
+        evaluation.action = "Call close_task with preview=false to queue the close reviewer."
         return evaluation
 
     task_validator = ctx.task_validator
@@ -727,7 +739,7 @@ async def _evaluate_close(
         )
         return evaluation.fail(
             13,
-            "criteria_review",
+            "close_review",
             "validation_provider_unavailable",
             infra.message or "The task-close criteria reviewer is not configured.",
             extra=infra.extra,
@@ -745,14 +757,14 @@ async def _evaluate_close(
         )
         return evaluation.fail(
             13,
-            "criteria_review",
+            "close_review",
             infra.error_type or "validation_diff_unavailable",
             infra.message or str(exc),
             extra=infra.extra,
         )
 
     review_started = perf_counter()
-    llm_result = await evaluate_criteria_review(
+    llm_result = await evaluate_close_review(
         task=evaluation_task,
         task_validator=task_validator,
         ctx=ctx,
@@ -791,7 +803,7 @@ async def _evaluate_close(
         resolved_id,
         "submitted" if submitted_review is not None else "detached",
     )
-    llm_result.extra["criteria_review_duration_ms"] = review_duration_ms
+    llm_result.extra["close_review_duration_ms"] = review_duration_ms
     evaluation.validation_status = llm_result.validation_status
     evaluation.validation_feedback = llm_result.validation_feedback
     evaluation.validation_reset_reason = llm_result.reset_reason
@@ -807,14 +819,14 @@ async def _evaluate_close(
         message = reasons[0] if reasons else llm_result.message or "Criteria review did not pass."
         return evaluation.fail(
             13,
-            "criteria_review",
+            "close_review",
             llm_result.error_type or "validation_failed",
             message,
             reasons=reasons,
             actions=actions,
             extra=extra,
         )
-    evaluation.pass_gate(13, "criteria_review", "Task-close criteria review passed.")
+    evaluation.pass_gate(13, "close_review", "Task close review passed.")
     evaluation.extra.update(llm_result.extra)
     return evaluation
 

@@ -31,7 +31,7 @@ from gobby.tasks.transcript_outcomes import (
     infer_failure_categories,
 )
 
-GateStatus = Literal["passed", "failed", "skipped"]
+GateStatus = Literal["passed", "failed", "skipped", "not_run"]
 
 _TEST_REQUIRED_CATEGORIES = frozenset({"code", "refactor", "test"})
 _AUTO_PASS_CATEGORIES = frozenset({"docs", "planning", "research", "manual"})

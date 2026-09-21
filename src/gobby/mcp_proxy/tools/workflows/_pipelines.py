@@ -387,6 +387,7 @@ def register_pipeline_tools(
 
     @registry.tool(
         name="list_pipelines",
+        read_only=True,
         description="List available pipeline definitions from project and global directories.",
     )
     async def _list_pipelines() -> dict[str, Any]:
@@ -396,6 +397,7 @@ def register_pipeline_tools(
 
     @registry.tool(
         name="get_pipeline",
+        read_only=True,
         description="Get details about a specific pipeline definition including steps and inputs.",
     )
     async def _get_pipeline(name: str) -> dict[str, Any]:
@@ -606,6 +608,7 @@ def register_pipeline_tools(
 
     @registry.tool(
         name="get_pipeline_status",
+        read_only=True,
         description="Get the status of a pipeline execution including step details.",
     )
     def _get_pipeline_status(
@@ -626,6 +629,7 @@ def register_pipeline_tools(
 
     @registry.tool(
         name="list_pipeline_executions",
+        read_only=True,
         description=(
             "List pipeline executions with optional filters and offset pagination. "
             "Returns a page of executions plus a filter-scoped total and status_summary. "
@@ -664,6 +668,7 @@ def register_pipeline_tools(
 
     @registry.tool(
         name="search_pipeline_executions",
+        read_only=True,
         description=(
             "Search pipeline executions by text with offset pagination. Matches "
             "pipeline names and optionally step error messages. Combine with status "
@@ -802,6 +807,7 @@ def register_pipeline_tools(
 
     @registry.tool(
         name="export_pipeline",
+        read_only=True,
         description="Export a pipeline definition as YAML content.",
     )
     def _export_pipeline(

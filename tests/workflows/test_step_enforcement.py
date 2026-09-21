@@ -14,6 +14,7 @@ import pytest
 
 from gobby.adapters.capabilities import GROK_MODEL_REASON_WINDOW_CHARS
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+from gobby.mcp_proxy.tools.internal import InternalRegistryManager, InternalToolRegistry
 from gobby.skills.formatting import SKILL_BLOCK_ATOMICITY_NOTICE
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions.agents import AgentDefinitionManager
@@ -48,7 +49,33 @@ def manager(db: "HubDatabase") -> AgentDefinitionManager:
 
 @pytest.fixture
 def engine(db: "HubDatabase") -> RuleEngine:
-    return RuleEngine(db)
+    internal_manager = InternalRegistryManager()
+    tasks_registry = InternalToolRegistry("gobby-tasks")
+    tasks_registry.register(
+        name="list_tasks",
+        description="List tasks.",
+        input_schema={"type": "object", "properties": {}},
+        func=lambda: None,
+        read_only=True,
+    )
+    tasks_registry.register(
+        name="update_task",
+        description="Update a task.",
+        input_schema={"type": "object", "properties": {}},
+        func=lambda: None,
+    )
+    skills_registry = InternalToolRegistry("gobby-skills")
+    for tool_name in ("get_skill_file", "get_skill_files"):
+        skills_registry.register(
+            name=tool_name,
+            description="Read a skill file.",
+            input_schema={"type": "object", "properties": {}},
+            func=lambda: None,
+            read_only=True,
+        )
+    internal_manager.add_registry(tasks_registry)
+    internal_manager.add_registry(skills_registry)
+    return RuleEngine(db, internal_manager=internal_manager)
 
 
 @pytest.fixture
@@ -965,6 +992,118 @@ class TestStepMCPToolBlocking:
         assert "gobby-tasks:close_task" in response.reason
         assert "Abandon this call" in response.reason
         assert "do not retry the same blocked tool in this step" in response.reason
+
+    @pytest.mark.asyncio
+    async def test_read_only_internal_tool_allowed_in_restricted_step(
+        self,
+        db: "HubDatabase",
+        manager: AgentDefinitionManager,
+        engine: RuleEngine,
+        instance_mgr: AgentStepInstanceManager,
+    ) -> None:
+        _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
+        event = _make_event(
+            data={
+                "tool_name": "mcp__gobby__call_tool",
+                "tool_input": {
+                    "server_name": "gobby-tasks",
+                    "tool_name": "list_tasks",
+                },
+            }
+        )
+
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables={})
+
+        assert response.decision == "allow"
+
+    @pytest.mark.asyncio
+    async def test_blocked_read_only_tool_still_refused(
+        self,
+        db: "HubDatabase",
+        manager: AgentDefinitionManager,
+        engine: RuleEngine,
+        instance_mgr: AgentStepInstanceManager,
+    ) -> None:
+        workflow = {
+            "name": "explicit-read-only-block",
+            "version": "1.0",
+            "enabled": False,
+            "steps": [
+                {
+                    "name": "work",
+                    "allowed_mcp_tools": ["gobby-tasks:claim_task"],
+                    "blocked_mcp_tools": ["gobby-tasks:list_tasks"],
+                }
+            ],
+        }
+        _setup_step_workflow(
+            db,
+            manager,
+            instance_mgr,
+            current_step="work",
+            workflow_data=workflow,
+        )
+        event = _make_event(
+            data={
+                "tool_name": "mcp__gobby__call_tool",
+                "tool_input": {
+                    "server_name": "gobby-tasks",
+                    "tool_name": "list_tasks",
+                },
+            }
+        )
+
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables={})
+
+        assert response.decision == "block"
+        assert response.reason is not None and "blocked" in response.reason
+
+    @pytest.mark.asyncio
+    async def test_mutating_internal_tool_outside_allowlist_still_refused(
+        self,
+        db: "HubDatabase",
+        manager: AgentDefinitionManager,
+        engine: RuleEngine,
+        instance_mgr: AgentStepInstanceManager,
+    ) -> None:
+        _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
+        event = _make_event(
+            data={
+                "tool_name": "mcp__gobby__call_tool",
+                "tool_input": {
+                    "server_name": "gobby-tasks",
+                    "tool_name": "update_task",
+                },
+            }
+        )
+
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables={})
+
+        assert response.decision == "block"
+        assert response.reason is not None and "gobby-tasks:update_task" in response.reason
+
+    @pytest.mark.asyncio
+    async def test_get_skill_file_allowed_via_read_only_classification(
+        self,
+        db: "HubDatabase",
+        manager: AgentDefinitionManager,
+        engine: RuleEngine,
+        instance_mgr: AgentStepInstanceManager,
+    ) -> None:
+        _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
+        event = _make_event(
+            data={
+                "tool_name": "mcp__gobby__call_tool",
+                "tool_input": {
+                    "server_name": "gobby-skills",
+                    "tool_name": "get_skill_file",
+                },
+            }
+        )
+
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables={})
+
+        assert response.decision == "allow"
 
     @pytest.mark.parametrize(
         ("allowed_mcp_tools", "blocked_mcp_tools", "expected_decision"),
@@ -2900,7 +3039,7 @@ class TestProviderToolNameNormalization:
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "mcp_key",
-    ["gobby-sessions:feedback", "gobby-skills:get_skill_file", "gobby-skills:get_skill_files"],
+    ["gobby-sessions:set_handoff", "gobby-sessions:feedback"],
 )
 async def test_capability_neutral_tools_pass_step_allowlist(
     db: "HubDatabase",

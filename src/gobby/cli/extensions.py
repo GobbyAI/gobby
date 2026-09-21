@@ -150,6 +150,9 @@ def hooks_test(ctx: click.Context, hook_type: str, source: str, json_format: boo
         click.echo(f"  Context: {str(inject_context)[:100]}...")
 
 
+_FAILURE_STDOUT_TAIL_LINES = 40
+
+
 @hooks.command("run")
 @click.argument(
     "stage",
@@ -258,6 +261,11 @@ def hooks_run(stage: str, verbose: bool, dry_run: bool, json_format: bool) -> No
                 first_line = r.stderr.strip().split("\n")[0]
                 if first_line:
                     click.echo(f"    {first_line}")
+            if not verbose and r.stdout:
+                # Test runners report which test failed on stdout; keep its tail so
+                # a failed pre-push names the test without --verbose.
+                tail = "\n".join(r.stdout.rstrip().splitlines()[-_FAILURE_STDOUT_TAIL_LINES:])
+                click.echo(f"    stdout tail:\n{_indent(tail, 6)}")
 
         if verbose and r.stdout:
             click.echo(f"    stdout:\n{_indent(r.stdout, 6)}")

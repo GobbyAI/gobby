@@ -21,6 +21,7 @@ from gobby.hooks.hook_types import (
     HookType,
 )
 from gobby.hooks.normalization import normalize_notification_input
+from gobby.sessions.reasoning_effort import observed_reasoning_effort
 
 logger = logging.getLogger(__name__)
 
@@ -249,6 +250,11 @@ class HookEventBroadcaster:
 
             # Prepare input data
             raw_input = event.data.copy()
+            effort = observed_reasoning_effort(raw_input)
+            if effort is None:
+                raw_input.pop("effort", None)
+            else:
+                raw_input["effort"] = effort
             self._normalize_external_id(raw_input, event)
 
             # Special handling for Subagent events: ensure subagent_id is present

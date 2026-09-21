@@ -568,6 +568,7 @@ class TestStepTrace:
             _make_step(
                 "claim_task",
                 description="Claim a task",
+                allowed_mcp_tools=["gobby-tasks:claim_task"],
                 transitions=[{"to": "work", "when": "true"}],
                 on_enter=[
                     {
@@ -600,6 +601,9 @@ class TestStepTrace:
         assert len(result.step_trace) == 5
         assert result.step_trace[0].name == "claim_task"
         assert result.step_trace[0].on_enter_actions == ["call_mcp_tool: gobby-tasks:claim_task"]
+        assert result.step_trace[0].mcp_tool_exemptions == ["read-only internal tools"]
+        assert result.step_trace[1].mcp_tool_exemptions == []
+        assert result.step_trace[0].to_dict()["mcp_tool_exemptions"] == ["read-only internal tools"]
         assert result.step_trace[4].name == "complete"
 
 

@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import subprocess  # nosec B404 # git subprocess results are mediated by WorktreeGitManager.
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
+from gobby.agents.cargo_target import cleanup_checkout_cargo_target_dir
 from gobby.agents.isolation_git_hygiene import (
     GENERATED_ISOLATION_EXCLUDE_PATHS,
     PROJECT_JSON_RELATIVE_PATH,
@@ -15,6 +17,7 @@ from gobby.agents.isolation_git_hygiene import (
     is_generated_isolation_project_json,
 )
 from gobby.utils.project_context import IsolationProjectJsonError, ensure_project_json_for_isolation
+from gobby.worktrees.deletion import probe_missing_worktree_git_state
 
 logger = logging.getLogger(__name__)
 
@@ -86,17 +89,35 @@ async def cleanup_stale_worktree_registration(
     worktree_storage: Any,
     worktree: Any,
 ) -> None:
-    delete_result = await git_manager.delete_worktree(
+    git_already_deleted, retry_error = await probe_missing_worktree_git_state(
+        git_manager,
         worktree_path=worktree.worktree_path,
-        force=True,
-        delete_branch=True,
         branch_name=worktree.branch_name,
-        base_branch=worktree.base_branch,
     )
-    if not delete_result.success:
-        raise RuntimeError(f"Failed to clean up stale worktree: {delete_result.error}")
-    if delete_result.error and "not found" not in delete_result.error:
-        raise RuntimeError(f"Failed to delete stale worktree branch: {delete_result.error}")
+    if retry_error is not None:
+        raise RuntimeError(retry_error)
+    if not git_already_deleted:
+        delete_result = await git_manager.delete_worktree(
+            worktree_path=worktree.worktree_path,
+            force=True,
+            delete_branch=True,
+            branch_name=worktree.branch_name,
+            base_branch=worktree.base_branch,
+        )
+        if not delete_result.success:
+            raise RuntimeError(f"Failed to clean up stale worktree: {delete_result.error}")
+        if delete_result.error and "not found" not in delete_result.error:
+            raise RuntimeError(f"Failed to delete stale worktree branch: {delete_result.error}")
+    cargo_error = await asyncio.to_thread(
+        cleanup_checkout_cargo_target_dir,
+        Path(worktree.worktree_path),
+        worktree.project_id,
+    )
+    if cargo_error is not None:
+        raise RuntimeError(
+            "cargo_target_cleanup_failed: Git worktree files were deleted, but Cargo target "
+            f"cleanup failed: {cargo_error}"
+        )
     worktree_storage.delete(worktree.id)
 
 

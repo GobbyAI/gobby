@@ -6,7 +6,7 @@ import asyncio
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import cast
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 from uuid import UUID
 
 import pytest
@@ -26,22 +26,7 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.mark.asyncio
-async def test_ordinary_review_detaches_without_awaiting_provider(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    provider_release = asyncio.Event()
-
-    async def wait_for_provider(*_args: object, **_kwargs: object) -> ValidationResult:
-        await provider_release.wait()
-        return ValidationResult(can_close=True)
-
-    inline_review = AsyncMock(side_effect=wait_for_provider)
-    monkeypatch.setattr(
-        review_gate,
-        "evaluate_criteria_review",
-        inline_review,
-        raising=False,
-    )
+async def test_ordinary_review_prepares_without_a_one_shot_provider_call() -> None:
     validation_commands = {"latest_outcomes": {"test": "success"}, "latest_runs": []}
 
     result = await asyncio.wait_for(
@@ -49,12 +34,11 @@ async def test_ordinary_review_detaches_without_awaiting_provider(
         timeout=0.05,
     )
 
-    assert result.error_type == "agentic_review_required"
+    assert result.error_type == "close_review_required"
     assert result.extra["review_fingerprint"] == "close"
     assert result.extra["deterministic_evidence_fingerprint"] == "evidence"
-    # Gate 10's record is forwarded for the validator launch prompt.
+    # Gate 10's record is forwarded for the reviewer launch prompt.
     assert result.extra["validation_commands"] == validation_commands
-    inline_review.assert_not_awaited()
     assert "spawn_request" not in result.extra
     assert "review_run_id" not in result.extra
 
@@ -63,7 +47,7 @@ async def test_ordinary_review_detaches_without_awaiting_provider(
 async def test_detached_review_reports_the_normalized_criterion_count() -> None:
     result = await _evaluate(criteria="- A top\n  - A nested one\n  - A nested two\n- B top")
 
-    assert result.error_type == "agentic_review_required"
+    assert result.error_type == "close_review_required"
     assert result.extra["criterion_count"] == 4
 
 
@@ -236,7 +220,7 @@ async def test_operational_criteria_reach_review_with_completion_evidence(
         prepare=prepare,
     )
 
-    assert result.error_type == "agentic_review_required"
+    assert result.error_type == "close_review_required"
     prepare.assert_called_once()
 
 
@@ -248,7 +232,7 @@ async def test_spawned_agent_skips_live_operational_evidence() -> None:
         agent_caller=True,
     )
 
-    assert result.error_type == "agentic_review_required"
+    assert result.error_type == "close_review_required"
     assert result.extra["coordinator_owned_pending"] is True
 
 
@@ -342,16 +326,13 @@ async def test_no_work_disposition_skips_operational_evidence_gate() -> None:
         prepare=prepare,
     )
 
-    assert result.error_type == "agentic_review_required"
+    assert result.error_type == "close_review_required"
     prepare.assert_called_once()
 
 
 def _prepared(criteria: tuple[str, ...] = ("Criterion.",)) -> PreparedCloseReview:
     return PreparedCloseReview(
-        prompt="prompt",
         criteria=criteria,
-        prompt_chars=1_024,
-        prompt_limit=256_000,
         review_fingerprint="close",
         evidence_fingerprint="evidence",
         diff_sha="diff",

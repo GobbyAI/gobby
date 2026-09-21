@@ -6,6 +6,7 @@ from concurrent.futures import Future
 from pathlib import Path
 from typing import Any
 
+from gobby.agents.cargo_target import cleanup_checkout_cargo_target_dir
 from gobby.app_context import get_app_context
 from gobby.hooks.event_handlers._base import EventHandlersBase
 from gobby.hooks.event_handlers._session_start.in_place_compact import (
@@ -25,6 +26,7 @@ from gobby.sessions.token_usage import typed_json_token_usage
 from gobby.storage.context_usage_snapshot import ContextUsageSnapshot
 from gobby.storage.token_events import build_session_usage_payload
 from gobby.utils.project_context import get_workflow_project_path
+from gobby.worktrees.deletion import probe_missing_worktree_git_state
 from gobby.worktrees.git import WorktreeGitManager
 
 
@@ -336,6 +338,18 @@ class MiscEventHandlerMixin(EventHandlersBase):
                 )
                 return HookResponse(worktree_path=existing.worktree_path)
             if existing:
+                cargo_error = await asyncio.to_thread(
+                    cleanup_checkout_cargo_target_dir,
+                    Path(existing.worktree_path),
+                    existing.project_id,
+                )
+                if cargo_error is not None:
+                    self.logger.warning(
+                        "WORKTREE_CREATE retained stale record after Cargo target cleanup "
+                        "failure: %s",
+                        cargo_error,
+                    )
+                    return HookResponse(decision="allow")
                 self._worktree_manager.delete(existing.id)
 
         current_branch = await git_manager.get_current_branch()
@@ -411,24 +425,49 @@ class MiscEventHandlerMixin(EventHandlersBase):
 
         try:
             git_manager = WorktreeGitManager(repo_path)
-            result = await git_manager.delete_worktree(
-                worktree_path=worktree_path,
-                force=True,
-                delete_branch=True,
-                branch_name=getattr(existing, "branch_name", None),
-                base_branch=getattr(existing, "base_branch", None),
-            )
-            if not result.success:
-                self.logger.warning("WORKTREE_REMOVE failed: %s", result.message)
-            git_delete_succeeded = result.success
+            git_already_deleted = False
+            if existing:
+                git_already_deleted, retry_error = await probe_missing_worktree_git_state(
+                    git_manager,
+                    worktree_path=existing.worktree_path,
+                    branch_name=existing.branch_name,
+                )
+                if retry_error is not None:
+                    raise RuntimeError(retry_error)
+            if git_already_deleted:
+                git_delete_succeeded = True
+            else:
+                result = await git_manager.delete_worktree(
+                    worktree_path=worktree_path,
+                    force=True,
+                    delete_branch=True,
+                    branch_name=getattr(existing, "branch_name", None),
+                    base_branch=getattr(existing, "base_branch", None),
+                )
+                if not result.success:
+                    self.logger.warning("WORKTREE_REMOVE failed: %s", result.message)
+                git_delete_succeeded = result.success
         except Exception as e:
             self.logger.warning("WORKTREE_REMOVE cleanup failed: %s", e)
             git_delete_succeeded = False
 
-        if self._worktree_manager and record_cleanup_succeeded:
+        if self._worktree_manager and record_cleanup_succeeded and git_delete_succeeded:
             try:
                 if existing:
-                    self._worktree_manager.delete(existing.id)
+                    cargo_error = await asyncio.to_thread(
+                        cleanup_checkout_cargo_target_dir,
+                        Path(existing.worktree_path),
+                        existing.project_id,
+                    )
+                    if cargo_error is not None:
+                        self.logger.warning(
+                            "WORKTREE_REMOVE retained record after Cargo target cleanup "
+                            "failure: %s",
+                            cargo_error,
+                        )
+                        record_cleanup_succeeded = False
+                    else:
+                        self._worktree_manager.delete(existing.id)
             except Exception as e:
                 self.logger.warning("WORKTREE_REMOVE record cleanup failed: %s", e)
                 record_cleanup_succeeded = False

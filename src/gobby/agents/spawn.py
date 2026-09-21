@@ -316,6 +316,7 @@ def prepare_terminal_spawn(
             bind_run=bind_fresh_run,
             worktree_id=worktree_id,
             clone_id=clone_id,
+            checkout_root=workspace_path,
         )
         prompt_file = prepared.prompt_file
         return _issue_prelaunch_credential(
@@ -365,6 +366,7 @@ def prepare_terminal_resume(
     resume_metadata_json: dict[str, Any],
     worktree_id: str | None,
     clone_id: str | None,
+    workspace_path: str,
     credential_manager: ManagedCredentialManager | None = None,
 ) -> PreparedSpawn:
     """Prepare a successor run against an existing durable child session."""
@@ -435,6 +437,7 @@ def prepare_terminal_resume(
             bind_run=bind_successor_run,
             worktree_id=worktree_id,
             clone_id=clone_id,
+            checkout_root=workspace_path,
         )
     return _issue_prelaunch_credential(
         session_manager,
@@ -531,6 +534,7 @@ def _prepare_run_for_session(
     bind_run: Callable[[str], None],
     worktree_id: str | None,
     clone_id: str | None,
+    checkout_root: str | None = None,
 ) -> PreparedSpawn:
     """Create and bind a run, then construct its terminal identity."""
     from gobby.storage.agents import LocalAgentRunManager
@@ -541,28 +545,54 @@ def _prepare_run_for_session(
         session_id,
     )
     agent_run_mgr = LocalAgentRunManager(session_manager._storage.db)
-    agent_run_mgr.create(
-        parent_session_id=parent_session_id,
-        provider=provider,
-        prompt=prompt or "",
-        workflow_name=workflow_name,
-        agent_name=agent_name,
-        model=model,
-        is_local=is_local,
-        child_session_id=session_id,
-        claimed_session_id=claimed_session_id,
-        run_id=agent_run_id,
-        task_id=task_id,
-        timeout_seconds=timeout_seconds,
-        requested_reasoning_effort=requested_reasoning_effort,
-        effective_reasoning_effort=effective_reasoning_effort,
-        reasoning_required=reasoning_required,
-        reasoning_status=reasoning_status,
-        reasoning_message=reasoning_message,
-        resume_metadata_json=resume_metadata_json,
-        worktree_id=worktree_id,
-        clone_id=clone_id,
-    )
+    existing_run = agent_run_mgr.get(agent_run_id)
+    if existing_run is not None and existing_run.status == "queued":
+        activated = agent_run_mgr.activate_queued(
+            agent_run_id,
+            child_session_id=session_id,
+            provider=provider,
+            prompt=prompt or "",
+            workflow_name=workflow_name,
+            agent_name=agent_name,
+            model=model,
+            is_local=is_local,
+            requested_reasoning_effort=requested_reasoning_effort,
+            effective_reasoning_effort=effective_reasoning_effort,
+            reasoning_required=reasoning_required,
+            reasoning_status=reasoning_status,
+            reasoning_message=reasoning_message,
+            timeout_seconds=timeout_seconds,
+            resume_metadata_json=resume_metadata_json,
+            worktree_id=worktree_id,
+            clone_id=clone_id,
+        )
+        if activated is None:
+            raise RuntimeError(f"Queued agent run {agent_run_id} could not be activated")
+    elif existing_run is None:
+        agent_run_mgr.create(
+            parent_session_id=parent_session_id,
+            provider=provider,
+            prompt=prompt or "",
+            workflow_name=workflow_name,
+            agent_name=agent_name,
+            model=model,
+            is_local=is_local,
+            child_session_id=session_id,
+            claimed_session_id=claimed_session_id,
+            run_id=agent_run_id,
+            task_id=task_id,
+            timeout_seconds=timeout_seconds,
+            requested_reasoning_effort=requested_reasoning_effort,
+            effective_reasoning_effort=effective_reasoning_effort,
+            reasoning_required=reasoning_required,
+            reasoning_status=reasoning_status,
+            reasoning_message=reasoning_message,
+            resume_metadata_json=resume_metadata_json,
+            worktree_id=worktree_id,
+            clone_id=clone_id,
+        )
+    else:
+        raise RuntimeError(f"Agent run {agent_run_id} already exists with {existing_run.status}")
     bind_run(agent_run_id)
 
     prompt_env: str | None = None
@@ -579,6 +609,7 @@ def _prepare_run_for_session(
             parent_session_id=parent_session_id,
             agent_run_id=agent_run_id,
             project_id=project_id,
+            checkout_root=checkout_root,
             workflow_name=workflow_name,
             agent_depth=session_depth,
             max_agent_depth=max_agent_depth,

@@ -390,8 +390,8 @@ title.
 
 | Indicator | Meaning |
 | --- | --- |
-| `● held` | You hold the lease. Keys, pastes, and mouse reports go to the terminal. |
-| `○ observe` | You are watching; the first keystroke takes control and is delivered once the lease is granted. |
+| `● held` | You hold the lease. Keys, pastes, and mouse reports go to the terminal. A pane still acquiring the lease focus asked for reads the same, because queued input is the behavior and not a separate mode. |
+| `○ observe` | You are watching, having asked for that with `alt+click`. The first keystroke takes control and is delivered once the lease is granted. |
 | `▲ take-back` | Someone else holds the lease. `prefix+shift+a` or the indicator asks for it back. |
 | `◌ lease lost` | The daemon revoked your lease, typically because another viewer took over. Typing is refused until you take control again. |
 | `◌ read-only` | A write's outcome is unknown after a disconnect. Typing is refused; take control again to continue. Only panes that type through the daemon can reach this state. |
@@ -412,6 +412,11 @@ acknowledges can have an unknown outcome. No indicator tells the two apart; a
 pane that typed instantly and then went sluggish fell back, and
 `~/.gobby/logs/gclient.log` records it.
 
+Key encoding follows the focused pane's latest terminal mode. When an application
+enables the kitty keyboard protocol, modified Enter and other extended keys reach
+it as distinct keys; a pane that has not enabled the protocol keeps legacy terminal
+encoding, where modified Enter is indistinguishable from Enter.
+
 Three messages belong to the direct path:
 
 | Status line | What happened |
@@ -420,12 +425,26 @@ Three messages belong to the direct path:
 | `terminal refused input (<code>); take control again` | The host refused a key, normally `input_not_granted` after your grant was revoked. Output keeps flowing; the pane returns to observing. |
 | `terminal input backlog; key dropped` | You typed faster than the terminal drained. That one keystroke is gone and is not retried, because a retried keystroke is the wrong keystroke. |
 
-Focusing a pane takes control of it automatically, whether you focus it by
-keyboard, by click, or through the navigator. Typing into an observed pane also
-requests control first and delivers the pending keystrokes once the lease is
-granted; keys typed while that request is still pending are dropped, and the
-status line says `acquiring control`. To look at a pane without taking it,
-`alt+click` it.
+Focusing a pane takes control of it, whether you focus it by keyboard, by click,
+or through the navigator — including when another viewer holds it, which focus
+takes over rather than asking. Focus is the whole gesture: there is no second
+button to press and nothing to confirm.
+
+Asking the daemon who may type costs one round trip, and that round trip belongs
+to the focus change, never to a key. So the pane is usable the moment you focus
+it: keys, pastes, and forwarded mouse reports you produce before the grant lands
+are held in order and written the instant it does. Nothing is dropped and nothing
+announces a mode — the pane reads `● held` throughout. Only a daemon that
+stops answering can overrun that queue, and then the status line says
+`too much typed while acquiring control; the rest was dropped`.
+
+Moving focus away before the grant lands discards whatever that pane was holding,
+rather than replaying it whenever the pane next wins control — a command that
+runs long after you typed it is worse than one that never ran.
+
+To look at a pane without taking it, `alt+click` it. An observed pane still
+types: the first key takes control for you. A forwarded mouse report does not,
+so a pane you deliberately left observing stays that way under the pointer.
 
 `prefix+u`, `prefix+q`, and `ctrl+\` release the lease. The daemon can refuse a
 take: the pane then shows `▲ take-back` and the reason lands in the status line.
@@ -455,11 +474,14 @@ opening the terminal.
 The status line names the active mode. `esc` leaves every mode.
 
 **Copy mode (`prefix+[`).** Mouse selection is the copy gesture: left-drag over
-pane text and release to copy the selection to your clipboard through OSC 52. Any
-other key leaves copy mode and goes to the terminal. Outside copy mode the same
-gesture works in the focused pane whenever its application is not tracking the
-mouse; `shift+drag` forces it even when the application is. Double-click selects
-a word, triple-click a line, each copying immediately.
+pane text, scroll while selecting to extend through native scrollback, and
+release to copy the whole selection to your clipboard through OSC 52. Any other
+key leaves copy mode and goes to the terminal. Outside copy mode the same gesture
+works in the focused pane whenever its application is not tracking the mouse;
+`shift+drag` forces it even when the application is. Double-click selects a word,
+triple-click a line, each copying immediately. Direct native attachments read the
+off-screen range from gterm; proxy attachments and tmux panes copy the visible
+frame or attach history available to the client.
 
 **Resize mode (`prefix+r`).** `h` / `j` / `k` / `l` or the arrow keys move the
 focused pane's border one step. `enter` or `esc` leaves. Dragging a split border

@@ -117,6 +117,7 @@ def create_review_learning_registry(service: ReviewLearningService) -> InternalT
 
     @registry.tool(
         name="recall_review_lessons_for_files",
+        read_only=True,
         description="Recall compact confirmed review lessons relevant to touched files.",
     )
     async def recall_review_lessons_for_files(
@@ -141,6 +142,7 @@ def create_review_learning_registry(service: ReviewLearningService) -> InternalT
 
     @registry.tool(
         name="recall_review_lessons_by_class",
+        read_only=True,
         description="Recall confirmed review lessons for a domain-qualified lesson class.",
     )
     async def recall_review_lessons_by_class(
@@ -163,6 +165,7 @@ def create_review_learning_registry(service: ReviewLearningService) -> InternalT
 
     @registry.tool(
         name="list_check_keys",
+        read_only=True,
         description="List all check-key identities recorded for a review-lesson class.",
     )
     async def list_check_keys(

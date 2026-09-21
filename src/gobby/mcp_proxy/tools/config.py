@@ -33,6 +33,7 @@ def create_config_registry(
 
     @registry.tool(
         name="get_config_schema",
+        read_only=True,
         description="Get the public daemon configuration schema.",
     )
     async def get_config_schema() -> dict[str, object]:
@@ -40,6 +41,7 @@ def create_config_registry(
 
     @registry.tool(
         name="get_config_values",
+        read_only=True,
         description="Get desired and active public daemon configuration values.",
     )
     async def get_config_values() -> dict[str, object]:

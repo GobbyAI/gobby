@@ -35,8 +35,6 @@ _CAPABILITY_NEUTRAL_MCP_TOOLS = frozenset(
     {
         "gobby-sessions:set_handoff",
         "gobby-sessions:feedback",
-        "gobby-skills:get_skill_file",
-        "gobby-skills:get_skill_files",
     }
 )
 # Grok's read-only poll for a backgrounded call. It returns the result of a call
@@ -758,6 +756,9 @@ class EnforcementCheckMixin:
                 ):
                     return None
 
+                if self._is_read_only_internal_tool(mcp_server, mcp_tool_name):
+                    return None
+
                 if mcp_key and step.allowed_mcp_tools != "all":
                     if not self._mcp_tool_matches(mcp_key, step.allowed_mcp_tools):
                         reason = _step_tool_denial_reason(
@@ -905,6 +906,13 @@ class EnforcementCheckMixin:
             if pattern.endswith(":*") and mcp_key.startswith(pattern[:-1]):
                 return True
         return False
+
+    def _is_read_only_internal_tool(self, server_name: str, tool_name: str) -> bool:
+        """Return whether an internal registration explicitly classifies a tool read-only."""
+        manager = getattr(self, "_internal_manager", None)
+        registry = manager.get_registry(server_name) if manager is not None else None
+        metadata = registry.get_tool_metadata(tool_name) if registry is not None else None
+        return metadata is not None and metadata.read_only
 
     @staticmethod
     def _step_handler_tool_input(tool_input: dict[str, Any]) -> dict[str, Any]:

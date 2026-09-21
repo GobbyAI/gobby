@@ -35,7 +35,7 @@ CLOSE_GATE_ORDER: tuple[tuple[int, str], ...] = (
     (10, "validation_commands"),
     (11, "acceptance_artifacts"),
     (12, "tdd_evidence"),
-    (13, "criteria_review"),
+    (13, "close_review"),
 )
 
 
@@ -152,6 +152,10 @@ class CloseEvaluation:
             f"Not evaluated because gate {blocked_by} failed.",
             skipped=True,
         )
+
+    def not_run_gate(self, item: int, name: str, message: str) -> None:
+        """Record an eligible gate deliberately omitted by a read-only preview."""
+        self.gates.append(CloseGateResult(item=item, name=name, status="not_run", message=message))
 
     def block_remaining(self) -> CloseEvaluation:
         """End the checklist, skipping every gate this evaluation never reached.

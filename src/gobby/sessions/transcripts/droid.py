@@ -31,6 +31,7 @@ _LIFECYCLE_TAIL_BYTES = 256 * 1024
 _TOOL_ID_KEYS = frozenset({"id", "tool_call_id", "toolCallId", "tool_use_id", "toolUseId"})
 _TURN_ID_KEYS = frozenset({"prompt_id", "promptId", "turn_id", "turnId"})
 _TURN_CANCELLATION_TYPES = frozenset({"turn_cancelled", "turn_canceled", "turn_interrupted"})
+_TURN_CANCELLATION_REASONS = frozenset({"cancelled", "canceled", "interrupted", "user_interrupt"})
 
 _INJECTED_BLOCK_PATTERN = re.compile(
     r"<(system-reminder|command-name|command-message)>.*?</\1>",
@@ -82,6 +83,25 @@ def _nested_identifier_matches(value: object, keys: frozenset[str], expected: st
     return False
 
 
+def _record_lineage_ids(records: list[dict[str, Any]], record_id: str) -> frozenset[str]:
+    """Return a transcript record's parent chain, including the record itself."""
+    records_by_id = {
+        candidate_id: record
+        for record in records
+        if isinstance((candidate_id := record.get("id")), str)
+    }
+    lineage: set[str] = set()
+    current_id: str | None = record_id
+    while current_id and current_id not in lineage:
+        lineage.add(current_id)
+        record = records_by_id.get(current_id)
+        if record is None:
+            break
+        parent_id = record.get("parentId", record.get("parent_id"))
+        current_id = parent_id if isinstance(parent_id, str) else None
+    return frozenset(lineage)
+
+
 def droid_transcript_has_tool_id(
     transcript_path: str | Path | None,
     tool_id: str,
@@ -96,18 +116,30 @@ def droid_transcript_has_tool_id(
 def droid_transcript_confirms_turn_cancellation(
     transcript_path: str | Path | None,
     provider_turn_key: str | None,
+    notification_message_id: str | None = None,
 ) -> bool:
     """Require a whole-turn cancellation marker for the current Droid turn."""
-    for record in reversed(_tail_records(transcript_path)):
+    records = _tail_records(transcript_path)
+    notification_lineage = (
+        _record_lineage_ids(records, notification_message_id) if notification_message_id else None
+    )
+    for record in reversed(records):
         record_type = record.get("type", record.get("event_type"))
-        if record_type not in _TURN_CANCELLATION_TYPES:
+        reason = record.get("reason")
+        is_turn_outcome_cancellation = (
+            record_type == "agent_turn_outcome"
+            and isinstance(reason, str)
+            and reason.casefold() in _TURN_CANCELLATION_REASONS
+        )
+        if record_type not in _TURN_CANCELLATION_TYPES and not is_turn_outcome_cancellation:
             continue
-        if provider_turn_key and not _nested_identifier_matches(
-            record,
-            _TURN_ID_KEYS,
-            provider_turn_key,
-        ):
-            continue
+        if provider_turn_key:
+            if not _nested_identifier_matches(record, _TURN_ID_KEYS, provider_turn_key):
+                continue
+        elif notification_lineage is not None:
+            turn_id = record.get("turnId", record.get("turn_id"))
+            if not isinstance(turn_id, str) or turn_id not in notification_lineage:
+                continue
         return True
     return False
 

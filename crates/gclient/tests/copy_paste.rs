@@ -1,10 +1,14 @@
 //! 3.3.13 / 3.3.14 / 3.3.20 scrollback, copy, and paste.
 
 use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use gobby_client::app::{route_mouse, MouseGesture, MouseOutcome, PaneId};
+use gobby_client::app::{
+    anchor_selection, extend_selection, finish_selection, route_mouse, MouseGesture, MouseOutcome,
+    PaneId,
+};
 use gobby_client::copy_mode::{
-    copy_finalized_selection, copy_selection, extract_logical_line, route_mouse_selection,
-    route_paste_event, write_selection_osc52, PASTE_MAX_BYTES,
+    apply_text_read, copy_finalized_selection, copy_or_request_selection, copy_selection,
+    extract_logical_line, route_mouse_selection, route_paste_event, write_selection_osc52,
+    PASTE_MAX_BYTES,
 };
 use gobby_client::frame_source::{PaneFrameSource, ScriptedFrameSource, Transport};
 use gobby_client::ui::chrome::{Chrome, Mode};
@@ -59,7 +63,7 @@ async fn client_copy_path_emits_finalized_selection_as_osc52() {
         .expect("open terminal");
     let mut source = ScriptedFrameSource::new(Transport::Direct);
     source.queue(ServerMessage::Frame(FrameData {
-        cells: "copy"
+        cells: "copymore"
             .chars()
             .map(|symbol| CellData {
                 symbol: symbol.to_string(),
@@ -71,7 +75,7 @@ async fn client_copy_path_emits_finalized_selection_as_osc52() {
             })
             .collect(),
         width: 4,
-        height: 1,
+        height: 2,
         cursor: None,
         hyperlinks: Vec::new(),
         graphics: Vec::new(),
@@ -92,33 +96,33 @@ async fn client_copy_path_emits_finalized_selection_as_osc52() {
         .find(|info| info.id == slot)
         .expect("pane geometry")
         .inner_rect;
-    let mouse = |kind, column| {
+    let mouse = |kind, column, row| {
         RawInputEvent::Mouse(MouseEvent {
             kind,
             column: inner.x + column,
-            row: inner.y,
+            row: inner.y + row,
             modifiers: KeyModifiers::NONE,
         })
     };
     assert!(!route_mouse_selection(
         &ws,
         &mut chrome,
-        &mouse(MouseEventKind::Down(MouseButton::Left), 0),
+        &mouse(MouseEventKind::Down(MouseButton::Left), 1, 0),
     ));
     assert!(!route_mouse_selection(
         &ws,
         &mut chrome,
-        &mouse(MouseEventKind::Drag(MouseButton::Left), 3),
+        &mouse(MouseEventKind::Drag(MouseButton::Left), 2, 1),
     ));
     assert!(route_mouse_selection(
         &ws,
         &mut chrome,
-        &mouse(MouseEventKind::Up(MouseButton::Left), 3),
+        &mouse(MouseEventKind::Up(MouseButton::Left), 2, 1),
     ));
 
     let mut output = Vec::new();
     assert!(copy_finalized_selection(&ws, &chrome, &mut output).expect("copy selection"));
-    assert_eq!(output, b"\x1b]52;c;Y29weQ==\x07");
+    assert_eq!(output, b"\x1b]52;c;b3B5Cm1vcg==\x07");
 }
 
 #[test]
@@ -361,6 +365,93 @@ async fn pane_showing(ws: &mut Workspace, terminal: &str, frame: FrameData) -> P
         .expect("replace source");
     ws.recv_pane_frame(pane).await.expect("receive frame");
     pane
+}
+
+#[tokio::test]
+async fn selection_spanning_scrollback_requests_read_text_and_copies_reply() {
+    let mut ws = Workspace::scripted();
+    let pane = ws
+        .open_terminal("term-scrollback-copy", "native", "epoch-copy")
+        .expect("open terminal");
+    let mut source = ScriptedFrameSource::new(Transport::Direct);
+    source.queue(ServerMessage::Frame(frame_of(
+        &["near", "live"],
+        PaneModes::default(),
+    )));
+    source.queue(ServerMessage::TextRead {
+        text: "offscreen\nvisible".into(),
+        truncated: false,
+    });
+    ws.replace_frame_source(pane, PaneFrameSource::Scripted(source))
+        .expect("replace source");
+    ws.recv_pane_frame(pane).await.expect("receive frame");
+    ws.apply_scroll_applied(pane, 0, 10);
+
+    let mut chrome = Chrome::dark();
+    let slot = chrome.open_pane(pane, "copy");
+    chrome.compute_view(&ws, Rect::new(0, 0, 120, 40));
+    let inner = inner_rect(&chrome, slot);
+    anchor_selection(&mut chrome, ws.pane(pane), slot, inner, 0, 1);
+    ws.apply_scroll_applied(pane, 5, 10);
+    extend_selection(&mut chrome, ws.pane(pane), inner, inner.x + 2, inner.y);
+    assert!(finish_selection(&mut chrome));
+
+    let mut output = Vec::new();
+    assert!(copy_or_request_selection(&mut ws, &mut chrome, &mut output)
+        .await
+        .expect("request full selection"));
+    assert!(output.is_empty());
+    assert!(
+        chrome.selection.is_some(),
+        "selection stays visible while reading"
+    );
+    assert!(matches!(
+        ws.pane(pane)
+            .scripted_source()
+            .expect("scripted source")
+            .sent_messages()
+            .last(),
+        Some(ClientMessage::ReadText {
+            start_rows_from_live_edge: 6,
+            start_col: 2,
+            end_rows_from_live_edge: 0,
+            end_col: 0,
+        })
+    ));
+
+    let reply = ws.recv_pane_frame(pane).await.expect("text read reply");
+    let ServerMessage::TextRead { text, .. } = reply else {
+        panic!("expected text read")
+    };
+    assert!(apply_text_read(&mut chrome, pane, text, &mut output).expect("copy reply"));
+    assert_eq!(output, b"\x1b]52;c;b2Zmc2NyZWVuCnZpc2libGU=\x07");
+    assert_eq!(chrome.last_copy.as_deref(), Some("offscreen\nvisible"));
+    assert!(chrome.selection.is_none());
+
+    let sent_before = ws
+        .pane(pane)
+        .scripted_source()
+        .expect("scripted source")
+        .sent_messages()
+        .len();
+    anchor_selection(&mut chrome, ws.pane(pane), slot, inner, 0, 0);
+    extend_selection(&mut chrome, ws.pane(pane), inner, inner.x + 3, inner.y + 1);
+    assert!(finish_selection(&mut chrome));
+    let mut immediate = Vec::new();
+    assert!(
+        copy_or_request_selection(&mut ws, &mut chrome, &mut immediate)
+            .await
+            .expect("copy visible selection")
+    );
+    assert_eq!(immediate, b"\x1b]52;c;bmVhcmxpdmU=\x07");
+    assert_eq!(
+        ws.pane(pane)
+            .scripted_source()
+            .expect("scripted source")
+            .sent_messages()
+            .len(),
+        sent_before
+    );
 }
 
 fn inner_rect(chrome: &Chrome, slot: LayoutPaneId) -> Rect {

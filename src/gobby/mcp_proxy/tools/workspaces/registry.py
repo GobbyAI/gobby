@@ -95,7 +95,8 @@ def create_workspaces_registry(
         return shared
 
     @registry.tool(
-        description=f"List the operator's machines; `local` marks this daemon's node. {_NODE}"
+        description=f"List the operator's machines; `local` marks this daemon's node. {_NODE}",
+        read_only=True,
     )
     async def list_nodes(node: str | None = None) -> dict[str, Any]:
         async def work(_actor: str) -> dict[str, Any]:
@@ -117,7 +118,9 @@ def create_workspaces_registry(
 
         return await _run(work)
 
-    @registry.tool(description=f"List a node's workspaces (this node by default). {_NODE}")
+    @registry.tool(
+        description=f"List a node's workspaces (this node by default). {_NODE}", read_only=True
+    )
     async def list_workspaces(node: str | None = None) -> dict[str, Any]:
         async def work(_actor: str) -> dict[str, Any]:
             with storage_errors():
@@ -127,7 +130,7 @@ def create_workspaces_registry(
 
         return await _run(work)
 
-    @registry.tool(description=f"Read a workspace with its tabs and panes. {_NODE}")
+    @registry.tool(description=f"Read a workspace with its tabs and panes. {_NODE}", read_only=True)
     async def get_workspace(workspace: str, node: str | None = None) -> dict[str, Any]:
         async def work(actor: str) -> dict[str, Any]:
             snapshot = await ops().workspace_snapshot(actor, workspace, node=node)
@@ -275,7 +278,9 @@ def create_workspaces_registry(
             )
         )
 
-    @registry.tool(description=f"Read the last `lines` lines of a pane's screen. {_NODE}")
+    @registry.tool(
+        description=f"Read the last `lines` lines of a pane's screen. {_NODE}", read_only=True
+    )
     async def read_pane(pane: str, lines: int = 50, node: str | None = None) -> dict[str, Any]:
         return await _run(lambda actor: ops().pane_read(actor, pane, lines=lines, node=node))
 

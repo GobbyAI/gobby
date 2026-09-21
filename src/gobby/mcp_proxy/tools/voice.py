@@ -131,6 +131,7 @@ def create_voice_registry(
 
     @registry.tool(
         name="list_vocab",
+        read_only=True,
         description="List current Whisper STT vocabulary terms and prompt.",
     )
     def list_vocab() -> dict[str, Any]:

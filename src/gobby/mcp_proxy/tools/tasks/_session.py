@@ -154,6 +154,7 @@ def create_session_registry(ctx: RegistryContext) -> InternalToolRegistry:
             },
         },
         func=get_session_tasks,
+        read_only=True,
     )
 
     def get_task_sessions(task_id: str) -> dict[str, Any]:
@@ -186,6 +187,7 @@ def create_session_registry(ctx: RegistryContext) -> InternalToolRegistry:
             "required": ["task_id"],
         },
         func=get_task_sessions,
+        read_only=True,
     )
 
     return registry

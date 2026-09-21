@@ -8,10 +8,13 @@ and hit "transaction_immediate() inside a non-immediate transaction()".
 from __future__ import annotations
 
 import uuid
+from pathlib import Path
 from typing import Any
 
 import pytest
 
+from gobby.agents.cargo_target import checkout_cargo_target_dir
+from gobby.agents.constants import CARGO_TARGET_DIR
 from gobby.agents.session import ChildSessionManager
 from gobby.agents.spawn import prepare_terminal_resume
 from gobby.storage.agents import LocalAgentRunManager
@@ -32,7 +35,11 @@ def _local_machine_identity(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_prepare_terminal_resume_merges_variables_inside_preflight(
     temp_db: Any,
     sample_project: dict[str, Any],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "home"))
+    workspace = tmp_path / "checkout"
     sessions = SessionManager(temp_db)
     parent = sessions.register(
         external_id="resume-prep-parent",
@@ -94,10 +101,14 @@ def test_prepare_terminal_resume_merges_variables_inside_preflight(
         },
         worktree_id=None,
         clone_id=None,
+        workspace_path=str(workspace),
     )
 
     assert prepared.session_id == child.id
     assert prepared.agent_run_id == successor_run_id
+    assert prepared.env_vars[CARGO_TARGET_DIR] == str(
+        checkout_cargo_target_dir(workspace, sample_project["id"])
+    )
     successor = runs.get(successor_run_id)
     assert successor is not None
     assert successor.status == "pending"
@@ -174,4 +185,5 @@ def test_prepare_terminal_resume_refuses_foreign_owner(
             resume_metadata_json={"resumed_from_run_id": original.id},
             worktree_id=None,
             clone_id=None,
+            workspace_path="/tmp/resume-foreign-owner",
         )

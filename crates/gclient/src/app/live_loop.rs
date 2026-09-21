@@ -13,10 +13,11 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 use tokio::time::Instant;
 
-use crate::copy_mode::{copy_selection, route_mouse_selection, PASTE_MAX_BYTES};
+use crate::copy_mode::{
+    apply_text_read, copy_or_request_selection, route_mouse_selection, PASTE_MAX_BYTES,
+};
 use crate::daemon::{Daemon, DaemonError, DaemonEvent, EventReceiver, Generation, LiveDaemon};
 use crate::frame_source::{FrameError, FrameSource};
-use crate::input::key_to_bytes_with_protocol;
 use crate::key_input::{key_input, resolve_chord, text_bytes, Resolution};
 use crate::teardown::MouseCaptureSwitch;
 use crate::ui::status::Toast;
@@ -40,7 +41,7 @@ pub(super) mod projects;
 mod workspace_actions;
 
 use actions::{apply_live_modal_outcome, apply_live_mouse_outcome, handle_live_action};
-use control::{apply_live_write_outcome, focus_live_pane, send_live_input, send_live_write};
+use control::{apply_control_outcome, apply_live_write_outcome, focus_live_pane, send_live_input};
 use modal_input::{route_modal_key, ModalOutcome};
 use mouse::{route_mouse, MouseOutcome};
 use projects::restore_focused;
@@ -220,6 +221,10 @@ pub async fn run_live_loop<B: Backend>(
     let mut prefix_armed = false;
     let mut reconnect_job = None;
     let mut sidebar_job: Option<SidebarFetchFuture> = None;
+    // Control replies come back on a channel rather than a single in-flight
+    // slot: a grant still out for one pane must never hold up the grant the
+    // pane someone just clicked is waiting for (#22573).
+    let (control_tx, mut control_rx) = tokio::sync::mpsc::unbounded_channel();
     let mut sidebar_error_shown = false;
     // The memo starts on the daemon's stored focus: the window opened on it,
     // so the first iteration reports nothing unless it shows otherwise.
@@ -242,10 +247,22 @@ pub async fn run_live_loop<B: Backend>(
     }
 
     while workspace.exit_reason().is_none() {
+        // The click and the keystroke only record the control request they
+        // need; it is started here so neither ever waits on the daemon
+        // (#22573).
+        workspace.start_control_request(&control_tx);
         tokio::select! {
             biased;
             reason = recv_exit_signal(&mut exit_signals) => {
                 workspace.latch_exit(reason);
+            }
+            // Above input on purpose: `biased` stops at the first ready
+            // branch, so a grant sitting below a busy keyboard would never be
+            // polled, its request would never leave, and the keys queued for
+            // it would wait forever (#22573).
+            Some(outcome) = control_rx.recv() => {
+                apply_control_outcome(workspace, chrome, outcome).await;
+                sync_live_chrome(workspace, chrome);
             }
             event = input.recv() => {
                 let Some(event) = event else {
@@ -287,6 +304,15 @@ pub async fn run_live_loop<B: Backend>(
                 }
             }
             frame = recv_workspace_frame(workspace) => {
+                if let Some((pane_id, Ok(gobby_terminal::protocol::ServerMessage::TextRead {
+                    text,
+                    ..
+                }))) = &frame
+                {
+                    let mut output = std::io::stdout();
+                    apply_text_read(chrome, *pane_id, text.clone(), &mut output)?;
+                    output.flush()?;
+                }
                 if let Some((pane_id, Err(error))) = frame {
                     let mut deferred_input = Vec::new();
                     let mut probe_prefix = prefix_armed;
@@ -412,6 +438,10 @@ pub async fn run_live_loop<B: Backend>(
                 }
             }
         }
+        // Again after the event, not only before it: the event just handled is
+        // usually the click or key that asked for the grant, and an event that
+        // also ends the loop gets no next iteration to start it in (#22573).
+        workspace.start_control_request(&control_tx);
         // The settings toggle only records the wish; the terminal flag is
         // flipped here, outside any borrow of the chrome.
         if let Some(on) = chrome.pending_mouse_capture.take() {
@@ -439,6 +469,12 @@ pub async fn run_live_loop<B: Backend>(
 
     drop(reconnect_job.take());
     drop(sidebar_job.take());
+    // A reply still in flight has nowhere to land: the exit latch is set, a
+    // latched exit issues no further requests, and `shutdown` releases the
+    // lease this client asked for either way. Waiting for it here would hang on
+    // a daemon that is already gone, which is the common reason this loop is
+    // exiting.
+    control_rx.close();
     supervisor.cancel(DaemonError::Protocol {
         detail: workspace
             .exit_reason()
@@ -650,8 +686,8 @@ async fn route_live_input(
                     .expect("pane exists")
                     .search_buffer
                     .push_str(text);
-            } else if workspace.pane(pane_id).writable() {
-                send_live_write(workspace, pane_id, text.as_bytes(), true).await?;
+            } else {
+                send_live_input(workspace, chrome, pane_id, text.as_bytes(), true).await?;
             }
         }
         return Ok(false);
@@ -664,12 +700,16 @@ async fn route_live_input(
     }
     if route_mouse_selection(workspace, chrome, event) {
         let mut output = std::io::stdout();
-        copy_selection(workspace, chrome, &mut output)?;
+        copy_or_request_selection(workspace, chrome, &mut output).await?;
         output.flush()?;
         chrome.mode = Mode::Terminal;
         return Ok(false);
     }
-    if let Some(input) = key_input(event, KeyboardProtocol::Legacy) {
+    let protocol = chrome
+        .focused_pane()
+        .map(|pane_id| workspace.pane(pane_id).keyboard_protocol())
+        .unwrap_or(KeyboardProtocol::Legacy);
+    if let Some(input) = key_input(event, protocol) {
         // Any keypress clears the toast stack (D3); the alert log keeps them.
         chrome.dismiss_toasts();
         if chrome.mode == Mode::Respond {
@@ -698,17 +738,14 @@ async fn route_live_input(
             Resolution::Unbound => {
                 *prefix_armed = false;
                 chrome.mode = Mode::Terminal;
-                if let (Some(pane_id), Some(bytes)) = (
-                    chrome.focused_pane(),
-                    key_to_bytes_with_protocol(input.key, KeyboardProtocol::Legacy),
-                ) {
-                    send_live_input(workspace, chrome, pane_id, &bytes).await?;
+                if let Some(pane_id) = chrome.focused_pane() {
+                    send_live_input(workspace, chrome, pane_id, &input.bytes, false).await?;
                 }
             }
         }
     } else if let Some(bytes) = text_bytes(event) {
         if let Some(pane_id) = chrome.focused_pane() {
-            send_live_input(workspace, chrome, pane_id, &bytes).await?;
+            send_live_input(workspace, chrome, pane_id, &bytes, false).await?;
         }
     }
     Ok(false)

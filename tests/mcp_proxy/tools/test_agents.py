@@ -443,9 +443,14 @@ class TestWaitForAgent:
         assert result["error_code"] == "subscription_persistence_failed"
 
     @pytest.mark.asyncio
-    async def test_active_run_registers_durable_notification(self, temp_db: HubDatabase) -> None:
+    @pytest.mark.parametrize("status", ["queued", "running"])
+    async def test_active_run_registers_durable_notification(
+        self,
+        temp_db: HubDatabase,
+        status: str,
+    ) -> None:
         runner = MagicMock()
-        runner.get_run.return_value = self._run()
+        runner.get_run.return_value = self._run(status)
         completion_registry = CompletionEventRegistry()
         registry = self._registry(runner, temp_db, completion_registry)
 

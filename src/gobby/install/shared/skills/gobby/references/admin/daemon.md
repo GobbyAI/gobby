@@ -18,7 +18,8 @@ the serving checkout, Gobby home, local/remote mode, and active work.
 4. Stop or restart through the CLI. Maintenance ownership refuses daemon stop.
    Protected cron runs and pending handoffs can also refuse shutdown. `--wait`
    defers eligible protected work; `--force` and `--wait` are mutually exclusive.
-   Do not interpret force as bypassing every shutdown gate.
+   `--force` interrupts protected cron runs and bypasses unresolved handoffs, but
+   does not bypass other shutdown gates.
 5. Verify readiness and affected client reconnection after restarting. A schema
    mismatch can reject restart before stopping the current daemon; repair the
    coherent native installation rather than repeatedly restarting it.

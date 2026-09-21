@@ -52,6 +52,7 @@ def create_profiles_registry(
         },
         output_schema={"type": "object"},
         func=list_profiles,
+        read_only=True,
     )
 
     def show_profile(
@@ -85,6 +86,7 @@ def create_profiles_registry(
         },
         output_schema={"type": "object"},
         func=show_profile,
+        read_only=True,
     )
 
     def create_profile(

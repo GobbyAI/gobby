@@ -12,10 +12,7 @@ from gobby.cli.tasks._utils import (
     get_backup_manager,
     get_task_manager,
 )
-from gobby.cli.tasks.ai import (
-    suggest_cmd,
-    validate_task_cmd,
-)
+from gobby.cli.tasks.ai import suggest_cmd
 from gobby.cli.tasks.commits import commit_cmd, diff_cmd
 from gobby.cli.tasks.crud import (
     blocked_tasks,
@@ -63,7 +60,6 @@ tasks.add_command(de_escalate_cmd)
 tasks.add_command(validation_history_cmd)
 
 # Register AI-powered commands from extracted module
-tasks.add_command(validate_task_cmd)
 tasks.add_command(suggest_cmd)
 
 # Register search commands

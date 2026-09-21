@@ -572,7 +572,6 @@ Stages with required review must be submitted through `tasks review --submit`.
 ```bash
 gobby tasks search QUERY [OPTIONS]
 gobby tasks reindex [OPTIONS]
-gobby tasks validate TASK --summary SUMMARY
 gobby tasks validation-history TASK [--clear] [--json]
 gobby tasks doctor
 gobby tasks clean
@@ -585,8 +584,9 @@ gobby tasks restore [--input PATH] [--quiet]
 `--limit`, `--min-score`, and `--json`. `tasks reindex` supports
 `--all-projects`.
 
-Leaf validation requires `--summary` or `--file`; it runs a bounded criteria
-review and does not replace the agent close checklist.
+Leaf close review runs through the agent-facing `gobby-tasks:close_task` MCP
+workflow. `validation-history` remains an operator inspection and maintenance
+surface for past review outcomes.
 
 ### Dependencies, Labels, Commits, And Diffs
 

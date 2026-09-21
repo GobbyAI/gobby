@@ -188,6 +188,7 @@ def create_dependency_registry(
             "required": ["task_id"],
         },
         func=get_dependency_tree,
+        read_only=True,
     )
 
     # --- check_dependency_cycles ---
@@ -204,6 +205,7 @@ def create_dependency_registry(
         description="Detect circular dependencies in the project. Returns any cycles found.",
         input_schema={"type": "object", "properties": {}},
         func=check_dependency_cycles,
+        read_only=True,
     )
 
     return registry

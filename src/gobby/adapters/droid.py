@@ -198,13 +198,21 @@ class DroidAdapter(BaseAdapter):
                 normalized_data.get("type", normalized_data.get("kind")),
             )
             reason = normalized_data.get("reason")
+            normalized_reason = reason.casefold() if isinstance(reason, str) else ""
+            message = normalized_data.get("message")
+            stopped_by_user = isinstance(message, str) and "stopped by user" in message.casefold()
+            message_id = normalized_data.get("message_id")
             transcript_path = normalized_data.get("transcript_path")
             if (
                 notification_kind == "idle_prompt"
-                and reason in {"cancelled", "canceled", "user_interrupt"}
+                and (
+                    normalized_reason in {"cancelled", "canceled", "user_interrupt"}
+                    or stopped_by_user
+                )
                 and droid_transcript_confirms_turn_cancellation(
                     transcript_path if isinstance(transcript_path, str) else None,
                     event.provider_turn_key,
+                    message_id if isinstance(message_id, str) else None,
                 )
             ):
                 event.event_type = HookEventType.INTERRUPT

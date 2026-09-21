@@ -339,6 +339,26 @@ def test_unknown_residual_row_fails_closed(revision_db: HubDatabase) -> None:
         ConfigRepository(revision_db).reconcile_registry()
 
 
+def test_unknown_residual_row_is_skipped_only_when_asked(revision_db: HubDatabase) -> None:
+    """A read-only reader survives the row until the migration that drops it lands."""
+    revision_db.execute(
+        """INSERT INTO config_store (key, value, source, is_secret, revision)
+           VALUES (%s, %s, %s, %s, %s), (%s, %s, %s, %s, %s)""",
+        ("removed.setting", "true", "test", False, 0, "ui.enabled", "true", "test", False, 0),
+    )
+    repository = ConfigRepository(revision_db)
+
+    with pytest.raises(UnknownStoredConfigKeyError, match="removed.setting"):
+        repository.read()
+
+    snapshot = repository.read(unknown_keys="skip")
+
+    assert snapshot.unknown_keys == ("removed.setting",)
+    assert "removed.setting" not in snapshot.overrides
+    assert snapshot.overrides["ui.enabled"] is True
+    assert snapshot.values["ui.enabled"] is True
+
+
 def test_revision_ceiling_returns_exhausted(
     revision_db: HubDatabase,
     mutations: ConfigMutations,

@@ -113,8 +113,8 @@ async def _reconcile_project_worktrees(
     *,
     run_db: Callable[..., Awaitable[Any]] | None,
 ) -> int:
-    manager = WorktreeGitManager(checkout_root)
     try:
+        manager = WorktreeGitManager(checkout_root)
         primary_path = await asyncio.to_thread(_canonical_path, checkout_root)
         worktrees = await worktree_git_status.list_worktrees(
             manager,
@@ -160,14 +160,14 @@ async def _reconcile_project_clones(
     *,
     run_db: Callable[..., Awaitable[Any]] | None,
 ) -> int:
-    manager = CloneGitManager(checkout_root)
     try:
+        manager = CloneGitManager(checkout_root)
         project_directory = await asyncio.to_thread(
             _canonical_path,
             clone_git.CLONES_ROOT / project.name,
         )
         candidates = await asyncio.to_thread(_list_immediate_directories, project_directory)
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
         logger.debug("Skipping clone reconciliation for %s: %s", project.name, exc)
         return 0
 

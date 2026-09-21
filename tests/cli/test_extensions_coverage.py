@@ -189,7 +189,9 @@ class TestHooksRun:
         cmd_result.name = "lint"
         cmd_result.duration_ms = 100
         cmd_result.skipped = False
-        cmd_result.stdout = ""
+        cmd_result.stdout = "\n".join(
+            [*(f"passing line {index}" for index in range(41)), "FAILED src/App.test.tsx > renders"]
+        )
         cmd_result.stderr = "Error on line 5\nMore details"
         cmd_result.error = "exit code 1"
 
@@ -208,6 +210,11 @@ class TestHooksRun:
         assert result.exit_code == 1
         assert "Error: exit code 1" in result.output
         assert "Error on line 5" in result.output
+        assert "More details" not in result.output
+        assert "stdout tail:" in result.output
+        assert "FAILED src/App.test.tsx > renders" in result.output
+        assert "passing line 2" in result.output
+        assert "passing line 0" not in result.output
 
     @patch("gobby.hooks.verification_runner.VerificationRunner")
     def test_hooks_run_failure_verbose(self, mock_vr_cls: MagicMock, runner: CliRunner) -> None:

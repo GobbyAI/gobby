@@ -73,7 +73,7 @@ class TestSpawnAgentDedup:
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context"
             ) as mock_ctx,
             patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.resolve_task_id_for_mcp"
+                "gobby.mcp_proxy.tools.spawn_agent._spawn_guards.resolve_task_id_for_mcp"
             ) as mock_resolve,
         ):
             mock_ctx.return_value = {
@@ -142,7 +142,7 @@ class TestSpawnAgentDedup:
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context"
             ) as mock_ctx,
             patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.resolve_task_id_for_mcp"
+                "gobby.mcp_proxy.tools.spawn_agent._spawn_guards.resolve_task_id_for_mcp"
             ) as mock_resolve,
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn",
@@ -229,7 +229,7 @@ class TestSpawnAgentDedup:
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context"
             ) as mock_ctx,
             patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.resolve_task_id_for_mcp"
+                "gobby.mcp_proxy.tools.spawn_agent._spawn_guards.resolve_task_id_for_mcp"
             ) as mock_resolve,
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn",
@@ -327,7 +327,7 @@ class TestSpawnAgentDedup:
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context"
             ) as mock_ctx,
             patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.resolve_task_id_for_mcp"
+                "gobby.mcp_proxy.tools.spawn_agent._spawn_guards.resolve_task_id_for_mcp"
             ) as mock_resolve,
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.get_isolation_handler"
@@ -426,7 +426,7 @@ class TestSpawnAgentDedup:
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context"
             ) as mock_ctx,
             patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.resolve_task_id_for_mcp"
+                "gobby.mcp_proxy.tools.spawn_agent._spawn_guards.resolve_task_id_for_mcp"
             ) as mock_resolve,
         ):
             mock_ctx.return_value = {

@@ -1,5 +1,5 @@
 //! The vt-engine build script links Cargo-owned copies of libghostty-vt, so the
-//! build-script output cached in a shared target dir never names a checkout.
+//! build-script output cached in a checkout target never names its source tree.
 
 use std::fs;
 use std::path::{Path, PathBuf};

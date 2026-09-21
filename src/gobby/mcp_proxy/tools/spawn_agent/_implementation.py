@@ -9,6 +9,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
+from gobby.agents.cargo_target import cleanup_checkout_cargo_target_dir
 from gobby.agents.completion_subscribers import subscribe_agent_completion
 from gobby.agents.external_write_grants import GRANT_KEY, apply_write_grant, authorize_write_grant
 from gobby.agents.isolation import (
@@ -30,17 +31,11 @@ from gobby.agents.spawn_models import ManagedRuntimeProfile, resolve_terminal_ba
 from gobby.agents.spawn_timing import finish_spawn_phase, start_spawn_phase
 from gobby.agents.worktree_reuse import ReusedWorktreeRebaseConflict
 from gobby.mcp_proxy.tools._background_task_lifecycle import schedule_background_task
-from gobby.mcp_proxy.tools.tasks import resolve_task_id_for_mcp
 from gobby.providers.version_gate import (
     AGY_REVALIDATING_REASON,
     AGY_UNPUBLISHED_REASON,
     ensure_agy_support,
     peek_agy_support,
-)
-from gobby.tasks.state_semantics import (
-    get_claimed_session_id,
-    is_task_actionable,
-    is_task_reviewable,
 )
 from gobby.utils.local_token import read_local_api_token
 from gobby.utils.machine_id import get_machine_id
@@ -54,7 +49,6 @@ from ._failure_cleanup import (
     cleanup_failed_spawn,
     remember_spawn_pid,
 )
-from ._idempotency import non_actionable_task_spawn_response
 from ._managed_runtime import (
     managed_runtime_pair_error,
     managed_runtime_path_error,
@@ -70,20 +64,15 @@ from ._provider_resolution import (
 from ._request import build_spawn_request
 from ._runtime import (
     _normalize_optional_model,
-    _normalize_string_list,
     build_spawn_context,
 )
 from ._spawn_guards import (
     TaskSpawnLease,
     active_task_response_if_blocked,
     reserve_agent_slot,
+    resolve_spawn_task_context,
 )
-from ._step_state import (
-    persist_initial_step_instance_if_resolved,
-    preclaimed_task_instruction,
-    spawn_starts_after_claim,
-    task_coordination_instruction,
-)
+from ._step_state import persist_initial_step_instance_if_resolved
 from ._worktree_reuse import prepare_reused_worktree
 
 if TYPE_CHECKING:
@@ -133,10 +122,12 @@ async def spawn_agent_impl(
     code_index: Any | None = None,  # CodeIndexContext
     held_task_mutex: Any | None = None,
     terminal_backend: Literal["tmux", "native"] | None = None,
+    droid_mode: Literal["exec", "interactive"] = "exec",
     managed_runtime_profile: ManagedRuntimeProfile | None = None,
     prelaunch_authority: Callable[[str], None] | None = None,
     extra_write_paths: list[str] | None = None,
     write_paths_reason: str | None = None,
+    reserved_run_id: str | None = None,
 ) -> dict[str, Any]:
     """Core spawn_agent implementation used by the MCP tool and direct callers."""
     try:
@@ -412,61 +403,24 @@ async def spawn_agent_impl(
     can_spawn, reason, _depth = await asyncio.to_thread(runner.can_spawn, parent_session_id)
     if not can_spawn:
         return {"success": False, "error": reason}
-    resolved_task_id: str | None = None
-    task_title: str | None = None
-    task_seq_num: int | None = None
-    task_category: str | None = None
-    task_additional_skills: list[str] | None = None
-    claimed_session_id: str | None = None
-    resolved_task: Any | None = None
-
-    if task_id and task_manager:
-        try:
-            resolved_task_id = await asyncio.to_thread(
-                resolve_task_id_for_mcp, task_manager, task_id, project_id
-            )
-            resolved_task = await asyncio.to_thread(task_manager.get_task, resolved_task_id)
-            if resolved_task:
-                task_title = resolved_task.title
-                task_seq_num = resolved_task.seq_num
-                task_category = getattr(resolved_task, "category", None)
-                if resolved_task.additional_skills is not None:
-                    task_additional_skills = _normalize_string_list(resolved_task.additional_skills)
-                claimed_session_id = get_claimed_session_id(resolved_task)
-        except Exception as e:
-            # The caller asked the child to own this task. Continuing task-less spawns an
-            # agent that trips require-task-before-edit on every file operation while the
-            # spawn still reports success (#22402), so refuse at the boundary instead.
-            logger.warning("Failed to resolve task_id %s: %s", task_id, e)
-            return {
-                "success": False,
-                "skipped": True,
-                "task_id": task_id,
-                "error": f"Task {task_id} could not be resolved; refusing to spawn agent: {e}",
-            }
-
-    if resolved_task_id and resolved_task is not None and not is_task_actionable(resolved_task):
-        if not (allow_closed_task and is_task_reviewable(resolved_task)):
-            return non_actionable_task_spawn_response(
-                resolved_task, task_ref=task_id, resolved_task_id=resolved_task_id
-            )
-
-    task_will_be_owned_by_child = bool(
-        resolved_task_id
-        and resolved_task is not None
-        and is_task_actionable(resolved_task)
-        and claimed_session_id is None
+    task_context = await resolve_spawn_task_context(
+        prompt=prompt,
+        task_id=task_id,
+        task_manager=task_manager,
+        project_id=project_id,
+        allow_closed_task=allow_closed_task,
+        agent_body=agent_body,
+        initial_variables=initial_variables,
     )
-    if agent_body is not None and spawn_starts_after_claim(
-        agent_body.step_workflow,
-        task_owned_by_child=task_will_be_owned_by_child,
-    ):
-        assert resolved_task_id is not None
-        task_ref = f"#{task_seq_num}" if task_seq_num else resolved_task_id
-        prompt = f"{prompt}\n\n{preclaimed_task_instruction(task_ref)}"
-    initial_task_ref = initial_variables.get("assigned_task_id") if initial_variables else None
-    if resolved_task_id is not None or isinstance(initial_task_ref, str):
-        prompt = f"{prompt}\n\n{task_coordination_instruction()}"
+    if task_context.refusal is not None:
+        return task_context.refusal
+    prompt = task_context.prompt
+    resolved_task_id = task_context.resolved_task_id
+    task_title = task_context.task_title
+    task_seq_num = task_context.task_seq_num
+    task_category = task_context.task_category
+    task_additional_skills = task_context.task_additional_skills
+    claimed_session_id = task_context.claimed_session_id
     spawn_config = SpawnConfig(
         prompt=prompt,
         task_id=resolved_task_id,
@@ -480,6 +434,11 @@ async def spawn_agent_impl(
         provider=effective_provider,
         parent_session_id=parent_session_id,
     )
+    if droid_mode == "interactive" and effective_provider != "droid":
+        return {
+            "success": False,
+            "error": "droid_mode='interactive' requires provider='droid'",
+        }
     isolation_ctx = None
     if worktree_id and worktree_storage:
         try:
@@ -490,6 +449,20 @@ async def spawn_agent_impl(
         if not existing_worktree:
             return {"success": False, "error": f"Worktree {worktree_id} not found"}
         if not Path(existing_worktree.worktree_path).is_dir():
+            cargo_error = await asyncio.to_thread(
+                cleanup_checkout_cargo_target_dir,
+                Path(existing_worktree.worktree_path),
+                existing_worktree.project_id,
+            )
+            if cargo_error is not None:
+                return {
+                    "success": False,
+                    "error_code": "cargo_target_cleanup_failed",
+                    "error": (
+                        "Worktree directory was already missing, but Cargo target cleanup "
+                        f"failed: {cargo_error}"
+                    ),
+                }
             worktree_storage.delete(worktree_id)
             return {
                 "success": False,
@@ -540,6 +513,20 @@ async def spawn_agent_impl(
         if not existing_clone:
             return {"success": False, "error": f"Clone {clone_id} not found"}
         if not Path(existing_clone.clone_path).is_dir():
+            cargo_error = await asyncio.to_thread(
+                cleanup_checkout_cargo_target_dir,
+                Path(existing_clone.clone_path),
+                existing_clone.project_id,
+            )
+            if cargo_error is not None:
+                return {
+                    "success": False,
+                    "error_code": "cargo_target_cleanup_failed",
+                    "error": (
+                        "Clone directory was already missing, but Cargo target cleanup failed: "
+                        f"{cargo_error}"
+                    ),
+                }
             clone_storage.delete(clone_id)
             return {
                 "success": False,
@@ -623,7 +610,7 @@ async def spawn_agent_impl(
     )
     enhanced_prompt = context_handler.build_context_prompt(prompt, isolation_ctx)
 
-    run_id = str(uuid.uuid4())
+    run_id = reserved_run_id or str(uuid.uuid4())
     prepared_spawn = None
     spawn_request = None
 
@@ -859,6 +846,7 @@ async def spawn_agent_impl(
             code_index_api_token=await asyncio.to_thread(read_local_api_token),
             phase_timings_ms=phase_timings_ms,
             terminal_backend=resolved_terminal_backend,
+            droid_mode=droid_mode,
         )
 
         async def _spawn_failure(error: str, *, infrastructure: bool = False) -> dict[str, Any]:

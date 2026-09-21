@@ -19,6 +19,7 @@ _SHELL_TOOLS = frozenset(
         "ShellTool",
         "commandExecution",
         "exec_command",
+        "functions.exec_command",
     }
 )
 

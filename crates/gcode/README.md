@@ -204,32 +204,6 @@ search. For reference mapping, resolve a symbol ID first and prefer
 `gcode usages <symbol-id>` or `gcode callers <symbol-id>` over text grep when
 the graph projection is synced.
 
-## AI CLI Skill Installation
-
-For isolated roots and linked worktrees (anything other than a
-`.gobby/project.json` project), `gcode init` installs the bundled `gcode` skill
-for every supported project-local AI CLI target:
-
-| CLI | Project-local files |
-|-----|---------------------|
-| Claude Code | `.claude-plugin/plugin.json`, `skills/gobby/SKILL.md` |
-| Codex | `.codex/skills/gobby/SKILL.md` |
-| Droid | `.factory/skills/gobby/SKILL.md` |
-| Grok | `.grok/skills/gobby/SKILL.md` |
-| Qwen | `.qwen/skills/gobby/SKILL.md` |
-| Antigravity CLI | `.agents/skills/gobby/SKILL.md` |
-
-Gobby-managed projects skip these project-local writes because Gobby owns CLI
-wiring. The router loads Gobby's code-index references through its connected MCP
-server; a connected server alone does not count as an installed standalone skill.
-
-Reinstallation preserves an existing current router, including its generated
-catalog appendix. An unrecognized router or custom Claude plugin manifest stops
-installation with a preservation diagnostic; reconcile that file explicitly.
-Upgrade removes the predecessor `gcode/SKILL.md` only when its bytes match the
-known bundled carrier. Modified predecessors are reported for manual reconciliation;
-other files in that directory remain untouched.
-
 ## Runtime modes
 
 Production indexing and search are daemon-backed. Start the Gobby daemon and

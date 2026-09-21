@@ -10,6 +10,21 @@ command. It emitted neither hook for the nonzero command. Terminal-hook output
 therefore uses the documented success-event contract and leaves missing failure
 events untouched; managed web-chat uses the live structured `isError` field.
 
+## 0.223.0 turn-lifecycle capture
+
+`turn-lifecycle-0.223.0.json` is the sanitized source artifact for the ten
+turn-lifecycle cases. Every case came from a distinct
+`gobby-agents:spawn_agent(provider="droid")` run, using one-shot exec mode for
+completion cases and the managed terminal UI for interactive cases. The artifact
+records the pinned binary SHA-256, bounded hook and transcript slices, correlation
+IDs, terminal/message actions, and positive and negative evidence.
+
+Droid 0.223.0 emits a generic `Stop` before the cancellation-specific
+`idle_prompt`. The prompt has no `reason`; its message says the agent was stopped
+by the user, while the matching transcript has
+`agent_turn_outcome(reason="cancelled")`. Gobby therefore gives the explicit,
+turn-correlated cancellation evidence precedence over the earlier `Stop`.
+
 ## 0.219.0 hook and session captures
 
 `hook-payloads-0.219.0.jsonl` holds hook stdin that Droid `0.219.0` sent during

@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from gobby.agents.cargo_target import checkout_cargo_target_dir
 from gobby.hooks.project_checkout_ingress import register_cwd_marker_checkout
 from gobby.storage.project_checkouts import LocalProjectCheckoutManager
 from gobby.storage.projects import LocalProjectManager
@@ -160,7 +161,7 @@ def test_marker_refresh_oserror_is_logged_not_raised(
     assert checkout.root_path == str(root)
 
 
-def test_registered_cargo_checkout_links_shared_target(
+def test_registered_cargo_checkout_links_checkout_target(
     temp_db: HubDatabase,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -183,4 +184,4 @@ def test_registered_cargo_checkout_links_shared_target(
     assert checkout is not None
     link = root / "target"
     assert link.is_symlink()
-    assert os.readlink(link) == str(tmp_path / "home" / "cache" / "cargo-target" / project.id)
+    assert os.readlink(link) == str(checkout_cargo_target_dir(root, project.id))
