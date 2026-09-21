@@ -7,7 +7,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 from uuid import UUID, uuid4
 
 from psycopg.types.json import Jsonb
@@ -246,8 +246,24 @@ class Terminal:
         )
 
 
+class TerminalLocatorRecord(Protocol):
+    """Terminal fields required to build an attach locator."""
+
+    @property
+    def backend(self) -> str: ...
+
+    @property
+    def machine_id(self) -> str: ...
+
+    @property
+    def host_epoch(self) -> str | None: ...
+
+    @property
+    def locator(self) -> Mapping[str, object] | None: ...
+
+
 def native_attach_locator(
-    row: Terminal,
+    row: TerminalLocatorRecord,
     *,
     live_host_epoch: str,
     host_socket: str | None,
@@ -263,6 +279,38 @@ def native_attach_locator(
         frame_host_epoch=str(row.host_epoch),
         host_socket=host_socket,
         host_terminal_id=host_terminal_id,
+    )
+
+
+def attach_locator_for_terminal(
+    row: TerminalLocatorRecord,
+    *,
+    live_host_epoch: str,
+    socket_dir: Path | str,
+) -> AttachLocator:
+    """Compute an attach handle from an already-loaded terminal row."""
+    if row.machine_id != require_machine_id():
+        raise MachineOwnershipMismatchError
+    stored = row.locator or {}
+    host_socket = str(Path(socket_dir) / FRAMES_SOCKET_NAME)
+    if row.backend == "native":
+        return native_attach_locator(
+            row,
+            live_host_epoch=live_host_epoch,
+            host_socket=host_socket,
+        )
+    pid = stored.get("server_pid")
+    start = stored.get("server_start_time")
+    return AttachLocator(
+        backend="tmux",
+        frame_host_epoch=live_host_epoch,
+        host_socket=host_socket,
+        socket_path=None if stored.get("socket_path") is None else str(stored.get("socket_path")),
+        pane_id=None if stored.get("pane_id") is None else str(stored.get("pane_id")),
+        server_pid=pid if isinstance(pid, int) and not isinstance(pid, bool) else None,
+        server_start_time=(
+            start if isinstance(start, int) and not isinstance(start, bool) else None
+        ),
     )
 
 
@@ -713,30 +761,10 @@ class TerminalManager(TerminalSettlementMixin):
         row = self.get(terminal_id)
         if row is None:
             raise KeyError(terminal_id)
-        if row.machine_id != require_machine_id():
-            raise MachineOwnershipMismatchError
-        stored = row.locator or {}
-        host_socket = str(Path(socket_dir) / FRAMES_SOCKET_NAME)
-        if row.backend == "native":
-            return native_attach_locator(
-                row,
-                live_host_epoch=live_host_epoch,
-                host_socket=host_socket,
-            )
-        pid = stored.get("server_pid")
-        start = stored.get("server_start_time")
-        return AttachLocator(
-            backend="tmux",
-            frame_host_epoch=live_host_epoch,
-            host_socket=host_socket,
-            socket_path=None
-            if stored.get("socket_path") is None
-            else str(stored.get("socket_path")),
-            pane_id=None if stored.get("pane_id") is None else str(stored.get("pane_id")),
-            server_pid=pid if isinstance(pid, int) and not isinstance(pid, bool) else None,
-            server_start_time=(
-                start if isinstance(start, int) and not isinstance(start, bool) else None
-            ),
+        return attach_locator_for_terminal(
+            row,
+            live_host_epoch=live_host_epoch,
+            socket_dir=socket_dir,
         )
 
     def revalidate_tmux_generation(

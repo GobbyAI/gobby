@@ -3,20 +3,35 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import threading
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
+from functools import partial
+from itertools import count
+from time import perf_counter
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 
 from gobby.agents.prompt_detector import PromptDetector
+from gobby.servers.http import HTTPServer
 from gobby.servers.routes.attention import AttentionAnswer, AttentionPane, create_attention_router
-from gobby.storage.attention import AttentionState, AttentionStateManager
+from gobby.storage.agents import LocalAgentRunManager
+from gobby.storage.attention import (
+    AttentionRosterRow,
+    AttentionRosterTerminal,
+    AttentionState,
+    AttentionStateManager,
+)
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.tasks import LocalTaskManager
+from gobby.utils.machine_id import require_machine_id
 from tests.agents.detection_test_support import BundledDetectionRegistry
 
 DETECTION_REGISTRY = BundledDetectionRegistry()
@@ -85,6 +100,50 @@ def _client(server: SimpleNamespace, **kwargs: Any) -> TestClient:
     app = FastAPI()
     app.include_router(create_attention_router(server, **kwargs))
     return TestClient(app)
+
+
+def _roster_run(
+    run: Any,
+    *,
+    terminal: AttentionRosterTerminal | None = None,
+    task_ref: str | None = None,
+    task_stage: str | None = None,
+) -> AttentionRosterRow:
+    return AttentionRosterRow(
+        kind="run",
+        source_id=run.id,
+        session_id=run.child_session_id,
+        lifecycle_status=run.status,
+        task_id=run.task_id,
+        task_ref=task_ref,
+        task_stage=task_stage,
+        provider=run.provider,
+        model=run.model,
+        pid=run.pid,
+        updated_at=run.updated_at,
+        terminal_context={},
+        terminal_id=run.terminal_id,
+        terminal=terminal,
+    )
+
+
+def _roster_session(session: Any) -> AttentionRosterRow:
+    return AttentionRosterRow(
+        kind="session",
+        source_id=session.id,
+        session_id=session.id,
+        lifecycle_status=session.status,
+        task_id=None,
+        task_ref=None,
+        task_stage=None,
+        provider=session.source,
+        model=session.model,
+        pid=None,
+        updated_at=session.updated_at,
+        terminal_context=session.terminal_context,
+        terminal_id=None,
+        terminal=None,
+    )
 
 
 def test_ordering_coordinator_no_regression(temp_db: HubDatabase) -> None:
@@ -255,22 +314,6 @@ def test_interactive_entry_end_to_end(
         updated_at=datetime(2026, 7, 21, 1, tzinfo=UTC),
     )
 
-    class RosterRuns:
-        def __init__(self, _db: HubDatabase) -> None:
-            pass
-
-        def list_active_for_machine(
-            self,
-            machine_id: str,
-            limit: int = 500,
-            offset: int = 0,
-        ) -> list[Any]:
-            del machine_id, limit
-            if offset:
-                return []
-            return [run]
-
-    monkeypatch.setattr("gobby.servers.routes.attention.LocalAgentRunManager", RosterRuns)
     injected: list[AttentionAnswer] = []
 
     async def pane(_state: AttentionState) -> AttentionPane:
@@ -283,33 +326,34 @@ def test_interactive_entry_end_to_end(
         injected.append(answer)
 
     server = _server(temp_db, manager, [session])
-    from gobby.storage.terminals import AttachLocator
-
-    row = SimpleNamespace(
-        session_name="agent-run-2",
+    terminal = AttentionRosterTerminal(
+        id="term-run-2",
         backend="tmux",
         state="orphaned",
+        machine_id=require_machine_id(),
         host_epoch=None,
-        id="term-run-2",
-    )
-    server.services.terminal_manager = SimpleNamespace(
-        get=lambda _tid: row,
-        get_live_for_session=lambda _sid: None,
-        attach_locator=lambda *_a, **_k: AttachLocator(
-            backend="tmux",
-            frame_host_epoch="",
-            socket_path="/tmp/gobby.sock",
-            pane_id="%1",
-        ),
-    )
-    task = SimpleNamespace(
-        id="task-2",
-        to_brief=lambda: {
-            "ref": "#42",
-            "state": {"current_stage": {"name": "development"}},
+        session_name="agent-run-2",
+        locator={
+            "socket_path": "/tmp/gobby.sock",
+            "pane_id": "%1",
+            "server_pid": 123,
+            "server_start_time": 456,
         },
     )
-    server.services.task_manager = SimpleNamespace(get_task=lambda _task_id: task)
+    monkeypatch.setattr(
+        manager,
+        "load_roster_rows",
+        lambda *_args, **_kwargs: [
+            _roster_run(
+                run,
+                terminal=terminal,
+                task_ref="#42",
+                task_stage="development",
+            ),
+            _roster_session(session),
+        ],
+    )
+    server.services.terminal_manager = SimpleNamespace()
     with _client(server, pane_resolver=pane, injector=inject) as client:
         roster = client.get("/api/attention/roster")
         seen = client.post(
@@ -368,17 +412,11 @@ def test_roster_spells_the_model_as_its_provider_prints_it(
         updated_at=datetime(2026, 7, 21, 1, tzinfo=UTC),
     )
 
-    class RosterRuns:
-        def __init__(self, _db: HubDatabase) -> None:
-            pass
-
-        def list_active_for_machine(
-            self, machine_id: str, limit: int = 500, offset: int = 0
-        ) -> list[Any]:
-            del machine_id, limit
-            return [] if offset else [run]
-
-    monkeypatch.setattr("gobby.servers.routes.attention.LocalAgentRunManager", RosterRuns)
+    monkeypatch.setattr(
+        manager,
+        "load_roster_rows",
+        lambda *_args, **_kwargs: [_roster_run(run), _roster_session(session)],
+    )
     catalog = {("codex", "gpt-5"): "GPT-5", ("claude", "sonnet"): "Claude Sonnet 4.5"}
     resolver = SimpleNamespace(
         find_model=lambda provider, model: (
@@ -410,3 +448,258 @@ def test_roster_terminal_block(temp_db: HubDatabase) -> None:
     assert roster.status_code == 200
     for entry in roster.json()["entries"]:
         assert "terminal" in entry
+
+
+def test_roster_cold_path_is_bounded_and_cursor_invalidates_cache(
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    manager = AttentionStateManager(temp_db, epoch="bounded-cache")
+    runs = [
+        SimpleNamespace(
+            id=f"run-{index}",
+            child_session_id=f"session-{index}",
+            status="running",
+            task_id=f"task-{index}",
+            provider="codex",
+            model="gpt-5",
+            terminal_id=None,
+            pid=None,
+            updated_at=datetime(2026, 9, 21, tzinfo=UTC),
+        )
+        for index in range(50)
+    ]
+    rows = [
+        _roster_run(run, task_ref=f"#{index}", task_stage="development")
+        for index, run in enumerate(runs)
+    ]
+    monkeypatch.setattr(manager, "load_roster_rows", lambda *_args, **_kwargs: rows)
+    db_jobs = 0
+
+    async def counted_run_db(function: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        nonlocal db_jobs
+        db_jobs += 1
+        return function(*args, **kwargs)
+
+    server = _server(temp_db, manager)
+    server.services.run_db = counted_run_db
+    ticks = count()
+    monkeypatch.setattr(
+        "gobby.servers.routes.attention.perf_counter",
+        lambda: next(ticks) / 1000,
+    )
+    caplog.set_level(logging.DEBUG, logger="gobby.servers.routes.attention")
+
+    with _client(server) as client:
+        cold = client.get("/api/attention/roster")
+        warm = client.get("/api/attention/roster")
+        state = _open(manager)
+        invalidated = client.get("/api/attention/roster")
+        manager.ordering.epoch = "bounded-cache-next"
+        epoch_invalidated = client.get("/api/attention/roster")
+
+    assert (
+        cold.status_code
+        == warm.status_code
+        == invalidated.status_code
+        == epoch_invalidated.status_code
+        == 200
+    )
+    assert len(cold.json()["entries"]) == 50
+    assert db_jobs == 6
+    assert epoch_invalidated.json()["epoch"] == "bounded-cache-next"
+    invalidated_entries = {entry["entry_id"]: entry for entry in invalidated.json()["entries"]}
+    assert invalidated_entries["run:run-1"]["attention"]["attention_id"] == state.attention_id
+    profiles = [
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("Attention roster profile ")
+    ]
+    assert profiles[0] == (
+        "Attention roster profile cache_hit=False entries=50 executor_wait_ms=4.000 "
+        "query_ms=2.000 assembly_ms=1.000 total_ms=13.000"
+    )
+    assert profiles[1] == (
+        "Attention roster profile cache_hit=True entries=50 executor_wait_ms=0.000 "
+        "query_ms=0.000 assembly_ms=0.000 total_ms=2.000"
+    )
+
+
+@pytest.mark.asyncio
+async def test_warm_roster_cache_check_uses_attention_ordering_lock(
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class TrackingLock:
+        def __init__(self) -> None:
+            self.delegate = asyncio.Lock()
+            self.entries = 0
+
+        async def __aenter__(self) -> None:
+            await self.delegate.acquire()
+            self.entries += 1
+
+        async def __aexit__(self, *_args: object) -> None:
+            self.delegate.release()
+
+    manager = AttentionStateManager(temp_db, epoch="ordered-cache")
+    monkeypatch.setattr(manager, "load_roster_rows", lambda *_args, **_kwargs: [])
+    tracking_lock = TrackingLock()
+    monkeypatch.setattr(manager.ordering, "_lock", tracking_lock)
+    server = _server(temp_db, manager)
+    app = FastAPI()
+    app.include_router(create_attention_router(cast(HTTPServer, server)))
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        cold = await client.get("/api/attention/roster")
+        tracking_lock.entries = 0
+        warm = await client.get("/api/attention/roster")
+
+    assert cold.status_code == warm.status_code == 200
+    assert tracking_lock.entries == 1
+
+
+@pytest.mark.asyncio
+async def test_warm_roster_cache_return_is_ordered_with_worker_thread_mutation(
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = AttentionStateManager(temp_db, epoch="ordered-cache")
+    monkeypatch.setattr(manager, "load_roster_rows", lambda *_args, **_kwargs: [])
+    server = _server(temp_db, manager)
+    app = FastAPI()
+    app.include_router(create_attention_router(cast(HTTPServer, server)))
+    cache_checked = threading.Event()
+    mutation_entered = threading.Event()
+    allow_mutation = threading.Event()
+    mutation_done = threading.Event()
+    errors: list[BaseException] = []
+    mutation_entered_before_return = False
+
+    def mutate_from_worker() -> None:
+        try:
+            assert cache_checked.wait(timeout=2)
+            with manager.ordering.synchronized():
+                mutation_entered.set()
+                assert allow_mutation.wait(timeout=2)
+                _open(manager)
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            mutation_done.set()
+
+    def pause_after_warm_cache_check(
+        _profile: object,
+        *,
+        cache_hit: bool,
+        **_kwargs: object,
+    ) -> None:
+        nonlocal mutation_entered_before_return
+        if not cache_hit:
+            return
+        cache_checked.set()
+        mutation_entered_before_return = mutation_entered.wait(timeout=0.25)
+        allow_mutation.set()
+        if mutation_entered_before_return:
+            assert mutation_done.wait(timeout=2)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        cold = await client.get("/api/attention/roster")
+        monkeypatch.setattr(
+            "gobby.servers.routes.attention._log_roster_profile",
+            pause_after_warm_cache_check,
+        )
+        worker = threading.Thread(target=mutate_from_worker)
+        worker.start()
+        warm = await client.get("/api/attention/roster")
+        worker.join(timeout=2)
+        fresh = await client.get("/api/attention/roster")
+
+    assert not worker.is_alive()
+    assert errors == []
+    assert not mutation_entered_before_return
+    assert cold.status_code == warm.status_code == fresh.status_code == 200
+    assert warm.json()["seq"] == cold.json()["seq"] == 0
+    assert fresh.json()["seq"] == manager.seq == 1
+
+
+def test_bounded_roster_query_joins_task_payload(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    session_manager: Any,
+) -> None:
+    session = session_manager.register(
+        external_id="attention-roster-query-parent",
+        machine_id=require_machine_id(),
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    task = LocalTaskManager(temp_db).create_task(
+        project_id=sample_project["id"],
+        title="Roster query task",
+        validation_criteria="The joined roster query returns this task payload.",
+    )
+    run = LocalAgentRunManager(temp_db).create(
+        parent_session_id=session.id,
+        provider="codex",
+        model="gpt-5",
+        prompt="test",
+        task_id=task.id,
+    )
+
+    rows = AttentionStateManager(temp_db).load_roster_rows(
+        require_machine_id(),
+        live_session_statuses=(),
+    )
+
+    row = next(item for item in rows if item.source_id == run.id)
+    assert row.task_id == task.id
+    assert row.task_ref == f"#{task.seq_num}"
+    assert row.task_stage is None
+
+
+@pytest.mark.asyncio
+async def test_roster_p95_stays_below_deadline_with_shared_executor_load(
+    temp_db: HubDatabase,
+) -> None:
+    manager = AttentionStateManager(temp_db, epoch="loaded-roster")
+    server = _server(temp_db, manager)
+    executor = ThreadPoolExecutor(max_workers=4)
+    release = threading.Event()
+    entered = [threading.Event() for _ in range(3)]
+
+    def concurrent_db_work(ready: threading.Event) -> None:
+        ready.set()
+        while not release.is_set():
+            temp_db.fetchone("SELECT 1")
+
+    async def executor_run_db(function: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(executor, partial(function, *args, **kwargs))
+
+    server.services.run_db = executor_run_db
+    app = FastAPI()
+    app.include_router(create_attention_router(cast(HTTPServer, server)))
+    loop = asyncio.get_running_loop()
+    blockers = [loop.run_in_executor(executor, concurrent_db_work, ready) for ready in entered]
+
+    try:
+        assert await asyncio.to_thread(lambda: all(ready.wait(2) for ready in entered))
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+
+            async def fetch() -> float:
+                started_at = perf_counter()
+                response = await client.get("/api/attention/roster")
+                assert response.status_code == 200
+                return perf_counter() - started_at
+
+            async with asyncio.timeout(5.0):
+                latencies = await asyncio.gather(*(fetch() for _ in range(20)))
+    finally:
+        release.set()
+        await asyncio.gather(*blockers)
+        executor.shutdown(wait=True)
+
+    p95 = sorted(latencies)[18]
+    assert p95 < 1.0, f"roster p95 {p95:.3f}s exceeded the 1s loaded-test budget"
