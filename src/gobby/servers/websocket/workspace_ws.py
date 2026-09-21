@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any, Final, get_args, get_type_hints
 
 from gobby.servers.websocket.terminal_ws_create import _bounded_code
 from gobby.terminals.actor_scope import OPERATOR_ACTOR
+from gobby.terminals.leases import LifecyclePublicationError
 from gobby.terminals.workspace_ops import WorkspaceOpError, WorkspaceOps, WorkspaceSnapshot
 from gobby.utils.datetime import to_json_safe
 
@@ -98,6 +99,7 @@ class WorkspaceWsMixin:
     """Serve ``workspace_attach``, ``workspace_snapshot``, and ``workspace_op``."""
 
     workspace_ops: WorkspaceOps | None
+    shutdown_in_progress: Callable[[], bool]
 
     if TYPE_CHECKING:
 
@@ -107,7 +109,13 @@ class WorkspaceWsMixin:
 
     async def _handle_workspace_attach(self, websocket: Any, data: dict[str, Any]) -> None:
         try:
+            self._ensure_workspace_requests_open()
             snapshot = await self._read_workspace(data)
+        except LifecyclePublicationError:
+            if not self.shutdown_in_progress():
+                raise
+            await self._send_workspace_error(websocket, data, self._shutdown_error())
+            return
         except WorkspaceOpError as exc:
             await self._send_workspace_error(websocket, data, exc)
             return
@@ -118,7 +126,13 @@ class WorkspaceWsMixin:
 
     async def _handle_workspace_snapshot(self, websocket: Any, data: dict[str, Any]) -> None:
         try:
+            self._ensure_workspace_requests_open()
             snapshot = await self._read_workspace(data)
+        except LifecyclePublicationError:
+            if not self.shutdown_in_progress():
+                raise
+            await self._send_workspace_error(websocket, data, self._shutdown_error())
+            return
         except WorkspaceOpError as exc:
             await self._send_workspace_error(websocket, data, exc)
             return
@@ -127,11 +141,17 @@ class WorkspaceWsMixin:
     async def _handle_workspace_op(self, websocket: Any, data: dict[str, Any]) -> None:
         op = data.get("op")
         try:
+            self._ensure_workspace_requests_open()
             method = WORKSPACE_OPS.get(op) if isinstance(op, str) else None
             if method is None:
                 raise WorkspaceOpError("invalid_op", f"Unknown workspace op: {op!r}")
             arguments = _arguments(method, data, _OP_ENVELOPE)
             result = await getattr(self._workspace_ops(), method)(OPERATOR_ACTOR, **arguments)
+        except LifecyclePublicationError:
+            if not self.shutdown_in_progress():
+                raise
+            await self._send_workspace_error(websocket, data, self._shutdown_error())
+            return
         except WorkspaceOpError as exc:
             await self._send_workspace_error(websocket, data, exc)
             return
@@ -149,6 +169,14 @@ class WorkspaceWsMixin:
         if self.workspace_ops is None:
             raise WorkspaceOpError("terminal_failed", "Workspace ops are not configured")
         return self.workspace_ops
+
+    def _ensure_workspace_requests_open(self) -> None:
+        if self.shutdown_in_progress():
+            raise self._shutdown_error()
+
+    @staticmethod
+    def _shutdown_error() -> WorkspaceOpError:
+        return WorkspaceOpError("shutdown_in_progress", "Daemon is shutting down")
 
     async def _read_workspace(self, data: dict[str, Any]) -> WorkspaceSnapshot:
         arguments = _arguments("workspace_snapshot", data, _ENVELOPE)
