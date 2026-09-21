@@ -1392,6 +1392,7 @@ def _git(repo: Path, *args: str) -> str:
         ("crates/gcore/tests/schema_contract.rs", True),
         ("crates/gterminal/src/host/backpressure/tests.rs", True),
         ("crates/gcore/src/ai/tests.rs", True),
+        ("crates/gcode/src/communities/remap_tests.rs", True),
         ("src/tests.rs", True),
         ("crates/gcore/benches/tests.rs", False),
         ("crates/gcore/src/backpressure.rs", False),

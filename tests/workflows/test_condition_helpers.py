@@ -779,6 +779,13 @@ class TestTddPathHelpers:
 
         assert first_tdd_test_path(event_data, {}) == "tests/helper.py"
 
+    def test_rust_named_test_module_counts_as_test_path(self) -> None:
+        path = "crates/gcode/src/communities/remap_tests.rs"
+        event_data = {"canonical_file_paths": [path]}
+
+        assert first_tdd_test_path(event_data, {}) == path
+        assert first_tdd_code_path(event_data, {}) == ""
+
     def test_tdd_helpers_fall_back_to_native_tool_input(self) -> None:
         tool_input = {"file_path": "src/new_module.py"}
 

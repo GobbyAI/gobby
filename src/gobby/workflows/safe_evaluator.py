@@ -534,6 +534,7 @@ def build_condition_helpers(
     from gobby.hooks.provider_launch_guard import blocks_direct_provider_launch
 
     from .condition_helpers import (
+        _event_and_tool_paths,
         all_tasks_have_label,
         first_tdd_code_path,
         first_tdd_test_path,
@@ -560,16 +561,50 @@ def build_condition_helpers(
     )
 
     ctx = context or {}
+
+    def _tdd_project_path() -> str | None:
+        return _event_field(ctx.get("event"), "metadata", {}).get(
+            "project_path"
+        ) or _get_project_path(ctx)
+
+    def _claimed_acceptance_test_path(event_data: Any, tool_input: Any) -> str:
+        variables = _get_variables(ctx)
+        acceptance_paths = variables.get("claimed_task_acceptance_test_paths", [])
+        if not isinstance(acceptance_paths, list | tuple):
+            return ""
+        for path in _event_and_tool_paths(event_data, tool_input):
+            for acceptance_path in acceptance_paths:
+                if not isinstance(acceptance_path, str) or not acceptance_path:
+                    continue
+                if tdd_gate_open(
+                    {
+                        "claimed_task_acceptance_test_paths": [acceptance_path],
+                        "tdd_tests_written": [path],
+                    },
+                    _tdd_project_path(),
+                ):
+                    return acceptance_path
+        return ""
+
+    def _first_tdd_code_path(event_data: Any, tool_input: Any) -> str:
+        if _claimed_acceptance_test_path(event_data, tool_input):
+            return ""
+        return first_tdd_code_path(event_data, tool_input)
+
+    def _first_tdd_test_path(event_data: Any, tool_input: Any) -> str:
+        return _claimed_acceptance_test_path(event_data, tool_input) or first_tdd_test_path(
+            event_data, tool_input
+        )
+
     funcs = build_agent_workflow_allowed_funcs(ctx)
     funcs.update(
         {
             "normalize_path": lambda p: p.replace("\\", "/"),
-            "first_tdd_code_path": first_tdd_code_path,
-            "first_tdd_test_path": first_tdd_test_path,
+            "first_tdd_code_path": _first_tdd_code_path,
+            "first_tdd_test_path": _first_tdd_test_path,
             "tdd_gate_open": lambda variables: tdd_gate_open(
                 variables,
-                _event_field(ctx.get("event"), "metadata", {}).get("project_path")
-                or _get_project_path(ctx),
+                _tdd_project_path(),
             ),
             "is_gobby_build_command": is_gobby_build_command,
             "is_validation_command": is_validation_command,

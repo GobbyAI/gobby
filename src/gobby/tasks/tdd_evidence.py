@@ -46,8 +46,10 @@ def is_test_convention_path(path: str) -> bool:
     """A test module in any language or any file under a test directory."""
     pure = PurePosixPath(path)
     name = pure.name.casefold()
-    if name == "tests.rs" and any(part.casefold() == "src" for part in pure.parts[:-1]):
-        # Rust module tests: <module>/tests.rs declared by `#[cfg(test)] mod tests`.
+    if (name == "tests.rs" or name.endswith("_tests.rs")) and any(
+        part.casefold() == "src" for part in pure.parts[:-1]
+    ):
+        # Rust module tests: <module>/tests.rs or <module>_tests.rs under src/.
         return True
     return (
         any(part.casefold() in {"test", "tests", "__tests__"} for part in pure.parts[:-1])
