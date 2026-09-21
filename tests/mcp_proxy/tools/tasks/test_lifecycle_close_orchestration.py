@@ -52,6 +52,7 @@ from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.tasks import agentic_close_review as agentic_close_review_module
 from gobby.tasks.close_review_delivery import terminal_review_delivery
 from gobby.utils.machine_id import require_machine_id
+from tests._timing import wait_for_awaitable_or_background_task
 
 pytestmark = pytest.mark.unit
 
@@ -616,6 +617,41 @@ async def test_failed_reviewer_launch_remains_unsuccessful(
     assert result["error"] == "agentic_review_launch_failed"
     assert result["review_status"] == "error"
     assert store.finished_status == "error"
+
+
+@pytest.mark.asyncio
+async def test_finish_launch_error_in_background_close_is_surfaced(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _Store(_review(status="queued", run_id=None))
+    registry = SimpleNamespace(call=AsyncMock(side_effect=OSError("review launch failed")))
+    _patch_store(monkeypatch, store)
+    monkeypatch.setattr(
+        orchestration,
+        "_finish_launch_error",
+        MagicMock(side_effect=RuntimeError("finish launch error failed")),
+    )
+    evaluation = _evaluation()
+    spawn_started = asyncio.Event()
+    close_task = asyncio.create_task(
+        launch_close_review(
+            _ctx(registry=registry),
+            evaluation=evaluation,
+            close_arguments=_arguments(),
+            evaluate_close=_revalidate(evaluation),
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="finish launch error failed"):
+        await wait_for_awaitable_or_background_task(
+            spawn_started.wait(),
+            close_task,
+            timeout=1,
+            description="task-close reviewer spawn",
+        )
+
+    assert close_task.done()
+    assert close_task.exception() is not None
 
 
 @pytest.mark.asyncio
@@ -1608,11 +1644,18 @@ async def _live_mcp_http_server(
     )
     http = uvicorn.Server(config)
     task = asyncio.create_task(http.serve())
-    try:
+
+    async def wait_until_started() -> None:
         while not http.started:
-            if task.done():
-                await task
             await asyncio.sleep(0)
+
+    try:
+        await wait_for_awaitable_or_background_task(
+            wait_until_started(),
+            task,
+            timeout=5,
+            description="live MCP HTTP server startup",
+        )
         sockets = http.servers[0].sockets
         assert sockets is not None
         yield int(sockets[0].getsockname()[1])
