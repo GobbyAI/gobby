@@ -1439,6 +1439,42 @@ def test_update_community_label_is_signature_guarded(code_storage: CodeIndexStor
     assert after["labeled_at"] is not None
 
 
+def test_mark_community_labels_attempted_is_signature_guarded(
+    code_storage: CodeIndexStorage,
+) -> None:
+    current_signature = "1111111111111111"
+    _insert_test_community(
+        code_storage,
+        1,
+        member_count=3,
+        member_signature=current_signature,
+    )
+    _insert_test_community(
+        code_storage,
+        2,
+        member_count=2,
+        member_signature="2222222222222222",
+    )
+
+    updated = code_storage.mark_community_labels_attempted(
+        [
+            (PROJECT_ID, 1, current_signature),
+            (PROJECT_ID, 2, "stale-signature"),
+        ]
+    )
+
+    assert updated == 1
+    attempts = code_storage.db.fetchall(
+        """SELECT community_id, label_attempted_at
+           FROM code_communities
+           WHERE machine_id = %s AND project_id = %s
+           ORDER BY community_id""",
+        (require_machine_id(), PROJECT_ID),
+    )
+    assert attempts[0]["label_attempted_at"] is not None
+    assert attempts[1]["label_attempted_at"] is None
+
+
 # ── Summary freshness ──────────────────────────────────────────────────
 
 

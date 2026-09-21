@@ -94,6 +94,6 @@ class CodeIndexCommunityStorageMixin:
                       AND c.community_id = v.community_id
                       AND c.member_signature = v.member_signature
                       AND c.labeled_signature IS DISTINCT FROM c.member_signature""",
-                (now, require_machine_id(), *params),
+                (now, *params, require_machine_id()),
             )
             return cursor.rowcount
