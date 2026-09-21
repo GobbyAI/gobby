@@ -112,6 +112,8 @@ const terminalHook = {
   resizeTerminal: vi.fn(),
   onOutput: vi.fn(),
   onAttachHistory: vi.fn(),
+  setScrollOffset: vi.fn(),
+  onScrollOffsetApplied: vi.fn(),
 };
 
 vi.mock("../../../hooks/useTmuxSessions", () => ({
