@@ -28,9 +28,13 @@ pytestmark = pytest.mark.unit
 
 def _registered_send_keys(
     temp_db: HubDatabase,
+    *,
+    context_only: bool = False,
 ) -> tuple[Callable[..., Any], FakeRuntime, MemoryTerminalStore, WriteCoordinator]:
     terminal = make_memory_terminal(backend="native")
-    terminal.session_id = "target-session"
+    terminal.session_id = None if context_only else "target-session"
+    if context_only:
+        terminal.project_id = "project-1"
     store = MemoryTerminalStore(terminal)
     runtime = FakeRuntime(backend="native")
     coordinator = WriteCoordinator(
@@ -39,7 +43,12 @@ def _registered_send_keys(
         lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
     )
     caller = MagicMock(id="caller-session", project_id="project-1", agent_run_id=None)
-    target = MagicMock(id="target-session", project_id="project-1")
+    target = MagicMock(
+        id="target-session",
+        project_id="project-1",
+        session_type="terminal",
+        terminal_context={"gobby_terminal_id": terminal.id} if context_only else None,
+    )
     session_manager = MagicMock()
     session_manager.resolve_session_reference.side_effect = lambda ref, project_id=None: ref
     session_manager.get.side_effect = {
@@ -57,6 +66,20 @@ def _registered_send_keys(
     send = tools.get_tool("send_keys")
     assert send is not None
     return send, runtime, store, coordinator
+
+
+@pytest.mark.asyncio
+async def test_send_keys_uses_unbound_native_context_id(temp_db: HubDatabase) -> None:
+    send, runtime, _store, _coordinator = _registered_send_keys(temp_db, context_only=True)
+
+    with patch(
+        "gobby.utils.session_context.get_current_session_id",
+        return_value="caller-session",
+    ):
+        result = await send(session_id="target-session", keys="hello\n", literal=True)
+
+    assert result["success"] is True
+    assert runtime.write_log == [("text", "hello\n")]
 
 
 @pytest.mark.asyncio

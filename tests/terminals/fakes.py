@@ -327,6 +327,33 @@ class MemoryTerminalStore:
         ]
         return matches[-1] if matches else None
 
+    def resolve_live_for_session(self, session: Any) -> Terminal | None:
+        bound = self.get_live_for_session(session.id)
+        if bound is not None:
+            return bound
+        context = getattr(session, "terminal_context", None)
+        if getattr(session, "session_type", "terminal") != "terminal" or not isinstance(
+            context, dict
+        ):
+            return None
+        terminal_id = context.get("gobby_terminal_id")
+        if not isinstance(terminal_id, str):
+            return None
+        try:
+            terminal_id = str(UUID(terminal_id))
+        except ValueError:
+            return None
+        terminal = self.get(terminal_id)
+        if (
+            terminal is None
+            or terminal.state not in {"pending", "live"}
+            or terminal.project_id != getattr(session, "project_id", None)
+            or terminal.agent_run_id is not None
+            or terminal.session_id not in {None, session.id}
+        ):
+            return None
+        return terminal
+
     def list_stale_pending(self, max_age_seconds: float) -> list[Terminal]:
         now = datetime.now(UTC)
         stale: list[Terminal] = []

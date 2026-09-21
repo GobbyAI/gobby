@@ -110,7 +110,7 @@ class TestWakeDispatch:
             "decline_reason": f"session_{status}",
         }
         assert dispatcher._last_live_wake == {}
-        terminal_manager.get_live_for_session.assert_not_called()
+        terminal_manager.resolve_live_for_session.assert_not_called()
         tmux_sender.assert_not_awaited()
         pane_sender.assert_not_awaited()
         sdk_resumer.assert_not_awaited()
@@ -1358,7 +1358,7 @@ class TestComposerGate:
             id=WAKE_SESSION_ID, terminal_context={"tmux_pane": "%7"}
         )
         terminal_manager = MagicMock()
-        terminal_manager.get_live_for_session.return_value = None
+        terminal_manager.resolve_live_for_session.return_value = None
         return WakeDispatcher(
             session_manager=session_manager,
             ism_manager=MagicMock(),

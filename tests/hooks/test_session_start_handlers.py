@@ -2088,3 +2088,70 @@ def test_native_terminal_id_binds_unless_tmux_or_nested(
     tmux_row = terminals.get_live_for_session(tmux_cli)
     assert tmux_row is not None
     assert tmux_row.backend == "tmux"
+
+
+def test_pre_created_native_resume_rebinds_new_terminal(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    session_manager: SessionManager,
+) -> None:
+    project_id = sample_project["id"]
+    terminals = TerminalManager(temp_db)
+    session = session_manager.register(
+        external_id="af5f5c4a-resumed-codex",
+        machine_id=require_machine_id(),
+        source="codex",
+        project_id=project_id,
+        terminal_context={"term_program": "gterm"},
+    )
+    terminal_id = str(uuid.uuid4())
+    terminals.create_pending(
+        terminal_id=terminal_id,
+        project_id=project_id,
+        backend="native",
+        ownership="gobby",
+        spawn_key=terminal_id,
+    )
+    terminal_context = {
+        "gobby_terminal_id": terminal_id,
+        "host_terminal_id": "3eb7116d-new-pane",
+        **_cli_process(os.getpid()),
+    }
+    handlers = EventHandlers(
+        session_manager=cast(HookSessionManager, session_manager),
+        terminal_manager=terminals,
+        get_machine_id=require_machine_id,
+        resolve_project_id=lambda _project_id, _cwd: project_id,
+    )
+    event = make_event(
+        HookEventType.SESSION_START,
+        session_id=session.external_id,
+        source="codex",
+        data={"terminal_context": terminal_context, "skip_default_agent_activation": True},
+    )
+
+    with (
+        patch.object(handlers, "_setup_code_index"),
+        patch.object(handlers, "_build_claimed_task_context", return_value=None),
+        patch.object(handlers, "_resolve_message_processor", return_value=None),
+        patch.object(handlers, "_compose_session_response", return_value=MagicMock()),
+        patch("gobby.hooks.event_handlers._session_start.flow._seed_parent_turn_seq"),
+        patch("gobby.hooks.event_handlers._session_start.flow.seed_user_profile_content"),
+        patch(
+            "gobby.hooks.event_handlers._session_start.flow.classify_session_start_context",
+            return_value=SimpleNamespace(mode="live"),
+        ),
+    ):
+        handlers._handle_pre_created_session(
+            existing_session=session,
+            external_id=session.external_id,
+            transcript_path=None,
+            cli_source="codex",
+            event=event,
+            cwd=None,
+            terminal_context=terminal_context,
+        )
+
+    rebound = terminals.get_live_for_session(session.id)
+    assert rebound is not None
+    assert rebound.id == terminal_id
