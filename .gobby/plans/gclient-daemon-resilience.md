@@ -135,10 +135,12 @@ Josh, 2026-09-20:
    proven root cause. The plan closes the ordinary WARN gaps around frame failure,
    recovery give-up, unresolved opens, lag, REST and reconnect, but adds no stack
    sampler; the historical root cause remains unproven.
-8. Josh, 2026-09-21: add no daemon or client-loop watchdog. D2 keeps ordered
-   concurrent lanes, while D3/D3b use bounded operations and test-only barriers for
-   diagnosis. **Restraint rung 1:** watchdogs do not need to exist to meet the
-   liveness or diagnostic requirements and would add latency/noise.
+8. Josh, 2026-09-21: add no daemon or client-loop watchdog. The D2 per-lane
+   one-shot handler watchdog, Q7b loop phase-label watchdog and B2 idle keepalive
+   are removed. D2 keeps ordered concurrent lanes, while D3/D3b use bounded
+   operations and test-only barriers for diagnosis. **Restraint rung 1:** these
+   timer-driven probes do not need to exist to meet the liveness or diagnostic
+   requirements and would add latency/noise.
 
 Coordinator decision (gobby#14018, 2026-09-20): the near-ceiling gclient files are
 decomposed first in one behaviour-neutral refactor leaf (R1) so that every later
@@ -946,11 +948,9 @@ reconciliation --test ws_golden`.
 `kind: framing`
 
 **Goal:** the client observes daemon responsiveness from the age of its own
-in-flight requests, says so on the status line, keeps a half-open socket from
-going unnoticed, and stops polling while the daemon is slow. No new protocol
-beyond a `request_id` on `ping`. Every P2 production deliverable changes the
-gclient binary and therefore uses the shared clean-cutover gate after merge; none
-promotes independently.
+in-flight requests, says so on the status line, and stops polling while the daemon
+is slow. Every P2 production deliverable changes the gclient binary and therefore
+uses the shared clean-cutover gate after merge; none promotes independently.
 
 ### B1 Daemon health from in-flight age [category: code] (depends: A5)
 `kind: deliverable`
@@ -1002,8 +1002,9 @@ the status line through `WorkspaceView::daemon_ready` (`crates/gclient/src/ui/ch
 `render_status_line` (`crates/gclient/src/ui/status.rs` ~341-406) pushes
 `" │ Daemon unreachable."` in `p.red` when `!ws.daemon_ready()`. Protocol-level
 `Ping`/`Pong` frames are discarded in `crates/gclient/src/daemon/live_reader.rs`
-`decode_frame` and stay so. Rejected: a heartbeat before B2 (the client already
-knows every in-flight age; it just never looks). Planned verification: `cargo
+`decode_frame` and stay so. Rejected: an idle keepalive; passive health derives
+only from organic in-flight requests, while transport loss follows the existing
+disconnect path. Planned verification: `cargo
 nextest run -p gobby-client --test loop_liveness`; screen goldens unchanged
 (`GOBBY_UPDATE_SCREENS=1` only if a fixture renders a slow daemon).
 
@@ -1020,59 +1021,7 @@ nextest run -p gobby-client --test loop_liveness`; screen goldens unchanged
 - B1.4 - The guide's status-line section describes the slow state. behavior:
   "Daemon slow" in `docs/guides/gclient-user-guide.md`.
 
-### B2 Idle keepalive [category: code] (depends: B1)
-`kind: deliverable`
-
-Targets:
-- `crates/gclient/src/app/live_loop/health.rs`
-- `crates/gclient/src/app/live_loop.rs::*` — scope-reason: `run_live_loop` ticks the keepalive
-- `src/gobby/servers/websocket/handlers/core.py::HandlerMixin._handle_ping`
-- `tests/servers/websocket/test_server.py::*` — scope-reason: adds the pong echo test beside the existing dispatch tests
-- `docs/guides/gclient-user-guide.md`
-- `crates/gclient/tests/loop_liveness.rs`
-
-Consumers unchanged:
-- `crates/gclient/src/daemon/live_reader.rs` — no-edit-reason: `handle_inbound` routes any reply by `route_key`, so a `pong` carrying `request_id` already reaches its waiter.
-
-When no request has been in flight for 15 s, the loop sends
-`{"type":"ping","request_id":...}` through `LiveDaemon::request`; the daemon's
-`_handle_ping` (zero DB) echoes `request_id` in the `pong` so it routes as a normal
-reply through `RouteKey::Request`. A pong later than `REQUEST_DEADLINE` is treated
-as a disconnect (`observe_daemon_disconnect`) so a half-open socket after
-sleep/wake or a daemon SIGSTOP is noticed within 20 s instead of never. The
-keepalive state (last activity, in-flight ping) lives in `health.rs`; `run_live_loop`
-only ticks it. The guide's `Daemon restarts and reconnects` section names the
-keepalive.
-
-`crates/gclient/src/app/live_loop.rs` is at 868 production lines: the keepalive is
-a move into `crates/gclient/src/app/live_loop/health.rs`, not growth in
-`live_loop.rs`.
-
-**Cutover:** B2 changes gclient and the running Python daemon and does not promote
-or restart either independently; after all leaves pass, it participates in the
-single shared clean-cutover gate in Constraints.
-
-**Research context:** Observed: `_handle_ping` (`src/gobby/servers/websocket/handlers/core.py`
-~154-171) replies `{"type": "pong", "latency": ...}` with no `request_id`;
-`LiveDaemon::request` (`crates/gclient/src/daemon/live.rs` ~440-487) correlates on
-`route_key(&message)` (`crates/gclient/src/daemon/ws.rs` ~172) and `handle_inbound`
-(`live_reader.rs` ~260-364) resolves `RouteKey::Request(id)` for any kind, so no
-reader change is needed. Planned verification: `cargo nextest run -p gobby-client
---test loop_liveness`; `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test
-GOBBY_TEST_PROTECT=1 uv run pytest tests/servers/websocket/test_server.py`.
-
-**Acceptance:**
-
-- B2.1 - After 15 s idle the client sends a `ping` with a `request_id`; an
-  unanswered ping past `REQUEST_DEADLINE` produces a disconnect and a reconnect
-  attempt. test:
-  `crates/gclient/tests/loop_liveness.rs::an_unanswered_keepalive_ping_counts_as_a_disconnect`.
-- B2.2 - The daemon's `pong` echoes `request_id`. test:
-  `tests/servers/websocket/test_server.py::test_pong_echoes_request_id`.
-- B2.3 - The guide's reconnect section describes the keepalive. behavior:
-  "keepalive" in `docs/guides/gclient-user-guide.md`.
-
-### B3 Shed load while slow [category: code] (depends: B2)
+### B3 Shed load while slow [category: code] (depends: B1)
 `kind: deliverable`
 
 Targets:
@@ -1137,6 +1086,10 @@ Targets:
 - `crates/gterminal/tests/control_protocol.rs::*` — scope-reason: add daemon takeover/revoke cases through the real control protocol
 - `crates/gterminal/tests/wire_golden.rs::*` — scope-reason: cover the appended inventory request and response variants
 - `docs/contracts/gterm-protocols.md`
+
+Consumers unchanged:
+- `crates/gterminal/src/host/mod.rs` — no-edit-reason: The accept loop keeps the same `frames::handle_connection(stream, state)` signature at current line 111.
+- `crates/gterminal/src/host/control.rs` — no-edit-reason: The control dispatcher keeps the same `HostState::grant_input` and `HostState::revoke_input` signatures at current lines 404-405.
 
 Append `ListNativeTerminals` to `ClientMessage` and `NativeTerminals` to
 `ServerMessage`. The response carries `host_epoch` plus committed live native rows
@@ -1274,6 +1227,9 @@ Targets:
 - `crates/gclient/tests/startup.rs::*` — scope-reason: add missing-token and daemonless launch cases beside the existing unreachable-daemon test
 - `crates/gclient/tests/loop_liveness.rs`
 - `docs/guides/gclient-user-guide.md`
+
+Consumers unchanged:
+- `crates/gclient/tests/client_loop.rs` — no-edit-reason: `live_entry_connects_before_running` still validates invalid-URL construction before the new degraded attachment path; its direct `run_ready` call keeps the same signature.
 
 `resolve_probe_env_at` treats a missing default daemon token as `token=None`; an
 explicit `--token-file` that is missing, unreadable or empty remains an error.
@@ -1729,7 +1685,7 @@ tests/agents/test_native_spawn.py`.
 - D1d.2 - The host process helpers live in their own module and
   `host_manager.py` is under 850 lines. file: `src/gobby/terminals/host_process.py`.
 
-### D2 Concurrent dispatch per connection, ordered per lane [category: code] (depends: D1b, B2)
+### D2 Concurrent dispatch per connection, ordered per lane [category: code] (depends: D1b)
 `kind: deliverable`
 
 Targets:
@@ -2179,6 +2135,9 @@ protocol contract (no `gobby docs` CLI exists). Never run the full pytest suite.
 - 2026-09-21: round 3 moves slow-attach liveness into A3, types #22677 as its
   prerequisite, gives each daemonless native pane its own frame connection, and
   retains the local token for daemonless host authentication.
+- 2026-09-22: applied round 3's three blocking findings by removing the idle
+  keepalive and recording C0/C0c's unchanged consumers; by the orchestrator's
+  decision, there is no round 4.
 
 Round 1 adversarial review (plan-adversary-taskless run 47e9dd2e, 2026-09-21 10:1x): needs_review, 11 blocking findings, 2 candidates dismissed. The coordinator (the assistant gobby#14069, under delegated planning-lane authority from the orchestrator gobby#14018) accepted all 11.
 
