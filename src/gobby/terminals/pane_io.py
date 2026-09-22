@@ -362,21 +362,21 @@ async def submit_text(
             elif held_seconds + verify_window > SUBMIT_HELD_RETRY_SECONDS:
                 break
             if enter_count == 1:
-                logger.warning(
+                logger.debug(
                     "Session %s still held %s in its composer after Enter; re-sending Enter",
                     session_id,
                     label,
                 )
             continue
         if verdict == "unreadable":
-            logger.warning(
+            logger.debug(
                 "Session %s: composer could not be read after submitting %s; "
                 "trusting the delivered write and Enter",
                 session_id,
                 label,
             )
         else:
-            logger.info(
+            logger.debug(
                 "Session %s submitted %s after %d Enter(s); the composer left the draft",
                 session_id,
                 label,

@@ -94,7 +94,9 @@ PROXY_ATTACH_FAILURE_REASONS: dict[str, str] = {
 
 
 def _log_proxy_attach_failure(terminal_id: str, code: str, *, exc_info: bool = False) -> str:
-    logger.warning(
+    level = logging.DEBUG if code == "terminal_exited" else logging.WARNING
+    logger.log(
+        level,
         "proxy attach failed terminal_id=%s code=%s reason=%s",
         terminal_id,
         code,

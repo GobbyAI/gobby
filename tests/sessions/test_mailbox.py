@@ -1715,7 +1715,7 @@ async def test_mailbox_boundary_correlates_and_logs_one_decline_per_message(
         ism_manager=InterSessionMessageManager(temp_db),
     )
 
-    with caplog.at_level(logging.INFO, logger="gobby.sessions.mailbox_delivery"):
+    with caplog.at_level(logging.DEBUG, logger="gobby.sessions.mailbox_delivery"):
         result = await _mailbox(temp_db, session_manager, dispatcher).send(
             from_session_id=sender.id,
             target="session",
@@ -1726,10 +1726,45 @@ async def test_mailbox_boundary_correlates_and_logs_one_decline_per_message(
 
     assert result.wake_results[0]["message_id"] == result.message_ids[0]
     assert result.wake_results[0]["decline_reason"] == "session_active"
-    records = [
-        record.getMessage() for record in caplog.records if "declined" in record.getMessage()
-    ]
-    assert records == [
+    records = [record for record in caplog.records if "declined" in record.getMessage()]
+    assert [record.getMessage() for record in records] == [
         f"mailbox wake declined for session {recipient.id} message "
         f"{result.message_ids[0]}: session_active"
     ]
+    assert records[0].levelno == logging.DEBUG
+
+
+@pytest.mark.asyncio
+async def test_mailbox_nonroutine_decline_stays_at_info(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class DecliningDispatcher:
+        async def dispatch_live_wake(
+            self, session_id: str, *, priority: str = "normal"
+        ) -> dict[str, Any]:
+            return {
+                "session_id": session_id,
+                "delivered": False,
+                "method": None,
+                "decline_reason": "composer_occupied",
+            }
+
+    sender = _register_session(session_manager, sample_project["id"], "info-decline-sender")
+    recipient = _register_session(session_manager, sample_project["id"], "info-decline-recipient")
+
+    with caplog.at_level(logging.DEBUG, logger="gobby.sessions.mailbox_delivery"):
+        result = await _mailbox(temp_db, session_manager, DecliningDispatcher()).send(
+            from_session_id=sender.id,
+            target="session",
+            target_id=recipient.id,
+            content="declined",
+            wake=True,
+        )
+
+    assert result.wake_results[0]["decline_reason"] == "composer_occupied"
+    records = [record for record in caplog.records if "declined" in record.getMessage()]
+    assert len(records) == 1
+    assert records[0].levelno == logging.INFO

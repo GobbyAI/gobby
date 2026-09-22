@@ -480,7 +480,7 @@ class EnforcementCompletionMixin:
                 variables["_last_blocked_tool"] = ""
                 variables["tool_block_pending"] = False
 
-                logger.info(
+                logger.debug(
                     "Step transition: %s -> %s (workflow=%s, session=%s)",
                     old_step,
                     new_step,
@@ -521,7 +521,7 @@ class EnforcementCompletionMixin:
                         ),
                     )
                     if exit_met:
-                        logger.info(
+                        logger.debug(
                             "Exit condition met for workflow %s (session=%s, step=%s)",
                             instance.agent_name,
                             session_id,
