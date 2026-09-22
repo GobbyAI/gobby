@@ -6,7 +6,9 @@ import asyncio
 import logging
 import threading
 import time
+from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
+from contextvars import ContextVar
 from typing import Any, Final, cast
 
 from gobby.hooks.background_tasks import create_background_task
@@ -32,6 +34,17 @@ _HOOK_ADAPTER_EXECUTOR = ThreadPoolExecutor(
     max_workers=HOOK_ADAPTER_MAX_WORKERS,
     thread_name_prefix="gobby-hook-adapter",
 )
+_current_session_admission_release: ContextVar[Callable[[], None] | None] = ContextVar(
+    "current_session_admission_release",
+    default=None,
+)
+
+
+def release_session_admission_for_external_wait() -> None:
+    """Release this hook's admission slot before an external async wait."""
+    release = _current_session_admission_release.get()
+    if release is not None:
+        release()
 
 
 class AdapterHookTimeout(TimeoutError):
@@ -145,7 +158,8 @@ async def run_adapter_hook(
     A session's hooks take adapter workers one at a time, in arrival order. Its
     rule evaluations serialize on the session eval lock anyway; without this, a
     flooding session (native subagents hook under the parent's session id)
-    parks every shared worker and times out every other session's hooks.
+    parks every shared worker and times out every other session's hooks. An
+    allowlisted external rule lookup can yield its slot while it waits.
     """
     loop = asyncio.get_running_loop()
     arrived_at = time.perf_counter()
@@ -157,8 +171,20 @@ async def run_adapter_hook(
     session_id = session_key if isinstance(session_key, str) and session_key else None
     admission = _reserve_session_admission(session_id) if session_id else None
     admitted = False
+    admission_ended = False
+    admission_end_lock = threading.Lock()
     executor_future: Future[dict[str, Any]] | None = None
     timings = phase_timings or HookPhaseTimings()
+
+    def end_worker_admission() -> None:
+        nonlocal admission_ended
+        if admission is None:
+            return
+        with admission_end_lock:
+            if admission_ended:
+                return
+            admission_ended = True
+        _end_session_admission(admission, admitted=True)
 
     def run_adapter() -> dict[str, Any]:
         nonlocal started_at, finished_at
@@ -168,6 +194,7 @@ async def run_adapter_hook(
         # executor; both inherit this context, so they share this delivery's
         # staging buffer and nothing they stage survives into the next delivery
         # that lands on those shared threads (#21427).
+        release_token = _current_session_admission_release.set(end_worker_admission)
         with worker_staging_scope(), hook_phase_timing_scope(timings):
             try:
                 result = cast(dict[str, Any], adapter.handle_native(payload, hook_manager))
@@ -178,6 +205,7 @@ async def run_adapter_hook(
                 attached[STAGED_EFFECTS_FIELD] = staged
                 return attached
             finally:
+                _current_session_admission_release.reset(release_token)
                 finished_at = time.perf_counter()
 
     def durations() -> tuple[float, float, float]:
@@ -199,10 +227,7 @@ async def run_adapter_hook(
         if admission is not None:
             # The worker owns the slot, so one that outlives this request's
             # timeout keeps the session's later hooks queued until it exits.
-            held = admission
-            executor_future.add_done_callback(
-                lambda _worker: _end_session_admission(held, admitted=True)
-            )
+            executor_future.add_done_callback(lambda _worker: end_worker_admission())
         pending = asyncio.wrap_future(executor_future, loop=loop)
         if timeout_seconds is None:
             return await pending

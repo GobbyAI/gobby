@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -15,7 +16,7 @@ from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 from gobby.workflows.engine.core import RuleEngine
-from gobby.workflows.engine.effects import _is_empty_inject_payload
+from gobby.workflows.engine.delivery_formatting import _is_empty_inject_payload
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 
@@ -172,6 +173,7 @@ def test_review_lesson_formatter_dedup(engine: RuleEngine, db: HubDatabase) -> N
 async def test_review_lessons_path_survives_orphan_removal(db: HubDatabase) -> None:
     sync_bundled_rules(db, get_bundled_rules_path())
     calls: list[tuple[str, str]] = []
+    dispatch_finished = asyncio.Event()
 
     async def dispatcher(
         server: str,
@@ -180,6 +182,7 @@ async def test_review_lessons_path_survives_orphan_removal(db: HubDatabase) -> N
         _event: HookEvent,
     ) -> dict[str, Any]:
         calls.append((server, tool))
+        dispatch_finished.set()
         return {
             "success": True,
             "result": {
@@ -205,19 +208,29 @@ async def test_review_lessons_path_survives_orphan_removal(db: HubDatabase) -> N
         }
     )
 
+    variables = {
+        "_active_rule_names": ["inject-review-lessons-for-touched-files"],
+        "project": {"id": PROJECT_ID, "path": "/tmp/project"},
+    }
     response = await rule_engine.evaluate(
         event,
         session_id=PLATFORM_SESSION_ID,
-        variables={
-            "_active_rule_names": ["inject-review-lessons-for-touched-files"],
-            "project": {"id": PROJECT_ID, "path": "/tmp/project"},
-        },
+        variables=variables,
+    )
+    await asyncio.wait_for(dispatch_finished.wait(), timeout=1.0)
+    next_event = _event()
+    next_event.data["tool_name"] = "Read"
+    unrelated_response = await rule_engine.evaluate(
+        next_event,
+        session_id=PLATFORM_SESSION_ID,
+        variables=variables,
     )
 
     assert calls == [("gobby-review-learning", "recall_review_lessons_for_files")]
     assert response.context is not None
     assert "<review-guidance>" in response.context
     assert "Keep review-lesson guidance on the live delivery path" in response.context
+    assert unrelated_response.context is None
     assert "injected_review_lesson_ids" not in _vars(db, PLATFORM_SESSION_ID)
     staged = response.metadata.get("_gobby_staged_effects") or take_worker_staging()
     assert staged["append_set_variables"]["injected_review_lesson_ids"] == ["lesson-survivor"]
@@ -238,7 +251,9 @@ async def test_review_lessons_path_survives_orphan_removal(db: HubDatabase) -> N
 async def test_apply_effect_dispatch_switch_cancel_stale_helpers_no_op(
     db: HubDatabase,
 ) -> None:
-    async def dispatcher(server: str, tool: str, args: dict[str, Any], event: Any) -> dict:
+    async def dispatcher(
+        server: str, tool: str, args: dict[str, Any], event: Any
+    ) -> dict[str, Any]:
         return {"success": True, "result": {"success": True, "cancelled": 2, "count": 2}}
 
     manager = RuleDefinitionManager(db)
