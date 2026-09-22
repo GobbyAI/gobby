@@ -175,19 +175,6 @@ hashes from `~/.gobby/bin/`, never from `target/release/`. **Restraint rung 2:**
 reuse the repository's native promotion functions and batch one cutover; add no
 installer or promotion path.
 
-Detach-deadline escalation is owned and implemented by task #22677; this plan does
-not create a second deliverable or manifest leaf for it. Its exact code surfaces are
-`crates/gclient/src/app/live_attach.rs::recover_proxy_source`,
-`crates/gclient/src/app/attach.rs::Pane::take_expired_detach_generation`,
-`crates/gclient/src/app/mod.rs::Workspace::submit_expired_detaches` and
-`crates/gclient/src/daemon/live.rs::LiveDaemon::reconnect`, with gclient loop tests
-covering each deadline/error exit. The task clears `fallback_in_flight`, restores
-`direct_available` on successful recovery or the next attach pass, hands the pane
-back to the attach job with backoff, and reconnects only for real transport loss.
-Its test matrix covers a late healthy-socket reply, reply error, nested result
-error, success and real transport loss. **Restraint rung 2:** reuse #22677's owned
-repair and acceptance instead of duplicating it in this plan.
-
 Implementer traps for P1 (recorded from the research pass):
 
 - Never `abort()` a job. Dropping a control future after its write started
@@ -223,6 +210,30 @@ proxied panes beyond D1a's per-key terminal-row SELECT removal; the D2 per-lane
 one-shot handler watchdog; the Q7b loop phase-label watchdog; re-adding an
 event-loop lag watchdog; reducing `REQUEST_DEADLINE`; and duplicating #22677's
 detach-deadline repair.
+
+## X1 Detach-deadline repair prerequisite
+`kind: deferred`
+
+Task #22677 solely owns the detach-deadline implementation and acceptance. A3 may
+not start until #22677 is closed as `completed` or `already_implemented`; it then
+moves that repaired state machine into the job seam without redefining its contract.
+Before expansion, #22677 must carry the provenance label
+`deferred-from:gclient-daemon-resilience:X1`. **Restraint rung 2:** reuse the
+existing bug task as the external prerequisite instead of duplicating its repair,
+tests or manifest leaf in this plan.
+
+```yaml
+deferral:
+  task_ref: "#22677"
+  reason: "A3 must transform the repaired detach state machine; #22677 remains the sole owner of its implementation and five validation criteria."
+  owner: "task #22677"
+  original_acceptance_items:
+    - "22677.1"
+    - "22677.2"
+    - "22677.3"
+    - "22677.4"
+    - "22677.5"
+```
 
 ## P1: gclient loop never awaits the daemon
 `kind: framing`
@@ -364,13 +375,12 @@ advances, a key typed into another pane reaches its source, and the held outcome
 applies after release. The file header documents the wait-for-mock-visible-request
 rule from memory `679bf344`.
 
-The baseline matrix includes the Q7b case: a `created` event starts a new
-terminal's `terminal_attach`, its reply is held for three seconds of paused Tokio
-time, and already attached direct panes continue consuming frames and input for the
-whole interval. This test proves the current inline path stalls before A3 and turns
-green when attach is issued as a job. It records loop progress directly; it adds no
-phase label or watchdog. **Restraint rung 2:** reuse `hold_ws` and the shared
-liveness probe instead of adding a runtime monitor.
+A0 closes with passing hold and probe infrastructure only. The current inline
+`terminal_attach` path is not required to satisfy a green liveness assertion in
+this section; A3 owns that assertion after it moves attach work into a job. The
+probe records loop progress directly and adds no phase label or watchdog.
+**Restraint rung 1:** do not add a behavior promise before the deliverable that
+owns the production change; reuse `hold_ws` and the shared probe there.
 
 **Research context:** Observed: `crates/gclient/tests/mock_daemon/mod.rs`
 (`MockDaemon::start_at`, `enqueue`, `enqueue_with_events`,
@@ -390,9 +400,6 @@ Approach: a `Notify` per hold, stored on `MockState`, consulted by
   `replies` counts the released reply. file: `crates/gclient/tests/mock_daemon/mod.rs`.
 - A0.2 - The liveness probe is a reusable helper and its baseline test passes.
   test: `crates/gclient/tests/loop_liveness.rs::held_websocket_request_stays_pending_until_released`.
-- A0.3 - A newly created terminal whose `terminal_attach` reply takes three
-  seconds does not stop frames, ticks or input on existing direct panes. test:
-  `crates/gclient/tests/loop_liveness.rs::a_slow_new_terminal_attach_never_stalls_streaming_direct_panes`.
 
 ### A1 Job plumbing, focus hints and geometry [category: code] (depends: R1, A0)
 `kind: deliverable`
@@ -627,11 +634,20 @@ detached so the daemon does not hold a dangling attachment. `Pane::begin_attachi
 sets `status_message = "attaching (direct|proxy)…"`. C3's direct-first retry later
 lands inside `recover_job`.
 
-A3 starts from #22677's repaired detach state machine and moves it without changing
-its ownership contract: deadline or reply errors return the pane to the attach job
-with backoff, restore `fallback_in_flight`/`direct_available` as #22677 specifies,
-and never request a reconnect for a healthy socket. #22677 remains the only task
-that implements and validates those transitions.
+A3 has an external execution precondition on X1: #22677 must first close as
+`completed` or `already_implemented` with its provenance intact. A3 then starts
+from #22677's repaired detach state machine and moves it without changing its
+ownership contract: deadline or reply errors return the pane to the attach job with
+backoff, restore `fallback_in_flight`/`direct_available` as #22677 specifies, and
+never request a reconnect for a healthy socket. #22677 remains the only task that
+implements and validates those transitions.
+
+The Q7b liveness case belongs here: a `created` event starts a new terminal's
+`terminal_attach`, its reply is held for three seconds of paused Tokio time, and
+already attached direct panes continue consuming frames, advancing ticks and
+delivering input for the whole interval. It turns green only after A3 issues attach
+as a job. **Restraint rung 2:** reuse A0's hold/probe infrastructure and add no
+runtime phase label or watchdog.
 
 Frame recovery also becomes observable. Each attach/recovery issue records its
 start instant. The issue side emits one structured `tracing::warn!` when a real
@@ -701,6 +717,9 @@ loop_liveness --test frame_delivery --test reconciliation --test frame_source_li
   a successful replacement closes the attempt. The same test covers a
   direct-handshake timeout and a `RetireReason::Lag` retirement. test:
   `crates/gclient/tests/loop_liveness.rs::frame_errors_and_recovery_giveups_are_logged_with_pane_context`.
+- A3.7 - A newly created terminal whose `terminal_attach` reply takes three
+  seconds does not stop frames, ticks or input on existing direct panes. test:
+  `crates/gclient/tests/loop_liveness.rs::a_slow_new_terminal_attach_never_stalls_streaming_direct_panes`.
 
 ### A3b Open unresolved terminals as jobs [category: code] (depends: A3)
 `kind: deliverable`
@@ -1259,10 +1278,21 @@ Targets:
 `resolve_probe_env_at` treats a missing default daemon token as `token=None`; an
 explicit `--token-file` that is missing, unreadable or empty remains an error.
 `run_ready` constructs `LiveDaemon` with the available token but does not await
-`attach_live_workspace` before opening the terminal. It asks `NativeHost` for local
-inventory, and new `native_degraded.rs` installs one direct pane and one local tab
-per returned native row, keyed by stable gterm `terminal_id`. A missing gterm opens
-an empty window with `Daemon unavailable; no local native host.` rather than exiting.
+`attach_live_workspace` before opening the terminal. When a valid owner-only
+`local_cli_token` is available, it opens one short-lived authenticated
+`NativeHost` connection, sends `Hello` plus `ListNativeTerminals`, records the
+inventory and closes that connection without attaching a terminal. For every
+returned row it opens a fresh authenticated frame connection, sends
+`AttachTerminal` and `BindAttachment`, and installs exactly that connection as the
+row's direct source. This is required because gterm's frame server stores one
+`attachment_id` and one frame mailbox per connection; another `AttachTerminal` on
+the same connection replaces them. New `native_degraded.rs` installs one direct
+pane and one local tab per row, keyed by stable gterm `terminal_id`. A missing gterm
+or missing default token opens an empty window with `Daemon unavailable; no local
+native host.` rather than exiting; an explicit bad token-file path remains an
+error. **Restraint rung 2:** reuse the existing authenticated frame connection for
+each stream and use only a short-lived extra connection for inventory; add no
+connection pool or multiplexing layer.
 
 Each local pane gets a fresh client attachment id, binds on the frame stream, starts
 Held with `lease_unconfirmed`, and sends `Input`/`Paste` directly even while
@@ -1302,14 +1332,18 @@ probe into a notice, but `resolve_probe_env_at` still requires the daemon token;
 `LiveDaemon` is already valid. `send_live_input` returns before testing direct input
 when `daemon_ready` is false. `sync_live_chrome` currently projects only a daemon
 workspace model. `ensure_live_pane` and `install_live_row` already reuse a pane by
-terminal id, which is the reconnect merge seam. Planned verification: `cargo
+terminal id, which is the reconnect merge seam. `gterminal`'s
+`frames::handle_connection` authenticates `Hello.local_token` against the same
+owner-only local token, then keeps only one `attachment_id` and `out_rx` per
+connection; a second `AttachTerminal` replaces both. Planned verification: `cargo
 nextest run -p gobby-client --test startup --test frame_source_live --test
 loop_liveness --test reconciliation`; docs link check.
 
 **Acceptance:**
 
-- C0c.1 - A missing default daemon token and an unreachable daemon still produce a
-  Ready session; an explicitly requested bad token file remains a startup error.
+- C0c.1 - A missing default daemon token produces an empty degraded Ready window,
+  an unreachable daemon with a valid local token can use the native host, and an
+  explicitly requested bad token file remains a startup error.
   test: `crates/gclient/tests/startup.rs::missing_default_daemon_token_starts_in_native_degraded_mode`.
 - C0c.2 - With the daemon absent and a real gterm present, gclient launches, lists
   native panes only, attaches, renders advancing frames and delivers typed bytes to
@@ -1325,6 +1359,10 @@ loop_liveness --test reconciliation`; docs link check.
 - C0c.5 - Without the daemon, the UI states the unavailable enhancements and never
   lists tmux, web or proxied panes. behavior: "Native degraded mode" in
   `docs/guides/gclient-user-guide.md`.
+- C0c.6 - With two native terminals and no daemon, gclient opens one independently
+  attached direct pane per inventory row; frames advance and typed bytes reach the
+  correct PTY on both streams. test:
+  `crates/gclient/tests/loop_liveness.rs::daemonless_launch_attaches_and_types_multiple_native_panes_independently`.
 
 ### C1 Keep control on disconnect for direct-granted panes [category: code] (depends: C0c)
 `kind: deliverable`
@@ -2080,15 +2118,20 @@ gclient so it execs the new inode. P3 changes gterm, so build it with
 `install_gterm_from_submodule` inside this same announced window. Read installed
 identity/hash evidence from `~/.gobby/bin/`, not `target/release/`.
 
-Daemonless live path: stop the isolated daemon before launch and remove the default
-daemon token, while a real promoted gterm owns one native PTY. Launch gclient and
-verify it opens, lists only that native pane, attaches, renders advancing output and
-delivers typed bytes. Confirm the UI names unavailable lease/takeover,
-layout/workspace, roster, attention and relay features and offers no tmux, web or
-proxy panes. Launch a second gclient and verify its input is refused while the first
-keeps typing. Start the isolated daemon, then verify the same pane is adopted by
-terminal id without duplication, its frame stream rebinds to the daemon attachment,
-typing continues before the take reply, and the daemon grant replaces the fallback.
+Daemonless live path: stop or omit the isolated daemon before launch but keep a
+valid owner-only `local_cli_token`, while a real promoted gterm owns two native
+PTYs. Launch gclient and verify one independently attached direct pane opens per
+inventory row, both render advancing output, and bytes typed into each pane reach
+the correct PTY. Confirm the UI names unavailable lease/takeover, layout/workspace,
+roster, attention and relay features and offers no tmux, web or proxy panes. Launch
+a second gclient and verify its input is refused while the first keeps typing.
+Start the isolated daemon, then verify the same panes are adopted by terminal id
+without duplication, their frame streams rebind to daemon attachments, typing
+continues before the take replies, and daemon grants replace the fallbacks. Test the
+missing-default-token path separately with no native-host authentication attempt:
+gclient opens an empty degraded window and states that no local native host is
+available. **Restraint rung 2:** preserve the shared token contract and vary only
+daemon availability; add no second daemonless credential.
 
 gclient live, the freeze: with the promoted binaries and a direct pane held, run
 `kill -STOP <daemon pid>` at t=0, immediately focus another project to issue its
@@ -2133,6 +2176,9 @@ protocol contract (no `gobby docs` CLI exists). Never run the full pytest suite.
 - 2026-09-21: round 2 adds daemonless native launch/render/input and local fallback
   authority, removes both proposed watchdogs, tightens the EOF/retry deadline and
   lock-release proof, references #22677, closes WARN gaps, and corrects diagnosis.
+- 2026-09-21: round 3 moves slow-attach liveness into A3, types #22677 as its
+  prerequisite, gives each daemonless native pane its own frame connection, and
+  retains the local token for daemonless host authentication.
 
 Round 1 adversarial review (plan-adversary-taskless run 47e9dd2e, 2026-09-21 10:1x): needs_review, 11 blocking findings, 2 candidates dismissed. The coordinator (the assistant gobby#14069, under delegated planning-lane authority from the orchestrator gobby#14018) accepted all 11.
 
