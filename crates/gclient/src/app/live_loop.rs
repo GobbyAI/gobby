@@ -38,6 +38,7 @@ pub(super) mod modal_input;
 pub(super) mod mouse;
 pub(super) mod orphans;
 pub(super) mod projects;
+mod suspend;
 mod workspace_actions;
 
 use actions::{apply_live_modal_outcome, apply_live_mouse_outcome, handle_live_action};
@@ -45,6 +46,7 @@ use control::{apply_control_outcome, apply_live_write_outcome, focus_live_pane, 
 use modal_input::{route_modal_key, ModalOutcome};
 use mouse::{route_mouse, MouseOutcome};
 use projects::restore_focused;
+use suspend::{suspend_process, SuspendSignal};
 use workspace_actions::{send_focus_hints_if_changed, stored_focus};
 
 const SHUTDOWN_DEADLINE: Duration = Duration::from_secs(2);
@@ -216,6 +218,7 @@ pub async fn run_live_loop<B: Backend>(
     let mut events = Some(workspace.event_rx.take().unwrap_or(fallback_events));
     let mut exit_signals = install_exit_signals(workspace, &mut loop_error);
     let mut resize_signal = install_resize_signal(workspace, &mut loop_error);
+    let mut suspend_signal = install_suspend_signal(workspace, &mut loop_error);
     let mut render_tick = tokio::time::interval(RENDER_TICK);
     render_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut prefix_armed = false;
@@ -255,6 +258,17 @@ pub async fn run_live_loop<B: Backend>(
             biased;
             reason = recv_exit_signal(&mut exit_signals) => {
                 workspace.latch_exit(reason);
+            }
+            _ = recv_suspend_signal(&mut suspend_signal) => {
+                switch.suspend()?;
+                let suspend_result = suspend_process();
+                let resume_result = switch.resume();
+                suspend_result?;
+                resume_result?;
+                if let Err(error) = render_live_workspace(terminal, workspace, chrome) {
+                    workspace.latch_exit(error.to_string());
+                    loop_error = Some(error);
+                }
             }
             // Above input on purpose: `biased` stops at the first ready
             // branch, so a grant sitting below a busy keyboard would never be
@@ -548,6 +562,20 @@ fn install_resize_signal(
     }
 }
 
+fn install_suspend_signal(
+    workspace: &mut Workspace<LiveDaemon>,
+    loop_error: &mut Option<FrameError>,
+) -> Option<SuspendSignal> {
+    match SuspendSignal::new() {
+        Ok(signal) => Some(signal),
+        Err(error) => {
+            workspace.latch_exit(error.to_string());
+            *loop_error = Some(FrameError::Other(error.to_string()));
+            None
+        }
+    }
+}
+
 async fn recv_exit_signal(signals: &mut Option<ExitSignals>) -> &'static str {
     match signals {
         Some(signals) => signals.recv().await,
@@ -556,6 +584,13 @@ async fn recv_exit_signal(signals: &mut Option<ExitSignals>) -> &'static str {
 }
 
 async fn recv_resize_signal(signal: &mut Option<ResizeSignal>) {
+    match signal {
+        Some(signal) => signal.recv().await,
+        None => std::future::pending().await,
+    }
+}
+
+async fn recv_suspend_signal(signal: &mut Option<SuspendSignal>) {
     match signal {
         Some(signal) => signal.recv().await,
         None => std::future::pending().await,

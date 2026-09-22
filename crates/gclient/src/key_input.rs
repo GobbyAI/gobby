@@ -7,7 +7,7 @@
 //! whether the chrome consumes the key. Text commits and bracketed pastes
 //! bypass the keymap through [`text_bytes`].
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use gobby_terminal::input::{encode_terminal_key, KeyboardProtocol};
 use gobby_terminal::raw_input::RawInputEvent;
 
@@ -27,7 +27,7 @@ pub struct KeyInput {
 /// other event.
 pub fn key_input(event: &RawInputEvent, protocol: KeyboardProtocol) -> Option<KeyInput> {
     match event {
-        RawInputEvent::Key(key) => Some(KeyInput {
+        RawInputEvent::Key(key) if key.kind != KeyEventKind::Release => Some(KeyInput {
             key: key.as_key_event(),
             bytes: encode_terminal_key(key.clone(), protocol),
         }),

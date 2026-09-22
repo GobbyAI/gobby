@@ -28,10 +28,13 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use tokio::time::{timeout, Duration, Instant};
+use tracing::instrument::WithSubscriber;
 use tracing::{Event, Subscriber};
 use tracing_subscriber::layer::Context as LayerContext;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::Layer;
+
+static PROCESS_SIGNAL_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 /// Seed the mock's daemon workspace with one tab showing `terminal_id` for
 /// `project` and give the workspace a Gobby home, so the loop projects that
@@ -131,6 +134,7 @@ fn legacy_backend_restore_failure_is_retried() {
 #[derive(Default)]
 struct StageBackend {
     events: Arc<Mutex<Vec<&'static str>>>,
+    keyboard_enhancement_supported: bool,
     fail_entry: Option<&'static str>,
     fail_restore: Option<&'static str>,
     failed_restore: bool,
@@ -172,6 +176,18 @@ impl ModeBackend for StageBackend {
         self.entry("raw+")
     }
 
+    fn supports_keyboard_enhancement(&mut self) -> bool {
+        self.keyboard_enhancement_supported
+    }
+
+    fn push_keyboard_enhancement_flags(&mut self) -> io::Result<()> {
+        self.entry("keyboard+")
+    }
+
+    fn pop_keyboard_enhancement_flags(&mut self) -> io::Result<()> {
+        self.restoration("keyboard-")
+    }
+
     fn enter_alternate_screen(&mut self) -> io::Result<()> {
         self.entry("alt+")
     }
@@ -207,6 +223,109 @@ impl ModeBackend for StageBackend {
     fn disable_mouse_capture(&mut self) -> io::Result<()> {
         self.restoration("mouse-")
     }
+}
+
+#[test]
+fn keyboard_enhancement_flags_push_at_startup_and_pop_on_every_exit_path() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let mut guard = TerminalGuard::new(StageBackend {
+        events: Arc::clone(&events),
+        keyboard_enhancement_supported: true,
+        ..StageBackend::default()
+    });
+    guard.arm(false).unwrap();
+    guard.restore().unwrap();
+    assert_eq!(
+        *events.lock().unwrap(),
+        [
+            "raw+",
+            "keyboard+",
+            "alt+",
+            "bracket+",
+            "cursor+",
+            "cursor-",
+            "bracket-",
+            "alt-",
+            "keyboard-",
+            "raw-",
+        ]
+    );
+
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let mut guard = TerminalGuard::new(StageBackend {
+        events: Arc::clone(&events),
+        keyboard_enhancement_supported: true,
+        fail_entry: Some("alt+"),
+        ..StageBackend::default()
+    });
+    assert!(guard.arm(false).is_err());
+    drop(guard);
+    assert_eq!(
+        *events.lock().unwrap(),
+        ["raw+", "keyboard+", "alt+", "keyboard-", "raw-"]
+    );
+
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let panic_events = Arc::clone(&events);
+    let unwind = catch_unwind(AssertUnwindSafe(move || {
+        let mut guard = TerminalGuard::new(StageBackend {
+            events: panic_events,
+            keyboard_enhancement_supported: true,
+            ..StageBackend::default()
+        });
+        guard.arm(false).unwrap();
+        panic!("injected panic");
+    }));
+    assert!(unwind.is_err());
+    assert_eq!(
+        events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|event| **event == "keyboard-")
+            .count(),
+        1,
+        "panic teardown pops the enhancement flags"
+    );
+
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let mut guard = TerminalGuard::new(StageBackend {
+        events: Arc::clone(&events),
+        keyboard_enhancement_supported: true,
+        ..StageBackend::default()
+    });
+    guard.arm(false).unwrap();
+    guard.suspend().unwrap();
+    guard.resume().unwrap();
+    guard.restore().unwrap();
+    let events = events.lock().unwrap();
+    assert_eq!(
+        events.iter().filter(|event| **event == "keyboard+").count(),
+        2,
+        "resume re-pushes the flags"
+    );
+    assert_eq!(
+        events.iter().filter(|event| **event == "keyboard-").count(),
+        2,
+        "suspend and final teardown each pop the flags"
+    );
+
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let mut guard = TerminalGuard::new(StageBackend {
+        events: Arc::clone(&events),
+        keyboard_enhancement_supported: false,
+        ..StageBackend::default()
+    });
+    guard.arm(false).unwrap();
+    guard.restore().unwrap();
+    assert!(
+        !events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| event.starts_with("keyboard")),
+        "an unsupported host keeps the legacy lifecycle"
+    );
 }
 
 #[test]
@@ -1009,6 +1128,7 @@ async fn assert_live_exit_trace(cause: LiveExitCause, trace: Arc<Mutex<Vec<Strin
 
 #[tokio::test]
 async fn graceful_exit_releases_and_detaches_within_deadline() {
+    let _signal_test = PROCESS_SIGNAL_TEST_LOCK.lock().await;
     let trace = Arc::new(Mutex::new(Vec::new()));
     let daemon = TraceDaemon::new(Arc::clone(&trace), false, None);
     let mut workspace = ShutdownFixture {
@@ -1149,9 +1269,8 @@ async fn live_daemon_expired_close_latches_before_returning() {
 
 #[tokio::test]
 async fn every_exit_cause_uses_one_shutdown_seam() {
+    let _signal_test = PROCESS_SIGNAL_TEST_LOCK.lock().await;
     let trace = Arc::new(Mutex::new(Vec::new()));
-    let subscriber = tracing_subscriber::registry().with(LifecycleLayer(Arc::clone(&trace)));
-    let _subscriber = tracing::subscriber::set_default(subscriber);
 
     for cause in [
         LiveExitCause::Quit,
@@ -1160,7 +1279,10 @@ async fn every_exit_cause_uses_one_shutdown_seam() {
         LiveExitCause::SighupThenQuit,
         LiveExitCause::QuitDuringDaemonLoss,
     ] {
-        assert_live_exit_trace(cause, Arc::clone(&trace)).await;
+        let subscriber = tracing_subscriber::registry().with(LifecycleLayer(Arc::clone(&trace)));
+        assert_live_exit_trace(cause, Arc::clone(&trace))
+            .with_subscriber(subscriber)
+            .await;
         let mut expected = vec![
             "latch-exit",
             "release-held-leases",

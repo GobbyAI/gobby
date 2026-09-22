@@ -24,6 +24,18 @@ pub trait ModeBackend {
         self.enter()
     }
 
+    fn supports_keyboard_enhancement(&mut self) -> bool {
+        false
+    }
+
+    fn push_keyboard_enhancement_flags(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+
+    fn pop_keyboard_enhancement_flags(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+
     fn enter_alternate_screen(&mut self) -> io::Result<()> {
         Ok(())
     }
@@ -109,6 +121,27 @@ impl ModeBackend for CrosstermBackend {
         crossterm::terminal::enable_raw_mode()
     }
 
+    fn supports_keyboard_enhancement(&mut self) -> bool {
+        io::stdout().is_terminal()
+            && matches!(
+                crossterm::terminal::supports_keyboard_enhancement(),
+                Ok(true)
+            )
+    }
+
+    fn push_keyboard_enhancement_flags(&mut self) -> io::Result<()> {
+        crossterm::execute!(
+            io::stdout(),
+            crossterm::event::PushKeyboardEnhancementFlags(
+                crossterm::event::KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+            )
+        )
+    }
+
+    fn pop_keyboard_enhancement_flags(&mut self) -> io::Result<()> {
+        crossterm::execute!(io::stdout(), crossterm::event::PopKeyboardEnhancementFlags)
+    }
+
     fn enter_alternate_screen(&mut self) -> io::Result<()> {
         if !io::stdout().is_terminal() {
             return Ok(());
@@ -176,6 +209,7 @@ impl ModeBackend for CrosstermBackend {
 #[derive(Default)]
 struct Obligations {
     raw_mode: bool,
+    keyboard_enhancement: bool,
     alternate_screen: bool,
     mouse_capture: bool,
     bracketed_paste: bool,
@@ -185,6 +219,8 @@ struct Obligations {
 struct GuardState<B> {
     backend: B,
     obligations: Obligations,
+    keyboard_enhancement_supported: Option<bool>,
+    mouse_capture_requested: bool,
 }
 
 pub struct TerminalGuard<B: ModeBackend = CrosstermBackend> {
@@ -193,14 +229,24 @@ pub struct TerminalGuard<B: ModeBackend = CrosstermBackend> {
 
 pub type TerminalModeGuard<B = CrosstermBackend> = TerminalGuard<B>;
 
-/// Mouse-capture control the live loop drives from the settings toggle.
+/// Host-terminal mode control the live loop drives from settings and signals.
 pub trait MouseCaptureSwitch {
     fn set_mouse_capture(&mut self, on: bool) -> io::Result<()>;
+    fn suspend(&mut self) -> io::Result<()>;
+    fn resume(&mut self) -> io::Result<()>;
 }
 
 impl<B: ModeBackend> MouseCaptureSwitch for TerminalGuard<B> {
     fn set_mouse_capture(&mut self, on: bool) -> io::Result<()> {
         TerminalGuard::set_mouse_capture(self, on)
+    }
+
+    fn suspend(&mut self) -> io::Result<()> {
+        TerminalGuard::suspend(self)
+    }
+
+    fn resume(&mut self) -> io::Result<()> {
+        TerminalGuard::resume(self)
     }
 }
 
@@ -228,6 +274,8 @@ impl<B: ModeBackend> TerminalGuard<B> {
             state: Mutex::new(GuardState {
                 backend,
                 obligations: Obligations::default(),
+                keyboard_enhancement_supported: None,
+                mouse_capture_requested: false,
             }),
         }
     }
@@ -237,8 +285,25 @@ impl<B: ModeBackend> TerminalGuard<B> {
             .state
             .get_mut()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.mouse_capture_requested = mouse_capture;
+        Self::arm_state(state, mouse_capture)
+    }
+
+    fn arm_state(state: &mut GuardState<B>, mouse_capture: bool) -> io::Result<()> {
         state.backend.enable_raw_mode()?;
         state.obligations.raw_mode = true;
+        let keyboard_enhancement_supported = match state.keyboard_enhancement_supported {
+            Some(supported) => supported,
+            None => {
+                let supported = state.backend.supports_keyboard_enhancement();
+                state.keyboard_enhancement_supported = Some(supported);
+                supported
+            }
+        };
+        if keyboard_enhancement_supported {
+            state.backend.push_keyboard_enhancement_flags()?;
+            state.obligations.keyboard_enhancement = true;
+        }
         state.backend.enter_alternate_screen()?;
         state.obligations.alternate_screen = true;
         if mouse_capture {
@@ -260,6 +325,7 @@ impl<B: ModeBackend> TerminalGuard<B> {
             .get_mut()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if state.obligations.mouse_capture == on {
+            state.mouse_capture_requested = on;
             return Ok(());
         }
         if on {
@@ -268,7 +334,22 @@ impl<B: ModeBackend> TerminalGuard<B> {
             state.backend.disable_mouse_capture()?;
         }
         state.obligations.mouse_capture = on;
+        state.mouse_capture_requested = on;
         Ok(())
+    }
+
+    /// Restore terminal modes before the process stops.
+    pub fn suspend(&mut self) -> io::Result<()> {
+        self.restore()
+    }
+
+    /// Re-enter the same terminal modes after the process continues.
+    pub fn resume(&mut self) -> io::Result<()> {
+        let state = self
+            .state
+            .get_mut()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        Self::arm_state(state, state.mouse_capture_requested)
     }
 
     pub fn handle_signal(&self) {
@@ -282,6 +363,7 @@ impl<B: ModeBackend> TerminalGuard<B> {
         let GuardState {
             backend,
             obligations,
+            ..
         } = &mut *state;
         let mut errors = Vec::new();
         restore_obligation(
@@ -306,6 +388,12 @@ impl<B: ModeBackend> TerminalGuard<B> {
             &mut obligations.alternate_screen,
             "leave_alternate_screen",
             || backend.leave_alternate_screen(),
+            &mut errors,
+        );
+        restore_obligation(
+            &mut obligations.keyboard_enhancement,
+            "pop_keyboard_enhancement_flags",
+            || backend.pop_keyboard_enhancement_flags(),
             &mut errors,
         );
         restore_obligation(
