@@ -1351,7 +1351,7 @@ class TestComposerGate:
 
     @staticmethod
     def _dispatcher(probe: object, pane_sender: AsyncMock) -> WakeDispatcher:
-        from gobby.events.live_wake import ComposerProbe
+        from gobby.events.live_wake import ActivityProbe
 
         session_manager = MagicMock()
         session_manager.get.return_value = FakeSession(
@@ -1365,15 +1365,16 @@ class TestComposerGate:
             tmux_sender=AsyncMock(),
             tmux_pane_sender=pane_sender,
             terminal_manager=terminal_manager,
-            composer_probe=cast("ComposerProbe | None", probe),
+            activity_probe=cast("ActivityProbe | None", probe),
         )
 
     @pytest.mark.asyncio
     async def test_draft_defers_the_wake_to_the_next_turn(self) -> None:
         from gobby.agents.idle_detector import ComposerRead
+        from gobby.events.live_wake import TerminalActivity
 
         pane_sender = AsyncMock()
-        probe = AsyncMock(return_value=ComposerRead("draft", "hello draft"))
+        probe = AsyncMock(return_value=TerminalActivity(ComposerRead("draft", "hello draft")))
         dispatcher = self._dispatcher(probe, pane_sender)
 
         result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
@@ -1392,9 +1393,10 @@ class TestComposerGate:
     @pytest.mark.asyncio
     async def test_urgent_wake_bypasses_the_probe(self) -> None:
         from gobby.agents.idle_detector import ComposerRead
+        from gobby.events.live_wake import TerminalActivity
 
         pane_sender = AsyncMock()
-        probe = AsyncMock(return_value=ComposerRead("draft", "hello draft"))
+        probe = AsyncMock(return_value=TerminalActivity(ComposerRead("draft", "hello draft")))
         dispatcher = self._dispatcher(probe, pane_sender)
 
         result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID, priority="urgent")
@@ -1407,9 +1409,10 @@ class TestComposerGate:
     @pytest.mark.parametrize("state", ["empty", "unknown"])
     async def test_non_draft_reads_drain_blind(self, state: str) -> None:
         from gobby.agents.idle_detector import ComposerRead, ComposerState
+        from gobby.events.live_wake import TerminalActivity
 
         pane_sender = AsyncMock()
-        probe = AsyncMock(return_value=ComposerRead(cast(ComposerState, state)))
+        probe = AsyncMock(return_value=TerminalActivity(ComposerRead(cast(ComposerState, state))))
         dispatcher = self._dispatcher(probe, pane_sender)
 
         result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)

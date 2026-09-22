@@ -11,12 +11,20 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 import gobby.runner_lifecycle_subsystems as lifecycle_subsystems
+from gobby.events.wake_recovery import WakeReplayCoordinator
+from gobby.runner_hook_replay import HookReplayBarrierOutcome
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.inter_session_messages import InterSessionMessageManager
+from gobby.storage.sessions import SessionManager
+from tests._timing import drain_asyncio_tasks
 
 if TYPE_CHECKING:
     from gobby.runner import GobbyRunner
     from gobby.runner_lifecycle_startup import StartupTracker
 
 pytestmark = pytest.mark.unit
+
+SAFE_BARRIER = HookReplayBarrierOutcome(settled=True, session_recovery_safe=True)
 
 
 def _patch_init_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -36,7 +44,8 @@ def _patch_init_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
         "_start_system_automation_loop",
     )
     for name in async_steps:
-        monkeypatch.setattr(lifecycle_subsystems, name, AsyncMock())
+        result = SAFE_BARRIER if name == "_run_agent_hook_replay_barrier" else None
+        monkeypatch.setattr(lifecycle_subsystems, name, AsyncMock(return_value=result))
     monkeypatch.setattr(
         lifecycle_subsystems,
         "_repair_code_index_bm25",
@@ -51,7 +60,11 @@ def _minimal_init_runner() -> SimpleNamespace:
     return SimpleNamespace(
         agent_lifecycle_monitor=None,
         agent_runner=None,
+        http_bound_at_ms=1_700_000_000_000,
         http_server=SimpleNamespace(services=services),
+        wake_dispatcher=SimpleNamespace(
+            reconcile_restart_active_sessions=AsyncMock(return_value=())
+        ),
     )
 
 
@@ -226,8 +239,11 @@ async def test_startup_vector_rebuild_includes_project_id_payload() -> None:
 
 
 @pytest.mark.asyncio
-async def test_terminal_host_starts_before_agent_and_mcp_recovery(
+async def test_wake_replay_gate_opens_after_reconciliation(
     monkeypatch: pytest.MonkeyPatch,
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
 ) -> None:
     """Clients reconnect as soon as HTTP serves; the surviving gterm host must be
     adopted before the slow recovery steps so their attaches find it (#22002)."""
@@ -236,9 +252,10 @@ async def test_terminal_host_starts_before_agent_and_mcp_recovery(
     runner = _minimal_init_runner()
     tracker = SimpleNamespace(complete=Mock(), error=Mock(), finish=Mock())
 
-    def record(name: str) -> AsyncMock:
-        async def step(*_args: object, **_kwargs: object) -> None:
+    def record(name: str, result: object = None) -> AsyncMock:
+        async def step(*_args: object, **_kwargs: object) -> object:
             order.append(name)
+            return result
 
         return AsyncMock(side_effect=step)
 
@@ -246,7 +263,57 @@ async def test_terminal_host_starts_before_agent_and_mcp_recovery(
     mocks = {name: record(name) for name in steps}
     for name, mock in mocks.items():
         monkeypatch.setattr(lifecycle_subsystems, name, mock)
-    runner.wake_replay_coordinator = SimpleNamespace(open=record("wake_replay_open"))
+    recipient = session_manager.register(
+        external_id="startup-gate-recipient",
+        machine_id=None,
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    sender = session_manager.register(
+        external_id="startup-gate-sender",
+        machine_id=None,
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    messages = InterSessionMessageManager(temp_db)
+    messages.create_message(
+        from_session=sender.id,
+        to_session=recipient.id,
+        content="startup gate",
+        metadata_json='{"wake_requested": true}',
+    )
+    terminal_write = AsyncMock(
+        return_value={"session_id": recipient.id, "delivered": True, "method": "terminal"}
+    )
+
+    async def run_barrier(*_args: object, **_kwargs: object) -> HookReplayBarrierOutcome:
+        order.append("_run_agent_hook_replay_barrier")
+        session_manager.update_status(recipient.id, "paused")
+        await drain_asyncio_tasks()
+        terminal_write.assert_not_awaited()
+        return SAFE_BARRIER
+
+    mocks["_run_agent_hook_replay_barrier"].side_effect = run_barrier
+    runner.wake_dispatcher = SimpleNamespace(
+        reconcile_restart_active_sessions=record("session_reconcile")
+    )
+
+    async def run_db(operation: Any, *args: Any, **kwargs: Any) -> Any:
+        return operation(*args, **kwargs)
+
+    coordinator = WakeReplayCoordinator(
+        message_manager=messages,
+        session_manager=session_manager,
+        dispatcher=SimpleNamespace(dispatch_live_wake=terminal_write),
+        run_db=run_db,
+    )
+    coordinator.bind_owner_loop(asyncio.get_running_loop())
+
+    async def open_gate() -> None:
+        order.append("wake_replay_open")
+        await coordinator.open()
+
+    runner.wake_replay_coordinator = SimpleNamespace(open=open_gate)
     monkeypatch.setattr(lifecycle_subsystems, "_maybe_start_ui_dev_server", lambda _runner: None)
 
     await lifecycle_subsystems.init_subsystems(
@@ -260,8 +327,15 @@ async def test_terminal_host_starts_before_agent_and_mcp_recovery(
     assert order == [
         "_start_terminal_host",
         "_run_agent_hook_replay_barrier",
+        "session_reconcile",
         "wake_replay_open",
         "_connect_mcp_servers",
     ]
     mocks["_start_terminal_host"].assert_awaited_once_with(runner, tracker)
+    runner.wake_dispatcher.reconcile_restart_active_sessions.assert_awaited_once_with(
+        restart_horizon_ms=runner.http_bound_at_ms,
+        excluded_session_ids=frozenset(),
+        recovery_safe=True,
+    )
+    terminal_write.assert_awaited_once_with(recipient.id, priority="normal")
     assert runner.http_server.services.startup_ready is True

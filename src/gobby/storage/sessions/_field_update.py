@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import TYPE_CHECKING, Protocol
 
 from gobby.sessions.status_events import SessionStatusTransition
@@ -104,6 +105,45 @@ class _FieldUpdateMixin(
                 self._notify_status_transition(
                     SessionStatusTransition.from_session(updated, transitioned_at=now)
                 )
+        return updated
+
+    def _pause_restart_stale_active(
+        self: _ManagerState,
+        session_id: str,
+        *,
+        observed_updated_at: datetime,
+        restart_horizon_ms: int,
+    ) -> Session | None:
+        """Pause one exact pre-horizon active row without changing activity time."""
+        now = utc_now()
+        with self.db.transaction():
+            cursor = self.db.execute(
+                """
+                UPDATE sessions
+                SET status = 'paused', updated_at = %s
+                WHERE id = %s
+                  AND status = 'active'
+                  AND updated_at = %s
+                  AND last_activity IS NOT NULL
+                  AND FLOOR(EXTRACT(EPOCH FROM updated_at) * 1000)::bigint <= %s
+                  AND FLOOR(EXTRACT(EPOCH FROM last_activity) * 1000)::bigint <= %s
+                """,
+                (
+                    now,
+                    session_id,
+                    observed_updated_at,
+                    restart_horizon_ms,
+                    restart_horizon_ms,
+                ),
+            )
+        if cursor.rowcount <= 0:
+            return None
+        updated = self.get(session_id)
+        if updated is not None:
+            self._notify_session_change("session_updated", session_id)
+            self._notify_status_transition(
+                SessionStatusTransition.from_session(updated, transitioned_at=now)
+            )
         return updated
 
     def update_status_from_activity(

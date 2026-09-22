@@ -9,7 +9,8 @@ from unittest.mock import patch
 import pytest
 
 from gobby.agents.idle_detector import ComposerRead
-from gobby.runner_init.orchestration import _probe_composer
+from gobby.events.live_wake import TerminalActivity
+from gobby.runner_init.wake_activity import probe_terminal_activity
 from gobby.terminals import TerminalRuntimeRegistry
 from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.runtime import SnapshotMode
@@ -68,9 +69,9 @@ async def test_managed_terminal_suggestion_reads_empty_from_an_ansi_snapshot() -
     )
     session = SimpleNamespace(id="session-1", source="claude")
 
-    read = await _probe_composer(cast("GobbyRunner", runner), session, terminal)
+    read = await probe_terminal_activity(cast("GobbyRunner", runner), session, terminal)
 
-    assert read == ComposerRead("empty")
+    assert read == TerminalActivity(ComposerRead("empty"))
     assert runtime.snapshot_modes == ["ansi"]
 
 
@@ -83,7 +84,7 @@ async def test_raw_tmux_pane_suggestion_reads_empty_from_an_ansi_snapshot() -> N
     )
 
     with patch("gobby.terminals.lookup.manager_for_terminal_context", return_value=tmux):
-        read = await _probe_composer(cast("GobbyRunner", runner), session, None)
+        read = await probe_terminal_activity(cast("GobbyRunner", runner), session, None)
 
-    assert read == ComposerRead("empty")
+    assert read == TerminalActivity(ComposerRead("empty"))
     assert tmux.modes == ["ansi"]

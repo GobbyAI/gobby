@@ -2,14 +2,22 @@
 
 from __future__ import annotations
 
+import asyncio
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
 
+from gobby.agents.idle_detector import ComposerRead
+from gobby.events.live_wake import TerminalActivity
+from gobby.events.wake_active_recovery import reconcile_restart_stale_session
+from gobby.events.wake_recovery import WakeReplayCoordinator
 from gobby.sessions.turn_lifecycle import TurnEvidence, TurnLifecycleReducer
 from gobby.storage.attention import AttentionStateManager, session_attention_entry_id
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.sessions import SessionManager
+from tests._timing import drain_asyncio_tasks
 
 pytestmark = pytest.mark.unit
 
@@ -26,6 +34,10 @@ def _session(
         source="codex",
         project_id=project_id,
     ).id
+
+
+async def _run_db(func: Any, *args: Any, **kwargs: Any) -> Any:
+    return func(*args, **kwargs)
 
 
 def test_transition_matrix_and_simultaneous_wait_priority(
@@ -91,6 +103,84 @@ def test_transition_matrix_and_simultaneous_wait_priority(
         TurnEvidence(source="codex", generation=1, provider_turn_key="turn-1"),
     )
     assert completed.status == "paused"
+
+
+@pytest.mark.asyncio
+async def test_post_restart_genuine_turn_is_not_reconciled(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    sessions = SessionManager(temp_db)
+    sender_id = _session(sessions, sample_project["id"], external_id="restart-sender")
+    recipient_id = _session(sessions, sample_project["id"], external_id="genuine-turn")
+    lifecycle = TurnLifecycleReducer(sessions)
+    horizon_ms = int((datetime.now(UTC) - timedelta(seconds=1)).timestamp() * 1_000)
+    lifecycle.begin_turn(
+        recipient_id,
+        TurnEvidence(source="codex", provider_turn_key="post-restart-turn"),
+    )
+    observed = sessions.get(recipient_id)
+    assert observed is not None
+
+    async def empty_activity(_session: object, _terminal: object | None) -> TerminalActivity:
+        return TerminalActivity(ComposerRead("empty"))
+
+    reconciled = await reconcile_restart_stale_session(
+        session_manager=sessions,
+        observed=observed,
+        terminal=None,
+        activity_probe=empty_activity,
+        run_db=_run_db,
+        restart_horizon_ms=horizon_ms,
+        excluded_session_ids=frozenset(),
+    )
+    assert reconciled is None
+    active = sessions.get(recipient_id)
+    assert active is not None and active.status == "active"
+
+    messages = InterSessionMessageManager(temp_db)
+    messages.create_message(
+        from_session=sender_id,
+        to_session=recipient_id,
+        content="wait for real boundary",
+        metadata_json='{"wake_requested": true}',
+    )
+    calls: list[str] = []
+
+    class StatusDispatcher:
+        async def dispatch_live_wake(
+            self,
+            session_id: str,
+            *,
+            priority: str = "normal",
+        ) -> dict[str, Any]:
+            current = sessions.get(session_id)
+            assert current is not None
+            calls.append(current.status)
+            return {
+                "session_id": session_id,
+                "delivered": current.status == "paused",
+                "method": "terminal" if current.status == "paused" else "next_call_context",
+                "decline_reason": None if current.status == "paused" else "session_active",
+            }
+
+    coordinator = WakeReplayCoordinator(
+        message_manager=messages,
+        session_manager=sessions,
+        dispatcher=StatusDispatcher(),
+        run_db=_run_db,
+    )
+    coordinator.bind_owner_loop(asyncio.get_running_loop())
+    await coordinator.open()
+    assert calls == ["active"]
+
+    lifecycle.end_turn(
+        recipient_id,
+        "completed",
+        TurnEvidence(source="codex", generation=1, provider_turn_key="post-restart-turn"),
+    )
+    await drain_asyncio_tasks(cycles=10)
+    assert calls == ["active", "paused"]
 
 
 def test_replacement_prompt_fences_late_wait_and_terminal_evidence(

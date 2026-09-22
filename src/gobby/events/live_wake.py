@@ -3,16 +3,24 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any
+from dataclasses import dataclass
+from typing import Any
 
+from gobby.agents.idle_detector import ComposerRead
 from gobby.sessions.tmux_context import get_tmux_socket_path, parse_terminal_context_value
 from gobby.storage.sessions import LIVE_SESSION_STATUSES, PROTECTED_SESSION_STATUSES
 
-if TYPE_CHECKING:
-    from gobby.agents.idle_detector import ComposerRead
 
-# (session, managed terminal row or None) -> what the composer shows.
-ComposerProbe = Callable[[Any, Any | None], Awaitable["ComposerRead"]]
+@dataclass(frozen=True)
+class TerminalActivity:
+    """Composer and provider-turn evidence derived from one terminal snapshot."""
+
+    composer: ComposerRead
+    turn_in_flight_fingerprint: str | None = None
+
+
+# (session, managed terminal row or None) -> one shared terminal activity read.
+ActivityProbe = Callable[[Any, Any | None], Awaitable[TerminalActivity]]
 
 COMPOSER_OCCUPIED = "composer_occupied"
 
