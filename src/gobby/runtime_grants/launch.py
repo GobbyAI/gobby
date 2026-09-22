@@ -5,9 +5,11 @@ from __future__ import annotations
 import os
 import tempfile
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
-from gobby.runtime_grants.schema import GrantBundle
+from gobby.runtime_grants.schema import GrantBundle, GrantDeployment, PostgresDirect
+from gobby.runtime_grants.signing import sign_grant
 from gobby.utils.local_token import (
     issue_agent_api_token,
     issue_maintenance_api_token,
@@ -40,7 +42,6 @@ def write_grant_file(path: Path, grant: GrantBundle) -> Path:
         stream.close()
         stream = None
         os.replace(temporary_path, path)
-        os.chmod(path, 0o600)
     except Exception:
         if stream is not None:
             stream.close()
@@ -52,6 +53,44 @@ def write_grant_file(path: Path, grant: GrantBundle) -> Path:
         temporary_path.unlink(missing_ok=True)
         raise
     return path
+
+
+def rewrite_managed_grant_file(
+    path: Path,
+    *,
+    managed_execution_id: str,
+    scoped_dsn: str,
+    role_name: str,
+    credential_generation: int,
+    issued_at: datetime,
+    expires_at: datetime,
+    deployment_token: str,
+    fencing_epoch: int,
+    signing_secret: str,
+) -> Path:
+    """Atomically replace a launch grant with a signed successor credential."""
+    grant = GrantBundle.model_validate_json(path.read_bytes())
+    if grant.principal.execution_id != managed_execution_id:
+        raise ValueError("managed launch grant execution identity does not match credential")
+    expires_at_epoch = int(expires_at.timestamp())
+    postgres = PostgresDirect(
+        dsn=scoped_dsn,
+        role_name=role_name,
+        credential_generation=credential_generation,
+        valid_until=expires_at_epoch,
+    )
+    unsigned = grant.model_copy(
+        update={
+            "deployment": GrantDeployment(
+                token=deployment_token,
+                fencing_epoch=fencing_epoch,
+            ),
+            "capabilities": grant.capabilities.model_copy(update={"postgres": postgres}),
+            "issued_at": int(issued_at.timestamp()),
+            "expires_at": expires_at_epoch,
+        }
+    )
+    return write_grant_file(path, sign_grant(unsigned, signing_secret))
 
 
 def materialize_managed_launch(

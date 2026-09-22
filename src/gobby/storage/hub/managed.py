@@ -60,8 +60,6 @@ def managed_hub_database(
         ) from exc
     try:
         payload = json.loads(text)
-        if isinstance(payload, dict) and "grant" in payload:
-            payload = payload["grant"]
         grant = GrantBundle.model_validate(payload)
     except (json.JSONDecodeError, ValidationError) as exc:
         raise BootstrapConfigError(
