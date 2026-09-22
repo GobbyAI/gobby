@@ -35,6 +35,7 @@ _CACHED_INJECTION_TOOLS = frozenset(
 )
 _INLINE_WAIT_CAP_SECONDS = 2.0
 _BACKGROUND_TIMEOUT_SECONDS = 30.0
+_CACHE_TTL_SECONDS = 120.0
 _MAX_CACHED_SESSIONS = 512
 _MAX_CACHED_PER_SESSION = 16
 
@@ -42,6 +43,7 @@ _MAX_CACHED_PER_SESSION = 16
 @dataclass(frozen=True, slots=True)
 class _CompletedMcpInjection:
     raw_result: Any
+    filled_at: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,8 +116,12 @@ class CachedMcpInjectionMixin(DeliveryFormattingMixin):
             if session_cache is not None:
                 completed = session_cache.get(call_key)
                 if completed is not None:
-                    session_cache.move_to_end(call_key)
-                    self._mcp_injection_cache.move_to_end(platform_session_id)
+                    if loop.time() - completed.filled_at > _CACHE_TTL_SECONDS:
+                        del session_cache[call_key]
+                        completed = None
+                    else:
+                        session_cache.move_to_end(call_key)
+                        self._mcp_injection_cache.move_to_end(platform_session_id)
 
             if completed is None:
                 inflight = self._mcp_injection_inflight.get(call_key)
@@ -219,7 +225,10 @@ class CachedMcpInjectionMixin(DeliveryFormattingMixin):
                 return None
 
             raw_result = result.get("result") if isinstance(result, dict) else None
-            completed = _CompletedMcpInjection(raw_result=raw_result)
+            completed = _CompletedMcpInjection(
+                raw_result=raw_result,
+                filled_at=asyncio.get_running_loop().time(),
+            )
             self._cache_mcp_injection_result(platform_session_id, call_key, completed)
             return completed
         except TimeoutError:

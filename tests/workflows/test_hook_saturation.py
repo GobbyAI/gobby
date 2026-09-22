@@ -31,6 +31,17 @@ _CODEX_SESSIONS = (
 _GROK_SESSION = "33333333-3333-4333-8333-333333333333"
 
 
+class _FakeLoopClock:
+    def __init__(self, now: float) -> None:
+        self.now = now
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
 def _insert_optional_mcp_rule(
     manager: RuleDefinitionManager,
     *,
@@ -238,6 +249,77 @@ async def test_cached_mcp_result_serves_matching_hook_inline_without_redispatch(
     assert "cached-hub" in first.context
     assert second.context is not None
     assert "cached-hub" in second.context
+
+
+@pytest.mark.asyncio
+async def test_cached_mcp_result_expires_from_fill_time_without_hit_extension(
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = RuleDefinitionManager(temp_db)
+    arguments = {"file_paths_json": '["src/example.py"]', "limit": 3}
+    _insert_optional_mcp_rule(
+        manager,
+        name="recall-review-lessons-with-expiry",
+        event=RuleTriggerEvent.BEFORE_TOOL,
+        when="True",
+        server="gobby-review-learning",
+        tool="recall_review_lessons_for_files",
+        arguments=arguments,
+    )
+    clock = _FakeLoopClock(1_000.0)
+    monkeypatch.setattr(asyncio.get_running_loop(), "time", clock)
+    lesson: dict[str, str] | None = None
+    dispatch_count = 0
+
+    async def dispatcher(
+        _server: str,
+        _tool: str,
+        _arguments: dict[str, Any],
+        _event: HookEvent,
+    ) -> dict[str, Any]:
+        nonlocal dispatch_count
+        dispatch_count += 1
+        lessons = [lesson] if lesson is not None else []
+        return {"success": True, "result": {"count": len(lessons), "lessons": lessons}}
+
+    engine = RuleEngine(temp_db, mcp_dispatcher=dispatcher)
+
+    async def evaluate() -> Any:
+        return await engine.evaluate(
+            HookEvent(
+                event_type=HookEventType.BEFORE_TOOL,
+                session_id=_CODEX_SESSIONS[0],
+                source=SessionSource.CODEX,
+                timestamp=datetime.now(UTC),
+                data={"tool_name": "Edit"},
+                metadata={"_platform_session_id": _CODEX_SESSIONS[0]},
+            ),
+            session_id=_CODEX_SESSIONS[0],
+            variables={"project": {"id": "isolated-hub", "path": "/tmp"}},
+        )
+
+    initial = await evaluate()
+    lesson = {
+        "memory_id": "lesson-after-fill",
+        "pattern_id": "new-lesson-after-fill",
+        "matched_file_path": "src/example.py",
+        "do": "Refresh cached review guidance.",
+        "avoid": "Serving expired review guidance.",
+    }
+    clock.advance(60.0)
+    first_hit = await evaluate()
+    clock.advance(59.0)
+    second_hit = await evaluate()
+    clock.advance(2.0)
+    refreshed = await evaluate()
+
+    assert dispatch_count == 2
+    assert initial.context is None
+    assert first_hit.context is None
+    assert second_hit.context is None
+    assert refreshed.context is not None
+    assert "new-lesson-after-fill" in refreshed.context
 
 
 @pytest.mark.asyncio
