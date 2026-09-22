@@ -380,6 +380,50 @@ class TestBlockUnresolvedScopeShellWrite:
         assert body.when is not None
         assert "canonical_repo_mutation_scope_unknown" in body.when
 
+    @pytest.mark.parametrize(
+        "command",
+        [
+            'for RANDOM in a.py b.py; do sed -i "s/x/y/" "$RANDOM"; done',
+            'for f in a.py b.py; do sed -i "s/x/y/" "${f:-fallback.py}"; done',
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_rule_blocks_untrusted_loop_binding_scope(
+        self,
+        db: HubDatabase,
+        tmp_path: Path,
+        command: str,
+    ) -> None:
+        _sync_bundled(db)
+        data: dict[str, object] = {
+            "tool_name": "Bash",
+            "tool_input": {"command": command, "cwd": str(tmp_path)},
+            "project_path": str(tmp_path),
+        }
+        normalize_tool_fields(data)
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id=SESSION_ID,
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data=data,
+        )
+
+        response = await RuleEngine(db).evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables={
+                "require_task_before_edit": True,
+                "task_claimed": True,
+                "plan_mode": False,
+                "loaded_skills": ["python", "restraint"],
+            },
+        )
+
+        assert data.get("canonical_file_paths") in (None, [])
+        assert data["canonical_repo_mutation_scope_unknown"] is True
+        assert response.decision == "block"
+
     @pytest.mark.asyncio
     async def test_rule_distinguishes_resolved_rebound_partial_and_opaque_shell_targets(
         self,

@@ -7,6 +7,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from gobby.hooks._normalization_shell import (
+    _SHELL_CHAIN_TOKENS,
     ShellToken,
     _shell_positional_args,
 )
@@ -41,6 +42,25 @@ class _ShellSegmentMetadata:
     cwd: str | None = None
     loop_binding_variable: str | None = None
     shell_words: tuple[str, ...] = ()
+    shell_raw_words: tuple[str, ...] = ()
+
+
+def _split_shell_segments(tokens: list[ShellToken]) -> list[_ShellSegment]:
+    """Split tokenized shell input at unquoted chain operators."""
+    segments: list[_ShellSegment] = []
+    current: list[ShellToken] = []
+    separator_before: str | None = None
+    for token in tokens:
+        if not token.quoted and token.value in _SHELL_CHAIN_TOKENS:
+            if current:
+                segments.append(_ShellSegment(current, separator_before))
+                current = []
+            separator_before = token.value
+            continue
+        current.append(token)
+    if current:
+        segments.append(_ShellSegment(current, separator_before))
+    return segments
 
 
 def _pipeline_filter_output_line_bound(parts: list[str]) -> int | None:
