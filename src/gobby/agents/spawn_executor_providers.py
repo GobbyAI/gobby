@@ -214,6 +214,7 @@ async def _prepare_managed_code_index(
             credential=credential,
             api_token=run_api_token or request.code_index_api_token,
             identity_env=identity_env,
+            config_snapshot=spawn_context.config_snapshot,
             phase_timings_ms=request.phase_timings_ms,
         )
         spawn_context.env_vars.update(preflight.env)

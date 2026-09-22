@@ -133,6 +133,7 @@ async def test_managed_code_index_preflight_uses_issued_credential(
             **run_token_env,
         },
         managed_credential=credential,
+        config_snapshot=MagicMock(),
     )
     request = SpawnRequest(
         prompt="Plan",
@@ -155,6 +156,7 @@ async def test_managed_code_index_preflight_uses_issued_credential(
         credential: object,
         api_token: str | None,
         identity_env: dict[str, str] | None = None,
+        config_snapshot: object | None = None,
         phase_timings_ms: dict[str, float] | None = None,
     ) -> SimpleNamespace:
         assert cwd == "/isolated"
@@ -168,6 +170,7 @@ async def test_managed_code_index_preflight_uses_issued_credential(
             "GOBBY_SESSION_ID": "session-id-env",
             "GOBBY_MACHINE_ID": "21000000-0000-4000-8000-000000000001",
         }
+        assert config_snapshot is context.config_snapshot
         assert phase_timings_ms is request.phase_timings_ms
         return SimpleNamespace(env={"PATH": "/scoped/bin"}, api_token="minted-probe-capability")
 

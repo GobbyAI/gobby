@@ -85,7 +85,7 @@ def daemon_config(
     falkor_host: str = "falkor-a.test",
     falkor_port: int = 6379,
     falkor_password: str | None = "falkor-secret-a",
-    qdrant_url: str = "http://qdrant-a.test:6333",
+    qdrant_url: str | None = "http://qdrant-a.test:6333",
     qdrant_api_key: str | None = "qdrant-secret-a",
     embedding_model: str = "daemon-embed",
 ) -> DaemonConfig:

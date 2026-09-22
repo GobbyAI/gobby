@@ -10,6 +10,7 @@ from gobby.agents.code_index import CodeIndexPreflightResult
 from gobby.agents.code_index import ensure_isolation_code_index as _ensure_isolation_code_index
 
 if TYPE_CHECKING:
+    from gobby.config.runtime_models import ConfigSnapshot
     from gobby.storage.managed_credentials import ManagedCredential
 
 
@@ -23,6 +24,7 @@ async def ensure_isolation_code_index(
     search_smoke_timeout: float = 10.0,
     api_token: str | None = None,
     identity_env: Mapping[str, str] | None = None,
+    config_snapshot: ConfigSnapshot | None = None,
     phase_timings_ms: MutableMapping[str, float] | None = None,
 ) -> CodeIndexPreflightResult:
     """Run and verify gcode indexing inside an isolated workspace before spawn."""
@@ -35,5 +37,6 @@ async def ensure_isolation_code_index(
         search_smoke_timeout=search_smoke_timeout,
         api_token=api_token,
         identity_env=identity_env,
+        config_snapshot=config_snapshot,
         phase_timings_ms=phase_timings_ms,
     )
