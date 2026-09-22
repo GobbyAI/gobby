@@ -20,6 +20,18 @@ if (typeof window !== "undefined" && !window.matchMedia) {
   }));
 }
 
+// jsdom loads no stylesheets, so the responsive tier tokens authored in
+// styles/tailwind-theme.css are absent and every real useIsMobile render warns.
+// Pin the authored values; suites that exercise other tokens set their own.
+document.documentElement.style.setProperty(
+  "--breakpoint-mobile-max-width",
+  "767px",
+);
+document.documentElement.style.setProperty(
+  "--breakpoint-mobile-max-height",
+  "500px",
+);
+
 // Node 25 ships a built-in `globalThis.localStorage` getter that warns about a
 // missing `--localstorage-file` flag whenever it's touched. Vitest's jsdom env
 // uses `populateGlobal()` to copy window props onto globalThis, but it skips
