@@ -685,10 +685,10 @@ def test_register_code_index_prune_cron_preserves_disabled_job() -> None:
 
     storage = CronStorage()
     context = PruneContext(PruneStorage(), PruneGateway(), Path("/tmp/maintenance.log"))
-    pruner = CodeIndexPruner(context)  # type: ignore[arg-type]
+    pruner = CodeIndexPruner(cast(Any, context))
 
     register_code_index_prune_cron(
-        cron_storage=storage,  # type: ignore[arg-type]
+        cron_storage=cast(Any, storage),
         cron_executor=CronExecutor(),
         pruner=pruner,
         project_id="personal",
@@ -699,7 +699,7 @@ def test_register_code_index_prune_cron_preserves_disabled_job() -> None:
     assert "orphan Qdrant collection cleanup" in storage.definition_update["description"]
 
 
-def test_register_code_index_prune_cron_wakes_enabled_job_without_next_run() -> None:
+def test_register_code_index_prune_cron_preserves_parked_enabled_job() -> None:
     now = datetime.now(UTC)
     enabled_job = CronJob(
         id="prune-job",
@@ -717,9 +717,6 @@ def test_register_code_index_prune_cron_wakes_enabled_job_without_next_run() -> 
     )
 
     class CronStorage:
-        def __init__(self) -> None:
-            self.woken: list[str] = []
-
         def get_job_by_name(self, _name: str) -> CronJob:
             return enabled_job
 
@@ -729,8 +726,8 @@ def test_register_code_index_prune_cron_wakes_enabled_job_without_next_run() -> 
         def reconcile_system_job_identity(self, _job_id: str, **_fields: Any) -> None:
             pytest.fail("enabled identity must not be rewritten")
 
-        def wake_system_job(self, job_id: str) -> None:
-            self.woken.append(job_id)
+        def wake_system_job(self, _job_id: str) -> None:
+            pytest.fail("parked jobs must not be woken")
 
     class CronExecutor:
         def register_handler(self, _name: str, _handler: Any) -> None:
@@ -738,13 +735,13 @@ def test_register_code_index_prune_cron_wakes_enabled_job_without_next_run() -> 
 
     storage = CronStorage()
     context = PruneContext(PruneStorage(), PruneGateway(), Path("/tmp/maintenance.log"))
-    pruner = CodeIndexPruner(context)  # type: ignore[arg-type]
+    pruner = CodeIndexPruner(cast(Any, context))
 
     register_code_index_prune_cron(
-        cron_storage=storage,  # type: ignore[arg-type]
+        cron_storage=cast(Any, storage),
         cron_executor=CronExecutor(),
         pruner=pruner,
         project_id="personal",
     )
 
-    assert storage.woken == ["prune-job"]
+    assert enabled_job.next_run_at is None

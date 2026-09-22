@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Iterator
 from contextlib import AbstractContextManager, contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -21,6 +22,7 @@ from gobby.code_index.nightly_repair import (
 )
 from gobby.config.code_index import CodeIndexConfig
 from gobby.runtime_grants.launch import ManagedLaunch
+from gobby.storage.cron_models import CronJob
 from gobby.utils.datetime import resolve_local_timezone
 
 pytestmark = pytest.mark.unit
@@ -373,3 +375,106 @@ def test_register_nightly_repair_cron_reconciles_timeout() -> None:
 
     assert storage.reconciled is not None
     assert storage.reconciled["action_config"]["timeout_seconds"] == 8 * 60 * 60
+
+
+def test_register_nightly_repair_cron_preserves_parked_job() -> None:
+    now = datetime.now(UTC)
+    parked_job = CronJob(
+        id="nightly-repair-job",
+        project_id="personal",
+        name=CODE_INDEX_NIGHTLY_REPAIR_JOB_NAME,
+        schedule_type="cron",
+        action_type="handler",
+        action_config={"handler": CODE_INDEX_NIGHTLY_REPAIR_HANDLER},
+        created_at=now,
+        updated_at=now,
+        cron_expr="0 2 * * *",
+        enabled=True,
+        is_system=True,
+        next_run_at=None,
+    )
+
+    class CronStorage:
+        def get_job_by_name(self, _name: str) -> CronJob:
+            return parked_job
+
+        def reconcile_system_job_definition(self, _job_id: str, **_fields: Any) -> CronJob:
+            return parked_job
+
+        def reconcile_system_job_identity(self, _job_id: str, **_fields: Any) -> None:
+            pytest.fail("parked jobs must retain their operator-controlled schedule")
+
+        def wake_system_job(self, _job_id: str) -> None:
+            pytest.fail("parked jobs must not be woken")
+
+    storage = CronStorage()
+    repairer = CodeIndexNightlyRepairer(
+        cast(
+            Any,
+            NightlyContext(projects=[], gateway=NightlyGateway(), log_file=Path("/tmp/log")),
+        )
+    )
+
+    register_code_index_nightly_repair_cron(
+        cron_storage=cast(Any, storage),
+        cron_executor=cast(Any, SimpleNamespace(register_handler=lambda *_args: None)),
+        repairer=repairer,
+        config=CodeIndexConfig(),
+        project_id="personal",
+    )
+
+    assert parked_job.next_run_at is None
+
+
+def test_register_nightly_repair_cron_schedules_reenabled_job() -> None:
+    now = datetime.now(UTC)
+    disabled_job = CronJob(
+        id="nightly-repair-job",
+        project_id="personal",
+        name=CODE_INDEX_NIGHTLY_REPAIR_JOB_NAME,
+        schedule_type="cron",
+        action_type="handler",
+        action_config={"handler": CODE_INDEX_NIGHTLY_REPAIR_HANDLER},
+        created_at=now,
+        updated_at=now,
+        cron_expr="0 2 * * *",
+        enabled=False,
+        is_system=True,
+        next_run_at=None,
+    )
+
+    class CronStorage:
+        def __init__(self) -> None:
+            self.identity_update: dict[str, Any] | None = None
+
+        def get_job_by_name(self, _name: str) -> CronJob:
+            return disabled_job
+
+        def reconcile_system_job_definition(self, _job_id: str, **_fields: Any) -> CronJob:
+            return disabled_job
+
+        def reconcile_system_job_identity(self, _job_id: str, **fields: Any) -> None:
+            self.identity_update = fields
+
+        def wake_system_job(self, _job_id: str) -> None:
+            pytest.fail("re-enabled jobs must be scheduled in the identity repair")
+
+    storage = CronStorage()
+    repairer = CodeIndexNightlyRepairer(
+        cast(
+            Any,
+            NightlyContext(projects=[], gateway=NightlyGateway(), log_file=Path("/tmp/log")),
+        )
+    )
+
+    register_code_index_nightly_repair_cron(
+        cron_storage=cast(Any, storage),
+        cron_executor=cast(Any, SimpleNamespace(register_handler=lambda *_args: None)),
+        repairer=repairer,
+        config=CodeIndexConfig(),
+        project_id="personal",
+    )
+
+    assert storage.identity_update is not None
+    assert storage.identity_update["enabled"] is True
+    assert storage.identity_update["next_run_at"] is not None

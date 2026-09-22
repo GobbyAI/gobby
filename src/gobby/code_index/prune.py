@@ -488,7 +488,7 @@ def register_code_index_prune_cron(
     if not existing.is_system:
         cron_storage.mark_as_system_job(existing.id)
 
-    repaired = cron_storage.reconcile_system_job_definition(
+    cron_storage.reconcile_system_job_definition(
         existing.id,
         action_type="handler",
         action_config=action_config,
@@ -496,8 +496,6 @@ def register_code_index_prune_cron(
         schedule_type="interval",
         interval_seconds=CODE_INDEX_PRUNE_INTERVAL_SECONDS,
     )
-    if repaired is not None and repaired.enabled and repaired.next_run_at is None:
-        cron_storage.wake_system_job(repaired.id)
 
 
 def _dirty_prune_cursor(dirty: Any) -> tuple[Any, Any, str]:
