@@ -17,10 +17,12 @@ from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.workflows.code_review_scope import (
     commit_has_reviewable_paths,
+    inspect_commit_review_scope,
     parse_commit_scope,
 )
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.hooks import WorkflowHookHandler
+from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
@@ -341,6 +343,56 @@ async def test_gate_blocks_a_commit_that_records_code(
     assert response.decision == "block"
     assert response.reason is not None
     assert "code-review" in response.reason
+
+
+@pytest.mark.asyncio
+async def test_gate_reason_lists_only_session_owned_review_targets(
+    gate_handler: tuple[WorkflowHookHandler, Session, Project],
+    temp_db: HubDatabase,
+    repo: Path,
+) -> None:
+    handler, session, project = gate_handler
+    _edit(repo, "src/owned.py", "owned = True\n")
+    _edit(repo, "src/foreign.py", "foreign = True\n")
+    _git(repo, "add", "-A")
+    SessionVariableManager(temp_db).merge_variables(
+        session.id,
+        {
+            "session_dirty_files": ["src/owned.py"],
+            "session_dirty_file_checkouts": {str(repo): ["src/owned.py"]},
+        },
+    )
+
+    response = await handler._evaluate_rules(
+        _gate_event("git commit -m mixed", session, project, repo)
+    )
+
+    assert response.decision == "block"
+    assert response.reason is not None
+    assert "src/owned.py" in response.reason
+    assert "src/foreign.py" not in response.reason
+
+
+@pytest.mark.asyncio
+async def test_commit_review_scope_intersects_recorded_paths_with_session_ledger(
+    repo: Path,
+) -> None:
+    _edit(repo, "src/owned.py", "owned = True\n")
+    _edit(repo, "src/foreign.py", "foreign = True\n")
+    _git(repo, "add", "-A")
+    variables = {
+        "session_dirty_files": ["src/owned.py"],
+        "session_dirty_file_checkouts": {str(repo): ["src/owned.py"]},
+    }
+
+    scope = await inspect_commit_review_scope(
+        _event("git commit -m mixed", repo),
+        str(repo),
+        variables,
+    )
+
+    assert scope.has_reviewable_paths is True
+    assert scope.session_owned_reviewable_paths == ("src/owned.py",)
 
 
 @pytest.mark.parametrize(
