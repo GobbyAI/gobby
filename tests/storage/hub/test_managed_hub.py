@@ -51,6 +51,30 @@ def test_direct_grant_opens_the_scoped_dsn_without_a_runtime_role(tmp_path: Path
     ]
 
 
+def test_direct_grant_envelope_opens_the_scoped_dsn(tmp_path: Path) -> None:
+    """Managed Python callers accept gcode's coherent grant/settings cache."""
+    grant = json.loads(_DIRECT.read_text(encoding="utf-8"))
+    grant_path = tmp_path / "grant.json"
+    grant_path.write_text(
+        json.dumps(
+            {
+                "grant": grant,
+                "settings": {"config_revision": grant["config_revision"], "settings": {}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with patch("gobby.storage.hub.postgres.PostgresHubDatabase") as database_class:
+        database_class.return_value = MagicMock()
+        result = managed_hub_database(grant_path, now=_BEFORE_EXPIRY)
+
+    assert result is database_class.return_value
+    assert database_class.call_args_list == [
+        call(grant["capabilities"]["postgres"]["dsn"], pool_config=DEFAULT_POSTGRES_POOL_CONFIG)
+    ]
+
+
 @pytest.mark.parametrize("source", ["brokered_datastores.json", "unavailable_datastores.json"])
 def test_non_direct_postgres_capability_is_refused(tmp_path: Path, source: str) -> None:
     grant_path = _write_grant(tmp_path, _GOLDEN / source)

@@ -689,7 +689,28 @@ async def test_intent_is_bounded_before_sanitization_and_search() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("intent", ["", "   ", "!!! ???"])
+async def test_intent_search_preserves_a_balanced_phrase() -> None:
+    """Offload intent search forwards phrase syntax to the shared backend."""
+    harness = _harness()
+
+    actual = await harness.offloader.maybe_offload(
+        server_name="server",
+        tool_name="tool",
+        result="x" * 4_000,
+        session_id="session",
+        intent='"agent-prompt cap"',
+    )
+
+    assert actual["retrieval_available"] is True
+    harness.search.search.assert_called_once_with(
+        '"agent-prompt cap"',
+        5,
+        filters={"result_id": RESULT_ID},
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("intent", ["", "   "])
 async def test_empty_or_sanitized_empty_intent_skips_search(intent: str) -> None:
     harness = _harness()
 

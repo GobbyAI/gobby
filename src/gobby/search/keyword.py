@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import unicodedata
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
@@ -450,12 +451,113 @@ MAX_PG_SEARCH_QUERY_CHARS = 1_000
 """Maximum caller-controlled query length accepted by offload search surfaces."""
 
 
+def _literal_parenthesis_mask(chars: list[str], balanced_quotes: bool) -> list[bool]:
+    """Mark parentheses that must remain literals instead of pg_search grouping."""
+    mask = [False] * len(chars)
+    open_parentheses: list[int] = []
+    backslash_run = 0
+    in_quotes = False
+
+    for index, char in enumerate(chars):
+        is_escaped = backslash_run % 2 == 1
+        if balanced_quotes and char == '"' and not is_escaped:
+            in_quotes = not in_quotes
+        elif not in_quotes and not is_escaped:
+            if char == "(":
+                open_parentheses.append(index)
+            elif char == ")":
+                if not open_parentheses:
+                    mask[index] = True
+                    backslash_run = 0
+                    continue
+                open_index = open_parentheses.pop()
+                follows_identifier = open_index > 0 and (
+                    chars[open_index - 1].isalnum() or chars[open_index - 1] == "_"
+                )
+                is_empty = all(inner.isspace() for inner in chars[open_index + 1 : index])
+                if follows_identifier or is_empty:
+                    mask[open_index] = True
+                    mask[index] = True
+        backslash_run = backslash_run + 1 if char == "\\" else 0
+
+    for open_index in open_parentheses:
+        mask[open_index] = True
+    return mask
+
+
+def _neutralize_boolean_operators(query: str) -> str:
+    """Lowercase standalone boolean operators without touching quoted phrases."""
+    sanitized: list[str] = []
+    token: list[str] = []
+    in_quotes = False
+    backslash_run = 0
+
+    def flush_token() -> None:
+        if token:
+            value = "".join(token)
+            sanitized.append(value.lower() if value.upper() in {"AND", "OR", "NOT"} else value)
+            token.clear()
+
+    for char in query:
+        unescaped_quote = char == '"' and backslash_run % 2 == 0
+        if in_quotes:
+            sanitized.append(char)
+            if unescaped_quote:
+                in_quotes = False
+        elif unescaped_quote:
+            flush_token()
+            sanitized.append(char)
+            in_quotes = True
+        elif (char.isascii() and char.isalnum()) or char == "_":
+            token.append(char)
+        else:
+            flush_token()
+            sanitized.append(char)
+        backslash_run = backslash_run + 1 if char == "\\" else 0
+    flush_token()
+    return "".join(sanitized)
+
+
 def sanitize_pg_search_query(query: str) -> str:
-    """Sanitize user input for pg_search's BM25 query DSL."""
-    cleaned = "".join(ch if ch.isalnum() or ch in (" ", "_") else " " for ch in query)
-    tokens = (token for token in cleaned.split() if token.strip("_"))
+    """Escape pg_search DSL syntax while preserving balanced quoted phrases."""
+    cleaned_parts: list[str] = []
+    for char in query:
+        if unicodedata.category(char) == "Cc":
+            if char.isspace():
+                cleaned_parts.append(" ")
+        else:
+            cleaned_parts.append(char)
+    chars = list("".join(cleaned_parts))
+
+    unescaped_quote_count = 0
+    backslash_run = 0
+    for char in chars:
+        if char == '"' and backslash_run % 2 == 0:
+            unescaped_quote_count += 1
+        backslash_run = backslash_run + 1 if char == "\\" else 0
+
+    balanced_quotes = unescaped_quote_count % 2 == 0
+    literal_parentheses = _literal_parenthesis_mask(chars, balanced_quotes)
+    escaped_literals: list[str] = []
+    backslash_run = 0
+    in_quotes = False
+    for index, char in enumerate(chars):
+        is_escaped = backslash_run % 2 == 1
+        unescaped_quote = char == '"' and not is_escaped
+        outside_phrase = not balanced_quotes or not in_quotes
+        needs_escape = (unescaped_quote and not balanced_quotes) or (
+            outside_phrase and (char in "[]?'*:^~{}/!" or literal_parentheses[index])
+        )
+        if needs_escape and not is_escaped:
+            escaped_literals.append("\\")
+        escaped_literals.append(char)
+        if balanced_quotes and unescaped_quote:
+            in_quotes = not in_quotes
+        backslash_run = backslash_run + 1 if char == "\\" else 0
+
+    tokens = _neutralize_boolean_operators("".join(escaped_literals)).split()
     return " ".join(
-        token.lower() if token.upper() in {"AND", "OR", "NOT"} else token for token in tokens
+        f"\\{token}" if token.startswith("-") else token for token in tokens if token.strip("_")
     )
 
 

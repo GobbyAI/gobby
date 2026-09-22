@@ -416,11 +416,13 @@ async def _gather_unit(
                 hydrated_rows = await hydration_task
     except TimeoutError as exc:
         await _drain_tasks(unit_tasks)
+        session._tasks.difference_update(unit_tasks)
         raise RelatedEvidencePhaseTimeoutError(
             unit_index, timeout_seconds=phase_timeout_seconds
         ) from exc
     except BaseException:
         await _drain_tasks(unit_tasks)
+        session._tasks.difference_update(unit_tasks)
         raise
 
     hydrated = {memory.id: memory for memory in hydrated_rows}
@@ -752,7 +754,7 @@ def _distinctive_terms(content: str, max_terms: int = 24) -> str:
     if max_terms <= 0:
         return ""
 
-    tokens = sanitize_pg_search_query(content).split()
+    tokens = _split_search_terms(sanitize_pg_search_query(content))
     task_refs = _deduplicate(_TASK_REF_PATTERN.findall(content))
     task_ref_set = set(task_refs)
     eligible = [
@@ -763,6 +765,28 @@ def _distinctive_terms(content: str, max_terms: int = 24) -> str:
     identifiers = [token for token in eligible if _is_identifier_like(token)]
     remaining = [token for token in eligible if not _is_identifier_like(token)]
     return " ".join(_deduplicate([*task_refs, *identifiers, *remaining])[:max_terms])
+
+
+def _split_search_terms(query: str) -> list[str]:
+    """Split on whitespace outside quoted phrases, preserving query syntax."""
+    terms: list[str] = []
+    current: list[str] = []
+    in_quotes = False
+    backslash_run = 0
+    for char in query:
+        is_escaped = backslash_run % 2 == 1
+        if char == '"' and not is_escaped:
+            in_quotes = not in_quotes
+        if char.isspace() and not in_quotes:
+            if current:
+                terms.append("".join(current))
+                current = []
+        else:
+            current.append(char)
+        backslash_run = backslash_run + 1 if char == "\\" else 0
+    if current:
+        terms.append("".join(current))
+    return terms
 
 
 def _is_identifier_like(token: str) -> bool:
