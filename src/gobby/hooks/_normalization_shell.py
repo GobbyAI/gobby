@@ -368,6 +368,76 @@ def _is_env_assignment(part: str) -> bool:
     )
 
 
+_SHELL_VARIABLE_NAME = re.compile(r"^[A-Za-z_]\w*$")
+_SHELL_VARIABLE_ASSIGNMENT = re.compile(r"^(?P<name>[A-Za-z_]\w*)(?:\+)?=")
+_SHELL_ARITHMETIC_MUTATION = re.compile(
+    r"\b(?P<name>[A-Za-z_]\w*)\s*(?:\+\+|--|<<=|>>=|[-+*/%&|^]=|=(?!=))"
+)
+_READ_ARRAY_OPTIONS = frozenset({"-a", "-A"})
+_READ_VALUE_OPTIONS = frozenset({"-d", "-i", "-n", "-N", "-p", "-t", "-u"})
+
+
+def _shell_variable_mutations(parts: list[str]) -> tuple[str, ...]:
+    """Return variables explicitly changed by one shell segment."""
+    stripped = list(parts)
+    while stripped[:1] in (["do"], ["then"], ["else"]):
+        stripped = stripped[1:]
+
+    leading_assignments: list[str] = []
+    while stripped:
+        match = _SHELL_VARIABLE_ASSIGNMENT.match(stripped[0])
+        if not match:
+            break
+        leading_assignments.append(match.group("name"))
+        stripped = stripped[1:]
+    if not stripped:
+        return tuple(dict.fromkeys(leading_assignments))
+
+    command, *arguments = stripped
+    mutations: list[str] = []
+    if command in {"declare", "export", "local", "readonly", "typeset"}:
+        mutations.extend(
+            match.group("name")
+            for argument in arguments
+            if (match := _SHELL_VARIABLE_ASSIGNMENT.match(argument))
+        )
+    elif command == "unset":
+        mutations.extend(
+            argument for argument in arguments if _SHELL_VARIABLE_NAME.fullmatch(argument)
+        )
+    elif command == "read":
+        index = 0
+        while index < len(arguments):
+            argument = arguments[index]
+            if argument in _READ_ARRAY_OPTIONS and index + 1 < len(arguments):
+                variable = arguments[index + 1]
+                if _SHELL_VARIABLE_NAME.fullmatch(variable):
+                    mutations.append(variable)
+                index += 2
+            elif argument in _READ_VALUE_OPTIONS:
+                index += 2
+            else:
+                if not argument.startswith("-") and _SHELL_VARIABLE_NAME.fullmatch(argument):
+                    mutations.append(argument)
+                index += 1
+    elif command == "printf" and "-v" in arguments:
+        variable_index = arguments.index("-v") + 1
+        if variable_index < len(arguments):
+            variable = arguments[variable_index]
+            if _SHELL_VARIABLE_NAME.fullmatch(variable):
+                mutations.append(variable)
+    if command == "let" or command.startswith("(("):
+        mutations.extend(
+            match.group("name") for match in _SHELL_ARITHMETIC_MUTATION.finditer(" ".join(stripped))
+        )
+        mutations.extend(
+            match.group("name")
+            for argument in arguments
+            if (match := _SHELL_VARIABLE_ASSIGNMENT.match(argument))
+        )
+    return tuple(dict.fromkeys(mutations))
+
+
 def _strip_shell_wrappers(parts: list[str]) -> list[str]:
     """Drop env assignments and transparent prefixes ahead of a segment's command."""
     stripped = list(parts)

@@ -4,6 +4,7 @@ import os
 import posixpath
 import re
 from collections.abc import Mapping
+from dataclasses import replace
 from typing import Any
 
 from gobby.hooks._inline_interpreter_classifier import (
@@ -49,6 +50,7 @@ from gobby.hooks._normalization_shell import (
     _looks_file_like,
     _looks_path_target,
     _shell_positional_args,
+    _shell_variable_mutations,
     _strip_shell_wrappers,
     extract_redirection_paths,
     has_mutating_output_redirection,
@@ -288,6 +290,8 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
     navigation_scope_unknown = False
     loop_bindings: dict[str, tuple[str, ...]] = {}
     for item in active:
+        for mutated_variable in item.shell_variable_mutations:
+            loop_bindings.pop(mutated_variable, None)
         if item.loop_binding_variable:
             if item.paths and all(
                 not _contains_unexpanded_shell_reference(path) for path in item.paths
@@ -312,8 +316,14 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
             saw_unexpanded_mutation_path = True
             for path in unresolved_mutation_paths:
                 match = _LOOP_BINDING_REFERENCE.fullmatch(path)
-                variable = match.group("braced") or match.group("bare") if match else None
-                if not variable or variable not in loop_bindings:
+                referenced_variable = (
+                    match.group("braced") or match.group("bare") if match else None
+                )
+                if referenced_variable and referenced_variable in loop_bindings:
+                    for resolved_path in loop_bindings[referenced_variable]:
+                        if resolved_path not in mutation_paths:
+                            mutation_paths.append(resolved_path)
+                else:
                     mutation_scope_resolved_by_loop_binding = False
         for path in resolvable:
             if path not in paths:
@@ -353,14 +363,11 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
     if navigation_scope_unknown and not paths:
         extra["_canonical_code_navigation_scope_unknown"] = True
 
-    # A write command's paths are the ones it writes. Segments that only name
-    # paths — a `for <var> in <words>` header, a read on the same line — are
-    # scope evidence, and pooling them here attributed loop counters to tasks
-    # and turned read-only probes into repo mutations. The header stays the
-    # fallback when a mutating segment's own operands are unexpanded, which is
-    # the only scope signal that case has. An empty mutation set is not a
-    # licence to relax: `paths_may_touch_project` treats it as unknown scope.
-    effective_paths = mutation_paths if kind == "write" and not mutation_scope_unknown else paths
+    # Only publish paths proved to belong to mutating segments. A live loop
+    # binding promotes its header paths into that set when the body references
+    # the bound variable. An empty mutation set is not a licence to relax:
+    # `paths_may_touch_project` treats it as unknown scope.
+    effective_paths = mutation_paths if kind == "write" else paths
 
     return _build_canonical_tool_metadata(
         kind,
@@ -406,9 +413,16 @@ def _normalize_shell_tool_metadata(command: str) -> dict[str, Any]:
         if segment.separator_before not in {None, "&&", ";", "\n", "|"}:
             persistent_cwd = None
         raw_parts = shell_token_values(segment.tokens)
+        variable_mutations = _shell_variable_mutations(raw_parts)
         parts = _strip_shell_wrappers(raw_parts)
         if not parts:
-            metadata.append(_ShellSegmentMetadata("execute", neutral_setup=True))
+            metadata.append(
+                _ShellSegmentMetadata(
+                    "execute",
+                    neutral_setup=not variable_mutations,
+                    shell_variable_mutations=variable_mutations,
+                )
+            )
             continue
 
         cd_target = _literal_cd_target(parts)
@@ -431,7 +445,12 @@ def _normalize_shell_tool_metadata(command: str) -> dict[str, Any]:
                 )
             continue
 
-        metadata.append(_classify_shell_segment(segment.tokens, parts, persistent_cwd))
+        metadata.append(
+            replace(
+                _classify_shell_segment(segment.tokens, parts, persistent_cwd),
+                shell_variable_mutations=variable_mutations,
+            )
+        )
 
     metadata = _classify_stdin_python(metadata, heredoc_bodies)
     return _merge_shell_segment_metadata(metadata)

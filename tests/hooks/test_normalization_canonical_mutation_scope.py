@@ -184,3 +184,44 @@ def test_loop_binding_clears_only_the_public_unknown_scope(tmp_path: Path) -> No
     assert data["canonical_file_paths"] == ["a.py", "b.py"]
     assert data["canonical_repo_mutation"] is True
     assert "canonical_repo_mutation_scope_unknown" not in data
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ['f="$SRC"', "unset f", 'printf -v f %s "$SRC"', "read f", "((f = 1))"],
+)
+def test_changed_loop_binding_restores_unknown_write_scope(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    data: dict[str, Any] = {
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": f'for f in a.py b.py; do {mutation}; sed -i "s/x/y/" "$f"; done',
+            "cwd": str(tmp_path),
+        },
+        "project_path": str(tmp_path),
+    }
+
+    _set_canonical_tool_metadata(data)
+
+    assert data.get("canonical_file_paths") in (None, [])
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+def test_read_option_value_does_not_invalidate_loop_binding(tmp_path: Path) -> None:
+    data: dict[str, Any] = {
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": ('for f in a.py b.py; do read -p f response; sed -i "s/x/y/" "$f"; done'),
+            "cwd": str(tmp_path),
+        },
+        "project_path": str(tmp_path),
+    }
+
+    _set_canonical_tool_metadata(data)
+
+    assert data["canonical_file_paths"] == ["a.py", "b.py"]
+    assert data["canonical_repo_mutation"] is True
+    assert "canonical_repo_mutation_scope_unknown" not in data

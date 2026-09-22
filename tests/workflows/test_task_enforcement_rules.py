@@ -381,7 +381,7 @@ class TestBlockUnresolvedScopeShellWrite:
         assert "canonical_repo_mutation_scope_unknown" in body.when
 
     @pytest.mark.asyncio
-    async def test_rule_distinguishes_resolved_loop_partial_and_opaque_shell_targets(
+    async def test_rule_distinguishes_resolved_rebound_partial_and_opaque_shell_targets(
         self,
         db: HubDatabase,
         tmp_path: Path,
@@ -420,6 +420,33 @@ class TestBlockUnresolvedScopeShellWrite:
         assert resolved_loop_data["canonical_file_paths"] == ["a.py", "b.py"]
         assert "canonical_repo_mutation_scope_unknown" not in resolved_loop_data
         assert resolved_loop_response.decision == "allow", resolved_loop_response.reason
+
+        rebound_data: dict[str, object] = {
+            "tool_name": "Bash",
+            "tool_input": {
+                "command": ('for f in a.py b.py; do f="$SRC"; sed -i "s/x/y/" "$f"; done'),
+                "cwd": str(tmp_path),
+            },
+            "project_path": str(tmp_path),
+        }
+        normalize_tool_fields(rebound_data)
+        rebound_event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id=SESSION_ID,
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data=rebound_data,
+        )
+
+        rebound_response = await RuleEngine(db).evaluate(
+            rebound_event,
+            session_id=SESSION_ID,
+            variables=variables,
+        )
+
+        assert rebound_data.get("canonical_file_paths") in (None, [])
+        assert rebound_data["canonical_repo_mutation_scope_unknown"] is True
+        assert rebound_response.decision == "block"
 
         partial_data: dict[str, object] = {
             "tool_name": "Bash",

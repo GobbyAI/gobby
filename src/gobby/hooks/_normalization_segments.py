@@ -40,6 +40,7 @@ class _ShellSegmentMetadata:
     stdin_program_interpreter: str | None = None
     cwd: str | None = None
     loop_binding_variable: str | None = None
+    shell_variable_mutations: tuple[str, ...] = ()
 
 
 def _pipeline_filter_output_line_bound(parts: list[str]) -> int | None:
