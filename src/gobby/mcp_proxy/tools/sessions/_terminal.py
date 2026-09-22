@@ -41,6 +41,9 @@ from gobby.mcp_proxy.tools.sessions._terminal_send_keys import (
 from gobby.mcp_proxy.tools.sessions._terminal_send_keys import (
     register_send_keys_tool,
 )
+from gobby.mcp_proxy.tools.sessions._terminal_termination import (
+    register_terminate_terminal_tool,
+)
 from gobby.mcp_proxy.tools.sessions._terminal_tmux_target import (
     _resolve_tmux_target as _resolve_tmux_target_impl,
 )
@@ -337,6 +340,12 @@ def register_terminal_tools(
         db,
         terminal_manager=terminal_manager,
         write_coordinator=write_coordinator,
+    )
+    register_terminate_terminal_tool(
+        registry,
+        session_manager,
+        terminal_manager=terminal_manager,
+        terminal_runtime_registry=terminal_runtime_registry,
     )
 
     def _validated_found_work(entries: list[dict[str, Any]] | None) -> list[FoundWorkEntry]:

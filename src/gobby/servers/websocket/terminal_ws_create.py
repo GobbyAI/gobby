@@ -9,11 +9,10 @@ from gobby.config.terminals import TerminalConfig
 from gobby.servers.websocket.tmux_activation import TmuxAttachHost, teardown_terminal_bridges
 from gobby.storage.projects import GLOBAL_PROJECT_ID
 from gobby.terminals.dimensions import InvalidTerminalDimensionsError, validate_dimensions
+from gobby.terminals.termination import kill_terminal
 from gobby.terminals.ws_protocol import inventory_item
 
 if TYPE_CHECKING:
-    from gobby.storage.terminals import Terminal, TerminalManager
-    from gobby.terminals.runtime import TerminalRuntimeRegistry
     from gobby.terminals.web_spawn import WebSpawnResult
 
 logger = logging.getLogger(__name__)
@@ -23,14 +22,6 @@ MAX_RESULT_CODE_LENGTH = 128
 
 def _bounded_code(code: str | None, fallback: str) -> str:
     return (code or fallback)[:MAX_RESULT_CODE_LENGTH]
-
-
-async def kill_terminal(
-    manager: TerminalManager, registry: TerminalRuntimeRegistry, terminal: Terminal
-) -> Terminal | None:
-    """Terminate ``terminal`` through its row's runtime; the exited row when it transitioned."""
-    await registry.resolve(terminal.backend).terminate(terminal, 1.0)
-    return manager.mark_exited(terminal.id)
 
 
 class TerminalCreateMixin:
