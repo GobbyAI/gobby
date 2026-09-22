@@ -15,6 +15,7 @@ from gobby.sessions.handoff import (
     clear_handoff_turn_end_pending,
     restore_staged_handoff,
 )
+from gobby.sessions.handoff_records import record_handoff_delivery
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +41,10 @@ class WebChatSessionRegistry:
     def __init__(self) -> None:
         self.sessions: dict[str, ChatSessionProtocol] = {}
         self.active_tasks: dict[str, asyncio.Task[None]] = {}
-        self._queued_compactions: dict[str, tuple[str, str | None]] = {}
+        self._queued_compactions: dict[
+            str,
+            tuple[str, str | None, str | None, str | None],
+        ] = {}
         self._queued_compaction_tasks: dict[str, asyncio.Task[None]] = {}
         self._queued_wakes: dict[str, tuple[str, str]] = {}
         self._queued_wake_tasks: dict[str, asyncio.Task[None]] = {}
@@ -97,7 +101,9 @@ class WebChatSessionRegistry:
             if not isinstance(predecessor_id, str) or not predecessor_id:
                 predecessor_id = conversation_id
             self._fail_clear_attempt(predecessor_id, attempt_id)
-        for conversation_id, (_, compact_attempt_id) in list(self._queued_compactions.items()):
+        for conversation_id, (_, compact_attempt_id, _, _) in list(
+            self._queued_compactions.items()
+        ):
             if compact_attempt_id is None:
                 continue
             session = self.sessions.get(conversation_id)
@@ -302,6 +308,8 @@ class WebChatSessionRegistry:
         session_id: str,
         command: str = "/compact",
         handoff_attempt_id: str | None = None,
+        handoff_record_id: str | None = None,
+        handoff_session_id: str | None = None,
     ) -> dict[str, Any]:
         """Trigger a web-chat compaction command on a live session."""
         conversation_id, session = self.find_session(session_id)
@@ -312,28 +320,41 @@ class WebChatSessionRegistry:
             }
 
         if self.has_active_turn(conversation_id):
-            self._queued_compactions[conversation_id] = (command, handoff_attempt_id)
-            return {
+            self._queued_compactions[conversation_id] = (
+                command,
+                handoff_attempt_id,
+                handoff_record_id,
+                handoff_session_id,
+            )
+            result: dict[str, Any] = {
                 "compacted": True,
                 "command": command,
                 "via": "web_chat",
                 "queued": True,
             }
+            if handoff_attempt_id is not None:
+                result["handoff_delivered"] = False
+            return result
 
         result = await self._drain_compaction(
             session,
             command,
             continuation_prompt=build_handoff_continue_prompt(),
             handoff_attempt_id=handoff_attempt_id,
+            handoff_record_id=handoff_record_id,
+            handoff_session_id=handoff_session_id,
         )
         if not result.get("compacted"):
             return result
-        return {
+        response: dict[str, Any] = {
             "compacted": True,
             "command": command,
             "via": "web_chat",
             "queued": False,
         }
+        if handoff_attempt_id is not None:
+            response["handoff_delivered"] = result.get("handoff_delivered", False)
+        return response
 
     async def wake_session(
         self,
@@ -364,6 +385,8 @@ class WebChatSessionRegistry:
         compact_request = self._queued_compactions.pop(conversation_id, None)
         command = compact_request[0] if compact_request is not None else None
         compact_attempt_id = compact_request[1] if compact_request is not None else None
+        compact_handoff_id = compact_request[2] if compact_request is not None else None
+        compact_session_id = compact_request[3] if compact_request is not None else None
         wake_request = self._queued_wakes.pop(conversation_id, None)
         clear_attempt_id = self._queued_clears.pop(conversation_id, None)
         if command is None and wake_request is None and clear_attempt_id is None:
@@ -392,6 +415,8 @@ class WebChatSessionRegistry:
                 compact_attempt_id,
                 wake_request,
                 clear_attempt_id,
+                compact_handoff_id=compact_handoff_id,
+                compact_session_id=compact_session_id,
             )
         )
         if compact_request is not None:
@@ -470,10 +495,18 @@ class WebChatSessionRegistry:
         compact_attempt_id: str | None,
         wake_request: tuple[str, str] | None,
         clear_attempt_id: str | None = None,
+        *,
+        compact_handoff_id: str | None = None,
+        compact_session_id: str | None = None,
     ) -> None:
         if self.has_active_turn(conversation_id):
             if command is not None:
-                self._queued_compactions[conversation_id] = (command, compact_attempt_id)
+                self._queued_compactions[conversation_id] = (
+                    command,
+                    compact_attempt_id,
+                    compact_handoff_id,
+                    compact_session_id,
+                )
             if wake_request is not None:
                 self._queued_wakes[conversation_id] = wake_request
             if clear_attempt_id is not None:
@@ -512,6 +545,8 @@ class WebChatSessionRegistry:
                 conversation_id,
                 command=command,
                 handoff_attempt_id=compact_attempt_id,
+                handoff_record_id=compact_handoff_id,
+                handoff_session_id=compact_session_id,
             )
             if not result.get("compacted"):
                 logger.warning(
@@ -675,6 +710,8 @@ class WebChatSessionRegistry:
         *,
         continuation_prompt: str | None = None,
         handoff_attempt_id: str | None = None,
+        handoff_record_id: str | None = None,
+        handoff_session_id: str | None = None,
     ) -> dict[str, Any]:
         compact_result = await self._drain_message_until_done(
             session,
@@ -684,13 +721,33 @@ class WebChatSessionRegistry:
         if not compact_result.get("ok"):
             return {"compacted": False, "reason": compact_result["reason"]}
 
-        if handoff_attempt_id is not None and self._clear_db is not None:
-            session_id = getattr(session, "db_session_id", None)
-            if isinstance(session_id, str) and session_id:
+        handoff_delivered = False
+        if (
+            handoff_attempt_id is not None
+            and handoff_record_id is not None
+            and handoff_session_id is not None
+            and self._clear_db is not None
+        ):
+            try:
+                record_handoff_delivery(
+                    self._clear_db,
+                    handoff_id=handoff_record_id,
+                    attempt_id=handoff_attempt_id,
+                    boundary_kind="compact",
+                    continuation_session_id=handoff_session_id,
+                )
+                handoff_delivered = True
                 clear_handoff_turn_end_pending(
                     self._clear_db,
-                    session_id,
+                    handoff_session_id,
                     attempt_id=handoff_attempt_id,
+                )
+            except Exception:
+                logger.warning(
+                    "Failed recording compact handoff delivery %s for session %s",
+                    handoff_attempt_id,
+                    handoff_session_id,
+                    exc_info=True,
                 )
 
         if continuation_prompt:
@@ -702,7 +759,7 @@ class WebChatSessionRegistry:
             if not continuation_result.get("ok"):
                 return {"compacted": False, "reason": continuation_result["reason"]}
 
-        return {"compacted": True}
+        return {"compacted": True, "handoff_delivered": handoff_delivered}
 
     async def _drain_message_until_done(
         self,

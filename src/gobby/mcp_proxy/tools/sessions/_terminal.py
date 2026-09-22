@@ -524,6 +524,8 @@ def register_terminal_tools(
                 result = await web_chat_session_registry.compact_session(
                     compact_target,
                     handoff_attempt_id=attempt_id,
+                    handoff_record_id=attempt_state.handoff_record_id,
+                    handoff_session_id=resolved_session_id,
                 )
             except Exception as exc:
                 if attempt_state is not None:
@@ -533,23 +535,24 @@ def register_terminal_tools(
                 restore_handoff_attempt(db, attempt_state)
                 return result
             clear_queued_context(session_manager, resolved_session_id)
-            try:
-                record_handoff_delivery(
-                    db,
-                    handoff_id=attempt_state.handoff_record_id,
-                    attempt_id=attempt_id,
-                    boundary_kind="compact",
-                    continuation_session_id=resolved_session_id,
-                )
-                result["handoff_delivered"] = True
-            except Exception:
-                logger.warning(
-                    "Failed recording compact handoff delivery %s for session %s",
-                    attempt_id,
-                    resolved_session_id,
-                    exc_info=True,
-                )
-                result["handoff_delivered"] = False
+            if not result.get("queued") and not result.get("handoff_delivered"):
+                try:
+                    record_handoff_delivery(
+                        db,
+                        handoff_id=attempt_state.handoff_record_id,
+                        attempt_id=attempt_id,
+                        boundary_kind="compact",
+                        continuation_session_id=resolved_session_id,
+                    )
+                    result["handoff_delivered"] = True
+                except Exception:
+                    logger.warning(
+                        "Failed recording compact handoff delivery %s for session %s",
+                        attempt_id,
+                        resolved_session_id,
+                        exc_info=True,
+                    )
+                    result["handoff_delivered"] = False
             result["attempt_id"] = attempt_id
             result["handoff_staged"] = True
             return result

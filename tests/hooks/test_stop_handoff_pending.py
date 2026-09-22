@@ -17,9 +17,12 @@ from gobby.mcp_proxy.tools.sessions import create_session_messages_registry
 from gobby.mcp_proxy.tools.sessions._terminal import register_terminal_tools
 from gobby.servers.websocket.chat.session_registry import WebChatSessionRegistry
 from gobby.sessions.handoff import (
+    HANDOFF_PULL_PENDING_VARIABLE,
     HANDOFF_TURN_END_PENDING_VARIABLE,
+    PENDING_HANDOFF_VARIABLE,
     build_handoff_continue_prompt,
     consume_pending_handoff,
+    restore_staged_handoff,
     stage_handoff_attempt,
 )
 from gobby.sessions.handoff_records import (
@@ -66,6 +69,35 @@ def _create_session(db: HubDatabase) -> None:
         """,
         (SESSION_ID, EXTERNAL_SESSION_ID, MACHINE_ID, "codex", PROJECT_ID),
     )
+
+
+def _delivery_count(db: HubDatabase, attempt_id: str) -> int:
+    row = db.fetchone(
+        "SELECT COUNT(*) AS count FROM session_handoff_deliveries WHERE attempt_id = %s",
+        (attempt_id,),
+    )
+    assert row is not None
+    return int(row["count"])
+
+
+def _assert_attempt_compensated(
+    db: HubDatabase,
+    variable_manager: SessionVariableManager,
+    *,
+    attempt_id: str,
+    handoff_record_id: str,
+) -> None:
+    assert _delivery_count(db, attempt_id) == 0
+    variables = variable_manager.get_variables(SESSION_ID)
+    assert PENDING_HANDOFF_VARIABLE not in variables
+    assert HANDOFF_PULL_PENDING_VARIABLE not in variables
+    assert HANDOFF_TURN_END_PENDING_VARIABLE not in variables
+    row = db.fetchone(
+        "SELECT COUNT(*) AS count FROM session_handoffs WHERE id = %s",
+        (handoff_record_id,),
+    )
+    assert row is not None
+    assert int(row["count"]) == 0
 
 
 def _insert_rules(db: HubDatabase) -> None:
@@ -398,6 +430,8 @@ async def test_active_web_chat_handoff_yields_until_queued_compaction_then_rearm
 
     assert staged["compacted"] is True
     assert staged["queued"] is True
+    assert staged["handoff_delivered"] is False
+    assert _delivery_count(temp_db, staged["attempt_id"]) == 0
     assert chat_session.send_message.call_count == 0
     assert variable_manager.get_variables(SESSION_ID)[HANDOFF_TURN_END_PENDING_VARIABLE] is True
 
@@ -438,6 +472,8 @@ async def test_active_web_chat_handoff_yields_until_queued_compaction_then_rearm
         "/compact",
         build_handoff_continue_prompt(),
     ]
+    assert _delivery_count(temp_db, staged["attempt_id"]) == 1
+    assert restore_staged_handoff(temp_db, SESSION_ID, staged["attempt_id"]) is False
     assert HANDOFF_TURN_END_PENDING_VARIABLE not in variable_manager.get_variables(SESSION_ID)
 
     with session_context_for_test(SESSION_ID):
@@ -456,3 +492,128 @@ async def test_active_web_chat_handoff_yields_until_queued_compaction_then_rearm
     rearmed = await _evaluate(handler, _stop_event(tmp_path))
     assert rearmed.decision == "block"
     assert all(name in (rearmed.reason or "") for name in STOP_GATE_NAMES), rearmed.reason
+
+
+async def test_active_web_chat_handoff_failure_compensates_without_receipt(
+    temp_db: HubDatabase,
+) -> None:
+    _create_session(temp_db)
+    variable_manager = SessionVariableManager(temp_db)
+    attempt_id = "b" * 32
+    state = stage_handoff_attempt(
+        temp_db,
+        SESSION_ID,
+        attempt_id=attempt_id,
+        handoff=build_handoff_payload(
+            current_state="Queued compact will fail.",
+            next_steps=["Retry the handoff."],
+        ),
+        clear_session=False,
+        delivery_mode="queued_in_process",
+    )
+
+    chat_session = MagicMock(db_session_id=SESSION_ID)
+    chat_session.send_message.side_effect = RuntimeError("compact failed")
+    web_registry = WebChatSessionRegistry()
+    web_registry.bind_clear_lifecycle(MagicMock(), db=temp_db)
+    web_registry.register("conversation-1", chat_session)
+
+    release_turn = asyncio.Event()
+
+    async def active_turn() -> None:
+        await release_turn.wait()
+
+    active_task = asyncio.create_task(active_turn())
+    web_registry.track_active_task("conversation-1", active_task)
+    queued = await web_registry.compact_session(
+        SESSION_ID,
+        handoff_attempt_id=attempt_id,
+        handoff_record_id=state.handoff_record_id,
+        handoff_session_id=SESSION_ID,
+    )
+
+    assert queued["queued"] is True
+    assert queued["handoff_delivered"] is False
+    assert _delivery_count(temp_db, attempt_id) == 0
+
+    release_turn.set()
+    await active_task
+    await drain_asyncio_tasks()
+    queued_task = web_registry._queued_compaction_tasks.get("conversation-1")
+    assert queued_task is not None
+    await queued_task
+
+    _assert_attempt_compensated(
+        temp_db,
+        variable_manager,
+        attempt_id=attempt_id,
+        handoff_record_id=state.handoff_record_id,
+    )
+
+
+async def test_active_web_chat_handoff_cancellation_compensates_without_receipt(
+    temp_db: HubDatabase,
+) -> None:
+    _create_session(temp_db)
+    variable_manager = SessionVariableManager(temp_db)
+    attempt_id = "c" * 32
+    state = stage_handoff_attempt(
+        temp_db,
+        SESSION_ID,
+        attempt_id=attempt_id,
+        handoff=build_handoff_payload(
+            current_state="Queued compact will be cancelled.",
+            next_steps=["Retry the handoff."],
+        ),
+        clear_session=False,
+        delivery_mode="queued_in_process",
+    )
+
+    compact_started = asyncio.Event()
+    keep_compacting = asyncio.Event()
+
+    async def blocked_stream() -> AsyncIterator[DoneEvent]:
+        compact_started.set()
+        await keep_compacting.wait()
+        yield DoneEvent(tool_calls_count=0)
+
+    chat_session = MagicMock(db_session_id=SESSION_ID)
+    chat_session.send_message.side_effect = lambda _message: blocked_stream()
+    web_registry = WebChatSessionRegistry()
+    web_registry.bind_clear_lifecycle(MagicMock(), db=temp_db)
+    web_registry.register("conversation-1", chat_session)
+
+    release_turn = asyncio.Event()
+
+    async def active_turn() -> None:
+        await release_turn.wait()
+
+    active_task = asyncio.create_task(active_turn())
+    web_registry.track_active_task("conversation-1", active_task)
+    queued = await web_registry.compact_session(
+        SESSION_ID,
+        handoff_attempt_id=attempt_id,
+        handoff_record_id=state.handoff_record_id,
+        handoff_session_id=SESSION_ID,
+    )
+
+    assert queued["queued"] is True
+    assert queued["handoff_delivered"] is False
+    assert _delivery_count(temp_db, attempt_id) == 0
+
+    release_turn.set()
+    await active_task
+    await compact_started.wait()
+    queued_task = web_registry._queued_compaction_tasks.get("conversation-1")
+    assert queued_task is not None
+    queued_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await queued_task
+    await drain_asyncio_tasks()
+
+    _assert_attempt_compensated(
+        temp_db,
+        variable_manager,
+        attempt_id=attempt_id,
+        handoff_record_id=state.handoff_record_id,
+    )
