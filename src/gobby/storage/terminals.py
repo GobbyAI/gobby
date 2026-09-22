@@ -750,6 +750,18 @@ class TerminalManager(TerminalSettlementMixin):
         )
         return [Terminal.from_row(row) for row in rows]
 
+    def list_reconcilable_by_machine(self, machine_id: str) -> list[Terminal]:
+        """Pending, live, and orphaned native-host candidates on a machine."""
+        rows = self.db.fetchall(
+            """
+            SELECT * FROM terminals
+            WHERE machine_id = %s AND state IN ('pending', 'live', 'orphaned')
+            ORDER BY created_at ASC
+            """,
+            (str(UUID(machine_id)),),
+        )
+        return [Terminal.from_row(row) for row in rows]
+
     def attach_locator(
         self,
         terminal_id: str,

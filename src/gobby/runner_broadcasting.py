@@ -11,6 +11,7 @@ import inspect
 import logging
 from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
@@ -23,6 +24,8 @@ if TYPE_CHECKING:
     )
     from gobby.storage.cron_models import CronJob, CronRun
     from gobby.storage.sessions import SessionManager
+    from gobby.storage.terminals import Terminal, TerminalManager
+    from gobby.terminals.leases import LifecyclePublisher, TerminalLeaseRegistry
     from gobby.workflows.pipeline_executor import PipelineExecutor
 
 logger = logging.getLogger(__name__)
@@ -90,6 +93,7 @@ class CronCommunicationsRouter(Protocol):
 _agent_event_callback: Any | None = None
 _agent_broadcast_tasks: set[asyncio.Task[None]] = set()
 _agent_output_readers: tuple[Any, Any] | None = None
+_terminal_lifecycle_tasks: set[asyncio.Task[dict[str, Any]]] = set()
 
 
 def _schedule_agent_broadcast(
@@ -111,6 +115,66 @@ def _schedule_agent_broadcast(
             logger.warning("Failed to broadcast agent event %s: %s", event_type, exc)
 
     task.add_done_callback(_on_done)
+
+
+def setup_terminal_lifecycle_broadcasting(
+    terminal_manager: TerminalManager,
+    lease_registry: TerminalLeaseRegistry,
+    publisher: LifecyclePublisher,
+    *,
+    loop_getter: Callable[[], asyncio.AbstractEventLoop | None],
+) -> None:
+    """Publish committed terminal settlement transitions on the daemon loop."""
+
+    def observe(terminal: Terminal) -> None:
+        loop = loop_getter()
+        if loop is None or loop.is_closed():
+            logger.debug(
+                "Skipping terminal lifecycle broadcast for %s/%s without daemon loop",
+                terminal.id,
+                terminal.state,
+            )
+            return
+        event: dict[str, Any] = {
+            "type": "terminal_event",
+            "event": terminal.state,
+            "terminal_id": terminal.id,
+            "timestamp": datetime.now(UTC).isoformat(),
+        }
+
+        def schedule() -> None:
+            task = loop.create_task(
+                lease_registry.publish_lifecycle(event, publisher),
+                name=f"terminal-lifecycle-{terminal.state}",
+            )
+            _terminal_lifecycle_tasks.add(task)
+
+            def on_done(completed: asyncio.Task[dict[str, Any]]) -> None:
+                _terminal_lifecycle_tasks.discard(completed)
+                try:
+                    completed.result()
+                except asyncio.CancelledError:
+                    pass
+                except Exception:
+                    logger.warning(
+                        "Failed to broadcast terminal lifecycle event %s/%s",
+                        terminal.id,
+                        terminal.state,
+                        exc_info=True,
+                    )
+
+            task.add_done_callback(on_done)
+
+        try:
+            loop.call_soon_threadsafe(schedule)
+        except RuntimeError:
+            logger.debug(
+                "Skipping terminal lifecycle broadcast for %s/%s on closed daemon loop",
+                terminal.id,
+                terminal.state,
+            )
+
+    terminal_manager.set_transition_observer(observe)
 
 
 @dataclass(frozen=True, slots=True)

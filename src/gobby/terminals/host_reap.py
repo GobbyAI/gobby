@@ -36,6 +36,19 @@ def reap_recorded_process(
     _kill_group(pgid_raw, signal.SIGKILL)
 
 
+def recorded_process_group_is_alive(process: Mapping[str, Any] | None) -> bool:
+    """Return whether the process group still belongs to the recorded host process."""
+    if process is None:
+        return False
+    pgid_raw = process.get("pgid")
+    start_raw = process.get("start_time")
+    if not isinstance(pgid_raw, int) or pgid_raw <= 0:
+        return False
+    if isinstance(start_raw, (int, float)) and _pid_recycled(pgid_raw, float(start_raw)):
+        return False
+    return _group_alive(pgid_raw)
+
+
 def _pid_recycled(pgid: int, start_time: float) -> bool:
     try:
         import psutil
