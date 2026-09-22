@@ -9,7 +9,7 @@ use schema::*;
 pub fn contract() -> CliContract {
     CliContract {
         tool: "gcode",
-        contract_version: 10,
+        contract_version: 11,
         summary: "Fast code index CLI for Gobby.",
         global_flags: vec![
             FlagContract::value("--project", "ROOT"),
@@ -464,8 +464,8 @@ pub fn contract() -> CliContract {
                     FlagContract {
                         name: "--view",
                         takes_value: true,
-                        value_name: Some("fcg|mcg|class-hierarchy"),
-                        allowed_values: vec!["fcg", "mcg", "class-hierarchy"],
+                        value_name: Some("fcg|mcg|class-hierarchy|communities"),
+                        allowed_values: vec!["fcg", "mcg", "class-hierarchy", "communities"],
                         required: true,
                         repeatable: false,
                     },
@@ -475,12 +475,14 @@ pub fn contract() -> CliContract {
                     FlagContract::value("--depth", "N"),
                     FlagContract::value("--incoming-limit", "N"),
                     FlagContract::value("--outgoing-limit", "N"),
+                    FlagContract::value("--min-size", "N"),
+                    FlagContract::value("--community", "ID|LABEL|PATH"),
                     format_flag(),
                 ],
                 json_output_keys: graph_view_output_keys(),
                 ..CommandContract::new(
                     "graph view",
-                    "Render a scoped fcg, mcg, or class-hierarchy graph view.",
+                    "Render a scoped fcg, mcg, or class-hierarchy graph view, or project-wide import communities.",
                 )
             },
             CommandContract {

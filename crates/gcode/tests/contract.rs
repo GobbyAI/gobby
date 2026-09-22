@@ -84,7 +84,7 @@ fn output_keys(contract: &Value, name: &str) -> Vec<String> {
 #[test]
 fn ask_command_contract_is_complete() {
     let contract = serde_json::to_value(gobby_code::contract::contract()).expect("contract JSON");
-    assert_eq!(contract["contract_version"], serde_json::json!(10));
+    assert_eq!(contract["contract_version"], serde_json::json!(11));
 
     let ask = command(&contract, "ask");
     assert!(ask["daemon_consumed"].as_bool().expect("daemon flag"));
@@ -146,9 +146,27 @@ fn ask_command_contract_is_complete() {
 }
 
 #[test]
-fn contract_is_version_ten_with_ask_and_evidence_without_codewiki() {
+fn contract_is_version_eleven_with_project_import_communities() {
     let contract = serde_json::to_value(gobby_code::contract::contract()).expect("contract json");
-    assert_eq!(contract["contract_version"], serde_json::json!(10));
+    assert_eq!(contract["contract_version"], serde_json::json!(11));
+    let graph_view = command(&contract, "graph view");
+    let flags = graph_view["flags"].as_array().expect("graph view flags");
+    let view = flags
+        .iter()
+        .find(|flag| flag["name"] == "--view")
+        .expect("--view flag");
+    assert!(
+        view["allowed_values"]
+            .as_array()
+            .expect("view values")
+            .contains(&serde_json::json!("communities"))
+    );
+    for expected in ["--min-size", "--community"] {
+        assert!(
+            flags.iter().any(|flag| flag["name"] == expected),
+            "graph view missing {expected}"
+        );
+    }
     assert!(
         contract["error_codes"]
             .as_array()
@@ -290,7 +308,13 @@ fn contract_declares_tree_paths_and_typed_graph_view_selectors() {
     let graph_view = command(&contract, "graph view");
     assert_eq!(graph_view["positionals"], serde_json::json!([]));
     let flags = graph_view["flags"].as_array().expect("graph view flags");
-    for expected in ["--file", "--module", "--symbol"] {
+    for expected in [
+        "--file",
+        "--module",
+        "--symbol",
+        "--min-size",
+        "--community",
+    ] {
         assert!(
             flags.iter().any(|flag| flag["name"] == expected),
             "graph view missing {expected}"

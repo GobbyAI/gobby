@@ -146,6 +146,7 @@ fn view_render_does_not_clip_above_historical_budget() {
                         GraphViewKind::Fcg => "CALLS".to_string(),
                         GraphViewKind::Mcg => "IMPORTS".to_string(),
                         GraphViewKind::ClassHierarchy => "EXTENDS".to_string(),
+                        GraphViewKind::Communities => "IMPORTS".to_string(),
                     },
                 });
             }

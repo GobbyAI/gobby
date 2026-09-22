@@ -343,10 +343,11 @@ fn graph_view_unavailable_differs_from_empty() {
 
     let args = GraphViewArgs {
         view: GraphViewKind::Fcg,
-        seed: GraphViewSeed::Symbol("Derived".into()),
+        seed: Some(GraphViewSeed::Symbol("Derived".into())),
         depth: None,
         incoming_limit: None,
         outgoing_limit: None,
+        min_size: None,
     };
     let seed = ViewSeed {
         id: "seed".into(),
@@ -514,4 +515,36 @@ fn node_file_is_null_for_external_and_unresolved_even_when_raw_file_is_id() {
     .node();
     assert_eq!(file.kind, "file");
     assert_eq!(file.file.as_deref(), Some("src/a.py"));
+}
+
+#[test]
+fn run_routes_every_view_and_seed_combination() {
+    use GraphViewKind::{ClassHierarchy, Communities, Fcg, Mcg};
+    use GraphViewSeed::{Community, File, Module, Symbol};
+
+    let seeds = [
+        None,
+        Some(File("file".into())),
+        Some(Module("module".into())),
+        Some(Symbol("symbol".into())),
+        Some(Community("community".into())),
+    ];
+    for view in [Fcg, Mcg, ClassHierarchy, Communities] {
+        for seed in &seeds {
+            let expected = match (view, seed) {
+                (Mcg, Some(File(_))) => Some(ViewRoute::McgFile),
+                (Mcg, Some(Module(_))) => Some(ViewRoute::McgModule),
+                (Fcg, Some(Symbol(_))) => Some(ViewRoute::Fcg),
+                (ClassHierarchy, Some(Symbol(_))) => Some(ViewRoute::ClassHierarchy),
+                (Communities, None) => Some(ViewRoute::CommunitiesList),
+                (Communities, Some(Community(_))) => Some(ViewRoute::CommunitiesDetail),
+                _ => None,
+            };
+            assert_eq!(
+                route_for(view, seed.as_ref()),
+                expected,
+                "{view:?} {seed:?}"
+            );
+        }
+    }
 }
