@@ -154,6 +154,7 @@ class InboundCommunications:
 
                 reply_id = message.metadata_json.get("reply_to_message_id")
                 chat_id = message.metadata_json.get("chat_id")
+                reply_routed = False
                 if (
                     channel.channel_type == "telegram"
                     and isinstance(reply_id, str)
@@ -169,6 +170,22 @@ class InboundCommunications:
                     )
                     if source is not None and source.direction == "outbound" and source.session_id:
                         message.session_id = source.session_id
+                        reply_routed = True
+
+                if (
+                    channel.channel_type == "telegram"
+                    and not reply_routed
+                    and message.content_type != "callback"
+                ):
+                    conversation_key = _conversation_key(message.metadata_json)
+                    if conversation_key is None and isinstance(chat_id, str):
+                        conversation_key = f"dm:{chat_id}"
+                    if conversation_key is not None:
+                        attached = await asyncio.to_thread(
+                            manager.attached_session, channel.id, conversation_key
+                        )
+                        if attached is not None:
+                            message.session_id = attached
 
                 if message.session_id and message.platform_thread_id:
                     manager._track_thread(
