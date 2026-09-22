@@ -404,8 +404,21 @@ def init_servers(runner: GobbyRunner) -> None:
         from gobby.runner_broadcasting import (
             setup_agent_event_broadcasting,
             setup_pipeline_event_broadcasting,
+            setup_terminal_lifecycle_broadcasting,
         )
 
+        terminal_publisher = getattr(runner.websocket_server, "broadcast", None)
+        if (
+            services.terminal_manager is not None
+            and services.lease_registry is not None
+            and callable(terminal_publisher)
+        ):
+            setup_terminal_lifecycle_broadcasting(
+                services.terminal_manager,
+                services.lease_registry,
+                terminal_publisher,
+                loop_getter=lambda: runner.main_loop,
+            )
         setup_agent_event_broadcasting(runner.websocket_server)
 
         if runner.pipeline_executor:

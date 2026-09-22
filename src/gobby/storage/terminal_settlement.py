@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator, Mapping
+import logging
+from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime
+from threading import Lock
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
+from weakref import WeakKeyDictionary
 
 from psycopg.types.json import Jsonb
 
@@ -22,6 +25,12 @@ UNRESOLVED_WRITE_MAX_SERIALIZED_BYTES = 65536
 
 if TYPE_CHECKING:
     from gobby.storage.terminals import Terminal
+
+logger = logging.getLogger(__name__)
+
+TerminalTransitionObserver = Callable[["Terminal"], None]
+_transition_observers: WeakKeyDictionary[object, TerminalTransitionObserver] = WeakKeyDictionary()
+_transition_observers_lock = Lock()
 
 ALLOWED_EDGES: frozenset[tuple[str, str]] = frozenset(
     {
@@ -82,6 +91,31 @@ class TerminalSettlementMixin:
 
     def __init__(self) -> None:
         self._settlement_locks: dict[str, _SettlementLockCell] = {}
+
+    def set_transition_observer(self, observer: TerminalTransitionObserver | None) -> None:
+        """Observe terminal state transitions from every manager sharing this database."""
+        with _transition_observers_lock:
+            if observer is None:
+                _transition_observers.pop(self.db, None)
+            else:
+                _transition_observers[self.db] = observer
+
+    def _notify_transition(self, terminal: Terminal) -> None:
+        if terminal.state not in {"exited", "orphaned"}:
+            return
+        with _transition_observers_lock:
+            observer = _transition_observers.get(self.db)
+        if observer is None:
+            return
+        try:
+            observer(terminal)
+        except Exception:
+            logger.warning(
+                "Terminal transition observer failed for %s/%s",
+                terminal.id,
+                terminal.state,
+                exc_info=True,
+            )
 
     @asynccontextmanager
     async def settle_lock(self, terminal_id: str) -> AsyncIterator[None]:
@@ -231,10 +265,11 @@ class TerminalSettlementMixin:
 
     def mark_exited(self, terminal_id: str) -> Terminal | None:
         """CAS live or orphaned to exited without clearing locator identity."""
-        live = self._cas(terminal_id, expected="live", new_state="exited")
-        if live is not None:
-            return live
-        return self._cas(terminal_id, expected="orphaned", new_state="exited")
+        return self._cas(
+            terminal_id,
+            expected=("live", "orphaned"),
+            new_state="exited",
+        )
 
     def mark_orphaned(self, terminal_id: str) -> Terminal | None:
         """CAS live to orphaned after native host-epoch or host-crash loss."""
@@ -248,19 +283,16 @@ class TerminalSettlementMixin:
         attempt_started_at: datetime,
     ) -> Terminal | None:
         """CAS pending to exited only when the captured attempt still owns the row."""
-        row = self.db.fetchone(
-            """
-            UPDATE terminals
-            SET state = 'exited', updated_at = now()
-            WHERE id = %s
-              AND state = 'pending'
-              AND attempt_generation = %s
-              AND attempt_started_at = %s
-            RETURNING *
+        return self._cas(
+            terminal_id,
+            expected="pending",
+            new_state="exited",
+            predicate_sql="""
+                AND attempt_generation = %s
+                AND attempt_started_at = %s
             """,
-            (str(UUID(terminal_id)), attempt_generation, attempt_started_at),
+            predicate_params=(attempt_generation, attempt_started_at),
         )
-        return _terminal(row)
 
     def record_process(
         self,
@@ -317,18 +349,13 @@ class TerminalSettlementMixin:
 
     def settle_exit(self, terminal_id: str, host_terminal_id: str) -> Terminal | None:
         """Move a matching pending or live native resource to exited."""
-        row = self.db.fetchone(
-            """
-            UPDATE terminals
-            SET state = 'exited', updated_at = now()
-            WHERE id = %s
-              AND state IN ('pending', 'live')
-              AND process ->> 'host_terminal_id' = %s
-            RETURNING *
-            """,
-            (str(UUID(terminal_id)), host_terminal_id),
+        return self._cas(
+            terminal_id,
+            expected=("pending", "live"),
+            new_state="exited",
+            predicate_sql="AND process ->> 'host_terminal_id' = %s",
+            predicate_params=(host_terminal_id,),
         )
-        return _terminal(row)
 
     def bump_attempt_generation(self, terminal_id: str) -> Terminal | None:
         """Start a new pending attempt and discard the prior host resource identity."""
@@ -373,24 +400,43 @@ class TerminalSettlementMixin:
         self,
         terminal_id: str,
         *,
-        expected: str,
+        expected: str | tuple[str, ...],
         new_state: str,
         extra: str = "",
         extra_params: tuple[object, ...] = (),
+        predicate_sql: str = "",
+        predicate_params: tuple[object, ...] = (),
     ) -> Terminal | None:
-        if (expected, new_state) not in ALLOWED_EDGES:
+        expected_states = (expected,) if isinstance(expected, str) else expected
+        if not expected_states or any(
+            (state, new_state) not in ALLOWED_EDGES for state in expected_states
+        ):
             raise IllegalTerminalTransitionError(
                 f"Illegal terminal transition {expected}->{new_state}"
             )
+        state_predicate = "state = %s" if len(expected_states) == 1 else "state = ANY(%s)"
+        state_param: object = (
+            expected_states[0] if len(expected_states) == 1 else list(expected_states)
+        )
         row = self.db.fetchone(
             f"""
             UPDATE terminals
             SET state = %s,
                 updated_at = now()
                 {extra}
-            WHERE id = %s AND state = %s
+            WHERE id = %s AND {state_predicate}
+                {predicate_sql}
             RETURNING *
             """,
-            (new_state, *extra_params, str(UUID(terminal_id)), expected),
+            (
+                new_state,
+                *extra_params,
+                str(UUID(terminal_id)),
+                state_param,
+                *predicate_params,
+            ),
         )
-        return _terminal(row)
+        terminal = _terminal(row)
+        if terminal is not None and new_state in {"exited", "orphaned"}:
+            self.db.after_commit(lambda: self._notify_transition(terminal))
+        return terminal
