@@ -6,6 +6,9 @@ resolver = "3"
 lto = true
 strip = true
 
+[profile.release.package.gobby-client]
+strip = "debuginfo"
+
 [profile.release.package.gobby-code]
 opt-level = 3
 
