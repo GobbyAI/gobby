@@ -61,7 +61,14 @@ Writer verification: confirmed. `wc -l` reports 998 (the plan said 988); `gcode 
 Move: 1.2 states the true line count, moves only `_spawn_codex_terminal`, and claims the repository ceiling; the planned `wc -l` check and 1.2.5 say "under 1,000" and 1.2.5 also asserts the old attribute path `spawn_executor._spawn_codex_terminal` still resolves (the `tests/agents/test_srt_spawn.py` consumer entry already depends on it). The split itself is kept: 1.2 only deletes lines in that file, but 998 lines leaves no headroom for the next edit, and the adversary's repair keeps it (restraint rung 6, the smallest complete split).
 
 ## Adversary moves
-Pending the adversary's withdraw-or-hold on the folded plan (recorded by the Program Director on receipt; the writer records nothing it did not receive). No item is contested, so nothing is escalated to the Program Director from this round.
+Protocol (prompt-council.md §4, the adversary's rule): "When the writer contests a finding, you rule on it: withdraw it, or hold it with your reasoning restated against theirs. A finding is resolved only when the writer folds it or you withdraw it." The writer folded all three findings and contested none, so each finding is resolved by its fold and no withdraw-or-hold ruling is owed on any of them. Nothing is open, so nothing goes to the Program Director's gate from this round.
+
+Observable dispositions per finding, as of the writer's fold commit:
+- Finding 1 gcr-r2-retired-pref-keys: writer FOLD (applied as required, with the `skip_serializing` refinement); resolved by fold. Adversary ruling: none owed (not contested).
+- Finding 2 gcr-r2-unnamed-pane-consumers: writer FOLD (applied as required, plus the validator-driven `workspace_panes.rs` split); resolved by fold. Adversary ruling: none owed (not contested).
+- Finding 3 gcr-r2-spawn-executor-ceiling: writer FOLD (applied as required); resolved by fold. Adversary ruling: none owed (not contested).
+
+Relay note: a spawned writer can message only its parent and this run may not spawn or address the adversary (gobby#14287), so any acknowledgment the adversary gives on the folded hash reaches this log through the Program Director's relay; the Program Director appends it below this line verbatim when received.
 
 ## Resulting artifact
 - Plan edits: sections 1.2, 3.1, 3.2a, 3.2b, 3.3, 3.4b, 3.6, 3.7, 3.8, 3.9 and V1 Verification (round-2 provenance).
