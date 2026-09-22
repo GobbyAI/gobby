@@ -195,7 +195,7 @@ fn apply_event(ws: &mut Workspace, message: &Value) -> Result<(), DaemonError> {
                     })?;
             }
         }
-        "exited" | "killed" | "terminated" => {
+        "exited" | "killed" | "terminated" | "orphaned" => {
             let Some(terminal_id) = terminal_id else {
                 return Ok(());
             };

@@ -579,7 +579,7 @@ impl Workspace<LiveDaemon> {
                             .unwrap_or_default();
                         self.ensure_live_pane(terminal_id, backend);
                     }
-                    Some("exited" | "killed" | "terminated") => {
+                    Some("exited" | "killed" | "terminated" | "orphaned") => {
                         self.roster_ids.retain(|id| id != terminal_id);
                         self.remove_terminal(terminal_id);
                     }

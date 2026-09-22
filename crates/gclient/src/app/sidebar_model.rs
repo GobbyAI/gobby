@@ -365,18 +365,18 @@ fn resolve_state(
     if orphaned {
         return RowState::Orphaned;
     }
-    // awaiting_input, awaiting_approval, awaiting_handoff: the turn ended
-    // and the session sits until someone answers.
-    if lifecycle_status.is_some_and(|status| status.starts_with("awaiting_")) {
+    // A paused or awaiting turn sits until the agent or user resumes it.
+    if lifecycle_status.is_some_and(|status| status == "paused" || status.starts_with("awaiting_"))
+    {
         return RowState::Paused;
+    }
+    if lifecycle_status.is_some_and(|status| matches!(status, "running" | "active")) {
+        return RowState::Working;
     }
     let Some(pane) = pane else {
         return RowState::Idle;
     };
-    let running = lifecycle_status.is_some_and(|status| matches!(status, "running" | "active"));
-    if pane.new_output && pane.live && running {
-        RowState::Working
-    } else if pane.new_output {
+    if pane.new_output {
         RowState::Unseen
     } else {
         RowState::Idle

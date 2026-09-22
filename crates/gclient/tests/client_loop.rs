@@ -43,7 +43,7 @@ use gobby_client::ui::scrollbar::{
     scrollbar_offset_from_drag_row, scrollbar_offset_from_row, scrollbar_thumb_grab_offset,
 };
 use gobby_client::ui::settings::{ClientPrefs, PassthroughModifier};
-use gobby_client::ui::sidebar::TERMINAL_ROW;
+use gobby_client::ui::sidebar::{session_rows, TERMINAL_ROW};
 use gobby_client::ui::status::{Toast, ToastKind};
 use gobby_client::ui::{render_workspace, Chrome, WorkspaceView};
 use gobby_client::Workspace;
@@ -434,6 +434,75 @@ async fn live_created_event_attaches_before_next_reconciliation() {
         .pane_for_terminal("terminal-created")
         .expect("created terminal pane");
     assert!(workspace.pane(created).is_live());
+    mock.shutdown().await;
+}
+
+#[tokio::test]
+async fn an_orphaned_terminal_leaves_the_sidebar() {
+    const TERMINAL_ID: &str = "orphaned-terminal";
+    let mock = MockDaemon::start("local-token").await;
+    mock.enqueue(
+        "GET",
+        "/api/terminals?",
+        200,
+        json!({
+            "items": [{"terminal_id": TERMINAL_ID, "backend": "native", "state": "live"}],
+            "next_cursor": null,
+            "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
+        }),
+    );
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    mock.wait_for_websocket().await;
+    let mut workspace = Workspace::live(daemon.clone());
+    workspace.select_project("project-1");
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("initial reconcile");
+
+    let chrome = Chrome::dark();
+    assert!(
+        session_rows(&workspace, &chrome)
+            .iter()
+            .any(|row| row.id == format!("{TERMINAL_ROW}{TERMINAL_ID}")),
+        "the native terminal starts as a bare sidebar row"
+    );
+
+    send_daemon_event(
+        &mock,
+        &daemon,
+        json!({
+            "type": "terminal_event",
+            "event": "orphaned",
+            "terminal_id": TERMINAL_ID,
+            "daemon_epoch": "epoch-1",
+            "seq": 2,
+        }),
+    )
+    .await;
+    workspace
+        .drain_live_events()
+        .await
+        .expect("drain orphaned event");
+
+    assert!(
+        workspace.pane_for_terminal(TERMINAL_ID).is_none(),
+        "the orphaned terminal pane is removed"
+    );
+    let rows = session_rows(&workspace, &chrome);
+    assert!(
+        rows.iter().all(|row| {
+            row.id != format!("{TERMINAL_ROW}{TERMINAL_ID}") && row.label != TERMINAL_ID
+        }),
+        "the orphaned terminal leaves no terminal or shell row: {rows:?}"
+    );
+
+    daemon
+        .close(Instant::now() + Duration::from_secs(1))
+        .await
+        .expect("close live daemon");
     mock.shutdown().await;
 }
 
@@ -6845,6 +6914,106 @@ fn sidebar_roster_entry(entry_id: &str, run_id: &str, terminal_id: &str) -> Valu
         "tmux": null,
         "last_activity_at": null,
     })
+}
+
+#[tokio::test]
+async fn sidebar_draws_paused_and_working_glyphs_from_roster_status() {
+    let mock = MockDaemon::start("local-token").await;
+    let terminals = ["paused-term", "active-term", "running-term", "blocked-term"];
+    let items: Vec<Value> = terminals
+        .iter()
+        .map(
+            |terminal_id| json!({"terminal_id": terminal_id, "backend": "native", "state": "live"}),
+        )
+        .collect();
+    mock.enqueue(
+        "GET",
+        "/api/terminals?",
+        200,
+        json!({
+            "items": items,
+            "next_cursor": null,
+            "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
+        }),
+    );
+
+    let session_entry = |entry_id: &str, session_id: &str, terminal_id: &str, status: &str| {
+        let mut entry = sidebar_roster_entry(entry_id, "unused", terminal_id);
+        entry["run_id"] = Value::Null;
+        entry["session_id"] = json!(session_id);
+        entry["lifecycle_status"] = json!(status);
+        entry
+    };
+    let paused = session_entry("session:paused", "paused", "paused-term", "paused");
+    let active = session_entry("session:active", "active", "active-term", "active");
+    let running = sidebar_roster_entry("run:running", "running", "running-term");
+    let mut blocked = session_entry("session:blocked", "blocked", "blocked-term", "completed");
+    blocked["attention"] = json!({"attention_id": "att-1", "kind": "actionable"});
+    mock.enqueue(
+        "GET",
+        "/api/attention/roster",
+        200,
+        json!({
+            "epoch": "attention-1",
+            "seq": 1,
+            "entries": [paused, active, running, blocked],
+        }),
+    );
+
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    mock.wait_for_websocket().await;
+    let mut workspace = Workspace::live(daemon.clone());
+    workspace.select_project("project-1");
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("roster reconcile");
+
+    const WIDTH: u16 = 120;
+    const HEIGHT: u16 = 40;
+    let mut chrome = Chrome::dark();
+    show_roster(&workspace, &mut chrome);
+    chrome.compute_view(&workspace, Rect::new(0, 0, WIDTH, HEIGHT));
+    let mut terminal = Terminal::new(TestBackend::new(WIDTH, HEIGHT)).expect("test terminal");
+    let mut hits = None;
+    terminal
+        .draw(|frame| {
+            hits = Some(render_workspace(frame, &workspace, &chrome));
+        })
+        .expect("draw sidebar frame");
+    chrome.view.apply_hits(hits.expect("sidebar frame hits"));
+    let buffer = terminal.backend().buffer();
+
+    for (entry_id, glyph) in [
+        ("session:paused", "‖"),
+        ("session:active", "▶"),
+        ("run:running", "▶"),
+        ("session:blocked", "⍾"),
+    ] {
+        let area = chrome
+            .view
+            .agent_hit_areas
+            .iter()
+            .find(|(row_id, _)| row_id == entry_id)
+            .map(|(_, area)| *area)
+            .unwrap_or_else(|| panic!("missing drawn sidebar row for {entry_id}"));
+        let row = (0..WIDTH)
+            .map(|x| buffer[(x, area.y)].symbol())
+            .collect::<String>();
+        assert!(row.contains(glyph), "{entry_id} must draw {glyph}: {row:?}");
+        assert!(
+            !row.contains('○'),
+            "{entry_id} must not draw the idle glyph: {row:?}"
+        );
+    }
+
+    daemon
+        .close(Instant::now() + Duration::from_secs(1))
+        .await
+        .expect("close live daemon");
+    mock.shutdown().await;
 }
 
 #[tokio::test]
