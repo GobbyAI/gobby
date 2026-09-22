@@ -272,6 +272,80 @@ fn overlay_refresh_seeds_prior_rows_from_parent() {
 
 #[test]
 #[serial_test::serial(serial_db)]
+fn overlay_refresh_seeds_parent_rows_as_managed_principal() {
+    let (mut owner, database_url, parent_id, _parent_cleanup) = seeded_project("managed-parent");
+    let parent_root = Path::new("/tmp").join(&parent_id);
+    seed_file(&mut owner, &parent_id, &parent_root, "pkg/a.py", &["pkg.b"]);
+    seed_file(&mut owner, &parent_id, &parent_root, "pkg/b.py", &["pkg.a"]);
+    let parent_ctx = test_context(database_url.clone(), &parent_id, ProjectIndexScope::Single);
+    refresh_project_communities(&mut owner, &parent_ctx).expect("refresh parent");
+    let parent_uuid = db::id_param(&parent_id).expect("parent id");
+    owner
+        .execute(
+            "UPDATE code_communities
+             SET label = 'parent model', label_source = 'model', label_confidence = 0.93,
+                 label_model = 'labeler-v1', labeled_signature = member_signature
+             WHERE project_id = $1",
+            &[&parent_uuid],
+        )
+        .expect("seed parent model label");
+    owner
+        .execute(
+            "UPDATE code_indexed_project_states
+             SET community_id_watermark = 40
+             WHERE project_id = $1",
+            &[&parent_uuid],
+        )
+        .expect("raise parent watermark");
+
+    let overlay_root = Path::new("/tmp").join(format!("managed-overlay-{parent_id}"));
+    let overlay_root_text = overlay_root.to_string_lossy().into_owned();
+    let overlay_uuid: uuid::Uuid = owner
+        .query_one(
+            "SELECT gobby_agent_auth.code_index_project_id($1)",
+            &[&overlay_root_text],
+        )
+        .expect("derive overlay project id")
+        .get(0);
+    let overlay_id = overlay_uuid.to_string();
+    cleanup_project(&mut owner, &overlay_id).expect("pre-clean overlay project");
+    let machine_id = gobby_core::machine::read_local_machine_id().expect("machine id");
+    api::upsert_project_seed(
+        &mut owner,
+        &machine_id,
+        &overlay_id,
+        &overlay_root,
+        IndexWriteMode::Overlay,
+    )
+    .expect("seed overlay indexed project");
+    let _overlay_cleanup = ProjectCleanup {
+        database_url: database_url.clone(),
+        project_id: overlay_id.clone(),
+    };
+    let mut managed = managed_overlay_principal(
+        &mut owner,
+        &database_url,
+        &parent_id,
+        &parent_root,
+        &overlay_root,
+        overlay_uuid,
+    );
+    let ctx = overlay_context(database_url, &parent_id, &overlay_id);
+
+    let report = refresh_project_communities(managed.client(), &ctx)
+        .expect("refresh overlay through managed principal");
+
+    assert!(!report.skipped_unchanged);
+    let rows = raw_rows(&mut owner, &overlay_id);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].community_id, 1);
+    assert_eq!(rows[0].label, "parent model");
+    assert_eq!(rows[0].label_source, LabelSource::Model);
+    assert_eq!(project_state(&mut owner, &overlay_id).0, 40);
+}
+
+#[test]
+#[serial_test::serial(serial_db)]
 fn overlay_first_refresh_commits_when_partition_matches_parent() {
     let (mut conn, database_url, parent_id, _parent_cleanup) = seeded_project("match-parent");
     let (_, _, overlay_id, _overlay_cleanup) = seeded_project("match-overlay");
@@ -294,7 +368,7 @@ fn overlay_first_refresh_commits_when_partition_matches_parent() {
 
 #[test]
 #[serial_test::serial(serial_db)]
-fn overlay_seed_locks_parent_state_row() {
+fn overlay_seed_reads_parent_snapshot_without_locking() {
     let (mut conn, database_url, parent_id, _parent_cleanup) = seeded_project("lock-parent");
     let (_, _, overlay_id, _overlay_cleanup) = seeded_project("lock-overlay");
     store_partition(
@@ -329,10 +403,11 @@ fn overlay_seed_locks_parent_state_row() {
         done_sender.send(result).expect("send seed result");
     });
     started_receiver.recv().expect("seeder started");
-    assert!(
+    assert_eq!(
         done_receiver
-            .recv_timeout(Duration::from_millis(100))
-            .is_err()
+            .recv_timeout(Duration::from_secs(2))
+            .expect("plain parent snapshot read does not wait for a parent row lock"),
+        (3, 3)
     );
     parent_replace
         .commit(
@@ -346,12 +421,6 @@ fn overlay_seed_locks_parent_state_row() {
             "committed",
         )
         .expect("commit parent replacement");
-    assert_eq!(
-        done_receiver
-            .recv_timeout(Duration::from_secs(2))
-            .expect("seed observes committed parent"),
-        (8, 8)
-    );
     seeder.join().expect("seeder thread");
 }
 
@@ -1182,9 +1251,122 @@ fn unique_test_uuid(prefix: &str) -> String {
     .to_string()
 }
 
+fn managed_overlay_principal(
+    owner: &mut postgres::Client,
+    database_url: &str,
+    parent_id: &str,
+    parent_root: &Path,
+    overlay_root: &Path,
+    expected_overlay_id: uuid::Uuid,
+) -> ManagedPrincipal {
+    let machine_id =
+        db::id_param(&gobby_core::machine::read_local_machine_id().expect("machine id"))
+            .expect("machine uuid");
+    let parent_id = db::id_param(parent_id).expect("parent id");
+    let session_id = uuid::Uuid::new_v4();
+    let worktree_id = uuid::Uuid::new_v4();
+    let execution_id = uuid::Uuid::new_v4();
+    let password = format!("gobby-community-test-{}", uuid::Uuid::new_v4().simple());
+    let parent_root = parent_root.to_string_lossy().into_owned();
+    let overlay_root = overlay_root.to_string_lossy().into_owned();
+    let external_id = format!("community-managed-{session_id}");
+
+    owner
+        .execute(
+            "INSERT INTO projects(id, name) VALUES ($1, $2)",
+            &[&parent_id, &format!("community-managed-{parent_id}")],
+        )
+        .expect("seed managed principal project");
+    owner
+        .execute(
+            "INSERT INTO project_checkouts(machine_id, project_id, root_path)
+             VALUES ($1, $2, $3)",
+            &[&machine_id, &parent_id, &parent_root],
+        )
+        .expect("seed managed principal checkout");
+    owner
+        .execute(
+            "INSERT INTO sessions(id, external_id, machine_id, source, project_id)
+             VALUES ($1, $2, $3, 'test', $4)",
+            &[&session_id, &external_id, &machine_id, &parent_id],
+        )
+        .expect("seed managed principal session");
+    owner
+        .execute(
+            "INSERT INTO worktrees(
+                 id, project_id, machine_id, branch_name, worktree_path, agent_session_id
+             ) VALUES ($1, $2, $3, $4, $5, $6)",
+            &[
+                &worktree_id,
+                &parent_id,
+                &machine_id,
+                &format!("community-managed-{worktree_id}"),
+                &overlay_root,
+                &session_id,
+            ],
+        )
+        .expect("seed managed principal worktree");
+    let issued = owner
+        .query_one(
+            "SELECT role_name::TEXT, credential_generation
+             FROM gobby_agent_auth.issue_tool_principal(
+                 $1, $2, $3, clock_timestamp() + INTERVAL '10 minutes', $4
+             )",
+            &[&execution_id, &session_id, &machine_id, &password],
+        )
+        .expect("issue managed gcode principal");
+    let role_name: String = issued.get(0);
+    let credential_generation: i32 = issued.get(1);
+    let bound_overlay_id: Option<uuid::Uuid> = owner
+        .query_one(
+            "SELECT code_overlay_project_id
+             FROM gobby_agent_auth.principal_bindings
+             WHERE managed_execution_id = $1",
+            &[&execution_id],
+        )
+        .expect("read managed principal binding")
+        .get(0);
+    assert_eq!(bound_overlay_id, Some(expected_overlay_id));
+
+    let mut config = database_url
+        .parse::<postgres::Config>()
+        .expect("parse test database URL");
+    config.user(&role_name).password(password);
+    let client = config
+        .connect(postgres::NoTls)
+        .expect("connect as managed gcode principal");
+    ManagedPrincipal {
+        client: Some(client),
+        database_url: database_url.to_string(),
+        execution_id,
+        credential_generation,
+        session_id,
+        worktree_id,
+        machine_id,
+        project_id: parent_id,
+    }
+}
+
 struct ProjectCleanup {
     database_url: String,
     project_id: String,
+}
+
+struct ManagedPrincipal {
+    client: Option<postgres::Client>,
+    database_url: String,
+    execution_id: uuid::Uuid,
+    credential_generation: i32,
+    session_id: uuid::Uuid,
+    worktree_id: uuid::Uuid,
+    machine_id: uuid::Uuid,
+    project_id: uuid::Uuid,
+}
+
+impl ManagedPrincipal {
+    fn client(&mut self) -> &mut postgres::Client {
+        self.client.as_mut().expect("managed principal connection")
+    }
 }
 
 struct CheckoutRootRestore {
@@ -1215,6 +1397,25 @@ impl Drop for ProjectCleanup {
     fn drop(&mut self) {
         if let Ok(mut conn) = gobby_core::postgres::connect_readwrite(&self.database_url) {
             let _ = cleanup_project(&mut conn, &self.project_id);
+        }
+    }
+}
+
+impl Drop for ManagedPrincipal {
+    fn drop(&mut self) {
+        self.client.take();
+        if let Ok(mut owner) = db::connect_readwrite(&self.database_url) {
+            let _ = owner.query_opt(
+                "SELECT gobby_agent_auth.revoke_principal($1, $2)",
+                &[&self.execution_id, &self.credential_generation],
+            );
+            let _ = owner.execute("DELETE FROM worktrees WHERE id = $1", &[&self.worktree_id]);
+            let _ = owner.execute("DELETE FROM sessions WHERE id = $1", &[&self.session_id]);
+            let _ = owner.execute(
+                "DELETE FROM project_checkouts WHERE machine_id = $1 AND project_id = $2",
+                &[&self.machine_id, &self.project_id],
+            );
+            let _ = owner.execute("DELETE FROM projects WHERE id = $1", &[&self.project_id]);
         }
     }
 }

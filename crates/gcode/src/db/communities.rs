@@ -165,13 +165,12 @@ impl ReplaceTxn<'_> {
             .query_opt(
                 "SELECT community_id_watermark
                  FROM code_indexed_project_states
-                 WHERE machine_id = $1 AND project_id = $2
-                 FOR UPDATE",
+                 WHERE machine_id = $1 AND project_id = $2",
                 &[&self.machine_id, &parent_project_id],
             )?
             .ok_or_else(|| anyhow!("parent indexed project state is missing for overlay seed"))?;
         let parent_watermark: i32 = state.get(0);
-        self.prior = read_rows(&mut self.tx, &self.machine_id, &parent_project_id, true)?;
+        self.prior = read_rows(&mut self.tx, &self.machine_id, &parent_project_id, false)?;
         self.watermark = self.watermark.max(parent_watermark);
         Ok(())
     }
