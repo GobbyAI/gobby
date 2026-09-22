@@ -39,6 +39,7 @@ class _ShellSegmentMetadata:
     # read-only or mutating. Python also reports literal write targets.
     stdin_program_interpreter: str | None = None
     cwd: str | None = None
+    loop_binding_variable: str | None = None
 
 
 def _pipeline_filter_output_line_bound(parts: list[str]) -> int | None:

@@ -95,6 +95,7 @@ _ECHO_UNSAFE_CHARS = frozenset({"$", "`"})
 _KNOWN_NAVIGATION_SHELL_REFERENCE = re.compile(
     r"(?<![\\$])\$(?:\{(?P<braced>HOME|PWD|TMPDIR)\}|(?P<bare>HOME|PWD|TMPDIR)(?!\w))"
 )
+_LOOP_BINDING_REFERENCE = re.compile(r"^\$(?:\{(?P<braced>[A-Za-z_]\w*)\}|(?P<bare>[A-Za-z_]\w*))$")
 
 
 def _build_canonical_tool_metadata(
@@ -282,8 +283,18 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
     mutation_paths: list[str] = []
     write_paths: list[str] = []
     mutation_scope_unknown = False
+    mutation_scope_resolved_by_loop_binding = True
+    saw_unexpanded_mutation_path = False
     navigation_scope_unknown = False
+    loop_bindings: dict[str, tuple[str, ...]] = {}
     for item in active:
+        if item.loop_binding_variable:
+            if item.paths and all(
+                not _contains_unexpanded_shell_reference(path) for path in item.paths
+            ):
+                loop_bindings[item.loop_binding_variable] = item.paths
+            else:
+                loop_bindings.pop(item.loop_binding_variable, None)
         resolvable = [path for path in item.paths if not _contains_unexpanded_shell_reference(path)]
         if (
             item.extra
@@ -291,10 +302,19 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
             and len(resolvable) != len(item.paths)
         ):
             navigation_scope_unknown = True
-        if item.repo_mutation and any(
-            _contains_unexpanded_shell_reference(path) for path in item.paths
-        ):
+        unresolved_mutation_paths = (
+            [path for path in item.paths if _contains_unexpanded_shell_reference(path)]
+            if item.repo_mutation
+            else []
+        )
+        if unresolved_mutation_paths:
             mutation_scope_unknown = True
+            saw_unexpanded_mutation_path = True
+            for path in unresolved_mutation_paths:
+                match = _LOOP_BINDING_REFERENCE.fullmatch(path)
+                variable = match.group("braced") or match.group("bare") if match else None
+                if not variable or variable not in loop_bindings:
+                    mutation_scope_resolved_by_loop_binding = False
         for path in resolvable:
             if path not in paths:
                 paths.append(path)
@@ -328,6 +348,8 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
         extra = _without_code_index_navigation(extra)
     if mutation_scope_unknown:
         extra["_canonical_repo_mutation_scope_unknown"] = True
+    if saw_unexpanded_mutation_path and mutation_scope_resolved_by_loop_binding:
+        extra["_canonical_repo_mutation_scope_resolved_by_loop_binding"] = True
     if navigation_scope_unknown and not paths:
         extra["_canonical_code_navigation_scope_unknown"] = True
 
@@ -577,6 +599,7 @@ def _classify_for_loop_header(parts: list[str], cwd: str | None) -> _ShellSegmen
     return _ShellSegmentMetadata(
         "execute",
         paths=tuple(_rebase_shell_paths(items, cwd)),
+        loop_binding_variable=parts[1] if len(parts) > 1 else None,
     )
 
 

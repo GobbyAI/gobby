@@ -381,7 +381,7 @@ class TestBlockUnresolvedScopeShellWrite:
         assert "canonical_repo_mutation_scope_unknown" in body.when
 
     @pytest.mark.asyncio
-    async def test_claimed_session_blocks_opaque_shell_write_but_allows_literal_target(
+    async def test_rule_distinguishes_resolved_loop_partial_and_opaque_shell_targets(
         self,
         db: HubDatabase,
         tmp_path: Path,
@@ -391,7 +391,62 @@ class TestBlockUnresolvedScopeShellWrite:
             "require_task_before_edit": True,
             "task_claimed": True,
             "plan_mode": False,
+            "loaded_skills": ["python", "restraint"],
         }
+
+        resolved_loop_data: dict[str, object] = {
+            "tool_name": "Bash",
+            "tool_input": {
+                "command": 'for f in a.py b.py; do sed -i "s/x/y/" "$f"; done',
+                "cwd": str(tmp_path),
+            },
+            "project_path": str(tmp_path),
+        }
+        normalize_tool_fields(resolved_loop_data)
+        resolved_loop_event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id=SESSION_ID,
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data=resolved_loop_data,
+        )
+
+        resolved_loop_response = await RuleEngine(db).evaluate(
+            resolved_loop_event,
+            session_id=SESSION_ID,
+            variables=variables,
+        )
+
+        assert resolved_loop_data["canonical_file_paths"] == ["a.py", "b.py"]
+        assert "canonical_repo_mutation_scope_unknown" not in resolved_loop_data
+        assert resolved_loop_response.decision == "allow", resolved_loop_response.reason
+
+        partial_data: dict[str, object] = {
+            "tool_name": "Bash",
+            "tool_input": {
+                "command": 'mv "$SRC" dst.txt',
+                "cwd": str(tmp_path),
+            },
+            "project_path": str(tmp_path),
+        }
+        normalize_tool_fields(partial_data)
+        partial_event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id=SESSION_ID,
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data=partial_data,
+        )
+
+        partial_response = await RuleEngine(db).evaluate(
+            partial_event,
+            session_id=SESSION_ID,
+            variables=variables,
+        )
+
+        assert partial_data["canonical_file_paths"] == ["dst.txt"]
+        assert partial_data["canonical_repo_mutation_scope_unknown"] is True
+        assert partial_response.decision == "block"
 
         opaque_data: dict[str, object] = {
             "tool_name": "Bash",
@@ -416,38 +471,11 @@ class TestBlockUnresolvedScopeShellWrite:
             variables=variables,
         )
 
-        assert opaque_data["canonical_repo_mutation"] is True
+        assert opaque_data.get("canonical_file_paths") in (None, [])
         assert opaque_data["canonical_repo_mutation_scope_unknown"] is True
         assert opaque_response.decision == "block"
         assert "literal path" in (opaque_response.reason or "")
         assert "Write/Edit" in (opaque_response.reason or "")
-
-        literal_data: dict[str, object] = {
-            "tool_name": "Bash",
-            "tool_input": {
-                "command": "mkdir -p src/generated",
-                "cwd": str(tmp_path),
-            },
-            "project_path": str(tmp_path),
-        }
-        normalize_tool_fields(literal_data)
-        literal_event = HookEvent(
-            event_type=HookEventType.BEFORE_TOOL,
-            session_id=SESSION_ID,
-            source=SessionSource.CODEX,
-            timestamp=datetime.now(UTC),
-            data=literal_data,
-        )
-
-        literal_response = await RuleEngine(db).evaluate(
-            literal_event,
-            session_id=SESSION_ID,
-            variables=variables,
-        )
-
-        assert literal_data["canonical_file_paths"] == ["src/generated"]
-        assert "canonical_repo_mutation_scope_unknown" not in literal_data
-        assert literal_response.decision == "allow", literal_response.reason
 
         structured_data: dict[str, object] = {
             "tool_name": "Write",

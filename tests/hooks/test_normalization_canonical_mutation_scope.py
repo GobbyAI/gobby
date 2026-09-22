@@ -155,10 +155,32 @@ def test_loop_header_still_scopes_a_mutating_body_with_unexpanded_paths() -> Non
     """
     metadata = _merge_shell_segment_metadata(
         [
-            _ShellSegmentMetadata(kind="execute", paths=("a.py", "b.py")),
+            _ShellSegmentMetadata(
+                kind="execute",
+                paths=("a.py", "b.py"),
+                loop_binding_variable="f",
+            ),
             _ShellSegmentMetadata(kind="write", paths=("$f",), repo_mutation=True),
         ]
     )
 
     assert metadata["canonical_file_paths"] == ["a.py", "b.py"]
     assert metadata["_canonical_repo_mutation_scope_unknown"] is True
+    assert metadata["_canonical_repo_mutation_scope_resolved_by_loop_binding"] is True
+
+
+def test_loop_binding_clears_only_the_public_unknown_scope(tmp_path: Path) -> None:
+    data: dict[str, Any] = {
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": 'for f in a.py b.py; do sed -i "s/x/y/" "$f"; done',
+            "cwd": str(tmp_path),
+        },
+        "project_path": str(tmp_path),
+    }
+
+    _set_canonical_tool_metadata(data)
+
+    assert data["canonical_file_paths"] == ["a.py", "b.py"]
+    assert data["canonical_repo_mutation"] is True
+    assert "canonical_repo_mutation_scope_unknown" not in data
