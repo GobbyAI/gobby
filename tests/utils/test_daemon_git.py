@@ -9,6 +9,7 @@ import threading
 import time
 from pathlib import Path
 from typing import Any, cast
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -50,9 +51,14 @@ def _write_fake_git(tmp_path: Path) -> None:
         'if [ -n "$GIT_TEST_COUNT" ]; then printf x >> "$GIT_TEST_COUNT"; fi\n'
         'if [ -n "$GIT_TEST_PIDS" ]; then\n'
         "  /bin/sleep 30 &\n"
-        '  printf \'%s %s\' "$$" "$!" > "$GIT_TEST_PIDS"\n'
+        "  helper_pid=$!\n"
+        '  /bin/sleep "${GIT_TEST_DELAY:-0}" &\n'
+        "  command_pid=$!\n"
+        '  printf \'%s %s %s\' "$$" "$helper_pid" "$command_pid" > "$GIT_TEST_PIDS"\n'
+        '  wait "$command_pid"\n'
+        "else\n"
+        '  /bin/sleep "${GIT_TEST_DELAY:-0}"\n'
         "fi\n"
-        '/bin/sleep "${GIT_TEST_DELAY:-0}"\n'
         'if [ -n "$GIT_TEST_OUTPUT_FILE" ]; then\n'
         '  /bin/cat "$GIT_TEST_OUTPUT_FILE"\n'
         "  exit 0\n"
@@ -114,6 +120,15 @@ async def _assert_processes_gone(*process_ids: int) -> None:
             await asyncio.sleep(0.01)
 
 
+def _assert_no_new_git_workers(baseline: set[threading.Thread]) -> None:
+    leaked = [
+        thread
+        for thread in threading.enumerate()
+        if thread.name == "gobby-daemon-git" and thread not in baseline
+    ]
+    assert leaked == []
+
+
 @pytest.mark.asyncio
 async def test_run_returns_typed_success_and_failure(tmp_path: Path) -> None:
     _write_fake_git(tmp_path)
@@ -134,6 +149,127 @@ async def test_run_returns_typed_success_and_failure(tmp_path: Path) -> None:
     assert isinstance(failure, GitFailed)
     assert failure.returncode == 7
     assert failure.stderr.strip() == "failed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("platform_name", "missing_attribute"),
+    [
+        ("nt", None),
+        ("posix", "posix_spawn"),
+        ("posix", "POSIX_SPAWN_DUP2"),
+        ("posix", "POSIX_SPAWN_CLOSE"),
+    ],
+)
+async def test_run_posix_spawn_falls_back_when_platform_support_is_unavailable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    platform_name: str,
+    missing_attribute: str | None,
+) -> None:
+    service = DaemonGitService()
+    expected = GitOk("ok", ("git", "status"), "", "")
+    fallback = AsyncMock(return_value=expected)
+    monkeypatch.setattr(service, "run", fallback)
+    monkeypatch.setattr("gobby.utils.daemon_git.os.name", platform_name)
+    if missing_attribute is not None:
+        monkeypatch.delattr(f"gobby.utils.daemon_git.os.{missing_attribute}")
+
+    result = await service.run_posix_spawn(["status"], cwd=tmp_path)
+
+    assert result is expected
+    fallback.assert_awaited_once_with(
+        ["status"],
+        cwd=tmp_path,
+        timeout=10.0,
+        env=None,
+        input_text=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_posix_spawn_uses_owned_posix_spawn_process_group(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_fake_git(tmp_path)
+    loop_thread = threading.get_ident()
+    spawn_calls: list[tuple[str, tuple[str, ...], dict[str, Any], int]] = []
+    real_posix_spawn = os.posix_spawn
+
+    def recording_posix_spawn(
+        path: str,
+        argv: tuple[str, ...],
+        env: dict[str, str],
+        **kwargs: Any,
+    ) -> int:
+        spawn_calls.append((path, argv, kwargs, threading.get_ident()))
+        return real_posix_spawn(path, argv, env, **kwargs)
+
+    monkeypatch.setattr("gobby.utils.daemon_git.os.posix_spawn", recording_posix_spawn)
+
+    result = await DaemonGitService().run_posix_spawn(
+        ["rev-parse", "HEAD"],
+        cwd=tmp_path,
+        timeout=2.0,
+        env=_git_env(tmp_path),
+    )
+
+    assert isinstance(result, GitOk)
+    assert len(spawn_calls) == 1
+    path, argv, kwargs, spawn_thread = spawn_calls[0]
+    assert path == str(tmp_path / "git")
+    assert argv == (str(tmp_path / "git"), "-C", str(tmp_path), "rev-parse", "HEAD")
+    assert spawn_thread != loop_thread
+    assert kwargs["setpgroup"] == 0
+    assert kwargs["file_actions"]
+
+
+@pytest.mark.asyncio
+async def test_run_posix_spawn_timeout_kills_children_and_settles_worker(tmp_path: Path) -> None:
+    _write_fake_git(tmp_path)
+    pids_file = tmp_path / "pids"
+    baseline_workers = set(threading.enumerate())
+
+    result = await DaemonGitService().run_posix_spawn(
+        ["status"],
+        cwd=tmp_path,
+        timeout=0.5,
+        env=_git_env(tmp_path, GIT_TEST_DELAY="30", GIT_TEST_PIDS=str(pids_file)),
+    )
+
+    assert isinstance(result, GitTimeout)
+    process_ids = tuple(map(int, pids_file.read_text(encoding="utf-8").split()))
+    assert len(process_ids) == 3
+    await _assert_processes_gone(*process_ids)
+    _assert_no_new_git_workers(baseline_workers)
+
+
+@pytest.mark.asyncio
+async def test_run_posix_spawn_cancellation_kills_children_and_settles_worker(
+    tmp_path: Path,
+) -> None:
+    _write_fake_git(tmp_path)
+    pids_file = tmp_path / "pids"
+    baseline_workers = set(threading.enumerate())
+    request = asyncio.create_task(
+        DaemonGitService().run_posix_spawn(
+            ["status"],
+            cwd=tmp_path,
+            timeout=30,
+            env=_git_env(tmp_path, GIT_TEST_DELAY="30", GIT_TEST_PIDS=str(pids_file)),
+        )
+    )
+    await _wait_for_file(pids_file)
+
+    request.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await request
+    process_ids = tuple(map(int, pids_file.read_text(encoding="utf-8").split()))
+    assert len(process_ids) == 3
+    await _assert_processes_gone(*process_ids)
+    _assert_no_new_git_workers(baseline_workers)
 
 
 @pytest.mark.asyncio
@@ -345,11 +481,12 @@ async def test_timeout_kills_process_group_and_reaps_leader(
     )
 
     assert isinstance(result, GitTimeout)
-    leader, child = map(int, pids.read_text(encoding="utf-8").split())
+    process_ids = tuple(map(int, pids.read_text(encoding="utf-8").split()))
+    leader = process_ids[0]
     assert "phase=running" in result.stderr
     assert "spawn_seconds=" in result.stderr
     assert "running_seconds=" in result.stderr
-    await _assert_processes_gone(leader, child)
+    await _assert_processes_gone(*process_ids)
 
     warnings = [
         record
@@ -367,7 +504,7 @@ async def test_timeout_kills_process_group_and_reaps_leader(
 
 
 @pytest.mark.asyncio
-async def test_nonstream_timeout_waits_for_bounded_worker_cleanup(
+async def test_nonstream_timeout_waits_for_worker_cleanup(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -391,7 +528,7 @@ async def test_nonstream_timeout_waits_for_bounded_worker_cleanup(
         return DelayedCompletionProcess(real_popen(*args, **kwargs))
 
     monkeypatch.setattr("gobby.utils.daemon_git.subprocess.Popen", delayed_popen)
-    asyncio.get_running_loop().call_later(0.08, release_cleanup.set)
+    asyncio.get_running_loop().call_later(0.35, release_cleanup.set)
 
     started = time.monotonic()
     result = await DaemonGitService().run(
@@ -404,7 +541,7 @@ async def test_nonstream_timeout_waits_for_bounded_worker_cleanup(
 
     assert isinstance(result, GitTimeout)
     assert release_cleanup.is_set()
-    assert elapsed >= 0.07
+    assert elapsed >= 0.3
     cleanup_match = re.search(r"cleanup_seconds=([0-9.]+)", result.stderr)
     assert cleanup_match is not None
     assert float(cleanup_match.group(1)) >= 0.04
@@ -528,8 +665,8 @@ async def test_cancellation_kills_process_group_and_reaps_leader(tmp_path: Path)
 
     with pytest.raises(asyncio.CancelledError):
         await request
-    leader, child = map(int, pids.read_text(encoding="utf-8").split())
-    await _assert_processes_gone(leader, child)
+    process_ids = tuple(map(int, pids.read_text(encoding="utf-8").split()))
+    await _assert_processes_gone(*process_ids)
 
 
 @pytest.mark.asyncio
@@ -552,25 +689,23 @@ async def test_deadline_includes_slow_spawn(
 
     monkeypatch.setattr("gobby.utils.daemon_git.subprocess.Popen", slow_popen)
     service = DaemonGitService()
+    asyncio.get_running_loop().call_later(0.08, release_spawn.set)
 
-    try:
-        started = time.monotonic()
-        result = await asyncio.wait_for(
-            service.run(
-                ["status"],
-                cwd=tmp_path,
-                timeout=0.02,
-                env=_git_env(tmp_path, GIT_TEST_DELAY="30"),
-            ),
-            timeout=0.5,
-        )
-        assert isinstance(result, GitTimeout)
-        assert time.monotonic() - started < 0.5
-        assert not created
-        assert "phase=spawning" in result.stderr
-    finally:
-        release_spawn.set()
-        assert await asyncio.to_thread(finished.wait, 2)
+    started = time.monotonic()
+    result = await asyncio.wait_for(
+        service.run(
+            ["status"],
+            cwd=tmp_path,
+            timeout=0.02,
+            env=_git_env(tmp_path, GIT_TEST_DELAY="30"),
+        ),
+        timeout=0.5,
+    )
+
+    assert isinstance(result, GitTimeout)
+    assert 0.07 <= time.monotonic() - started < 0.5
+    assert "phase=spawning" in result.stderr
+    assert finished.is_set()
     assert len(created) == 1
     await _assert_processes_gone(created[0].pid)
     assert created[0].poll() is not None

@@ -19,6 +19,7 @@ from fastapi import FastAPI, HTTPException
 from starlette.testclient import TestClient
 
 import gobby.servers.routes.source_control as sc_module
+import gobby.servers.routes.source_control_git as sc_git_module
 from gobby.clones.git import CloneGitManager
 from gobby.servers.routes.source_control import (
     _get_cached,
@@ -128,7 +129,9 @@ async def test_daemon_git_timeout_is_unavailable_without_blocking_loop(
         return GitTimeout("timeout", ("git", *args), 0.01)
 
     monkeypatch.setattr(source_control, "_resolve_project", lambda *_args: "/tmp/repo")
-    monkeypatch.setattr("gobby.servers.routes.source_control_git.daemon_git.run", timeout_git)
+    monkeypatch.setattr(
+        "gobby.servers.routes.source_control_git.daemon_git.run_posix_spawn", timeout_git
+    )
     async with AsyncClient(transport=ASGITransport(app=client.app), base_url="http://test") as http:
         request = asyncio.create_task(http.get("/api/source-control/status"))
         try:
@@ -142,7 +145,7 @@ async def test_daemon_git_timeout_is_unavailable_without_blocking_loop(
         response = await request
     assert response.status_code == 504
     assert response.json() == {"detail": "Git status timed out"}
-    assert source_control._get_cached("status:default", 60) is None
+    assert source_control._get_cached(sc_git_module._status_cache_key("/tmp/repo"), 60) is None
 
 
 # ---------------------------------------------------------------------------
@@ -283,12 +286,11 @@ class TestResolveProject:
     def test_resolve_with_project_id(
         self, mock_server: MagicMock, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        mock_project = MagicMock()
-        mock_project.id = "proj-123"
+        mock_project = SimpleNamespace(id="proj-123")
 
         mock_pm = MagicMock()
         mock_pm.get.return_value = mock_project
-        mock_pm.db = MagicMock()
+        mock_pm.db = object()
         monkeypatch.setattr(
             "gobby.servers.routes.source_control_git.require_local_machine_id",
             lambda _provided, **_kwargs: "machine-1",
@@ -306,17 +308,18 @@ class TestResolveProject:
             repo_path = _resolve_project(mock_server, "proj-123")
 
         assert repo_path == "/tmp/repo"
+        assert Path(repo_path).is_absolute()
+        mock_pm.get.assert_called_once_with("proj-123")
+        mock_pm.list.assert_not_called()
 
     def test_resolve_without_project_id_falls_back(
         self, mock_server: MagicMock, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        mock_proj = MagicMock()
-        mock_proj.id = "proj-fallback"
-        mock_proj.name = "my-project"
+        mock_proj = SimpleNamespace(id="proj-fallback", name="my-project")
 
         mock_pm = MagicMock()
         mock_pm.list.return_value = [mock_proj]
-        mock_pm.db = MagicMock()
+        mock_pm.db = object()
         monkeypatch.setattr(
             "gobby.servers.routes.source_control_git.require_local_machine_id",
             lambda _provided, **_kwargs: "machine-1",
@@ -334,21 +337,19 @@ class TestResolveProject:
             repo_path = _resolve_project(mock_server, None)
 
         assert repo_path == "/tmp/fallback"
+        assert Path(repo_path).is_absolute()
+        mock_pm.list.assert_called_once_with()
+        mock_pm.get.assert_not_called()
 
     def test_resolve_skips_hidden_projects(
         self, mock_server: MagicMock, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        orphaned = MagicMock()
-        orphaned.id = "orphaned"
-        orphaned.name = "_orphaned"
-
-        real = MagicMock()
-        real.id = "real"
-        real.name = "real-project"
+        orphaned = SimpleNamespace(id="orphaned", name="_orphaned")
+        real = SimpleNamespace(id="real", name="real-project")
 
         mock_pm = MagicMock()
         mock_pm.list.return_value = [orphaned, real]
-        mock_pm.db = MagicMock()
+        mock_pm.db = object()
         monkeypatch.setattr(
             "gobby.servers.routes.source_control_git.require_local_machine_id",
             lambda _provided, **_kwargs: "machine-1",
@@ -368,6 +369,9 @@ class TestResolveProject:
             repo_path = _resolve_project(mock_server, None)
 
         assert repo_path == "/tmp/real"
+        assert Path(repo_path).is_absolute()
+        mock_pm.list.assert_called_once_with()
+        mock_pm.get.assert_not_called()
 
     def test_resolve_returns_none_none_on_failure(self, mock_server: MagicMock) -> None:
         mock_server.session_manager = None
@@ -383,16 +387,14 @@ class TestResolveProject:
         global_project = MagicMock()
         global_project.id = GLOBAL_PROJECT_ID
         global_project.name = "_global"
-        personal = MagicMock()
-        personal.id = PERSONAL_PROJECT_ID
-        personal.name = "_personal"
+        personal = SimpleNamespace(id=PERSONAL_PROJECT_ID, name="_personal")
         real = MagicMock()
         real.id = "real"
         real.name = "real-project"
 
         mock_pm = MagicMock()
         mock_pm.list.return_value = [global_project, personal, real]
-        mock_pm.db = MagicMock()
+        mock_pm.db = object()
         monkeypatch.setattr(
             "gobby.servers.routes.source_control_git.require_local_machine_id",
             lambda _provided, **_kwargs: "machine-1",
@@ -422,13 +424,11 @@ class TestResolveProject:
     def test_resolve_explicit_sentinel_is_empty_not_conflict(
         self, mock_server: MagicMock, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        personal = MagicMock()
-        personal.id = PERSONAL_PROJECT_ID
-        personal.name = "_personal"
+        personal = SimpleNamespace(id=PERSONAL_PROJECT_ID, name="_personal")
 
         mock_pm = MagicMock()
         mock_pm.get.return_value = personal
-        mock_pm.db = MagicMock()
+        mock_pm.db = object()
 
         def refuse(*_args: Any, **_kwargs: Any) -> str:
             raise AssertionError("sentinel projects must not resolve a checkout")
@@ -443,6 +443,8 @@ class TestResolveProject:
             repo_path = _resolve_project(mock_server, PERSONAL_PROJECT_ID)
 
         assert repo_path is None
+        mock_pm.get.assert_called_once_with(PERSONAL_PROJECT_ID)
+        mock_pm.list.assert_not_called()
 
     def test_status_for_sentinel_project_is_empty_200(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
@@ -517,14 +519,14 @@ class TestGetStatus:
         assert data["branch_count"] == 0
 
     def test_status_with_repo_path(self, client: TestClient, mock_server: MagicMock) -> None:
-        """When repo_path resolves, runs git commands to get branch info."""
+        """When repo_path resolves, gets all local branch status in one Git call."""
         mock_server.services.worktree_storage = None
         mock_server.services.clone_storage = None
 
-        # Mock git responses
-        branch_result = MagicMock(returncode=0, stdout="feature/test\n")
-        list_result = MagicMock(returncode=0, stdout="  main\n* feature/test\n  develop\n")
-        tracking_result = MagicMock(returncode=0, stdout="\t\n")
+        branch_result = MagicMock(
+            returncode=0,
+            stdout=" \tmain\t\t\n*\tfeature/test\t\t\n \tdevelop\t\t\n",
+        )
 
         with (
             patch(
@@ -534,8 +536,8 @@ class TestGetStatus:
             patch(
                 "gobby.servers.routes.source_control._run_git",
                 new_callable=AsyncMock,
-                side_effect=[branch_result, list_result, tracking_result],
-            ),
+                return_value=branch_result,
+            ) as run_git,
         ):
             response = client.get("/api/source-control/status")
 
@@ -543,6 +545,65 @@ class TestGetStatus:
         data = response.json()
         assert data["current_branch"] == "feature/test"
         assert data["branch_count"] == 3
+        run_git.assert_awaited_once_with(
+            [
+                "for-each-ref",
+                "--format=%(HEAD)\t%(refname:short)\t%(upstream:short)\t%(upstream:track)",
+                "refs/heads/",
+            ],
+            "/tmp/repo",
+        )
+
+    def test_status_debounces_requests_per_repo(self, client: TestClient) -> None:
+        branch_result = MagicMock(returncode=0, stdout="*\tmain\t\t\n")
+
+        with (
+            patch(
+                "gobby.servers.routes.source_control._resolve_project",
+                return_value="/tmp/repo",
+            ),
+            patch(
+                "gobby.servers.routes.source_control._run_git",
+                new_callable=AsyncMock,
+                return_value=branch_result,
+            ) as run_git,
+        ):
+            first = client.get("/api/source-control/status?project_id=project-one")
+            second = client.get("/api/source-control/status?project_id=project-two")
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert first.json()["current_branch"] == "main"
+        assert second.json()["current_branch"] == "main"
+        assert run_git.await_count == 1
+
+    def test_status_refreshes_after_debounce_window(self, client: TestClient) -> None:
+        first_result = MagicMock(returncode=0, stdout="*\tmain\t\t\n")
+        refreshed_result = MagicMock(returncode=0, stdout="*\tfeature\t\t\n")
+
+        with (
+            patch(
+                "gobby.servers.routes.source_control._resolve_project",
+                return_value="/tmp/repo",
+            ),
+            patch(
+                "gobby.servers.routes.source_control._run_git",
+                new_callable=AsyncMock,
+                side_effect=[first_result, refreshed_result],
+            ) as run_git,
+        ):
+            first = client.get("/api/source-control/status")
+            cache_key = sc_git_module._status_cache_key("/tmp/repo")
+            cached_at, cached_value = sc_module._cache[cache_key]
+            sc_module._cache[cache_key] = (
+                cached_at - sc_git_module._STATUS_TTL - 1,
+                cached_value,
+            )
+            refreshed = client.get("/api/source-control/status")
+
+        assert first.json()["current_branch"] == "main"
+        assert refreshed.json()["current_branch"] == "feature"
+        assert run_git.await_count == 2
 
     def test_status_with_worktree_and_clone_counts(
         self, client: TestClient, mock_server: MagicMock
@@ -880,13 +941,15 @@ class TestCheckoutBranch:
         assert response.status_code == 409
         assert response.json()["detail"] == "dirty worktree"
 
-    def test_checkout_success_invalidates_branch_cache(self, client: TestClient) -> None:
+    def test_checkout_success_invalidates_branch_and_status_cache(self, client: TestClient) -> None:
         sc_module._cache["branches:proj-1"] = (time.time(), {"branches": ["stale"]})
         sc_module._cache["prs:owner/repo:open"] = (time.time(), {"prs": ["cached"]})
 
+        initial_status = MagicMock(returncode=0, stdout="*\tmain\t\t\n")
         show_ref_result = MagicMock(returncode=0, stdout="")
         switch_result = MagicMock(returncode=0, stdout="", stderr="")
         current_result = MagicMock(returncode=0, stdout="feature\n")
+        refreshed_status = MagicMock(returncode=0, stdout="*\tfeature\t\t\n")
 
         with (
             patch(
@@ -896,15 +959,28 @@ class TestCheckoutBranch:
             patch(
                 "gobby.servers.routes.source_control._run_git",
                 new_callable=AsyncMock,
-                side_effect=[show_ref_result, switch_result, current_result],
-            ),
+                side_effect=[
+                    initial_status,
+                    show_ref_result,
+                    switch_result,
+                    current_result,
+                    refreshed_status,
+                ],
+            ) as run_git,
         ):
+            initial = client.get("/api/source-control/status?project_id=proj-1")
+            cached = client.get("/api/source-control/status?project_id=proj-1")
             response = client.post(
                 "/api/source-control/branches/checkout?project_id=proj-1",
                 json={"branch_name": "feature"},
             )
+            refreshed = client.get("/api/source-control/status?project_id=proj-1")
 
         assert response.status_code == 200
+        assert initial.json()["current_branch"] == "main"
+        assert cached.json()["current_branch"] == "main"
+        assert refreshed.json()["current_branch"] == "feature"
+        assert run_git.await_count == 5
         assert "branches:proj-1" not in sc_module._cache
         assert "prs:owner/repo:open" in sc_module._cache
 
@@ -1856,11 +1932,11 @@ def test_status_reports_ahead_behind(
 
     async def run_git(args: list[str], _cwd: str, timeout: int = 10) -> SimpleNamespace:
         del timeout
-        if args == ["branch", "--show-current"]:
-            return SimpleNamespace(returncode=0, stdout="feature/test\n")
-        if args == ["branch", "--list"]:
-            return SimpleNamespace(returncode=0, stdout="  main\n* feature/test\n  develop\n")
-        return SimpleNamespace(returncode=0, stdout=f"{upstream}\t{track}\n")
+        assert args[0] == "for-each-ref"
+        return SimpleNamespace(
+            returncode=0,
+            stdout=(f" \tmain\t\t\n*\tfeature/test\t{upstream}\t{track}\n \tdevelop\t\t\n"),
+        )
 
     with (
         patch(
@@ -1892,7 +1968,7 @@ def test_status_reports_ahead_behind(
     assert response.status_code == 200
     assert response.json() == expected
     assert cached_response.json() == expected
-    assert mock_run_git.await_count == 3
+    assert mock_run_git.await_count == 1
 
 
 def test_source_control_missing_checkout_is_409(  # tdd-red window

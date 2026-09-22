@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import re
 import subprocess  # nosec B404 # subprocess needed for git operations
@@ -12,8 +11,10 @@ from fastapi import APIRouter, HTTPException, Query
 
 from gobby.servers.routes.source_control_git import (
     _GIT_TTL,
+    _STATUS_TTL,
     _delete_cached,
     _run_git,
+    _status_cache_key,
     parse_upstream_track,
 )
 from gobby.servers.routes.source_control_git import (
@@ -74,44 +75,53 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
         """Get source control status overview."""
         repo_path = await server.run_db(_resolve_project, server, project_id)
 
-        cache_key = f"status:{project_id or 'default'}"
-        cached = _get_cached(cache_key, _GIT_TTL)
-        if cached:
-            return cached
-
         current_branch = None
         branch_count = 0
         ahead = None
         behind = None
         if repo_path:
-            try:
-                branch_result, list_result = await asyncio.gather(
-                    _run_git(["branch", "--show-current"], repo_path),
-                    _run_git(["branch", "--list"], repo_path),
-                )
-                _require_git_success(branch_result, "Current branch")
-                _require_git_success(list_result, "Branch list")
-                current_branch = branch_result.stdout.strip()
-                branch_count = len(
-                    [line for line in list_result.stdout.strip().split("\n") if line.strip()]
-                )
-                if current_branch:
-                    tracking = await _run_git(
+            cache_key = _status_cache_key(repo_path)
+            cached = _get_cached(cache_key, _STATUS_TTL)
+            if cached is not None:
+                current_branch = cached["current_branch"]
+                branch_count = cached["branch_count"]
+                ahead = cached["ahead"]
+                behind = cached["behind"]
+            else:
+                try:
+                    branch_result = await _run_git(
                         [
                             "for-each-ref",
-                            "--format=%(upstream:short)\t%(upstream:track)",
-                            f"refs/heads/{current_branch}",
+                            "--format=%(HEAD)\t%(refname:short)\t"
+                            "%(upstream:short)\t%(upstream:track)",
+                            "refs/heads/",
                         ],
                         repo_path,
                     )
-                    _require_git_success(tracking, "Upstream status")
-                    upstream, _, track = tracking.stdout.rstrip("\n").partition("\t")
-                    if upstream:
-                        ahead, behind = parse_upstream_track(track)
-            except subprocess.TimeoutExpired:
-                raise HTTPException(504, "Git status timed out") from None
-            except OSError as exc:
-                raise HTTPException(503, f"Git status unavailable: {exc}") from exc
+                    _require_git_success(branch_result, "Branch status")
+                    for line in branch_result.stdout.splitlines():
+                        if not line:
+                            continue
+                        head, name, upstream, track = (*line.split("\t", 3), "", "", "")[:4]
+                        branch_count += 1
+                        if head.strip() != "*":
+                            continue
+                        current_branch = name
+                        if upstream:
+                            ahead, behind = parse_upstream_track(track)
+                    _set_cached(
+                        cache_key,
+                        {
+                            "current_branch": current_branch,
+                            "branch_count": branch_count,
+                            "ahead": ahead,
+                            "behind": behind,
+                        },
+                    )
+                except subprocess.TimeoutExpired:
+                    raise HTTPException(504, "Git status timed out") from None
+                except OSError as exc:
+                    raise HTTPException(503, f"Git status unavailable: {exc}") from exc
 
         worktree_count = 0
         clone_count = 0
@@ -126,7 +136,7 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
             )
             clone_count = len(cls)
 
-        result = {
+        return {
             "current_branch": current_branch,
             "branch_count": branch_count,
             "worktree_count": worktree_count,
@@ -135,8 +145,6 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
             "ahead": ahead,
             "behind": behind,
         }
-        _set_cached(cache_key, result)
-        return result
 
     @router.get("/branches")
     async def list_branches(project_id: str | None = None) -> dict[str, Any]:
@@ -283,7 +291,7 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
             raise HTTPException(500, "Failed to checkout branch") from e
 
         _delete_cached(f"branches:{project_id or 'default'}")
-        _delete_cached(f"status:{project_id or 'default'}")
+        _delete_cached(_status_cache_key(repo_path))
         return {
             "success": True,
             "current_branch": current_branch,
