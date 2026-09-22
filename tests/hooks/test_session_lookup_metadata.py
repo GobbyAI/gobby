@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 import psutil
 import pytest
 
+from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookEvent, HookEventType, MissingHookMachineIdError, SessionSource
 from gobby.hooks.session_coordinator import SessionCoordinator
 from gobby.hooks.session_lookup import NON_MATERIALIZING_EVENTS, SessionLookupService
@@ -332,6 +333,15 @@ def _pane_event(
     )
 
 
+def _live_grok_terminal_context() -> dict[str, Any]:
+    return {
+        "tmux_pane": "%90",
+        "tmux_socket_path": "/tmp/tmux-501/default",
+        "parent_pid": os.getpid(),
+        "parent_create_time": psutil.Process(os.getpid()).create_time(),
+    }
+
+
 def test_subagent_start_with_parent_tty_binds_without_registering() -> None:
     session_manager, _, service = _uncached_service()
     parent = SimpleNamespace(id="parent-live", status="active", agent_run_id=None, agent_depth=0)
@@ -366,7 +376,7 @@ def test_tool_hook_with_active_parent_subagent_binds_to_parent() -> None:
     session_manager.db.fetchone.return_value = {
         "variables": {"subagent_count": 1, "is_subagent": True}
     }
-    event = _pane_event(HookEventType.BEFORE_TOOL)
+    event = _pane_event(HookEventType.BEFORE_TOOL, source=SessionSource.CLAUDE)
 
     result = service.resolve(event)
 
@@ -432,6 +442,8 @@ def test_grok_tool_hook_from_another_process_in_the_pane_auto_registers() -> Non
     session_manager, _, service = _uncached_service()
     parent = SimpleNamespace(
         id="parent-stale",
+        external_id="01a0b000-stale-owner",
+        project_id="project-1",
         status="active",
         agent_run_id=None,
         agent_depth=0,
@@ -442,17 +454,102 @@ def test_grok_tool_hook_from_another_process_in_the_pane_auto_registers() -> Non
             "parent_create_time": 1789400000.0,
         },
     )
+    session_manager.get.return_value = parent
     session_manager.find_live_interactive_pane_owner.return_value = parent
-    session_manager.db.fetchone.return_value = None
+    session_manager.db.fetchone.return_value = {
+        "variables": {"subagent_count": 3, "is_subagent": True}
+    }
     session_manager.register_session.return_value = "created-session"
     event = _pane_event(HookEventType.BEFORE_TOOL, session_id="01a0b000-new-process")
     event.data["terminal_context"]["parent_pid"] = os.getpid()
+    event.metadata["_platform_session_id"] = parent.id
 
     result = service.resolve(event)
 
     assert result == "created-session"
     assert "_native_subagent_binding" not in event.metadata
     session_manager.register_session.assert_called_once()
+
+
+def test_spawned_grok_parent_survives_first_of_three_process_bound_children() -> None:
+    session_manager, session_task_manager, service = _uncached_service()
+    parent_context = _live_grok_terminal_context()
+    parent = SimpleNamespace(
+        id="1040f8b8-parent-session",
+        external_id="01a0c9b7-8671-7d60-a15c-e25ed5209883",
+        project_id="project-1",
+        status="active",
+        session_type="terminal",
+        agent_run_id="b8fba33c-1661-4a7e-b835-6e03e0dcd59c",
+        created_at=datetime.now(UTC),
+        terminal_context=parent_context,
+    )
+    session_manager.get.return_value = parent
+    session_manager.find_live_interactive_pane_owner.return_value = parent
+    session_task_manager.get_session_tasks.return_value = []
+
+    coordinator = MagicMock()
+    task_manager = MagicMock()
+    task_manager.list_tasks.return_value = []
+    terminal_manager = MagicMock()
+    terminal_manager.get_live_for_session.return_value = SimpleNamespace(
+        id="2228eb40-parent-terminal",
+        ownership="gobby",
+        agent_run_id=parent.agent_run_id,
+    )
+    handlers = EventHandlers(
+        session_manager=session_manager,
+        session_task_manager=session_task_manager,
+        session_coordinator=coordinator,
+        task_manager=task_manager,
+        terminal_manager=terminal_manager,
+    )
+
+    child_ids = (
+        "01a0c9bd-8c02-7242-94ce-fddc90374322",
+        "01a0c9bd-8c02-7242-94ce-fdef9e232d6a",
+        "01a0c9bd-8c02-7242-94ce-fdf9b83b402a",
+    )
+    for child_id in child_ids:
+        child_event = _pane_event(HookEventType.BEFORE_TOOL, session_id=child_id)
+        child_event.data["terminal_context"] = dict(parent_context)
+        child_event.metadata["_platform_session_id"] = parent.id
+
+        assert service.resolve(child_event) == parent.id
+        assert child_event.metadata["_native_subagent_binding"] is True
+
+    child_stop = _pane_event(HookEventType.STOP, session_id=child_ids[0])
+    child_stop.data["terminal_context"] = dict(parent_context)
+    child_stop.metadata["_platform_session_id"] = parent.id
+    assert service.resolve(child_stop) == parent.id
+    with (
+        patch.object(handlers, "_end_turn_lifecycle") as end_turn,
+        patch("gobby.hooks.event_handlers._agent.retire_session_hook_effects") as retire,
+    ):
+        assert handlers.handle_stop(child_stop).decision == "allow"
+    end_turn.assert_not_called()
+    retire.assert_not_called()
+
+    child_end = _pane_event(HookEventType.SESSION_END, session_id=child_ids[0])
+    child_end.data["terminal_context"] = dict(parent_context)
+    child_end.metadata["_platform_session_id"] = parent.id
+    assert service.resolve(child_end) == parent.id
+    assert handlers.handle_session_end(child_end).decision == "allow"
+
+    coordinator.complete_agent_run.assert_not_called()
+    session_manager.update_status_if_non_terminal.assert_not_called()
+    terminal_manager.mark_exited.assert_not_called()
+
+    parent_end = _pane_event(HookEventType.SESSION_END, session_id=parent.external_id)
+    parent_end.data["terminal_context"] = dict(parent_context)
+    parent_end.metadata["_platform_session_id"] = parent.id
+    assert service.resolve(parent_end) == parent.id
+    assert "_native_subagent_binding" not in parent_end.metadata
+    assert handlers.handle_session_end(parent_end).decision == "allow"
+
+    coordinator.complete_agent_run.assert_called_once_with(parent)
+    session_manager.update_status_if_non_terminal.assert_called_once_with(parent.id, "expired")
+    terminal_manager.mark_exited.assert_called_once_with("2228eb40-parent-terminal")
 
 
 def test_grok_debug_trace_records_dispatched_subagent_start() -> None:

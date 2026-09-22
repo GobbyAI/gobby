@@ -18,6 +18,13 @@ class SessionEndMixin(EventHandlersBase):
         external_id = event.session_id
         session_id = event.metadata.get("_platform_session_id")
 
+        if event.metadata.get("_native_subagent_binding"):
+            self.logger.debug(
+                "Ignoring process-bound native subagent SESSION_END for %s",
+                session_id,
+            )
+            return HookResponse(decision="allow")
+
         if session_id:
             self.logger.debug("SESSION_END: session %s", session_id)
         else:
