@@ -107,7 +107,7 @@ async def dispatch_live_wakes(
             if current is not None:
                 session = current
             blocked = await dispatcher._composer_blocks_wake(
-                session_id, session, terminal, method="terminal", priority=priority
+                session_id, session, terminal, method="terminal"
             )
             if blocked is not None:
                 results[session_id] = blocked

@@ -374,7 +374,6 @@ class WakeDispatcher:
                 session,
                 terminal,
                 self._tmux_sender,
-                priority=priority,
             )
 
         # Interactive session → nudge its tmux pane after durable message storage.
@@ -410,7 +409,7 @@ class WakeDispatcher:
             if current is not None:
                 session = current
             blocked = await self._composer_blocks_wake(
-                session_id, session, None, method="tmux_pane", priority=priority
+                session_id, session, None, method="tmux_pane"
             )
             if blocked is not None:
                 return blocked
@@ -469,9 +468,7 @@ class WakeDispatcher:
                 return state_failure
             if current is not None:
                 session = current
-            blocked = await self._composer_blocks_wake(
-                session_id, session, None, method="tmux", priority=priority
-            )
+            blocked = await self._composer_blocks_wake(session_id, session, None, method="tmux")
             if blocked is not None:
                 return blocked
             try:
@@ -526,7 +523,7 @@ class WakeDispatcher:
             if current is not None:
                 session = current
             blocked = await self._composer_blocks_wake(
-                session_id, session, None, method="tmux_pane", priority=priority
+                session_id, session, None, method="tmux_pane"
             )
             if blocked is not None:
                 return blocked
@@ -651,15 +648,15 @@ class WakeDispatcher:
         terminal: Any | None,
         *,
         method: str,
-        priority: str,
     ) -> dict[str, Any] | None:
         """Withhold the drain when the composer positively shows an operator draft.
 
         Only a ``draft`` read blocks; ``empty``, ``unknown``, a missing probe and
-        a probe error all fall through to the blind drain. An urgent wake always
-        drains. No debounce record is written, so the next wake probes again.
+        a probe error all fall through to the blind drain. Priority remains on the
+        durable notification; it never authorizes typing over a draft. No debounce
+        record is written, so the next wake probes again.
         """
-        if priority == "urgent" or self._activity_probe is None:
+        if self._activity_probe is None:
             return None
         try:
             activity = await self._activity_probe(session, terminal)
@@ -680,8 +677,6 @@ class WakeDispatcher:
         session: Any,
         terminal: Any,
         send: TmuxSender,
-        *,
-        priority: str = "normal",
     ) -> dict[str, Any]:
         """Wake a session through the terminal row that hosts it.
 
@@ -697,9 +692,7 @@ class WakeDispatcher:
             return state_failure
         if current is not None:
             session = current
-        blocked = await self._composer_blocks_wake(
-            session_id, session, terminal, method="terminal", priority=priority
-        )
+        blocked = await self._composer_blocks_wake(session_id, session, terminal, method="terminal")
         if blocked is not None:
             return blocked
         try:

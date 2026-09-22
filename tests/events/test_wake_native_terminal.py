@@ -10,7 +10,7 @@ from uuid import UUID
 
 import pytest
 
-from gobby.agents.idle_detector import ComposerRead
+from gobby.agents.idle_detector import IdleDetector
 from gobby.events.live_wake import ActivityProbe, TerminalActivity, composer_occupied_result
 from gobby.events.wake import CONTINUE_WAKE_MESSAGE, WakeDispatcher
 from gobby.runner_init.orchestration import _send_tmux_session_wake
@@ -19,6 +19,7 @@ from gobby.terminals.composer import composer_clear_sequence
 from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.runtime import Delivered, IndeterminateWrite
 from gobby.terminals.write_coordinator import UnresolvedWriteStore, WriteCoordinator
+from tests.agents.detection_test_support import BundledDetectionRegistry
 from tests.terminals.fakes import (
     FakeRuntime,
     MemoryTerminalStore,
@@ -603,12 +604,26 @@ async def test_terminal_row_lookup_failure_degrades_to_the_tmux_pane() -> None:
     pane_sender.assert_awaited_once()
 
 
+def _claude_composer_activity(prompt: str) -> TerminalActivity:
+    snapshot = "\n".join(
+        (
+            "⏺ done",
+            "──────────── epic-22508-feedback-triage ─",
+            prompt,
+            "────────────────────",
+            "   Fable 5.1  12%   ⎇ main",
+        )
+    )
+    detector = IdleDetector(BundledDetectionRegistry(), "claude")
+    return TerminalActivity(detector.composer_read(snapshot))
+
+
 async def _draft(_session: object, _terminal: object) -> TerminalActivity:
-    return TerminalActivity(ComposerRead("draft", "hello draft"))
+    return _claude_composer_activity("❯ hello draft")
 
 
 async def _empty(_session: object, _terminal: object) -> TerminalActivity:
-    return TerminalActivity(ComposerRead("empty"))
+    return _claude_composer_activity("❯")
 
 
 async def _broken(_session: object, _terminal: object) -> TerminalActivity:
@@ -640,14 +655,32 @@ async def test_pane_wake_is_withheld_while_the_composer_holds_a_draft() -> None:
 
 
 @pytest.mark.asyncio
-async def test_urgent_wake_drains_over_a_draft() -> None:
+async def test_urgent_wake_is_withheld_while_the_composer_holds_a_draft() -> None:
     pane_sender = AsyncMock()
     dispatcher = _pane_dispatcher(_draft, pane_sender)
 
     result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID, priority="urgent")
 
+    assert result == composer_occupied_result(WAKE_SESSION_ID, method="tmux_pane")
+    pane_sender.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_urgent_wake_injects_an_empty_composer() -> None:
+    pane_sender = AsyncMock()
+    dispatcher = _pane_dispatcher(_empty, pane_sender)
+
+    result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID, priority="urgent")
+
     assert result["delivered"] is True
-    pane_sender.assert_awaited_once()
+    pane_sender.assert_awaited_once_with(
+        "%12",
+        CONTINUE_WAKE_MESSAGE,
+        "/tmp/s",
+        submit=True,
+        clear_before_submit=True,
+        cli_source=ANY,
+    )
 
 
 @pytest.mark.asyncio
