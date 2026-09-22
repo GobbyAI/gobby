@@ -1,5 +1,7 @@
 """Shell tool identity and command-token helpers."""
 
+import os
+import posixpath
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -57,6 +59,9 @@ _SCRIPT_LIKE_CHARS = frozenset({"{", "}", "$", ";", "(", ")"})
 # `$` opening a variable (`$VAR`, `${VAR}`), command substitution (`$(cmd)`),
 # positional parameter (`$1`), or special parameter — anything expanded at runtime.
 _UNEXPANDED_SHELL_REFERENCE = re.compile(r"\$[\w{(@*?#$!-]")
+_KNOWN_NAVIGATION_SHELL_REFERENCE = re.compile(
+    r"(?<![\\$])\$(?:\{(?P<braced>HOME|PWD|TMPDIR)\}|(?P<bare>HOME|PWD|TMPDIR)(?!\w))"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -368,6 +373,141 @@ def _is_env_assignment(part: str) -> bool:
     )
 
 
+_BASH_LOOP_BINDING_UNSTABLE_PARAMETERS = frozenset(
+    """RANDOM SRANDOM SECONDS LINENO BASHPID BASH_COMMAND BASH_SUBSHELL BASH_ARGV
+    BASH_ARGC BASH_ARGV0 BASH_SOURCE BASH_LINENO BASH_VERSINFO BASH_VERSION
+    BASH_ALIASES BASH_CMDS BASH_EXECUTION_STRING BASH_REMATCH FUNCNAME HISTCMD
+    EPOCHSECONDS EPOCHREALTIME PIPESTATUS DIRSTACK GROUPS UID EUID PPID SHELLOPTS
+    BASHOPTS OPTIND OPTARG OPTERR REPLY COMP_WORDS COMP_CWORD COMP_LINE COMP_POINT
+    COMP_KEY COMP_TYPE COMPREPLY IFS PATH HOME PWD OLDPWD SHLVL _""".split()
+)
+_SHELL_IDENTIFIER_RE = re.compile(r"^[A-Za-z_]\w*$")
+
+
+def _loop_binding_variable_is_stable(variable: str) -> bool:
+    """Return whether Bash gives ``variable`` ordinary scalar expansion semantics."""
+    return bool(
+        _SHELL_IDENTIFIER_RE.fullmatch(variable)
+        and variable not in _BASH_LOOP_BINDING_UNSTABLE_PARAMETERS
+    )
+
+
+def _raw_shell_word_is_literal(raw_word: str) -> bool:
+    """Prove a source word contains no active Bash expansion or glob syntax."""
+    in_single_quote = False
+    in_double_quote = False
+    escaped = False
+    for index, char in enumerate(raw_word):
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\" and not in_single_quote:
+            escaped = True
+            continue
+        if char == "'" and not in_double_quote:
+            in_single_quote = not in_single_quote
+            continue
+        if char == '"' and not in_single_quote:
+            in_double_quote = not in_double_quote
+            continue
+        if in_single_quote:
+            continue
+        if char in "$`":
+            return False
+        if not in_double_quote and (char in "*?[{}" or (index == 0 and char == "~")):
+            return False
+    return not escaped and not in_single_quote and not in_double_quote
+
+
+def _loop_header_words_are_literal(
+    words: tuple[str, ...],
+    raw_words: tuple[str, ...],
+) -> bool:
+    """Prove every word in a ``for <var> in ...`` header is a literal path."""
+    if not words or not raw_words or len(words) != len(raw_words):
+        return not words and not raw_words
+    try:
+        for_index = words.index("for")
+    except ValueError:
+        return False
+    if len(words) <= for_index + 3 or words[for_index + 2] != "in":
+        return False
+    return all(
+        _looks_path_target(value) and _raw_shell_word_is_literal(raw)
+        for value, raw in zip(words[for_index + 3 :], raw_words[for_index + 3 :], strict=True)
+    )
+
+
+def _shell_loop_binding_disqualifications(words: tuple[str, ...]) -> frozenset[str]:
+    """Return variables whose command-local attributes make loop binding unsafe."""
+    disqualified: set[str] = set()
+    cursor = 0
+    if words[:1] == ("env",):
+        cursor = 1
+    while cursor < len(words) and _is_env_assignment(words[cursor]):
+        disqualified.add(words[cursor].partition("=")[0])
+        cursor += 1
+
+    parts = _strip_shell_wrappers(list(words))
+    if not parts:
+        return frozenset(disqualified)
+    command = parts[0].rsplit("/", 1)[-1]
+    declares_attributes = command in {"readonly", "export"}
+    if command in {"declare", "local", "typeset"}:
+        option_letters = "".join(part[1:] for part in parts[1:] if part.startswith("-"))
+        declares_attributes = any(flag in option_letters for flag in "inr")
+    if declares_attributes:
+        for part in parts[1:]:
+            if part.startswith(("-", "+")):
+                continue
+            name = part.partition("=")[0].partition("[")[0]
+            if _SHELL_IDENTIFIER_RE.fullmatch(name):
+                disqualified.add(name)
+    return frozenset(disqualified)
+
+
+def _plain_loop_binding_reference(
+    path: str,
+    words: tuple[str, ...],
+    raw_words: tuple[str, ...],
+) -> str | None:
+    """Return the referenced variable only for one exact double-quoted expansion."""
+    match = re.fullmatch(r"\$(?:\{(?P<braced>[A-Za-z_]\w*)\}|(?P<bare>[A-Za-z_]\w*))", path)
+    if not match or not raw_words:
+        return None
+    variable = match.group("braced") or match.group("bare")
+    raw_matches = [raw for word, raw in zip(words, raw_words, strict=True) if word == path]
+    allowed = {f'"${variable}"', f'"${{{variable}}}"'}
+    return variable if raw_matches and all(raw in allowed for raw in raw_matches) else None
+
+
+_LOOP_BINDING_UNSAFE_COMMANDS = frozenset(
+    {".", "declare", "eval", "getopts", "mapfile", "read", "readarray", "source", "unset"}
+)
+
+
+def _shell_segment_preserves_loop_binding(
+    words: tuple[str, ...],
+    variable: str,
+    *,
+    command_is_known: bool,
+) -> bool:
+    """Prove that one simple shell segment cannot rebind ``variable``."""
+    assignment = re.compile(rf"(?<![A-Za-z0-9_]){re.escape(variable)}(?:\[[^]]*\])?\+?=")
+    if any("$(" in word or "`" in word or assignment.search(word) for word in words):
+        return False
+
+    parts = _strip_shell_wrappers(list(words))
+    if not parts:
+        return True
+    command = parts[0].rsplit("/", 1)[-1]
+    if command in _LOOP_BINDING_UNSAFE_COMMANDS:
+        return False
+    if command == "printf" and "-v" in parts[1:]:
+        return False
+    return command_is_known
+
+
 def _strip_shell_wrappers(parts: list[str]) -> list[str]:
     """Drop env assignments and transparent prefixes ahead of a segment's command."""
     stripped = list(parts)
@@ -551,6 +691,49 @@ def _get_command_text(tool_input: Any) -> str | None:
     return None
 
 
+def _literal_cd_target(parts: list[str]) -> str | None:
+    """Return a single literal ``cd`` target, if the command proves one."""
+    if not parts or parts[0].rsplit("/", 1)[-1] != "cd":
+        return None
+    positional = [part for part in parts[1:] if part and not part.startswith("-")]
+    if len(positional) != 1:
+        return None
+    target = positional[0]
+    return None if any(char in target for char in "$`*?[]{};") else target
+
+
+def _rebase_shell_path(path: str, cwd: str | None) -> str:
+    if not cwd or path.startswith(("/", "~")) or "://" in path:
+        return path
+    return posixpath.normpath(posixpath.join(cwd, path))
+
+
+def _rebase_shell_paths(paths: list[str], cwd: str | None) -> list[str]:
+    return [_rebase_shell_path(path, cwd) for path in paths]
+
+
+def _rebase_navigation_shell_paths(paths: list[str], cwd: str | None) -> list[str]:
+    def replace_reference(match: re.Match[str]) -> str:
+        name = match.group("braced") or match.group("bare")
+        if name == "PWD":
+            return "."
+        return os.environ.get(name, match.group(0))
+
+    expanded = [
+        posixpath.normpath(_KNOWN_NAVIGATION_SHELL_REFERENCE.sub(replace_reference, path))
+        for path in paths
+    ]
+    return _rebase_shell_paths(expanded, cwd)
+
+
+def _apply_cd(cwd: str | None, target: str) -> str:
+    if target.startswith("/"):
+        return posixpath.normpath(target)
+    if not cwd:
+        return posixpath.normpath(target)
+    return posixpath.normpath(posixpath.join(cwd, target))
+
+
 def _shell_positional_args(parts: list[str]) -> list[str]:
     """Return non-option shell args, excluding obvious control operators."""
     return [
@@ -582,6 +765,8 @@ def _looks_path_target(candidate: str) -> bool:
         return False
     if candidate.startswith("-") or candidate.startswith("&"):
         return False
+    if _contains_unexpanded_shell_reference(candidate):
+        return True
     if any(ch in candidate for ch in _SCRIPT_LIKE_CHARS):
         return False
     return True
@@ -590,6 +775,20 @@ def _looks_path_target(candidate: str) -> bool:
 def _contains_unexpanded_shell_reference(path: str) -> bool:
     """Return whether ``path`` still contains a runtime shell expansion."""
     return _UNEXPANDED_SHELL_REFERENCE.search(path) is not None
+
+
+def _input_redirection_paths(tokens: list[ShellToken]) -> list[str]:
+    """Return literal-looking paths read through stdin redirection."""
+    paths: list[str] = []
+    for index, token in enumerate(tokens[:-1]):
+        if not is_shell_input_redirection_token(token) or token.value != "<":
+            continue
+        candidate = tokens[index + 1]
+        if is_unquoted_shell_control_token(candidate):
+            continue
+        if _looks_path_target(candidate.value) and candidate.value not in paths:
+            paths.append(candidate.value)
+    return paths
 
 
 def _has_sed_inplace_option(parts: list[str]) -> bool:

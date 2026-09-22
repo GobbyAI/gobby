@@ -511,6 +511,7 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
             session_storage=runner.session_manager,
             max_agent_depth=5,
             credential_manager=runner.managed_credential_manager,
+            config_runtime=runner.config_runtime,
         )
         logger.debug("AgentRunner initialized")
     except Exception:

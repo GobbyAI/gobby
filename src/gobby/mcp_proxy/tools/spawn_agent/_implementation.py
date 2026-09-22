@@ -696,6 +696,10 @@ async def spawn_agent_impl(
         phase_timings_ms: dict[str, float] = {}
         prepare_terminal_started = start_spawn_phase()
         try:
+            config_runtime = getattr(runner, "config_runtime", None)
+            config_snapshot = (
+                config_runtime.capture().snapshot if config_runtime is not None else None
+            )
             # Child-session creation, run persistence, credential-role issuance, and
             # grant materialization are synchronous. PostgreSQL pool acquisition alone
             # can wait for its full timeout, so keep the complete transactional
@@ -704,6 +708,7 @@ async def spawn_agent_impl(
                 prepare_terminal_spawn,
                 session_manager=child_session_manager,
                 credential_manager=runner.run_storage.credential_manager,
+                config_snapshot=config_snapshot,
                 parent_session_id=parent_session_id,
                 project_id=project_id,
                 machine_id=machine_id,

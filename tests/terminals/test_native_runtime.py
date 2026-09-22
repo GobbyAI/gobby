@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import logging
 import os
 import shutil
 import tempfile
@@ -1209,7 +1210,9 @@ async def test_grant_refusals_pass_through_the_runtime() -> None:
 
 
 @pytest.mark.asyncio
-async def test_sync_host_input_grant_follows_the_holder() -> None:
+async def test_sync_host_input_grant_follows_the_holder(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     runtime, host = _runtime()
     row = _native_terminal(host, host_terminal_id="ht-3")
     direct = _Holder("att-direct", "direct")
@@ -1231,10 +1234,18 @@ async def test_sync_host_input_grant_follows_the_holder() -> None:
     assert host.grants == []
 
     # Host refusals and outages answer False for a grant and stay quiet for a revoke.
-    for code in ("not_native", "not_found"):
-        host.grant_error = HostCommandError(code)
-        assert await sync_host_input_grant(runtime, row, direct) is False
-        assert await sync_host_input_grant(runtime, row, None) is None
+    with caplog.at_level(logging.DEBUG, logger="gobby.terminals.input_grants"):
+        for code in ("not_native", "not_found"):
+            host.grant_error = HostCommandError(code)
+            assert await sync_host_input_grant(runtime, row, direct) is False
+            assert await sync_host_input_grant(runtime, row, None) is None
+            revoke_record = next(
+                record
+                for record in reversed(caplog.records)
+                if record.getMessage().startswith("revoke_input")
+            )
+            expected_level = logging.DEBUG if code == "not_found" else logging.WARNING
+            assert revoke_record.levelno == expected_level
     host.grant_error = None
     stale = _native_terminal(host)
     stale.host_epoch = "epoch-before-respawn"

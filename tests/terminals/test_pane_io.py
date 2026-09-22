@@ -304,7 +304,7 @@ async def test_a_repaint_after_enter_is_polled_until_the_composer_settles(
 
 
 @pytest.mark.asyncio
-async def test_an_unreadable_composer_trusts_the_delivered_write_and_enter(
+async def test_unreadable_composer_after_enter_logs_at_debug(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     """No frame after the Enter is no evidence of a failure.
@@ -315,13 +315,19 @@ async def test_an_unreadable_composer_trusts_the_delivered_write_and_enter(
     """
     pane = _ScriptedPane([ComposerRead("unknown")])
 
-    with caplog.at_level(logging.WARNING, logger="gobby.terminals.pane_io"):
+    with caplog.at_level(logging.DEBUG, logger="gobby.terminals.pane_io"):
         result = await _submit(pane, monkeypatch)
 
     assert result.ok is True
     assert pane.typed == [f"{_TEXT}\n"]
     assert pane.keys == ["enter"]
-    assert "could not be read after submitting the prompt" in caplog.text
+    records = [
+        record
+        for record in caplog.records
+        if "could not be read after submitting the prompt" in record.getMessage()
+    ]
+    assert len(records) == 1
+    assert records[0].levelno == logging.DEBUG
 
 
 @pytest.mark.asyncio
@@ -336,18 +342,22 @@ async def test_held_draft_is_submitted_by_a_second_enter(
 
 
 @pytest.mark.asyncio
-async def test_held_draft_after_the_retry_budget_reports_command_not_submitted(
-    monkeypatch: pytest.MonkeyPatch,
+async def test_held_retry_logs_at_debug_and_exhaustion_still_fails(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     pane = _ScriptedPane([ComposerRead("draft", _TEXT)])
     monkeypatch.setattr("gobby.terminals.pane_io.SUBMIT_HELD_RETRY_SECONDS", 0.02)
 
-    result = await _submit(pane, monkeypatch, verify_seconds=0.01)
+    with caplog.at_level(logging.DEBUG, logger="gobby.terminals.pane_io"):
+        result = await _submit(pane, monkeypatch, verify_seconds=0.01)
 
     assert result.ok is False
     assert result.error_code == TEXT_NOT_SUBMITTED_ERROR_CODE
     assert pane.typed == [f"{_TEXT}\n"]
     assert pane.keys == ["enter", "enter"]
+    records = [record for record in caplog.records if "re-sending Enter" in record.getMessage()]
+    assert len(records) == 1
+    assert records[0].levelno == logging.DEBUG
 
 
 @pytest.mark.asyncio
@@ -356,11 +366,16 @@ async def test_an_unreadable_composer_after_a_held_read_trusts_the_enter(
 ) -> None:
     pane = _ScriptedPane([ComposerRead("draft", _TEXT), ComposerRead("unknown")])
 
-    with caplog.at_level(logging.WARNING, logger="gobby.terminals.pane_io"):
+    with caplog.at_level(logging.DEBUG, logger="gobby.terminals.pane_io"):
         result = await _submit(pane, monkeypatch)
 
     assert result.ok is True
     assert pane.typed == [f"{_TEXT}\n"]
     assert pane.keys == ["enter", "enter"]
-    assert "re-sending Enter" in caplog.text
-    assert "could not be read after submitting the prompt" in caplog.text
+    records = [
+        record
+        for record in caplog.records
+        if "re-sending Enter" in record.getMessage()
+        or "could not be read after submitting the prompt" in record.getMessage()
+    ]
+    assert [record.levelno for record in records] == [logging.DEBUG, logging.DEBUG]

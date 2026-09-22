@@ -33,6 +33,7 @@ from gobby.storage.managed_credentials import MANAGED_EXECUTION_BOOTSTRAP_ENV
 from gobby.utils.local_token import read_local_api_token
 
 if TYPE_CHECKING:
+    from gobby.config.runtime_models import ConfigSnapshot
     from gobby.storage.managed_credentials import ManagedCredential, ManagedCredentialManager
 
 __all__ = [
@@ -85,6 +86,9 @@ class PreparedSpawn:
 
     managed_credential: ManagedCredential | None = None
     """Run-scoped database credential issued before provider launch."""
+
+    config_snapshot: ConfigSnapshot | None = None
+    """Single runtime snapshot used for every launch-grant materialization."""
 
     prompt_file: str | None = None
     """On-disk prompt file created during preparation, if any."""
@@ -191,6 +195,7 @@ def prepare_terminal_spawn(
     clone_id: str | None = None,
     workspace_path: str | None = None,
     credential_manager: ManagedCredentialManager | None = None,
+    config_snapshot: ConfigSnapshot | None = None,
 ) -> PreparedSpawn:
     """
     Prepare a terminal spawn by creating the child session.
@@ -319,6 +324,7 @@ def prepare_terminal_spawn(
             checkout_root=workspace_path,
         )
         prompt_file = prepared.prompt_file
+        prepared.config_snapshot = config_snapshot
         return _issue_prelaunch_credential(
             session_manager,
             prepared,
@@ -368,6 +374,7 @@ def prepare_terminal_resume(
     clone_id: str | None,
     workspace_path: str,
     credential_manager: ManagedCredentialManager | None = None,
+    config_snapshot: ConfigSnapshot | None = None,
 ) -> PreparedSpawn:
     """Prepare a successor run against an existing durable child session."""
     child_session = session_manager._storage.get(existing_session_id)
@@ -439,6 +446,7 @@ def prepare_terminal_resume(
             clone_id=clone_id,
             checkout_root=workspace_path,
         )
+    prepared.config_snapshot = config_snapshot
     return _issue_prelaunch_credential(
         session_manager,
         prepared,
@@ -463,6 +471,8 @@ def _issue_prelaunch_credential(
 
     if credential_manager is None:
         return prepared
+    if prepared.config_snapshot is None:
+        raise RuntimeError("prelaunch credential requires a config snapshot")
     # Grant identity and HMAC come from the live daemon lease; fail closed
     # before issuing anything a broken bootstrap could leak into the launch.
     operator_token = read_local_api_token()
@@ -489,6 +499,7 @@ def _issue_prelaunch_credential(
         project_id=prepared.project_id,
         session_id=prepared.session_id,
         context=context,
+        config_snapshot=prepared.config_snapshot,
     )
     remaining_seconds = (credential.expires_at - datetime.now(UTC)).total_seconds()
     launch = materialize_managed_launch(

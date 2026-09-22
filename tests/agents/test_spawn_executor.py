@@ -133,6 +133,7 @@ async def test_managed_code_index_preflight_uses_issued_credential(
             **run_token_env,
         },
         managed_credential=credential,
+        config_snapshot=MagicMock(),
     )
     request = SpawnRequest(
         prompt="Plan",
@@ -155,6 +156,7 @@ async def test_managed_code_index_preflight_uses_issued_credential(
         credential: object,
         api_token: str | None,
         identity_env: dict[str, str] | None = None,
+        config_snapshot: object | None = None,
         phase_timings_ms: dict[str, float] | None = None,
     ) -> SimpleNamespace:
         assert cwd == "/isolated"
@@ -168,6 +170,7 @@ async def test_managed_code_index_preflight_uses_issued_credential(
             "GOBBY_SESSION_ID": "session-id-env",
             "GOBBY_MACHINE_ID": "21000000-0000-4000-8000-000000000001",
         }
+        assert config_snapshot is context.config_snapshot
         assert phase_timings_ms is request.phase_timings_ms
         return SimpleNamespace(env={"PATH": "/scoped/bin"}, api_token="minted-probe-capability")
 
@@ -558,7 +561,7 @@ class TestExecuteSpawn:
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         """Test that terminal mode dispatches to TmuxSpawner."""
-        caplog.set_level(logging.INFO, logger="gobby.agents.spawn_executor")
+        caplog.set_level(logging.DEBUG, logger="gobby.agents.spawn_executor")
         mock_session_manager = MagicMock()
         request = SpawnRequest(
             prompt="Test",
@@ -610,12 +613,44 @@ class TestExecuteSpawn:
         ]
         assert len(timing_records) == 1
         timing_record = timing_records[0]
+        assert timing_record.levelno == logging.DEBUG
         assert timing_record.__dict__["run_id"] == "run"
         assert timing_record.__dict__["provider"] == "claude"
         timings = cast(dict[str, float], timing_record.__dict__["phase_timings_ms"])
         assert set(timings) == set(SPAWN_PHASES)
         assert timings["provider_post_sandbox"] >= 0
         assert timings["runtime_prepare_spawn"] > 0
+
+    async def test_slow_spawn_phase_timings_stay_at_info(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        request = SpawnRequest(
+            prompt="Test",
+            cwd="/path",
+            provider="unknown",
+            session_id="sess",
+            run_id="slow-run",
+            parent_session_id="parent",
+            project_id="proj",
+            prepared_spawn=prepared_spawn(),
+            terminal_backend="tmux",
+        )
+        clock = iter((0.0, 1.0))
+        monkeypatch.setattr(
+            "gobby.agents.spawn_executor.time.perf_counter",
+            lambda: next(clock),
+        )
+
+        with caplog.at_level(logging.DEBUG, logger="gobby.agents.spawn_executor"):
+            await execute_spawn(request)
+
+        timing_records = [
+            record for record in caplog.records if record.getMessage() == "Spawn phase timings"
+        ]
+        assert len(timing_records) == 1
+        assert timing_records[0].levelno == logging.INFO
 
     @pytest.mark.asyncio
     async def test_execute_spawn_persists_workspace_identity(self) -> None:
