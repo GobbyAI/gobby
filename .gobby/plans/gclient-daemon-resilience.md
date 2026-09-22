@@ -59,29 +59,44 @@ the hub pool logged `pool_available: 0, requests_waiting: 54, connections_errors
 validators ran concurrently. A quiet-window sample at 11:38 (`terminal_take_control`
 1.03 s, `workspace_op` 1.21 s) shows the handlers' own cost without contention.
 
-The 2026-09-21 split-right freeze is a separate trigger whose root cause remains
-**unproven**. The old gclient connection stopped making progress, a fresh gclient
-connection worked against the same daemon, and no sessions were lost. The leading,
-falsifiable hypothesis is one old-connection lane stuck in
-`HostClient._roundtrip` (`src/gobby/terminals/host_client.py`, observed symbol range
-317-353) while `TerminalLeaseRegistry.take_control` or `release_control`
-(`src/gobby/terminals/leases.py`, observed ranges 421-478) held the terminal lease
-lock across the gterm grant callback; the serial connection loop in
-`WebSocketServer._handle_connection` (`src/gobby/servers/websocket/server.py`,
-observed range 327-405) then stopped reading later messages. P1 prevents that lane
-from parking the gclient loop, D2 makes other lanes independent and captures a stuck
-stack, D3 bounds the host wait, and D3b removes the lock from the external wait. V1
-contains the diagnostic that must either capture this chain or refute it.
+The incident diagnosis is now split by evidence instead of treating three freezes
+as one cause:
 
-gterm needs no change. `crates/gterminal` never dials the daemon; PTY delivery is
-`try_send`, frames come off a 30 ms ticker, `input_activity` fan-out drops a slow
-subscriber, and grants persist in memory.
+- **07:44 remains unproven.** An isolated reproduction confirms that an unanswered
+  `HostClient._roundtrip` can hold `TerminalLeaseRegistry.lock(terminal_id)`, wedge
+  that attachment lane and silently block later same-terminal work. No retained
+  evidence proves that 07:44 took this path. D3 and D3b remove the confirmed
+  mechanism; their watchdog-free barrier tests do not claim historical attribution.
+- **11:58 was a daemon-wide load stall.** The concurrent pool, slow-handler and
+  request-timeout evidence above applies to the whole daemon, rather than one
+  gclient lane.
+- **14:47 was client-side.** A deadline-less attach, roster or websocket await is
+  refuted: those requests are bounded by the 5 s `REQUEST_DEADLINE`, or by the 2 s
+  control and detach deadlines. A never-returned wait is refuted, the daemon
+  websocket lane is refuted by cleanup completing in 225 ms, and #22675's gterm
+  `write_batch` lock is a separate bug rather than the causal link. The leading
+  chain remains unproven: inline attach of a new terminal, then serial recovery of
+  direct panes retired for `RetireReason::Lag`, then a detach reply exceeding 2 s
+  and escalating to reconnection of the healthy socket, followed by inline
+  reconcile/re-attach of every pane and inline REST. The same shape appeared at
+  14:07; the 13:09 slow attach did not freeze. P1 remains the vehicle because it
+  removes every daemon await from the gclient loop regardless of which bounded
+  steps composed the stall.
 
-Intended outcome: a slow, erroring or restarting daemon degrades only the action
-that needed it. Rendering, direct-pane typing, frame ingest, scrolling and reconnect
-never stop. The status line says when the daemon is slow. Daemon-side, one slow
-terminal handler no longer stalls the other panes on the same window or the other
-connections on the daemon.
+gterm does not dial the daemon; PTY delivery is `try_send`, frames come off a 30 ms
+ticker, and `input_activity` fan-out drops a slow subscriber. It does need the P3
+change that removes daemon grant issuance as a prerequisite for local native input:
+the existing frame socket supplies native inventory and grants one attached local
+client fallback authority only while no daemon control owner and no current holder
+exist. Daemon grants replace that fallback when daemon arbitration returns.
+
+Intended outcome: a slow, absent, erroring or restarting daemon degrades only the
+enhancements it owns. gclient and gterm still launch, enumerate local native panes,
+attach, render, scroll and type without it. Lease coordination and takeover, layout
+and workspace sync, roster, attention and agent relay are unavailable; tmux, web
+and proxied panes remain daemon-bound. The status line states that boundary.
+Daemon-side, one slow terminal handler no longer stalls the other panes on the same
+window or the other connections on the daemon.
 
 ## Decision Record
 `kind: framing`
@@ -96,18 +111,34 @@ Josh, 2026-09-20:
    per-attachment ordering, and HostClient round trips get a bounded deadline.
 3. Pool exhaustion gets a diagnosis leaf (attribute the next incident), not a
    capacity redesign.
-4. gterm is not changed and its binary is not rebuilt, which also sidesteps the
-   `--features vt-engine --bin gterm` trap (memory `b59e4ce9`).
-5. Only direct-native `Input` and `Paste` bypass the daemon: gclient sends them on
-   the bound gterm frame stream under a daemon-issued grant (memory `b59e4ce9`).
-   The daemon remains authoritative for leases, workspace layout and workspace
-   mutation (memory `be35449d`). tmux, web and proxied input remain
-   daemon-mediated. D1a's removal of the per-key terminal-row lookup is the sole
-   daemon-input-path optimisation in scope; routing and authority do not change.
-6. Josh, 2026-09-21: P1 is the vehicle for reducing gclient's blocking dependency
+4. Josh, 2026-09-21, verbatim: "the daemon should enhance gclient/gterm. it should
+   still work degraded without it." and "typing does not need to be dependent on
+   the daemon at all. gterm/gclient should function degraded absent the daemon."
+   Every deliverable is checked against both statements.
+5. Without the daemon, gclient uses the already-authenticated local frame socket to
+   list and attach native gterm panes. `BindAttachment` claims the empty local
+   fallback holder only when gterm has no authenticated daemon control owner and no
+   current grant. The first local holder retains input until that frame attachment
+   detaches; another local client observes `InputRefused` and cannot take over.
+   When the daemon returns, `grant_input` replaces the fallback holder and restores
+   normal lease/takeover arbitration. **Restraint rung 2:** extend the existing
+   frame protocol, `TerminalSlot.input_grant` and refusal path; add no second socket,
+   control service, election protocol or TTL.
+6. The daemon enhances native panes with leases and takeover, layout and workspace
+   sync, roster, attention and agent relay. Those features degrade when it is down
+   or absent. tmux, web and proxied panes remain daemon-bound and unavailable.
+   Direct-native `Input` and `Paste` always travel on the bound gterm frame stream;
+   D1a's removal of the per-key terminal-row lookup remains the sole optimisation
+   to the daemon-mediated tmux/web/proxy input path.
+7. Josh, 2026-09-21: P1 is the vehicle for reducing gclient's blocking dependency
    on the daemon. The split-right incident is evidence for the priority, not a
-   proven root cause; the plan must leave a stack-level diagnostic for the next
-   occurrence.
+   proven root cause. The plan closes the ordinary WARN gaps around frame failure,
+   recovery give-up, unresolved opens, lag, REST and reconnect, but adds no stack
+   sampler; the historical root cause remains unproven.
+8. Josh, 2026-09-21: add no daemon or client-loop watchdog. D2 keeps ordered
+   concurrent lanes, while D3/D3b use bounded operations and test-only barriers for
+   diagnosis. **Restraint rung 1:** watchdogs do not need to exist to meet the
+   liveness or diagnostic requirements and would add latency/noise.
 
 Coordinator decision (gobby#14018, 2026-09-20): the near-ceiling gclient files are
 decomposed first in one behaviour-neutral refactor leaf (R1) so that every later
@@ -121,8 +152,8 @@ Scheduling. This epic runs after tasks #22635 and #22637 (gclient key encoding a
 scrollback copy, both also touching gterm), #22617 (the fourteen dirty gclient
 files in the task-22616 worktree) and epic #22627 (post-reboot daemon terminal
 handler fixes) have landed, because P1-P3 rewrite `live_loop.rs`, `live.rs`,
-`live_attach.rs`, `control.rs` and `actions.rs`, and P4 touches `terminal_ws.py`.
-The coordinator gobby#14018 holds the epic until then.
+`live_attach.rs`, `control.rs`, `actions.rs` and the gterm frame/grant seam, and P4
+touches `terminal_ws.py`. The coordinator gobby#14018 holds the epic until then.
 
 Shared clean-cutover gate. No implementation leaf promotes a live binary by itself.
 After all P1-P4 commits and focused validation are green, announce the cutover with
@@ -136,13 +167,26 @@ through
 `src/gobby/cli/install_setup_gclient.py::install_gclient_from_submodule`, because
 `promote_workspace_binary_set` rejects gclient (memory `8303e661`). Restart the
 Python daemon from the main checkout and restart each validation gclient so it execs
-the new inode. Read the installed identity stamp and hashes from `~/.gobby/bin/`,
-never from `target/release/`. gterm stays untouched in the planned work. If
-implementation evidence forces a gterm change, use the same announced quiet window, build with
-`cargo build --release -p gobby-terminal --features vt-engine --bin gterm`, promote
-through `src/gobby/cli/install_setup_gterm.py::install_gterm_from_submodule`, and
-rerun the direct-pane checks. **Restraint rung 2:** reuse the repository's native
-promotion functions and batch one cutover; add no installer or promotion path.
+the new inode. P3 changes gterm: build it with `cargo build --release -p
+gobby-terminal --features vt-engine --bin gterm`, promote it through
+`src/gobby/cli/install_setup_gterm.py::install_gterm_from_submodule`, and restart it
+before relaunching the validation gclient. Read the installed identity stamp and
+hashes from `~/.gobby/bin/`, never from `target/release/`. **Restraint rung 2:**
+reuse the repository's native promotion functions and batch one cutover; add no
+installer or promotion path.
+
+Detach-deadline escalation is owned and implemented by task #22677; this plan does
+not create a second deliverable or manifest leaf for it. Its exact code surfaces are
+`crates/gclient/src/app/live_attach.rs::recover_proxy_source`,
+`crates/gclient/src/app/attach.rs::Pane::take_expired_detach_generation`,
+`crates/gclient/src/app/mod.rs::Workspace::submit_expired_detaches` and
+`crates/gclient/src/daemon/live.rs::LiveDaemon::reconnect`, with gclient loop tests
+covering each deadline/error exit. The task clears `fallback_in_flight`, restores
+`direct_available` on successful recovery or the next attach pass, hands the pane
+back to the attach job with backoff, and reconnects only for real transport loss.
+Its test matrix covers a late healthy-socket reply, reply error, nested result
+error, success and real transport loss. **Restraint rung 2:** reuse #22677's owned
+repair and acceptance instead of duplicating it in this plan.
 
 Implementer traps for P1 (recorded from the research pass):
 
@@ -173,10 +217,12 @@ Implementer traps for P1 (recorded from the research pass):
 - `docs/guides/gclient-user-guide.md` must track code (memory `392cc53f`).
 
 Out of scope: the Postgres capacity model (`docs/contracts/database-concurrency-v1.json`)
-and what consumed the direct-connection reserve during the 04:58 exhaustion; any
-change to gterm, `PROTOCOL_VERSION`, the lease model, or the daemon keystroke path
-for tmux, web and proxied panes beyond D1a's per-key terminal-row SELECT removal;
-re-adding an event-loop lag watchdog; reducing `REQUEST_DEADLINE`.
+and what consumed the direct-connection reserve during the 04:58 exhaustion;
+changing `PROTOCOL_VERSION`; changing the daemon keystroke path for tmux, web and
+proxied panes beyond D1a's per-key terminal-row SELECT removal; the D2 per-lane
+one-shot handler watchdog; the Q7b loop phase-label watchdog; re-adding an
+event-loop lag watchdog; reducing `REQUEST_DEADLINE`; and duplicating #22677's
+detach-deadline repair.
 
 ## P1: gclient loop never awaits the daemon
 `kind: framing`
@@ -318,6 +364,14 @@ advances, a key typed into another pane reaches its source, and the held outcome
 applies after release. The file header documents the wait-for-mock-visible-request
 rule from memory `679bf344`.
 
+The baseline matrix includes the Q7b case: a `created` event starts a new
+terminal's `terminal_attach`, its reply is held for three seconds of paused Tokio
+time, and already attached direct panes continue consuming frames and input for the
+whole interval. This test proves the current inline path stalls before A3 and turns
+green when attach is issued as a job. It records loop progress directly; it adds no
+phase label or watchdog. **Restraint rung 2:** reuse `hold_ws` and the shared
+liveness probe instead of adding a runtime monitor.
+
 **Research context:** Observed: `crates/gclient/tests/mock_daemon/mod.rs`
 (`MockDaemon::start_at`, `enqueue`, `enqueue_with_events`,
 `finalize_next_proxy_attach_before_reply`, `pause_websocket_reads`, `requests`,
@@ -336,6 +390,9 @@ Approach: a `Notify` per hold, stored on `MockState`, consulted by
   `replies` counts the released reply. file: `crates/gclient/tests/mock_daemon/mod.rs`.
 - A0.2 - The liveness probe is a reusable helper and its baseline test passes.
   test: `crates/gclient/tests/loop_liveness.rs::held_websocket_request_stays_pending_until_released`.
+- A0.3 - A newly created terminal whose `terminal_attach` reply takes three
+  seconds does not stop frames, ticks or input on existing direct panes. test:
+  `crates/gclient/tests/loop_liveness.rs::a_slow_new_terminal_attach_never_stalls_streaming_direct_panes`.
 
 ### A1 Job plumbing, focus hints and geometry [category: code] (depends: R1, A0)
 `kind: deliverable`
@@ -347,7 +404,7 @@ Targets:
 - `crates/gclient/src/app/live_loop/jobs_apply.rs`
 - `crates/gclient/src/app/live_loop/workspace_actions.rs::*` — scope-reason: `send_focus_hints_if_changed` becomes a coalesced job and `issue_workspace_op` is added beside `send_workspace_op`
 - `crates/gclient/src/app/run_loop.rs::propagate_geometry`
-- `crates/gclient/src/frame_source.rs::UnixSocketFrameSource::send_input`
+- `crates/gclient/src/frame_source.rs::*` — scope-reason: keep direct SetViewport/input delivery nonblocking while the same file is decomposed and extended by P3
 - `crates/gclient/tests/loop_liveness.rs`
 
 Consumers unchanged:
@@ -438,8 +495,7 @@ Planned verification: `cargo nextest run -p gobby-client --test loop_liveness`,
 
 Targets:
 - `crates/gclient/src/app/live_loop/control.rs::*` — scope-reason: every daemon-awaiting function becomes a sync issue or a job outcome apply
-- `crates/gclient/src/app/pane.rs::Pane`
-- `crates/gclient/src/app/pane.rs::Pane::new`
+- `crates/gclient/src/app/pane.rs::*` — scope-reason: add the bounded writer, queue accounting and release state across Pane construction and input helpers
 - `crates/gclient/src/app/live.rs::*` — scope-reason: the control-request machinery moves out to the new control module
 - `crates/gclient/src/app/live_control.rs`
 - `crates/gclient/src/app/mod.rs::*` — scope-reason: gains the `mod live_control;` declaration only
@@ -571,19 +627,26 @@ detached so the daemon does not hold a dangling attachment. `Pane::begin_attachi
 sets `status_message = "attaching (direct|proxy)…"`. C3's direct-first retry later
 lands inside `recover_job`.
 
-Frame recovery also becomes observable. The issue side emits one structured
-`tracing::warn!` when a real frame error starts recovery; the apply side emits one
-`tracing::warn!` named `frame_recovery_gave_up` when detach reaches its deadline,
-attach is refused or errors, or a stale/tombstoned result is discarded without
-installing a replacement source. Both records carry `pane_id`, `terminal_id`, old
+A3 starts from #22677's repaired detach state machine and moves it without changing
+its ownership contract: deadline or reply errors return the pane to the attach job
+with backoff, restore `fallback_in_flight`/`direct_available` as #22677 specifies,
+and never request a reconnect for a healthy socket. #22677 remains the only task
+that implements and validates those transitions.
+
+Frame recovery also becomes observable. Each attach/recovery issue records its
+start instant. The issue side emits one structured `tracing::warn!` when a real
+frame error starts recovery, including `RetireReason::Lag`; the handshake emits a
+WARN when the direct connect/attach phase times out; and the apply side emits one
+WARN named `frame_recovery_gave_up` when detach reaches its deadline, attach is
+refused or errors, or a stale/tombstoned result is discarded without installing a
+replacement source. These records carry `pane_id`, `terminal_id`, old
 `attachment_id` when present, transport, daemon generation, recovery stage, error
-class and elapsed milliseconds. `Refused` and `Backpressure` input outcomes are not
-frame failures and remain excluded. A successful recovery emits one
-`tracing::info!` completion with the replacement transport so the two warnings can
-be closed in `gclient.log`. The job/apply seam owns these records; there is no new
-logger, telemetry transport or retry counter. **Restraint rung 2:** reuse gclient's
-existing tracing file subscriber and the A3 outcome instead of adding a diagnostics
-subsystem.
+class and `elapsed_ms`. `Refused` and `Backpressure` input outcomes are not frame
+failures and remain excluded. A successful recovery emits one structured
+completion with elapsed time and the replacement transport so the attempt closes
+in `gclient.log`. The job/apply seam owns these records; there is no new logger,
+telemetry transport, retry counter or watchdog. **Restraint rung 2:** reuse
+gclient's tracing subscriber and the A3 outcome.
 
 `crates/gclient/src/app/live_loop.rs` is at 868 production lines: the frame branch
 shrinks to classify plus issue, and `FrameRecovery`, `deferred_input` and the inner
@@ -634,9 +697,10 @@ loop_liveness --test frame_delivery --test reconciliation --test frame_source_li
 - A3.5 - `FrameRecovery` and the inner input-only select no longer exist. symbol:
   `run_live_loop`.
 - A3.6 - A frame error and every recovery give-up leave one structured record with
-pane, terminal, attachment, generation, stage, error class and elapsed time, while a
-successful replacement closes the attempt. test:
-`crates/gclient/tests/loop_liveness.rs::frame_errors_and_recovery_giveups_are_logged_with_pane_context`.
+  pane, terminal, attachment, generation, stage, error class and `elapsed_ms`, while
+  a successful replacement closes the attempt. The same test covers a
+  direct-handshake timeout and a `RetireReason::Lag` retirement. test:
+  `crates/gclient/tests/loop_liveness.rs::frame_errors_and_recovery_giveups_are_logged_with_pane_context`.
 
 ### A3b Open unresolved terminals as jobs [category: code] (depends: A3)
 `kind: deliverable`
@@ -655,7 +719,11 @@ callers. A sync `plan_unresolved_opens` sibling snapshots the missing terminal i
 the live loop calls it after a workspace event and issues one keyed `Opened` job per
 terminal. `apply_live_event` no longer awaits an open. A repeated event coalesces on
 `Terminal(id)`, and an outcome applies only when that terminal is still unresolved
-in the current daemon generation.
+in the current daemon generation. Replace the current discarded
+`open_live_terminal` error with one structured WARN at the job/apply seam carrying
+`terminal_id`, daemon generation, error class and `elapsed_ms`; a stale-generation
+drop is a distinct outcome. **Restraint rung 2:** reuse the `Opened` job result and
+tracing subscriber; add no retry counter or monitoring task.
 
 `crates/gclient/src/app/live_loop.rs` is at 879 production lines after the current
 checkout's prior edits: move unresolved-job issuance and outcome routing into new
@@ -686,6 +754,10 @@ the nonblocking job seam. Planned verification: `cargo nextest run -p gobby-clie
   `open_unresolved_terminals`.
 - A3b.3 - Unresolved-job issuance and apply helpers live outside the near-ceiling
   loop module. file: `crates/gclient/src/app/live_loop/unresolved.rs`.
+- A3b.4 - A failed unresolved-terminal open emits one WARN with terminal,
+  generation, error class and `elapsed_ms`; the error is no longer discarded.
+  test:
+  `crates/gclient/tests/loop_liveness.rs::an_unresolved_terminal_open_failure_is_logged_with_elapsed_time`.
 
 ### A4 Actions and event-driven refetches as jobs [category: code] (depends: A3b)
 `kind: deliverable`
@@ -720,6 +792,15 @@ issues it plus a `Roster` job. `TabClose` after every kill: a `CloseTabPlan` joi
 the ledger. `focus_project` selects immediately and issues a scoped `Roster`;
 `restore_focused` runs when it lands if the project is still selected. Orphans:
 `fetch_orphans` job, kill fan-out with a `DestroySummary` reducer.
+
+Every sidebar/REST job records its start instant. The existing `optional` DEBUG
+becomes one WARN per failed REST component with operation, project, error class and
+`elapsed_ms`; the aggregate outcome still applies any successful rows. Both the
+websocket receiver's `RecvError::Lagged(skipped)` branch and a decoded
+`DaemonEvent::Lagged` emit one WARN with source, skipped count when available,
+generation and `elapsed_ms` before scheduling refetch jobs. **Restraint rung 2:**
+reuse the job outcome and existing tracing subscriber; add no lag watchdog or
+metrics pipeline.
 
 `crates/gclient/src/app/live_loop.rs` is at 868 production lines: the refetch drain
 and the new outcome arms are a move into `crates/gclient/src/app/live_loop/jobs_apply.rs`
@@ -770,6 +851,10 @@ applied only after its own job settles. test:
   orphan kills fan out concurrently and `DestroySummary` preserves one result per
   requested orphan regardless of completion order. test:
   `crates/gclient/tests/loop_liveness.rs::held_orphan_fetch_and_kill_fanout_are_nonblocking_and_complete`.
+- A4.8 - Failed REST components and both `Lagged` entry paths emit WARN records
+  with operation/source, generation, error class or skipped count, and
+  `elapsed_ms`, while successful partial rows still apply. test:
+  `crates/gclient/tests/loop_liveness.rs::rest_failures_and_lagged_events_warn_with_elapsed_time`.
 
 ### A5 Launch and reconnect reconcile as a job [category: code] (depends: A4)
 `kind: deliverable`
@@ -794,6 +879,13 @@ handshake, restores focus and plans attaches; an error applies
 `observe_daemon_disconnect` plus `handshake_failed`. `reconcile_subscribe_first`
 stays inline for its direct callers; `reconnect_daemon_ws` keeps its signature and
 delegates. `ReconnectSupervisor` is unchanged.
+
+The job records one WARN when reconnect/reconcile starts and one terminal WARN when
+it finishes, carrying reason, old/new generation, outcome and `elapsed_ms`; joined
+callers do not duplicate either record. A successful finish remains WARN in this
+diagnostic release so every freeze-relevant reconnect bracket is present in
+`gclient.log`. **Restraint rung 2:** log at the single reconcile job owner rather
+than adding per-caller logging or a watchdog.
 
 `crates/gclient/src/app/live.rs` (986 lines), `crates/gclient/src/app/live_loop.rs`
 (868) and `crates/gclient/src/app/mod.rs` (927) are near the ceiling: the reconcile
@@ -826,6 +918,10 @@ reconciliation --test ws_golden`.
   daemon-touching `run_live_loop` branch or post-select helper maps to a held-request
   case that advances frames, ticks and unaffected direct input. test:
   `crates/gclient/tests/loop_liveness.rs::every_run_live_loop_daemon_path_is_issued_without_awaiting`.
+- A5.5 - Each reconnect/reconcile attempt emits exactly one start and one finish
+  WARN with reason, generations, outcome and `elapsed_ms`, including success,
+  timeout and transport-loss cases. test:
+  `crates/gclient/tests/loop_liveness.rs::reconnect_attempts_warn_once_at_start_and_finish_with_reason`.
 
 ## P2: daemon health and load shedding
 `kind: framing`
@@ -1001,23 +1097,242 @@ loop_liveness`.
 ## P3: direct panes keep their host grant across daemon disconnects
 `kind: framing`
 
-**Goal:** gterm keeps `TerminalSlot.input_grant` until the daemon replaces it, and
-its frame-stream attach and bind need nothing from the daemon: `HostState::attach`
-takes a bare `host_terminal_id` for a user attachment and `bind_attachment` stamps
-the id on the stream with no uniqueness check. The client already holds
-`host_terminal_id` and `frame_socket_path` in `AttachLocator`. So a bound direct
-attachment can keep typing through a daemon outage and reconfirm its lease on
-reconnect. Every P3 production deliverable changes the gclient binary and therefore
-uses the shared clean-cutover gate after merge; none promotes independently.
+**Goal:** gclient and gterm launch, discover local native panes, attach, render and
+type with the daemon down or absent. The existing authenticated frame socket owns
+that degraded path. gterm grants the first attached local client fallback authority
+only when no daemon control owner and no holder exist; daemon grants replace it when
+lease arbitration returns. Existing daemon grants survive disconnect until replaced
+or explicitly revoked. Every P3 production deliverable participates in the shared
+clean-cutover gate; none promotes independently.
 
-### C1 Keep control on disconnect for direct-granted panes [category: code] (depends: B3, A5)
+### C0 Native inventory and fallback input authority in gterm [category: code] (depends: B3, A5)
+`kind: deliverable`
+
+Targets:
+- `crates/gterminal/src/protocol/wire_types.rs::*` — scope-reason: append the authenticated native-inventory request/response shapes without renumbering existing messages
+- `crates/gterminal/src/host/frames.rs::handle_connection`
+- `crates/gterminal/src/host/state.rs::*` — scope-reason: expose native inventory and track which frame attachment owns a local fallback grant
+- `crates/gterminal/src/host/write.rs::HostState::grant_input`
+- `crates/gterminal/src/host/write.rs::HostState::revoke_input`
+- `crates/gterminal/tests/frame_protocol.rs::*` — scope-reason: add daemonless inventory, first-holder and refusal cases to the frame protocol suite
+- `crates/gterminal/tests/control_protocol.rs::*` — scope-reason: add daemon takeover/revoke cases through the real control protocol
+- `crates/gterminal/tests/wire_golden.rs::*` — scope-reason: cover the appended inventory request and response variants
+- `docs/contracts/gterm-protocols.md`
+
+Append `ListNativeTerminals` to `ClientMessage` and `NativeTerminals` to
+`ServerMessage`. The response carries `host_epoch` plus committed live native rows
+with stable `terminal_id`, `host_terminal_id`, title, rows and columns; it excludes
+tmux/observer slots (`TerminalSlot.locator.is_some()`). The request is available
+only after the existing `Hello` authenticates `local_cli_token` on the owner-only
+frame socket. Existing message tags keep their order and `PROTOCOL_VERSION` does not
+change because only the newly paired gclient requests the appended response.
+
+Extend `TerminalSlot` with the authenticated frame-connection id that owns local
+fallback input, separate from the attachment id currently bound on that stream.
+`HostState::bind_attachment` atomically records the bound attachment id and, when
+`Inner.control_owners` and both authority slots are empty, installs that frame
+connection as the fallback holder. Rebinding a new attachment id on the same
+owning stream preserves fallback input; a second local connection cannot replace
+it and receives the existing `InputRefused{input_not_granted}` on `Input`/`Paste`,
+so degraded mode has no takeover path.
+
+When the last daemon control owner disconnects, a daemon grant whose attachment is
+bound on a live frame stream transfers atomically to that stream's fallback owner;
+this is the host half of C1's restart continuity. An arriving control owner blocks
+new fallback claims but does not clear the existing one. Its next `grant_input`
+installs the daemon attachment id and clears the fallback owner atomically, so
+normal lease/takeover arbitration resumes without an input gap. Detaching the
+owning frame connection clears only its fallback; detaching another connection
+cannot. Matching or unconditional `revoke_input` clears the daemon grant and any
+fallback owned by that same attachment/stream, while unrelated revoke/detach work
+cannot clear the holder. `frame_input` admits exactly the daemon grant or the one
+fallback connection. **Restraint rung 2:** reuse the current local token, frame
+socket, `input_grant` comparison and refusal surface; add one provenance field, no
+new socket, TTL, election or background task.
+
+**Granularity:** inventory and fallback authority land together because they are the
+two server halves of one authenticated daemonless frame-session contract and the
+wire enums, frame dispatcher and host state must compile atomically. The gclient
+consumer is split into C0b/C0c.
+
+**Cutover:** C0 changes gterm and does not promote independently. After all leaves
+pass, build with `cargo build --release -p gobby-terminal --features vt-engine --bin
+gterm`, promote through `install_gterm_from_submodule` inside the single announced
+quiet window, restart gterm and relaunch the validation gclient.
+
+**Research context:** Observed: `ClientMessage` and `ServerMessage` live in
+`crates/gterminal/src/protocol/wire_types.rs`; `frames::handle_connection` already
+authenticates `local_cli_token`, handles `AttachTerminal`/`BindAttachment`, and
+routes input to `HostState::frame_input`. `HostState::list_json` already builds host
+inventory; `TerminalSlot.locator.is_none()` is the same native test used by input
+admission. `Inner.control_owners` is populated by authenticated control `hello` and
+cleared by `on_control_disconnect`. `bind_attachment` currently stores the client
+id without granting it, while `grant_input`/`revoke_input` own
+`TerminalSlot.input_grant`. `detach` already has both frame attachment and slot.
+Planned verification: `cargo nextest run -p gobby-terminal --test frame_protocol
+--test control_protocol --test wire_golden`; `cargo clippy -p gobby-terminal
+--all-targets --features vt-engine`.
+
+**Acceptance:**
+
+- C0.1 - An authenticated frame client lists only committed live native terminals
+  with stable terminal/host ids and host epoch; unauthenticated and tmux inventory
+  is unavailable. test:
+  `crates/gterminal/tests/frame_protocol.rs::daemonless_native_inventory_is_authenticated_and_excludes_tmux`.
+- C0.2 - With no control owner or grant, the first bound local attachment can type
+  and paste; a second attachment cannot replace it and receives
+  `input_not_granted`. test:
+  `crates/gterminal/tests/frame_protocol.rs::first_local_attachment_holds_fallback_input_until_detach`.
+- C0.3 - Detaching clears its local fallback, while detaching another frame stream
+  cannot clear either the fallback or a daemon grant. test:
+  `crates/gterminal/tests/frame_protocol.rs::frame_detach_clears_only_its_local_fallback_grant`.
+- C0.4 - A control owner disables new fallback authority; its `grant_input`
+  replaces an existing fallback, and matching/unconditional revoke clears the
+  resulting holder. test:
+  `crates/gterminal/tests/control_protocol.rs::daemon_grant_replaces_local_fallback_and_restores_arbitration`.
+- C0.5 - The protocol contract and wire goldens describe the authenticated native
+  inventory and local-fallback/daemon-takeover rules. behavior: "local fallback
+  holder" in `docs/contracts/gterm-protocols.md`.
+- C0.6 - Last-control-owner disconnect transfers a bound daemon grant to that same
+  frame connection; rebinding it to the fresh reconnect attachment id preserves
+  input until the next daemon grant replaces the fallback. test:
+  `crates/gterminal/tests/control_protocol.rs::disconnect_and_rebind_transfer_the_daemon_grant_without_an_input_gap`.
+
+### C0b Read native inventory through the existing frame socket [category: code] (depends: C0)
+`kind: deliverable`
+
+Targets:
+- `crates/gclient/src/frame_source.rs::*` — scope-reason: declare the native-host submodule and move the shared direct hello/read/write helpers needed by inventory out of the near-ceiling file
+- `crates/gclient/src/frame_source/native_host.rs`
+- `crates/gclient/tests/frame_source_live.rs::*` — scope-reason: add a real-gterm daemonless inventory/attach/input integration case
+
+New `crates/gclient/src/frame_source/native_host.rs` owns
+`NativeHost::connect(socket, local_token, viewport)`, `list_native()` and
+`attach(row, client_attachment_id)`. It reuses the existing length-prefixed codec,
+`Hello`, local token and `UnixSocketFrameSource` attach path. Inventory has a 2 s
+aggregate local-host deadline covering connect, hello and list; a missing or
+unresponsive gterm returns a typed local-host-unavailable result and never touches
+the daemon. Move only the shared direct handshake helpers needed by this module out
+of the 950-line `frame_source.rs`; no second codec or connection pool.
+**Restraint rung 2:** reuse the frame transport and direct-source constructor.
+
+**Cutover:** C0b changes gclient and does not promote independently; after all
+leaves pass it participates in the shared quiet-window build and separate gclient
+promotion.
+
+**Research context:** Observed: `UnixSocketFrameSource::connect` opens the socket
+and `connect_stream` performs `Hello` then `AttachTerminal`; `frame_source.rs` is
+950 lines and must split rather than grow. `crates/gclient/tests/frame_source_live.rs`
+already builds a real test gterm, spawns a native terminal, reads frames and proves
+grant/refusal behavior. Planned verification: `cargo nextest run -p gobby-client
+--test frame_source_live`; `cargo clippy -p gobby-client --all-targets`.
+
+**Acceptance:**
+
+- C0b.1 - `NativeHost` uses the existing authenticated frame codec and returns
+  typed native inventory without any daemon request. file:
+  `crates/gclient/src/frame_source/native_host.rs`.
+- C0b.2 - Against a real gterm with no lasting control connection, gclient lists a
+  native terminal, attaches it and receives frames within one 2 s aggregate local
+  deadline. test:
+  `crates/gclient/tests/frame_source_live.rs::native_inventory_and_attach_work_without_a_daemon`.
+- C0b.3 - Missing, refused and timed-out local-host probes return typed outcomes and
+  leave no reader/writer task or socket alive. test:
+  `crates/gclient/tests/frame_source_live.rs::native_inventory_failure_cleans_up_the_frame_connection`.
+
+### C0c Launch, render and type native panes with no daemon [category: code] (depends: C0b, A5)
+`kind: deliverable`
+
+Targets:
+- `crates/gclient/src/startup.rs::*` — scope-reason: an absent default daemon token becomes a degraded capability while an explicit bad token path still errors
+- `crates/gclient/src/views/mod.rs::run_ready`
+- `crates/gclient/src/app/native_degraded.rs`
+- `crates/gclient/src/app/mod.rs::*` — scope-reason: declare the module and keep daemonless workspace state in the extracted implementation
+- `crates/gclient/src/app/pane.rs::*` — scope-reason: record local fallback authority and clear its provisional state on typed refusal
+- `crates/gclient/src/app/live_loop/actions.rs::*` — scope-reason: delegate daemonless tab projection to the extracted native-degraded module
+- `crates/gclient/src/app/live_loop/control.rs::*` — scope-reason: test direct input before daemon readiness for daemonless panes
+- `crates/gclient/src/app/live_roster.rs`
+- `crates/gclient/tests/startup.rs::*` — scope-reason: add missing-token and daemonless launch cases beside the existing unreachable-daemon test
+- `crates/gclient/tests/loop_liveness.rs`
+- `docs/guides/gclient-user-guide.md`
+
+`resolve_probe_env_at` treats a missing default daemon token as `token=None`; an
+explicit `--token-file` that is missing, unreadable or empty remains an error.
+`run_ready` constructs `LiveDaemon` with the available token but does not await
+`attach_live_workspace` before opening the terminal. It asks `NativeHost` for local
+inventory, and new `native_degraded.rs` installs one direct pane and one local tab
+per returned native row, keyed by stable gterm `terminal_id`. A missing gterm opens
+an empty window with `Daemon unavailable; no local native host.` rather than exiting.
+
+Each local pane gets a fresh client attachment id, binds on the frame stream, starts
+Held with `lease_unconfirmed`, and sends `Input`/`Paste` directly even while
+`daemon_ready == false`. An `InputRefused` clears provisional local authority and
+shows take-back unavailable; it never retries or falls back through the daemon.
+`sync_live_chrome` projects the flat local tabs only while no daemon workspace model
+exists. When A5 later reconciles, `install_live_rows` reuses panes by terminal id,
+preserves their live direct source, replaces the flat tabs with daemon layout and
+lets C2 retake every unconfirmed holder. Rows with no matching local inventory use
+the normal daemon attach path. **Restraint rung 2:** reuse `Pane`, local tabs,
+`InputRefused`, terminal ids and A5 reconcile; add no offline workspace database or
+synthetic daemon model.
+
+To preserve the production ceiling, move all daemonless workspace state and local
+tab projection out of near-ceiling `crates/gclient/src/app/mod.rs` and
+`crates/gclient/src/app/live_loop/actions.rs` into new
+`crates/gclient/src/app/native_degraded.rs`; the existing files gain only the module
+declaration and bounded calls.
+
+Without the daemon, the status/help text explicitly marks leases/takeover, layout
+and workspace sync, roster, attention and agent relay unavailable; tmux, web and
+proxied panes are not listed. Native render, scroll, copy and input remain available.
+
+**Granularity:** eight production files form one launch-to-loop state transition:
+startup capability, local inventory installation, tab projection and direct input
+must land together so the new launch path never renders a pane it cannot type into.
+The transport client is independently closeable and therefore split into C0b.
+
+**Cutover:** C0c changes gclient and does not promote independently; after all
+leaves pass it participates in the shared quiet-window build and separate gclient
+promotion.
+
+**Research context:** Observed: `prepare_at` already converts an unreachable health
+probe into a notice, but `resolve_probe_env_at` still requires the daemon token;
+`run_ready` calls `LiveDaemon::connect_or_wait` then awaits
+`attach_live_workspace` before constructing the terminal. A down-daemon
+`LiveDaemon` is already valid. `send_live_input` returns before testing direct input
+when `daemon_ready` is false. `sync_live_chrome` currently projects only a daemon
+workspace model. `ensure_live_pane` and `install_live_row` already reuse a pane by
+terminal id, which is the reconnect merge seam. Planned verification: `cargo
+nextest run -p gobby-client --test startup --test frame_source_live --test
+loop_liveness --test reconciliation`; docs link check.
+
+**Acceptance:**
+
+- C0c.1 - A missing default daemon token and an unreachable daemon still produce a
+  Ready session; an explicitly requested bad token file remains a startup error.
+  test: `crates/gclient/tests/startup.rs::missing_default_daemon_token_starts_in_native_degraded_mode`.
+- C0c.2 - With the daemon absent and a real gterm present, gclient launches, lists
+  native panes only, attaches, renders advancing frames and delivers typed bytes to
+  the PTY. test:
+  `crates/gclient/tests/loop_liveness.rs::daemonless_launch_attaches_renders_and_types_native_panes`.
+- C0c.3 - A competing local gclient that receives `input_not_granted` becomes
+  read-only without daemon fallback, while the first holder keeps typing. test:
+  `crates/gclient/tests/loop_liveness.rs::daemonless_second_client_cannot_take_over_the_local_holder`.
+- C0c.4 - When the daemon connects after degraded launch, matching terminal ids
+  preserve one direct source, daemon layout replaces local tabs, C2 retakes the
+  unconfirmed holder, and no duplicate pane appears. test:
+  `crates/gclient/tests/loop_liveness.rs::daemon_reconcile_adopts_daemonless_native_panes_without_duplication`.
+- C0c.5 - Without the daemon, the UI states the unavailable enhancements and never
+  lists tmux, web or proxied panes. behavior: "Native degraded mode" in
+  `docs/guides/gclient-user-guide.md`.
+
+### C1 Keep control on disconnect for direct-granted panes [category: code] (depends: C0c)
 `kind: deliverable`
 
 Targets:
 - `crates/gclient/src/app/disconnect.rs`
 - `crates/gclient/src/app/live_reconcile.rs`
-- `crates/gclient/src/app/pane.rs::Pane`
-- `crates/gclient/src/app/pane.rs::Pane::new`
+- `crates/gclient/src/app/pane.rs::*` — scope-reason: preserve direct control and record unconfirmed lease state across construction, disconnect and input admission
 - `crates/gclient/src/app/live_loop/control.rs::*` — scope-reason: `send_live_input` tests `direct_input` before `daemon_ready`
 - `docs/contracts/gterm-protocols.md`
 - `docs/guides/gclient-user-guide.md`
@@ -1025,7 +1340,8 @@ Targets:
 
 `observe_daemon_disconnect` (in `disconnect.rs` after R1) and the reconnect path's
 pre-reconcile clear (in `live_reconcile.rs` after A5) call `Pane::clear_control` on
-every pane today. New rule: a pane with `Pane::direct_input() == true` keeps
+every pane today. New rule: a pane with `Pane::direct_input() == true`, whether its
+authority came from a daemon grant or C0's local fallback, keeps
 `ControlState::Held`, gets `lease_unconfirmed: bool` set on `Pane`, and shows status
 text `Daemon disconnected; typing continues on the host.`; every other pane clears
 as today. Keystrokes keep flowing on the bound frame stream because
@@ -1034,10 +1350,11 @@ as today. Keystrokes keep flowing on the bound frame stream because
 "A surviving grant does not mean typing survives a daemon outage" paragraph is
 rewritten to the new contract: a bound direct attachment keeps typing; the lease is
 reconfirmed on reconnect; D3b's `ws_close` cleanup finalizes daemon-side attachment
-and lease state without revoking the current direct-native host grant. Explicit
-release, detach, takeover, terminal removal and non-direct cleanup still revoke.
-A take by another client during the outage is impossible because the daemon that
-issues leases is the thing that is down. The guide's
+and lease state while C0 transfers the matching host grant to the bound local frame
+connection. Its owning frame detach clears that fallback. Daemon-side explicit
+release, detach, takeover, terminal removal and non-direct cleanup still revoke or
+replace host authority. A daemon lease takeover is unavailable during the outage,
+and gterm refuses a second local fallback holder. The guide's
 status-string table and `Daemon restarts and reconnects` section follow.
 
 **Cutover:** C1 changes gclient and does not promote independently; after all
@@ -1059,8 +1376,9 @@ updated at close through the post-task memory review. Planned verification:
 
 **Acceptance:**
 
-- C1.1 - A direct-granted pane stays Held with `lease_unconfirmed` when the mock
-  daemon closes the socket, and the mock frame host still receives `Input`. test:
+- C1.1 - A daemon-granted or local-fallback direct pane stays Held with
+  `lease_unconfirmed` when the mock daemon closes the socket, and the mock frame
+  host still receives `Input`. test:
   `crates/gclient/tests/loop_liveness.rs::a_direct_granted_pane_keeps_typing_through_a_daemon_disconnect`.
 - C1.2 - A proxied pane drops to Observe on the same disconnect. test:
   `crates/gclient/tests/loop_liveness.rs::a_proxied_pane_drops_to_observe_on_daemon_disconnect`.
@@ -1075,17 +1393,24 @@ updated at close through the post-task memory review. Planned verification:
 Targets:
 - `crates/gclient/src/app/live_attach.rs::*` — scope-reason: `apply_attach_result` issues a take for every pane whose lease is unconfirmed
 - `crates/gclient/src/app/live_control.rs`
-- `crates/gclient/src/app/pane.rs::Pane`
+- `crates/gclient/src/app/pane.rs::*` — scope-reason: apply rebind/take outcomes to unconfirmed direct panes without dropping their live source
+- `crates/gclient/src/frame_source.rs::*` — scope-reason: rebind the preserved direct frame stream to the fresh daemon attachment id before issuing the reconnect take
 - `crates/gclient/tests/loop_liveness.rs`
 
 After the reconcile re-attaches panes (new attachment ids from the fresh daemon),
-every pane with `lease_unconfirmed` issues `request_control` (take), not only the
-focused one that `restore_focused` retakes today. Between the take being issued and
-`granted` arriving, keystrokes go to the pane's existing pre-grant `PendingInput`
-queue and flush on grant through the existing `apply_control_outcome` path; `held`
-by another attachment drops the pane to Observe with take-back exactly as today.
-The daemon's grant of the new attachment id replaces the old grant in gterm, so
-nothing else is needed host-side. `lease_unconfirmed` clears on `granted`.
+every pane with `lease_unconfirmed` first sends the existing `BindAttachment` on
+its preserved direct frame stream with the fresh daemon attachment id, then issues
+`request_control` (take), not only the focused pane that `restore_focused` retakes
+today. C0 keys fallback authority by that frame connection, so input continues on
+the direct stream while rebind and take are pending; it is not diverted to a daemon
+write or the pre-grant queue. The daemon's `granted` result atomically replaces the
+fallback with the fresh attachment id and clears `lease_unconfirmed`. A `held`
+result means the daemon granted another attachment, so this stream receives the
+typed host refusal, drops to Observe and offers take-back exactly as today. A
+rebind or take transport error leaves the pane Held but unconfirmed while the
+reconnect supervisor retries; the single host authority still prevents concurrent
+writes. **Restraint rung 2:** reuse `BindAttachment`, the preserved frame stream and
+the existing take outcome; add no handoff protocol or second source.
 
 **Cutover:** C2 changes gclient and does not promote independently; after all
 leaves pass, it participates in the single shared clean-cutover gate in
@@ -1101,9 +1426,11 @@ loop_liveness`.
 
 **Acceptance:**
 
-- C2.1 - On reconnect a `terminal_take_control` is recorded for every unconfirmed
-  direct pane, and input queued in between reaches the host after `granted`. test:
-  `crates/gclient/tests/loop_liveness.rs::an_unconfirmed_lease_is_retaken_on_reconnect_and_queued_input_flushes_on_grant`.
+- C2.1 - On reconnect every unconfirmed direct pane rebinds its preserved frame
+  stream before `terminal_take_control`; bytes typed before the reply continue to
+  reach the host, and `granted` clears the unconfirmed state without duplicating the
+  source. test:
+  `crates/gclient/tests/loop_liveness.rs::an_unconfirmed_direct_stream_rebinds_and_keeps_typing_until_retake_grants`.
 - C2.2 - `lease_unconfirmed` clears on grant and a `held` reply drops the pane to
   Observe with take-back. symbol: `Pane`.
 
@@ -1392,22 +1719,13 @@ carrying `attachment_id`; `workspace` (one per connection) for `workspace_*`,
 because splits and closes on one tab must stay ordered; `request:<id>` (fully
 concurrent) for read-only `terminal_list`; `default` (one ordered lane, today's
 behaviour) for chat, voice, `tool_call` and anything unclassified. Socket close
-cancels every lane task and its watchdog, awaits both with
-`gather(return_exceptions=True)`, and clears the lane map before connection cleanup;
-no task from the dead socket survives to mutate state. The slow-handler warning in
-`_handle_message` becomes "later messages in this lane waited".
-
-Each running lane arm also owns a one-shot watchdog at the existing
-`SLOW_WEBSOCKET_HANDLER_SECONDS` bound (1.0 s). If the handler is still pending, the
-watchdog logs the connection id, lane key, message type, request/attachment id,
-elapsed time, task name and a formatted await-chain dump: start with
-`asyncio.Task.get_stack()`, then follow the task coroutine's stdlib `cr_await` /
-`gi_yieldfrom` links so nested awaits such as `_notify_holder` and `_roundtrip` are
-visible rather than only the outer handler frame. It observes only: it does not
-cancel or retry the handler, and completion cancels and awaits the watchdog.
-**Restraint rung 3:** the existing completion-only warning cannot diagnose a handler
-that never returns, so use stdlib coroutine introspection and the existing threshold;
-add no sampler, dependency or config knob. The dispatcher test drives a fake async websocket
+cancels every lane task, awaits them with `gather(return_exceptions=True)`, and
+clears the lane map before connection cleanup; no task from the dead socket survives
+to mutate state. The existing completion-only slow-handler warning in
+`_handle_message` becomes "later messages in this lane waited". There is no
+per-lane timeout, sampler or one-shot watchdog. **Restraint rung 2:** reuse tasks,
+the semaphore and the existing completion warning; add only the dispatcher needed
+for ordering and concurrency. The dispatcher test drives a fake async websocket
 iterator through `handle_connection` and proves an attachment-A handler that
 sleeps 1 s does not delay a `terminal_take_control` on attachment B or a
 `workspace_op` on the same connection, while two `workspace_op`s stay ordered.
@@ -1419,8 +1737,8 @@ runtime bundle in a contextvar per message and logs `websocket handler %s took
 %.2fs; later messages on this connection waited` past
 `SLOW_WEBSOCKET_HANDLER_SECONDS`; the runtime-bundle contextvar must be pinned per
 lane task. That warning runs only after `_handle_message` returns and therefore left
-no evidence for the 2026-09-21 never-returned-handler hypothesis; the watchdog is
-the missing in-flight evidence. Golden fixtures live in
+no evidence for the 2026-09-21 never-returned-handler hypothesis. That hypothesis
+remains unproven rather than gaining a runtime watchdog. Golden fixtures live in
 `tests/fixtures/terminal_ws_golden/`. Planned
 verification: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test
 GOBBY_TEST_PROTECT=1 uv run pytest tests/servers/websocket/test_server.py
@@ -1432,15 +1750,11 @@ tests/servers/test_workspace_ws.py`.
 - D2.1 - Attachment lanes dispatch concurrently while workspace ops stay ordered,
   proven through the real connection loop. test:
   `tests/servers/websocket/test_server.py::test_attachment_lanes_dispatch_concurrently_while_workspace_ops_stay_ordered`.
-- D2.2 - Socket close cancels and awaits every in-flight lane and watchdog, runs
-  each handler's `finally`, and leaves no dispatcher task. test:
+- D2.2 - Socket close cancels and awaits every in-flight lane, runs each handler's
+  `finally`, and leaves no dispatcher task. test:
   `tests/servers/test_websocket_server_disconnects.py::test_socket_close_cancels_in_flight_lanes`.
 - D2.3 - The dispatcher, its lane keys and the in-flight cap live in their own
   module. file: `src/gobby/servers/websocket/dispatch.py`.
-- D2.4 - A lane that exceeds 1.0 s emits one stack dump with lane and request
-identity without cancelling the handler; release before the bound emits none. test:
-`tests/servers/websocket/test_server.py::test_lane_watchdog_dumps_the_stuck_task_without_cancelling_it`.
-
 ### D3 Bounded HostClient round trips [category: code] (depends: D1d)
 `kind: deliverable`
 
@@ -1456,7 +1770,7 @@ Targets:
 - `src/gobby/config/terminal_host.py::TerminalHostConfig`
 - `crates/gcore/assets/config/runtime_config_contract.json::*` — scope-reason: regenerated derived carrier for the new config field
 - `tests/terminals/test_host_client.py::*` — scope-reason: adds the deadline tests beside the round-trip tests
-- `tests/terminals/test_native_runtime.py::*` — scope-reason: adds the aggregate grant/revoke deadline and double-stall cleanup tests
+- `tests/terminals/test_native_runtime.py::*` — scope-reason: adds the aggregate EOF/reconnect/retry deadline, pending cleanup and lease-lock release test
 - `tests/config/test_terminal_host_config.py::*` — scope-reason: adds the new field's default and bounds
 
 Consumers unchanged:
@@ -1483,14 +1797,17 @@ new `TerminalHostConfig.control_timeout_seconds` (5.0) stored by
 
 `NativeTerminalRuntime.grant_input` and `revoke_input` each compute one absolute
 1.5 s deadline before `_ensure`. That same deadline covers ensure, first round trip,
-reconnect, retry, writer lock/drain and reply. `_reconnect_epoch`,
+an EOF from that attempt, reconnect, the second grant/revoke attempt, writer
+lock/drain and reply. `_reconnect_epoch`,
 `HostClient.reconnect`, `grant_input`, `revoke_input` and `_roundtrip` receive only
 the remaining time/absolute deadline; no phase or retry resets it. Expiry cancels
 the active pending future, lets `_begin_request`'s existing done callback remove it
 from `_pending`, and raises `HostUnavailableError("timed out")`. Thus the complete
-operation stays below gclient's 2 s `CONTROL_REQUEST_DEADLINE`, including when both
-attempts stall. `sync_host_input_grant` already maps that error to
-`host_input_granted=False`.
+operation stays below gclient's 2 s `CONTROL_REQUEST_DEADLINE`, including when the
+first attempt ends in EOF and reconnect plus the second attempt consume the rest.
+`sync_host_input_grant` already maps that error to `host_input_granted=False`, so
+its caller exits the observer await and releases `TerminalLeaseRegistry.lock` no
+later than the same original 1.5 s deadline.
 
 `src/gobby/terminals/native_runtime.py` is at 851 lines: move the grant/revoke and
 reconnect deadline orchestration into new
@@ -1530,10 +1847,12 @@ tests/servers/test_terminal_ws_lease.py`; `uv run mypy src/`.
 - D3.1 - A round trip past its deadline raises `HostUnavailableError("timed out")`
   and drops the pending future. test:
   `tests/terminals/test_host_client.py::test_roundtrip_times_out_with_host_unavailable`.
-- D3.2 - Grant and revoke use one absolute 1.5 s budget across ensure, attempt,
-  reconnect and retry. With both attempts stalled, virtual elapsed time is 1.5 s,
-  wall time stays below 2 s, and every HostClient pending entry is removed. test:
-  `tests/terminals/test_native_runtime.py::test_grant_and_revoke_double_stall_share_one_deadline_and_clear_pending`.
+- D3.2 - Grant and revoke use one absolute 1.5 s budget across ensure, a first
+  attempt ending in EOF, reconnect and the second attempt. With the retry stalled,
+  wall time stays below 2 s, every HostClient pending entry is removed, and a
+  competing acquisition of the same `TerminalLeaseRegistry.lock(terminal_id)`
+  succeeds by that original deadline. test:
+  `tests/terminals/test_native_runtime.py::test_eof_reconnect_and_retry_share_one_deadline_and_release_the_lease_lock`.
 - D3.3 - `control_timeout_seconds` defaults to 5.0 and is exported to the runtime
   config contract. test:
   `tests/config/test_terminal_host_config.py::test_control_timeout_seconds_default`.
@@ -1578,32 +1897,28 @@ the newer mutation wins the sync lock first, the older generation is skipped. Th
 four existing observer awaits at observed lines 437, 446, 470 and 494 are removed
 from their lease-lock scopes.
 
-The lane directly awaits `_sync_committed_holder(change)` outside the lease lock so
-the D2 await-chain dump reaches `_notify_holder`, `sync_host_input_grant` and
-`HostClient._roundtrip`. If lane cancellation interrupts that await, the wrapper
-synchronously creates a registry-owned `reconcile_latest_holder(terminal_id)` task
-before re-raising `CancelledError`; the task is kept in a strong-reference set until
-its done callback removes it. `reconcile_latest_holder` acquires the holder-sync
-lock first, then snapshots the current generation, holder and disposition under the
-lease lock, releases only the lease lock, and applies or preserves that latest host
-state while still owning the holder-sync lock. If a newer normal sync wins the
-holder-sync lock first, recovery snapshots the newer state after it; if recovery
-wins first, a later mutation queues and writes last. No pre-lock snapshot can be
-applied after a newer host effect. No lease mutation, write admission or sizing
-decision waits on gterm. **Restraint rung 2:** reuse the registry's existing
-per-terminal lock-cell pattern and holder observer; introduce one separate sync
-lock plus cancellation-recovery task set because the external effect cannot safely
-share the lease-state lock.
+The lane directly awaits `_sync_committed_holder(change)` outside the lease lock.
+If lane cancellation interrupts that await, the wrapper synchronously creates a
+registry-owned `reconcile_latest_holder(terminal_id)` task before re-raising
+`CancelledError`; the task is kept in a strong-reference set until its done callback
+removes it. `reconcile_latest_holder` acquires the holder-sync lock first, then
+snapshots the current generation, holder and disposition under the lease lock,
+releases only the lease lock, and applies or preserves that latest host state while
+still owning the holder-sync lock. If a newer normal sync wins the holder-sync lock
+first, recovery snapshots the newer state after it; if recovery wins first, a later
+mutation queues and writes last. No pre-lock snapshot can be applied after a newer
+host effect. No lease mutation, write admission or sizing decision waits on gterm.
+**Restraint rung 2:** reuse the registry's existing per-terminal lock-cell pattern
+and holder observer; introduce one separate sync lock plus cancellation-recovery
+task set because the external effect cannot safely share the lease-state lock.
 
-Before changing `leases.py`, the D3b executor adds the real unanswered-grant harness
-to `tests/servers/test_terminal_ws_lease.py` and runs it on the D2+D3 predecessor.
-The retained task-validation checkpoint must contain the D2 watchdog await chain
-`TerminalLeaseRegistry._notify_holder → sync_host_input_grant →
-HostClient._roundtrip` and `lock_held(terminal_id) == true`. A mismatch blocks D3b
-implementation and the shared cutover while the premise is corrected from the
-captured evidence; it does not block plan expansion and it does not prove the
-historical 2026-09-21 incident. After the repair, the same real seam must show the
-chain with `lock_held == false` and bounded progress.
+The real unanswered-grant test uses a test-only barrier after `HostClient` registers
+the request and before the fake host replies. While that request is visibly pending,
+it asserts `lock_held(terminal_id) == false` and completes another connection lane
+and same-terminal lease-state acquisition. Releasing the barrier or allowing D3's
+single deadline to expire clears the pending entry. It adds no production phase
+label, sampler or watchdog and makes no claim about the historical incidents; their
+root cause remains unproven.
 
 **Research context:** gcode verified `TerminalLeaseRegistry.take_control`
 (`src/gobby/terminals/leases.py` 421-455), `release_control` (457-478) and
@@ -1638,21 +1953,15 @@ test:
   the PTY, then C2 replaces the grant and an explicit detach refuses later input.
   test:
   `tests/e2e/test_terminal_client_stack.py::test_direct_native_input_survives_daemon_restart_until_lease_retake`.
-- D3b.4 - An actual `HostClient` grant whose writer never receives a reply produces
-the D2 watchdog stack containing `_roundtrip`, times out by 1.5 s, clears its
-pending request, and does not block another connection lane or the lease-state lock.
-test:
-`tests/servers/test_terminal_ws_lease.py::test_unanswered_host_grant_is_diagnosed_bounded_and_lock_free`.
+- D3b.4 - A test barrier holds an actual `HostClient` grant after request
+  registration; while it is pending, `lock_held(terminal_id) == false`, another
+  connection lane and same-terminal lease-state acquisition complete, and D3's
+  deadline clears the pending request without any production watchdog. test:
+  `tests/servers/test_terminal_ws_lease.py::test_unanswered_host_grant_is_bounded_and_lock_free`.
 - D3b.5 - In the barrier race where the newer normal sync wins the holder-sync lock
   before recovery, recovery snapshots only after acquiring that lock and the final
   host state still matches the newest generation. test:
   `tests/terminals/test_lease_authority.py::test_reconcile_latest_holder_snapshots_under_the_sync_lock_after_newer_sync_wins`.
-- D3b.6 - Task validation retains the pre-repair watchdog chain with
-  `lock_held == true` and the post-repair chain with `lock_held == false`; absence
-  of the pre-repair chain stops D3b and cutover without claiming historical cause.
-  test:
-  `tests/servers/test_terminal_ws_lease.py::test_unanswered_host_grant_causal_checkpoint`.
-
 ### D4 Pool exhaustion diagnosis [category: code]
 `kind: deliverable`
 
@@ -1750,22 +2059,15 @@ Render characterisations in `crates/gclient/tests/parity/chrome.rs` and
 `crates/gclient/tests/fixtures/screens/*.txt` change only if status-line text
 changes (B1, C1); regenerate with `GOBBY_UPDATE_SCREENS=1` in the same commit.
 
-Freeze hypothesis, isolated causal checkpoint: after D2 and D3 pass but before any
-D3b edit, run
-`tests/servers/test_terminal_ws_lease.py::test_unanswered_host_grant_causal_checkpoint`
-with the isolated hub. Retain the D2 watchdog stack containing
-`TerminalLeaseRegistry._notify_holder`, `sync_host_input_grant` and
-`HostClient._roundtrip` plus `lock_held(terminal_id) == true` in D3b's task
-validation evidence. If the chain or lock state differs, stop D3b and the shared
-cutover and correct the implementation premise from that evidence; expansion has
-already occurred and is not the gate. After D3b, run
-`test_unanswered_host_grant_is_diagnosed_bounded_and_lock_free`: the same chain must
-show `lock_held == false`, another lane and lease-state operation must progress, and
-D3 must end the complete host operation within 1.5 s with `_pending` empty. These
-checkpoints reproduce and remove the proposed mechanism; neither proves that it
-caused the historical 2026-09-21 incident. **Restraint rung 2:** use the real
-handler/lease/HostClient seam and D2 watchdog; add no production fault-injection
-switch.
+Watchdog-free host-grant verification: run
+`tests/servers/test_terminal_ws_lease.py::test_unanswered_host_grant_is_bounded_and_lock_free`
+with the isolated hub. Its test-only barrier stops the fake host after the real
+`HostClient` request is registered. While `_pending` is non-empty, the lease lock
+must be free and another connection lane plus same-terminal lease-state acquisition
+must complete; the one D3 deadline then clears `_pending`. This proves the repaired
+invariant without a production watchdog or phase label. The 07:44 and 14:47
+historical root causes remain unproven. **Restraint rung 2:** reuse the real
+handler/lease/HostClient seam and a test barrier; add no runtime diagnostic task.
 
 Clean-cutover window: send one `global` announcement and wait for no live spawned
 worker or close validator. D3's gcore runtime-config carrier dirties the coherent
@@ -1773,10 +2075,20 @@ set, so rebuild all three of `gcode`/`gdaemon`/`ghook` and promote them together
 through `promote_workspace_binary_set`. Build and promote gclient separately through
 `install_gclient_from_submodule` (never pass gclient to the coherent-set function),
 restart the Python daemon from the main checkout, then restart the validation
-gclient so it execs the new inode. If implementation changed gterm, build it with
+gclient so it execs the new inode. P3 changes gterm, so build it with
 `--features vt-engine --bin gterm` and promote it through
 `install_gterm_from_submodule` inside this same announced window. Read installed
 identity/hash evidence from `~/.gobby/bin/`, not `target/release/`.
+
+Daemonless live path: stop the isolated daemon before launch and remove the default
+daemon token, while a real promoted gterm owns one native PTY. Launch gclient and
+verify it opens, lists only that native pane, attaches, renders advancing output and
+delivers typed bytes. Confirm the UI names unavailable lease/takeover,
+layout/workspace, roster, attention and relay features and offers no tmux, web or
+proxy panes. Launch a second gclient and verify its input is refused while the first
+keeps typing. Start the isolated daemon, then verify the same pane is adopted by
+terminal id without duplication, its frame stream rebinds to the daemon attachment,
+typing continues before the take reply, and the daemon grant replaces the fallback.
 
 gclient live, the freeze: with the promoted binaries and a direct pane held, run
 `kill -STOP <daemon pid>` at t=0, immediately focus another project to issue its
@@ -1792,8 +2104,10 @@ and reconfirms the direct lease without take-back. Then run
 the announced `uv run gobby restart --wait` while typing in a direct pane: typing
 never stops; after reconnect the pane shows Held again with the lease reconfirmed; a
 proxied pane drops to observe and comes back on take. Trigger one mock frame error
-and one forced recovery give-up and retain the corresponding structured
-`frame_recovery_*` records from `gclient.log`.
+and one forced recovery give-up. Retain structured WARN evidence for frame-error
+start, direct-handshake timeout, recovery give-up and success, unresolved-open
+failure, REST component failure, both Lagged entry paths, and reconnect start/finish
+including timeout and success from `gclient.log`.
 
 Daemon: `uv run ruff format src/ && uv run ruff check src/ && uv run mypy src/`,
 the pytest targets in P4 with the isolated hub
@@ -1811,11 +2125,14 @@ protocol contract (no `gobby docs` CLI exists). Never run the full pytest suite.
 ## V1 Plan Changelog
 `kind: verification`
 
-- 2026-09-21: made the split-right freeze hypothesis falsifiable; added lane stack
-watchdogs, lock-free host-grant reconciliation, frame-recovery logging, and the
-shared native-binary clean-cutover gate.
+- 2026-09-21: made the split-right freeze hypothesis testable; added ordered lanes,
+  lock-free host-grant reconciliation, frame-recovery logging, and the shared
+  native-binary clean-cutover gate.
 - 2026-09-21: resolved GDR-R1-F01 through F11 with corrected ordering, restart-grant
   continuity, aggregate deadlines, lock ordering, path-complete tests and bounded input.
+- 2026-09-21: round 2 adds daemonless native launch/render/input and local fallback
+  authority, removes both proposed watchdogs, tightens the EOF/retry deadline and
+  lock-release proof, references #22677, closes WARN gaps, and corrects diagnosis.
 
 Round 1 adversarial review (plan-adversary-taskless run 47e9dd2e, 2026-09-21 10:1x): needs_review, 11 blocking findings, 2 candidates dismissed. The coordinator (the assistant gobby#14069, under delegated planning-lane authority from the orchestrator gobby#14018) accepted all 11.
 
