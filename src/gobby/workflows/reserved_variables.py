@@ -2,12 +2,15 @@
 
 from typing import TYPE_CHECKING
 
+HANDOFF_TURN_END_PENDING_VARIABLE = "_handoff_turn_end_pending"
+
 if TYPE_CHECKING:
     from gobby.storage.definitions.rules import RuleDefinitionRow
 
 RESERVED_WORKFLOW_VARIABLES = frozenset(
     {
         "_block_reasons_shown",
+        HANDOFF_TURN_END_PENDING_VARIABLE,
         "consecutive_tool_blocks",
         "grok_pending_briefing",
         "grok_pending_delivery",

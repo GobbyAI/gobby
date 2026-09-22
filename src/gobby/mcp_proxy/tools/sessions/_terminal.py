@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio as asyncio
 import logging
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 from uuid import uuid4
 
 from gobby.agents.provider_capabilities import provider_capabilities
@@ -506,16 +506,26 @@ def register_terminal_tools(
             attempt_id = uuid4().hex
             attempt_state = None
             try:
+                conversation_id, _ = web_chat_session_registry.find_session(compact_target)
+                delivery_mode: Literal["in_process", "queued_in_process"] = (
+                    "queued_in_process"
+                    if conversation_id is not None
+                    and web_chat_session_registry.has_active_turn(conversation_id)
+                    else "in_process"
+                )
                 attempt_state = stage_handoff_attempt(
                     db,
                     resolved_session_id,
                     attempt_id=attempt_id,
                     handoff=handoff,
                     clear_session=False,
+                    delivery_mode=delivery_mode,
                 )
                 result = await web_chat_session_registry.compact_session(
                     compact_target,
                     handoff_attempt_id=attempt_id,
+                    handoff_record_id=attempt_state.handoff_record_id,
+                    handoff_session_id=resolved_session_id,
                 )
             except Exception as exc:
                 if attempt_state is not None:
@@ -525,23 +535,24 @@ def register_terminal_tools(
                 restore_handoff_attempt(db, attempt_state)
                 return result
             clear_queued_context(session_manager, resolved_session_id)
-            try:
-                record_handoff_delivery(
-                    db,
-                    handoff_id=attempt_state.handoff_record_id,
-                    attempt_id=attempt_id,
-                    boundary_kind="compact",
-                    continuation_session_id=resolved_session_id,
-                )
-                result["handoff_delivered"] = True
-            except Exception:
-                logger.warning(
-                    "Failed recording compact handoff delivery %s for session %s",
-                    attempt_id,
-                    resolved_session_id,
-                    exc_info=True,
-                )
-                result["handoff_delivered"] = False
+            if not result.get("queued") and not result.get("handoff_delivered"):
+                try:
+                    record_handoff_delivery(
+                        db,
+                        handoff_id=attempt_state.handoff_record_id,
+                        attempt_id=attempt_id,
+                        boundary_kind="compact",
+                        continuation_session_id=resolved_session_id,
+                    )
+                    result["handoff_delivered"] = True
+                except Exception:
+                    logger.warning(
+                        "Failed recording compact handoff delivery %s for session %s",
+                        attempt_id,
+                        resolved_session_id,
+                        exc_info=True,
+                    )
+                    result["handoff_delivered"] = False
             result["attempt_id"] = attempt_id
             result["handoff_staged"] = True
             return result
