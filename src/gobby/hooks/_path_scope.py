@@ -47,7 +47,19 @@ def apply_path_scope_metadata(
     cwd = current_tool_cwd(event_data)
 
     if metadata.get("canonical_tool_kind") == "write":
-        scope_unknown = bool(metadata.pop("_canonical_repo_mutation_scope_unknown", False))
+        scope_resolved_by_loop_binding = bool(
+            metadata.pop("_canonical_repo_mutation_scope_resolved_by_loop_binding", False)
+        )
+        scope_unknown = (
+            bool(metadata.pop("_canonical_repo_mutation_scope_unknown", False))
+            and not scope_resolved_by_loop_binding
+        ) or (metadata.get("canonical_structured_mutation") is not True and not paths)
+        if scope_unknown:
+            # Keep the shell classifier's uncertainty visible to before-tool
+            # enforcement. `canonical_repo_mutation` alone intentionally
+            # treats unknown scope as in-project, but it cannot distinguish a
+            # literal, attributable write from one whose target is opaque.
+            metadata["canonical_repo_mutation_scope_unknown"] = True
         metadata["canonical_repo_mutation"] = scope_unknown or paths_may_touch_project(
             paths, cwd=cwd, project_root=project_root
         )

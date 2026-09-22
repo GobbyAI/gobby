@@ -5,14 +5,25 @@ session linking, and session variable management.
 """
 
 import logging
+from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._authorization import has_delegated_agent_run
 from gobby.mcp_proxy.tools.tasks._claim_activity import confirm_claiming_session_activity
-from gobby.mcp_proxy.tools.tasks._context import RegistryContext
+from gobby.mcp_proxy.tools.tasks._context import (
+    CHECKOUT_RESOLUTION_ERRORS,
+    RegistryContext,
+    checkout_unresolved_error,
+)
 from gobby.mcp_proxy.tools.tasks._errors import TaskToolErrorCode, task_error
+from gobby.mcp_proxy.tools.tasks._lifecycle_paths import (
+    _claimed_session_worktree_path,
+    _lifecycle_checkout_root,
+)
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
+from gobby.storage.task_affected_files import TaskAffectedFileManager
 from gobby.storage.tasks import (
     AgentTaskClaimConflictError,
     TaskAlreadyClaimedError,
@@ -21,8 +32,138 @@ from gobby.storage.tasks import (
 )
 from gobby.tasks.state_semantics import get_claimed_session_id, is_task_closed
 from gobby.workflows.claimed_task_extra_skills import build_claimed_task_extra_skill_state
+from gobby.workflows.commit_guard import (
+    DirtyEditOwnershipInspectionError,
+    ForeignPathOwner,
+    foreign_owned_dirty_paths,
+)
+from gobby.workflows.task_claim_state import (
+    normalize_task_edited_path,
+    task_edited_file_set_for_checkout,
+)
 
 logger = logging.getLogger(__name__)
+
+_DECLARED_AFFECTED_FILE_SOURCES = frozenset({"manual", "expansion"})
+
+
+def _declared_affected_paths(ctx: RegistryContext, task_id: str) -> set[str]:
+    """Return exact, binding affected-file declarations for one task."""
+    paths: set[str] = set()
+    for annotation in TaskAffectedFileManager(ctx.task_manager.db).get_files(task_id):
+        if annotation.annotation_source not in _DECLARED_AFFECTED_FILE_SOURCES:
+            continue
+        normalized = normalize_task_edited_path(annotation.file_path)
+        if normalized is not None:
+            paths.add(normalized)
+    return paths
+
+
+def _canonical_claim_scope_path(path: str, checkout_root: str) -> str | None:
+    """Resolve a declared path to its checkout-relative canonical destination."""
+    root = Path(checkout_root).resolve(strict=False)
+    resolved = (root / path).resolve(strict=False)
+    if not resolved.is_relative_to(root):
+        return None
+    return normalize_task_edited_path(resolved.relative_to(root).as_posix())
+
+
+def _task_attribution_sessions(
+    ctx: RegistryContext,
+    task_id: str,
+    claimed_by_session_id: str | None,
+) -> set[str]:
+    """Return sessions that may hold persisted attribution for ``task_id``."""
+    session_ids = {claimed_by_session_id} if claimed_by_session_id else set()
+    for row in ctx.session_task_manager.get_task_sessions(task_id):
+        if not isinstance(row, Mapping):
+            continue
+        session_id = row.get("session_id")
+        if isinstance(session_id, str) and session_id:
+            session_ids.add(session_id)
+    return session_ids
+
+
+def _claim_scope_conflicts(
+    ctx: RegistryContext,
+    *,
+    task_id: str,
+    project_id: str,
+    claimed_by_session_id: str | None,
+    claimant_session_id: str,
+) -> set[ForeignPathOwner]:
+    """Find active same-checkout owners of a task's explicit claim scope."""
+    declared_paths = _declared_affected_paths(ctx, task_id)
+    attribution_sessions = _task_attribution_sessions(ctx, task_id, claimed_by_session_id)
+    attribution_variables: list[dict[str, Any]] = []
+    for session_id in attribution_sessions:
+        try:
+            variables = ctx.session_var_manager.get_variables(session_id)
+        except KeyError:
+            # A task owner can predate session variables; without a persisted
+            # attribution record it must not supply guessed claim scope.
+            continue
+        if isinstance(variables, dict):
+            attribution_variables.append(variables)
+    has_persisted_attribution = any(
+        task_id in checkouts
+        for variables in attribution_variables
+        if isinstance(checkouts := variables.get("task_edited_file_checkouts"), dict)
+    )
+    if not declared_paths and not has_persisted_attribution:
+        return set()
+
+    checkout_root = _lifecycle_checkout_root(
+        ctx,
+        session_id=claimant_session_id,
+        project_id=project_id,
+        overlay_path=_claimed_session_worktree_path(
+            ctx,
+            session_id=claimant_session_id,
+            project_id=project_id,
+        ),
+    )
+    if checkout_root is None:
+        raise ValueError("Cannot resolve the claimant checkout for ownership inspection")
+
+    candidate_paths = {
+        canonical
+        for path in declared_paths
+        if (canonical := _canonical_claim_scope_path(path, checkout_root)) is not None
+    }
+    for variables in attribution_variables:
+        candidate_paths.update(task_edited_file_set_for_checkout(variables, task_id, checkout_root))
+    if not candidate_paths:
+        return set()
+
+    owners_by_path = foreign_owned_dirty_paths(
+        ctx.task_manager.db,
+        session_id=claimant_session_id,
+        project_id=project_id,
+        checkout_root=checkout_root,
+        paths=candidate_paths,
+    )
+    return {
+        owner
+        for owners in owners_by_path.values()
+        for owner in owners
+        if owner.owner_task_id != task_id
+    }
+
+
+def _claim_scope_conflict_reason(conflicts: set[ForeignPathOwner]) -> str:
+    """Format exact ownership evidence without inventing additional scope."""
+    ordered = sorted(conflicts, key=lambda owner: (owner.path, owner.session_ref, owner.task_ref))
+    return "\n".join(
+        [
+            "Task claim blocked: declared or attributed path(s) belong to another active task/session:",
+            *[
+                f"- {owner.path} — session {owner.session_ref}, task {owner.task_ref}"
+                for owner in ordered
+            ],
+            "Ask the owner to commit or move the work to a worktree before claiming this task.",
+        ]
+    )
 
 
 def register_claim_task(registry: InternalToolRegistry, ctx: RegistryContext) -> None:
@@ -136,6 +277,41 @@ def register_claim_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                     f"Task is already claimed by session '{current_owner}'. "
                     "Use force=True to override."
                 ),
+            )
+
+        try:
+            scope_conflicts = _claim_scope_conflicts(
+                ctx,
+                task_id=resolved_id,
+                project_id=task.project_id,
+                claimed_by_session_id=current_owner,
+                claimant_session_id=resolved_session_id,
+            )
+        except CHECKOUT_RESOLUTION_ERRORS as exc:
+            return checkout_unresolved_error(exc)
+        except DirtyEditOwnershipInspectionError as exc:
+            return task_error(
+                f"Cannot inspect claim-time path ownership: {exc}",
+                TaskToolErrorCode.TASK_INVALID_STATUS,
+            )
+        except ValueError as exc:
+            return task_error(str(exc), TaskToolErrorCode.TASK_INVALID_STATUS)
+
+        if scope_conflicts:
+            return task_error(
+                _claim_scope_conflict_reason(scope_conflicts),
+                TaskToolErrorCode.TASK_CLAIM_CONFLICT,
+                conflicts=[
+                    {
+                        "path": owner.path,
+                        "session": owner.session_ref,
+                        "task": owner.task_ref,
+                    }
+                    for owner in sorted(
+                        scope_conflicts,
+                        key=lambda owner: (owner.path, owner.session_ref, owner.task_ref),
+                    )
+                ],
             )
 
         try:

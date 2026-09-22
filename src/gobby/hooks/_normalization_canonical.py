@@ -1,9 +1,7 @@
 """Canonical tool metadata inference."""
 
-import os
-import posixpath
-import re
 from collections.abc import Mapping
+from dataclasses import replace
 from typing import Any
 
 from gobby.hooks._inline_interpreter_classifier import (
@@ -36,30 +34,37 @@ from gobby.hooks._normalization_paths import (
 from gobby.hooks._normalization_segments import (
     _bound_pipeline_reads,
     _pipeline_filter_output_line_bound,
-    _ShellSegment,
     _ShellSegmentMetadata,
+    _split_shell_segments,
 )
 from gobby.hooks._normalization_shell import (
-    _SHELL_CHAIN_TOKENS,
     ShellToken,
+    _apply_cd,
     _contains_unexpanded_shell_reference,
     _get_command_text,
     _has_perl_inplace_option,
     _has_sed_inplace_option,
+    _input_redirection_paths,
+    _literal_cd_target,
     _looks_file_like,
     _looks_path_target,
+    _loop_binding_variable_is_stable,
+    _loop_header_words_are_literal,
+    _plain_loop_binding_reference,
+    _rebase_navigation_shell_paths,
+    _rebase_shell_paths,
+    _shell_loop_binding_disqualifications,
     _shell_positional_args,
+    _shell_segment_preserves_loop_binding,
     _strip_shell_wrappers,
     extract_redirection_paths,
     has_mutating_output_redirection,
     has_shell_input_redirection,
-    is_shell_input_redirection_token,
-    is_unquoted_shell_control_token,
     redirects_stdout_to_file,
+    scan_shell_command,
     shell_token_values,
     strip_input_redirections,
     strip_output_redirections,
-    tokenize_shell_command,
 )
 from gobby.hooks._path_scope import apply_path_scope_metadata
 from gobby.hooks._python_pipeline_classifier import (
@@ -91,10 +96,6 @@ _GCODE_PIPELINE_READ_ONLY_FILTERS = frozenset(
 )
 # Characters in echo arguments that imply command substitution rather than a plain marker.
 _ECHO_UNSAFE_CHARS = frozenset({"$", "`"})
-
-_KNOWN_NAVIGATION_SHELL_REFERENCE = re.compile(
-    r"(?<![\\$])\$(?:\{(?P<braced>HOME|PWD|TMPDIR)\}|(?P<bare>HOME|PWD|TMPDIR)(?!\w))"
-)
 
 
 def _build_canonical_tool_metadata(
@@ -165,67 +166,6 @@ def _is_neutral_echo_segment(tokens: list[ShellToken], parts: list[str]) -> bool
     return not any(ch in part for part in parts[1:] for ch in _ECHO_UNSAFE_CHARS)
 
 
-def _split_shell_segments(tokens: list[ShellToken]) -> list[_ShellSegment]:
-    segments: list[_ShellSegment] = []
-    current: list[ShellToken] = []
-    separator_before: str | None = None
-    for token in tokens:
-        if not token.quoted and token.value in _SHELL_CHAIN_TOKENS:
-            if current:
-                segments.append(_ShellSegment(current, separator_before))
-                current = []
-            separator_before = token.value
-            continue
-        current.append(token)
-    if current:
-        segments.append(_ShellSegment(current, separator_before))
-    return segments
-
-
-def _literal_cd_target(parts: list[str]) -> str | None:
-    if not parts or shell_command_name(parts[0]) != "cd":
-        return None
-    positional = [part for part in parts[1:] if part and not part.startswith("-")]
-    if len(positional) != 1:
-        return None
-    target = positional[0]
-    if any(char in target for char in "$`*?[]{};"):
-        return None
-    return target
-
-
-def _rebase_shell_path(path: str, cwd: str | None) -> str:
-    if not cwd or path.startswith(("/", "~")) or "://" in path:
-        return path
-    return posixpath.normpath(posixpath.join(cwd, path))
-
-
-def _rebase_shell_paths(paths: list[str], cwd: str | None) -> list[str]:
-    return [_rebase_shell_path(path, cwd) for path in paths]
-
-
-def _rebase_navigation_shell_paths(paths: list[str], cwd: str | None) -> list[str]:
-    def replace_reference(match: re.Match[str]) -> str:
-        name = match.group("braced") or match.group("bare")
-        if name == "PWD":
-            return "."
-        return os.environ.get(name, match.group(0))
-
-    expanded = [
-        posixpath.normpath(_KNOWN_NAVIGATION_SHELL_REFERENCE.sub(replace_reference, path))
-        for path in paths
-    ]
-    return _rebase_shell_paths(expanded, cwd)
-
-
-def _apply_cd(cwd: str | None, target: str) -> str:
-    if target.startswith("/"):
-        return posixpath.normpath(target)
-    if not cwd:
-        return posixpath.normpath(target)
-    return posixpath.normpath(posixpath.join(cwd, target))
-
-
 def _without_code_index_navigation(extra: Mapping[str, Any] | None) -> dict[str, Any]:
     if not extra:
         return {}
@@ -282,8 +222,37 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
     mutation_paths: list[str] = []
     write_paths: list[str] = []
     mutation_scope_unknown = False
+    mutation_scope_resolved_by_loop_binding = True
+    saw_unexpanded_mutation_path = False
     navigation_scope_unknown = False
-    for item in active:
+    loop_bindings: dict[str, tuple[str, ...]] = {}
+    disqualified_loop_variables = set().union(
+        *(_shell_loop_binding_disqualifications(item.shell_words) for item in metadata)
+    )
+    for item in metadata:
+        command_is_known = bool(
+            item.kind != "execute"
+            or item.repo_mutation
+            or item.neutral_setup
+            or item.read_only_pipeline_filter
+            or (item.extra and item.extra.get("canonical_code_navigation_action"))
+        )
+        for bound_variable in tuple(loop_bindings):
+            if not _shell_segment_preserves_loop_binding(
+                item.shell_words,
+                bound_variable,
+                command_is_known=command_is_known,
+            ):
+                loop_bindings.pop(bound_variable)
+        if item.loop_binding_variable:
+            if (
+                item.loop_binding_variable not in disqualified_loop_variables
+                and item.paths
+                and _loop_header_words_are_literal(item.shell_words, item.shell_raw_words)
+            ):
+                loop_bindings[item.loop_binding_variable] = item.paths
+            else:
+                loop_bindings.pop(item.loop_binding_variable, None)
         resolvable = [path for path in item.paths if not _contains_unexpanded_shell_reference(path)]
         if (
             item.extra
@@ -291,10 +260,26 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
             and len(resolvable) != len(item.paths)
         ):
             navigation_scope_unknown = True
-        if item.repo_mutation and any(
-            _contains_unexpanded_shell_reference(path) for path in item.paths
-        ):
+        unresolved_mutation_paths = (
+            [path for path in item.paths if _contains_unexpanded_shell_reference(path)]
+            if item.repo_mutation
+            else []
+        )
+        if unresolved_mutation_paths:
             mutation_scope_unknown = True
+            saw_unexpanded_mutation_path = True
+            for path in unresolved_mutation_paths:
+                referenced_variable = _plain_loop_binding_reference(
+                    path,
+                    item.shell_words,
+                    item.shell_raw_words,
+                )
+                if referenced_variable and referenced_variable in loop_bindings:
+                    for resolved_path in loop_bindings[referenced_variable]:
+                        if resolved_path not in mutation_paths:
+                            mutation_paths.append(resolved_path)
+                else:
+                    mutation_scope_resolved_by_loop_binding = False
         for path in resolvable:
             if path not in paths:
                 paths.append(path)
@@ -328,17 +313,16 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
         extra = _without_code_index_navigation(extra)
     if mutation_scope_unknown:
         extra["_canonical_repo_mutation_scope_unknown"] = True
+    if saw_unexpanded_mutation_path and mutation_scope_resolved_by_loop_binding:
+        extra["_canonical_repo_mutation_scope_resolved_by_loop_binding"] = True
     if navigation_scope_unknown and not paths:
         extra["_canonical_code_navigation_scope_unknown"] = True
 
-    # A write command's paths are the ones it writes. Segments that only name
-    # paths — a `for <var> in <words>` header, a read on the same line — are
-    # scope evidence, and pooling them here attributed loop counters to tasks
-    # and turned read-only probes into repo mutations. The header stays the
-    # fallback when a mutating segment's own operands are unexpanded, which is
-    # the only scope signal that case has. An empty mutation set is not a
-    # licence to relax: `paths_may_touch_project` treats it as unknown scope.
-    effective_paths = mutation_paths if kind == "write" and not mutation_scope_unknown else paths
+    # Only publish paths proved to belong to mutating segments. A live loop
+    # binding promotes its header paths into that set when the body references
+    # the bound variable. An empty mutation set is not a licence to relax:
+    # `paths_may_touch_project` treats it as unknown scope.
+    effective_paths = mutation_paths if kind == "write" else paths
 
     return _build_canonical_tool_metadata(
         kind,
@@ -350,30 +334,22 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
     )
 
 
-def _input_redirection_paths(tokens: list[ShellToken]) -> list[str]:
-    paths: list[str] = []
-    for idx, token in enumerate(tokens[:-1]):
-        if not is_shell_input_redirection_token(token) or token.value != "<":
-            continue
-        candidate = tokens[idx + 1]
-        if is_unquoted_shell_control_token(candidate):
-            continue
-        if _looks_path_target(candidate.value) and candidate.value not in paths:
-            paths.append(candidate.value)
-    return paths
-
-
 def _normalize_shell_tool_metadata(command: str) -> dict[str, Any]:
     """Infer canonical semantics from visible shell command segments."""
-    heredoc_bodies: list[str] = []
     try:
-        tokens = tokenize_shell_command(command, heredoc_bodies=heredoc_bodies)
+        scan = scan_shell_command(command)
     except ValueError:
         return {}
 
+    tokens = scan.tokens
     if not tokens:
         return {}
 
+    heredoc_bodies = [body.text for body in scan.heredocs if body.terminated]
+    raw_by_token = {
+        id(token): command[start:end]
+        for token, (start, end) in zip(scan.tokens, scan.spans, strict=True)
+    }
     persistent_cwd: str | None = None
     metadata: list[_ShellSegmentMetadata] = []
     segments = _split_shell_segments(tokens)
@@ -384,16 +360,31 @@ def _normalize_shell_tool_metadata(command: str) -> dict[str, Any]:
         if segment.separator_before not in {None, "&&", ";", "\n", "|"}:
             persistent_cwd = None
         raw_parts = shell_token_values(segment.tokens)
+        source_parts = tuple(raw_by_token[id(token)] for token in segment.tokens)
         parts = _strip_shell_wrappers(raw_parts)
         if not parts:
-            metadata.append(_ShellSegmentMetadata("execute", neutral_setup=True))
+            metadata.append(
+                _ShellSegmentMetadata(
+                    "execute",
+                    neutral_setup=True,
+                    shell_words=tuple(raw_parts),
+                    shell_raw_words=source_parts,
+                )
+            )
             continue
 
         cd_target = _literal_cd_target(parts)
         if cd_target is not None:
             if not in_pipeline and segment.separator_before in {None, "&&", ";", "\n"}:
                 persistent_cwd = _apply_cd(persistent_cwd, cd_target)
-            metadata.append(_ShellSegmentMetadata("execute", neutral_setup=True))
+            metadata.append(
+                _ShellSegmentMetadata(
+                    "execute",
+                    neutral_setup=True,
+                    shell_words=tuple(raw_parts),
+                    shell_raw_words=source_parts,
+                )
+            )
             continue
 
         if segment.separator_before == "|" and _is_read_only_pipeline_stage(segment.tokens, parts):
@@ -401,6 +392,8 @@ def _normalize_shell_tool_metadata(command: str) -> dict[str, Any]:
                 _ShellSegmentMetadata(
                     "execute",
                     read_only_pipeline_filter=True,
+                    shell_words=tuple(raw_parts),
+                    shell_raw_words=source_parts,
                 )
             )
             if index + 1 >= len(segments) or segments[index + 1].separator_before != "|":
@@ -409,7 +402,13 @@ def _normalize_shell_tool_metadata(command: str) -> dict[str, Any]:
                 )
             continue
 
-        metadata.append(_classify_shell_segment(segment.tokens, parts, persistent_cwd))
+        metadata.append(
+            replace(
+                _classify_shell_segment(segment.tokens, parts, persistent_cwd),
+                shell_words=tuple(raw_parts),
+                shell_raw_words=source_parts,
+            )
+        )
 
     metadata = _classify_stdin_python(metadata, heredoc_bodies)
     return _merge_shell_segment_metadata(metadata)
@@ -573,10 +572,19 @@ def _classify_for_loop_header(parts: list[str], cwd: str | None) -> _ShellSegmen
         in_index = parts.index("in")
     except ValueError:
         return _ShellSegmentMetadata("execute")
-    items = [part for part in parts[in_index + 1 :] if _looks_path_target(part)]
+    variable = parts[1] if len(parts) > 1 else ""
+    items = parts[in_index + 1 :]
+    if (
+        in_index != 2
+        or not _loop_binding_variable_is_stable(variable)
+        or not items
+        or any(not _looks_path_target(part) for part in items)
+    ):
+        return _ShellSegmentMetadata("execute")
     return _ShellSegmentMetadata(
         "execute",
         paths=tuple(_rebase_shell_paths(items, cwd)),
+        loop_binding_variable=variable,
     )
 
 
