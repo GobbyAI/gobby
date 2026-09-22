@@ -10,6 +10,7 @@ combining:
 This follows the pattern established by claim_worktree in worktrees.py.
 """
 
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -18,6 +19,7 @@ import pytest
 from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.storage.tasks import AgentTaskClaimConflictError, LocalTaskManager, Task
 from gobby.utils.session_context import session_context_for_test
+from gobby.workflows.commit_guard import ForeignPathOwner
 
 pytestmark = pytest.mark.unit
 
@@ -170,6 +172,138 @@ class TestClaimTaskTool:
             )
             assert mock_st_instance.link_task.call_count == 1
             assert mock_st_instance.link_task.call_args is not None
+
+    @pytest.mark.asyncio
+    async def test_claim_task_blocks_foreign_owner_of_declared_or_attributed_path(
+        self,
+        mock_task_manager: MagicMock,
+        sample_task: Task,
+        tmp_path: Path,
+    ) -> None:
+        """Claim scope is the exact union of declarations and same-checkout attribution."""
+        declared_path = tmp_path / "src" / "declared.py"
+        declared_path.parent.mkdir()
+        declared_path.write_text("declared\n", encoding="utf-8")
+        (tmp_path / "declared-link.py").symlink_to(declared_path)
+        foreign_owner = ForeignPathOwner(
+            path="src/attributed.py",
+            session_ref="#77",
+            task_ref="#88",
+            owner_session_id="foreign-session-id",
+            owner_task_id="foreign-task-id",
+        )
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
+            ) as MockSessionTaskManager,
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager,
+            patch(
+                "gobby.mcp_proxy.tools.tasks._context.SessionVariableManager"
+            ) as MockSessionVariableManager,
+            patch(
+                "gobby.mcp_proxy.tools.tasks._lifecycle_claim.TaskAffectedFileManager"
+            ) as MockAffectedFiles,
+            patch(
+                "gobby.mcp_proxy.tools.tasks._lifecycle_claim._claimed_session_worktree_path",
+                return_value=None,
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.tasks._lifecycle_claim._lifecycle_checkout_root",
+                return_value=str(tmp_path),
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.tasks._lifecycle_claim.foreign_owned_dirty_paths",
+                return_value={"src/attributed.py": (foreign_owner,)},
+            ) as foreign_paths,
+        ):
+            mock_session_tasks = MagicMock()
+            mock_session_tasks.get_task_sessions.return_value = [
+                {"session_id": "previous-session-id"}
+            ]
+            MockSessionTaskManager.return_value = mock_session_tasks
+            mock_session_variables = MagicMock()
+            mock_session_variables.get_variables.return_value = {
+                "task_edited_file_checkouts": {
+                    sample_task.id: {str(tmp_path): ["src/attributed.py"]}
+                }
+            }
+            MockSessionVariableManager.return_value = mock_session_variables
+            mock_session_manager = MagicMock()
+            mock_session_manager.resolve_session_reference.return_value = "my-session-id"
+            mock_session_manager.get.return_value = MagicMock(
+                project_id=sample_task.project_id,
+                status="awaiting_handoff",
+            )
+            MockSessionManager.return_value = mock_session_manager
+            MockAffectedFiles.return_value.get_files.return_value = [
+                MagicMock(file_path="declared-link.py", annotation_source="manual")
+            ]
+            mock_task_manager.get_task.return_value = sample_task
+
+            registry = create_task_registry(mock_task_manager)
+            result = await registry.call("claim_task", {"task_id": sample_task.id})
+
+        assert result["error_code"] == "TASK_CLAIM_CONFLICT"
+        assert "src/attributed.py" in result["error"]
+        assert "session #77, task #88" in result["error"]
+        assert result["conflicts"] == [
+            {"path": "src/attributed.py", "session": "#77", "task": "#88"}
+        ]
+        foreign_paths.assert_called_once_with(
+            mock_task_manager.db,
+            session_id="my-session-id",
+            project_id=sample_task.project_id,
+            checkout_root=str(tmp_path),
+            paths={"src/declared.py", "src/attributed.py"},
+        )
+        mock_task_manager.claim_task_for_agent.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_claim_task_with_empty_scope_does_not_guess_conflicts(
+        self,
+        mock_task_manager: MagicMock,
+        sample_task: Task,
+    ) -> None:
+        """An empty declaration and attribution union leaves claim behavior unchanged."""
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
+            ) as MockSessionTaskManager,
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager,
+            patch(
+                "gobby.mcp_proxy.tools.tasks._lifecycle_claim.TaskAffectedFileManager"
+            ) as MockAffectedFiles,
+            patch(
+                "gobby.mcp_proxy.tools.tasks._lifecycle_claim.foreign_owned_dirty_paths"
+            ) as foreign_paths,
+        ):
+            mock_session_tasks = MagicMock()
+            mock_session_tasks.get_task_sessions.return_value = []
+            MockSessionTaskManager.return_value = mock_session_tasks
+            mock_session_manager = MagicMock()
+            mock_session_manager.resolve_session_reference.return_value = "my-session-id"
+            mock_session_manager.get.return_value = MagicMock(
+                project_id=sample_task.project_id,
+                status="awaiting_handoff",
+            )
+            MockSessionManager.return_value = mock_session_manager
+            MockAffectedFiles.return_value.get_files.return_value = []
+            mock_task_manager.get_task.return_value = sample_task
+            mock_task_manager.claim_task_for_agent.return_value = sample_task
+
+            registry = create_task_registry(mock_task_manager)
+            result = await registry.call("claim_task", {"task_id": sample_task.id})
+
+        assert result["success"] is True
+        assert result["task_id"] == sample_task.id
+        assert result["title"] == sample_task.title
+        assert "error" not in result
+        foreign_paths.assert_not_called()
+        mock_task_manager.claim_task_for_agent.assert_called_once_with(
+            sample_task.id,
+            session_id="my-session-id",
+            force=False,
+        )
 
     @pytest.mark.asyncio
     async def test_claim_task_rejects_present_session_that_cannot_reactivate(

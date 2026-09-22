@@ -582,6 +582,8 @@ def _looks_path_target(candidate: str) -> bool:
         return False
     if candidate.startswith("-") or candidate.startswith("&"):
         return False
+    if _contains_unexpanded_shell_reference(candidate):
+        return True
     if any(ch in candidate for ch in _SCRIPT_LIKE_CHARS):
         return False
     return True

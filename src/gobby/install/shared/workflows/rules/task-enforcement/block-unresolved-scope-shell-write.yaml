@@ -1,0 +1,17 @@
+tags: [task-enforcement, enforcement, shell, write, default, guardrail]
+
+rules:
+  block-unresolved-scope-shell-write:
+    description: "Fail closed before a repository shell write with an unresolved target scope"
+    event: before_tool
+    enabled: true
+    priority: 25
+    when: >-
+      event.data.get('canonical_tool_kind') == 'write'
+      and event.data.get('canonical_repo_mutation')
+      and event.data.get('canonical_repo_mutation_scope_unknown')
+    effects:
+      - type: block
+        reason: >-
+          Shell write blocked because Gobby cannot resolve its target scope. Use literal path
+          operands or a structured Write/Edit tool, then retry.

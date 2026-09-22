@@ -107,6 +107,46 @@ def test_in_project_shell_write_still_attributes_its_own_path(tmp_path: Path) ->
     assert data["canonical_repo_mutation"] is True
 
 
+def test_unresolved_shell_write_exposes_its_unknown_scope(tmp_path: Path) -> None:
+    """A variable target is a repository write but has no safe attribution path."""
+    data: dict[str, Any] = {
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": 'TARGET=src/generated\nmkdir -p "$TARGET"',
+            "cwd": str(tmp_path),
+        },
+        "project_path": str(tmp_path),
+    }
+
+    _set_canonical_tool_metadata(data)
+
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+    assert data.get("canonical_file_paths") in (None, [])
+
+
+def test_dynamic_python_write_exposes_its_unknown_scope(tmp_path: Path) -> None:
+    """A proven Python write with a dynamic target remains fail-closed."""
+    data: dict[str, Any] = {
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": (
+                "uv run python -c \"from pathlib import Path; Path(input()).write_text('x')\""
+            ),
+            "cwd": str(tmp_path),
+        },
+        "project_path": str(tmp_path),
+    }
+
+    _set_canonical_tool_metadata(data)
+
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+    assert data.get("canonical_file_paths") in (None, [])
+
+
 def test_loop_header_still_scopes_a_mutating_body_with_unexpanded_paths() -> None:
     """Guard: `for f in a.py b.py; do sed -i ... "$f"; done` still attributes both.
 

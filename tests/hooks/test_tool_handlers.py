@@ -1000,29 +1000,47 @@ class TestToolHandlerEdgeCases:
         assert code_index_trigger.notify_file_changed.call_count == 1
         assert code_index_trigger.notify_file_changed.call_args is not None
 
-    def test_after_tool_edit_skips_gobby_internal_files(
+    def test_after_tool_edit_attributes_gobby_internal_files(
         self,
         mock_dependencies: dict[str, Any],
+        tmp_path: Path,
     ) -> None:
-        """Test AFTER_TOOL does NOT mark had_edits for .gobby/ internal files."""
+        """`.gobby` files remain task-owned even though gcode does not index them."""
         mock_dependencies["task_manager"].list_tasks.return_value = [
             MagicMock()
         ]  # Has claimed task
         handlers = EventHandlers(**mock_dependencies)
+        notify_code_index = MagicMock()
         event = make_event(
             HookEventType.AFTER_TOOL,
             data={
                 "tool_name": "Write",
-                "tool_input": {"file_path": "/path/to/project/.gobby/tasks.jsonl"},
+                "tool_input": {"file_path": str(tmp_path / ".gobby" / "tasks.jsonl")},
             },
             metadata={"_platform_session_id": "sess-123"},
         )
+        event.cwd = str(tmp_path)
 
-        handlers.handle_after_tool(event)
+        with (
+            patch.object(handlers, "_notify_code_index", notify_code_index),
+            patch(
+                "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files"
+            ) as record_files,
+        ):
+            response = handlers.handle_after_tool(event)
 
-        mock_dependencies["session_storage"].mark_had_edits.assert_not_called()
-        assert mock_dependencies["session_storage"].mark_had_edits.call_count == 0
-        assert not mock_dependencies["session_storage"].mark_had_edits.called
+        assert response.decision == "allow"
+        assert handlers._resolve_repo_edit_paths(
+            str(tmp_path / ".gobby" / "tasks.jsonl"), str(tmp_path)
+        ) == (tmp_path.resolve(), ".gobby/tasks.jsonl")
+        record_files.assert_called_once_with(
+            "sess-123",
+            [".gobby/tasks.jsonl"],
+            checkout_root=str(tmp_path),
+            edited_at=event.timestamp.timestamp(),
+        )
+        mock_dependencies["session_storage"].mark_had_edits.assert_called_once_with("sess-123")
+        notify_code_index.assert_not_called()
 
     def test_after_tool_edit_skips_out_of_repo_paths(
         self,
@@ -1048,11 +1066,12 @@ class TestToolHandlerEdgeCases:
         assert mock_dependencies["session_storage"].mark_had_edits.call_count == 0
         assert not mock_dependencies["session_storage"].mark_had_edits.called
 
-    def test_after_tool_edit_skips_relative_gobby_path(
+    def test_after_tool_edit_attributes_relative_gobby_path(
         self,
         mock_dependencies: dict[str, MagicMock],
+        tmp_path: Path,
     ) -> None:
-        """Test AFTER_TOOL does NOT mark had_edits for relative .gobby/ paths."""
+        """Relative `.gobby` paths are attributed against the current checkout."""
         mock_dependencies["task_manager"].list_tasks.return_value = [
             MagicMock()
         ]  # Has claimed task
@@ -1065,12 +1084,25 @@ class TestToolHandlerEdgeCases:
             },
             metadata={"_platform_session_id": "sess-123"},
         )
+        event.cwd = str(tmp_path)
 
-        handlers.handle_after_tool(event)
+        with patch(
+            "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files"
+        ) as record_files:
+            response = handlers.handle_after_tool(event)
 
-        mock_dependencies["session_storage"].mark_had_edits.assert_not_called()
-        assert mock_dependencies["session_storage"].mark_had_edits.call_count == 0
-        assert not mock_dependencies["session_storage"].mark_had_edits.called
+        assert response.decision == "allow"
+        assert handlers._resolve_repo_edit_paths(".gobby/memories.jsonl", str(tmp_path)) == (
+            tmp_path.resolve(),
+            ".gobby/memories.jsonl",
+        )
+        record_files.assert_called_once_with(
+            "sess-123",
+            [".gobby/memories.jsonl"],
+            checkout_root=str(tmp_path),
+            edited_at=event.timestamp.timestamp(),
+        )
+        mock_dependencies["session_storage"].mark_had_edits.assert_called_once_with("sess-123")
 
 
 class TestSkillToolInterception:

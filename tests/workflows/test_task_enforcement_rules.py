@@ -287,6 +287,7 @@ NATIVE_TRACKER_TOOLS = {
 
 TASK_ENFORCEMENT_RULES = {
     "block-cross-session-foreign-dirty-edit",
+    "block-unresolved-scope-shell-write",
     "block-native-task-tracker-unclaimed",
     "block-spawned-agent-create-task",
     "block-reopen-task",
@@ -361,6 +362,116 @@ class TestTaskEnforcementSync:
                     "mcp_call",
                     "rewrite_input",
                 }
+
+
+class TestBlockUnresolvedScopeShellWrite:
+    """Unknown-target shell mutations must stop before provider execution."""
+
+    def test_rule_uses_canonical_unknown_scope_metadata(self, db, manager) -> None:
+        _sync_bundled(db)
+
+        row = manager.get_by_name("block-unresolved-scope-shell-write")
+        assert row is not None
+        body = RuleDefinitionBody.model_validate(row.definition_json)
+
+        assert row.enabled is True
+        assert row.source == "installed"
+        assert body.event.value == "before_tool"
+        assert body.when is not None
+        assert "canonical_repo_mutation_scope_unknown" in body.when
+
+    @pytest.mark.asyncio
+    async def test_claimed_session_blocks_opaque_shell_write_but_allows_literal_target(
+        self,
+        db: HubDatabase,
+        tmp_path: Path,
+    ) -> None:
+        _sync_bundled(db)
+        variables = {
+            "require_task_before_edit": True,
+            "task_claimed": True,
+            "plan_mode": False,
+        }
+
+        opaque_data: dict[str, object] = {
+            "tool_name": "Bash",
+            "tool_input": {
+                "command": 'TARGET=src/generated\nmkdir -p "$TARGET"',
+                "cwd": str(tmp_path),
+            },
+            "project_path": str(tmp_path),
+        }
+        normalize_tool_fields(opaque_data)
+        opaque_event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id=SESSION_ID,
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data=opaque_data,
+        )
+
+        opaque_response = await RuleEngine(db).evaluate(
+            opaque_event,
+            session_id=SESSION_ID,
+            variables=variables,
+        )
+
+        assert opaque_data["canonical_repo_mutation"] is True
+        assert opaque_data["canonical_repo_mutation_scope_unknown"] is True
+        assert opaque_response.decision == "block"
+        assert "literal path" in (opaque_response.reason or "")
+        assert "Write/Edit" in (opaque_response.reason or "")
+
+        literal_data: dict[str, object] = {
+            "tool_name": "Bash",
+            "tool_input": {
+                "command": "mkdir -p src/generated",
+                "cwd": str(tmp_path),
+            },
+            "project_path": str(tmp_path),
+        }
+        normalize_tool_fields(literal_data)
+        literal_event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id=SESSION_ID,
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data=literal_data,
+        )
+
+        literal_response = await RuleEngine(db).evaluate(
+            literal_event,
+            session_id=SESSION_ID,
+            variables=variables,
+        )
+
+        assert literal_data["canonical_file_paths"] == ["src/generated"]
+        assert "canonical_repo_mutation_scope_unknown" not in literal_data
+        assert literal_response.decision == "allow", literal_response.reason
+
+        structured_data: dict[str, object] = {
+            "tool_name": "Write",
+            "tool_input": {"file_path": str(tmp_path / "src" / "structured.txt")},
+            "project_path": str(tmp_path),
+        }
+        normalize_tool_fields(structured_data)
+        structured_event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id=SESSION_ID,
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data=structured_data,
+        )
+
+        structured_response = await RuleEngine(db).evaluate(
+            structured_event,
+            session_id=SESSION_ID,
+            variables=variables,
+        )
+
+        assert structured_data["canonical_structured_mutation"] is True
+        assert "canonical_repo_mutation_scope_unknown" not in structured_data
+        assert structured_response.decision == "allow", structured_response.reason
 
 
 class TestRequireTaskBeforeCommit:
