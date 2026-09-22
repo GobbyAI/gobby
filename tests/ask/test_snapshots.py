@@ -157,7 +157,7 @@ async def test_bind_grant_and_bounded_probes_use_real_repository(
     storage, run_id = _run_storage(temp_db, project_id, repo)
     artifacts = AskArtifactStore(tmp_path / "state", project_id, run_id, db=temp_db)
     issued_paths: list[str] = []
-    probes: list[tuple[list[str], Path, float]] = []
+    probes: list[tuple[list[str], float]] = []
     runtime_workspaces: list[Path] = []
 
     class Credentials:
@@ -185,10 +185,10 @@ async def test_bind_grant_and_bounded_probes_use_real_repository(
             api_token="managed-ask-capability",
         )
 
-    async def run(argv: list[str], *, cwd: Path, timeout: float, **kwargs: object) -> None:
+    async def run(argv: list[str], *, timeout: float, **kwargs: object) -> None:
         assert not {"index", "--snapshot-commit", "--snapshot-json"}.intersection(argv)
         assert argv[argv.index("--project") + 1] == str(repo.resolve())
-        probes.append((argv, cwd, timeout))
+        probes.append((argv, timeout))
 
     monkeypatch.setattr(snapshot_module, "_prepare_gcode_runtime", runtime)
     monkeypatch.setattr(snapshot_module, "_run_gcode", run)
@@ -199,10 +199,9 @@ async def test_bind_grant_and_bounded_probes_use_real_repository(
     )
     prepared = await manager.prepare_async(run_id=run_id, repository_root=repo, artifacts=artifacts)
     assert issued_paths == [str(repo.resolve())]
-    assert [argv[1] for argv, _, _ in probes] == ["status", "search-content"]
-    assert all(cwd == repo.resolve() for _, cwd, _ in probes)
-    assert 0 < probes[0][2] <= 5
-    assert 0 < probes[1][2] <= 10
+    assert [argv[1] for argv, _ in probes] == ["status", "search-content"]
+    assert 0 < probes[0][1] <= 5
+    assert 0 < probes[1][1] <= 10
     assert runtime_workspaces == [artifacts.run_root / "runtime"]
     assert prepared.runtime.env["GOBBY_PROJECT_ID"] == project_id
     assert prepared.runtime.env["GOBBY_AGENT_API_TOKEN"] == "managed-ask-capability"
