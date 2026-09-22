@@ -12,6 +12,7 @@ to the grant's project — and nothing more.
 
 from __future__ import annotations
 
+import json
 import os
 import time
 from collections.abc import Mapping
@@ -58,8 +59,11 @@ def managed_hub_database(
             f"cannot read managed execution grant {grant_path}: {exc}"
         ) from exc
     try:
-        grant = GrantBundle.model_validate_json(text)
-    except ValidationError as exc:
+        payload = json.loads(text)
+        if isinstance(payload, dict) and "grant" in payload:
+            payload = payload["grant"]
+        grant = GrantBundle.model_validate(payload)
+    except (json.JSONDecodeError, ValidationError) as exc:
         raise BootstrapConfigError(
             f"managed execution grant {grant_path} is malformed: {exc}"
         ) from exc

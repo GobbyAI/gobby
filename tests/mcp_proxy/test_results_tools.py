@@ -216,6 +216,57 @@ async def test_search_tool_result_hydrates_ranked_chunks_within_shared_budget(
 
 @pytest.mark.asyncio
 @pytest.mark.integration
+async def test_search_tool_result_matches_a_hyphenated_exact_phrase(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    """A quoted phrase reaches the chunk search backend unchanged."""
+    config = _config()
+    store = ToolResultStore(temp_db, config)
+    decoy = "agent cap prompt " + ("filler " * 280)
+    exact = "agent-prompt cap exact phrase"
+    result_id = _save(store, project_id=sample_project["id"], content=f"{decoy}\n{exact}")
+    registry = create_results_registry(
+        temp_db,
+        config,
+        default_project_id=sample_project["id"],
+    )
+
+    result = await registry.call(
+        "search_tool_result",
+        {"result_id": result_id, "query": '"agent-prompt cap"'},
+    )
+
+    assert [match["content"] for match in result["matches"]] == [exact]
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_search_tool_result_escapes_an_unbalanced_phrase_quote(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    """Unbalanced quote syntax reaches pg_search as a safe literal query."""
+    config = _config()
+    store = ToolResultStore(temp_db, config)
+    result_id = _save(store, project_id=sample_project["id"], content="Draft notes")
+    registry = create_results_registry(
+        temp_db,
+        config,
+        default_project_id=sample_project["id"],
+    )
+
+    result = await registry.call(
+        "search_tool_result",
+        {"result_id": result_id, "query": 'title:"Draft? notes'},
+    )
+
+    assert "error" not in result
+    assert result["result_id"] == result_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
 async def test_unknown_expired_and_cross_project_ids_share_configured_error(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
@@ -354,7 +405,7 @@ async def test_invalid_bounds_and_queries_fail_before_store_or_search(
 
 
 @pytest.mark.asyncio
-async def test_punctuation_only_query_runs_meta_gate_without_search() -> None:
+async def test_punctuation_only_query_runs_meta_gate_with_escaped_literals() -> None:
     config = _config()
     result_id = str(uuid.uuid4())
     project_id = "11111111-1111-4111-8111-111111111111"
@@ -375,7 +426,11 @@ async def test_punctuation_only_query_runs_meta_gate_without_search() -> None:
 
     assert result == {"result_id": result_id, "total_chars": 500, "matches": []}
     store.get_meta.assert_called_once_with(result_id, project_id)
-    backend.search.assert_not_called()
+    backend.search.assert_called_once_with(
+        r"\!\!\!\?\?\?",
+        5,
+        filters={"result_id": result_id},
+    )
 
 
 @pytest.mark.asyncio
@@ -489,6 +544,7 @@ def test_results_tool_schemas_bound_every_input() -> None:
 
     assert search_schema is not None
     assert get_schema is not None
+    assert "phrases spanning a chunk boundary do not match" in search_schema["description"]
     search_properties = search_schema["inputSchema"]["properties"]
     get_properties = get_schema["inputSchema"]["properties"]
     assert search_properties["query"]["maxLength"] == MAX_PG_SEARCH_QUERY_CHARS
