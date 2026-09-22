@@ -27,6 +27,7 @@ const SCHEMA: Record<string, unknown> = {
       type: "object",
       properties: {
         symbol_summary: { $ref: "#/$defs/CodeIndexSymbolSummaryConfig" },
+        sync_worker_concurrency: { type: "integer", minimum: 1 },
       },
     },
     CodeIndexSymbolSummaryConfig: {
@@ -107,6 +108,7 @@ function makeConfigValues(): Record<string, unknown> {
       },
       sync_worker_interval_seconds: 30,
       sync_worker_batch_size: 50,
+      sync_worker_concurrency: 4,
     },
     indexing: {
       respect_gitignore: true,
@@ -260,6 +262,25 @@ describe("RuntimeInfrastructureSection", () => {
     expect(
       screen.queryByLabelText("Qdrant collection prefix"),
     ).not.toBeInTheDocument();
+  });
+
+  it("reads and persists the bounded sync worker concurrency row", async () => {
+    const ctx = makeContext();
+    renderSection(ctx);
+
+    const concurrency = screen.getByLabelText("Sync worker concurrency");
+    expect(concurrency).toHaveValue(4);
+    expect(concurrency).toHaveAttribute("min", "1");
+
+    fireEvent.change(concurrency, { target: { value: "8" } });
+    const save = screen.getByRole("button", { name: "Save" });
+    await waitFor(() => expect(save).toBeEnabled());
+    fireEvent.click(save);
+
+    await waitFor(() => expect(ctx.saveConfig).toHaveBeenCalledTimes(1));
+    expect(ctx.saveConfig).toHaveBeenCalledWith(
+      expect.objectContaining({ "code_index.sync_worker_concurrency": 8 }),
+    );
   });
 
   it("renders the sandbox path editors as string lists", () => {

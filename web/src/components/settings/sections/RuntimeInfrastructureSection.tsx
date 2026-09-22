@@ -66,6 +66,7 @@ const OWNED_PATHS: readonly string[] = [
   "code_index.symbol_summary.max_tokens",
   "code_index.sync_worker_interval_seconds",
   "code_index.sync_worker_batch_size",
+  "code_index.sync_worker_concurrency",
   "indexing.respect_gitignore",
   // Binary freshness
   "bin_freshness.enabled",
@@ -401,6 +402,12 @@ function CodeIndexGroup({ fields }: { fields: SettingsSectionFields }) {
         path="code_index.sync_worker_batch_size"
         label="Sync worker batch size"
         ariaLabel="Sync worker batch size"
+      />
+      <NumberConfigField
+        fields={fields}
+        path="code_index.sync_worker_concurrency"
+        label="Sync worker concurrency"
+        ariaLabel="Sync worker concurrency"
       />
       <SwitchConfigField
         fields={fields}
