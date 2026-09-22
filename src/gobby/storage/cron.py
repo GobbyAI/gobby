@@ -564,7 +564,7 @@ class CronJobStorage(CronRunStorageMixin):
         run_at: str | None | _Unset = UNSET,
         timezone: str | _Unset = UNSET,
     ) -> CronJob | None:
-        """Repair bundled definition fields on an existing system cron job."""
+        """Repair bundled definition fields while preserving parked state."""
         job = self.get_job(job_id)
         if job is None:
             return None
@@ -601,7 +601,11 @@ class CronJobStorage(CronRunStorageMixin):
             return job
 
         candidate = replace(job, **fields)
-        next_run = compute_next_run(candidate) if candidate.enabled else None
+        next_run = (
+            compute_next_run(candidate)
+            if candidate.enabled and job.next_run_at is not None
+            else None
+        )
         fields["next_run_at"] = next_run
         fields["updated_at"] = utc_now()
         return self._update_job_fields(job_id, **fields)
