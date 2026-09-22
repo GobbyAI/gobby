@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 
 import httpx
+import yaml
 
 from gobby.providers.capabilities.collectors.base import SourceSpec, describe_fetch_error
 from gobby.providers.capabilities.models import (
@@ -245,24 +246,34 @@ def _parse_effort_docs(
     document: str,
     models: Sequence[_OverviewModel],
 ) -> dict[str, _EffortSupport]:
-    compatibility = _required_heading_section(document, "Compatibility")
-    declarations = re.findall(
-        r"^[ \t]*-\s+Supported models:[ \t]*(.*?)[ \t]*$",
-        compatibility,
-        flags=re.MULTILINE,
-    )
-    if len(declarations) != 1:
+    match = re.match(r"\A---[ \t]*\r?\n(.*?)\r?\n---[ \t]*(?:\r?\n|\Z)", document, re.DOTALL)
+    if match is None:
+        raise ValueError("effort docs are missing YAML front matter")
+    try:
+        metadata = yaml.safe_load(match.group(1))
+    except yaml.YAMLError as error:
+        raise ValueError("effort docs contain invalid YAML front matter") from error
+    if not isinstance(metadata, Mapping):
+        raise ValueError("effort docs front matter must be a mapping")
+    feature_metadata = metadata.get("featureMetadata")
+    if not isinstance(feature_metadata, Mapping):
+        raise ValueError("effort front matter is missing featureMetadata.supportedModels")
+    supported_model_ids = feature_metadata.get("supportedModels")
+    if not isinstance(supported_model_ids, list) or not supported_model_ids:
+        raise ValueError("effort featureMetadata.supportedModels must be a non-empty list")
+    if any(
+        not isinstance(model_id, str) or re.fullmatch(r"claude-[a-z0-9-]+", model_id) is None
+        for model_id in supported_model_ids
+    ):
         raise ValueError(
-            "effort compatibility must contain exactly one Supported models declaration"
+            "effort featureMetadata.supportedModels must contain canonical Claude model IDs"
         )
-    documented_model_ids = frozenset(re.findall(r"`(claude-[a-z0-9-]+)`", declarations[0]))
-    if not documented_model_ids:
-        raise ValueError("effort Supported models declaration lists no canonical model IDs")
+    documented_model_ids = frozenset(supported_model_ids)
     supported_models = tuple(
         model for model in models if model.canonical_model in documented_model_ids
     )
     if not supported_models:
-        raise ValueError("effort Supported models declaration overlaps no overview models")
+        raise ValueError("effort featureMetadata.supportedModels overlaps no overview models")
 
     table = _find_table(document, ("level", "description", "typical use case"))
     levels_by_model: dict[str, set[str]] = {

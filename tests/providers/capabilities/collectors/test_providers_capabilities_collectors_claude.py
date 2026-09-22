@@ -50,7 +50,7 @@ async def test_alias_to_canonical_mapping() -> None:
 
     assert {"opus", "opus[1m]", "opusplan"} <= set(models["claude-opus-5"].aliases)
     assert {"sonnet", "sonnet[1m]"} <= set(models["claude-sonnet-5"].aliases)
-    assert "fable" in models["claude-fable-5"].aliases
+    assert "fable" in models["claude-fable-5-1"].aliases
     assert "haiku" in models["claude-haiku-4-5-20251001"].aliases
 
 
@@ -117,7 +117,7 @@ async def test_fact_provenance() -> None:
             "| Level | Description | Typical use case |",
             "| Tier | Description | Use |",
         ),
-        ("effort-docs", "## Compatibility", "## Model support"),
+        ("effort-docs", "featureMetadata:", "featureData:"),
     ],
 )
 @pytest.mark.asyncio
@@ -141,7 +141,7 @@ async def test_compared_models_are_collected() -> None:
     models = {model.canonical_model: model for model in snapshot.models}
 
     assert set(models) == {
-        "claude-fable-5",
+        "claude-fable-5-1",
         "claude-opus-5",
         "claude-sonnet-5",
         "claude-haiku-4-5-20251001",
@@ -150,7 +150,7 @@ async def test_compared_models_are_collected() -> None:
 
 
 @pytest.mark.asyncio
-async def test_effort_compatibility_uses_canonical_model_ids() -> None:
+async def test_effort_frontmatter_uses_canonical_model_ids() -> None:
     documents = _documents()
 
     snapshot = await _collector(documents).collect()
@@ -164,7 +164,7 @@ async def test_effort_compatibility_uses_canonical_model_ids() -> None:
         "max",
     )
     assert models["claude-opus-5"].default_effort == "high"
-    assert models["claude-fable-5"].supported_efforts == (
+    assert models["claude-fable-5-1"].supported_efforts == (
         "low",
         "medium",
         "high",
@@ -177,39 +177,29 @@ async def test_effort_compatibility_uses_canonical_model_ids() -> None:
 
 
 @pytest.mark.parametrize(
-    ("replacement", "detail"),
+    ("frontmatter", "detail"),
     [
-        ("- Compatible models: `claude-opus-5`", "exactly one Supported models"),
-        ("- Supported models:", "lists no canonical model IDs"),
-        ("- Supported models: claude-opus-5", "lists no canonical model IDs"),
+        ("title: Effort", "missing featureMetadata.supportedModels"),
         (
-            "- Supported models: `claude-mythos-5`, `claude-mythos-preview`",
+            "featureMetadata:\n  supportedModels: []",
+            "featureMetadata.supportedModels must be a non-empty list",
+        ),
+        (
+            "featureMetadata:\n  supportedModels:\n    - claude-mythos-5",
             "overlaps no overview models",
         ),
     ],
 )
 @pytest.mark.asyncio
-async def test_invalid_effort_supported_models_declaration_fails_snapshot(
-    replacement: str,
+async def test_invalid_effort_supported_models_frontmatter_fails_snapshot(
+    frontmatter: str,
     detail: str,
 ) -> None:
     documents = _documents()
-    declaration = next(
-        line for line in documents["effort-docs"].splitlines() if "Supported models:" in line
+    _old_frontmatter, body = (
+        documents["effort-docs"].removeprefix("---\n").split("\n---\n", maxsplit=1)
     )
-    documents["effort-docs"] = documents["effort-docs"].replace(declaration, replacement)
+    documents["effort-docs"] = f"---\n{frontmatter}\n---\n{body}"
 
     with pytest.raises(ClaudeSourceError, match=detail):
-        await _collector(documents).collect()
-
-
-@pytest.mark.asyncio
-async def test_duplicate_effort_supported_models_declaration_fails_snapshot() -> None:
-    documents = _documents()
-    declaration = next(
-        line for line in documents["effort-docs"].splitlines() if "Supported models:" in line
-    )
-    documents["effort-docs"] += f"\n{declaration}\n"
-
-    with pytest.raises(ClaudeSourceError, match="exactly one Supported models"):
         await _collector(documents).collect()
