@@ -552,6 +552,10 @@ class AgentEventHandlerMixin(EventHandlersBase):
         """Handle an agent STOP event."""
         session_id = event.metadata.get("_platform_session_id")
 
+        if event.metadata.get("_native_subagent_binding"):
+            self.logger.debug("Ignoring process-bound native subagent STOP for %s", session_id)
+            return HookResponse(decision="allow")
+
         if session_id:
             self.logger.debug("STOP: session %s", session_id)
             if self._session_manager:
