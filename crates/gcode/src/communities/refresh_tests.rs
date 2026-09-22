@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::config::{CodeVectorSettings, Context, ProjectIndexScope};
 use crate::index::api::{self, IndexWriteMode};
@@ -422,6 +422,126 @@ fn overlay_seed_reads_parent_snapshot_without_locking() {
         )
         .expect("commit parent replacement");
     seeder.join().expect("seeder thread");
+}
+
+#[test]
+#[serial_test::serial(serial_db)]
+fn overlay_seed_reads_coherent_parent_snapshot_across_replace_commit() {
+    let (mut owner, database_url, parent_id, _parent_cleanup) = seeded_project("snapshot-parent");
+    store_partition(
+        &mut owner,
+        &parent_id,
+        vec![stored_row(&parent_id, 3, &["old.py"], "1111111111111111")],
+        3,
+        "old",
+    );
+    let parent_root = Path::new("/tmp").join(&parent_id);
+    let overlay_root = Path::new("/tmp").join(format!("snapshot-overlay-{parent_id}"));
+    let overlay_root_text = overlay_root.to_string_lossy().into_owned();
+    let overlay_uuid: uuid::Uuid = owner
+        .query_one(
+            "SELECT gobby_agent_auth.code_index_project_id($1)",
+            &[&overlay_root_text],
+        )
+        .expect("derive overlay project id")
+        .get(0);
+    let overlay_id = overlay_uuid.to_string();
+    cleanup_project(&mut owner, &overlay_id).expect("pre-clean overlay project");
+    let machine_id = gobby_core::machine::read_local_machine_id().expect("machine id");
+    api::upsert_project_seed(
+        &mut owner,
+        &machine_id,
+        &overlay_id,
+        &overlay_root,
+        IndexWriteMode::Overlay,
+    )
+    .expect("seed overlay indexed project");
+    let _overlay_cleanup = ProjectCleanup {
+        database_url: database_url.clone(),
+        project_id: overlay_id.clone(),
+    };
+    let mut managed = managed_overlay_principal(
+        &mut owner,
+        &database_url,
+        &parent_id,
+        &parent_root,
+        &overlay_root,
+        overlay_uuid,
+    );
+    let application_name = format!("gobby-parent-seed-snapshot-{overlay_uuid}");
+    managed
+        .client()
+        .execute(
+            "SELECT set_config('application_name', $1, false)",
+            &[&application_name],
+        )
+        .expect("name managed seed connection");
+    managed
+        .client()
+        .execute(
+            "SELECT set_config('gobby.test_parent_seed_project', $1, false)",
+            &[&parent_id],
+        )
+        .expect("target parent seed barrier");
+    install_parent_seed_select_barrier(&mut owner, &mut managed);
+    owner
+        .query_one(
+            "SELECT pg_advisory_lock($1)",
+            &[&PARENT_SEED_BARRIER_LOCK_KEY],
+        )
+        .expect("hold parent seed barrier");
+    let parent_replace =
+        db::begin_replace(&mut owner, &machine_id, &parent_id).expect("begin parent replace");
+    let (ready_sender, ready_receiver) = mpsc::channel();
+    let (go_sender, go_receiver) = mpsc::channel();
+    let seed_overlay = overlay_id.clone();
+    let seed_parent = parent_id.clone();
+    let seed_machine = machine_id.clone();
+    let seeder = thread::spawn(move || {
+        let mut overlay_replace = db::begin_replace(managed.client(), &seed_machine, &seed_overlay)
+            .expect("begin overlay replacement");
+        ready_sender.send(()).expect("signal seed ready");
+        go_receiver.recv().expect("start parent seed");
+        overlay_replace
+            .seed_from_parent(&seed_parent)
+            .expect("seed parent rows");
+        let result = (
+            overlay_replace.watermark(),
+            overlay_replace.prior()[0].community_id,
+        );
+        overlay_replace.skip().expect("rollback seed transaction");
+        result
+    });
+    ready_receiver.recv().expect("seeder ready");
+    go_sender.send(()).expect("start seeder");
+    let mut observer = db::connect_readwrite(&database_url).expect("observer connection");
+    wait_for_advisory_waiter(&mut observer, &application_name);
+    parent_replace
+        .commit(
+            vec![stored_row(
+                &parent_id,
+                8,
+                &["committed.py"],
+                "2222222222222222",
+            )],
+            8,
+            "committed",
+        )
+        .expect("commit parent replacement");
+    let unlocked: bool = owner
+        .query_one(
+            "SELECT pg_advisory_unlock($1)",
+            &[&PARENT_SEED_BARRIER_LOCK_KEY],
+        )
+        .expect("release parent seed barrier")
+        .get(0);
+    assert!(unlocked);
+
+    assert_eq!(
+        seeder.join().expect("seeder thread"),
+        (3, 3),
+        "overlay seed must not combine a parent watermark and rows from different commits"
+    );
 }
 
 #[test]
@@ -1338,6 +1458,7 @@ fn managed_overlay_principal(
     ManagedPrincipal {
         client: Some(client),
         database_url: database_url.to_string(),
+        role_name,
         execution_id,
         credential_generation,
         session_id,
@@ -1345,6 +1466,78 @@ fn managed_overlay_principal(
         machine_id,
         project_id: parent_id,
     }
+}
+
+const PARENT_SEED_BARRIER_LOCK_KEY: i64 = 22_595;
+
+fn wait_for_advisory_waiter(conn: &mut postgres::Client, application_name: &str) {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline {
+        let waiting: bool = conn
+            .query_one(
+                "SELECT EXISTS (
+                     SELECT 1
+                     FROM pg_stat_activity
+                     WHERE application_name = $1
+                       AND wait_event_type = 'Lock'
+                       AND wait_event = 'advisory'
+                 )",
+                &[&application_name],
+            )
+            .expect("observe managed seed connection")
+            .get(0);
+        if waiting {
+            return;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    panic!("managed seed connection did not wait on the parent snapshot barrier");
+}
+
+fn install_parent_seed_select_barrier(
+    owner: &mut postgres::Client,
+    managed: &mut ManagedPrincipal,
+) {
+    let role_name = managed.role_name.clone();
+    let privileges = owner
+        .query_one(
+            "SELECT
+                 format('GRANT TEMPORARY ON DATABASE %I TO %I', current_database(), $1::text),
+                 format('REVOKE TEMPORARY ON DATABASE %I FROM %I', current_database(), $1::text)",
+            &[&role_name],
+        )
+        .expect("format managed role TEMPORARY privilege statements");
+    let grant: String = privileges.get(0);
+    let revoke: String = privileges.get(1);
+    owner
+        .batch_execute(&grant)
+        .expect("grant managed role TEMPORARY privilege");
+    let installed = managed.client().batch_execute(
+        "CREATE TEMP TABLE gobby_test_parent_seed_barrier_init(value integer);
+             DROP TABLE gobby_test_parent_seed_barrier_init;
+             CREATE FUNCTION pg_temp.gobby_test_parent_seed_barrier(row_project_id uuid)
+             RETURNS boolean
+             LANGUAGE plpgsql
+             VOLATILE
+             AS $function$
+             BEGIN
+                 IF row_project_id::text =
+                    current_setting('gobby.test_parent_seed_project', true)
+                 THEN
+                     PERFORM pg_advisory_xact_lock(22595);
+                 END IF;
+                 RETURN TRUE;
+             END
+             $function$;
+             CREATE TEMP VIEW code_indexed_project_states AS
+             SELECT state.*
+             FROM public.code_indexed_project_states AS state
+             WHERE pg_temp.gobby_test_parent_seed_barrier(state.project_id);",
+    );
+    owner
+        .batch_execute(&revoke)
+        .expect("revoke managed role TEMPORARY privilege");
+    installed.expect("install connection-local parent seed SELECT barrier");
 }
 
 struct ProjectCleanup {
@@ -1355,6 +1548,7 @@ struct ProjectCleanup {
 struct ManagedPrincipal {
     client: Option<postgres::Client>,
     database_url: String,
+    role_name: String,
     execution_id: uuid::Uuid,
     credential_generation: i32,
     session_id: uuid::Uuid,

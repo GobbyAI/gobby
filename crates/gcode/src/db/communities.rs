@@ -1,5 +1,5 @@
 use anyhow::{Context as _, anyhow};
-use postgres::{Client, GenericClient, Transaction};
+use postgres::{Client, GenericClient, Row, Transaction};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -43,46 +43,47 @@ fn read_rows(
     );
     conn.query(&sql, &[machine_id, project_id])?
         .into_iter()
-        .map(|row| {
-            let label_source_value: String = row.get(12);
-            let label_source = LabelSource::parse(&label_source_value).ok_or_else(|| {
-                anyhow!("invalid stored community label source {label_source_value:?}")
-            })?;
-            let boundary_json: String = row.get(8);
-            let boundary = serde_json::from_str::<Vec<BoundaryRow>>(&boundary_json)
-                .with_context(|| format!("invalid stored community boundary {boundary_json:?}"))?
-                .into_iter()
-                .map(|edge| (edge.other_community_id, edge.import_count))
-                .collect();
-            let member_count: i32 = row.get(3);
-            let internal_edges: i32 = row.get(6);
-            Ok(StoredCommunity {
-                machine_id: row.get(0),
-                project_id: row.get(1),
-                community_id: row.get(2),
-                member_count: usize::try_from(member_count)
-                    .context("stored community member_count is negative")?,
-                members: row.get(4),
-                representatives: row.get(5),
-                internal_edges: usize::try_from(internal_edges)
-                    .context("stored community internal_edges is negative")?,
-                cohesion: row.get(7),
-                boundary,
-                member_signature: row.get(9),
-                label_deterministic: row.get(10),
-                label: row.get(11),
-                label_source,
-                label_confidence: row.get(13),
-                label_model: row.get(14),
-                label_candidates: row.get(15),
-                labeled_signature: row.get(16),
-                labeled_at: row.get(17),
-                label_attempted_at: row.get(18),
-                refreshed_at: row.get(19),
-                label_stale: false,
-            })
-        })
+        .map(|row| stored_community_from_row(&row, 0))
         .collect()
+}
+
+fn stored_community_from_row(row: &Row, offset: usize) -> anyhow::Result<StoredCommunity> {
+    let label_source_value: String = row.get(offset + 12);
+    let label_source = LabelSource::parse(&label_source_value)
+        .ok_or_else(|| anyhow!("invalid stored community label source {label_source_value:?}"))?;
+    let boundary_json: String = row.get(offset + 8);
+    let boundary = serde_json::from_str::<Vec<BoundaryRow>>(&boundary_json)
+        .with_context(|| format!("invalid stored community boundary {boundary_json:?}"))?
+        .into_iter()
+        .map(|edge| (edge.other_community_id, edge.import_count))
+        .collect();
+    let member_count: i32 = row.get(offset + 3);
+    let internal_edges: i32 = row.get(offset + 6);
+    Ok(StoredCommunity {
+        machine_id: row.get(offset),
+        project_id: row.get(offset + 1),
+        community_id: row.get(offset + 2),
+        member_count: usize::try_from(member_count)
+            .context("stored community member_count is negative")?,
+        members: row.get(offset + 4),
+        representatives: row.get(offset + 5),
+        internal_edges: usize::try_from(internal_edges)
+            .context("stored community internal_edges is negative")?,
+        cohesion: row.get(offset + 7),
+        boundary,
+        member_signature: row.get(offset + 9),
+        label_deterministic: row.get(offset + 10),
+        label: row.get(offset + 11),
+        label_source,
+        label_confidence: row.get(offset + 13),
+        label_model: row.get(offset + 14),
+        label_candidates: row.get(offset + 15),
+        labeled_signature: row.get(offset + 16),
+        labeled_at: row.get(offset + 17),
+        label_attempted_at: row.get(offset + 18),
+        refreshed_at: row.get(offset + 19),
+        label_stale: false,
+    })
 }
 
 #[allow(dead_code, reason = "consumed by the stored-community read surfaces")]
@@ -160,17 +161,29 @@ impl ReplaceTxn<'_> {
             return Ok(());
         }
         let parent_project_id = id_param(parent_project_id)?;
-        let state = self
-            .tx
-            .query_opt(
-                "SELECT community_id_watermark
-                 FROM code_indexed_project_states
-                 WHERE machine_id = $1 AND project_id = $2",
-                &[&self.machine_id, &parent_project_id],
-            )?
+        let rows = self.tx.query(
+            "SELECT s.community_id_watermark,
+                    c.machine_id::text, c.project_id::text, c.community_id, c.member_count,
+                    c.members, c.representatives, c.internal_edges, c.cohesion,
+                    c.boundary::text, c.member_signature, c.label_deterministic, c.label,
+                    c.label_source, c.label_confidence, c.label_model, c.label_candidates,
+                    c.labeled_signature, c.labeled_at, c.label_attempted_at, c.refreshed_at
+             FROM code_indexed_project_states AS s
+             LEFT JOIN code_communities AS c
+               ON c.machine_id = s.machine_id AND c.project_id = s.project_id
+             WHERE s.machine_id = $1 AND s.project_id = $2
+             ORDER BY c.community_id",
+            &[&self.machine_id, &parent_project_id],
+        )?;
+        let state = rows
+            .first()
             .ok_or_else(|| anyhow!("parent indexed project state is missing for overlay seed"))?;
         let parent_watermark: i32 = state.get(0);
-        self.prior = read_rows(&mut self.tx, &self.machine_id, &parent_project_id, false)?;
+        self.prior = rows
+            .iter()
+            .filter(|row| row.get::<_, Option<i32>>(3).is_some())
+            .map(|row| stored_community_from_row(row, 1))
+            .collect::<anyhow::Result<_>>()?;
         self.watermark = self.watermark.max(parent_watermark);
         Ok(())
     }
