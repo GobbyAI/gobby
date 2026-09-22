@@ -114,7 +114,7 @@ async def preseed_isolated_python_environment(
             error=f"uv_sync_failed:{proc.returncode}:{detail}",
         )
 
-    logger.info("Pre-seeded isolated Python environment at %s", workspace)
+    logger.debug("Pre-seeded isolated Python environment at %s", workspace)
     return PythonEnvSeedResult(attempted=True, success=True, cache_dir=cache_dir)
 
 

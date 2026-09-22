@@ -167,7 +167,9 @@ async def dispatch_mailbox_wakes(
         item = {**outcome, "message_id": message.id}
         decline_reason = item.get("decline_reason")
         if isinstance(decline_reason, str) and decline_reason:
-            logger.info(
+            level = logging.DEBUG if decline_reason == "session_active" else logging.INFO
+            logger.log(
+                level,
                 "mailbox wake declined for session %s message %s: %s",
                 session_id,
                 message.id,

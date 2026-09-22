@@ -239,7 +239,7 @@ async def test_proxy_attach_failures_are_typed_and_finalized(
     frame = _configure(server, temp_db, kind)
     ws = MockWebSocket()
     server.clients[ws] = {"subscriptions": {"*"}}
-    with caplog.at_level(logging.WARNING, logger="gobby.servers.websocket.terminal_ws"):
+    with caplog.at_level(logging.DEBUG, logger="gobby.servers.websocket.terminal_ws"):
         await _send(
             server,
             ws,
@@ -262,8 +262,9 @@ async def test_proxy_attach_failures_are_typed_and_finalized(
         assert frame.closed is True
     assert attachment not in server._proxy().attachments
     assert ws not in server._proxy().by_socket
+    expected_level = logging.DEBUG if code == "terminal_exited" else logging.WARNING
     assert any(
-        record.levelno == logging.WARNING
+        record.levelno == expected_level
         and code in record.getMessage()
         and terminal_id in record.getMessage()
         and reason in record.getMessage()
