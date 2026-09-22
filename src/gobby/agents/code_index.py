@@ -26,6 +26,7 @@ from psycopg.conninfo import conninfo_to_dict
 
 from gobby.agents.spawn_timing import finish_spawn_phase, start_spawn_phase
 from gobby.config.bootstrap_io import read_bootstrap_yaml
+from gobby.config.runtime_models import ConfigSnapshot
 from gobby.paths import get_gobby_home
 from gobby.runtime_grants.launch import materialize_managed_launch
 from gobby.runtime_grants.schema import (
@@ -39,7 +40,7 @@ from gobby.runtime_grants.schema import (
     SchemaIdentity,
     UnavailableCapability,
 )
-from gobby.runtime_grants.service import DeploymentGrantContext
+from gobby.runtime_grants.service import DeploymentGrantContext, capabilities_from_snapshot
 from gobby.runtime_grants.signing import sign_grant
 from gobby.storage.managed_credentials import MANAGED_EXECUTION_BOOTSTRAP_ENV
 from gobby.storage.schema_contract import installed_schema_identity
@@ -274,6 +275,7 @@ async def ensure_isolation_code_index(
     search_smoke_timeout: float = _SEARCH_SMOKE_TIMEOUT,
     api_token: str | None = None,
     identity_env: Mapping[str, str] | None = None,
+    config_snapshot: ConfigSnapshot | None = None,
     phase_timings_ms: MutableMapping[str, float] | None = None,
 ) -> CodeIndexPreflightResult:
     """Prepare and verify `gcode` access inside an isolated workspace.
@@ -326,6 +328,7 @@ async def ensure_isolation_code_index(
         machine_id=identity.get("GOBBY_MACHINE_ID"),
         project_id=identity.get("GOBBY_PROJECT_ID"),
         session_id=identity.get("GOBBY_SESSION_ID"),
+        config_snapshot=config_snapshot,
         git_exclude_path=git_exclude_path,
         principal_kind=principal_kind,
     )
@@ -408,6 +411,7 @@ def _prepare_gcode_runtime(
     machine_id: str | None = None,
     project_id: str | None = None,
     session_id: str | None = None,
+    config_snapshot: ConfigSnapshot | None = None,
     git_exclude_path: Path | None = None,
     principal_kind: Literal["agent_run", "tool_chat"] = "agent_run",
 ) -> CodeIndexPreflightResult:
@@ -442,6 +446,7 @@ def _prepare_gcode_runtime(
         project_id=project_id,
         session_id=session_id,
         context=context,
+        config_snapshot=config_snapshot,
         principal_kind=principal_kind,
     )
     remaining_seconds = (credential.expires_at - datetime.now(UTC)).total_seconds()
@@ -512,26 +517,19 @@ def _signed_grant_from_credential(
     project_id: str,
     session_id: str | None,
     context: DeploymentGrantContext,
+    config_snapshot: ConfigSnapshot | None = None,
     principal_kind: Literal["agent_run", "tool_chat"] = "agent_run",
 ) -> GrantBundle:
+    if config_snapshot is None and principal_kind == "agent_run":
+        raise RuntimeError("agent_run grant requires a config snapshot")
     postgres = PostgresDirect(
         dsn=_scoped_database_url(credential),
         role_name=credential.role_name,
         credential_generation=credential.credential_generation,
         valid_until=int(credential.expires_at.timestamp()),
     )
-    unsigned = GrantBundle(
-        config_revision=0,
-        deployment=GrantDeployment(token=context.token, fencing_epoch=context.fencing_epoch),
-        schema_identity=SchemaIdentity.model_validate(installed_schema_identity()),
-        principal=GrantPrincipal(
-            kind=principal_kind,
-            machine_id=machine_id or "00000000-0000-4000-8000-000000000000",
-            project_id=project_id,
-            execution_id=str(credential.managed_execution_id),
-            session_id=session_id or str(uuid4()),
-        ),
-        capabilities=GrantCapabilities(
+    if config_snapshot is None:
+        capabilities = GrantCapabilities(
             postgres=postgres,
             falkordb=UnavailableCapability(),
             qdrant=UnavailableCapability(),
@@ -541,7 +539,23 @@ def _signed_grant_from_credential(
             vision_extract=AIUnavailableCapability(),
             audio_transcribe=AIUnavailableCapability(),
             broker_operations=(),
+        )
+        config_revision = 0
+    else:
+        capabilities = capabilities_from_snapshot(config_snapshot, postgres)
+        config_revision = config_snapshot.revision
+    unsigned = GrantBundle(
+        config_revision=config_revision,
+        deployment=GrantDeployment(token=context.token, fencing_epoch=context.fencing_epoch),
+        schema_identity=SchemaIdentity.model_validate(installed_schema_identity()),
+        principal=GrantPrincipal(
+            kind=principal_kind,
+            machine_id=machine_id or "00000000-0000-4000-8000-000000000000",
+            project_id=project_id,
+            execution_id=str(credential.managed_execution_id),
+            session_id=session_id or str(uuid4()),
         ),
+        capabilities=capabilities,
         issued_at=int(credential.issued_at.timestamp()),
         expires_at=int(credential.expires_at.timestamp()),
     )

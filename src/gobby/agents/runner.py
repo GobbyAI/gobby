@@ -21,6 +21,7 @@ __all__ = ["AgentRunner"]
 
 if TYPE_CHECKING:
     from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
+    from gobby.runtime_grants.service import ConfigCapture
     from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 
@@ -47,6 +48,7 @@ class AgentRunner:
         session_storage: SessionManager,
         max_agent_depth: int = 1,
         credential_manager: ManagedCredentialManager | None = None,
+        config_runtime: ConfigCapture | None = None,
     ):
         """
         Initialize AgentRunner.
@@ -67,6 +69,7 @@ class AgentRunner:
             status_notifier=session_storage._notify_status_transition,
             credential_manager=credential_manager,
         )
+        self.config_runtime = config_runtime
         self.logger = logger
 
         # Workflow handler for hook evaluation on spawned agent tool calls

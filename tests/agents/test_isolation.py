@@ -40,11 +40,13 @@ from gobby.agents.isolation import (
 )
 from gobby.agents.isolation_models import spawn_state_key
 from gobby.clones.git import CloneGitManager
+from gobby.config.runtime_models import ConfigSnapshot
 from gobby.runtime_grants.service import DeploymentGrantContext
 from gobby.storage.managed_credentials import ManagedCredential
 from gobby.storage.schema_contract import expected_schema_identity
 from gobby.utils.local_token import verify_agent_api_token
 from gobby.worktrees.git import WorktreeGitManager
+from tests.runtime_grants.support import config_snapshot, daemon_config
 
 _REAL_POPEN = subprocess.Popen
 
@@ -191,6 +193,10 @@ class TestEnsureIsolationCodeIndex:
             "GOBBY_SESSION_ID": self._SESSION_ID,
         }
 
+    @staticmethod
+    def _config_snapshot() -> ConfigSnapshot:
+        return config_snapshot(daemon_config(), revision=1)
+
     @pytest.mark.asyncio
     async def test_runs_gcode_index_in_workspace(self, tmp_path: Path) -> None:
         proc = self._proc()
@@ -263,6 +269,7 @@ class TestEnsureIsolationCodeIndex:
             result = await ensure_isolation_code_index(
                 str(workspace),
                 credential=credential,
+                config_snapshot=self._config_snapshot(),
                 runtime_root=runtime_root,
                 identity_env=self._identity_env(),
             )
@@ -330,6 +337,7 @@ class TestEnsureIsolationCodeIndex:
             result = await ensure_isolation_code_index(
                 str(workspace),
                 credential=credential,
+                config_snapshot=self._config_snapshot(),
                 runtime_root=runtime_root,
                 identity_env=self._identity_env(),
             )
@@ -476,6 +484,7 @@ class TestEnsureIsolationCodeIndex:
             workspace=workspace,
             gcode_bin=Path("/tmp/gcode"),
             credential=credential,
+            config_snapshot=self._config_snapshot(),
             runtime_root=runtime_root,
             project_id=self._PROJECT_ID,
         )
@@ -513,6 +522,7 @@ class TestEnsureIsolationCodeIndex:
             result = await ensure_isolation_code_index(
                 str(workspace),
                 credential=self._credential(tmp_path),
+                config_snapshot=self._config_snapshot(),
                 runtime_root=runtime_root,
                 identity_env=self._identity_env(),
             )
@@ -635,6 +645,7 @@ class TestEnsureIsolationCodeIndex:
             result = await ensure_isolation_code_index(
                 str(workspace),
                 credential=self._credential(tmp_path),
+                config_snapshot=self._config_snapshot(),
                 runtime_root=runtime_root,
                 api_token="operator-token-value",
                 identity_env=self._identity_env(),
@@ -687,6 +698,7 @@ class TestEnsureIsolationCodeIndex:
             result = await ensure_isolation_code_index(
                 str(workspace),
                 credential=credential,
+                config_snapshot=self._config_snapshot(),
                 runtime_root=runtime_root,
                 identity_env=self._identity_env(),
             )

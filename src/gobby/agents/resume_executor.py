@@ -320,9 +320,12 @@ async def resume_agent_run(
     metadata["initial_variables"] = initial_variables
 
     try:
+        config_runtime = getattr(runner, "config_runtime", None)
+        config_snapshot = config_runtime.capture().snapshot if config_runtime is not None else None
         spawn_context = prepare_terminal_resume(
             session_manager=runner.child_session_manager,
             credential_manager=runner.run_storage.credential_manager,
+            config_snapshot=config_snapshot,
             existing_session_id=child_session_id,
             original_run_id=original_run.id,
             parent_session_id=parent_session_id,
