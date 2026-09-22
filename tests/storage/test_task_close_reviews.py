@@ -290,6 +290,95 @@ def test_run_end_finish_does_not_overwrite_finalizing(temp_db: HubDatabase) -> N
     assert unchanged.error is None
 
 
+def test_delivered_rejection_is_reused_for_identical_evidence(temp_db: HubDatabase) -> None:
+    store = TaskCloseReviewStore(temp_db)
+    _finish_terminal_review(store, status="invalid")
+    newest_delivered = _finish_terminal_review(store, status="invalid")
+    _finish_terminal_review(store, status="invalid", delivered=False)
+
+    reused = store.get_delivered_rejected_verdict(
+        task_id=_TASK_ID,
+        evidence_fingerprint="evidence",
+        expected_task_updated_at=_TASK_UPDATED_AT,
+    )
+
+    assert reused is not None
+    assert reused.id == newest_delivered.id
+    assert reused.result_payload == newest_delivered.result_payload
+
+
+def test_changed_evidence_does_not_reuse_delivered_rejection(temp_db: HubDatabase) -> None:
+    store = TaskCloseReviewStore(temp_db)
+    _finish_terminal_review(store, status="invalid")
+
+    reused = store.get_delivered_rejected_verdict(
+        task_id=_TASK_ID,
+        evidence_fingerprint="changed-evidence",
+        expected_task_updated_at=_TASK_UPDATED_AT,
+    )
+
+    assert reused is None
+
+
+def test_no_terminal_rejection_returns_no_reusable_verdict(temp_db: HubDatabase) -> None:
+    store = TaskCloseReviewStore(temp_db)
+
+    reused = store.get_delivered_rejected_verdict(
+        task_id=_TASK_ID,
+        evidence_fingerprint="evidence",
+        expected_task_updated_at=_TASK_UPDATED_AT,
+    )
+
+    assert reused is None
+
+
+def test_delivered_approval_is_not_reused_as_rejection(temp_db: HubDatabase) -> None:
+    store = TaskCloseReviewStore(temp_db)
+    _finish_terminal_review(store, status="closed")
+
+    reused = store.get_delivered_rejected_verdict(
+        task_id=_TASK_ID,
+        evidence_fingerprint="evidence",
+        expected_task_updated_at=_TASK_UPDATED_AT,
+    )
+
+    assert reused is None
+
+
+def test_active_review_takes_precedence_over_delivered_rejection(temp_db: HubDatabase) -> None:
+    store = TaskCloseReviewStore(temp_db)
+    _finish_terminal_review(store, status="invalid")
+    active, created = store.create_or_get_active(**_intent())
+
+    reused = store.get_delivered_rejected_verdict(
+        task_id=_TASK_ID,
+        evidence_fingerprint="evidence",
+        expected_task_updated_at=_TASK_UPDATED_AT,
+    )
+
+    assert created is True
+    assert active.status == "queued"
+    assert reused is None
+
+
+def test_task_update_after_evaluation_prevents_rejection_reuse(temp_db: HubDatabase) -> None:
+    store = TaskCloseReviewStore(temp_db)
+    _finish_terminal_review(store, status="invalid")
+    with temp_db.transaction() as conn:
+        conn.execute(
+            "UPDATE tasks SET updated_at = %s WHERE id = %s",
+            (_TASK_UPDATED_AT + timedelta(seconds=1), _TASK_ID),
+        )
+
+    reused = store.get_delivered_rejected_verdict(
+        task_id=_TASK_ID,
+        evidence_fingerprint="evidence",
+        expected_task_updated_at=_TASK_UPDATED_AT,
+    )
+
+    assert reused is None
+
+
 def test_unjudged_attempts_count_every_review_that_never_reached_a_verdict(
     temp_db: HubDatabase,
 ) -> None:
@@ -392,6 +481,33 @@ def _intent(*, caller_session_id: str | None = None) -> dict[str, Any]:
             requested_reasoning_effort=None,
         ),
     }
+
+
+def _finish_terminal_review(
+    store: TaskCloseReviewStore,
+    *,
+    status: TerminalTaskCloseReviewStatus,
+    delivered: bool = True,
+) -> TaskCloseReview:
+    review, created = store.create_or_get_active(**_intent())
+    assert created is True
+    promoted = _promote(store, review)
+    assert promoted.agent_run_id is not None
+    running = store.bind_run(promoted.id, promoted.agent_run_id)
+    assert running is not None
+    payload = {
+        "event": "task_close_review_completed",
+        "review_id": review.id,
+        "status": status,
+        "message": "Stored terminal close-review result.",
+    }
+    terminal = store.finish(review.id, status=status, result_payload=payload)
+    assert terminal is not None
+    if delivered:
+        assert store.mark_delivered(review.id) is True
+    result = store.get(review.id)
+    assert result is not None
+    return result
 
 
 def _promote(

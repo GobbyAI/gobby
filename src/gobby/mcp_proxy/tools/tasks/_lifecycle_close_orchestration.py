@@ -101,6 +101,15 @@ async def launch_close_review(
 
     task = evaluation.task
     task_ref = f"#{task.seq_num}" if task.seq_num else task.id
+    store = TaskCloseReviewStore(ctx.task_manager.db)
+    reusable_rejection = store.get_delivered_rejected_verdict(
+        task_id=task.id,
+        evidence_fingerprint=evidence_fingerprint,
+        expected_task_updated_at=task.updated_at,
+    )
+    if reusable_rejection is not None and reusable_rejection.result_payload is not None:
+        return dict(reusable_rejection.result_payload)
+
     validation_config = ctx.validation_config or TaskValidationConfig()
     validator_timeout_seconds = validation_config.close_review_validator_timeout_seconds
     review_id = str(uuid4())
@@ -152,7 +161,6 @@ async def launch_close_review(
             "_review_model": overrides.get("model"),
         }
     )
-    store = TaskCloseReviewStore(ctx.task_manager.db)
     try:
         review, created = store.create_or_get_active(
             task_id=task.id,
