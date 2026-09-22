@@ -412,7 +412,7 @@ def register_project_purge_cron(
         return
     if not existing.is_system:
         cron_storage.mark_as_system_job(existing.id)
-    reconciled = cron_storage.reconcile_system_job_definition(
+    cron_storage.reconcile_system_job_definition(
         existing.id,
         action_type="handler",
         action_config=action_config,
@@ -420,8 +420,6 @@ def register_project_purge_cron(
         schedule_type="interval",
         interval_seconds=PROJECT_PURGE_INTERVAL_SECONDS,
     )
-    if reconciled is not None and reconciled.enabled and reconciled.next_run_at is None:
-        cron_storage.wake_system_job(reconciled.id)
 
 
 def _command_failure(command: str, result: Any) -> str:
