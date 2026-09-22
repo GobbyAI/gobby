@@ -606,7 +606,8 @@ async def test_active_web_chat_handoff_cancellation_compensates_without_receipt(
     await compact_started.wait()
     queued_task = web_registry._queued_compaction_tasks.get("conversation-1")
     assert queued_task is not None
-    queued_task.cancel()
+    web_registry.unregister("conversation-1")
+    assert web_registry.find_session("conversation-1") == (None, None)
     with pytest.raises(asyncio.CancelledError):
         await queued_task
     await drain_asyncio_tasks()

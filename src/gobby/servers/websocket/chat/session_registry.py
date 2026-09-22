@@ -78,7 +78,9 @@ class WebChatSessionRegistry:
             self._fail_clear_attempt(predecessor_id, attempt_id)
         compact_request = self._queued_compactions.pop(conversation_id, None)
         if compact_request is not None and compact_request[1] is not None:
-            predecessor_id = getattr(session, "db_session_id", None) or conversation_id
+            predecessor_id = (
+                compact_request[3] or getattr(session, "db_session_id", None) or conversation_id
+            )
             self._fail_handoff_attempt(str(predecessor_id), compact_request[1])
         self.sessions.pop(conversation_id, None)
         self.active_tasks.pop(conversation_id, None)
@@ -101,13 +103,15 @@ class WebChatSessionRegistry:
             if not isinstance(predecessor_id, str) or not predecessor_id:
                 predecessor_id = conversation_id
             self._fail_clear_attempt(predecessor_id, attempt_id)
-        for conversation_id, (_, compact_attempt_id, _, _) in list(
+        for conversation_id, (_, compact_attempt_id, _, compact_session_id) in list(
             self._queued_compactions.items()
         ):
             if compact_attempt_id is None:
                 continue
             session = self.sessions.get(conversation_id)
-            predecessor_value = getattr(session, "db_session_id", None) or conversation_id
+            predecessor_value = (
+                compact_session_id or getattr(session, "db_session_id", None) or conversation_id
+            )
             self._fail_handoff_attempt(str(predecessor_value), compact_attempt_id)
         for task in self._queued_compaction_tasks.values():
             if not task.done():
@@ -404,7 +408,9 @@ class WebChatSessionRegistry:
                 self._fail_clear_attempt(predecessor_id, clear_attempt_id)
             if compact_attempt_id is not None:
                 session = self.sessions.get(conversation_id)
-                predecessor_id = getattr(session, "db_session_id", None) or conversation_id
+                predecessor_id = (
+                    compact_session_id or getattr(session, "db_session_id", None) or conversation_id
+                )
                 self._fail_handoff_attempt(str(predecessor_id), compact_attempt_id)
             return
 
@@ -426,6 +432,7 @@ class WebChatSessionRegistry:
                     conversation_id,
                     done_task,
                     compact_attempt_id,
+                    compact_session_id,
                 )
             )
         if wake_request is not None:
@@ -444,12 +451,15 @@ class WebChatSessionRegistry:
         conversation_id: str,
         task: asyncio.Task[None],
         attempt_id: str | None = None,
+        compact_session_id: str | None = None,
     ) -> None:
         self._queued_compaction_tasks.pop(conversation_id, None)
         if task.cancelled():
             if attempt_id is not None:
                 _, session = self.find_session(conversation_id)
-                predecessor_id = getattr(session, "db_session_id", None) or conversation_id
+                predecessor_id = (
+                    compact_session_id or getattr(session, "db_session_id", None) or conversation_id
+                )
                 self._fail_handoff_attempt(str(predecessor_id), attempt_id)
             return
         exc = task.exception()
@@ -461,7 +471,9 @@ class WebChatSessionRegistry:
             )
             if attempt_id is not None:
                 _, session = self.find_session(conversation_id)
-                predecessor_id = getattr(session, "db_session_id", None) or conversation_id
+                predecessor_id = (
+                    compact_session_id or getattr(session, "db_session_id", None) or conversation_id
+                )
                 self._fail_handoff_attempt(str(predecessor_id), attempt_id)
             return
         self._schedule_queued_clear_if_idle(conversation_id)
@@ -556,7 +568,11 @@ class WebChatSessionRegistry:
                 )
                 if compact_attempt_id is not None:
                     _, session = self.find_session(conversation_id)
-                    predecessor_id = getattr(session, "db_session_id", None) or conversation_id
+                    predecessor_id = (
+                        compact_session_id
+                        or getattr(session, "db_session_id", None)
+                        or conversation_id
+                    )
                     self._fail_handoff_attempt(str(predecessor_id), compact_attempt_id)
 
         wake_request = self._queued_wakes.pop(conversation_id, wake_request)
