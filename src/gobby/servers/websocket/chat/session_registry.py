@@ -10,7 +10,11 @@ from typing import Any, Protocol
 from gobby.llm.claude_models import DoneEvent
 from gobby.servers.chat_session_base import ChatSessionProtocol
 from gobby.sessions.clear_continuation import clear_failed_attempt
-from gobby.sessions.handoff import build_handoff_continue_prompt, restore_staged_handoff
+from gobby.sessions.handoff import (
+    build_handoff_continue_prompt,
+    clear_handoff_turn_end_pending,
+    restore_staged_handoff,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -320,6 +324,7 @@ class WebChatSessionRegistry:
             session,
             command,
             continuation_prompt=build_handoff_continue_prompt(),
+            handoff_attempt_id=handoff_attempt_id,
         )
         if not result.get("compacted"):
             return result
@@ -669,6 +674,7 @@ class WebChatSessionRegistry:
         command: str,
         *,
         continuation_prompt: str | None = None,
+        handoff_attempt_id: str | None = None,
     ) -> dict[str, Any]:
         compact_result = await self._drain_message_until_done(
             session,
@@ -677,6 +683,15 @@ class WebChatSessionRegistry:
         )
         if not compact_result.get("ok"):
             return {"compacted": False, "reason": compact_result["reason"]}
+
+        if handoff_attempt_id is not None and self._clear_db is not None:
+            session_id = getattr(session, "db_session_id", None)
+            if isinstance(session_id, str) and session_id:
+                clear_handoff_turn_end_pending(
+                    self._clear_db,
+                    session_id,
+                    attempt_id=handoff_attempt_id,
+                )
 
         if continuation_prompt:
             continuation_result = await self._drain_message_until_done(

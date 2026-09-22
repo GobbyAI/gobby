@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio as asyncio
 import logging
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 from uuid import uuid4
 
 from gobby.agents.provider_capabilities import provider_capabilities
@@ -506,13 +506,20 @@ def register_terminal_tools(
             attempt_id = uuid4().hex
             attempt_state = None
             try:
+                conversation_id, _ = web_chat_session_registry.find_session(compact_target)
+                delivery_mode: Literal["in_process", "queued_in_process"] = (
+                    "queued_in_process"
+                    if conversation_id is not None
+                    and web_chat_session_registry.has_active_turn(conversation_id)
+                    else "in_process"
+                )
                 attempt_state = stage_handoff_attempt(
                     db,
                     resolved_session_id,
                     attempt_id=attempt_id,
                     handoff=handoff,
                     clear_session=False,
-                    delivery_mode="in_process",
+                    delivery_mode=delivery_mode,
                 )
                 result = await web_chat_session_registry.compact_session(
                     compact_target,

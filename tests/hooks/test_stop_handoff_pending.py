@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -35,6 +36,7 @@ from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.found_work_gate import FoundWorkStopFacts
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import SessionVariableManager
+from tests._timing import drain_asyncio_tasks
 
 pytestmark = pytest.mark.unit
 
@@ -341,3 +343,116 @@ async def test_web_chat_handoff_consumes_once_and_keeps_stop_gates_armed(
 
     assert response.decision == "block"
     assert all(name in (response.reason or "") for name in STOP_GATE_NAMES), response.reason
+
+
+async def test_active_web_chat_handoff_yields_until_queued_compaction_then_rearms(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    _create_session(temp_db)
+    temp_db.execute(
+        "UPDATE sessions SET session_type = 'web_chat' WHERE id = %s",
+        (SESSION_ID,),
+    )
+    _insert_rules(temp_db)
+    session_manager = SessionManager(temp_db)
+    variable_manager = SessionVariableManager(temp_db)
+    variable_manager.set_variable(SESSION_ID, "_gobby_feedback_epoch_submitted", True)
+
+    async def done_stream() -> AsyncIterator[DoneEvent]:
+        yield DoneEvent(tool_calls_count=0)
+
+    chat_session = MagicMock(db_session_id=SESSION_ID)
+    chat_session.send_message.side_effect = lambda _message: done_stream()
+    web_registry = WebChatSessionRegistry()
+    web_registry.bind_clear_lifecycle(MagicMock(), db=temp_db)
+    web_registry.register("conversation-1", chat_session)
+
+    release_turn = asyncio.Event()
+
+    async def active_turn() -> None:
+        await release_turn.wait()
+
+    active_task = asyncio.create_task(active_turn())
+    web_registry.track_active_task("conversation-1", active_task)
+
+    terminal_registry = InternalToolRegistry(name="test", description="test")
+    register_terminal_tools(
+        terminal_registry,
+        session_manager,
+        temp_db,
+        web_chat_session_registry=web_registry,
+    )
+    set_handoff = terminal_registry.get_tool("set_handoff")
+    assert set_handoff is not None
+    handoff_registry = create_session_messages_registry(
+        session_manager=session_manager,
+        db=temp_db,
+    )
+
+    with session_context_for_test(SESSION_ID):
+        staged = await set_handoff(
+            current_state="Web chat compact queued behind an active turn.",
+            next_steps=["Consume this continuation exactly once."],
+        )
+
+    assert staged["compacted"] is True
+    assert staged["queued"] is True
+    assert chat_session.send_message.call_count == 0
+    assert variable_manager.get_variables(SESSION_ID)[HANDOFF_TURN_END_PENDING_VARIABLE] is True
+
+    variable_manager.merge_variables(
+        SESSION_ID,
+        {
+            "_agent_type": "default",
+            "_gobby_feedback_epoch_submitted": False,
+            "_gobby_feedback_survey_active": True,
+            "_memory_pending_task_reviews": [{"task_ref": "#42"}],
+            "_variable_defaults_loaded": True,
+            "baseline_dirty_files": [],
+            "claimed_tasks": {"55555555-5555-4555-8555-555555555555": "#42"},
+            "mode_level": 2,
+            "project": {"name": "gobby"},
+            "session_edited_files": [],
+            "stop_attempts": 0,
+            "task_claimed": True,
+        },
+    )
+    handler = WorkflowHookHandler(rule_engine=RuleEngine(temp_db))
+    yielded = await _evaluate(handler, _stop_event(tmp_path))
+
+    assert yielded.decision == "allow"
+    with session_context_for_test(SESSION_ID):
+        pending = await handoff_registry.call("get_handoff", {})
+    assert pending["found"] is False
+    assert pending["delivery_pending"] is True
+
+    release_turn.set()
+    await active_task
+    await drain_asyncio_tasks()
+    queued_task = web_registry._queued_compaction_tasks.get("conversation-1")
+    assert queued_task is not None
+    await queued_task
+
+    assert [call.args[0] for call in chat_session.send_message.call_args_list] == [
+        "/compact",
+        build_handoff_continue_prompt(),
+    ]
+    assert HANDOFF_TURN_END_PENDING_VARIABLE not in variable_manager.get_variables(SESSION_ID)
+
+    with session_context_for_test(SESSION_ID):
+        delivered = await handoff_registry.call("get_handoff", {})
+        consumed = await handoff_registry.call("get_handoff", {})
+
+    assert delivered["found"] is True
+    assert delivered["handoff"]
+    assert consumed == {
+        "success": True,
+        "found": False,
+        "session_id": None,
+        "handoff": "",
+    }
+
+    rearmed = await _evaluate(handler, _stop_event(tmp_path))
+    assert rearmed.decision == "block"
+    assert all(name in (rearmed.reason or "") for name in STOP_GATE_NAMES), rearmed.reason

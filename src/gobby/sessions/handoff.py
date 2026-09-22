@@ -377,7 +377,7 @@ def stage_handoff_attempt(
     attempt_id: str,
     handoff: HandoffPayload,
     clear_session: bool,
-    delivery_mode: Literal["terminal", "in_process"] = "terminal",
+    delivery_mode: Literal["terminal", "in_process", "queued_in_process"] = "terminal",
     additional_markers: Mapping[str, Any] | None = None,
     transition_status: str | None = None,
 ) -> HandoffAttemptState:
@@ -387,8 +387,9 @@ def stage_handoff_attempt(
     the staging transaction (clear attempts use ``awaiting_handoff`` so startup
     expiry and SessionEnd leave the row alone until its successor binds); the
     prior status is recorded on the attempt markers and in the returned state.
-    Terminal delivery arms the turn-end bypass until SessionStart; in-process
-    delivery completes its continuation without that epoch boundary.
+    Terminal delivery arms the turn-end bypass until SessionStart. Queued
+    in-process delivery arms it until the queued compact settles; idle in-process
+    delivery completes its continuation without crossing a turn boundary.
     """
     marker_updates = dict(additional_markers or {})
     marker_updates[PENDING_HANDOFF_VARIABLE] = {
@@ -396,7 +397,7 @@ def stage_handoff_attempt(
         "clear_session": clear_session,
         "created_at": utc_now().isoformat(),
     }
-    if delivery_mode == "terminal":
+    if delivery_mode != "in_process":
         marker_updates[HANDOFF_TURN_END_PENDING_VARIABLE] = True
     if not clear_session:
         marker_updates[HANDOFF_PULL_PENDING_VARIABLE] = True
@@ -455,6 +456,30 @@ def stage_handoff_attempt(
         missing_markers=missing_markers,
         prior_status=prior_status,
     )
+
+
+def clear_handoff_turn_end_pending(
+    db: HubDatabase,
+    session_id: str,
+    *,
+    attempt_id: str,
+) -> bool:
+    """Clear the turn-end bypass after its queued in-process compact settles."""
+    with db.transaction() as conn:
+        variable_row = conn.execute(
+            "SELECT variables FROM session_variables WHERE session_id = %s FOR UPDATE",
+            (session_id,),
+        ).fetchone()
+        if variable_row is None:
+            return False
+        variables = _load_variables(variable_row["variables"])
+        marker = variables.get(PENDING_HANDOFF_VARIABLE)
+        if not isinstance(marker, Mapping) or marker.get("attempt_id") != attempt_id:
+            return False
+        if variables.pop(HANDOFF_TURN_END_PENDING_VARIABLE, None) is None:
+            return False
+        _store_variables(conn, session_id, variables, exists=True)
+    return True
 
 
 def restore_handoff_attempt(

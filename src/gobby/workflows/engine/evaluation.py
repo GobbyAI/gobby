@@ -406,8 +406,8 @@ class EvaluationMixin:
         if _is_turn_end_event(evaluation.event.event_type):
             if evaluation.variables.get(HANDOFF_TURN_END_PENDING_VARIABLE) is True:
                 turn_end_suppression = (
-                    "pending-terminal-handoff-delivery",
-                    "pending terminal handoff delivery",
+                    "pending-handoff-delivery",
+                    "pending handoff delivery",
                 )
             elif evaluation.variables.get("turn_interrupt_initiated") is True:
                 turn_end_suppression = ("interrupt-initiated-turn", "interrupt-initiated turn")

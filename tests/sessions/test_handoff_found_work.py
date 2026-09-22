@@ -164,6 +164,7 @@ async def test_get_handoff_rearms_the_gate_for_open_findings(
         attempt_id="a" * 32,
         handoff=_payload(ESCALATED),
         clear_session=False,
+        delivery_mode="in_process",
     )
     sv_mgr = SessionVariableManager(temp_db)
     assert FOUND_WORK_GATE_ARMED_AT_VARIABLE not in sv_mgr.get_variables(session.id)
