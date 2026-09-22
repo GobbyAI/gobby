@@ -8,6 +8,31 @@ from urllib.parse import parse_qs, urlsplit
 
 from mcp.client.auth import AuthorizationCodeResult, OAuthFlowError
 
+_OAUTH_ERROR_CODES = frozenset(
+    {
+        "access_denied",
+        "invalid_client",
+        "invalid_grant",
+        "invalid_request",
+        "invalid_scope",
+        "invalid_token",
+        "insufficient_scope",
+        "server_error",
+        "temporarily_unavailable",
+        "unauthorized_client",
+        "unsupported_grant_type",
+        "unsupported_response_type",
+    }
+)
+
+
+def _oauth_error_message(error_code: str) -> str:
+    if error_code == "access_denied":
+        return "OAuth authorization was denied"
+    if error_code in _OAUTH_ERROR_CODES:
+        return f"OAuth authorization failed: {error_code}"
+    return "OAuth authorization failed"
+
 
 class OAuthCallback(AbstractAsyncContextManager["OAuthCallback"]):
     def __init__(self, open_browser: Callable[[str], Awaitable[None]], port: int = 0) -> None:
@@ -73,9 +98,13 @@ class OAuthCallback(AbstractAsyncContextManager["OAuthCallback"]):
                 )
                 status, message = "400 Bad Request", "Invalid OAuth callback."
                 if valid and self.result is not None:
-                    if query.get("error"):
-                        self.result.set_exception(OAuthFlowError("OAuth authorization was denied"))
-                        message = "Authorization denied. Return to your terminal."
+                    if "error" in query:
+                        error_code = query["error"][0]
+                        self.result.set_exception(OAuthFlowError(_oauth_error_message(error_code)))
+                        if error_code == "access_denied":
+                            message = "Authorization denied. Return to your terminal."
+                        else:
+                            message = "Authorization failed. Return to your terminal."
                     elif query.get("code", [""])[0]:
                         self.result.set_result(
                             AuthorizationCodeResult(
