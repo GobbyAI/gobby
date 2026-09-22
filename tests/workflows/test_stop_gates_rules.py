@@ -105,6 +105,7 @@ STOP_GATES_RULES = {
     "block-terminal-validation-failure",
     "block-unclaimed-found-work",
     "require-epic-tree-close",
+    "rearm-close-gates-on-session-start",
     "require-task-close",
     "require-step-completion",
 }
@@ -728,6 +729,7 @@ class TestRequireStepCompletion:
             task_id=task.id,
             task_ref=f"#{task.seq_num}",
             caller_session_id=caller.id,
+            commit_shas=(),
             close_arguments={},
             expected_task_updated_at=task.updated_at,
             review_fingerprint="review",
@@ -2197,6 +2199,7 @@ async def test_infrastructure_retry_wait_reaches_task_and_epic_stop_gates(
         task_id=task.id,
         task_ref=f"#{task.seq_num}",
         caller_session_id=review_caller.id,
+        commit_shas=(),
         close_arguments={},
         expected_task_updated_at=task.updated_at,
         review_fingerprint="review",

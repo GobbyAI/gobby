@@ -7,7 +7,7 @@ import json
 import logging
 import threading
 import uuid
-from collections.abc import Awaitable, Callable, Iterator, Mapping
+from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 AttentionKind = Literal["actionable", "non_actionable"]
 AttentionStatus = Literal["blocked"]
+AttentionRosterKind = Literal["run", "session"]
 
 
 def run_attention_entry_id(run_id: str) -> str:
@@ -142,6 +143,80 @@ class AttentionRosterSnapshot:
     metadata: Mapping[str, Mapping[str, object]]
 
 
+@dataclass(frozen=True)
+class AttentionRosterTerminal:
+    """Terminal fields needed to assemble one roster entry without another query."""
+
+    id: str
+    backend: str
+    state: str
+    machine_id: str
+    host_epoch: str | None
+    session_name: str | None
+    locator: Mapping[str, object] | None
+
+
+@dataclass(frozen=True)
+class AttentionRosterRow:
+    """One run or interactive session loaded by the bounded roster query."""
+
+    kind: AttentionRosterKind
+    source_id: str
+    session_id: str | None
+    lifecycle_status: str
+    task_id: str | None
+    task_ref: str | None
+    task_stage: str | None
+    provider: str
+    model: str | None
+    pid: int | None
+    updated_at: object
+    terminal_context: Mapping[str, object]
+    terminal_id: str | None
+    terminal: AttentionRosterTerminal | None
+
+    @classmethod
+    def from_row(cls, row: Row) -> AttentionRosterRow:
+        terminal_id = row.get("terminal_id")
+        terminal = None
+        if terminal_id is not None and row.get("terminal_backend") is not None:
+            raw_locator = row.get("terminal_locator")
+            terminal = AttentionRosterTerminal(
+                id=str(terminal_id),
+                backend=str(row["terminal_backend"]),
+                state=str(row["terminal_state"]),
+                machine_id=str(row["terminal_machine_id"]),
+                host_epoch=(
+                    str(row["terminal_host_epoch"])
+                    if row.get("terminal_host_epoch") is not None
+                    else None
+                ),
+                session_name=(
+                    str(row["terminal_session_name"])
+                    if row.get("terminal_session_name") is not None
+                    else None
+                ),
+                locator=dict(raw_locator) if isinstance(raw_locator, Mapping) else None,
+            )
+        raw_context = row.get("terminal_context")
+        return cls(
+            kind=cast(AttentionRosterKind, str(row["roster_kind"])),
+            source_id=str(row["source_id"]),
+            session_id=str(row["session_id"]) if row.get("session_id") is not None else None,
+            lifecycle_status=str(row["lifecycle_status"]),
+            task_id=str(row["task_id"]) if row.get("task_id") is not None else None,
+            task_ref=str(row["task_ref"]) if row.get("task_ref") is not None else None,
+            task_stage=(str(row["task_stage"]) if row.get("task_stage") is not None else None),
+            provider=str(row["provider"]),
+            model=str(row["model"]) if row.get("model") is not None else None,
+            pid=int(row["pid"]) if row.get("pid") is not None else None,
+            updated_at=row.get("updated_at"),
+            terminal_context=(dict(raw_context) if isinstance(raw_context, Mapping) else {}),
+            terminal_id=str(terminal_id) if terminal_id is not None else None,
+            terminal=terminal,
+        )
+
+
 def _timestamp(value: object) -> str | None:
     if value is None:
         return None
@@ -193,6 +268,91 @@ class AttentionStateManager:
             """
         )
         return [AttentionState.from_row(row) for row in rows]
+
+    def load_roster_rows(
+        self,
+        machine_id: str,
+        *,
+        live_session_statuses: Sequence[str],
+    ) -> list[AttentionRosterRow]:
+        """Load runs, sessions, tasks, and terminals in one database round trip."""
+        rows = self.db.fetchall(
+            """
+            SELECT
+                'run' AS roster_kind,
+                run.id::text AS source_id,
+                run.child_session_id::text AS session_id,
+                run.status AS lifecycle_status,
+                run.task_id::text AS task_id,
+                CASE
+                    WHEN task.id IS NULL THEN NULL
+                    WHEN task.seq_num IS NOT NULL THEN '#' || task.seq_num::text
+                    ELSE LEFT(task.id::text, 8)
+                END AS task_ref,
+                current_stage.stage_name AS task_stage,
+                run.provider,
+                run.model,
+                run.pid,
+                run.updated_at,
+                '{}'::jsonb AS terminal_context,
+                run.terminal_id::text AS terminal_id,
+                terminal.backend AS terminal_backend,
+                terminal.state AS terminal_state,
+                terminal.machine_id::text AS terminal_machine_id,
+                terminal.host_epoch AS terminal_host_epoch,
+                terminal.session_name AS terminal_session_name,
+                terminal.locator AS terminal_locator
+            FROM agent_runs run
+            LEFT JOIN tasks task ON task.id = run.task_id
+            LEFT JOIN LATERAL (
+                SELECT stage.stage_name
+                FROM task_stage_states stage
+                WHERE stage.task_id = task.id AND stage.state != 'done'
+                ORDER BY stage.position
+                LIMIT 1
+            ) current_stage ON TRUE
+            LEFT JOIN terminals terminal ON terminal.id = run.terminal_id
+            WHERE run.status IN ('queued', 'running', 'pending')
+              AND run.machine_id = %s
+
+            UNION ALL
+
+            SELECT
+                'session' AS roster_kind,
+                session.id::text AS source_id,
+                session.id::text AS session_id,
+                session.status AS lifecycle_status,
+                NULL::text AS task_id,
+                NULL::text AS task_ref,
+                NULL::text AS task_stage,
+                session.source AS provider,
+                session.model,
+                NULL::bigint AS pid,
+                session.updated_at,
+                COALESCE(session.terminal_context, '{}'::jsonb) AS terminal_context,
+                terminal.id::text AS terminal_id,
+                terminal.backend AS terminal_backend,
+                terminal.state AS terminal_state,
+                terminal.machine_id::text AS terminal_machine_id,
+                terminal.host_epoch AS terminal_host_epoch,
+                terminal.session_name AS terminal_session_name,
+                terminal.locator AS terminal_locator
+            FROM sessions session
+            LEFT JOIN LATERAL (
+                SELECT candidate.*
+                FROM terminals candidate
+                WHERE candidate.session_id = session.id
+                  AND candidate.state IN ('pending', 'live')
+                ORDER BY candidate.updated_at DESC
+                LIMIT 1
+            ) terminal ON TRUE
+            WHERE session.status = ANY(%s)
+
+            ORDER BY roster_kind, source_id
+            """,
+            (machine_id, list(live_session_statuses)),
+        )
+        return [AttentionRosterRow.from_row(row) for row in rows]
 
     def snapshot(
         self,

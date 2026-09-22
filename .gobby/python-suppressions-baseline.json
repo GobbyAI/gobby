@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "site_count": 212,
+  "site_count": 206,
   "sites": [
     {
       "fingerprint": "0f66536411482f1a325ea75a3b12fe585163203aa948bb885f30281b874362a0",
@@ -273,16 +273,6 @@
       "statement": "repairer = CodeIndexNightlyRepairer ( context )"
     },
     {
-      "fingerprint": "6c0d816c9f2279c7ef213694e5fb0604be816bfdf48c4e5e5dbfaf47f34c62d2",
-      "path": "tests/code_index/test_nightly_repair.py",
-      "symbol": "test_register_nightly_repair_cron_creates_global_system_job",
-      "directive": "type: ignore",
-      "codes": [
-        "arg-type"
-      ],
-      "statement": "register_code_index_nightly_repair_cron ( cron_storage = storage , cron_executor = executor , repairer = repairer , config = config , project_id = \"personal\" , )"
-    },
-    {
       "fingerprint": "b187bc6962323de0765f6e412e5184a0bb12f6deece35bec0b1cae64604354b4",
       "path": "tests/code_index/test_nightly_repair.py",
       "symbol": "test_register_nightly_repair_cron_creates_global_system_job",
@@ -411,56 +401,6 @@
         "arg-type"
       ],
       "statement": "pruner = CodeIndexPruner ( context )"
-    },
-    {
-      "fingerprint": "eba46532dd275a138c6999f60b5262d066b38fadc0aa5dca46ba6ec3b3711a21",
-      "path": "tests/code_index/test_prune.py",
-      "symbol": "test_register_code_index_prune_cron_creates_hourly_system_job",
-      "directive": "type: ignore",
-      "codes": [
-        "arg-type"
-      ],
-      "statement": "register_code_index_prune_cron ( cron_storage = storage , cron_executor = executor , pruner = pruner , project_id = \"personal\" , )"
-    },
-    {
-      "fingerprint": "85bc5a457d0e6a2396374dd6319bed3c269d774266a5189abb18a92ab6e7ebb8",
-      "path": "tests/code_index/test_prune.py",
-      "symbol": "test_register_code_index_prune_cron_preserves_disabled_job",
-      "directive": "type: ignore",
-      "codes": [
-        "arg-type"
-      ],
-      "statement": "pruner = CodeIndexPruner ( context )"
-    },
-    {
-      "fingerprint": "7b34d115fa9d9b324f9e45195a605a22ebcca1b5b5cd2347bb140af252923872",
-      "path": "tests/code_index/test_prune.py",
-      "symbol": "test_register_code_index_prune_cron_preserves_disabled_job",
-      "directive": "type: ignore",
-      "codes": [
-        "arg-type"
-      ],
-      "statement": "register_code_index_prune_cron ( cron_storage = storage , cron_executor = CronExecutor ( ) , pruner = pruner , project_id = \"personal\" , )"
-    },
-    {
-      "fingerprint": "706235e7eb5b29010a8c9d8ce4249a355ebd5dc95acc6c95e26eb233d8f0d8e9",
-      "path": "tests/code_index/test_prune.py",
-      "symbol": "test_register_code_index_prune_cron_wakes_enabled_job_without_next_run",
-      "directive": "type: ignore",
-      "codes": [
-        "arg-type"
-      ],
-      "statement": "pruner = CodeIndexPruner ( context )"
-    },
-    {
-      "fingerprint": "c11234f30364496db9756456868d23c1bc62576706f9e37b40974bff94c802bc",
-      "path": "tests/code_index/test_prune.py",
-      "symbol": "test_register_code_index_prune_cron_wakes_enabled_job_without_next_run",
-      "directive": "type: ignore",
-      "codes": [
-        "arg-type"
-      ],
-      "statement": "register_code_index_prune_cron ( cron_storage = storage , cron_executor = CronExecutor ( ) , pruner = pruner , project_id = \"personal\" , )"
     },
     {
       "fingerprint": "adde4054782cca7f2b6e6a42062666a96b8f2b57c7117440d8a614b6824f31fd",

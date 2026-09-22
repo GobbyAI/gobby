@@ -22,7 +22,7 @@ fn attach_refusal_is_transient(code: &str) -> bool {
 impl Workspace<LiveDaemon> {
     pub(super) async fn attach_ready_panes(&mut self) -> Result<(), DaemonError> {
         let snapshot = self.daemon.subscribe().0;
-        if !snapshot.ready {
+        if !snapshot.ready || !self.daemon_ready {
             return Ok(());
         }
         let now = tokio::time::Instant::now();
@@ -211,7 +211,13 @@ impl Workspace<LiveDaemon> {
             return Ok(());
         }
         pane.fallback_in_flight = true;
-        pane.direct_available = false;
+        let result = self.recover_proxy_source_once(pane_id).await;
+        self.clear_fallback_flight(pane_id);
+        result
+    }
+
+    async fn recover_proxy_source_once(&mut self, pane_id: PaneId) -> Result<(), FrameError> {
+        let pane = self.panes.get_mut(&pane_id).expect("pane exists");
         let terminal_id = pane.terminal_id.clone();
         let (old_attachment, deadline) = pane
             .begin_detaching(tokio::time::Instant::now())
@@ -235,13 +241,21 @@ impl Workspace<LiveDaemon> {
             let reason = loop {
                 tokio::select! {
                     reply = &mut detach => {
-                        let reply = reply?;
+                        let reply = match reply {
+                            Ok(reply) => reply,
+                            Err(error) => {
+                                let error = FrameError::from(error);
+                                self.defer_fallback_retry(pane_id, &error);
+                                return Err(error);
+                            }
+                        };
                         if reply.get("success").and_then(Value::as_bool) != Some(true) {
-                            self.clear_fallback_flight(pane_id);
-                            return Err(FrameError::Protocol(
+                            let error = FrameError::Protocol(
                                 reply.get("reason").and_then(Value::as_str)
                                     .unwrap_or("terminal detach refused").to_string()
-                            ));
+                            );
+                            self.defer_fallback_retry(pane_id, &error);
+                            return Err(error);
                         }
                         break reply.get("reason").and_then(Value::as_str).map(str::to_owned);
                     }
@@ -254,17 +268,37 @@ impl Workspace<LiveDaemon> {
                             }
                             Ok(_) => {}
                             Err(_) => {
-                                let reply = tokio::time::timeout_at(deadline, &mut detach)
-                                    .await
-                                    .map_err(|_| FrameError::Other("detach deadline expired".into()))??;
+                                let reply = match tokio::time::timeout_at(deadline, &mut detach).await {
+                                    Ok(Ok(reply)) => reply,
+                                    Ok(Err(error)) => {
+                                        let error = FrameError::from(error);
+                                        self.defer_fallback_retry(pane_id, &error);
+                                        return Err(error);
+                                    }
+                                    Err(_) => {
+                                        let error = FrameError::Other(
+                                            "detach deadline expired".into()
+                                        );
+                                        self.defer_fallback_retry(pane_id, &error);
+                                        return Ok(());
+                                    }
+                                };
                                 if reply.get("success").and_then(Value::as_bool) != Some(true) {
-                                    return Err(FrameError::Protocol("terminal detach refused".into()));
+                                    let error = FrameError::Protocol(
+                                        "terminal detach refused".into()
+                                    );
+                                    self.defer_fallback_retry(pane_id, &error);
+                                    return Err(error);
                                 }
                                 break reply.get("reason").and_then(Value::as_str).map(str::to_owned);
                             }
                         }
                     }
-                    _ = tokio::time::sleep_until(deadline) => return Ok(()),
+                    _ = tokio::time::sleep_until(deadline) => {
+                        let error = FrameError::Other("detach deadline expired".into());
+                        self.defer_fallback_retry(pane_id, &error);
+                        return Ok(());
+                    }
                 }
             };
             if !self
@@ -273,7 +307,6 @@ impl Workspace<LiveDaemon> {
                 .expect("pane exists")
                 .retire_attachment(&old_attachment, reason)
             {
-                self.clear_fallback_flight(pane_id);
                 return Ok(());
             }
         }
@@ -281,6 +314,17 @@ impl Workspace<LiveDaemon> {
         self.begin_live_proxy_attach(pane_id, &terminal_id, self.daemon.generation())
             .await
             .map_err(|error| FrameError::Other(error.to_string()))
+    }
+
+    fn defer_fallback_retry(&mut self, pane_id: PaneId, error: &FrameError) {
+        self.panes
+            .get_mut(&pane_id)
+            .expect("pane exists")
+            .defer_attach(
+                "detach_failed",
+                &error.to_string(),
+                tokio::time::Instant::now(),
+            );
     }
 
     async fn request_proxy_source(

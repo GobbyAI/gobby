@@ -4,6 +4,7 @@ Handles applying rule effects: set_variable, inject_context, observe,
 mcp_call, rewrite_input, load_skill, run_command, and block matching.
 """
 
+import asyncio
 import json
 import logging
 from collections.abc import Callable
@@ -149,9 +150,13 @@ class EffectsMixin(RunCommandEffectsMixin, DeliveryFormattingMixin):
             if effect.inject_result and not effect.background and self._mcp_dispatcher:
                 event = ctx.get("event")
                 try:  # Broad catch intentional — external MCP dispatcher is an opaque async callable
-                    dr = await self._mcp_dispatcher(
+                    dispatch = self._mcp_dispatcher(
                         effect.server, effect.tool, rendered_args, event
                     )
+                    if effect.timeout_seconds is None:
+                        dr = await dispatch
+                    else:
+                        dr = await asyncio.wait_for(dispatch, timeout=effect.timeout_seconds)
                     success = isinstance(dr, dict) and dr.get("success", False)
                     if success and effect.success_variable:
                         if is_internal_rule(row) or not is_reserved_workflow_variable(
@@ -225,6 +230,19 @@ class EffectsMixin(RunCommandEffectsMixin, DeliveryFormattingMixin):
                                 f"Auto-heal prerequisite failed: "
                                 f"{effect.server}/{effect.tool}: {error}"
                             )
+                except TimeoutError:
+                    logger.warning(
+                        "Inline mcp_call %s/%s timed out after %ss (rule %s)",
+                        effect.server,
+                        effect.tool,
+                        effect.timeout_seconds,
+                        row.name,
+                    )
+                    if effect.block_on_failure:
+                        return (
+                            f"Auto-heal prerequisite failed: {effect.server}/{effect.tool}: "
+                            f"timed out after {effect.timeout_seconds}s"
+                        )
                 except Exception as exc:
                     logger.warning(
                         "Inline mcp_call %s/%s raised (rule %s)",
@@ -240,17 +258,18 @@ class EffectsMixin(RunCommandEffectsMixin, DeliveryFormattingMixin):
                 return None
 
             # Deferred dispatch (background, non-inject, or no dispatcher)
-            mcp_calls.append(
-                {
-                    "server": effect.server,
-                    "tool": effect.tool,
-                    "arguments": rendered_args,
-                    "background": effect.background,
-                    "inject_result": effect.inject_result,
-                    "block_on_failure": effect.block_on_failure,
-                    "block_on_success": effect.block_on_success,
-                }
-            )
+            deferred_call = {
+                "server": effect.server,
+                "tool": effect.tool,
+                "arguments": rendered_args,
+                "background": effect.background,
+                "inject_result": effect.inject_result,
+                "block_on_failure": effect.block_on_failure,
+                "block_on_success": effect.block_on_success,
+            }
+            if effect.timeout_seconds is not None:
+                deferred_call["timeout_seconds"] = effect.timeout_seconds
+            mcp_calls.append(deferred_call)
 
         elif effect.type == "rewrite_input":
             if effect.input_updates:

@@ -815,6 +815,11 @@ class TestContinueInChatTerminalKill:
                 return_value=None,
             ),
             patch(
+                "gobby.servers.websocket.handlers.session_observe.kill_terminal_session",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch(
                 "gobby.storage.agents.LocalAgentRunManager.get_by_session",
                 return_value=None,
             ),

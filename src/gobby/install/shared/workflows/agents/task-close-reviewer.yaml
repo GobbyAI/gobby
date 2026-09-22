@@ -7,11 +7,11 @@ priority: 20
 surfaces: [spawn, persona]
 # Provider and model are overridden at launch by the first gobby_tasks.validation
 # candidate; these defaults mirror that feature's feature_mid profile for direct
-# spawns. Reasoning stays `auto` (model-default reasoning) unless the candidate
-# pins a concrete effort.
+# spawns. Pin the mid-profile reasoning default so direct spawns are deterministic;
+# a validation candidate may still override it with its own concrete effort.
 provider: codex
 model: gpt-5.6-terra
-reasoning_effort: auto
+reasoning_effort: medium
 isolation: none
 blocked_mcp_tools:
   - "gobby-tasks:create_task"

@@ -169,6 +169,11 @@ class CodeIndexConfig(BaseModel):
         ge=1,
         description="Max files to sync per poll iteration",
     )
+    sync_worker_concurrency: int = Field(
+        default=4,
+        ge=1,
+        description="Maximum concurrent per-file projection sync commands",
+    )
     sync_worker_breaker_failure_threshold: int = Field(
         default=5,
         ge=1,

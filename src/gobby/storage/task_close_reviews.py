@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -210,6 +210,7 @@ class TaskCloseReviewStore:
         task_id: str,
         task_ref: str,
         caller_session_id: str,
+        commit_shas: Sequence[str],
         close_arguments: Mapping[str, Any],
         expected_task_updated_at: datetime,
         review_fingerprint: str,
@@ -272,6 +273,18 @@ class TaskCloseReviewStore:
             ).fetchone()
             created = row is not None
             if created:
+                for commit_sha in dict.fromkeys(commit_shas):
+                    conn.execute(
+                        """
+                        UPDATE tasks
+                           SET commits = COALESCE(commits, '[]'::jsonb)
+                                         || jsonb_build_array(%s::text)
+                         WHERE id = %s
+                           AND NOT COALESCE(commits, '[]'::jsonb)
+                                   @> jsonb_build_array(%s::text)
+                        """,
+                        (commit_sha, task_id, commit_sha),
+                    )
                 conn.execute(
                     """
                     INSERT INTO agent_runs (

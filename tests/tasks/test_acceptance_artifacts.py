@@ -93,6 +93,26 @@ def test_line_leading_references_support_markdown_prefixes() -> None:
     )
 
 
+def test_expansion_prefixed_references_are_extracted() -> None:
+    criteria = (
+        "Acceptance artifacts:\n"
+        "- 2.3.1: test: `tests/test_expanded.py::test_expanded`\n"
+        "- A.2b.3: test: `tests/test_alphanumeric.py::test_alphanumeric`\n"
+        "- 2.3.2: file: `src/gobby/tasks/acceptance_artifacts.py`\n"
+        "- 2: test: `tests/test_single_segment.py::test_ignored`\n"
+        "Prose containing 2.3.3: test: `tests/test_ignored.py::test_ignored`.\n"
+        "- Prose containing 2.3.4: file: `docs/ignored.md`."
+    )
+
+    assert artifacts_module.extract_artifact_references(criteria, "test") == (
+        "tests/test_expanded.py::test_expanded",
+        "tests/test_alphanumeric.py::test_alphanumeric",
+    )
+    assert artifacts_module.extract_artifact_references(criteria, "file") == (
+        "src/gobby/tasks/acceptance_artifacts.py",
+    )
+
+
 def test_inline_code_examples_are_not_artifact_references() -> None:
     criteria = (
         "The schema describes `test: path::test_symbol`, examples use "
@@ -1372,6 +1392,7 @@ def _git(repo: Path, *args: str) -> str:
         ("crates/gcore/tests/schema_contract.rs", True),
         ("crates/gterminal/src/host/backpressure/tests.rs", True),
         ("crates/gcore/src/ai/tests.rs", True),
+        ("crates/gcode/src/communities/remap_tests.rs", True),
         ("src/tests.rs", True),
         ("crates/gcore/benches/tests.rs", False),
         ("crates/gcore/src/backpressure.rs", False),

@@ -39,7 +39,7 @@ from gobby.storage.model_metadata import ModelMetadataStore
 if TYPE_CHECKING:
     from gobby.runner import GobbyRunner
     from gobby.runtime_grants.schema import GrantPrincipal, PostgresDirect
-    from gobby.storage.managed_credential_types import SecretStore
+    from gobby.storage.managed_credential_types import ManagedCredential, SecretStore
     from gobby.storage.managed_credentials import ManagedCredentialManager
     from gobby.storage.terminals import AttachLocator
     from gobby.terminals.frame_client import FrameClient
@@ -356,6 +356,7 @@ def init_servers(runner: GobbyRunner) -> None:
             web_chat_session_registry=web_chat_session_registry,
             tool_proxy_getter=tool_proxy_getter,
             completion_registry=runner.completion_registry,
+            shutdown_in_progress=lambda: services.shutdown_in_progress,
         )
         runner.websocket_server.web_chat_runtime_manager = services.web_chat_runtime_manager
         attention_manager = services.attention_manager
@@ -540,6 +541,7 @@ def issue_grant_postgres(
 def _bind_runtime_grants(server: HTTPServer, runner: GobbyRunner) -> None:
     # Deferred imports stay here: they close a runner <-> runtime_grants cycle.
     from gobby.runtime_grants.handshake import HandshakeRejection, HandshakeService
+    from gobby.runtime_grants.launch import rewrite_managed_grant_file
     from gobby.runtime_grants.revocation import GrantRevocationStore
     from gobby.runtime_grants.schema import GrantBundle, PostgresDirect
     from gobby.runtime_grants.service import DeploymentGrantContext, GrantService
@@ -579,6 +581,29 @@ def _bind_runtime_grants(server: HTTPServer, runner: GobbyRunner) -> None:
     bind = getattr(credentials, "bind_grant_revocations", None)
     if callable(bind):
         bind(revocations)
+
+    def _rewrite_launch_grant(credential: ManagedCredential, scoped_dsn: str) -> None:
+        deployment_token = getattr(lease, "deployment_token", None)
+        fencing_epoch = getattr(lease, "fencing_epoch", None)
+        signing_secret = getattr(lease, "grant_signing_secret", None)
+        if deployment_token is None or fencing_epoch is None or not signing_secret:
+            raise RuntimeError("active-daemon lease has no grant signing context")
+        rewrite_managed_grant_file(
+            credential.bootstrap_path.parent / "grant.json",
+            managed_execution_id=str(credential.managed_execution_id),
+            scoped_dsn=scoped_dsn,
+            role_name=credential.role_name,
+            credential_generation=credential.credential_generation,
+            issued_at=credential.issued_at,
+            expires_at=credential.expires_at,
+            deployment_token=str(deployment_token),
+            fencing_epoch=int(fencing_epoch),
+            signing_secret=str(signing_secret),
+        )
+
+    bind_launch_grant = getattr(credentials, "bind_launch_grant_rewriter", None)
+    if callable(bind_launch_grant):
+        bind_launch_grant(_rewrite_launch_grant)
 
     def _principal_revoked(grant: GrantBundle) -> bool:
         generation = getattr(grant.capabilities.postgres, "credential_generation", None)

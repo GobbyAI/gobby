@@ -194,12 +194,20 @@ class TestEnsureIsolationCodeIndex:
     @pytest.mark.asyncio
     async def test_runs_gcode_index_in_workspace(self, tmp_path: Path) -> None:
         proc = self._proc()
+        loop_thread = threading.get_ident()
+        popen_threads: list[int] = []
+        launch = self._popen_side_effect(proc)
+
+        def recording_launch(args: list[str], *popen_args: Any, **kwargs: Any) -> Any:
+            if args[0] != "git":
+                popen_threads.append(threading.get_ident())
+            return launch(args, *popen_args, **kwargs)
 
         with (
             patch("gobby.agents.code_index.resolve_native_bin", return_value="/tmp/gcode"),
             patch(
                 "gobby.agents.code_index.subprocess.Popen",
-                side_effect=self._popen_side_effect(proc),
+                side_effect=recording_launch,
             ) as popen,
         ):
             result = await ensure_isolation_code_index(str(tmp_path))
@@ -221,7 +229,12 @@ class TestEnsureIsolationCodeIndex:
         ]
         assert "--allow-stale" in calls[2].args[0]
         assert "--no-freshness" not in calls[2].args[0]
-        assert calls[0].kwargs["cwd"] == str(tmp_path)
+        assert popen_threads and all(thread_id != loop_thread for thread_id in popen_threads)
+        for gcode_call in calls:
+            assert Path(gcode_call.args[0][0]).is_absolute()
+            assert "cwd" not in gcode_call.kwargs
+            assert "start_new_session" not in gcode_call.kwargs
+            assert "preexec_fn" not in gcode_call.kwargs
         assert proc.communicate_timeouts == pytest.approx([5.0, 120.0, 10.0], abs=0.25)
 
     @pytest.mark.asyncio

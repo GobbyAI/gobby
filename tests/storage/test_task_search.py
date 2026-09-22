@@ -1,10 +1,11 @@
 """Tests for task search functionality."""
 
-from typing import Any
+from typing import Any, cast
 
 import psycopg
 import pytest
 
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 from tests.storage.tasks._stage_test_helpers import set_stage_state
@@ -322,32 +323,80 @@ class TestTaskSearchBackend:
         assert results == [("task-a", 1.0), ("task-b", 0.5)]
         assert "pdb.score(t.id)" in db.sql
         assert "(t.title @@@ %s OR t.description @@@ %s)" in db.sql
-        assert db.params == ("alpha", "alpha", "ready", "in_progress", 2)
+        assert db.params == (r"alpha\!\!", r"alpha\!\!", "ready", "in_progress", 2)
 
-    def test_pg_search_query_sanitization(self) -> None:
-        """Test pg_search query sanitization."""
+    def test_pg_search_query_sanitization_matches_rust(self) -> None:
+        """Keep Python's pg_search escaping aligned with gcore's sanitizer."""
         from gobby.search.keyword import sanitize_pg_search_query
 
         assert sanitize_pg_search_query("hello world") == "hello world"
-        assert sanitize_pg_search_query("hello (world)") == "hello world"
-        assert sanitize_pg_search_query('key:value "quoted"') == "key value quoted"
-        assert sanitize_pg_search_query("func(arg) -> str") == "func arg str"
-        assert sanitize_pg_search_query("-") == ""
-        assert sanitize_pg_search_query("") == ""
-        assert sanitize_pg_search_query("   ") == ""
         assert sanitize_pg_search_query("my_func") == "my_func"
-        assert sanitize_pg_search_query("some-thing") == "some thing"
-        assert sanitize_pg_search_query("alpha::beta -> list[str] &&") == ("alpha beta list str")
-        assert sanitize_pg_search_query("!!! ---") == ""
+        assert sanitize_pg_search_query("   ") == ""
+        assert sanitize_pg_search_query('foo::bar baz-qux _id + "drop"') == (
+            r'foo\:\:bar baz-qux _id + "drop"'
+        )
+        assert sanitize_pg_search_query("-draft stable") == r"\-draft stable"
+        assert sanitize_pg_search_query(r"\-draft -stable") == r"\-draft \-stable"
+        assert sanitize_pg_search_query("alpha\tbeta\x00gamma") == "alpha betagamma"
+        assert sanitize_pg_search_query(":: + compute (fence)") == r"\:\: + compute (fence)"
+        assert sanitize_pg_search_query("_compute_fence_mask()") == r"_compute_fence_mask\(\)"
+        assert sanitize_pg_search_query(r"_compute_fence_mask\(\)") == r"_compute_fence_mask\(\)"
+        assert sanitize_pg_search_query('"_compute_fence_mask()"') == '"_compute_fence_mask()"'
+        assert sanitize_pg_search_query("compute (fence") == r"compute \(fence"
+        assert sanitize_pg_search_query("claude-opus-4-8[1m]") == r"claude-opus-4-8\[1m\]"
+        assert sanitize_pg_search_query(r"claude-opus-4-8\[1m\]") == r"claude-opus-4-8\[1m\]"
+
+    def test_pg_search_query_escapes_dsl_syntax_outside_balanced_phrases(self) -> None:
+        """Escaped syntax cannot become a pg_search operator or parse error."""
+        from gobby.search.keyword import sanitize_pg_search_query
+
+        assert sanitize_pg_search_query('"agent-prompt cap"') == '"agent-prompt cap"'
+        assert sanitize_pg_search_query("? ' * : ^ ~ { } / !") == r"\? \' \* \: \^ \~ \{ \} \/ \!"
+        assert sanitize_pg_search_query('title:"Draft? notes') == r"title\:\"Draft\? notes"
+        assert (
+            sanitize_pg_search_query('"proxy\'s foo:bar!? / {x}"') == '"proxy\'s foo:bar!? / {x}"'
+        )
+
+    def test_task_search_forwards_a_balanced_phrase_to_pg_search(self) -> None:
+        """Task search uses the shared sanitizer without losing phrase syntax."""
+        from gobby.storage.tasks._search import TaskSearchBackend
+
+        class FakePostgresDB:
+            dialect = "postgres"
+
+            def __init__(self) -> None:
+                self.params: tuple[Any, ...] = ()
+
+            def fetchall(self, _sql: str, params: tuple[Any, ...]) -> list[dict[str, Any]]:
+                self.params = params
+                return []
+
+        db = FakePostgresDB()
+        assert TaskSearchBackend(cast(HubDatabase, db)).search('"agent-prompt cap"', top_k=10) == []
+        assert db.params == ('"agent-prompt cap"', '"agent-prompt cap"', 10)
+
+    def test_pg_search_query_neutralizes_boolean_operators_outside_phrases(self) -> None:
+        """Boolean-looking terms remain literal search terms outside phrases."""
+        from gobby.search.keyword import sanitize_pg_search_query
+
         assert sanitize_pg_search_query("AND OR NOT") == "and or not"
         assert (
             sanitize_pg_search_query("salt AND pepper Or paprika nOt sugar")
             == "salt and pepper or paprika not sugar"
         )
-        assert sanitize_pg_search_query("CANDY ORACLE NOTICE _NOT_") == (
-            "CANDY ORACLE NOTICE _NOT_"
+        assert (
+            sanitize_pg_search_query('"salt AND pepper" OR "NOT"') == '"salt AND pepper" or "NOT"'
         )
-        assert sanitize_pg_search_query('"salt AND pepper" OR "NOT"') == ("salt and pepper or not")
+
+    def test_pg_search_query_preserves_plain_legacy_inputs(self) -> None:
+        """Alphanumeric, underscore, and whitespace input remains unchanged."""
+        from gobby.search.keyword import sanitize_pg_search_query
+
+        assert sanitize_pg_search_query("") == ""
+        assert sanitize_pg_search_query("   ") == ""
+        assert sanitize_pg_search_query("my_func") == "my_func"
+        assert sanitize_pg_search_query("___") == ""
+        assert sanitize_pg_search_query("plain words\tand\nspaces") == "plain words and spaces"
 
     def test_postgres_keyword_parse_error_raises_typed_error(self) -> None:
         """Known pg_search parse errors are exposed as query syntax failures."""

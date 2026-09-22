@@ -9,14 +9,15 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from gobby.agents.detection.registry import DetectionManifestRegistry
-from gobby.agents.idle_detector import COMPOSER_PROBE_LINES, ComposerRead
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
 from gobby.agents.runner import AgentRunner
 from gobby.autonomous.progress_tracker import ProgressTracker
 from gobby.autonomous.stuck_detector import StuckDetector
+from gobby.events.live_wake import TerminalActivity
 from gobby.runner_init.project_purge import init_project_purge
 from gobby.runner_init.services import mark_service_degraded
 from gobby.runner_init.terminal_wiring import init_terminal_wiring, wake_write_services
+from gobby.runner_init.wake_activity import probe_terminal_activity
 from gobby.sessions.lifecycle import SessionLifecycleManager
 
 if TYPE_CHECKING:
@@ -103,6 +104,7 @@ async def _send_native_wake_batch(targets: list[NativeWakeTarget]) -> list[dict[
                     "error": outcome.reason,
                     "error_code": outcome.reason,
                     "error_message": f"automatic write declined: {outcome.reason}",
+                    "decline_reason": outcome.reason,
                 }
             )
         elif isinstance(outcome, NativeBatchFailure):
@@ -262,48 +264,6 @@ async def _drain_composer_before_wake(
     _settle_earlier_wake(coordinator, terminal, f"wake:{terminal.id}")
 
 
-async def _probe_composer(runner: GobbyRunner, session: Any, terminal: Any | None) -> ComposerRead:
-    """Read the composer of ``session`` through its terminal row, else its raw tmux pane.
-
-    The managed row is the backend-neutral path (tmux and gterm alike); the raw
-    pane is only for a tmux session Gobby holds no row for. Anything that
-    prevents a read is ``unknown``, and the caller drains blind as before.
-    """
-    from gobby.agents.idle_detector import IdleDetector
-    from gobby.sessions.tmux_context import parse_terminal_context_value
-    from gobby.terminals.lookup import manager_for_terminal_context
-    from gobby.terminals.pane_io import TmuxPaneIO
-
-    unknown = ComposerRead("unknown")
-    source = getattr(session, "source", None)
-    registry = getattr(runner, "detection_registry", None)
-    if not source or registry is None:
-        return unknown
-    try:
-        if terminal is not None:
-            services = runner.terminal_services
-            if services is None:
-                return unknown
-            result = await services.runtime_for(terminal).snapshot(
-                terminal, COMPOSER_PROBE_LINES, mode="ansi"
-            )
-            text: str | None = result.text
-        else:
-            ctx = parse_terminal_context_value(getattr(session, "terminal_context", None))
-            target = ctx.get("tmux_pane") if ctx else None
-            if not target:
-                return unknown
-            text = await TmuxPaneIO(manager_for_terminal_context(ctx), str(target)).snapshot(
-                COMPOSER_PROBE_LINES, mode="ansi"
-            )
-        return IdleDetector(registry, str(source)).composer_read(text)
-    except Exception:
-        logger.debug(
-            "Composer probe failed for session %s", getattr(session, "id", None), exc_info=True
-        )
-        return unknown
-
-
 def _settle_earlier_wake(coordinator: Any, terminal: Any, action_key: str) -> None:
     """Release the latch of an earlier wake once the composer is known empty.
 
@@ -421,6 +381,7 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
     from gobby.agents.tmux import configure_tmux
     from gobby.events.completion_registry import CompletionEventRegistry
     from gobby.events.wake import WakeDispatcher
+    from gobby.events.wake_recovery import WakeReplayCoordinator
     from gobby.storage.agents import LocalAgentRunManager
     from gobby.storage.attention import AttentionStateManager
     from gobby.storage.inter_session_messages import InterSessionMessageManager
@@ -502,8 +463,8 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
         if processor is not None:
             await processor.flush_session(session_id)
 
-    async def probe_composer(session: Any, terminal: Any | None) -> ComposerRead:
-        return await _probe_composer(runner, session, terminal)
+    async def probe_activity(session: Any, terminal: Any | None) -> TerminalActivity:
+        return await probe_terminal_activity(runner, session, terminal)
 
     runner.wake_dispatcher = WakeDispatcher(
         session_manager=runner.session_manager,
@@ -514,7 +475,13 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
         agent_run_manager=agent_run_manager,
         run_db=runner.db_executor.run,
         lifecycle_refresh=refresh_wake_lifecycle,
-        composer_probe=probe_composer,
+        activity_probe=probe_activity,
+    )
+    runner.wake_replay_coordinator = WakeReplayCoordinator(
+        message_manager=ism_manager,
+        session_manager=runner.session_manager,
+        dispatcher=runner.wake_dispatcher,
+        run_db=runner.db_executor.run,
     )
 
     runner.completion_registry = CompletionEventRegistry(

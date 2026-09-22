@@ -16,6 +16,7 @@ from gobby.sessions.context_usage import (
 )
 from gobby.sessions.terminal_kill import kill_terminal_session
 from gobby.storage.projects import LocalProjectManager
+from gobby.terminals.termination import kill_terminal
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -362,9 +363,30 @@ def register_lifecycle_routes(
             if session.status == "expired":
                 return {"status": "already_expired", "session_id": session_id}
 
-            # Kill tmux pane / terminal process if present
+            # Prefer the daemon-tracked terminal so its row transitions before the reply.
             terminal_killed = False
-            if session.terminal_context:
+            services = getattr(server, "services", None)
+            terminal_manager = getattr(services, "terminal_manager", None)
+            terminal_registry = getattr(services, "terminal_runtime_registry", None)
+            terminal = (
+                None
+                if terminal_manager is None or terminal_registry is None
+                else await server.run_db(terminal_manager.get_live_for_session, session_id)
+            )
+            if terminal is not None:
+                assert terminal_manager is not None
+                assert terminal_registry is not None
+                try:
+                    terminal_killed = (
+                        await kill_terminal(terminal_manager, terminal_registry, terminal)
+                    ) is not None
+                except Exception:
+                    logger.warning(
+                        "Tracked terminal termination failed for session %s",
+                        session_id,
+                        exc_info=True,
+                    )
+            elif session.terminal_context:
                 terminal_killed = await kill_terminal_session(session.terminal_context, session_id)
 
             await server.run_db(server.session_manager.update_status, session_id, "expired")

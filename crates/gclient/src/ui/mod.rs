@@ -12,6 +12,7 @@ pub mod hit;
 pub mod keybind_help;
 pub mod keymap;
 pub mod navigator;
+pub mod pane_chrome;
 pub mod pane_layout;
 pub mod panes;
 pub mod scrollbar;

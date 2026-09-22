@@ -732,6 +732,7 @@ gobby sessions stats [--project PROJECT]
 gobby sessions summarize [NOTES] [--session-id SESSION] [--output db|file|all] [--path DIR]
 gobby sessions restore SESSION [--path PATH] [--json]
 gobby sessions restore --all [--json]
+gobby sessions terminate-terminal TERMINAL_OR_SESSION [--json]
 gobby sessions delete SESSION [--yes]
 gobby sessions renumber --project PROJECT [--apply]
 gobby sessions backfill-context-windows [--dry-run]
@@ -740,6 +741,9 @@ gobby sessions backfill-context-windows [--dry-run]
 `summarize` creates archival output; it never stages a recoverable handoff.
 `renumber` previews until `--apply`; context-window backfill writes unless
 `--dry-run` is present. Restoration does not overwrite an existing transcript.
+`terminate-terminal` explicitly kills a daemon-tracked terminal, including an
+external terminal, and marks its terminal row exited before returning. It does
+not change the ownership protections on workspace close operations.
 See the [session guide](sessions.md#cli-commands) for workflows and recovery.
 
 ### Agents

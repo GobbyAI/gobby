@@ -56,7 +56,7 @@ from ._managed_runtime import (
 )
 from ._provider_resolution import (
     concrete_provider,
-    incompatible_spawn_model_provider,
+    incompatible_spawn_model_provider_after_recollect,
     missing_provider_for_supplied_model,
     resolve_spawn_provider,
     spawning_session_provider,
@@ -247,7 +247,7 @@ async def spawn_agent_impl(
                         "instead of leaving it to the provider's default."
                     ),
                 }
-    pair_error = incompatible_spawn_model_provider(
+    pair_error = await incompatible_spawn_model_provider_after_recollect(
         provider=effective_provider,
         model=effective_model,
     )
@@ -891,6 +891,7 @@ async def spawn_agent_impl(
                     completion_registry=completion_registry,
                     cleanup_isolation_on_failure=cleanup_isolation_on_failure,
                     task_manager=task_manager,
+                    session_manager=session_manager,
                     parent_session_id=parent_session_id,
                     effective_provider=effective_provider,
                     resolved_task_id=resolved_task_id,

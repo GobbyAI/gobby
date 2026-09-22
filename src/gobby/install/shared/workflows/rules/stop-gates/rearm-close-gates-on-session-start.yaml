@@ -1,0 +1,12 @@
+tags: [stop-gates, enforcement, lifecycle, handoff, gobby, default]
+
+rules:
+  rearm-close-gates-on-session-start:
+    description: "Re-arm turn-end gates after terminal handoff delivery crosses an epoch"
+    event: session_start
+    enabled: true
+    priority: 1
+    effects:
+      - type: set_variable
+        variable: _handoff_turn_end_pending
+        value: false

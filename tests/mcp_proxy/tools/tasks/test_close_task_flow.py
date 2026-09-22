@@ -38,7 +38,7 @@ from gobby.mcp_proxy.tools.tasks._task_scope import TaskScopeEvaluation
 from gobby.sessions.machine_scope import RemoteSessionOwnershipError
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
-from gobby.storage.task_close_reviews import TaskCloseReviewStore
+from gobby.storage.task_close_reviews import TaskCloseReview, TaskCloseReviewStore
 from gobby.storage.tasks import LocalTaskManager, Task, TaskHasOpenChildrenError
 from gobby.tasks.acceptance_artifacts import AcceptanceArtifactResult, AcceptanceTest
 from gobby.tasks.close_checklist import evaluate_validation_commands
@@ -53,6 +53,7 @@ from gobby.tasks.validation import TaskValidator
 from gobby.utils.machine_id import require_machine_id
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.state_manager import SessionVariableManager
+from tests._timing import wait_for_awaitable_or_background_task
 
 pytestmark = pytest.mark.unit
 
@@ -983,6 +984,8 @@ async def test_ready_preview_returns_same_evaluation_without_committing() -> Non
 @pytest.mark.asyncio
 async def test_concurrent_ordinary_closes_share_review_without_closing_or_releasing_claim() -> None:
     task = _task()
+    caller_session_id = task.claimed_by_session_id
+    assert caller_session_id is not None
     spawn_started = asyncio.Event()
     release_spawn = asyncio.Event()
 
@@ -1012,14 +1015,13 @@ async def test_concurrent_ordinary_closes_share_review_without_closing_or_releas
             "close_review_duration_ms": 4.25,
         }
     )
-    review_fields = {
-        "id": "review-id",
-        "agent_run_id": "00000000-0000-4000-8000-000000000778",
-        "caller_session_id": task.claimed_by_session_id,
-        "review_fingerprint": "review-fingerprint",
-        "evidence_fingerprint": "evidence-fingerprint",
-        "task_id": task.id,
-        "close_arguments": {
+    queued_review = TaskCloseReview(
+        id="review-id",
+        task_id=task.id,
+        task_ref=task.id,
+        caller_session_id=caller_session_id,
+        agent_run_id="00000000-0000-4000-8000-000000000778",
+        close_arguments={
             "task_id": task.id,
             "reason": "completed",
             "changes_summary": "Implemented and tested.",
@@ -1029,16 +1031,36 @@ async def test_concurrent_ordinary_closes_share_review_without_closing_or_releas
             "response_detail": "concise",
             "_criterion_count": 1,
         },
-        "terminal": False,
-    }
-    queued_review = SimpleNamespace(**review_fields, status="queued")
-    launching_review = SimpleNamespace(**review_fields, status="launching")
-    running_review = SimpleNamespace(**review_fields, status="running")
+        review_fingerprint="review-fingerprint",
+        evidence_fingerprint="evidence-fingerprint",
+        status="queued",
+        result_payload=None,
+        error=None,
+        launched_at=None,
+        completed_at=None,
+        delivered_at=None,
+        created_at=datetime(2026, 7, 27, 12, tzinfo=UTC),
+        updated_at=datetime(2026, 7, 27, 12, tzinfo=UTC),
+        diff_sha="diff-sha",
+        test_bodies_sha="test-bodies-sha",
+        stable_facts={},
+    )
+    launching_review = replace(queued_review, status="launching")
+    running_review = replace(queued_review, status="running")
     store = MagicMock()
-    store.create_or_get_active.side_effect = [
-        (queued_review, True),
-        (launching_review, False),
-    ]
+    review_results = iter([(queued_review, True), (launching_review, False)])
+    snapshot_updated_at = task.updated_at
+
+    def create_or_get_active(**kwargs: object) -> tuple[TaskCloseReview, bool]:
+        assert kwargs["expected_task_updated_at"] == snapshot_updated_at
+        review, created = next(review_results)
+        if created:
+            commit_shas = cast(list[str], kwargs["commit_shas"])
+            task.commits = list(dict.fromkeys([*(task.commits or []), *commit_shas]))
+            assert task.updated_at == snapshot_updated_at
+        return review, created
+
+    store.create_or_get_active.side_effect = create_or_get_active
     store.claim_queued.side_effect = [[launching_review], []]
     store.get.return_value = running_review
     store.count_unjudged_attempts.return_value = 0
@@ -1060,8 +1082,24 @@ async def test_concurrent_ordinary_closes_share_review_without_closing_or_releas
             return_value=run_manager,
         ),
     ):
-        first_close = asyncio.create_task(
-            registry.call(
+        async with asyncio.timeout(5), asyncio.TaskGroup() as task_group:
+            first_close = task_group.create_task(
+                registry.call(
+                    "close_task",
+                    {
+                        "task_id": task.id,
+                        "changes_summary": "Implemented and tested.",
+                        "commit_sha": "abc123",
+                        "preview": False,
+                    },
+                )
+            )
+            await wait_for_awaitable_or_background_task(
+                spawn_started.wait(),
+                first_close,
+                description="task-close reviewer spawn",
+            )
+            pending_result = await registry.call(
                 "close_task",
                 {
                     "task_id": task.id,
@@ -1070,19 +1108,8 @@ async def test_concurrent_ordinary_closes_share_review_without_closing_or_releas
                     "preview": False,
                 },
             )
-        )
-        await spawn_started.wait()
-        pending_result = await registry.call(
-            "close_task",
-            {
-                "task_id": task.id,
-                "changes_summary": "Implemented and tested.",
-                "commit_sha": "abc123",
-                "preview": False,
-            },
-        )
-        release_spawn.set()
-        result = await first_close
+            release_spawn.set()
+        result = first_close.result()
 
     assert result["error"] == "close_review_required"
     assert result["closed"] is False
@@ -1128,7 +1155,14 @@ async def test_ordinary_close_detaches_real_validation_and_preserves_persisted_c
     claimed = manager.claim_task(task.id, session.id)
     validator = TaskValidator(TaskValidationConfig())
 
+    commit_sha = "abc123"
+    worktree_path = f"{sample_git_project['repo_path']}-worker"
+
     async def spawn_reviewer(_tool: str, arguments: dict[str, Any]) -> dict[str, object]:
+        persisted_at_launch = manager.get_task(task.id)
+        assert persisted_at_launch is not None
+        assert persisted_at_launch.commits == [commit_sha]
+        assert arguments["project_path"] == worktree_path
         return {"success": True, "run_id": arguments["reserved_run_id"]}
 
     agent_call = AsyncMock(side_effect=spawn_reviewer)
@@ -1154,13 +1188,13 @@ async def test_ordinary_close_detaches_real_validation_and_preserves_persisted_c
         patch.object(
             lifecycle,
             "resolve_task_repo_path",
-            return_value=sample_git_project["repo_path"],
+            return_value=worktree_path,
         ),
         patch.object(close_finalization, "_claimed_session_window_start", return_value=None),
         patch.object(close_finalization, "_linked_commit_paths", return_value=frozenset()),
         patch.object(close_finalization, "_committable_task_paths", return_value=set()),
         patch.object(lifecycle_validation, "task_dirty_paths_async", return_value=set()),
-        patch.object(lifecycle, "resolve_close_commit_shas", return_value=(["abc123"], None)),
+        patch.object(lifecycle, "resolve_close_commit_shas", return_value=([commit_sha], None)),
         patch.object(
             lifecycle,
             "validate_commit_requirements",
@@ -1180,7 +1214,8 @@ async def test_ordinary_close_detaches_real_validation_and_preserves_persisted_c
             {
                 "task_id": task.id,
                 "changes_summary": "Implemented and tested.",
-                "commit_sha": "abc123",
+                "commit_sha": commit_sha,
+                "project_path": worktree_path,
                 "preview": False,
             },
         )
@@ -1196,6 +1231,8 @@ async def test_ordinary_close_detaches_real_validation_and_preserves_persisted_c
     assert result["prompt_chars"] < result["prompt_limit"]
     assert 0 <= result["close_review_duration_ms"] < 50
     persisted = manager.get_task(task.id)
+    assert persisted is not None
+    assert persisted.commits == [commit_sha]
     assert persisted.closed_at is None
     assert persisted.claimed_by_session_id == session.id
     stored_review = TaskCloseReviewStore(temp_db).get(result["review_id"])

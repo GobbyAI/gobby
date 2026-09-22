@@ -354,7 +354,6 @@ async def ensure_isolation_code_index(
                 "--project",
                 str(workspace),
             ],
-            cwd=workspace,
             timeout=remaining(cap=config_probe_timeout),
             timeout_code="gcode_index_unavailable_timeout",
             failure_code="gcode_index_unavailable",
@@ -368,7 +367,6 @@ async def ensure_isolation_code_index(
     try:
         await _run_gcode(
             index_command,
-            cwd=workspace,
             timeout=remaining(),
             timeout_code="gcode_index_timeout",
             failure_code="gcode_index_failed",
@@ -391,7 +389,6 @@ async def ensure_isolation_code_index(
                 "--project",
                 str(workspace),
             ],
-            cwd=workspace,
             timeout=remaining(cap=search_smoke_timeout),
             timeout_code="gcode_search_content_timeout",
             failure_code="gcode_search_content_failed",
@@ -712,7 +709,6 @@ def _chmod_private(path: Path) -> None:
 async def _run_gcode(
     args: Sequence[str],
     *,
-    cwd: Path,
     timeout: float,
     timeout_code: str,
     failure_code: str,
@@ -723,7 +719,6 @@ async def _run_gcode(
         proc = await asyncio.to_thread(
             subprocess.Popen,  # nosec B603 # fixed gcode binary with controlled arguments.
             args,
-            cwd=str(cwd),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             env={**os.environ, **env} if env is not None else None,

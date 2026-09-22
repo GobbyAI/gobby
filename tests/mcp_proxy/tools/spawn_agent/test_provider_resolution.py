@@ -12,6 +12,7 @@ from gobby.mcp_proxy.tools.spawn_agent._provider_resolution import (
     PROVIDER_REQUIRED_FOR_MODEL,
     concrete_provider,
     incompatible_spawn_model_provider,
+    incompatible_spawn_model_provider_after_recollect,
     missing_provider_for_supplied_model,
     parent_session_provider,
     resolve_spawn_provider,
@@ -390,3 +391,63 @@ def test_agent_worker_inherits_spawning_agent_provider_not_coordinator() -> None
     )
 
     assert resolved == "codex"
+
+
+def _droid_snapshot(*models: str) -> ProviderSnapshot:
+    return ProviderSnapshot(
+        provider="droid",
+        generation=0,
+        models=tuple(_model_capability(model) for model in models),
+        sources=(_source(SourceState.OK),),
+    )
+
+
+class _Refresher:
+    def __init__(
+        self, snapshots: dict[str, ProviderSnapshot], fresh: ProviderSnapshot | None
+    ) -> None:
+        self._snapshots = snapshots
+        self._fresh = fresh
+        self.calls: list[str] = []
+
+    async def refresh_provider(self, provider: str) -> bool:
+        self.calls.append(provider)
+        if self._fresh is None:
+            return False
+        self._snapshots[provider] = self._fresh
+        return True
+
+
+async def test_stale_collected_catalog_recollects_before_rejecting() -> None:
+    snapshots = {"droid": _droid_snapshot("glm-5.2")}
+    resolver = CapabilityResolver(_SnapshotStore(snapshots), _NoMetadata())
+    refresher = _Refresher(snapshots, _droid_snapshot("glm-5.2", "glm-5.3-flash"))
+
+    listed = await incompatible_spawn_model_provider_after_recollect(
+        provider="droid", model="glm-5.2", resolver=resolver, refresher=refresher
+    )
+    shipped_since_refresh = await incompatible_spawn_model_provider_after_recollect(
+        provider="droid", model="glm-5.3-flash", resolver=resolver, refresher=refresher
+    )
+
+    assert listed is None
+    assert shipped_since_refresh is None
+    assert refresher.calls == ["droid"]
+
+
+@pytest.mark.parametrize(
+    "fresh", [None, _droid_snapshot("glm-5.2")], ids=["no-run", "still-missing"]
+)
+async def test_recollect_that_still_misses_keeps_rejection(fresh: ProviderSnapshot | None) -> None:
+    snapshots = {"droid": _droid_snapshot("glm-5.2")}
+    resolver = CapabilityResolver(_SnapshotStore(snapshots), _NoMetadata())
+    refresher = _Refresher(snapshots, fresh)
+
+    error = await incompatible_spawn_model_provider_after_recollect(
+        provider="droid", model="glm-5.3-flash", resolver=resolver, refresher=refresher
+    )
+
+    assert error is not None
+    assert error.error_code == INCOMPATIBLE_MODEL_PROVIDER
+    assert error.model == "glm-5.3-flash"
+    assert refresher.calls == ["droid"]

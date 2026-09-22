@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import shutil
 import signal
 import subprocess  # nosec B404 - argv-only Git process boundary
 import tempfile
@@ -13,7 +14,7 @@ import time
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import BinaryIO, Literal
 
 from gobby.utils.git import git_subprocess_env
 
@@ -64,10 +65,6 @@ class GitStatusEntry:
 
 
 type GitResult = GitOk | GitTimeout | GitFailed
-type _GitProcess = subprocess.Popen[str] | subprocess.Popen[bytes]
-type _GitWorker = Callable[
-    [asyncio.AbstractEventLoop, asyncio.Future[GitOk | GitFailed], "_ProcessControl"], None
-]
 type _ProcessPhase = Literal["queued", "preparing", "spawning", "running", "consuming", "finished"]
 type _StatusKey = tuple[
     asyncio.AbstractEventLoop,
@@ -79,7 +76,103 @@ type _StatusKey = tuple[
 
 _STREAM_CHUNK_BYTES = 64 * 1024
 _MAX_STREAM_STDERR_BYTES = 64 * 1024
-_WORKER_CLEANUP_GRACE_SECONDS = 0.25
+
+
+class _PosixSpawnProcess:
+    """Small process handle for group-owned ``posix_spawn`` Git commands."""
+
+    def __init__(
+        self,
+        pid: int,
+        stdin_file: BinaryIO | None,
+        stdout_file: BinaryIO,
+        stderr_file: BinaryIO,
+    ) -> None:
+        self.pid = pid
+        self.returncode: int | None = None
+        self._stdin_file = stdin_file
+        self._stdout_file = stdout_file
+        self._stderr_file = stderr_file
+
+    @classmethod
+    def spawn(
+        cls,
+        argv: tuple[str, ...],
+        *,
+        env: dict[str, str],
+        input_bytes: bytes | None,
+    ) -> _PosixSpawnProcess:
+        stdin_file = tempfile.TemporaryFile() if input_bytes is not None else None
+        stdout_file = tempfile.TemporaryFile()
+        stderr_file = tempfile.TemporaryFile()
+        files: list[BinaryIO] = [stdout_file, stderr_file]
+        if stdin_file is not None:
+            assert input_bytes is not None
+            stdin_file.write(input_bytes)
+            stdin_file.seek(0)
+            files.append(stdin_file)
+        file_actions: list[tuple[int, int] | tuple[int, int, int]] = []
+        targets: list[tuple[BinaryIO, int]] = [(stdout_file, 1), (stderr_file, 2)]
+        if stdin_file is not None:
+            targets.append((stdin_file, 0))
+        for source, target in targets:
+            source_fd = source.fileno()
+            file_actions.append((os.POSIX_SPAWN_DUP2, source_fd, target))
+            if source_fd != target:
+                file_actions.append((os.POSIX_SPAWN_CLOSE, source_fd))
+        reset_signals = tuple(
+            getattr(signal, name)
+            for name in ("SIGPIPE", "SIGXFZ", "SIGXFSZ")
+            if hasattr(signal, name)
+        )
+        try:
+            pid = os.posix_spawn(
+                argv[0],
+                argv,
+                env,
+                file_actions=file_actions,
+                setpgroup=0,
+                setsigdef=reset_signals,
+            )
+        except Exception:
+            for file in files:
+                file.close()
+            raise
+        return cls(pid, stdin_file, stdout_file, stderr_file)
+
+    def communicate(self, _input_bytes: bytes | None = None) -> tuple[bytes, bytes]:
+        try:
+            self.wait()
+            self._stdout_file.seek(0)
+            self._stderr_file.seek(0)
+            return self._stdout_file.read(), self._stderr_file.read()
+        finally:
+            if self._stdin_file is not None:
+                self._stdin_file.close()
+            self._stdout_file.close()
+            self._stderr_file.close()
+
+    def wait(self) -> int:
+        if self.returncode is not None:
+            return self.returncode
+        while True:
+            try:
+                _pid, status = os.waitpid(self.pid, 0)
+                break
+            except InterruptedError:
+                continue
+        self.returncode = os.waitstatus_to_exitcode(status)
+        return self.returncode
+
+    def kill(self) -> None:
+        os.kill(self.pid, signal.SIGKILL)
+
+
+type _GitProcess = subprocess.Popen[bytes] | _PosixSpawnProcess
+type _GitWorker = Callable[
+    [asyncio.AbstractEventLoop, asyncio.Future[GitOk | GitFailed], "_ProcessControl"], None
+]
+type _ProcessFactory = Callable[[bytes | None], _GitProcess]
 
 
 def parse_porcelain_v1_z(output: str) -> tuple[GitStatusEntry, ...]:
@@ -244,6 +337,75 @@ class DaemonGitService:
             input_text=input_text,
         )
 
+    async def run_posix_spawn(
+        self,
+        args: Sequence[str],
+        *,
+        cwd: str | Path,
+        timeout: float = 10.0,
+        env: Mapping[str, str] | None = None,
+        input_text: str | None = None,
+    ) -> GitResult:
+        """Run Git through an owned ``posix_spawn`` process group.
+
+        Git's ``-C`` option preserves repository-relative behavior without a
+        subprocess ``cwd``. Direct ``posix_spawn`` avoids forking the daemon;
+        other platforms use the existing ``Popen`` path.
+        """
+        if os.name != "posix" or not all(
+            hasattr(os, attribute)
+            for attribute in ("posix_spawn", "POSIX_SPAWN_DUP2", "POSIX_SPAWN_CLOSE")
+        ):
+            return await self.run(
+                args,
+                cwd=cwd,
+                timeout=timeout,
+                env=env,
+                input_text=input_text,
+            )
+        argv = ("git", *args)
+        if timeout <= 0:
+            return GitTimeout("timeout", argv, timeout)
+        try:
+            resolved_cwd = os.path.abspath(os.fspath(cwd))
+        except (OSError, TypeError, ValueError) as exc:
+            return GitFailed("failed", argv, None, "", str(exc))
+        effective_env = dict(env) if env is not None else git_subprocess_env()
+        spawn_env = effective_env if effective_env is not None else dict(os.environ)
+        search_env = spawn_env
+        executable = shutil.which("git", path=os.pathsep.join(os.get_exec_path(search_env)))
+        if executable is None:
+            return GitFailed("failed", argv, None, "", "git executable not found")
+        spawn_argv = (executable, "-C", resolved_cwd, *args)
+
+        def spawn(input_bytes: bytes | None) -> _GitProcess:
+            return _PosixSpawnProcess.spawn(
+                spawn_argv,
+                env=spawn_env,
+                input_bytes=input_bytes,
+            )
+
+        def worker(
+            loop: asyncio.AbstractEventLoop,
+            completion: asyncio.Future[GitOk | GitFailed],
+            control: _ProcessControl,
+        ) -> None:
+            _run_git_worker(
+                loop,
+                completion,
+                control,
+                spawn_argv,
+                spawn=spawn,
+                input_text=input_text,
+            )
+
+        return await self._execute_worker(
+            spawn_argv,
+            cwd=resolved_cwd,
+            timeout=timeout,
+            worker=worker,
+        )
+
     async def stream_bytes(
         self,
         args: Sequence[str],
@@ -354,6 +516,18 @@ class DaemonGitService:
         env: dict[str, str] | None,
         input_text: str | None,
     ) -> GitResult:
+        def spawn(_input_bytes: bytes | None) -> _GitProcess:
+            process_env = env if env is not None else git_subprocess_env()
+            return subprocess.Popen(  # nosec B603 B607 - fixed executable, argv-only args
+                argv,
+                cwd=cwd,
+                stdin=subprocess.PIPE if input_text is not None else None,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=process_env,
+                start_new_session=True,
+            )
+
         def worker(
             loop: asyncio.AbstractEventLoop,
             completion: asyncio.Future[GitOk | GitFailed],
@@ -364,8 +538,7 @@ class DaemonGitService:
                 completion,
                 control,
                 argv,
-                cwd=cwd,
-                env=env,
+                spawn=spawn,
                 input_text=input_text,
             )
 
@@ -375,7 +548,7 @@ class DaemonGitService:
         self,
         argv: tuple[str, ...],
         *,
-        cwd: str,
+        cwd: str | None,
         timeout: float,
         worker: _GitWorker,
     ) -> GitResult:
@@ -404,15 +577,8 @@ class DaemonGitService:
                 timeout,
                 diagnostic,
             )
-            cleanup_phase = control.kill()
-            cancelled = False
-            if cleanup_phase == "consuming":
-                cancelled = await _await_worker_cleanup(completion)
-            elif cleanup_phase == "running":
-                cancelled = await _await_worker_cleanup(
-                    completion,
-                    timeout=_WORKER_CLEANUP_GRACE_SECONDS,
-                )
+            control.kill()
+            cancelled = await _await_worker_cleanup(completion)
             completion.cancel()
             if cancelled:
                 raise asyncio.CancelledError() from None
@@ -424,14 +590,8 @@ class DaemonGitService:
                 stderr=f"Git timed out: {diagnostic} cleanup_seconds={cleanup_seconds:.3f}",
             )
         except asyncio.CancelledError:
-            cleanup_phase = control.kill()
-            if cleanup_phase == "consuming":
-                await _await_worker_cleanup(completion)
-            elif cleanup_phase == "running":
-                await _await_worker_cleanup(
-                    completion,
-                    timeout=_WORKER_CLEANUP_GRACE_SECONDS,
-                )
+            control.kill()
+            await _await_worker_cleanup(completion)
             completion.cancel()
             raise
 
@@ -442,28 +602,18 @@ def _run_git_worker(
     control: _ProcessControl,
     argv: tuple[str, ...],
     *,
-    cwd: str,
-    env: dict[str, str] | None,
+    spawn: _ProcessFactory,
     input_text: str | None,
 ) -> None:
     """Own one process from spawn through communication and leader reap."""
-    process: subprocess.Popen[bytes] | None = None
+    process: _GitProcess | None = None
     control.begin_preparing()
     try:
         input_bytes = (
             input_text.encode("utf-8", errors="surrogateescape") if input_text is not None else None
         )
-        process_env = env if env is not None else git_subprocess_env()
         control.begin_spawn()
-        process = subprocess.Popen(  # nosec B603 B607 - fixed executable, argv-only args
-            argv,
-            cwd=cwd,
-            stdin=subprocess.PIPE if input_text is not None else None,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            env=process_env,
-            start_new_session=True,
-        )
+        process = spawn(input_bytes)
         control.attach(process)
         stdout_bytes, stderr_bytes = process.communicate(input_bytes)
         stdout = stdout_bytes.decode("utf-8", errors="surrogateescape")
@@ -580,24 +730,12 @@ async def _await_cleanup[T](future: asyncio.Future[T] | asyncio.Task[T]) -> T:
 
 async def _await_worker_cleanup(
     future: asyncio.Future[GitOk | GitFailed],
-    *,
-    timeout: float | None = None,
 ) -> bool:
-    """Wait for owned cleanup, optionally bounding process kill and reap."""
+    """Wait for the off-loop worker to finish process kill and reap."""
     cancelled = False
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + timeout if timeout is not None else None
     while True:
         try:
-            if deadline is None:
-                await asyncio.shield(future)
-            else:
-                remaining = deadline - loop.time()
-                if remaining <= 0:
-                    return cancelled
-                await asyncio.wait_for(asyncio.shield(future), remaining)
-            return cancelled
-        except TimeoutError:
+            await asyncio.shield(future)
             return cancelled
         except asyncio.CancelledError:
             cancelled = True
@@ -608,7 +746,7 @@ async def _await_worker_cleanup(
 
 
 def _kill_process_group(process: _GitProcess) -> None:
-    """Kill the complete session-owned process group; the worker reaps its leader."""
+    """Kill the complete owned process group; the worker reaps its leader."""
     try:
         os.killpg(process.pid, signal.SIGKILL)
         return

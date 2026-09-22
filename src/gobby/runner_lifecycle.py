@@ -189,6 +189,9 @@ async def run_daemon(
             owner_loop=main_loop,
         )
         runner.wake_dispatcher.bind_owner_loop(main_loop)
+        wake_replay_coordinator = getattr(runner, "wake_replay_coordinator", None)
+        if wake_replay_coordinator is not None:
+            wake_replay_coordinator.bind_owner_loop(main_loop)
 
         from gobby.runner_service_readiness import require_managed_services_ready
 

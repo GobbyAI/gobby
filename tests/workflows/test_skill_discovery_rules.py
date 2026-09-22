@@ -423,6 +423,7 @@ class TestListSkillHubsOncePerSession:
         assert body.effects[0].server == "gobby-skills"
         assert body.effects[0].tool == "list_hubs"
         assert body.effects[0].inject_result is True
+        assert body.effects[0].timeout_seconds == 2.0
         assert body.effects[0].success_variable == "skill_discovery_instructions_shown"
         assert getattr(body.effects[0], "delivery", None) == "on_receipt"
 

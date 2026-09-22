@@ -1,15 +1,21 @@
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
+import gobby.agents.reasoning as reasoning
 from gobby.agents.reasoning import resolve_spawn_reasoning
 from gobby.agents.spawners.command_builder import build_cli_command
 from gobby.ai.codex_endpoint import CODEX_ENDPOINT_API_KEY_ENV
 from gobby.config.app import DaemonConfig
 from gobby.mcp_proxy.tools.spawn_agent._generation_endpoint import (
     resolve_spawn_generation_endpoint,
+)
+from gobby.providers.capabilities.resolve import (
+    CapabilityResolver,
+    ReasoningResolution,
+    ReasoningStatus,
 )
 
 pytestmark = pytest.mark.unit
@@ -162,21 +168,40 @@ async def test_vllm_spawn_env_key_transport() -> None:
     assert studio_cmd[:4] == ["codex", "--oss", "--local-provider", "lmstudio"]
 
 
-def test_spawn_auto_reasoning_emits_no_effort_flag() -> None:
+def test_spawn_auto_reasoning_emits_resolved_effort_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resolver = Mock(spec=CapabilityResolver)
+    resolver.find_model.return_value = Mock(default_effort="medium")
+    resolver.resolve_reasoning.return_value = ReasoningResolution(
+        requested_effort="medium",
+        effective_effort="medium",
+        status=ReasoningStatus.VERIFIED,
+        reason=None,
+    )
+    monkeypatch.setattr(reasoning, "_get_capability_resolver", lambda: resolver)
+
     resolution = resolve_spawn_reasoning(
         provider="codex",
-        model="gpt-5.6-luna",
+        model="gpt-5.6-terra",
         requested_effort="auto",
         reasoning_required=False,
     )
-    assert resolution.effective_effort is None
+    assert resolution.requested_effort == "auto"
+    assert resolution.effective_effort == "medium"
+    resolver.resolve_reasoning.assert_called_once_with(
+        "codex",
+        "gpt-5.6-terra",
+        "medium",
+        transport_supports_effort=True,
+    )
 
     cmd, _env = build_cli_command(
         "codex",
         prompt="hello",
         reasoning_effort=resolution.effective_effort,
     )
-    assert "model_reasoning_effort" not in " ".join(cmd)
+    assert cmd.count('model_reasoning_effort="medium"') == 1
 
     pinned_cmd, _pinned_env = build_cli_command(
         "codex",

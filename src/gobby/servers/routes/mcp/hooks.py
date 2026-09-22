@@ -44,6 +44,11 @@ from gobby.hooks.envelope_dedupe import (
 )
 from gobby.hooks.health_gate import DaemonNotReadyError
 from gobby.hooks.inbox import consume_pending_delivery_receipts
+from gobby.hooks.phase_timing import (
+    SLOW_HOOK_THRESHOLD_SECONDS,
+    HookPhaseTimings,
+    observe_hook_phase_timings,
+)
 from gobby.hooks.receipt_effects import STAGED_EFFECTS_FIELD
 from gobby.hooks.receipt_redelivery import (
     attach_delivery_receipt,
@@ -386,6 +391,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
             Hook execution result with status
         """
         start_time = time.perf_counter()
+        phase_timings = HookPhaseTimings()
         inc_counter("hooks_total")
         hook_type: str | None = None  # Track for error handling
         source: str | None = None  # Track for error handling
@@ -407,7 +413,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
         payload: dict[str, Any] = {}
         platform_session_id = ""
 
-        def mark_processed_and_return(response: dict[str, Any]) -> Any:
+        def _mark_processed_and_return(response: dict[str, Any]) -> Any:
             staged_payload = response.get(STAGED_EFFECTS_FIELD)
             response = strip_private_startup_claim_fields(response)
             receipt_db = getattr(getattr(server, "services", None), "database", None)
@@ -468,6 +474,10 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                     )
             return receipt_guarded_response(response, db=receipt_db)
 
+        def mark_processed_and_return(response: dict[str, Any]) -> Any:
+            with phase_timings.measure("persistence_broadcast"):
+                return _mark_processed_and_return(response)
+
         try:
             # Parse request
             try:
@@ -513,7 +523,8 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
             # carry-forward can presume the previous delivery lost and bump
             # the generation those acks would CAS against.
             try:
-                await asyncio.to_thread(consume_pending_delivery_receipts, request.app)
+                with phase_timings.measure("persistence_broadcast"):
+                    await asyncio.to_thread(consume_pending_delivery_receipts, request.app)
             except Exception:
                 logger.warning(
                     "Pending delivery-receipt sweep failed; the periodic drain remains",
@@ -665,6 +676,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                     payload,
                     hook_manager,
                     timeout_seconds=hook_timeout,
+                    phase_timings=phase_timings,
                 )
 
                 # Rule and adapter denials are final. Never let web-chat approval,
@@ -929,10 +941,31 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
             # The lease dies with this execution, including a client
             # disconnect or a cancelled replay. Releasing is a CAS on the live
             # lease this request owns, so a finalized marker is untouched.
-            if not lease_outlives_request:
-                if lease_renewal is not None:
-                    lease_renewal.cancel()
-                if envelope_id and owner_token:
-                    release_envelope_processing_claim(envelope_id, owner_token=owner_token)
+            with phase_timings.measure("persistence_broadcast"):
+                if not lease_outlives_request:
+                    if lease_renewal is not None:
+                        lease_renewal.cancel()
+                    if envelope_id and owner_token:
+                        release_envelope_processing_claim(envelope_id, owner_token=owner_token)
+            total_seconds = time.perf_counter() - start_time
+            dominant_phase, dominant_seconds, phase_durations = observe_hook_phase_timings(
+                phase_timings,
+                total_seconds=total_seconds,
+                hook_type=hook_type,
+                source=source,
+            )
+            if total_seconds >= SLOW_HOOK_THRESHOLD_SECONDS:
+                logger.warning(
+                    "Slow hook execution dominated by %s",
+                    dominant_phase,
+                    extra={
+                        "hook_type": hook_type,
+                        "source": source,
+                        "total_seconds": total_seconds,
+                        "dominant_phase": dominant_phase,
+                        "dominant_phase_seconds": dominant_seconds,
+                        "hook_phase_durations_seconds": phase_durations,
+                    },
+                )
 
     return router

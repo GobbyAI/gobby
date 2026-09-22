@@ -635,6 +635,15 @@ mod tests {
         pane.control_request = Some(1);
 
         assert_eq!(pane.displayed_control(), ControlState::Held);
+        // The edge metadata agrees: asking is the normal focused state, even
+        // while the request is the take-back a Read-only pane offered.
+        let reads = |pane: &Pane| crate::ui::pane_chrome::pane_metadata(pane, true).text;
+        assert_eq!(reads(&pane), "gclient · Focused");
+        pane.control = ControlState::LeaseLost;
+        pane.take_back = true;
+        assert_eq!(reads(&pane), "gclient · Focused");
+        pane.control_request = None;
+        assert_eq!(reads(&pane), "gclient · Read-only");
     }
 
     #[test]

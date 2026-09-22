@@ -852,6 +852,9 @@ class TestSyncBundledAgents:
         assert "frontend-developer" in names
         assert "qa-reviewer" in names
         assert "doc-reviewer" in names
+        close_reviewer = mgr.get_by_name("task-close-reviewer")
+        assert close_reviewer is not None
+        assert _parse_body(close_reviewer).reasoning_effort == "medium"
         assert all(
             n in names
             for n in (

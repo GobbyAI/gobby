@@ -26,11 +26,14 @@ from gobby.hooks.inbox import (
     drain_hook_inbox_once,
 )
 from gobby.runner import GobbyRunner
+from gobby.runner_hook_replay import (
+    HookReplayBarrierOutcome,
+    _run_agent_hook_replay_barrier,
+)
 from gobby.runner_lifecycle_agents import (
     _RUN_REPLAY_PAGE_SIZE,
     _list_active_agent_runs_once,
     _rehydrate_active_agent_completion_subscribers,
-    _run_agent_hook_replay_barrier,
 )
 from gobby.runner_lifecycle_reconcile import (
     _reclassify_reconciliation_pending_runs,
@@ -46,6 +49,9 @@ from gobby.utils.machine_id import require_machine_id
 from tests.agents.terminal_fixtures import make_live_terminal
 
 pytestmark = pytest.mark.unit
+
+SAFE_BARRIER = HookReplayBarrierOutcome(settled=True, session_recovery_safe=True)
+UNSETTLED_BARRIER = HookReplayBarrierOutcome(settled=False, session_recovery_safe=True)
 
 
 class TestAgentRestartReconciliation:
@@ -647,7 +653,8 @@ class TestAgentRestartReconciliation:
         runtime = SimpleNamespace(list_sessions=AsyncMock(return_value=[]))
         with (
             patch(
-                "gobby.runner_lifecycle_reconcile._run_agent_hook_replay_barrier", return_value=True
+                "gobby.runner_lifecycle_reconcile._run_agent_hook_replay_barrier",
+                return_value=SAFE_BARRIER,
             ),
             patch("gobby.runner_lifecycle_reconcile._tmux_runtime", return_value=runtime),
             patch(
@@ -704,7 +711,7 @@ class TestAgentRestartReconciliation:
         runner = self._runner(run_storage, db=temp_db)
         with patch(
             "gobby.runner_lifecycle_reconcile._run_agent_hook_replay_barrier",
-            new=AsyncMock(return_value=True),
+            new=AsyncMock(return_value=SAFE_BARRIER),
         ):
             reclassified = await _reclassify_reconciliation_pending_runs(runner)
 
@@ -765,7 +772,7 @@ class TestAgentRestartReconciliation:
         runner = self._runner(run_storage, db=temp_db)
         with patch(
             "gobby.runner_lifecycle_reconcile._run_agent_hook_replay_barrier",
-            new=AsyncMock(return_value=True),
+            new=AsyncMock(return_value=SAFE_BARRIER),
         ):
             reclassified = await _reclassify_reconciliation_pending_runs(runner)
 
@@ -812,10 +819,10 @@ class TestAgentRestartReconciliation:
         )
         runner = self._runner(storage)
 
-        async def settle(*args: Any, **kwargs: Any) -> bool:
+        async def settle(*args: Any, **kwargs: Any) -> HookReplayBarrierOutcome:
             # This run is admitted while the periodic pass awaits inbox replay.
             active.append(fresh)
-            return True
+            return SAFE_BARRIER
 
         runtime = SimpleNamespace(
             list_sessions=AsyncMock(
@@ -914,7 +921,7 @@ class TestReclassifyReconciliationPendingRuns:
             merge_resume_metadata=MagicMock(),
         )
         runner = self._runner(run_storage)
-        barrier = AsyncMock(return_value=True)
+        barrier = AsyncMock(return_value=SAFE_BARRIER)
 
         with patch(
             "gobby.runner_lifecycle_reconcile._run_agent_hook_replay_barrier",
@@ -958,16 +965,18 @@ class TestReclassifyReconciliationPendingRuns:
             ),
             caplog.at_level(logging.INFO, logger="gobby.runner_lifecycle"),
         ):
-            settled = await _run_agent_hook_replay_barrier(runner)
+            outcome = await _run_agent_hook_replay_barrier(runner)
 
-        assert settled is True
+        assert outcome.settled is True
+        assert outcome.session_recovery_safe is True
+        assert outcome.excluded_session_ids == frozenset()
         run_storage.get.assert_not_called()
         run_storage.merge_resume_metadata.assert_not_called()
         assert not [record for record in caplog.records if record.levelno >= logging.WARNING]
         assert any(
             record.levelno == logging.INFO
             and "replaying 3 envelope(s)" in record.getMessage()
-            and "0 session identity/identities" in record.getMessage()
+            and "0 ordinary session identity/identities" in record.getMessage()
             for record in caplog.records
         )
 
@@ -1000,18 +1009,76 @@ class TestReclassifyReconciliationPendingRuns:
             ),
             caplog.at_level(logging.INFO, logger="gobby.runner_lifecycle"),
         ):
-            settled = await _run_agent_hook_replay_barrier(runner)
+            outcome = await _run_agent_hook_replay_barrier(runner)
 
-        assert settled is True
+        assert outcome.settled is True
+        assert outcome.session_recovery_safe is True
+        assert outcome.excluded_session_ids == frozenset({session_id})
         session_manager.get.assert_called_once_with(session_id)
         run_storage.get.assert_not_called()
         run_storage.merge_resume_metadata.assert_not_called()
         assert not [record for record in caplog.records if record.levelno >= logging.WARNING]
         assert any(
             "replaying 2 envelope(s)" in record.getMessage()
-            and "1 session identity/identities" in record.getMessage()
+            and "1 ordinary session identity/identities" in record.getMessage()
             for record in caplog.records
         )
+
+    @pytest.mark.asyncio
+    async def test_barrier_outcome_preserves_every_unresolved_session_class(self) -> None:
+        ordinary_id = "019fac30-b716-73c2-934e-7d4fb8aa42d0"
+        active_child_id = "019fac30-b716-73c2-934e-7d4fb8aa42d1"
+        unknown_child_id = "019fac30-b716-73c2-934e-7d4fb8aa42d2"
+        active = SimpleNamespace(
+            id=self._RUN_ID,
+            status="running",
+            child_session_id=active_child_id,
+        )
+        unclassified = SimpleNamespace(
+            id=self._OTHER_RUN_ID,
+            status="recovering",
+            child_session_id=unknown_child_id,
+        )
+        runs = {active.id: active, unclassified.id: unclassified}
+        run_storage = SimpleNamespace(
+            get=MagicMock(side_effect=runs.get),
+            merge_resume_metadata=MagicMock(),
+        )
+        runner = self._runner(run_storage)
+        runner.session_manager = SimpleNamespace(
+            get=MagicMock(return_value=SimpleNamespace(agent_run_id=None))
+        )
+        barrier_result = HookInboxBarrierResult(
+            replayed=0,
+            timed_out=True,
+            unresolved_run_ids=(active.id, unclassified.id),
+            unresolved_session_ids=(ordinary_id,),
+        )
+
+        with patch(
+            "gobby.hooks.inbox.drain_hook_inbox_barrier",
+            new=AsyncMock(return_value=barrier_result),
+        ):
+            outcome = await _run_agent_hook_replay_barrier(runner)
+
+        assert outcome.settled is False
+        assert outcome.session_recovery_safe is True
+        assert outcome.excluded_session_ids == frozenset(
+            {ordinary_id, active_child_id, unknown_child_id}
+        )
+        run_storage.merge_resume_metadata.assert_called_once_with(
+            active.id,
+            {"reconciliation_pending": True},
+        )
+
+        run_storage.get.side_effect = RuntimeError("lookup unavailable")
+        with patch(
+            "gobby.hooks.inbox.drain_hook_inbox_barrier",
+            new=AsyncMock(return_value=barrier_result),
+        ):
+            incomplete = await _run_agent_hook_replay_barrier(runner)
+
+        assert incomplete.session_recovery_safe is False
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("missing_service", ["agent", "session"])
@@ -1046,9 +1113,10 @@ class TestReclassifyReconciliationPendingRuns:
             ),
             caplog.at_level(logging.WARNING, logger="gobby.runner_lifecycle"),
         ):
-            settled = await _run_agent_hook_replay_barrier(runner)
+            outcome = await _run_agent_hook_replay_barrier(runner)
 
-        assert settled is False
+        assert outcome.settled is (missing_service == "session")
+        assert outcome.session_recovery_safe is False
         run_storage.get.assert_not_called()
         run_storage.merge_resume_metadata.assert_not_called()
         assert any(
@@ -1094,9 +1162,9 @@ class TestReclassifyReconciliationPendingRuns:
             ),
             caplog.at_level(logging.INFO, logger="gobby.runner_lifecycle"),
         ):
-            settled = await _run_agent_hook_replay_barrier(runner)
+            outcome = await _run_agent_hook_replay_barrier(runner)
 
-        assert settled is True
+        assert outcome.settled is True
         run_storage.get.assert_called_once_with(self._RUN_ID)
         run_storage.merge_resume_metadata.assert_not_called()
         assert not [record for record in caplog.records if record.levelno >= logging.WARNING]
@@ -1133,9 +1201,9 @@ class TestReclassifyReconciliationPendingRuns:
             patch("gobby.hooks.inbox.drain_hook_inbox_barrier", new=drain),
             caplog.at_level(logging.INFO, logger="gobby.runner_lifecycle"),
         ):
-            settled = await _run_agent_hook_replay_barrier(runner, timeout_seconds=1.0)
+            outcome = await _run_agent_hook_replay_barrier(runner, timeout_seconds=1.0)
 
-        assert settled is False
+        assert outcome.settled is False
         drain.assert_awaited_once()
         assert drain.await_args is not None
         assert drain.await_args.kwargs == {
@@ -1177,9 +1245,9 @@ class TestReclassifyReconciliationPendingRuns:
         )
 
         with patch("gobby.hooks.inbox.drain_hook_inbox_barrier", new=drain):
-            settled = await _run_agent_hook_replay_barrier(runner)
+            outcome = await _run_agent_hook_replay_barrier(runner)
 
-        assert settled is True
+        assert outcome.settled is True
         assert drain.await_args is not None
         assert drain.await_args.kwargs == {
             "timeout_seconds": 5.0,
@@ -1258,11 +1326,11 @@ class TestReclassifyReconciliationPendingRuns:
                 release = await started.get()
                 elapsed += replay_seconds
                 release.set()
-            settled = await barrier
+            outcome = await barrier
             async with _get_hook_inbox_drain_lock(app):
                 pass  # a replay outliving its barrier finishes before patches unwind
 
-        assert settled is True
+        assert outcome.settled is True
         run_storage.merge_resume_metadata.assert_not_called()
         assert [
             record.getMessage() for record in caplog.records if record.levelno >= logging.WARNING
@@ -1405,9 +1473,10 @@ class TestReclassifyReconciliationPendingRuns:
             ),
             caplog.at_level(logging.WARNING, logger="gobby.runner_lifecycle"),
         ):
-            settled = await _run_agent_hook_replay_barrier(runner)
+            outcome = await _run_agent_hook_replay_barrier(runner)
 
-        assert settled is False
+        assert outcome.settled is False
+        assert outcome.session_recovery_safe is False
         run_storage.merge_resume_metadata.assert_not_called()
         assert any(
             record.levelno == logging.WARNING
@@ -1448,7 +1517,7 @@ class TestReclassifyReconciliationPendingRuns:
             resolved_run_ids.update({self._RUN_ID, self._OTHER_RUN_ID})
             return 2
 
-        barrier = AsyncMock(return_value=True)
+        barrier = AsyncMock(return_value=SAFE_BARRIER)
         reconcile_mock = AsyncMock(side_effect=reconcile)
 
         with (
@@ -1509,7 +1578,7 @@ class TestReclassifyReconciliationPendingRuns:
         with (
             patch(
                 "gobby.runner_lifecycle_reconcile._run_agent_hook_replay_barrier",
-                new=AsyncMock(return_value=True),
+                new=AsyncMock(return_value=SAFE_BARRIER),
             ),
             patch(
                 "gobby.runner_lifecycle_reconcile._reconcile_agent_runs_after_restart",
@@ -1532,7 +1601,7 @@ class TestReclassifyReconciliationPendingRuns:
             merge_resume_metadata=MagicMock(),
         )
         runner = self._runner(run_storage)
-        barrier = AsyncMock(return_value=False)
+        barrier = AsyncMock(return_value=UNSETTLED_BARRIER)
         reconcile_mock = AsyncMock()
 
         with (

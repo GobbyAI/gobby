@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from struct import Struct
 from typing import Any, Protocol
 
 from gobby.storage.terminals import AttachLocator
@@ -40,6 +41,9 @@ _SINGLE_BYTE_MAX = 250
 _U16_BYTE = 251
 _U32_BYTE = 252
 _U64_BYTE = 253
+_U16 = Struct("<H")
+_U32 = Struct("<I")
+_U64 = Struct("<Q")
 
 
 def _uvarint(value: int) -> bytes:
@@ -82,14 +86,14 @@ def _option(value: object | None, encode_item: Callable[[Any], bytes]) -> bytes:
 
 
 class _Reader:
-    def __init__(self, data: bytes) -> None:
-        self.data = data
+    def __init__(self, data: bytes | memoryview) -> None:
+        self.data = memoryview(data)
         self.offset = 0
 
     def remaining(self) -> int:
         return len(self.data) - self.offset
 
-    def take(self, n: int) -> bytes:
+    def take(self, n: int) -> memoryview:
         if self.remaining() < n:
             raise FrameProtocolError("unexpected eof")
         chunk = self.data[self.offset : self.offset + n]
@@ -104,12 +108,18 @@ class _Reader:
         if byte <= _SINGLE_BYTE_MAX:
             return byte
         if byte == _U16_BYTE:
-            return int.from_bytes(self.take(2), "little")
-        if byte == _U32_BYTE:
-            return int.from_bytes(self.take(4), "little")
-        if byte == _U64_BYTE:
-            return int.from_bytes(self.take(8), "little")
-        raise FrameProtocolError("varint overflow")
+            unpacker = _U16
+        elif byte == _U32_BYTE:
+            unpacker = _U32
+        elif byte == _U64_BYTE:
+            unpacker = _U64
+        else:
+            raise FrameProtocolError("varint overflow")
+        if self.remaining() < unpacker.size:
+            raise FrameProtocolError("unexpected eof")
+        value = int(unpacker.unpack_from(self.data, self.offset)[0])
+        self.offset += unpacker.size
+        return value
 
     def ivarint(self) -> int:
         raw = self.uvarint()
@@ -117,14 +127,18 @@ class _Reader:
 
     def string(self) -> str:
         length = self.uvarint()
-        return self.take(length).decode("utf-8")
+        return self.take(length).tobytes().decode("utf-8")
 
     def blob(self) -> bytes:
         length = self.uvarint()
-        return self.take(length)
+        return self.take(length).tobytes()
 
     def boolean(self) -> bool:
-        return self.take(1) != b"\x00"
+        if self.remaining() <= 0:
+            raise FrameProtocolError("unexpected eof")
+        value = self.data[self.offset]
+        self.offset += 1
+        return value != 0
 
 
 def _encode_identity(identity: dict[str, Any]) -> bytes:
@@ -222,13 +236,12 @@ def _decode_cursor(reader: _Reader) -> dict[str, Any] | None:
 
 
 def _decode_server(reader: _Reader) -> dict[str, Any]:
-    raw = reader.data
     tag = reader.uvarint()
     if tag == 0:
         return {"type": "welcome", "host_epoch": reader.string()}
     if tag == 1:
         frame = _decode_frame_data_correct(reader)
-        return {"type": "frame", **frame, "raw": raw}
+        return {"type": "frame", **frame, "raw": reader.data.tobytes()}
     if tag == 2:
         return {
             "type": "terminal",
@@ -237,7 +250,7 @@ def _decode_server(reader: _Reader) -> dict[str, Any]:
             "height": reader.uvarint(),
             "full": reader.boolean(),
             "bytes": reader.blob(),
-            "raw": raw,
+            "raw": reader.data.tobytes(),
         }
     if tag == 3:
         return {"type": "graphics", "bytes": reader.blob()}
@@ -374,23 +387,20 @@ def _decode_client(reader: _Reader) -> dict[str, Any]:
     raise FrameProtocolError(f"unknown client tag {tag}")
 
 
-def decode_frame(raw: bytes) -> dict[str, Any]:
+def _frame_payload(raw: bytes) -> memoryview:
     if len(raw) < 4:
         raise FrameProtocolError("short frame")
-    claimed = int.from_bytes(raw[:4], "little")
+    claimed = _U32.unpack_from(raw)[0]
     if claimed > MAX_FRAME_SIZE:
         raise FrameProtocolError("oversized frame")
-    payload = raw[4:]
-    if len(payload) < claimed:
-        # allow decode of a complete in-memory frame only
-        if len(payload) != claimed and len(raw) >= 4:
-            # still try if payload is exactly the rest
-            payload = raw[4 : 4 + claimed] if len(raw) >= 4 + claimed else payload
-        if len(payload) < claimed:
-            raise FrameProtocolError("truncated frame")
-        payload = payload[:claimed]
-    else:
-        payload = payload[:claimed]
+    if len(raw) < 4 + claimed:
+        raise FrameProtocolError("truncated frame")
+    return memoryview(raw)[4 : 4 + claimed]
+
+
+def decode_frame(raw: bytes) -> dict[str, Any]:
+    payload = _frame_payload(raw)
+    claimed = len(payload)
     tag = payload[0] if payload else 255
     if tag == 0 and claimed > 13 and len(payload) > 1 and payload[1] == PROTOCOL_VERSION:
         return _decode_client(_Reader(payload))
@@ -402,6 +412,22 @@ def decode_frame(raw: bytes) -> dict[str, Any]:
         return _decode_client(_Reader(payload))
     if tag == 7 and claimed == 2:
         return _decode_client(_Reader(payload))
+    return _decode_server(_Reader(payload))
+
+
+def decode_relay_frame(raw: bytes) -> dict[str, Any]:
+    """Decode only the server-frame fields needed by the websocket relay."""
+    payload = _frame_payload(raw)
+    reader = _Reader(payload)
+    tag = reader.uvarint()
+    if tag == 1:
+        return {"type": "frame", "raw": payload.tobytes()}
+    if tag == 2:
+        reader.uvarint()  # sequence
+        reader.uvarint()  # width
+        reader.uvarint()  # height
+        reader.boolean()  # full repaint
+        return {"type": "terminal", "bytes": reader.blob()}
     return _decode_server(_Reader(payload))
 
 
@@ -433,12 +459,18 @@ class FrameClient:
             return
 
     async def read_message(self) -> dict[str, Any]:
+        return decode_frame(await self._read_frame())
+
+    async def read_relay_message(self) -> dict[str, Any]:
+        return decode_relay_frame(await self._read_frame())
+
+    async def _read_frame(self) -> bytes:
         header = await self._read_exact(4)
-        claimed = int.from_bytes(header, "little")
+        claimed = _U32.unpack(header)[0]
         if claimed > MAX_FRAME_SIZE:
             raise FrameProtocolError("oversized frame")
         payload = await self._read_exact(claimed)
-        return decode_frame(header + payload)
+        return header + payload
 
     async def _read_exact(self, n: int) -> bytes:
         buf = bytearray()
@@ -572,5 +604,6 @@ __all__ = [
     "FrameLagError",
     "FrameProtocolError",
     "decode_frame",
+    "decode_relay_frame",
     "encode_frame",
 ]

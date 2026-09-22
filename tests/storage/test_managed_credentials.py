@@ -26,6 +26,7 @@ from gobby.storage.hub.protocol import Row, Transaction
 from gobby.storage.managed_credentials import (
     CredentialAuthorizationError,
     CredentialIssuanceError,
+    ManagedCredential,
     ManagedCredentialManager,
     ManagedToolCredential,
 )
@@ -330,6 +331,57 @@ def test_rotate_rolls_back_on_bootstrap_failure(
         manager.close()
 
 
+def test_rotate_rolls_back_on_launch_grant_failure(
+    authorization_fixture: AuthorizationFixture,
+    tmp_path: Path,
+) -> None:
+    fixture = authorization_fixture
+    execution_id = uuid4()
+    runtime_root = tmp_path / "managed"
+    manager = _manager(fixture, runtime_root)
+    grant_path = runtime_root / str(execution_id) / "grant.json"
+    original_grant = b'{"predecessor":true}\n'
+    try:
+        predecessor = manager.issue(
+            managed_execution_id=execution_id,
+            owner_kind="agent_run",
+            session_id=fixture.session_id,
+            agent_run_id=fixture.agent_run_id,
+            expires_at=datetime.now(UTC) + timedelta(minutes=30),
+        )
+        grant_path.write_bytes(original_grant)
+        grant_path.chmod(0o600)
+
+        def fail_rewrite(_credential: ManagedCredential, _scoped_dsn: str) -> None:
+            raise OSError("synthetic launch grant failure")
+
+        manager.bind_launch_grant_rewriter(fail_rewrite)
+
+        with pytest.raises(CredentialIssuanceError, match="managed credential rotation failed"):
+            manager.rotate(
+                managed_execution_id=execution_id,
+                expires_at=datetime.now(UTC) + timedelta(minutes=30),
+            )
+
+        with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+            bindings = admin.execute(
+                f"SELECT credential_generation, revoked_at IS NOT NULL "
+                f"FROM {AUTH_SCHEMA}.principal_bindings "
+                "WHERE managed_execution_id = %s ORDER BY credential_generation",
+                (execution_id,),
+            ).fetchall()
+
+        bootstrap = json.loads(predecessor.bootstrap_path.read_text(encoding="utf-8"))
+        assert bootstrap["credential_generation"] == predecessor.credential_generation
+        assert grant_path.read_bytes() == original_grant
+        assert bindings[0] == (predecessor.credential_generation, False)
+        assert bindings[1][0] > predecessor.credential_generation
+        assert bindings[1][1] is True
+    finally:
+        manager.revoke(execution_id, reason="test-cleanup")
+        manager.close()
+
+
 class _UnavailableDatabase:
     conninfo = "postgresql://redacted.invalid/example"
 
@@ -545,6 +597,113 @@ def test_rotation_race_creates_one_successor_and_drains_the_predecessor(
                 (execution_id,),
             ).fetchall()
         assert bindings == [(1, True, True), (2, False, None)]
+    finally:
+        manager.revoke(execution_id, reason="test-cleanup")
+        manager.close()
+
+
+def test_rotation_rewrites_launch_grant_bundle(
+    authorization_fixture: AuthorizationFixture,
+    tmp_path: Path,
+) -> None:
+    from gobby.runtime_grants import GrantBundle, sign_grant
+    from gobby.runtime_grants.launch import rewrite_managed_grant_file, write_grant_file
+    from gobby.runtime_grants.schema import GrantPrincipal, PostgresDirect
+    from gobby.runtime_grants.signing import signature_matches
+    from tests.runtime_grants.support import DEPLOYMENT_TOKEN, FENCING_EPOCH, GOLDEN_SECRET
+
+    fixture = authorization_fixture
+    execution_id = uuid4()
+    runtime_root = tmp_path / "managed"
+    manager = _manager(fixture, runtime_root)
+    golden_path = (
+        Path(__file__).resolve().parents[1] / "runtime_grants/golden/direct_datastores.json"
+    )
+    try:
+        predecessor = manager.issue(
+            managed_execution_id=execution_id,
+            owner_kind="agent_run",
+            session_id=fixture.session_id,
+            agent_run_id=fixture.agent_run_id,
+            expires_at=datetime.now(UTC) + timedelta(minutes=30),
+        )
+        predecessor_payload = json.loads(predecessor.bootstrap_path.read_text(encoding="utf-8"))
+        golden = GrantBundle.model_validate_json(golden_path.read_bytes())
+        postgres = PostgresDirect(
+            dsn=predecessor_payload["database_url"],
+            role_name=predecessor.role_name,
+            credential_generation=predecessor.credential_generation,
+            valid_until=int(predecessor.expires_at.timestamp()),
+        )
+        principal = GrantPrincipal(
+            kind="agent_run",
+            machine_id=str(fixture.machine_id),
+            project_id=str(fixture.project_id),
+            execution_id=str(execution_id),
+            session_id=str(fixture.session_id),
+        )
+        initial = sign_grant(
+            golden.model_copy(
+                update={
+                    "principal": principal,
+                    "capabilities": golden.capabilities.model_copy(update={"postgres": postgres}),
+                    "issued_at": int(predecessor.issued_at.timestamp()),
+                    "expires_at": int(predecessor.expires_at.timestamp()),
+                }
+            ),
+            GOLDEN_SECRET,
+        )
+        grant_path = write_grant_file(predecessor.bootstrap_path.parent / "grant.json", initial)
+        predecessor_live_during_rewrite = False
+
+        def rewrite(credential: ManagedCredential, scoped_dsn: str) -> None:
+            nonlocal predecessor_live_during_rewrite
+            with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+                row = admin.execute(
+                    f"SELECT revoked_at IS NULL FROM {AUTH_SCHEMA}.principal_bindings "
+                    "WHERE managed_execution_id = %s AND credential_generation = %s",
+                    (execution_id, predecessor.credential_generation),
+                ).fetchone()
+            predecessor_live_during_rewrite = row == (True,)
+            rewrite_managed_grant_file(
+                grant_path,
+                managed_execution_id=str(credential.managed_execution_id),
+                scoped_dsn=scoped_dsn,
+                role_name=credential.role_name,
+                credential_generation=credential.credential_generation,
+                issued_at=credential.issued_at,
+                expires_at=credential.expires_at,
+                deployment_token=DEPLOYMENT_TOKEN,
+                fencing_epoch=FENCING_EPOCH,
+                signing_secret=GOLDEN_SECRET,
+            )
+
+        manager.bind_launch_grant_rewriter(rewrite)
+        with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+            admin.execute(
+                f"UPDATE {AUTH_SCHEMA}.principal_bindings "
+                "SET issued_at = NOW() - INTERVAL '46 minutes', "
+                "expires_at = NOW() + INTERVAL '10 minutes' "
+                "WHERE managed_execution_id = %s",
+                (execution_id,),
+            )
+
+        rotated = manager.rotate_due()
+
+        assert len(rotated) == 1
+        successor = rotated[0]
+        rewritten = GrantBundle.model_validate_json(grant_path.read_bytes())
+        rewritten_postgres = rewritten.capabilities.postgres
+        assert isinstance(rewritten_postgres, PostgresDirect)
+        successor_payload = json.loads(successor.bootstrap_path.read_text(encoding="utf-8"))
+        assert rewritten_postgres.dsn == successor_payload["database_url"]
+        assert rewritten_postgres.role_name == successor.role_name
+        assert rewritten_postgres.credential_generation == successor.credential_generation
+        assert rewritten.expires_at == int(successor.expires_at.timestamp())
+        assert rewritten_postgres.valid_until == rewritten.expires_at
+        assert predecessor_live_during_rewrite
+        assert signature_matches(rewritten, GOLDEN_SECRET)
+        assert stat.S_IMODE(grant_path.stat().st_mode) == 0o600
     finally:
         manager.revoke(execution_id, reason="test-cleanup")
         manager.close()

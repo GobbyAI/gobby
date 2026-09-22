@@ -53,7 +53,7 @@ Logs go to `~/.gobby/logs/gclient.log`.
 │ [Menu]         [+] │ ┌ ▸ zsh ──────────┐┌ claude ──────────────┐ │
 │                    │ │  pane (focused) ││   pane               │ │
 │ Machines           │ │                 ││                      │ │
-│ ▶ mbp · local      │ └─────────────────┘└──────────────────────┘ │
+│ ▶ mbp · local      │ └─ tmux · Focused ┘└───────────── gclient ┘ │
 │ └─ ○ studio        │                                             │
 │                    │                                             │
 │ Projects [working] │                                             │
@@ -67,7 +67,7 @@ Logs go to `~/.gobby/logs/gclient.log`.
 │   0:0:0:1 · tmux   │                                             │
 │                [«] │                                             │
 ├────────────────────┴─────────────────────────────────────────────┤
-│ [● held] │ 0:0:0:1 │ tmux │ prefix ctrl+] │ zsh                  │
+│ prefix ctrl+]                                                    │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
@@ -97,9 +97,11 @@ its cap); Sessions takes the rest.
   `address · provider · model effort · remote machine`, the model spelled as
   its provider prints it. Bare terminals with no session are listed by their
   foreground command over `address · backend`, and answer to click and
-  right-click the same way a session row does. A title too long for its row
-  scrolls: it rests at the start, walks to its end, parks, and jumps home,
-  every scrolling row on one clock. The
+  right-click the same way a session row does. In the all-projects view the
+  fixed prefix is `project#ref:`; in the current-project view it is `#ref:`.
+  Only the title after that prefix scrolls. By default it rests at the start,
+  walks left to its end, parks, and jumps home; every scrolling row and pane
+  header shares one clock. Settings can reverse that direction or turn it off. The
   band's `[view]` control opens a menu with both axes: the scope, `this
   project` (the focused project only) or `all projects` (every project,
   grouped under dim project rows), and the order, `grouped` (tab order, with
@@ -138,22 +140,29 @@ turn on `hide tab bar with one tab` in settings.
 
 **Panes.** A tab holds one or more terminals in nested splits; each pane is a
 workspace row with a ref such as `0:0:1:2`, and its name is that row's label.
-A pane's border title is its name, its backend, and its control state
-(`zsh · gclient · ○ observe`); the focused pane's starts with `▸`. The border
-is the one surface that leaves the address out, because a narrow pane
-truncates it first; the status line always carries it. A pane that has not yet received
+A pane's top border is only the running session title, falling back to the pane
+label and then the terminal display name; the focused pane's starts with `▸`.
+Over-long pane titles share the Sessions ticker. The bottom-right border names
+the backend (`gclient` or `tmux`), adding `Focused` on the focused pane or an
+exceptional `Read-only` / `Uncertain` state when typing is unsafe (see
+[Attach and control](#attach-and-control)). With `pane gaps` off, a pane above
+another shares that pane's top line and has no bottom edge of its own; its
+metadata moves to the top-right of its own title row, unless that would leave the
+title fewer than four cells. A pane that has not yet received
 a frame says `waiting for frames`; a pane whose size another viewer set says
-`sized by <viewer>` on its bottom row. An empty tab area shows `no pane open`.
+`sized by <viewer>` on its bottom row. An empty tab area shows `No pane open.`
+and the next step.
 
-**Status line.** From left to right: the focused pane's control indicator
-(`[● held]`, `[○ observe]`, `[▲ take-back]`, `[◌ lease lost]`, or
-`[◌ read-only]`), the pane's address, its backend (`gclient` or `tmux`), the
-prefix chord, shifted when the client runs inside tmux, the current mode when
-it is not plain terminal mode, `Daemon unreachable.` during an outage, and
-last the pane's title: `provider · name` for a terminal running a session,
-else the pane's name. The title comes last so it is the segment that gives
-way when the line runs out of width. Clicking the control indicator takes,
-releases, or takes back control.
+**Status line.** This line carries only window-global state: the prefix chord,
+shifted when the client runs inside tmux, the current mode when it is not plain
+terminal mode, and `Daemon unreachable.` during an outage. Pane-local title,
+backend, and control state stay on that pane's borders. A focused pane with no
+border at all (the only pane in the tab, or `pane borders` off) has nowhere
+else to put them, so the status line leads with its metadata and ends with its
+title. A focused pane too narrow to fit its metadata on its edge hands only the
+metadata here. Metadata is clickable only while it names an exception: clicking
+`Read-only` or `Uncertain`, on a border or here, takes control. `Focused` is a
+condition, not a button.
 
 **Alerts.** Messages that used to sit in the status line are toasts: they
 stack at the top-right corner of the pane area, newest at the bottom, up to
@@ -165,9 +174,8 @@ the status line.
 
 ### What a terminal is called
 
-Every surface that names a terminal — pane borders, sidebar rows, the status
-line, the goto list — asks the same three questions in order and stops at the
-first answer:
+When no running session title is available, surfaces that need a terminal name
+ask these questions in order and stop at the first answer:
 
 1. **The name you gave the pane.** Rename it from the pane's context menu or
    the rename key; the name is stored on the workspace row, so it survives a
@@ -185,8 +193,8 @@ rows. No surface falls back to one.
 Where two terminals share a name — most panes on a machine are running a shell
 — the address is what tells them apart: the pane's workspace ref (`0:0:0:1`),
 or the tmux pane id of an external tmux pane, which you can type straight into
-tmux. The address sits under every sidebar row, leads the navigator's detail,
-and follows the control indicator in the status line. A session's provider
+tmux. The address sits under every sidebar row and leads the navigator's detail.
+A session's provider
 (`claude`, `codex`, `droid`) is a token beside the address rather than the
 terminal's name.
 
@@ -385,16 +393,14 @@ client keeps it in `prefs.toml`.
 ## Attach and control
 
 Every pane you open is *attached*: it receives frames. Whether your keystrokes
-reach it depends on the control lease, shown in the status line and the pane
-title.
+reach it depends on the control lease, summarized at the pane's bottom-right.
 
-| Indicator | Meaning |
+| Pane metadata | Meaning |
 | --- | --- |
-| `● held` | You hold the lease. Keys, pastes, and mouse reports go to the terminal. A pane still acquiring the lease focus asked for reads the same, because queued input is the behavior and not a separate mode. |
-| `○ observe` | You are watching, having asked for that with `alt+click`. The first keystroke takes control and is delivered once the lease is granted. |
-| `▲ take-back` | Someone else holds the lease. `prefix+shift+a` or the indicator asks for it back. |
-| `◌ lease lost` | The daemon revoked your lease, typically because another viewer took over. Typing is refused until you take control again. |
-| `◌ read-only` | A write's outcome is unknown after a disconnect. Typing is refused; take control again to continue. Only panes that type through the daemon can reach this state. |
+| `gclient · Focused` / `tmux · Focused` | This is the focused pane. It holds the lease or is acquiring it; keys, pastes, and mouse reports are delivered in order. |
+| `gclient` / `tmux` | An ordinary unfocused pane, including one deliberately observed with `alt+click`. |
+| `backend · Read-only` | Another viewer took the lease, or the host refused this pane's input. Typing is refused; click the metadata or use `prefix+shift+a` to take control. |
+| `backend · Uncertain` | A proxied write's outcome is unknown after a disconnect. Typing is refused; click the metadata or take control again to continue. |
 
 ### Where your keystrokes go
 
@@ -412,10 +418,13 @@ acknowledges can have an unknown outcome. No indicator tells the two apart; a
 pane that typed instantly and then went sluggish fell back, and
 `~/.gobby/logs/gclient.log` records it.
 
-Key encoding follows the focused pane's latest terminal mode. When an application
-enables the kitty keyboard protocol, modified Enter and other extended keys reach
-it as distinct keys; a pane that has not enabled the protocol keeps legacy terminal
-encoding, where modified Enter is indistinguishable from Enter.
+On hosts that support the kitty keyboard protocol, gclient enables disambiguated
+key reporting while the client is active. That lets the host distinguish modified
+keys such as `ctrl+enter`; unsupported hosts retain their legacy input behavior.
+Key encoding then follows the focused pane's latest terminal mode. When an
+application enables the kitty keyboard protocol, modified Enter and other extended
+keys reach it as distinct keys; a pane that has not enabled the protocol keeps
+legacy terminal encoding, where modified Enter is indistinguishable from Enter.
 
 Three messages belong to the direct path:
 
@@ -434,8 +443,8 @@ Asking the daemon who may type costs one round trip, and that round trip belongs
 to the focus change, never to a key. So the pane is usable the moment you focus
 it: keys, pastes, and forwarded mouse reports you produce before the grant lands
 are held in order and written the instant it does. Nothing is dropped and nothing
-announces a mode — the pane reads `● held` throughout. Only a daemon that
-stops answering can overrun that queue, and then the status line says
+announces a mode — the pane reads `backend · Focused` throughout. Only a daemon
+that stops answering can overrun that queue, and then a warning toast says
 `too much typed while acquiring control; the rest was dropped`.
 
 Moving focus away before the grant lands discards whatever that pane was holding,
@@ -447,7 +456,8 @@ types: the first key takes control for you. A forwarded mouse report does not,
 so a pane you deliberately left observing stays that way under the pointer.
 
 `prefix+u`, `prefix+q`, and `ctrl+\` release the lease. The daemon can refuse a
-take: the pane then shows `▲ take-back` and the reason lands in the status line.
+take: the pane's metadata then reads `backend · Read-only`, the reason arrives
+as a toast, and clicking the metadata takes control back.
 On quit, the client releases every held lease and detaches every pane; the
 terminals keep running.
 
@@ -526,6 +536,7 @@ the `done` and `close` buttons. Rows are clickable. Every change is written to
 | sidebar width | 26 | Columns; also set by dragging the sidebar edge |
 | right-click passthrough | none | Modifier that sends a right-click to the pane's application instead of opening the pane menu (`shift`, `alt`, `ctrl`, or none) |
 | agent sort | `grouped` | `grouped` or `priority` order in the Sessions section |
+| title scrolling | `left` | `off`, `left`, or `right`: which way over-long session titles and pane headers scroll, on one shared ticker |
 
 The file is optional and every key in it is optional; an unknown key is a
 startup error that names the line. The sidebar writes three keys of its own as
@@ -543,6 +554,7 @@ pane_gaps = true
 confirm_close = true
 hide_tab_bar_when_single_tab = false
 sidebar_width = 26
+title_scrolling = "left"
 sidebar_collapsed = false
 project_order = ["4b1c…", "9e2f…"]
 

@@ -176,6 +176,7 @@ async def test_finalize_failure_envelope_includes_isolation_identity() -> None:
             completion_registry=None,
             cleanup_isolation_on_failure=True,
             task_manager=None,
+            session_manager=None,
             parent_session_id="parent-123",
             effective_provider="claude",
             resolved_task_id=None,

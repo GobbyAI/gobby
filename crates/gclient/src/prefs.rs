@@ -4,7 +4,7 @@
 //! key is optional and unknown keys are rejected by name, so a typo never
 //! silently falls back to a default.
 
-use crate::ui::settings::{AgentSort, ClientPrefs, PassthroughModifier};
+use crate::ui::settings::{AgentSort, ClientPrefs, PassthroughModifier, TitleScrolling};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
@@ -46,6 +46,7 @@ struct UiPrefs {
     sidebar_width: u16,
     right_click_passthrough_modifier: PassthroughModifier,
     agent_sort: AgentSort,
+    title_scrolling: TitleScrolling,
     sidebar_collapsed: bool,
     project_order: Vec<String>,
     /// Last: TOML emits a sub-table after the plain values.
@@ -71,6 +72,7 @@ impl From<&ClientPrefs> for UiPrefs {
             sidebar_width: prefs.sidebar_width,
             right_click_passthrough_modifier: prefs.right_click_passthrough_modifier,
             agent_sort: prefs.agent_sort,
+            title_scrolling: prefs.title_scrolling,
             sidebar_collapsed: prefs.sidebar_collapsed,
             project_order: prefs.project_order.clone(),
             project_labels: prefs.project_labels.clone(),
@@ -111,6 +113,7 @@ impl From<PrefsFile> for ClientPrefs {
             sidebar_width: ui.sidebar_width,
             right_click_passthrough_modifier: ui.right_click_passthrough_modifier,
             agent_sort: ui.agent_sort,
+            title_scrolling: ui.title_scrolling,
             sidebar_collapsed: ui.sidebar_collapsed,
             project_order: ui.project_order,
             project_labels: ui.project_labels,

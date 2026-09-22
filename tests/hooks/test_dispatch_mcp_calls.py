@@ -275,6 +275,33 @@ class TestDispatchMcpCallsNoEventLoop:
         assert time.monotonic() - started < 0.5
         assert results[0]["success"] is False
 
+    def test_captured_call_respects_effect_timeout(self) -> None:
+        proxy = AsyncMock()
+
+        async def stalled_call(*_args: object, **_kwargs: object) -> dict[str, bool]:
+            await asyncio.Event().wait()
+            return {"success": True}
+
+        proxy.call_tool = AsyncMock(side_effect=stalled_call)
+        stub = _make_hook_manager_stub(tool_proxy_getter=lambda: proxy, loop=None)
+        started = time.monotonic()
+
+        results = stub._dispatch_mcp_calls(
+            [
+                {
+                    "server": "gobby-memory",
+                    "tool": "surface_memories",
+                    "arguments": {"text": "context"},
+                    "inject_result": True,
+                    "timeout_seconds": 0.02,
+                }
+            ],
+            _make_event(platform_session_id="plat-456"),
+        )
+
+        assert time.monotonic() - started < 0.5
+        assert results[0]["success"] is False
+
     def test_blocking_call_falls_back_to_asyncio_run(self) -> None:
         """When no event loop exists, blocking calls use asyncio.run()."""
         proxy = AsyncMock()
