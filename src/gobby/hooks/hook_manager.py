@@ -420,6 +420,16 @@ class HookManager(HookManagerDispatchMixin):
                     event,
                     apply_session_mutations=not gated,
                 )
+            if event.metadata.get("_native_subagent_binding") and event.event_type in (
+                HookEventType.STOP,
+                HookEventType.SESSION_END,
+            ):
+                self.logger.debug(
+                    "Ignoring process-bound native child terminal hook: event=%s parent=%s",
+                    event.event_type.value,
+                    platform_session_id,
+                )
+                return HookResponse(decision="allow")
             if gated:
                 ingress = validate_managed_agent_hook(
                     event,

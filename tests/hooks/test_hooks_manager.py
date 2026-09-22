@@ -259,6 +259,40 @@ class TestHookManagerHandle:
         # Should fail open
         assert response.decision == "allow"
 
+    @pytest.mark.parametrize("event_type", [HookEventType.STOP, HookEventType.SESSION_END])
+    def test_process_bound_native_child_terminal_hook_skips_parent_lifecycle(
+        self,
+        hook_manager_with_mocks: HookManager,
+        temp_dir: Path,
+        event_type: HookEventType,
+    ) -> None:
+        manager = hook_manager_with_mocks
+        event = HookEvent(
+            event_type=event_type,
+            session_id="native-child",
+            source=SessionSource.GROK,
+            timestamp=datetime.now(UTC),
+            data={"cwd": str(temp_dir)},
+            machine_id=LOCAL_MACHINE_ID,
+        )
+
+        def bind_native_child(candidate: HookEvent, **_kwargs: Any) -> str:
+            candidate.metadata["_native_subagent_binding"] = True
+            candidate.metadata["_platform_session_id"] = "spawned-parent"
+            return "spawned-parent"
+
+        with (
+            patch.object(manager._session_lookup, "resolve", side_effect=bind_native_child),
+            patch(
+                "gobby.hooks.hook_manager.validate_managed_agent_hook",
+                side_effect=AssertionError("native child reached managed terminal ingress"),
+            ) as validate_ingress,
+        ):
+            response = manager.handle(event)
+
+        assert response.decision == "allow"
+        validate_ingress.assert_not_called()
+
     def test_non_session_end_hook_revives_expired_terminal_session(
         self,
         hook_manager_with_mocks: HookManager,

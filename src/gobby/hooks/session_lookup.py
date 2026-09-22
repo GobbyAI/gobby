@@ -118,6 +118,13 @@ class SessionLookupService:
         explicit_platform_session_id, explicit_session = self._resolve_metadata_platform_session(
             event
         )
+        if (
+            explicit_platform_session_id
+            and explicit_session is not None
+            and not self._accept_explicit_platform_session(event, explicit_session)
+        ):
+            explicit_platform_session_id = None
+            explicit_session = None
         explicit_project_id = getattr(explicit_session, "project_id", None)
         if isinstance(explicit_project_id, str) and explicit_project_id:
             apply_project_id_to_event(event, explicit_project_id)
@@ -241,6 +248,36 @@ class SessionLookupService:
 
         return platform_session_id, session
 
+    def _accept_explicit_platform_session(self, event: HookEvent, session: Session) -> bool:
+        """Fence an inherited Grok session hint by external and process identity."""
+        session_external_id = getattr(session, "external_id", None)
+        if (
+            event.source.value != "grok"
+            or not isinstance(session_external_id, str)
+            or not event.session_id
+            or event.session_id == session_external_id
+        ):
+            return True
+
+        cwd = hook_cwd(event.data, event.cwd)
+        raw_terminal_context = event.data.get("terminal_context")
+        terminal_context = raw_terminal_context if isinstance(raw_terminal_context, dict) else None
+        terminal_context = enrich_terminal_context_with_cwd(terminal_context, cwd)
+        if terminal_process_contexts_match(
+            getattr(session, "terminal_context", None),
+            terminal_context,
+        ):
+            event.metadata["_native_subagent_binding"] = True
+            return True
+
+        self._logger.info(
+            "Ignoring inherited Grok platform session hint %s for different process %s",
+            session.id,
+            event.session_id,
+        )
+        event.metadata.pop("_platform_session_id", None)
+        return False
+
     def _backfill_terminal_context(self, platform_session_id: str, event: HookEvent) -> None:
         """Merge terminal metadata discovered after the original registration."""
         raw_context = event.data.get("terminal_context")
@@ -331,15 +368,15 @@ class SessionLookupService:
             getattr(owner, "terminal_context", None),
             terminal_context,
         )
-        if (
-            not is_subagent_event
-            and not same_live_process
-            and not session_has_active_native_subagent(
+        if not is_subagent_event:
+            if event.source.value == "grok":
+                if not same_live_process:
+                    return None
+            elif not session_has_active_native_subagent(
                 self._session_manager.db,
                 owner.id,
-            )
-        ):
-            return None
+            ):
+                return None
         self._logger.info(
             "Bound native subagent hook %s to live pane owner %s (external_id=%s source=%s)",
             event.event_type.name,
@@ -428,6 +465,14 @@ class SessionLookupService:
         )
         if compact_handled:
             return compact_session_id
+
+        if event.event_type == HookEventType.SESSION_END and event.source.value == "grok":
+            bound_parent_id = self._bind_inherited_tty_native_subagent(
+                event,
+                machine_id=machine_id,
+            )
+            if bound_parent_id is not None:
+                return bound_parent_id
 
         if event.event_type in NON_MATERIALIZING_EVENTS:
             self._logger.info(
