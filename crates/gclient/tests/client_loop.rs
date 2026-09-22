@@ -52,7 +52,7 @@ use gobby_terminal::protocol::{
     read_message_async, write_message, write_message_async, CellData, ClientMessage, FrameData,
     PaneModes, ServerMessage, MAX_FRAME_SIZE,
 };
-use gobby_terminal::raw_input::RawInputEvent;
+use gobby_terminal::raw_input::{parse_raw_input_bytes, RawInputEvent};
 use mock_daemon::MockDaemon;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
@@ -752,7 +752,10 @@ async fn loop_routes_input_and_frames() {
     assert!(screen.contains("HELLO"), "rendered grid: {screen:?}");
 }
 
-async fn scripted_ctrl_enter_bytes(kitty_keyboard_flags: u16) -> Vec<u8> {
+async fn scripted_host_input_messages(
+    host_input: &[u8],
+    kitty_keyboard_flags: u16,
+) -> Vec<Vec<u8>> {
     let mut workspace = Workspace::scripted();
     let pane = workspace
         .open_terminal(
@@ -780,7 +783,9 @@ async fn scripted_ctrl_enter_bytes(kitty_keyboard_flags: u16) -> Vec<u8> {
     chrome.open_pane(pane, "keyboard protocol");
     let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
     let (input_tx, input_rx) = mpsc::channel(8);
-    send_key(&input_tx, KeyCode::Enter, KeyModifiers::CONTROL).await;
+    for event in parse_raw_input_bytes(host_input) {
+        input_tx.send(event).await.expect("parsed host input");
+    }
     send_chord(&input_tx, KeyCode::Char('Q'), KeyModifiers::SHIFT).await;
     drop(input_tx);
 
@@ -794,17 +799,37 @@ async fn scripted_ctrl_enter_bytes(kitty_keyboard_flags: u16) -> Vec<u8> {
         .expect("scripted source remains attached")
         .sent_messages()
         .iter()
-        .find_map(|message| match message {
+        .filter_map(|message| match message {
             ClientMessage::Input { data } => Some(data.clone()),
             _ => None,
         })
-        .expect("pane input")
+        .collect()
+}
+
+async fn scripted_host_input_bytes(host_input: &[u8], kitty_keyboard_flags: u16) -> Vec<u8> {
+    scripted_host_input_messages(host_input, kitty_keyboard_flags)
+        .await
+        .into_iter()
+        .flatten()
+        .collect()
 }
 
 #[tokio::test]
 async fn loop_encodes_ctrl_enter_with_the_pane_keyboard_protocol() {
-    assert_eq!(scripted_ctrl_enter_bytes(1).await, b"\x1b[13;5u");
-    assert_eq!(scripted_ctrl_enter_bytes(0).await, b"\r");
+    assert_eq!(
+        scripted_host_input_bytes(b"\x1b[13;5u", 1).await,
+        b"\x1b[13;5u"
+    );
+    assert_eq!(scripted_host_input_bytes(b"\r", 1).await, b"\r");
+    assert_eq!(scripted_host_input_bytes(b"\x1b[13;5u", 0).await, b"\r");
+}
+
+#[tokio::test]
+async fn key_release_events_are_never_encoded_to_the_pane() {
+    assert_eq!(
+        scripted_host_input_messages(b"\x1b[97;1:1u\x1b[97;1:3u", 1).await,
+        [b"a".to_vec()]
+    );
 }
 
 #[tokio::test]
