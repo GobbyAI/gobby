@@ -6,7 +6,7 @@ import json
 import re
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Never
+from typing import TYPE_CHECKING, Any, Literal, Never
 from uuid import uuid4
 
 from gobby.sessions.handoff_records import (
@@ -377,6 +377,7 @@ def stage_handoff_attempt(
     attempt_id: str,
     handoff: HandoffPayload,
     clear_session: bool,
+    delivery_mode: Literal["terminal", "in_process"] = "terminal",
     additional_markers: Mapping[str, Any] | None = None,
     transition_status: str | None = None,
 ) -> HandoffAttemptState:
@@ -386,6 +387,8 @@ def stage_handoff_attempt(
     the staging transaction (clear attempts use ``awaiting_handoff`` so startup
     expiry and SessionEnd leave the row alone until its successor binds); the
     prior status is recorded on the attempt markers and in the returned state.
+    Terminal delivery arms the turn-end bypass until SessionStart; in-process
+    delivery completes its continuation without that epoch boundary.
     """
     marker_updates = dict(additional_markers or {})
     marker_updates[PENDING_HANDOFF_VARIABLE] = {
@@ -393,7 +396,8 @@ def stage_handoff_attempt(
         "clear_session": clear_session,
         "created_at": utc_now().isoformat(),
     }
-    marker_updates[HANDOFF_TURN_END_PENDING_VARIABLE] = True
+    if delivery_mode == "terminal":
+        marker_updates[HANDOFF_TURN_END_PENDING_VARIABLE] = True
     if not clear_session:
         marker_updates[HANDOFF_PULL_PENDING_VARIABLE] = True
     # Always written, so a restaged attempt cannot inherit an earlier attempt's list.

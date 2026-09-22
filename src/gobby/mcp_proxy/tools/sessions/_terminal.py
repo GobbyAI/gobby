@@ -512,6 +512,7 @@ def register_terminal_tools(
                     attempt_id=attempt_id,
                     handoff=handoff,
                     clear_session=False,
+                    delivery_mode="in_process",
                 )
                 result = await web_chat_session_registry.compact_session(
                     compact_target,

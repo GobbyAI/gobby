@@ -1,16 +1,23 @@
-"""Stop-gate behavior while a terminal handoff crosses an epoch boundary."""
+"""Stop-gate behavior while a handoff crosses an epoch boundary."""
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+from gobby.llm.claude_models import DoneEvent
+from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.mcp_proxy.tools.sessions import create_session_messages_registry
+from gobby.mcp_proxy.tools.sessions._terminal import register_terminal_tools
+from gobby.servers.websocket.chat.session_registry import WebChatSessionRegistry
 from gobby.sessions.handoff import (
     HANDOFF_TURN_END_PENDING_VARIABLE,
+    build_handoff_continue_prompt,
     consume_pending_handoff,
     stage_handoff_attempt,
 )
@@ -21,6 +28,8 @@ from gobby.sessions.handoff_records import (
 )
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions import SessionManager
+from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.found_work_gate import FoundWorkStopFacts
@@ -241,6 +250,94 @@ async def test_stop_gates_rearm_after_handoff_consumed(
     )
 
     response = await _evaluate(handler, _stop_event(tmp_path))
+
+    assert response.decision == "block"
+    assert all(name in (response.reason or "") for name in STOP_GATE_NAMES), response.reason
+
+
+async def test_web_chat_handoff_consumes_once_and_keeps_stop_gates_armed(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    _create_session(temp_db)
+    temp_db.execute(
+        "UPDATE sessions SET session_type = 'web_chat' WHERE id = %s",
+        (SESSION_ID,),
+    )
+    _insert_rules(temp_db)
+    session_manager = SessionManager(temp_db)
+    variable_manager = SessionVariableManager(temp_db)
+    variable_manager.set_variable(SESSION_ID, "_gobby_feedback_epoch_submitted", True)
+
+    async def done_stream() -> AsyncIterator[DoneEvent]:
+        yield DoneEvent(tool_calls_count=0)
+
+    chat_session = MagicMock(db_session_id=SESSION_ID)
+    chat_session.send_message.side_effect = lambda _message: done_stream()
+    web_registry = WebChatSessionRegistry()
+    web_registry.register("conversation-1", chat_session)
+    terminal_registry = InternalToolRegistry(name="test", description="test")
+    register_terminal_tools(
+        terminal_registry,
+        session_manager,
+        temp_db,
+        web_chat_session_registry=web_registry,
+    )
+    set_handoff = terminal_registry.get_tool("set_handoff")
+    assert set_handoff is not None
+
+    with session_context_for_test(SESSION_ID):
+        staged = await set_handoff(
+            current_state="Web chat compacted in process.",
+            next_steps=["Consume this continuation exactly once."],
+        )
+
+    assert staged["compacted"] is True
+    assert staged["handoff_delivered"] is True
+    assert [call.args[0] for call in chat_session.send_message.call_args_list] == [
+        "/compact",
+        build_handoff_continue_prompt(),
+    ]
+    assert HANDOFF_TURN_END_PENDING_VARIABLE not in variable_manager.get_variables(SESSION_ID)
+
+    handoff_registry = create_session_messages_registry(
+        session_manager=session_manager,
+        db=temp_db,
+    )
+    with session_context_for_test(SESSION_ID):
+        delivered = await handoff_registry.call("get_handoff", {})
+        consumed = await handoff_registry.call("get_handoff", {})
+
+    assert delivered["found"] is True
+    assert delivered["handoff"]
+    assert consumed == {
+        "success": True,
+        "found": False,
+        "session_id": None,
+        "handoff": "",
+    }
+
+    variable_manager.merge_variables(
+        SESSION_ID,
+        {
+            "_agent_type": "default",
+            "_gobby_feedback_epoch_submitted": False,
+            "_gobby_feedback_survey_active": True,
+            "_memory_pending_task_reviews": [{"task_ref": "#42"}],
+            "_variable_defaults_loaded": True,
+            "baseline_dirty_files": [],
+            "claimed_tasks": {"55555555-5555-4555-8555-555555555555": "#42"},
+            "mode_level": 2,
+            "project": {"name": "gobby"},
+            "session_edited_files": [],
+            "stop_attempts": 0,
+            "task_claimed": True,
+        },
+    )
+    response = await _evaluate(
+        WorkflowHookHandler(rule_engine=RuleEngine(temp_db)),
+        _stop_event(tmp_path),
+    )
 
     assert response.decision == "block"
     assert all(name in (response.reason or "") for name in STOP_GATE_NAMES), response.reason
