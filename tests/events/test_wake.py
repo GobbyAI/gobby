@@ -186,6 +186,41 @@ class TestWakeDispatch:
         assert ism_manager.create_message.call_args.kwargs["priority"] == "urgent"
 
     @pytest.mark.asyncio
+    async def test_urgent_completion_stays_durable_when_the_composer_holds_a_draft(
+        self,
+        session_manager: MagicMock,
+        ism_manager: MagicMock,
+        tmux_sender: AsyncMock,
+    ) -> None:
+        from gobby.agents.idle_detector import ComposerRead
+        from gobby.events.live_wake import TerminalActivity, composer_occupied_result
+
+        session_manager.get.return_value = FakeSession(
+            id=WAKE_SESSION_ID,
+            agent_depth=1,
+            terminal_context={"tmux_session": "gobby-agent-abc"},
+            status="paused",
+        )
+        probe = AsyncMock(return_value=TerminalActivity(ComposerRead("draft", "hello draft")))
+        dispatcher = WakeDispatcher(
+            session_manager=session_manager,
+            ism_manager=ism_manager,
+            tmux_sender=tmux_sender,
+            activity_probe=probe,
+        )
+
+        result = await dispatcher.wake(
+            WAKE_SESSION_ID,
+            "Agent requires attention",
+            {"status": "failed", "priority": "urgent"},
+        )
+
+        assert result == composer_occupied_result(WAKE_SESSION_ID, method="tmux")
+        assert ism_manager.create_message.call_args.kwargs["priority"] == "urgent"
+        probe.assert_awaited_once()
+        tmux_sender.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_wake_routes_database_work_through_owned_executor(
         self,
         session_manager: MagicMock,
@@ -1391,9 +1426,9 @@ class TestComposerGate:
         assert dispatcher._last_live_wake == {}
 
     @pytest.mark.asyncio
-    async def test_urgent_wake_bypasses_the_probe(self) -> None:
+    async def test_urgent_wake_defers_when_the_composer_holds_a_draft(self) -> None:
         from gobby.agents.idle_detector import ComposerRead
-        from gobby.events.live_wake import TerminalActivity
+        from gobby.events.live_wake import TerminalActivity, composer_occupied_result
 
         pane_sender = AsyncMock()
         probe = AsyncMock(return_value=TerminalActivity(ComposerRead("draft", "hello draft")))
@@ -1401,9 +1436,26 @@ class TestComposerGate:
 
         result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID, priority="urgent")
 
+        assert result == composer_occupied_result(WAKE_SESSION_ID, method="tmux_pane")
+        probe.assert_awaited_once()
+        pane_sender.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_urgent_wake_delivers_when_the_composer_is_empty(self) -> None:
+        from gobby.agents.idle_detector import ComposerRead
+        from gobby.events.live_wake import TerminalActivity
+
+        pane_sender = AsyncMock()
+        probe = AsyncMock(return_value=TerminalActivity(ComposerRead("empty")))
+        dispatcher = self._dispatcher(probe, pane_sender)
+
+        result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID, priority="urgent")
+
         assert result["delivered"] is True
-        probe.assert_not_awaited()
-        pane_sender.assert_awaited_once()
+        probe.assert_awaited_once()
+        pane_sender.assert_awaited_once_with(
+            "%7", CONTINUE_WAKE_MESSAGE, None, submit=True, clear_before_submit=True, cli_source=ANY
+        )
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("state", ["empty", "unknown"])
