@@ -912,10 +912,10 @@ Research context:
 
 - 3.1.1 - `TaskRef` carries an optional `title` and the roster types live in the new module. file: `crates/gclient/src/daemon/roster.rs`.
 - 3.1.2 - `AgentEntry` exposes `agent_definition_name`, `task_title`, `context_percent`, `tokens_used`, and `definition_label()` falls back to the provider label. symbol: `AgentEntry`.
-- 3.1.3 - NEW test: a run entry with `task.title` and `agent_name` yields both fields; a session-only entry with provider `claude_code` yields `definition_label() == "Claude Code"` and one with provider `claude` yields `"Claude"`. test: `crates/gclient/tests/sidebar_model.rs::build_carries_definition_name_and_task_title`.
+- 3.1.3 - NEW regression: a run entry with `task.title` and `agent_name` yields both fields; a session-only entry with provider `claude_code` yields `definition_label() == "Claude Code"` and one with provider `claude` yields `"Claude"`. test: `crates/gclient/tests/sidebar_model.rs::build_carries_definition_name_and_task_title`.
 - 3.1.4 - Existing join test still passes with the new fields defaulted. test: `crates/gclient/tests/sidebar_model.rs::build_joins_projects_worktrees_and_agents`.
 - 3.1.5 - `crates/gclient/src/daemon/mod.rs` is under 850 lines after the move. file: `crates/gclient/src/daemon/mod.rs`.
-- 3.1.6 - NEW test: `model_slug()` lowercases the display name, joins whitespace runs with `-`, appends `-{effort}` when set, and falls back to `model`. symbol: `AgentEntry`. test: `crates/gclient/tests/sidebar_model.rs::model_slug_lowercases_hyphenates_and_appends_effort`.
+- 3.1.6 - NEW regression: `model_slug()` lowercases the display name, joins whitespace runs with `-`, appends `-{effort}` when set, and falls back to `model`. symbol: `AgentEntry`. test: `crates/gclient/tests/sidebar_model.rs::model_slug_lowercases_hyphenates_and_appends_effort`.
 
 ### 3.2a Frame: hidden sidebar, rail removed, four-edged panes [category: code] (depends: 3.1)
 `kind: deliverable`
@@ -1056,7 +1056,7 @@ Research context:
 **Acceptance:**
 
 - 3.2b.1 - The seven titles render on row 0 in accent. file: `crates/gclient/src/ui/menu_bar.rs`.
-- 3.2b.2 - NEW test: clicking a title returns `Hit::MenuTitle(i)` and opens that menu under it. test: `crates/gclient/tests/parity/chrome.rs::menu_bar_titles_hit_and_open_under_their_cell`.
+- 3.2b.2 - NEW regression: clicking a title returns `Hit::MenuTitle(i)` and opens that menu under it. test: `crates/gclient/tests/parity/chrome.rs::menu_bar_titles_hit_and_open_under_their_cell`.
 - 3.2b.3 - Prefix hint and mode word sit at the right end on `surface0`. test: `crates/gclient/src/ui/status.rs::status_line_shows_only_global_prefix_mode_and_health`.
 - 3.2b.4 - Hit precedence: menu bar before tab bar. test: `crates/gclient/src/ui/hit/tests.rs::hit_test_covers_split_live_layout`.
 - 3.2b.5 - Golden for the open menu. file: `crates/gclient/tests/fixtures/screens/menu_bar.txt`.
@@ -1115,8 +1115,8 @@ Research context:
 **Acceptance:**
 
 - 3.3.1 - `SidebarState { pinned, overlay, side }` with `overlay` never serialized. file: `crates/gclient/src/ui/chrome/sidebar_state.rs`.
-- 3.3.2 - NEW test: overlay yields a 34-column `sidebar_rect` and an unchanged `terminal_area`; pinned yields the column layout on the chosen side. test: `crates/gclient/tests/parity/chrome.rs::overlay_covers_34_columns_without_moving_panes`.
-- 3.3.3 - NEW test: Esc and `focus_pane` clear the overlay. test: `crates/gclient/tests/parity/chrome.rs::overlay_rolls_up_on_escape_and_pane_focus`.
+- 3.3.2 - NEW regression: overlay yields a 34-column `sidebar_rect` and an unchanged `terminal_area`; pinned yields the column layout on the chosen side. test: `crates/gclient/tests/parity/chrome.rs::overlay_covers_34_columns_without_moving_panes`.
+- 3.3.3 - NEW regression: Esc and `focus_pane` clear the overlay. test: `crates/gclient/tests/parity/chrome.rs::overlay_rolls_up_on_escape_and_pane_focus`.
 - 3.3.4 - Two settings rows persist through `prefs.toml`. test: `crates/gclient/src/ui/settings.rs::row_values_follow_prefs`.
 - 3.3.5 - Tab labels sit on the far side while the overlay is open. symbol: `render_tab_bar`.
 - 3.3.6 - Golden. file: `crates/gclient/tests/fixtures/screens/sidebar_overlay.txt`.
@@ -1244,7 +1244,7 @@ Research context:
 **Acceptance:**
 
 - 3.5.1 - Auto-named label is `project:tab_id`, renamed is `project:title`. test: `crates/gclient/tests/parity/tabs.rs::tab_bar_marks_zoomed_tabs_without_renaming_them`.
-- 3.5.2 - NEW test: a hidden tab with a blocked pane carries `⍾`. test: `crates/gclient/tests/parity/tabs.rs::hidden_tab_with_attention_carries_the_mark`.
+- 3.5.2 - NEW regression: a hidden tab with a blocked pane carries `⍾`. test: `crates/gclient/tests/parity/tabs.rs::hidden_tab_with_attention_carries_the_mark`.
 - 3.5.3 - Active tab is `panel_bg` bold on a `surface0` row. test: `crates/gclient/tests/parity/chrome.rs::tab_bar_cuts_the_active_tab_out_in_panel_bg`.
 - 3.5.4 - `MIN_TAB_WIDTH` fits `gobby:0:0:1`. symbol: `MIN_TAB_WIDTH`.
 - 3.5.5 - Goldens. test: `crates/gclient/tests/screens.rs::screens_match_committed_captures`.
@@ -1313,7 +1313,7 @@ Research context:
 
 - 3.6.1 - Title ladder task → manual → provisional; a bare terminal is empty unless renamed. test: `crates/gclient/src/ui/pane_chrome/tests.rs::pane_title_prefers_task_then_label_then_provisional`.
 - 3.6.2 - Footer corners: `definition (project#ref) · Focused` left, `gclient 0:0:1:2` right. test: `crates/gclient/src/ui/panes/tests.rs::bottom_metadata_renders_with_and_without_pane_gaps`.
-- 3.6.3 - NEW test: attention frames use the warning role with `⍾`, exited frames the destructive role with `◌`, junctions follow focus. test: `crates/gclient/tests/parity/panes.rs::frame_colour_follows_focus_attention_and_exit`.
+- 3.6.3 - NEW regression: attention frames use the warning role with `⍾`, exited frames the destructive role with `◌`, junctions follow focus. test: `crates/gclient/tests/parity/panes.rs::frame_colour_follows_focus_attention_and_exit`.
 - 3.6.4 - No `shell` literal remains. behavior: "\"shell\"" absent in `crates/gclient/src/app/pane.rs`.
 - 3.6.5 - The `UNNAMED_PANE` rung is gone from the model ladder. symbol: `build_agents`.
 - 3.6.6 - Golden exposing the unnamed rung. file: `crates/gclient/tests/fixtures/screens/unnamed_pane.txt`.
@@ -1369,8 +1369,8 @@ Research context:
 
 - 3.7.1 - Segment names parse and render from `[status]` lists. file: `crates/gclient/src/ui/status_segments.rs`.
 - 3.7.2 - `prefs.toml` round-trips `status.left`/`status.right`. symbol: `PrefsFile`.
-- 3.7.3 - NEW test: the left slot shows `Daemon unreachable` then the hidden-attention count; the right end keeps prefix and mode. test: `crates/gclient/tests/parity/status.rs::status_bar_orders_fixed_slots_and_configured_segments`.
-- 3.7.4 - NEW test: clicking the count opens the sidebar overlay. test: `crates/gclient/tests/parity/chrome.rs::status_count_click_opens_the_sidebar_overlay`.
+- 3.7.3 - NEW regression: the left slot shows `Daemon unreachable` then the hidden-attention count; the right end keeps prefix and mode. test: `crates/gclient/tests/parity/status.rs::status_bar_orders_fixed_slots_and_configured_segments`.
+- 3.7.4 - NEW regression: clicking the count opens the sidebar overlay. test: `crates/gclient/tests/parity/chrome.rs::status_count_click_opens_the_sidebar_overlay`.
 - 3.7.5 - Hit precedence for the count cell. test: `crates/gclient/src/ui/hit/tests.rs::hit_test_covers_split_live_layout`.
 - 3.7.6 - Golden. file: `crates/gclient/tests/fixtures/screens/status_segments.txt`.
 
@@ -1856,3 +1856,839 @@ Research context:
 **Enhancement round 2 of 2** — `kind: enhancement`; the refreshed-hash council round on `4065ada943990c6383d98d2021aa472e354eba3e59e0e1fa47b0ddd89ce930a8` (commit `79191b6bea37957c73521882b7c8c61e5e9f0341`); enhancer gobby#14285 (grok-4.7); verdict relayed as inter-session message `0fd8fc75-5f4a-4da3-bfad-eba3210beab2` (full verdict `08b6abc4-75e1-4ee1-a3e7-f60a02feaf47`); artifact `.gobby/plans/gclient-chrome-refresh-council-round2.md`; suggestions_presented 5; votes: cr-1 fold (3.2b depends on 3.2a only; 3.8 depends on 0.1 and 3.7), cr-2 fold (`StatusSegment` is the four list segments; `Daemon unreachable` and the hidden count are the fixed slot only, Decisions 8 and 17), cr-3 fold (the splash draws the wordmark alone; Decision 19), cr-4 fold (3.9 declares `pub mod splash;`), cr-5 fold (`AgentEntry::model_slug` in 3.1, called by 3.4b and 3.7).
 
 **Adversary round 2 of 2** — `kind: review`; reviewer gobby#14287 (grok-4.7); reviewed hash `4065ada943990c6383d98d2021aa472e354eba3e59e0e1fa47b0ddd89ce930a8`; verdict needs_review (3 blockers); relayed as inter-session message `39b362ac-64b1-4591-b780-a767bd6167c6` (full verdict `2089453c-28b3-4705-ad9d-dbeb3a085f3a`); artifact `.gobby/plans/gclient-chrome-refresh-council-round2.md`; findings 1 through 3 folded (gcr-r2-retired-pref-keys → 3.2a and 3.3, retired `UiPrefs` fields parsed and skipped on save; gcr-r2-unnamed-pane-consumers → 3.6, `app/mod.rs` and `chrome/labels.rs` targeted with the `short_terminal_id` rung, plus the `workspace_panes.rs` extension-file split the validator's size-growth rule requires of any edit to the 927-line `app/mod.rs`; gcr-r2-spawn-executor-ceiling → 1.2, the repository 1,000-line ceiling replaces the 850 claim). No item contested; nothing escalated.
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Marks and wordmark assets in the crate
+  category: config
+  task_type: feature
+  depends_on: []
+  validation_criteria: "0.1.1: Both generators live in the crate with a `grid` mode\
+    \ and the README's commands regenerate every committed grid byte-identically.\
+    \ file: `crates/gclient/assets/marks/mask2.py`. file: `crates/gclient/assets/marks/wordmark.py`.\
+    \ file: `crates/gclient/assets/marks/README.md`.\n0.1.2: The goblin grids are\
+    \ committed at 33 \xD7 16 and 29 \xD7 14 in the class format the README documents.\
+    \ file: `crates/gclient/assets/marks/goblin-33x16.grid`. file: `crates/gclient/assets/marks/goblin-29x14.grid`.\n\
+    0.1.3: The braille wordmark text (54 \xD7 8) and the drop shadow class grid (49\
+    \ \xD7 9) are committed. file: `crates/gclient/assets/marks/wordmark-braille-54x8.txt`.\
+    \ file: `crates/gclient/assets/marks/wordmark-shadow-49x9.grid`.\n0.1.4: Dark\
+    \ and light `.ans` renders of all four marks are committed under `renders/`. file:\
+    \ `crates/gclient/assets/marks/renders/goblin-33x16-dark.ans`. file: `crates/gclient/assets/marks/renders/goblin-33x16-light.ans`.\
+    \ file: `crates/gclient/assets/marks/renders/goblin-29x14-dark.ans`. file: `crates/gclient/assets/marks/renders/goblin-29x14-light.ans`.\
+    \ file: `crates/gclient/assets/marks/renders/wordmark-braille-dark.ans`. file:\
+    \ `crates/gclient/assets/marks/renders/wordmark-braille-light.ans`. file: `crates/gclient/assets/marks/renders/wordmark-shadow-dark.ans`.\
+    \ file: `crates/gclient/assets/marks/renders/wordmark-shadow-light.ans`.\n0.1.5:\
+    \ The README states the colour roles, the three homes rule and the macOS-only\
+    \ wordmark regeneration. behavior: \"three homes\" in `crates/gclient/assets/marks/README.md`."
+  labels:
+  - covers:gclient-chrome-refresh:0.1:0.1.1
+  - covers:gclient-chrome-refresh:0.1:0.1.2
+  - covers:gclient-chrome-refresh:0.1:0.1.3
+  - covers:gclient-chrome-refresh:0.1:0.1.4
+  - covers:gclient-chrome-refresh:0.1:0.1.5
+  tdd: true
+  source_section: '0.1'
+  assigned_agent: backend-developer
+- title: Provisional titles carry the provider label again
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.1.1: A registered codex session without a claim is titled
+    `project#N: Codex`. symbol: `format_provisional_session_title`. test: `tests/storage/sessions/test_register_fallback.py::test_register_session_happy_path_caches_persisted_provisional_title`.
+
+    1.1.2: The handoff lifecycle test asserts the provider-suffixed provisional title
+    before the task and manual steps. test: `tests/sessions/test_handoff.py::test_title_lifecycle_is_provisional_task_manual_and_clear_sticky`.
+
+    1.1.3: The spawn-route test still passes because it derives its expectation from
+    the formatter. test: `tests/servers/routes/test_agent_spawn_routes.py::test_spawn_claims_task_for_web_chat`.'
+  labels:
+  - covers:gclient-chrome-refresh:1.1:1.1.1
+  - covers:gclient-chrome-refresh:1.1:1.1.2
+  - covers:gclient-chrome-refresh:1.1:1.1.3
+  tdd: true
+  source_section: '1.1'
+  implementation_domain: backend
+- title: Remove the prompt heuristic triggers and lifecycle helpers
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  validation_criteria: '1.2.1: `title_lifecycle.py` exports no heuristic symbol and
+    `recompute_automatic_title` falls back straight to the provisional title after
+    the last claim closes. file: `src/gobby/sessions/title_lifecycle.py`. test: `tests/sessions/test_title_lifecycle.py::test_recompute_automatic_title_falls_back_to_provisional_after_close`
+    (new).
+
+    1.2.2: A first codex prompt records terminal identity but leaves the provisional
+    title. symbol: `AgentEventHandlerMixin.handle_before_agent`. test: `tests/hooks/test_hooks_manager.py::test_first_codex_prompt_persists_terminal_identity`
+    (renamed).
+
+    1.2.3: Codex spawns no longer seed a title from the prompt. symbol: `_spawn_codex_terminal`.
+    file: `src/gobby/agents/spawn_executor_codex.py`. behavior: "seed_heuristic_title_from_prompt"
+    absent in `src/gobby/agents/spawn_executor_providers.py`.
+
+    1.2.4: A persisted first web-chat message leaves the provisional title in place.
+    symbol: `ChatStreamPersistence.persist_user_message`. test: `tests/servers/websocket/chat/test_stream_persistence.py::test_persisted_first_user_message_leaves_provisional_title`
+    (new).
+
+    1.2.5: `spawn_executor.py` and the new codex module are each under 1,000 lines
+    (the repository ceiling), `spawn_executor._spawn_codex_terminal` still resolves
+    as an attribute, and the provider dispatch still resolves codex spawns. file:
+    `src/gobby/agents/spawn_executor.py`. test: `tests/agents/test_spawn_executor.py::test_codex_agent_prompt_precedes_task_prompt`.'
+  labels:
+  - covers:gclient-chrome-refresh:1.2:1.2.1
+  - covers:gclient-chrome-refresh:1.2:1.2.2
+  - covers:gclient-chrome-refresh:1.2:1.2.3
+  - covers:gclient-chrome-refresh:1.2:1.2.4
+  - covers:gclient-chrome-refresh:1.2:1.2.5
+  tdd: true
+  source_section: '1.2'
+  implementation_domain: backend
+- title: Delete the heuristic title source from storage
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.2'
+  validation_criteria: '1.3.1: `heuristic` is not a valid `title_source` and the formatter
+    module has no heuristic symbol. symbol: `SessionManager`. file: `src/gobby/storage/sessions/_title_defaults.py`.
+
+    1.3.2: `TITLE_UPDATE_ALLOWED_SQL` contains no heuristic branch. symbol: `TITLE_UPDATE_ALLOWED_SQL`.
+    behavior: "heuristic" absent in `src/gobby/storage/sessions/_title_update.py`.
+
+    1.3.3: `Session` has no `heuristic_title` field and `from_row` does not read the
+    column. symbol: `Session.from_row`. test: `tests/storage/sessions/test_storage_sessions_models.py::TestSession.test_full_and_brief_expose_nullable_effort`
+    (renamed).
+
+    1.3.4: The startup sweep rewrites `title_source=''heuristic''` rows to the provider
+    provisional title. symbol: `_TitleFieldMixin.normalize_automatic_title_refs`.
+    test: `tests/storage/sessions/test_title_fields.py::test_normalize_rewrites_heuristic_rows_to_provisional`
+    (new).
+
+    1.3.5: Prefix renames for task titles still work without touching the removed
+    column. test: `tests/storage/sessions/test_title_fields.py::test_normalize_keeps_task_titles_and_renames_prefix`
+    (new).'
+  labels:
+  - covers:gclient-chrome-refresh:1.3:1.3.1
+  - covers:gclient-chrome-refresh:1.3:1.3.2
+  - covers:gclient-chrome-refresh:1.3:1.3.3
+  - covers:gclient-chrome-refresh:1.3:1.3.4
+  - covers:gclient-chrome-refresh:1.3:1.3.5
+  tdd: true
+  source_section: '1.3'
+  implementation_domain: backend
+- title: 'Migration 447: drop sessions.heuristic_title'
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.3'
+  validation_criteria: '1.4.1: Migration 447 drops `sessions.heuristic_title`. file:
+    `crates/gcore/assets/schema/migrations/447_drop_session_heuristic_title.sql`.
+
+    1.4.2: `MIGRATIONS` embeds version 447 with its checksum and the catalog manifest
+    no longer lists `sessions.heuristic_title`. symbol: `MIGRATIONS`. file: `crates/gcore/assets/schema/catalog.manifest.json`.
+
+    1.4.3: The seed verifier allowlist no longer names `heuristic_title`. symbol:
+    `is_live_mutable_seed_field`.
+
+    1.4.4: The schema identity contract tests pass with `latest_version` 447. test:
+    `crates/gcore/tests/schema_contract.rs::embedded_assets_publish_a_complete_schema_identity`.
+    test: `crates/gdaemon/tests/cli_contract.rs::version_json_reports_exact_schema_identity_contract`.
+
+    1.4.5: `schema_expected_identity.json` matches the rebuilt gdaemon''s identity.
+    file: `src/gobby/storage/schema_expected_identity.json`.'
+  labels:
+  - covers:gclient-chrome-refresh:1.4:1.4.1
+  - covers:gclient-chrome-refresh:1.4:1.4.2
+  - covers:gclient-chrome-refresh:1.4:1.4.3
+  - covers:gclient-chrome-refresh:1.4:1.4.4
+  - covers:gclient-chrome-refresh:1.4:1.4.5
+  tdd: true
+  source_section: '1.4'
+  implementation_domain: backend
+- title: Canonical Telegram title and session docs
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  validation_criteria: '1.5.1: Provisional and task titles that already start with
+    the session ref are used verbatim in status messages. symbol: `_canonical_session_title`.
+    test: `tests/communications/test_session_events.py::test_canonical_title_keeps_ref_prefixed_titles_verbatim`
+    (new).
+
+    1.5.2: Manual titles are still prefixed with the ref. test: `tests/communications/test_session_events.py::test_canonical_title_prefixes_manual_titles`
+    (new).
+
+    1.5.3: The sessions guide describes the three deterministic formats and no heuristic.
+    file: `docs/guides/sessions.md`. behavior: "heuristic" absent in `docs/guides/sessions.md`.
+
+    1.5.4: The reference audit matches the guide. file: `docs/reference-audit/sessions.json`.'
+  labels:
+  - covers:gclient-chrome-refresh:1.5:1.5.1
+  - covers:gclient-chrome-refresh:1.5:1.5.2
+  - covers:gclient-chrome-refresh:1.5:1.5.3
+  - covers:gclient-chrome-refresh:1.5:1.5.4
+  tdd: true
+  source_section: '1.5'
+  implementation_domain: backend
+- title: Roster entries carry task titles and claimed tasks
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '2.1.1: Roster run entries include `task.title`. symbol: `AttentionStateManager.load_roster_rows`.
+    test: `tests/servers/test_attention_roster.py::test_roster_run_entries_carry_the_task_title`
+    (new).
+
+    2.1.2: Roster session entries include the open claimed task `{id, ref, stage,
+    title}` or `null` once it closes. symbol: `AttentionRosterRow.from_row`. test:
+    `tests/servers/test_attention_roster.py::test_roster_session_entries_carry_the_open_claimed_task`
+    (new).
+
+    2.1.3: The roster serialisation helpers live in the new module and the route still
+    serves the same keys. file: `src/gobby/servers/routes/attention_roster.py`. test:
+    `tests/servers/test_attention_roster.py::test_roster_spells_the_model_as_its_provider_prints_it`.
+
+    2.1.4: `src/gobby/servers/routes/attention.py` and `routes/attention_roster.py`
+    are each under 850 lines and the cold path stays one round trip. file: `src/gobby/servers/routes/attention.py`.
+    test: `tests/servers/test_attention_roster.py::test_roster_cold_path_is_bounded_and_cursor_invalidates_cache`.'
+  labels:
+  - covers:gclient-chrome-refresh:2.1:2.1.1
+  - covers:gclient-chrome-refresh:2.1:2.1.2
+  - covers:gclient-chrome-refresh:2.1:2.1.3
+  - covers:gclient-chrome-refresh:2.1:2.1.4
+  tdd: true
+  source_section: '2.1'
+  implementation_domain: backend
+- title: Terminal inventories report the spawned shell
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '2.2.1: Spawned terminals persist the shell basename as `process.shell`.
+    symbol: `spawn_web_terminal`. test: `tests/terminals/test_web_spawn.py::test_spawn_records_the_shell_basename_in_process`
+    (new).
+
+    2.2.2: `process_shell` reads the recorded basename and ignores rows without one.
+    file: `src/gobby/terminals/foreground.py`. test: `tests/terminals/test_foreground.py::test_process_shell_reads_the_recorded_basename`
+    (new).
+
+    2.2.3: The REST inventory `command` falls back to `process.shell`. symbol: `_row_json`.
+    test: `tests/servers/test_terminals_routes.py::test_a_native_row_falls_back_to_its_spawn_shell`
+    (new).
+
+    2.2.4: The WS inventory `command` falls back to `process.shell` after the live
+    foreground and pane command. symbol: `TerminalWsMixin._handle_terminal_list`.
+    test: `tests/servers/test_terminal_ws_list.py::test_list_falls_back_to_the_spawn_shell_for_a_native_row`
+    (new).
+
+    2.2.5: Live foreground detection still wins over the recorded shell. test: `tests/servers/test_terminals_routes.py::test_a_native_row_reports_the_command_in_its_terminal_foreground`.'
+  labels:
+  - covers:gclient-chrome-refresh:2.2:2.2.1
+  - covers:gclient-chrome-refresh:2.2:2.2.2
+  - covers:gclient-chrome-refresh:2.2:2.2.3
+  - covers:gclient-chrome-refresh:2.2:2.2.4
+  - covers:gclient-chrome-refresh:2.2:2.2.5
+  tdd: true
+  source_section: '2.2'
+  implementation_domain: backend
+- title: 'Agent data model: definition name, task title, roster row split'
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.1'
+  validation_criteria: '3.1.1: `TaskRef` carries an optional `title` and the roster
+    types live in the new module. file: `crates/gclient/src/daemon/roster.rs`.
+
+    3.1.2: `AgentEntry` exposes `agent_definition_name`, `task_title`, `context_percent`,
+    `tokens_used`, and `definition_label()` falls back to the provider label. symbol:
+    `AgentEntry`.
+
+    3.1.3: NEW regression: a run entry with `task.title` and `agent_name` yields both fields;
+    a session-only entry with provider `claude_code` yields `definition_label() ==
+    "Claude Code"` and one with provider `claude` yields `"Claude"`. test: `crates/gclient/tests/sidebar_model.rs::build_carries_definition_name_and_task_title`.
+
+    3.1.4: Existing join test still passes with the new fields defaulted. test: `crates/gclient/tests/sidebar_model.rs::build_joins_projects_worktrees_and_agents`.
+
+    3.1.5: `crates/gclient/src/daemon/mod.rs` is under 850 lines after the move. file:
+    `crates/gclient/src/daemon/mod.rs`.
+
+    3.1.6: NEW regression: `model_slug()` lowercases the display name, joins whitespace
+    runs with `-`, appends `-{effort}` when set, and falls back to `model`. symbol:
+    `AgentEntry`. test: `crates/gclient/tests/sidebar_model.rs::model_slug_lowercases_hyphenates_and_appends_effort`.'
+  labels:
+  - covers:gclient-chrome-refresh:3.1:3.1.1
+  - covers:gclient-chrome-refresh:3.1:3.1.2
+  - covers:gclient-chrome-refresh:3.1:3.1.3
+  - covers:gclient-chrome-refresh:3.1:3.1.4
+  - covers:gclient-chrome-refresh:3.1:3.1.5
+  - covers:gclient-chrome-refresh:3.1:3.1.6
+  tdd: true
+  source_section: '3.1'
+  implementation_domain: backend
+- title: 'Frame: hidden sidebar, rail removed, four-edged panes'
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.1'
+  validation_criteria: '3.2a.1: `SidebarState` lives in the new module with `pinned`
+    in place of `collapsed`/`hide_when_collapsed`. file: `crates/gclient/src/ui/chrome/sidebar_state.rs`.
+
+    3.2a.2: A default `Chrome` yields `sidebar_rect.width == 0`, a full-width `status_rect`
+    on the last row and `menu_bar_rect` on row 0. test: `crates/gclient/tests/parity/chrome.rs::hidden_sidebar_uses_full_width_terminal_area`.
+
+    3.2a.3: A lone pane''s `PaneInfo.borders == Borders::ALL` and the frame is drawn.
+    test: `crates/gclient/tests/parity/panes.rs::lone_pane_draws_all_four_edges`.
+
+    3.2a.4: Settings show ten rows and no `Pane borders` label. test: `crates/gclient/src/ui/settings.rs::row_values_follow_prefs`.
+
+    3.2a.5: No rail symbol remains. behavior: "render_collapsed_sidebar" absent in
+    `crates/gclient/src/ui/sidebar.rs`.
+
+    3.2a.6: Goldens regenerate and match. test: `crates/gclient/tests/screens.rs::screens_match_committed_captures`.
+
+    3.2a.7: A saved `prefs.toml` carrying `pane_borders` and `sidebar_collapsed` still
+    loads, a fresh save omits both keys, and an unknown key still fails. symbol: `UiPrefs`.
+    test: `crates/gclient/tests/startup.rs::prefs_round_trip_and_reject_unknown_keys`
+    (existing, extended).'
+  labels:
+  - covers:gclient-chrome-refresh:3.2a:3.2a.1
+  - covers:gclient-chrome-refresh:3.2a:3.2a.2
+  - covers:gclient-chrome-refresh:3.2a:3.2a.3
+  - covers:gclient-chrome-refresh:3.2a:3.2a.4
+  - covers:gclient-chrome-refresh:3.2a:3.2a.5
+  - covers:gclient-chrome-refresh:3.2a:3.2a.6
+  - covers:gclient-chrome-refresh:3.2a:3.2a.7
+  tdd: true
+  source_section: 3.2a
+  implementation_domain: frontend
+- title: Menu bar row and status row slot
+  category: code
+  task_type: feature
+  depends_on:
+  - 3.2a
+  validation_criteria: '3.2b.1: The seven titles render on row 0 in accent. file:
+    `crates/gclient/src/ui/menu_bar.rs`.
+
+    3.2b.2: NEW regression: clicking a title returns `Hit::MenuTitle(i)` and opens that
+    menu under it. test: `crates/gclient/tests/parity/chrome.rs::menu_bar_titles_hit_and_open_under_their_cell`.
+
+    3.2b.3: Prefix hint and mode word sit at the right end on `surface0`. test: `crates/gclient/src/ui/status.rs::status_line_shows_only_global_prefix_mode_and_health`.
+
+    3.2b.4: Hit precedence: menu bar before tab bar. test: `crates/gclient/src/ui/hit/tests.rs::hit_test_covers_split_live_layout`.
+
+    3.2b.5: Golden for the open menu. file: `crates/gclient/tests/fixtures/screens/menu_bar.txt`.
+
+    3.2b.6: The menu tests live in the new file and `menu.rs` stays under the ceiling
+    after the regroup. file: `crates/gclient/src/app/live_loop/menu/tests.rs`. test:
+    `crates/gclient/tests/source_size.rs::no_src_file_at_or_above_1000_lines` (existing).'
+  labels:
+  - covers:gclient-chrome-refresh:3.2b:3.2b.1
+  - covers:gclient-chrome-refresh:3.2b:3.2b.2
+  - covers:gclient-chrome-refresh:3.2b:3.2b.3
+  - covers:gclient-chrome-refresh:3.2b:3.2b.4
+  - covers:gclient-chrome-refresh:3.2b:3.2b.5
+  - covers:gclient-chrome-refresh:3.2b:3.2b.6
+  tdd: true
+  source_section: 3.2b
+  implementation_domain: frontend
+- title: 'Sidebar states: overlay, pinned, side'
+  category: code
+  task_type: feature
+  depends_on:
+  - 3.2a
+  - 3.2b
+  validation_criteria: "3.3.1: `SidebarState { pinned, overlay, side }` with `overlay`\
+    \ never serialized. file: `crates/gclient/src/ui/chrome/sidebar_state.rs`.\n3.3.2:\
+    \ NEW regression: overlay yields a 34-column `sidebar_rect` and an unchanged `terminal_area`;\
+    \ pinned yields the column layout on the chosen side. test: `crates/gclient/tests/parity/chrome.rs::overlay_covers_34_columns_without_moving_panes`.\n\
+    3.3.3: NEW regression: Esc and `focus_pane` clear the overlay. test: `crates/gclient/tests/parity/chrome.rs::overlay_rolls_up_on_escape_and_pane_focus`.\n\
+    3.3.4: Two settings rows persist through `prefs.toml`. test: `crates/gclient/src/ui/settings.rs::row_values_follow_prefs`.\n\
+    3.3.5: Tab labels sit on the far side while the overlay is open. symbol: `render_tab_bar`.\n\
+    3.3.6: Golden. file: `crates/gclient/tests/fixtures/screens/sidebar_overlay.txt`.\n\
+    3.3.7: View \u203A Pin Sidebar (`MenuAction::PinSidebar`) and the `SidebarPinned`\
+    \ settings row share `toggle_sidebar_pin`, which persists `sidebar_pinned` and\
+    \ closes the overlay when pinning. symbol: `toggle_sidebar_pin`. file: `crates/gclient/src/app/live_loop/actions/sidebar.rs`."
+  labels:
+  - covers:gclient-chrome-refresh:3.3:3.3.1
+  - covers:gclient-chrome-refresh:3.3:3.3.2
+  - covers:gclient-chrome-refresh:3.3:3.3.3
+  - covers:gclient-chrome-refresh:3.3:3.3.4
+  - covers:gclient-chrome-refresh:3.3:3.3.5
+  - covers:gclient-chrome-refresh:3.3:3.3.6
+  - covers:gclient-chrome-refresh:3.3:3.3.7
+  tdd: true
+  source_section: '3.3'
+  implementation_domain: frontend
+- title: 'Sidebar sections: Machines, Projects, Agents, Terminals'
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.3'
+  validation_criteria: '3.4a.1: Four sections with titles `Machines`, `Projects`,
+    `Agents`, `Terminals`. symbol: `SidebarSection`.
+
+    3.4a.2: `sidebar_layout` yields four rects; Agents and Terminals share the remainder.
+    test: `crates/gclient/src/ui/sidebar/tests.rs::layout_gives_the_top_half_to_machines_and_projects_at_most`.
+
+    3.4a.3: Scrollbar lanes hit by all four sections. test: `crates/gclient/src/ui/hit/tests.rs::sidebar_scrollbar_lane_hits_by_section`.
+
+    3.4a.4: The module rename lands. file: `crates/gclient/src/ui/sidebar/agents.rs`.
+
+    3.4a.5: Bare terminals render under their own band. file: `crates/gclient/src/ui/sidebar/terminals.rs`.'
+  labels:
+  - covers:gclient-chrome-refresh:3.4a:3.4a.1
+  - covers:gclient-chrome-refresh:3.4a:3.4a.2
+  - covers:gclient-chrome-refresh:3.4a:3.4a.3
+  - covers:gclient-chrome-refresh:3.4a:3.4a.4
+  - covers:gclient-chrome-refresh:3.4a:3.4a.5
+  tdd: true
+  source_section: 3.4a
+  implementation_domain: frontend
+- title: Agent and terminal rows
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.1'
+  - 3.4a
+  validation_criteria: '3.4b.1: `RowKind::Terminal` exists and `height()` is 3/2.
+    symbol: `RowKind`.
+
+    3.4b.2: Three-line agent row: bold name cut with an ellipsis before `(ref)`, slug
+    on line 3 without DIM. test: `crates/gclient/src/ui/sidebar_rows/tests.rs::agent_rows_render_three_lines_with_the_model_slug`.
+
+    3.4b.3: `Task #ref - ` pinned while the title scrolls; `No assigned task` otherwise.
+    test: `crates/gclient/src/ui/sidebar_rows/tests.rs::task_prefix_stays_fixed_while_the_title_scrolls`.
+
+    3.4b.4: Terminal rows show app over backend, no address. test: `crates/gclient/tests/parity/sidebar.rs::stripped_terminal_title_renders_with_unicode_width_truncation`.
+
+    3.4b.5: Unselected Agent and Project rows share one weight. test: `crates/gclient/tests/parity/sidebar.rs::occurrence_false_removes_default_workspace_bold_and_agent_dim`.
+
+    3.4b.6: Golden. file: `crates/gclient/tests/fixtures/screens/agent_rows.txt`.'
+  labels:
+  - covers:gclient-chrome-refresh:3.4b:3.4b.1
+  - covers:gclient-chrome-refresh:3.4b:3.4b.2
+  - covers:gclient-chrome-refresh:3.4b:3.4b.3
+  - covers:gclient-chrome-refresh:3.4b:3.4b.4
+  - covers:gclient-chrome-refresh:3.4b:3.4b.5
+  - covers:gclient-chrome-refresh:3.4b:3.4b.6
+  tdd: true
+  source_section: 3.4b
+  implementation_domain: fullstack
+- title: Tab labels and bar style
+  category: code
+  task_type: feature
+  depends_on:
+  - 3.4b
+  validation_criteria: "3.5.1: Auto-named label is `project:tab_id`, renamed is `project:title`.\
+    \ test: `crates/gclient/tests/parity/tabs.rs::tab_bar_marks_zoomed_tabs_without_renaming_them`.\n\
+    3.5.2: NEW regression: a hidden tab with a blocked pane carries `\u237E`. test: `crates/gclient/tests/parity/tabs.rs::hidden_tab_with_attention_carries_the_mark`.\n\
+    3.5.3: Active tab is `panel_bg` bold on a `surface0` row. test: `crates/gclient/tests/parity/chrome.rs::tab_bar_cuts_the_active_tab_out_in_panel_bg`.\n\
+    3.5.4: `MIN_TAB_WIDTH` fits `gobby:0:0:1`. symbol: `MIN_TAB_WIDTH`.\n3.5.5: Goldens.\
+    \ test: `crates/gclient/tests/screens.rs::screens_match_committed_captures`."
+  labels:
+  - covers:gclient-chrome-refresh:3.5:3.5.1
+  - covers:gclient-chrome-refresh:3.5:3.5.2
+  - covers:gclient-chrome-refresh:3.5:3.5.3
+  - covers:gclient-chrome-refresh:3.5:3.5.4
+  - covers:gclient-chrome-refresh:3.5:3.5.5
+  tdd: true
+  source_section: '3.5'
+  implementation_domain: backend
+- title: 'Pane chrome: task title, footer corners, frame colour, no shell literal'
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.2'
+  - '3.1'
+  - 3.2b
+  - '3.5'
+  validation_criteria: "3.6.1: Title ladder task \u2192 manual \u2192 provisional;\
+    \ a bare terminal is empty unless renamed. test: `crates/gclient/src/ui/pane_chrome/tests.rs::pane_title_prefers_task_then_label_then_provisional`.\n\
+    3.6.2: Footer corners: `definition (project#ref) \xB7 Focused` left, `gclient\
+    \ 0:0:1:2` right. test: `crates/gclient/src/ui/panes/tests.rs::bottom_metadata_renders_with_and_without_pane_gaps`.\n\
+    3.6.3: NEW regression: attention frames use the warning role with `\u237E`, exited frames\
+    \ the destructive role with `\u25CC`, junctions follow focus. test: `crates/gclient/tests/parity/panes.rs::frame_colour_follows_focus_attention_and_exit`.\n\
+    3.6.4: No `shell` literal remains. behavior: \"\\\"shell\\\"\" absent in `crates/gclient/src/app/pane.rs`.\n\
+    3.6.5: The `UNNAMED_PANE` rung is gone from the model ladder. symbol: `build_agents`.\n\
+    3.6.6: Golden exposing the unnamed rung. file: `crates/gclient/tests/fixtures/screens/unnamed_pane.txt`.\n\
+    3.6.7: The re-export is gone. behavior: \"UNNAMED_PANE\" absent in `crates/gclient/src/app/mod.rs`.\n\
+    3.6.8: The label fallbacks use the terminal id rung. behavior: \"UNNAMED_PANE\"\
+    \ absent in `crates/gclient/src/ui/chrome/labels.rs`. symbol: `terminal_label`.\n\
+    3.6.9: The pane-access methods live in the new extension file and `crates/gclient/src/app/mod.rs`\
+    \ is under 850 lines. file: `crates/gclient/src/app/workspace_panes.rs`. behavior:\
+    \ \"fn pane_for_terminal\" absent in `crates/gclient/src/app/mod.rs`."
+  labels:
+  - covers:gclient-chrome-refresh:3.6:3.6.1
+  - covers:gclient-chrome-refresh:3.6:3.6.2
+  - covers:gclient-chrome-refresh:3.6:3.6.3
+  - covers:gclient-chrome-refresh:3.6:3.6.4
+  - covers:gclient-chrome-refresh:3.6:3.6.5
+  - covers:gclient-chrome-refresh:3.6:3.6.6
+  - covers:gclient-chrome-refresh:3.6:3.6.7
+  - covers:gclient-chrome-refresh:3.6:3.6.8
+  - covers:gclient-chrome-refresh:3.6:3.6.9
+  tdd: true
+  source_section: '3.6'
+  implementation_domain: fullstack
+- title: Status bar segments
+  category: code
+  task_type: feature
+  depends_on:
+  - 3.2b
+  - '3.3'
+  - '3.6'
+  validation_criteria: '3.7.1: Segment names parse and render from `[status]` lists.
+    file: `crates/gclient/src/ui/status_segments.rs`.
+
+    3.7.2: `prefs.toml` round-trips `status.left`/`status.right`. symbol: `PrefsFile`.
+
+    3.7.3: NEW regression: the left slot shows `Daemon unreachable` then the hidden-attention
+    count; the right end keeps prefix and mode. test: `crates/gclient/tests/parity/status.rs::status_bar_orders_fixed_slots_and_configured_segments`.
+
+    3.7.4: NEW regression: clicking the count opens the sidebar overlay. test: `crates/gclient/tests/parity/chrome.rs::status_count_click_opens_the_sidebar_overlay`.
+
+    3.7.5: Hit precedence for the count cell. test: `crates/gclient/src/ui/hit/tests.rs::hit_test_covers_split_live_layout`.
+
+    3.7.6: Golden. file: `crates/gclient/tests/fixtures/screens/status_segments.txt`.'
+  labels:
+  - covers:gclient-chrome-refresh:3.7:3.7.1
+  - covers:gclient-chrome-refresh:3.7:3.7.2
+  - covers:gclient-chrome-refresh:3.7:3.7.3
+  - covers:gclient-chrome-refresh:3.7:3.7.4
+  - covers:gclient-chrome-refresh:3.7:3.7.5
+  - covers:gclient-chrome-refresh:3.7:3.7.6
+  tdd: true
+  source_section: '3.7'
+  implementation_domain: fullstack
+- title: Marks module and the ink, glint and dim theme roles
+  category: code
+  task_type: feature
+  depends_on:
+  - '0.1'
+  - '3.7'
+  validation_criteria: '3.8.1: The on-disk format above parses through `parse`, rejects
+    a bad header, a bad letter, a short or long line and a non-braille glyph, and
+    all four embedded assets parse to their declared sizes. test: `crates/gclient/tests/marks.rs::halfblock_grid_parses_to_its_declared_size`
+    (new, plus sibling error-case tests in the same file).
+
+    3.8.2: `render_mark` implements the four-case half-block rule exactly and leaves
+    transparent cells untouched. test: `crates/gclient/tests/marks.rs::halfblock_cells_paint_upper_and_lower_halves_by_the_stated_rule`
+    (new).
+
+    3.8.3: Braille glyphs paint in the palette''s braille role, U+2800 stays transparent,
+    and the shadow palette paints braille in `dim`. test: `crates/gclient/tests/marks.rs::braille_glyphs_paint_in_the_given_role_and_blank_cells_stay_transparent`
+    (new).
+
+    3.8.4: `MarkPalette::dimmed` drops glints and uses overlay0/panel_bg fill/lines
+    in dark and surface1/overlay0 in light. test: `crates/gclient/tests/marks.rs::dimmed_palette_drops_glints_and_uses_theme_fill_and_lines`
+    (new).
+
+    3.8.5: `Palette::entries` has 19 roles, `ink`/`glint` swap by kind, `dim` sits
+    between `surface1` and `overlay0`, and the monochrome/contrast contract still
+    holds. test: `crates/gclient/tests/theme.rs::palette_entries_bind_the_same_tokens_the_render_paints_with`
+    (existing, extended) and `crates/gclient/tests/theme.rs::dim_sits_between_surface1_and_overlay0_and_ink_glint_swap_by_kind`
+    (new).
+
+    3.8.6: The module carries the native header and adds no forbidden token. file:
+    `crates/gclient/src/ui/marks.rs`.'
+  labels:
+  - covers:gclient-chrome-refresh:3.8:3.8.1
+  - covers:gclient-chrome-refresh:3.8:3.8.2
+  - covers:gclient-chrome-refresh:3.8:3.8.3
+  - covers:gclient-chrome-refresh:3.8:3.8.4
+  - covers:gclient-chrome-refresh:3.8:3.8.5
+  - covers:gclient-chrome-refresh:3.8:3.8.6
+  tdd: true
+  source_section: '3.8'
+  implementation_domain: frontend
+- title: Splash first frame and Daemon unreachable
+  category: code
+  task_type: feature
+  depends_on:
+  - 3.2a
+  - '3.7'
+  - '3.8'
+  - '3.10'
+  validation_criteria: "3.9.1: The first drawn frame while stage 1 runs shows the\
+    \ menu bar, skeleton tab blocks, the centred goblin, wordmark, version line, four\
+    \ stage rows with `\u25D0 daemon health \u2026 9.8 s and waiting`, and the connecting\
+    \ line. file: `crates/gclient/tests/fixtures/screens/splash_connecting.txt`.\n\
+    3.9.2: The group is centred and degrades goblin-first, wordmark-second, never\
+    \ clipping. test: `crates/gclient/tests/splash.rs::group_is_centred_in_the_pane_area_and_never_clips`\
+    \ (new).\n3.9.3: The status bar's left slot names the running stage and its elapsed\
+    \ time, and leads with `Daemon unreachable \xB7 retry in <n> s` after a drop.\
+    \ test: `crates/gclient/tests/splash.rs::status_segment_names_the_running_stage_and_the_retry_countdown`\
+    \ (new) and `crates/gclient/src/ui/status.rs::status_line_shows_only_global_prefix_mode_and_health`\
+    \ (existing, updated).\n3.9.4: A drop raises exactly one error toast naming the\
+    \ URL per outage, and the segment clears when the handshake completes. test: `crates/gclient/tests/splash.rs::a_dropped_daemon_toasts_the_url_once_and_clears_on_reconnect`\
+    \ (new).\n3.9.5: A pane whose attachment retired keeps its last frame. test: `crates/gclient/tests/splash.rs::panes_keep_their_last_frame_while_the_daemon_is_away`\
+    \ (new). symbol: `Pane::retire_attachment`.\n3.9.6: The reconnect helpers live\
+    \ in the new file and live_loop.rs stays under 1,000 lines. file: `crates/gclient/src/app/live_loop/reconnect.rs`."
+  labels:
+  - covers:gclient-chrome-refresh:3.9:3.9.1
+  - covers:gclient-chrome-refresh:3.9:3.9.2
+  - covers:gclient-chrome-refresh:3.9:3.9.3
+  - covers:gclient-chrome-refresh:3.9:3.9.4
+  - covers:gclient-chrome-refresh:3.9:3.9.5
+  - covers:gclient-chrome-refresh:3.9:3.9.6
+  tdd: true
+  source_section: '3.9'
+  implementation_domain: fullstack
+- title: 'Startup latency: draw first, stage the connect, log the timings'
+  category: code
+  task_type: feature
+  depends_on:
+  - 3.2a
+  - '3.7'
+  validation_criteria: '3.10.1: A frame is drawn before the daemon answers the workspace
+    attach, and menus open during that wait. test: `crates/gclient/tests/startup_latency.rs::the_first_frame_is_drawn_before_the_daemon_answers`
+    (new).
+
+    3.10.2: The sidebar REST fan-out starts only after the first-frame stage completes,
+    on the loop''s background job. test: `crates/gclient/tests/startup_latency.rs::the_sidebar_fan_out_runs_after_the_first_frame`
+    (new).
+
+    3.10.3: Stages advance in order, `elapsed`/`summary` are computed from the stored
+    `now`, and `for_test` builds any state. test: `crates/gclient/tests/startup_stages.rs::stages_advance_in_order_and_report_took_and_waiting`
+    (new).
+
+    3.10.4: Each stage logs `took_ms` once and the summary logs once per launch. test:
+    `crates/gclient/tests/startup_latency.rs::stage_timings_are_logged_once_per_launch`
+    (new).
+
+    3.10.5: A daemon that is down at launch still opens the window, waits, and restores
+    on return; a project-less start still opens one shell. test: `crates/gclient/tests/client_loop.rs::launch_with_the_daemon_down_waits_and_restores_when_it_returns`
+    (existing) and `crates/gclient/tests/client_loop.rs::first_run_opens_one_shell_and_never_auto_opens`
+    (existing).
+
+    3.10.6: The four split files exist and no source file reaches 1,000 lines. file:
+    `crates/gclient/src/daemon/live_connect.rs`. file: `crates/gclient/src/app/live_sidebar.rs`.
+    file: `crates/gclient/src/app/live_loop/startup.rs`. file: `crates/gclient/src/ui/chrome/project_workspace.rs`.
+    test: `crates/gclient/tests/source_size.rs::no_src_file_at_or_above_1000_lines`
+    (existing).'
+  labels:
+  - covers:gclient-chrome-refresh:3.10:3.10.1
+  - covers:gclient-chrome-refresh:3.10:3.10.2
+  - covers:gclient-chrome-refresh:3.10:3.10.3
+  - covers:gclient-chrome-refresh:3.10:3.10.4
+  - covers:gclient-chrome-refresh:3.10:3.10.5
+  - covers:gclient-chrome-refresh:3.10:3.10.6
+  tdd: true
+  source_section: '3.10'
+  implementation_domain: fullstack
+- title: 'Menus: definitions, the Agent menu, and every item a real action'
+  category: code
+  task_type: feature
+  depends_on:
+  - 3.2a
+  - 3.2b
+  - '3.3'
+  validation_criteria: "3.11.1: Every enabled item of every bar menu, activated, changes\
+    \ state, opens a mode or dialog, or sends a request. test: `crates/gclient/tests/menu_bar.rs::every_menu_bar_item_dispatches_to_a_handler`\
+    \ (new).\n3.11.2: The Agent menu lists exactly the nine actions in the stated\
+    \ order, with `respond`/`mark seen` disabled when no attention entry applies.\
+    \ test: `crates/gclient/tests/menu_bar.rs::agent_menu_lists_the_nine_actions_in_order`\
+    \ (new).\n3.11.3: File says `new workspace\u2026`, Help holds `alerts\u2026`,\
+    \ the global menu no longer does, and the keymap description reads `Add a workspace`.\
+    \ test: `crates/gclient/tests/menu_bar.rs::file_menu_says_new_workspace_and_help_holds_the_alert_log`\
+    \ (new). file: `crates/gclient/src/ui/keymap/names.rs`.\n3.11.4: View carries\
+    \ the `[view]` and `[working]` band choices plus `show sidebar` as `Act(ToggleSidebar)`\
+    \ and `pin sidebar` as `MenuAction::PinSidebar`. behavior: \"pin sidebar\" in\
+    \ `crates/gclient/src/app/live_loop/menu_bar.rs`.\n3.11.5: The item builders live\
+    \ in `menu/items.rs` (the tests were moved to `menu/tests.rs` by 3.2b and only\
+    \ their two global-menu index assertions change here), dispatch lives in menu_dispatch.rs,\
+    \ and the existing global-menu tests pass with their updated indices. test: `crates/gclient/src/app/live_loop/menu/tests.rs::menus_list_items_per_target_and_state`\
+    \ (existing, updated). file: `crates/gclient/src/app/live_loop/menu_dispatch.rs`.\n\
+    3.11.6: The keys overlay golden shows `Add a workspace`. file: `crates/gclient/tests/fixtures/screens/help_dialog.txt`.\n\
+    3.11.7: The menu-bar dispatch test calls apply_live_menu_action for every enabled\
+    \ non-Act item, and an Ok(false) fall-through from apply_scripted_menu_action\
+    \ is a failure. test: `crates/gclient/tests/menu_bar.rs::every_menu_bar_item_dispatches_to_a_handler`."
+  labels:
+  - covers:gclient-chrome-refresh:3.11:3.11.1
+  - covers:gclient-chrome-refresh:3.11:3.11.2
+  - covers:gclient-chrome-refresh:3.11:3.11.3
+  - covers:gclient-chrome-refresh:3.11:3.11.4
+  - covers:gclient-chrome-refresh:3.11:3.11.5
+  - covers:gclient-chrome-refresh:3.11:3.11.6
+  - covers:gclient-chrome-refresh:3.11:3.11.7
+  tdd: true
+  source_section: '3.11'
+  implementation_domain: frontend
+- title: "Window \u203A Arrange and New Grid"
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.11'
+  validation_criteria: "3.12.1: Each of the five layouts plans the stated move-then-ratio\
+    \ sequence for three panes. test: `crates/gclient/tests/arrange.rs::each_layout_plans_moves_then_ratios_for_three_panes`\
+    \ (new).\n3.12.2: Tiled uses `ceil(sqrt N)` rows and even ratios for five panes.\
+    \ test: `crates/gclient/tests/arrange.rs::tiled_uses_ceil_sqrt_rows_and_even_ratios`\
+    \ (new).\n3.12.3: A one-pane or local tab sends nothing and says so. test: `crates/gclient/tests/arrange.rs::a_single_pane_tab_plans_nothing_and_says_so`\
+    \ (new).\n3.12.4: The New Grid dialog clamps rows and columns to 1..=4, previews\
+    \ them, and confirms as a `NewGrid` menu action. test: `crates/gclient/tests/arrange.rs::new_grid_dialog_clamps_to_one_through_four_and_confirms_dims`\
+    \ (new).\n3.12.5: `create_grid` spawns rows\xD7cols shells with the stated placements\
+    \ and evens the cells. test: `crates/gclient/tests/arrange.rs::create_grid_spawns_rows_times_cols_shells_and_evens_them`\
+    \ (new).\n3.12.6: Both the Window menu and the pane context menu carry the five\
+    \ arrange items and `new grid\u2026`. behavior: \"new grid\u2026\" in `crates/gclient/src/app/live_loop/menu/items.rs`."
+  labels:
+  - covers:gclient-chrome-refresh:3.12:3.12.1
+  - covers:gclient-chrome-refresh:3.12:3.12.2
+  - covers:gclient-chrome-refresh:3.12:3.12.3
+  - covers:gclient-chrome-refresh:3.12:3.12.4
+  - covers:gclient-chrome-refresh:3.12:3.12.5
+  - covers:gclient-chrome-refresh:3.12:3.12.6
+  tdd: true
+  source_section: '3.12'
+  implementation_domain: backend
+- title: "Help \u203A Daemon and Help \u203A About Gobby dialogs"
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.8'
+  - '3.9'
+  - '3.10'
+  - '3.11'
+  - '3.12'
+  validation_criteria: "3.13.1: About is 72\xD715 with the title ` about gobby`, `esc\
+    \ close` in accent at the right, the goblin 29\xD714 at left, and the stated rows\
+    \ in their stated roles. test: `crates/gclient/tests/info_dialogs.rs::about_dialog_is_72_by_15_with_the_goblin_and_the_stated_rows`\
+    \ (new).\n3.13.2: Daemon shows url, both versions, health, the last roster refresh\
+    \ age and the startup summary. test: `crates/gclient/tests/info_dialogs.rs::daemon_dialog_shows_url_versions_health_and_last_roster_refresh`\
+    \ (new).\n3.13.3: Help lists `keys`, `alerts\u2026`, `daemon`, `about gobby` in\
+    \ that order, and both entries open their dialogs. test: `crates/gclient/tests/info_dialogs.rs::help_menu_ends_with_about_gobby_and_both_entries_open`\
+    \ (new).\n3.13.4: Esc, Enter and `q` close either dialog; other keys are consumed.\
+    \ test: `crates/gclient/tests/info_dialogs.rs::info_dialogs_close_on_esc_enter_and_q`\
+    \ (new).\n3.13.5: The renderer carries the native header. file: `crates/gclient/src/ui/dialogs/info.rs`."
+  labels:
+  - covers:gclient-chrome-refresh:3.13:3.13.1
+  - covers:gclient-chrome-refresh:3.13:3.13.2
+  - covers:gclient-chrome-refresh:3.13:3.13.3
+  - covers:gclient-chrome-refresh:3.13:3.13.4
+  - covers:gclient-chrome-refresh:3.13:3.13.5
+  tdd: true
+  source_section: '3.13'
+  implementation_domain: fullstack
+- title: Empty tab
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.6'
+  - '3.8'
+  validation_criteria: "3.14.1: The empty tab shows the dimmed goblin above `No pane\
+    \ open.` and the three ways out, with live chords. file: `crates/gclient/tests/fixtures/screens/empty_workspace.txt`.\n\
+    3.14.2: A short area drops the goblin and keeps the four text rows, with no exclamation\
+    \ mark. test: `crates/gclient/src/ui/panes/tests.rs::empty_state_names_the_next_step_without_exclamation`\
+    \ (existing, extended to assert the three rows and the dropped goblin at 60\xD7\
+    10).\n3.14.3: The chords follow the keymap: a nested prefix and an `unset` binding\
+    \ render as such. test: `crates/gclient/src/ui/panes/tests.rs::empty_state_chords_follow_the_live_keymap`\
+    \ (new, in the existing inline test module).\n3.14.4: The projects-and-agents\
+    \ golden shows the same empty tab. file: `crates/gclient/tests/fixtures/screens/projects_agents.txt`."
+  labels:
+  - covers:gclient-chrome-refresh:3.14:3.14.1
+  - covers:gclient-chrome-refresh:3.14:3.14.2
+  - covers:gclient-chrome-refresh:3.14:3.14.3
+  - covers:gclient-chrome-refresh:3.14:3.14.4
+  tdd: true
+  source_section: '3.14'
+  implementation_domain: frontend
+- title: 'Keys overlay: the description is never cut'
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.11'
+  validation_criteria: "3.15.1: At 120, 80 and 56 columns every description is present\
+    \ in full; a too-narrow column wraps rather than cuts. test: `crates/gclient/tests/keybind_help.rs::the_description_column_is_never_cut_at_narrow_widths`\
+    \ (new).\n3.15.2: Names draw only when the longest row fits, for all rows or none.\
+    \ test: `crates/gclient/tests/keybind_help.rs::the_keymap_name_draws_only_when_the_longest_row_fits`\
+    \ (new).\n3.15.3: Hidden names stay searchable. test: `crates/gclient/tests/keybind_help.rs::name_stays_searchable_when_hidden`\
+    \ (new).\n3.15.4: `help_lines` keeps its text, so the parity cases and the scroll\
+    \ bound are unchanged. symbol: `help_lines`.\n3.15.5: The 120\xD740 golden is\
+    \ unchanged except for 3.11's description. file: `crates/gclient/tests/fixtures/screens/help_dialog.txt`."
+  labels:
+  - covers:gclient-chrome-refresh:3.15:3.15.1
+  - covers:gclient-chrome-refresh:3.15:3.15.2
+  - covers:gclient-chrome-refresh:3.15:3.15.3
+  - covers:gclient-chrome-refresh:3.15:3.15.4
+  - covers:gclient-chrome-refresh:3.15:3.15.5
+  tdd: true
+  source_section: '3.15'
+  implementation_domain: backend
+- title: User guide
+  category: docs
+  task_type: feature
+  depends_on:
+  - '3.1'
+  - 3.2a
+  - 3.2b
+  - '3.3'
+  - 3.4a
+  - 3.4b
+  - '3.5'
+  - '3.6'
+  - '3.7'
+  - '3.8'
+  - '3.9'
+  - '3.10'
+  - '3.11'
+  - '3.12'
+  - '3.13'
+  - '3.14'
+  - '3.15'
+  validation_criteria: "3.16.1: The layout diagram shows the menu bar row, tab row,\
+    \ pane area and status row, and the prose names all seven menus and their items.\
+    \ behavior: \"Gobby  File  Edit  View  Window  Agent  Help\" in `docs/guides/gclient-user-guide.md`.\n\
+    3.16.2: \xA7What a terminal is called has two rungs and no `shell` literal. behavior:\
+    \ \"The command in its foreground\" in `docs/guides/gclient-user-guide.md`.\n\
+    3.16.3: The keybinding table reads `Add a workspace` and the context-menu table\
+    \ has no `[Menu]` row. behavior: \"Add a workspace\" in `docs/guides/gclient-user-guide.md`.\n\
+    3.16.4: The reconnect section describes the splash stages, the status segment,\
+    \ the URL toast and the frozen panes. behavior: \"retry in\" in `docs/guides/gclient-user-guide.md`.\n\
+    3.16.5: The index row still resolves to the guide. file: `docs/guides/README.md`."
+  labels:
+  - covers:gclient-chrome-refresh:3.16:3.16.1
+  - covers:gclient-chrome-refresh:3.16:3.16.2
+  - covers:gclient-chrome-refresh:3.16:3.16.3
+  - covers:gclient-chrome-refresh:3.16:3.16.4
+  - covers:gclient-chrome-refresh:3.16:3.16.5
+  tdd: false
+  source_section: '3.16'
+  assigned_agent: tech-writer
+- title: One tagline everywhere
+  category: docs
+  task_type: feature
+  depends_on: []
+  validation_criteria: '4.1.1: `gobby --help` and the package docstring open with
+    `Gobby - fleet management for AI coding agents.` file: `src/gobby/cli/__init__.py`.
+    file: `src/gobby/__init__.py`.
+
+    4.1.2: Both service templates describe the daemon as `Gobby Daemon - fleet management
+    for AI coding agents`. file: `src/gobby/install/shared/services/gobby-daemon.service.j2`.
+    file: `src/gobby/install/shared/services/gobby-daemon.task.xml.j2`.
+
+    4.1.3: The README hero, its lead paragraph, the root `package.json` description
+    and the `pyproject.toml` description carry the line; the loop sentence stays in
+    the README body. file: `README.md`. file: `package.json`. file: `pyproject.toml`.
+
+    4.1.4: `AGENTS.md`, `ROADMAP.md`, both architecture docs and `ONBOARDING.md` open
+    with the line and keep their mechanism lists. file: `AGENTS.md`. file: `ROADMAP.md`.
+    file: `docs/architecture/index.md`. file: `docs/architecture/architecture.md`.
+    file: `ONBOARDING.md`.
+
+    4.1.5: The default agent persona states the line and `web/index.html` carries
+    it as the meta description. file: `src/gobby/install/shared/workflows/agents/default.yaml`.
+    file: `web/index.html`.
+
+    4.1.6: `rg -n "local-first daemon|Local-first daemon|control plane for AI coding|unify
+    your AI coding|Walk away. End with a PR" --glob ''!tests/**'' --glob ''!web/src/**/__tests__/**''
+    --glob ''!.gobby/**''` matches only `SECURITY.md` and the README loop sentence.
+    behavior: "local-first daemon" in `SECURITY.md`.'
+  labels:
+  - covers:gclient-chrome-refresh:4.1:4.1.1
+  - covers:gclient-chrome-refresh:4.1:4.1.2
+  - covers:gclient-chrome-refresh:4.1:4.1.3
+  - covers:gclient-chrome-refresh:4.1:4.1.4
+  - covers:gclient-chrome-refresh:4.1:4.1.5
+  - covers:gclient-chrome-refresh:4.1:4.1.6
+  tdd: false
+  source_section: '4.1'
+  assigned_agent: tech-writer
+```
