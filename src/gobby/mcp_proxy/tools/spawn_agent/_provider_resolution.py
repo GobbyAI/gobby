@@ -204,6 +204,45 @@ def incompatible_spawn_model_provider(
     )
 
 
+class CapabilityRefresher(Protocol):
+    """The slice of ``CapabilityRefreshCoordinator`` the spawn gate needs."""
+
+    async def refresh_provider(self, provider: str) -> bool: ...
+
+
+def spawn_capability_service() -> CapabilityRefresher | None:
+    """Return the daemon capability refresh coordinator, or ``None`` outside the daemon."""
+    from gobby.app_context import get_app_context
+
+    ctx = get_app_context()
+    service = getattr(ctx, "provider_capability_service", None) if ctx else None
+    return cast(CapabilityRefresher | None, service)
+
+
+async def incompatible_spawn_model_provider_after_recollect(
+    *,
+    provider: str,
+    model: str | None,
+    resolver: CapabilityResolver | None = None,
+    refresher: CapabilityRefresher | None = None,
+) -> SpawnArgumentError | None:
+    """Re-collect the provider's catalog once before rejecting a model it does not list.
+
+    The stored snapshot refreshes at startup and every 24 hours, so a model a CLI
+    update ships between refreshes would otherwise be rejected until the next
+    daemon restart. A miss against an answered catalog is the one signal that the
+    catalog may be stale, so it costs one collector run (bounded by the
+    coordinator's per-provider cooldown) before the verdict stands.
+    """
+    error = incompatible_spawn_model_provider(provider=provider, model=model, resolver=resolver)
+    if error is None:
+        return None
+    service = refresher if refresher is not None else spawn_capability_service()
+    if service is None or not await service.refresh_provider(provider):
+        return error
+    return incompatible_spawn_model_provider(provider=provider, model=model, resolver=resolver)
+
+
 def spawn_capability_resolver() -> CapabilityResolver:
     """Return the daemon capability resolver, or an empty fallback."""
     from gobby.agents.reasoning import _get_capability_resolver
@@ -222,9 +261,11 @@ __all__ = [
     "SpawnArgumentError",
     "concrete_provider",
     "incompatible_spawn_model_provider",
+    "incompatible_spawn_model_provider_after_recollect",
     "missing_provider_for_supplied_model",
     "parent_session_provider",
     "resolve_spawn_provider",
     "spawn_capability_resolver",
+    "spawn_capability_service",
     "spawning_session_provider",
 ]

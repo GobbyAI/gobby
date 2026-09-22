@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 from gobby.mcp_proxy.tools.spawn_agent._provider_resolution import (
     SpawnArgumentError,
     concrete_provider,
-    incompatible_spawn_model_provider,
+    incompatible_spawn_model_provider_after_recollect,
     missing_provider_for_supplied_model,
     resolve_spawn_provider,
     spawning_session_provider,
@@ -133,7 +133,7 @@ async def evaluate_spawn(
         result.items.append(_argument_error_item(missing_provider))
     explicit_provider = concrete_provider(provider)
     if explicit_provider is not None:
-        pair_error = incompatible_spawn_model_provider(
+        pair_error = await incompatible_spawn_model_provider_after_recollect(
             provider=explicit_provider,
             model=model,
         )
