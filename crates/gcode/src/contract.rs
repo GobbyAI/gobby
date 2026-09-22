@@ -122,6 +122,8 @@ pub fn contract() -> CliContract {
                     "indexed_symbols",
                     "skipped_files",
                     "errors",
+                    // Additive per-run partition refresh report from task 3.2.
+                    "communities",
                 ],
                 ..CommandContract::new(
                     "index",

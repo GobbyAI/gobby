@@ -388,7 +388,8 @@
         "indexed_files",
         "indexed_symbols",
         "skipped_files",
-        "errors"
+        "errors",
+        "communities"
       ]
     },
     {
