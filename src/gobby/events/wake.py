@@ -21,12 +21,16 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from gobby.agents.tmux.text_injection import TmuxExpectedTextInjectionError
 from gobby.events.live_wake import (
-    ComposerProbe,
+    ActivityProbe,
     composer_occupied_result,
     normalize_live_wake_result,
     wake_debounced_result,
     wake_failure,
     wake_state_failure,
+)
+from gobby.events.wake_active_recovery import (
+    reconcile_restart_stale_session,
+    reconcile_restart_stale_sessions,
 )
 from gobby.events.wake_notifications import persist_completion_notification
 from gobby.events.wake_terminal_resolution import (
@@ -134,7 +138,7 @@ class WakeDispatcher:
         terminal_manager: LiveTerminalResolver | None = None,
         run_db: RunDb | None = None,
         lifecycle_refresh: LifecycleRefresh | None = None,
-        composer_probe: ComposerProbe | None = None,
+        activity_probe: ActivityProbe | None = None,
     ) -> None:
         self._session_manager = session_manager
         self._ism_manager = ism_manager
@@ -147,13 +151,37 @@ class WakeDispatcher:
         self._terminal_manager = terminal_manager
         self._run_db = run_db or _default_run_db
         self._lifecycle_refresh = lifecycle_refresh
-        self._composer_probe = composer_probe
+        self._activity_probe = activity_probe
+        self._restart_horizon_ms: int | None = None
+        self._restart_excluded_session_ids: frozenset[str] = frozenset()
         # session_id -> (turn_count_at_last_wake, monotonic_ts_at_last_wake)
         self._last_live_wake: dict[str, tuple[int, float]] = {}
         self._live_wake_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = (
             weakref.WeakValueDictionary()
         )
         self._owner_loop: asyncio.AbstractEventLoop | None = None
+
+    async def reconcile_restart_active_sessions(
+        self,
+        *,
+        restart_horizon_ms: int | None,
+        excluded_session_ids: frozenset[str],
+        recovery_safe: bool,
+    ) -> tuple[str, ...]:
+        """Run initial reconciliation, then enable the same policy for later wakes."""
+        paused = await reconcile_restart_stale_sessions(
+            session_manager=self._session_manager,
+            terminal_manager=self._terminal_manager,
+            activity_probe=self._activity_probe,
+            run_db=self._run_db,
+            restart_horizon_ms=restart_horizon_ms,
+            excluded_session_ids=excluded_session_ids,
+            recovery_safe=recovery_safe,
+        )
+        if recovery_safe and isinstance(restart_horizon_ms, int):
+            self._restart_horizon_ms = restart_horizon_ms
+            self._restart_excluded_session_ids = excluded_session_ids
+        return paused
 
     def bind_owner_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         """Confine wakes to the daemon loop that owns the per-session locks."""
@@ -293,13 +321,27 @@ class WakeDispatcher:
         # and cancel its in-flight tool batch. Check after acquiring the lock and
         # refreshing lifecycle state for both mailbox and completion wakes.
         if getattr(session, "status", None) == "active" and priority != "urgent":
-            return {
-                "session_id": session_id,
-                "delivered": False,
-                "method": "next_call_context",
-                "skipped": "session_active",
-                "ism_persisted": True,
-            }
+            if self._activity_probe is not None and self._restart_horizon_ms is not None:
+                terminal_route = await self._terminal_route_for_session(session)
+                reconciled = await reconcile_restart_stale_session(
+                    session_manager=self._session_manager,
+                    observed=session,
+                    terminal=terminal_route.managed_terminal,
+                    activity_probe=self._activity_probe,
+                    run_db=self._run_db,
+                    restart_horizon_ms=self._restart_horizon_ms,
+                    excluded_session_ids=self._restart_excluded_session_ids,
+                )
+                if reconciled is not None:
+                    session = reconciled
+            if getattr(session, "status", None) == "active":
+                return {
+                    "session_id": session_id,
+                    "delivered": False,
+                    "method": "next_call_context",
+                    "skipped": "session_active",
+                    "ism_persisted": True,
+                }
 
         agent_depth = getattr(session, "agent_depth", 0) or 0
         session_type = getattr(session, "session_type", None)
@@ -617,14 +659,14 @@ class WakeDispatcher:
         a probe error all fall through to the blind drain. An urgent wake always
         drains. No debounce record is written, so the next wake probes again.
         """
-        if priority == "urgent" or self._composer_probe is None:
+        if priority == "urgent" or self._activity_probe is None:
             return None
         try:
-            read = await self._composer_probe(session, terminal)
+            activity = await self._activity_probe(session, terminal)
         except Exception:
-            logger.debug("composer probe failed for session %s", session_id, exc_info=True)
+            logger.debug("activity probe failed for session %s", session_id, exc_info=True)
             return None
-        if read.state != "draft":
+        if activity.composer.state != "draft":
             return None
         logger.debug(
             "wake for session %s deferred to the next turn: composer holds an operator draft",

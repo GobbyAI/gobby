@@ -57,7 +57,16 @@ class WakeReplayCoordinator:
             if not self._ready or loop is None or not loop.is_running() or loop.is_closed():
                 self._pending_recipients.add(transition.session_id)
                 return
-        loop.call_soon_threadsafe(self._start_task, transition.session_id)
+        try:
+            loop.call_soon_threadsafe(self._start_task, transition.session_id)
+        except RuntimeError:
+            with self._state_lock:
+                self._pending_recipients.add(transition.session_id)
+            logger.warning(
+                "Wake replay scheduling failed for session %s; durable intent retained",
+                transition.session_id,
+                exc_info=True,
+            )
 
     async def open(self) -> None:
         """Open the startup gate and drain every durable replay candidate."""
