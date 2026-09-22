@@ -820,9 +820,12 @@ rows (`representatives` are the top five members by in-degree with ties by path;
 and `commit`. Overlay projects: when `ctx` resolves to an overlay project that has no
 rows of its own, `begin_replace` seeds the prior rows and the watermark from the parent
 project (the same parent lookup `read_for_context` uses) inside the same READ COMMITTED
-transaction, taking `FOR UPDATE` on the parent's `code_indexed_project_states` row before
-reading the parent's `code_communities` rows: the parent's run holds a different advisory
-lock, so that row lock is what serializes the seed against the parent's own replace. The
+transaction, reading the parent's `code_indexed_project_states` row and its
+`code_communities` rows with plain SELECTs in one statement: that single statement's MVCC
+snapshot is what keeps the seeded watermark and rows from different parent commits apart,
+and it takes no parent row locks, because the managed gcode principal has no UPDATE
+privilege on parent rows under RLS and `FOR UPDATE` there returns nothing (Decision 29a).
+A parent replace committing mid-read becomes visible only to a later statement. The
 seed never copies the parent's `partition_signature`; the skip compares against the
 overlay's own stored value. `assign_ids` then carries the parent's ids and label fields
 forward by signature match and only genuinely new communities take fresh ids above the
@@ -876,9 +879,13 @@ issued after `begin_replace` blocks, matches zero rows, and leaves the row queue
 parent's ids and model labels for unchanged communities and issues fresh ids above the
 parent's watermark), `overlay_first_refresh_commits_when_partition_matches_parent` (an
 overlay whose partition equals the parent's commits rows under the overlay id on its
-first refresh and skips on its second), `overlay_seed_locks_parent_state_row` (a seed
-started while a parent replace holds the row lock blocks until the parent commits and
-reads the committed rows), `invalidate_removes_community_rows_with_project_state`
+first refresh and skips on its second), `overlay_seed_reads_parent_snapshot_without_locking`
+(a seed reads the parent's state row and community rows with plain SELECTs, taking no
+parent row locks), `overlay_seed_reads_coherent_parent_snapshot_across_replace_commit`
+(a seed running while a parent replace commits never combines a parent watermark and
+rows from different commits), `overlay_refresh_seeds_parent_rows_as_managed_principal`
+(the seed succeeds as the RLS-enforced managed gcode principal, which has no UPDATE
+privilege on parent rows), `invalidate_removes_community_rows_with_project_state`
 (after `invalidate` neither table holds a row for the machine and project), `edge_change_without_membership_change_rewrites_rows` (adding one
 import between existing members of one community rewrites its `internal_edges`,
 `cohesion`, `representatives`, and `boundary` with every `member_signature` unchanged),
@@ -909,7 +916,7 @@ after the coherent-set cutover.
 - 3.2.12 - Incremental single-file index latency before and after this leaf is recorded against the +250 ms p50 budget on both corpora. behavior: "p50" in `docs/evidence/community-labels-2026-09/refresh-latency.md`.
 - 3.2.13 - `invalidate` removes this machine's `code_communities` rows in the same transaction that removes its `code_indexed_project_states` row. test: `crates/gcode/src/communities/refresh_tests.rs::invalidate_removes_community_rows_with_project_state`.
 - 3.2.14 - An overlay's first refresh commits rows under the overlay id even when its partition equals the parent's, because the skip compares against the overlay's own stored signature. test: `crates/gcode/src/communities/refresh_tests.rs::overlay_first_refresh_commits_when_partition_matches_parent`.
-- 3.2.15 - The overlay seed reads the parent's rows under `FOR UPDATE` on the parent's state row in one READ COMMITTED transaction and observes a concurrent parent replace only after it commits. test: `crates/gcode/src/communities/refresh_tests.rs::overlay_seed_locks_parent_state_row`.
+- 3.2.15 - The overlay seed reads the parent's state row and community rows with plain SELECTs from one coherent READ COMMITTED statement snapshot inside the replacement transaction. It needs no UPDATE visibility and takes no parent row locks, so it succeeds as the RLS-enforced managed gcode principal, and it never combines a parent watermark and rows from different commits when a concurrent parent replace commits during the read. test: `crates/gcode/src/communities/refresh_tests.rs::overlay_seed_reads_parent_snapshot_without_locking`. test: `crates/gcode/src/communities/refresh_tests.rs::overlay_seed_reads_coherent_parent_snapshot_across_replace_commit`. test: `crates/gcode/src/communities/refresh_tests.rs::overlay_refresh_seeds_parent_rows_as_managed_principal`.
 
 ## P4: Surfaces at contract v11
 `kind: framing`
@@ -2244,9 +2251,12 @@ prose defining `D1.1` plus a `deferred_from` key, because the validator rejects 
     its partition equals the parent''s, because the skip compares against the overlay''s
     own stored signature. test: `crates/gcode/src/communities/refresh_tests.rs::overlay_first_refresh_commits_when_partition_matches_parent`.
 
-    3.2.15: The overlay seed reads the parent''s rows under `FOR UPDATE` on the parent''s
-    state row in one READ COMMITTED transaction and observes a concurrent parent replace
-    only after it commits. test: `crates/gcode/src/communities/refresh_tests.rs::overlay_seed_locks_parent_state_row`.'
+    3.2.15: The overlay seed reads the parent''s state row and community rows with plain
+    SELECTs from one coherent READ COMMITTED statement snapshot inside the replacement
+    transaction. It needs no UPDATE visibility and takes no parent row locks, so it
+    succeeds as the RLS-enforced managed gcode principal, and it never combines a parent
+    watermark and rows from different commits when a concurrent parent replace commits
+    during the read. test: `crates/gcode/src/communities/refresh_tests.rs::overlay_seed_reads_parent_snapshot_without_locking`. test: `crates/gcode/src/communities/refresh_tests.rs::overlay_seed_reads_coherent_parent_snapshot_across_replace_commit`. test: `crates/gcode/src/communities/refresh_tests.rs::overlay_refresh_seeds_parent_rows_as_managed_principal`.'
   labels:
   - covers:gcode-import-communities:3.2:3.2.1
   - covers:gcode-import-communities:3.2:3.2.2
