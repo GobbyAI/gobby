@@ -221,32 +221,56 @@ pub(super) fn build_view_payload(
             count: None,
         })
         .collect::<Vec<_>>();
-    let node_ids = rendered_nodes
+    let node_by_id = rendered_nodes
         .iter()
-        .map(|node| node.id.as_str())
-        .collect::<std::collections::HashSet<_>>();
+        .map(|node| (node.id.as_str(), node))
+        .collect::<std::collections::HashMap<_, _>>();
     for community in &mut communities {
         community.nodes.sort();
         community.nodes.dedup();
         for member in &community.nodes {
-            if !node_ids.contains(member.as_str()) {
+            let Some(node) = node_by_id.get(member.as_str()) else {
                 bail!(
                     "community {} contains unknown view node {member}",
+                    community.id
+                );
+            };
+            if node.community.as_deref() != Some(community.id.as_str()) {
+                bail!(
+                    "community {} contains mismatched view node {member}",
                     community.id
                 );
             }
         }
     }
     communities.sort_by(|left, right| left.id.cmp(&right.id));
-    let community_ids = communities
+    let members_by_community = communities
         .iter()
-        .map(|community| community.id.as_str())
-        .collect::<std::collections::HashSet<_>>();
+        .map(|community| {
+            (
+                community.id.as_str(),
+                community
+                    .nodes
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<std::collections::HashSet<_>>(),
+            )
+        })
+        .collect::<std::collections::HashMap<_, _>>();
     for node in &rendered_nodes {
-        if let Some(community) = node.community.as_deref()
-            && !community_ids.contains(community)
-        {
-            bail!("view node {} names unlisted community {community}", node.id);
+        if let Some(community_id) = node.community.as_deref() {
+            let Some(members) = members_by_community.get(community_id) else {
+                bail!(
+                    "view node {} names unlisted community {community_id}",
+                    node.id
+                );
+            };
+            if !members.contains(node.id.as_str()) {
+                bail!(
+                    "community {community_id} does not include view node {}",
+                    node.id
+                );
+            }
         }
     }
     let mermaid = render_mermaid(&seed, &rendered_nodes, &rendered_edges, &communities)?;

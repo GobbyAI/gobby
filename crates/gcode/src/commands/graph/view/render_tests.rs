@@ -316,6 +316,29 @@ fn payload_rejects_unknown_community_member() {
             .contains("file:src/missing.py")
     );
 
+    let missing_membership = build_view_payload(
+        "proj-1",
+        "/abs/project",
+        GraphViewKind::Mcg,
+        sample_seed(),
+        1,
+        false,
+        false,
+        None,
+        vec![ViewNodeInput {
+            community: Some("community:1".into()),
+            ..node.clone()
+        }],
+        Vec::new(),
+        vec![community("community:1", "Core", &[])],
+    );
+    assert!(
+        missing_membership
+            .expect_err("node missing from its listed community must fail")
+            .to_string()
+            .contains("file:src/a.py")
+    );
+
     let unlisted_community = build_view_payload(
         "proj-1",
         "/abs/project",
