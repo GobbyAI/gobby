@@ -8,13 +8,14 @@ import math
 import threading
 import time
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from gobby.hooks.adapter_execution import run_adapter_hook
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.hooks.receipt_effects import STAGED_EFFECTS_FIELD
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
@@ -40,6 +41,9 @@ def _insert_optional_mcp_rule(
     tool: str,
     arguments: dict[str, Any],
     timeout_seconds: float = 2.0,
+    success_variable: str | None = None,
+    delivery: Literal["eager", "on_receipt"] = "eager",
+    tags: list[str] | None = None,
 ) -> None:
     manager.create(
         name=name,
@@ -54,11 +58,14 @@ def _insert_optional_mcp_rule(
                     arguments=arguments,
                     inject_result=True,
                     timeout_seconds=timeout_seconds,
+                    success_variable=success_variable,
+                    delivery=delivery,
                 )
             ],
         ).model_dump(),
         priority=10,
         enabled=True,
+        tags=tags,
     )
 
 
@@ -172,7 +179,7 @@ async def test_slow_rule_evaluation_does_not_hold_admission_for_unrelated_hooks(
 
 
 @pytest.mark.asyncio
-async def test_nonblocking_inline_mcp_result_is_delivered_on_next_hook(
+async def test_cached_mcp_result_serves_matching_hook_inline_without_redispatch(
     temp_db: HubDatabase,
 ) -> None:
     manager = RuleDefinitionManager(temp_db)
@@ -181,11 +188,11 @@ async def test_nonblocking_inline_mcp_result_is_delivered_on_next_hook(
         name="surface-memory-without-blocking",
         event=RuleTriggerEvent.BEFORE_TOOL,
         when="event.data.get('tool_name') == 'SlowTool'",
-        server="gobby-memory",
-        tool="surface_memories",
-        arguments={"text": "remember hook admission", "trigger": "turn"},
+        server="gobby-skills",
+        tool="list_hubs",
+        arguments={},
     )
-    dispatch_finished = asyncio.Event()
+    dispatch_count = 0
 
     async def dispatcher(
         _server: str,
@@ -193,27 +200,14 @@ async def test_nonblocking_inline_mcp_result_is_delivered_on_next_hook(
         _arguments: dict[str, Any],
         _event: HookEvent,
     ) -> dict[str, Any]:
-        dispatch_finished.set()
+        nonlocal dispatch_count
+        dispatch_count += 1
         return {
             "success": True,
-            "result": {
-                "count": 1,
-                "trigger": "turn",
-                "memories": [
-                    {
-                        "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-                        "type": "fact",
-                        "search_via": "semantic|keyword",
-                        "updated_at": "2026-09-22T12:00:00Z",
-                        "content": "Hook admission must stay responsive.",
-                        "rationale": "Use when changing hook concurrency.",
-                    }
-                ],
-            },
+            "result": {"hubs": [{"name": "cached-hub", "type": "test"}]},
         }
 
     engine = RuleEngine(temp_db, mcp_dispatcher=dispatcher)
-    variables = {"project": {"id": "isolated-hub", "path": "/tmp"}}
     first = await engine.evaluate(
         HookEvent(
             event_type=HookEventType.BEFORE_TOOL,
@@ -224,30 +218,30 @@ async def test_nonblocking_inline_mcp_result_is_delivered_on_next_hook(
             metadata={"_platform_session_id": _CODEX_SESSIONS[0]},
         ),
         session_id=_CODEX_SESSIONS[0],
-        variables=variables,
+        variables={"project": {"id": "isolated-hub", "path": "/tmp"}},
     )
-    await asyncio.wait_for(dispatch_finished.wait(), timeout=1.0)
     second = await engine.evaluate(
         HookEvent(
             event_type=HookEventType.BEFORE_TOOL,
             session_id=_CODEX_SESSIONS[0],
             source=SessionSource.CODEX,
             timestamp=datetime.now(UTC),
-            data={"tool_name": "FastTool"},
+            data={"tool_name": "SlowTool"},
             metadata={"_platform_session_id": _CODEX_SESSIONS[0]},
         ),
         session_id=_CODEX_SESSIONS[0],
-        variables=variables,
+        variables={"project": {"id": "isolated-hub", "path": "/tmp"}},
     )
 
-    assert first.context is None
+    assert dispatch_count == 1
+    assert first.context is not None
+    assert "cached-hub" in first.context
     assert second.context is not None
-    assert '<memory-index trigger="turn">' in second.context
-    assert "Hook admission must stay responsive." in second.context
+    assert "cached-hub" in second.context
 
 
 @pytest.mark.asyncio
-async def test_nonblocking_mcp_timeout_does_not_extend_hook_completion(
+async def test_mcp_timeout_stays_capped_and_background_result_fills_cache(
     temp_db: HubDatabase,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -257,12 +251,15 @@ async def test_nonblocking_mcp_timeout_does_not_extend_hook_completion(
         name="surface-memory-timeout",
         event=RuleTriggerEvent.BEFORE_TOOL,
         when="True",
-        server="gobby-memory",
-        tool="surface_memories",
-        arguments={"text": "timeout probe", "trigger": "turn"},
+        server="gobby-skills",
+        tool="list_hubs",
+        arguments={},
         timeout_seconds=0.05,
     )
-    dispatch_cancelled = asyncio.Event()
+    dispatch_count = 0
+    dispatch_started = asyncio.Event()
+    release_dispatch = asyncio.Event()
+    dispatch_finished = asyncio.Event()
 
     async def stalled_dispatcher(
         _server: str,
@@ -270,11 +267,17 @@ async def test_nonblocking_mcp_timeout_does_not_extend_hook_completion(
         _arguments: dict[str, Any],
         _event: HookEvent,
     ) -> dict[str, Any]:
+        nonlocal dispatch_count
+        dispatch_count += 1
+        dispatch_started.set()
         try:
-            await asyncio.Event().wait()
-            return {"success": True, "result": {}}
+            await release_dispatch.wait()
+            return {
+                "success": True,
+                "result": {"hubs": [{"name": "late-hub", "type": "test"}]},
+            }
         finally:
-            dispatch_cancelled.set()
+            dispatch_finished.set()
 
     engine = RuleEngine(temp_db, mcp_dispatcher=stalled_dispatcher)
     started_at = time.perf_counter()
@@ -292,11 +295,193 @@ async def test_nonblocking_mcp_timeout_does_not_extend_hook_completion(
             variables={"project": {"id": "isolated-hub", "path": "/tmp"}},
         )
         hook_seconds = time.perf_counter() - started_at
-        await asyncio.wait_for(dispatch_cancelled.wait(), timeout=1.0)
+        await asyncio.wait_for(dispatch_started.wait(), timeout=1.0)
+        release_dispatch.set()
+        await asyncio.wait_for(dispatch_finished.wait(), timeout=1.0)
+        cached_started_at = time.perf_counter()
+        cached_response = await engine.evaluate(
+            HookEvent(
+                event_type=HookEventType.BEFORE_TOOL,
+                session_id=_CODEX_SESSIONS[0],
+                source=SessionSource.CODEX,
+                timestamp=datetime.now(UTC),
+                data={"tool_name": "Read"},
+                metadata={"_platform_session_id": _CODEX_SESSIONS[0]},
+            ),
+            session_id=_CODEX_SESSIONS[0],
+            variables={"project": {"id": "isolated-hub", "path": "/tmp"}},
+        )
+        cached_seconds = time.perf_counter() - cached_started_at
 
     assert response.decision == "allow"
+    assert response.context is None
     assert hook_seconds < 0.2
+    assert dispatch_count == 1
+    assert cached_seconds < 0.2
+    assert cached_response.context is not None
+    assert "late-hub" in cached_response.context
     assert "timed out after 0.05s (rule surface-memory-timeout)" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_inflight_mcp_result_fans_out_to_distinct_consumers(
+    temp_db: HubDatabase,
+) -> None:
+    manager = RuleDefinitionManager(temp_db)
+    shared_arguments = {"query": "shared"}
+    _insert_optional_mcp_rule(
+        manager,
+        name="external-on-receipt-consumer",
+        event=RuleTriggerEvent.BEFORE_TOOL,
+        when="event.data.get('tool_name') == 'ExternalTool'",
+        server="gobby-skills",
+        tool="list_hubs",
+        arguments=shared_arguments,
+        success_variable="external_consumer_succeeded",
+        delivery="on_receipt",
+        tags=["user"],
+    )
+    _insert_optional_mcp_rule(
+        manager,
+        name="internal-reserved-consumer",
+        event=RuleTriggerEvent.BEFORE_TOOL,
+        when="event.data.get('tool_name') == 'InternalTool'",
+        server="gobby-skills",
+        tool="list_hubs",
+        arguments=shared_arguments,
+        success_variable="listed_servers",
+        tags=["gobby"],
+    )
+    _insert_optional_mcp_rule(
+        manager,
+        name="external-reserved-consumer",
+        event=RuleTriggerEvent.BEFORE_TOOL,
+        when="event.data.get('tool_name') == 'UntrustedTool'",
+        server="gobby-skills",
+        tool="list_hubs",
+        arguments=shared_arguments,
+        success_variable="listed_servers",
+        tags=["user"],
+    )
+    dispatch_count = 0
+    dispatch_started = asyncio.Event()
+    release_dispatch = asyncio.Event()
+
+    async def dispatcher(
+        _server: str,
+        _tool: str,
+        _arguments: dict[str, Any],
+        _event: HookEvent,
+    ) -> dict[str, Any]:
+        nonlocal dispatch_count
+        dispatch_count += 1
+        dispatch_started.set()
+        await release_dispatch.wait()
+        return {
+            "success": True,
+            "result": {"hubs": [{"name": "shared-hub", "type": "test"}]},
+        }
+
+    engine = RuleEngine(temp_db, mcp_dispatcher=dispatcher)
+    external_variables: dict[str, Any] = {"project": {"id": "isolated-hub", "path": "/tmp"}}
+    internal_variables: dict[str, Any] = {"project": {"id": "isolated-hub", "path": "/tmp"}}
+    untrusted_variables: dict[str, Any] = {"project": {"id": "isolated-hub", "path": "/tmp"}}
+    evaluations_entered = 0
+    all_evaluations_entered = asyncio.Event()
+
+    async def evaluate(tool_name: str, variables: dict[str, Any]) -> Any:
+        nonlocal evaluations_entered
+        evaluations_entered += 1
+        if evaluations_entered == 3:
+            all_evaluations_entered.set()
+        await all_evaluations_entered.wait()
+        return await engine.evaluate(
+            HookEvent(
+                event_type=HookEventType.BEFORE_TOOL,
+                session_id=_CODEX_SESSIONS[0],
+                source=SessionSource.CODEX,
+                timestamp=datetime.now(UTC),
+                data={"tool_name": tool_name},
+                metadata={"_platform_session_id": _CODEX_SESSIONS[0]},
+            ),
+            session_id=_CODEX_SESSIONS[0],
+            variables=variables,
+        )
+
+    evaluations = [
+        asyncio.create_task(evaluate("ExternalTool", external_variables)),
+        asyncio.create_task(evaluate("InternalTool", internal_variables)),
+        asyncio.create_task(evaluate("UntrustedTool", untrusted_variables)),
+    ]
+    await asyncio.wait_for(dispatch_started.wait(), timeout=1.0)
+    release_dispatch.set()
+    responses = await asyncio.gather(*evaluations)
+
+    assert dispatch_count == 1
+    assert all(response.context and "shared-hub" in response.context for response in responses)
+    assert external_variables["external_consumer_succeeded"] is True
+    assert responses[0].metadata[STAGED_EFFECTS_FIELD]["session_variables"] == {
+        "external_consumer_succeeded": True
+    }
+    assert internal_variables["listed_servers"] is True
+    assert "listed_servers" not in untrusted_variables
+
+
+@pytest.mark.asyncio
+async def test_cached_mcp_result_is_not_delivered_across_sessions(
+    temp_db: HubDatabase,
+) -> None:
+    manager = RuleDefinitionManager(temp_db)
+    _insert_optional_mcp_rule(
+        manager,
+        name="session-scoped-cache",
+        event=RuleTriggerEvent.BEFORE_TOOL,
+        when="True",
+        server="gobby-skills",
+        tool="list_hubs",
+        arguments={},
+    )
+    dispatched_sessions: list[str] = []
+
+    async def dispatcher(
+        _server: str,
+        _tool: str,
+        _arguments: dict[str, Any],
+        event: HookEvent,
+    ) -> dict[str, Any]:
+        session_id = event.metadata["_platform_session_id"]
+        dispatched_sessions.append(session_id)
+        return {
+            "success": True,
+            "result": {"hubs": [{"name": session_id, "type": "test"}]},
+        }
+
+    engine = RuleEngine(temp_db, mcp_dispatcher=dispatcher)
+
+    async def evaluate(session_id: str) -> Any:
+        return await engine.evaluate(
+            HookEvent(
+                event_type=HookEventType.BEFORE_TOOL,
+                session_id=session_id,
+                source=SessionSource.CODEX,
+                timestamp=datetime.now(UTC),
+                data={"tool_name": "Read"},
+                metadata={"_platform_session_id": session_id},
+            ),
+            session_id=session_id,
+            variables={"project": {"id": "isolated-hub", "path": "/tmp"}},
+        )
+
+    first = await evaluate(_CODEX_SESSIONS[0])
+    second = await evaluate(_CODEX_SESSIONS[1])
+
+    assert dispatched_sessions == list(_CODEX_SESSIONS)
+    assert first.context is not None
+    assert _CODEX_SESSIONS[0] in first.context
+    assert _CODEX_SESSIONS[1] not in first.context
+    assert second.context is not None
+    assert _CODEX_SESSIONS[1] in second.context
+    assert _CODEX_SESSIONS[0] not in second.context
 
 
 @pytest.mark.asyncio
@@ -350,41 +535,48 @@ async def test_isolated_hub_two_codex_one_grok_hook_p95_under_one_second(
             arguments=arguments,
         )
 
-    dispatch_started_count = 0
-    dispatch_finished_count = 0
+    dispatch_count = 0
     dispatch_count_lock = threading.Lock()
-    all_dispatches_started = threading.Event()
-    all_dispatches_finished = threading.Event()
-    release_dispatches = threading.Event()
 
-    async def slow_dispatcher(
+    async def dispatcher(
         _server: str,
         tool: str,
         _arguments: dict[str, Any],
         _event: HookEvent,
     ) -> dict[str, Any]:
-        nonlocal dispatch_started_count, dispatch_finished_count
+        nonlocal dispatch_count
         with dispatch_count_lock:
-            dispatch_started_count += 1
-            if dispatch_started_count == 6:
-                all_dispatches_started.set()
-        await asyncio.to_thread(release_dispatches.wait)
-        with dispatch_count_lock:
-            dispatch_finished_count += 1
-            if dispatch_finished_count == 6:
-                all_dispatches_finished.set()
+            dispatch_count += 1
         if tool == "recall_review_lessons_for_files":
             return {"success": True, "result": {"count": 0, "lessons": []}}
         return {"success": True, "result": {"count": 0, "memories": [], "trigger": "turn"}}
 
-    engine = RuleEngine(temp_db, mcp_dispatcher=slow_dispatcher)
-    runtime = WorkflowEvaluationRuntime(max_workers=8)
-    adapter = _adapter_for_engine(engine, runtime)
+    engine = RuleEngine(temp_db, mcp_dispatcher=dispatcher)
     hook_specs = [
         (session_id, "codex", event_type)
         for session_id in _CODEX_SESSIONS
         for event_type in ("before_tool", "after_tool")
     ] + [(_GROK_SESSION, "grok", event_type) for event_type in ("before_tool", "after_tool")]
+    for session_id, source, event_type in hook_specs:
+        await engine.evaluate(
+            HookEvent(
+                event_type=HookEventType(event_type),
+                session_id=session_id,
+                source=SessionSource(source),
+                timestamp=datetime.now(UTC),
+                data={
+                    "provider": source,
+                    "tool_name": "Edit" if event_type == "before_tool" else "EditResult",
+                },
+                metadata={"_platform_session_id": session_id},
+            ),
+            session_id=session_id,
+            variables={"project": {"id": "isolated-hub", "path": "/tmp"}},
+        )
+    assert dispatch_count == 6
+
+    runtime = WorkflowEvaluationRuntime(max_workers=8)
+    adapter = _adapter_for_engine(engine, runtime)
     started_at = time.perf_counter()
     completed_at: dict[tuple[str, str, str], float] = {}
     rule_timings_ms: dict[str, list[float]] = {}
@@ -426,11 +618,7 @@ async def test_isolated_hub_two_codex_one_grok_hook_p95_under_one_second(
             responses = await asyncio.gather(
                 *(execute_hook(*hook_spec) for hook_spec in hook_specs)
             )
-        assert await asyncio.to_thread(all_dispatches_started.wait, 1.0)
-        release_dispatches.set()
-        assert await asyncio.to_thread(all_dispatches_finished.wait, 3.0)
     finally:
-        release_dispatches.set()
         runtime.shutdown()
 
     durations = sorted(completed_at.values())
@@ -452,6 +640,7 @@ async def test_isolated_hub_two_codex_one_grok_hook_p95_under_one_second(
         print(f"hook-saturation-measurement={report}")
 
     assert all(response == {"continue": True} for response in responses)
+    assert dispatch_count == 6
     assert len(durations) == 6
     assert p95_seconds < 1.0
     assert all(

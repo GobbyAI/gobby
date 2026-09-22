@@ -212,7 +212,7 @@ async def test_review_lessons_path_survives_orphan_removal(db: HubDatabase) -> N
         "_active_rule_names": ["inject-review-lessons-for-touched-files"],
         "project": {"id": PROJECT_ID, "path": "/tmp/project"},
     }
-    first_response = await rule_engine.evaluate(
+    response = await rule_engine.evaluate(
         event,
         session_id=PLATFORM_SESSION_ID,
         variables=variables,
@@ -220,17 +220,17 @@ async def test_review_lessons_path_survives_orphan_removal(db: HubDatabase) -> N
     await asyncio.wait_for(dispatch_finished.wait(), timeout=1.0)
     next_event = _event()
     next_event.data["tool_name"] = "Read"
-    response = await rule_engine.evaluate(
+    unrelated_response = await rule_engine.evaluate(
         next_event,
         session_id=PLATFORM_SESSION_ID,
         variables=variables,
     )
 
     assert calls == [("gobby-review-learning", "recall_review_lessons_for_files")]
-    assert first_response.context is None
     assert response.context is not None
     assert "<review-guidance>" in response.context
     assert "Keep review-lesson guidance on the live delivery path" in response.context
+    assert unrelated_response.context is None
     assert "injected_review_lesson_ids" not in _vars(db, PLATFORM_SESSION_ID)
     staged = response.metadata.get("_gobby_staged_effects") or take_worker_staging()
     assert staged["append_set_variables"]["injected_review_lesson_ids"] == ["lesson-survivor"]
@@ -251,7 +251,9 @@ async def test_review_lessons_path_survives_orphan_removal(db: HubDatabase) -> N
 async def test_apply_effect_dispatch_switch_cancel_stale_helpers_no_op(
     db: HubDatabase,
 ) -> None:
-    async def dispatcher(server: str, tool: str, args: dict[str, Any], event: Any) -> dict:
+    async def dispatcher(
+        server: str, tool: str, args: dict[str, Any], event: Any
+    ) -> dict[str, Any]:
         return {"success": True, "result": {"success": True, "cancelled": 2, "count": 2}}
 
     manager = RuleDefinitionManager(db)

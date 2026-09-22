@@ -20,7 +20,7 @@ from gobby.storage.hub.operation_deadline import DatabaseOperationDeadlineExceed
 from gobby.workflows.enforcement.blocking import is_gobby_call_tool
 from gobby.workflows.engine._offload import offload
 from gobby.workflows.engine.command_matching import command_patterns_match
-from gobby.workflows.engine.mcp_injections import NonBlockingMcpInjectionMixin
+from gobby.workflows.engine.mcp_injections import CachedMcpInjectionMixin
 from gobby.workflows.engine.run_command_effects import RunCommandEffectsMixin
 from gobby.workflows.reserved_variables import is_internal_rule, is_reserved_workflow_variable
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
@@ -28,7 +28,7 @@ from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
 logger = logging.getLogger(__name__)
 
 
-class EffectsMixin(RunCommandEffectsMixin, NonBlockingMcpInjectionMixin):
+class EffectsMixin(RunCommandEffectsMixin, CachedMcpInjectionMixin):
     """Mixin providing effect handling methods for RuleEngine."""
 
     db: Any
@@ -142,18 +142,19 @@ class EffectsMixin(RunCommandEffectsMixin, NonBlockingMcpInjectionMixin):
             )
 
             event = ctx.get("event")
-            if (
-                self._mcp_dispatcher
-                and isinstance(event, HookEvent)
-                and self._is_nonblocking_mcp_injection(effect)
-                and self._schedule_nonblocking_mcp_injection(
+            if self._mcp_dispatcher and isinstance(event, HookEvent):
+                if self._uses_mcp_injection_cache(
+                    effect
+                ) and await self._apply_cached_mcp_injection(
                     effect,
                     row,
                     rendered_args,
                     event,
-                )
-            ):
-                return None
+                    variables,
+                    context_parts,
+                    staged_variable_updates,
+                ):
+                    return None
 
             # Safety-significant captured calls stay inline so their outcome can
             # block the originating operation. Sessionless calls retain the old
