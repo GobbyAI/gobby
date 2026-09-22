@@ -187,17 +187,34 @@ def test_loop_binding_clears_only_the_public_unknown_scope(tmp_path: Path) -> No
 
 
 @pytest.mark.parametrize(
-    "mutation",
-    ['f="$SRC"', "unset f", 'printf -v f %s "$SRC"', "read f", "((f = 1))"],
+    "intervening_segment",
+    [
+        'f="$SRC"',
+        "unset x",
+        'printf -v x %s "$SRC"',
+        "read -p f response",
+        "((f = 1))",
+        "eval 'f=\"$SRC\"'",
+        "source ./rebind.sh",
+        ". ./rebind.sh",
+        "readarray f",
+        "mapfile f",
+        "getopts x f",
+        'declare f="$SRC"',
+        "x=$(rebind_f)",
+        "rebind_f",
+    ],
 )
-def test_changed_loop_binding_restores_unknown_write_scope(
+def test_unproven_intervening_segment_restores_unknown_write_scope(
     tmp_path: Path,
-    mutation: str,
+    intervening_segment: str,
 ) -> None:
     data: dict[str, Any] = {
         "tool_name": "Bash",
         "tool_input": {
-            "command": f'for f in a.py b.py; do {mutation}; sed -i "s/x/y/" "$f"; done',
+            "command": (
+                f'for f in a.py b.py; do {intervening_segment}; sed -i "s/x/y/" "$f"; done'
+            ),
             "cwd": str(tmp_path),
         },
         "project_path": str(tmp_path),
@@ -210,11 +227,15 @@ def test_changed_loop_binding_restores_unknown_write_scope(
     assert data["canonical_repo_mutation_scope_unknown"] is True
 
 
-def test_read_option_value_does_not_invalidate_loop_binding(tmp_path: Path) -> None:
+@pytest.mark.parametrize("safe_segment", ["x=value", "echo processing"])
+def test_proven_safe_intervening_segment_preserves_loop_binding(
+    tmp_path: Path,
+    safe_segment: str,
+) -> None:
     data: dict[str, Any] = {
         "tool_name": "Bash",
         "tool_input": {
-            "command": ('for f in a.py b.py; do read -p f response; sed -i "s/x/y/" "$f"; done'),
+            "command": (f'for f in a.py b.py; do {safe_segment}; sed -i "s/x/y/" "$f"; done'),
             "cwd": str(tmp_path),
         },
         "project_path": str(tmp_path),

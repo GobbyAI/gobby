@@ -50,7 +50,7 @@ from gobby.hooks._normalization_shell import (
     _looks_file_like,
     _looks_path_target,
     _shell_positional_args,
-    _shell_variable_mutations,
+    _shell_segment_preserves_loop_binding,
     _strip_shell_wrappers,
     extract_redirection_paths,
     has_mutating_output_redirection,
@@ -289,9 +289,21 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
     saw_unexpanded_mutation_path = False
     navigation_scope_unknown = False
     loop_bindings: dict[str, tuple[str, ...]] = {}
-    for item in active:
-        for mutated_variable in item.shell_variable_mutations:
-            loop_bindings.pop(mutated_variable, None)
+    for item in metadata:
+        command_is_known = bool(
+            item.kind != "execute"
+            or item.repo_mutation
+            or item.neutral_setup
+            or item.read_only_pipeline_filter
+            or (item.extra and item.extra.get("canonical_code_navigation_action"))
+        )
+        for bound_variable in tuple(loop_bindings):
+            if not _shell_segment_preserves_loop_binding(
+                item.shell_words,
+                bound_variable,
+                command_is_known=command_is_known,
+            ):
+                loop_bindings.pop(bound_variable)
         if item.loop_binding_variable:
             if item.paths and all(
                 not _contains_unexpanded_shell_reference(path) for path in item.paths
@@ -413,14 +425,13 @@ def _normalize_shell_tool_metadata(command: str) -> dict[str, Any]:
         if segment.separator_before not in {None, "&&", ";", "\n", "|"}:
             persistent_cwd = None
         raw_parts = shell_token_values(segment.tokens)
-        variable_mutations = _shell_variable_mutations(raw_parts)
         parts = _strip_shell_wrappers(raw_parts)
         if not parts:
             metadata.append(
                 _ShellSegmentMetadata(
                     "execute",
-                    neutral_setup=not variable_mutations,
-                    shell_variable_mutations=variable_mutations,
+                    neutral_setup=True,
+                    shell_words=tuple(raw_parts),
                 )
             )
             continue
@@ -429,7 +440,9 @@ def _normalize_shell_tool_metadata(command: str) -> dict[str, Any]:
         if cd_target is not None:
             if not in_pipeline and segment.separator_before in {None, "&&", ";", "\n"}:
                 persistent_cwd = _apply_cd(persistent_cwd, cd_target)
-            metadata.append(_ShellSegmentMetadata("execute", neutral_setup=True))
+            metadata.append(
+                _ShellSegmentMetadata("execute", neutral_setup=True, shell_words=tuple(raw_parts))
+            )
             continue
 
         if segment.separator_before == "|" and _is_read_only_pipeline_stage(segment.tokens, parts):
@@ -437,6 +450,7 @@ def _normalize_shell_tool_metadata(command: str) -> dict[str, Any]:
                 _ShellSegmentMetadata(
                     "execute",
                     read_only_pipeline_filter=True,
+                    shell_words=tuple(raw_parts),
                 )
             )
             if index + 1 >= len(segments) or segments[index + 1].separator_before != "|":
@@ -448,7 +462,7 @@ def _normalize_shell_tool_metadata(command: str) -> dict[str, Any]:
         metadata.append(
             replace(
                 _classify_shell_segment(segment.tokens, parts, persistent_cwd),
-                shell_variable_mutations=variable_mutations,
+                shell_words=tuple(raw_parts),
             )
         )
 
