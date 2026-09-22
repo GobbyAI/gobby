@@ -4,7 +4,7 @@ use crate::codewiki_facts::GraphAvailability;
 use crate::config::Context;
 use crate::graph::code_graph::GraphReadError;
 use gobby_core::mermaid::is_valid_mermaid;
-use render::{NodeKey, ViewNodeInput, analytics_graph_from_payload, build_view_payload};
+use render::{NodeKey, ViewNodeInput, build_view_payload};
 use std::path::PathBuf;
 
 fn ctx_without_falkor() -> Context {
@@ -120,16 +120,6 @@ fn view_typed_ids_keep_file_and_module_collision_distinct() {
     assert_eq!(ids, ["file:shared", "module:shared"]);
     assert!(payload.mermaid.contains("n0[\""));
     assert!(payload.mermaid.contains("n1[\""));
-    let graph = analytics_graph_from_payload(&payload);
-    assert_eq!(graph.nodes.len(), 2);
-    let graph_ids = graph
-        .nodes
-        .iter()
-        .map(|node| node.id.as_str())
-        .collect::<HashSet<_>>();
-    assert!(graph_ids.contains("file:shared"));
-    assert!(graph_ids.contains("module:shared"));
-    assert_eq!(graph.edges.len(), 1);
 }
 
 #[test]

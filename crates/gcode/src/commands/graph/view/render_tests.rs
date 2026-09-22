@@ -31,6 +31,18 @@ fn payload_for(
     .expect("payload builds")
 }
 
+fn community(id: &str, label: &str, nodes: &[&str]) -> ViewCommunity {
+    ViewCommunity {
+        id: id.to_string(),
+        label: label.to_string(),
+        size: nodes.len(),
+        cohesion: 1.0,
+        label_source: "deterministic".to_string(),
+        label_stale: false,
+        nodes: nodes.iter().map(|node| (*node).to_string()).collect(),
+    }
+}
+
 #[test]
 fn view_render_is_deterministic_and_escapes_hostile_labels() {
     let hostile = ViewNodeInput {
@@ -90,6 +102,7 @@ fn view_render_is_deterministic_and_escapes_hostile_labels() {
     let first_json = format_view_output(&first).expect("json");
     let second_json = format_view_output(&second).expect("json");
     assert_eq!(first_json, second_json);
+    assert!(!first_json.contains("\"count\""));
     assert!(is_valid_mermaid(&first.mermaid));
     assert!(first.mermaid.starts_with("```mermaid\n"));
     assert!(first.mermaid.trim_end().ends_with("```"));
@@ -272,4 +285,179 @@ fn view_empty_payload_uses_seed_name_without_symbol_prefix() {
     assert!(payload.mermaid.contains("n0[\"src/pkg/mod.py\"]"));
     assert!(!payload.mermaid.contains("symbol:"));
     assert!(is_valid_mermaid(&payload.mermaid));
+}
+
+#[test]
+fn payload_rejects_unknown_community_member() {
+    let node = ViewNodeInput {
+        key: NodeKey::file("src/a.py"),
+        name: "a.py".into(),
+        kind: "file".into(),
+        file: Some("src/a.py".into()),
+        community: None,
+    };
+    let unknown_member = build_view_payload(
+        "proj-1",
+        "/abs/project",
+        GraphViewKind::Mcg,
+        sample_seed(),
+        1,
+        false,
+        false,
+        None,
+        vec![node.clone()],
+        Vec::new(),
+        vec![community("community:1", "Core", &["file:src/missing.py"])],
+    );
+    assert!(
+        unknown_member
+            .expect_err("unknown community member must fail")
+            .to_string()
+            .contains("file:src/missing.py")
+    );
+
+    let unlisted_community = build_view_payload(
+        "proj-1",
+        "/abs/project",
+        GraphViewKind::Mcg,
+        sample_seed(),
+        1,
+        false,
+        false,
+        None,
+        vec![ViewNodeInput {
+            community: Some("community:9".into()),
+            ..node
+        }],
+        Vec::new(),
+        Vec::new(),
+    );
+    assert!(
+        unlisted_community
+            .expect_err("unlisted node community must fail")
+            .to_string()
+            .contains("community:9")
+    );
+}
+
+#[test]
+fn community_node_has_null_file() {
+    let key = NodeKey::community("7");
+    assert_eq!(key.canonical(), "community:7");
+    let file = node_file_for_kind(NodeKind::Community, Some("src/a.py".into()), &[]);
+    assert_eq!(file, None);
+    let payload = payload_for(
+        GraphViewKind::Mcg,
+        vec![ViewNodeInput {
+            key,
+            name: "Core".into(),
+            kind: "community".into(),
+            file,
+            community: None,
+        }],
+        Vec::new(),
+    );
+    assert_eq!(payload.nodes[0].file, None);
+}
+
+#[test]
+fn edge_count_renders_in_mermaid() {
+    let mermaid = render_mermaid(
+        &sample_seed(),
+        &[
+            ViewNode {
+                id: "file:src/a.py".into(),
+                name: "a.py".into(),
+                kind: "file".into(),
+                file: Some("src/a.py".into()),
+                community: None,
+            },
+            ViewNode {
+                id: "file:src/b.py".into(),
+                name: "b.py".into(),
+                kind: "file".into(),
+                file: Some("src/b.py".into()),
+                community: None,
+            },
+        ],
+        &[ViewEdge {
+            source: "file:src/a.py".into(),
+            target: "file:src/b.py".into(),
+            rel: "IMPORTS".into(),
+            count: Some(12),
+        }],
+        &[],
+    )
+    .expect("mermaid");
+    assert!(mermaid.contains("IMPORTS #40;12#41;"));
+}
+
+#[test]
+fn mermaid_groups_nodes_into_community_subgraphs() {
+    let payload = build_view_payload(
+        "proj-1",
+        "/abs/project",
+        GraphViewKind::Mcg,
+        sample_seed(),
+        1,
+        false,
+        false,
+        None,
+        vec![
+            ViewNodeInput {
+                key: NodeKey::file("src/a.py"),
+                name: "a.py".into(),
+                kind: "file".into(),
+                file: Some("src/a.py".into()),
+                community: Some("community:1".into()),
+            },
+            ViewNodeInput {
+                key: NodeKey::file("src/b.py"),
+                name: "b.py".into(),
+                kind: "file".into(),
+                file: Some("src/b.py".into()),
+                community: Some("community:2".into()),
+            },
+            ViewNodeInput {
+                key: NodeKey::file("src/loose.py"),
+                name: "loose.py".into(),
+                kind: "file".into(),
+                file: Some("src/loose.py".into()),
+                community: None,
+            },
+        ],
+        vec![ViewEdgeInput {
+            source: NodeKey::file("src/a.py"),
+            target: NodeKey::file("src/b.py"),
+            rel: "IMPORTS".into(),
+        }],
+        vec![
+            community("community:1", "Core \"API\"", &["file:src/a.py"]),
+            community("community:2", "Data]Store", &["file:src/b.py"]),
+            community("community:3", "Empty", &[]),
+        ],
+    )
+    .expect("payload");
+
+    assert!(
+        payload
+            .mermaid
+            .contains("subgraph community_1[\"Core #quot;API#quot;\"]")
+    );
+    assert!(
+        payload
+            .mermaid
+            .contains("subgraph community_2[\"Data#93;Store\"]")
+    );
+    assert!(!payload.mermaid.contains("subgraph community_3"));
+    assert!(
+        payload
+            .mermaid
+            .lines()
+            .any(|line| line == "    n2[\"loose.py\"]")
+    );
+    assert!(!payload.mermaid.contains("a.py [community:1]"));
+    let last_subgraph = payload.mermaid.rfind("    end").expect("subgraph end");
+    let cross_edge = payload.mermaid.find("n0 -->").expect("cross-subgraph edge");
+    assert!(cross_edge > last_subgraph);
 }
