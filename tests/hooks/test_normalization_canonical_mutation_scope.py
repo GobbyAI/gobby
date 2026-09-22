@@ -161,7 +161,13 @@ def test_loop_header_still_scopes_a_mutating_body_with_unexpanded_paths() -> Non
                 paths=("a.py", "b.py"),
                 loop_binding_variable="f",
             ),
-            _ShellSegmentMetadata(kind="write", paths=("$f",), repo_mutation=True),
+            _ShellSegmentMetadata(
+                kind="write",
+                paths=("$f",),
+                repo_mutation=True,
+                shell_words=("$f",),
+                shell_raw_words=('"$f"',),
+            ),
         ]
     )
 
@@ -262,8 +268,8 @@ def test_bash_unstable_parameter_cannot_supply_loop_binding(
     assert data["canonical_repo_mutation_scope_unknown"] is True
 
 
-@pytest.mark.parametrize("reference", ["$f", '"$f"', "${f}", '"${f}"'])
-def test_plain_loop_parameter_references_preserve_binding(
+@pytest.mark.parametrize("reference", ['"$f"', '"${f}"'])
+def test_double_quoted_loop_parameter_references_preserve_binding(
     tmp_path: Path,
     reference: str,
 ) -> None:
@@ -279,6 +285,53 @@ def test_plain_loop_parameter_references_preserve_binding(
     _set_canonical_tool_metadata(data)
 
     assert data["canonical_file_paths"] == ["a.py", "b.py"]
+    assert "canonical_repo_mutation_scope_unknown" not in data
+
+
+@pytest.mark.parametrize("header_word", ["'src/a.py src/b.py'", "'src/*.py'"])
+def test_unquoted_loop_parameter_reference_keeps_scope_unknown(
+    tmp_path: Path,
+    header_word: str,
+) -> None:
+    data: dict[str, Any] = {
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": f"for f in {header_word}; do rm $f; done",
+            "cwd": str(tmp_path),
+        },
+        "project_path": str(tmp_path),
+    }
+
+    _set_canonical_tool_metadata(data)
+
+    assert data.get("canonical_file_paths") in (None, [])
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.parametrize(
+    ("header_word", "expected_path"),
+    [
+        ("'src/a.py src/b.py'", "src/a.py src/b.py"),
+        ("'src/*.py'", "src/*.py"),
+    ],
+)
+def test_double_quoted_loop_parameter_reference_preserves_literal_header_path(
+    tmp_path: Path,
+    header_word: str,
+    expected_path: str,
+) -> None:
+    data: dict[str, Any] = {
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": f'for f in {header_word}; do rm "$f"; done',
+            "cwd": str(tmp_path),
+        },
+        "project_path": str(tmp_path),
+    }
+
+    _set_canonical_tool_metadata(data)
+
+    assert data["canonical_file_paths"] == [expected_path]
     assert "canonical_repo_mutation_scope_unknown" not in data
 
 

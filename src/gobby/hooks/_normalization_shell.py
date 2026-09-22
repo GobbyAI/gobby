@@ -471,15 +471,13 @@ def _plain_loop_binding_reference(
     words: tuple[str, ...],
     raw_words: tuple[str, ...],
 ) -> str | None:
-    """Return the referenced variable only for one exact ordinary expansion form."""
+    """Return the referenced variable only for one exact double-quoted expansion."""
     match = re.fullmatch(r"\$(?:\{(?P<braced>[A-Za-z_]\w*)\}|(?P<bare>[A-Za-z_]\w*))", path)
-    if not match:
+    if not match or not raw_words:
         return None
     variable = match.group("braced") or match.group("bare")
-    if not raw_words:
-        return variable
     raw_matches = [raw for word, raw in zip(words, raw_words, strict=True) if word == path]
-    allowed = {f"${variable}", f'"${variable}"', f"${{{variable}}}", f'"${{{variable}}}"'}
+    allowed = {f'"${variable}"', f'"${{{variable}}}"'}
     return variable if raw_matches and all(raw in allowed for raw in raw_matches) else None
 
 
