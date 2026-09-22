@@ -24,7 +24,7 @@ use gobby_client::daemon::{
     Answer, Daemon, DaemonError, DaemonEvent, EventReceiver, Generation, KillOutcome, LiveDaemon,
     Page, ProjectRow, RosterEntry, RunRow, ScriptedDaemon, SessionRow, SourceStatus, SpawnOutcome,
     SpawnRequest, SubscribeSnapshot, TerminalRow, WorkspaceOp, WorktreeRow, WsMessage, WsReply,
-    CONTROL_REQUEST_DEADLINE,
+    BROADCAST_CAPACITY, CONTROL_REQUEST_DEADLINE,
 };
 use gobby_client::frame_source::{
     AttachLocator, FrameError, PaneFrameSource, ScriptedFrameSource, Transport,
@@ -1863,22 +1863,31 @@ async fn proxy_fallback_uses_fresh_attachment() {
         let (mut workspace, old_attachment) =
             live_workspace_with_scripted_direct(&mock, terminal_id, 3).await;
         mock.suppress_ws("terminal_detach");
+        let observed_daemon = workspace.daemon().clone();
         let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
         let mut chrome = Chrome::dark();
         show_roster(&workspace, &mut chrome);
         let (input_tx, input_rx) = mpsc::channel(16);
         let driver = async {
             wait_for_websocket_requests(&mock, "terminal_detach", 1).await;
-            timeout(Duration::from_secs(4), async {
-                loop {
-                    if websocket_requests(&mock, "terminal_set_viewport").len() >= 2 {
-                        break;
-                    }
-                    tokio::task::yield_now().await;
+            tokio::time::pause();
+            tokio::time::advance(Duration::from_secs(3)).await;
+            for _ in 0..1_024 {
+                if observed_daemon.pending_counts().0 == 0 {
+                    break;
                 }
-            })
-            .await
-            .expect("deadline recovery reattaches");
+                tokio::task::yield_now().await;
+            }
+            assert_eq!(observed_daemon.pending_counts().0, 0);
+            tokio::time::advance(Duration::from_secs(6)).await;
+            for _ in 0..4_096 {
+                if websocket_requests(&mock, "terminal_set_viewport").len() >= 2 {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+            tokio::time::resume();
+            assert!(websocket_requests(&mock, "terminal_set_viewport").len() >= 2);
             drop(input_tx);
         };
         let mut switch = TerminalGuard::recording().0;
@@ -2015,6 +2024,342 @@ async fn proxy_fallback_uses_fresh_attachment() {
         );
         mock.shutdown().await;
     }
+}
+
+#[tokio::test]
+async fn fallback_recovery_clears_its_flight_after_success() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    let terminal_id = "terminal-repeat-fallback";
+    let (mut workspace, _) = live_workspace_with_scripted_direct(&mock, terminal_id, 1).await;
+    let pane_id = workspace
+        .pane_for_terminal(terminal_id)
+        .expect("fallback pane");
+
+    assert!(matches!(
+        workspace.recv_live_frame(pane_id).await,
+        Err(FrameError::Eof)
+    ));
+    assert_eq!(websocket_requests(&mock, "terminal_attach").len(), 2);
+
+    workspace
+        .replace_frame_source(
+            pane_id,
+            PaneFrameSource::Scripted(ScriptedFrameSource::new(Transport::Direct)),
+        )
+        .expect("install a second failed direct source");
+    assert!(matches!(
+        workspace.recv_live_frame(pane_id).await,
+        Err(FrameError::Eof)
+    ));
+    assert_eq!(
+        websocket_requests(&mock, "terminal_attach").len(),
+        3,
+        "a completed fallback must not suppress the next recovery"
+    );
+    mock.shutdown().await;
+}
+
+#[tokio::test]
+async fn fallback_recovery_clears_its_flight_after_a_detach_reply_error() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    mock.enqueue_detach_reply(false, Some("detach state indeterminate"));
+    let terminal_id = "terminal-refused-detach";
+    let (mut workspace, _) = live_workspace_with_scripted_direct(&mock, terminal_id, 1).await;
+    let pane_id = workspace
+        .pane_for_terminal(terminal_id)
+        .expect("fallback pane");
+
+    let error = workspace
+        .recv_live_frame(pane_id)
+        .await
+        .expect_err("the detach refusal must be reported");
+    assert!(error.to_string().contains("detach state indeterminate"));
+    assert!(matches!(
+        workspace.pane(pane_id).attach_state(),
+        AttachState::Detached
+    ));
+
+    workspace
+        .replace_frame_source(
+            pane_id,
+            PaneFrameSource::Scripted(ScriptedFrameSource::new(Transport::Direct)),
+        )
+        .expect("install a second failed direct source");
+    assert!(matches!(
+        workspace.recv_live_frame(pane_id).await,
+        Err(FrameError::Eof)
+    ));
+    assert_eq!(
+        websocket_requests(&mock, "terminal_attach").len(),
+        2,
+        "a refused detach must not suppress the next recovery"
+    );
+    mock.shutdown().await;
+}
+
+#[tokio::test]
+async fn fallback_recovery_clears_its_flight_after_a_reply_error() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    mock.suppress_ws("terminal_detach");
+    let terminal_id = "terminal-detach-transport-error";
+    let (mut workspace, _) = live_workspace_with_scripted_direct(&mock, terminal_id, 1).await;
+    let pane_id = workspace
+        .pane_for_terminal(terminal_id)
+        .expect("fallback pane");
+    let daemon = workspace.daemon().clone();
+    let generation = daemon.generation();
+
+    {
+        let recovery = workspace.recv_live_frame(pane_id);
+        tokio::pin!(recovery);
+        tokio::select! {
+            result = &mut recovery => panic!("detach unexpectedly completed: {result:?}"),
+            _ = wait_for_websocket_requests(&mock, "terminal_detach", 1) => {}
+        }
+        mock.drop_websockets();
+        recovery
+            .await
+            .expect_err("transport loss must fail the detach reply");
+    }
+
+    daemon
+        .reconnect(generation)
+        .await
+        .expect("reconnect after detach reply error");
+    mock.allow_ws("terminal_detach");
+    workspace
+        .replace_frame_source(
+            pane_id,
+            PaneFrameSource::Scripted(ScriptedFrameSource::new(Transport::Direct)),
+        )
+        .expect("install a second failed direct source");
+    assert!(matches!(
+        workspace.recv_live_frame(pane_id).await,
+        Err(FrameError::Eof)
+    ));
+    assert_eq!(
+        websocket_requests(&mock, "terminal_attach").len(),
+        2,
+        "a failed detach reply must not suppress the next recovery"
+    );
+    mock.shutdown().await;
+}
+
+#[tokio::test]
+async fn fallback_recovery_clears_its_flight_after_a_nested_result_error() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    mock.suppress_ws("terminal_detach");
+    let terminal_id = "terminal-detach-nested-error";
+    let (mut workspace, _) = live_workspace_with_scripted_direct(&mock, terminal_id, 1).await;
+    let pane_id = workspace
+        .pane_for_terminal(terminal_id)
+        .expect("fallback pane");
+    let daemon = workspace.daemon().clone();
+    let generation = daemon.generation();
+
+    {
+        let recovery = workspace.recv_live_frame(pane_id);
+        tokio::pin!(recovery);
+        tokio::select! {
+            result = &mut recovery => panic!("detach unexpectedly completed: {result:?}"),
+            _ = wait_for_websocket_requests(&mock, "terminal_detach", 1) => {}
+        }
+
+        // Stop polling recovery while the socket reader fills its receiver. The
+        // next poll observes Lagged and enters the nested timeout around the
+        // still-pending detach reply.
+        for sequence in 0..=BROADCAST_CAPACITY {
+            mock.send_event_and_wait(json!({
+                "type": "detach_test_event",
+                "seq": sequence,
+            }))
+            .await;
+        }
+        let (_, mut proof) = daemon.subscribe();
+        mock.send_event_and_wait(json!({"type": "detach_test_marker"}))
+            .await;
+        timeout(Duration::from_secs(1), async {
+            loop {
+                match proof.recv().await {
+                    Ok(DaemonEvent::Message(value))
+                        if value.get("type").and_then(Value::as_str)
+                            == Some("detach_test_marker") =>
+                    {
+                        break;
+                    }
+                    Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        panic!("daemon event stream closed before the marker")
+                    }
+                }
+            }
+        })
+        .await
+        .expect("marker delivery deadline");
+        tokio::select! {
+            biased;
+            result = &mut recovery => panic!("detach unexpectedly completed: {result:?}"),
+            _ = tokio::task::yield_now() => {}
+        }
+
+        mock.drop_websockets();
+        recovery
+            .await
+            .expect_err("transport loss must fail the nested detach reply");
+    }
+
+    daemon
+        .reconnect(generation)
+        .await
+        .expect("reconnect after nested detach error");
+    mock.allow_ws("terminal_detach");
+    workspace
+        .replace_frame_source(
+            pane_id,
+            PaneFrameSource::Scripted(ScriptedFrameSource::new(Transport::Direct)),
+        )
+        .expect("install a second failed direct source");
+    assert!(matches!(
+        workspace.recv_live_frame(pane_id).await,
+        Err(FrameError::Eof)
+    ));
+    assert_eq!(
+        websocket_requests(&mock, "terminal_attach").len(),
+        2,
+        "a nested detach error must not suppress the next recovery"
+    );
+    mock.shutdown().await;
+}
+
+#[tokio::test]
+async fn fallback_recovery_clears_its_flight_after_the_detach_deadline() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    mock.suppress_ws("terminal_detach");
+    let terminal_id = "terminal-detach-deadline";
+    let (mut workspace, _) = live_workspace_with_scripted_direct(&mock, terminal_id, 1).await;
+    let pane_id = workspace
+        .pane_for_terminal(terminal_id)
+        .expect("fallback pane");
+
+    tokio::time::pause();
+    let driver = async {
+        while websocket_requests(&mock, "terminal_detach").is_empty() {
+            tokio::task::yield_now().await;
+        }
+        tokio::time::advance(Duration::from_secs(3)).await;
+    };
+    let (result, ()) = tokio::join!(workspace.recv_live_frame(pane_id), driver);
+    assert!(matches!(result, Err(FrameError::Eof)));
+    tokio::time::resume();
+
+    mock.allow_ws("terminal_detach");
+    workspace
+        .replace_frame_source(
+            pane_id,
+            PaneFrameSource::Scripted(ScriptedFrameSource::new(Transport::Direct)),
+        )
+        .expect("install a second failed direct source");
+    assert!(matches!(
+        workspace.recv_live_frame(pane_id).await,
+        Err(FrameError::Eof)
+    ));
+    assert_eq!(
+        websocket_requests(&mock, "terminal_attach").len(),
+        2,
+        "a timed-out detach must not suppress the next recovery"
+    );
+    mock.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_late_detach_reply_retries_direct_without_reconnecting() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    let host = DirectHost::start("direct-recovery-epoch").await;
+    let terminal_id = "terminal-late-detach";
+    let (mut workspace, _home) = live_workspace_on_direct_host(&mock, &host, terminal_id).await;
+    let observed_daemon = workspace.daemon().clone();
+
+    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    show_roster(&workspace, &mut chrome);
+    let (input_tx, input_rx) = mpsc::channel(16);
+    let driver = async {
+        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        let reply_gate = mock.pause_websocket_reads().await;
+        tokio::time::pause();
+        host.disconnect();
+        for _ in 0..1_024 {
+            if observed_daemon.pending_counts().0 > 0 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(
+            observed_daemon.pending_counts().0,
+            1,
+            "detach request entered the healthy socket"
+        );
+
+        tokio::time::advance(Duration::from_secs(3)).await;
+        for _ in 0..1_024 {
+            if observed_daemon.pending_counts().0 == 0 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(observed_daemon.pending_counts().0, 0);
+        assert_eq!(mock.websocket_handshakes(), 1);
+
+        reply_gate.notify_waiters();
+        for _ in 0..1_024 {
+            if !websocket_requests(&mock, "terminal_detach").is_empty() {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(websocket_requests(&mock, "terminal_detach").len(), 1);
+
+        tokio::time::advance(Duration::from_secs(6)).await;
+        for _ in 0..4_096 {
+            if websocket_requests(&mock, "terminal_attach").len() >= 2 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(websocket_requests(&mock, "terminal_attach").len(), 2);
+        assert_eq!(mock.websocket_handshakes(), 1);
+        assert_eq!(
+            websocket_requests(&mock, "terminal_attach")[1]
+                .get("frame_delivery")
+                .and_then(Value::as_str),
+            Some("direct"),
+            "the retry must restore the advertised direct transport"
+        );
+        tokio::time::resume();
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("late detach recovery loop");
+    assert_eq!(mock.websocket_handshakes(), 1);
+    host.shutdown().await;
+    mock.shutdown().await;
 }
 
 #[tokio::test]
@@ -2297,11 +2642,12 @@ struct DirectHost {
     host_epoch: String,
     received: mpsc::UnboundedReceiver<ClientMessage>,
     to_client: mpsc::UnboundedSender<ServerMessage>,
+    disconnect: mpsc::UnboundedSender<()>,
     task: tokio::task::JoinHandle<()>,
 }
 
 impl DirectHost {
-    /// Listen on a fresh socket and answer one attach with `host_epoch`.
+    /// Listen on a fresh socket and answer attaches with `host_epoch`.
     async fn start(host_epoch: &str) -> Self {
         let socket_dir = tempfile::tempdir().expect("direct socket dir");
         let socket_path = socket_dir.path().join("frames.sock");
@@ -2309,38 +2655,47 @@ impl DirectHost {
             tokio::net::UnixListener::bind(&socket_path).expect("bind direct frame socket");
         let (received_tx, received) = mpsc::unbounded_channel();
         let (to_client, mut outbound) = mpsc::unbounded_channel::<ServerMessage>();
+        let (disconnect, mut disconnect_rx) = mpsc::unbounded_channel();
         let epoch = host_epoch.to_string();
         let task = tokio::spawn(async move {
-            let (mut stream, _) = listener.accept().await.expect("direct client");
-            let _: ClientMessage = read_message_async(&mut stream, MAX_FRAME_SIZE)
-                .await
-                .expect("direct hello");
-            write_message_async(
-                &mut stream,
-                &ServerMessage::Welcome {
-                    host_epoch: epoch.clone(),
-                },
-            )
-            .await
-            .expect("direct welcome");
-            let _: ClientMessage = read_message_async(&mut stream, MAX_FRAME_SIZE)
-                .await
-                .expect("direct attach");
             loop {
-                tokio::select! {
-                    message = read_message_async(&mut stream, MAX_FRAME_SIZE) => {
-                        match message {
-                            Ok(message) => {
-                                if received_tx.send(message).is_err() {
-                                    break;
+                let (mut stream, _) = listener.accept().await.expect("direct client");
+                let _: ClientMessage = read_message_async(&mut stream, MAX_FRAME_SIZE)
+                    .await
+                    .expect("direct hello");
+                write_message_async(
+                    &mut stream,
+                    &ServerMessage::Welcome {
+                        host_epoch: epoch.clone(),
+                    },
+                )
+                .await
+                .expect("direct welcome");
+                let _: ClientMessage = read_message_async(&mut stream, MAX_FRAME_SIZE)
+                    .await
+                    .expect("direct attach");
+                loop {
+                    tokio::select! {
+                        message = read_message_async(&mut stream, MAX_FRAME_SIZE) => {
+                            match message {
+                                Ok(message) => {
+                                    if received_tx.send(message).is_err() {
+                                        return;
+                                    }
                                 }
+                                Err(_) => break,
                             }
-                            Err(_) => break,
                         }
-                    }
-                    outgoing = outbound.recv() => {
-                        let Some(outgoing) = outgoing else { break };
-                        if write_message_async(&mut stream, &outgoing).await.is_err() {
+                        outgoing = outbound.recv() => {
+                            let Some(outgoing) = outgoing else { return };
+                            if write_message_async(&mut stream, &outgoing).await.is_err() {
+                                break;
+                            }
+                        }
+                        disconnect = disconnect_rx.recv() => {
+                            if disconnect.is_none() {
+                                return;
+                            }
                             break;
                         }
                     }
@@ -2353,6 +2708,7 @@ impl DirectHost {
             host_epoch: host_epoch.to_string(),
             received,
             to_client,
+            disconnect,
             task,
         }
     }
@@ -2410,8 +2766,13 @@ impl DirectHost {
         seen
     }
 
+    fn disconnect(&self) {
+        self.disconnect.send(()).expect("direct host task");
+    }
+
     async fn shutdown(self) {
         drop(self.to_client);
+        drop(self.disconnect);
         self.task.abort();
         let _ = self.task.await;
         drop(self.socket_dir);
@@ -3421,7 +3782,6 @@ async fn latched_exit_issues_no_further_requests() {
         let pane_id = workspace
             .pane_for_terminal("terminal-reconnect-exit")
             .expect("reconnect pane");
-        let attachment = workspace.pane(pane_id).attachment_id().to_string();
         let reconnect_gate = mock.pause_next_websocket();
         let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
         let mut chrome = Chrome::dark();
@@ -3458,12 +3818,10 @@ async fn latched_exit_issues_no_further_requests() {
         );
         result.expect("exit cancels reconnect");
         assert_eq!(terminal_side_effects(&mock), before_exit);
-        assert_eq!(
-            workspace
-                .pane_for_terminal("terminal-reconnect-exit")
-                .map(|id| workspace.pane(id).attachment_id()),
-            Some(attachment.as_str())
-        );
+        assert!(matches!(
+            workspace.pane(pane_id).attach_state(),
+            AttachState::Detached
+        ));
         mock.shutdown().await;
     }
 
@@ -3567,7 +3925,7 @@ async fn reconnect_episode_rolls_generation_forward() {
 }
 
 #[tokio::test]
-async fn detach_deadlines_recover_through_the_supervisor() {
+async fn detach_reply_errors_retry_panes_without_reconnecting() {
     let mock = MockDaemon::start("local-token").await;
     mock.use_unique_attachment_ids();
     for _ in 0..2 {
@@ -3642,7 +4000,7 @@ async fn detach_deadlines_recover_through_the_supervisor() {
         assert_eq!(mock.websocket_handshakes(), 1);
         assert_eq!(websocket_requests(&mock, "terminal_attach").len(), 3);
 
-        tokio::time::advance(Duration::from_secs(2)).await;
+        tokio::time::advance(Duration::from_secs(5)).await;
         tokio::time::resume();
         wait_for_websocket_requests(&mock, "terminal_attach", 6).await;
         drop(input_tx);
@@ -3660,8 +4018,12 @@ async fn detach_deadlines_recover_through_the_supervisor() {
         ),
         driver
     );
-    result.expect("deadline recovery loop");
-    assert_eq!(mock.websocket_handshakes(), 2, "one coalesced reconnect");
+    result.expect("detach reply recovery loop");
+    assert_eq!(
+        mock.websocket_handshakes(),
+        1,
+        "detach failures on a healthy socket must not reconnect it"
+    );
     let detaches = websocket_requests(&mock, "terminal_detach");
     assert_eq!(detaches.len(), 6);
     assert_eq!(websocket_requests(&mock, "terminal_attach").len(), 6);
@@ -4123,7 +4485,12 @@ async fn daemon_loss_renders_read_only_until_recovery() {
         6,
         "one startup roster, four failed reconnect rosters, one recovery roster"
     );
-    assert_eq!(websocket_requests(&mock, "terminal_attach").len(), 2);
+    let outage_attaches = websocket_requests(&mock, "terminal_attach");
+    assert_eq!(
+        outage_attaches.len(),
+        2,
+        "one initial and one post-reconnect attach: {outage_attaches:?}"
+    );
     assert_eq!(
         websocket_requests(&mock, "terminal_take_control").len(),
         2,
