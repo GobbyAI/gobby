@@ -8,6 +8,7 @@ import os
 import secrets
 import tempfile
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
@@ -93,6 +94,7 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
         self._owns_database = owns_database
         self._interactive_grant_expiry: dict[InteractiveGrantExpiryKey, datetime] = {}
         self._grant_revocations: GrantRevocationSink | None = None
+        self._launch_grant_rewriter: Callable[[ManagedCredential, str], None] | None = None
         self._auth_schema: str | None = None
 
     @property
@@ -104,6 +106,12 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
 
     def bind_grant_revocations(self, sink: GrantRevocationSink) -> None:
         self._grant_revocations = sink
+
+    def bind_launch_grant_rewriter(
+        self,
+        rewriter: Callable[[ManagedCredential, str], None],
+    ) -> None:
+        self._launch_grant_rewriter = rewriter
 
     def close(self) -> None:
         if self._owns_database and hasattr(self._database, "close"):
@@ -470,7 +478,12 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
     ) -> ManagedCredential | None:
         password = secrets.token_urlsafe(32)
         successor_generation: int | None = None
+        bootstrap_path = self._execution_root(managed_execution_id) / "bootstrap.json"
+        launch_grant_path = bootstrap_path.parent / "grant.json"
+        predecessor_bootstrap: bytes | None = None
         try:
+            if launch_grant_path.exists():
+                predecessor_bootstrap = bootstrap_path.read_bytes()
             row = self._database.fetchone(
                 f"""SELECT * FROM {self.auth_schema}.rotate_principal_if_generation(
                     %s, %s, %s, %s
@@ -497,8 +510,19 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
                 expires_at=expires_at,
                 bootstrap_path=bootstrap_path,
             )
+            if predecessor_bootstrap is not None:
+                if self._launch_grant_rewriter is None:
+                    raise RuntimeError("managed launch grant rewriter is unavailable")
+                self._launch_grant_rewriter(credential, scoped_dsn)
         except Exception as error:
             if successor_generation is not None:
+                if predecessor_bootstrap is not None:
+                    try:
+                        self._restore_bootstrap(bootstrap_path, predecessor_bootstrap)
+                    except Exception:
+                        logger.exception(
+                            "Failed to restore managed bootstrap for %s", managed_execution_id
+                        )
                 self.revoke(
                     managed_execution_id,
                     generation=successor_generation,
@@ -649,7 +673,6 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
                 stream.flush()
                 os.fsync(stream.fileno())
             os.replace(temporary_path, bootstrap_path)
-            os.chmod(bootstrap_path, 0o600)
         except Exception:
             try:
                 os.close(descriptor)
@@ -660,6 +683,35 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
         finally:
             scoped_dsn = ""
         return bootstrap_path
+
+    @staticmethod
+    def _restore_bootstrap(bootstrap_path: Path, payload: bytes) -> None:
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=".bootstrap-rollback-",
+            suffix=".json",
+            dir=bootstrap_path.parent,
+        )
+        temporary_path = Path(temporary_name)
+        stream = None
+        try:
+            os.fchmod(descriptor, 0o600)
+            stream = os.fdopen(descriptor, "wb")
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+            stream.close()
+            stream = None
+            os.replace(temporary_path, bootstrap_path)
+        except Exception:
+            if stream is not None:
+                stream.close()
+            else:
+                try:
+                    os.close(descriptor)
+                except OSError:
+                    pass
+            temporary_path.unlink(missing_ok=True)
+            raise
 
     def _execution_root(self, managed_execution_id: UUID) -> Path:
         return self._runtime_root / str(managed_execution_id)
