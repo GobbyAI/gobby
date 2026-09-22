@@ -1063,6 +1063,7 @@ async def test_concurrent_ordinary_closes_share_review_without_closing_or_releas
     store.create_or_get_active.side_effect = create_or_get_active
     store.claim_queued.side_effect = [[launching_review], []]
     store.get.return_value = running_review
+    store.get_delivered_rejected_verdict.return_value = None
     store.count_unjudged_attempts.return_value = 0
     store.bind_run.return_value = running_review
     run_manager = MagicMock()

@@ -498,7 +498,9 @@ async def test_abandoned_closed_task_uses_stagnation_fallback(harness: _Harness)
     assert get_agent_end_handoff(harness.db, harness.caller_run.id) is None
 
 
-async def test_caller_retries_close_task_after_an_invalid_verdict(harness: _Harness) -> None:
+async def test_caller_reuses_delivered_invalid_verdict_on_unchanged_retry(
+    harness: _Harness,
+) -> None:
     first = await harness.close_task()
     assert "run_id" not in first
     [first_run_id] = harness.spawned
@@ -518,26 +520,16 @@ async def test_caller_retries_close_task_after_an_invalid_verdict(harness: _Harn
     ]
     assert harness.completion_registry.is_awaiting(harness.caller_session) is False
 
-    # A retry while the first review is terminal launches a fresh validator, and the
-    # caller parks again on the new run.
+    # Unchanged deterministic evidence reuses the delivered rejection without
+    # launching or parking on another reviewer.
     retry = await harness.close_task()
-    assert retry["error"] == "close_review_required"
-    assert retry["review_id"] != first["review_id"]
-    assert "run_id" not in retry
-    retry_run_id = harness.spawned[-1]
-    assert retry_run_id != first_run_id
-    assert harness.spawned == [first_run_id, retry_run_id]
+    assert retry == {key: value for key, value in delivered.items() if key != "completion_id"}
+    assert harness.spawned == [first_run_id]
     store = TaskCloseReviewStore(harness.db)
-    assert {
-        r.status for r in (store.get(first["review_id"]), store.get(retry["review_id"])) if r
-    } == {
-        "invalid",
-        "running",
-    }
-
-    waited = await harness.wait_for_agent(retry_run_id)
-    assert waited["notification_registered"] is True
-    assert await harness.watchdogs_tick() == (0, 0, [], 0)
+    stored = store.get(first["review_id"])
+    assert stored is not None
+    assert stored.status == "invalid"
+    assert store.get_active_for_task(harness.task.id) is None
 
 
 @pytest.mark.asyncio
