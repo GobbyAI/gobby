@@ -349,8 +349,20 @@ class DaemonGitService:
         """Run Git through an owned ``posix_spawn`` process group.
 
         Git's ``-C`` option preserves repository-relative behavior without a
-        subprocess ``cwd``. Direct ``posix_spawn`` avoids forking the daemon.
+        subprocess ``cwd``. Direct ``posix_spawn`` avoids forking the daemon;
+        other platforms use the existing ``Popen`` path.
         """
+        if os.name != "posix" or not all(
+            hasattr(os, attribute)
+            for attribute in ("posix_spawn", "POSIX_SPAWN_DUP2", "POSIX_SPAWN_CLOSE")
+        ):
+            return await self.run(
+                args,
+                cwd=cwd,
+                timeout=timeout,
+                env=env,
+                input_text=input_text,
+            )
         argv = ("git", *args)
         if timeout <= 0:
             return GitTimeout("timeout", argv, timeout)

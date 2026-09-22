@@ -9,6 +9,7 @@ import threading
 import time
 from pathlib import Path
 from typing import Any, cast
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -148,6 +149,42 @@ async def test_run_returns_typed_success_and_failure(tmp_path: Path) -> None:
     assert isinstance(failure, GitFailed)
     assert failure.returncode == 7
     assert failure.stderr.strip() == "failed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("platform_name", "missing_attribute"),
+    [
+        ("nt", None),
+        ("posix", "posix_spawn"),
+        ("posix", "POSIX_SPAWN_DUP2"),
+        ("posix", "POSIX_SPAWN_CLOSE"),
+    ],
+)
+async def test_run_posix_spawn_falls_back_when_platform_support_is_unavailable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    platform_name: str,
+    missing_attribute: str | None,
+) -> None:
+    service = DaemonGitService()
+    expected = GitOk("ok", ("git", "status"), "", "")
+    fallback = AsyncMock(return_value=expected)
+    monkeypatch.setattr(service, "run", fallback)
+    monkeypatch.setattr("gobby.utils.daemon_git.os.name", platform_name)
+    if missing_attribute is not None:
+        monkeypatch.delattr(f"gobby.utils.daemon_git.os.{missing_attribute}")
+
+    result = await service.run_posix_spawn(["status"], cwd=tmp_path)
+
+    assert result is expected
+    fallback.assert_awaited_once_with(
+        ["status"],
+        cwd=tmp_path,
+        timeout=10.0,
+        env=None,
+        input_text=None,
+    )
 
 
 @pytest.mark.asyncio
