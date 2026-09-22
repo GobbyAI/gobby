@@ -1,7 +1,7 @@
 {
   "version": 1,
   "capability": "sessions",
-  "verified_at": "2026-09-12",
+  "verified_at": "2026-09-21",
   "source_skills": [
     "handoff-discipline"
   ],
@@ -453,6 +453,20 @@
     },
     {
       "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/terminals.md",
+      "implementation": {
+        "path": "src/gobby/cli/sessions.py",
+        "symbol": "terminate_terminal"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions"
+      ],
+      "audience": "operator/client",
+      "command": "gobby sessions terminate-terminal"
+    },
+    {
+      "surface": "cli",
       "reference": "src/gobby/install/shared/skills/gobby/references/sessions/context.md",
       "implementation": {
         "path": "src/gobby/cli/sessions.py",
@@ -833,6 +847,21 @@
       "audience": "agent",
       "server": "gobby-sessions",
       "tool": "send_keys"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/terminals.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/sessions/_terminal_termination.py",
+        "symbol": "register_terminate_terminal_tool.terminate_terminal"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions"
+      ],
+      "audience": "agent",
+      "server": "gobby-sessions",
+      "tool": "terminate_terminal"
     },
     {
       "surface": "mcp",

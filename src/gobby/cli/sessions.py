@@ -6,13 +6,16 @@ import asyncio
 import json
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager, nullcontext
+from json import JSONDecodeError
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import click
+import httpx
 
 from gobby.cli.runtime import require_cli_database
 from gobby.cli.utils import resolve_project_ref, resolve_session_id
+from gobby.cli.utils_config import get_daemon_url
 from gobby.sessions.machine_scope import (
     RemoteSessionOwnershipError,
     require_local_session_ownership,
@@ -21,6 +24,65 @@ from gobby.storage.attention import AttentionStateManager
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.utils.json_helpers import json_dumps
+from gobby.utils.local_token import daemon_auth_headers
+
+_TERMINAL_OPERATION_TIMEOUT_SECONDS = 30.0
+
+
+class SessionToolError(click.ClickException):
+    """A session MCP tool completed with an explicit failure result."""
+
+    def __init__(self, tool_name: str, reason: str, code: str | None = None) -> None:
+        detail = f"{reason} ({code})" if code else reason
+        super().__init__(f"Failed to {tool_name.replace('_', ' ')}: {detail}")
+
+
+def _call_session_tool(
+    tool_name: str,
+    arguments: dict[str, Any],
+    timeout: float = _TERMINAL_OPERATION_TIMEOUT_SECONDS,
+) -> dict[str, Any]:
+    """Call a gobby-sessions MCP tool through the authenticated daemon route."""
+    try:
+        response = httpx.post(
+            f"{get_daemon_url()}/api/mcp/gobby-sessions/tools/{tool_name}",
+            json=arguments,
+            headers=daemon_auth_headers(),
+            timeout=timeout,
+        )
+        response.raise_for_status()
+    except httpx.ConnectError as exc:
+        raise click.ClickException("Cannot connect to Gobby daemon. Is it running?") from exc
+    except httpx.TimeoutException as exc:
+        raise click.ClickException(f"Timed out calling Gobby daemon: {exc}") from exc
+    except httpx.HTTPStatusError as exc:
+        raise click.ClickException(
+            f"HTTP Error {exc.response.status_code}: {exc.response.text}"
+        ) from exc
+    except httpx.HTTPError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    try:
+        raw_result = response.json()
+    except JSONDecodeError as exc:
+        raise click.ClickException(f"Invalid JSON response from Gobby daemon: {exc}") from exc
+    if not isinstance(raw_result, dict):
+        raise click.ClickException(
+            f"Invalid response from Gobby daemon for {tool_name}: expected a JSON object"
+        )
+    outer = cast(dict[str, Any], raw_result)
+    inner = outer.get("result")
+    payload = cast(dict[str, Any], inner) if isinstance(inner, dict) else outer
+    if payload.get("success") is False:
+        error = payload.get("error")
+        reason = error if isinstance(error, str) and error else "No failure reason was provided"
+        code = payload.get("error_code")
+        raise SessionToolError(tool_name, reason, code if isinstance(code, str) else None)
+    if outer.get("success") is not True:
+        raise click.ClickException(
+            f"Invalid response from Gobby daemon for {tool_name}: missing boolean 'success'"
+        )
+    return payload
 
 
 def get_session_manager() -> SessionManager:
@@ -141,6 +203,18 @@ def _append_summary_notes(markdown: str, notes: str | None) -> str:
 def sessions() -> None:
     """Manage Gobby sessions."""
     pass
+
+
+@sessions.command("terminate-terminal")
+@click.argument("reference")
+@click.option("--json", "json_format", is_flag=True, help="Print the daemon response as JSON.")
+def terminate_terminal(reference: str, json_format: bool) -> None:
+    """Terminate a daemon-tracked terminal by terminal or root-session reference."""
+    result = _call_session_tool("terminate_terminal", {"reference": reference})
+    if json_format:
+        click.echo(json_dumps(result))
+        return
+    click.echo(f"Terminated terminal {result['terminal_id']}.")
 
 
 @sessions.command("list")
