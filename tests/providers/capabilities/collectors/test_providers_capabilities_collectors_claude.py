@@ -185,6 +185,10 @@ async def test_effort_frontmatter_uses_canonical_model_ids() -> None:
             "featureMetadata.supportedModels must be a non-empty list",
         ),
         (
+            "featureMetadata:\n  supportedModels:\n    - opus-5",
+            "must contain canonical Claude model IDs",
+        ),
+        (
             "featureMetadata:\n  supportedModels:\n    - claude-mythos-5",
             "overlaps no overview models",
         ),
