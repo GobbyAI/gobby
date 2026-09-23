@@ -190,11 +190,11 @@ class _WorkspaceServices:
                 ensure_no_active_workspace_run(self.db, "worktree", stored.id)
                 await _refresh_clean_git_dir(stored.worktree_path, branch_name, base_branch)
                 return stored
-            await _refresh_clean_git_dir(unmanaged.path, branch_name, base_branch)
             if await rejects_unreferenced_sha_base(self.git_manager, base_branch):
                 raise BuildWorkspaceError(
                     f"base_branch must be a branch name, not a commit sha: {base_branch}"
                 )
+            await _refresh_clean_git_dir(unmanaged.path, branch_name, base_branch)
             return self.worktree_storage.create(
                 project_id=self.project_id,
                 branch_name=branch_name,

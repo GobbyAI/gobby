@@ -5,10 +5,14 @@ from __future__ import annotations
 import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 
 from gobby.agents.isolation import SpawnConfig, WorktreeIsolationHandler
+from gobby.build.workspace_common import BuildWorkspaceError
+from gobby.build.workspace_services import _WorkspaceServices
 from gobby.mcp_proxy.tools.worktrees._merge_state import (
     is_worktree_git_merged,
     worktree_dict_with_git_merge_state,
@@ -239,6 +243,9 @@ class _SpawnStorage:
     def get_by_branch(self, _project_id: str, _branch_name: str) -> None:
         return None
 
+    def get_by_path(self, _path: str) -> None:
+        return None
+
     def create(self, **kwargs: object) -> None:
         self.created.append(kwargs)
 
@@ -280,6 +287,53 @@ async def test_spawn_isolation_refuses_unreferenced_sha_base(tmp_path: Path) -> 
         await handler.prepare_environment(config)
     assert storage.created == []
     assert not spawned.exists()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_unmanaged_sha_base_refusal_leaves_head_unchanged(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "init", "-b", "main", str(repo)], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "config", "user.name", "Test"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "config", "user.email", "test@example.invalid"],
+        check=True,
+        capture_output=True,
+    )
+    _commit(repo, "base")
+    topic = tmp_path / "topic"
+    subprocess.run(
+        ["git", "-C", str(repo), "worktree", "add", "-b", "topic", str(topic)],
+        check=True,
+        capture_output=True,
+    )
+    head_before = _git(topic, "rev-parse", "HEAD")
+    _commit(repo, "later")
+    short = _git(repo, "rev-parse", "--short=10", "HEAD")
+    storage = _SpawnStorage()
+    services = _WorkspaceServices(
+        db=cast(Any, None),
+        task_manager=cast(Any, None),
+        project_id="proj",
+        repo_path=repo,
+        git_manager=WorktreeGitManager(repo),
+        worktree_storage=cast(Any, storage),
+        clone_manager=cast(Any, None),
+        clone_storage=cast(Any, None),
+    )
+    with pytest.raises(BuildWorkspaceError, match="not a commit sha"):
+        await services._ensure_worktree(
+            cast(Any, SimpleNamespace(id="task-1")),
+            "topic",
+            short,
+            cast(Any, SimpleNamespace(integration_workspace_id=None)),
+        )
+    assert _git(topic, "rev-parse", "HEAD") == head_before
+    assert storage.created == []
 
 
 @pytest.mark.unit
