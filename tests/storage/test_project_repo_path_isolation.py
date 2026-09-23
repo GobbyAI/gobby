@@ -10,8 +10,8 @@ import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import cast
-from urllib.parse import quote
 from unittest.mock import patch
+from urllib.parse import quote
 
 import pytest
 from psycopg.conninfo import conninfo_to_dict
@@ -196,12 +196,22 @@ Validate the same plan through both principals.
     )
     operator_config = tmp_path / "operator-bootstrap.yaml"
     operator_conninfo = conninfo_to_dict(fixture.database_url)
+    user = operator_conninfo["user"]
+    password = operator_conninfo["password"]
+    host = operator_conninfo["host"]
+    port = operator_conninfo["port"]
+    dbname = operator_conninfo["dbname"]
+    assert isinstance(user, str)
+    assert isinstance(password, str)
+    assert isinstance(host, str)
+    assert isinstance(port, str | int)
+    assert isinstance(dbname, str)
     operator_database_url = (
         "postgresql://"
-        f"{quote(operator_conninfo['user'], safe='')}:"
-        f"{quote(operator_conninfo['password'], safe='')}@"
-        f"{operator_conninfo['host']}:{operator_conninfo['port']}/"
-        f"{quote(operator_conninfo['dbname'], safe='')}"
+        f"{quote(user, safe='')}:"
+        f"{quote(password, safe='')}@"
+        f"{host}:{port}/"
+        f"{quote(dbname, safe='')}"
     )
     operator_config.write_text(
         json.dumps(

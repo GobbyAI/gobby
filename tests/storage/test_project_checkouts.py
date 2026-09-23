@@ -1165,7 +1165,6 @@ def test_identity_repo_path_residue_allowlist() -> None:
         "tests/storage/test_postgres_agent_authorization.py",
         "tests/storage/test_project_manager.py",
         "tests/storage/test_project_repo_path_isolation.py",
-        "tests/sync/test_github_issue_sync.py",
         "tests/workflows/test_pipeline_heartbeat.py",
     )
     json_query = (
