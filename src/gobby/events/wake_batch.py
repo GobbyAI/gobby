@@ -41,15 +41,6 @@ async def dispatch_live_wakes(
         sessions: dict[str, Any] = {}
         results: dict[str, dict[str, Any]] = {}
         for session_id in session_ids:
-            if dispatcher._lifecycle_refresh is not None:
-                try:
-                    await dispatcher._lifecycle_refresh(session_id)
-                except Exception:
-                    logger.warning(
-                        "Lifecycle refresh failed before waking session %s",
-                        session_id,
-                        exc_info=True,
-                    )
 
             def read_session(current_id: str = session_id) -> Any | None:
                 with dispatcher._session_manager.db.bounded_transaction():
@@ -100,7 +91,9 @@ async def dispatch_live_wakes(
             if not dispatcher._should_send_live_wake(session_id, session):
                 results[session_id] = wake_debounced_result(session_id, method="terminal")
                 continue
-            current, state_failure = await dispatcher._preflight_live_side_effect(session_id)
+            current, state_failure = await dispatcher._preflight_live_side_effect(
+                session_id, priority=priority
+            )
             if state_failure is not None:
                 results[session_id] = state_failure
                 continue

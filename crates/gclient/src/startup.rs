@@ -39,6 +39,8 @@ pub struct CliArgs {
 pub struct AttachTarget {
     pub node: Option<String>,
     pub workspace: Option<String>,
+    /// Registered project to resolve when `workspace` is absent.
+    pub project_id: Option<String>,
 }
 
 impl AttachTarget {
@@ -48,6 +50,7 @@ impl AttachTarget {
         let mut target = Self {
             node: node.map(str::to_string),
             workspace: workspace.map(str::to_string),
+            project_id: None,
         };
         if let Some((head, rest)) = workspace.and_then(|reference| reference.split_once(':')) {
             // Refs are letterless and left-anchored: `2:1` is workspace 1 on

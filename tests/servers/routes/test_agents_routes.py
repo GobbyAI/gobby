@@ -6,6 +6,7 @@ create_http_server() with a real AgentDefinitionManager backed by temp_db.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import threading
 from collections.abc import Iterator
@@ -35,6 +36,33 @@ pytestmark = pytest.mark.unit
 UNKNOWN_ID = "99999999-9999-4999-8999-999999999999"
 
 LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
+
+
+@pytest.mark.parametrize("route", ["/api/agents/runs", "/api/agents/running"])
+def test_agent_run_listing_projects_off_event_loop(
+    client: TestClient,
+    route: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def assert_off_loop() -> None:
+        with pytest.raises(RuntimeError, match="no running event loop"):
+            asyncio.get_running_loop()
+
+    def list_runs(*_args: object, **_kwargs: object) -> list[SimpleNamespace]:
+        assert_off_loop()
+        return [SimpleNamespace(child_session_id=None, to_list_dict=project)]
+
+    def project() -> dict[str, str]:
+        assert_off_loop()
+        return {"run_id": "run-1"}
+
+    monkeypatch.setattr(LocalAgentRunManager, "list_by_status", list_runs)
+    monkeypatch.setattr(LocalAgentRunManager, "list_active_global", list_runs)
+
+    response = client.get(route)
+
+    assert response.status_code == 200
+    assert response.json()["count"] == 1
 
 
 @pytest.fixture(autouse=True)

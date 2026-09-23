@@ -18,6 +18,7 @@ from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.search.keyword import (
     MAX_PG_SEARCH_QUERY_CHARS,
     SearchHit,
+    SearchQuerySyntaxError,
     pick_search_backend,
     sanitize_pg_search_query,
 )
@@ -100,6 +101,9 @@ def create_results_registry(
                 filters={"result_id": canonical_id},
             )
             matches = _hydrate_matches(db, result_id=canonical_id, hits=hits)
+        except SearchQuerySyntaxError as exc:
+            logger.warning("Rejected tool result search query: %s", exc)
+            return _bounded_error(str(exc), response_limit)
         except Exception:
             logger.exception("Failed to search stored tool result")
             return _bounded_error("tool result search unavailable", response_limit)

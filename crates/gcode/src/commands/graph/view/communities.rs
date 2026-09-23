@@ -267,6 +267,7 @@ fn view_community(row: &StoredCommunity, nodes: Vec<String>) -> ViewCommunity {
         label_source: row.label_source.as_str().into(),
         label_stale: row.label_stale,
         nodes,
+        first_member: row.members.first().cloned().unwrap_or_default(),
     }
 }
 

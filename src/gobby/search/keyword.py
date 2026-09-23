@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import unicodedata
+import re
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
@@ -451,114 +451,46 @@ MAX_PG_SEARCH_QUERY_CHARS = 1_000
 """Maximum caller-controlled query length accepted by offload search surfaces."""
 
 
-def _literal_parenthesis_mask(chars: list[str], balanced_quotes: bool) -> list[bool]:
-    """Mark parentheses that must remain literals instead of pg_search grouping."""
-    mask = [False] * len(chars)
-    open_parentheses: list[int] = []
-    backslash_run = 0
-    in_quotes = False
-
-    for index, char in enumerate(chars):
-        is_escaped = backslash_run % 2 == 1
-        if balanced_quotes and char == '"' and not is_escaped:
-            in_quotes = not in_quotes
-        elif not in_quotes and not is_escaped:
-            if char == "(":
-                open_parentheses.append(index)
-            elif char == ")":
-                if not open_parentheses:
-                    mask[index] = True
-                    backslash_run = 0
-                    continue
-                open_index = open_parentheses.pop()
-                follows_identifier = open_index > 0 and (
-                    chars[open_index - 1].isalnum() or chars[open_index - 1] == "_"
-                )
-                is_empty = all(inner.isspace() for inner in chars[open_index + 1 : index])
-                if follows_identifier or is_empty:
-                    mask[open_index] = True
-                    mask[index] = True
-        backslash_run = backslash_run + 1 if char == "\\" else 0
-
-    for open_index in open_parentheses:
-        mask[open_index] = True
-    return mask
+# `\w` is Unicode, so letters such as ë stay inside the term.
+_PLAIN_TERM = re.compile(r"\w+(?:-\w+)*")
+_BOOLEAN_TERMS = frozenset({"and", "or", "not"})
 
 
-def _neutralize_boolean_operators(query: str) -> str:
-    """Lowercase standalone boolean operators without touching quoted phrases."""
-    sanitized: list[str] = []
-    token: list[str] = []
-    in_quotes = False
-    backslash_run = 0
-
-    def flush_token() -> None:
-        if token:
-            value = "".join(token)
-            sanitized.append(value.lower() if value.upper() in {"AND", "OR", "NOT"} else value)
-            token.clear()
-
-    for char in query:
-        unescaped_quote = char == '"' and backslash_run % 2 == 0
-        if in_quotes:
-            sanitized.append(char)
-            if unescaped_quote:
-                in_quotes = False
-        elif unescaped_quote:
-            flush_token()
-            sanitized.append(char)
-            in_quotes = True
-        elif (char.isascii() and char.isalnum()) or char == "_":
-            token.append(char)
-        else:
-            flush_token()
-            sanitized.append(char)
-        backslash_run = backslash_run + 1 if char == "\\" else 0
-    flush_token()
-    return "".join(sanitized)
+def _plain_terms(text: str) -> list[str]:
+    terms: list[str] = []
+    for match in _PLAIN_TERM.finditer(text):
+        token = match.group(0)
+        if not token.strip("_"):
+            continue
+        folded = token.casefold()
+        terms.append(folded if folded in _BOOLEAN_TERMS else token)
+    return terms
 
 
 def sanitize_pg_search_query(query: str) -> str:
-    """Escape pg_search DSL syntax while preserving balanced quoted phrases."""
-    cleaned_parts: list[str] = []
-    for char in query:
-        if unicodedata.category(char) == "Cc":
-            if char.isspace():
-                cleaned_parts.append(" ")
-        else:
-            cleaned_parts.append(char)
-    chars = list("".join(cleaned_parts))
+    """Turn user text into plain terms pg_search can parse.
 
-    unescaped_quote_count = 0
-    backslash_run = 0
-    for char in chars:
-        if char == '"' and backslash_run % 2 == 0:
-            unescaped_quote_count += 1
-        backslash_run = backslash_run + 1 if char == "\\" else 0
-
-    balanced_quotes = unescaped_quote_count % 2 == 0
-    literal_parentheses = _literal_parenthesis_mask(chars, balanced_quotes)
-    escaped_literals: list[str] = []
-    backslash_run = 0
-    in_quotes = False
-    for index, char in enumerate(chars):
-        is_escaped = backslash_run % 2 == 1
-        unescaped_quote = char == '"' and not is_escaped
-        outside_phrase = not balanced_quotes or not in_quotes
-        needs_escape = (unescaped_quote and not balanced_quotes) or (
-            outside_phrase and (char in "[]?'*:^~{}/!" or literal_parentheses[index])
-        )
-        if needs_escape and not is_escaped:
-            escaped_literals.append("\\")
-        escaped_literals.append(char)
-        if balanced_quotes and unescaped_quote:
-            in_quotes = not in_quotes
-        backslash_run = backslash_run + 1 if char == "\\" else 0
-
-    tokens = _neutralize_boolean_operators("".join(escaped_literals)).split()
-    return " ".join(
-        f"\\{token}" if token.startswith("-") else token for token in tokens if token.strip("_")
-    )
+    Punctuation and operators are separators. A balanced quoted region stays
+    one phrase of those terms, because the caller asked for a phrase.
+    Boolean words are lowercased so they remain terms instead of query syntax.
+    """
+    parts: list[str] = []
+    cursor = 0
+    while cursor < len(query):
+        quote = query.find('"', cursor)
+        if quote == -1:
+            parts.extend(_plain_terms(query[cursor:]))
+            break
+        parts.extend(_plain_terms(query[cursor:quote]))
+        close = query.find('"', quote + 1)
+        if close == -1:
+            parts.extend(_plain_terms(query[quote + 1 :]))
+            break
+        phrase = _plain_terms(query[quote + 1 : close])
+        if phrase:
+            parts.append('"' + " ".join(phrase) + '"')
+        cursor = close + 1
+    return " ".join(parts)
 
 
 def is_pg_search_parse_error(error: BaseException) -> bool:

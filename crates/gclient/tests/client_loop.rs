@@ -661,8 +661,11 @@ impl Daemon for ReconnectDaemon {
         &self,
         node: Option<&str>,
         workspace: Option<&str>,
+        project_id: Option<&str>,
     ) -> Result<gobby_client::daemon::WorkspaceSnapshot, DaemonError> {
-        self.inner.attach_workspace(node, workspace).await
+        self.inner
+            .attach_workspace(node, workspace, project_id)
+            .await
     }
 
     async fn workspace_op(
@@ -9057,7 +9060,7 @@ async fn tab_sets_follow_the_focused_project() {
         {"id": "project-2", "name": "two", "display_name": "two",
          "checkout": {"machine_id": "m-local", "root_path": "/repo2"}},
     ]);
-    for _ in 0..3 {
+    for _ in 0..4 {
         mock.enqueue("GET", "/api/projects", 200, projects.clone());
     }
     mock.enqueue(
@@ -9066,25 +9069,12 @@ async fn tab_sets_follow_the_focused_project() {
         200,
         terminal_page(&["terminal-a1", "terminal-a2"]),
     );
-    mock.enqueue(
-        "GET",
-        "/api/terminals?",
-        200,
-        terminal_page(&["terminal-b1"]),
-    );
-    mock.enqueue(
-        "GET",
-        "/api/terminals?",
-        200,
-        terminal_page(&["terminal-b1", SPAWNED]),
-    );
-    mock.enqueue(
-        "GET",
-        "/api/terminals?",
-        200,
-        terminal_page(&["terminal-a1", "terminal-a2"]),
-    );
-    // 4.2: project-1's two tabs are rows of the attached workspace.
+    let later = terminal_page(&["terminal-a1", "terminal-a2", "terminal-b1", SPAWNED]);
+    for _ in 0..8 {
+        mock.enqueue("GET", "/api/terminals?", 200, later.clone());
+    }
+    // The seeded rows belong to the projectless scratch. Opening a project
+    // attaches that project's own workspace.
     mock.seed_workspace(
         "project-1",
         &[
@@ -9110,6 +9100,12 @@ async fn tab_sets_follow_the_focused_project() {
         ["terminal-a1", "terminal-a2"]
     );
     assert!(chrome.activate_tab(1), "the second tab is activated");
+    let scratch_id = workspace
+        .workspace_model()
+        .expect("scratch workspace")
+        .workspace
+        .id
+        .clone();
 
     focus_project(&mut workspace, &mut chrome, "project-2")
         .await
@@ -9141,7 +9137,7 @@ async fn tab_sets_follow_the_focused_project() {
         .clone();
     daemon
         .workspace_op(WorkspaceOp::TabCreate {
-            workspace: workspace_id,
+            workspace: workspace_id.clone(),
             project_id: "project-2".into(),
             worktree_id: None,
             title: None,
@@ -9160,17 +9156,32 @@ async fn tab_sets_follow_the_focused_project() {
     focus_project(&mut workspace, &mut chrome, "project-1")
         .await
         .expect("focus project-1");
-    assert_eq!(chrome.project_tabs.focused.as_deref(), Some("project-1"));
+    let project_one = workspace.workspace_model().expect("project-1 workspace");
+    assert_eq!(
+        project_one.workspace.default_project_id.as_deref(),
+        Some("project-1")
+    );
+    assert_ne!(project_one.workspace.id, scratch_id);
+    assert_ne!(project_one.workspace.id, workspace_id);
+    assert!(
+        shown_terminals(&workspace, &chrome)
+            .iter()
+            .all(|terminal| terminal != "terminal-a1" && terminal != "terminal-a2"),
+        "the scratch keeps its tabs"
+    );
+
+    focus_project(&mut workspace, &mut chrome, "project-2")
+        .await
+        .expect("focus project-2 again");
+    let project_two = workspace.workspace_model().expect("project-2 workspace");
+    assert_eq!(project_two.workspace.id, workspace_id);
+    assert_eq!(
+        project_two.workspace.default_project_id.as_deref(),
+        Some("project-2")
+    );
     assert_eq!(
         shown_terminals(&workspace, &chrome),
-        ["terminal-a1", "terminal-a2"]
-    );
-    assert_eq!(chrome.active_index(), 1, "the viewer's active tab is kept");
-    assert_eq!(websocket_requests(&mock, "terminal_create").len(), 1);
-    assert_eq!(
-        chrome.project_tabs.sets["project-2"].tabs.len(),
-        2,
-        "project-2's tabs stay parked"
+        [SPAWNED, "terminal-b1"]
     );
     mock.shutdown().await;
 }
@@ -10599,6 +10610,56 @@ async fn two_project_workspace(
     (daemon, workspace, chrome, home)
 }
 
+/// Opening a project attaches the next workspace and the first tab is created there.
+#[tokio::test]
+async fn opening_a_project_places_its_tab_on_the_next_workspace() {
+    const SPAWNED: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    let mock = MockDaemon::start("local-token").await;
+    let (_daemon, mut workspace, mut chrome, _home) = two_project_workspace(&mock, SPAWNED).await;
+    let original = workspace
+        .workspace_model()
+        .expect("attached")
+        .workspace
+        .id
+        .clone();
+    let original_ref = workspace
+        .workspace_model()
+        .expect("attached")
+        .workspace
+        .reference;
+    focus_project(&mut workspace, &mut chrome, "project-2")
+        .await
+        .expect("focus project-2");
+    workspace
+        .drain_live_events()
+        .await
+        .expect("apply the tab.created event");
+    sync_live_chrome(&mut workspace, &mut chrome);
+    let attaches = websocket_requests(&mock, "workspace_attach");
+    assert!(
+        attaches
+            .iter()
+            .any(|request| request.get("project_id") == Some(&json!("project-2"))),
+        "opening a project resolves its workspace"
+    );
+    let creates = workspace_ops(&mock, "tab.create");
+    assert_eq!(creates.len(), 1, "the new workspace's first tab");
+    assert_ne!(
+        creates[0].get("workspace").and_then(|value| value.as_str()),
+        Some(original.as_str())
+    );
+    let model = workspace.workspace_model().expect("project workspace");
+    assert_eq!(
+        model.workspace.default_project_id.as_deref(),
+        Some("project-2")
+    );
+    assert_eq!(model.workspace.reference, original_ref + 1);
+    let tab = model.tabs_for_project("project-2");
+    assert_eq!(tab.len(), 1);
+    assert_eq!(tab[0].workspace_id, model.workspace.id);
+    mock.shutdown().await;
+}
+
 /// Create a project-2 tab for `terminal` the way another window would.
 async fn other_window_creates_tab(daemon: &LiveDaemon, workspace_id: &str, terminal: &str) {
     daemon
@@ -10621,17 +10682,17 @@ async fn a_refused_placement_is_not_claimed_when_another_window_places_it() {
     const SPAWNED: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     let mock = MockDaemon::start("local-token").await;
     let (daemon, mut workspace, mut chrome, _home) = two_project_workspace(&mock, SPAWNED).await;
-    let workspace_id = workspace
-        .workspace_model()
-        .expect("attached")
-        .workspace
-        .id
-        .clone();
 
     mock.enqueue_workspace_refusal("busy", "another window is moving the workspace");
     focus_project(&mut workspace, &mut chrome, "project-2")
         .await
         .expect("focus project-2");
+    let project_workspace = workspace
+        .workspace_model()
+        .expect("project workspace")
+        .workspace
+        .id
+        .clone();
     assert_eq!(
         workspace_ops(&mock, "tab.create").len(),
         1,
@@ -10642,9 +10703,9 @@ async fn a_refused_placement_is_not_claimed_when_another_window_places_it() {
         Some("another window is moving the workspace")
     );
 
-    // Another window gives project-2 a tab, then places the refused shell.
+    // Another window fills the project workspace, including the refused shell.
     for terminal in ["terminal-b1", SPAWNED] {
-        other_window_creates_tab(&daemon, &workspace_id, terminal).await;
+        other_window_creates_tab(&daemon, &project_workspace, terminal).await;
         workspace
             .drain_live_events()
             .await
@@ -10667,41 +10728,34 @@ async fn a_placement_landing_behind_another_project_focuses_on_return() {
     const SPAWNED: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     let mock = MockDaemon::start("local-token").await;
     let (daemon, mut workspace, mut chrome, _home) = two_project_workspace(&mock, SPAWNED).await;
-    let workspace_id = workspace
-        .workspace_model()
-        .expect("attached")
-        .workspace
-        .id
-        .clone();
 
-    // The spawn's tab.created event is queued behind the op reply; the
-    // user is back on project-1 before the loop applies it.
+    // Place the shell, then leave. Another window edits that parked workspace.
     focus_project(&mut workspace, &mut chrome, "project-2")
         .await
         .expect("focus project-2");
-    focus_project(&mut workspace, &mut chrome, "project-1")
-        .await
-        .expect("focus project-1");
+    let project_workspace = workspace
+        .workspace_model()
+        .expect("project workspace")
+        .workspace
+        .id
+        .clone();
     workspace
         .drain_live_events()
         .await
-        .expect("apply the tab.created event");
+        .expect("apply the shell's tab.created event");
     sync_live_chrome(&mut workspace, &mut chrome);
+    focus_project(&mut workspace, &mut chrome, "project-1")
+        .await
+        .expect("focus project-1");
 
-    // Another window puts a tab in front of the shell's.
-    other_window_creates_tab(&daemon, &workspace_id, "terminal-b1").await;
+    other_window_creates_tab(&daemon, &project_workspace, "terminal-b1").await;
     workspace
         .drain_live_events()
         .await
         .expect("apply the second tab.created event");
-    let front = workspace
-        .workspace_model()
-        .expect("attached")
-        .tabs_for_project("project-2")
-        .last()
-        .expect("two project-2 tabs")
-        .id
-        .clone();
+    let front = mock
+        .tab_for_terminal("terminal-b1")
+        .expect("the other window's tab");
     daemon
         .workspace_op(WorkspaceOp::TabMove {
             tab: front,

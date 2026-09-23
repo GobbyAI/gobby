@@ -100,6 +100,26 @@ pub enum EvidenceOperation {
     Search { search: SearchSelector },
     Read { read: ReadSelector },
     Graph { graph: GraphSelector },
+    Communities { communities: CommunitiesSelector },
+}
+
+/// Lists stored import communities, or selects them by at most one of
+/// `community_id`, `label`, or `path` (detail mode, with members).
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CommunitiesSelector {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub community_id: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_size: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_members: Option<usize>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -218,12 +238,13 @@ pub enum EntitySelector {
     },
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "item_type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum EvidenceItem {
     Source(SourceEvidence),
     Graph(GraphEvidence),
     CommitMetadata(CommitMetadataEvidence),
+    Community(CommunityEvidence),
 }
 
 impl EvidenceItem {
@@ -232,6 +253,7 @@ impl EvidenceItem {
             Self::Source(item) => &item.evidence_id,
             Self::Graph(item) => &item.evidence_id,
             Self::CommitMetadata(item) => &item.evidence_id,
+            Self::Community(item) => &item.evidence_id,
         }
     }
 
@@ -259,8 +281,49 @@ impl EvidenceItem {
                     .unwrap_or("");
                 format!("2\0{path}\0{}", item.evidence_id)
             }
+            Self::Community(item) => format!(
+                "3\0{:020}\0{:020}\0{}",
+                usize::MAX - item.size,
+                item.community_id,
+                item.evidence_id
+            ),
         }
     }
+}
+
+/// One stored import community. `members` is empty in list mode.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CommunityEvidence {
+    pub evidence_id: String,
+    pub community_id: i32,
+    pub label: String,
+    pub label_source: String,
+    pub label_confidence: Option<f64>,
+    pub label_stale: bool,
+    pub size: usize,
+    pub cohesion: f64,
+    pub internal_edges: usize,
+    pub member_signature: String,
+    pub members: Vec<CommunityMember>,
+    pub members_truncated: bool,
+    pub representatives: Vec<String>,
+    pub boundary: Vec<CommunityBoundary>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CommunityMember {
+    pub path: String,
+    pub content_hash: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CommunityBoundary {
+    pub other_community_id: i32,
+    pub label: String,
+    pub import_count: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -342,7 +405,7 @@ pub struct EvidenceObservation {
     pub recorded_head: String,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EvidenceResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]

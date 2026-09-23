@@ -10,7 +10,7 @@ use std::collections::HashSet;
 use chrono::{DateTime, Utc};
 
 use super::LabelSource;
-use super::labels::{derive_label, label_candidates};
+use super::labels::{dedupe_labels, derive_label, label_candidates};
 use super::partition::{PartitionCommunity, ProjectPartition};
 
 #[derive(Clone, Debug)]
@@ -82,11 +82,19 @@ pub(crate) fn assign_ids(
         .unwrap_or(watermark)
         .max(watermark);
     let mut new_watermark = watermark;
+    let deterministic = dedupe_labels(
+        partition
+            .communities
+            .iter()
+            .map(|community| derive_label(&community.members, &community.in_degree))
+            .collect(),
+    );
     let assigned = partition
         .communities
         .iter()
+        .zip(deterministic)
         .enumerate()
-        .map(|(partition_index, community)| {
+        .map(|(partition_index, (community, deterministic))| {
             let matched = prior_by_new[partition_index].map(|index| &prior[index]);
             let community_id = match matched {
                 Some(previous) => previous.community_id,
@@ -100,7 +108,7 @@ pub(crate) fn assign_ids(
                 community_id,
                 matched_prior: matched.map(|previous| previous.community_id),
                 partition_index,
-                label: carry_label(community, matched),
+                label: carry_label(community, matched, deterministic),
             }
         })
         .collect();
@@ -146,9 +154,18 @@ fn compare_candidates(left: &MatchCandidate, right: &MatchCandidate) -> Ordering
         .then_with(|| left.new_index.cmp(&right.new_index))
 }
 
-fn carry_label(current: &PartitionCommunity, previous: Option<&PriorCommunity>) -> LabelCarry {
-    let deterministic = derive_label(&current.members, &current.in_degree);
-    let candidates = label_candidates(current);
+/// `deterministic` is the derived label after the partition-wide ` #N` dedupe, so
+/// every arm writes the current ordinal. It also leads the candidates, so the
+/// labeler cannot re-admit the bare name as a deterministic pick.
+fn carry_label(
+    current: &PartitionCommunity,
+    previous: Option<&PriorCommunity>,
+    deterministic: String,
+) -> LabelCarry {
+    let mut candidates = label_candidates(current);
+    if let Some(first) = candidates.first_mut() {
+        first.clone_from(&deterministic);
+    }
     match previous {
         None => LabelCarry {
             label: deterministic.clone(),
@@ -162,8 +179,16 @@ fn carry_label(current: &PartitionCommunity, previous: Option<&PriorCommunity>) 
             label_candidates: candidates,
         },
         Some(previous) if previous.member_signature == current.member_signature => LabelCarry {
-            label: previous.label.clone(),
-            label_deterministic: previous.label_deterministic.clone(),
+            // A derived label takes the current ordinal; a model label or a
+            // gate-skipped candidate pick (6.3) is carried.
+            label: if previous.label_source == LabelSource::Deterministic
+                && previous.label == previous.label_deterministic
+            {
+                deterministic.clone()
+            } else {
+                previous.label.clone()
+            },
+            label_deterministic: deterministic,
             label_source: previous.label_source,
             label_confidence: previous.label_confidence,
             label_model: previous.label_model.clone(),

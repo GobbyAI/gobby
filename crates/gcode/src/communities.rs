@@ -15,6 +15,7 @@ use chrono::{DateTime, Utc};
 use postgres::Client;
 
 use self::identity::load_project_imports;
+use self::labels::LABEL_ALGORITHM_VERSION;
 use self::partition::{PartitionCommunity, ProjectPartition, build_partition};
 use self::remap::{AssignedCommunity, PriorCommunity, assign_ids};
 
@@ -89,7 +90,11 @@ pub(crate) fn refresh_project_communities(
     {
         replace.seed_from_parent(parent_project_id)?;
     }
-    if target_signature.as_deref() == Some(partition.partition_signature.as_str()) {
+    let stored_signature = format!(
+        "{LABEL_ALGORITHM_VERSION}:{}",
+        partition.partition_signature
+    );
+    if target_signature.as_deref() == Some(stored_signature.as_str()) {
         replace.skip()?;
         return Ok(CommunityRefreshReport {
             communities: partition.communities.len(),
@@ -128,7 +133,7 @@ pub(crate) fn refresh_project_communities(
         })
         .count();
     let communities = rows.len();
-    replace.commit(rows, watermark, &partition.partition_signature)?;
+    replace.commit(rows, watermark, &stored_signature)?;
     Ok(CommunityRefreshReport {
         communities,
         changed,

@@ -2497,7 +2497,7 @@ async fn workspace_attach_op_and_event_round_trip() {
     );
 
     let attached = daemon
-        .attach_workspace(None, None)
+        .attach_workspace(None, None, None)
         .await
         .expect("attach workspace");
     assert_fixture(
@@ -2595,7 +2595,7 @@ async fn workspace_attach_op_and_event_round_trip() {
     mock.send_event_and_wait(workspace_event(ATTACHED_WORKSPACE, 2))
         .await;
     daemon
-        .attach_workspace(None, Some(ATTACHED_WORKSPACE))
+        .attach_workspace(None, Some(ATTACHED_WORKSPACE), None)
         .await
         .expect("re-attach workspace");
     assert_eq!(count_ws_requests(&mock, "workspace_attach"), 2);
@@ -2656,14 +2656,18 @@ async fn abandoned_workspace_attach_cannot_retarget_the_filter() {
         .expect("connect live daemon");
     let (_, mut events) = daemon.subscribe();
     daemon
-        .attach_workspace(None, Some(ATTACHED_WORKSPACE))
+        .attach_workspace(None, Some(ATTACHED_WORKSPACE), None)
         .await
         .expect("attach workspace");
 
     mock.suppress_ws("workspace_attach");
     let abandoned = tokio::spawn({
         let daemon = daemon.clone();
-        async move { daemon.attach_workspace(None, Some(OTHER_WORKSPACE)).await }
+        async move {
+            daemon
+                .attach_workspace(None, Some(OTHER_WORKSPACE), None)
+                .await
+        }
     });
     poll_until(
         Duration::from_secs(1),

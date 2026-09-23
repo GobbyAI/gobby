@@ -99,6 +99,7 @@ pub(super) fn label_communities(
                 label_source: community.label_source.as_str().to_string(),
                 label_stale: community.label_stale,
                 nodes: view_nodes,
+                first_member: community.members.first().cloned().unwrap_or_default(),
             }
         })
         .collect();

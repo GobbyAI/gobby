@@ -900,8 +900,10 @@ impl Daemon for LiveDaemon {
         &self,
         node: Option<&str>,
         workspace: Option<&str>,
+        project_id: Option<&str>,
     ) -> Result<WorkspaceSnapshot, DaemonError> {
-        self.attach_workspace_live(node, workspace).await
+        self.attach_workspace_live(node, workspace, project_id)
+            .await
     }
 
     async fn workspace_op(&self, op: WorkspaceOp) -> Result<WorkspaceReply, DaemonError> {

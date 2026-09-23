@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
@@ -156,15 +157,37 @@ async def dispatch_mailbox_wakes(
     """Dispatch and correlate one live-wake outcome per committed message."""
     if len(messages) != len(session_ids):
         raise RuntimeError("Committed mailbox messages do not match resolved recipients")
-    outcomes = await _wake_many(
-        dispatcher,
-        session_manager,
-        session_ids,
-        priority=priority,
-    )
+    started = time.monotonic()
+    logger.info("Mailbox wake dispatch started: recipients=%d", len(session_ids))
+    try:
+        outcomes = await _wake_many(
+            dispatcher,
+            session_manager,
+            session_ids,
+            priority=priority,
+        )
+    except asyncio.CancelledError:
+        logger.warning(
+            "Mailbox wake dispatch cancelled: recipients=%d duration_ms=%.1f",
+            len(session_ids),
+            (time.monotonic() - started) * 1000,
+        )
+        raise
+    duration_ms = (time.monotonic() - started) * 1000
     correlated: list[dict[str, Any]] = []
     for message, session_id, outcome in zip(messages, session_ids, outcomes, strict=True):
         item = {**outcome, "message_id": message.id}
+        logger.info(
+            "Mailbox wake dispatch: session=%s message=%s delivered=%s method=%s "
+            "skipped=%s error_code=%s duration_ms=%.1f",
+            session_id,
+            message.id,
+            item.get("delivered"),
+            item.get("method"),
+            item.get("skipped"),
+            item.get("error_code"),
+            duration_ms,
+        )
         decline_reason = item.get("decline_reason")
         if isinstance(decline_reason, str) and decline_reason:
             level = logging.DEBUG if decline_reason == "session_active" else logging.INFO

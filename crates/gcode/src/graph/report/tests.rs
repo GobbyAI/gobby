@@ -1,13 +1,18 @@
+use crate::communities::{LabelSource, StoredCommunity};
 use crate::config::{CodeVectorSettings, Context};
 use crate::models::{ProjectionMetadata, ProjectionProvenance};
 use std::path::PathBuf;
+use std::time::SystemTime;
 
-use super::generation::generate_report_from_snapshot;
+use super::generation::{
+    generate_report_from_snapshot, generate_report_from_snapshot_with_options,
+};
+use super::loading::{CODE_COMMUNITIES_INPUT, MISSING_COMMUNITIES_DETAIL, community_input};
 use super::render::render_markdown;
 use super::summary::{CODE_GRAPH_INPUT, summarize_bridge_edges, summarize_hotspots};
 use super::types::{
     BridgeEdgeInput, BridgeReportSummary, ConfidenceRange, GraphHotspot, GraphReportHotspots,
-    NamedCount, ReportCodeEdge, ReportGraphSnapshot, ReportNode,
+    NamedCount, ReportCodeEdge, ReportDegradation, ReportGraphSnapshot, ReportNode,
 };
 use super::*;
 
@@ -239,6 +244,7 @@ fn markdown_inline_code_uses_commonmark_backtick_delimiters() {
             count: 1,
         }],
         external_targets: &[],
+        communities: None,
         bridge_summary: None,
         degradation_details: &[],
         top_n: 10,
@@ -268,6 +274,7 @@ fn markdown_renders_high_degree_modules() {
         hotspots: &report.hotspots,
         unresolved_targets: &[],
         external_targets: &[],
+        communities: None,
         bridge_summary: None,
         degradation_details: &[],
         top_n: 10,
@@ -419,5 +426,169 @@ fn bridge_summary_aggregates_shared_symbol_hypotheses_across_source_systems() {
             ],
             confidence_range: Some(ConfidenceRange { min: 0.6, max: 0.9 }),
         })
+    );
+}
+
+fn stored_community(id: i32, size: usize, label: &str) -> StoredCommunity {
+    let members: Vec<String> = (0..size)
+        .map(|index| format!("src/c{id}/m{index}.rs"))
+        .collect();
+    StoredCommunity {
+        machine_id: "machine-1".into(),
+        project_id: "project-1".into(),
+        community_id: id,
+        member_count: size,
+        representatives: members.iter().take(5).cloned().collect(),
+        members,
+        internal_edges: size.saturating_sub(1),
+        cohesion: 0.5,
+        boundary: Vec::new(),
+        member_signature: format!("signature-{id}"),
+        label_deterministic: label.into(),
+        label: label.into(),
+        label_source: LabelSource::Deterministic,
+        label_confidence: None,
+        label_model: None,
+        label_candidates: Vec::new(),
+        labeled_signature: None,
+        labeled_at: None,
+        label_attempted_at: None,
+        refreshed_at: SystemTime::UNIX_EPOCH,
+        label_stale: false,
+    }
+}
+
+fn report_with_communities(
+    rows: anyhow::Result<Vec<StoredCommunity>>,
+    top_n: usize,
+) -> ProjectGraphReport {
+    generate_report_from_snapshot_with_options(
+        "project-1",
+        "2026-09-23T00:00:00Z",
+        ReportGraphSnapshot::default(),
+        community_input(rows),
+        ProjectGraphReportOptions { top_n },
+    )
+}
+
+#[test]
+fn report_communities_section_counts_reconcile() {
+    let rows = vec![
+        stored_community(3, 3, "session handoff"),
+        stored_community(1, 12, "graph report"),
+        stored_community(5, 1, "single a"),
+        stored_community(2, 7, "task close gates"),
+        stored_community(6, 1, "single b"),
+        stored_community(4, 2, "pair"),
+    ];
+    let report = report_with_communities(Ok(rows), 2);
+
+    let counts = report
+        .communities
+        .as_ref()
+        .map(|communities| (communities.total, communities.thin_count));
+    assert_eq!(counts, Some((6, 3)));
+    let top_ids: Vec<i32> = report
+        .communities
+        .iter()
+        .flat_map(|communities| &communities.top)
+        .map(|community| community.community_id)
+        .collect();
+    assert_eq!(top_ids, vec![1, 2]);
+    assert!(report.degradation_details.is_empty());
+
+    let json = serde_json::to_value(&report).expect("report serializes");
+    assert_eq!(json["communities"]["total"], 6);
+    assert_eq!(json["communities"]["thin_count"], 3);
+    assert_eq!(json["communities"]["top"][0]["size"], 12);
+
+    assert!(report.markdown.contains("## Import communities"));
+    assert!(
+        report
+            .markdown
+            .contains("- 6 communities (3 thin, below 3 members)")
+    );
+    assert!(
+        report
+            .markdown
+            .contains("| 1 | graph report | 12 | 0.50 | deterministic |")
+    );
+    assert!(!report.markdown.contains("| 3 | session handoff |"));
+}
+
+#[test]
+fn report_without_communities_degrades_optional_input() {
+    let report = report_with_communities(Ok(Vec::new()), DEFAULT_TOP_LIMIT);
+
+    assert_eq!(report.communities, None);
+    assert_eq!(
+        report.degradation_details,
+        vec![ReportDegradation {
+            input: CODE_COMMUNITIES_INPUT.to_string(),
+            required: false,
+            detail: MISSING_COMMUNITIES_DETAIL.to_string(),
+        }]
+    );
+    assert!(!report.markdown.contains("## Import communities"));
+    assert!(
+        report
+            .markdown
+            .contains("- `code_communities`: no stored import communities")
+    );
+
+    let failed = report_with_communities(
+        Err(anyhow::anyhow!("connection refused")),
+        DEFAULT_TOP_LIMIT,
+    );
+    assert_eq!(failed.communities, None);
+    assert_eq!(failed.degradation_details.len(), 1);
+    assert_eq!(failed.degradation_details[0].input, CODE_COMMUNITIES_INPUT);
+    assert!(!failed.degradation_details[0].required);
+    assert!(
+        failed.degradation_details[0]
+            .detail
+            .contains("connection refused")
+    );
+}
+
+#[test]
+fn report_marks_stale_labels() {
+    let mut stale = stored_community(1, 5, "graph report");
+    stale.label_stale = true;
+    let fresh = StoredCommunity {
+        label: "Task close gates".into(),
+        label_source: LabelSource::Model,
+        ..stored_community(2, 4, "task close gates")
+    };
+    let report = report_with_communities(Ok(vec![stale, fresh]), DEFAULT_TOP_LIMIT);
+
+    let labels: Vec<(i32, bool, String)> = report
+        .communities
+        .iter()
+        .flat_map(|communities| &communities.top)
+        .map(|community| {
+            (
+                community.community_id,
+                community.label_stale,
+                community.label_source.clone(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        labels,
+        vec![
+            (1, true, "deterministic".to_string()),
+            (2, false, "model".to_string()),
+        ]
+    );
+    assert!(
+        report
+            .markdown
+            .contains("| 1 | graph report | 5 | 0.50 | deterministic (model label stale) |")
+    );
+    assert!(
+        report
+            .markdown
+            .contains("| 2 | Task close gates | 4 | 0.50 | model |")
     );
 }

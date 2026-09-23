@@ -13,7 +13,7 @@ async def retrieve_evidence(
     *,
     executable: Path,
     project_root: Path,
-    operation: Literal["search", "read", "graph"],
+    operation: Literal["search", "read", "graph", "communities"],
     selector: dict[str, Any],
     continuation: str | None,
 ) -> dict[str, Any]:

@@ -85,7 +85,10 @@ fn unchanged_partition_keeps_every_id() {
     assert_eq!(assigned[0].label.label, "stored-label");
     assert_eq!(
         assigned[0].label.label_deterministic,
-        "stored-deterministic"
+        derive_label(
+            &partition.communities[0].members,
+            &partition.communities[0].in_degree
+        )
     );
     assert_eq!(assigned[0].label.label_source, LabelSource::Model);
     assert_eq!(assigned[0].label.label_confidence, Some(0.85));
@@ -386,4 +389,73 @@ fn test_helpers_keep_empty_indegree_explicit() {
         community.in_degree,
         BTreeMap::from([("src/a.rs".to_owned(), 0)])
     );
+}
+
+#[test]
+fn deterministic_labels_dedupe_in_current_partition_order() {
+    let partition = project(vec![
+        community(
+            &["src/gobby/c1.py", "src/gobby/c2.py", "src/gobby/c3.py"],
+            "sig-c",
+        ),
+        community(&["src/gobby/a1.py", "src/gobby/a2.py"], "sig-a"),
+        community(&["src/gobby/b1.py", "src/gobby/b2.py"], "sig-b"),
+        community(&["src/gobby/d1.py", "src/gobby/d2.py"], "sig-d"),
+        community(&["tests/e1.py", "tests/e2.py"], "sig-e"),
+    ]);
+    let a = &["src/gobby/a1.py", "src/gobby/a2.py"];
+    let b = &["src/gobby/b1.py", "src/gobby/b2.py"];
+    let e = &["tests/e1.py", "tests/e2.py"];
+    let prior = vec![
+        PriorCommunity {
+            label: "src/gobby".to_owned(),
+            label_deterministic: "src/gobby".to_owned(),
+            ..prior(1, a, "sig-a", LabelSource::Deterministic)
+        },
+        PriorCommunity {
+            label: "src/gobby #2".to_owned(),
+            label_deterministic: "src/gobby #2".to_owned(),
+            ..prior(2, b, "sig-b", LabelSource::Deterministic)
+        },
+        prior(
+            3,
+            &["src/gobby/d1.py", "src/gobby/d2.py"],
+            "sig-d",
+            LabelSource::Model,
+        ),
+        // A gate-skipped model pick (6.3) keeps its chosen candidate.
+        PriorCommunity {
+            label: "tests/e1.py".to_owned(),
+            label_deterministic: "tests".to_owned(),
+            ..prior(4, e, "sig-e", LabelSource::Deterministic)
+        },
+    ];
+
+    let (assigned, _) = assign_ids(&partition, &prior, 4);
+
+    let labels = assigned
+        .iter()
+        .map(|community| {
+            (
+                community.label.label.as_str(),
+                community.label.label_deterministic.as_str(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        labels,
+        [
+            ("src/gobby", "src/gobby"),
+            ("src/gobby #2", "src/gobby #2"),
+            ("src/gobby #3", "src/gobby #3"),
+            ("stored-label", "src/gobby #4"),
+            ("tests/e1.py", "tests"),
+        ]
+    );
+    for community in &assigned {
+        assert_eq!(
+            community.label.label_candidates[0],
+            community.label.label_deterministic
+        );
+    }
 }

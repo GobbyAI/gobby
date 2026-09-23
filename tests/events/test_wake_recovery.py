@@ -371,7 +371,7 @@ async def test_two_mid_turn_messages_replay_through_acknowledged_receipt(
         wake=True,
     )
     clock[0] += 5
-    with caplog.at_level(logging.INFO, logger="gobby.sessions.mailbox_delivery"):
+    with caplog.at_level(logging.DEBUG, logger="gobby.sessions.mailbox_delivery"):
         second = await mailbox.send(
             from_session_id=sender_id,
             target="session",
