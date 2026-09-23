@@ -179,6 +179,21 @@
     {
       "surface": "mcp",
       "server": "gobby-tasks",
+      "tool": "delegate_task",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/implementation.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_session.py",
+        "symbol": "create_session_registry.delegate_task"
+      },
+      "verification": [
+        "registered-inventory",
+        "task-delegation"
+      ],
+      "audience": "agent; only the filing session may delegate"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks",
       "tool": "create_task",
       "reference": "src/gobby/install/shared/skills/gobby/references/tasks/creation.md",
       "implementation": {
@@ -1539,7 +1554,7 @@
       "id": "registered-inventory",
       "kind": "live-read-only",
       "command": "list_tools(gobby-tasks); list_tools(gobby-tasks-ops)",
-      "result": "39 and 50 registered public tools inventoried. 60 task-owned tools mapped; remaining tools assigned to build, plan, source-control.",
+      "result": "39 and 50 registered public tools inventoried. 60 task-owned tools mapped; remaining tools assigned to build, plan, source-control. 2026-09-23 (#22804): list_tools(gobby-tasks) reports 40 tools; delegate_task is mapped.",
       "schemas_read": [
         "create_task",
         "claim_task",
@@ -1547,8 +1562,15 @@
         "list_tasks",
         "add_dependency",
         "get_task_diff",
-        "link_task_to_session"
+        "link_task_to_session",
+        "delegate_task"
       ]
+    },
+    {
+      "id": "task-delegation",
+      "kind": "isolated-tests",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/tools/tasks/test_delegate_task.py tests/workflows/test_found_work_unclaimed_gate.py -q -x -p no:cacheprovider",
+      "result": "19 passed. Source reads (gcode symbol-at and grep) of the delegate_task tool, storage/tasks/_delegation.py and found_work_gate.py verified filer-only delegation of an open, unclaimed task, the self-delegation rejection, and the gate exclusion that holds only while the delegated session is live."
     },
     {
       "id": "source-contract",
