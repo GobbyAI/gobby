@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+#### gcode
+
+- **Persisted import communities** — `gcode index` computes the project's file
+  import partition and stores it per machine and project in the
+  `code_communities` table (schema migration 443), keeping community ids stable
+  across runs.
+- **Communities graph view** — `gcode graph view --view=communities` lists
+  communities and the import edges between them. `--min-size N` (default 2)
+  hides smaller communities, and `--community ID|LABEL|PATH` shows one
+  community's members and neighbor communities.
+- **`communities` evidence operation** — Ask and worker evidence read stored
+  communities by id, label, or member path.
+- **Report section** — `gcode graph report` adds an `## Import communities`
+  section.
+
+#### gobby-core
+
+- **Validated graph analytics** — `graph_analytics::communities` and
+  `graph_analytics::centrality` reject malformed input with
+  `GraphInputError` instead of sanitizing it. Version: `0.10.0`.
+
 ### Removed
 
 #### gcode
@@ -62,6 +85,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   multi-line constant. Assignments nested in Python functions or classes stay
   unindexed. The minor bump makes `gcode repair` full-reindex existing
   projects so they pick up the new symbols. Version: `1.8.0`.
+- **Stored MCG community labels** — MCG views label nodes from the persisted
+  partition with content-derived labels instead of computing `community-N` ids
+  inline, and the Mermaid output groups nodes into one subgraph per community.
+  CLI contract version 11. Version: `1.9.0`.
 
 #### gwiki
 

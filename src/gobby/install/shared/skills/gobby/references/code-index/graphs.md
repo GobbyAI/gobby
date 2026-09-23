@@ -20,8 +20,21 @@ these diagnostics. A nullable node `file` is not an ownership fact.
 For MCG, a uniquely resolving file and its module aliases identify the same
 provider neighborhood. Incoming imports identify consumers. Do not invent a
 persisted provider-file ownership column; inspect ambiguous aliases and use
-concrete seeds. Communities use the graph analysis implementation, not file
-ownership inferred from incoming edges.
+concrete seeds.
+
+MCG community labels come from the import partition that `gcode index` persists
+per machine and project; community ids stay stable across runs. Views never
+compute a partition inline: with none stored, node `community` stays null and
+the `hint` says to run `gcode index`. MCG Mermaid output groups nodes into one
+subgraph per community.
+
+- `graph view --view communities [--min-size N] [--community ID|LABEL|PATH]`
+  answers "Which files form a subsystem, and how subsystems depend on each
+  other?" With no seed it lists communities of at least N files (default 2)
+  and the import edges between them. `--community` selects one community by
+  id, label, or member path and shows its members and neighbor communities.
+- `label_stale: true` means the model label predates the current membership,
+  so the view shows the deterministic label instead.
 
 For authorized projection repair, `graph sync-file --file <path>` replays one
 indexed file, `graph rebuild` replays project facts, and `graph cleanup-orphans`
@@ -46,4 +59,4 @@ Guides: [Graph operations](../../../../../../../../docs/guides/gcode-user-guide.
 [ownership contract](../../../../../../../../docs/guides/gcode-graph-core.md#ownership-boundaries),
 [HTTP routes](../../../../../../../../docs/guides/code-index.md#http-endpoints).
 
-_Last verified: 2026-09-12_
+_Last verified: 2026-09-23_
