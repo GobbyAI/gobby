@@ -266,6 +266,7 @@ async def test_recommendation_and_import_use_live_llm_service() -> None:
         llm_service=llm_services[0],
         mcp_manager=mcp_manager,
         db=MagicMock(),
+        project_id="test-project",
         config_resolver=lambda: configs[active["index"]].recommend_tools,
         llm_service_resolver=lambda: llm_services[active["index"]],
     )
@@ -448,12 +449,16 @@ async def test_results_schema_stays_pinned_and_live_bound_clamps_the_slice() -> 
 @pytest.mark.asyncio
 async def test_task_close_uses_session_lifecycle_archive_override(tmp_path: Path) -> None:
     archive_dir = str(tmp_path / "archive")
+    window_start = "2026-01-01T00:00:00+00:00"
     config = DaemonConfig(
         session_lifecycle={"transcript_archive_dir": archive_dir},
     )
     context = MagicMock()
     context.config = config
-    context.session_manager.get.return_value = SimpleNamespace(created_at="start")
+    context.session_manager.get.return_value = SimpleNamespace(
+        created_at=window_start,
+        source="codex",
+    )
     evidence = MagicMock()
     merged = MagicMock()
 
@@ -466,6 +471,10 @@ async def test_task_close_uses_session_lifecycle_archive_override(tmp_path: Path
             new=AsyncMock(return_value=evidence),
         ) as derive,
         patch(
+            "gobby.mcp_proxy.tools.tasks._close_evaluation_support.derive_prelink_runs",
+            new=AsyncMock(return_value=()),
+        ),
+        patch(
             "gobby.mcp_proxy.tools.tasks._close_evaluation_support.merge_transcript_evidence",
             return_value=merged,
         ),
@@ -475,7 +484,7 @@ async def test_task_close_uses_session_lifecycle_archive_override(tmp_path: Path
             task_id="task",
             owner_session_id="session",
             closing_session_id="session",
-            owner_window_start="start",
+            owner_window_start=window_start,
             task_edited_files=set(),
             repo_path=str(tmp_path),
         )

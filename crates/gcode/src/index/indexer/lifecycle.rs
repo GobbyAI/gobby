@@ -4,12 +4,14 @@ use std::path::Path;
 use anyhow::Context as _;
 use postgres::Client;
 
+use crate::communities;
+use crate::config::Context;
 use crate::db::id_param;
 use crate::index::{api, hasher};
 use crate::models::IndexedProject;
 use crate::projection::sync::{self, ProjectionSyncRequest, ProjectionTarget};
 
-use super::types::{IndexOutcome, IndexRequest, IndexTarget};
+use super::types::{IndexDegradation, IndexOutcome, IndexRequest, IndexTarget};
 use super::util::{epoch_secs_str, relative_path};
 
 pub(super) fn attach_projection_sync(outcome: &mut IndexOutcome, request: &IndexRequest) {
@@ -36,6 +38,11 @@ pub fn invalidate(
     let project_uuid = id_param(project_id)?;
     let mut tx = conn.transaction()?;
     tx.execute(
+        "DELETE FROM code_communities
+         WHERE machine_id = $1 AND project_id = $2",
+        &[&machine_uuid, &project_uuid],
+    )?;
+    tx.execute(
         "DELETE FROM code_indexed_file_states
          WHERE machine_id = $1 AND project_id = $2",
         &[&machine_uuid, &project_uuid],
@@ -49,6 +56,17 @@ pub fn invalidate(
     eprintln!("Invalidated local code index state for project {project_id}");
 
     Ok(())
+}
+
+pub(crate) fn refresh_communities(conn: &mut Client, ctx: &Context, outcome: &mut IndexOutcome) {
+    match communities::refresh_project_communities(conn, ctx) {
+        Ok(report) => outcome.communities = Some(Box::new(report)),
+        Err(error) => outcome
+            .degraded
+            .push(IndexDegradation::CommunityRefreshFailed {
+                message: format!("{error:#}"),
+            }),
+    }
 }
 
 pub(super) fn refresh_project_stats(

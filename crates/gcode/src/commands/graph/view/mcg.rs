@@ -6,13 +6,11 @@ mod identity;
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use gobby_core::graph_analytics::{
-    AnalyticsEdge, AnalyticsGraph, AnalyticsNode, analyze, weight_for_kind,
-};
-
 use crate::codewiki_facts::PublicEdge;
+use crate::communities::identity::ImportIdentity;
+use crate::communities::{MISSING_PARTITION_HINT, StoredCommunity};
 
-use super::render::{NodeKey, ViewCommunity, ViewEdgeInput, ViewNodeInput};
+use super::render::{NodeKey, NodeKind, ViewCommunity, ViewEdgeInput, ViewNodeInput};
 use super::{
     CandidateEndpoint, CandidateEndpointKind, ViewEdgeCandidate, VisibleFileMap,
     take_visible_before_bound,
@@ -33,6 +31,82 @@ pub(super) struct McgWalk {
     pub edges: Vec<ViewEdgeInput>,
     pub incoming_truncated: bool,
     pub outgoing_truncated: bool,
+}
+
+pub(super) struct LabeledCommunities {
+    pub nodes: Vec<ViewNodeInput>,
+    pub communities: Vec<ViewCommunity>,
+    pub hint: Option<String>,
+}
+
+pub(super) fn label_communities(
+    mut nodes: Vec<ViewNodeInput>,
+    stored: &[StoredCommunity],
+    identity: &ImportIdentity,
+) -> LabeledCommunities {
+    if stored.is_empty() {
+        for node in &mut nodes {
+            node.community = None;
+        }
+        return LabeledCommunities {
+            nodes,
+            communities: Vec::new(),
+            hint: Some(MISSING_PARTITION_HINT.to_string()),
+        };
+    }
+
+    let by_member = stored
+        .iter()
+        .flat_map(|community| {
+            community
+                .members
+                .iter()
+                .map(move |member| (member.as_str(), community))
+        })
+        .collect::<HashMap<_, _>>();
+    let mut visible = BTreeMap::<i32, (&StoredCommunity, Vec<String>)>::new();
+    for node in &mut nodes {
+        let member = match node.key.kind {
+            NodeKind::File => Some(node.key.identity.clone()),
+            NodeKind::Module => identity.unique_provider(&node.key.identity),
+            NodeKind::Symbol | NodeKind::Community | NodeKind::External | NodeKind::Unresolved => {
+                None
+            }
+        };
+        let community = member
+            .as_deref()
+            .and_then(|member| by_member.get(member).copied());
+        node.community = community
+            .map(|community| NodeKey::community(community.community_id.to_string()).canonical());
+        if let Some(community) = community {
+            visible
+                .entry(community.community_id)
+                .or_insert_with(|| (community, Vec::new()))
+                .1
+                .push(node.key.canonical());
+        }
+    }
+    let communities = visible
+        .into_values()
+        .map(|(community, mut view_nodes)| {
+            view_nodes.sort();
+            view_nodes.dedup();
+            ViewCommunity {
+                id: NodeKey::community(community.community_id.to_string()).canonical(),
+                label: community.label.clone(),
+                size: community.member_count,
+                cohesion: community.cohesion,
+                label_source: community.label_source.as_str().to_string(),
+                label_stale: community.label_stale,
+                nodes: view_nodes,
+            }
+        })
+        .collect();
+    LabeledCommunities {
+        nodes,
+        communities,
+        hint: None,
+    }
 }
 
 pub(super) fn walk_mcg(
@@ -126,50 +200,6 @@ pub(super) fn walk_mcg(
         incoming_truncated,
         outgoing_truncated,
     })
-}
-
-pub(super) fn assign_leiden_communities(
-    mut nodes: Vec<ViewNodeInput>,
-    edges: &[ViewEdgeInput],
-) -> (Vec<ViewNodeInput>, Vec<ViewCommunity>) {
-    let graph = AnalyticsGraph {
-        nodes: nodes
-            .iter()
-            .map(|node| AnalyticsNode {
-                id: node.key.canonical(),
-                kind: node.kind.clone(),
-                weight: 1.0,
-            })
-            .collect(),
-        edges: edges
-            .iter()
-            .map(|edge| AnalyticsEdge {
-                source: edge.source.canonical(),
-                target: edge.target.canonical(),
-                kind: edge.rel.clone(),
-                weight: weight_for_kind(&edge.rel),
-            })
-            .collect(),
-    };
-    let analytics = analyze(&graph);
-    let mut by_id = HashMap::new();
-    let communities = analytics
-        .communities
-        .iter()
-        .map(|community| {
-            for node in &community.nodes {
-                by_id.insert(node.id.clone(), community.id.clone());
-            }
-            ViewCommunity {
-                id: community.id.clone(),
-                nodes: community.nodes.iter().map(|node| node.id.clone()).collect(),
-            }
-        })
-        .collect();
-    for node in &mut nodes {
-        node.community = by_id.get(&node.key.canonical()).cloned();
-    }
-    (nodes, communities)
 }
 
 fn expandable(kind: CandidateEndpointKind) -> bool {

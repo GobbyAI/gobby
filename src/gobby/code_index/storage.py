@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from gobby.code_index._storage.communities import CodeIndexCommunityStorageMixin
 from gobby.code_index._storage.content import CodeIndexContentStorageMixin
 from gobby.code_index._storage.files import CodeIndexFileStorageMixin
 from gobby.code_index._storage.graph_fallbacks import CodeIndexGraphFallbackStorageMixin
@@ -24,6 +25,7 @@ class CodeIndexStorage(
     CodeIndexProjectionCleanupStorageMixin,
     CodeIndexPruneStorageMixin,
     CodeIndexSummaryStorageMixin,
+    CodeIndexCommunityStorageMixin,
     CodeIndexContentStorageMixin,
     CodeIndexGraphFallbackStorageMixin,
 ):
