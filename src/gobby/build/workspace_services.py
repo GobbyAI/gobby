@@ -29,6 +29,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.tasks._artifacts import TaskArtifacts
 from gobby.storage.worktrees import LocalWorktreeManager, Worktree
+from gobby.worktrees.base_branch import rejects_unreferenced_sha_base
 from gobby.worktrees.git import WorktreeGitManager, WorktreeInfo
 
 
@@ -190,6 +191,10 @@ class _WorkspaceServices:
                 await _refresh_clean_git_dir(stored.worktree_path, branch_name, base_branch)
                 return stored
             await _refresh_clean_git_dir(unmanaged.path, branch_name, base_branch)
+            if await rejects_unreferenced_sha_base(self.git_manager, base_branch):
+                raise BuildWorkspaceError(
+                    f"base_branch must be a branch name, not a commit sha: {base_branch}"
+                )
             return self.worktree_storage.create(
                 project_id=self.project_id,
                 branch_name=branch_name,

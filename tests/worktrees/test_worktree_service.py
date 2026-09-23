@@ -233,6 +233,25 @@ async def test_merged_worktree_against_branch_base_is_cleanup_eligible(
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_spawn_worktree_create_refuses_unreferenced_sha_base(tmp_path: Path) -> None:
+    """The spawn path stores base_branch from WorktreeGitManager.create_worktree."""
+    root = tmp_path / "repo"
+    _init_repo(root)
+    short = _git(root, "rev-parse", "--short=10", "moving")
+    result = await WorktreeGitManager(root).create_worktree(
+        worktree_path=str(tmp_path / "spawned"),
+        branch_name="spawned",
+        base_branch=short,
+        create_branch=True,
+        use_local=True,
+    )
+    assert result.success is False
+    assert result.error == "base_branch_is_commit_sha"
+    assert not (tmp_path / "spawned").exists()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_worktree_read_reports_unreferenced_sha_base(tmp_path: Path) -> None:
     root = tmp_path / "repo"
     _init_repo(root)
