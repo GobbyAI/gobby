@@ -6,6 +6,7 @@ import json
 import os
 import re
 import stat
+import subprocess
 import threading
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
@@ -21,6 +22,7 @@ from psycopg import sql
 from psycopg.conninfo import conninfo_to_dict
 
 import gobby.storage.managed_credentials as managed_credentials_module
+from gobby.runtime_grants.schema import SchemaIdentity
 from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.storage.hub.protocol import Row, Transaction
 from gobby.storage.managed_credentials import (
@@ -31,7 +33,9 @@ from gobby.storage.managed_credentials import (
     ManagedToolCredential,
 )
 from gobby.storage.secrets import SecretStore
+from gobby.utils.native_bin import resolve_native_bin
 from tests._timing import wait_for_condition
+from tests.fixtures.isolated_checkout import write_project_marker
 from tests.fixtures.postgres import TEST_USER_ID
 from tests.storage.test_postgres_agent_authorization import (
     AUTH_SCHEMA,
@@ -705,22 +709,39 @@ def test_rotation_rewrites_launch_grant_bundle(
         assert signature_matches(rewritten, GOLDEN_SECRET)
         assert stat.S_IMODE(grant_path.stat().st_mode) == 0o600
 
+        content_hash = f"hash-{fixture.project_id}"
         with psycopg.connect(fixture.database_url, autocommit=True) as admin:
             admin.execute(
-                "INSERT INTO code_indexed_file_states "
-                "(machine_id, project_id, file_path, content_hash) "
-                "VALUES (%s, %s, 'src/lib.rs', %s)",
-                (
-                    fixture.machine_id,
-                    fixture.project_id,
-                    f"hash-{fixture.project_id}",
-                ),
+                "INSERT INTO code_indexed_projects (id) VALUES (%s) "
+                "ON CONFLICT (id) DO NOTHING",
+                (fixture.project_id,),
             )
             admin.execute(
-                "UPDATE code_content_chunks "
-                "SET content = 'rotated credential indexed sentinel' "
-                "WHERE project_id = %s AND file_path = 'src/lib.rs'",
-                (fixture.project_id,),
+                """
+                UPDATE code_indexed_files
+                SET language = 'python'
+                WHERE project_id = %s AND file_path = 'src/lib.rs' AND content_hash = %s
+                """,
+                (fixture.project_id, content_hash),
+            )
+            admin.execute(
+                """
+                INSERT INTO code_indexed_file_states
+                    (machine_id, project_id, file_path, content_hash)
+                VALUES (%s, %s, 'src/lib.rs', %s)
+                ON CONFLICT (machine_id, project_id, file_path) DO UPDATE
+                SET content_hash = EXCLUDED.content_hash
+                """,
+                (fixture.machine_id, fixture.project_id, content_hash),
+            )
+            admin.execute(
+                """
+                UPDATE code_content_chunks
+                SET content = 'rotated credential indexed sentinel',
+                    content_hash = %s
+                WHERE project_id = %s AND file_path = 'src/lib.rs'
+                """,
+                (content_hash, fixture.project_id),
             )
         with psycopg.connect(rewritten_postgres.dsn, autocommit=True) as agent:
             assert agent.execute(
@@ -739,6 +760,97 @@ def test_rotation_rewrites_launch_grant_bundle(
                 "WHERE fs.machine_id = %s AND c.content @@@ %s",
                 (fixture.machine_id, "rotated credential"),
             ).fetchone() == ("rotated credential indexed sentinel",)
+            visible = agent.execute(
+                """
+                SELECT f.language, fs.machine_id::text, c.content
+                FROM code_indexed_file_states fs
+                JOIN code_indexed_files f
+                  ON f.project_id = fs.project_id
+                 AND f.file_path = fs.file_path
+                 AND f.content_hash = fs.content_hash
+                LEFT JOIN code_content_chunks c
+                  ON c.project_id = f.project_id
+                 AND c.file_path = f.file_path
+                 AND c.content_hash = f.content_hash
+                WHERE fs.project_id = %s AND fs.file_path = 'src/lib.rs'
+                """,
+                (fixture.project_id,),
+            ).fetchall()
+        assert visible, "indexed file is not visible to the successor role"
+        assert any(
+            row[2] == "rotated credential indexed sentinel" for row in visible
+        ), visible
+
+        installed_identity = json.loads(
+            Path("/Users/josh/.gobby/bin/.gdaemon-schema-identity.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        # Installed gcode rejects a grant whose schema stamp is this branch's
+        # unpromoted identity and then tries a daemon refresh. Stamp the
+        # installed identity so search-content uses the rewritten role directly.
+        write_grant_file(
+            grant_path,
+            sign_grant(
+                rewritten.model_copy(
+                    update={
+                        "schema_identity": SchemaIdentity.model_validate(installed_identity),
+                    }
+                ),
+                GOLDEN_SECRET,
+            ),
+        )
+        gcode_bin = resolve_native_bin("gcode")
+        assert gcode_bin is not None
+        project_root = tmp_path / "search-project"
+        project_root.mkdir()
+        source = project_root / "src" / "lib.rs"
+        source.parent.mkdir()
+        source.write_text("rotated credential indexed sentinel\n", encoding="utf-8")
+        write_project_marker(
+            project_root,
+            project_id=str(fixture.project_id),
+            name=f"agent-auth-{fixture.project_id}",
+        )
+        gobby_home = tmp_path / "gobby-home"
+        gobby_home.mkdir()
+        (gobby_home / "machine_id").write_text(str(fixture.machine_id), encoding="utf-8")
+        env = os.environ.copy()
+        env.update(
+            {
+                "GOBBY_AGENT_RUN_ID": str(execution_id),
+                "GCODE_LOG": "debug",
+                "GOBBY_HOME": str(gobby_home),
+                "GOBBY_MANAGED_EXECUTION_BOOTSTRAP": str(grant_path),
+                "GOBBY_SESSION_ID": str(fixture.session_id),
+            }
+        )
+        env.pop("GOBBY_AGENT_API_TOKEN", None)
+        env.pop("DATABASE_URL", None)
+        env.pop("GOBBY_DATABASE_URL", None)
+        result = subprocess.run(
+            [
+                gcode_bin,
+                "--project",
+                str(project_root),
+                "search-content",
+                "rotated credential",
+                "--allow-stale",
+            ],
+            cwd=project_root,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=30,
+        )
+        assert result.returncode == 0, result.stderr or result.stdout
+        assert "rotated credential indexed sentinel" in result.stdout, (
+            result.stderr,
+            visible,
+            str(fixture.machine_id),
+        )
+        assert "password authentication failed" not in (result.stdout + result.stderr).lower()
     finally:
         with psycopg.connect(fixture.database_url, autocommit=True) as admin:
             admin.execute(
