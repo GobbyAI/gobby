@@ -5,9 +5,10 @@ import hashlib
 import json
 import logging
 import shlex
+import time
 import webbrowser
 from collections.abc import AsyncGenerator, Awaitable, Callable
-from typing import Literal
+from typing import Any, Literal
 from urllib.parse import urlsplit
 
 import httpx2
@@ -27,6 +28,15 @@ from pydantic import AnyUrl, BaseModel
 
 from gobby.mcp_proxy.models import MCPAuthorizationRequired, MCPError, MCPServerConfig
 from gobby.mcp_proxy.oauth_callback import OAuthCallback
+from gobby.mcp_proxy.oauth_keepalive import (
+    backoff_active,
+    conninfo_for_store,
+    consent_required,
+    hold_oauth_lock,
+    oauth_lock_is_held,
+    oauth_server_lock,
+    schedule_backoff,
+)
 from gobby.mcp_proxy.transports.base import gobby_client_info
 from gobby.mcp_proxy.transports.http import build_mcp_http_client
 from gobby.storage.projects import GLOBAL_PROJECT_ID
@@ -100,6 +110,8 @@ class OAuthState(BaseModel):
     metadata: OAuthMetadata | None = None
     resource: ProtectedResourceMetadata | None = None
     issuer: str | None = None
+    retry_not_before: float | None = None
+    retry_attempt: int = 0
 
 
 class MCPOAuthStorage:
@@ -191,7 +203,13 @@ class PersistentOAuthProvider(OAuthClientProvider):
     async def async_auth_flow(
         self, request: httpx2.Request
     ) -> AsyncGenerator[httpx2.Request, httpx2.Response]:
+        if not self._initialized:
+            await self._initialize()
+        if backoff_active(self.persistent_storage.state, time.time()):
+            raise OAuthFlowError("OAuth token endpoint is in backoff")
+        await self._enter_refresh_lock()
         flow = super().async_auth_flow(request)
+        saw_token = False
         try:
             outgoing = await anext(flow)
             while True:
@@ -203,6 +221,11 @@ class PersistentOAuthProvider(OAuthClientProvider):
                     + "/register"
                 )
                 registering = outgoing.method == "POST" and str(outgoing.url) == registration_url
+                if registering and self.persistent_storage.state.client is not None:
+                    raise OAuthFlowError("refusing to re-register an existing OAuth client")
+                saw_token = (
+                    outgoing.method == "POST" and str(outgoing.url) == self._get_token_endpoint()
+                )
                 if registering:
                     supported = (
                         metadata.token_endpoint_auth_methods_supported
@@ -254,6 +277,20 @@ class PersistentOAuthProvider(OAuthClientProvider):
                         await response.aread()
                         summary = _safe_oauth_failure_summary(response)
                         logger.warning("OAuth token endpoint failed: %s", summary)
+                        payload = _token_error_payload(response)
+                        if consent_required(payload):
+                            self.persistent_storage.state.tokens = None
+                            self.persistent_storage.state.expires_at = None
+                            self.context.clear_tokens()
+                            await self.persistent_storage.save()
+                            raise MCPAuthorizationRequired(self.auth_command)
+                        schedule_backoff(
+                            self.persistent_storage.state,
+                            status=response.status_code,
+                            retry_after=response.headers.get("retry-after"),
+                            now=time.time(),
+                        )
+                        await self.persistent_storage.save()
                     body: dict[str, str] = {"error": "oauth_endpoint_error"}
                     if summary is not None:
                         body["error_description"] = summary
@@ -267,8 +304,56 @@ class PersistentOAuthProvider(OAuthClientProvider):
                     outgoing = await flow.asend(response)
                 except StopAsyncIteration:
                     break
+                if saw_token:
+                    await self._exit_refresh_lock()
+                    saw_token = False
         finally:
+            await self._exit_refresh_lock()
             await flow.aclose()
+
+    def _apply_stored_state(self) -> None:
+        state = self.persistent_storage.state
+        self.context.current_tokens = state.tokens
+        self.context.client_info = state.client
+        self.context.token_expiry_time = state.expires_at
+        self.context.oauth_metadata = state.metadata
+        self.context.protected_resource_metadata = state.resource
+        if state.issuer:
+            self.context.auth_server_url = state.issuer
+
+    async def _enter_refresh_lock(self) -> None:
+        self._refresh_lock: Any = None
+        if oauth_lock_is_held():
+            return
+        conninfo = conninfo_for_store(self.persistent_storage.store)
+        if not isinstance(conninfo, str):
+            return
+        state = self.persistent_storage.state
+        if state.tokens is None:
+            return
+        if state.expires_at is not None and state.expires_at > time.time():
+            return
+        lock = oauth_server_lock(self.persistent_storage.name, conninfo)
+        await lock.__aenter__()
+        self._refresh_lock = lock
+        try:
+            await self.persistent_storage.load()
+            self._apply_stored_state()
+            now = time.time()
+            if backoff_active(self.persistent_storage.state, now):
+                await self._exit_refresh_lock()
+                raise OAuthFlowError("OAuth token endpoint is in backoff")
+            if self.context.is_token_valid():
+                await self._exit_refresh_lock()
+        except Exception:
+            await self._exit_refresh_lock()
+            raise
+
+    async def _exit_refresh_lock(self) -> None:
+        lock = getattr(self, "_refresh_lock", None)
+        self._refresh_lock = None
+        if lock is not None:
+            await lock.__aexit__(None, None, None)
 
     async def _save_context(self) -> None:
         state = self.persistent_storage.state
@@ -277,6 +362,9 @@ class PersistentOAuthProvider(OAuthClientProvider):
         state.resource = self.context.protected_resource_metadata
         state.issuer = self.context.auth_server_url
         state.tokens = self.context.current_tokens
+        if state.expires_at is not None and state.expires_at > time.time():
+            state.retry_not_before = None
+            state.retry_attempt = 0
         await self.persistent_storage.save()
 
     async def _handle_token_response(self, response: httpx2.Response) -> None:
@@ -289,6 +377,20 @@ class PersistentOAuthProvider(OAuthClientProvider):
         return refreshed
 
 
+def _token_error_payload(response: httpx2.Response) -> dict[str, Any]:
+    try:
+        payload = json.loads(response.content or b"{}")
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+async def automatic_oauth_authorization(config: MCPServerConfig, store: SecretStore) -> None:
+    """Daemon authorization never opens a browser or registers a new client."""
+    del store
+    raise MCPAuthorizationRequired(oauth_auth_command(config))
+
+
 async def authorize_server(
     config: MCPServerConfig,
     store: SecretStore,
@@ -298,6 +400,21 @@ async def authorize_server(
     """Complete interactive OAuth and persist credentials for one MCP server."""
     storage = MCPOAuthStorage(store, config)
     await storage.load()
+    conninfo = conninfo_for_store(store)
+    if isinstance(conninfo, str):
+        async with oauth_server_lock(storage.name, conninfo, timeout_seconds=max(1.0, timeout)):
+            with hold_oauth_lock():
+                await _authorize_loaded_server(config, storage, timeout, open_browser)
+        return
+    await _authorize_loaded_server(config, storage, timeout, open_browser)
+
+
+async def _authorize_loaded_server(
+    config: MCPServerConfig,
+    storage: MCPOAuthStorage,
+    timeout: float,
+    open_browser: Callable[[str], Awaitable[None]],
+) -> None:
     port = 0
     if storage.state.client and storage.state.client.redirect_uris:
         redirect = urlsplit(str(storage.state.client.redirect_uris[0]))

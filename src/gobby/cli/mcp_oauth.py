@@ -1,6 +1,7 @@
 """Interactive OAuth login for registered remote MCP servers."""
 
 import asyncio
+import json
 import webbrowser
 from urllib.parse import quote
 
@@ -15,7 +16,8 @@ from gobby.cli.mcp_proxy import (
 )
 from gobby.cli.runtime import require_cli_database
 from gobby.mcp_proxy.models import MCPError, MCPServerConfig
-from gobby.mcp_proxy.oauth import authorize_server
+from gobby.mcp_proxy.oauth import MCPOAuthStorage, authorize_server
+from gobby.mcp_proxy.oauth_keepalive import oauth_state_shape
 from gobby.storage.mcp import LocalMCPManager
 from gobby.storage.projects import GLOBAL_PROJECT_ID
 from gobby.storage.secrets import SecretStore
@@ -75,3 +77,32 @@ def auth_server(ctx: click.Context, name: str, global_scope: bool, timeout: floa
     if not result or not result.get("success"):
         raise click.ClickException("Credentials saved, but updating the daemon connection failed")
     click.echo(f"Authorized MCP server: {name}")
+
+
+@mcp_proxy.command("oauth-shape")
+@click.argument("name")
+@click.option("--global", "global_scope", is_flag=True, help="Inspect a machine-wide instance")
+@click.pass_context
+def oauth_shape(ctx: click.Context, name: str, global_scope: bool) -> None:
+    """Print which stored OAuth fields exist, as types, never as values."""
+    project_id, scope = resolve_cli_mcp_project(global_scope=global_scope)
+    db = require_cli_database()
+    row = LocalMCPManager(db).get_server(name, project_id=project_id or GLOBAL_PROJECT_ID)
+    if row is None:
+        raise click.ClickException(f"No MCP server {name!r} in {scope} scope")
+    store = SecretStore(db)
+    config = MCPServerConfig(
+        name=row.name,
+        id=row.id,
+        project_id=row.project_id,
+        transport=row.transport,
+        url=row.url,
+        requires_oauth=True,
+    )
+    storage = MCPOAuthStorage(store, config)
+
+    async def load() -> dict[str, str | None]:
+        await storage.load()
+        return oauth_state_shape(storage.state)
+
+    click.echo(json.dumps(asyncio.run(load()), sort_keys=True))
