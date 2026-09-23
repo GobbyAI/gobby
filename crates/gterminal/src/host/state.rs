@@ -1,7 +1,6 @@
 //! Host registry, reservations, and control-verb implementations.
 
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 #[cfg(feature = "vt-engine")]
@@ -14,7 +13,7 @@ use tokio::sync::{watch, Mutex};
 use super::backpressure::FrameMailbox;
 use super::config::HostConfig;
 use super::events::{EventReceiver, HostEvents};
-use super::helpers::{err, list_rows, s, spawn_fingerprint};
+use super::helpers::{err, list_rows, resolved_spawn_cwd, s, spawn_fingerprint};
 #[cfg(feature = "vt-engine")]
 use super::spawn::{spawn_prepared, PreparedChild};
 use crate::protocol::render_ansi::BlitEncoder;
@@ -258,11 +257,7 @@ impl HostState {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
-        let cwd = extra
-            .get("cwd")
-            .and_then(Value::as_str)
-            .map(PathBuf::from)
-            .unwrap_or_else(std::env::temp_dir);
+        let cwd = resolved_spawn_cwd(extra);
         let env = extra
             .get("env")
             .and_then(Value::as_object)

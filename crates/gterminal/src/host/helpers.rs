@@ -113,6 +113,15 @@ pub(crate) fn s(extra: &Map<String, Value>, key: &str) -> String {
         .to_string()
 }
 
+pub(crate) fn resolved_spawn_cwd(extra: &Map<String, Value>) -> PathBuf {
+    extra
+        .get("cwd")
+        .and_then(Value::as_str)
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
+}
+
 pub(crate) fn err(code: &str) -> Value {
     json!({"ok": false, "error": code})
 }

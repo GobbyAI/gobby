@@ -912,10 +912,7 @@ pub(super) async fn spawn_live_terminal(
     chrome: &mut Chrome,
     placement: Placement,
 ) -> Result<(), FrameError> {
-    let cwd = match placement {
-        Placement::Tab => workspace.focused_checkout_path(),
-        Placement::SplitRight | Placement::SplitDown => None,
-    };
+    let cwd = workspace.focused_checkout_path();
     spawn_live_shell(workspace, chrome, placement, cwd, None).await
 }
 
