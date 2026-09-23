@@ -14,6 +14,7 @@ from gobby.hooks.project_context import ProjectIdResolver
 from gobby.hooks.session_types import HookSessionManager
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.clones import LocalCloneManager
+from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.project_checkouts import (
     LocalProjectCheckoutManager,
@@ -26,6 +27,7 @@ from gobby.utils.checkout_root import InvalidCheckoutRootError
 from gobby.utils.project_context import ensure_project_json_for_isolation
 from gobby.utils.project_init import initialize_project
 from tests.fixtures.isolated_checkout import insert_isolated_machine, write_project_marker
+from tests.storage.test_postgres_agent_authorization import AuthorizationFixture
 
 pytestmark = pytest.mark.unit
 
@@ -118,6 +120,22 @@ def _assert_canonical_checkout(db: HubDatabase, project_id: str, canonical_path:
     checkout = LocalProjectCheckoutManager(db).get(LOCAL_MACHINE_ID, project_id)
     assert checkout is not None
     assert checkout.root_path == str(canonical_path)
+
+
+@pytest.mark.integration
+def test_agent_role_can_resolve_project_by_name(
+    authorization_fixture: AuthorizationFixture,
+) -> None:
+    fixture = authorization_fixture
+    database = PostgresHubDatabase(fixture.agent_url)
+    database.open()
+    try:
+        project = LocalProjectManager(database).get_by_name(f"agent-auth-{fixture.project_id}")
+    finally:
+        database.close()
+
+    assert project is not None
+    assert project.id == str(fixture.project_id)
 
 
 @pytest.mark.parametrize("isolation", ["worktree", "clone"])

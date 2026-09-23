@@ -73,7 +73,7 @@ def test_manifest_privileges_match_the_managed_relation_set() -> None:
         "code_communities",
     }
     assert relations["projects"]["operations"] == ["SELECT"]
-    assert relations["projects"]["columns"] == ["id", "name", "deleted_at"]
+    assert "columns" not in relations["projects"]
     assert relations["project_checkouts"] == {
         "relation": "project_checkouts",
         "operations": ["SELECT", "UPDATE"],

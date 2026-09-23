@@ -452,7 +452,7 @@ def _prepare_gcode_runtime(
     remaining_seconds = (credential.expires_at - datetime.now(UTC)).total_seconds()
     launch = materialize_managed_launch(
         grant,
-        dest_dir=runtime_home,
+        dest_dir=credential.bootstrap_path.parent,
         operator_token=operator_token,
         deadline_seconds=max(1.0, remaining_seconds),
     )

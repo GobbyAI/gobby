@@ -880,6 +880,10 @@ def test_live_run_rotated_in_its_window_survives_restart_and_re_handshakes(
             == rotated.credential_generation
         )
 
+        def read_bootstrap_dsn(bootstrap_path: object) -> str:
+            payload = json.loads(Path(str(bootstrap_path)).read_text(encoding="utf-8"))
+            return str(payload["database_url"])
+
         direct = issue_grant_postgres(
             GrantPrincipal(
                 kind="agent_run",
@@ -891,10 +895,12 @@ def test_live_run_rotated_in_its_window_survives_restart_and_re_handshakes(
             credentials=restarted_daemon,
             deployment_token="agent-runs-ignore-this",
             secrets=store,
-            managed_bootstrap_dsn=str,
+            managed_bootstrap_dsn=read_bootstrap_dsn,
         )
 
         assert direct.credential_generation == rotated.credential_generation + 1
+        with psycopg.connect(direct.dsn, autocommit=True) as agent:
+            assert agent.execute("SELECT current_user").fetchone() == (direct.role_name,)
     finally:
         restarted_daemon.revoke(execution_id, reason="test-cleanup")
         restarted_daemon.close()

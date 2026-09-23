@@ -194,6 +194,12 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
             "../../assets/schema/migrations/445_drop_task_validation_system_prompt.sql"
         ),
     },
+    EmbeddedMigration {
+        version: 446,
+        filename: "446_grant_agent_project_resolution.sql",
+        checksum: "c88d1987a657dd9ed7ed7869ca7c8a99575d340dd78bc2fdfc54aeab5b6c4024",
+        sql: include_str!("../../assets/schema/migrations/446_grant_agent_project_resolution.sql"),
+    },
 ];
 // Numbered migrations after canonical baseline@420 land here.
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");
