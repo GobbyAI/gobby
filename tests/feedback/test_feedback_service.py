@@ -327,6 +327,7 @@ def _cluster(
     priority: int | None = None,
     theme: str = "close-gate validation reruns",
     cited_paths: list[str] | None = None,
+    implementation_paths: list[str] | None = None,
 ) -> dict[str, Any]:
     proposed: dict[str, Any] | None = None
     if title is not None:
@@ -340,6 +341,7 @@ def _cluster(
     return {
         "observation_ids": observation_ids,
         "cited_paths": cited_paths or [],
+        "implementation_paths": implementation_paths or [],
         "theme": theme,
         "classification": classification,
         "proposed_task": proposed,
@@ -752,6 +754,7 @@ async def test_run_review_marks_path_touched_after_observation_possibly_fixed(
                     [observation_id],
                     title="Recheck recently changed feedback premise",
                     cited_paths=["src/gobby/example.py"],
+                    implementation_paths=["src/gobby/example.py"],
                 )
             ]
         }
@@ -765,6 +768,29 @@ async def test_run_review_marks_path_touched_after_observation_possibly_fixed(
     run = FeedbackReviewStore(temp_db).get_run(result["run_id"])
     assert run is not None and run.actions is not None
     assert run.actions["suppressed"] == []
+
+
+@pytest.mark.asyncio
+async def test_victim_only_commit_does_not_mark_feedback_possibly_fixed(
+    temp_db: HubDatabase,
+    session_id: str,
+    tmp_path: Path,
+) -> None:
+    observation_id = _insert_feedback(temp_db, session_id, created_at=_T0)
+    _commit_file(tmp_path / "gobby", "tests/test_victim.py", _T0 + timedelta(hours=1))
+    cluster = _cluster(
+        [observation_id],
+        title="Repair victim path handling",
+        cited_paths=["tests/test_victim.py"],
+        implementation_paths=["tests/test_victim.py"],
+    )
+    task_manager = _FakeTaskManager()
+    result = await _service(
+        temp_db, _FakeLLM(response={"clusters": [cluster]}), task_manager
+    ).run_review()
+
+    assert result["run_id"]
+    assert "possibly-fixed" not in task_manager.created[0].labels
 
 
 async def test_run_review_dry_run_writes_digest_but_files_and_flips_nothing(

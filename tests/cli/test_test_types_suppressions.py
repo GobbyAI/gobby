@@ -108,6 +108,48 @@ def test_cli_accepts_unchanged_debt_and_rejects_changed_or_new_sites(
     assert "test_new.py" in added.output
 
 
+def test_scoped_suppressions_check_ignores_outside_baseline_entries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    first = tmp_path / "tests" / "test_first.py"
+    second = tmp_path / "tests" / "test_second.py"
+    baseline = tmp_path / "baseline.json"
+    _write(first, "first = 1  # noqa: F401\n")
+    _write(second, "second = 2  # noqa: F401\n")
+    _baseline(tmp_path, baseline)
+
+    result = CliRunner().invoke(
+        types_command, ["suppressions", str(first), "--baseline", str(baseline)]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Stale: 0" in result.output
+
+
+def test_scoped_suppression_baseline_write_preserves_outside_entries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    first = tmp_path / "tests" / "test_first.py"
+    second = tmp_path / "tests" / "test_second.py"
+    baseline = tmp_path / "baseline.json"
+    _write(first, "first = 1  # noqa: F401\n")
+    _write(second, "second = 2  # noqa: F401\n")
+    _baseline(tmp_path, baseline)
+    _write(first, "first = 1\n")
+
+    result = CliRunner().invoke(
+        types_command,
+        ["suppressions", str(first), "--baseline", str(baseline), "--write-baseline"],
+    )
+
+    assert result.exit_code == 0, result.output
+    entries = json.loads(baseline.read_text(encoding="utf-8"))["sites"]
+    assert len(entries) == 1
+    assert entries[0]["path"] == "tests/test_second.py"
+
+
 def test_cli_requires_explicit_baseline_reduction_after_removal(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

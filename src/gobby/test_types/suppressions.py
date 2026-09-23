@@ -198,12 +198,28 @@ def diff_suppressions(
     return SuppressionDiff(tuple(new_sites), tuple(stale_entries))
 
 
-def write_suppression_baseline(path: Path, sites: Sequence[SuppressionSite]) -> None:
+def write_suppression_baseline(
+    path: Path,
+    sites: Sequence[SuppressionSite],
+    *,
+    preserved_entries: Sequence[Mapping[str, object]] = (),
+) -> None:
     """Write deterministic suppression baseline JSON."""
+    entries = [site.baseline_entry() for site in sites]
+    entries.extend(dict(entry) for entry in preserved_entries)
+    entries.sort(
+        key=lambda entry: (
+            str(entry["path"]),
+            str(entry["symbol"]),
+            str(entry["directive"]),
+            str(entry["codes"]),
+            str(entry["statement"]),
+        )
+    )
     payload = {
         "schema_version": _BASELINE_SCHEMA_VERSION,
-        "site_count": len(sites),
-        "sites": [site.baseline_entry() for site in sorted(sites, key=_site_sort_key)],
+        "site_count": len(entries),
+        "sites": entries,
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=False) + "\n", encoding="utf-8")

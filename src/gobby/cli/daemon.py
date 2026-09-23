@@ -913,7 +913,13 @@ def status(ctx: click.Context) -> None:
             managed_services=managed_services,
         )
     except Exception as exc:
-        logger.debug("Failed to collect CLI dependency status", exc_info=True)
+        logger.warning("Failed to collect CLI dependency status", exc_info=True)
+        exception_message = " ".join(str(exc).split())[:160]
+        detail = (
+            f"{type(exc).__name__}: {exception_message}"
+            if exception_message
+            else type(exc).__name__
+        )
         deps_info = {
             "dependencies": {
                 "required": {
@@ -923,7 +929,7 @@ def status(ctx: click.Context) -> None:
                         "minimum_version": None,
                         "expected_version": None,
                         "path": None,
-                        "error": f"Dependency status collection failed: {type(exc).__name__}",
+                        "error": f"Dependency status collection failed: {detail}",
                     }
                 },
                 "optional": {},
@@ -931,7 +937,7 @@ def status(ctx: click.Context) -> None:
             "integrations": {
                 "embeddings_provider": {
                     "status": "degraded",
-                    "error": type(exc).__name__,
+                    "error": detail,
                 }
             },
         }

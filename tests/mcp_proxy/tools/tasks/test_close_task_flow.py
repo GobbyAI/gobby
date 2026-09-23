@@ -472,12 +472,26 @@ async def test_manual_close_supplies_available_command_evidence_to_review(outcom
 
 
 @pytest.mark.asyncio
-async def test_no_work_disposition_skips_delivery_gates_but_runs_review() -> None:
+@pytest.mark.parametrize(
+    ("summary", "commit_shas", "edited_paths", "skips_review"),
+    [
+        ("Duplicate of #100, which owns this exact behavior.", [], [], True),
+        ("Duplicate of the existing implementation.", [], [], False),
+        ("This task #100 has no edits.", [], [], False),
+        ("Duplicate of #100, which owns this exact behavior.", ["abc123"], [], False),
+        ("Duplicate of #100, which owns this exact behavior.", [], ["src/gobby/edit.py"], False),
+    ],
+)
+async def test_no_work_disposition_with_target_skips_agentic_review(
+    summary: str, commit_shas: list[str], edited_paths: list[str], skips_review: bool
+) -> None:
     task = replace(_task(), category="research")
     ctx = _ctx(task, validator=object())
     ctx.session_var_manager = cast(
         SessionVariableManager,
-        SimpleNamespace(get_variables=lambda _session_id: {"task_edited_files": {task.id: []}}),
+        SimpleNamespace(
+            get_variables=lambda _session_id: {"task_edited_files": {task.id: edited_paths}}
+        ),
     )
     review = AsyncMock(
         return_value=ValidationResult(
@@ -492,7 +506,7 @@ async def test_no_work_disposition_skips_delivery_gates_but_runs_review() -> Non
         patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
         patch.object(lifecycle, "resolve_task_repo_path", return_value="/repo"),
         patch.object(close_finalization, "_claimed_session_window_start", return_value=None),
-        patch.object(lifecycle, "resolve_close_commit_shas", return_value=([], None)),
+        patch.object(lifecycle, "resolve_close_commit_shas", return_value=(commit_shas, None)),
         patch.object(lifecycle, "collect_commit_diff_text", return_value=""),
         patch.object(
             lifecycle,
@@ -505,19 +519,27 @@ async def test_no_work_disposition_skips_delivery_gates_but_runs_review() -> Non
             ctx,
             task_id=task.id,
             reason="duplicate",
-            changes_summary="Duplicate of #100, which owns this exact behavior.",
+            changes_summary=summary,
             commit_sha=None,
             project_path=None,
             response_detail="diagnostic",
         )
 
-    assert evaluation.ready is True
+    assert evaluation.ready is (not edited_paths)
     delivery = {gate.name: gate.status for gate in evaluation.gates[10:12]}
     assert delivery == {
         "acceptance_artifacts": "skipped",
         "tdd_evidence": "skipped",
     }
-    review.assert_awaited_once()
+    if skips_review:
+        review.assert_not_awaited()
+    elif not edited_paths:
+        review.assert_awaited_once()
+    else:
+        review.assert_not_awaited()
+    assert next(gate for gate in evaluation.gates if gate.item == 13).status == (
+        "skipped" if edited_paths else "passed"
+    )
 
 
 @pytest.mark.asyncio

@@ -84,8 +84,18 @@ class StdioTransportConnection(OwnerTaskTransportConnection):
             expanded_env = dict(expanded_env or {})
             expanded_env.setdefault("npm_config_prefer_offline", "true")
 
+        command = self.config.command
+        if self.config.runtime_hook == "chrome_executable_path":
+            expanded_args = [
+                "-m",
+                "gobby.mcp_proxy.transports.chrome_supervisor",
+                command,
+                *expanded_args,
+            ]
+            command = sys.executable
+
         params = StdioServerParameters(
-            command=self.config.command,
+            command=command,
             args=expanded_args,
             env=expanded_env,
         )

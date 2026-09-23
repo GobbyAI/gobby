@@ -1,6 +1,6 @@
 ---
 description: Cluster session feedback and propose deduplicated follow-up tasks
-version: "6.0"
+version: "6.1"
 required_variables:
   - run_id
   - max_tasks
@@ -48,8 +48,10 @@ belongs to later runs. The reader is the authoritative source of observation IDs
    exactly one cluster.
    Copy every repository-relative path cited by a cluster's evidence or suggestion
    into `cited_paths`; use an empty list when no repository path is cited. Do not
-   infer paths that the observations do not name. Deterministic intake code verifies
-   each path against HEAD and checks commits touching it after the observations.
+   infer cited paths that the observations do not name. Separately put verified
+   implementation source paths into `implementation_paths`; exclude affected or
+   victim files, documentation, and tests. Use an empty list if no implementation
+   path is verified. Intake checks recency only for implementation paths.
 2. Classify each cluster:
    - `defect`: something is broken or misbehaving (most `bug` and reproducible
      `friction` clusters).
@@ -75,6 +77,9 @@ belongs to later runs. The reader is the authoritative source of observation IDs
    valid. Existing closed tasks and later commits are leads to verify, not proof
    that a concern was fixed. If you cannot establish validity, do not file it as a
    verified defect; explain the uncertainty in the Markdown summary.
+   When the premise concerns active configuration, inspect the installed rule or agent row
+   and name its identity and current state in `verification_evidence`; a bundled template
+   alone does not establish active behavior.
 6. Write a one-or-two-sentence `digest_note` per cluster for the human digest:
    what the cluster says and what, if anything, was proposed.
 
@@ -87,6 +92,7 @@ Produce exactly this JSON shape:
     {
       "observation_ids": ["b3d2…", "9f41…"],
       "cited_paths": ["src/gobby/tasks/validation.py"],
+      "implementation_paths": ["src/gobby/tasks/validation.py"],
       "theme": "close_task reruns validation after every retry",
       "classification": "defect",
       "proposed_task": {
@@ -101,7 +107,7 @@ Produce exactly this JSON shape:
   ]
 }
 
-Every cluster requires `observation_ids`, `cited_paths`, `theme` (a short specific
+Every cluster requires `observation_ids`, `cited_paths`, `implementation_paths`, `theme` (a short specific
 phrase naming the underlying behavior), `classification`, and `digest_note`;
 `proposed_task` is null when no task is warranted. Tasks created from proposals are
 marked `llm-reviewed` and `awaiting-human-review`; a human removes the latter label
