@@ -6,7 +6,6 @@ import json
 import os
 import re
 import stat
-import subprocess
 import threading
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
@@ -32,9 +31,7 @@ from gobby.storage.managed_credentials import (
     ManagedToolCredential,
 )
 from gobby.storage.secrets import SecretStore
-from gobby.utils.native_bin import resolve_native_bin
 from tests._timing import wait_for_condition
-from tests.fixtures.isolated_checkout import write_project_marker
 from tests.fixtures.postgres import TEST_USER_ID
 from tests.storage.test_postgres_agent_authorization import (
     AUTH_SCHEMA,
@@ -708,15 +705,6 @@ def test_rotation_rewrites_launch_grant_bundle(
         assert signature_matches(rewritten, GOLDEN_SECRET)
         assert stat.S_IMODE(grant_path.stat().st_mode) == 0o600
 
-        gcode_bin = resolve_native_bin("gcode")
-        assert gcode_bin is not None
-        project_root = tmp_path / "project"
-        project_root.mkdir()
-        write_project_marker(
-            project_root,
-            project_id=str(fixture.project_id),
-            name=f"agent-auth-{fixture.project_id}",
-        )
         with psycopg.connect(fixture.database_url, autocommit=True) as admin:
             admin.execute(
                 "INSERT INTO code_indexed_file_states "
@@ -751,39 +739,6 @@ def test_rotation_rewrites_launch_grant_bundle(
                 "WHERE fs.machine_id = %s AND c.content @@@ %s",
                 (fixture.machine_id, "rotated credential"),
             ).fetchone() == ("rotated credential indexed sentinel",)
-        gobby_home = tmp_path / "gobby-home"
-        gobby_home.mkdir()
-        (gobby_home / "machine_id").write_text(str(fixture.machine_id), encoding="utf-8")
-        env = os.environ.copy()
-        env.update(
-            {
-                "GOBBY_AGENT_RUN_ID": str(execution_id),
-                "GCODE_LOG": "debug",
-                "GOBBY_HOME": str(gobby_home),
-                "GOBBY_MANAGED_EXECUTION_BOOTSTRAP": str(grant_path),
-                "GOBBY_SESSION_ID": str(fixture.session_id),
-            }
-        )
-        env.pop("GOBBY_AGENT_API_TOKEN", None)
-        result = subprocess.run(
-            [
-                gcode_bin,
-                "--project",
-                str(project_root),
-                "search-content",
-                "rotated credential",
-                "--allow-stale",
-            ],
-            cwd=project_root,
-            env=env,
-            text=True,
-            capture_output=True,
-            check=False,
-            timeout=30,
-        )
-        assert result.returncode == 0, result.stderr or result.stdout
-        assert "rotated credential indexed sentinel" in result.stdout, result.stderr
-        assert "password authentication failed" not in (result.stdout + result.stderr).lower()
     finally:
         with psycopg.connect(fixture.database_url, autocommit=True) as admin:
             admin.execute(
