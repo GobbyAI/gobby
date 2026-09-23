@@ -3,6 +3,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+use crate::communities::StoredCommunity;
 use crate::graph::report::DEFAULT_TOP_LIMIT;
 use crate::models::ProjectionMetadata;
 
@@ -58,6 +59,8 @@ pub struct ProjectGraphReport {
     pub hotspots: GraphReportHotspots,
     pub unresolved_targets: Vec<TargetFrequency>,
     pub external_targets: Vec<TargetFrequency>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub communities: Option<GraphReportCommunities>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bridge_summary: Option<BridgeReportSummary>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -123,6 +126,62 @@ pub struct TargetFrequency {
     pub id: String,
     pub name: String,
     pub count: usize,
+}
+
+/// Communities with fewer members than this are counted as thin and left out
+/// of `top`.
+pub(super) const REPORT_COMMUNITY_MIN_SIZE: usize = 3;
+
+/// The stored import communities. `total` and `thin_count` count every stored
+/// row; `top` lists the largest non-thin communities, up to `--top-n`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GraphReportCommunities {
+    pub total: usize,
+    pub thin_count: usize,
+    pub top: Vec<GraphReportCommunity>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GraphReportCommunity {
+    pub community_id: i32,
+    pub label: String,
+    pub label_source: String,
+    pub label_stale: bool,
+    pub size: usize,
+    pub cohesion: f64,
+}
+
+impl GraphReportCommunities {
+    pub(super) fn from_rows(rows: &[StoredCommunity], top_n: usize) -> Self {
+        let mut sized = rows
+            .iter()
+            .filter(|row| row.member_count >= REPORT_COMMUNITY_MIN_SIZE)
+            .collect::<Vec<_>>();
+        let thin_count = rows.len() - sized.len();
+        sized.sort_by(|left, right| {
+            right
+                .member_count
+                .cmp(&left.member_count)
+                .then(left.community_id.cmp(&right.community_id))
+        });
+        let top = sized
+            .into_iter()
+            .take(top_n)
+            .map(|row| GraphReportCommunity {
+                community_id: row.community_id,
+                label: row.label.clone(),
+                label_source: row.label_source.as_str().to_string(),
+                label_stale: row.label_stale,
+                size: row.member_count,
+                cohesion: row.cohesion,
+            })
+            .collect();
+        Self {
+            total: rows.len(),
+            thin_count,
+            top,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -263,6 +322,19 @@ impl BridgeEdgeInput {
 }
 
 impl Default for BridgeEdgeInput {
+    fn default() -> Self {
+        Self::Available(vec![])
+    }
+}
+
+/// The stored import communities as an optional report input.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) enum CommunityInput {
+    Available(Vec<StoredCommunity>),
+    Unavailable(String),
+}
+
+impl Default for CommunityInput {
     fn default() -> Self {
         Self::Available(vec![])
     }

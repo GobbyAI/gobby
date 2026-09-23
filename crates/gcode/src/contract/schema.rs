@@ -334,7 +334,14 @@ pub(super) fn graph_cleanup_keys() -> Vec<&'static str> {
 }
 
 pub(super) fn graph_report_keys() -> Vec<&'static str> {
-    vec!["project_id", "summary", "hotspots", "bridges", "degraded"]
+    vec![
+        "project_id",
+        "summary",
+        "hotspots",
+        "communities",
+        "bridges",
+        "degraded",
+    ]
 }
 
 pub(super) fn vector_lifecycle_keys() -> Vec<&'static str> {

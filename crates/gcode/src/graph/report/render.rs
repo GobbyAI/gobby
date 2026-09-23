@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
 use super::types::{
-    BridgeReportSummary, GraphHotspot, GraphReportHotspots, GraphReportSummary, ReportDegradation,
-    TargetFrequency,
+    BridgeReportSummary, GraphHotspot, GraphReportCommunities, GraphReportHotspots,
+    GraphReportSummary, REPORT_COMMUNITY_MIN_SIZE, ReportDegradation, TargetFrequency,
 };
 
 pub(super) struct RenderMarkdownInput<'a> {
@@ -12,6 +12,7 @@ pub(super) struct RenderMarkdownInput<'a> {
     pub(super) hotspots: &'a GraphReportHotspots,
     pub(super) unresolved_targets: &'a [TargetFrequency],
     pub(super) external_targets: &'a [TargetFrequency],
+    pub(super) communities: Option<&'a GraphReportCommunities>,
     pub(super) bridge_summary: Option<&'a BridgeReportSummary>,
     pub(super) degradation_details: &'a [ReportDegradation],
     pub(super) top_n: usize,
@@ -70,6 +71,9 @@ pub(super) fn render_markdown(input: RenderMarkdownInput<'_>) -> String {
         input.external_targets,
         input.top_n,
     );
+    if let Some(communities) = input.communities {
+        append_community_section(&mut lines, communities);
+    }
 
     if let Some(summary) = input.bridge_summary {
         lines.push(String::new());
@@ -140,6 +144,36 @@ fn append_target_section(
     }
 }
 
+fn append_community_section(lines: &mut Vec<String>, communities: &GraphReportCommunities) {
+    lines.push(String::new());
+    lines.push("## Import communities".to_string());
+    lines.push(format!(
+        "- {} communities ({} thin, below {REPORT_COMMUNITY_MIN_SIZE} members)",
+        communities.total, communities.thin_count
+    ));
+    if communities.top.is_empty() {
+        return;
+    }
+    lines.push(String::new());
+    lines.push("| id | label | size | cohesion | source |".to_string());
+    lines.push("| --- | --- | ---: | ---: | --- |".to_string());
+    for community in &communities.top {
+        let stale = if community.label_stale {
+            " (model label stale)"
+        } else {
+            ""
+        };
+        lines.push(format!(
+            "| {} | {} | {} | {:.2} | {}{stale} |",
+            community.community_id,
+            markdown_text(&community.label),
+            community.size,
+            community.cohesion,
+            community.label_source
+        ));
+    }
+}
+
 fn inline_code(value: &str) -> String {
     let delimiter = "`".repeat(max_backtick_run(value).saturating_add(1));
     if value.starts_with('`') || value.ends_with('`') {
@@ -173,6 +207,7 @@ fn markdown_text(value: &str) -> String {
         .replace(']', "\\]")
         .replace('<', "\\<")
         .replace('>', "\\>")
+        .replace('|', "\\|")
         .replace('\n', " ")
 }
 

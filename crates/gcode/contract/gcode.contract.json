@@ -2148,6 +2148,7 @@
         "project_id",
         "summary",
         "hotspots",
+        "communities",
         "bridges",
         "degraded"
       ]

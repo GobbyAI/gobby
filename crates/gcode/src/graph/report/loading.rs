@@ -10,10 +10,40 @@ use super::rows::{
     rows_to_named_counts,
 };
 use super::types::{
-    BridgeEdgeInput, GraphHotspot, GraphReportHotspots, GraphReportSummary, ReportGraphSnapshot,
-    TargetFrequency,
+    BridgeEdgeInput, CommunityInput, GraphHotspot, GraphReportHotspots, GraphReportSummary,
+    ReportGraphSnapshot, TargetFrequency,
 };
+use crate::communities::{self, StoredCommunity};
+use crate::config::Context;
 use gobby_core::falkor::Row;
+
+/// The degradation input name for the stored import communities.
+pub(super) const CODE_COMMUNITIES_INPUT: &str = "code_communities";
+
+/// The degradation detail for a project with no stored import communities.
+pub(super) const MISSING_COMMUNITIES_DETAIL: &str =
+    "no stored import communities for this project; run `gcode index` to compute them";
+
+/// Reads the stored import communities for the report. The report never
+/// computes a partition itself.
+pub(super) fn load_report_communities(ctx: &Context) -> CommunityInput {
+    community_input(
+        crate::db::connect_readonly(&ctx.database_url)
+            .and_then(|mut conn| communities::read_for_context(&mut conn, ctx)),
+    )
+}
+
+/// A failed read, or a project without stored rows, makes the input
+/// unavailable; the report degrades instead of failing.
+pub(super) fn community_input(rows: anyhow::Result<Vec<StoredCommunity>>) -> CommunityInput {
+    match rows {
+        Ok(rows) if rows.is_empty() => {
+            CommunityInput::Unavailable(MISSING_COMMUNITIES_DETAIL.to_string())
+        }
+        Ok(rows) => CommunityInput::Available(rows),
+        Err(error) => CommunityInput::Unavailable(format!("{error:#}")),
+    }
+}
 
 pub(super) fn load_report_snapshot(
     client: &mut GraphClient,
