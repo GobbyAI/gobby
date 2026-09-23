@@ -108,41 +108,23 @@ describe("McpServerFields", () => {
       <McpServerFields mode="create" source={makeDraft()} onSave={onSave} />,
     );
 
-    await user.type(
-      screen.getByRole("textbox", { name: "Server name" }),
-      "linear",
-    );
-    await user.type(
-      screen.getByRole("textbox", { name: "URL" }),
-      "https://mcp.linear.app",
-    );
+    await user.type(screen.getByLabelText("Server name"), "linear");
+    await user.type(screen.getByLabelText("URL"), "https://mcp.linear.app");
     await user.selectOptions(screen.getByLabelText("Project"), [
       "22222222-2222-4222-8222-222222222222",
     ]);
 
-    const headers = screen.getByRole("group", { name: "Headers" });
-    await user.click(within(headers).getByRole("button", { name: "Add row" }));
-    await user.type(
-      within(headers).getByRole("textbox", { name: "Key 1" }),
-      "Authorization",
-    );
-    await user.type(
-      within(headers).getByRole("textbox", { name: "Value 1" }),
-      "Bearer token",
-    );
+    const headers = screen.getByLabelText("Headers");
+    await user.click(within(headers).getByText("Add row"));
+    await user.type(within(headers).getByLabelText("Key 1"), "Authorization");
+    await user.type(within(headers).getByLabelText("Value 1"), "Bearer token");
 
-    const env = screen.getByRole("group", { name: "Environment" });
-    await user.click(within(env).getByRole("button", { name: "Add row" }));
-    await user.type(
-      within(env).getByRole("textbox", { name: "Key 1" }),
-      "API_TOKEN",
-    );
-    await user.type(
-      within(env).getByRole("textbox", { name: "Value 1" }),
-      "secret",
-    );
+    const env = screen.getByLabelText("Environment");
+    await user.click(within(env).getByText("Add row"));
+    await user.type(within(env).getByLabelText("Key 1"), "API_TOKEN");
+    await user.type(within(env).getByLabelText("Value 1"), "secret");
 
-    await user.click(screen.getByRole("button", { name: "Save" }));
+    await user.click(screen.getByText("Save"));
 
     await waitFor(() => {
       expect(onSave).toHaveBeenCalledWith({

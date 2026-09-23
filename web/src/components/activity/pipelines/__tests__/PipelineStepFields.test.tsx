@@ -40,9 +40,7 @@ function CommonHarness() {
 }
 
 function stepState(): PipelineStep {
-  return JSON.parse(
-    screen.getByRole("status", { name: "Step state" }).textContent ?? "{}",
-  );
+  return JSON.parse(screen.getByLabelText("Step state").textContent ?? "{}");
 }
 
 describe("PipelineStepFields drafts", () => {
@@ -50,11 +48,9 @@ describe("PipelineStepFields drafts", () => {
     const user = userEvent.setup();
     render(<McpHarness initialStep={{ id: "mcp", mcp: { arguments: {} } }} />);
 
-    await user.click(screen.getByRole("button", { name: "Add Arguments row" }));
-    const keyInput = screen.getByRole("textbox", { name: "Arguments key 1" });
-    const valueInput = screen.getByRole("textbox", {
-      name: "Arguments value 1",
-    });
+    await user.click(screen.getByLabelText("Add Arguments row"));
+    const keyInput = screen.getByLabelText("Arguments key 1");
+    const valueInput = screen.getByLabelText("Arguments value 1");
 
     await user.type(valueInput, "secret");
 
@@ -67,11 +63,9 @@ describe("PipelineStepFields drafts", () => {
     const user = userEvent.setup();
     render(<McpHarness initialStep={{ id: "mcp", mcp: { arguments: {} } }} />);
 
-    await user.click(screen.getByRole("button", { name: "Add Arguments row" }));
-    const keyInput = screen.getByRole("textbox", { name: "Arguments key 1" });
-    const valueInput = screen.getByRole("textbox", {
-      name: "Arguments value 1",
-    });
+    await user.click(screen.getByLabelText("Add Arguments row"));
+    const keyInput = screen.getByLabelText("Arguments key 1");
+    const valueInput = screen.getByLabelText("Arguments value 1");
 
     await user.type(keyInput, "token");
 
@@ -92,10 +86,8 @@ describe("PipelineStepFields drafts", () => {
       />,
     );
 
-    const keyInput = screen.getByRole("textbox", { name: "Arguments key 1" });
-    const valueInput = screen.getByRole("textbox", {
-      name: "Arguments value 1",
-    });
+    const keyInput = screen.getByLabelText("Arguments key 1");
+    const valueInput = screen.getByLabelText("Arguments value 1");
 
     await user.clear(keyInput);
 
@@ -105,9 +97,7 @@ describe("PipelineStepFields drafts", () => {
 
     await user.tab();
 
-    expect(
-      screen.queryByRole("textbox", { name: "Arguments key 1" }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Arguments key 1")).not.toBeInTheDocument();
     expect(stepState().mcp).toEqual({ arguments: {} });
   });
 

@@ -31,7 +31,7 @@ vi.mock("../ActiveAgentIndicator", () => ({
   ),
 }));
 vi.mock("../../ui/Button", () => ({
-  Button: ({ children, onClick, disabled, ...props }: any) => (
+  Button: ({ children, onClick, disabled, dense: _dense, ...props }: any) => (
     <button onClick={onClick} disabled={disabled} {...props}>
       {children}
     </button>

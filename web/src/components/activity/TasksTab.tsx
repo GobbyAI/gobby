@@ -511,24 +511,17 @@ export const TasksTab = memo(function TasksTab({
     selectedTaskIdRef.current = selectedTaskId;
   }, [selectedTaskId]);
 
+  // Reconcile against the selection React holds when it applies the update,
+  // not selectedTaskIdRef: a row clicked before this effect flushes must not
+  // be overridden by the first-row default.
   useEffect(() => {
-    if (visibleRows.length === 0) {
-      if (selectedTaskIdRef.current !== null) {
-        setSelectedTaskId(null);
-      }
-      return;
-    }
-
-    const hasVisibleSelection = visibleRows.some(
-      (row) => row.node.task.id === selectedTaskIdRef.current,
-    );
-    if (!hasVisibleSelection) {
-      if (selectedTaskIdRef.current !== null) {
-        setSelectedTaskId(null);
-        return;
-      }
-      setSelectedTaskId(visibleRows[0].node.task.id);
-    }
+    setSelectedTaskId((current) => {
+      if (visibleRows.length === 0) return null;
+      if (current === null) return visibleRows[0].node.task.id;
+      return visibleRows.some((row) => row.node.task.id === current)
+        ? current
+        : null;
+    });
   }, [visibleRows]);
 
   const applyRawTaskUpdate = useCallback(

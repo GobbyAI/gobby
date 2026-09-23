@@ -12,9 +12,16 @@ import type { UseChatPageVoiceStatusResult } from "../useChatPageVoiceStatus";
 vi.mock("../CommandBar", () => ({
   CommandBar: () => <div data-testid="command-bar" />,
 }));
-vi.mock("../MessageList", () => ({
-  MessageList: () => <div data-testid="message-list" />,
-}));
+vi.mock("../MessageList", async () => {
+  const ReactModule = await import("react");
+  return {
+    MessageList: ReactModule.forwardRef<MessageListHandle>(
+      function MockMessageList(_props, _ref) {
+        return <div data-testid="message-list" />;
+      },
+    ),
+  };
+});
 vi.mock("../ChatInput", () => ({
   ChatInput: () => <div data-testid="chat-input" />,
 }));

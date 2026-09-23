@@ -96,7 +96,7 @@
     "eslint-plugin-react-hooks": "^7.1.0-canary-404b38c7-20260408",
     "eslint-plugin-react-refresh": "^0.5.2",
     "globals": "^17.4.0",
-    "jsdom": "^28.1.0",
+    "jsdom": "29.1.1",
     "postcss": "^8.5.23",
     "prettier": "3.9.6",
     "prettier-plugin-tailwindcss": "0.8.1",

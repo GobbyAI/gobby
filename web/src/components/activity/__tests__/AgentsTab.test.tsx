@@ -102,9 +102,7 @@ describe("AgentsTab", () => {
 
     render(<AgentsTab projectId="project-1" />);
 
-    await user.click(
-      await screen.findByRole("button", { name: "Select reviewer" }),
-    );
+    await user.click(await screen.findByLabelText("Select reviewer"));
     const pipelineSelect = screen.getByLabelText("Pipeline");
     expect(pipelineSelect).toBeInTheDocument();
     expect(
@@ -115,22 +113,19 @@ describe("AgentsTab", () => {
       .find((url) => url.includes("/api/pipelines/definitions"));
     expect(pipelineCall).toBeDefined();
     expect(pipelineCall).not.toContain(["workflow", "type"].join("_"));
-    await user.clear(screen.getByRole("textbox", { name: "Description" }));
-    await user.type(
-      screen.getByRole("textbox", { name: "Description" }),
-      "Updated reviewer",
-    );
+    await user.clear(screen.getByLabelText("Description"));
+    await user.type(screen.getByLabelText("Description"), "Updated reviewer");
     await user.selectOptions(screen.getByLabelText("Provider"), "codex");
-    await user.clear(screen.getByRole("textbox", { name: "Model" }));
-    await user.type(screen.getByRole("textbox", { name: "Model" }), "gpt-5");
+    await user.clear(screen.getByLabelText("Model"));
+    await user.type(screen.getByLabelText("Model"), "gpt-5");
 
     await user.type(screen.getByLabelText("Add Tags"), "qa{enter}");
-    await user.click(screen.getByRole("button", { name: "+ Add Variable" }));
+    await user.click(screen.getByText("+ Add Variable"));
     await user.type(screen.getByPlaceholderText("Key"), "API_TOKEN");
     await user.type(screen.getByPlaceholderText("Value"), "secret");
-    await user.click(screen.getByRole("button", { name: "Add" }));
+    await user.click(screen.getByText("Add"));
 
-    await user.click(screen.getByRole("button", { name: "Save" }));
+    await user.click(screen.getByText("Save"));
 
     await waitFor(() => {
       const putCall = mockFetch.fn.mock.calls.find(

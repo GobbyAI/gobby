@@ -47,7 +47,7 @@ const render = (ui: ReactElement) => baseRender(ui, { wrapper: HeaderHarness });
 
 // The search bar is hidden until the header Search toggle opens it.
 async function openSearch(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(screen.getByRole("button", { name: "Search integrations" }));
+  await user.click(screen.getByLabelText("Search integrations"));
 }
 
 type ChannelRecord = {
@@ -248,11 +248,9 @@ describe("Integrations activity tab", () => {
     render(<IntegrationsTab />);
 
     expect(
-      await screen.findByRole("button", { name: "Select Release alerts" }),
+      await screen.findByLabelText("Select Release alerts"),
     ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Select Incident bridge" }),
-    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Select Incident bridge")).toBeInTheDocument();
     await openSearch(user);
     expect(
       screen.getByRole("searchbox", { name: "Search integrations" }),
@@ -262,42 +260,34 @@ describe("Integrations activity tab", () => {
       "incident",
     );
     expect(screen.queryByText("Release alerts")).not.toBeInTheDocument();
-    await user.click(
-      screen.getByRole("button", { name: "Filter integrations" }),
+    await user.click(screen.getByLabelText("Filter integrations"));
+    expect(screen.getByLabelText("Platform filter")).toHaveAttribute(
+      "name",
+      "integration-platform-filter",
     );
-    expect(
-      screen.getByRole("combobox", { name: "Platform filter" }),
-    ).toHaveAttribute("name", "integration-platform-filter");
-    expect(
-      screen.getByRole("combobox", { name: "Integration status" }),
-    ).toHaveAttribute("name", "integration-status-filter");
+    expect(screen.getByLabelText("Integration status")).toHaveAttribute(
+      "name",
+      "integration-status-filter",
+    );
     expect(
       screen.queryByRole("searchbox", { name: "Search integrations" }),
     ).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Select Release alerts" }),
-    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Select Release alerts")).toBeInTheDocument();
 
-    const incident = screen.getByRole("button", {
-      name: "Select Incident bridge",
-    });
+    const incident = screen.getByLabelText("Select Incident bridge");
     incident.focus();
     await user.keyboard("{Enter}");
     expect(incident.parentElement).toHaveClass("activity-list-row--selected");
 
     await user.selectOptions(
-      screen.getByRole("combobox", { name: "Platform filter" }),
+      screen.getByLabelText("Platform filter"),
       "telegram",
     );
     expect(screen.queryByText("Release alerts")).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Select Incident bridge" }),
-    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Select Incident bridge")).toBeInTheDocument();
 
     await openSearch(user);
-    expect(
-      screen.queryByRole("combobox", { name: "Platform filter" }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Platform filter")).not.toBeInTheDocument();
     await user.clear(
       screen.getByRole("searchbox", { name: "Search integrations" }),
     );
@@ -305,9 +295,7 @@ describe("Integrations activity tab", () => {
       screen.getByRole("searchbox", { name: "Search integrations" }),
       "incident",
     );
-    expect(
-      screen.getByRole("button", { name: "Select Incident bridge" }),
-    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Select Incident bridge")).toBeInTheDocument();
   });
 
   it("exposes row actions through the shared kebab menu", async () => {

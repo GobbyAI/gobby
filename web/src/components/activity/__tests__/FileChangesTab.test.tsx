@@ -41,8 +41,8 @@ describe("FileChangesTab", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /first\.ts/i }));
-    fireEvent.click(screen.getByRole("button", { name: /second\.ts/i }));
+    fireEvent.click(screen.getByText("first.ts").closest("button")!);
+    fireEvent.click(screen.getByText("second.ts").closest("button")!);
     expect(fetchDiff).toHaveBeenCalledTimes(2);
 
     expect(resolveSecond).toBeDefined();

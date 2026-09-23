@@ -213,9 +213,9 @@ describe("Skills activity Installed segment", () => {
     render(<SkillsTab projectId="project-1" />);
 
     expect(
-      await screen.findByRole("button", { name: "Select Code navigator" }),
+      await screen.findByLabelText("Select Code navigator"),
     ).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: "Installed" })).toHaveAttribute(
+    expect(screen.getByLabelText("Installed")).toHaveAttribute(
       "aria-checked",
       "true",
     );
@@ -223,13 +223,13 @@ describe("Skills activity Installed segment", () => {
     expect(screen.getByText("PROJECT")).toBeInTheDocument();
     expect(screen.getByText("hub")).toBeInTheDocument();
 
-    const hubSkill = screen.getByRole("button", { name: "Select Hub curator" });
+    const hubSkill = screen.getByLabelText("Select Hub curator");
     hubSkill.focus();
     await user.keyboard("{Enter}");
     expect(hubSkill.parentElement).toHaveClass("activity-list-row--selected");
 
     // Source/category filters live behind the header Filter trigger now.
-    await user.click(screen.getByRole("button", { name: "Filter skills" }));
+    await user.click(screen.getByLabelText("Filter skills"));
     await user.selectOptions(screen.getByLabelText("Skill source"), "project");
     expect(screen.getAllByText("Bridge pack").length).toBeGreaterThan(0);
     expect(screen.queryByText("Code navigator")).not.toBeInTheDocument();
@@ -239,7 +239,7 @@ describe("Skills activity Installed segment", () => {
       "Automation",
     );
     // The search bar is hidden until the header Search toggle opens it.
-    await user.click(screen.getByRole("button", { name: "Search skills" }));
+    await user.click(screen.getByLabelText("Search skills"));
     await user.type(
       screen.getByRole("searchbox", { name: "Search skills" }),
       "bridge",

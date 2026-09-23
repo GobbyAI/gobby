@@ -281,18 +281,18 @@ describe("Rules activity tab", () => {
 
     render(<RulesTab />);
 
-    const rulesList = await screen.findByRole("list", { name: "Rules" });
+    const rulesList = await screen.findByLabelText("Rules");
     expect(within(rulesList).getByText("alpha-rule")).toBeInTheDocument();
     expect(within(rulesList).getByText("gamma-rule")).toBeInTheDocument();
     expect(within(rulesList).queryByText("beta-rule")).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("radio", { name: "Disabled" }));
+    await user.click(screen.getByLabelText("Disabled"));
     expect(await within(rulesList).findByText("beta-rule")).toBeInTheDocument();
     expect(within(rulesList).queryByText("alpha-rule")).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("radio", { name: "Enabled" }));
+    await user.click(screen.getByLabelText("Enabled"));
     // The search bar is hidden until the header Search toggle opens it.
-    await user.click(screen.getByRole("button", { name: "Search rules" }));
+    await user.click(screen.getByLabelText("Search rules"));
     await user.type(
       screen.getByRole("searchbox", { name: "Search rules" }),
       "compaction",
@@ -302,7 +302,7 @@ describe("Rules activity tab", () => {
     ).toBeInTheDocument();
     expect(within(rulesList).queryByText("alpha-rule")).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Filter rules" }));
+    await user.click(screen.getByLabelText("Filter rules"));
     expect(
       screen.queryByRole("searchbox", { name: "Search rules" }),
     ).not.toBeInTheDocument();

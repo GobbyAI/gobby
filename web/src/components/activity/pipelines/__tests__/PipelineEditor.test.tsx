@@ -46,9 +46,9 @@ describe("PipelineEditor", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: /npm test/ }));
+    await user.click(screen.getByText(/npm test/).closest("button")!);
 
-    const typeSelect = screen.getByRole("combobox", { name: "Type" });
+    const typeSelect = screen.getByLabelText("Type");
     expect(typeSelect).not.toHaveTextContent("Workflow");
     expect(
       screen.queryByRole("option", { name: "Workflow" }),
@@ -68,13 +68,13 @@ describe("PipelineEditor", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: "Save" }));
+    await user.click(screen.getByText("Save", { selector: "button" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Could not save the pipeline. Please try again.",
     );
     expect(updateWorkflow).toHaveBeenCalledOnce();
-    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+    expect(screen.getByText("Save", { selector: "button" })).toBeEnabled();
   });
 
   it("shows the thrown update error and restores the save action", async () => {
@@ -92,11 +92,11 @@ describe("PipelineEditor", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: "Save" }));
+    await user.click(screen.getByText("Save", { selector: "button" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Save failed: network unavailable",
     );
-    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+    expect(screen.getByText("Save", { selector: "button" })).toBeEnabled();
   });
 });

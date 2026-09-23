@@ -171,11 +171,9 @@ describe("AutomationWorkflowsSection", () => {
   it("reads task-system and file-extraction rows under the hyphenated gobby-tasks key", () => {
     renderSection(makeContext());
 
+    expect(screen.getByLabelText("Enable task system")).toBeChecked();
     expect(
-      screen.getByRole("switch", { name: "Enable task system" }),
-    ).toBeChecked();
-    expect(
-      screen.getByRole("switch", { name: "Show result on task create" }),
+      screen.getByLabelText("Show result on task create"),
     ).not.toBeChecked();
     expect(screen.getByLabelText("Task file extensions item 1")).toHaveValue(
       ".py",
@@ -251,7 +249,7 @@ describe("AutomationWorkflowsSection", () => {
     const ctx = makeContext();
     renderSection(ctx);
 
-    const toggle = screen.getByRole("switch", { name: "Enforce rules engine" });
+    const toggle = screen.getByLabelText("Enforce rules engine");
     expect(toggle).toBeChecked();
     fireEvent.click(toggle);
     expect(ctx.setRulesEnforcement).toHaveBeenCalledWith(false);
@@ -266,10 +264,8 @@ describe("AutomationWorkflowsSection", () => {
     const ctx = makeContext();
     renderSection(ctx);
 
-    fireEvent.click(
-      screen.getByRole("switch", { name: "Enable workflow engine" }),
-    );
-    const save = screen.getByRole("button", { name: "Save" });
+    fireEvent.click(screen.getByLabelText("Enable workflow engine"));
+    const save = screen.getByText("Save").closest("button")!;
     await waitFor(() => expect(save).toBeEnabled());
     fireEvent.click(save);
 
@@ -287,7 +283,7 @@ describe("AutomationWorkflowsSection", () => {
       screen.getByLabelText("Close-review prompt limit (characters)"),
       { target: { value: "24000" } },
     );
-    const save = screen.getByRole("button", { name: "Save" });
+    const save = screen.getByText("Save").closest("button")!;
     await waitFor(() => expect(save).toBeEnabled());
     fireEvent.click(save);
 
@@ -302,9 +298,7 @@ describe("AutomationWorkflowsSection", () => {
   it("degrades gracefully when the rules-enforcement surface is absent", () => {
     renderSection(makeContext({ setRulesEnforcement: undefined }));
 
-    expect(
-      screen.queryByRole("switch", { name: "Enforce rules engine" }),
-    ).toBeNull();
+    expect(screen.queryByLabelText("Enforce rules engine")).toBeNull();
     expect(
       screen.getByText(/Rules enforcement is unavailable/i),
     ).toBeInTheDocument();

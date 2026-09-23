@@ -72,6 +72,16 @@ function setupFetch() {
     if (url.includes("/api/memories?")) {
       return jsonResponse({ memories: [memory] });
     }
+    if (url.endsWith("/api/config/values")) {
+      return jsonResponse({
+        revision: 0,
+        desired: {},
+        active: {},
+        secret_set: {},
+        pending_restart_keys: [],
+        failed_live_keys: {},
+      });
+    }
     return jsonResponse({ error: "no mock route matched" });
   });
 

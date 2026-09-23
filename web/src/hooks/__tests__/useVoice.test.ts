@@ -1464,7 +1464,7 @@ describe("useVoice", () => {
     expectVoiceLog("vad_error", { error: "VAD denied" });
   });
 
-  it("schedules contiguous TTS buffers and cancels every scheduled source", () => {
+  it("schedules contiguous TTS buffers and cancels every scheduled source", async () => {
     const { result } = renderHook(() =>
       useVoice(
         wsRef as React.RefObject<WebSocket | null>,
@@ -1475,6 +1475,9 @@ describe("useVoice", () => {
         true,
       ),
     );
+    await waitFor(() => {
+      expect(result.current.voiceReady).toBe(true);
+    });
     const enqueue = () => {
       result.current.handleVoiceMessage({
         type: "tts_audio",

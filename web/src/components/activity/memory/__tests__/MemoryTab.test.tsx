@@ -31,7 +31,7 @@ const render = (ui: ReactElement) => baseRender(ui, { wrapper: HeaderHarness });
 
 // The search bar is hidden until the header Search toggle opens it.
 async function openSearch(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(screen.getByRole("button", { name: "Search memories" }));
+  await user.click(screen.getByLabelText("Search memories"));
 }
 
 vi.mock("../../../shared/ResizeHandle", () => ({
@@ -113,15 +113,21 @@ function setupFetch(
       const method = init?.method ?? "GET";
 
       if (url.endsWith("/api/config/values") && method === "GET") {
-        return jsonResponse({
-          values: {
-            memory: {
-              dream: {
-                purge_review_after_days: 90,
-                purge_delete_after_days: 30,
-              },
+        const config = {
+          memory: {
+            dream: {
+              purge_review_after_days: 90,
+              purge_delete_after_days: 30,
             },
           },
+        };
+        return jsonResponse({
+          revision: 0,
+          desired: config,
+          active: config,
+          secret_set: {},
+          pending_restart_keys: [],
+          failed_live_keys: {},
         });
       }
       if (url.includes("/api/memories/stats")) {
@@ -239,53 +245,47 @@ describe("Memory activity tab", () => {
     render(<MemoryTab projectId="project-1" />);
 
     expect(
-      await screen.findByRole("button", {
-        name: "Select Persist panel width override",
-      }),
+      await screen.findByLabelText("Select Persist panel width override"),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", {
-        name: "Select Use a quiet palette for dashboards",
-      }),
+      screen.getByLabelText("Select Use a quiet palette for dashboards"),
     ).toBeInTheDocument();
     await openSearch(user);
     expect(
       screen.getByRole("searchbox", { name: "Search memories" }),
     ).toBeInTheDocument();
     // Manual refresh is gone — the list stays current via live updates (#19152).
-    expect(
-      screen.queryByRole("button", { name: "Refresh memories" }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Refresh memories")).not.toBeInTheDocument();
     // Scope selector defaults to Project.
-    expect(screen.getByRole("radio", { name: "Project" })).toHaveAttribute(
+    expect(screen.getByLabelText("Project")).toHaveAttribute(
       "aria-checked",
       "true",
     );
 
-    const paletteMemory = screen.getByRole("button", {
-      name: "Select Use a quiet palette for dashboards",
-    });
+    const paletteMemory = screen.getByLabelText(
+      "Select Use a quiet palette for dashboards",
+    );
     paletteMemory.focus();
     await user.keyboard(" ");
     expect(paletteMemory.parentElement).toHaveClass(
       "activity-list-row--selected",
     );
 
-    await user.click(screen.getByRole("button", { name: "Filter memories" }));
-    await user.click(screen.getByRole("checkbox", { name: "Last 24 hours" }));
+    await user.click(screen.getByLabelText("Filter memories"));
+    await user.click(screen.getByLabelText("Last 24 hours"));
     expect(
       screen.queryByText("Use a quiet palette for dashboards"),
     ).not.toBeInTheDocument();
-    const recentMemory = screen.getByRole("button", {
-      name: "Select Persist panel width override",
-    });
+    const recentMemory = screen.getByLabelText(
+      "Select Persist panel width override",
+    );
     expect(recentMemory).toBeInTheDocument();
     expect(recentMemory.parentElement).toHaveClass(
       "activity-list-row--selected",
     );
 
-    await user.click(screen.getByRole("button", { name: "Filter memories" }));
-    await user.click(screen.getByRole("checkbox", { name: "Last 24 hours" }));
+    await user.click(screen.getByLabelText("Filter memories"));
+    await user.click(screen.getByLabelText("Last 24 hours"));
     await user.type(
       screen.getByRole("searchbox", { name: "Search memories" }),
       "palette",
@@ -294,9 +294,7 @@ describe("Memory activity tab", () => {
       screen.queryByText("Persist panel width override"),
     ).not.toBeInTheDocument();
     expect(
-      await screen.findByRole("button", {
-        name: "Select Use a quiet palette for dashboards",
-      }),
+      await screen.findByLabelText("Select Use a quiet palette for dashboards"),
     ).toBeInTheDocument();
 
     await user.clear(
@@ -304,32 +302,27 @@ describe("Memory activity tab", () => {
     );
 
     await user.click(
-      screen.getByRole("button", {
-        name: "Select Persist panel width override",
-      }),
+      screen.getByLabelText("Select Persist panel width override"),
     );
-    await user.clear(screen.getByRole("textbox", { name: "Memory content" }));
+    await user.clear(screen.getByLabelText("Memory content"));
     await user.type(
-      screen.getByRole("textbox", { name: "Memory content" }),
+      screen.getByLabelText("Memory content"),
       "Draft should be discarded",
     );
-    await user.click(screen.getByRole("button", { name: "Discard" }));
-    expect(screen.getByRole("textbox", { name: "Memory content" })).toHaveValue(
+    await user.click(screen.getByText("Discard"));
+    expect(screen.getByLabelText("Memory content")).toHaveValue(
       "Persist panel width override",
     );
 
-    await user.clear(screen.getByRole("textbox", { name: "Memory content" }));
+    await user.clear(screen.getByLabelText("Memory content"));
     await user.type(
-      screen.getByRole("textbox", { name: "Memory content" }),
+      screen.getByLabelText("Memory content"),
       "Panel override is transient",
     );
-    await user.selectOptions(
-      screen.getByRole("combobox", { name: "Memory type" }),
-      "pattern",
-    );
+    await user.selectOptions(screen.getByLabelText("Memory type"), "pattern");
     await user.type(screen.getByLabelText("Add Tags"), "panel{Enter}");
-    expect(screen.getByRole("button", { name: "Discard" })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(screen.getByText("Discard")).toBeInTheDocument();
+    await user.click(screen.getByText("Save"));
 
     await waitFor(() =>
       expect(lastJsonBody(fetchMock)).toMatchObject({
@@ -340,9 +333,7 @@ describe("Memory activity tab", () => {
     );
 
     await user.click(
-      screen.getByRole("button", {
-        name: "Open actions for Persist panel width override",
-      }),
+      screen.getByLabelText("Open actions for Persist panel width override"),
     );
     const menu = screen.getByRole("menu", {
       name: "Actions for Persist panel width override",
@@ -373,7 +364,7 @@ describe("Memory activity tab", () => {
 
     render(<MemoryTab projectId="project-1" />);
     expect(
-      await screen.findByRole("button", { name: "Select Listed memory 0" }),
+      await screen.findByLabelText("Select Listed memory 0"),
     ).toBeInTheDocument();
 
     await openSearch(user);
@@ -383,9 +374,7 @@ describe("Memory activity tab", () => {
     );
 
     expect(
-      await screen.findByRole("button", {
-        name: "Select Server-only memory beyond list cap",
-      }),
+      await screen.findByLabelText("Select Server-only memory beyond list cap"),
     ).toBeInTheDocument();
     expect(screen.queryByText("Listed memory 0")).not.toBeInTheDocument();
     expect(

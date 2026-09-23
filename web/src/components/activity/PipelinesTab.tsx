@@ -214,8 +214,10 @@ export const PipelinesTab = memo(function PipelinesTab({
       });
   }, []);
 
-  // Poll running executions
+  // Poll running executions. A poll supersedes any in-flight list request,
+  // so it waits for a Load more page to land instead of discarding it.
   useEffect(() => {
+    if (loadingMore) return;
     const hasRunning = executions.some((e) => e.status === "running");
     if (hasRunning || (selectedId && detailExec?.status === "running")) {
       pollRef.current = setInterval(() => {
@@ -231,6 +233,7 @@ export const PipelinesTab = memo(function PipelinesTab({
     };
   }, [
     executions,
+    loadingMore,
     selectedId,
     detailExec?.status,
     fetchExecutions,

@@ -191,7 +191,7 @@ describe("PipelinesTab", () => {
     await waitFor(() => {
       expect(screen.getByText("Pipeline 50")).toBeInTheDocument();
     });
-    fireEvent.click(screen.getByRole("button", { name: "Load more" }));
+    fireEvent.click(screen.getByText("Load more"));
 
     await waitFor(() => {
       expect(screen.getByText("Pipeline 51")).toBeInTheDocument();
@@ -231,7 +231,7 @@ describe("PipelinesTab", () => {
     render(<PipelinesTab projectId="proj-1" />);
     await screen.findByText("Pipeline 50");
 
-    fireEvent.click(screen.getByRole("button", { name: "Load more" }));
+    fireEvent.click(screen.getByText("Load more"));
     await screen.findByText("Pipeline 100");
 
     await act(async () => {
@@ -241,7 +241,7 @@ describe("PipelinesTab", () => {
       expect(screen.getByText("Pipeline 100")).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Load more" }));
+    fireEvent.click(screen.getByText("Load more"));
     await screen.findByText("Pipeline 101");
 
     const executionCalls = mockFetch.fn.mock.calls
@@ -256,6 +256,46 @@ describe("PipelinesTab", () => {
     // Renders 101 rows across three page loads plus a poll; shared CI runners
     // need well over vitest's 5s default for this one.
   }, 20_000);
+
+  it("keeps a Load more page when a poll comes due while it is in flight", async () => {
+    mockFetch.resetRoutes();
+    const executions = Array.from({ length: 51 }, (_, index) => ({
+      id: `exec-${index + 1}`,
+      pipeline_name: `Pipeline ${index + 1}`,
+      status: index === 0 ? "running" : "completed",
+      created_at: "2026-04-09T00:00:00Z",
+    }));
+    let resolveNextPage: (response: Response) => void = () => undefined;
+    const nextPageResponse = new Promise<Response>((resolve) => {
+      resolveNextPage = resolve;
+    });
+
+    mockFetch.fn.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/api/pipelines/executions") {
+        if (url.searchParams.get("offset") === "50") return nextPageResponse;
+        return Response.json({ executions: executions.slice(0, 50) });
+      }
+      const id = url.pathname.split("/").pop();
+      return Response.json({
+        execution: { ...executions.find((item) => item.id === id), steps: [] },
+      });
+    });
+
+    render(<PipelinesTab projectId="proj-1" />);
+    await screen.findByText("Pipeline 50");
+
+    fireEvent.click(screen.getByText("Load more"));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    await act(async () => {
+      resolveNextPage(Response.json({ executions: executions.slice(50) }));
+    });
+
+    expect(await screen.findByText("Pipeline 51")).toBeInTheDocument();
+    expect(screen.getByText("Pipeline 50")).toBeInTheDocument();
+  });
 
   it("discards a stale execution response after the filter changes", async () => {
     mockFetch.resetRoutes();

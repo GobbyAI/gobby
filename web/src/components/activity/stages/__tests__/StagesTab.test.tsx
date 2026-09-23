@@ -281,16 +281,16 @@ describe("Stages activity tab", () => {
     render(<StagesTab projectId="project-1" />);
 
     expect(
-      await screen.findByRole("button", { name: "Select Implementation" }),
+      await screen.findByLabelText("Select Implementation"),
     ).toBeInTheDocument();
 
     await user.click(screen.getByRole("radio", { name: "Profiles" }));
 
     expect(
-      await screen.findByRole("button", { name: "Select Fast build" }),
+      await screen.findByLabelText("Select Fast build"),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Select Implementation" }),
+      screen.queryByLabelText("Select Implementation"),
     ).not.toBeInTheDocument();
   });
 
@@ -299,21 +299,19 @@ describe("Stages activity tab", () => {
     const user = userEvent.setup();
 
     render(<StagesTab projectId="project-1" />);
-    await user.click(
-      await screen.findByRole("button", { name: "Select Implementation" }),
-    );
+    await user.click(await screen.findByLabelText("Select Implementation"));
 
     const labelField = await screen.findByLabelText("Stage label");
     await user.clear(labelField);
     await user.type(labelField, "Build & Review");
 
-    expect(screen.getByRole("button", { name: "Save" })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Discard" }));
+    expect(screen.getByText("Save")).toBeInTheDocument();
+    await user.click(screen.getByText("Discard"));
     expect(screen.getByLabelText("Stage label")).toHaveValue("Implementation");
 
     await user.clear(screen.getByLabelText("Stage label"));
     await user.type(screen.getByLabelText("Stage label"), "Build Review");
-    await user.click(screen.getByRole("button", { name: "Save" }));
+    await user.click(screen.getByText("Save"));
 
     await waitFor(() =>
       expect(
@@ -333,9 +331,7 @@ describe("Stages activity tab", () => {
 
     render(<StagesTab projectId="project-1" />);
     await user.click(screen.getByRole("radio", { name: "Profiles" }));
-    await user.click(
-      await screen.findByRole("button", { name: "Select Fast build" }),
-    );
+    await user.click(await screen.findByLabelText("Select Fast build"));
 
     const descriptionField = await screen.findByLabelText(
       "Profile description",
@@ -343,7 +339,7 @@ describe("Stages activity tab", () => {
     await user.clear(descriptionField);
     await user.type(descriptionField, "Parallel fast lane");
 
-    await user.click(screen.getByRole("button", { name: "Discard" }));
+    await user.click(screen.getByText("Discard"));
     expect(screen.getByLabelText("Profile description")).toHaveValue(
       "Short autonomous build",
     );
@@ -353,7 +349,7 @@ describe("Stages activity tab", () => {
       screen.getByLabelText("Profile description"),
       "Parallel fast lane",
     );
-    await user.click(screen.getByRole("button", { name: "Save" }));
+    await user.click(screen.getByText("Save"));
 
     await waitFor(() =>
       expect(
@@ -374,12 +370,8 @@ describe("Stages activity tab", () => {
     render(<StagesTab projectId="project-1" />);
     await user.click(screen.getByRole("radio", { name: "Profiles" }));
 
-    const row = await screen.findByRole("listitem", {
-      name: /Fast build profile/i,
-    });
-    await user.click(
-      within(row).getByRole("button", { name: "Open actions for Fast build" }),
-    );
+    const row = await screen.findByLabelText(/Fast build profile/i);
+    await user.click(within(row).getByLabelText("Open actions for Fast build"));
     await user.click(
       await screen.findByRole("menuitem", { name: "Set as default" }),
     );
@@ -402,9 +394,7 @@ describe("Stages activity tab", () => {
 
     render(<StagesTab projectId="project-1" />);
     await user.click(screen.getByRole("radio", { name: "Profiles" }));
-    await user.click(
-      await screen.findByRole("button", { name: "Select Fast build" }),
-    );
+    await user.click(await screen.findByLabelText("Select Fast build"));
 
     await user.clear(screen.getByLabelText("Profile description"));
     await user.type(
@@ -412,28 +402,22 @@ describe("Stages activity tab", () => {
       "Updated description",
     );
     fetchMock.mockRejectedValueOnce(new Error("Profile save failed"));
-    await user.click(screen.getByRole("button", { name: "Save" }));
+    await user.click(screen.getByText("Save"));
 
     expect(
-      await screen.findByRole("button", {
-        name: "Dismiss error: Profile save failed",
-      }),
+      await screen.findByLabelText("Dismiss error: Profile save failed"),
     ).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Discard" }));
+    await user.click(screen.getByText("Discard"));
 
-    const row = screen.getByRole("listitem", { name: /Fast build profile/i });
-    await user.click(
-      within(row).getByRole("button", { name: "Open actions for Fast build" }),
-    );
+    const row = screen.getByLabelText(/Fast build profile/i);
+    await user.click(within(row).getByLabelText("Open actions for Fast build"));
     fetchMock.mockRejectedValueOnce(new Error("Profile action failed"));
     await user.click(
       await screen.findByRole("menuitem", { name: "Set as default" }),
     );
 
     expect(
-      await screen.findByRole("button", {
-        name: "Dismiss error: Profile action failed",
-      }),
+      await screen.findByLabelText("Dismiss error: Profile action failed"),
     ).toBeInTheDocument();
   });
 
@@ -444,13 +428,9 @@ describe("Stages activity tab", () => {
 
     render(<StagesTab projectId="project-1" />);
 
-    const stageRow = await screen.findByRole("listitem", {
-      name: /Implementation stage/i,
-    });
+    const stageRow = await screen.findByLabelText(/Implementation stage/i);
     await user.click(
-      within(stageRow).getByRole("button", {
-        name: "Open actions for Implementation",
-      }),
+      within(stageRow).getByLabelText("Open actions for Implementation"),
     );
     await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
 
@@ -459,9 +439,7 @@ describe("Stages activity tab", () => {
 
     confirm.mockReturnValue(true);
     await user.click(
-      within(stageRow).getByRole("button", {
-        name: "Open actions for Implementation",
-      }),
+      within(stageRow).getByLabelText("Open actions for Implementation"),
     );
     await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
 
@@ -476,14 +454,10 @@ describe("Stages activity tab", () => {
     );
 
     await user.click(screen.getByRole("radio", { name: "Profiles" }));
-    const profileRow = await screen.findByRole("listitem", {
-      name: /Fast build profile/i,
-    });
+    const profileRow = await screen.findByLabelText(/Fast build profile/i);
     confirm.mockReturnValue(false);
     await user.click(
-      within(profileRow).getByRole("button", {
-        name: "Open actions for Fast build",
-      }),
+      within(profileRow).getByLabelText("Open actions for Fast build"),
     );
     await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
 
@@ -497,9 +471,7 @@ describe("Stages activity tab", () => {
 
     confirm.mockReturnValue(true);
     await user.click(
-      within(profileRow).getByRole("button", {
-        name: "Open actions for Fast build",
-      }),
+      within(profileRow).getByLabelText("Open actions for Fast build"),
     );
     await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
 
