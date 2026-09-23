@@ -312,6 +312,7 @@ def reconcile_model_context(
     observed_context_window: Any = None,
     *,
     provider: str | None = None,
+    db: HubDatabase | None = None,
 ) -> ReconciledModelContext:
     """Reconcile a provider observation with authoritative session model metadata."""
     model = reconcile_observed_model(existing_model, observed_model)
@@ -320,6 +321,7 @@ def reconcile_model_context(
         model,
         provider=provider,
         provider_reported_context_window=reported_window,
+        db=db,
     )
     return ReconciledModelContext(
         model=model,

@@ -1,0 +1,1 @@
+{"timestamp":1,"method":"session/update","params":{"sessionId":"grok-session","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"hello from a current grok-4.7 transcript"},"_meta":{"modelId":"grok-4.7","promptIndex":0}},"_meta":{"eventId":"evt-current","agentTimestampMs":1}}}

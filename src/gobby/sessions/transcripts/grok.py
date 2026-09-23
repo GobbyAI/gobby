@@ -359,12 +359,18 @@ def _message(
 
 def _message_model(data: dict[str, Any]) -> str | None:
     params = data.get("params")
-    meta = params.get("_meta") if isinstance(params, dict) else None
-    if not isinstance(meta, dict):
+    if not isinstance(params, dict):
         return None
-    model_id = meta.get("modelId")
-    if isinstance(model_id, str) and model_id.strip():
-        return model_id.strip()
+    metas = [params.get("_meta")]
+    update = params.get("update")
+    if isinstance(update, dict):
+        metas.append(update.get("_meta"))
+    for meta in metas:
+        if not isinstance(meta, dict):
+            continue
+        model_id = meta.get("modelId")
+        if isinstance(model_id, str) and model_id.strip():
+            return model_id.strip()
     return None
 
 
