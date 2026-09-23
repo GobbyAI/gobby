@@ -1016,7 +1016,7 @@ class TestToolIntentSurfacing:
         assert effect.inject_result is True
         assert effect.block_on_failure is False
         assert effect.block_on_success is False
-        assert effect.timeout_seconds == 2.0
+        assert effect.timeout_seconds == 10.0
 
     async def test_spawn_prompt_surfaces_under_the_spawn_trigger(
         self, surface_engine: RuleEngine, surface_calls: list[dict[str, Any]]
@@ -1263,7 +1263,7 @@ class TestTurnStartSurfacing:
         assert call.background is False
         assert call.inject_result is True
         assert call.block_on_failure is False
-        assert call.timeout_seconds == 2.0
+        assert call.timeout_seconds == 10.0
         assert guard.type == "set_variable"
         assert guard.variable == "_memory_surface_turn_seq"
         assert guard.value == "{{ variables.get('parent_turn_seq') }}"

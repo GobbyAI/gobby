@@ -52,6 +52,7 @@ INTERACTIVE_TASK_MUTATIONS = (
     "close_task",
     "create_task",
     "de_escalate_task",
+    "delegate_task",
     "delete_task",
     "escalate_task",
     "link_commit",

@@ -33,7 +33,10 @@ _CACHED_INJECTION_TOOLS = frozenset(
         ("gobby-skills", "list_hubs"),
     }
 )
-_INLINE_WAIT_CAP_SECONDS = 2.0
+# Memory recall waits up to this long rather than dropping its result (Josh,
+# #22807); it must stay well inside workflow.timeout (24 s) with the other
+# turn-start inline calls. #22708 owns the underlying recall slowness.
+_INLINE_WAIT_CAP_SECONDS = 10.0
 _BACKGROUND_TIMEOUT_SECONDS = 30.0
 _CACHE_TTL_SECONDS = 120.0
 _MAX_CACHED_SESSIONS = 512

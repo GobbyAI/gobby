@@ -26,7 +26,7 @@ rules:
           trigger: turn
         background: false
         inject_result: true
-        timeout_seconds: 2.0
+        timeout_seconds: 10.0
       - type: set_variable
         delivery: on_receipt
         variable: _memory_surface_turn_seq
