@@ -405,23 +405,11 @@ def _dedupe_dependencies(dependencies: list[dict[str, str]]) -> list[dict[str, s
     return deduped
 
 
-def validate_contract_manifest(plan_doc: PlanDocument) -> dict[str, ManifestEntry]:
-    """Check a manifest-bearing plan against the requirements expansion compiles.
-
-    Expansion preflight and the deterministic compiler both call this, so a plan
-    that passes ``gobby plans validate --mode expansion`` cannot be rejected at
-    compile time for a requirement preflight never checked. Raises ``ValueError``
-    describing the first violation.
-    """
-    section_by_id = {section.section_id: section for section in plan_doc.sections}
-    manifest_entry_by_section = {entry.source_section: entry for entry in plan_doc.manifest_entries}
-    for entry in plan_doc.manifest_entries:
-        section = section_by_id.get(entry.source_section)
-        if section is None or section.kind is not Kind.deliverable:
-            raise ValueError(
-                f"manifest entry source_section={entry.source_section!r} "
-                "does not resolve to a kind: deliverable section"
-            )
+def validate_contract_test_artifacts(plan_doc: PlanDocument) -> None:
+    """Enforce the compiler's test-artifact grammar before manifest synthesis."""
+    for section in plan_doc.sections:
+        if section.kind is not Kind.deliverable:
+            continue
         for item in section.acceptance_items:
             if (
                 item.artifact_kind is ArtifactKind.test
@@ -432,6 +420,25 @@ def validate_contract_manifest(plan_doc: PlanDocument) -> dict[str, ManifestEntr
                     f"{item.artifact_ref!r} must use path::test_symbol"
                 )
 
+
+def validate_contract_manifest(plan_doc: PlanDocument) -> dict[str, ManifestEntry]:
+    """Check a manifest-bearing plan against the requirements expansion compiles.
+
+    Expansion preflight and the deterministic compiler both call this, so a plan
+    that passes ``gobby plans validate --mode expansion`` cannot be rejected at
+    compile time for a requirement preflight never checked. Raises ``ValueError``
+    describing the first violation.
+    """
+    validate_contract_test_artifacts(plan_doc)
+    section_by_id = {section.section_id: section for section in plan_doc.sections}
+    manifest_entry_by_section = {entry.source_section: entry for entry in plan_doc.manifest_entries}
+    for entry in plan_doc.manifest_entries:
+        section = section_by_id.get(entry.source_section)
+        if section is None or section.kind is not Kind.deliverable:
+            raise ValueError(
+                f"manifest entry source_section={entry.source_section!r} "
+                "does not resolve to a kind: deliverable section"
+            )
     deliverable_ids = {
         section.section_id for section in plan_doc.sections if section.kind is Kind.deliverable
     }

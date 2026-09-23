@@ -17,6 +17,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from gobby.cli.plans import _validate_plan_for_cli
+from gobby.plans.manifest_emitter import emit_stub_manifest
 from gobby.plans.parser import parse_plan
 from gobby.storage.tasks import LocalTaskManager
 from gobby.tasks.expansion import _compile as compile_module
@@ -435,3 +437,58 @@ def test_validate_plan_file_reports_the_compilers_manifest_error(
         validate_contract_manifest(plan_doc)
 
     assert service.validate_plan_file(plan_path)["errors"] == [str(compiler_error.value)]
+
+
+def test_preflight_and_compiler_reject_earlier_prose_test_marker(
+    service: ExpansionService, tmp_path: Path
+) -> None:
+    plan_path = _write_plan_with_test_artifact(
+        tmp_path / "earlier-prose-test.md", "tests/test_behavior.py::test_behavior"
+    )
+    plan_path.write_text(
+        plan_path.read_text(encoding="utf-8").replace(
+            "Regression test exists. test:",
+            "NEW test: a run entry records completion. test:",
+        ),
+        encoding="utf-8",
+    )
+    plan_doc = parse_plan(plan_path, parse_mode="expansion")
+
+    with pytest.raises(ValueError) as compiler_error:
+        validate_contract_manifest(plan_doc)
+
+    result = service.validate_plan_file(plan_path)
+    assert result["valid"] is False
+    assert result["errors"] == [str(compiler_error.value)]
+
+
+def test_preflight_rejects_prose_test_marker_before_manifest_synthesis(
+    service: ExpansionService, tmp_path: Path, sample_project: dict[str, Any]
+) -> None:
+    plan_path = _write_plan_with_test_artifact(
+        tmp_path / "before-synthesis.md", "tests/test_behavior.py::test_behavior"
+    )
+    plan_text = plan_path.read_text(encoding="utf-8")
+    plan_text = plan_text.replace(
+        "Regression test exists. test:",
+        "NEW test: a run entry records completion. test:",
+    )
+    plan_path.write_text(plan_text.split("## M1 Task Manifest", 1)[0], encoding="utf-8")
+
+    result = service.validate_plan_file(plan_path)
+
+    assert result["valid"] is False
+    assert result["errors"] == [
+        "acceptance item '1.1.1' test artifact 'a run entry records completion' "
+        "must use path::test_symbol"
+    ]
+    cli_result = _validate_plan_for_cli(plan_path, None, mode="expansion")
+    assert cli_result["valid"] is False
+    assert cli_result["errors"] == result["errors"]
+    assert emit_stub_manifest(plan_path, plan_id="test-artifact") == "fresh"
+    parent = service.task_manager.create_task(
+        project_id=sample_project["id"], title="Expansion epic", task_type="epic"
+    )
+    with pytest.raises(ValueError) as compiler_error:
+        service.compile_plan_to_spec(parse_plan(plan_path, parse_mode="expansion"), parent)
+    assert str(compiler_error.value) == result["errors"][0]
