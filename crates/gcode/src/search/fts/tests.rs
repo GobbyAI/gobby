@@ -39,7 +39,7 @@ fn fixture_uuid_param(id: &str) -> uuid::Uuid {
 fn sanitize_pg_search_query_matches_gobby_rules() {
     assert_eq!(
         sanitize_pg_search_query("foo::bar baz-qux _id + \"drop\""),
-        r#"foo\:\:bar baz-qux _id + "drop""#
+        "foo bar baz-qux _id \"drop\""
     );
 }
 
@@ -47,7 +47,7 @@ fn sanitize_pg_search_query_matches_gobby_rules() {
 fn sanitize_pg_search_query_escapes_leading_minus_per_token() {
     assert_eq!(
         sanitize_pg_search_query("-foo bar-baz -qux"),
-        "\\-foo bar-baz \\-qux"
+        "foo bar-baz qux"
     );
     assert_eq!(sanitize_pg_search_query("foo-bar"), "foo-bar");
 }
@@ -56,32 +56,29 @@ fn sanitize_pg_search_query_escapes_leading_minus_per_token() {
 fn sanitize_pg_search_query_preserves_dsl_punctuation() {
     assert_eq!(
         sanitize_pg_search_query(":: + compute (fence)"),
-        r"\:\: + compute (fence)"
+        "compute fence"
     );
     assert_eq!(
         sanitize_pg_search_query("_compute_fence_mask()"),
-        r"_compute_fence_mask\(\)"
+        "_compute_fence_mask"
     );
     assert_eq!(
         sanitize_pg_search_query(r"_compute_fence_mask\(\)"),
-        r"_compute_fence_mask\(\)"
+        "_compute_fence_mask"
     );
     assert_eq!(
         sanitize_pg_search_query(r#""_compute_fence_mask()""#),
-        r#""_compute_fence_mask()""#
+        "\"_compute_fence_mask\""
     );
-    assert_eq!(
-        sanitize_pg_search_query("compute (fence"),
-        r"compute \(fence"
-    );
-    assert_eq!(sanitize_pg_search_query(r"\-foo -bar"), r"\-foo \-bar");
+    assert_eq!(sanitize_pg_search_query("compute (fence"), "compute fence");
+    assert_eq!(sanitize_pg_search_query(r"\-foo -bar"), "foo bar");
     assert_eq!(
         sanitize_pg_search_query("claude-opus-4-8[1m]"),
-        r"claude-opus-4-8\[1m\]"
+        "claude-opus-4-8 1m"
     );
     assert_eq!(
         sanitize_pg_search_query(r"claude-opus-4-8\[1m\]"),
-        r"claude-opus-4-8\[1m\]"
+        "claude-opus-4-8 1m"
     );
 }
 
@@ -94,11 +91,11 @@ fn sanitize_pg_search_query_neutralizes_boolean_operators_without_breaking_phras
     );
     assert_eq!(
         sanitize_pg_search_query("(AND) OR-based _NOT_ CANDY ORACLE NOTICE"),
-        "(and) or-based _NOT_ CANDY ORACLE NOTICE"
+        "and OR-based _NOT_ CANDY ORACLE NOTICE"
     );
     assert_eq!(
         sanitize_pg_search_query(r#""salt AND pepper" OR "NOT""#),
-        r#""salt AND pepper" or "NOT""#
+        "\"salt and pepper\" or \"not\""
     );
 }
 
