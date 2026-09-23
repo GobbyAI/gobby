@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
+import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -14,6 +19,10 @@ from gobby.cli.install_components import run_install_components
 from gobby.cli.install_files_home import (
     _install_maintenance_block_message,
     local_install_requires_maintenance,
+)
+from gobby.cli.install_setup import (
+    _install_gclient_from_submodule,
+    _install_gterm_from_submodule,
 )
 from gobby.cli.runtime import CliRuntime
 from gobby.install.bin_freshness_promotion import native_bin_predates_source
@@ -84,3 +93,103 @@ def test_a_rebuilt_gclient_clears_the_stale_marker(tmp_path: Path) -> None:
     now = time.time() + 5
     os.utime(binary, (now, now))
     assert native_bin_predates_source("gclient", bin_dir=tmp_path) is False
+
+
+def _signature_text(path: Path) -> str:
+    probe = subprocess.run(
+        ["codesign", "-dv", str(path)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    return probe.stderr + probe.stdout
+
+
+def _unsigned_executable(destination: Path) -> None:
+    shutil.copy("/usr/bin/true", destination)
+    removed = subprocess.run(
+        ["codesign", "--remove-signature", str(destination)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert removed.returncode == 0, removed.stderr
+    assert "Signature=adhoc" not in _signature_text(destination)
+
+
+def _which_build_tools(name: str) -> str | None:
+    if name in {"cargo", "zig", "codesign"}:
+        return f"/usr/bin/{name}"
+    return None
+
+
+_REAL_SUBPROCESS_RUN = subprocess.run
+_REAL_REPLACE = os.replace
+
+
+def _run_except_cargo(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+    """Let codesign run; the submodule installer must not invoke cargo here."""
+    if args and args[0] == "cargo":
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+    return _REAL_SUBPROCESS_RUN(args, **kwargs)
+
+
+@pytest.mark.parametrize(
+    ("binary_name", "crate_dir", "module_name", "install"),
+    [
+        (
+            "gclient",
+            "gclient",
+            "gobby.cli.install_setup_gclient",
+            _install_gclient_from_submodule,
+        ),
+        (
+            "gterm",
+            "gterminal",
+            "gobby.cli.install_setup_gterm",
+            _install_gterm_from_submodule,
+        ),
+    ],
+)
+def test_submodule_install_ad_hoc_signs_the_staged_binary(
+    binary_name: str,
+    crate_dir: str,
+    module_name: str,
+    install: Callable[[Path], str | None],
+    tmp_path: Path,
+) -> None:
+    """The real submodule installer signs the staged inode before promotion."""
+    if sys.platform != "darwin" or shutil.which("codesign") is None:
+        pytest.skip("ad-hoc signing is enforced on macOS")
+
+    workspace = tmp_path / "workspace"
+    (workspace / "crates" / crate_dir).mkdir(parents=True)
+    (workspace / "src" / "gobby" / "cli").mkdir(parents=True)
+    (workspace / "Cargo.toml").touch()
+    (workspace / "crates" / crate_dir / "Cargo.toml").touch()
+    source = workspace / "target" / "release" / binary_name
+    source.parent.mkdir(parents=True)
+    _unsigned_executable(source)
+    dest_dir = tmp_path / "bin"
+    dest_dir.mkdir()
+
+    def replace_staged(src: str, dst: str) -> None:
+        staged = Path(src)
+        if staged.name == binary_name:
+            assert "Signature=adhoc" in _signature_text(staged)
+        _REAL_REPLACE(src, dst)
+
+    with (
+        patch("gobby.cli.install_setup.shutil.which", side_effect=_which_build_tools),
+        patch("gobby.cli.install_setup.subprocess.run", side_effect=_run_except_cargo),
+        patch(
+            f"{module_name}.__file__",
+            str(workspace / "src" / "gobby" / "cli" / "installer.py"),
+        ),
+        patch(f"{module_name}.try_acquire_native_bin_lock", return_value=MagicMock()),
+        patch("gobby.install.bin_freshness_promotion.os.replace", side_effect=replace_staged),
+    ):
+        result = install(dest_dir)
+
+    assert result == "promoted"
+    assert "Signature=adhoc" in _signature_text(dest_dir / binary_name)
