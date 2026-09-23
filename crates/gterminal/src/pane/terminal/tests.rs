@@ -1560,6 +1560,30 @@ fn visible_ansi_preserves_cell_style_sequences() {
 }
 
 #[test]
+fn visible_ansi_keeps_faint_claude_suggestion() {
+    let (tx, _rx) = mpsc::channel(4);
+    let mut terminal = crate::ghostty::Terminal::new(80, 8, 100).unwrap();
+    // Claude draws the prompt at normal intensity and each suggestion word faint.
+    terminal.write(
+        "\u{1b}[39m❯\u{a0}\u{1b}[2mrun\u{1b}[0m \u{1b}[2mlightspeed and report\u{1b}[0m".as_bytes(),
+    );
+    let pane = GhosttyPaneTerminal::new(terminal, tx).unwrap();
+
+    let ansi = pane.recent_unwrapped_ansi(8);
+    let run_at = ansi.find("run").expect("suggestion word");
+    let before_word = &ansi[..run_at];
+    let faint_at = before_word
+        .rfind("\u{1b}[2m")
+        .expect("faint before the suggestion");
+    let reset_at = before_word.rfind("\u{1b}[0m");
+    assert!(
+        reset_at.is_none_or(|index| index < faint_at),
+        "ghostty history ansi dropped faint styling: {ansi:?}"
+    );
+    assert!(ansi.contains("lightspeed"), "{ansi:?}");
+}
+
+#[test]
 fn recent_ansi_can_read_styled_scrollback() {
     let (tx, _rx) = mpsc::channel(4);
     let mut terminal = crate::ghostty::Terminal::new(20, 3, 100).unwrap();
