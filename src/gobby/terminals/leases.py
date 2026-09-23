@@ -399,6 +399,17 @@ class TerminalLeaseRegistry:
     def holder(self, terminal_id: str) -> str | None:
         return self._lease(terminal_id).holder
 
+    def holder_info(self, terminal_id: str) -> dict[str, str | None] | None:
+        attachment_id = self.holder(terminal_id)
+        record = None if attachment_id is None else self.get(attachment_id)
+        if record is None:
+            return None
+        return {
+            "attachment_id": record.attachment_id,
+            "kind": record.viewer,
+            "session_ref": None if record.terminal is None else record.terminal.session_id,
+        }
+
     def generation(self, terminal_id: str) -> int:
         return self._lease(terminal_id).generation
 

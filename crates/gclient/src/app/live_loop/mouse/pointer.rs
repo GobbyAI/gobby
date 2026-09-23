@@ -101,10 +101,22 @@ pub(super) fn down<W: WorkspaceView>(
             if button != MouseButton::Left {
                 return MouseOutcome::Ignore;
             }
-            if focused {
-                return select::down(ws, chrome, pane, slot, col, row, mouse);
+            if observe_only && !focused {
+                return MouseOutcome::Focus {
+                    pane,
+                    observe_only: true,
+                };
             }
-            MouseOutcome::Focus { pane, observe_only }
+            let selection = select::down(ws, chrome, pane, slot, col, row, mouse);
+            if focused || !matches!(selection, MouseOutcome::Handled) {
+                return selection;
+            }
+            // Focus on press so a drag selects in the clicked pane, but wait
+            // for release before taking its input lease.
+            MouseOutcome::Focus {
+                pane,
+                observe_only: true,
+            }
         }
         Hit::Tab(index) if button == MouseButton::Right => {
             open_menu(
@@ -490,7 +502,26 @@ pub(super) fn up<W: WorkspaceView>(
             chrome.prefs.sidebar_width = chrome.sidebar.width;
             MouseOutcome::Handled
         }
-        Some(MouseGesture::Select { .. }) => select::up(chrome),
+        Some(MouseGesture::Select { slot }) => {
+            let selection = select::up(chrome);
+            if selection != MouseOutcome::Handled
+                || mouse
+                    .modifiers
+                    .intersects(KeyModifiers::ALT | KeyModifiers::SHIFT | KeyModifiers::CONTROL)
+                || !matches!(hit, Hit::Pane { slot: released_slot, .. } if released_slot == slot)
+            {
+                return selection;
+            }
+            let Some(pane) = chrome.pane_for_slot(slot) else {
+                return selection;
+            };
+            let state = ws.pane(pane);
+            if state.is_held() || state.take_back {
+                selection
+            } else {
+                MouseOutcome::TakeFreeControl { pane }
+            }
+        }
         Some(MouseGesture::Forwarding { slot, strip }) => {
             forward::captured(ws, chrome, slot, strip, mouse)
         }

@@ -444,14 +444,16 @@ Three messages belong to the direct path:
 | `terminal refused input (<code>); take control again` | The host refused a key, normally `input_not_granted` after your grant was revoked. Output keeps flowing; the pane returns to observing. |
 | `terminal input backlog; key dropped` | You typed faster than the terminal drained. That one keystroke is gone and is not retried, because a retried keystroke is the wrong keystroke. |
 
-Focusing a pane takes control of it, whether you focus it by keyboard, by click,
-or through the navigator — including when another viewer holds it, which focus
-takes over rather than asking. Focus is the whole gesture: there is no second
-button to press and nothing to confirm.
+Keyboard and navigator focus claim a free pane. A completed left click does the
+same, including when its previous holder released it. Pressing alone does not
+take control, so dragging to select text leaves the lease alone. Clicking a pane
+you already control sends no new take request. If another live agent holds the
+pane, the click focuses it and shows the read-only takeover control; use that
+indicator or `prefix+t` for a deliberate take-back.
 
 Asking the daemon who may type costs one round trip, and that round trip belongs
-to the focus change, never to a key. So the pane is usable the moment you focus
-it: keys, pastes, and forwarded mouse reports you produce before the grant lands
+to the focus change or completed click, never to a key. For a free pane, keys,
+pastes, and forwarded mouse reports you produce before the grant lands
 are held in order and written the instant it does. Nothing is dropped and nothing
 announces a mode — the pane reads `backend · Focused` throughout. Only a daemon
 that stops answering can overrun that queue, and then a warning toast says
@@ -613,9 +615,9 @@ Mouse support is on by default; turn it off with `--no-mouse` or the
 
 | Gesture | Effect |
 | --- | --- |
-| Left-click a pane | Focus it and take control |
+| Left-click a free pane | Focus it and take control on release; an agent-held pane focuses and shows the takeover indicator |
 | `alt+click` a pane | Focus it without taking control (observe) |
-| Left-drag in the focused pane | Select and copy text (see copy mode) |
+| Left-drag in a pane | Select and copy text without taking control (see copy mode) |
 | Double-click / triple-click | Select a word / a line |
 | `ctrl+click` a link | Open the URL with `open` on macOS, `xdg-open` elsewhere |
 | Wheel over a pane | Scroll its scrollback; on an alternate screen the wheel sends arrow keys instead |

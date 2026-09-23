@@ -612,7 +612,11 @@ async def test_terminal_client_stack_end_to_end(
     assert _is_item_pair(attention)
     native_entry, tmux_entry = attention
     _respond(client, native_entry)
-    _respond(client, tmux_entry)
+    # The first response can advance the other CLI's prompt. Read its current
+    # fingerprint immediately before answering the second entry.
+    current_tmux_entry = _roster_entry(client, tmux_session)
+    assert current_tmux_entry, tmux_entry
+    _respond(client, current_tmux_entry)
     await _assert_input_reaches(native_frames, "ANSWERED:", description="native attention answer")
     await _assert_input_reaches(tmux_frames, "ANSWERED:", description="tmux attention answer")
 
@@ -658,20 +662,9 @@ async def test_terminal_client_stack_end_to_end(
         timeout=8.0,
         description="gclient direct frames while daemon is down",
     )
-    web_disconnected = False
-    try:
-        await web_ws.send(
-            {
-                "type": "terminal_input",
-                "terminal_id": native_id,
-                "attachment_id": web_ws.attachment_id,
-                "data": "DAEMON-DOWN\r",
-                "client_write_seq": 99,
-            }
-        )
-    except Exception:
-        web_disconnected = True
-    assert web_disconnected or web_ws.of_type("terminal_attachment_finalized")
+    assert web_ws._task is not None
+    await asyncio.wait_for(web_ws._task, timeout=5.0)
+    assert web_ws._ws is not None and web_ws._ws.close_code is not None
     daemon_instance.restart()
     client.close()
     client = _http(daemon_instance)
@@ -1338,7 +1331,7 @@ async def _shell(daemon: DaemonInstance, *, marker: str = "GCLIENT-SHELL-READY")
 
 async def _take_and_echo(client: GclientDriver, marker: str) -> None:
     await asyncio.to_thread(client.chord, "t")
-    await _screen(client, "held")
+    await _screen(client, "Focused")
     # Splitting the marker means terminal echo alone cannot satisfy the assertion.
     left, right = marker.rsplit("-", 1)
     client.send(f"echo {left}-'{right}'\r")
@@ -1380,7 +1373,10 @@ async def test_gclient_renders_native_row_direct_and_types(daemon_instance: Daem
             await _take_and_echo(client, "GCLIENT-INTERRUPTED-OK")
             assert "SLEEP-COMPLETED" not in client.screen.text
             inputs = [item for item in wire.sent if item.get("type") == "terminal_input"]
-            assert any("\x03" in item.get("data", "") for item in inputs)
+            # Direct delivery writes Ctrl-C on the host frame socket. The
+            # completed shell marker above proves it interrupted sleep;
+            # it must not be mirrored through the daemon WebSocket.
+            assert not any("\x03" in item.get("data", "") for item in inputs)
             assert not any(item.get("type") == "terminal_paste" for item in wire.sent)
 
 
@@ -1588,11 +1584,17 @@ async def test_gclient_spawns_and_terminates_a_terminal(daemon_instance: DaemonI
             spawned_id = row["id"]
             spawned_address = await _placed_address(daemon_instance, spawned_id)
             await _screen(client, spawned_address)
-            if spawned_address not in client.screen.lines[-1]:
-                await asyncio.to_thread(client.chord, "\t")
+            await asyncio.to_thread(client.chord, "l")
+
+            def spawned_focused(screen: Screen) -> bool:
+                # The focused badge lives on the right pane's lower border;
+                # the final row is the global prefix hint, not pane metadata.
+                border = screen.lines[-2]
+                return border.count("┘") >= 2 and border.rfind("Focused") > border.find("┘")
+
             await asyncio.to_thread(
                 client.wait_for,
-                lambda screen: spawned_address in screen.lines[-1],
+                spawned_focused,
                 description="spawned terminal selected",
             )
             await _take_and_echo(client, "GCLIENT-SPAWNED-OK")
@@ -1622,12 +1624,12 @@ async def test_gclient_follows_a_live_pty_resize(daemon_instance: DaemonInstance
         await _screen(client, "GCLIENT-BEFORE-RESIZE")
         assert client.screen.cols == 120
         assert client.screen.rows == 40
-        assert address in client.screen.lines[-1]
+        assert "Focused" in client.screen.lines[-1]
         client.resize(100, 32)
         await _screen(client, "GCLIENT-BEFORE-RESIZE")
         await asyncio.to_thread(
             client.wait_for,
-            lambda screen: address in screen.lines[31],
+            lambda screen: "Focused" in screen.lines[31],
             description="status bar moved to the resized bottom row",
         )
         assert len(client.screen.lines) == 32

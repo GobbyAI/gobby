@@ -514,12 +514,16 @@ async fn terminal_mode_drag_selects_and_copies_on_release() {
     assert_eq!(output, b"\x1b]52;c;aGVsbG8=\x07");
     assert_eq!(chrome.last_copy.as_deref(), Some("hello"));
 
-    // A press that never moves clears the selection instead of copying.
+    // A completed click without movement clears the selection and takes an
+    // uncontrolled pane instead of copying.
     let down = left(MouseEventKind::Down(MouseButton::Left), 2, 1);
     assert_eq!(route_mouse(&ws, &mut chrome, &down), MouseOutcome::Handled);
     assert!(chrome.selection.is_some());
     let up = left(MouseEventKind::Up(MouseButton::Left), 2, 1);
-    assert_eq!(route_mouse(&ws, &mut chrome, &up), MouseOutcome::Handled);
+    assert_eq!(
+        route_mouse(&ws, &mut chrome, &up),
+        MouseOutcome::TakeFreeControl { pane }
+    );
     assert!(chrome.selection.is_none());
     assert!(!copy_selection(&ws, &mut chrome, &mut Vec::new()).expect("nothing to copy"));
     assert_eq!(chrome.last_copy.as_deref(), Some("hello"));

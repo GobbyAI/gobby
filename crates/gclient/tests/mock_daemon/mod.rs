@@ -62,6 +62,7 @@ struct MockState {
     websocket_closes: usize,
     unique_attachment_ids: bool,
     next_attachment_id: u64,
+    attach_lease_holders: Vec<(String, Value)>,
     /// `(granted, lease_generation, reason, host_input_granted)`. The last
     /// field is the terminal host's input grant, which a direct native pane
     /// needs before it may type on its own frame socket (#22573).
@@ -119,6 +120,7 @@ impl MockDaemon {
             websocket_closes: 0,
             unique_attachment_ids: false,
             next_attachment_id: 0,
+            attach_lease_holders: Vec::new(),
             take_control_replies: VecDeque::new(),
             write_outcomes: VecDeque::new(),
             kill_refusals: VecDeque::new(),
@@ -300,6 +302,14 @@ impl MockDaemon {
 
     pub fn use_unique_attachment_ids(&self) {
         self.state.lock().expect("mock state").unique_attachment_ids = true;
+    }
+
+    pub fn set_attach_lease_holder(&self, terminal_id: &str, holder: Value) {
+        self.state
+            .lock()
+            .expect("mock state")
+            .attach_lease_holders
+            .push((terminal_id.to_string(), holder));
     }
 
     pub fn enqueue_take_control_reply(
@@ -790,6 +800,15 @@ fn websocket_reply(state: &Arc<Mutex<MockState>>, request: &Value) -> Option<Val
                     "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb".into()
                 }
             };
+            let lease_holder = state
+                .lock()
+                .expect("mock state")
+                .attach_lease_holders
+                .iter()
+                .find(|(id, _)| {
+                    Some(id.as_str()) == request.get("terminal_id").and_then(Value::as_str)
+                })
+                .map(|(_, holder)| holder.clone());
             Some(json!({
                 "type": "terminal_attach_result",
                 "request_id": request.get("request_id"),
@@ -800,6 +819,7 @@ fn websocket_reply(state: &Arc<Mutex<MockState>>, request: &Value) -> Option<Val
                 "rows": 24,
                 "cols": 80,
                 "lease_generation": 0,
+                "lease_holder": lease_holder,
                 "direct": direct,
                 "frame_delivery": request.get("frame_delivery"),
             }))

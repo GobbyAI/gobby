@@ -48,6 +48,9 @@ use super::workspace_actions::{
 /// tab dropped once empty; a daemon tab's only unmapped, since the daemon's
 /// layout keeps the slot, which renders empty until its terminal resolves.
 pub fn sync_live_chrome(workspace: &mut Workspace<LiveDaemon>, chrome: &mut Chrome) {
+    let focused_pane_removed = workspace
+        .focus
+        .is_some_and(|pane| !workspace.panes.contains_key(&pane));
     project_live_workspace(workspace, chrome);
     let index = chrome.active_index();
     let viewer = &mut chrome.viewer;
@@ -65,10 +68,28 @@ pub fn sync_live_chrome(workspace: &mut Workspace<LiveDaemon>, chrome: &mut Chro
                 tab.slots.remove(&slot);
             }
         }
+        if !tab.slots.is_empty() && !tab.slots.contains_key(&viewer.focus_of(tab)) {
+            if let Some(slot) = tab
+                .layout
+                .pane_ids()
+                .into_iter()
+                .find(|slot| tab.slots.contains_key(slot))
+            {
+                viewer.focus.insert(tab.id.clone(), slot);
+            }
+        }
     }
     set.tabs
         .retain(|tab| !tab.is_local() || !tab.slots.is_empty());
     chrome.settle_active_index(index);
+    if focused_pane_removed {
+        if let Some(survivor) = chrome.focused_pane() {
+            workspace.focus = Some(survivor);
+            if !workspace.pane(survivor).take_back {
+                workspace.request_control(survivor, false);
+            }
+        }
+    }
 }
 
 /// Project the workspace model onto the focused project's tab bar when it
@@ -167,6 +188,7 @@ pub(super) async fn apply_live_mouse_outcome(
         }
         MouseOutcome::Action(Action::Quit) => return Ok(true),
         MouseOutcome::Action(action) => handle_live_action(workspace, chrome, action).await?,
+        MouseOutcome::TakeFreeControl { pane } => workspace.request_control(pane, false),
         MouseOutcome::Spawn { placement } => {
             spawn_live_terminal(workspace, chrome, placement).await?;
         }
