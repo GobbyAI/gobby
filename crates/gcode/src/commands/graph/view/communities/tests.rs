@@ -108,6 +108,34 @@ fn list_edges_are_between_listed_communities_only() {
 }
 
 #[test]
+fn list_orders_communities_by_size_then_first_member() {
+    let rows = vec![
+        community(1, "small", "small", &["lib/a.rs", "lib/b.rs"], &[]),
+        community(
+            2,
+            "later",
+            "later",
+            &["src/c.rs", "src/d.rs", "src/e.rs"],
+            &[],
+        ),
+        community(
+            10,
+            "earlier",
+            "earlier",
+            &["src/a.rs", "src/b.rs", "src/f.rs"],
+            &[],
+        ),
+    ];
+    let payload = build_list_payload(&ctx(), &args(None), &rows).expect("list payload");
+    let order = payload
+        .communities
+        .iter()
+        .map(|community| community.id.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(order, ["community:10", "community:2", "community:1"]);
+}
+
+#[test]
 fn detail_resolves_id_label_and_unique_substring() {
     let rows = vec![
         community(7, "Memory Core", "memory-core", &["memory.rs"], &[]),
