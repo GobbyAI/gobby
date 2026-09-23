@@ -1263,6 +1263,26 @@ class TestProcessSession:
         assert processor._byte_offsets["session-1"] == transcript.stat().st_size
         assert processor._stats["session-1"] == first_stats
 
+    async def test_transcript_parse_runs_off_owner_loop(
+        self, processor: SessionMessageProcessor, tmp_path: Path
+    ) -> None:
+        from gobby.sessions import processor_transcripts
+
+        transcript = tmp_path / "transcript.jsonl"
+        transcript.write_text(json.dumps({"type": "user", "message": {"content": "hello"}}) + "\n")
+        processor.register_session("session-1", str(transcript))
+        owner_thread = get_ident()
+        original_parse = processor_transcripts._parse_incremental_records
+
+        def parse_off_loop(*args: Any, **kwargs: Any) -> Any:
+            assert get_ident() != owner_thread
+            return original_parse(*args, **kwargs)
+
+        with patch.object(processor_transcripts, "_parse_incremental_records", parse_off_loop):
+            await processor._process_session("session-1", str(transcript))
+
+        assert processor._byte_offsets["session-1"] == transcript.stat().st_size
+
     @pytest.mark.asyncio
     async def test_process_session_with_existing_state(
         self, processor: SessionMessageProcessor, tmp_path: Path

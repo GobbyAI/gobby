@@ -820,7 +820,7 @@ class TestWakeDispatch:
         ism_manager.create_message.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_lifecycle_refresh_failure_does_not_abort_live_wake(
+    async def test_deferred_lifecycle_refresh_failure_preserves_active_decline(
         self,
         session_manager: MagicMock,
         ism_manager: MagicMock,
@@ -829,6 +829,7 @@ class TestWakeDispatch:
         session_manager.get.return_value = FakeSession(
             id=WAKE_SESSION_ID,
             terminal_context={"tmux_pane": "%12"},
+            status="active",
         )
         lifecycle_refresh = AsyncMock(side_effect=RuntimeError("refresh failed"))
         tmux_pane_sender = AsyncMock()
@@ -841,11 +842,111 @@ class TestWakeDispatch:
 
         with caplog.at_level(logging.WARNING, logger="gobby.events.wake"):
             result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
+            await drain_asyncio_tasks()
 
-        assert result["delivered"] is True
+        assert result["skipped"] == "session_active"
         lifecycle_refresh.assert_awaited_once_with(WAKE_SESSION_ID)
+        tmux_pane_sender.assert_not_awaited()
+        assert "Lifecycle refresh failed before retrying wake" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_idle_wake_does_not_wait_for_transcript_refresh(
+        self,
+        session_manager: MagicMock,
+        ism_manager: MagicMock,
+    ) -> None:
+        session_manager.get.return_value = FakeSession(
+            id=WAKE_SESSION_ID,
+            terminal_context={"tmux_pane": "%12"},
+            status="paused",
+        )
+        refresh_started = asyncio.Event()
+        release_refresh = asyncio.Event()
+
+        async def blocked_refresh(_session_id: str) -> None:
+            refresh_started.set()
+            await release_refresh.wait()
+
+        tmux_pane_sender = AsyncMock()
+        dispatcher = WakeDispatcher(
+            session_manager=session_manager,
+            ism_manager=ism_manager,
+            lifecycle_refresh=blocked_refresh,
+            tmux_pane_sender=tmux_pane_sender,
+        )
+
+        result = await asyncio.wait_for(dispatcher.dispatch_live_wake(WAKE_SESSION_ID), 0.5)
+        assert result["delivered"] is True
         tmux_pane_sender.assert_awaited_once()
-        assert "Lifecycle refresh failed before waking session" in caplog.text
+        assert not refresh_started.is_set()
+        release_refresh.set()
+
+    @pytest.mark.asyncio
+    async def test_wake_declines_if_session_becomes_active_before_terminal_write(
+        self,
+        session_manager: MagicMock,
+        ism_manager: MagicMock,
+    ) -> None:
+        session_manager.get.side_effect = [
+            FakeSession(
+                id=WAKE_SESSION_ID,
+                terminal_context={"tmux_pane": "%12"},
+                status="paused",
+            ),
+            FakeSession(
+                id=WAKE_SESSION_ID,
+                terminal_context={"tmux_pane": "%12"},
+                status="active",
+            ),
+        ]
+        tmux_pane_sender = AsyncMock()
+        dispatcher = WakeDispatcher(
+            session_manager=session_manager,
+            ism_manager=ism_manager,
+            tmux_pane_sender=tmux_pane_sender,
+        )
+
+        result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
+
+        assert result["skipped"] == "session_active"
+        tmux_pane_sender.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_stale_active_wake_retries_after_deferred_refresh(
+        self,
+        session_manager: MagicMock,
+        ism_manager: MagicMock,
+    ) -> None:
+        session = FakeSession(
+            id=WAKE_SESSION_ID,
+            terminal_context={"tmux_pane": "%12"},
+            status="active",
+        )
+        session_manager.get.return_value = session
+        refresh_started = asyncio.Event()
+        release_refresh = asyncio.Event()
+        wake_delivered = asyncio.Event()
+
+        async def blocked_refresh(_session_id: str) -> None:
+            refresh_started.set()
+            await release_refresh.wait()
+            session.status = "paused"
+
+        async def send_pane(*_args: object, **_kwargs: object) -> None:
+            wake_delivered.set()
+
+        dispatcher = WakeDispatcher(
+            session_manager=session_manager,
+            ism_manager=ism_manager,
+            lifecycle_refresh=blocked_refresh,
+            tmux_pane_sender=send_pane,
+        )
+
+        result = await asyncio.wait_for(dispatcher.dispatch_live_wake(WAKE_SESSION_ID), 0.5)
+        assert result["skipped"] == "session_active"
+        await asyncio.wait_for(refresh_started.wait(), 0.5)
+        release_refresh.set()
+        await asyncio.wait_for(wake_delivered.wait(), 0.5)
 
     @pytest.mark.asyncio
     async def test_interactive_session_without_tmux_pane_reports_no_tmux_pane(

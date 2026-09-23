@@ -682,21 +682,23 @@ class TestMailboxDirectSend:
         temp_db: HubDatabase,
         session_manager: SessionManager,
         sample_project: dict[str, Any],
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         sender = _register_session(session_manager, sample_project["id"], "sender")
         recipient = _register_session(session_manager, sample_project["id"], "recipient")
         wake_dispatcher = FakeWakeDispatcher()
 
-        result = await _mailbox(temp_db, session_manager, wake_dispatcher).send(
-            from_session_id=sender.id,
-            target="session",
-            target_id=recipient.id,
-            content="  Assigned task  ",
-            priority="high",
-            message_type="task_assignment",
-            metadata={"task_id": "#14760"},
-            wake=True,
-        )
+        with caplog.at_level(logging.INFO, logger="gobby.sessions.mailbox_delivery"):
+            result = await _mailbox(temp_db, session_manager, wake_dispatcher).send(
+                from_session_id=sender.id,
+                target="session",
+                target_id=recipient.id,
+                content="  Assigned task  ",
+                priority="high",
+                message_type="task_assignment",
+                metadata={"task_id": "#14760"},
+                wake=True,
+            )
 
         assert result.recipient_session_ids == [recipient.id]
         assert result.broadcast_id is None
@@ -711,6 +713,15 @@ class TestMailboxDirectSend:
             }
         ]
         assert wake_dispatcher.calls == [recipient.id]
+        dispatch_logs = [
+            record.message
+            for record in caplog.records
+            if "Mailbox wake dispatch:" in record.message
+        ]
+        assert len(dispatch_logs) == 1
+        assert result.message_ids[0] in dispatch_logs[0]
+        assert "delivered=True" in dispatch_logs[0]
+        assert "duration_ms=" in dispatch_logs[0]
 
         row = temp_db.fetchone(
             "SELECT * FROM inter_session_messages WHERE id = %s",

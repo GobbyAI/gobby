@@ -159,6 +159,7 @@ class WakeDispatcher:
         self._live_wake_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = (
             weakref.WeakValueDictionary()
         )
+        self._deferred_refreshes: dict[str, asyncio.Task[None]] = {}
         self._owner_loop: asyncio.AbstractEventLoop | None = None
 
     async def reconcile_restart_active_sessions(
@@ -265,16 +266,9 @@ class WakeDispatcher:
             lock = asyncio.Lock()
             self._live_wake_locks[session_id] = lock
         async with lock:
-            if self._lifecycle_refresh is not None:
-                try:
-                    await self._lifecycle_refresh(session_id)
-                except Exception:
-                    logger.warning(
-                        "Lifecycle refresh failed before waking session %s",
-                        session_id,
-                        exc_info=True,
-                    )
             result = await self._dispatch_live_wake_unlocked(session_id, priority=priority)
+            if result.get("skipped") == "session_active":
+                self._schedule_deferred_refresh(session_id, priority=priority)
             return normalize_live_wake_result(result)
 
     async def dispatch_live_wakes(
@@ -288,7 +282,58 @@ class WakeDispatcher:
         from gobby.events.wake_batch import dispatch_live_wakes
 
         results = await dispatch_live_wakes(self, session_ids, priority=priority)
+        for session_id, result in zip(session_ids, results, strict=True):
+            if result.get("skipped") == "session_active":
+                self._schedule_deferred_refresh(session_id, priority=priority)
         return [normalize_live_wake_result(result) for result in results]
+
+    def _schedule_deferred_refresh(self, session_id: str, *, priority: str) -> None:
+        """Refresh stale active state after returning the durable wake outcome."""
+        if self._lifecycle_refresh is None or session_id in self._deferred_refreshes:
+            return
+        task = asyncio.create_task(self._refresh_and_retry_wake(session_id, priority=priority))
+        self._deferred_refreshes[session_id] = task
+
+        def forget(completed: asyncio.Task[None]) -> None:
+            if self._deferred_refreshes.get(session_id) is completed:
+                self._deferred_refreshes.pop(session_id, None)
+
+        task.add_done_callback(forget)
+
+    async def _refresh_and_retry_wake(self, session_id: str, *, priority: str) -> None:
+        assert self._lifecycle_refresh is not None
+        started = time.monotonic()
+        try:
+            await self._lifecycle_refresh(session_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning(
+                "Lifecycle refresh failed before retrying wake for session %s",
+                session_id,
+                exc_info=True,
+            )
+            return
+        lock = self._live_wake_locks.get(session_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._live_wake_locks[session_id] = lock
+        try:
+            async with lock:
+                result = await self._dispatch_live_wake_unlocked(session_id, priority=priority)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("Deferred wake failed for session %s", session_id, exc_info=True)
+            return
+        logger.info(
+            "Deferred wake for session %s: delivered=%s method=%s skipped=%s duration_ms=%.1f",
+            session_id,
+            result.get("delivered"),
+            result.get("method"),
+            result.get("skipped"),
+            (time.monotonic() - started) * 1000,
+        )
 
     async def _dispatch_live_wake_unlocked(
         self,
@@ -353,7 +398,7 @@ class WakeDispatcher:
         if session_type == "web_chat":
             if not self._should_send_live_wake(session_id, session):
                 return wake_debounced_result(session_id, method="web_chat")
-            result = await self._dispatch_web_chat_wake(session_id)
+            result = await self._dispatch_web_chat_wake(session_id, priority=priority)
             if result.get("delivered"):
                 self._record_live_wake(session_id, session)
             return result
@@ -374,6 +419,7 @@ class WakeDispatcher:
                 session,
                 terminal,
                 self._tmux_sender,
+                priority=priority,
             )
 
         # Interactive session → nudge its tmux pane after durable message storage.
@@ -403,7 +449,9 @@ class WakeDispatcher:
             if not self._should_send_live_wake(session_id, session):
                 return wake_debounced_result(session_id, method="tmux_pane")
             tmux_socket_path = terminal_route.tmux_socket_path
-            current, state_failure = await self._preflight_live_side_effect(session_id)
+            current, state_failure = await self._preflight_live_side_effect(
+                session_id, priority=priority
+            )
             if state_failure is not None:
                 return state_failure
             if current is not None:
@@ -463,7 +511,9 @@ class WakeDispatcher:
 
         wake_identity = terminal_route.tmux_session
         if wake_identity and self._tmux_sender:
-            current, state_failure = await self._preflight_live_side_effect(session_id)
+            current, state_failure = await self._preflight_live_side_effect(
+                session_id, priority=priority
+            )
             if state_failure is not None:
                 return state_failure
             if current is not None:
@@ -517,7 +567,9 @@ class WakeDispatcher:
         tmux_pane = terminal_route.tmux_pane
         if tmux_pane and self._tmux_pane_sender:
             tmux_socket_path = terminal_route.tmux_socket_path
-            current, state_failure = await self._preflight_live_side_effect(session_id)
+            current, state_failure = await self._preflight_live_side_effect(
+                session_id, priority=priority
+            )
             if state_failure is not None:
                 return state_failure
             if current is not None:
@@ -563,7 +615,9 @@ class WakeDispatcher:
         if self._sdk_resumer:
             sdk_session_id = await self._resolve_sdk_session_id(session_id)
             if sdk_session_id:
-                current, state_failure = await self._preflight_live_side_effect(session_id)
+                current, state_failure = await self._preflight_live_side_effect(
+                    session_id, priority=priority
+                )
                 if state_failure is not None:
                     return state_failure
                 if current is not None:
@@ -624,6 +678,8 @@ class WakeDispatcher:
     async def _preflight_live_side_effect(
         self,
         session_id: str,
+        *,
+        priority: str = "normal",
     ) -> tuple[Any | None, dict[str, Any] | None]:
         """Re-read lifecycle state immediately before a wake side effect."""
 
@@ -639,7 +695,16 @@ class WakeDispatcher:
                 error_code="session_not_found",
                 error_message=f"Session {session_id} not found",
             )
-        return session, wake_state_failure(session_id, getattr(session, "status", None))
+        status = getattr(session, "status", None)
+        if status == "active" and priority != "urgent":
+            return session, {
+                "session_id": session_id,
+                "delivered": False,
+                "method": "next_call_context",
+                "skipped": "session_active",
+                "ism_persisted": True,
+            }
+        return session, wake_state_failure(session_id, status)
 
     async def _composer_blocks_wake(
         self,
@@ -681,6 +746,8 @@ class WakeDispatcher:
         session: Any,
         terminal: Any,
         send: TmuxSender,
+        *,
+        priority: str = "normal",
     ) -> dict[str, Any]:
         """Wake a session through the terminal row that hosts it.
 
@@ -691,7 +758,9 @@ class WakeDispatcher:
         from gobby.terminals.runtime import AutomaticWriteDeclined, IndeterminateWrite
 
         terminal_id = str(terminal.id)
-        current, state_failure = await self._preflight_live_side_effect(session_id)
+        current, state_failure = await self._preflight_live_side_effect(
+            session_id, priority=priority
+        )
         if state_failure is not None:
             return state_failure
         if current is not None:
@@ -753,11 +822,15 @@ class WakeDispatcher:
             "method": "terminal",
         }
 
-    async def _dispatch_web_chat_wake(self, session_id: str) -> dict[str, Any]:
+    async def _dispatch_web_chat_wake(
+        self, session_id: str, *, priority: str = "normal"
+    ) -> dict[str, Any]:
         if self._web_chat_session_registry is None:
             return self._web_chat_no_live_result(session_id)
 
-        _session, state_failure = await self._preflight_live_side_effect(session_id)
+        _session, state_failure = await self._preflight_live_side_effect(
+            session_id, priority=priority
+        )
         if state_failure is not None:
             return state_failure
 
