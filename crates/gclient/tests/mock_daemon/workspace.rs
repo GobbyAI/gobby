@@ -15,6 +15,8 @@ pub struct WorkspaceSim {
     workspace: Value,
     tabs: Vec<Value>,
     panes: Vec<Value>,
+    /// Workspaces parked when a project opens as its own workspace.
+    parked: Vec<(Value, Vec<Value>, Vec<Value>)>,
     daemon_epoch: String,
     seq: u64,
     next_id: u64,
@@ -28,6 +30,7 @@ impl WorkspaceSim {
             workspace: fixture["workspace"].clone(),
             tabs: fixture["tabs"].as_array().cloned().unwrap_or_default(),
             panes: fixture["panes"].as_array().cloned().unwrap_or_default(),
+            parked: Vec::new(),
             daemon_epoch: fixture["snapshot"]["daemon_epoch"]
                 .as_str()
                 .unwrap_or_default()
@@ -42,6 +45,18 @@ impl WorkspaceSim {
             .as_str()
             .unwrap_or_default()
             .to_string()
+    }
+
+    /// The tab whose pane shows `terminal_id`, including a parked workspace.
+    pub fn tab_for_terminal(&self, terminal_id: &str) -> Option<String> {
+        let find = |panes: &[Value]| {
+            panes.iter().find_map(|pane| {
+                (pane["terminal_id"].as_str() == Some(terminal_id))
+                    .then(|| pane["tab_id"].as_str().unwrap_or_default().to_string())
+                    .filter(|id| !id.is_empty())
+            })
+        };
+        find(&self.panes).or_else(|| self.parked.iter().find_map(|(_, _, panes)| find(panes)))
     }
 
     /// Replace every tab with `project`'s: one tab per entry, its terminals
@@ -97,6 +112,79 @@ impl WorkspaceSim {
         seeded
     }
 
+    /// Open `project_id` as its own workspace, creating the next ref when needed.
+    pub fn open_project(&mut self, project_id: &str) {
+        if self
+            .workspace
+            .get("default_project_id")
+            .and_then(Value::as_str)
+            == Some(project_id)
+        {
+            return;
+        }
+        if let Some(index) = self.parked.iter().position(|(workspace, _, _)| {
+            workspace.get("default_project_id").and_then(Value::as_str) == Some(project_id)
+        }) {
+            let parked = self.parked.remove(index);
+            self.park_current();
+            (self.workspace, self.tabs, self.panes) = parked;
+            return;
+        }
+        let next_ref = self
+            .parked
+            .iter()
+            .map(|(workspace, _, _)| workspace["ref"].as_u64().unwrap_or(0))
+            .chain(std::iter::once(self.workspace["ref"].as_u64().unwrap_or(0)))
+            .max()
+            .unwrap_or(0)
+            + 1;
+        let machine_id = self
+            .workspace
+            .get("machine_id")
+            .cloned()
+            .unwrap_or(Value::Null);
+        let node_ref = self
+            .workspace
+            .get("node_ref")
+            .cloned()
+            .unwrap_or(Value::Null);
+        self.park_current();
+        self.workspace = json!({
+            "id": format!("mock-ws-{next_ref}"),
+            "machine_id": machine_id,
+            "ref": next_ref,
+            "name": project_id,
+            "focused_project_id": project_id,
+            "focused_tab_id": null,
+            "default_project_id": project_id,
+            "node_ref": node_ref,
+            "created_at": TIMESTAMP,
+            "updated_at": TIMESTAMP,
+        });
+        self.tabs.clear();
+        self.panes.clear();
+    }
+
+    /// Every workspace on the node, current one last so a switch can walk them.
+    pub fn list(&self) -> Vec<Value> {
+        let mut rows: Vec<Value> = self
+            .parked
+            .iter()
+            .map(|(workspace, _, _)| workspace.clone())
+            .collect();
+        rows.push(self.workspace.clone());
+        rows.sort_by_key(|workspace| workspace["ref"].as_u64().unwrap_or(0));
+        rows
+    }
+
+    fn park_current(&mut self) {
+        self.parked.push((
+            self.workspace.clone(),
+            std::mem::take(&mut self.tabs),
+            std::mem::take(&mut self.panes),
+        ));
+    }
+
     /// The `workspace_snapshot` reply for an attach request.
     pub fn attach_reply(&self, request_id: Option<&Value>) -> Value {
         json!({
@@ -110,7 +198,72 @@ impl WorkspaceSim {
     }
 
     /// Apply one `workspace_op` envelope and return the events it publishes.
+    ///
+    /// An op that names a parked workspace runs there, and the previously
+    /// attached workspace stays current. A `tab.move` with no workspace
+    /// follows the tab into the parked workspace that owns it.
     pub fn apply(&mut self, op: &Value) -> Vec<Value> {
+        let named = op.get("workspace").and_then(Value::as_str);
+        let target = if let Some(named) = named {
+            (named != self.workspace_id()).then(|| named.to_string())
+        } else if op.get("op").and_then(Value::as_str) == Some("tab.move") {
+            op.get("tab")
+                .and_then(Value::as_str)
+                .and_then(|tab_id| self.owner_of_tab(tab_id))
+                .filter(|owner| owner != &self.workspace_id())
+        } else {
+            None
+        };
+        if let Some(target) = target {
+            if let Some(events) = self.applying_in(&target, op) {
+                return events;
+            }
+        }
+        self.apply_in_place(op)
+    }
+
+    fn applying_in(&mut self, workspace_id: &str, op: &Value) -> Option<Vec<Value>> {
+        let index = self
+            .parked
+            .iter()
+            .position(|(workspace, _, _)| workspace["id"].as_str() == Some(workspace_id))?;
+        let parked = self.parked.remove(index);
+        let previous = self.workspace_id();
+        self.park_current();
+        (self.workspace, self.tabs, self.panes) = parked;
+        let events = self.apply_in_place(op);
+        self.restore_workspace(&previous);
+        Some(events)
+    }
+
+    fn restore_workspace(&mut self, workspace_id: &str) {
+        if self.workspace_id() == workspace_id {
+            return;
+        }
+        let Some(index) = self
+            .parked
+            .iter()
+            .position(|(workspace, _, _)| workspace["id"].as_str() == Some(workspace_id))
+        else {
+            return;
+        };
+        let parked = self.parked.remove(index);
+        self.park_current();
+        (self.workspace, self.tabs, self.panes) = parked;
+    }
+
+    fn owner_of_tab(&self, tab_id: &str) -> Option<String> {
+        if self.tabs.iter().any(|tab| tab["id"] == tab_id) {
+            return Some(self.workspace_id());
+        }
+        self.parked.iter().find_map(|(workspace, tabs, _)| {
+            tabs.iter()
+                .any(|tab| tab["id"] == tab_id)
+                .then(|| workspace["id"].as_str().unwrap_or_default().to_string())
+        })
+    }
+
+    fn apply_in_place(&mut self, op: &Value) -> Vec<Value> {
         let kind = op.get("op").and_then(Value::as_str).unwrap_or_default();
         let field = |name: &str| op.get(name).and_then(Value::as_str).map(str::to_string);
         match kind {

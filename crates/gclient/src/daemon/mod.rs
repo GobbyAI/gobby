@@ -453,6 +453,7 @@ pub trait Daemon: Send + Sync {
         &self,
         node: Option<&str>,
         workspace: Option<&str>,
+        project_id: Option<&str>,
     ) -> Result<WorkspaceSnapshot, DaemonError>;
     /// `workspace_op`: run one op; a `workspace_error` is `DaemonError::Workspace`.
     async fn workspace_op(&self, op: WorkspaceOp) -> Result<WorkspaceReply, DaemonError>;
@@ -977,8 +978,9 @@ impl Daemon for ScriptedDaemon {
         &self,
         node: Option<&str>,
         workspace: Option<&str>,
+        project_id: Option<&str>,
     ) -> Result<WorkspaceSnapshot, DaemonError> {
-        self.attach_workspace_scripted(node, workspace)
+        self.attach_workspace_scripted(node, workspace, project_id)
     }
 
     async fn workspace_op(&self, op: WorkspaceOp) -> Result<WorkspaceReply, DaemonError> {

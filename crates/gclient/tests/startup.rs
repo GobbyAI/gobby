@@ -296,6 +296,7 @@ fn workspace_flags_default_to_the_local_default() {
     let target = |node: Option<&str>, workspace: Option<&str>| AttachTarget {
         node: node.map(str::to_string),
         workspace: workspace.map(str::to_string),
+        project_id: None,
     };
     let attach = |argv: &[&str]| {
         let args = parse_args(argv.iter().copied()).expect("flags parse");

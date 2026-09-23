@@ -12,9 +12,10 @@ impl LiveDaemon {
         &self,
         node: Option<&str>,
         workspace: Option<&str>,
+        project_id: Option<&str>,
     ) -> Result<WorkspaceSnapshot, DaemonError> {
         let request_id = Uuid::new_v4().to_string();
-        let mut request = attach_request(node, workspace);
+        let mut request = attach_request(node, workspace, project_id);
         request["request_id"] = json!(request_id);
         // The reader marks the attached workspace when it routes this request's
         // reply, before it reads the next frame, so no event slips past its filter.

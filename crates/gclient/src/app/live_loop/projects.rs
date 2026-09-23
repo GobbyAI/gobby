@@ -39,6 +39,7 @@ pub async fn focus_project(
     if workspace.project_id() == Some(project_id) {
         return Ok(());
     }
+    attach_project_workspace(workspace, project_id).await?;
     if let Some(current) = workspace.project_id() {
         chrome.focus_project(current);
     }
@@ -52,6 +53,35 @@ pub async fn focus_project(
     chrome.sidebar.expanded_project = Some(project_id.to_owned());
     sync_live_chrome(workspace, chrome);
     restore_focused(workspace, chrome).await
+}
+
+/// Attach the project's default workspace when this window is not already on it.
+///
+/// Opening a project creates that workspace at the next free ref. An explicit
+/// new tab stays in the attached workspace and does not call this.
+async fn attach_project_workspace(
+    workspace: &mut Workspace<LiveDaemon>,
+    project_id: &str,
+) -> Result<(), FrameError> {
+    let same = workspace
+        .workspace_model()
+        .is_some_and(|model| model.workspace.default_project_id.as_deref() == Some(project_id));
+    if same {
+        return Ok(());
+    }
+    let node = workspace.attach_target().node.clone();
+    let snapshot = workspace
+        .daemon()
+        .attach_workspace(node.as_deref(), None, Some(project_id))
+        .await?;
+    workspace.apply_workspace_snapshot(snapshot);
+    let mut target = workspace.attach_target().clone();
+    if let Some(model) = workspace.workspace_model() {
+        target.workspace = Some(model.workspace.id.clone());
+    }
+    target.project_id = None;
+    workspace.set_attach_target(target);
+    Ok(())
 }
 
 /// Show the agent behind `entry_id` (its row's `focus` item, and its row's
