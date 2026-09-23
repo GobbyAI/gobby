@@ -172,7 +172,7 @@ def test_gcode_contract_covers_daemon_consumed_surface() -> None:
     contract = _contract("gcode")
     commands = {command["name"] for command in contract["commands"]}
 
-    assert contract["contract_version"] == 10
+    assert contract["contract_version"] == 11
     assert "invalid_path_scope" in contract["error_codes"]
     assert {
         "ask",
@@ -246,7 +246,9 @@ def test_gcode_contract_covers_daemon_consumed_surface() -> None:
     assert "--max-depth" in _allowed_flags(contract, "path")
     assert {"status", "project_id", "summary"} <= _json_keys(contract, "graph clear")
     assert {"status", "project_id", "summary"} <= _json_keys(contract, "graph rebuild")
-    assert {"--file", "--module", "--symbol"} <= _allowed_flags(contract, "graph view")
+    assert {"--file", "--module", "--symbol", "--min-size", "--community"} <= _allowed_flags(
+        contract, "graph view"
+    )
     assert _command(contract, "graph view")["positionals"] == []
     assert _command(contract, "tree")["positionals"] == [
         {"name": "PATH", "required": False, "repeatable": True}

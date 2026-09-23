@@ -328,7 +328,10 @@ gcode graph rebuild
 
 Use `gcode graph view --view mcg --file <path>` (or `--module <name>`) for
 imports, `--view fcg --symbol <query>` for calls, and `--view class-hierarchy
---symbol <query>` for inheritance. Views return complete JSON and Mermaid.
+--symbol <query>` for inheritance. The fourth kind, `--view communities`, lists
+stored project import communities without a seed; add `--community
+<ID|LABEL|PATH>` for one community's members and neighbors. Views return
+complete JSON and Mermaid.
 Class hierarchy defaults to depth 8 with no row limit inside that depth;
 FCG/MCG default to depth 1 and expose incoming/outgoing truncation flags.
 Inspect those bounds when assessing completeness.

@@ -9,6 +9,7 @@ use crate::codewiki_facts::{
     CodewikiFacts, GraphAvailability, GraphBounds, GraphEdge, GraphEdgeKind, GraphOutcome,
     GraphScopeMode, MAX_DECLARED_EDGE_LIMIT, PublicEdge, ScopeSelector,
 };
+use crate::communities;
 use crate::communities::identity::{ImportIdentity, load_project_imports};
 use crate::config::Context;
 use crate::output::Format;
@@ -19,7 +20,7 @@ use super::super::{
     local_machine_id, non_empty, visible_map_for_candidates,
 };
 use super::identity::{McgSeedSelector, close_endpoint, resolve_mcg_seed};
-use super::{McgHopFetch, assign_leiden_communities, walk_mcg};
+use super::{McgHopFetch, label_communities, walk_mcg};
 
 /// Import edge → walk candidate. The module endpoint's `file` is the unique
 /// provider from the identity map (the raw `target_file` column is the module
@@ -138,6 +139,7 @@ pub(crate) fn run(
 
     let mut conn = crate::db::connect_readonly(&ctx.database_url)?;
     let identity = load_project_imports(&mut conn, ctx)?.identity;
+    let stored_communities = communities::read_for_context(&mut conn, ctx)?;
     let resolved = resolve_mcg_seed(selector, &identity)?;
     let seed = ViewSeed {
         id: resolved.input.clone(),
@@ -156,7 +158,8 @@ pub(crate) fn run(
         |files, modules, exclude| fetch_mcg_hop(&facts, &identity, files, modules, exclude),
         |endpoint| Ok(close_endpoint(endpoint, &identity)),
     )?;
-    let (nodes, communities) = assign_leiden_communities(walk.nodes, &walk.edges);
+    let labeled = label_communities(walk.nodes, &stored_communities, &identity);
+    let hint = hint.or(labeled.hint);
     let payload = build_view_payload(
         ctx.project_id.clone(),
         ctx.project_root.display().to_string(),
@@ -166,9 +169,9 @@ pub(crate) fn run(
         walk.incoming_truncated,
         walk.outgoing_truncated,
         hint,
-        nodes,
+        labeled.nodes,
         walk.edges,
-        communities,
+        labeled.communities,
     )
     .context("build mcg view payload")?;
     print_view(&payload, format)

@@ -567,7 +567,7 @@ fn run() -> anyhow::Result<()> {
         Command::Graph {
             command: GraphCommand::View(mut args),
         } => {
-            if let GraphViewSeed::File(file) = &mut args.seed {
+            if let Some(GraphViewSeed::File(file)) = &mut args.seed {
                 *file = resolve_exact_file(&ctx, &cwd, file)?;
             }
             ensure_project_fresh(&ctx, cli.allow_stale)?;

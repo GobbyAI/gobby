@@ -15,7 +15,7 @@ use super::file::{
 };
 use super::lifecycle::{
     attach_projection_sync, current_file_state, get_orphan_files, get_stale_files,
-    refresh_project_stats,
+    refresh_communities, refresh_project_stats,
 };
 use super::local_imports::{
     resolve_local_import_calls, resolve_local_import_inheritance,
@@ -250,6 +250,7 @@ fn index_discovered_files(
     outcome.durations.stats_ms = stats_start.elapsed().as_millis() as u64;
     outcome.durations.total_ms = start.elapsed().as_millis() as u64;
 
+    refresh_communities(conn, ctx, &mut outcome);
     attach_projection_sync(&mut outcome, request);
     Ok(outcome)
 }
@@ -429,6 +430,7 @@ fn index_explicit_files_with_connection(
     outcome.durations.stats_ms = stats_start.elapsed().as_millis() as u64;
     outcome.durations.total_ms = start.elapsed().as_millis() as u64;
 
+    refresh_communities(conn, ctx, &mut outcome);
     attach_projection_sync(&mut outcome, request);
     Ok(outcome)
 }

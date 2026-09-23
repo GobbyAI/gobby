@@ -58,7 +58,8 @@ def create_communications_registry(
 
     @registry.tool(
         description=(
-            "Send a message to a communication channel. For Telegram clarification or approval "
+            "Send a message to a communication channel. session_id defaults to the calling "
+            "session when available. For Telegram clarification or approval "
             "prompts, pass inline_keyboard as rows of {text, value} buttons with a session_id; "
             "the selected value returns to that session. For Telegram text messages, "
             "link_preview_options overrides the channel's preview defaults."
@@ -97,12 +98,36 @@ def create_communications_registry(
             msg = await communications_manager.send_message(
                 channel_name=channel,
                 content=content,
-                session_id=session_id,
+                session_id=session_id if session_id is not None else get_current_session_id(),
                 metadata=metadata,
             )
             return {"success": msg.status == "sent", "message_id": msg.id, "error": msg.error}
         except Exception as e:
             logger.exception("Communications tool error")
+            return {"success": False, "error": str(e)}
+
+    @registry.tool(
+        description="Attach the calling live session to one Telegram conversation. Use dm:<chat_id>, group:<chat_id>, or topic:<chat_id>:<thread_id>."
+    )
+    def attach_conversation(channel: str, conversation_id: str) -> dict[str, Any]:
+        session_id = get_current_session_id()
+        if session_id is None:
+            return {"success": False, "error": "Calling session context is required"}
+        try:
+            communications_manager.attach_conversation(channel, conversation_id, session_id)
+            return {"success": True, "session_id": session_id, "conversation_id": conversation_id}
+        except ValueError as e:
+            return {"success": False, "error": str(e)}
+
+    @registry.tool(description="Detach the calling session from a Telegram conversation.")
+    def detach_conversation(channel: str, conversation_id: str) -> dict[str, Any]:
+        session_id = get_current_session_id()
+        if session_id is None:
+            return {"success": False, "error": "Calling session context is required"}
+        try:
+            communications_manager.detach_conversation(channel, conversation_id, session_id)
+            return {"success": True}
+        except ValueError as e:
             return {"success": False, "error": str(e)}
 
     @registry.tool(description="Send an existing local file to a communication channel.")

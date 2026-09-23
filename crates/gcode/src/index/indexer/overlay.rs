@@ -17,7 +17,7 @@ use crate::visibility;
 use super::file::{
     ExplicitFileRoute, create_semantic_resolver_if_needed, index_content_only, index_file,
 };
-use super::lifecycle::{attach_projection_sync, refresh_project_stats};
+use super::lifecycle::{attach_projection_sync, refresh_communities, refresh_project_stats};
 use super::local_imports::{resolve_local_import_calls, resolve_local_import_inheritance};
 use super::pipeline::explicit_route_with_discovery_options;
 use super::sink::{CodeFactSink, PostgresCodeFactSink};
@@ -334,6 +334,7 @@ pub(super) fn index_overlay_files(
     outcome.durations.stats_ms = stats_start.elapsed().as_millis() as u64;
     outcome.durations.total_ms = start.elapsed().as_millis() as u64;
 
+    refresh_communities(conn, ctx, &mut outcome);
     attach_projection_sync(&mut outcome, request);
     Ok(outcome)
 }
