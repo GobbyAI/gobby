@@ -4,12 +4,12 @@ description: |
   returns structured findings to the parent session, and never claims or mutates
   Gobby tasks.
 
-version: "1.4"
+version: "1.5"
 enabled: true
 priority: 20
 surfaces: [spawn, persona]
-provider: codex
-model: gpt-5.6-sol
+provider: grok
+model: grok-4.7
 reasoning_effort: xhigh
 reasoning_required: false
 isolation: none

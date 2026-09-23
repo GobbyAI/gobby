@@ -57,10 +57,14 @@ def terminal_review_delivery(
             if run_status == "success" and not run_error:
                 message = REVIEWER_RUN_ENDED_SUCCESS_ERROR
             elif run_error:
-                message = f"Task-close reviewer run ended with status {run_status}: {run_error}"
+                message = (
+                    "Task-close review ended without a verdict "
+                    f"(reviewer status {run_status}): {run_error}"
+                )
             else:
                 message = (
-                    f"Task-close reviewer run ended with status {run_status} before finalization."
+                    "Task-close review ended without a verdict "
+                    f"(reviewer status {run_status}) before finalization."
                 )
             error_class, retry_seconds = _run_ended_retry(run)
             payload = build_terminal_review_payload(

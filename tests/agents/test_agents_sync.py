@@ -63,6 +63,34 @@ class TestSyncBundledAgents:
         assert body.name == "test-agent"
 
     @pytest.mark.unit
+    def test_taskless_adversary_syncs_grok_xhigh(
+        self, tmp_path: Path, definition_db: PostgresHubDatabase
+    ) -> None:
+        """Template sync installs the grok-4.7 xhigh adversary definition."""
+        source = (
+            Path(__file__).resolve().parents[2]
+            / "src/gobby/install/shared/workflows/agents/plan-adversary-taskless.yaml"
+        )
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        (agents_dir / source.name).write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+
+        with patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir):
+            result = sync_bundled_agents(definition_db)
+
+        assert result["success"] is True
+        assert result["errors"] == []
+        row = next(
+            item
+            for item in _mgr(definition_db).list_all()
+            if item.name == "plan-adversary-taskless"
+        )
+        body = _parse_body(row)
+        assert body.provider == "grok"
+        assert body.model == "grok-4.7"
+        assert body.reasoning_effort == "xhigh"
+
+    @pytest.mark.unit
     def test_sync_skips_unchanged(self, tmp_path: Path, definition_db: PostgresHubDatabase) -> None:
         """Test that sync skips agents that already exist."""
         db = definition_db

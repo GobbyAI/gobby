@@ -48,8 +48,9 @@ class IdentityManager:
     def bridge_identity(self, identity_id: str, session_id: str) -> None:
         """Link existing identity to a session."""
         identity = self._store.get_identity(identity_id)
-        if identity:
+        if identity is not None and identity.session_id != session_id:
             identity.session_id = session_id
+            identity.updated_at = utc_now()
             self._store.update_identity(identity)
 
     def resolve_identity(
@@ -157,6 +158,7 @@ class IdentityManager:
                         needs_update = True
 
             if needs_update:
+                identity.updated_at = utc_now()
                 self._store.update_identity(identity)
         else:
             # Store generates the id on insert.
