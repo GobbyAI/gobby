@@ -329,8 +329,7 @@ export function TerminalTab({
   // already the new terminal while the attachment is still the old one, and an
   // offset sent then would address a tmux attachment.
   const scroll = useTerminalScrollOffset({
-    native:
-      selected?.tmux.backend === "native" && attachedKey === selectedKey,
+    native: selected?.tmux.backend === "native" && attachedKey === selectedKey,
     streamingId,
     setScrollOffset,
     onScrollOffsetApplied,

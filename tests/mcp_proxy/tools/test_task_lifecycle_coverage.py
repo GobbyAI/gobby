@@ -655,6 +655,11 @@ class TestCloseTask:
                 ),
             ),
             patch.object(
+                lifecycle_close,
+                "_derive_close_transcript_evidence",
+                AsyncMock(return_value=TranscriptEvidence()),
+            ),
+            patch.object(
                 close_tool,
                 "launch_close_review",
                 new=complete_valid_close_review,
@@ -760,6 +765,11 @@ class TestCloseTask:
                     status="skipped",
                     message="Validation commands skipped for this test.",
                 ),
+            ),
+            patch.object(
+                lifecycle_close,
+                "_derive_close_transcript_evidence",
+                AsyncMock(return_value=TranscriptEvidence()),
             ),
             patch.object(
                 close_tool,

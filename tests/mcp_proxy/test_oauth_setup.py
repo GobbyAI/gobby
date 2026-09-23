@@ -4,7 +4,9 @@ import asyncio
 import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx2
 import pytest
+from mcp.client.auth import OAuthFlowError, OAuthRegistrationError, OAuthTokenError
 
 from gobby.mcp_proxy.client_manager import connections
 from gobby.mcp_proxy.manager import MCPClientManager
@@ -254,3 +256,99 @@ async def test_automatic_authorization_failure_preserves_manual_command() -> Non
     assert caught.value.command == "gobby mcp-proxy auth fieldy --global"
     assert connect.await_count == 1
     authorizer.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_automatic_authorization_failure_logs_nested_exception_group_leaf_types(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    config = MCPServerConfig(
+        name="fieldy",
+        project_id=GLOBAL_PROJECT_ID,
+        transport="http",
+        url="https://api.fieldy.ai/mcp",
+        requires_oauth=True,
+    )
+    failure = BaseExceptionGroup(
+        "outer authorization failure",
+        [
+            OAuthRegistrationError("registration failed"),
+            BaseExceptionGroup(
+                "nested authorization failure",
+                [
+                    OAuthFlowError("callback failed"),
+                    OAuthTokenError("token exchange failed"),
+                    httpx2.ConnectError("transport failed"),
+                ],
+            ),
+        ],
+    )
+    db_manager = MagicMock()
+    db_manager.db = MagicMock()
+    manager = MCPClientManager(
+        [config],
+        mcp_db_manager=db_manager,
+        max_connection_retries=0,
+        oauth_authorizer=AsyncMock(side_effect=failure),
+    )
+    required = MCPAuthorizationRequired("gobby mcp-proxy auth fieldy --global")
+
+    with (
+        patch.object(manager, "_connect_server", side_effect=required),
+        caplog.at_level(logging.WARNING, logger="gobby.mcp.manager"),
+        pytest.raises(MCPAuthorizationRequired),
+    ):
+        await manager.ensure_connected(config.id)
+
+    assert [record.getMessage() for record in caplog.records] == [
+        "Automatic OAuth authorization failed for 'fieldy': "
+        "ExceptionGroup[OAuthRegistrationError, "
+        "ExceptionGroup[OAuthFlowError, OAuthTokenError, ConnectError]]"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_automatic_authorization_failure_logs_types_only(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    secrets = {
+        "exception message",
+        "error_description=private-description",
+        "code=private-authorization-code",
+        "token=private-access-token",
+        "client_secret=private-client-secret",
+    }
+    config = MCPServerConfig(
+        name="fieldy",
+        project_id=GLOBAL_PROJECT_ID,
+        transport="http",
+        url="https://api.fieldy.ai/mcp",
+        requires_oauth=True,
+    )
+    failure = BaseExceptionGroup(
+        " ".join(secrets),
+        [OAuthTokenError(*sorted(secrets))],
+    )
+    db_manager = MagicMock()
+    db_manager.db = MagicMock()
+    manager = MCPClientManager(
+        [config],
+        mcp_db_manager=db_manager,
+        max_connection_retries=0,
+        oauth_authorizer=AsyncMock(side_effect=failure),
+    )
+    required = MCPAuthorizationRequired("gobby mcp-proxy auth fieldy --global")
+
+    with (
+        patch.object(manager, "_connect_server", side_effect=required),
+        caplog.at_level(logging.WARNING, logger="gobby.mcp.manager"),
+        pytest.raises(MCPAuthorizationRequired),
+    ):
+        await manager.ensure_connected(config.id)
+
+    assert [record.getMessage() for record in caplog.records] == [
+        "Automatic OAuth authorization failed for 'fieldy': ExceptionGroup[OAuthTokenError]"
+    ]
+    assert all(secret not in caplog.text for secret in secrets)
+    assert "Traceback" not in caplog.text
+    assert all(record.exc_info is None for record in caplog.records)

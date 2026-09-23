@@ -443,6 +443,50 @@ class TaskCloseReviewStore:
             (task_id, list(ACTIVE_TASK_CLOSE_REVIEW_STATUSES)),
         )
 
+    def get_delivered_rejected_verdict(
+        self,
+        *,
+        task_id: str,
+        evidence_fingerprint: str,
+        expected_task_updated_at: datetime,
+    ) -> TaskCloseReview | None:
+        """Return the newest delivered rejection when no active review owns the task."""
+        with self.db.transaction() as conn:
+            task_row = conn.execute(
+                "SELECT updated_at FROM tasks WHERE id = %s FOR UPDATE",
+                (task_id,),
+            ).fetchone()
+            if (
+                not isinstance(task_row, Mapping)
+                or task_row["updated_at"] != expected_task_updated_at
+            ):
+                return None
+            row = conn.execute(
+                f"""
+                SELECT {_QUALIFIED_COLUMNS}
+                FROM task_close_reviews AS r
+                WHERE r.task_id = %s
+                  AND r.evidence_fingerprint = %s
+                  AND r.status = 'invalid'
+                  AND r.delivered_at IS NOT NULL
+                  AND r.result_payload IS NOT NULL
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM task_close_reviews AS active
+                      WHERE active.task_id = r.task_id
+                        AND active.status = ANY(%s)
+                  )
+                ORDER BY r.completed_at DESC NULLS LAST, r.created_at DESC
+                LIMIT 1
+                """,  # nosec B608 - static column fragment
+                (
+                    task_id,
+                    evidence_fingerprint,
+                    list(ACTIVE_TASK_CLOSE_REVIEW_STATUSES),
+                ),
+            ).fetchone()
+        return _review_from_row(row) if row is not None else None
+
     def get_active_for_caller_session(self, session_id: str) -> TaskCloseReview | None:
         return self._get(
             "caller_session_id = %s AND status = ANY(%s)",

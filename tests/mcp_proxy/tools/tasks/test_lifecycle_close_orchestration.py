@@ -142,6 +142,48 @@ async def test_close_persists_and_launches_one_taskless_reviewer(
 
 
 @pytest.mark.asyncio
+async def test_launch_reuses_delivered_rejection_after_summary_only_change(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = {
+        "event": "task_close_review_completed",
+        "review_id": "rejected-review",
+        "status": "invalid",
+        "closed": False,
+        "message": "The deterministic close evidence was rejected.",
+    }
+    rejected = replace(
+        _review(status="invalid", run_id=_FIRST_REVIEW_RUN_ID),
+        id="rejected-review",
+        review_fingerprint="summary-before-rewording",
+        result_payload=payload,
+        completed_at=datetime(2026, 8, 22, 1, tzinfo=UTC),
+        delivered_at=datetime(2026, 8, 22, 2, tzinfo=UTC),
+    )
+    store = _Store(
+        _review(status="queued", run_id=None),
+        reusable_rejection=rejected,
+    )
+    registry = SimpleNamespace(call=AsyncMock())
+    _patch_store(monkeypatch, store)
+    evaluation = _evaluation()
+    evaluation.extra["review_fingerprint"] = "summary-after-rewording"
+    arguments = {**_arguments(), "changes_summary": "Same work, reworded."}
+
+    result = await launch_close_review(
+        _ctx(registry=registry),
+        evaluation=evaluation,
+        close_arguments=arguments,
+        evaluate_close=_revalidate(evaluation),
+    )
+
+    assert result == payload
+    assert store.reuse_lookup == ("task", "evidence")
+    assert store.created_arguments is None
+    registry.call.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_launch_is_refused_without_a_normalized_criterion_count(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1411,6 +1453,7 @@ class _Store:
         *,
         created: bool = True,
         unjudged_attempts: int = 0,
+        reusable_rejection: TaskCloseReview | None = None,
     ) -> None:
         self.db = object()
         self.review = review
@@ -1423,9 +1466,26 @@ class _Store:
         self.restored = False
         self.unjudged_attempts = unjudged_attempts
         self.queue_claimed = False
+        self.reusable_rejection = reusable_rejection
+        self.reuse_lookup: tuple[str, str] | None = None
 
     def count_unjudged_attempts(self, _task_id: str) -> int:
         return self.unjudged_attempts
+
+    def get_delivered_rejected_verdict(
+        self,
+        *,
+        task_id: str,
+        evidence_fingerprint: str,
+        expected_task_updated_at: datetime,
+    ) -> TaskCloseReview | None:
+        assert expected_task_updated_at == datetime(2026, 8, 22, tzinfo=UTC)
+        self.reuse_lookup = (task_id, evidence_fingerprint)
+        if self.reusable_rejection is None:
+            return None
+        if self.reusable_rejection.evidence_fingerprint != evidence_fingerprint:
+            return None
+        return self.reusable_rejection
 
     def create_or_get_active(self, **kwargs: Any) -> tuple[TaskCloseReview, bool]:
         self.created_arguments = dict(kwargs["close_arguments"])

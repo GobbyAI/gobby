@@ -20,10 +20,7 @@ from gobby.storage.hub.operation_deadline import DatabaseOperationDeadlineExceed
 from gobby.workflows.enforcement.blocking import is_gobby_call_tool
 from gobby.workflows.engine._offload import offload
 from gobby.workflows.engine.command_matching import command_patterns_match
-from gobby.workflows.engine.delivery_formatting import (
-    DeliveryFormattingMixin,
-    _is_empty_inject_payload,
-)
+from gobby.workflows.engine.mcp_injections import CachedMcpInjectionMixin
 from gobby.workflows.engine.run_command_effects import RunCommandEffectsMixin
 from gobby.workflows.reserved_variables import is_internal_rule, is_reserved_workflow_variable
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
@@ -31,7 +28,7 @@ from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
 logger = logging.getLogger(__name__)
 
 
-class EffectsMixin(RunCommandEffectsMixin, DeliveryFormattingMixin):
+class EffectsMixin(RunCommandEffectsMixin, CachedMcpInjectionMixin):
     """Mixin providing effect handling methods for RuleEngine."""
 
     db: Any
@@ -144,11 +141,25 @@ class EffectsMixin(RunCommandEffectsMixin, DeliveryFormattingMixin):
                 }
             )
 
-            # Inline dispatch for inject_result calls — ensures atomicity with
-            # sibling effects (e.g. set_variable that tracks injection state).
-            # Background calls are always deferred regardless of inject_result.
+            event = ctx.get("event")
+            if self._mcp_dispatcher and isinstance(event, HookEvent):
+                if self._uses_mcp_injection_cache(
+                    effect
+                ) and await self._apply_cached_mcp_injection(
+                    effect,
+                    row,
+                    rendered_args,
+                    event,
+                    variables,
+                    context_parts,
+                    staged_variable_updates,
+                ):
+                    return None
+
+            # Safety-significant captured calls stay inline so their outcome can
+            # block the originating operation. Sessionless calls retain the old
+            # path because there is nowhere to deliver a deferred result.
             if effect.inject_result and not effect.background and self._mcp_dispatcher:
-                event = ctx.get("event")
                 try:  # Broad catch intentional — external MCP dispatcher is an opaque async callable
                     dispatch = self._mcp_dispatcher(
                         effect.server, effect.tool, rendered_args, event
@@ -166,49 +177,15 @@ class EffectsMixin(RunCommandEffectsMixin, DeliveryFormattingMixin):
                             if effect.delivery == "on_receipt":
                                 staged_variable_updates[effect.success_variable] = True
                     if success and dr.get("result"):
-                        raw_result = dr["result"]
-                        formatted: str | None = None
-                        event_obj = ctx.get("event")
-                        platform_session_id = (
-                            event_obj.metadata.get("_platform_session_id")
-                            if isinstance(event_obj, HookEvent) and event_obj.metadata
-                            else None
-                        )
-
-                        memory_result_handled = False
-                        if isinstance(raw_result, dict) and isinstance(event_obj, HookEvent):
-                            from gobby.hooks.receipt_effects import stage_append_set_variables
-
-                            memory_result_handled, formatted, new_lesson_ids = await offload(
-                                self._format_memory_backed_result,
+                        if isinstance(event, HookEvent):
+                            await self._append_injected_mcp_result(
                                 server=effect.server,
                                 tool=effect.tool,
-                                result=raw_result,
-                                event=event_obj,
-                                platform_session_id=platform_session_id,
+                                raw_result=dr["result"],
+                                event=event,
                                 variables=variables,
+                                context_parts=context_parts,
                             )
-                            if new_lesson_ids and isinstance(platform_session_id, str):
-                                stage_append_set_variables(
-                                    platform_session_id,
-                                    "injected_review_lesson_ids",
-                                    new_lesson_ids,
-                                )
-                        if memory_result_handled:
-                            pass
-                        elif (effect.server, effect.tool) == (
-                            "gobby-agents",
-                            "cancel_stale_helpers",
-                        ):
-                            formatted = None
-                        elif not _is_empty_inject_payload(raw_result):
-                            from gobby.hooks.dispatchers.mcp import format_discovery_result
-
-                            formatted = format_discovery_result(
-                                {"tool": effect.tool, "result": raw_result}
-                            )
-                        if formatted:
-                            context_parts.append((f"mcp:{effect.server}/{effect.tool}", formatted))
                     if effect.block_on_success and success:
                         return f"Intercepted by {effect.server}/{effect.tool} — see context below."
                     if not success:

@@ -15,7 +15,7 @@ code change land; a redundant one costs one review pass.
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING
@@ -23,6 +23,8 @@ from typing import TYPE_CHECKING
 from gobby.config.shell_lexing import parse_shell_command
 from gobby.utils.daemon_git import GitOk, daemon_git
 from gobby.workflows.commit_guard import GitCommitInvocation, resolve_commit_inspect_cwd
+from gobby.workflows.git_utils import resolve_git_worktree_root_async
+from gobby.workflows.ledger_reconcile import session_dirty_file_set_for_checkout
 from gobby.workflows.observer_utils import _extract_shell_command
 
 if TYPE_CHECKING:
@@ -137,6 +139,14 @@ class CommitScope:
     """``-a``: every tracked path whose working tree differs from the index."""
     include_staged: bool
     """``-i``: the staged changes as well as the pathspec'd working-tree ones."""
+
+
+@dataclass(frozen=True, slots=True)
+class CommitReviewScope:
+    """Reviewability plus the operation paths attributed to this session."""
+
+    has_reviewable_paths: bool
+    session_owned_reviewable_paths: tuple[str, ...] | None
 
 
 def parse_commit_scope(command: str | None) -> CommitScope | None:
@@ -261,9 +271,24 @@ async def commit_has_reviewable_paths(event: HookEvent, project_path: str) -> bo
     ``True`` whenever the answer is not provably no: a non-commit command, an
     undeterminable path set, a Git failure, or nothing to commit at all.
     """
+    review_scope = await inspect_commit_review_scope(event, project_path)
+    return review_scope.has_reviewable_paths
+
+
+async def inspect_commit_review_scope(
+    event: HookEvent,
+    project_path: str,
+    variables: Mapping[str, object] | None = None,
+) -> CommitReviewScope:
+    """Return reviewability and only the current session's review target paths.
+
+    Unknown commit shapes stay gated, but expose no paths. This keeps a
+    conservative gate from ever directing one session to review another
+    session's staged work.
+    """
     scope = parse_commit_scope(_extract_shell_command(event))
     if scope is None:
-        return True
+        return CommitReviewScope(True, None)
 
     inspect_cwd = resolve_commit_inspect_cwd(
         GitCommitInvocation(pathspecs=(), chdir=scope.chdir),
@@ -272,9 +297,23 @@ async def commit_has_reviewable_paths(event: HookEvent, project_path: str) -> bo
     )
     paths = await _recorded_paths(scope, inspect_cwd)
     if not paths:
-        return True
-    return any(
-        PurePosixPath(path).suffix.lower() not in NON_REVIEWABLE_EXTENSIONS for path in paths
+        return CommitReviewScope(True, () if variables is not None else None)
+
+    reviewable = {
+        path
+        for path in paths
+        if PurePosixPath(path).suffix.lower() not in NON_REVIEWABLE_EXTENSIONS
+    }
+    if variables is None:
+        return CommitReviewScope(bool(reviewable), None)
+
+    checkout_root = await resolve_git_worktree_root_async(inspect_cwd, project_path)
+    if checkout_root is None:
+        return CommitReviewScope(bool(reviewable), None)
+    owned = session_dirty_file_set_for_checkout(variables, checkout_root)
+    return CommitReviewScope(
+        bool(reviewable),
+        tuple(sorted(reviewable & owned)),
     )
 
 

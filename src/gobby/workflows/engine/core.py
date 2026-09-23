@@ -163,6 +163,7 @@ class RuleEngine(
         self._agent_def_cache_revision = get_definitions_revision("agents")
         self._agent_def_cache: dict[tuple[str, str | None], AgentDefinitionBody | None] = {}
         self._background_run_commands: dict[tuple[str, str], asyncio.Task[None]] = {}
+        self._initialize_cached_mcp_injections()
 
     async def prewarm_skill_scripts(self, *, project_id: str | None) -> None:
         """Prepare skill scripts referenced by enabled rules."""
@@ -309,6 +310,8 @@ class RuleEngine(
                     eval_context = {}
                 eval_context.setdefault("foreign_dirty_edit_conflict", "")
                 eval_context.setdefault("foreign_staged_commit_conflict", "")
+                eval_context.setdefault("foreign_landing_merge", False)
+                eval_context.setdefault("session_owned_reviewable_paths", None)
                 # Gate-keeping default: an uninspected commit is reviewable.
                 eval_context.setdefault("commit_has_reviewable_paths", True)
                 eval_context.setdefault("found_work_shirk", False)
@@ -383,7 +386,6 @@ class RuleEngine(
                     block_tool_name=_block_tool_name(event),
                     mcp_calls=mcp_calls,
                 )
-
                 # Auto-track consecutive retries after a blocked BEFORE_TOOL.
                 # _last_blocked_tool is only set by pre-execution gate/enforcement blocks.
                 # tool_block_pending is reserved for real tool execution failures.
