@@ -184,8 +184,10 @@ async def test_ask_authorization_and_discovery(
         "search",
         "read",
         "graph",
+        "communities",
     ]
     assert '"kind":"range"' in query_schema["description"]
+    assert "communities orients you; it is not citable" in query_schema["description"]
 
     with _project_context(project_id), session_context_for_test(SESSION_ID):
         started = await registry.call(

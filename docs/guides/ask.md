@@ -153,8 +153,9 @@ daemon authentication transport.
 ## Interactive Evidence And Diagnostics
 
 Use the public `evidence` MCP tool for a direct native JSON search, read, graph,
-or commit-patch retrieval without starting Ask. Project and checkout are derived
-from your authenticated context. CLI requests may omit the binding:
+communities, or commit-patch retrieval without starting Ask. communities orients
+you; it is not citable, cite `read` items from its members. Project and checkout
+are derived from your authenticated context. CLI requests may omit the binding:
 
 ```bash
 gcode evidence --request-json '{"schema_version":1,"operation":"read","read":{"kind":"range","path":"src/example.py","start_line":1,"end_line":20}}'

@@ -99,9 +99,9 @@ pub(crate) fn service_config_selection(request: &EvidenceRequest) -> ServiceConf
         EvidenceOperation::Search { ref search } if search.lane == SearchLane::Hybrid => {
             ServiceConfigSelection::vectors()
         }
-        EvidenceOperation::Search { .. } | EvidenceOperation::Read { .. } => {
-            ServiceConfigSelection::database_only()
-        }
+        EvidenceOperation::Search { .. }
+        | EvidenceOperation::Read { .. }
+        | EvidenceOperation::Communities { .. } => ServiceConfigSelection::database_only(),
     }
 }
 

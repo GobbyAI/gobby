@@ -86,8 +86,9 @@ implemented by `stage_tool_is_discoverable`.
 ## Direct interactive evidence
 
 Ordinary authenticated agents may call `evidence(operation, selector,
-continuation=null)` without an Ask run. Search, read, graph, and commit-patch
-selectors reuse native retrieval and return JSON. Project and checkout derive
+continuation=null)` without an Ask run. Search, read, graph, communities, and
+commit-patch selectors reuse native retrieval and return JSON. communities orients
+you; it is not citable, cite `read` items from its members. Project and checkout derive
 from caller context. Managed Ask workers cannot use this public tool to bypass
 evidence admission; reviewers remain limited to admitted records.
 
@@ -105,7 +106,7 @@ not invalidate the result. MCP never writes output files or exposes this option.
 
 `gcode evidence` is a model-free JSON adapter for exact source evidence. Supply
 one versioned request through `--request-json`; `gcode evidence --help` prints
-example requests. Evidence schema v1 supports search, read, and graph operations
+example requests. Evidence schema v1 supports search, read, graph, and communities operations
 against the resolved project index, with recorded commit/tree provenance. A
 minimal symbol search is
 `{"schema_version":1,"operation":"search","search":{"lane":"symbol","query":"NAME"}}`.
@@ -121,4 +122,4 @@ Ask worker's durable manifest; use that worker's MCP tools for admission.
 Guide: [Ask](../../../../../../../../docs/guides/ask.md).
 Contract: [Evidence and provenance](../../../../../../../../docs/contracts/ask.md#evidence-and-provenance).
 
-_Last verified: 2026-09-13_
+_Last verified: 2026-09-23_

@@ -48,8 +48,9 @@ installed.
 ## Evidence And Repository Questions
 
 Ordinary authenticated agents can use `gobby-ask:evidence` for native JSON search,
-read, graph, and commit-patch evidence without starting an Ask run. Project and
-checkout come from caller context. `gcode evidence --request-json ...` supports
+read, graph, communities, and commit-patch evidence without starting an Ask run.
+communities orients you; it is not citable, cite `read` items from its members.
+Project and checkout come from caller context. `gcode evidence --request-json ...` supports
 the same retrieval contract and resolves an omitted binding from the selected
 project. Source hashes, bounds, and continuation tokens remain part of the result.
 

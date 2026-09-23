@@ -18,6 +18,171 @@ fn test_evidence_cli_contract() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Its own project, because nextest runs this beside `test_evidence_cli_contract`.
+const COMMUNITIES_PROJECT_ID: &str = "3c9d2f4e-8b71-5a06-9e2d-4f1b7c6a0d35";
+
+#[test]
+#[serial_test::serial(serial_db)]
+fn evidence_communities_request_json_round_trips() -> anyhow::Result<()> {
+    let binding = serde_json::json!({
+        "project_id": COMMUNITIES_PROJECT_ID,
+        "commit_oid": "a".repeat(40),
+        "tree_oid": "b".repeat(40),
+    });
+    for (selector, code) in [
+        (
+            serde_json::json!({"community_id": 1, "label": "pkg"}),
+            "invalid_selector",
+        ),
+        (
+            serde_json::json!({"cluster": 1}),
+            "invalid_evidence_request",
+        ),
+    ] {
+        let request = serde_json::json!({
+            "schema_version": 1,
+            "binding": binding,
+            "operation": "communities",
+            "communities": selector,
+            "max_bytes": 16_384,
+        });
+        let output = Command::new(env!("CARGO_BIN_EXE_gcode"))
+            .args(["evidence", "--request-json", &request.to_string()])
+            .output()?;
+        assert_error(&output, code);
+    }
+
+    #[cfg(gcode_postgres_tests)]
+    communities_database_round_trip()?;
+
+    Ok(())
+}
+
+#[cfg(gcode_postgres_tests)]
+fn communities_database_round_trip() -> anyhow::Result<()> {
+    use gobby_code::evidence::{Completeness, EvidenceResponse};
+    use postgres::{Client, NoTls};
+
+    const MODULES: [(&str, &str); 3] = [
+        ("pkg/a.py", "import pkg.b\nimport pkg.c\n"),
+        ("pkg/b.py", "import pkg.a\nimport pkg.c\n"),
+        ("pkg/c.py", "import pkg.a\nimport pkg.b\n"),
+    ];
+    let database_url =
+        gobby_code::test_env::postgres_test_database_url("evidence communities round trip");
+    let mut conn = Client::connect(&database_url, NoTls)?;
+    cleanup_project(&mut conn, COMMUNITIES_PROJECT_ID)?;
+    let _cleanup = ProjectCleanup {
+        database_url: database_url.clone(),
+        project_id: COMMUNITIES_PROJECT_ID,
+    };
+
+    let project_dir = tempfile::tempdir()?;
+    let project = project_dir.path().canonicalize()?;
+    std::fs::create_dir_all(project.join(".gobby"))?;
+    std::fs::create_dir_all(project.join("pkg"))?;
+    for (path, content) in MODULES {
+        std::fs::write(project.join(path), content)?;
+    }
+    std::fs::write(
+        project.join(".gobby/project.json"),
+        serde_json::json!({"id": COMMUNITIES_PROJECT_ID, "name": "evidence-communities"})
+            .to_string(),
+    )?;
+    git(&project, &["init", "--quiet", "-b", "main"])?;
+    git(&project, &["add", "."])?;
+    let binding = serde_json::json!({
+        "project_id": COMMUNITIES_PROJECT_ID,
+        "commit_oid": commit(&project, "communities fixture")?,
+        "tree_oid": git(&project, &["rev-parse", "HEAD^{tree}"])?,
+    });
+    gobby_code::test_env::seed_test_checkout(&mut conn, COMMUNITIES_PROJECT_ID, &project)
+        .map_err(anyhow::Error::msg)?;
+    let home = isolated_gobby_home(&project)?;
+    let connections = gobby_core::grant::DirectConnections::postgres(&database_url);
+    let run = |args: &[&str]| -> anyhow::Result<std::process::Output> {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_gcode"));
+        command
+            .current_dir(&project)
+            .args(["--quiet", "--project"])
+            .arg(&project)
+            .args(args);
+        attach_managed_grant(&mut command, &home, COMMUNITIES_PROJECT_ID, &connections)?;
+        Ok(command.output()?)
+    };
+    let indexed = run(&["index", "--full"])?;
+    assert!(
+        indexed.status.success(),
+        "index fixture: {}",
+        String::from_utf8_lossy(&indexed.stderr)
+    );
+    let query = |selector: Value| -> anyhow::Result<(Value, EvidenceResponse)> {
+        let request = serde_json::json!({
+            "schema_version": 1,
+            "binding": binding,
+            "operation": "communities",
+            "communities": selector,
+            "max_bytes": 16_384,
+        });
+        let output = run(&["evidence", "--request-json", &request.to_string()])?;
+        anyhow::ensure!(
+            output.status.success(),
+            "communities request failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok((
+            serde_json::from_slice(&output.stdout)?,
+            serde_json::from_slice(&output.stdout)?,
+        ))
+    };
+
+    let (listed_json, listed) = query(serde_json::json!({}))?;
+    let listed_items = community_items(&listed);
+    assert_eq!(listed_items.len(), 1, "{listed_json}");
+    assert_eq!(listed.completeness, Completeness::Complete);
+    assert_eq!(listed_json["request"]["operation"], "communities");
+    assert_eq!(listed_items[0].size, 3);
+    assert!(listed_items[0].members.is_empty());
+
+    let (detail_json, detail) = query(serde_json::json!({"path": "pkg/b.py"}))?;
+    let detail_items = community_items(&detail);
+    assert_eq!(detail_items.len(), 1, "{detail_json}");
+    assert_eq!(detail_items[0].evidence_id, listed_items[0].evidence_id);
+    let mut members = detail_items[0]
+        .members
+        .iter()
+        .map(|member| (member.path.clone(), member.content_hash.clone()))
+        .collect::<Vec<_>>();
+    members.sort();
+    let expected = MODULES
+        .iter()
+        .map(|(path, content)| {
+            (
+                path.to_string(),
+                gobby_core::indexing::content_hash(content.as_bytes()),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(members, expected);
+    assert!(!detail_items[0].members_truncated);
+    assert!(detail.warnings.is_empty(), "{detail_json}");
+    Ok(())
+}
+
+#[cfg(gcode_postgres_tests)]
+fn community_items(
+    response: &gobby_code::evidence::EvidenceResponse,
+) -> Vec<&gobby_code::evidence::CommunityEvidence> {
+    response
+        .items
+        .iter()
+        .map(|item| match item {
+            gobby_code::evidence::EvidenceItem::Community(community) => community,
+            other => panic!("community evidence, got {other:?}"),
+        })
+        .collect()
+}
+
 #[test]
 fn evidence_help_matches_json_only_contract() {
     let output = Command::new(env!("CARGO_BIN_EXE_gcode"))
@@ -161,6 +326,7 @@ fn database_contract() -> anyhow::Result<()> {
     cleanup_project(&mut conn, PROJECT_ID)?;
     let cleanup = ProjectCleanup {
         database_url: database_url.clone(),
+        project_id: PROJECT_ID,
     };
 
     let project_dir = tempfile::tempdir()?;
@@ -1156,13 +1322,14 @@ fn first_symbol_id(conn: &mut postgres::Client) -> anyhow::Result<String> {
 #[cfg(gcode_postgres_tests)]
 struct ProjectCleanup {
     database_url: String,
+    project_id: &'static str,
 }
 
 #[cfg(gcode_postgres_tests)]
 impl Drop for ProjectCleanup {
     fn drop(&mut self) {
         if let Ok(mut conn) = postgres::Client::connect(&self.database_url, postgres::NoTls) {
-            let _ = cleanup_project(&mut conn, PROJECT_ID);
+            let _ = cleanup_project(&mut conn, self.project_id);
         }
     }
 }

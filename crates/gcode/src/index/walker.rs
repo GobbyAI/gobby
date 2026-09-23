@@ -10,7 +10,9 @@ mod types;
 pub use classification::{
     classify_explicit_file_with_options, classify_file, content_language, is_content_indexable,
 };
+pub(crate) use classification::{indexable_len, passes_path_filters};
 pub use discovery::discover_files_with_options;
+pub(crate) use discovery::walk_files;
 pub use types::{DiscoveryOptions, FileClassification};
 
 #[cfg(test)]

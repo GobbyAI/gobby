@@ -181,6 +181,21 @@ Operations and selector semantics are:
   `usages`, `imports`, `directed_path`, and `scoped_view`, with typed source and
   target selectors, bounded `depth`, relations, direction, and result limit.
   Missing or unavailable graph state is an explicit `graph_unavailable` error.
+- `{"operation":"communities","communities":...}`: an empty selector lists the
+  stored import communities with at least `min_size` members (default 2),
+  largest first and then by ID, up to `limit`; list items omit members. At most
+  one of `community_id`, `label` (display label case-insensitively, then the
+  deterministic label, then a substring of either), or exact member `path`
+  selects detail: members with their snapshot content hashes, representatives
+  first, capped by `max_members` (default 50, at most 500) with
+  `members_truncated`. Several matches all return with
+  `community_selector_ambiguous`. Members absent from the pinned snapshot are
+  dropped and counted in one `community_member_not_in_snapshot` warning per
+  community, and a partition that was never computed returns `complete_empty`
+  with `community_partition_missing`. Items carry the label and its source,
+  confidence, and staleness, size, cohesion, internal edges, member signature,
+  representatives, and import counts across each boundary. Community items
+  orient a reader; Ask does not accept them as citations.
 
 The response echoes the canonical request (with continuation removed), its
 fingerprint, the verified snapshot binding, contract identity, whole evidence

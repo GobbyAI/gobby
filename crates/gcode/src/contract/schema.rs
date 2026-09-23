@@ -252,6 +252,24 @@ pub(super) fn evidence_keys() -> Vec<&'static str> {
         "direction",
         "depth",
         "relations",
+        "communities",
+        "community_id",
+        "min_size",
+        "max_members",
+        "label",
+        "label_source",
+        "label_confidence",
+        "label_stale",
+        "size",
+        "cohesion",
+        "internal_edges",
+        "member_signature",
+        "members",
+        "members_truncated",
+        "representatives",
+        "boundary",
+        "other_community_id",
+        "import_count",
         "id",
         "name",
         "path",
@@ -334,7 +352,14 @@ pub(super) fn graph_cleanup_keys() -> Vec<&'static str> {
 }
 
 pub(super) fn graph_report_keys() -> Vec<&'static str> {
-    vec!["project_id", "summary", "hotspots", "bridges", "degraded"]
+    vec![
+        "project_id",
+        "summary",
+        "hotspots",
+        "communities",
+        "bridges",
+        "degraded",
+    ]
 }
 
 pub(super) fn vector_lifecycle_keys() -> Vec<&'static str> {

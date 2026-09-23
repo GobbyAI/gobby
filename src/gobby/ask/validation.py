@@ -23,6 +23,7 @@ from gobby.ask.validation_models import (
     ClaimValidationReport,
     ClaimValidationResult,
     CommitMetadataEvidenceItem,
+    CommunityEvidenceItem,
     EvidenceItem,
     EvidenceManifest,
     GcodeEvidenceResponse,
@@ -362,6 +363,9 @@ def _validate_evidence_manifest(
                 item_diagnostics = _validate_source(item, binding, pinned_blobs)
             elif isinstance(item, GraphEvidenceItem):
                 item_diagnostics = _validate_graph(item, binding, pinned_blobs)
+            elif isinstance(item, CommunityEvidenceItem):
+                # Orientation only: it carries no source bytes, and citing it is rejected.
+                continue
             else:
                 item_diagnostics = _validate_git_metadata(item, response)
             diagnostics.extend(
@@ -464,7 +468,15 @@ def _citation_diagnostics(
             _diagnostic("fabricated_citation", "citation evidence id was not recorded")
         )
         return diagnostics
-    if isinstance(citation, SourceCitation):
+    if isinstance(item, CommunityEvidenceItem):
+        diagnostics.append(
+            _diagnostic(
+                "community_not_citable",
+                "communities evidence orients retrieval and is not citable; "
+                "cite read items from its members",
+            )
+        )
+    elif isinstance(citation, SourceCitation):
         if not isinstance(item, SourceEvidenceItem):
             diagnostics.append(_diagnostic("citation_type_mismatch", "citation type is wrong"))
         else:

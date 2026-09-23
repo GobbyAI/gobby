@@ -91,8 +91,39 @@ class CommitMetadataEvidenceItem(_FrozenModel):
     record_hash: Sha256Digest
 
 
+class CommunityMember(_FrozenModel):
+    path: str
+    content_hash: Sha256Digest
+
+
+class CommunityBoundary(_FrozenModel):
+    other_community_id: int
+    label: str
+    import_count: int = Field(ge=0)
+
+
+class CommunityEvidenceItem(_FrozenModel):
+    """An import community: it orients retrieval and is never citable."""
+
+    item_type: Literal["community"]
+    evidence_id: str
+    community_id: int
+    label: str
+    label_source: str
+    label_confidence: float | None
+    label_stale: bool
+    size: int = Field(ge=0)
+    cohesion: float
+    internal_edges: int = Field(ge=0)
+    member_signature: str
+    members: tuple[CommunityMember, ...]
+    members_truncated: bool
+    representatives: tuple[str, ...]
+    boundary: tuple[CommunityBoundary, ...]
+
+
 EvidenceItem = Annotated[
-    SourceEvidenceItem | GraphEvidenceItem | CommitMetadataEvidenceItem,
+    SourceEvidenceItem | GraphEvidenceItem | CommitMetadataEvidenceItem | CommunityEvidenceItem,
     Field(discriminator="item_type"),
 ]
 

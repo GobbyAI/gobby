@@ -25,35 +25,11 @@ pub fn discover_files_with_options<S: AsRef<str>>(
     let mut candidates = Vec::new();
     let mut content_only = Vec::new();
     let mut seen = BTreeSet::new();
-    let hidden_context = HiddenPathContext::load(root);
 
-    let mut settings = gobby_core::indexing::WalkerSettings::new(root);
-    settings.respect_gitignore = options.respect_gitignore;
-    settings.max_filesize = Some(MAX_FILE_SIZE);
-    let mut builder = settings.into_walker();
-    builder.hidden(true);
-    let walker = builder.build();
-
-    for entry in walker.flatten() {
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-
+    for file in walk_files(root, options) {
         push_classified_file(
             root,
-            path,
-            exclude_patterns,
-            &mut candidates,
-            &mut content_only,
-            &mut seen,
-        );
-    }
-
-    for path in hidden_context.allowlist().discover(root) {
-        push_classified_file(
-            root,
-            &path,
+            &file.path,
             exclude_patterns,
             &mut candidates,
             &mut content_only,
@@ -62,6 +38,48 @@ pub fn discover_files_with_options<S: AsRef<str>>(
     }
 
     (candidates, content_only)
+}
+
+/// A file the discovery walk yields, before classification.
+pub(crate) struct WalkedFile {
+    pub(crate) path: PathBuf,
+    /// The walker reached a regular file without following a link. Under a
+    /// canonical root, such a path is already canonical.
+    pub(crate) direct: bool,
+}
+
+/// Every file discovery classifies, in discovery order: walker entries that
+/// are regular files or links to one, then hidden-allowlist matches.
+pub(crate) fn walk_files(root: &Path, options: DiscoveryOptions) -> Vec<WalkedFile> {
+    let hidden_context = HiddenPathContext::load(root);
+
+    let mut settings = gobby_core::indexing::WalkerSettings::new(root);
+    settings.respect_gitignore = options.respect_gitignore;
+    settings.max_filesize = Some(MAX_FILE_SIZE);
+    let mut builder = settings.into_walker();
+    builder.hidden(true);
+
+    let mut files = Vec::new();
+    for entry in builder.build().flatten() {
+        let direct = entry.file_type().is_some_and(|kind| kind.is_file());
+        if direct || entry.path().is_file() {
+            files.push(WalkedFile {
+                path: entry.into_path(),
+                direct,
+            });
+        }
+    }
+    files.extend(
+        hidden_context
+            .allowlist()
+            .discover(root)
+            .into_iter()
+            .map(|path| WalkedFile {
+                path,
+                direct: false,
+            }),
+    );
+    files
 }
 
 fn push_classified_file(
