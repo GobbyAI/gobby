@@ -316,6 +316,24 @@ async def test_memory_reconcile_runs_before_24_hours_then_waits_for_normal_inter
     assert sleep.requests == [_TEST_STARTUP_DELAY_SECONDS, _DAY_SECONDS]
 
 
+async def test_memory_reconcile_retries_qdrant_failure_before_daily_interval() -> None:
+    sleep = CancelAtInterval()
+    memory_manager = MagicMock()
+    memory_manager.reconcile_stores = AsyncMock(
+        return_value={"qdrant": {"error": "TimeoutError()"}}
+    )
+
+    await memory_reconcile_loop(
+        memory_manager,
+        lambda: False,
+        startup_delay_seconds=_TEST_STARTUP_DELAY_SECONDS,
+        sleep=sleep,
+    )
+
+    assert memory_manager.reconcile_stores.await_count == 1
+    assert sleep.requests == [_TEST_STARTUP_DELAY_SECONDS, 5 * 60]
+
+
 @pytest.mark.asyncio
 async def test_comms_cleanup_runs_before_24_hours_then_waits_for_normal_interval() -> None:
     sleep = CancelAtInterval()
