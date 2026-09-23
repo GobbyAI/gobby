@@ -246,7 +246,7 @@ class _SpawnStorage:
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_spawn_isolation_refuses_unreferenced_sha_base(tmp_path: Path) -> None:
-    root = tmp_path / "repo"
+    root = tmp_path / "spawn-sha-project"
     subprocess.run(["git", "init", "-b", "main", str(root)], check=True, capture_output=True)
     subprocess.run(
         ["git", "-C", str(root), "config", "user.name", "Test"],
@@ -275,9 +275,11 @@ async def test_spawn_isolation_refuses_unreferenced_sha_base(tmp_path: Path) -> 
         provider="claude",
         parent_session_id="sess",
     )
+    spawned = Path.home() / ".gobby" / "worktrees" / root.name / "spawned"
     with pytest.raises(RuntimeError, match="base_branch_is_commit_sha"):
         await handler.prepare_environment(config)
     assert storage.created == []
+    assert not spawned.exists()
 
 
 @pytest.mark.unit
