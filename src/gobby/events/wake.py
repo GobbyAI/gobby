@@ -665,9 +665,13 @@ class WakeDispatcher:
             return None
         if activity.composer.state != "draft":
             return None
-        logger.debug(
-            "wake for session %s deferred to the next turn: composer holds an operator draft",
+        excerpt = " ".join((activity.composer.line or "").split())
+        if len(excerpt) > 160:
+            excerpt = f"{excerpt[:157]}..."
+        logger.warning(
+            "wake for session %s deferred: composer holds an operator draft: %s",
             session_id,
+            excerpt,
         )
         return composer_occupied_result(session_id, method=method)
 

@@ -384,6 +384,7 @@ class RuleEngine(
                     eval_context=eval_context,
                     is_before_tool=is_before_tool,
                     block_tool_name=_block_tool_name(event),
+                    is_turn_end=is_turn_end,
                     mcp_calls=mcp_calls,
                 )
                 # Auto-track consecutive retries after a blocked BEFORE_TOOL.
@@ -446,12 +447,14 @@ class RuleEngine(
                     close_response_batch(block_state)
 
                 elif is_turn_start:
+                    blocked_turn_feedback = variables.pop("_blocked_turn_end_pending", False)
                     variables["consecutive_tool_blocks"] = 0
                     clear_blocked_tool_recovery_state(variables)
                     clear_block_scopes(variables)
                     variables["tool_block_pending"] = False
-                    variables["stop_attempts"] = 0
-                    variables["_block_reasons_shown"] = []
+                    if not blocked_turn_feedback:
+                        variables["stop_attempts"] = 0
+                        variables["_block_reasons_shown"] = []
 
                     # [auto-discover-servers] — hardcoded, always-on
                     # Seed progressive discovery on first prompt so agents

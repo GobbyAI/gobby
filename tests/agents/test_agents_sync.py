@@ -89,6 +89,7 @@ class TestSyncBundledAgents:
         assert body.provider == "grok"
         assert body.model == "grok-4.7"
         assert body.reasoning_effort == "xhigh"
+        assert "codex" not in body.model_dump_json().lower()
 
     @pytest.mark.unit
     def test_sync_skips_unchanged(self, tmp_path: Path, definition_db: PostgresHubDatabase) -> None:

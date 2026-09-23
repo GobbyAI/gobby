@@ -11506,3 +11506,57 @@ async fn reconnect_rearms_direct_from_the_fresh_roster_row() {
     );
     mock.shutdown().await;
 }
+
+#[tokio::test]
+async fn tab_and_split_shells_start_in_the_focused_checkout() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.set_spawn_refusal("cwd-probe");
+    for _ in 0..4 {
+        mock.enqueue("GET", "/api/projects", 200, sidebar_project_row());
+    }
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon);
+    workspace.select_project("project-1");
+    workspace.set_launch_dir(std::path::PathBuf::from("/launch-dir"));
+    let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(16);
+    let driver = async {
+        wait_for_http_requests(&mock, "GET", "/api/projects", 1).await;
+        settle_live_event().await;
+        send_chord(&input_tx, KeyCode::Char('c'), KeyModifiers::NONE).await;
+        wait_for_websocket_requests(&mock, "terminal_create", 1).await;
+        send_chord(&input_tx, KeyCode::Char('v'), KeyModifiers::NONE).await;
+        wait_for_websocket_requests(&mock, "terminal_create", 2).await;
+        send_chord(&input_tx, KeyCode::Char('-'), KeyModifiers::NONE).await;
+        wait_for_websocket_requests(&mock, "terminal_create", 3).await;
+        settle_live_event().await;
+        drop(input_tx);
+    };
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("checkout cwd live loop");
+    let resolved = workspace.focused_checkout_path();
+    let creates = websocket_requests(&mock, "terminal_create");
+    let cwds: Vec<Option<&str>> = creates
+        .iter()
+        .map(|create| create.get("cwd").and_then(Value::as_str))
+        .collect();
+    assert_eq!(
+        (resolved.as_deref(), cwds.as_slice()),
+        (Some("/repo"), [Some("/repo"), Some("/repo"), Some("/repo")].as_slice()),
+        "tab, split right, and split down start in the focused checkout: {creates:?}"
+    );
+    mock.shutdown().await;
+}

@@ -116,8 +116,15 @@ def grok_epoch_max_occupancy(
     current: ContextUsageSnapshot | None,
     stored_used_tokens: int | None = None,
     occupancy_known: bool = False,
+    epoch_reset: bool = False,
 ) -> ContextUsageSnapshot:
-    """Keep the highest Grok totalTokens stamp in the current compact epoch."""
+    """Keep the highest Grok totalTokens stamp in the current compact epoch.
+
+    auto_compact_completed starts a new epoch at tokens_after and must not
+    fold the stored or earlier batch max back in.
+    """
+    if epoch_reset or candidate.epoch_reset:
+        return candidate
     used = candidate.context_used_tokens
     if used is None:
         return candidate

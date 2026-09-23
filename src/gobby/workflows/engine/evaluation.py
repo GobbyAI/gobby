@@ -64,6 +64,7 @@ class EvaluationContext:
     eval_context: dict[str, Any] | None
     is_before_tool: bool
     block_tool_name: str
+    is_turn_end: bool = False
     context_parts: list[ContextPart] = field(default_factory=list)
     mcp_calls: list[dict[str, Any]] = field(default_factory=list)
     proxy_hooks: list[ProxyHookInvocation] = field(default_factory=list)
@@ -245,6 +246,8 @@ class EvaluationMixin:
         warn_detail: str = "block response omitted reason",
     ) -> HookResponse:
         """Normalize block responses, log them, and attach tracing fields."""
+        if evaluation.is_turn_end:
+            evaluation.variables["_blocked_turn_end_pending"] = response.decision == "block"
         if response.decision == "block":
             # A blocked call never carries an input rewrite: drop any pending
             # rewrite so it neither reaches the adapter nor persists into the

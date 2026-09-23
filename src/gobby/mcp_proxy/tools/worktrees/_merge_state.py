@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gobby.storage.worktrees import Worktree, WorktreeStatus
+from gobby.worktrees.base_branch import is_sha_shaped, name_unreferenced_sha_base_rows
 
 if TYPE_CHECKING:
     from gobby.worktrees.git import WorktreeGitManager
@@ -18,6 +19,17 @@ def _qualified_ref(branch: str) -> str:
     if branch.startswith("origin/"):
         return f"refs/remotes/{branch}"
     return f"refs/heads/{branch}"
+
+
+async def _ref_short_names(git_manager: WorktreeGitManager) -> set[str] | None:
+    result = await git_manager.run_git_command(
+        ["for-each-ref", "--format=%(refname:short)"],
+        cwd=str(git_manager.repo_path),
+        timeout=10,
+    )
+    if result.returncode != 0:
+        return None
+    return {line.strip() for line in result.stdout.splitlines() if line.strip()}
 
 
 def _git_cwd(worktree: Worktree, git_manager: WorktreeGitManager) -> str:
@@ -88,6 +100,13 @@ async def worktree_dict_with_git_merge_state(
     """Return worktree dict with stale merged metadata corrected for responses."""
     data = worktree.to_dict()
     state = await merge_state_payload(worktree, git_manager)
+    if git_manager is not None and is_sha_shaped(worktree.base_branch):
+        ref_names = await _ref_short_names(git_manager)
+        if ref_names is not None:
+            named = name_unreferenced_sha_base_rows([worktree], ref_names)
+            if named:
+                state["consistent"] = False
+                state["unreferenced_sha_base_ids"] = [row.id for row in named]
     data["git_merge_state"] = state
 
     if worktree.status == WorktreeStatus.MERGED.value and state["git_merged"] is False:

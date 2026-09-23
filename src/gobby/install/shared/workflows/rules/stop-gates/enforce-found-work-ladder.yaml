@@ -49,8 +49,10 @@ rules:
           Found-work ladder: terminal validation failure remains unresolved:
           {{ terminal_validation_failure_commands | join('\n') }}
           Fix it inside the claimed task, hand a confined foreign failure to its active
-          owner via send_message after a scoped green rerun, or file the edge case with a
-          needs-decision/needs-planning/clean-window label and reason.
+          owner via send_message after a scoped green rerun, or link an owner-filed task
+          for the same failed path after a scoped green rerun using
+          link_task_to_session(action=discovered). The owner-filed task must have a
+          needs-decision/needs-planning/clean-window label or a live delegate_task handoff.
 
   block-unclaimed-found-work:
     description: "Block stop while this session's found-work filings remain unclaimed"
@@ -68,7 +70,7 @@ rules:
       - type: block
         reason: >-
           Found-work ladder: this session filed {{ unclaimed_found_work_tasks | join(', ') }} and
-          left them unclaimed. Claim and finish each one now (claim_task, fix, close), hand it to
-          its active owner via send_message, or — edge case only — label it
+          left them unclaimed. Claim and finish each one now (claim_task, fix, close),
+          record a handoff to a live session with delegate_task, or — edge case only — label it
           needs-decision/needs-planning/clean-window with the reason in its description. Filing is not a terminal
           state.
