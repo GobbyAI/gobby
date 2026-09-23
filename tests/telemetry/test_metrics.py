@@ -5,6 +5,7 @@ Tests for TelemetryMetrics instruments.
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from typing import Protocol, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -13,6 +14,10 @@ from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 
 from gobby.telemetry import instruments
 from gobby.telemetry.instruments import TelemetryMetrics
+
+
+class _GaugePoint(Protocol):
+    value: float
 
 
 @pytest.fixture
@@ -159,17 +164,22 @@ def test_update_daemon_metrics(metrics_collector):
         assert all_metrics["gauges"]["daemon_uptime_seconds"]["value"] >= 0
 
 
-def test_observable_gauge_callback(metrics_collector, meter_provider):
+def test_observable_gauge_callback(
+    metrics_collector: TelemetryMetrics,
+    meter_provider: tuple[MeterProvider, InMemoryMetricReader],
+) -> None:
     _, reader = meter_provider
     metrics_collector.set_gauge("daemon_uptime_seconds", value=123.45)
 
     # OTel ObservableGauge will call the callback during collect
     data = reader.get_metrics_data()
+    assert data is not None
     found = False
     for resource_metrics in data.resource_metrics:
         for scope_metrics in resource_metrics.scope_metrics:
             for metric in scope_metrics.metrics:
                 if metric.name == "daemon_uptime_seconds":
                     found = True
-                    assert metric.data.data_points[0].value == 123.45
+                    point = cast(_GaugePoint, metric.data.data_points[0])
+                    assert point.value == 123.45
     assert found
