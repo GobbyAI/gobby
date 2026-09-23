@@ -75,7 +75,7 @@ def _install_live_wait_identity(db: PostgresHubDatabase) -> None:
     """Apply this branch's migration. Installed gdaemon does not embed it yet."""
     sql_path = (
         Path(__file__).resolve().parents[2]
-        / "crates/gcore/assets/schema/migrations/446_coordination_wait_live_identity.sql"
+        / "crates/gcore/assets/schema/migrations/447_coordination_wait_live_identity.sql"
     )
     statement: list[str] = []
     in_dollar = False

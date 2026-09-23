@@ -196,9 +196,15 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
     },
     EmbeddedMigration {
         version: 446,
-        filename: "446_coordination_wait_live_identity.sql",
+        filename: "446_grant_agent_project_resolution.sql",
+        checksum: "92af848e93ef46536f40fdb0084dcf5f0fa4bc3b5b7eaf9788ee020c977d3b31",
+        sql: include_str!("../../assets/schema/migrations/446_grant_agent_project_resolution.sql"),
+    },
+    EmbeddedMigration {
+        version: 447,
+        filename: "447_coordination_wait_live_identity.sql",
         checksum: "7de2a20e9697002df4ca27ca8a85c3a043266a5a622449419e26a73cfdfb11e8",
-        sql: include_str!("../../assets/schema/migrations/446_coordination_wait_live_identity.sql"),
+        sql: include_str!("../../assets/schema/migrations/447_coordination_wait_live_identity.sql"),
     },
 ];
 // Numbered migrations after canonical baseline@420 land here.
