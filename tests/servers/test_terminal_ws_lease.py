@@ -269,6 +269,80 @@ async def test_attach_result_supplies_attachment_identity(
     assert ws.messages_of_type("terminal_control_result")
 
 
+async def test_attach_and_inventory_report_current_lease_holder(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    terminal_id = _live_row(temp_db, sample_project)
+    server = _ws_server()
+    _configure(server, temp_db)
+    holder = MockWebSocket()
+    observer = MockWebSocket()
+    server.clients[holder] = {"subscriptions": {"*"}}
+    server.clients[observer] = {"subscriptions": {"*"}}
+    await _send(
+        server,
+        holder,
+        {
+            "type": "terminal_attach",
+            "request_id": "holder",
+            "terminal_id": terminal_id,
+            "frame_delivery": "direct",
+        },
+    )
+    holder_attachment = holder.messages_of_type("terminal_attach_result")[-1]["attachment_id"]
+    await _send(
+        server,
+        holder,
+        {
+            "type": "terminal_take_control",
+            "terminal_id": terminal_id,
+            "attachment_id": holder_attachment,
+            "takeover": False,
+        },
+    )
+    await _send(
+        server,
+        observer,
+        {
+            "type": "terminal_attach",
+            "request_id": "observer",
+            "terminal_id": terminal_id,
+            "frame_delivery": "direct",
+        },
+    )
+    expected = {
+        "attachment_id": holder_attachment,
+        "kind": "gclient",
+        "session_ref": None,
+    }
+    attach_result = observer.messages_of_type("terminal_attach_result")[-1]
+    assert attach_result["success"], attach_result
+    assert attach_result["lease_holder"] == expected
+    await _send(
+        server,
+        observer,
+        {"type": "terminal_list", "request_id": "inventory", "project_id": sample_project["id"]},
+    )
+    page = observer.messages_of_type("terminal_list")[-1]
+    item = next(item for item in page["items"] if item["terminal_id"] == terminal_id)
+    assert item["lease_holder"] == expected
+
+
+async def test_explicit_takeover_displaces_the_existing_holder() -> None:
+    registry = TerminalLeaseRegistry()
+    first = await registry.attach("terminal-agent", "direct")
+    second = await registry.attach("terminal-agent", "direct")
+    initial = await registry.take_control("terminal-agent", first.attachment_id, takeover=False)
+    assert initial.granted is True
+    refused = await registry.take_control("terminal-agent", second.attachment_id, takeover=False)
+    assert refused.granted is False
+    assert refused.reason == "held"
+    taken = await registry.take_control("terminal-agent", second.attachment_id, takeover=True)
+    assert taken.granted is True
+    assert taken.displaced_attachment_id == first.attachment_id
+    assert registry.holder("terminal-agent") == second.attachment_id
+
+
 @pytest.mark.asyncio
 async def test_direct_delivery_registers_without_frame_relay(
     temp_db: HubDatabase, sample_project: dict[str, Any]

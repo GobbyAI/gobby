@@ -90,6 +90,8 @@ pub enum MouseOutcome {
     Focus { pane: PaneId, observe_only: bool },
     /// A keymap action, dispatched exactly as its chord would be.
     Action(Action),
+    /// A completed pane click requests control only if no other viewer holds it.
+    TakeFreeControl { pane: PaneId },
     /// Spawn a terminal and place it.
     Spawn { placement: Placement },
     /// Bytes for a pane: a forwarded SGR report where it reports mouse, or
@@ -428,9 +430,9 @@ mod tests {
             route_mouse(&ws, &mut chrome, &down(col, row, KeyModifiers::NONE)),
             MouseOutcome::Focus {
                 pane: other,
-                observe_only: false
+                observe_only: true
             },
-            "with capture on the same click focuses the other pane"
+            "the press focuses the other pane in observe mode until release"
         );
         chrome.prefs.mouse_capture = false;
         assert_eq!(

@@ -90,7 +90,7 @@ async fn single_terminal_loop(mock: &MockDaemon) -> (Workspace<LiveDaemon>, temp
 /// focus proves the grant landed, which is also the signal this assertion
 /// waits on.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn focus_displaces_the_holder_in_one_gesture() {
+async fn focus_claims_a_free_pane_in_one_gesture() {
     let mock = MockDaemon::start("local-token").await;
     let (mut workspace, _home) = single_terminal_loop(&mock).await;
     let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
@@ -126,8 +126,8 @@ async fn focus_displaces_the_holder_in_one_gesture() {
     );
     assert_eq!(
         takes[0].get("takeover"),
-        Some(&json!(true)),
-        "focus displaces the holder"
+        Some(&json!(false)),
+        "focus does not displace a holder that raced the free-pane check"
     );
     let pane = workspace
         .pane_for_terminal("terminal-a")

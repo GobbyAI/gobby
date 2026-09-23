@@ -160,6 +160,12 @@ impl Workspace<LiveDaemon> {
             lease_generation,
             PaneFrameSource::Direct(source),
         );
+        pane.observe_lease_holder(
+            reply
+                .get("lease_holder")
+                .and_then(|holder| holder.get("attachment_id"))
+                .and_then(Value::as_str),
+        );
     }
 
     pub async fn recv_live_frame(&mut self, pane_id: PaneId) -> Result<ServerMessage, FrameError> {
@@ -496,6 +502,12 @@ impl Workspace<LiveDaemon> {
             generation,
             lease_generation,
             PaneFrameSource::Proxy(source),
+        );
+        pane.observe_lease_holder(
+            reply
+                .get("lease_holder")
+                .and_then(|holder| holder.get("attachment_id"))
+                .and_then(Value::as_str),
         );
     }
 

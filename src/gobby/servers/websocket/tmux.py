@@ -186,7 +186,7 @@ class TmuxMixin(TerminalCreateMixin, TerminalSizingMixin, TerminalControlMixin, 
         registry = self._leases()
         viewer: Literal["web", "gclient"] = "web" if data.get("viewer") == "web" else "gclient"
         record = await registry.attach(
-            terminal_id, "proxy", websocket=websocket, viewer=viewer, backend="tmux"
+            terminal_id, "proxy", websocket=websocket, viewer=viewer, backend="tmux", terminal=row
         )
         # A desktop tmux client is a typing seat: the newest one holds the lease,
         # exactly as every attached desktop client can type. A web viewer attaches
@@ -222,6 +222,7 @@ class TmuxMixin(TerminalCreateMixin, TerminalSizingMixin, TerminalControlMixin, 
                 "frame_delivery": record.frame_delivery,
                 "direct": None,
                 "lease_generation": registry.generation(terminal_id),
+                "lease_holder": registry.holder_info(terminal_id),
                 "success": True,
             },
         )

@@ -360,6 +360,16 @@ impl Pane {
         self.take_back
     }
 
+    pub(super) fn observe_lease_holder(&mut self, holder: Option<&str>) {
+        if self.is_held() {
+            return;
+        }
+        self.take_back = holder.is_some_and(|id| id != self.attachment_id());
+        if holder.is_none() && self.control == ControlState::LeaseLost {
+            self.control = ControlState::Observe;
+        }
+    }
+
     pub fn attachment_id(&self) -> &str {
         match &self.attach {
             AttachState::Attached { attachment_id, .. } => attachment_id,

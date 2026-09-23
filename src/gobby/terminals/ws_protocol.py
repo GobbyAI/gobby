@@ -242,7 +242,9 @@ def parse_list_cursor(raw: object) -> tuple[datetime | None, str | None]:
     return datetime.fromisoformat(created_at), str(UUID(terminal_id))
 
 
-def inventory_item(row: Any) -> dict[str, Any]:
+def inventory_item(
+    row: Any, *, lease_holder: dict[str, str | None] | None = None
+) -> dict[str, Any]:
     """Backend-neutral list row."""
     dims = None
     if row.rows is not None and row.cols is not None:
@@ -255,6 +257,7 @@ def inventory_item(row: Any) -> dict[str, Any]:
         "title": row.title,
         "session_id": row.session_id,
         "agent_run_id": row.agent_run_id,
+        "lease_holder": lease_holder,
         "dims": dims,
         "updated_at": row.updated_at.isoformat(),
     }
