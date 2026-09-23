@@ -2,14 +2,19 @@
 
 Evidence for `.gobby/plans/gcode-import-communities.md` acceptance item 4.3.15: the list
 view on the Gobby checkout, read from stored `code_communities` rows, measured over five
-runs.
+runs. A second measurement covers the full command before and after #22790 (Make the gcode
+freshness pre-gate cheap when nothing changed).
 
 ## Result
 
 Read from stored rows, the view completes in **under one second**: 0.346 s median over five
-runs, slowest run 0.430 s. The full command, including the project-scoped freshness gate
-that every `graph view` runs first, takes about 2.2 s. That extra time comes from the
-freshness pre-gate, which is shared code that this leaf did not change (see below).
+runs, slowest run 0.430 s. Until #22790, the full command took 2.2 to 2.5 s because of the
+project-scoped freshness pre-gate that every `graph view` runs first. With #22790 the full
+command also completes in **under one second**: 0.906 s median over five runs, against
+2.390 s and 2.500 s for the binary without it.
+
+The installed `~/.gobby/bin/gcode` keeps the old pre-gate until a cutover promotes a build
+that contains #22790.
 
 ## Method
 
@@ -47,7 +52,35 @@ The stored-rows arm covers what this leaf built: it connects, calls
 `communities::read_for_context`, builds the list payload, and prints it. No Leiden run or
 partition rebuild happens on the read path.
 
-## Where the rest of the full-command time goes
+## Full command before and after #22790
+
+#22790 lets the pre-gate check an indexed regular file from its metadata alone when both
+its mtime and its ctime predate the last index. Such a file is not opened, read or
+canonicalized. Every other file still goes through the indexer's full classification.
+
+- Both binaries are `cargo build -p gobby-code --release` artifacts from the lane worktree
+  `lane/22581-gcode-import-communities`. They were built from the same tree, differing
+  only by #22790's diff, and copied aside so both survive the second build.
+  `gcode --version` reports `1.9.0` for both. `gcode schema-identity --json` output for
+  each is identical to the installed `~/.gobby/bin/gcode`'s, so both arms read the same
+  live schema. The installed binary could not serve as either arm because it does not
+  contain #22790.
+- Same machine, project and full command as above, without `--allow-stale`.
+- Order: a before block, the after block, then a second before block, to rule out a
+  load spike during the first. Each block gets one warm-up run, then five timed runs.
+- Wall time is `time.perf_counter()` around the subprocess. The harness script lives in the
+  session scratchpad and is not committed.
+
+| Binary | Runs (s) | Median (s) |
+| --- | --- | ---: |
+| before #22790, first block | 2.390, 2.342, 2.249, 2.852, 3.150 | 2.390 |
+| after #22790 | 1.039, 0.921, 0.803, 0.906, 0.846 | **0.906** |
+| before #22790, second block | 2.233, 2.151, 2.500, 2.592, 2.623 | 2.500 |
+
+The slowest after run, 1.039 s, beats the fastest before run, 2.151 s, so the gap is well
+outside run-to-run noise.
+
+## Where the full-command time went before #22790
 
 `dispatch.rs` calls `ensure_project_fresh` before every `graph view`. A `sample` profile of
 one full run put every main-thread sample inside that call's lock-free pre-gate,
@@ -63,5 +96,5 @@ file through `push_classified_file`:
 That is three `realpath` calls, one open and read, and one `stat` per file across about
 7,700 files. It explains the roughly 1.3 s of system time a full run shows. `gcode status`
 goes through the same gate and costs the same, so this cost belongs to every
-project-scoped read and not to the communities view. It is filed as #22790 (Make the gcode
-freshness pre-gate cheap when nothing changed) under the gcode lane epic #22777.
+project-scoped read and not to the communities view. #22790, under the gcode lane epic
+#22777, fixes it; the section above has the measurement.

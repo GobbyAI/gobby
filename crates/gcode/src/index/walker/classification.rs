@@ -135,19 +135,32 @@ fn is_safe_text_file(root: &Path, path: &Path, exclude_patterns: &[impl AsRef<st
     if !security::is_symlink_safe(path, root) {
         return false;
     }
-    if security::should_exclude_path(root, path, exclude_patterns) {
-        return false;
-    }
-    if security::has_secret_extension(path) {
+    if !passes_path_filters(root, path, exclude_patterns) {
         return false;
     }
 
     let Ok(meta) = path.metadata() else {
         return false;
     };
-    if meta.len() == 0 || meta.len() > MAX_FILE_SIZE {
+    if !indexable_len(meta.len()) {
         return false;
     }
 
     !security::is_binary(path)
+}
+
+/// The lexical filters: configured excludes and secret-looking names. They
+/// read neither metadata nor file bytes.
+pub(crate) fn passes_path_filters(
+    root: &Path,
+    path: &Path,
+    exclude_patterns: &[impl AsRef<str>],
+) -> bool {
+    !security::should_exclude_path(root, path, exclude_patterns)
+        && !security::has_secret_extension(path)
+}
+
+/// Whether a file of `len` bytes is inside the indexable size range.
+pub(crate) fn indexable_len(len: u64) -> bool {
+    len > 0 && len <= MAX_FILE_SIZE
 }
