@@ -194,6 +194,12 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
             "../../assets/schema/migrations/445_drop_task_validation_system_prompt.sql"
         ),
     },
+    EmbeddedMigration {
+        version: 446,
+        filename: "446_coordination_wait_live_identity.sql",
+        checksum: "7de2a20e9697002df4ca27ca8a85c3a043266a5a622449419e26a73cfdfb11e8",
+        sql: include_str!("../../assets/schema/migrations/446_coordination_wait_live_identity.sql"),
+    },
 ];
 // Numbered migrations after canonical baseline@420 land here.
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");

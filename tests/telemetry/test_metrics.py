@@ -3,6 +3,7 @@ Tests for TelemetryMetrics instruments.
 """
 
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import MagicMock, patch
 
@@ -128,6 +129,19 @@ def test_observe_histogram(metrics_collector, meter_provider):
     all_metrics = metrics_collector.get_all_metrics()
     assert all_metrics["histograms"]["http_request_duration_seconds"]["count"] == 1
     assert all_metrics["histograms"]["http_request_duration_seconds"]["sum"] == 0.5
+
+
+def test_consecutive_daemon_cpu_samples_measure_work(metrics_collector):
+    """Two samples of one daemon process report the CPU used between them."""
+    metrics_collector.update_daemon_metrics()
+    deadline = time.perf_counter() + 0.2
+    spins = 0
+    while time.perf_counter() < deadline:
+        spins += 1
+    metrics_collector.update_daemon_metrics()
+    measured = metrics_collector.get_all_metrics()["gauges"]["daemon_cpu_percent"]["value"]
+    assert spins > 0
+    assert measured > 0
 
 
 def test_update_daemon_metrics(metrics_collector):
