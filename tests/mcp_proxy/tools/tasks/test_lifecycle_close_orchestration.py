@@ -142,7 +142,7 @@ async def test_close_persists_and_launches_one_taskless_reviewer(
 
 
 @pytest.mark.asyncio
-async def test_launch_reuses_delivered_rejection_after_summary_only_change(
+async def test_launch_reviews_again_after_summary_only_change(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     payload = {
@@ -164,7 +164,9 @@ async def test_launch_reuses_delivered_rejection_after_summary_only_change(
         _review(status="queued", run_id=None),
         reusable_rejection=rejected,
     )
-    registry = SimpleNamespace(call=AsyncMock())
+    registry = SimpleNamespace(
+        call=AsyncMock(return_value={"success": True, "run_id": _FIRST_REVIEW_RUN_ID})
+    )
     _patch_store(monkeypatch, store)
     evaluation = _evaluation()
     evaluation.extra["review_fingerprint"] = "summary-after-rewording"
@@ -177,10 +179,10 @@ async def test_launch_reuses_delivered_rejection_after_summary_only_change(
         evaluate_close=_revalidate(evaluation),
     )
 
-    assert result == payload
-    assert store.reuse_lookup == ("task", "evidence")
-    assert store.created_arguments is None
-    registry.call.assert_not_awaited()
+    assert result["error"] == "close_review_required"
+    assert store.reuse_lookup == ("task", "summary-after-rewording")
+    assert store.created_arguments is not None
+    registry.call.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -1476,14 +1478,14 @@ class _Store:
         self,
         *,
         task_id: str,
-        evidence_fingerprint: str,
+        review_fingerprint: str,
         expected_task_updated_at: datetime,
     ) -> TaskCloseReview | None:
         assert expected_task_updated_at == datetime(2026, 8, 22, tzinfo=UTC)
-        self.reuse_lookup = (task_id, evidence_fingerprint)
+        self.reuse_lookup = (task_id, review_fingerprint)
         if self.reusable_rejection is None:
             return None
-        if self.reusable_rejection.evidence_fingerprint != evidence_fingerprint:
+        if self.reusable_rejection.review_fingerprint != review_fingerprint:
             return None
         return self.reusable_rejection
 
@@ -1497,6 +1499,8 @@ class _Store:
                 id=str(kwargs["review_id"]),
                 agent_run_id=run.id,
                 close_arguments=dict(kwargs["close_arguments"]),
+                review_fingerprint=kwargs["review_fingerprint"],
+                evidence_fingerprint=kwargs["evidence_fingerprint"],
                 status="queued",
             )
         return self.review, self.created

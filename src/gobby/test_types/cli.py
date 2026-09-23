@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 
 import click
@@ -20,6 +21,7 @@ from gobby.test_types._mypy import MypyInvocationError
 from gobby.test_types.audit import audit_types_paths
 from gobby.test_types.render import render_json, render_text
 from gobby.test_types.suppressions import (
+    SuppressionBaseline,
     SuppressionSite,
     diff_suppressions,
     load_suppression_baseline,
@@ -50,11 +52,24 @@ def suppressions(paths: tuple[Path, ...], baseline: Path, write_baseline: bool) 
     if not baseline.exists():
         raise click.ClickException(f"suppression baseline does not exist: {baseline}")
     try:
-        scan = scan_suppressions(paths or (Path("."),), root=Path.cwd())
+        scan_paths = paths or (Path("."),)
+        scan = scan_suppressions(scan_paths, root=Path.cwd())
         loaded_baseline = load_suppression_baseline(baseline)
     except ValueError as exc:
         raise click.ClickException(str(exc)) from exc
-    diff = diff_suppressions(scan.sites, loaded_baseline)
+    resolved_targets = tuple(path.resolve() for path in scan_paths)
+    root = Path.cwd().resolve()
+
+    def in_scope(entry: Mapping[str, object]) -> bool:
+        entry_path = root / str(entry["path"])
+        return any(
+            entry_path == target if target.is_file() else entry_path.is_relative_to(target)
+            for target in resolved_targets
+        )
+
+    scoped_entries = tuple(entry for entry in loaded_baseline.entries if in_scope(entry))
+    outside_entries = tuple(entry for entry in loaded_baseline.entries if not in_scope(entry))
+    diff = diff_suppressions(scan.sites, SuppressionBaseline(scoped_entries))
 
     click.echo("Python suppression ratchet")
     click.echo(f"Files scanned: {scan.files_scanned}")
@@ -86,8 +101,10 @@ def suppressions(paths: tuple[Path, ...], baseline: Path, write_baseline: bool) 
             raise click.ClickException(
                 "refusing to rewrite the suppression baseline without a strict debt reduction"
             )
-        write_suppression_baseline(baseline, scan.sites)
-        click.echo(f"Baseline reduced to {len(scan.sites)} suppression sites.")
+        write_suppression_baseline(baseline, scan.sites, preserved_entries=outside_entries)
+        click.echo(
+            f"Baseline reduced to {len(scan.sites) + len(outside_entries)} suppression sites."
+        )
         return
     if diff.new_sites or diff.stale_entries:
         raise click.exceptions.Exit(1)

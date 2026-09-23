@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import replace
 from time import perf_counter
 from typing import Literal
@@ -80,6 +81,11 @@ from gobby.tasks.transcript_evidence_models import (
 from gobby.tasks.validation import NO_WORK_CLOSE_REASONS
 
 _DELIBERATE_CLOSE_SKIP = "Skipped for a justified deliberate close of an escalated task."
+_NO_WORK_TARGET_RE = re.compile(
+    r"\b(?:duplicate of|implemented in|implemented by|superseded by|absorbed by|"
+    r"covered by|tracked in|replaced by|moved to)\s+#[0-9]+\b",
+    re.IGNORECASE,
+)
 logger = logging.getLogger(__name__)
 
 
@@ -716,6 +722,20 @@ async def _evaluate_close(
         # Gate 13 spends a paid validator run, so it is the one gate that never starts
         # while a deterministic blocker is still on the checklist.
         evaluation.skip_gate(13, "close_review", blocked_by=blocker.name)
+        return evaluation
+
+    if (
+        reason in NO_WORK_CLOSE_REASONS
+        and not evaluation.had_attributed_edits
+        and not commit_shas
+        and _NO_WORK_TARGET_RE.search(changes_summary or "") is not None
+    ):
+        if run_close_review:
+            evaluation.pass_gate(
+                13, "close_review", "No-work disposition names its target; review skipped."
+            )
+        else:
+            evaluation.not_run_gate(13, "close_review", "No-work fast path requires no reviewer.")
         return evaluation
 
     if not run_close_review:

@@ -298,7 +298,7 @@ def test_delivered_rejection_is_reused_for_identical_evidence(temp_db: HubDataba
 
     reused = store.get_delivered_rejected_verdict(
         task_id=_TASK_ID,
-        evidence_fingerprint="evidence",
+        review_fingerprint="review",
         expected_task_updated_at=_TASK_UPDATED_AT,
     )
 
@@ -307,16 +307,23 @@ def test_delivered_rejection_is_reused_for_identical_evidence(temp_db: HubDataba
     assert reused.result_payload == newest_delivered.result_payload
 
 
-def test_changed_evidence_does_not_reuse_delivered_rejection(temp_db: HubDatabase) -> None:
+def test_changed_review_summary_does_not_reuse_delivered_rejection(temp_db: HubDatabase) -> None:
     store = TaskCloseReviewStore(temp_db)
-    _finish_terminal_review(store, status="invalid")
+    rejected = _finish_terminal_review(store, status="invalid")
 
-    reused = store.get_delivered_rejected_verdict(
+    identical_retry = store.get_delivered_rejected_verdict(
         task_id=_TASK_ID,
-        evidence_fingerprint="changed-evidence",
+        review_fingerprint="review",
         expected_task_updated_at=_TASK_UPDATED_AT,
     )
 
+    reused = store.get_delivered_rejected_verdict(
+        task_id=_TASK_ID,
+        review_fingerprint="review-with-new-summary",
+        expected_task_updated_at=_TASK_UPDATED_AT,
+    )
+
+    assert identical_retry is not None and identical_retry.id == rejected.id
     assert reused is None
 
 
@@ -325,7 +332,7 @@ def test_no_terminal_rejection_returns_no_reusable_verdict(temp_db: HubDatabase)
 
     reused = store.get_delivered_rejected_verdict(
         task_id=_TASK_ID,
-        evidence_fingerprint="evidence",
+        review_fingerprint="review",
         expected_task_updated_at=_TASK_UPDATED_AT,
     )
 
@@ -338,7 +345,7 @@ def test_delivered_approval_is_not_reused_as_rejection(temp_db: HubDatabase) -> 
 
     reused = store.get_delivered_rejected_verdict(
         task_id=_TASK_ID,
-        evidence_fingerprint="evidence",
+        review_fingerprint="review",
         expected_task_updated_at=_TASK_UPDATED_AT,
     )
 
@@ -352,7 +359,7 @@ def test_active_review_takes_precedence_over_delivered_rejection(temp_db: HubDat
 
     reused = store.get_delivered_rejected_verdict(
         task_id=_TASK_ID,
-        evidence_fingerprint="evidence",
+        review_fingerprint="review",
         expected_task_updated_at=_TASK_UPDATED_AT,
     )
 
@@ -372,7 +379,7 @@ def test_task_update_after_evaluation_prevents_rejection_reuse(temp_db: HubDatab
 
     reused = store.get_delivered_rejected_verdict(
         task_id=_TASK_ID,
-        evidence_fingerprint="evidence",
+        review_fingerprint="review",
         expected_task_updated_at=_TASK_UPDATED_AT,
     )
 

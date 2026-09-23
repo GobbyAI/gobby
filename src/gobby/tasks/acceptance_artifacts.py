@@ -675,11 +675,17 @@ async def _workflow_exists(sha: str, workflow_name: str, repo_path: str) -> bool
 def _path_error(path: str, repo_path: str) -> str | None:
     pure = PurePosixPath(path)
     if pure.is_absolute() or ".." in pure.parts:
-        return "path traversal is forbidden"
+        return (
+            "file: evidence must be repository-relative; path traversal is forbidden. "
+            "For external or manual artifacts, add a committed evidence report"
+        )
     root = Path(repo_path).resolve()
     candidate = (root / Path(*pure.parts)).resolve(strict=False)
     if not candidate.is_relative_to(root):
-        return "path resolves outside the repository"
+        return (
+            "file: evidence must be repository-relative; path resolves outside the repository. "
+            "For external or manual artifacts, add a committed evidence report"
+        )
     return None
 
 

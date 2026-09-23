@@ -597,6 +597,112 @@ def test_production_size_growth_accepts_explicit_new_split_target(tmp_path: Path
     assert not any(issue.code == "production-size-growth" for issue in result.issues)
 
 
+def test_production_size_growth_accepts_unambiguous_qualified_suffix(tmp_path: Path) -> None:
+    source_path = tmp_path / "src" / "engine" / "core.py"
+    source_path.parent.mkdir(parents=True)
+    source_path.write_text("value = 1\n" * 850, encoding="utf-8")
+    result = _lint_plan_text(
+        tmp_path,
+        """
+        > **Plan ID:** production-size-qualified-split
+
+        # Production Size Qualified Split
+
+        ## P1: Work
+        `kind: framing`
+
+        ### 1.1 Split core [category: code]
+        `kind: deliverable`
+
+        Targets:
+        - `src/engine/core.py::run`
+        - `src/engine/core_overrides.py`
+
+        Split `engine/core.py` and move overrides into `engine/core_overrides.py`.
+
+        **Acceptance:**
+        - 1.1.1 - Core remains. file: `src/engine/core.py`.
+        - 1.1.2 - Overrides move. file: `src/engine/core_overrides.py`.
+        """,
+        project_root=tmp_path,
+    )
+    assert not any(issue.code == "production-size-growth" for issue in result.issues)
+
+
+def test_production_size_growth_rejects_ambiguous_split_name_with_candidates(
+    tmp_path: Path,
+) -> None:
+    source_path = tmp_path / "src" / "engine" / "core.py"
+    source_path.parent.mkdir(parents=True)
+    source_path.write_text("value = 1\n" * 850, encoding="utf-8")
+    result = _lint_plan_text(
+        tmp_path,
+        """
+        > **Plan ID:** production-size-ambiguous-split
+
+        # Production Size Ambiguous Split
+
+        ## P1: Work
+        `kind: framing`
+
+        ### 1.1 Split core [category: code]
+        `kind: deliverable`
+
+        Targets:
+        - `src/engine/core.py::run`
+        - `src/a/core_overrides.py`
+        - `src/b/core_overrides.py`
+
+        Split `src/engine/core.py` and move overrides into `core_overrides.py`.
+
+        **Acceptance:**
+        - 1.1.1 - Core remains. file: `src/engine/core.py`.
+        - 1.1.2 - Overrides move. file: `src/a/core_overrides.py`.
+        """,
+        project_root=tmp_path,
+    )
+    issue = next(issue for issue in result.issues if issue.code == "production-size-growth")
+    assert "ambiguous split path" in issue.message
+    assert "src/a/core_overrides.py" in issue.message
+    assert "src/b/core_overrides.py" in issue.message
+
+
+def test_production_size_growth_names_candidates_for_unmatched_split_name(
+    tmp_path: Path,
+) -> None:
+    source_path = tmp_path / "src" / "engine" / "core.py"
+    source_path.parent.mkdir(parents=True)
+    source_path.write_text("value = 1\n" * 850, encoding="utf-8")
+    result = _lint_plan_text(
+        tmp_path,
+        """
+        > **Plan ID:** production-size-unmatched-split
+
+        # Production Size Unmatched Split
+
+        ## P1: Work
+        `kind: framing`
+
+        ### 1.1 Split core [category: code]
+        `kind: deliverable`
+
+        Targets:
+        - `src/engine/core.py::run`
+        - `src/engine/core_overrides.py`
+
+        Split `src/engine/core.py` and move overrides into `other.py`.
+
+        **Acceptance:**
+        - 1.1.1 - Core remains. file: `src/engine/core.py`.
+        - 1.1.2 - Overrides move. file: `src/engine/core_overrides.py`.
+        """,
+        project_root=tmp_path,
+    )
+    issue = next(issue for issue in result.issues if issue.code == "production-size-growth")
+    assert "unmatched" in issue.message
+    assert "src/engine/core_overrides.py" in issue.message
+
+
 def test_production_size_growth_excludes_test_module_outside_tests_directory(
     tmp_path: Path,
 ) -> None:

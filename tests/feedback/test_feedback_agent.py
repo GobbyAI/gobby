@@ -133,6 +133,7 @@ async def test_named_reviewer_launches_waits_and_reads_submitted_report(
             {
                 "observation_ids": ["feedback-1"],
                 "cited_paths": [],
+                "implementation_paths": [],
                 "theme": "close retry friction",
                 "classification": "defect",
                 "proposed_task": None,
@@ -350,6 +351,7 @@ def test_actionable_findings_require_current_verification(evidence: str | None) 
             {
                 "observation_ids": ["observation"],
                 "cited_paths": [],
+                "implementation_paths": [],
                 "theme": "Prior feedback",
                 "classification": "defect",
                 "proposed_task": {
@@ -363,4 +365,29 @@ def test_actionable_findings_require_current_verification(evidence: str | None) 
     if evidence is not None:
         findings["clusters"][0]["proposed_task"]["verification_evidence"] = evidence
     with pytest.raises(FeedbackReviewerResultError, match="verification_evidence"):
+        agent_module.validate_feedback_findings(findings)
+
+
+def test_feedback_reviewer_checks_installed_row_for_active_configuration() -> None:
+    prompt = (
+        Path(__file__).resolve().parents[2] / "src/gobby/install/shared/prompts/feedback/review.md"
+    ).read_text(encoding="utf-8")
+    assert "installed rule or agent row" in prompt
+    assert "implementation_paths" in prompt
+
+
+def test_feedback_findings_require_implementation_paths() -> None:
+    findings = {
+        "clusters": [
+            {
+                "observation_ids": ["observation"],
+                "cited_paths": [],
+                "theme": "Victim path changed",
+                "classification": "defect",
+                "proposed_task": None,
+                "digest_note": "No implementation path was verified.",
+            }
+        ]
+    }
+    with pytest.raises(FeedbackReviewerResultError, match="implementation_paths"):
         agent_module.validate_feedback_findings(findings)
