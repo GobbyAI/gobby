@@ -39,7 +39,9 @@ pub(super) fn execute(library: &EvidenceLibrary, selector: &SearchSelector) -> R
     };
     items.retain(|item| match item {
         EvidenceItem::Source(source) => eligible.contains(&source.path),
-        EvidenceItem::Graph(_) | EvidenceItem::CommitMetadata(_) => false,
+        EvidenceItem::Graph(_) | EvidenceItem::CommitMetadata(_) | EvidenceItem::Community(_) => {
+            false
+        }
     });
     let mut warnings = Vec::new();
     let completeness = if truncated {
