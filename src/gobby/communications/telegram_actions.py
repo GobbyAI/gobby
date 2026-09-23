@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 from gobby.communications.models import ChannelConfig, CommsMessage, CommsRoutingRule
 from gobby.communications.native_plan_actions import decode_native_plan_option
 from gobby.communications.telegram_access import allowed_senders
-from gobby.storage.sessions import system_session_id
+from gobby.storage.sessions import LIVE_SESSION_STATUSES, system_session_id
 
 if TYPE_CHECKING:
     from gobby.communications.manager import CommunicationsManager
@@ -72,23 +72,83 @@ class TelegramActionController:
             return True
 
         reply_id = _string_value(message.metadata_json.get("reply_to_message_id"))
-        if reply_id is None:
-            return False
-        source = await self._source_message(channel.name, reply_id)
-        if source is None or not source.metadata_json.get("lifecycle_actionable"):
-            return False
-        await self._consume_safely(
-            channel,
-            message,
-            self._deliver_session_answer(
+        source = await self._source_message(channel.name, reply_id) if reply_id else None
+        if source is not None and source.metadata_json.get("lifecycle_actionable"):
+            await self._consume_safely(
                 channel,
                 message,
-                source,
-                message.content,
-                "reply",
-            ),
+                self._deliver_session_answer(
+                    channel,
+                    message,
+                    source,
+                    message.content,
+                    "reply",
+                ),
+            )
+            return True
+
+        session = (
+            await asyncio.to_thread(self._session_manager.get, message.session_id)
+            if message.session_id
+            else None
         )
-        return True
+        if (
+            session is not None
+            and session.status in LIVE_SESSION_STATUSES
+            and getattr(session, "source", "comms") not in {"comms", "web-chat", "web_chat"}
+            and message.content_type != "reaction"
+        ):
+            try:
+                safe_source = (
+                    source if source is not None and _same_telegram_chat(source, message) else None
+                )
+                await self._deliver_inbound(channel, message, session.id, safe_source)
+            except Exception:
+                logger.exception(
+                    "Failed to deliver Telegram message %s to %s", message.id, session.id
+                )
+                try:
+                    await self._feedback(
+                        channel, message, "Delivery failed. Please send your message again."
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to report Telegram delivery failure for %s", message.id
+                    )
+            return True
+        return False
+
+    async def _deliver_inbound(
+        self,
+        channel: ChannelConfig,
+        message: CommsMessage,
+        session_id: str,
+        source: CommsMessage | None,
+    ) -> None:
+        """Persist a Telegram message for its live CLI or agent recipient."""
+        content = message.content or "[Telegram attachment]"
+        result = await self._mailbox.send(
+            from_session_id=system_session_id(),
+            target="session",
+            target_id=session_id,
+            content=content,
+            wake=True,
+            message_type="telegram_message",
+            metadata={
+                "channel": channel.name,
+                "sender": message.metadata_json.get("external_user_id"),
+                "sender_username": message.metadata_json.get("external_username"),
+                "communications_message_id": message.id,
+                "telegram_chat_id": message.metadata_json.get("chat_id"),
+                "telegram_platform_message_id": message.platform_message_id,
+                "reply_to_message_id": message.metadata_json.get("reply_to_message_id"),
+                "replied_to_post": source.content if source is not None else None,
+                "callback_data": message.metadata_json.get("callback_value"),
+            },
+            preserve_content=True,
+        )
+        if not result.success:
+            raise RuntimeError(result.error or "Mailbox delivery was rejected")
 
     async def _consume_safely(
         self,

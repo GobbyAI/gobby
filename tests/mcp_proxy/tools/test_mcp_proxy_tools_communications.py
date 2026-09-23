@@ -84,6 +84,42 @@ async def test_send_message(registry: Any, mock_manager: MagicMock) -> None:
 
 
 @pytest.mark.asyncio
+async def test_send_message_inherits_caller_only_when_omitted(
+    registry: Any, mock_manager: MagicMock
+) -> None:
+    mock_manager.send_message.return_value = MagicMock(status="sent", id="outbound", error=None)
+    with patch(
+        "gobby.mcp_proxy.tools.communications.get_current_session_id", return_value="caller"
+    ):
+        await registry.get_tool("send_message")(channel="telegram", content="hello")
+        await registry.get_tool("send_message")(
+            channel="telegram", content="explicit", session_id="other"
+        )
+    assert mock_manager.send_message.await_args_list[0].kwargs["session_id"] == "caller"
+    assert mock_manager.send_message.await_args_list[1].kwargs["session_id"] == "other"
+
+    with patch("gobby.mcp_proxy.tools.communications.get_current_session_id", return_value=None):
+        await registry.get_tool("send_message")(channel="telegram", content="anonymous")
+    assert mock_manager.send_message.await_args.kwargs["session_id"] is None
+
+
+def test_attach_and_detach_use_caller_session(registry: Any, mock_manager: MagicMock) -> None:
+    with patch(
+        "gobby.mcp_proxy.tools.communications.get_current_session_id", return_value="caller"
+    ):
+        attached = registry.get_tool("attach_conversation")(
+            channel="telegram", conversation_id="dm:42"
+        )
+        detached = registry.get_tool("detach_conversation")(
+            channel="telegram", conversation_id="dm:42"
+        )
+    assert attached["success"] is True
+    assert detached["success"] is True
+    mock_manager.attach_conversation.assert_called_once_with("telegram", "dm:42", "caller")
+    mock_manager.detach_conversation.assert_called_once_with("telegram", "dm:42", "caller")
+
+
+@pytest.mark.asyncio
 async def test_send_attachment_validates_path_and_returns_metadata(
     registry: Any,
     mock_manager: MagicMock,

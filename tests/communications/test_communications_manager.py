@@ -7,6 +7,7 @@ import logging
 import threading
 import uuid
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -29,8 +30,10 @@ from gobby.communications.models import (
     CommsRoutingRule,
 )
 from gobby.communications.rate_limiter import RateLimitWaitExceeded
+from gobby.communications.telegram_actions import TelegramActionController
 from gobby.communications.voice import apply_voice_transcription
 from gobby.config.communications import ChannelDefaults, CommunicationsConfig
+from gobby.sessions.mailbox import MailboxSendResult
 from gobby.storage.communications import LocalCommunicationsStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.secrets import SecretStore
@@ -2567,3 +2570,127 @@ async def test_telegram_reply_targets_originating_session_with_shared_chat() -> 
         "comms.message_received",
         message=stored[0],
     )
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_attached_telegram_plain_message_routes_to_live_holder_then_falls_back() -> None:
+    channel = make_channel(channel_type="telegram", config_json={"allow_from": ["42"]})
+    store = make_store([channel])
+    store.get_message_by_platform_id.return_value = None
+    store.create_message.side_effect = lambda message: message
+    sessions = MagicMock()
+    holder = MagicMock(id="live-session", status="active", source="claude")
+    comms_session = MagicMock(id="comms-session", status="active", source="comms")
+    sessions.get.side_effect = lambda session_id: (
+        holder if session_id == holder.id else comms_session
+    )
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), sessions)
+    manager._channel_by_name[channel.name] = channel
+    manager._identity_manager = MagicMock()
+    manager._identity_manager.resolve_inbound_identity.return_value = IdentityResolution(
+        identity=CommsIdentity(
+            id="identity",
+            channel_id=channel.id,
+            external_user_id="42",
+            created_at=_FIXED_TS,
+            updated_at=_FIXED_TS,
+        ),
+        session_id="comms-session",
+    )
+    manager.event_callback = AsyncMock()
+    mailbox = MagicMock(send=AsyncMock(return_value=MailboxSendResult()))
+    manager.set_telegram_action_controller(TelegramActionController(manager, sessions, mailbox))
+
+    def inbound(reply_to: str | None = None) -> CommsMessage:
+        return CommsMessage(
+            id=str(uuid.uuid4()),
+            channel_id=channel.id,
+            direction="inbound",
+            content="hello",
+            identity_id="42",
+            metadata_json={
+                "chat_id": "99",
+                "conversation_type": "private",
+                **({"reply_to_message_id": reply_to} if reply_to is not None else {}),
+            },
+            created_at=_FIXED_TS,
+        )
+
+    manager.attach_conversation(channel.name, "dm:99", holder.id)
+    first = await manager.handle_inbound_messages(channel.name, [inbound()])
+    assert first[0].session_id == holder.id
+    manager.event_callback.assert_not_awaited()
+    mailbox.send.assert_awaited_once()
+    assert mailbox.send.await_args.kwargs["wake"] is True
+
+    unsourced_reply = await manager.handle_inbound_messages(channel.name, [inbound("old-post")])
+    assert unsourced_reply[0].session_id == holder.id
+    assert mailbox.send.await_count == 2
+    manager.event_callback.assert_not_awaited()
+
+    manager.detach_conversation(channel.name, "dm:99", holder.id)
+    second = await manager.handle_inbound_messages(channel.name, [inbound()])
+    assert second[0].session_id == "comms-session"
+    manager.event_callback.assert_awaited_once()
+
+    manager.attach_conversation(channel.name, "dm:99", holder.id)
+    holder.status = "expired"
+    third = await manager.handle_inbound_messages(channel.name, [inbound()])
+    assert third[0].session_id == "comms-session"
+    assert manager.attached_session(channel.id, "dm:99") is None
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_attachment_sets_outbound_destination_and_rejects_second_holder() -> None:
+    channel = make_channel(channel_type="telegram")
+    sessions = MagicMock()
+    sessions.get.side_effect = lambda session_id: MagicMock(
+        id=session_id, status="active", source="claude"
+    )
+    manager = CommunicationsManager(
+        make_config(), make_store([channel]), make_secret_store(), sessions
+    )
+    manager._channel_by_name[channel.name] = channel
+    manager._identity_manager = MagicMock()
+    manager._identity_manager.get_identity_by_session.return_value = None
+
+    manager.attach_conversation(channel.name, "topic:99:7", "session-a")
+    with pytest.raises(ValueError, match="already attached"):
+        manager.attach_conversation(channel.name, "topic:99:7", "session-b")
+    metadata = await manager._enrich_outbound_metadata(channel, channel.name, "session-a", None)
+    assert metadata["platform_destination"] == "99"
+    assert metadata["thread_id"] == "7"
+
+
+@pytest.mark.unit
+def test_concurrent_attachment_claims_have_one_holder() -> None:
+    channel = make_channel(channel_type="telegram")
+    barrier = threading.Barrier(2)
+    local = threading.local()
+
+    def get_session(session_id: str) -> MagicMock:
+        if not getattr(local, "entered", False):
+            local.entered = True
+            barrier.wait(timeout=5)
+        return MagicMock(id=session_id, status="active", source="claude")
+
+    sessions = MagicMock()
+    sessions.get.side_effect = get_session
+    manager = CommunicationsManager(
+        make_config(), make_store([channel]), make_secret_store(), sessions
+    )
+    manager._channel_by_name[channel.name] = channel
+
+    def claim(session_id: str) -> bool:
+        try:
+            manager.attach_conversation(channel.name, "dm:99", session_id)
+            return True
+        except ValueError:
+            return False
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(claim, ("session-a", "session-b")))
+    assert results.count(True) == 1
+    assert results.count(False) == 1

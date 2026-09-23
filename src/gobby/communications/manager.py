@@ -6,6 +6,7 @@ import asyncio
 import uuid
 from collections.abc import Callable
 from dataclasses import asdict, replace
+from threading import RLock
 from typing import TYPE_CHECKING, Any
 
 from gobby.communications.adapters import get_adapter_class
@@ -35,6 +36,7 @@ from gobby.communications.telegram_access import (
 )
 from gobby.communications.threads import ThreadManager
 from gobby.communications.voice import VoiceTranscriber, VoiceTranscriberGetter
+from gobby.storage.sessions import LIVE_SESSION_STATUSES
 from gobby.utils.datetime import datetime_to_local_iso, utc_now
 
 
@@ -102,6 +104,8 @@ class CommunicationsManager:
         self._vision_extract_service: VisionExtractService | None = None
         self._session_notifications: SessionNotificationService | None = None
         self._telegram_actions: TelegramActionController | None = None
+        self._conversation_attachments: dict[tuple[str, str], str] = {}
+        self._attachment_lock = RLock()
 
         self._identity_manager = IdentityManager(store, session_store, config)
         self._thread_manager = ThreadManager(max_size=10000)
@@ -374,6 +378,76 @@ class CommunicationsManager:
     ) -> None:
         """Attach Telegram lifecycle and subscription actions."""
         self._telegram_actions = controller
+
+    def attached_session(self, channel_id: str, conversation_id: str) -> str | None:
+        """Return the live holder, dropping stale process-local bindings."""
+        with self._attachment_lock:
+            key = (channel_id, conversation_id)
+            session_id = self._conversation_attachments.get(key)
+            if session_id is None:
+                return None
+            session = self._session_store.get(session_id)
+            if session is None or session.status not in LIVE_SESSION_STATUSES:
+                self._conversation_attachments.pop(key, None)
+                return None
+            return session_id
+
+    def attach_conversation(self, channel_name: str, conversation_id: str, session_id: str) -> None:
+        channel = self._channel_by_name.get(channel_name)
+        if channel is None or channel.channel_type != "telegram":
+            raise ValueError("An active Telegram channel is required")
+        kind, _, parts = conversation_id.partition(":")
+        components = parts.split(":")
+        if (
+            kind not in {"dm", "group", "topic"}
+            or any(not part for part in components)
+            or (kind == "topic" and len(components) != 2)
+            or (kind != "topic" and len(components) != 1)
+        ):
+            raise ValueError(
+                "conversation_id must be dm:<chat>, group:<chat>, or topic:<chat>:<thread>"
+            )
+        session = self._session_store.get(session_id)
+        if (
+            session is None
+            or session.status not in LIVE_SESSION_STATUSES
+            or session.source in {"comms", "web-chat", "web_chat"}
+        ):
+            raise ValueError("A live non-comms session is required")
+        with self._attachment_lock:
+            holder = self.attached_session(channel.id, conversation_id)
+            if holder is not None and holder != session_id:
+                raise ValueError("Conversation is already attached to another live session")
+            for (
+                bound_channel,
+                bound_conversation,
+            ), bound_session in self._conversation_attachments.items():
+                if bound_session == session_id and (bound_channel, bound_conversation) != (
+                    channel.id,
+                    conversation_id,
+                ):
+                    raise ValueError("Session is already attached to another conversation")
+            self._conversation_attachments[(channel.id, conversation_id)] = session_id
+
+    def detach_conversation(self, channel_name: str, conversation_id: str, session_id: str) -> None:
+        channel = self.get_channel_by_name(channel_name)
+        if channel is None:
+            raise ValueError("Channel not found")
+        with self._attachment_lock:
+            key = (channel.id, conversation_id)
+            if self.attached_session(*key) != session_id:
+                raise ValueError("Conversation is not attached to this session")
+            del self._conversation_attachments[key]
+
+    def attached_destination(self, channel_id: str, session_id: str) -> str | None:
+        with self._attachment_lock:
+            for (attached_channel, conversation_id), holder in list(
+                self._conversation_attachments.items()
+            ):
+                if attached_channel == channel_id and holder == session_id:
+                    if self.attached_session(attached_channel, conversation_id) == session_id:
+                        return conversation_id
+        return None
 
     async def handle_session_status_transition(
         self,
