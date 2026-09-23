@@ -6,7 +6,7 @@ use crate::config::Context;
 
 #[cfg(test)]
 use super::RELATES_TO_CODE;
-use super::loading::load_report_snapshot;
+use super::loading::{CODE_COMMUNITIES_INPUT, load_report_communities, load_report_snapshot};
 use super::render::{RenderMarkdownInput, render_markdown};
 use super::summary::{
     normalize_bridge_edges, suggested_questions, summarize_bridge_edges, summarize_graph,
@@ -14,8 +14,9 @@ use super::summary::{
 };
 use super::time::now_iso8601;
 use super::types::{
-    BridgeEdgeInput, GraphReportHotspots, ProjectGraphReport, ProjectGraphReportError,
-    ProjectGraphReportOptions, ReportDegradation, ReportGraphSnapshot,
+    BridgeEdgeInput, CommunityInput, GraphReportCommunities, GraphReportHotspots,
+    ProjectGraphReport, ProjectGraphReportError, ProjectGraphReportOptions, ReportDegradation,
+    ReportGraphSnapshot,
 };
 
 #[cfg(test)]
@@ -33,6 +34,7 @@ pub fn generate_report_with_options(
 
     let connection_config = config.connection_config();
     let options = options.normalized();
+    let communities = load_report_communities(ctx);
     let result = gobby_core::falkor::with_graph(
         Some(&connection_config),
         &config.graph_name,
@@ -45,6 +47,7 @@ pub fn generate_report_with_options(
             &ctx.project_id,
             now_iso8601(),
             snapshot,
+            communities,
             options,
         )),
         Ok((_, ServiceState::NotConfigured)) => {
@@ -74,14 +77,16 @@ pub(super) fn generate_report_from_snapshot(
         project_id,
         generated_at,
         snapshot,
+        CommunityInput::default(),
         ProjectGraphReportOptions::default().normalized(),
     )
 }
 
-fn generate_report_from_snapshot_with_options(
+pub(super) fn generate_report_from_snapshot_with_options(
     project_id: impl Into<String>,
     generated_at: impl Into<String>,
     snapshot: ReportGraphSnapshot,
+    communities: CommunityInput,
     options: ProjectGraphReportOptions,
 ) -> ProjectGraphReport {
     let project_id = project_id.into();
@@ -130,6 +135,19 @@ fn generate_report_from_snapshot_with_options(
         };
     let bridge_summary = summarize_bridge_edges(&bridge_edges);
     degradation_details.extend(hotspot_degradation);
+    let communities = match communities {
+        CommunityInput::Available(rows) => {
+            Some(GraphReportCommunities::from_rows(&rows, options.top_n))
+        }
+        CommunityInput::Unavailable(detail) => {
+            degradation_details.push(ReportDegradation {
+                input: CODE_COMMUNITIES_INPUT.to_string(),
+                required: false,
+                detail,
+            });
+            None
+        }
+    };
     degradation_details.sort_by(|left, right| left.input.cmp(&right.input));
 
     let suggested_investigation_questions = suggested_questions(
@@ -146,6 +164,7 @@ fn generate_report_from_snapshot_with_options(
         hotspots: &hotspots,
         unresolved_targets: &unresolved_targets,
         external_targets: &external_targets,
+        communities: communities.as_ref(),
         bridge_summary: bridge_summary.as_ref(),
         degradation_details: &degradation_details,
         top_n: options.top_n,
@@ -158,6 +177,7 @@ fn generate_report_from_snapshot_with_options(
         hotspots,
         unresolved_targets,
         external_targets,
+        communities,
         bridge_summary,
         bridge_edges,
         degradation_details,

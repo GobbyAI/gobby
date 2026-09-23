@@ -212,6 +212,12 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
         checksum: "51c14abba79016cc9c5ff0c045650315fc213420e8694a5713d50d215c49e67b",
         sql: include_str!("../../assets/schema/migrations/448_add_task_delegation.sql"),
     },
+    EmbeddedMigration {
+        version: 449,
+        filename: "449_workspace_default_project.sql",
+        checksum: "41cfe81ece42cc02275d859df92ec978a0b768128ea9e8c419560b17d36f016f",
+        sql: include_str!("../../assets/schema/migrations/449_workspace_default_project.sql"),
+    },
 ];
 // Numbered migrations after canonical baseline@420 land here.
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");

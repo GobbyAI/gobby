@@ -1115,3 +1115,74 @@ async def test_summary_update_logs_per_symbol_failures(caplog: pytest.LogCapture
 
     assert set(updated) == {"sym-ok", "sym-bad", "sym-later"}
     assert "Failed to persist summary for symbol sym-bad: write failed" in caplog.text
+
+
+class RecordingCommunityLabeler:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, Any, Any, Any]] = []
+
+    async def label_batch(
+        self, project_id: str, communities: Any, *, storage: Any, run_db: Any
+    ) -> dict[int, Any]:
+        self.calls.append((project_id, communities, storage, run_db))
+        return {}
+
+
+async def test_maintenance_labels_unlabeled_communities(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    project = IndexedProject(
+        id="proj-labels",
+        root_path=str(root),
+        total_files=1,
+        total_symbols=1,
+    )
+    communities = [SimpleNamespace(community_id=7, member_signature="0000000000000007")]
+    storage = MagicMock()
+    storage.get_registry_project.return_value = (True, False)
+    storage.list_projection_cleanup_pending.return_value = []
+    storage.list_indexed_projects.return_value = [project]
+    storage.get_unsummarized_symbols.return_value = []
+    storage.get_unlabeled_communities.return_value = communities
+    gateway = RecordingGcodeGateway(
+        maintenance_result=_gcode_result(
+            ("/tmp/gcode", "index", "--project", str(root), "--skip-if-locked")
+        )
+    )
+    _write_project_marker(root, "proj-labels")
+    labeler = RecordingCommunityLabeler()
+
+    async def run_db(func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
+        return func(*args, **kwargs)
+
+    context: _MaintenanceContext = SimpleNamespace(
+        storage=storage,
+        clear_graph=AsyncMock(return_value={"success": True}),
+        gcode_gateway=gateway,
+        launch_factory=DummyLaunchFactory(),
+        daemon_config_breaker=SyncCircuitBreaker(
+            name="test",
+            probe_target="daemon config",
+            operation="maintenance",
+        ),
+        config=SimpleNamespace(
+            graph_enabled=True,
+            embedding_enabled=True,
+            maintenance_index_timeout_seconds=900,
+        ),
+        run_db=run_db,
+    )
+
+    await _run_maintenance(
+        cast(CodeIndexContext, context),
+        summarizer=cast(Any, SimpleNamespace(summarize_batch=AsyncMock())),
+        community_labeler=cast(Any, labeler),
+        community_label_batch_size=3,
+    )
+
+    storage.get_unlabeled_communities.assert_called_once_with("proj-labels", limit=3)
+    assert labeler.calls == [("proj-labels", communities, storage, run_db)]
+    call_names = [name for name, _args, _kwargs in storage.mock_calls]
+    assert call_names.index("get_unsummarized_symbols") < call_names.index(
+        "get_unlabeled_communities"
+    )

@@ -5,6 +5,7 @@ Provides endpoints for viewing and managing agent definitions
 (merged from file-based and database sources).
 """
 
+import asyncio
 import logging
 import re
 from pathlib import Path
@@ -705,11 +706,14 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
         try:
             from gobby.storage.agents import LocalAgentRunManager
 
-            manager = LocalAgentRunManager(server.services.database)
-            runs = manager.list_active_global()
+            def load_runs() -> list[dict[str, Any]]:
+                manager = LocalAgentRunManager(server.services.database)
+                return [run.to_list_dict() for run in manager.list_active_global()]
+
+            runs = await asyncio.to_thread(load_runs)
             return {
                 "status": "success",
-                "agents": [r.to_list_dict() for r in runs],
+                "agents": runs,
                 "count": len(runs),
             }
         except Exception as e:
@@ -728,20 +732,25 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
         try:
             from gobby.storage.agents import LocalAgentRunManager
 
-            manager = LocalAgentRunManager(server.services.database)
-            runs = manager.list_by_status(status=status, limit=limit, project_id=project_id)
+            def load_runs() -> tuple[list[dict[str, Any]], list[str]]:
+                manager = LocalAgentRunManager(server.services.database)
+                records = manager.list_by_status(status=status, limit=limit, project_id=project_id)
+                projections = [run.to_list_dict() for run in records]
+                session_ids = [run.child_session_id for run in records if run.child_session_id]
+                return projections, session_ids
+
+            projections, session_ids = await asyncio.to_thread(load_runs)
 
             # Enrich with session data (token usage, cost)
             enriched = []
-            session_ids = [r.child_session_id for r in runs if r.child_session_id]
             session_map = await _batch_load_session_info(
                 server, server.services.database, session_ids
             )
 
-            for r in runs:
-                d = r.to_list_dict()
-                if r.child_session_id and r.child_session_id in session_map:
-                    d.update(session_map[r.child_session_id])
+            for d in projections:
+                child_session_id = d.get("child_session_id")
+                if child_session_id and child_session_id in session_map:
+                    d.update(session_map[child_session_id])
                 enriched.append(d)
 
             return {

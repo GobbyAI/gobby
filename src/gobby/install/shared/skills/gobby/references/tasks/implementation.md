@@ -28,6 +28,11 @@ Every encountered defect, warning, or failed check becomes work in this session:
    command, diagnostics, paths, and impact through `gobby-agents:send_message`.
    Spawned agents route owner handoffs through `send_message(target="parent")`.
    Preserve their files and prove the failure is confined with a passing scoped run.
+   When you filed an open, unclaimed task for another session to own, record the
+   handoff with `delegate_task(task_id, delegated_to_session_ref, reason)`. The
+   found-work gate stops counting it while that session is live, and counts it
+   again if the session ends before anyone claims it. Only the filer can
+   delegate, and never to its own session.
 3. Only a genuine decision, necessary planning pass, or broad clean window permits
    filing `needs-decision`, `needs-planning`, or `clean-window`, with the reason
    in the description. Filing alone does not finish found work.
@@ -47,4 +52,4 @@ content; do not release another session's ownership yourself.
 Guides: [Git and Validation](../../../../../../../../docs/guides/tasks.md#git-and-validation),
 [TDD Enforcement](../../../../../../../../docs/guides/tdd-enforcement.md).
 
-_Last verified: 2026-09-16_
+_Last verified: 2026-09-23_

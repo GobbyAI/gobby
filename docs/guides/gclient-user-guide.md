@@ -129,9 +129,12 @@ Collapse the sidebar with `prefix+b` or `[«]`. Collapsed, it becomes a narrow
 rail: a dot per machine, then numbered project cards, then numbered sessions,
 each list under a `─` rule, with `»` on the last row to expand.
 
-**Tab bar.** One row of tabs for the focused project; each project keeps its own
-tab set, and every tab is a row of the attached workspace (see
-[Workspaces](#workspaces)). A tab you have not renamed is named for its own
+**Tab bar.** One row of tabs for the focused project. A registered project opens
+as its own workspace, so the address is hub, then workspace, then tab, then pane:
+Gobby on workspace 0 and Game Goblins on the next workspace is `0:1:0`, not a
+second tab of workspace 0. `prefix+c` still opens a tab inside the attached
+workspace. `prefix+shift+g` switches to the next workspace on this node. See
+[Workspaces](#workspaces). A tab you have not renamed is named for its own
 address, `tab-` followed by its `node:workspace:tab` ref (`tab-0:0:1`), which
 stays put while the panes inside it change what they run; a renamed tab shows
 its name, and a zoomed tab adds ` Z`. A new-tab button follows the last tab; scroll
@@ -206,9 +209,16 @@ one pane and `75`, `[tmux]` or a whole session banner for the next.
 ## Workspaces
 
 A workspace is the daemon's record of a layout: its tabs, the panes in them, and
-the terminal each pane shows. The client attaches one workspace at startup
-(`--workspace`, default `default`, created on first use) and renders its rows; it
-keeps no layout of its own. Every window attached to the same workspace shows the
+the terminal each pane shows. Addressing is hub, workspace, tab, pane. A
+registered project has one default workspace on the machine; opening that project
+attaches it, creating it at the next free workspace ref when it does not exist
+yet. A launch with no project attaches the projectless scratch named `default`.
+An explicit `--workspace` wins and may hold tabs from more than one project.
+`prefix+shift+g` cycles every workspace on the node without quitting; `prefix+c`
+opens a tab in the workspace you are already on. This reverses the earlier rule
+that projects stayed inside one workspace. The client attaches one workspace at
+startup and renders its rows; it keeps no layout of its own. Every window
+attached to the same workspace shows the
 same tabs, panes, and names, whether a change came from another `gclient`, from
 `gobby panes split`, or from an agent calling the `gobby-workspaces` MCP tools.
 
@@ -663,11 +673,13 @@ after a daemon restart. The client writes nothing about layout.
 
 | Where | What it holds |
 | --- | --- |
-| Workspace rows on the daemon | Tabs, split layout, tab and pane names, and the focus hints (focused project, tab, and pane) |
+| Workspace rows on the daemon | Tabs, split layout, tab and pane names, the project's default workspace (distinct from the focused project), and the focus hints (focused project, tab, and pane) |
 | `~/.gobby/client/prefs.toml` | Settings, plus `sidebar_collapsed`, `project_order`, and `[ui.project_labels]`, which the sidebar writes as you change them |
 | The window's own memory | Zoom, scrollback position, copy mode, and the machine, projects, and sessions filters |
 
-On launch the client attaches the workspace and opens the focused project. A
+On launch the client attaches the workspace — the project's own workspace when
+the launch names a registered project and no `--workspace` was given — and opens
+the focused project. A
 project with no tabs gets one shell in its checkout (for the personal project,
 the directory `gclient` was launched from). A pane whose terminal died is dropped
 from its split by the daemon's restart sweep, and a tab with no surviving panes

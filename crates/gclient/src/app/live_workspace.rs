@@ -11,11 +11,18 @@ impl Workspace<LiveDaemon> {
     /// as the model. Every reconnect re-attaches: the reader forgets the
     /// attachment with the socket, and the daemon may have restarted.
     pub async fn attach_live_workspace(&mut self) -> Result<(), DaemonError> {
+        let project_id = self
+            .attach
+            .workspace
+            .is_none()
+            .then_some(self.attach.project_id.as_deref())
+            .flatten();
         let snapshot = self
             .daemon
             .attach_workspace(
                 self.attach.node.as_deref(),
                 self.attach.workspace.as_deref(),
+                project_id,
             )
             .await?;
         self.apply_workspace_snapshot(snapshot);

@@ -34,6 +34,14 @@ const SKEW_MARGIN: Duration = Duration::from_secs(2);
 /// lockstep with what actually gets indexed — including the internal
 /// `.gobby/plans/*.md` edits the daemon trigger never forwards.
 /// Short-circuits on the first sign of change.
+///
+/// An indexed regular file whose mtime and ctime both predate the threshold
+/// is checked from its metadata alone: its bytes are the ones the last index
+/// classified, so the content checks (binary detection, generated-bundle
+/// detection) are skipped. A classifier upgrade therefore does not re-prune
+/// unchanged files here; the periodic maintenance full re-hash sweep does.
+/// Every other file goes through the indexer's full classification and the
+/// mtime check.
 pub fn project_changed_since(
     project_root: &Path,
     last_indexed_at: SystemTime,
@@ -45,19 +53,79 @@ pub fn project_changed_since(
         .checked_sub(SKEW_MARGIN)
         .unwrap_or(last_indexed_at);
 
+    // Walk from the canonical root, so a regular file the walker reaches without
+    // following a link has a canonical path and a lexical relative path.
+    let root = match project_root.canonicalize() {
+        Ok(root) => root,
+        Err(error) => {
+            log::debug!(
+                "treating project as changed: failed to resolve {}: {error}",
+                project_root.display()
+            );
+            return true;
+        }
+    };
     let excludes = effective_excludes(extra_excludes);
-    let (candidates, content_only) =
-        walker::discover_files_with_options(project_root, &excludes, options);
     let indexed_paths: HashSet<&str> = indexed_paths.iter().map(String::as_str).collect();
     let mut discovered_paths = HashSet::new();
+    // Discovery's dedup, keyed the same way: first file per canonical path wins.
+    let mut seen = HashSet::new();
 
-    // Add: any discovered path absent from code_indexed_files. Check this before
-    // mtime so previously excluded files refresh even when their mtimes are old.
-    // Modify: a discovered file whose mtime is newer than the threshold.
-    for path in candidates.iter().chain(content_only.iter()) {
-        let Ok(rel) = relative_path(path, project_root) else {
+    for file in walker::walk_files(&root, options) {
+        let path = file.path.as_path();
+        let key = if file.direct {
+            path.to_path_buf()
+        } else {
+            path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+        };
+        if !seen.insert(key) {
+            continue;
+        }
+
+        // Fast path: an indexed regular file whose inode has not changed since
+        // the threshold keeps the bytes and permissions the last index
+        // classified, so only the byte-free filters can have changed its
+        // verdict. Nothing is opened or read.
+        if file.direct {
+            let rel =
+                crate::index::normalize_storage_path(path.strip_prefix(&root).unwrap_or(path));
+            if indexed_paths.contains(rel.as_str())
+                && let Ok(meta) = path.metadata()
+            {
+                match meta.modified() {
+                    Ok(modified) if modified > threshold => {
+                        log::debug!(
+                            "treating project as changed: {rel} was modified after the last index"
+                        );
+                        return true;
+                    }
+                    Ok(_) if status_unchanged_since(&meta, threshold) => {
+                        if !walker::passes_path_filters(&root, path, &excludes)
+                            || !walker::indexable_len(meta.len())
+                        {
+                            log::debug!(
+                                "treating project as changed: indexed path {rel} is no longer discovered"
+                            );
+                            return true;
+                        }
+                        discovered_paths.insert(rel);
+                        continue;
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // Full classification, as the indexer runs it, for new, linked,
+        // allowlisted or recently touched files.
+        if walker::classify_file(&root, path, &excludes).is_none() {
+            continue;
+        }
+        let Ok(rel) = relative_path(path, &root) else {
             return true;
         };
+        // Add: a discovered path absent from code_indexed_files. Check this before
+        // mtime so previously excluded files refresh even when their mtimes are old.
         discovered_paths.insert(rel.clone());
         if !indexed_paths.contains(rel.as_str()) {
             log::debug!("treating project as changed: {rel} is discovered but not indexed");
@@ -103,214 +171,28 @@ pub fn project_changed_since(
     false
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::fs::File;
-    use std::path::PathBuf;
+/// Whether the inode's last status change (ctime) is at or before `threshold`.
+/// Writes, chmod, renames and a backdated `touch` all advance ctime, and
+/// ordinary tools cannot set it back.
+#[cfg(unix)]
+fn status_unchanged_since(meta: &std::fs::Metadata, threshold: SystemTime) -> bool {
+    use std::os::unix::fs::MetadataExt;
 
-    fn write_file(root: &Path, rel: &str, contents: &[u8]) -> PathBuf {
-        let path = root.join(rel);
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).expect("create parent");
-        }
-        std::fs::write(&path, contents).expect("write file");
-        path
-    }
-
-    fn set_mtime(path: &Path, time: SystemTime) {
-        File::options()
-            .write(true)
-            .open(path)
-            .expect("open file to set mtime")
-            .set_modified(time)
-            .expect("set mtime");
-    }
-
-    /// A fixed, whole-second base instant well in the past, so the arithmetic
-    /// never underflows and 1-second-granularity filesystems round-trip it.
-    fn base_time() -> SystemTime {
-        SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000)
-    }
-
-    fn default_options() -> walker::DiscoveryOptions {
-        walker::DiscoveryOptions::default()
-    }
-
-    #[test]
-    fn reports_no_change_when_everything_predates_last_index() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let root = tmp.path();
-        let lib = write_file(root, "src/lib.rs", b"fn main() {}\n");
-        let readme = write_file(root, "README.md", b"# Title\n");
-
-        let base = base_time();
-        set_mtime(&lib, base);
-        set_mtime(&readme, base);
-
-        // last_indexed_at is well after every file's mtime.
-        let last = base + Duration::from_secs(3600);
-        let indexed = vec!["src/lib.rs".to_string(), "README.md".to_string()];
-
-        assert!(!project_changed_since(
-            root,
-            last,
-            &indexed,
-            &[],
-            default_options()
-        ));
-    }
-
-    #[test]
-    fn reports_change_when_a_file_is_modified_after_last_index() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let root = tmp.path();
-        let lib = write_file(root, "src/lib.rs", b"fn main() {}\n");
-        set_mtime(&lib, base_time() + Duration::from_secs(7200));
-
-        let last = base_time() + Duration::from_secs(3600);
-        let indexed = vec!["src/lib.rs".to_string()];
-
-        assert!(project_changed_since(
-            root,
-            last,
-            &indexed,
-            &[],
-            default_options()
-        ));
-    }
-
-    #[test]
-    fn reports_change_for_unindexed_file_even_when_mtime_is_old() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let root = tmp.path();
-        let added = write_file(root, "src/new.rs", b"fn added() {}\n");
-        set_mtime(&added, base_time());
-
-        let last = base_time() + Duration::from_secs(3600);
-        let indexed: Vec<String> = Vec::new();
-
-        assert!(project_changed_since(
-            root,
-            last,
-            &indexed,
-            &[],
-            default_options()
-        ));
-    }
-
-    #[test]
-    fn reports_change_when_indexed_file_is_deleted() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let root = tmp.path();
-        let lib = write_file(root, "src/lib.rs", b"fn main() {}\n");
-        set_mtime(&lib, base_time());
-
-        let last = base_time() + Duration::from_secs(3600);
-        // "src/gone.rs" is recorded as indexed but no longer exists on disk.
-        let indexed = vec!["src/lib.rs".to_string(), "src/gone.rs".to_string()];
-
-        assert!(project_changed_since(
-            root,
-            last,
-            &indexed,
-            &[],
-            default_options()
-        ));
-    }
-
-    #[test]
-    fn skew_margin_boundary_only_ever_makes_the_gate_more_eager() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let root = tmp.path();
-        let lib = write_file(root, "src/lib.rs", b"fn main() {}\n");
-        let mtime = base_time();
-        set_mtime(&lib, mtime);
-        let indexed = vec!["src/lib.rs".to_string()];
-
-        // File is 1s older than last_indexed_at — inside the 2s margin, so the
-        // gate refreshes (threshold = last - 2s = mtime - 1s < mtime).
-        let within_margin = mtime + Duration::from_secs(1);
-        assert!(project_changed_since(
-            root,
-            within_margin,
-            &indexed,
-            &[],
-            default_options()
-        ));
-
-        // File sits exactly at the boundary (threshold == mtime, mtime <=
-        // threshold), so it counts as unchanged.
-        let at_margin = mtime + SKEW_MARGIN;
-        assert!(!project_changed_since(
-            root,
-            at_margin,
-            &indexed,
-            &[],
-            default_options()
-        ));
-
-        // File is 3s older than last_indexed_at — beyond the 2s margin, so the
-        // gate skips (threshold = last - 2s = mtime + 1s >= mtime).
-        let beyond_margin = mtime + Duration::from_secs(3);
-        assert!(!project_changed_since(
-            root,
-            beyond_margin,
-            &indexed,
-            &[],
-            default_options()
-        ));
-    }
-
-    #[test]
-    fn gitignored_new_files_follow_respect_gitignore_setting() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let root = tmp.path();
-        std::fs::create_dir(root.join(".git")).expect("git dir");
-        write_file(root, ".gitignore", b"ignored.rs\n");
-        let ignored = write_file(root, "ignored.rs", b"fn ignored() {}\n");
-        set_mtime(&ignored, base_time() + Duration::from_secs(7200));
-
-        let last = base_time() + Duration::from_secs(3600);
-        let indexed: Vec<String> = Vec::new();
-
-        assert!(!project_changed_since(
-            root,
-            last,
-            &indexed,
-            &[],
-            walker::DiscoveryOptions {
-                respect_gitignore: true
-            }
-        ));
-        assert!(project_changed_since(
-            root,
-            last,
-            &indexed,
-            &[],
-            walker::DiscoveryOptions {
-                respect_gitignore: false
-            }
-        ));
-    }
-
-    #[test]
-    fn newly_excluded_indexed_file_triggers_pruning_refresh() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let root = tmp.path();
-        let generated = write_file(root, "generated/output.rs", b"fn generated() {}\n");
-        set_mtime(&generated, base_time());
-
-        let last = base_time() + Duration::from_secs(3600);
-        let indexed = vec!["generated/output.rs".to_string()];
-        let extra_excludes = vec!["generated".to_string()];
-
-        assert!(project_changed_since(
-            root,
-            last,
-            &indexed,
-            &extra_excludes,
-            default_options()
-        ));
-    }
+    let (Ok(secs), Ok(nanos)) = (
+        u64::try_from(meta.ctime()),
+        u32::try_from(meta.ctime_nsec()),
+    ) else {
+        return false;
+    };
+    SystemTime::UNIX_EPOCH + Duration::new(secs, nanos) <= threshold
 }
+
+/// Without a ctime, every indexed file takes the full classification path.
+#[cfg(not(unix))]
+fn status_unchanged_since(_meta: &std::fs::Metadata, _threshold: SystemTime) -> bool {
+    false
+}
+
+#[cfg(test)]
+#[path = "freshness_probe/tests.rs"]
+mod tests;

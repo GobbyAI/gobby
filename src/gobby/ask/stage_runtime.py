@@ -727,7 +727,7 @@ class AskStageRuntime:
         return EvidenceAdmission(
             run_id=record.run_id,
             runtime=runtime,
-            permitted_operations={"search", "read", "graph"},
+            permitted_operations={"search", "read", "graph", "communities"},
             page_size=1024 * 1024,
             artifacts=artifacts,
             storage=self.storage,

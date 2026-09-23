@@ -4,9 +4,10 @@ use std::process::{Command, Stdio};
 use std::sync::Arc;
 
 use crate::codewiki_facts::{
-    ContentFact, FileFact, FileId, GraphBounds as FactsGraphBounds, GraphEdge, GraphEdgeKind,
-    GraphOutcome, GraphScopeMode, GrepContextLineFact, GrepHit, GrepOutcome, GrepQuery,
-    GrepSpanFact, ScopeSelector, ScopedGraph, SearchQuery, SymbolFact,
+    CommunityFact, ContentFact, FileFact, FileId, GraphBounds as FactsGraphBounds, GraphEdge,
+    GraphEdgeKind, GraphOutcome, GraphScopeMode, GrepContextLineFact, GrepHit, GrepOutcome,
+    GrepQuery, GrepSpanFact, ProjectCommunities, ScopeSelector, ScopedGraph, SearchQuery,
+    SymbolFact,
 };
 
 use super::*;
@@ -113,6 +114,7 @@ struct FakeFacts {
     files: Vec<FileFact>,
     symbols: Vec<SymbolFact>,
     edges: Vec<GraphEdge>,
+    communities: ProjectCommunities,
 }
 
 impl FakeFacts {
@@ -154,6 +156,7 @@ impl FakeFacts {
             files,
             symbols,
             edges,
+            communities: ProjectCommunities::default(),
         }
     }
 }
@@ -161,6 +164,10 @@ impl FakeFacts {
 impl EvidenceFacts for FakeFacts {
     fn project_id(&self) -> &str {
         &self.project_id
+    }
+
+    fn project_communities(&self) -> anyhow::Result<ProjectCommunities> {
+        Ok(self.communities.clone())
     }
 
     fn files(&self) -> anyhow::Result<Vec<FileFact>> {
@@ -1213,4 +1220,547 @@ fn numbered_excerpt_numbers_every_line_including_an_unterminated_last_line() {
     );
     assert_eq!(read::numbered_excerpt("\n\n", 1), "1| \n2| \n");
     assert_eq!(read::numbered_excerpt("", 1), "");
+}
+
+fn community_binding() -> RepositoryBinding {
+    RepositoryBinding {
+        project_id: "project-1".to_string(),
+        commit_oid: "a".repeat(40),
+        tree_oid: "b".repeat(40),
+    }
+}
+
+/// A deterministic-labeled community of `size` members named `c{id}/m000.py` upward.
+fn community(community_id: i32, label: &str, size: usize) -> CommunityFact {
+    CommunityFact {
+        community_id,
+        label: label.to_string(),
+        label_deterministic: format!("c{community_id}"),
+        label_source: "deterministic".to_string(),
+        label_confidence: None,
+        label_stale: false,
+        size,
+        cohesion: 0.5,
+        internal_edges: size,
+        member_signature: format!("signature-{community_id}"),
+        members: (0..size)
+            .map(|index| format!("c{community_id}/m{index:03}.py"))
+            .collect(),
+        representatives: Vec::new(),
+        boundary: Vec::new(),
+    }
+}
+
+/// Every member of every community is an indexed file except `missing`.
+fn community_library(
+    binding: &RepositoryBinding,
+    refreshed: bool,
+    communities: Vec<CommunityFact>,
+    missing: &[&str],
+) -> anyhow::Result<(tempfile::TempDir, EvidenceLibrary)> {
+    let temporary = tempfile::tempdir()?;
+    let files = communities
+        .iter()
+        .flat_map(|community| community.members.iter())
+        .filter(|path| !missing.contains(&path.as_str()))
+        .map(|path| FileFact {
+            id: FileId::new(path.clone()),
+            path: path.clone(),
+            language: "python".to_string(),
+            symbol_count: 0,
+            content_hash: format!("hash:{path}"),
+        })
+        .collect();
+    let facts = FakeFacts {
+        project_id: binding.project_id.clone(),
+        files,
+        symbols: Vec::new(),
+        edges: Vec::new(),
+        communities: ProjectCommunities {
+            refreshed,
+            communities,
+        },
+    };
+    let library = EvidenceLibrary::new(temporary.path(), binding.clone(), Arc::new(facts))?;
+    Ok((temporary, library))
+}
+
+fn communities_request(
+    binding: &RepositoryBinding,
+    communities: CommunitiesSelector,
+) -> EvidenceRequest {
+    request(binding, EvidenceOperation::Communities { communities })
+}
+
+fn community_items(response: &EvidenceResponse) -> Vec<&CommunityEvidence> {
+    response
+        .items
+        .iter()
+        .map(|item| match item {
+            EvidenceItem::Community(community) => community,
+            other => panic!("community evidence, got {other:?}"),
+        })
+        .collect()
+}
+
+fn community_ids(response: &EvidenceResponse) -> Vec<i32> {
+    community_items(response)
+        .iter()
+        .map(|community| community.community_id)
+        .collect()
+}
+
+fn warning_codes(response: &EvidenceResponse) -> Vec<&str> {
+    response
+        .warnings
+        .iter()
+        .map(|warning| warning.code.as_str())
+        .collect()
+}
+
+fn community_member(path: &str) -> CommunityMember {
+    CommunityMember {
+        path: path.to_string(),
+        content_hash: format!("hash:{path}"),
+    }
+}
+
+#[test]
+fn communities_list_orders_by_size_then_id() -> anyhow::Result<()> {
+    let binding = community_binding();
+    let (_temporary, library) = community_library(
+        &binding,
+        true,
+        vec![
+            community(1, "nine", 9),
+            community(10, "ten b", 10),
+            community(2, "hundred", 100),
+            community(9, "ten a", 10),
+            community(3, "eleven", 11),
+        ],
+        &[],
+    )?;
+
+    let response = library.query(communities_request(
+        &binding,
+        CommunitiesSelector::default(),
+    ))?;
+    assert_eq!(community_ids(&response), vec![2, 3, 9, 10, 1]);
+    assert_eq!(response.completeness, Completeness::Complete);
+    assert!(
+        community_items(&response)
+            .iter()
+            .all(|community| community.members.is_empty())
+    );
+    assert!(
+        response
+            .items
+            .iter()
+            .all(|item| item.canonical_key().starts_with("3\0"))
+    );
+
+    let limited = library.query(communities_request(
+        &binding,
+        CommunitiesSelector {
+            limit: Some(2),
+            ..CommunitiesSelector::default()
+        },
+    ))?;
+    assert_eq!(community_ids(&limited), vec![2, 3]);
+    assert_eq!(limited.completeness, Completeness::TruncatedIndex);
+    Ok(())
+}
+
+#[test]
+fn communities_detail_bounds_members_and_flags_truncation() -> anyhow::Result<()> {
+    let binding = community_binding();
+    let mut selected = community(7, "Parsing", 6);
+    selected.members = [
+        "pkg/e.py",
+        "pkg/d.py",
+        "pkg/c.py",
+        "pkg/b.py",
+        "pkg/a.py",
+        "pkg/gone.py",
+    ]
+    .map(String::from)
+    .to_vec();
+    selected.representatives = vec!["pkg/c.py".to_string(), "pkg/a.py".to_string()];
+    selected.boundary = vec![(8, 3), (99, 1)];
+    let (_temporary, library) = community_library(
+        &binding,
+        true,
+        vec![selected, community(8, "Rendering", 2)],
+        &["pkg/gone.py"],
+    )?;
+
+    let response = library.query(communities_request(
+        &binding,
+        CommunitiesSelector {
+            community_id: Some(7),
+            max_members: Some(3),
+            ..CommunitiesSelector::default()
+        },
+    ))?;
+    let items = community_items(&response);
+    assert_eq!(items.len(), 1);
+    assert_eq!(response.completeness, Completeness::Complete);
+    assert_eq!(items[0].size, 6);
+    assert_eq!(
+        items[0].members,
+        vec![
+            community_member("pkg/c.py"),
+            community_member("pkg/a.py"),
+            community_member("pkg/b.py"),
+        ]
+    );
+    assert!(items[0].members_truncated);
+    assert_eq!(
+        items[0].boundary,
+        vec![
+            CommunityBoundary {
+                other_community_id: 8,
+                label: "Rendering".to_string(),
+                import_count: 3,
+            },
+            CommunityBoundary {
+                other_community_id: 99,
+                label: String::new(),
+                import_count: 1,
+            },
+        ]
+    );
+    assert_eq!(
+        response
+            .warnings
+            .iter()
+            .map(|warning| (warning.code.as_str(), warning.path.as_deref()))
+            .collect::<Vec<_>>(),
+        vec![("community_member_not_in_snapshot", None)]
+    );
+
+    let by_path = library.query(communities_request(
+        &binding,
+        CommunitiesSelector {
+            path: Some("pkg/d.py".to_string()),
+            max_members: Some(5),
+            ..CommunitiesSelector::default()
+        },
+    ))?;
+    let items = community_items(&by_path);
+    assert_eq!(community_ids(&by_path), vec![7]);
+    assert_eq!(items[0].members.len(), 5);
+    assert!(!items[0].members_truncated);
+    Ok(())
+}
+
+#[test]
+fn communities_detail_reports_snapshot_misses_in_one_warning() -> anyhow::Result<()> {
+    let binding = community_binding();
+    let selected = community(9, "Large", 40);
+    let missing = selected.members[..35]
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    let (_temporary, library) =
+        community_library(&binding, true, vec![selected.clone()], &missing)?;
+
+    let response = library.query(communities_request(
+        &binding,
+        CommunitiesSelector {
+            community_id: Some(9),
+            max_members: Some(2),
+            ..CommunitiesSelector::default()
+        },
+    ))?;
+    let items = community_items(&response);
+    assert_eq!(
+        items[0].members,
+        vec![
+            community_member("c9/m035.py"),
+            community_member("c9/m036.py")
+        ]
+    );
+    assert!(items[0].members_truncated);
+    assert_eq!(
+        warning_codes(&response),
+        vec!["community_member_not_in_snapshot"]
+    );
+    assert!(
+        response.warnings[0]
+            .message
+            .ends_with(": 35 (first c9/m000.py)"),
+        "{}",
+        response.warnings[0].message
+    );
+    Ok(())
+}
+
+#[test]
+fn communities_without_rows_is_complete_empty_with_hint() -> anyhow::Result<()> {
+    let binding = community_binding();
+    let (_temporary, library) = community_library(&binding, false, Vec::new(), &[])?;
+
+    for selector in [
+        CommunitiesSelector::default(),
+        CommunitiesSelector {
+            community_id: Some(1),
+            ..CommunitiesSelector::default()
+        },
+    ] {
+        let response = library.query(communities_request(&binding, selector))?;
+        assert_eq!(response.completeness, Completeness::CompleteEmpty);
+        assert!(response.items.is_empty());
+        assert_eq!(
+            response.warnings,
+            vec![EvidenceWarning {
+                code: "community_partition_missing".to_string(),
+                message: crate::communities::MISSING_PARTITION_HINT.to_string(),
+                path: None,
+            }]
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn communities_refreshed_but_empty_is_complete_empty() -> anyhow::Result<()> {
+    let binding = community_binding();
+    let (_temporary, library) = community_library(&binding, true, Vec::new(), &[])?;
+
+    for selector in [
+        CommunitiesSelector::default(),
+        CommunitiesSelector {
+            label: Some("auth".to_string()),
+            ..CommunitiesSelector::default()
+        },
+    ] {
+        let response = library.query(communities_request(&binding, selector))?;
+        assert_eq!(response.completeness, Completeness::CompleteEmpty);
+        assert!(response.items.is_empty());
+        assert!(response.warnings.is_empty());
+    }
+    Ok(())
+}
+
+#[test]
+fn communities_ambiguous_label_returns_every_match_with_warning() -> anyhow::Result<()> {
+    let binding = community_binding();
+    let mut first = community(1, "Auth Flow", 3);
+    first.label_deterministic = "src/auth".to_string();
+    let mut second = community(2, "auth flow", 4);
+    second.label_deterministic = "src/login".to_string();
+    let mut storage = community(3, "Storage", 3);
+    storage.label_deterministic = "src/storage".to_string();
+    let mut tools = community(4, "Storage Tools", 3);
+    tools.label_deterministic = "src/tools".to_string();
+    let mut payments = community(5, "Payments", 2);
+    payments.label_deterministic = "src/payments".to_string();
+    payments.members = vec!["src/billing.py".to_string(), "src/ledger.py".to_string()];
+    let (_temporary, library) = community_library(
+        &binding,
+        true,
+        vec![first, second, storage, tools, payments],
+        &[],
+    )?;
+    let by_label = |label: &str| {
+        library.query(communities_request(
+            &binding,
+            CommunitiesSelector {
+                label: Some(label.to_string()),
+                ..CommunitiesSelector::default()
+            },
+        ))
+    };
+
+    let ambiguous = by_label("AUTH FLOW")?;
+    assert_eq!(community_ids(&ambiguous), vec![2, 1]);
+    assert_eq!(
+        warning_codes(&ambiguous),
+        vec!["community_selector_ambiguous"]
+    );
+
+    let exact = by_label("storage")?;
+    assert_eq!(community_ids(&exact), vec![3]);
+    assert!(exact.warnings.is_empty());
+
+    let deterministic = by_label("src/tools")?;
+    assert_eq!(community_ids(&deterministic), vec![4]);
+
+    let substring = by_label("flow")?;
+    assert_eq!(community_ids(&substring), vec![2, 1]);
+    assert_eq!(
+        warning_codes(&substring),
+        vec!["community_selector_ambiguous"]
+    );
+
+    let member_only = by_label("billing")?;
+    assert_eq!(member_only.completeness, Completeness::CompleteEmpty);
+    assert!(member_only.items.is_empty());
+    assert!(member_only.warnings.is_empty());
+    Ok(())
+}
+
+#[test]
+fn communities_below_min_size_is_complete_empty() -> anyhow::Result<()> {
+    let binding = community_binding();
+    let (_temporary, library) = community_library(
+        &binding,
+        true,
+        vec![
+            community(1, "pair", 2),
+            community(2, "triple", 3),
+            community(3, "single", 1),
+        ],
+        &[],
+    )?;
+
+    let above = library.query(communities_request(
+        &binding,
+        CommunitiesSelector {
+            min_size: Some(4),
+            ..CommunitiesSelector::default()
+        },
+    ))?;
+    assert_eq!(above.completeness, Completeness::CompleteEmpty);
+    assert!(above.items.is_empty());
+
+    let singleton = library.query(communities_request(
+        &binding,
+        CommunitiesSelector {
+            community_id: Some(3),
+            ..CommunitiesSelector::default()
+        },
+    ))?;
+    assert_eq!(singleton.completeness, Completeness::CompleteEmpty);
+    assert!(singleton.items.is_empty());
+
+    let listed = library.query(communities_request(
+        &binding,
+        CommunitiesSelector::default(),
+    ))?;
+    assert_eq!(community_ids(&listed), vec![2, 1]);
+    Ok(())
+}
+
+#[test]
+fn communities_evidence_id_survives_relabel() -> anyhow::Result<()> {
+    let binding = community_binding();
+    let evidence_id =
+        |binding: &RepositoryBinding, fact: CommunityFact| -> anyhow::Result<String> {
+            let (_temporary, library) = community_library(binding, true, vec![fact], &[])?;
+            let response =
+                library.query(communities_request(binding, CommunitiesSelector::default()))?;
+            assert_eq!(response.items.len(), 1);
+            Ok(response.items[0].evidence_id().to_string())
+        };
+    let original = community(4, "Before", 3);
+    let mut relabeled = original.clone();
+    relabeled.label = "After".to_string();
+    relabeled.label_source = "model".to_string();
+    relabeled.label_confidence = Some(0.9);
+    let mut regrouped = original.clone();
+    regrouped.member_signature = "signature-changed".to_string();
+    let mut rebound = binding.clone();
+    rebound.commit_oid = "c".repeat(40);
+
+    let original_id = evidence_id(&binding, original.clone())?;
+    assert!(original_id.starts_with("com:"), "{original_id}");
+    assert_eq!(evidence_id(&binding, relabeled)?, original_id);
+    assert_ne!(evidence_id(&binding, regrouped)?, original_id);
+    assert_ne!(evidence_id(&rebound, original)?, original_id);
+    Ok(())
+}
+
+#[test]
+fn communities_selector_rejects_two_keys() -> anyhow::Result<()> {
+    let binding = community_binding();
+    let (_temporary, library) =
+        community_library(&binding, true, vec![community(1, "Auth", 2)], &[])?;
+
+    for selector in [
+        CommunitiesSelector {
+            community_id: Some(1),
+            label: Some("Auth".to_string()),
+            ..CommunitiesSelector::default()
+        },
+        CommunitiesSelector {
+            community_id: Some(1),
+            path: Some("c1/m000.py".to_string()),
+            ..CommunitiesSelector::default()
+        },
+        CommunitiesSelector {
+            label: Some("Auth".to_string()),
+            path: Some("c1/m000.py".to_string()),
+            ..CommunitiesSelector::default()
+        },
+    ] {
+        let error = library
+            .query(communities_request(&binding, selector.clone()))
+            .expect_err(&format!("two selector keys must be rejected: {selector:?}"));
+        assert_eq!(error.code(), "invalid_selector");
+    }
+    Ok(())
+}
+
+#[test]
+fn communities_selector_rejects_invalid_bounds() -> anyhow::Result<()> {
+    let binding = community_binding();
+    let (_temporary, library) =
+        community_library(&binding, true, vec![community(1, "Auth", 2)], &[])?;
+
+    for (selector, code) in [
+        (
+            CommunitiesSelector {
+                community_id: Some(1),
+                max_members: Some(0),
+                ..CommunitiesSelector::default()
+            },
+            "invalid_selector",
+        ),
+        (
+            CommunitiesSelector {
+                community_id: Some(1),
+                max_members: Some(501),
+                ..CommunitiesSelector::default()
+            },
+            "invalid_selector",
+        ),
+        (
+            CommunitiesSelector {
+                limit: Some(0),
+                ..CommunitiesSelector::default()
+            },
+            "invalid_selector",
+        ),
+        (
+            CommunitiesSelector {
+                label: Some("  ".to_string()),
+                ..CommunitiesSelector::default()
+            },
+            "invalid_selector",
+        ),
+        (
+            CommunitiesSelector {
+                path: Some("../outside.py".to_string()),
+                ..CommunitiesSelector::default()
+            },
+            "unsafe_path",
+        ),
+    ] {
+        let error = library
+            .query(communities_request(&binding, selector.clone()))
+            .expect_err(&format!("selector must be rejected: {selector:?}"));
+        assert_eq!(error.code(), code, "{selector:?}");
+    }
+    let widest = library.query(communities_request(
+        &binding,
+        CommunitiesSelector {
+            community_id: Some(1),
+            max_members: Some(500),
+            ..CommunitiesSelector::default()
+        },
+    ))?;
+    assert_eq!(community_ids(&widest), vec![1]);
+    Ok(())
 }

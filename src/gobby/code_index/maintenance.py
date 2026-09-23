@@ -21,6 +21,7 @@ from gobby.code_index.gcode_gateway import (
 from gobby.code_index.maintenance_launch import open_launch_async
 
 if TYPE_CHECKING:
+    from gobby.code_index.community_labeler import CommunityLabeler
     from gobby.code_index.context import CodeIndexContext
     from gobby.code_index.summarizer import SymbolSummarizer
 
@@ -35,6 +36,9 @@ async def code_index_maintenance_loop(
     interval: int = 3600,
     summarizer: SymbolSummarizer | None = None,
     symbol_summary_batch_size: int = 20,
+    *,
+    community_labeler: CommunityLabeler | None = None,
+    community_label_batch_size: int = 10,
 ) -> None:
     """Background loop that checks for stale indexed files.
 
@@ -44,6 +48,8 @@ async def code_index_maintenance_loop(
         interval: Seconds between maintenance runs.
         summarizer: Optional SymbolSummarizer for generating summaries.
         symbol_summary_batch_size: Max symbols to summarize per pass.
+        community_labeler: Optional CommunityLabeler for naming import communities.
+        community_label_batch_size: Max communities to label per project per pass.
     """
     logger.info("Code index maintenance loop started (interval=%ss)", interval)
     missing_root_observations: dict[str, int] = {}
@@ -59,6 +65,8 @@ async def code_index_maintenance_loop(
                 summarizer,
                 symbol_summary_batch_size,
                 missing_root_observations=missing_root_observations,
+                community_labeler=community_labeler,
+                community_label_batch_size=community_label_batch_size,
             )
         except Exception as e:
             logger.exception("Code index maintenance error: %s", e)
@@ -81,6 +89,9 @@ async def _run_maintenance(
     summarizer: SymbolSummarizer | None = None,
     symbol_summary_batch_size: int = 20,
     missing_root_observations: dict[str, int] | None = None,
+    *,
+    community_labeler: CommunityLabeler | None = None,
+    community_label_batch_size: int = 10,
 ) -> None:
     """Single maintenance pass: re-index via gcode and generate summaries."""
     if missing_root_observations is None:
@@ -198,6 +209,14 @@ async def _run_maintenance(
                 project,
                 summarizer,
                 symbol_summary_batch_size,
+            )
+
+        if community_labeler:
+            await _label_unlabeled_communities(
+                context,
+                project,
+                community_labeler,
+                community_label_batch_size,
             )
 
 
@@ -376,6 +395,31 @@ async def _retry_pending_vector_cleanup(context: CodeIndexContext, project_id: s
         return
 
     await context.run_db(context.storage.clear_projection_cleanup_pending, project_id, "vector")
+
+
+async def _label_unlabeled_communities(
+    context: CodeIndexContext,
+    project: Any,
+    labeler: CommunityLabeler,
+    batch_size: int,
+) -> None:
+    """Name import communities whose membership changed since they were last labeled."""
+    communities = await context.run_db(
+        context.storage.get_unlabeled_communities,
+        project.id,
+        limit=batch_size,
+    )
+    if not communities:
+        return
+    try:
+        await labeler.label_batch(
+            project.id,
+            communities,
+            storage=context.storage,
+            run_db=context.run_db,
+        )
+    except Exception:
+        logger.exception("Community labeling failed for project %s", project.id)
 
 
 async def _summarize_unsummarized(

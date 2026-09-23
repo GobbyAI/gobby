@@ -95,7 +95,7 @@ async fn focus_hints_seed_and_follow_the_last_actor() {
         .await
         .expect("connect live daemon");
     let workspace_id = daemon
-        .attach_workspace(None, None)
+        .attach_workspace(None, None, None)
         .await
         .expect("attach the seeded workspace")
         .workspace

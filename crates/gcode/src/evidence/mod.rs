@@ -5,10 +5,11 @@ use std::sync::Arc;
 
 use crate::codewiki_facts::{
     CodewikiFacts, ContentFact, FileFact, GraphBounds as FactsGraphBounds, GraphEdge,
-    GraphEdgeKind, GraphOutcome, GraphScopeMode, GrepOutcome, GrepQuery, ScopeSelector,
-    ScopedGraph, SearchQuery, SymbolFact,
+    GraphEdgeKind, GraphOutcome, GraphScopeMode, GrepOutcome, GrepQuery, ProjectCommunities,
+    ScopeSelector, ScopedGraph, SearchQuery, SymbolFact,
 };
 
+mod communities;
 mod contracts;
 mod graph;
 mod provenance;
@@ -47,6 +48,9 @@ pub fn validate_request_shape(request: &EvidenceRequest) -> Result<()> {
         EvidenceOperation::Search { search } => search::validate_selector(search),
         EvidenceOperation::Read { read } => read::validate_selector(read),
         EvidenceOperation::Graph { graph } => graph::validate_selector(graph),
+        EvidenceOperation::Communities { communities } => {
+            communities::validate_selector(communities)
+        }
     }
 }
 
@@ -197,6 +201,7 @@ pub trait EvidenceFacts {
         bounds: FactsGraphBounds,
         mode: GraphScopeMode,
     ) -> anyhow::Result<ScopedGraph>;
+    fn project_communities(&self) -> anyhow::Result<ProjectCommunities>;
 }
 
 impl EvidenceFacts for CodewikiFacts {
@@ -250,6 +255,10 @@ impl EvidenceFacts for CodewikiFacts {
         mode: GraphScopeMode,
     ) -> anyhow::Result<ScopedGraph> {
         self.scoped_edges(seed, kind, bounds, mode, None)
+    }
+
+    fn project_communities(&self) -> anyhow::Result<ProjectCommunities> {
+        self.project_communities()
     }
 }
 
@@ -316,6 +325,9 @@ impl EvidenceLibrary {
             EvidenceOperation::Search { search } => search::execute(self, search)?,
             EvidenceOperation::Read { read } => read::execute(self, read)?,
             EvidenceOperation::Graph { graph } => graph::execute(self, graph)?,
+            EvidenceOperation::Communities { communities } => {
+                communities::execute(self, communities)?
+            }
         };
         self.paginate(
             canonical,

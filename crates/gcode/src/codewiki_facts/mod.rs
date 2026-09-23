@@ -24,6 +24,7 @@ use postgres::Client;
 
 use crate::config::Context;
 
+mod communities;
 mod graph;
 mod graph_query;
 mod scope;
@@ -32,6 +33,7 @@ mod symbols;
 mod text;
 
 pub use crate::freshness::FreshnessStatus;
+pub use communities::{CommunityFact, ProjectCommunities};
 pub use graph::{
     GraphAvailability, GraphBounds, GraphDirection, GraphEdge, GraphEdgeKind, GraphNodeFact,
     GraphOutcome, GraphScopeMode, MAX_DECLARED_EDGE_LIMIT, ScopedGraph,
