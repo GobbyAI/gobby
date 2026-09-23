@@ -48,7 +48,7 @@ def main() -> int:
                 )
             except psutil.NoSuchProcess:
                 break
-            time.sleep(0.1)
+            time.sleep(1)
     finally:
         try:
             owned.update(
