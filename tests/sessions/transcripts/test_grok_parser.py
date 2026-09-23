@@ -159,6 +159,18 @@ def test_grok_model_id_becomes_parsed_message_model() -> None:
     assert messages[0].model == "grok-4.6"
 
 
+def test_current_grok_transcript_sets_model() -> None:
+    fixture = (
+        Path(__file__).parent / "fixtures" / "grok_4_7_user_message.jsonl"
+    ).read_text(encoding="utf-8")
+    messages = _parsed_messages(
+        GrokTranscriptParser(session_id="grok-session"),
+        [fixture],
+    )
+    assert len(messages) == 1
+    assert messages[0].model == "grok-4.7"
+
+
 def test_grok_unix_millisecond_timestamp_is_scaled() -> None:
     parser = GrokTranscriptParser(session_id="grok-session")
     record = _turn_completed_record()

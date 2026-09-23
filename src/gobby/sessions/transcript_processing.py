@@ -379,6 +379,7 @@ class TranscriptProcessingMixin:
                     else session_context_window
                 ),
                 provider=session_source,
+                db=self.db,
             )
             last_model = reconciled_context.model
             message_context_window = reconciled_context.context_window

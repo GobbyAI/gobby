@@ -96,6 +96,7 @@ class ProcessorUsageMixin:
                 message_model,
                 message_context_window if message_context_window is not None else context_window,
                 provider=source,
+                db=self.db,
             )
             last_model = reconciled_context.model
             event_context_window = reconciled_context.context_window
