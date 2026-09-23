@@ -193,27 +193,39 @@ async def test_a_command_the_paste_kept_is_submitted_by_the_enter() -> None:
     clear.assert_not_called()
 
 
-async def test_command_the_recovery_enter_cannot_submit_is_retyped() -> None:
+async def test_command_the_recovery_enter_cannot_submit_fails_without_retyping(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("gobby.terminals.pane_io.SUBMIT_HELD_RETRY_SECONDS", 0.04)
     pane = _RetypeOnlyPane()
 
     result, _mark, clear = await _send(
         pane, lambda: True, command="/compact", composer_read=_CLAUDE_READ
     )
 
-    assert result == (True, None, True, None)
-    assert pane.typed == ["/compact\n", "/compact\n"]
+    compacted, reason, continuation_pending, detail = result
+    assert compacted is False
+    assert continuation_pending is False
+    assert detail == {
+        "error_code": _COMMAND_NOT_SUBMITTED_ERROR_CODE,
+        "continuation_pending": False,
+    }
+    assert reason is not None and "/compact" in reason
+    assert pane.typed == ["/compact\n"]
     assert pane.keys == [
         "escape",
         *composer_clear_sequence("claude"),
         "enter",
-        *composer_clear_sequence("claude"),
         "enter",
     ]
-    clear.assert_not_called()
+    clear.assert_called_once()
 
 
 @pytest.mark.asyncio
-async def test_command_that_never_leaves_the_composer_fails_typed() -> None:
+async def test_command_that_never_leaves_the_composer_fails_typed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("gobby.terminals.pane_io.SUBMIT_HELD_RETRY_SECONDS", 0.04)
     pane = _UnsubmittedPane()
 
     result, _mark, clear = await _send(
@@ -228,7 +240,13 @@ async def test_command_that_never_leaves_the_composer_fails_typed() -> None:
         "continuation_pending": False,
     }
     assert reason is not None and "/compact" in reason
-    assert pane.typed == ["/compact\n", "/compact\n"]
+    assert pane.typed == ["/compact\n"]
+    assert pane.keys == [
+        "escape",
+        *composer_clear_sequence("claude"),
+        "enter",
+        "enter",
+    ]
     clear.assert_called_once()
 
 

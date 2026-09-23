@@ -22,6 +22,11 @@ from gobby.agents.constants import (
     GOBBY_TAB_ID,
     GOBBY_WORKSPACE_ID,
 )
+from gobby.agents.detection.registry import (
+    DetectionManifestRegistry,
+    sync_bundled_detection_manifests,
+)
+from gobby.agents.idle_detector import IdleDetector
 from gobby.mcp_proxy.tools.sessions._terminal_send_keys import _authorize_send_keys_target
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -812,3 +817,56 @@ async def test_send_keys_scope_without_a_caller_is_caller_not_found(harness: _Ha
         target_id, error = _authorize_send_keys_target(caller.id, h.sessions)
     assert target_id is None
     assert (error or {}).get("error_code") == "send_keys_caller_not_found"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("source", "frame_template", "readable"),
+    [
+        pytest.param("claude", "────────\n❯ {text}\n────────", True, id="claude"),
+        pytest.param("codex", "────────\n❯ {text}\n────────", True, id="codex"),
+        pytest.param("droid", "╭────────╮\n│ > {text} │\n╰────────╯", True, id="droid"),
+    ],
+)
+async def test_workspace_send_text_submit_reports_unsubmitted_codex_draft(
+    harness: _Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    source: str,
+    frame_template: str,
+    readable: bool,
+) -> None:
+    h = harness
+    monkeypatch.setattr("gobby.terminals.pane_io.SUBMIT_ENTER_GAP_SECONDS", 0.0)
+    monkeypatch.setattr("gobby.terminals.pane_io.SUBMIT_HELD_RETRY_SECONDS", 0.0)
+    sync_bundled_detection_manifests(h.db)
+    session = h.sessions.register(
+        external_id=f"workspace-ops-{source}",
+        machine_id=LOCAL_MACHINE_ID,
+        source=source,
+        project_id=h.project_id,
+    )
+    terminal = _live_terminal(h.terminals, h.project_id, "native", session_id=session.id)
+    workspace = await h.ops.workspace_create(OPERATOR, "codex-submit")
+    pane = (
+        await h.ops.tab_create(
+            OPERATOR,
+            workspace.id,
+            h.project_id,
+            terminal_id=terminal.id,
+        )
+    ).panes[0]
+    text = "Start the persistent Codex role and report ready."
+    h.native.snapshot_text = frame_template.format(text=text)
+    detector = IdleDetector(DetectionManifestRegistry(h.db), source)
+    assert detector.reads_composer() is True
+    read = detector.composer_read(h.native.snapshot_text)
+    assert read.state == "draft"
+    expected_line = text if readable else None
+    assert read.line == expected_line
+
+    result = await h.ops.pane_send_text(OPERATOR, pane.id, text, submit=True)
+
+    assert result.indeterminate is True, (result, h.native.write_log, h.native.snapshot_modes)
+    assert result.detail is not None
+    assert "not submitted" in result.detail
+    assert h.native.write_log == [("text", f"{text}\n"), ("key", "enter")]

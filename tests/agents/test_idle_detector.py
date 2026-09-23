@@ -449,7 +449,7 @@ class TestComposerRead:
 
     def test_empty_frame(self) -> None:
         read = self.detector.composer_read(_framed("❯\xa0"))
-        assert (read.state, read.line) == ("empty", "")
+        assert (read.state, read.line) == ("empty", None)
 
     def test_single_line_draft_carries_its_text(self) -> None:
         read = self.detector.composer_read(_framed("❯ hello draft"))

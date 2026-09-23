@@ -8,7 +8,8 @@ from typing import Any, cast
 
 import pytest
 
-from gobby.agents.idle_detector import ComposerRead
+from gobby.agents.detection.matcher import CompiledManifest, compile_manifest
+from gobby.agents.idle_detector import ComposerRead, IdleDetector
 from gobby.terminals.composer import composer_clear_sequence
 from gobby.terminals.pane_io import (
     TEXT_NOT_SUBMITTED_ERROR_CODE,
@@ -255,6 +256,27 @@ class _ScriptedPane:
         return read
 
 
+class _UnreadableDraftRegistry:
+    def __init__(self) -> None:
+        self.manifest = compile_manifest(
+            """
+id = "test"
+version = "1"
+engine = 1
+
+[[rules]]
+id = "composer_draft"
+state = "idle"
+priority = 1
+region = "composer"
+line_regex = ["wrapped draft is present"]
+"""
+        )
+
+    def for_provider(self, provider_id: str) -> CompiledManifest | None:
+        return self.manifest if provider_id == "test" else None
+
+
 async def _submit(
     pane: _ScriptedPane, monkeypatch: pytest.MonkeyPatch, *, verify_seconds: float = 0.0
 ) -> SubmitResult:
@@ -328,6 +350,35 @@ async def test_unreadable_composer_after_enter_logs_at_debug(
     ]
     assert len(records) == 1
     assert records[0].levelno == logging.DEBUG
+
+
+@pytest.mark.asyncio
+async def test_unreadable_draft_is_not_reported_submitted(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    detector = IdleDetector(_UnreadableDraftRegistry(), "test")
+    frame = "\n".join(("────────", "wrapped draft is present", "────────"))
+
+    with caplog.at_level(logging.WARNING, logger="gobby.agents.idle_detector"):
+        unreadable_draft = detector.composer_read(frame)
+        detector.composer_read(frame)
+
+    pane = _ScriptedPane([unreadable_draft])
+    monkeypatch.setattr("gobby.terminals.pane_io.SUBMIT_HELD_RETRY_SECONDS", 0.02)
+    result = await _submit(pane, monkeypatch, verify_seconds=0.01)
+
+    assert unreadable_draft.state == "draft"
+    assert unreadable_draft.line is None
+    assert result.ok is False
+    assert result.error_code == TEXT_NOT_SUBMITTED_ERROR_CODE
+    assert pane.typed == [f"{_TEXT}\n"]
+    assert pane.keys == ["enter", "enter"]
+    matching_warnings = [
+        record
+        for record in caplog.records
+        if "test" in record.getMessage() and "frame" in record.getMessage()
+    ]
+    assert len(matching_warnings) == 1
 
 
 @pytest.mark.asyncio

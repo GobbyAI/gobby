@@ -12,9 +12,10 @@ import asyncio
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
-from gobby.agents.idle_detector import COMPOSER_PROBE_LINES, ComposerRead
+from gobby.agents.detection.provider import DetectionRegistry
+from gobby.agents.idle_detector import COMPOSER_PROBE_LINES, ComposerRead, IdleDetector
 from gobby.terminals.composer import composer_clear_sequence
 from gobby.terminals.key_bytes import tmux_key_name
 from gobby.terminals.runtime import (
@@ -25,6 +26,10 @@ from gobby.terminals.runtime import (
     TerminalRuntime,
     TerminalWriteError,
 )
+from gobby.terminals.write_coordinator import WriteCoordinator, WriteRequest
+
+if TYPE_CHECKING:
+    from gobby.storage.terminals import Terminal
 
 __all__ = [
     "COMPOSER_MATCH_CHARS",
@@ -36,16 +41,19 @@ __all__ = [
     "TEXT_NOT_SUBMITTED_ERROR_CODE",
     "ComposerReader",
     "ComposerVerdict",
+    "CoordinatorPaneIO",
     "PaneIO",
     "RuntimePaneIO",
     "SendResult",
     "SubmitResult",
     "TmuxPaneIO",
     "clear_composer",
+    "composer_reader",
     "composer_verdict",
     "live_runtime_pane",
     "log_pane_failure",
     "send_pane_key",
+    "submit_coordinated_text",
     "submit_text",
 ]
 
@@ -99,6 +107,14 @@ class PaneIO(Protocol):
     async def snapshot(
         self, lines: int = DEFAULT_SNAPSHOT_LINES, *, mode: SnapshotMode = "text"
     ) -> str | None: ...
+
+
+def composer_reader(registry: DetectionRegistry, cli_source: str | None) -> ComposerReader | None:
+    """Bind a provider composer reader when its installed manifest supports one."""
+    if not cli_source:
+        return None
+    detector = IdleDetector(registry, cli_source)
+    return detector.composer_read if detector.reads_composer() else None
 
 
 def live_runtime_pane(
@@ -160,6 +176,64 @@ class RuntimePaneIO:
             )
             return None
         return result.text
+
+
+class CoordinatorPaneIO:
+    """Pane adapter whose writes retain coordinator locking and idempotency."""
+
+    def __init__(
+        self,
+        coordinator: WriteCoordinator,
+        runtime: TerminalRuntime,
+        terminal: Terminal,
+        *,
+        action_key: str,
+        idempotency_key: str,
+    ) -> None:
+        self._coordinator = coordinator
+        self._runtime_pane = RuntimePaneIO(runtime, terminal)
+        self._terminal = terminal
+        self._action_key = action_key
+        self._idempotency_key = idempotency_key
+        self._write_count = 0
+
+    @property
+    def backend(self) -> str:
+        return self._runtime_pane.backend
+
+    @property
+    def target(self) -> str:
+        return self._runtime_pane.target
+
+    async def send_key(self, key: NamedKey) -> SendResult:
+        return await self._dispatch("key", key, submit=False)
+
+    async def type_text(self, text: str) -> SendResult:
+        body = text.rstrip("\n")
+        return await self._dispatch("text", body, submit=body != text)
+
+    async def snapshot(
+        self, lines: int = DEFAULT_SNAPSHOT_LINES, *, mode: SnapshotMode = "text"
+    ) -> str | None:
+        return await self._runtime_pane.snapshot(lines, mode=mode)
+
+    async def _dispatch(
+        self, kind: Literal["text", "key"], payload: str, *, submit: bool
+    ) -> SendResult:
+        index = self._write_count
+        self._write_count += 1
+        outcome = await self._coordinator.write(
+            WriteRequest(
+                terminal_id=self._terminal.id,
+                action_key=self._action_key if index == 0 else f"{self._action_key}:{index}",
+                origin="daemon",
+                kind=kind,
+                payload=payload,
+                submit=submit,
+                idempotency_key=self._idempotency_key if index == 0 else None,
+            )
+        )
+        return _outcome_result(outcome, f"{self.backend} {kind} write")
 
 
 class TmuxPaneIO:
@@ -289,7 +363,9 @@ async def composer_verdict(
     elapsed = 0.0
     while True:
         read = composer_read(await pane.snapshot(COMPOSER_PROBE_LINES, mode="ansi"))
-        if read.state == "empty" or (read.state == "draft" and not read.line.startswith(prefix)):
+        if read.state == "empty" or (
+            read.state == "draft" and read.line is not None and not read.line.startswith(prefix)
+        ):
             return "left"
         if elapsed >= window_seconds:
             return "held" if read.state == "draft" else "unreadable"
@@ -387,4 +463,34 @@ async def submit_text(
         False,
         f"{label} was typed but stayed in the composer: the CLI never submitted it",
         TEXT_NOT_SUBMITTED_ERROR_CODE,
+    )
+
+
+async def submit_coordinated_text(
+    coordinator: WriteCoordinator,
+    runtime: TerminalRuntime,
+    terminal: Terminal,
+    text: str,
+    session_id: str,
+    *,
+    action_key: str,
+    idempotency_key: str,
+    label: str,
+    cli_source: str | None,
+    composer_read: ComposerReader | None,
+) -> SubmitResult:
+    """Submit through coordinator locking while retaining composer verification."""
+    return await submit_text(
+        CoordinatorPaneIO(
+            coordinator,
+            runtime,
+            terminal,
+            action_key=action_key,
+            idempotency_key=idempotency_key,
+        ),
+        text,
+        session_id,
+        label=label,
+        cli_source=cli_source,
+        composer_read=composer_read,
     )
