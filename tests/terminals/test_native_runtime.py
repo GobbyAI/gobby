@@ -727,6 +727,42 @@ async def test_spawn_env_carries_terminal_id() -> None:
     )
 
 
+async def test_prepare_spawn_forwards_requested_cwd() -> None:
+    """A missing cwd stays missing. An explicit directory, including /tmp, is kept."""
+    recorded: list[str | None] = []
+
+    class _CwdClient:
+        host_epoch = "epoch-cwd"
+
+        async def ensure_connected(self) -> None:
+            return None
+
+        async def spawn(self, **fields: Any) -> dict[str, Any]:
+            cwd = fields.get("cwd")
+            recorded.append(cwd if isinstance(cwd, str) else None)
+            return {
+                "ok": True,
+                "host_terminal_id": "ht-cwd",
+                "pgid": 1,
+                "start_time": 1,
+            }
+
+    runtime = NativeTerminalRuntime(_CwdClient(), frame_host_epoch="epoch-cwd")
+    for cwd in (None, "/repo", "/tmp"):
+        await runtime.prepare_spawn(
+            TerminalSpawnRequest(
+                terminal_id=uuid4(),
+                spawn_key="gobby-native",
+                command=["/bin/sh"],
+                cwd=cwd,
+                reservation_id="rsv",
+                reserve_key="rk",
+            )
+        )
+
+    assert recorded == [None, "/repo", "/tmp"]
+
+
 @pytest.mark.asyncio
 async def test_control_client_preflights_encoded_line() -> None:
     runtime, host = _runtime()
