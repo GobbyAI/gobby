@@ -10,6 +10,7 @@ import json
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
+from threading import get_ident
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -17,6 +18,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import psycopg
 import pytest
 
+from gobby.llm.context_windows import reconcile_model_context
 from gobby.sessions.message_stats import MessageStats
 from gobby.sessions.processor import SessionMessageProcessor
 from gobby.sessions.transcript_index import (
@@ -1849,9 +1851,20 @@ class TestModelExtraction:
         assert mock_session_manager.update_model.call_args is not None
 
     @pytest.mark.asyncio
-    async def test_live_claude_usage_preserves_one_million_session_model(
+    async def test_live_claude_usage_resolves_model_off_loop_and_preserves_session_model(
         self, mock_db: MagicMock, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        loop_thread = get_ident()
+        resolver_threads: list[int] = []
+
+        def observe_reconcile(*args: Any, **kwargs: Any) -> Any:
+            resolver_threads.append(get_ident())
+            return reconcile_model_context(*args, **kwargs)
+
+        monkeypatch.setattr(
+            "gobby.sessions.processor_usage.reconcile_model_context", observe_reconcile
+        )
+
         class FakeTokenEventStore:
             def __init__(self, _db: object) -> None:
                 self.records: list[TokenEvent] = []
@@ -1908,6 +1921,7 @@ class TestModelExtraction:
 
         await processor._persist_usage_events("session-1", [message])
 
+        assert resolver_threads and all(thread != loop_thread for thread in resolver_threads)
         event = store.records[0]
         assert event.model == "claude-opus-4-8[1m]"
         assert event.context_window == 1_000_000

@@ -215,8 +215,11 @@ async def memory_reconcile_loop(
         return
 
     while True:
+        next_delay = interval_seconds
         try:
             report = await memory_manager.reconcile_stores(dry_run=False)
+            if report.get("qdrant", {}).get("error"):
+                next_delay = min(interval_seconds, 5 * 60)
             qdrant_orphans = report.get("qdrant", {}).get("orphans_deleted", 0)
             falkordb_orphans = report.get("falkordb", {}).get("orphan_memories_deleted", 0)
             falkordb_entities = report.get("falkordb", {}).get("orphan_entities_deleted", 0)
@@ -232,8 +235,9 @@ async def memory_reconcile_loop(
             break
         except Exception as e:
             logger.error("Error in memory reconcile loop: %s", e)
+            next_delay = min(interval_seconds, 5 * 60)
         try:
-            await sleep_fn(interval_seconds)
+            await sleep_fn(next_delay)
         except asyncio.CancelledError:
             break
         if is_shutdown_requested():

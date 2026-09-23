@@ -4,12 +4,13 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from gobby.memory.services.indexing import REINDEX_PAGE_SIZE, IndexingService
+from gobby.memory.services.indexing import REINDEX_PAGE_SIZE, IndexingService, VectorStoreProtocol
+from gobby.memory.vectorstore import VectorStore
 from gobby.projects.fenced_vector_store import ProjectFencedVectorStore
 from gobby.projects.write_fence import ProjectWriteFence
 from gobby.storage.memories import Memory
@@ -201,7 +202,7 @@ async def _embed_fn(_content: str) -> list[float]:
 
 def _service(
     storage: _MemoryStorage,
-    vector_store: _VectorStore,
+    vector_store: VectorStoreProtocol,
     run_db: Callable[..., Awaitable[Any]] | None = None,
     embed_fn: Callable[[str], Awaitable[list[float]]] = _embed_fn,
     cleanup_rowless: Callable[[str], Awaitable[None]] | None = None,
@@ -277,6 +278,38 @@ async def test_reconcile_backfills_missing_vectors_and_deletes_orphans() -> None
             },
         )
     ]
+
+
+async def test_reconcile_holds_global_write_admission_only_while_deleting_orphans() -> None:
+    events: list[str] = []
+
+    class FencedVectorStore(_VectorStore):
+        @asynccontextmanager
+        async def global_write_context(self) -> AsyncIterator[None]:
+            events.append("admission:enter")
+            try:
+                yield
+            finally:
+                events.append("admission:exit")
+
+    vector_store = FencedVectorStore()
+    vector_store.ids = ["orphan"]
+
+    async def scroll() -> list[str]:
+        events.append("scroll")
+        return list(vector_store.ids)
+
+    async def delete(ids: list[str]) -> None:
+        events.append("delete")
+        await vector_store._delete_many(ids)
+
+    vector_store.scroll_ids.side_effect = scroll
+    vector_store.delete_many.side_effect = delete
+
+    report = await _service(_MemoryStorage([]), vector_store).reconcile_stores()
+
+    assert report["qdrant"]["orphans_deleted"] == 1
+    assert events == ["scroll", "admission:enter", "delete", "admission:exit"]
 
 
 @pytest.mark.asyncio
@@ -385,6 +418,23 @@ async def test_reconcile_reports_vector_upsert_failure_without_crashing() -> Non
         {"memory_id": "missing", "error": "vector upsert failed: qdrant unavailable"}
     ]
     assert vector_store.ids == []
+
+
+async def test_reconcile_qdrant_timeout_logs_exception_type_and_traceback(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    vector_store = _VectorStore()
+    vector_store.scroll_ids.side_effect = TimeoutError()
+
+    with caplog.at_level(logging.ERROR):
+        report = await _service(_MemoryStorage([]), vector_store).reconcile_stores()
+
+    assert report["qdrant"]["error"] == "TimeoutError()"
+    record = next(
+        record for record in caplog.records if "Qdrant reconciliation failed" in record.message
+    )
+    assert "TimeoutError()" in record.message
+    assert record.exc_info is not None
 
 
 @pytest.mark.asyncio
@@ -774,7 +824,7 @@ async def test_project_reindex_holds_writer_admission_across_embedding_and_batch
     project = MagicMock(deleted_at=None)
     fence = ProjectWriteFence(lambda _project_id: project)
     inner = _VectorStore()
-    vector_store = ProjectFencedVectorStore(inner, fence)  # type: ignore[arg-type]
+    vector_store = ProjectFencedVectorStore(cast(VectorStore, inner), fence)
     embed_started = asyncio.Event()
     release_embed = asyncio.Event()
 
@@ -783,7 +833,7 @@ async def test_project_reindex_holds_writer_admission_across_embedding_and_batch
         await release_embed.wait()
         return [0.1]
 
-    service = _service(_MemoryStorage([_memory("mem-1", "alpha")]), vector_store, embed_fn=embed)  # type: ignore[arg-type]
+    service = _service(_MemoryStorage([_memory("mem-1", "alpha")]), vector_store, embed_fn=embed)
     reindex_task = asyncio.create_task(service.reindex_embeddings("project-1"))
     await embed_started.wait()
     project.deleted_at = object()
@@ -806,11 +856,11 @@ async def test_project_reindex_holds_writer_admission_across_embedding_and_batch
 
 
 @pytest.mark.asyncio
-async def test_reconcile_backfill_holds_global_admission_across_embedding_and_batch() -> None:
+async def test_reconcile_backfill_allows_purge_during_embedding_without_resurrection() -> None:
     project = MagicMock(deleted_at=None)
     fence = ProjectWriteFence(lambda _project_id: project)
     inner = _VectorStore()
-    vector_store = ProjectFencedVectorStore(inner, fence)  # type: ignore[arg-type]
+    vector_store = ProjectFencedVectorStore(cast(VectorStore, inner), fence)
     embed_started = asyncio.Event()
     release_embed = asyncio.Event()
 
@@ -819,7 +869,7 @@ async def test_reconcile_backfill_holds_global_admission_across_embedding_and_ba
         await release_embed.wait()
         return [0.1]
 
-    service = _service(_MemoryStorage([_memory("missing", "alpha")]), vector_store, embed_fn=embed)  # type: ignore[arg-type]
+    service = _service(_MemoryStorage([_memory("missing", "alpha")]), vector_store, embed_fn=embed)
     reconcile_task = asyncio.create_task(service.reconcile_stores())
     await embed_started.wait()
     project.deleted_at = object()
@@ -830,15 +880,15 @@ async def test_reconcile_backfill_holds_global_admission_across_embedding_and_ba
             exclusive_entered.set()
 
     purge_task = asyncio.create_task(purge())
-    await wait_for_exclusive_claim(fence, "project-1")
-    assert not exclusive_entered.is_set()
+    await asyncio.wait_for(purge_task, timeout=1.0)
+    assert exclusive_entered.is_set()
+    assert not reconcile_task.done()
 
     release_embed.set()
     result = await reconcile_task
-    await purge_task
-    assert result["qdrant"]["missing_embedded"] == 1
-    assert inner.ids == ["missing"]
-    assert exclusive_entered.is_set()
+    assert result["qdrant"]["missing_embedded"] == 0
+    assert result["qdrant"]["errors"] == 1
+    assert inner.ids == []
 
 
 @pytest.mark.asyncio
