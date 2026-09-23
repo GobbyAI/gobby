@@ -494,6 +494,7 @@ async def submit_text(
     )
 
 
+# WorkspaceOps._write mints a fresh key per call, so this map must stay bounded.
 _HELD_VERIFIED_SUBMIT_LIMIT = 32
 
 
