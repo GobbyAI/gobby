@@ -673,6 +673,32 @@ async def test_workspace_create_announces_only_a_new_row(harness: _Harness) -> N
     assert [event["kind"] for event in h.events] == ["pane.removed", "tab.removed"]
 
 
+async def test_project_snapshot_resolves_one_workspace_and_keeps_the_tab(
+    harness: _Harness,
+) -> None:
+    h = harness
+    scratch = await h.ops.workspace_snapshot(OPERATOR)
+    assert scratch.workspace.default_project_id is None
+    opened = await h.ops.workspace_snapshot(OPERATOR, project_id=h.project_id)
+    assert opened.workspace.id != scratch.workspace.id
+    assert opened.workspace.default_project_id == h.project_id
+    assert opened.workspace.ref == scratch.workspace.ref + 1
+    again = await h.ops.workspace_snapshot(OPERATOR, project_id=h.project_id)
+    assert again.workspace.id == opened.workspace.id
+    explicit = await h.ops.workspace_snapshot(
+        OPERATOR, scratch.workspace.id, project_id=h.project_id
+    )
+    assert explicit.workspace.id == scratch.workspace.id
+    change = await h.ops.tab_create(OPERATOR, opened.workspace.id, h.project_id)
+    tab, pane = change.tabs[0], change.panes[0]
+    assert tab.project_id == h.project_id
+    assert tab.worktree_id is None
+    assert pane.ref == 0
+    listed = await h.ops.workspace_list(OPERATOR)
+    assert [row.id for row in listed] == [scratch.workspace.id, opened.workspace.id]
+    assert opened.workspace.to_dict()["default_project_id"] == h.project_id
+
+
 async def test_rollback_retries_a_concurrent_move_and_types_storage_failures(
     harness: _Harness,
 ) -> None:

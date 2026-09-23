@@ -236,6 +236,7 @@ class Workspace:
     focused_tab_id: str | None
     created_at: datetime
     updated_at: datetime
+    default_project_id: str | None = None
 
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> Workspace:
@@ -248,6 +249,7 @@ class Workspace:
             focused_tab_id=_optional_str(row["focused_tab_id"]),
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+            default_project_id=_optional_str(row["default_project_id"]),
         )
 
     def to_dict(self) -> dict[str, Any]:

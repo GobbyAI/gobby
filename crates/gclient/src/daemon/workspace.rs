@@ -40,6 +40,9 @@ pub struct WorkspaceRow {
     pub name: String,
     pub focused_project_id: Option<String>,
     pub focused_tab_id: Option<String>,
+    /// The project this workspace opens for. Absent on a projectless scratch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_project_id: Option<String>,
     pub created_at: String,
     pub updated_at: String,
     /// The owning node's ref; only a `workspace_snapshot` reply carries it.
@@ -170,6 +173,11 @@ pub struct WorkspaceEvent {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "op")]
 pub enum WorkspaceOp {
+    #[serde(rename = "workspace.list")]
+    WorkspaceList {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        node: Option<String>,
+    },
     #[serde(rename = "workspace.create")]
     WorkspaceCreate {
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -325,9 +333,17 @@ pub enum WorkspaceOp {
 
 /// A `workspace_attach` request without its `request_id`; absent references
 /// are omitted so the daemon picks the local node and its default workspace.
-pub(super) fn attach_request(node: Option<&str>, workspace: Option<&str>) -> Value {
+pub(super) fn attach_request(
+    node: Option<&str>,
+    workspace: Option<&str>,
+    project_id: Option<&str>,
+) -> Value {
     let mut request = json!({"type": "workspace_attach"});
-    for (field, value) in [("node", node), ("workspace", workspace)] {
+    for (field, value) in [
+        ("node", node),
+        ("workspace", workspace),
+        ("project_id", project_id),
+    ] {
         if let Some(value) = value {
             request[field] = json!(value);
         }
@@ -354,8 +370,9 @@ impl ScriptedDaemon {
         &self,
         node: Option<&str>,
         workspace: Option<&str>,
+        project_id: Option<&str>,
     ) -> Result<WorkspaceSnapshot, DaemonError> {
-        self.send_ws(attach_request(node, workspace))?;
+        self.send_ws(attach_request(node, workspace, project_id))?;
         self.state().workspace.clone().ok_or(DaemonError::NotFound)
     }
 

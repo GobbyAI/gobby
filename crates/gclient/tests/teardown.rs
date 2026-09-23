@@ -642,8 +642,9 @@ impl Daemon for TraceDaemon {
         &self,
         node: Option<&str>,
         workspace: Option<&str>,
+        project_id: Option<&str>,
     ) -> Result<gobby_client::daemon::WorkspaceSnapshot, DaemonError> {
-        Daemon::attach_workspace(&self.inner, node, workspace).await
+        Daemon::attach_workspace(&self.inner, node, workspace, project_id).await
     }
 
     async fn workspace_op(

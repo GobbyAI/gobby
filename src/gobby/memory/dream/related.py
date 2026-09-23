@@ -4,7 +4,8 @@ Evidence is gathered per bounded work unit (at most 25 candidates): one bulk
 keyword query, one stored-vector batch query, and at most one hydration query.
 All three channels are required in every deployment mode; a channel that fails
 every bounded attempt raises a typed dependency failure instead of silently
-degrading candidate evidence.
+degrading candidate evidence. A keyword parse error is that memory's evidence
+failure: it is logged and the rest of the unit continues.
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ from qdrant_client.models import Filter
 from gobby.memory.dream.models import DreamCandidate, RelatedMemoryEvidence
 from gobby.memory.services.keyword import MemoryKeywordSearchService
 from gobby.memory.vectorstore_filters import memory_scope_filter
-from gobby.search.keyword import sanitize_pg_search_query
+from gobby.search.keyword import is_pg_search_parse_error, sanitize_pg_search_query
 from gobby.storage.hub.async_ops import run_bounded_db
 from gobby.storage.memories_crud import map_get_memories_rows, render_get_memories_statement
 from gobby.storage.memories_scope import MemoryScope
@@ -601,11 +602,34 @@ async def _keyword_hits_bulk(
             await cursor.execute(sql, params)
             return list(await cursor.fetchall())
 
-    rows = await run_bounded_db(
-        execute,
-        conninfo=db.conninfo,
-        deadline_seconds=deadline_seconds,
-    )
+    try:
+        rows = await run_bounded_db(
+            execute,
+            conninfo=db.conninfo,
+            deadline_seconds=deadline_seconds,
+        )
+    except Exception as exc:
+        if not is_pg_search_parse_error(exc):
+            raise
+        if len(unit) == 1:
+            logger.warning(
+                "Related-evidence keyword query failed for memory %s: %s",
+                unit[0].id,
+                exc,
+            )
+            return {}
+        merged: dict[str, list[tuple[str, float]]] = {}
+        for candidate in unit:
+            merged.update(
+                await _keyword_hits_bulk(
+                    [candidate],
+                    db=db,
+                    scope=scope,
+                    fetch_limit=fetch_limit,
+                    deadline_seconds=deadline_seconds,
+                )
+            )
+        return merged
     grouped: dict[str, list[tuple[int, str, float]]] = {}
     for row in rows:
         grouped.setdefault(str(row["candidate_key"]), []).append(

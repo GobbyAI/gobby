@@ -229,7 +229,8 @@ class ProcessorTranscriptMixin:
             parser.snapshot_state() if _parser_supports_incremental_state(parser) else None
         )
         try:
-            raw_records = _parse_incremental_records(
+            raw_records = await asyncio.to_thread(
+                _parse_incremental_records,
                 parser,
                 new_lines,
                 start_index=last_index + 1,

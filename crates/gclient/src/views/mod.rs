@@ -55,7 +55,11 @@ pub fn run_ready(
             workspace.set_local_machine(
                 gobby_core::machine::read_local_machine_id().unwrap_or_default(),
             );
-            workspace.set_attach_target(ready.attach);
+            let mut attach = ready.attach;
+            if attach.workspace.is_none() {
+                attach.project_id = ready.project.clone();
+            }
+            workspace.set_attach_target(attach);
             workspace.set_in_pane(ready.in_pane);
             workspace.set_launch_dir(ready.launch_dir);
             workspace.set_frame_delivery(ready.frame_delivery);
