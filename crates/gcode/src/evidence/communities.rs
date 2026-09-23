@@ -208,8 +208,8 @@ fn resolve<'a>(
         .collect()
 }
 
-/// Representatives first, then the other members by path. A member absent from the
-/// pinned snapshot is dropped with a warning instead of being reported without a hash.
+/// Representatives first, then the other members by path. Members absent from the
+/// pinned snapshot are dropped, not reported without a hash, and counted in one warning.
 fn snapshot_members(
     library: &EvidenceLibrary,
     row: &CommunityFact,
@@ -236,21 +236,27 @@ fn snapshot_members(
     ordered.extend(rest);
 
     let mut present = Vec::with_capacity(ordered.len());
+    let mut missing = Vec::new();
     for path in ordered {
         match library.files.get(path) {
             Some(file) => present.push(CommunityMember {
                 path: path.to_string(),
                 content_hash: file.content_hash.clone(),
             }),
-            None => warnings.push(EvidenceWarning {
-                code: "community_member_not_in_snapshot".to_string(),
-                message: format!(
-                    "community {} member {path} is not in the pinned index snapshot",
-                    row.community_id
-                ),
-                path: Some(path.to_string()),
-            }),
+            None => missing.push(path),
         }
+    }
+    // One warning per community keeps a mass deletion from flooding the response.
+    if let Some(first) = missing.first() {
+        warnings.push(EvidenceWarning {
+            code: "community_member_not_in_snapshot".to_string(),
+            message: format!(
+                "community {} members missing from the pinned index snapshot: {} (first {first})",
+                row.community_id,
+                missing.len()
+            ),
+            path: None,
+        });
     }
     let truncated = present.len() > max_members;
     present.truncate(max_members);

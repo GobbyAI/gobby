@@ -101,7 +101,7 @@ def _contains_credential(value: object, *, source_references: bool = False) -> b
         return any(
             _credential_text(str(key))
             or (
-                key not in {"path", "paths", "excerpt", "numbered_excerpt"}
+                key not in {"path", "paths", "representatives", "excerpt", "numbered_excerpt"}
                 and _contains_credential(child, source_references=key == "query")
             )
             for key, child in value.items()
@@ -126,7 +126,12 @@ class EvidenceAdmission:
     ) -> None:
         if not 0 < page_size <= _MAX_PAGE_SIZE:
             raise ValueError(f"evidence page_size must be between 1 and {_MAX_PAGE_SIZE}")
-        if not permitted_operations or not permitted_operations <= {"search", "read", "graph"}:
+        if not permitted_operations or not permitted_operations <= {
+            "search",
+            "read",
+            "graph",
+            "communities",
+        }:
             raise ValueError("unsupported evidence operation policy")
 
         self.run_id = run_id
@@ -491,8 +496,9 @@ class EvidenceAdmission:
             raise EvidenceAdmissionError("evidence deadline exceeded during publication") from None
         return response
 
+    @classmethod
     def _normalize_selector(
-        self,
+        cls,
         operation: str,
         selector: Mapping[str, Any],
     ) -> dict[str, Any]:
@@ -506,7 +512,7 @@ class EvidenceAdmission:
         operation_body = dict(parsed)
         value = operation_body.get(operation)
         if isinstance(value, dict):
-            value = self._without_none(value)
+            value = cls._without_none(value)
             if operation == "search":
                 value.setdefault("paths", [])
                 value.setdefault("limit", 1000)
@@ -514,6 +520,13 @@ class EvidenceAdmission:
                 value.setdefault("depth", 3)
                 value.setdefault("relations", [])
                 value.setdefault("limit", 1000)
+            elif operation == "communities":
+                if len({"community_id", "label", "path"} & value.keys()) > 1:
+                    raise EvidenceAdmissionError(
+                        "select a community by at most one of community_id, label, or path"
+                    )
+                value.setdefault("min_size", 2)
+                value.setdefault("max_members", 50)
             operation_body[operation] = value
         return operation_body
 

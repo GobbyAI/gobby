@@ -46,6 +46,7 @@ _TEST_LITERAL_VALUE = "01234567" + "89abcdef"
         ),
         ({"path": "tests/fixture.py", "excerpt": "token = 'fixture-value'"}, False),
         ({"path": "tests/fixture.py", "numbered_excerpt": "1| token = fixture_value"}, False),
+        ({"representatives": ["docs/sk-" + _TEST_LITERAL_VALUE + ".md"]}, False),
         ({"query": "token = runtime_token_reference"}, False),
         ({"query": "postgresql://worker:request-secret@127.0.0.1/db"}, True),
         ({"error": "postgresql://worker:runtime-secret@127.0.0.1/db"}, True),

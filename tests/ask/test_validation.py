@@ -805,3 +805,117 @@ def test_live_source_freshness_follows_claim_references(tmp_path: Path, same_pat
         )
         stale = validate_claims(scoped, manifest, pinned_blobs=blobs)
         assert "source_content_missing" in stale.diagnostic_codes
+
+
+def _community_case() -> tuple[Any, Any, dict[tuple[str, str], bytes], str]:
+    """The valid case plus a second record holding one `communities` list item."""
+    from gobby.ask.validation_models import EvidenceManifest
+
+    draft, evidence, blobs, _review = _valid_case()
+    body = evidence.model_dump(mode="json")
+    binding = body["repository_binding"]
+    community_id = "com:" + "c" * 64
+    community_item = {
+        "item_type": "community",
+        "evidence_id": community_id,
+        "community_id": 1,
+        "label": "src",
+        "label_source": "deterministic",
+        "label_confidence": None,
+        "label_stale": False,
+        "size": 2,
+        "cohesion": 0.5,
+        "internal_edges": 1,
+        "member_signature": "e" * 64,
+        "members": [],
+        "members_truncated": True,
+        "representatives": ["src/app.py"],
+        "boundary": [{"other_community_id": 2, "label": "tests", "import_count": 3}],
+    }
+    request = {
+        "schema_version": 1,
+        "binding": binding,
+        "operation": "communities",
+        "communities": {"min_size": 2, "max_members": 50},
+        "max_bytes": 262_144,
+    }
+    response = {
+        "request": request,
+        "request_fingerprint": _json_hash(request, sort_keys=False),
+        "binding": binding,
+        "contract": {
+            "name": "gcode-evidence",
+            "schema_version": 1,
+            "tool": "gobby-code",
+            "tool_version": "0.5.0",
+            "lane": "communities",
+        },
+        "items": [community_item],
+        "complete": True,
+        "completeness": "complete",
+        "bounds": {
+            "max_bytes": 262_144,
+            "serialized_item_bytes": len(
+                json.dumps(community_item, separators=(",", ":")).encode()
+            ),
+            "returned_items": 1,
+            "total_items": 1,
+            "result_limit": 1000,
+        },
+        "warnings": [],
+    }
+    body["records"].append(
+        {
+            "run_id": body["run_id"],
+            "invocation_id": "invocation-2",
+            "binding_digest": _json_hash(binding),
+            "request_hash": _json_hash(request),
+            "response_hash": _json_hash(response),
+            "response": response,
+        }
+    )
+    return draft, EvidenceManifest.model_validate(body), blobs, community_id
+
+
+def test_manifest_accepts_community_item() -> None:
+    from gobby.ask.validation import validate_claims
+
+    draft, evidence, blobs, community_id = _community_case()
+    community = evidence.records[1].response.items[0]
+    assert (community.item_type, community.evidence_id) == ("community", community_id)
+
+    report = validate_claims(draft, evidence, pinned_blobs=blobs)
+    assert report.diagnostic_codes == ()
+    assert report.accepted_claim_ids == ("claim-return", "claim-stable")
+
+
+def test_citation_of_community_item_is_rejected() -> None:
+    from gobby.ask.validation import validate_claims
+
+    draft, evidence, blobs, community_id = _community_case()
+    claim = draft.claims[0]
+    citing_community = claim.model_copy(
+        update={"citations": (claim.citations[0].model_copy(update={"evidence_id": community_id}),)}
+    )
+    draft = draft.model_copy(update={"claims": (citing_community, draft.claims[1])})
+
+    report = validate_claims(draft, evidence, pinned_blobs=blobs)
+    rejected = report.results[0]
+    assert (rejected.claim_id, rejected.accepted) == ("claim-return", False)
+    assert [(item.code, item.evidence_id) for item in rejected.diagnostics] == [
+        ("community_not_citable", community_id)
+    ]
+    assert "communities" in rejected.diagnostics[0].message
+
+
+def test_selector_rejects_multiple_community_keys() -> None:
+    from gobby.ask.errors import EvidenceAdmissionError
+    from gobby.ask.evidence import EvidenceAdmission
+
+    assert EvidenceAdmission._normalize_selector(
+        "communities", {"label": "Ask pipeline", "community_id": None}
+    ) == {"communities": {"label": "Ask pipeline", "min_size": 2, "max_members": 50}}
+    with pytest.raises(EvidenceAdmissionError, match="at most one of community_id, label, or path"):
+        EvidenceAdmission._normalize_selector(
+            "communities", {"community_id": 3, "path": "src/app.py"}
+        )

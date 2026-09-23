@@ -1436,7 +1436,7 @@ fn communities_detail_bounds_members_and_flags_truncation() -> anyhow::Result<()
             .iter()
             .map(|warning| (warning.code.as_str(), warning.path.as_deref()))
             .collect::<Vec<_>>(),
-        vec![("community_member_not_in_snapshot", Some("pkg/gone.py"))]
+        vec![("community_member_not_in_snapshot", None)]
     );
 
     let by_path = library.query(communities_request(
@@ -1451,6 +1451,48 @@ fn communities_detail_bounds_members_and_flags_truncation() -> anyhow::Result<()
     assert_eq!(community_ids(&by_path), vec![7]);
     assert_eq!(items[0].members.len(), 5);
     assert!(!items[0].members_truncated);
+    Ok(())
+}
+
+#[test]
+fn communities_detail_reports_snapshot_misses_in_one_warning() -> anyhow::Result<()> {
+    let binding = community_binding();
+    let selected = community(9, "Large", 40);
+    let missing = selected.members[..35]
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    let (_temporary, library) =
+        community_library(&binding, true, vec![selected.clone()], &missing)?;
+
+    let response = library.query(communities_request(
+        &binding,
+        CommunitiesSelector {
+            community_id: Some(9),
+            max_members: Some(2),
+            ..CommunitiesSelector::default()
+        },
+    ))?;
+    let items = community_items(&response);
+    assert_eq!(
+        items[0].members,
+        vec![
+            community_member("c9/m035.py"),
+            community_member("c9/m036.py")
+        ]
+    );
+    assert!(items[0].members_truncated);
+    assert_eq!(
+        warning_codes(&response),
+        vec!["community_member_not_in_snapshot"]
+    );
+    assert!(
+        response.warnings[0]
+            .message
+            .ends_with(": 35 (first c9/m000.py)"),
+        "{}",
+        response.warnings[0].message
+    );
     Ok(())
 }
 

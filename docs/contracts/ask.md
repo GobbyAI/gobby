@@ -59,12 +59,21 @@ and do not infer an outcome from prose.
 
 Ordinary authenticated agents use `evidence(operation, selector, continuation)`
 without starting Ask. It returns native JSON for search, read (including commit
-patches), and graph operations. Project and checkout come from authenticated
+patches), graph, and communities operations. Project and checkout come from authenticated
 caller context; no run or worker identity is required. CLI evidence may omit its
 binding, which is resolved from the selected project. Existing selectors, bounds,
 hashes, freshness checks, and continuation tokens apply. Managed Ask workers
 cannot use public retrieval: investigators admit evidence through `query_evidence`,
 and reviewers may only read admitted evidence.
+
+The `communities` operation returns the project's stored import communities: a
+size-ordered list, or the one community a `community_id`, `label`, or member
+`path` names, with its members' snapshot content hashes. Ask admits it in pipeline
+and interactive modes, defaults `min_size` to 2 and `max_members` to 50, and
+rejects a selector that names more than one of `community_id`, `label`, and
+`path`. communities orients you; it is not citable, cite `read` items from its
+members. The manifest records community items like any other evidence, and a
+citation that targets one fails validation with `community_not_citable`.
 
 Responses record observation time, checkout identity, recorded HEAD, and source
 hashes. Citations carry repository-relative paths and ranges, evidence IDs and
