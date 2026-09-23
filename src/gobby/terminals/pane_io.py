@@ -12,9 +12,11 @@ import asyncio
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol
+from weakref import WeakKeyDictionary
 
-from gobby.agents.idle_detector import COMPOSER_PROBE_LINES, ComposerRead
+from gobby.agents.detection.provider import DetectionRegistry
+from gobby.agents.idle_detector import COMPOSER_PROBE_LINES, ComposerRead, IdleDetector
 from gobby.terminals.composer import composer_clear_sequence
 from gobby.terminals.key_bytes import tmux_key_name
 from gobby.terminals.runtime import (
@@ -25,6 +27,14 @@ from gobby.terminals.runtime import (
     TerminalRuntime,
     TerminalWriteError,
 )
+from gobby.terminals.write_coordinator import (
+    IdempotencyConflictError,
+    WriteCoordinator,
+    WriteRequest,
+)
+
+if TYPE_CHECKING:
+    from gobby.storage.terminals import Terminal
 
 __all__ = [
     "COMPOSER_MATCH_CHARS",
@@ -36,16 +46,19 @@ __all__ = [
     "TEXT_NOT_SUBMITTED_ERROR_CODE",
     "ComposerReader",
     "ComposerVerdict",
+    "CoordinatorPaneIO",
     "PaneIO",
     "RuntimePaneIO",
     "SendResult",
     "SubmitResult",
     "TmuxPaneIO",
     "clear_composer",
+    "composer_reader",
     "composer_verdict",
     "live_runtime_pane",
     "log_pane_failure",
     "send_pane_key",
+    "submit_coordinated_text",
     "submit_text",
 ]
 
@@ -99,6 +112,14 @@ class PaneIO(Protocol):
     async def snapshot(
         self, lines: int = DEFAULT_SNAPSHOT_LINES, *, mode: SnapshotMode = "text"
     ) -> str | None: ...
+
+
+def composer_reader(registry: DetectionRegistry, cli_source: str | None) -> ComposerReader | None:
+    """Bind a provider composer reader when its installed manifest supports one."""
+    if not cli_source:
+        return None
+    detector = IdleDetector(registry, cli_source)
+    return detector.composer_read if detector.reads_composer() else None
 
 
 def live_runtime_pane(
@@ -160,6 +181,87 @@ class RuntimePaneIO:
             )
             return None
         return result.text
+
+
+class CoordinatorPaneIO:
+    """Pane adapter whose writes retain coordinator locking and idempotency."""
+
+    def __init__(
+        self,
+        coordinator: WriteCoordinator,
+        runtime: TerminalRuntime,
+        terminal: Terminal,
+        *,
+        action_key: str,
+        idempotency_key: str,
+        skip_delivered_text: bool = False,
+        resume_epoch: int = 0,
+    ) -> None:
+        self._coordinator = coordinator
+        self._runtime_pane = RuntimePaneIO(runtime, terminal)
+        self._terminal = terminal
+        self._action_key = action_key
+        self._idempotency_key = idempotency_key
+        self._skip_delivered_text = skip_delivered_text
+        self._resume_epoch = resume_epoch
+        self._text_accepted = skip_delivered_text
+        self._write_count = 0
+
+    @property
+    def text_accepted(self) -> bool:
+        return self._text_accepted
+
+    @property
+    def backend(self) -> str:
+        return self._runtime_pane.backend
+
+    @property
+    def target(self) -> str:
+        return self._runtime_pane.target
+
+    async def send_key(self, key: NamedKey) -> SendResult:
+        return await self._dispatch("key", key, submit=False)
+
+    async def type_text(self, text: str) -> SendResult:
+        if self._skip_delivered_text:
+            self._skip_delivered_text = False
+            return True, None
+        body = text.rstrip("\n")
+        ok, reason = await self._dispatch("text", body, submit=body != text)
+        if ok:
+            self._text_accepted = True
+        return ok, reason
+
+    async def snapshot(
+        self, lines: int = DEFAULT_SNAPSHOT_LINES, *, mode: SnapshotMode = "text"
+    ) -> str | None:
+        return await self._runtime_pane.snapshot(lines, mode=mode)
+
+    async def _dispatch(
+        self, kind: Literal["text", "key"], payload: str, *, submit: bool
+    ) -> SendResult:
+        index = self._write_count
+        self._write_count += 1
+        if self._resume_epoch:
+            # A fresh key: the delivered text latch is already gone, and a latched
+            # indeterminate Enter must not swallow this bare-Enter resume.
+            action_key = f"{self._action_key}:resume:{self._resume_epoch}:{index}"
+            idempotency_key = None
+        else:
+            action_key = self._action_key if index == 0 else f"{self._action_key}:{index}"
+            idempotency_key = self._idempotency_key if index == 0 else None
+        outcome = await self._coordinator.write(
+            WriteRequest(
+                terminal_id=self._terminal.id,
+                action_key=action_key,
+                origin="daemon",
+                kind=kind,
+                payload=payload,
+                submit=submit,
+                idempotency_key=idempotency_key,
+            )
+        )
+        return _outcome_result(outcome, f"{self.backend} {kind} write")
 
 
 class TmuxPaneIO:
@@ -289,7 +391,9 @@ async def composer_verdict(
     elapsed = 0.0
     while True:
         read = composer_read(await pane.snapshot(COMPOSER_PROBE_LINES, mode="ansi"))
-        if read.state == "empty" or (read.state == "draft" and not read.line.startswith(prefix)):
+        if read.state == "empty" or (
+            read.state == "draft" and read.line is not None and not read.line.startswith(prefix)
+        ):
             return "left"
         if elapsed >= window_seconds:
             return "held" if read.state == "draft" else "unreadable"
@@ -388,3 +492,110 @@ async def submit_text(
         f"{label} was typed but stayed in the composer: the CLI never submitted it",
         TEXT_NOT_SUBMITTED_ERROR_CODE,
     )
+
+
+# WorkspaceOps._write mints a fresh key per call, so this map must stay bounded.
+_HELD_VERIFIED_SUBMIT_LIMIT = 32
+
+
+@dataclass
+class _VerifiedSubmitProgress:
+    """A verified submit that is still held or indeterminate."""
+
+    text_delivered: bool = False
+    payload: str | None = None
+    resume_epoch: int = 0
+
+
+_verified_submits: WeakKeyDictionary[
+    WriteCoordinator, dict[tuple[str, str], _VerifiedSubmitProgress]
+] = WeakKeyDictionary()
+
+
+def _held_submit(
+    coordinator: WriteCoordinator, terminal_id: str, idempotency_key: str
+) -> _VerifiedSubmitProgress | None:
+    records = _verified_submits.get(coordinator)
+    if records is None:
+        return None
+    return records.get((terminal_id, idempotency_key))
+
+
+def _remember_held(
+    coordinator: WriteCoordinator,
+    terminal_id: str,
+    idempotency_key: str,
+    progress: _VerifiedSubmitProgress,
+) -> None:
+    records = _verified_submits.get(coordinator)
+    if records is None:
+        records = {}
+        _verified_submits[coordinator] = records
+    key = (terminal_id, idempotency_key)
+    if key not in records:
+        while len(records) >= _HELD_VERIFIED_SUBMIT_LIMIT:
+            del records[next(iter(records))]
+    records[key] = progress
+
+
+def _forget_held(coordinator: WriteCoordinator, terminal_id: str, idempotency_key: str) -> None:
+    records = _verified_submits.get(coordinator)
+    if records is None:
+        return
+    records.pop((terminal_id, idempotency_key), None)
+    if not records:
+        _verified_submits.pop(coordinator, None)
+
+
+async def submit_coordinated_text(
+    coordinator: WriteCoordinator,
+    runtime: TerminalRuntime,
+    terminal: Terminal,
+    text: str,
+    session_id: str,
+    *,
+    action_key: str,
+    idempotency_key: str,
+    label: str,
+    cli_source: str | None,
+    composer_read: ComposerReader | None,
+) -> SubmitResult:
+    """Submit through coordinator locking while retaining composer verification.
+
+    A held or indeterminate finish keeps one bounded record so a retry resumes
+    with a bare Enter and does not retype. A verified success drops that record.
+    """
+    progress = _held_submit(coordinator, terminal.id, idempotency_key)
+    if progress is not None and progress.payload not in (None, text):
+        raise IdempotencyConflictError("idempotency key was already used with a different payload")
+    resume_epoch = 0
+    if progress is not None and progress.text_delivered:
+        progress.resume_epoch += 1
+        resume_epoch = progress.resume_epoch
+    pane = CoordinatorPaneIO(
+        coordinator,
+        runtime,
+        terminal,
+        action_key=action_key,
+        idempotency_key=idempotency_key,
+        skip_delivered_text=progress is not None and progress.text_delivered,
+        resume_epoch=resume_epoch,
+    )
+    result = await submit_text(
+        pane,
+        text,
+        session_id,
+        label=label,
+        cli_source=cli_source,
+        composer_read=composer_read,
+    )
+    if result.ok:
+        _forget_held(coordinator, terminal.id, idempotency_key)
+        return result
+    if pane.text_accepted:
+        remembered = progress if progress is not None else _VerifiedSubmitProgress()
+        remembered.text_delivered = True
+        remembered.payload = text
+        remembered.resume_epoch = resume_epoch
+        _remember_held(coordinator, terminal.id, idempotency_key, remembered)
+    return result

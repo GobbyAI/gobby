@@ -10,8 +10,9 @@ from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.events.wake_terminal_resolution import resolve_session_terminal_route
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.terminals.actor_scope import SESSION_ACTOR_PREFIX, ActorScopeError, resolve_actor_scope
+from gobby.terminals.key_bytes import normalize_named_key
 from gobby.terminals.lookup import manager_for_terminal_context
-from gobby.terminals.runtime import Delivered, IndeterminateWrite, is_named_key
+from gobby.terminals.runtime import Delivered, IndeterminateWrite
 from gobby.terminals.write_coordinator import IdempotencyConflictError, WriteRequest
 
 if TYPE_CHECKING:
@@ -150,7 +151,9 @@ def register_send_keys_tool(
             "Autonomous agent-run sessions cannot use this tool. Targets must be the caller, "
             "in the same project, or in the same agent tree. Use literal=true (default) to "
             "paste text — one or more trailing \\n characters produce exactly one Enter after "
-            "the literal paste settles. Use literal=false for tmux key names. An optional "
+            "the literal paste settles. Use literal=false for internal named keys or tmux-style "
+            "aliases with native equivalents (for example ctrl_u or C-u); unsupported names "
+            "fail on managed panes instead of becoming text. An optional "
             "idempotency_key is 1 to 128 characters from "
             "[A-Za-z0-9._:-]; retries preserve indeterminate outcomes without redispatch."
         ),
@@ -203,9 +206,17 @@ def register_send_keys_tool(
                 if literal and keys.endswith("\n"):
                     payload = keys.rstrip("\n")
                     submit = True
-                elif not literal and is_named_key(keys.lower()):
+                elif not literal:
+                    named_key = normalize_named_key(keys)
+                    if named_key is None:
+                        return {
+                            "success": False,
+                            "error": f"Unsupported named key for managed terminal: {keys}",
+                            "error_code": "send_keys_named_key_unsupported",
+                            "idempotency_key": resolved_key,
+                        }
                     kind = "key"
-                    payload = keys.lower()
+                    payload = named_key
                 try:
                     outcome = await write_coordinator.write(
                         WriteRequest(

@@ -27,6 +27,7 @@ from gobby.storage.machines import LocalMachineManager
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
+from gobby.terminals.runtime import Delivered
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.fixtures.isolated_checkout import write_project_marker
@@ -823,6 +824,56 @@ class TestRegisterTerminalTools:
 
 def test_send_keys_preserves_raw_tmux_fallback_after_native_lookup() -> None:
     TestRegisterTerminalTools().assert_send_keys_preserves_raw_tmux_fallback_after_native_lookup()
+
+
+def test_send_keys_named_key_never_pastes_literally() -> None:
+    registry = _TestRegistry(name="test", description="test")
+    session = MagicMock(
+        id="session-1",
+        project_id="project-1",
+        agent_run_id=None,
+        terminal_context=None,
+    )
+    session_manager = MagicMock()
+    session_manager.get.return_value = session
+    session_manager.resolve_session_reference.side_effect = lambda ref, project_id=None: ref
+    agent_run_manager = MagicMock()
+    agent_run_manager.get_by_session.return_value = None
+    terminal_manager = MagicMock()
+    terminal_manager.resolve_live_for_session.return_value = SimpleNamespace(id="terminal-1")
+    write_coordinator = MagicMock()
+    write_coordinator.write = AsyncMock(return_value=Delivered())
+
+    with patch(
+        "gobby.mcp_proxy.tools.sessions._terminal_send_keys.LocalAgentRunManager",
+        return_value=agent_run_manager,
+    ):
+        register_terminal_tools(
+            registry,
+            session_manager,
+            MagicMock(fetchone=MagicMock(return_value=None)),
+            terminal_manager=terminal_manager,
+            write_coordinator=write_coordinator,
+        )
+
+    send_keys = registry.get_tool("send_keys")
+    assert send_keys is not None
+    with patch("gobby.utils.session_context.get_current_session_id", return_value="session-1"):
+        result = asyncio.run(send_keys(session_id="session-1", keys="C-u", literal=False))
+
+    assert result["success"] is True
+    request = write_coordinator.write.await_args.args[0]
+    assert request.kind == "key"
+    assert request.payload == "ctrl_u"
+
+    with patch("gobby.utils.session_context.get_current_session_id", return_value="session-1"):
+        unsupported = asyncio.run(
+            send_keys(session_id="session-1", keys="not-a-native-key", literal=False)
+        )
+
+    assert unsupported["success"] is False
+    assert unsupported["error_code"] == "send_keys_named_key_unsupported"
+    assert write_coordinator.write.await_count == 1
 
 
 class TestSetHandoffFeedback:

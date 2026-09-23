@@ -22,6 +22,11 @@ from gobby.agents.constants import (
     GOBBY_TAB_ID,
     GOBBY_WORKSPACE_ID,
 )
+from gobby.agents.detection.registry import (
+    DetectionManifestRegistry,
+    sync_bundled_detection_manifests,
+)
+from gobby.agents.idle_detector import IdleDetector
 from gobby.mcp_proxy.tools.sessions._terminal_send_keys import _authorize_send_keys_target
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -45,7 +50,14 @@ from gobby.storage.workspaces import (
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.terminals.actor_scope import ActorScope
 from gobby.terminals.leases import TerminalLeaseRegistry
-from gobby.terminals.runtime import PreparedSpawn, TerminalRuntimeRegistry, TerminalSpawnRequest
+from gobby.terminals.pane_io import _verified_submits
+from gobby.terminals.runtime import (
+    Delivered,
+    IndeterminateWrite,
+    PreparedSpawn,
+    TerminalRuntimeRegistry,
+    TerminalSpawnRequest,
+)
 from gobby.terminals.workspace_ops import WorkspaceEvent, WorkspaceOpError, WorkspaceOps
 from gobby.terminals.write_coordinator import WriteCoordinator
 from gobby.utils.session_context import session_context_for_test
@@ -812,3 +824,289 @@ async def test_send_keys_scope_without_a_caller_is_caller_not_found(harness: _Ha
         target_id, error = _authorize_send_keys_target(caller.id, h.sessions)
     assert target_id is None
     assert (error or {}).get("error_code") == "send_keys_caller_not_found"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("source", "frame_template", "readable"),
+    [
+        pytest.param("claude", "────────\n❯ {text}\n────────", True, id="claude"),
+        pytest.param("codex", "────────\n❯ {text}\n────────", True, id="codex"),
+        pytest.param("droid", "╭────────╮\n│ > {text} │\n╰────────╯", True, id="droid"),
+    ],
+)
+async def test_workspace_send_text_submit_reports_unsubmitted_codex_draft(
+    harness: _Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    source: str,
+    frame_template: str,
+    readable: bool,
+) -> None:
+    h = harness
+    monkeypatch.setattr("gobby.terminals.pane_io.SUBMIT_ENTER_GAP_SECONDS", 0.0)
+    monkeypatch.setattr("gobby.terminals.pane_io.SUBMIT_HELD_RETRY_SECONDS", 0.0)
+    sync_bundled_detection_manifests(h.db)
+    session = h.sessions.register(
+        external_id=f"workspace-ops-{source}",
+        machine_id=LOCAL_MACHINE_ID,
+        source=source,
+        project_id=h.project_id,
+    )
+    terminal = _live_terminal(h.terminals, h.project_id, "native", session_id=session.id)
+    workspace = await h.ops.workspace_create(OPERATOR, "codex-submit")
+    pane = (
+        await h.ops.tab_create(
+            OPERATOR,
+            workspace.id,
+            h.project_id,
+            terminal_id=terminal.id,
+        )
+    ).panes[0]
+    text = "Start the persistent Codex role and report ready."
+    h.native.snapshot_text = frame_template.format(text=text)
+    detector = IdleDetector(DetectionManifestRegistry(h.db), source)
+    assert detector.reads_composer() is True
+    read = detector.composer_read(h.native.snapshot_text)
+    assert read.state == "draft"
+    expected_line = text if readable else None
+    assert read.line == expected_line
+
+    result = await h.ops.pane_send_text(OPERATOR, pane.id, text, submit=True)
+
+    assert result.indeterminate is True, (result, h.native.write_log, h.native.snapshot_modes)
+    assert result.detail is not None
+    assert "not submitted" in result.detail
+    assert h.native.write_log == [("text", f"{text}\n"), ("key", "enter")]
+
+
+@pytest.mark.asyncio
+async def test_workspace_send_text_submit_retry_does_not_retype_held_draft(
+    harness: _Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Retrying an indeterminate verified submit sends Enter again and does not retype."""
+    h = harness
+    monkeypatch.setattr("gobby.terminals.pane_io.SUBMIT_ENTER_GAP_SECONDS", 0.0)
+    monkeypatch.setattr("gobby.terminals.pane_io.SUBMIT_HELD_RETRY_SECONDS", 0.0)
+    sync_bundled_detection_manifests(h.db)
+    session = h.sessions.register(
+        external_id="workspace-ops-retry-held",
+        machine_id=LOCAL_MACHINE_ID,
+        source="codex",
+        project_id=h.project_id,
+    )
+    terminal = _live_terminal(h.terminals, h.project_id, "native", session_id=session.id)
+    workspace = await h.ops.workspace_create(OPERATOR, "retry-held")
+    pane = (
+        await h.ops.tab_create(
+            OPERATOR,
+            workspace.id,
+            h.project_id,
+            terminal_id=terminal.id,
+        )
+    ).panes[0]
+    text = "Start the persistent Codex role and report ready."
+    h.native.snapshot_text = f"────────\n❯ {text}\n────────"
+    key = "retry-held-draft"
+
+    first = await h.ops.pane_send_text(OPERATOR, pane.id, text, submit=True, idempotency_key=key)
+    second = await h.ops.pane_send_text(OPERATOR, pane.id, text, submit=True, idempotency_key=key)
+
+    assert first.indeterminate is True
+    assert second.indeterminate is True
+    assert h.native.write_log == [
+        ("text", f"{text}\n"),
+        ("key", "enter"),
+        ("key", "enter"),
+    ]
+    text_writes = sum(kind == "text" for kind, _payload in h.native.write_log)
+    print(f"held retry text_writes={text_writes} write_log={h.native.write_log}")
+
+
+@pytest.mark.asyncio
+async def test_workspace_send_text_submit_success_keeps_no_retry_record(
+    harness: _Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A verified submit drops its retry record, so the same key writes again."""
+    h = harness
+    monkeypatch.setattr("gobby.terminals.pane_io.SUBMIT_ENTER_GAP_SECONDS", 0.0)
+    monkeypatch.setattr("gobby.terminals.pane_io.SUBMIT_HELD_RETRY_SECONDS", 0.0)
+    sync_bundled_detection_manifests(h.db)
+    session = h.sessions.register(
+        external_id="workspace-ops-retry-left",
+        machine_id=LOCAL_MACHINE_ID,
+        source="codex",
+        project_id=h.project_id,
+    )
+    terminal = _live_terminal(h.terminals, h.project_id, "native", session_id=session.id)
+    workspace = await h.ops.workspace_create(OPERATOR, "retry-left")
+    pane = (
+        await h.ops.tab_create(
+            OPERATOR,
+            workspace.id,
+            h.project_id,
+            terminal_id=terminal.id,
+        )
+    ).panes[0]
+    text = "Start the persistent Codex role and report ready."
+    h.native.snapshot_text = "────────\n❯ other prompt\n────────"
+    key = "retry-left-draft"
+
+    first = await h.ops.pane_send_text(OPERATOR, pane.id, text, submit=True, idempotency_key=key)
+    second = await h.ops.pane_send_text(OPERATOR, pane.id, text, submit=True, idempotency_key=key)
+
+    assert first.indeterminate is False
+    assert all(
+        idem != key for records in _verified_submits.values() for _terminal_id, idem in records
+    )
+    assert second.indeterminate is False
+    assert h.native.write_log == [
+        ("text", f"{text}\n"),
+        ("key", "enter"),
+        ("text", f"{text}\n"),
+        ("key", "enter"),
+    ]
+    text_writes = sum(kind == "text" for kind, _payload in h.native.write_log)
+    print(f"success drops record text_writes={text_writes} write_log={h.native.write_log}")
+
+
+@pytest.mark.asyncio
+async def test_workspace_send_text_submit_bounds_held_retry_records(
+    harness: _Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Held retry records stay bounded, and an evicted key is typed again."""
+    h = harness
+    monkeypatch.setattr("gobby.terminals.pane_io.SUBMIT_ENTER_GAP_SECONDS", 0.0)
+    monkeypatch.setattr("gobby.terminals.pane_io.SUBMIT_HELD_RETRY_SECONDS", 0.0)
+    monkeypatch.setattr("gobby.terminals.pane_io._HELD_VERIFIED_SUBMIT_LIMIT", 2)
+    sync_bundled_detection_manifests(h.db)
+    session = h.sessions.register(
+        external_id="workspace-ops-retry-bound",
+        machine_id=LOCAL_MACHINE_ID,
+        source="codex",
+        project_id=h.project_id,
+    )
+    terminal = _live_terminal(h.terminals, h.project_id, "native", session_id=session.id)
+    workspace = await h.ops.workspace_create(OPERATOR, "retry-bound")
+    pane = (
+        await h.ops.tab_create(
+            OPERATOR,
+            workspace.id,
+            h.project_id,
+            terminal_id=terminal.id,
+        )
+    ).panes[0]
+    text = "Start the persistent Codex role and report ready."
+    h.native.snapshot_text = f"────────\n❯ {text}\n────────"
+    keys = ("held-a", "held-b", "held-c")
+    for idempotency_key in keys:
+        result = await h.ops.pane_send_text(
+            OPERATOR, pane.id, text, submit=True, idempotency_key=idempotency_key
+        )
+        assert result.indeterminate is True
+    stored = {
+        idem
+        for records in _verified_submits.values()
+        for _terminal_id, idem in records
+        if idem in keys
+    }
+    assert stored == {"held-b", "held-c"}
+    h.native.write_log.clear()
+    retried = await h.ops.pane_send_text(
+        OPERATOR, pane.id, text, submit=True, idempotency_key="held-a"
+    )
+    assert retried.indeterminate is True
+    assert ("text", f"{text}\n") in h.native.write_log
+
+
+@pytest.mark.asyncio
+async def test_workspace_send_text_submit_retry_after_indeterminate_enter_does_not_retype(
+    harness: _Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An indeterminate Enter leaves the text delivered; the retry does not retype it."""
+    h = harness
+    monkeypatch.setattr("gobby.terminals.pane_io.SUBMIT_ENTER_GAP_SECONDS", 0.0)
+    monkeypatch.setattr("gobby.terminals.pane_io.SUBMIT_HELD_RETRY_SECONDS", 0.0)
+    sync_bundled_detection_manifests(h.db)
+    session = h.sessions.register(
+        external_id="workspace-ops-retry-enter",
+        machine_id=LOCAL_MACHINE_ID,
+        source="codex",
+        project_id=h.project_id,
+    )
+    terminal = _live_terminal(h.terminals, h.project_id, "native", session_id=session.id)
+    workspace = await h.ops.workspace_create(OPERATOR, "retry-enter")
+    pane = (
+        await h.ops.tab_create(
+            OPERATOR,
+            workspace.id,
+            h.project_id,
+            terminal_id=terminal.id,
+        )
+    ).panes[0]
+    text = "Start the persistent Codex role and report ready."
+    h.native.snapshot_text = f"────────\n❯ {text}\n────────"
+    h.native.outcomes = [Delivered(), IndeterminateWrite("enter reply lost")]
+    key = "retry-indeterminate-enter"
+
+    first = await h.ops.pane_send_text(OPERATOR, pane.id, text, submit=True, idempotency_key=key)
+    second = await h.ops.pane_send_text(OPERATOR, pane.id, text, submit=True, idempotency_key=key)
+
+    assert first.indeterminate is True
+    assert second.indeterminate is True
+    assert h.native.write_log == [
+        ("text", f"{text}\n"),
+        ("key", "enter"),
+        ("key", "enter"),
+    ]
+    text_writes = sum(kind == "text" for kind, _payload in h.native.write_log)
+    print(f"indeterminate enter retry text_writes={text_writes} write_log={h.native.write_log}")
+
+
+@pytest.mark.asyncio
+async def test_workspace_send_text_submit_retry_rejects_a_different_payload(
+    harness: _Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The same idempotency key cannot retry a different payload."""
+    h = harness
+    monkeypatch.setattr("gobby.terminals.pane_io.SUBMIT_ENTER_GAP_SECONDS", 0.0)
+    monkeypatch.setattr("gobby.terminals.pane_io.SUBMIT_HELD_RETRY_SECONDS", 0.0)
+    sync_bundled_detection_manifests(h.db)
+    session = h.sessions.register(
+        external_id="workspace-ops-retry-conflict",
+        machine_id=LOCAL_MACHINE_ID,
+        source="codex",
+        project_id=h.project_id,
+    )
+    terminal = _live_terminal(h.terminals, h.project_id, "native", session_id=session.id)
+    workspace = await h.ops.workspace_create(OPERATOR, "retry-conflict")
+    pane = (
+        await h.ops.tab_create(
+            OPERATOR,
+            workspace.id,
+            h.project_id,
+            terminal_id=terminal.id,
+        )
+    ).panes[0]
+    text = "Start the persistent Codex role and report ready."
+    h.native.snapshot_text = f"────────\n❯ {text}\n────────"
+    key = "retry-payload-conflict"
+
+    first = await h.ops.pane_send_text(OPERATOR, pane.id, text, submit=True, idempotency_key=key)
+    assert first.indeterminate is True
+
+    await _raises(
+        "invalid_op",
+        h.ops.pane_send_text(
+            OPERATOR,
+            pane.id,
+            "A different instruction.",
+            submit=True,
+            idempotency_key=key,
+        ),
+    )
+    assert h.native.write_log == [("text", f"{text}\n"), ("key", "enter")]

@@ -36,6 +36,7 @@ from gobby.agents.constants import (
     GOBBY_TAB_ID,
     GOBBY_WORKSPACE_ID,
 )
+from gobby.agents.detection.registry import DetectionManifestRegistry
 from gobby.agents.detection.safe_regex import InvalidPatternError, RegexOutcome, compile_safe_regex
 from gobby.storage.machines import Machine, MachineNotRegisteredError
 from gobby.storage.project_checkouts import (
@@ -62,24 +63,23 @@ from gobby.storage.workspaces import (
 )
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.terminals.actor_scope import ActorScope, ActorScopeError, resolve_actor_scope
+from gobby.terminals.key_bytes import normalize_named_key
 from gobby.terminals.runtime import (
-    Delivered,
-    IndeterminateWrite,
     InputPayloadTooLargeError,
     SnapshotResult,
     TerminalRuntime,
     TerminalRuntimeRegistry,
     TerminalWriteError,
     UnregisteredBackendError,
-    is_named_key,
 )
 from gobby.terminals.termination import kill_terminal
 from gobby.terminals.web_spawn import spawn_web_terminal
-from gobby.terminals.write_coordinator import (
-    IdempotencyConflictError,
-    WriteCoordinator,
-    WriteRequest,
+from gobby.terminals.workspace_writes import (
+    PaneWrite,
+    WorkspacePaneWriteError,
+    write_workspace_pane,
 )
+from gobby.terminals.write_coordinator import IdempotencyConflictError, WriteCoordinator
 from gobby.utils.machine_id import require_machine_id
 
 logger = logging.getLogger(__name__)
@@ -141,15 +141,6 @@ class WorkspaceEvent(TypedDict):
     workspace: dict[str, Any] | None
     tabs: list[dict[str, Any]]
     panes: list[dict[str, Any]]
-
-
-@dataclass(frozen=True, slots=True)
-class PaneWrite:
-    """A pane write the coordinator accepted; ``indeterminate`` when it may have landed."""
-
-    idempotency_key: str
-    indeterminate: bool
-    detail: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -269,6 +260,7 @@ class WorkspaceOps:
         self._coordinator = coordinator
         self._sessions = sessions
         self._publish = publish
+        self._detection_registry = DetectionManifestRegistry(workspaces.db)
 
     # -- workspaces ---------------------------------------------------------
 
@@ -561,7 +553,14 @@ class WorkspaceOps:
         node: str | None = None,
     ) -> PaneWrite:
         return await self._write(
-            actor, pane, node, kind="text", payload=text, submit=submit, key=idempotency_key
+            actor,
+            pane,
+            node,
+            kind="text",
+            payload=text,
+            submit=submit,
+            key=idempotency_key,
+            verify_submit=submit,
         )
 
     async def pane_send_keys(
@@ -585,13 +584,17 @@ class WorkspaceOps:
                 submit=True,
                 key=idempotency_key,
             )
-        named = not literal and is_named_key(keys.lower())
+        named = None if literal else normalize_named_key(keys)
+        if not literal and named is None:
+            raise WorkspaceOpError(
+                "invalid_op", f"Unsupported named key for managed terminal: {keys}"
+            )
         return await self._write(
             actor,
             pane,
             node,
             kind="key" if named else "text",
-            payload=keys.lower() if named else keys,
+            payload=named or keys,
             submit=False,
             key=idempotency_key,
         )
@@ -931,8 +934,8 @@ class WorkspaceOps:
         payload: str,
         submit: bool,
         key: str | None,
+        verify_submit: bool = False,
     ) -> PaneWrite:
-        """Write through the coordinator with ``origin="daemon"``, as ``send_keys`` does."""
         resolved_key = key or secrets.token_hex(16)
         if IDEMPOTENCY_KEY_PATTERN.fullmatch(resolved_key) is None:
             raise WorkspaceOpError(
@@ -940,25 +943,22 @@ class WorkspaceOps:
             )
         row, terminal = await self._pane_terminal(actor, pane, node)
         try:
-            outcome = await self._coordinator.write(
-                WriteRequest(
-                    terminal_id=terminal.id,
-                    action_key=f"workspace-pane-send:{row.id}:{resolved_key}",
-                    origin="daemon",
-                    kind=kind,
-                    payload=payload,
-                    submit=submit,
-                    idempotency_key=resolved_key,
-                )
+            return await write_workspace_pane(
+                self._coordinator,
+                self._sessions,
+                self._detection_registry,
+                self._runtime(terminal),
+                terminal,
+                pane_id=row.id,
+                kind=kind,
+                payload=payload,
+                submit=submit,
+                verify_submit=verify_submit,
+                idempotency_key=resolved_key,
             )
         except (IdempotencyConflictError, InputPayloadTooLargeError) as exc:
             raise WorkspaceOpError("invalid_op", str(exc)) from exc
         except TerminalWriteError as exc:
             raise WorkspaceOpError("terminal_failed", str(exc)) from exc
-        if isinstance(outcome, IndeterminateWrite):
-            return PaneWrite(resolved_key, indeterminate=True, detail=str(outcome) or None)
-        if not isinstance(outcome, Delivered):
-            raise WorkspaceOpError(
-                "terminal_failed", f"Pane write was not delivered ({type(outcome).__name__})"
-            )
-        return PaneWrite(resolved_key, indeterminate=False)
+        except WorkspacePaneWriteError as exc:
+            raise WorkspaceOpError("terminal_failed", str(exc)) from exc

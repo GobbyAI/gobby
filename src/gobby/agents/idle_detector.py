@@ -9,6 +9,7 @@ pane analysis only runs when the session appears stale.
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 import time
 from dataclasses import dataclass
@@ -16,6 +17,8 @@ from typing import Literal
 
 from gobby.agents.detection.matcher import CompiledManifest, composer_region
 from gobby.agents.detection.provider import DetectionRegistry, resolve_manifest
+
+logger = logging.getLogger(__name__)
 
 # Pane lines a composer probe captures: enough to hold the frame around a
 # multi-line draft plus the status lines a provider draws below it.
@@ -103,7 +106,7 @@ class ComposerRead:
     """
 
     state: ComposerState
-    line: str = ""
+    line: str | None = None
 
 
 @dataclass
@@ -134,6 +137,7 @@ class IdleDetector:
         self._provider_id = provider_id.strip().lower() if provider_id is not None else None
         self._providers: dict[str, IdleDetector] = {}
         self._states: dict[str, IdleState] = {}
+        self._warned_unreadable_composer_shapes: set[tuple[int, ...]] = set()
 
     def for_provider(self, provider_id: str) -> IdleDetector:
         """Return the cached detector bound to one provider."""
@@ -211,10 +215,22 @@ class IdleDetector:
         if manifest is None:
             return ComposerRead("unknown")
         if manifest.match_rule("composer_draft", pane_output).match is not None:
-            for line in composer_region(pane_output).splitlines():
+            frame = composer_region(pane_output)
+            rows = frame.splitlines()
+            for line in rows:
                 row = _COMPOSER_ROW_RE.match(line)
                 if row is not None and row.group("text"):
                     return ComposerRead("draft", row.group("text"))
+            shape = tuple(len(row) for row in rows)
+            if shape not in self._warned_unreadable_composer_shapes:
+                self._warned_unreadable_composer_shapes.add(shape)
+                logger.warning(
+                    "CLI %s composer matched a draft but its text was unreadable; "
+                    "frame shape rows=%d widths=%s",
+                    self._provider_id,
+                    len(rows),
+                    shape,
+                )
             return ComposerRead("draft")
         if manifest.match_rule("composer_empty", pane_output).match is not None:
             return ComposerRead("empty")
