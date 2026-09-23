@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from gobby.agents.isolation import SpawnConfig, WorktreeIsolationHandler
 from gobby.mcp_proxy.tools.worktrees._merge_state import (
     is_worktree_git_merged,
     worktree_dict_with_git_merge_state,
@@ -229,6 +230,54 @@ async def test_merged_worktree_against_branch_base_is_cleanup_eligible(
     named = name_unreferenced_sha_base_rows([_row(_OBSERVED_SHA, "observed")], refs)
     assert [row.id for row in named] == ["observed"]
     assert [row.base_branch for row in named] == [_OBSERVED_SHA]
+
+
+class _SpawnStorage:
+    def __init__(self) -> None:
+        self.created: list[dict[str, object]] = []
+
+    def get_by_branch(self, _project_id: str, _branch_name: str) -> None:
+        return None
+
+    def create(self, **kwargs: object) -> None:
+        self.created.append(kwargs)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_spawn_isolation_refuses_unreferenced_sha_base(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    subprocess.run(["git", "init", "-b", "main", str(root)], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(root), "config", "user.name", "Test"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(root), "config", "user.email", "test@example.invalid"],
+        check=True,
+        capture_output=True,
+    )
+    _commit(root, "base")
+    short = _git(root, "rev-parse", "--short=10", "main")
+    storage = _SpawnStorage()
+    handler = WorktreeIsolationHandler(WorktreeGitManager(root), storage)
+    config = SpawnConfig(
+        prompt="spawn",
+        task_id=None,
+        task_title=None,
+        task_seq_num=None,
+        branch_name="spawned",
+        branch_prefix=None,
+        base_branch=short,
+        project_id="proj",
+        project_path=str(root),
+        provider="claude",
+        parent_session_id="sess",
+    )
+    with pytest.raises(RuntimeError, match="base_branch_is_commit_sha"):
+        await handler.prepare_environment(config)
+    assert storage.created == []
 
 
 @pytest.mark.unit
