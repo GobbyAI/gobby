@@ -45,8 +45,30 @@ def secret_store() -> SecretStore:
 
 
 class AuthorizationServer:
-    def __init__(self, auth_method: str = "none") -> None:
+    def __init__(
+        self,
+        auth_method: str = "none",
+        *,
+        resource: str = "https://resource.example",
+        issuer: str = "https://auth.example",
+        authorization_endpoint: str = "https://auth.example/authorize",
+        token_endpoint: str = "https://auth.example/custom/token",
+        registration_endpoint: str = "https://auth.example/register",
+        prm_url: str = "https://resource.example/prm",
+        metadata_paths: tuple[str, ...] = ("/.well-known/oauth-authorization-server",),
+        scopes: tuple[str, ...] = ("conversations:read", "offline_access"),
+        grant_types: tuple[str, ...] = (),
+    ) -> None:
         self.auth_method = auth_method
+        self.resource = resource
+        self.issuer = issuer
+        self.authorization_endpoint = authorization_endpoint
+        self.token_endpoint = token_endpoint
+        self.registration_endpoint = registration_endpoint
+        self.prm_url = prm_url
+        self.metadata_paths = metadata_paths
+        self.scopes = scopes
+        self.grant_types = grant_types
         self.authorization: dict[str, list[str]] = {}
         self.registration: dict[str, Any] = {}
         self.refreshes = 0
@@ -58,7 +80,7 @@ class AuthorizationServer:
 
     async def callback(self) -> AuthorizationCodeResult:
         return AuthorizationCodeResult(
-            code="consent-code", state=self.authorization["state"][0], iss="https://auth.example"
+            code="consent-code", state=self.authorization["state"][0], iss=self.issuer
         )
 
     def respond(self, request: httpx2.Request) -> httpx2.Response:
@@ -69,34 +91,32 @@ class AuthorizationServer:
                 return httpx2.Response(200, json={"authenticated": True})
             return httpx2.Response(
                 401,
-                headers={
-                    "WWW-Authenticate": 'Bearer resource_metadata="https://resource.example/prm"'
-                },
+                headers={"WWW-Authenticate": f'Bearer resource_metadata="{self.prm_url}"'},
             )
-        if path == "/prm":
+        if path == urlsplit(self.prm_url).path:
             return httpx2.Response(
                 200,
                 json={
-                    "resource": "https://resource.example",
-                    "authorization_servers": ["https://auth.example"],
-                    "scopes_supported": ["conversations:read", "offline_access"],
+                    "resource": self.resource,
+                    "authorization_servers": [self.issuer],
+                    "scopes_supported": list(self.scopes),
                 },
             )
-        if path == "/.well-known/oauth-authorization-server":
-            return httpx2.Response(
-                200,
-                json={
-                    "issuer": "https://auth.example",
-                    "authorization_endpoint": "https://auth.example/authorize",
-                    "token_endpoint": "https://auth.example/custom/token",
-                    "registration_endpoint": "https://auth.example/register",
-                    "response_types_supported": ["code"],
-                    "token_endpoint_auth_methods_supported": [self.auth_method],
-                    "code_challenge_methods_supported": ["S256"],
-                    "authorization_response_iss_parameter_supported": True,
-                },
-            )
-        if path == "/register":
+        if path in self.metadata_paths:
+            metadata: dict[str, Any] = {
+                "issuer": self.issuer,
+                "authorization_endpoint": self.authorization_endpoint,
+                "token_endpoint": self.token_endpoint,
+                "registration_endpoint": self.registration_endpoint,
+                "response_types_supported": ["code"],
+                "token_endpoint_auth_methods_supported": [self.auth_method],
+                "code_challenge_methods_supported": ["S256"],
+                "authorization_response_iss_parameter_supported": True,
+            }
+            if self.grant_types:
+                metadata["grant_types_supported"] = list(self.grant_types)
+            return httpx2.Response(200, json=metadata)
+        if path == urlsplit(self.registration_endpoint).path:
             self.registration = json.loads(request.content)
             assert self.registration["token_endpoint_auth_method"] == self.auth_method
             return httpx2.Response(
@@ -107,7 +127,7 @@ class AuthorizationServer:
                     "client_secret": "client-secret" if self.auth_method != "none" else None,
                 },
             )
-        if path == "/custom/token":
+        if path == urlsplit(self.token_endpoint).path:
             params = parse_qs(request.content.decode())
             if self.auth_method == "client_secret_basic":
                 expected = base64.b64encode(b"gobby-client:client-secret").decode()
@@ -119,7 +139,7 @@ class AuthorizationServer:
             else:
                 assert "client_secret" not in params
                 assert "Authorization" not in request.headers
-            assert params["resource"] == ["https://resource.example"]
+            assert params["resource"] == [self.resource]
             if params["grant_type"] == ["refresh_token"]:
                 self.refreshes += 1
                 assert params["refresh_token"] == ["refresh"]
@@ -265,6 +285,58 @@ async def login(
         response = await client.get(config.url or "")
     assert response.json() == {"authenticated": True}
     return config
+
+
+_FIELDY_SCOPES = (
+    "openid",
+    "profile",
+    "email",
+    "offline_access",
+    "conversations:read",
+    "transcripts:read",
+    "sharables:write",
+)
+
+
+@pytest.mark.asyncio
+async def test_fieldy_published_oauth_shape_completes_for_a_public_client(
+    secret_store: SecretStore,
+) -> None:
+    """Fieldy's published metadata completes on the public-client path with no network."""
+    server = AuthorizationServer(
+        resource="https://api.fieldy.ai",
+        issuer="https://api.fieldy.ai/api/auth",
+        authorization_endpoint="https://api.fieldy.ai/api/auth/oauth2/authorize",
+        token_endpoint="https://api.fieldy.ai/api/auth/oauth2/token",
+        registration_endpoint="https://api.fieldy.ai/api/auth/oauth2/register",
+        prm_url="https://api.fieldy.ai/.well-known/oauth-protected-resource",
+        metadata_paths=("/.well-known/oauth-authorization-server/api/auth",),
+        scopes=_FIELDY_SCOPES,
+        grant_types=("authorization_code", "client_credentials", "refresh_token"),
+    )
+    config = MCPServerConfig(name="fieldy", project_id="project", url="https://api.fieldy.ai/mcp")
+    await login(secret_store, server, config)
+
+    assert server.registration["token_endpoint_auth_method"] == "none"
+    assert server.authorization["code_challenge_method"] == ["S256"]
+    requested = set(server.authorization["scope"][0].split())
+    assert requested
+    assert requested <= set(_FIELDY_SCOPES)
+    token_requests = [
+        request
+        for request in server.requests
+        if request.url.path == "/api/auth/oauth2/token"
+        and parse_qs(request.content.decode())["grant_type"] == ["authorization_code"]
+    ]
+    assert token_requests
+    params = parse_qs(token_requests[0].content.decode())
+    assert params["resource"] == ["https://api.fieldy.ai"]
+    assert "client_secret" not in params
+    assert "Authorization" not in token_requests[0].headers
+    storage = MCPOAuthStorage(secret_store, config)
+    await storage.load()
+    assert storage.state.tokens is not None
+    assert storage.state.tokens.access_token == "access"
 
 
 @pytest.mark.asyncio
