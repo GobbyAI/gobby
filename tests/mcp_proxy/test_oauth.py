@@ -325,10 +325,16 @@ async def test_fieldy_published_oauth_shape_completes_for_a_public_client(
     token_requests = [
         request
         for request in server.requests
-        if request.url.path == "/api/auth/oauth2/token"
-        and parse_qs(request.content.decode())["grant_type"] == ["authorization_code"]
+        if request.method == "POST" and request.url.path == "/api/auth/oauth2/token"
     ]
-    assert token_requests
+    register_requests = [
+        request
+        for request in server.requests
+        if request.method == "POST" and request.url.path == "/api/auth/oauth2/register"
+    ]
+    assert len(token_requests) == 1
+    assert len(register_requests) == 1
+    assert server.requests.index(register_requests[0]) < server.requests.index(token_requests[0])
     params = parse_qs(token_requests[0].content.decode())
     assert params["resource"] == ["https://api.fieldy.ai"]
     assert "client_secret" not in params
@@ -375,6 +381,52 @@ async def test_oauth_response_secrets_are_redacted_before_sdk_logging(
     assert "private-response-secret" not in str(error.value)
     assert "private-response-secret" not in caplog.text
     assert "oauth_endpoint_error" in str(error.value)
+
+
+@pytest.mark.asyncio
+async def test_token_exchange_failure_surfaces_safe_headers_and_redacts_credentials(
+    secret_store: SecretStore, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A token-endpoint failure reports status and Fieldy's error fields, not credentials."""
+
+    class RateLimited(AuthorizationServer):
+        def respond(self, request: httpx2.Request) -> httpx2.Response:
+            if request.url.path == "/custom/token":
+                return httpx2.Response(
+                    429,
+                    headers={
+                        "Retry-After": "30",
+                        "RateLimit-Remaining": "0",
+                        "Content-Type": "application/json",
+                        "Server": "cloudflare",
+                        "CF-Ray": "abc123-ORD",
+                    },
+                    json={
+                        "error": "invalid_client",
+                        "error_description": "registration rejected",
+                        "message": "slow down",
+                        "access_token": "secret-token-value",
+                        "code": "auth-code-value",
+                        "client_secret": "super-secret-value",
+                    },
+                )
+            return super().respond(request)
+
+    caplog.set_level("WARNING")
+    with pytest.raises(OAuthFlowError) as error:
+        await login(secret_store, RateLimited())
+    visible = str(error.value) + caplog.text
+    assert "status=429" in visible
+    assert "retry_after=30" in visible
+    assert "ratelimit_remaining=0" in visible
+    assert "content_type=application/json" in visible
+    assert "server=cloudflare" in visible
+    assert "cf_ray=abc123-ORD" in visible
+    assert "error=invalid_client" in visible
+    assert "error_description=registration rejected" in visible
+    assert "message=slow down" in visible
+    for secret in ("secret-token-value", "auth-code-value", "super-secret-value"):
+        assert secret not in visible
 
 
 @pytest.mark.asyncio

@@ -2,6 +2,8 @@
 
 import asyncio
 import hashlib
+import json
+import logging
 import shlex
 import webbrowser
 from collections.abc import AsyncGenerator, Awaitable, Callable
@@ -31,6 +33,57 @@ from gobby.storage.projects import GLOBAL_PROJECT_ID
 from gobby.storage.secrets import SecretStore
 
 DEFAULT_OAUTH_TIMEOUT_SECONDS = 300.0
+logger = logging.getLogger(__name__)
+_SECRET_RESPONSE_KEYS = frozenset(
+    {
+        "access_token",
+        "refresh_token",
+        "id_token",
+        "code",
+        "client_secret",
+        "authorization",
+        "password",
+    }
+)
+_PUBLIC_ERROR_FIELDS = ("error", "error_description", "message")
+_NAMED_FAILURE_HEADERS = ("retry-after", "content-type", "server", "cf-ray")
+
+
+def _safe_oauth_failure_summary(response: httpx2.Response) -> str:
+    """Status, rate-limit headers, and Fieldy's error fields, without credentials."""
+    secrets: set[str] = set()
+    public: dict[str, str] = {}
+    try:
+        payload = json.loads(response.content or b"")
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        payload = None
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            if not isinstance(key, str) or not isinstance(value, str) or not value:
+                continue
+            if key in _SECRET_RESPONSE_KEYS:
+                secrets.add(value)
+            elif key in _PUBLIC_ERROR_FIELDS:
+                public[key] = value
+
+    def clean(text: str) -> str:
+        for secret in secrets:
+            text = text.replace(secret, "[redacted]")
+        return text
+
+    parts = [f"status={response.status_code}"]
+    for name in _NAMED_FAILURE_HEADERS:
+        value = response.headers.get(name)
+        if value:
+            parts.append(f"{name.replace('-', '_')}={clean(value)}")
+    for key, value in response.headers.items():
+        lower = key.lower()
+        if lower.startswith("ratelimit-"):
+            parts.append(f"{lower.replace('-', '_')}={clean(value)}")
+    for key in _PUBLIC_ERROR_FIELDS:
+        if key in public:
+            parts.append(f"{key}={clean(public[key])}")
+    return " ".join(parts)
 
 
 def oauth_auth_command(config: MCPServerConfig) -> str:
@@ -192,10 +245,22 @@ class PersistentOAuthProvider(OAuthClientProvider):
                 # SDK exceptions/logs include OAuth response bodies. Strip error bodies
                 # before they reach that layer; successful credentials remain encrypted.
                 if outgoing.url != request.url and response.status_code >= 400:
+                    token_exchange = (
+                        outgoing.method == "POST"
+                        and str(outgoing.url) == self._get_token_endpoint()
+                    )
+                    summary = None
+                    if token_exchange:
+                        await response.aread()
+                        summary = _safe_oauth_failure_summary(response)
+                        logger.warning("OAuth token endpoint failed: %s", summary)
+                    body: dict[str, str] = {"error": "oauth_endpoint_error"}
+                    if summary is not None:
+                        body["error_description"] = summary
                     response = httpx2.Response(
                         response.status_code,
                         headers={"Content-Type": "application/json"},
-                        json={"error": "oauth_endpoint_error"},
+                        json=body,
                         request=outgoing,
                     )
                 try:
