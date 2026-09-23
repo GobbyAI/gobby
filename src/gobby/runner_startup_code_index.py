@@ -90,6 +90,21 @@ def _start_code_index_tasks(runner: GobbyRunner, tracker: StartupTracker | None)
             except Exception as e:
                 logger.warning("Failed to create SymbolSummarizer: %s", e)
 
+        community_labeler = None
+        if config.code_index.community_label.enabled:
+            from gobby.code_index.community_labeler import CommunityLabeler
+
+            try:
+                if runner.text_generation_service is None:
+                    logger.warning("Skipping CommunityLabeler: text generation service unavailable")
+                else:
+                    community_labeler = CommunityLabeler(
+                        runner.text_generation_service,
+                        config.code_index,
+                    )
+            except Exception as e:
+                logger.warning("Failed to create CommunityLabeler: %s", e)
+
         shutdown_event = asyncio.Event()
         runner._code_index_shutdown = shutdown_event
         runner._code_index_task = asyncio.create_task(
@@ -99,6 +114,8 @@ def _start_code_index_tasks(runner: GobbyRunner, tracker: StartupTracker | None)
                 interval=config.code_index.maintenance_interval_seconds,
                 summarizer=summarizer,
                 symbol_summary_batch_size=config.code_index.symbol_summary.batch_size,
+                community_labeler=community_labeler,
+                community_label_batch_size=config.code_index.community_label.batch_size,
             ),
             name="code-index-maintenance",
         )
