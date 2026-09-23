@@ -10,6 +10,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Literal
 
+from gobby.worktrees.base_branch import rejects_unreferenced_sha_base
 from gobby.worktrees.git._models import GitOperationResult, WorktreeInfo
 from gobby.worktrees.git._runner import GitRunner
 from gobby.worktrees.git._status import get_worktree_status, list_worktrees
@@ -83,6 +84,12 @@ async def create_worktree(
             success=False,
             message=f"Remote-style base branch is not allowed: {base_branch}",
             error="remote_base_branch_not_allowed",
+        )
+    if await rejects_unreferenced_sha_base(runner, base_branch):
+        return GitOperationResult(
+            success=False,
+            message=f"base_branch must be a branch name, not a commit sha: {base_branch}",
+            error="base_branch_is_commit_sha",
         )
     worktree_path = Path(worktree_path)
 
