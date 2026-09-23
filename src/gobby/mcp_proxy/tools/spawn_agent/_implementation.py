@@ -635,6 +635,8 @@ async def spawn_agent_impl(
 
     if write_grant:
         resume_metadata[GRANT_KEY] = write_grant
+    if allow_closed_task:
+        resume_metadata["allow_closed_task"] = True
 
     task_spawn_lease = TaskSpawnLease(
         db=db,

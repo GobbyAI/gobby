@@ -184,6 +184,37 @@ async def test_closed_task_run_succeeds_on_next_completion_sweep(
     )
 
 
+async def test_allow_closed_task_respawn_survives_completion_sweep(
+    agent_run_manager: LocalAgentRunManager,
+    temp_db: HubDatabase,
+    parent_session: dict[str, Any],
+    sample_project: dict[str, Any],
+) -> None:
+    task_manager = LocalTaskManager(temp_db)
+    task_id, run = _create_task_run(
+        agent_run_manager=agent_run_manager,
+        task_manager=task_manager,
+        parent_session=parent_session,
+        sample_project=sample_project,
+    )
+    task_manager.close_task(task_id, reason="Done", closed_commit_sha="abc123")
+    agent_run_manager.merge_resume_metadata(run.id, {"allow_closed_task": True})
+    monitor = _monitor(
+        agent_run_manager=agent_run_manager,
+        temp_db=temp_db,
+        task_manager=task_manager,
+        stuck_detector=MagicMock(),
+    )
+
+    handled = await monitor.check_completed_task_agents()
+
+    stored = agent_run_manager.get(run.id)
+    assert handled == 0
+    assert stored is not None
+    assert stored.status != "success"
+    assert stored.terminal_reason != "task_completed"
+
+
 @pytest.mark.asyncio
 async def test_task_completed_before_session_end_persists_closed_task_result(
     agent_run_manager: LocalAgentRunManager,

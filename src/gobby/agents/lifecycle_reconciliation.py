@@ -245,6 +245,10 @@ class LifecycleReconciliation:
                     handled += 1
                 continue
 
+            metadata = run.resume_metadata_json or {}
+            if metadata.get("allow_closed_task") is True:
+                continue
+
             if await self._cooperative_close_handoff_pending(run):
                 logger.debug(
                     "Deferring closed-task completion for agent %s until its "
