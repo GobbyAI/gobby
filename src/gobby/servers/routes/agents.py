@@ -709,7 +709,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
             runs = manager.list_active_global()
             return {
                 "status": "success",
-                "agents": [r.to_dict() for r in runs],
+                "agents": [r.to_list_dict() for r in runs],
                 "count": len(runs),
             }
         except Exception as e:
@@ -739,7 +739,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
             )
 
             for r in runs:
-                d = r.to_dict()
+                d = r.to_list_dict()
                 if r.child_session_id and r.child_session_id in session_map:
                     d.update(session_map[r.child_session_id])
                 enriched.append(d)

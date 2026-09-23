@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
+from gobby.storage.agents import AgentRun
 from gobby.storage.agents._sandbox_records import _MAX_COUNTED_VIOLATIONS, sandbox_record
 
 pytestmark = pytest.mark.unit
@@ -254,3 +256,66 @@ def test_list_sandbox_record_counts_a_multiline_log_without_parsing_bodies(
     assert brief["violation_count"] == 3
     assert "violations" not in brief
     assert brief["retained_violation_path"] == str(violations.resolve())
+
+
+def test_list_projection_omits_violation_bodies_and_detail_keeps_them(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """List serialization counts a multi-line log; the detail dict still returns bodies."""
+    gobby_home = tmp_path / "gobby-home"
+    retention = gobby_home / "logs" / "sandbox-violations"
+    retention.mkdir(parents=True)
+    violations = retention / "run-list.jsonl"
+    events = [
+        {"sequence": 1, "body": "first\nline"},
+        {"sequence": 2, "body": "second"},
+        {"sequence": 3, "body": "third"},
+    ]
+    violations.write_text("".join(json.dumps(event) + "\n" for event in events), encoding="utf-8")
+    monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+    created = datetime(2026, 9, 23, tzinfo=UTC)
+    run = AgentRun(
+        id="11111111-1111-4111-8111-111111111111",
+        parent_session_id="22222222-2222-4222-8222-222222222222",
+        child_session_id="33333333-3333-4333-8333-333333333333",
+        provider="codex",
+        prompt="list projection",
+        status="success",
+        created_at=created,
+        updated_at=created,
+        terminal_id="term-1",
+        worktree_id="44444444-4444-4444-8444-444444444444",
+        requested_reasoning_effort="high",
+        effective_reasoning_effort="high",
+        resume_metadata_json={
+            "sandbox": {
+                "backend": "srt",
+                "retained_violation_path": str(violations),
+            }
+        },
+    )
+
+    detail = run.to_dict()
+    assert detail["sandbox"]["violations"] == events
+    assert detail["child_session_id"] == run.child_session_id
+
+    def _refuse_parse(*_args: object, **_kwargs: object) -> object:
+        raise json.JSONDecodeError("list must not parse bodies", "", 0)
+
+    monkeypatch.setattr(
+        "gobby.storage.agents._sandbox_records.json.loads",
+        _refuse_parse,
+    )
+    listed = run.to_list_dict()
+
+    assert listed["run_id"] == run.id
+    assert listed["child_session_id"] == run.child_session_id
+    assert listed["terminal_id"] == "term-1"
+    assert listed["worktree_id"] == run.worktree_id
+    assert listed["requested_reasoning_effort"] == "high"
+    assert listed["effective_reasoning_effort"] == "high"
+    sandbox = listed["sandbox"]
+    assert sandbox["violation_count"] == 3
+    assert "violations" not in sandbox
+    assert sandbox["retained_violation_path"] == str(violations.resolve())

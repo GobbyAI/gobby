@@ -176,6 +176,14 @@ class AgentRun:
         }
 
     def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary, including sandbox violation event bodies."""
+        return self._projection(include_sandbox_events=True)
+
+    def to_list_dict(self) -> dict[str, Any]:
+        """List projection: same fields as to_dict, without violation event bodies."""
+        return self._projection(include_sandbox_events=False)
+
+    def _projection(self, *, include_sandbox_events: bool) -> dict[str, Any]:
         """Convert to dictionary."""
         from gobby.storage.agents._sandbox_records import sandbox_record
 
@@ -222,7 +230,10 @@ class AgentRun:
             "pending_terminal_action": self.pending_terminal_action,
             "pending_terminal_reason": self.pending_terminal_reason,
             "termination_requested_at": self.termination_requested_at,
-            "sandbox": sandbox_record(self.resume_metadata_json, include_events=True),
+            "sandbox": sandbox_record(
+                self.resume_metadata_json,
+                include_events=include_sandbox_events,
+            ),
         }
 
     def to_brief(self) -> dict[str, Any]:
