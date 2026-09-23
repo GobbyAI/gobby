@@ -3,12 +3,13 @@
 import asyncio
 import os
 import time
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import httpx2
 import pytest
 from mcp.client.auth import OAuthFlowError
-from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
+from mcp.shared.auth import OAuthClientInformationFull, OAuthMetadata, OAuthToken
 from pydantic import AnyUrl
 
 from gobby.mcp_proxy.models import MCPAuthorizationRequired, MCPServerConfig
@@ -17,12 +18,14 @@ from gobby.mcp_proxy.oauth_keepalive import (
     ACCESS_REFRESH_LEAD_SECONDS,
     KEEPALIVE_TICK_SECONDS,
     backoff_active,
+    oauth_lock_key,
     oauth_server_lock,
     oauth_state_shape,
     refresh_expired_token,
     schedule_backoff,
     token_refresh_due,
 )
+from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.storage.projects import GLOBAL_PROJECT_ID
 from gobby.storage.secrets import SecretStore
 
@@ -284,3 +287,187 @@ async def test_invalid_grant_surfaces_authorization_required_once() -> None:
         ) as client:
             await client.get(config.url or "")
     assert calls == 1
+
+
+def _metadata_response() -> httpx2.Response:
+    return httpx2.Response(
+        200,
+        json={
+            "issuer": "https://auth.example",
+            "authorization_endpoint": "https://auth.example/authorize",
+            "token_endpoint": "https://auth.example/token",
+            "registration_endpoint": "https://auth.example/register",
+            "response_types_supported": ["code"],
+            "token_endpoint_auth_methods_supported": ["none"],
+            "code_challenge_methods_supported": ["S256"],
+            "authorization_response_iss_parameter_supported": True,
+        },
+    )
+
+
+def _registration_transport(posts: list[str]) -> httpx2.MockTransport:
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        path = request.url.path
+        if request.method == "POST":
+            posts.append(path)
+        if path == "/mcp":
+            return httpx2.Response(
+                401,
+                headers={
+                    "WWW-Authenticate": 'Bearer resource_metadata="https://resource.example/prm"'
+                },
+            )
+        if path == "/prm":
+            return httpx2.Response(
+                200,
+                json={
+                    "resource": "https://resource.example",
+                    "authorization_servers": ["https://auth.example"],
+                    "scopes_supported": ["conversations:read"],
+                },
+            )
+        if "oauth-authorization-server" in path or path.endswith("openid-configuration"):
+            return _metadata_response()
+        if path == "/register":
+            return httpx2.Response(429, headers={"Retry-After": "30"}, json={"error": "slow_down"})
+        return httpx2.Response(404)
+
+    return httpx2.MockTransport(respond)
+
+
+@pytest.mark.asyncio
+async def test_registration_429_persists_shared_backoff(
+    postgres_db: PostgresHubDatabase, tmp_path: Path
+) -> None:
+    """A registration 429 is shared through reloaded storage and blocks the next call."""
+    config = _config("register-backoff")
+    config.url = "https://resource.example/mcp"
+    store = SecretStore(postgres_db, gobby_home=tmp_path)
+    existing = MCPOAuthStorage(store, config)
+    await existing.save()
+    posts: list[str] = []
+
+    async def redirect(_url: str) -> None:
+        raise AssertionError("registration backoff must not open a browser")
+
+    provider = PersistentOAuthProvider(config, existing, redirect_handler=redirect)
+    with pytest.raises(OAuthFlowError):
+        async with httpx2.AsyncClient(
+            auth=provider, transport=_registration_transport(posts)
+        ) as client:
+            await client.get(config.url)
+    assert posts == ["/register"]
+
+    reloaded = MCPOAuthStorage(SecretStore(postgres_db, gobby_home=tmp_path), config)
+    await reloaded.load()
+    retry_not_before = reloaded.state.retry_not_before
+    assert retry_not_before is not None
+    assert retry_not_before > time.time()
+
+    second_posts: list[str] = []
+    fresh = PersistentOAuthProvider(
+        config,
+        MCPOAuthStorage(SecretStore(postgres_db, gobby_home=tmp_path), config),
+        redirect_handler=redirect,
+    )
+    with pytest.raises(OAuthFlowError, match="backoff"):
+        async with httpx2.AsyncClient(
+            auth=fresh, transport=_registration_transport(second_posts)
+        ) as client:
+            await client.get(config.url)
+    assert second_posts == []
+
+
+def _advisory_lock_ids(key: int) -> tuple[int, int]:
+    raw = key & ((1 << 64) - 1)
+    return (raw >> 32) & 0xFFFFFFFF, raw & 0xFFFFFFFF
+
+
+async def _refresh_waiter_blocked(db: PostgresHubDatabase, name: str) -> bool:
+    classid, objid = _advisory_lock_ids(oauth_lock_key(name))
+    query = """SELECT COUNT(*) AS waiting
+               FROM pg_locks
+               WHERE locktype = 'advisory'
+                 AND classid = %s
+                 AND objid = %s
+                 AND objsubid = 1
+                 AND NOT granted"""
+    for _ in range(200):
+        row = await asyncio.to_thread(db.fetchone, query, (classid, objid))
+        if row is not None and int(row["waiting"]) >= 1:
+            return True
+    return False
+
+
+@pytest.mark.asyncio
+async def test_async_auth_flow_refreshes_once_and_reuses_persisted_tokens(
+    postgres_db: PostgresHubDatabase, tmp_path: Path
+) -> None:
+    """Two providers refresh through one token POST, then the waiter uses the saved tokens."""
+    config = _config("refresh-flight")
+    seeded = MCPOAuthStorage(SecretStore(postgres_db, gobby_home=tmp_path), config)
+    seeded.state.tokens = OAuthToken(
+        access_token="old-access", token_type="Bearer", refresh_token="old-refresh"
+    )
+    seeded.state.client = OAuthClientInformationFull(
+        client_id="client",
+        redirect_uris=[AnyUrl("http://127.0.0.1:9/callback")],
+    )
+    seeded.state.metadata = OAuthMetadata(
+        issuer=AnyUrl("https://auth.example"),
+        authorization_endpoint=AnyUrl("https://auth.example/authorize"),
+        token_endpoint=AnyUrl("https://auth.example/token"),
+        response_types_supported=["code"],
+    )
+    seeded.state.expires_at = 1.0
+    await seeded.save()
+    posts: list[str] = []
+    auths: list[str | None] = []
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def respond(request: httpx2.Request) -> httpx2.Response:
+        if request.method == "POST":
+            posts.append(request.url.path)
+            if len(posts) == 1:
+                started.set()
+                await release.wait()
+            return httpx2.Response(
+                200,
+                json={
+                    "access_token": "rotated-access",
+                    "token_type": "Bearer",
+                    "refresh_token": "rotated-refresh",
+                    "expires_in": 3600,
+                },
+            )
+        auths.append(request.headers.get("Authorization"))
+        return httpx2.Response(200, json={"ok": True})
+
+    def provider() -> PersistentOAuthProvider:
+        storage = MCPOAuthStorage(SecretStore(postgres_db, gobby_home=tmp_path), config)
+        return PersistentOAuthProvider(config, storage)
+
+    async def drive(auth: PersistentOAuthProvider) -> None:
+        async with httpx2.AsyncClient(auth=auth, transport=httpx2.MockTransport(respond)) as client:
+            response = await client.get(config.url or "")
+        assert response.status_code == 200
+
+    async with asyncio.TaskGroup() as group:
+        group.create_task(drive(provider()))
+        await started.wait()
+        group.create_task(drive(provider()))
+        assert await _refresh_waiter_blocked(postgres_db, seeded.name)
+        midpoint = MCPOAuthStorage(SecretStore(postgres_db, gobby_home=tmp_path), config)
+        await midpoint.load()
+        assert midpoint.state.tokens is not None
+        assert midpoint.state.tokens.access_token == "old-access"
+        release.set()
+
+    assert posts == ["/token"]
+    assert auths == ["Bearer rotated-access", "Bearer rotated-access"]
+    finished = MCPOAuthStorage(SecretStore(postgres_db, gobby_home=tmp_path), config)
+    await finished.load()
+    assert finished.state.tokens is not None
+    assert finished.state.tokens.access_token == "rotated-access"
+    assert finished.state.tokens.refresh_token == "rotated-refresh"

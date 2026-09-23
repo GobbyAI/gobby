@@ -284,6 +284,9 @@ class PersistentOAuthProvider(OAuthClientProvider):
                             self.context.clear_tokens()
                             await self.persistent_storage.save()
                             raise MCPAuthorizationRequired(self.auth_command)
+                    if token_exchange or (
+                        registering and (response.status_code == 429 or response.status_code >= 500)
+                    ):
                         schedule_backoff(
                             self.persistent_storage.state,
                             status=response.status_code,
