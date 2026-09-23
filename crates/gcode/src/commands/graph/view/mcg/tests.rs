@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::time::SystemTime;
 
 use crate::cli::GraphViewKind;
 use crate::codewiki_facts::PublicEdge;
@@ -10,9 +11,10 @@ use crate::commands::graph::view::{
 };
 
 use crate::communities::identity::{ImportIdentity, identity_tests::identity_from};
+use crate::communities::{LabelSource, MISSING_PARTITION_HINT, StoredCommunity};
 
 use super::identity::{McgSeedError, McgSeedSelector, close_endpoint, resolve_mcg_seed};
-use super::{McgHopFetch, assign_leiden_communities, walk_mcg};
+use super::{McgHopFetch, label_communities, walk_mcg};
 
 const MACHINE: &str = "machine-1";
 const HASH: &str = "hash-a";
@@ -102,6 +104,37 @@ fn identity() -> ImportIdentity {
             ("src/r.py".into(), vec!["r".into(), ".r".into()]),
             ("collision".into(), Vec::new()),
         ]),
+    }
+}
+
+fn stored_community(
+    community_id: i32,
+    label: &str,
+    members: &[&str],
+    member_count: usize,
+) -> StoredCommunity {
+    StoredCommunity {
+        machine_id: MACHINE.into(),
+        project_id: "proj".into(),
+        community_id,
+        member_count,
+        members: members.iter().map(|member| (*member).to_string()).collect(),
+        representatives: Vec::new(),
+        internal_edges: 1,
+        cohesion: 0.75,
+        boundary: Vec::new(),
+        member_signature: format!("signature-{community_id}"),
+        label_deterministic: label.into(),
+        label: label.into(),
+        label_source: LabelSource::Deterministic,
+        label_confidence: None,
+        label_model: None,
+        label_candidates: vec![label.into()],
+        labeled_signature: None,
+        labeled_at: None,
+        label_attempted_at: None,
+        refreshed_at: SystemTime::now(),
+        label_stale: false,
     }
 }
 
@@ -243,7 +276,7 @@ fn consumer_provider_dep() -> Vec<ViewEdgeCandidate> {
 }
 
 #[test]
-fn mcg_assigns_leiden_communities_on_scoped_imports() {
+fn mcg_labels_nodes_from_stored_communities() {
     let nodes = vec![
         ViewNodeInput {
             key: NodeKey::file("src/a.py"),
@@ -253,46 +286,55 @@ fn mcg_assigns_leiden_communities_on_scoped_imports() {
             community: None,
         },
         ViewNodeInput {
-            key: NodeKey::module("cluster-a"),
-            name: "cluster-a".into(),
+            key: NodeKey::module("p"),
+            name: "p".into(),
             kind: "module".into(),
             file: None,
             community: None,
         },
         ViewNodeInput {
-            key: NodeKey::file("src/b.py"),
-            name: "src/b.py".into(),
-            kind: "file".into(),
-            file: Some("src/b.py".into()),
-            community: None,
-        },
-        ViewNodeInput {
-            key: NodeKey::module("cluster-b"),
-            name: "cluster-b".into(),
+            key: NodeKey::module("ambiguous"),
+            name: "ambiguous".into(),
             kind: "module".into(),
             file: None,
             community: None,
         },
-    ];
-    let edges = vec![
-        ViewEdgeInput {
-            source: NodeKey::file("src/a.py"),
-            target: NodeKey::module("cluster-a"),
-            rel: "IMPORTS".into(),
-        },
-        ViewEdgeInput {
-            source: NodeKey::file("src/b.py"),
-            target: NodeKey::module("cluster-b"),
-            rel: "IMPORTS".into(),
+        ViewNodeInput {
+            key: NodeKey::external("third_party"),
+            name: "third_party".into(),
+            kind: "external".into(),
+            file: None,
+            community: None,
         },
     ];
-    let (nodes, communities) = assign_leiden_communities(nodes, &edges);
-    let ids = nodes
+    let edges = vec![ViewEdgeInput {
+        source: NodeKey::file("src/a.py"),
+        target: NodeKey::module("p"),
+        rel: "IMPORTS".into(),
+    }];
+    let stored = vec![
+        stored_community(7, "Core API", &["src/a.py", "src/p.py"], 5),
+        stored_community(8, "Unused", &["src/q.py"], 3),
+    ];
+    let labeled = label_communities(nodes, &stored, &identity());
+    assert_eq!(labeled.hint, None);
+    let by_id = labeled
+        .nodes
         .iter()
-        .filter_map(|node| node.community.clone())
-        .collect::<HashSet<_>>();
-    assert_eq!(communities.len(), 2);
-    assert_eq!(ids.len(), 2);
+        .map(|node| (node.key.canonical(), node.community.as_deref()))
+        .collect::<HashMap<_, _>>();
+    assert_eq!(by_id["file:src/a.py"], Some("community:7"));
+    assert_eq!(by_id["module:p"], Some("community:7"));
+    assert_eq!(by_id["module:ambiguous"], None);
+    assert_eq!(by_id["external:third_party"], None);
+    assert_eq!(labeled.communities.len(), 1);
+    assert_eq!(labeled.communities[0].id, "community:7");
+    assert_eq!(labeled.communities[0].label, "Core API");
+    assert_eq!(labeled.communities[0].size, 5);
+    assert_eq!(labeled.communities[0].cohesion, 0.75);
+    assert_eq!(labeled.communities[0].label_source, "deterministic");
+    assert!(!labeled.communities[0].label_stale);
+    assert_eq!(labeled.communities[0].nodes, ["file:src/a.py", "module:p"]);
     let payload = build_view_payload(
         "proj",
         "/abs",
@@ -307,18 +349,40 @@ fn mcg_assigns_leiden_communities_on_scoped_imports() {
         false,
         false,
         None,
-        nodes,
+        labeled.nodes,
         edges,
-        communities,
+        labeled.communities,
     )
     .expect("payload");
-    assert!(payload.nodes.iter().any(|node| node.community.is_some()));
-    let community = payload
-        .nodes
-        .iter()
-        .find_map(|node| node.community.as_deref())
-        .expect("community id");
-    assert!(payload.mermaid.contains(community));
+    assert!(
+        payload
+            .mermaid
+            .contains("subgraph community_7[\"Core API\"]")
+    );
+}
+
+#[test]
+fn mcg_without_stored_partition_hints_and_leaves_null() {
+    let nodes = vec![
+        ViewNodeInput {
+            key: NodeKey::file("src/a.py"),
+            name: "src/a.py".into(),
+            kind: "file".into(),
+            file: Some("src/a.py".into()),
+            community: Some("community:99".into()),
+        },
+        ViewNodeInput {
+            key: NodeKey::module("p"),
+            name: "p".into(),
+            kind: "module".into(),
+            file: Some("src/p.py".into()),
+            community: Some("community:99".into()),
+        },
+    ];
+    let labeled = label_communities(nodes, &[], &identity());
+    assert_eq!(labeled.hint.as_deref(), Some(MISSING_PARTITION_HINT));
+    assert!(labeled.communities.is_empty());
+    assert!(labeled.nodes.iter().all(|node| node.community.is_none()));
 }
 
 #[test]

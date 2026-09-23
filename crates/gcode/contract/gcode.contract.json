@@ -1,6 +1,6 @@
 {
   "tool": "gcode",
-  "contract_version": 10,
+  "contract_version": 11,
   "summary": "Fast code index CLI for Gobby.",
   "global_flags": [
     {
@@ -388,7 +388,8 @@
         "indexed_files",
         "indexed_symbols",
         "skipped_files",
-        "errors"
+        "errors",
+        "communities"
       ]
     },
     {
@@ -1911,18 +1912,19 @@
     },
     {
       "name": "graph view",
-      "summary": "Render a scoped fcg, mcg, or class-hierarchy graph view.",
+      "summary": "Render a scoped fcg, mcg, or class-hierarchy graph view, or project-wide import communities.",
       "daemon_consumed": false,
       "positionals": [],
       "flags": [
         {
           "name": "--view",
           "takes_value": true,
-          "value_name": "fcg|mcg|class-hierarchy",
+          "value_name": "fcg|mcg|class-hierarchy|communities",
           "allowed_values": [
             "fcg",
             "mcg",
-            "class-hierarchy"
+            "class-hierarchy",
+            "communities"
           ],
           "required": true,
           "repeatable": false
@@ -1971,6 +1973,22 @@
           "name": "--outgoing-limit",
           "takes_value": true,
           "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--min-size",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--community",
+          "takes_value": true,
+          "value_name": "ID|LABEL|PATH",
           "allowed_values": [],
           "required": false,
           "repeatable": false

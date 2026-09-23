@@ -60,6 +60,18 @@ pub enum IndexDegradation {
         target: ProjectionTarget,
         message: String,
     },
+    CommunityRefreshFailed {
+        message: String,
+    },
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommunityRefreshReport {
+    pub communities: usize,
+    pub changed: usize,
+    pub new_ids: usize,
+    pub retired_ids: usize,
+    pub skipped_unchanged: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -90,6 +102,8 @@ pub struct IndexOutcome {
     pub projection_sync: Option<ProjectionSyncStatus>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub overlay: Option<OverlayIndexMetadata>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub communities: Option<Box<CommunityRefreshReport>>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
