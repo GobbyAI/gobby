@@ -781,8 +781,10 @@ def test_rotation_rewrites_launch_grant_bundle(
             row[2] == "rotated credential indexed sentinel" for row in visible
         ), visible
 
+        gcode_bin = resolve_native_bin("gcode")
+        assert gcode_bin is not None
         installed_identity = json.loads(
-            Path("/Users/josh/.gobby/bin/.gdaemon-schema-identity.json").read_text(
+            (Path(gcode_bin).parent / ".gdaemon-schema-identity.json").read_text(
                 encoding="utf-8"
             )
         )
@@ -800,8 +802,6 @@ def test_rotation_rewrites_launch_grant_bundle(
                 GOLDEN_SECRET,
             ),
         )
-        gcode_bin = resolve_native_bin("gcode")
-        assert gcode_bin is not None
         project_root = tmp_path / "search-project"
         project_root.mkdir()
         source = project_root / "src" / "lib.rs"
