@@ -2857,6 +2857,61 @@ class TestModelExtraction:
         assert snapshots[-1].confidence == "reported"
 
     @pytest.mark.asyncio
+    async def test_grok_auto_compact_starts_a_new_occupancy_epoch(
+        self, mock_db: MagicMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A compact completion replaces the stored max, then the new epoch tracks its own max."""
+        monkeypatch.setattr("gobby.sessions.processor.TokenEventStore", lambda _db: MagicMock())
+        session = SimpleNamespace(
+            project_id="proj-1",
+            source="grok",
+            context_window=512_000,
+            model="grok-build",
+            context_used_tokens=399_515,
+            context_usage_confidence="reported",
+        )
+        snapshots: list[ContextUsageSnapshot] = []
+        session_manager = MagicMock()
+        session_manager.get.return_value = session
+
+        def apply_snapshot(_session_id: str, snapshot: ContextUsageSnapshot) -> None:
+            snapshots.append(snapshot)
+            session.context_used_tokens = snapshot.context_used_tokens
+            session.context_usage_confidence = snapshot.confidence
+
+        session_manager.update_context_usage.side_effect = apply_snapshot
+        processor = SessionMessageProcessor(mock_db, session_manager=session_manager)
+
+        def message(
+            index: int,
+            context_used_tokens: int,
+            *,
+            epoch_reset: bool = False,
+        ) -> ParsedMessage:
+            return ParsedMessage(
+                index=index,
+                role="assistant",
+                content="",
+                content_type="text",
+                tool_name=None,
+                tool_input=None,
+                tool_result=None,
+                timestamp=datetime.now(),
+                raw_json={"params": {"update": {"totalContextTokens": 512_000}}},
+                model="grok-build",
+                message_id=f"grok-{index}",
+                context_used_tokens=context_used_tokens,
+                context_epoch_reset=epoch_reset,
+            )
+
+        await processor._persist_usage_events(
+            "session-1",
+            [message(0, 28_793, epoch_reset=True), message(1, 40_000)],
+        )
+
+        assert session.context_used_tokens == 40_000
+
+    @pytest.mark.asyncio
     async def test_grok_usage_snapshot_does_not_replace_reported_occupancy(
         self, mock_db: MagicMock, monkeypatch: pytest.MonkeyPatch
     ) -> None:

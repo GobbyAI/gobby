@@ -37,6 +37,7 @@ class ContextUsageSnapshot:
     cache_read_tokens: int | None = None
     cache_creation_tokens: int | None = None
     output_tokens: int | None = None
+    epoch_reset: bool = False
 
     @classmethod
     def calculate_ratio(
@@ -77,6 +78,7 @@ class ContextUsageSnapshot:
         context_window: int | None,
         context_used_tokens: int | None,
         model: str | None = None,
+        epoch_reset: bool = False,
     ) -> ContextUsageSnapshot:
         """Create a snapshot from provider-reported current-context occupancy."""
         context_used = _coerce_nonnegative_int(context_used_tokens)
@@ -89,6 +91,7 @@ class ContextUsageSnapshot:
             confidence="reported" if context_used is not None else "unknown",
             timestamp=utc_now(),
             raw_prompt_footprint=context_used,
+            epoch_reset=epoch_reset,
         )
 
     @classmethod

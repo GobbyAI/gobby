@@ -392,6 +392,7 @@ class TranscriptProcessingMixin:
                         context_window=message_context_window,
                         context_used_tokens=msg.context_used_tokens,
                         model=message_model or last_model,
+                        epoch_reset=msg.context_epoch_reset,
                     )
                 )
             usage = msg.usage
