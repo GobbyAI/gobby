@@ -439,7 +439,7 @@ def list_agent_runs(
             runs = manager.list_by_status(status=status, limit=limit)
 
     if json_format:
-        click.echo(json_dumps([r.to_dict() for r in runs], indent=2, default=str))
+        click.echo(json_dumps([r.to_list_dict() for r in runs], indent=2, default=str))
         return
 
     if not runs:

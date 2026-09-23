@@ -30,7 +30,6 @@ _SUPPRESSED_UPDATE_TYPES = frozenset(
     {
         "retry_state",
         "compaction_checkpoint",
-        "auto_compact_completed",
         "task_backgrounded",
         "task_completed",
         "current_mode_update",
@@ -92,6 +91,23 @@ class GrokTranscriptParser(BaseTranscriptParser):
                 message_id=_message_id("grok", self.session_id, index, update.get("prompt_id")),
                 usage=_turn_usage(update),
             )
+        if update_type == "auto_compact_completed":
+            tokens_after = _count(update.get("tokens_after"))
+            if tokens_after <= 0:
+                return None
+            parsed = _message(
+                index,
+                "assistant",
+                "",
+                "usage",
+                timestamp,
+                data,
+                message_id=message_id,
+            )
+            parsed.context_used_tokens = tokens_after
+            parsed.context_epoch_reset = True
+            return parsed
+
         if update_type in _SUPPRESSED_UPDATE_TYPES:
             return None
         if update_type == "user_message_chunk":

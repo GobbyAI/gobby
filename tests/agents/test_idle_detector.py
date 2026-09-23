@@ -478,6 +478,15 @@ class TestComposerRead:
         suggestion = "\x1b[39m❯\xa0\x1b[2mrun\x1b[0m \x1b[2mlightspeed and report\x1b[0m"
         assert self.detector.composer_read(_framed(suggestion)) == ComposerRead("empty")
 
+    def test_ghostty_faint_suggestion_reads_empty(self) -> None:
+        # Shape emitted by recent_unwrapped_ansi for an SGR 2 suggestion.
+        suggestion = "❯\xa0\x1b[0m\x1b[2mrun\x1b[0m \x1b[0m\x1b[2mlightspeed and report\x1b[0m"
+        assert self.detector.composer_read(_framed(suggestion)) == ComposerRead("empty")
+
+    def test_ghostty_single_span_suggestion_reads_empty(self) -> None:
+        suggestion = "❯\xa0\x1b[0m\x1b[2mcheck the lane status\x1b[0m"
+        assert self.detector.composer_read(_framed(suggestion)) == ComposerRead("empty")
+
     def test_styled_typed_claude_draft_keeps_its_text(self) -> None:
         typed = "\x1b[39m❯\xa0hello draft text"
         assert self.detector.composer_read(_framed(typed)) == ComposerRead(
