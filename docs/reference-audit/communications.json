@@ -771,7 +771,7 @@
     {
       "id": "inventory",
       "command": "gcode outline/symbol-at on communications MCP registry, CLI and HTTP routes; AST route inventory",
-      "result": "40 operations inventoried and mapped: 16 MCP, 10 CLI, 14 HTTP. 2026-09-23 (#22804): list_tools(gobby-communications) reports 18 MCP tools; attach_conversation and detach_conversation are mapped."
+      "result": "42 operations inventoried and mapped: 18 MCP, 10 CLI, 14 HTTP. The 2026-09-23 recount (#22804) added attach_conversation and detach_conversation to list_tools(gobby-communications); neither has a CLI or HTTP route."
     },
     {
       "id": "conversation-attachment",
@@ -790,8 +790,8 @@
     },
     {
       "id": "schemas",
-      "command": "get_tool_schema on all 16 gobby-communications tools",
-      "result": "All registered parameters and defaults inspected; no live external mutations. 2026-09-23 (#22804): get_tool_schema on attach_conversation and detach_conversation."
+      "command": "get_tool_schema on all 18 gobby-communications tools",
+      "result": "All registered parameters and defaults inspected; no live external mutations. attach_conversation and detach_conversation were read on 2026-09-23 (#22804)."
     },
     {
       "id": "notification-red-green",
@@ -806,7 +806,7 @@
     {
       "id": "links-current",
       "command": "uv run python /tmp/gobby_communications_validate.py",
-      "result": "19 catalog capabilities, 40 operation symbols, 61 local links/anchors valid."
+      "result": "19 catalog capabilities, 40 operation symbols, 61 local links/anchors valid, in the run before #22804. On 2026-09-23 (#22804), test_reference_contract_3_2_1 in tests/skills/test_reference_library.py resolved all 42 operation symbols and checked local links and anchors."
     },
     {
       "id": "quality-current",
@@ -991,6 +991,6 @@
     }
   ],
   "coverage_notes": [
-    "All 40 communications operations mapped. Communications and Telegram guide sections audited against implementation, registered schemas, installed persona and focused isolated tests. CLI guide audit limited to communications inventory. Official Telegram guidance checked for privacy, transport and rate limits. No live external messages or channel/subscription mutations. Final post-metadata validation is recorded in the task close transcript."
+    "All 42 communications operations mapped. Communications and Telegram guide sections audited against implementation, registered schemas, installed persona and focused isolated tests. CLI guide audit limited to communications inventory. Official Telegram guidance checked for privacy, transport and rate limits. No live external messages or channel/subscription mutations. Final post-metadata validation is recorded in the task close transcript."
   ]
 }
