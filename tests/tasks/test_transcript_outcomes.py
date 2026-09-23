@@ -7,11 +7,45 @@ from pathlib import Path
 
 import pytest
 
+from gobby.tasks.command_equivalence import command_covers
 from gobby.tasks.transcript_outcomes import (
     classify_validation_command_equivalence,
     is_unexecuted_tool_result,
     wrapped_validation_command,
 )
+
+
+def test_nice_delimited_criterion_command_is_credited() -> None:
+    command = "CARGO_BUILD_JOBS=4 nice -n 15 -- cargo clippy -p gobby-code"
+    core = classify_validation_command_equivalence(command).core_command
+    assert core == "cargo clippy -p gobby-code"
+    assert command_covers(command, "cargo clippy -p gobby-code")
+
+
+def test_nice_delimited_after_cd_criterion_command_is_credited() -> None:
+    command = "cd /x && CARGO_BUILD_JOBS=4 nice -n 15 -- cargo clippy -p gobby-code"
+    core = classify_validation_command_equivalence(command).core_command
+    assert core == "cargo clippy -p gobby-code"
+    assert command_covers(command, "cargo clippy -p gobby-code")
+
+
+def test_nice_without_delimiter_after_export_criterion_command_is_credited() -> None:
+    command = "export CARGO_BUILD_JOBS=4 && nice -n 15 cargo clippy -p gobby-code"
+    core = classify_validation_command_equivalence(command).core_command
+    assert core == "cargo clippy -p gobby-code"
+    assert command_covers(command, "cargo clippy -p gobby-code")
+
+
+def test_nice_inner_command_mismatch_is_not_credited() -> None:
+    command = "CARGO_BUILD_JOBS=4 nice -n 15 cargo check -p gobby-code"
+    assert not command_covers(command, "cargo clippy -p gobby-code")
+
+
+def test_nice_numeric_option_and_absolute_path_criterion_command_is_credited() -> None:
+    command = "/usr/bin/nice -5 -- cargo clippy -p gobby-code"
+    core = classify_validation_command_equivalence(command).core_command
+    assert core == "cargo clippy -p gobby-code"
+    assert command_covers(command, "cargo clippy -p gobby-code")
 
 
 @pytest.mark.parametrize(

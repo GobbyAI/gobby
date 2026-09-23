@@ -8,6 +8,7 @@ import shlex
 from collections import Counter
 
 from gobby.config.shell_lexing import ParsedShellCommand
+from gobby.config.validation_detection import normalize_validation_evidence_command
 
 # Keep the original spelling until operators and redirections have been identified.
 # shlex alone erases whether a token such as '|' was a literal argument.
@@ -92,6 +93,7 @@ def canonical_command(command: str) -> str | None:
     literal_free = re.sub(r'''\\.|'[^']*'|"(?:\\.|[^"\\])*"''', "", command)
     if any(char in literal_free for char in "*?[]{}~"):
         return None
+    command = normalize_validation_evidence_command(command)
     parsed = parse_validation_shell(command)
     if not parsed.segments or len(parsed.segments) != len(parsed.operators) + 1:
         return None
