@@ -8,7 +8,10 @@ from pathlib import Path
 
 import pytest
 
-from gobby.mcp_proxy.tools.worktrees._merge_state import is_worktree_git_merged
+from gobby.mcp_proxy.tools.worktrees._merge_state import (
+    is_worktree_git_merged,
+    worktree_dict_with_git_merge_state,
+)
 from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.storage.worktrees import LocalWorktreeManager, Worktree
 from gobby.utils.datetime import utc_now
@@ -226,3 +229,15 @@ async def test_merged_worktree_against_branch_base_is_cleanup_eligible(
     named = name_unreferenced_sha_base_rows([_row(_OBSERVED_SHA, "observed")], refs)
     assert [row.id for row in named] == ["observed"]
     assert [row.base_branch for row in named] == [_OBSERVED_SHA]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_worktree_read_reports_unreferenced_sha_base(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    _init_repo(root)
+    row = _row(_OBSERVED_SHA, "observed")
+    payload = await worktree_dict_with_git_merge_state(row, WorktreeGitManager(root))
+    state = payload["git_merge_state"]
+    assert state["consistent"] is False
+    assert state["unreferenced_sha_base_ids"] == ["observed"]
