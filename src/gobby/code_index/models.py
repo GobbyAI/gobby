@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from gobby.utils.datetime import normalize_datetime_model, utc_now
 
@@ -276,6 +277,61 @@ class IndexedProject:
             "last_indexed_at": self.last_indexed_at,
             "index_duration_ms": self.index_duration_ms,
         }
+
+
+@normalize_datetime_model(
+    required=("refreshed_at",),
+    optional=("labeled_at", "label_attempted_at"),
+)
+@dataclass
+class StoredCommunity:
+    """A persisted import community and its labeling state."""
+
+    machine_id: str
+    project_id: str
+    community_id: int
+    member_count: int
+    members: list[str]
+    representatives: list[str]
+    internal_edges: int
+    cohesion: float
+    boundary: list[dict[str, Any]]
+    member_signature: str
+    label_deterministic: str
+    label: str
+    label_source: str
+    label_confidence: float | None
+    label_model: str | None
+    label_candidates: list[str]
+    labeled_signature: str | None
+    labeled_at: datetime | None
+    label_attempted_at: datetime | None
+    refreshed_at: datetime
+
+    @classmethod
+    def from_row(cls, row: Mapping[str, Any]) -> StoredCommunity:
+        return cls(
+            machine_id=row["machine_id"],
+            project_id=row["project_id"],
+            community_id=row["community_id"],
+            member_count=row["member_count"],
+            members=cast(list[str], json.loads(row["members"])),
+            representatives=cast(list[str], json.loads(row["representatives"])),
+            internal_edges=row["internal_edges"],
+            cohesion=row["cohesion"],
+            boundary=cast(list[dict[str, Any]], json.loads(row["boundary"])),
+            member_signature=row["member_signature"],
+            label_deterministic=row["label_deterministic"],
+            label=row["label"],
+            label_source=row["label_source"],
+            label_confidence=row["label_confidence"],
+            label_model=row["label_model"],
+            label_candidates=cast(list[str], json.loads(row["label_candidates"])),
+            labeled_signature=row["labeled_signature"],
+            labeled_at=row["labeled_at"],
+            label_attempted_at=row["label_attempted_at"],
+            refreshed_at=row["refreshed_at"],
+        )
 
 
 ProjectionCleanupStore = Literal["graph", "vector"]

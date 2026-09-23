@@ -16,13 +16,15 @@ mod util;
 
 pub use freshness_probe::project_changed_since;
 pub use lifecycle::invalidate;
+#[cfg(test)]
+pub(crate) use lifecycle::refresh_communities;
 pub(crate) use local_imports::{
     LocalImportRepair, resolve_project_local_import_calls, resolve_project_local_import_inheritance,
 };
 pub use pipeline::index_files;
 pub use types::{
-    IndexDegradation, IndexDurations, IndexOptions, IndexOutcome, IndexProgressSink, IndexRequest,
-    UnsupportedFileType,
+    CommunityRefreshReport, IndexDegradation, IndexDurations, IndexOptions, IndexOutcome,
+    IndexProgressSink, IndexRequest, UnsupportedFileType,
 };
 
 #[cfg(test)]

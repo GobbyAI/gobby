@@ -28,6 +28,14 @@ from gobby.mcp_proxy.transports.base import BaseTransportConnection
 CreateConnection = Callable[[MCPServerConfig], BaseTransportConnection]
 
 
+def _exception_type_tree(exc: BaseException) -> str:
+    exception_type = type(exc).__name__
+    if isinstance(exc, BaseExceptionGroup):
+        nested_types = ", ".join(_exception_type_tree(nested) for nested in exc.exceptions)
+        return f"{exception_type}[{nested_types}]"
+    return exception_type
+
+
 def _dedupe_configs_by_id(configs: list[MCPServerConfig]) -> list[MCPServerConfig]:
     deduped: dict[str, MCPServerConfig] = {}
     for config in configs:
@@ -375,7 +383,7 @@ async def _authorize_oauth_once(
         logging.getLogger("gobby.mcp.manager").warning(
             "Automatic OAuth authorization failed for '%s': %s",
             config.name,
-            type(exc).__name__,
+            _exception_type_tree(exc),
         )
         raise required from exc
 

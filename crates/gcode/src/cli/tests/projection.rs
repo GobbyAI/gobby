@@ -608,3 +608,143 @@ fn graph_view_rejects_hierarchy_row_limits() {
         _ => panic!("expected graph view command"),
     }
 }
+
+#[test]
+fn communities_parses_without_seed() {
+    let cli = Cli::try_parse_from(["gcode", "graph", "view", "--view", "communities"])
+        .expect("seedless communities view parses");
+    match cli.command {
+        Command::Graph {
+            command: GraphCommand::View(args),
+        } => {
+            assert_eq!(args.view, GraphViewKind::Communities);
+            assert_eq!(args.seed, None);
+            assert_eq!(args.effective_min_size(), 2);
+        }
+        _ => panic!("expected graph view command"),
+    }
+}
+
+#[test]
+fn communities_parses_min_size_and_community_selectors() {
+    let sized = Cli::try_parse_from([
+        "gcode",
+        "graph",
+        "view",
+        "--view",
+        "communities",
+        "--min-size",
+        "5",
+    ])
+    .expect("communities --min-size parses");
+    match sized.command {
+        Command::Graph {
+            command: GraphCommand::View(args),
+        } => assert_eq!(args.min_size, Some(5)),
+        _ => panic!("expected graph view command"),
+    }
+
+    for selector in ["memory", "crates/gcode/src/lib.rs"] {
+        let cli = Cli::try_parse_from([
+            "gcode",
+            "graph",
+            "view",
+            "--view",
+            "communities",
+            "--community",
+            selector,
+        ])
+        .expect("communities --community parses");
+        match cli.command {
+            Command::Graph {
+                command: GraphCommand::View(args),
+            } => assert_eq!(
+                args.seed,
+                Some(GraphViewSeed::Community(selector.to_string()))
+            ),
+            _ => panic!("expected graph view command"),
+        }
+    }
+}
+
+#[test]
+fn communities_rejects_other_seeds_depth_and_row_limits() {
+    for extra in [
+        ["--file", "src/lib.rs"],
+        ["--symbol", "run"],
+        ["--depth", "1"],
+        ["--incoming-limit", "1"],
+    ] {
+        let error = match Cli::try_parse_from(
+            ["gcode", "graph", "view", "--view", "communities"]
+                .into_iter()
+                .chain(extra),
+        ) {
+            Ok(_) => panic!("communities must reject incompatible selectors and limits"),
+            Err(error) => error,
+        };
+        assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+}
+
+#[test]
+fn min_size_rejected_off_communities_and_at_zero() {
+    let off_communities = match Cli::try_parse_from([
+        "gcode",
+        "graph",
+        "view",
+        "--view",
+        "mcg",
+        "--file",
+        "src/lib.rs",
+        "--min-size",
+        "2",
+    ]) {
+        Ok(_) => panic!("--min-size only belongs to communities"),
+        Err(error) => error,
+    };
+    assert_eq!(
+        off_communities.kind(),
+        clap::error::ErrorKind::ArgumentConflict
+    );
+
+    let zero = match Cli::try_parse_from([
+        "gcode",
+        "graph",
+        "view",
+        "--view",
+        "communities",
+        "--min-size",
+        "0",
+    ]) {
+        Ok(_) => panic!("zero is not a positive minimum size"),
+        Err(error) => error,
+    };
+    assert_eq!(zero.kind(), clap::error::ErrorKind::ValueValidation);
+}
+
+#[test]
+fn effective_min_size_defaults_to_two() {
+    let cli = Cli::try_parse_from(["gcode", "graph", "view", "--view", "communities"])
+        .expect("seedless communities view parses");
+    match cli.command {
+        Command::Graph {
+            command: GraphCommand::View(args),
+        } => assert_eq!(args.effective_min_size(), 2),
+        _ => panic!("expected graph view command"),
+    }
+}
+
+#[test]
+fn seeded_views_still_require_a_seed() {
+    for view in ["mcg", "fcg", "class-hierarchy"] {
+        let error = match Cli::try_parse_from(["gcode", "graph", "view", "--view", view]) {
+            Ok(_) => panic!("seeded graph views still require a seed"),
+            Err(error) => error,
+        };
+        assert_eq!(
+            error.kind(),
+            clap::error::ErrorKind::MissingRequiredArgument
+        );
+    }
+}

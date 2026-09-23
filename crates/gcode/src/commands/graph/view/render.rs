@@ -1,8 +1,6 @@
 //! JSON + Mermaid payload for `gcode graph view`.
 
 use anyhow::{Context as _, bail};
-#[cfg(test)]
-use gobby_core::graph_analytics::{AnalyticsEdge, AnalyticsGraph, AnalyticsNode, weight_for_kind};
 use gobby_core::mermaid::{escape_label, is_valid_mermaid};
 use serde::Serialize;
 
@@ -14,6 +12,7 @@ pub(super) enum NodeKind {
     Symbol,
     File,
     Module,
+    Community,
     External,
     Unresolved,
 }
@@ -24,6 +23,7 @@ impl NodeKind {
             Self::Symbol => "symbol",
             Self::File => "file",
             Self::Module => "module",
+            Self::Community => "community",
             Self::External => "external",
             Self::Unresolved => "unresolved",
         }
@@ -55,6 +55,13 @@ impl NodeKey {
         Self {
             kind: NodeKind::Module,
             identity: name.into(),
+        }
+    }
+
+    pub(super) fn community(id: impl Into<String>) -> Self {
+        Self {
+            kind: NodeKind::Community,
+            identity: id.into(),
         }
     }
 
@@ -99,15 +106,23 @@ pub(super) struct ViewEdge {
     pub source: String,
     pub target: String,
     pub rel: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub count: Option<usize>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub(super) struct ViewCommunity {
     pub id: String,
+    pub label: String,
+    pub size: usize,
+    pub cohesion: f64,
+    pub label_source: String,
+    pub label_stale: bool,
+    /// Canonical node ids that are present in this view; `size` remains project-wide.
     pub nodes: Vec<String>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub(super) struct ViewPayload {
     pub project_id: String,
     pub project_root: String,
@@ -153,7 +168,7 @@ pub(super) fn node_file_for_kind(
                 None
             }
         }
-        NodeKind::External | NodeKind::Unresolved => None,
+        NodeKind::Community | NodeKind::External | NodeKind::Unresolved => None,
     }
 }
 
@@ -173,6 +188,7 @@ pub(super) fn build_view_payload(
 ) -> anyhow::Result<ViewPayload> {
     let mut nodes = nodes;
     let mut edges = edges;
+    let mut communities = communities;
     nodes.sort_by_key(|left| left.key.canonical());
     nodes.dedup_by(|left, right| left.key == right.key);
     edges.sort_by(|left, right| {
@@ -202,9 +218,62 @@ pub(super) fn build_view_payload(
             source: edge.source.canonical(),
             target: edge.target.canonical(),
             rel: edge.rel.clone(),
+            count: None,
         })
         .collect::<Vec<_>>();
-    let mermaid = render_mermaid(&seed, &rendered_nodes, &rendered_edges)?;
+    let node_by_id = rendered_nodes
+        .iter()
+        .map(|node| (node.id.as_str(), node))
+        .collect::<std::collections::HashMap<_, _>>();
+    for community in &mut communities {
+        community.nodes.sort();
+        community.nodes.dedup();
+        for member in &community.nodes {
+            let Some(node) = node_by_id.get(member.as_str()) else {
+                bail!(
+                    "community {} contains unknown view node {member}",
+                    community.id
+                );
+            };
+            if node.community.as_deref() != Some(community.id.as_str()) {
+                bail!(
+                    "community {} contains mismatched view node {member}",
+                    community.id
+                );
+            }
+        }
+    }
+    communities.sort_by(|left, right| left.id.cmp(&right.id));
+    let members_by_community = communities
+        .iter()
+        .map(|community| {
+            (
+                community.id.as_str(),
+                community
+                    .nodes
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<std::collections::HashSet<_>>(),
+            )
+        })
+        .collect::<std::collections::HashMap<_, _>>();
+    for node in &rendered_nodes {
+        if let Some(community_id) = node.community.as_deref() {
+            let Some(members) = members_by_community.get(community_id) else {
+                bail!(
+                    "view node {} names unlisted community {community_id}",
+                    node.id
+                );
+            };
+            if !members.contains(node.id.as_str()) {
+                bail!(
+                    "community {community_id} does not include view node {}",
+                    node.id
+                );
+            }
+        }
+    }
+    let mermaid = render_mermaid(&seed, &rendered_nodes, &rendered_edges, &communities)?;
     Ok(ViewPayload {
         project_id: project_id.into(),
         project_root: project_root.into(),
@@ -219,31 +288,6 @@ pub(super) fn build_view_payload(
         communities,
         mermaid,
     })
-}
-
-#[cfg(test)]
-pub(super) fn analytics_graph_from_payload(payload: &ViewPayload) -> AnalyticsGraph {
-    AnalyticsGraph {
-        nodes: payload
-            .nodes
-            .iter()
-            .map(|node| AnalyticsNode {
-                id: node.id.clone(),
-                kind: node.kind.clone(),
-                weight: 1.0,
-            })
-            .collect(),
-        edges: payload
-            .edges
-            .iter()
-            .map(|edge| AnalyticsEdge {
-                source: edge.source.clone(),
-                target: edge.target.clone(),
-                kind: edge.rel.clone(),
-                weight: weight_for_kind(&edge.rel),
-            })
-            .collect(),
-    }
 }
 
 pub(super) fn format_view_output(payload: &ViewPayload) -> anyhow::Result<String> {
@@ -276,6 +320,7 @@ fn render_mermaid(
     seed: &ViewSeed,
     nodes: &[ViewNode],
     edges: &[ViewEdge],
+    communities: &[ViewCommunity],
 ) -> anyhow::Result<String> {
     let mut keys = nodes.iter().map(|node| node.id.clone()).collect::<Vec<_>>();
     keys.sort();
@@ -289,18 +334,49 @@ fn render_mermaid(
     if nodes.is_empty() {
         lines.push(format!("    n0[\"{}\"]", mermaid_label(&seed.name)));
     } else {
-        for node in nodes {
+        let node_by_id = nodes
+            .iter()
+            .map(|node| (node.id.as_str(), node))
+            .collect::<std::collections::HashMap<_, _>>();
+        let clustered = communities
+            .iter()
+            .flat_map(|community| community.nodes.iter().map(String::as_str))
+            .collect::<std::collections::HashSet<_>>();
+        let render_node = |node: &ViewNode, indent: &str| -> anyhow::Result<String> {
             let token = id_for
                 .get(&node.id)
                 .cloned()
                 .with_context(|| format!("missing mermaid token for {}", node.id))?;
-            let label = match &node.community {
-                Some(community) if !community.is_empty() => {
-                    format!("{} [{community}]", node.name)
-                }
-                _ => node.name.clone(),
-            };
-            lines.push(format!("    {token}[\"{}\"]", mermaid_label(&label)));
+            Ok(format!(
+                "{indent}{token}[\"{}\"]",
+                mermaid_label(&node.name)
+            ))
+        };
+        for community in communities {
+            if community.nodes.is_empty() {
+                continue;
+            }
+            let community_id = community
+                .id
+                .strip_prefix("community:")
+                .and_then(|id| id.parse::<u32>().ok())
+                .with_context(|| format!("invalid community id {}", community.id))?;
+            lines.push(format!(
+                "    subgraph community_{community_id}[\"{}\"]",
+                mermaid_label(&community.label)
+            ));
+            for node_id in &community.nodes {
+                let node = node_by_id
+                    .get(node_id.as_str())
+                    .with_context(|| format!("missing community node {node_id}"))?;
+                lines.push(render_node(node, "        ")?);
+            }
+            lines.push("    end".to_string());
+        }
+        for node in nodes {
+            if !clustered.contains(node.id.as_str()) {
+                lines.push(render_node(node, "    ")?);
+            }
         }
     }
     for edge in edges {
@@ -312,9 +388,13 @@ fn render_mermaid(
             .get(&edge.target)
             .cloned()
             .with_context(|| format!("missing mermaid token for {}", edge.target))?;
+        let label = match edge.count {
+            Some(count) => format!("{} ({count})", edge.rel),
+            None => edge.rel.clone(),
+        };
         lines.push(format!(
             "    {source} -->|\"{}\"| {target}",
-            mermaid_label(&edge.rel)
+            mermaid_label(&label)
         ));
     }
     lines.push("```".to_string());
