@@ -88,3 +88,24 @@ def test_literal_json_key_search_returns_stored_chunk(
         (sanitized,),
     ).fetchall()
     assert [row[0] for row in rows] == ["row-1"]
+
+
+def test_unicode_term_search_returns_the_stored_chunk(
+    content_index: tuple[Any, str],
+) -> None:
+    conn, schema = content_index
+    conn.execute(
+        f'INSERT INTO "{schema}".chunks (id, content) VALUES (%s, %s)',
+        ("row-zoe", "Zoë-x meets the naïve plan"),
+    )
+    conn.execute(
+        f'INSERT INTO "{schema}".chunks (id, content) VALUES (%s, %s)',
+        ("row-zo", "Zo reports the zone"),
+    )
+    sanitized = sanitize_pg_search_query("Zoë-x")
+    assert sanitized == "Zoë-x"
+    rows = conn.execute(
+        f'SELECT id FROM "{schema}".chunks WHERE content @@@ %s',
+        (sanitized,),
+    ).fetchall()
+    assert [row[0] for row in rows] == ["row-zoe"]

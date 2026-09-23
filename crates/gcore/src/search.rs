@@ -148,7 +148,7 @@ fn push_plain_terms(terms: &mut Vec<String>, text: &str) {
     };
 
     for ch in text.chars() {
-        if ch.is_ascii_alphanumeric() || ch == '_' {
+        if ch.is_alphanumeric() || ch == '_' {
             if hyphen_pending {
                 token.push('-');
             }
@@ -289,6 +289,13 @@ mod tests {
             ),
             "How does the MCP proxy s progressive tool discovery work and why does it exist"
         );
+    }
+
+    #[test]
+    fn sanitize_pg_search_query_keeps_unicode_alphanumerics() {
+        assert_eq!(sanitize_pg_search_query("Zoë"), "Zoë");
+        assert_eq!(sanitize_pg_search_query("Zoë-x"), "Zoë-x");
+        assert_eq!(sanitize_pg_search_query("naïve"), "naïve");
     }
 
     #[test]

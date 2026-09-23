@@ -100,6 +100,13 @@ fn sanitize_pg_search_query_neutralizes_boolean_operators_without_breaking_phras
 }
 
 #[test]
+fn sanitize_pg_search_query_keeps_unicode_alphanumerics() {
+    assert_eq!(sanitize_pg_search_query("Zoë"), "Zoë");
+    assert_eq!(sanitize_pg_search_query("Zoë-x"), "Zoë-x");
+    assert_eq!(sanitize_pg_search_query("naïve"), "naïve");
+}
+
+#[test]
 fn glob_to_like_prefix_escapes_like_wildcards() {
     assert_eq!(
         glob_to_like_prefix("src/foo_bar/*.rs").as_deref(),

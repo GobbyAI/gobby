@@ -451,7 +451,8 @@ MAX_PG_SEARCH_QUERY_CHARS = 1_000
 """Maximum caller-controlled query length accepted by offload search surfaces."""
 
 
-_PLAIN_TERM = re.compile(r"[A-Za-z0-9_]+(?:-[A-Za-z0-9_]+)*")
+# `\w` is Unicode, so letters such as ë stay inside the term.
+_PLAIN_TERM = re.compile(r"\w+(?:-\w+)*")
 _BOOLEAN_TERMS = frozenset({"and", "or", "not"})
 
 

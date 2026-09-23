@@ -345,6 +345,9 @@ class TestTaskSearchBackend:
         assert sanitize_pg_search_query("compute (fence") == "compute fence"
         assert sanitize_pg_search_query("claude-opus-4-8[1m]") == "claude-opus-4-8 1m"
         assert sanitize_pg_search_query(r"claude-opus-4-8\[1m\]") == "claude-opus-4-8 1m"
+        assert sanitize_pg_search_query("Zoë") == "Zoë"
+        assert sanitize_pg_search_query("Zoë-x") == "Zoë-x"
+        assert sanitize_pg_search_query("naïve") == "naïve"
 
     def test_pg_search_query_escapes_dsl_syntax_outside_balanced_phrases(self) -> None:
         """Punctuation is a separator, so it cannot become a pg_search operator."""
