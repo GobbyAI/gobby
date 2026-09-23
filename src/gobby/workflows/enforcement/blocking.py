@@ -45,6 +45,7 @@ TASK_MUTATION_TOOLS_BY_SERVER = {
             "claim_task",
             "close_task",
             "create_task",
+            "delegate_task",
             "de_escalate_task",
             "delete_task",
             "escalate_task",

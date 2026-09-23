@@ -18,6 +18,9 @@ from gobby.config.validation_detection import (
 )
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.session_tasks import SessionTaskManager
+from gobby.storage.sessions import SessionManager
+from gobby.storage.tasks import LocalTaskManager
 from gobby.tasks.close_checklist import evaluate_validation_commands
 from gobby.tasks.transcript_evidence_models import (
     TranscriptEvidence,
@@ -25,6 +28,7 @@ from gobby.tasks.transcript_evidence_models import (
     TranscriptValidationSegment,
 )
 from gobby.tasks.transcript_outcomes import EvidenceOutcome
+from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.found_work_gate import (
     FoundWorkStopAnalyzer,
@@ -904,6 +908,184 @@ def _window_bound_derive(
     mock = AsyncMock(side_effect=derive)
     monkeypatch.setattr("gobby.workflows.found_work_gate.derive_transcript_evidence", mock)
     return mock
+
+
+@pytest.mark.parametrize("labeled", [True, False], ids=["owner-labeled", "owner-delegated"])
+@pytest.mark.asyncio
+async def test_owner_filed_same_finding_clears_scoped_reviewer_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, labeled: bool
+) -> None:
+    owner_id = "22222222-2222-4222-8222-222222222222"
+    receiver_id = "44444444-4444-4444-8444-444444444444"
+    failed_at = datetime(2026, 8, 27, 9, 0, tzinfo=UTC)
+    failed = _run(
+        1,
+        "failure",
+        "pytest tests/",
+        output="tests/foreign/test_bad.py:10: error: AssertionError",
+        started_at=failed_at,
+    )
+    green = _run(
+        2, "success", "pytest tests/owned/test_ok.py", started_at=failed_at + timedelta(minutes=1)
+    )
+    _window_bound_derive(monkeypatch, failed, green)
+    task = SimpleNamespace(
+        id="33333333-3333-4333-8333-333333333333",
+        title="Fix foreign test failure",
+        description="tests/foreign/test_bad.py fails in the broad suite.",
+        labels=["needs-planning"] if labeled else [],
+        created_in_session_id=owner_id,
+        created_at=failed_at + timedelta(minutes=2),
+        delegated_to_session_id=None if labeled else receiver_id,
+    )
+    link = {
+        "task": task,
+        "action": "discovered",
+        "link_created_at": failed_at + timedelta(minutes=3),
+    }
+    reviewer = SimpleNamespace(created_at=failed_at - timedelta(hours=1), status="active")
+    owner = SimpleNamespace(status="active")
+    analyzer = FoundWorkStopAnalyzer(
+        llm_service_resolver=lambda: None,
+        config_resolver=_Config,
+        session_manager=SimpleNamespace(get=lambda sid: reviewer if sid == SESSION_ID else owner),
+        session_task_manager=SimpleNamespace(get_session_tasks=lambda _sid: [link]),
+    )
+
+    facts = await analyzer.analyze(
+        event=_event(HookEventType.STOP),
+        session_id=SESSION_ID,
+        variables={},
+        project_path=str(tmp_path),
+    )
+
+    assert facts.terminal_validation_failures == ()
+
+
+@pytest.mark.parametrize(
+    "task_path,green_command,link_action",
+    [
+        ("tests/other/test_wrong.py", "pytest tests/owned/test_ok.py", "discovered"),
+        ("tests/foreign/test_bad.py", None, "discovered"),
+        ("tests/foreign/test_bad.py", "pytest tests/owned/test_ok.py", "mentioned"),
+    ],
+    ids=["unrelated-task", "no-scoped-green", "unacknowledged-link"],
+)
+@pytest.mark.asyncio
+async def test_owner_message_or_unrelated_link_does_not_clear_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    task_path: str,
+    green_command: str | None,
+    link_action: str,
+) -> None:
+    owner_id = "22222222-2222-4222-8222-222222222222"
+    failed_at = datetime(2026, 8, 27, 9, 0, tzinfo=UTC)
+    failed = _run(
+        1,
+        "failure",
+        "pytest tests/",
+        output="tests/foreign/test_bad.py:10: error: AssertionError",
+        started_at=failed_at,
+    )
+    runs = [failed]
+    if green_command:
+        runs.append(_run(2, "success", green_command, started_at=failed_at + timedelta(minutes=1)))
+    _window_bound_derive(monkeypatch, *runs)
+    task = SimpleNamespace(
+        title="Filed fix",
+        description=f"Fix {task_path}.",
+        labels=["needs-planning"],
+        created_in_session_id=owner_id,
+        created_at=failed_at + timedelta(minutes=2),
+        delegated_to_session_id=None,
+    )
+    link = {
+        "task": task,
+        "action": link_action,
+        "link_created_at": failed_at + timedelta(minutes=3),
+    }
+    reviewer = SimpleNamespace(created_at=failed_at - timedelta(hours=1), status="active")
+    owner = SimpleNamespace(status="active")
+    analyzer = FoundWorkStopAnalyzer(
+        llm_service_resolver=lambda: None,
+        config_resolver=_Config,
+        session_manager=SimpleNamespace(get=lambda sid: reviewer if sid == SESSION_ID else owner),
+        session_task_manager=SimpleNamespace(get_session_tasks=lambda _sid: [link]),
+    )
+
+    facts = await analyzer.analyze(
+        event=_event(HookEventType.STOP),
+        session_id=SESSION_ID,
+        variables={"_found_work_owner_handoff_turn": True},
+        project_path=str(tmp_path),
+    )
+
+    assert facts.terminal_validation_failures == ("pytest tests/",)
+
+
+@pytest.mark.asyncio
+async def test_two_sessions_owner_filed_disposition_survives_later_turn(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    sessions = SessionManager(temp_db)
+    reviewer = sessions.register(
+        external_id="reviewer-found-work",
+        machine_id=require_machine_id(),
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    owner = sessions.register(
+        external_id="owner-found-work",
+        machine_id=require_machine_id(),
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    failed_at = datetime.now(UTC)
+    _window_bound_derive(
+        monkeypatch,
+        _run(
+            1,
+            "failure",
+            "pytest tests/",
+            output="tests/foreign/test_bad.py:10: error: failed",
+            started_at=failed_at,
+        ),
+        _run(
+            2,
+            "success",
+            "pytest tests/owned/test_ok.py",
+            started_at=failed_at + timedelta(seconds=1),
+        ),
+    )
+    task = LocalTaskManager(temp_db).create_task(
+        project_id=sample_project["id"],
+        title="Fix foreign test failure",
+        description="tests/foreign/test_bad.py fails in the broad suite.",
+        created_in_session_id=owner.id,
+        labels=["needs-planning"],
+        category="code",
+        validation_criteria="The foreign test failure is fixed.",
+    )
+    SessionTaskManager(temp_db).link_task(reviewer.id, task.id, "discovered")
+    analyzer = FoundWorkStopAnalyzer(
+        llm_service_resolver=lambda: None,
+        config_resolver=_Config,
+        session_manager=sessions,
+        session_task_manager=SessionTaskManager(temp_db),
+    )
+
+    facts = await analyzer.analyze(
+        event=_event(HookEventType.STOP),
+        session_id=reviewer.id,
+        variables={},
+        project_path=str(tmp_path),
+    )
+
+    assert facts.terminal_validation_failures == ()
 
 
 class TestFoundWorkDeclarativeRules:

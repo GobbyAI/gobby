@@ -24,6 +24,7 @@ from gobby.config.validation_detection import (
 from gobby.config.validation_matchers import ValidationCommandMatcher
 from gobby.hooks.events import HookEvent
 from gobby.hooks.normalization import is_shell_tool
+from gobby.storage.sessions._constants import LIVE_SESSION_STATUS_ORDER
 from gobby.tasks.command_equivalence import target_covers
 from gobby.tasks.transcript_evidence import derive_transcript_evidence
 from gobby.tasks.transcript_evidence_models import (
@@ -31,6 +32,7 @@ from gobby.tasks.transcript_evidence_models import (
     TranscriptValidationRun,
     TranscriptValidationSegment,
 )
+from gobby.workflows.found_work_dispositions import has_owner_filed_disposition
 
 logger = logging.getLogger(__name__)
 
@@ -415,7 +417,7 @@ class FoundWorkStopAnalyzer:
             rows = self._db.fetchall(
                 """
                 WITH RECURSIVE candidates AS (
-                    SELECT id, seq_num, labels
+                    SELECT id, seq_num, labels, delegated_to_session_id
                     FROM tasks
                     WHERE created_in_session_id = %s
                       AND created_at > %s
@@ -458,12 +460,22 @@ class FoundWorkStopAnalyzer:
                 )
                 SELECT c.seq_num, c.labels
                 FROM candidates c
+                LEFT JOIN sessions delegated
+                    ON delegated.id = c.delegated_to_session_id
+                   AND delegated.status = ANY(%s)
                 WHERE NOT EXISTS (
                     SELECT 1 FROM authored a WHERE a.candidate_id = c.id
                 )
+                  AND delegated.id IS NULL
                 ORDER BY c.seq_num
                 """,
-                (session_id, task_duty_started_at, session_id, session_id),
+                (
+                    session_id,
+                    task_duty_started_at,
+                    session_id,
+                    session_id,
+                    list(LIVE_SESSION_STATUS_ORDER),
+                ),
             )
         except Exception:
             logger.debug("Could not inspect unclaimed found-work tasks", exc_info=True)
@@ -590,7 +602,29 @@ class FoundWorkStopAnalyzer:
             owner_handoff=owner_handoff,
             foreign_paths=foreign_paths,
         )
-        return tuple(dict.fromkeys(run.command for run in unresolved))
+        remaining: list[str] = []
+        for failed in unresolved:
+            paths = _reported_failure_paths(failed)
+            later_greens = (
+                run
+                for run in evidence.validation_runs
+                if run.order > failed.order
+                and run.outcome == "success"
+                and set(run.categories) & set(failed.categories)
+            )
+            scoped_green = any(
+                _green_scope_avoids_foreign_paths(run, paths) for run in later_greens
+            )
+            if scoped_green and has_owner_filed_disposition(
+                session_manager=self._session_manager,
+                session_task_manager=self._session_task_manager,
+                originating_session_id=session_id,
+                failure_paths=paths,
+                failure_at=failed.started_at,
+            ):
+                continue
+            remaining.append(failed.command)
+        return tuple(dict.fromkeys(remaining))
 
     def _latest_task_close(self, session_id: str) -> datetime | None:
         """Return when this session last closed a task, if it has.

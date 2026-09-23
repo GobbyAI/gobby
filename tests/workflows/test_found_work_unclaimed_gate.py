@@ -78,6 +78,60 @@ def task_context(temp_db: HubDatabase) -> tuple[LocalTaskManager, str, str, str]
     return LocalTaskManager(temp_db), project.id, owner_id, other_id
 
 
+def test_delegation_excludes_only_a_live_receiver(
+    temp_db: HubDatabase,
+    task_context: tuple[LocalTaskManager, str, str, str],
+) -> None:
+    tasks, project_id, filer_id, receiver_id = task_context
+    finding = tasks.create_task(
+        project_id=project_id,
+        title="Finding handed to owner",
+        created_in_session_id=filer_id,
+        category="code",
+        validation_criteria="The owner fixes the finding.",
+    )
+    tasks.delegate_task(
+        finding.id,
+        delegated_by_session_id=filer_id,
+        delegated_to_session_id=receiver_id,
+        reason="Owner accepted this lane.",
+    )
+
+    analyzer = _analyzer(temp_db)
+    assert analyzer.unclaimed_found_work(filer_id, armed_at=TEST_ARMED_AT) == ()
+
+    SessionManager(temp_db).update_status(receiver_id, "expired")
+    assert analyzer.unclaimed_found_work(filer_id, armed_at=TEST_ARMED_AT) == (
+        f"#{finding.seq_num}",
+    )
+
+
+def test_filer_cannot_delegate_found_work_to_self(
+    temp_db: HubDatabase,
+    task_context: tuple[LocalTaskManager, str, str, str],
+) -> None:
+    tasks, project_id, filer_id, _ = task_context
+    finding = tasks.create_task(
+        project_id=project_id,
+        title="Finding still owned by filer",
+        created_in_session_id=filer_id,
+        category="code",
+        validation_criteria="The finding is resolved.",
+    )
+
+    with pytest.raises(ValueError, match="self"):
+        tasks.delegate_task(
+            finding.id,
+            delegated_by_session_id=filer_id,
+            delegated_to_session_id=filer_id,
+            reason="No actual handoff.",
+        )
+
+    assert _analyzer(temp_db).unclaimed_found_work(filer_id, armed_at=TEST_ARMED_AT) == (
+        f"#{finding.seq_num}",
+    )
+
+
 @pytest.mark.asyncio
 async def test_query_returns_only_unclaimed_unlabeled_tasks_created_by_session(
     temp_db: HubDatabase,

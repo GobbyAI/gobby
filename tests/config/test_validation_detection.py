@@ -436,6 +436,27 @@ def test_wrapped_validation_commands_record_normalized_metadata(
     assert match.wrapper_chain == wrapper_chain
 
 
+def test_nice_without_delimiter_is_detected() -> None:
+    match = classify_validation_command("nice -n 15 cargo clippy -p gobby-code")
+    assert match is not None
+    assert match.normalized_argv == ("cargo", "clippy", "-p", "gobby-code")
+    assert match.wrapper_chain == ("nice",)
+
+
+def test_nice_with_delimiter_is_detected() -> None:
+    match = classify_validation_command("nice -n 15 -- cargo clippy -p gobby-code")
+    assert match is not None
+    assert match.normalized_argv == ("cargo", "clippy", "-p", "gobby-code")
+    assert match.wrapper_chain == ("nice",)
+
+
+def test_nice_numeric_option_and_absolute_path_are_detected() -> None:
+    match = classify_validation_command("/usr/bin/nice -5 -- cargo clippy -p gobby-code")
+    assert match is not None
+    assert match.normalized_argv == ("cargo", "clippy", "-p", "gobby-code")
+    assert match.wrapper_chain == ("nice",)
+
+
 def test_disabled_builtin_matcher_is_not_used() -> None:
     config = ValidationDetectionConfig(
         disabled_builtin_matcher_ids=["rust-validation"],

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import shlex
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
@@ -20,6 +21,8 @@ logger = logging.getLogger(__name__)
 PROJECT_VALIDATION_DETECTION_KEY = "validation_detection"
 _ENV_ASSIGNMENT_RE_PREFIX = "="
 _MAX_WRAPPER_NORMALIZATION_DEPTH = 8
+_EVIDENCE_ENV_ASSIGNMENT_PREFIX = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
+_EVIDENCE_RTK_PREFIX = re.compile(r"^(uv\s+run\s+)?rtk\s+")
 # Every entry consumes the token after it, so an option missing here is read as
 # the command and the run goes uncredited. List both forms of a spelling pair;
 # `-C` is uv's `--config-setting`, and `--directory` has no short form.
@@ -467,6 +470,9 @@ def _unwrap_matched_rule(
         return [remaining], ()
 
     if wrapper.kind == "delimiter":
+        if wrapper.id == "nice":
+            nice_command = _unwrap_nice_tokens(tokens)
+            return ([nice_command], ()) if nice_command is not None else None
         try:
             delimiter_index = tokens.index(wrapper.delimiter, len(prefix_tokens))
         except ValueError:
@@ -480,6 +486,117 @@ def _unwrap_matched_rule(
         parsed = parse_shell_command(command_tokens[0])
         return [list(segment) for segment in parsed.segments], parsed.operators
     return [command_tokens], ()
+
+
+def _unwrap_nice_tokens(tokens: list[str]) -> list[str] | None:
+    """Return the command executed by nice, with or without its -- separator."""
+    if not tokens or not _matches_command_token(tokens[0], "nice"):
+        return None
+    cursor = 1
+    if cursor < len(tokens) and tokens[cursor] == "-n":
+        if cursor + 1 >= len(tokens) or re.fullmatch(r"[+-]?\d+", tokens[cursor + 1]) is None:
+            return None
+        cursor += 2
+    elif cursor < len(tokens) and re.fullmatch(r"(?:-n[+-]?|-)\d+", tokens[cursor]):
+        cursor += 1
+    if cursor < len(tokens) and tokens[cursor] == "--":
+        cursor += 1
+    if cursor >= len(tokens) or tokens[cursor].startswith("-"):
+        return None
+    return tokens[cursor:]
+
+
+def normalize_validation_evidence_command(command: str) -> str:
+    """Remove exit-preserving prefixes and use the category check's nice grammar."""
+    cursor = _evidence_skip_whitespace(command, 0)
+    while True:
+        next_cursor = _evidence_consume_cd_prefix(command, cursor)
+        if next_cursor is None:
+            next_cursor = _evidence_consume_export_prefix(command, cursor)
+        if next_cursor is None:
+            break
+        cursor = _evidence_skip_whitespace(command, next_cursor)
+    while _EVIDENCE_ENV_ASSIGNMENT_PREFIX.match(command, cursor):
+        word_end = _evidence_shell_word_end(command, cursor)
+        if word_end is None or word_end >= len(command) or not command[word_end].isspace():
+            break
+        cursor = _evidence_skip_whitespace(command, word_end)
+    core = _EVIDENCE_RTK_PREFIX.sub(r"\1", command[cursor:].strip(), count=1)
+    parsed = parse_shell_command(core)
+    if len(parsed.segments) == 1 and not parsed.operators:
+        unwrapped = _unwrap_nice_tokens(list(parsed.segments[0]))
+        if unwrapped is not None:
+            return shlex.join(unwrapped)
+    return core
+
+
+def _evidence_consume_cd_prefix(command: str, cursor: int) -> int | None:
+    if not command.startswith("cd", cursor):
+        return None
+    name_end = cursor + 2
+    if name_end >= len(command) or not command[name_end].isspace():
+        return None
+    path_start = _evidence_skip_whitespace(command, name_end)
+    path_end = _evidence_shell_word_end(command, path_start)
+    if path_end is None:
+        return None
+    operator_start = path_end
+    while operator_start < len(command) and command[operator_start] in " \t\r":
+        operator_start += 1
+    if operator_start < len(command) and command[operator_start] == "\n":
+        return operator_start + 1
+    if not command.startswith("&&", operator_start):
+        return None
+    return operator_start + 2
+
+
+def _evidence_consume_export_prefix(command: str, cursor: int) -> int | None:
+    if not command.startswith("export", cursor):
+        return None
+    cursor += len("export")
+    if cursor >= len(command) or not command[cursor].isspace():
+        return None
+    consumed_assignment = False
+    while cursor < len(command):
+        cursor = _evidence_skip_whitespace(command, cursor)
+        if command.startswith("&&", cursor):
+            return cursor + 2 if consumed_assignment else None
+        if _EVIDENCE_ENV_ASSIGNMENT_PREFIX.match(command, cursor) is None:
+            return None
+        word_end = _evidence_shell_word_end(command, cursor)
+        if word_end is None:
+            return None
+        cursor = word_end
+        consumed_assignment = True
+    return None
+
+
+def _evidence_shell_word_end(command: str, start: int) -> int | None:
+    cursor = start
+    quote: str | None = None
+    while cursor < len(command):
+        char = command[cursor]
+        if quote is not None:
+            if char == quote:
+                quote = None
+            elif char == "\\" and quote == '"' and cursor + 1 < len(command):
+                cursor += 1
+        elif char in {"'", '"'}:
+            quote = char
+        elif char == "\\" and cursor + 1 < len(command):
+            cursor += 1
+        elif char.isspace() or char in ";&|()":
+            break
+        cursor += 1
+    if cursor == start or quote is not None:
+        return None
+    return cursor
+
+
+def _evidence_skip_whitespace(command: str, cursor: int) -> int:
+    while cursor < len(command) and command[cursor].isspace():
+        cursor += 1
+    return cursor
 
 
 def _matcher_matches_segment(matcher: ValidationCommandMatcher, tokens: list[str]) -> bool:
