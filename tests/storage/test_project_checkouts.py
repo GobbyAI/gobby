@@ -1085,7 +1085,7 @@ def test_target_schema_assets_are_checkout_only() -> None:
     assert "'project-checkout-cutover'::text" in baseline
     assert "LEFT JOIN public.project_checkouts AS checkout" in baseline
     projects = next(item for item in privileges["relations"] if item["relation"] == "projects")
-    assert projects["columns"] == ["id", "name", "deleted_at"]
+    assert "columns" not in projects
 
 
 def test_identity_repo_path_residue_allowlist() -> None:
@@ -1165,7 +1165,6 @@ def test_identity_repo_path_residue_allowlist() -> None:
         "tests/storage/test_postgres_agent_authorization.py",
         "tests/storage/test_project_manager.py",
         "tests/storage/test_project_repo_path_isolation.py",
-        "tests/sync/test_github_issue_sync.py",
         "tests/workflows/test_pipeline_heartbeat.py",
     )
     json_query = (
@@ -1214,7 +1213,7 @@ def test_identity_repo_path_residue_allowlist() -> None:
         (_REPO_ROOT / "crates/gcode/security/managed_postgres_privileges.json").read_text()
     )
     projects = next(item for item in privileges["relations"] if item["relation"] == "projects")
-    if projects["columns"] != ["id", "name", "deleted_at"]:
+    if "columns" in projects:
         violations.setdefault(
             'gcode grep -F \'"relation": "projects"\' '
             "crates/gcode/security/managed_postgres_privileges.json -A 12 -m 20",

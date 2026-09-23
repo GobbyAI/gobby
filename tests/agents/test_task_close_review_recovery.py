@@ -209,6 +209,43 @@ async def test_periodic_reconciliation_delivers_terminal_run_without_verdict(
 
 
 @pytest.mark.asyncio
+async def test_enforcement_block_notifies_close_requester_without_verdict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A reviewer run ended by a terminal enforcement block tells the closer."""
+    terminal_reason = (
+        "Agent run blocked after 3 identical enforcement denials: "
+        "workflow=task-close-reviewer, step=load_skills, "
+        "rule=step-native-tool-allowlist, target=tool:mcp__cua_repl__js"
+    )
+    store = _Store(_review(status="running", run_id="run"))
+    subscribers = _Subscribers()
+    run = SimpleNamespace(
+        id="run",
+        status="error",
+        error=terminal_reason,
+        terminal_reason="enforcement_block",
+        resume_metadata_json={},
+    )
+    wake = AsyncMock(return_value={"ism_persisted": True})
+    _install(monkeypatch, store=store, run=run, subscribers=subscribers)
+    _install_delivery(monkeypatch, store=store, run=run, task=None)
+
+    recovered = await lifecycle_agents._reconcile_task_close_reviews(_runner(wake))
+
+    assert recovered == 2
+    assert store.review.result_payload is not None
+    message = str(store.review.result_payload["message"])
+    assert "ended without a verdict" in message
+    assert "mcp__cua_repl__js" in message
+    wake.assert_awaited_once()
+    assert wake.await_args is not None
+    assert wake.await_args.args[0] == "parent"
+    assert "ended without a verdict" in wake.await_args.args[1]
+    assert terminal_reason in wake.await_args.args[1]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "run_status,task,startup,expected_status,expected_writes",
     [

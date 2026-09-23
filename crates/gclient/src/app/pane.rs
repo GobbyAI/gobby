@@ -202,6 +202,9 @@ pub struct Pane {
     /// `defer_attach` after the daemon did not answer or refused for a
     /// reason that clears on its own, cleared when an attach begins.
     pub(super) attach_retry_at: Option<Instant>,
+    /// An indeterminate control result detached this pane. The finalized event
+    /// arms `attach_retry_at`; arming it at retire would reconnect a dead daemon.
+    pub(super) reattach_after_indeterminate: bool,
     /// The wait before the next retry; doubles per failure and resets when
     /// an attachment installs.
     pub(super) attach_retry_delay: Duration,
@@ -267,6 +270,7 @@ impl Pane {
                 lease_generation: 0,
             },
             attach_retry_at: None,
+            reattach_after_indeterminate: false,
             attach_retry_delay: ATTACH_RETRY_BASE,
             tombstones: HashSet::new(),
             status_message: None,

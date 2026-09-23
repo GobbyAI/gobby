@@ -75,6 +75,12 @@ pub(crate) enum Command {
         /// Write a diagnostic bundle beneath this machine's Gobby home
         #[arg(long)]
         output_debug_files: bool,
+        /// Overrides the global flag so evidence help does not offer `text`.
+        #[arg(long, hide = true, value_enum)]
+        format: Option<output::Format>,
+        /// Overrides the global flag so evidence help does not offer this bypass.
+        #[arg(long, hide = true)]
+        allow_stale: bool,
     },
     /// Ask a source-bound question through the durable Gobby pipeline
     Ask(AskArgs),

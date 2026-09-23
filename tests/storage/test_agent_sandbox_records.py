@@ -214,3 +214,43 @@ def test_sandbox_record_refuses_retained_paths_outside_the_retention_root(
     assert record["violations"] == []
     assert "retained_violation_path" not in record
     assert "retained_settings_path" not in record
+
+
+def test_list_sandbox_record_counts_a_multiline_log_without_parsing_bodies(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    gobby_home = tmp_path / "gobby-home"
+    retention = gobby_home / "logs" / "sandbox-violations"
+    retention.mkdir(parents=True)
+    violations = retention / "run-list.jsonl"
+    events = [
+        {"sequence": 1, "body": "first\nline"},
+        {"sequence": 2, "body": "second"},
+        {"sequence": 3, "body": "third"},
+    ]
+    violations.write_text("".join(json.dumps(event) + "\n" for event in events), encoding="utf-8")
+    monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+    detail = sandbox_record(
+        {"sandbox": {"backend": "srt", "retained_violation_path": str(violations)}},
+        include_events=True,
+    )
+    assert detail is not None
+    assert detail["violations"] == events
+
+    def _refuse_parse(*_args: object, **_kwargs: object) -> object:
+        raise json.JSONDecodeError("list must not parse bodies", "", 0)
+
+    monkeypatch.setattr(
+        "gobby.storage.agents._sandbox_records.json.loads",
+        _refuse_parse,
+    )
+    brief = sandbox_record(
+        {"sandbox": {"backend": "srt", "retained_violation_path": str(violations)}},
+        include_events=False,
+    )
+
+    assert brief is not None
+    assert brief["violation_count"] == 3
+    assert "violations" not in brief
+    assert brief["retained_violation_path"] == str(violations.resolve())
