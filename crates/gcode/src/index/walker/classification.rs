@@ -126,6 +126,11 @@ fn same_existing_path(left: &Path, right: &Path) -> bool {
 }
 
 fn is_safe_text_file(root: &Path, path: &Path, exclude_patterns: &[impl AsRef<str>]) -> bool {
+    // The lexical filters go first: an excluded path then costs no stat or
+    // canonicalization.
+    if !passes_path_filters(root, path, exclude_patterns) {
+        return false;
+    }
     if !path.is_file() {
         return false;
     }
@@ -133,9 +138,6 @@ fn is_safe_text_file(root: &Path, path: &Path, exclude_patterns: &[impl AsRef<st
         return false;
     }
     if !security::is_symlink_safe(path, root) {
-        return false;
-    }
-    if !passes_path_filters(root, path, exclude_patterns) {
         return false;
     }
 

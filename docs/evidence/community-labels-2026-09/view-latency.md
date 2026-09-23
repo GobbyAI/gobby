@@ -2,19 +2,28 @@
 
 Evidence for `.gobby/plans/gcode-import-communities.md` acceptance item 4.3.15: the list
 view on the Gobby checkout, read from stored `code_communities` rows, measured over five
-runs. A second measurement covers the full command before and after #22790 (Make the gcode
-freshness pre-gate cheap when nothing changed).
+runs. Later measurements cover the full command, without `--allow-stale`, before and after
+#22790 (Make the gcode freshness pre-gate cheap when nothing changed) and after the #22598
+exclude-matching fix.
 
 ## Result
 
-Read from stored rows, the view completes in **under one second**: 0.346 s median over five
-runs, slowest run 0.430 s. Until #22790, the full command took 2.2 to 2.5 s because of the
-project-scoped freshness pre-gate that every `graph view` runs first. With #22790 the full
-command also completes in **under one second**: 0.906 s median over five runs, against
-2.390 s and 2.500 s for the binary without it.
+The full command `gcode graph view --view communities --format json --project
+/Users/josh/Projects/gobby`, without `--allow-stale`, completes every run in **under one
+second** with #22790 and the #22598 exclude-matching fix. The five timed runs took 0.580,
+0.558, 0.563, 0.574 and 0.579 s (median 0.574 s, slowest 0.580 s). A second block, timed
+right after the #22790-only binary, took 0.549, 0.574, 0.559, 0.571 and 0.555 s.
+
+#22790 alone did not meet the bar reliably. Its first block had a 1.039 s run, and its later
+block took 0.873, 0.839, 0.846, 0.837 and 0.867 s. Without #22790 the full command took 2.2
+to 2.5 s, because of the project-scoped freshness pre-gate that every `graph view` runs
+first.
+
+The `--allow-stale` arm below skips that pre-gate. It measures the stored-rows read on its
+own and is not evidence for 4.3.15, which is about the full command.
 
 The installed `~/.gobby/bin/gcode` keeps the old pre-gate until a cutover promotes a build
-that contains #22790.
+that contains #22790 and the exclude-matching fix.
 
 ## Method
 
@@ -78,7 +87,40 @@ canonicalized. Every other file still goes through the indexer's full classifica
 | before #22790, second block | 2.233, 2.151, 2.500, 2.592, 2.623 | 2.500 |
 
 The slowest after run, 1.039 s, beats the fastest before run, 2.151 s, so the gap is well
-outside run-to-run noise.
+outside run-to-run noise. That run still misses the one-second bar, which the next section
+closes.
+
+## Full command after the exclude-matching fix
+
+A `sample` profile of the #22790 binary's full command put about 0.40 s in the pre-gate's
+per-file loop. Most of those samples were in `security::should_exclude_path`. It calls
+`security::glob_match` once per exclude pattern for each path component, across about
+7,700 files, and `glob_match` copied both strings into new `Vec<char>` buffers on every
+call. All 17 default excludes are plain names with no wildcards. The fix:
+
+- `glob_match` compares a pattern without `*` or `?` as a plain string, with no
+  allocation. Wildcard patterns match as before.
+- The indexer's `is_safe_text_file` now runs the lexical path filters first. An excluded
+  path costs no `stat` or canonicalization. The checks are all required, so the verdict
+  does not change.
+
+Both binaries are `cargo build -p gobby-code --release` artifacts from the lane worktree.
+"After #22790" is the binary from the section above; "after the fix" adds only this diff.
+The method is the same: same machine, project and full command, without `--allow-stale`,
+one warm-up run, then five timed runs per block. The after-the-fix block ran first. The
+next two blocks ran back to back, with a load average of 3.5 to 5.9.
+
+| Binary | Runs (s) | Median (s) |
+| --- | --- | ---: |
+| after the fix, first block | 0.580, 0.558, 0.563, 0.574, 0.579 | **0.574** |
+| after #22790 only | 0.873, 0.839, 0.846, 0.837, 0.867 | 0.846 |
+| after the fix, second block | 0.549, 0.574, 0.559, 0.571, 0.555 | **0.559** |
+
+All ten runs after the fix complete in under one second, and the slowest, 0.580 s, beats the
+fastest #22790-only run, 0.837 s. A timestamped `RUST_LOG=debug` run of the fixed binary
+shows the walk-and-probe stretch taking 0.165 s, down from about 0.40 s. It also shows no
+refresh, so the pre-gate still reports no change. `gcode status` and every other
+project-scoped read go through the same pre-gate, so they gain the same time.
 
 ## Where the full-command time went before #22790
 

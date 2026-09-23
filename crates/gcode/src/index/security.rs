@@ -167,7 +167,14 @@ fn is_plaintext_secret_name(stem: &str) -> bool {
 }
 
 /// Simple glob matching supporting `*` and `?` wildcards.
+///
+/// A pattern without wildcards is compared as a plain string. Every default
+/// exclude is such a literal, and the freshness pre-gate matches each one
+/// against every path component of every file.
 pub fn glob_match(pattern: &str, text: &str) -> bool {
+    if !pattern.contains(['*', '?']) {
+        return pattern == text;
+    }
     let pc: Vec<char> = pattern.chars().collect();
     let tc: Vec<char> = text.chars().collect();
     glob_inner(&pc, &tc)
@@ -196,8 +203,32 @@ fn glob_inner(pattern: &[char], text: &[char]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::has_secret_extension;
+    use super::{glob_match, has_secret_extension};
     use std::path::Path;
+
+    #[test]
+    fn glob_match_compares_literals_exactly_and_expands_wildcards() {
+        let cases = [
+            ("node_modules", "node_modules", true),
+            ("node_modules", "node_module", false),
+            ("target", "targets", false),
+            ("target", "Target", false),
+            ("", "", true),
+            ("", "a", false),
+            ("*.log", "app.log", true),
+            ("*.log", "app.logs", false),
+            ("?ist", "dist", true),
+            ("?ist", "list.rs", false),
+        ];
+
+        for (pattern, text, expected) in cases {
+            assert_eq!(
+                glob_match(pattern, text),
+                expected,
+                "unexpected match of {text:?} against {pattern:?}"
+            );
+        }
+    }
 
     #[test]
     fn classifies_secret_names_by_boundary_and_container_extension() {
