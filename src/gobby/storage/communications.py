@@ -16,7 +16,7 @@ from gobby.communications.models import (
     CommsRoutingRule,
 )
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.utils.datetime import to_aware_utc
+from gobby.utils.datetime import to_aware_utc, utc_now
 from gobby.utils.machine_id import require_machine_id
 
 if TYPE_CHECKING:
@@ -208,8 +208,12 @@ class LocalCommunicationsStore:
         """Link or unlink an identity to a session."""
         with self.db.transaction() as conn:
             conn.execute(
-                "UPDATE comms_identities SET session_id = %s WHERE id = %s",
-                (session_id, identity_id),
+                """
+                UPDATE comms_identities
+                SET session_id = %s, updated_at = %s
+                WHERE id = %s AND session_id IS DISTINCT FROM %s
+                """,
+                (session_id, utc_now(), identity_id, session_id),
             )
 
     def update_identity(self, identity: CommsIdentity) -> CommsIdentity:

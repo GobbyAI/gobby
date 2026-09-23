@@ -34,10 +34,13 @@ def _review(agent: dict[str, Any]) -> dict[str, Any]:
 
 def test_adversary_agents_pin_the_reviewer_model() -> None:
     """The agent definition owns the reviewer model, not the coordinator skill."""
-    for name in ADVERSARIES:
-        agent = _agent(name)
-        assert agent["provider"] == "codex"
-        assert agent["model"] == "gpt-5.6-sol"
+    tasked = _agent("plan-adversary")
+    assert tasked["provider"] == "codex"
+    assert tasked["model"] == "gpt-5.6-sol"
+    taskless = _agent("plan-adversary-taskless")
+    assert taskless["provider"] == "grok"
+    assert taskless["model"] == "grok-4.7"
+    for agent in (tasked, taskless):
         assert agent["reasoning_effort"] == "xhigh"
         assert agent["reasoning_required"] is False
         assert agent["isolation"] == "none"

@@ -79,6 +79,9 @@ def _read_violations(
 ) -> tuple[int, list[Any], bool]:
     if path is None:
         return 0, [], False
+    if not include_events:
+        count, truncated = _count_violation_lines(path)
+        return count, [], truncated
     recent: deque[Any] = deque(maxlen=_MAX_EXPOSED_VIOLATIONS)
     count = 0
     truncated = False
@@ -98,3 +101,21 @@ def _read_violations(
     except OSError:
         return 0, [], False
     return count, list(recent), truncated
+
+
+def _count_violation_lines(path: Path) -> tuple[int, bool]:
+    """Count log lines without decoding event bodies."""
+    count = 0
+    truncated = False
+    try:
+        with path.open(encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                if not line.strip():
+                    continue
+                count += 1
+                if count >= _MAX_COUNTED_VIOLATIONS:
+                    truncated = next(handle, None) is not None
+                    break
+    except OSError:
+        return 0, False
+    return count, truncated

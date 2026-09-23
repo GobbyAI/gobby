@@ -18,7 +18,7 @@ from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.events.coordination_waits import CoordinationWaitService
 from gobby.events.wake import WakeDispatcher
 from gobby.mcp_proxy.tools.agents_registry import create_agents_registry
-from gobby.storage.coordination_waits import CoordinationWaitManager
+from gobby.storage.coordination_waits import CoordinationWaitManager, coordination_wait_payload
 from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.projects import PERSONAL_PROJECT_ID
@@ -89,14 +89,55 @@ def harness(postgres_db: PostgresHubDatabase) -> CoordinationHarness:
     )
 
 
+def test_terminal_coordination_wait_can_be_rearmed(harness: CoordinationHarness) -> None:
+    harness.release()
+    resolved = harness.wait()
+    assert resolved["outcome"] == "released"
+    fresh = harness.wait()
+    assert fresh["id"] != resolved["id"]
+    payload = coordination_wait_payload(fresh)
+    assert payload["wait_id"] == fresh["id"]
+    assert payload["outcome"] == "waiting"
+    assert payload["notification_registered"] is True
+    repeated = harness.wait(timeout=3600)
+    assert repeated["id"] == fresh["id"]
+    assert repeated["expires_at"] == fresh["expires_at"]
+
+
+def test_rearm_after_replied_timeout_and_cancelled(harness: CoordinationHarness) -> None:
+    cases = (
+        ("replied", {"reply": True}),
+        ("timeout", {"coordination_key": "timeout-case"}),
+        ("cancelled", {"statuses": ["completed"]}),
+    )
+    for outcome, kwargs in cases:
+        original = harness.wait(**kwargs)
+        harness.manager.db.execute(
+            "UPDATE coordination_waits SET outcome = %s, completed_at = clock_timestamp() "
+            "WHERE id = %s",
+            (outcome, original["id"]),
+        )
+        fresh = harness.wait(**kwargs)
+        assert fresh["id"] != original["id"]
+        assert fresh["outcome"] == "waiting"
+        assert coordination_wait_payload(fresh)["notification_registered"] is True
+        repeated = harness.wait(**kwargs)
+        assert repeated["id"] == fresh["id"]
+        assert repeated["expires_at"] == fresh["expires_at"]
+
+
 def test_early_release_and_repeated_registration(harness: CoordinationHarness) -> None:
     message_id = harness.release()
     row = harness.wait()
     repeated = harness.wait(timeout=3600)
     assert row["outcome"] == "released"
     assert row["message_id"] == message_id
-    assert repeated == row
+    assert repeated["id"] != row["id"]
+    assert repeated["outcome"] == "waiting"
     assert (row["expires_at"] - row["created_at"]).total_seconds() == pytest.approx(900, abs=1)
+    assert (repeated["expires_at"] - repeated["created_at"]).total_seconds() == pytest.approx(
+        3600, abs=1
+    )
 
 
 @pytest.mark.parametrize(
@@ -148,7 +189,9 @@ def test_reply_resolves_on_the_next_owner_message(harness: CoordinationHarness) 
     assert completed["message_id"] == message_id
     assert completed["matched_status"] is None
     assert harness.row(row["id"]) == completed
-    assert harness.wait(reply=True) == completed
+    fresh = harness.wait(reply=True)
+    assert fresh["id"] != completed["id"]
+    assert fresh["outcome"] == "waiting"
 
 
 def test_reply_ignores_messages_that_predate_registration(harness: CoordinationHarness) -> None:
@@ -214,7 +257,8 @@ def test_owner_deletion(harness: CoordinationHarness) -> None:
     row = harness.wait()
     harness.db.execute("DELETE FROM sessions WHERE id = %s", (harness.owner,))
     assert harness.row(row["id"])["outcome"] == "owner_ended"
-    assert harness.wait()["id"] == row["id"]
+    with pytest.raises(ValueError, match="does not exist"):
+        harness.wait()
 
 
 def test_cancel_is_owned_and_terminal(harness: CoordinationHarness) -> None:

@@ -31,6 +31,10 @@ class TelemetryMetrics:
         self._meter = meter
         self._lock = threading.Lock()
         self._start_time = time.time()
+        # psutil.Process.cpu_percent(interval=None) returns 0.0 until the same
+        # Process has a previous sample. Keep one process per pid.
+        self._daemon_cpu_process: psutil.Process | None = None
+        self._daemon_cpu_pid: int | None = None
 
         # OTel instruments
         self._counters: dict[str, metrics.Counter] = {}
@@ -397,8 +401,7 @@ class TelemetryMetrics:
     def update_daemon_metrics(self, pid: int | None = None) -> None:
         """Update daemon health metrics (uptime, memory, CPU)."""
         try:
-            # Get process
-            process = psutil.Process(pid) if pid else psutil.Process(os.getpid())
+            process = self._daemon_cpu_process_for(pid)
 
             # Update uptime
             self.set_gauge("daemon_uptime_seconds", self.get_uptime())
@@ -412,7 +415,19 @@ class TelemetryMetrics:
             self.set_gauge("daemon_cpu_percent", cpu_percent)
 
         except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
+            self._daemon_cpu_process = None
+            self._daemon_cpu_pid = None
             logger.warning("Failed to update daemon metrics: %s", e)
+
+    def _daemon_cpu_process_for(self, pid: int | None) -> psutil.Process:
+        """Return the Process whose previous cpu_percent sample this collector owns."""
+        target = os.getpid() if pid is None else pid
+        process = self._daemon_cpu_process
+        if process is None or self._daemon_cpu_pid != target:
+            process = psutil.Process(target)
+            self._daemon_cpu_process = process
+            self._daemon_cpu_pid = target
+        return process
 
     def get_all_metrics(self) -> dict[str, Any]:
         """Get all metrics for backward compatibility with /admin/status."""

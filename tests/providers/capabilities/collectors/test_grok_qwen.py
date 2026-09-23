@@ -11,7 +11,12 @@ from gobby.adapters.qwen_acp_client import QwenACPClient
 from gobby.agents.trust import authorize_model_discovery_trust
 from gobby.providers.capabilities.collectors import qwen as qwen_capabilities
 from gobby.providers.capabilities.collectors import validate_snapshot
-from gobby.providers.capabilities.collectors.grok import GrokCollector, GrokSourceError
+from gobby.providers.capabilities.collectors.grok import (
+    _EFFORT_SOURCE_KEY,
+    _EFFORT_SOURCE_URL,
+    GrokCollector,
+    GrokSourceError,
+)
 from gobby.providers.capabilities.collectors.qwen import QwenCollector, QwenSourceError
 from gobby.providers.capabilities.models import ReasoningSupport, SourceState
 from gobby.servers.provider_models_grok import models_from_cache
@@ -109,6 +114,37 @@ async def test_unknown_reasoning_null_efforts() -> None:
         assert model.reasoning is ReasoningSupport.UNKNOWN
         assert model.supported_efforts is None
         assert model.default_effort is None
+
+
+async def test_documented_grok_models_emit_reasoning_efforts() -> None:
+    grok = GrokCollector(
+        fetch_models_cache=_cache_loader(),
+        discover_models=_discoverer(
+            {"value": "grok-4.7", "label": "Grok 4.7"},
+            {"value": "grok-4.7-build-fast", "label": "Grok 4.7 Build Fast"},
+            {"value": "grok-4.6", "label": "Grok 4.6"},
+            {"value": "grok-4.5", "label": "Grok 4.5"},
+        ),
+        clock=lambda: _OBSERVED_AT,
+    )
+
+    models = {model.canonical_model: model for model in (await grok.collect()).models}
+
+    for model_id in ("grok-4.7", "grok-4.7-build-fast", "grok-4.6", "grok-4.5"):
+        model = models[model_id]
+        assert model.reasoning is ReasoningSupport.KNOWN
+        assert model.supported_efforts
+        assert model.default_effort == "high"
+        provenance = model.provenance["supported_efforts"]
+        assert provenance.source_key == _EFFORT_SOURCE_KEY
+        assert provenance.source_url == _EFFORT_SOURCE_URL
+    for model_id in ("grok-4.7", "grok-4.6"):
+        efforts = models[model_id].supported_efforts
+        assert efforts is not None
+        assert "xhigh" in efforts
+    older = models["grok-4.5"].supported_efforts
+    assert older is not None
+    assert "xhigh" not in older
 
 
 async def test_models_cache_fills_missing_windows_and_omitted_models(

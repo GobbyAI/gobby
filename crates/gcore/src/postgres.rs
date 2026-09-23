@@ -150,36 +150,44 @@ fn is_password_authentication_failure(error: &anyhow::Error) -> bool {
     })
 }
 
+fn indexed_path_lost_after_rehandshake(error: anyhow::Error) -> anyhow::Error {
+    error.context("indexed path lost after grant rehandshake")
+}
+
 fn connect_after_grant_rehandshake(original: anyhow::Error) -> anyhow::Result<Client> {
     let cwd = match std::env::current_dir() {
         Ok(cwd) => cwd,
         Err(error) => {
-            return Err(original.context(format!(
-                "grant rehandshake skipped: cannot resolve working directory: {error}"
+            return Err(indexed_path_lost_after_rehandshake(original.context(
+                format!("grant rehandshake skipped: cannot resolve working directory: {error}"),
             )));
         }
     };
     let Some(root) = crate::project::find_project_root(&cwd) else {
-        return Err(original.context(format!(
-            "grant rehandshake skipped: no project root above {}",
-            cwd.display()
+        return Err(indexed_path_lost_after_rehandshake(original.context(
+            format!(
+                "grant rehandshake skipped: no project root above {}",
+                cwd.display()
+            ),
         )));
     };
     let acquired =
         match crate::grant::rehandshake(&crate::grant::AcquireRequest::from_process(&root)) {
             Ok(acquired) => acquired,
             Err(error) => {
-                return Err(original.context(format!("grant rehandshake failed: {error}")));
+                return Err(indexed_path_lost_after_rehandshake(
+                    original.context(format!("grant rehandshake failed: {error}")),
+                ));
             }
         };
     let crate::grant::PostgresCapability::Direct { dsn, .. } =
         &acquired.bundle.capabilities.postgres
     else {
-        return Err(original.context(
+        return Err(indexed_path_lost_after_rehandshake(original.context(
             "grant rehandshake succeeded but the refreshed grant has no direct postgres capability",
-        ));
+        )));
     };
-    connect_once(dsn)
+    connect_once(dsn).map_err(indexed_path_lost_after_rehandshake)
 }
 
 fn connect(database_url: &str) -> anyhow::Result<Client> {
@@ -497,6 +505,19 @@ mod tests {
     fn password_authentication_failure_requires_sqlstate() {
         let error = anyhow::anyhow!("password authentication failed for user \"gobby\"");
         assert!(!is_password_authentication_failure(&error));
+    }
+
+    #[test]
+    fn grant_rehandshake_failure_reports_indexed_path_loss() {
+        let error = indexed_path_lost_after_rehandshake(anyhow::anyhow!(
+            "password authentication failed for managed agent"
+        ));
+
+        assert_eq!(
+            error.to_string(),
+            "indexed path lost after grant rehandshake"
+        );
+        assert!(format!("{error:#}").contains("password authentication failed for managed agent"));
     }
 
     #[test]

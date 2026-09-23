@@ -626,6 +626,7 @@ impl Workspace<LiveDaemon> {
             } => {
                 if self.accept_lifecycle(&daemon_epoch, seq) {
                     let reason = payload.get("reason").and_then(Value::as_str);
+                    self.arm_indeterminate_reattach(&attachment_id, &payload);
                     self.retire_attachment(&attachment_id, reason);
                     self.advance_lifecycle(daemon_epoch, seq);
                 } else if self

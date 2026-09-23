@@ -350,10 +350,15 @@ fn run() -> anyhow::Result<()> {
     let format = cli::effective_format(cli.format, &cli.command);
     let effective_token_budget = cli::effective_token_budget(format, &cli.command);
     let evidence_request = match &cli.command {
-        Command::Evidence { request_json, .. } => Some(commands::evidence::preflight(
+        Command::Evidence {
             request_json,
-            format,
-            cli.allow_stale,
+            format: evidence_format,
+            allow_stale,
+            ..
+        } => Some(commands::evidence::preflight(
+            request_json,
+            evidence_format.unwrap_or(format),
+            cli.allow_stale || *allow_stale,
             cli.project.as_deref(),
         )?),
         _ => None,

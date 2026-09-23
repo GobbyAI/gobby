@@ -726,11 +726,34 @@ impl<D: Daemon> Workspace<D> {
         pane_id: PaneId,
         now: tokio::time::Instant,
     ) -> Option<(String, String, Generation)> {
-        let pane = self.panes.get_mut(&pane_id)?;
-        let terminal_id = pane.terminal_id.clone();
-        let (attachment_id, generation) = pane.begin_detaching(now)?;
-        pane.clear_control("Control result indeterminate.");
-        Some((terminal_id, attachment_id, generation))
+        let outcome = {
+            let pane = self.panes.get_mut(&pane_id)?;
+            let terminal_id = pane.terminal_id.clone();
+            let (attachment_id, generation) = pane.begin_detaching(now)?;
+            pane.clear_control("Control result indeterminate.");
+            pane.reattach_after_indeterminate = true;
+            (terminal_id, attachment_id, generation)
+        };
+        // Same removal as proxy recovery. An unchanged socket generation
+        // would otherwise make the next attach pass skip this pane.
+        self.attached_generation.remove(&pane_id);
+        Some(outcome)
+    }
+
+    pub(super) fn arm_indeterminate_reattach(&mut self, attachment_id: &str, payload: &Value) {
+        let pane_id = payload
+            .get("terminal_id")
+            .and_then(Value::as_str)
+            .and_then(|id| self.pane_for_terminal(id))
+            .or_else(|| self.pane_by_attachment(attachment_id).map(|pane| pane.id));
+        let Some(pane_id) = pane_id else {
+            return;
+        };
+        let pane = self.pane_mut(pane_id);
+        if pane.reattach_after_indeterminate {
+            pane.reattach_after_indeterminate = false;
+            pane.attach_retry_at = Some(tokio::time::Instant::now());
+        }
     }
 
     pub fn observe_daemon_disconnect(&mut self, _generation: Generation, error: DaemonError) {
