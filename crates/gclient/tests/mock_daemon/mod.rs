@@ -257,6 +257,15 @@ impl MockDaemon {
             .seed(project, tabs)
     }
 
+    /// The tab id of `terminal_id` on the current or a parked workspace.
+    pub fn tab_for_terminal(&self, terminal_id: &str) -> Option<String> {
+        self.state
+            .lock()
+            .expect("mock state")
+            .workspace
+            .tab_for_terminal(terminal_id)
+    }
+
     pub fn enqueue_spawn_events_before_reply(&self, events: Vec<Value>) {
         self.state
             .lock()
@@ -892,15 +901,25 @@ fn websocket_reply(state: &Arc<Mutex<MockState>>, request: &Value) -> Option<Val
             "type": "subscribe_success",
             "events": request.get("events").cloned().unwrap_or_else(|| json!([])),
         })),
-        "workspace_attach" => Some(
-            state
-                .lock()
-                .expect("mock state")
-                .workspace
-                .attach_reply(request.get("request_id")),
-        ),
+        "workspace_attach" => {
+            let mut state = state.lock().expect("mock state");
+            if request.get("workspace").is_none() {
+                if let Some(project_id) = request.get("project_id").and_then(Value::as_str) {
+                    state.workspace.open_project(project_id);
+                }
+            }
+            Some(state.workspace.attach_reply(request.get("request_id")))
+        }
         "workspace_op" => {
             let mut state = state.lock().expect("mock state");
+            if request.get("op").and_then(Value::as_str) == Some("workspace.list") {
+                return Some(json!({
+                    "type": "workspace_op",
+                    "request_id": request.get("request_id"),
+                    "op": "workspace.list",
+                    "result": state.workspace.list(),
+                }));
+            }
             if let Some((code, reason)) = state.workspace_refusals.pop_front() {
                 return Some(json!({
                     "type": "workspace_error",

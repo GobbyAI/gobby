@@ -40,6 +40,7 @@ pub(super) mod orphans;
 pub(super) mod projects;
 mod suspend;
 mod workspace_actions;
+mod workspaces;
 
 use actions::{apply_live_modal_outcome, apply_live_mouse_outcome, handle_live_action};
 use control::{apply_control_outcome, apply_live_write_outcome, focus_live_pane, send_live_input};

@@ -160,14 +160,14 @@ fn workspace_fixtures_decode_into_typed_rows_ops_and_events() {
 #[test]
 fn scripted_daemon_serves_the_seeded_workspace() {
     let daemon = ScriptedDaemon::new();
-    let unseeded = Daemon::attach_workspace(&daemon, None, None)
+    let unseeded = Daemon::attach_workspace(&daemon, None, None, None)
         .now_or_never()
         .expect("scripted attach settles immediately");
     assert_eq!(unseeded, Err(DaemonError::NotFound));
 
     let snapshot: WorkspaceSnapshot = typed_fixture("workspace_snapshot.json");
     daemon.set_workspace(snapshot.clone());
-    let attached = Daemon::attach_workspace(&daemon, None, Some(&snapshot.workspace.id))
+    let attached = Daemon::attach_workspace(&daemon, None, Some(&snapshot.workspace.id), None)
         .now_or_never()
         .expect("scripted attach settles immediately")
         .expect("seeded workspace attaches");

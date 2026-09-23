@@ -417,6 +417,10 @@ pub(super) async fn handle_live_action(
             spawn_live_terminal(workspace, chrome, Placement::SplitDown).await?;
         }
         Action::NewTab => spawn_live_terminal(workspace, chrome, Placement::Tab).await?,
+        Action::NextWorkspace => {
+            super::workspaces::switch_next_workspace(workspace, chrome).await?;
+            sync_live_chrome(workspace, chrome);
+        }
         Action::NewProject => open_new_project_dialog(chrome),
         Action::CloseTerminal => {
             if let Some(pane_id) = chrome.focused_pane() {

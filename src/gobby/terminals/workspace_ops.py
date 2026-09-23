@@ -47,6 +47,7 @@ from gobby.storage.project_checkouts import (
 )
 from gobby.storage.sessions import SessionManager
 from gobby.storage.terminals import Terminal, TerminalManager
+from gobby.storage.workspace_address import resolve_launch_workspace
 from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
 from gobby.storage.workspaces import (
     DEFAULT_WORKSPACE_NAME,
@@ -277,6 +278,14 @@ class WorkspaceOps:
         await self._sweep(workspace.id)
         return workspace
 
+    async def workspace_list(self, actor: str, *, node: str | None = None) -> tuple[Workspace, ...]:
+        """Every workspace on the node, lowest ref first."""
+        del actor
+        with storage_errors():
+            machine = self._workspaces.resolve_node(node)
+            _require_local(machine)
+            return tuple(self._workspaces.list_for_node(machine.id))
+
     async def workspace_rename(
         self, actor: str, workspace: str, name: str, *, node: str | None = None
     ) -> Workspace:
@@ -321,16 +330,33 @@ class WorkspaceOps:
         return hinted, focused
 
     async def workspace_snapshot(
-        self, actor: str, workspace: str | None = None, *, node: str | None = None
+        self,
+        actor: str,
+        workspace: str | None = None,
+        *,
+        node: str | None = None,
+        project_id: str | None = None,
     ) -> WorkspaceSnapshot:
         """Sweep and read a whole workspace; absent, the node's default, created on first use.
 
-        The rows are read after the sweep with no await in between, so a caller that
+        A registered ``project_id`` with no explicit workspace resolves that
+        project's default workspace instead of the projectless scratch. The rows
+        are read after the sweep with no await in between, so a caller that
         takes the lifecycle watermark before its next await holds rows and watermark
         from the same moment.
         """
-        if workspace is None:
+        if workspace is None and project_id is None:
             workspace = (await self.workspace_create(actor, node=node)).id
+        elif workspace is None:
+            machine = self._workspaces.resolve_node(node)
+            _require_local(machine)
+            with storage_errors():
+                resolved, created = resolve_launch_workspace(
+                    self._workspaces, machine.id, workspace=None, project_id=project_id
+                )
+            if created:
+                await self._emit("workspace.created", resolved.id, workspace=resolved)
+            workspace = resolved.id
         target = await self._enter(workspace, node)
         home = _workspace_of(target, workspace)
         with storage_errors():

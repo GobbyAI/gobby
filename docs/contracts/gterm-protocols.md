@@ -214,13 +214,13 @@ a long `pane.wait_for_output` delays the messages behind it on that socket.
 
 | Message | Direction | Fields and behavior |
 | --- | --- | --- |
-| `workspace_attach` | Client → daemon | `request_id`, optional `workspace` and `node` references. Without `workspace`, the node's default workspace is used and created on first use; without `node`, the local node. The reply is `workspace_snapshot`, and the socket subscribes to `workspace_event:workspace_id=<id>`. |
-| `workspace_snapshot` | Client ↔ daemon | A request takes the `workspace_attach` fields without subscribing. The reply carries `workspace` (the row plus `node_ref`), every `tabs` and `panes` row, and `snapshot: {daemon_epoch, seq}`. Panes whose terminals ended are swept before the rows are read. |
+| `workspace_attach` | Client → daemon | `request_id`, optional `workspace`, `node`, and `project_id`. An explicit `workspace` wins. Without `workspace`, a `project_id` resolves or creates that project's one default workspace; with neither, the node's projectless `default` scratch is used and created on first use. Without `node`, the local node. The reply is `workspace_snapshot`, and the socket subscribes to `workspace_event:workspace_id=<id>`. |
+| `workspace_snapshot` | Client ↔ daemon | A request takes the `workspace_attach` fields without subscribing. The reply carries `workspace` (the row, including optional `default_project_id`, plus `node_ref`), every `tabs` and `panes` row, and `snapshot: {daemon_epoch, seq}`. Panes whose terminals ended are swept before the rows are read. |
 | `workspace_op` | Client ↔ daemon | A request carries `request_id`, `op`, and that op's fields. The reply carries `op` and `result`, the op's return value as JSON. |
 | `workspace_event` | Daemon → client | Lifecycle message with `daemon_epoch`, `seq`, `timestamp`, `kind`, `workspace_id`, `project_id` (the single project the event's tabs name, else null), and the changed `workspace`, `tabs`, and `panes` rows. Delivery follows the socket's subscriptions; attaching adds the one for that workspace. |
 | `workspace_error` | Daemon → client | Correlates `request_id` and carries `code` and `reason`. |
 
-`op` is one of `workspace.create`, `workspace.rename`, `workspace.close`,
+`op` is one of `workspace.list`, `workspace.create`, `workspace.rename`, `workspace.close`,
 `workspace.set_focus_hints`, `tab.create`, `tab.rename`, `tab.move`, `tab.close`,
 `pane.split`, `pane.swap`, `pane.move`, `pane.resize`, `pane.rename`,
 `pane.close`, `pane.send_text`, `pane.send_keys`, `pane.read`, and
