@@ -50,6 +50,7 @@ from gobby.storage.workspaces import (
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.terminals.actor_scope import ActorScope
 from gobby.terminals.leases import TerminalLeaseRegistry
+from gobby.terminals.pane_io import _verified_submits
 from gobby.terminals.runtime import (
     Delivered,
     IndeterminateWrite,
@@ -923,11 +924,11 @@ async def test_workspace_send_text_submit_retry_does_not_retype_held_draft(
 
 
 @pytest.mark.asyncio
-async def test_workspace_send_text_submit_retry_replays_verified_success(
+async def test_workspace_send_text_submit_success_keeps_no_retry_record(
     harness: _Harness,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A completed verified submit replayed with the same key does not write again."""
+    """A verified submit drops its retry record, so the same key writes again."""
     h = harness
     monkeypatch.setattr("gobby.terminals.pane_io.SUBMIT_ENTER_GAP_SECONDS", 0.0)
     monkeypatch.setattr("gobby.terminals.pane_io.SUBMIT_HELD_RETRY_SECONDS", 0.0)
@@ -956,11 +957,68 @@ async def test_workspace_send_text_submit_retry_replays_verified_success(
     second = await h.ops.pane_send_text(OPERATOR, pane.id, text, submit=True, idempotency_key=key)
 
     assert first.indeterminate is False
+    assert all(
+        idem != key for records in _verified_submits.values() for _terminal_id, idem in records
+    )
     assert second.indeterminate is False
-    assert second.idempotency_key == first.idempotency_key
-    assert h.native.write_log == [("text", f"{text}\n"), ("key", "enter")]
+    assert h.native.write_log == [
+        ("text", f"{text}\n"),
+        ("key", "enter"),
+        ("text", f"{text}\n"),
+        ("key", "enter"),
+    ]
     text_writes = sum(kind == "text" for kind, _payload in h.native.write_log)
-    print(f"success replay text_writes={text_writes} write_log={h.native.write_log}")
+    print(f"success drops record text_writes={text_writes} write_log={h.native.write_log}")
+
+
+@pytest.mark.asyncio
+async def test_workspace_send_text_submit_bounds_held_retry_records(
+    harness: _Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Held retry records stay bounded, and an evicted key is typed again."""
+    h = harness
+    monkeypatch.setattr("gobby.terminals.pane_io.SUBMIT_ENTER_GAP_SECONDS", 0.0)
+    monkeypatch.setattr("gobby.terminals.pane_io.SUBMIT_HELD_RETRY_SECONDS", 0.0)
+    monkeypatch.setattr("gobby.terminals.pane_io._HELD_VERIFIED_SUBMIT_LIMIT", 2)
+    sync_bundled_detection_manifests(h.db)
+    session = h.sessions.register(
+        external_id="workspace-ops-retry-bound",
+        machine_id=LOCAL_MACHINE_ID,
+        source="codex",
+        project_id=h.project_id,
+    )
+    terminal = _live_terminal(h.terminals, h.project_id, "native", session_id=session.id)
+    workspace = await h.ops.workspace_create(OPERATOR, "retry-bound")
+    pane = (
+        await h.ops.tab_create(
+            OPERATOR,
+            workspace.id,
+            h.project_id,
+            terminal_id=terminal.id,
+        )
+    ).panes[0]
+    text = "Start the persistent Codex role and report ready."
+    h.native.snapshot_text = f"────────\n❯ {text}\n────────"
+    keys = ("held-a", "held-b", "held-c")
+    for idempotency_key in keys:
+        result = await h.ops.pane_send_text(
+            OPERATOR, pane.id, text, submit=True, idempotency_key=idempotency_key
+        )
+        assert result.indeterminate is True
+    stored = {
+        idem
+        for records in _verified_submits.values()
+        for _terminal_id, idem in records
+        if idem in keys
+    }
+    assert stored == {"held-b", "held-c"}
+    h.native.write_log.clear()
+    retried = await h.ops.pane_send_text(
+        OPERATOR, pane.id, text, submit=True, idempotency_key="held-a"
+    )
+    assert retried.indeterminate is True
+    assert ("text", f"{text}\n") in h.native.write_log
 
 
 @pytest.mark.asyncio

@@ -208,6 +208,10 @@ class CoordinatorPaneIO:
         self._write_count = 0
 
     @property
+    def text_accepted(self) -> bool:
+        return self._text_accepted
+
+    @property
     def backend(self) -> str:
         return self._runtime_pane.backend
 
@@ -490,13 +494,15 @@ async def submit_text(
     )
 
 
+_HELD_VERIFIED_SUBMIT_LIMIT = 32
+
+
 @dataclass
 class _VerifiedSubmitProgress:
-    """How far one idempotent verified submission got."""
+    """A verified submit that is still held or indeterminate."""
 
     text_delivered: bool = False
     payload: str | None = None
-    success: SubmitResult | None = None
     resume_epoch: int = 0
 
 
@@ -505,19 +511,39 @@ _verified_submits: WeakKeyDictionary[
 ] = WeakKeyDictionary()
 
 
-def _verified_submit_progress(
+def _held_submit(
     coordinator: WriteCoordinator, terminal_id: str, idempotency_key: str
-) -> _VerifiedSubmitProgress:
+) -> _VerifiedSubmitProgress | None:
+    records = _verified_submits.get(coordinator)
+    if records is None:
+        return None
+    return records.get((terminal_id, idempotency_key))
+
+
+def _remember_held(
+    coordinator: WriteCoordinator,
+    terminal_id: str,
+    idempotency_key: str,
+    progress: _VerifiedSubmitProgress,
+) -> None:
     records = _verified_submits.get(coordinator)
     if records is None:
         records = {}
         _verified_submits[coordinator] = records
     key = (terminal_id, idempotency_key)
-    progress = records.get(key)
-    if progress is None:
-        progress = _VerifiedSubmitProgress()
-        records[key] = progress
-    return progress
+    if key not in records:
+        while len(records) >= _HELD_VERIFIED_SUBMIT_LIMIT:
+            del records[next(iter(records))]
+    records[key] = progress
+
+
+def _forget_held(coordinator: WriteCoordinator, terminal_id: str, idempotency_key: str) -> None:
+    records = _verified_submits.get(coordinator)
+    if records is None:
+        return
+    records.pop((terminal_id, idempotency_key), None)
+    if not records:
+        _verified_submits.pop(coordinator, None)
 
 
 async def submit_coordinated_text(
@@ -535,25 +561,24 @@ async def submit_coordinated_text(
 ) -> SubmitResult:
     """Submit through coordinator locking while retaining composer verification.
 
-    A retry of the same key replays a verified success. After the text write has
-    landed, a held or indeterminate finish resumes with a bare Enter and does not
-    retype the payload.
+    A held or indeterminate finish keeps one bounded record so a retry resumes
+    with a bare Enter and does not retype. A verified success drops that record.
     """
-    progress = _verified_submit_progress(coordinator, terminal.id, idempotency_key)
-    if progress.payload is not None and progress.payload != text:
+    progress = _held_submit(coordinator, terminal.id, idempotency_key)
+    if progress is not None and progress.payload not in (None, text):
         raise IdempotencyConflictError("idempotency key was already used with a different payload")
-    if progress.success is not None:
-        return progress.success
-    if progress.text_delivered:
+    resume_epoch = 0
+    if progress is not None and progress.text_delivered:
         progress.resume_epoch += 1
+        resume_epoch = progress.resume_epoch
     pane = CoordinatorPaneIO(
         coordinator,
         runtime,
         terminal,
         action_key=action_key,
         idempotency_key=idempotency_key,
-        skip_delivered_text=progress.text_delivered,
-        resume_epoch=progress.resume_epoch,
+        skip_delivered_text=progress is not None and progress.text_delivered,
+        resume_epoch=resume_epoch,
     )
     result = await submit_text(
         pane,
@@ -563,10 +588,13 @@ async def submit_coordinated_text(
         cli_source=cli_source,
         composer_read=composer_read,
     )
-    if pane._text_accepted:
-        progress.text_delivered = True
-        progress.payload = text
     if result.ok:
-        progress.success = result
-        progress.payload = text
+        _forget_held(coordinator, terminal.id, idempotency_key)
+        return result
+    if pane.text_accepted:
+        remembered = progress if progress is not None else _VerifiedSubmitProgress()
+        remembered.text_delivered = True
+        remembered.payload = text
+        remembered.resume_epoch = resume_epoch
+        _remember_held(coordinator, terminal.id, idempotency_key, remembered)
     return result
