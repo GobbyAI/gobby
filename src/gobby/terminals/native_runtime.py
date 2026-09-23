@@ -393,7 +393,7 @@ class NativeTerminalRuntime:
                 argv=list(request.command),
                 # After the caller env so nothing shadows the minted identity.
                 env={**(request.env or {}), GOBBY_TERMINAL_ID: str(request.terminal_id)},
-                cwd=request.cwd or "/tmp",
+                cwd=request.cwd,
                 rows=request.rows or 24,
                 cols=request.cols or 80,
             )

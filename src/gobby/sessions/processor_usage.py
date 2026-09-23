@@ -84,6 +84,7 @@ class ProcessorUsageMixin:
         # Known occupancy stands until a newer measurement replaces it; a record that
         # carries none must not reset it to a window-only snapshot.
         occupancy_known = getattr(session, "context_usage_confidence", None) == "reported"
+        epoch_stored = getattr(session, "context_used_tokens", None)
         latest_event_at: datetime | None = None
         saw_insert = False
         saw_token_usage = False
@@ -110,15 +111,19 @@ class ProcessorUsageMixin:
                         context_window=event_context_window,
                         context_used_tokens=msg.context_used_tokens,
                         model=last_model,
+                        epoch_reset=msg.context_epoch_reset,
                     )
                     if occupancy_snapshot.context_used_tokens is not None:
                         if source == "grok":
                             occupancy_snapshot = grok_epoch_max_occupancy(
                                 occupancy_snapshot,
                                 current=latest_context_snapshot,
-                                stored_used_tokens=getattr(session, "context_used_tokens", None),
+                                stored_used_tokens=epoch_stored,
                                 occupancy_known=occupancy_known,
+                                epoch_reset=msg.context_epoch_reset,
                             )
+                            if msg.context_epoch_reset:
+                                epoch_stored = occupancy_snapshot.context_used_tokens
                         latest_context_snapshot = occupancy_snapshot
                         occupancy_known = True
             if not self._usage_has_tokens(msg) or msg.usage is None:

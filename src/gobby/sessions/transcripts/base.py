@@ -122,6 +122,7 @@ class ParsedMessage:
     source_ref: str | None = None
     source_line: int | None = None
     context_used_tokens: int | None = None
+    context_epoch_reset: bool = False
 
 
 DecodeFailureKind = Literal["empty", "non_json", "truncated"]

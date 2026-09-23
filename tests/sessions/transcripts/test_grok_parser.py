@@ -68,7 +68,6 @@ def _thought_chunk(text: str) -> dict[str, object]:
     [
         "retry_state",
         "compaction_checkpoint",
-        "auto_compact_completed",
         "task_backgrounded",
         "task_completed",
         "current_mode_update",
@@ -82,6 +81,23 @@ def test_grok_protocol_metadata_records_are_suppressed(update_type: str) -> None
     parsed = parser.parse_line(line, 0)
     assert parsed is None
     assert parser.parse_lines([line]) == []
+
+
+def test_auto_compact_completed_resets_occupancy_to_tokens_after() -> None:
+    parser = GrokTranscriptParser(session_id="grok-session")
+    line = _event(
+        {
+            "sessionUpdate": "auto_compact_completed",
+            "tokens_before": 400_183,
+            "tokens_after": 28_793,
+        }
+    )
+
+    parsed = parser.parse_line(line, 0)
+
+    assert isinstance(parsed, ParsedMessage)
+    assert parsed.context_used_tokens == 28_793
+    assert parsed.context_epoch_reset is True
 
 
 def _parsed_messages(parser: GrokTranscriptParser, lines: list[str]) -> list[ParsedMessage]:
@@ -160,9 +176,9 @@ def test_grok_model_id_becomes_parsed_message_model() -> None:
 
 
 def test_current_grok_transcript_sets_model() -> None:
-    fixture = (
-        Path(__file__).parent / "fixtures" / "grok_4_7_user_message.jsonl"
-    ).read_text(encoding="utf-8")
+    fixture = (Path(__file__).parent / "fixtures" / "grok_4_7_user_message.jsonl").read_text(
+        encoding="utf-8"
+    )
     messages = _parsed_messages(
         GrokTranscriptParser(session_id="grok-session"),
         [fixture],

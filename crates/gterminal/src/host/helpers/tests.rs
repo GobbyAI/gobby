@@ -1,6 +1,10 @@
 use std::time::Instant;
 
-use super::push_terminal_ansi;
+use std::path::PathBuf;
+
+use serde_json::{Map, Value};
+
+use super::{push_terminal_ansi, resolved_spawn_cwd};
 use crate::host::backpressure::FrameMailbox;
 use crate::host::state::Attachment;
 use crate::protocol::render_ansi::BlitEncoder;
@@ -142,4 +146,20 @@ fn overflow_replaces_queued_deltas_with_one_keyframe() {
         !terminal_frame(&mailbox).full,
         "the next change after a replacement is a delta, not a repeated repaint"
     );
+}
+
+#[test]
+fn missing_spawn_cwd_uses_the_process_directory() {
+    let process = std::env::current_dir().expect("process directory");
+    let missing = resolved_spawn_cwd(&Map::new());
+    assert_eq!(missing, process);
+    assert_ne!(missing, std::env::temp_dir());
+
+    let mut extra = Map::new();
+    extra.insert("cwd".into(), Value::Null);
+    assert_eq!(resolved_spawn_cwd(&extra), process);
+    extra.insert("cwd".into(), Value::String(String::new()));
+    assert_eq!(resolved_spawn_cwd(&extra), process);
+    extra.insert("cwd".into(), Value::String("/repo".into()));
+    assert_eq!(resolved_spawn_cwd(&extra), PathBuf::from("/repo"));
 }
