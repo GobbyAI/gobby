@@ -32,6 +32,12 @@ document.documentElement.style.setProperty(
   "500px",
 );
 
+// jsdom builds its CSS cascade machinery (default stylesheet, selector and
+// color engines) on the first getComputedStyle call, about 100 ms of CPU per
+// test file. Pay it here, during environment setup, instead of inside
+// whichever test first runs a role query or a user-event pointer check.
+window.getComputedStyle(document.documentElement);
+
 // Node 25 ships a built-in `globalThis.localStorage` getter that warns about a
 // missing `--localstorage-file` flag whenever it's touched. Vitest's jsdom env
 // uses `populateGlobal()` to copy window props onto globalThis, but it skips

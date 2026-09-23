@@ -67,10 +67,8 @@ function renderTemplateFields(
 }
 
 async function chooseTemplate(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(screen.getByRole("radio", { name: "From template" }));
-  await user.selectOptions(screen.getByRole("combobox", { name: "Template" }), [
-    "github",
-  ]);
+  await user.click(screen.getByLabelText("From template"));
+  await user.selectOptions(screen.getByLabelText("Template"), ["github"]);
 }
 
 afterEach(() => {
@@ -88,9 +86,9 @@ describe("McpTemplatePicker", () => {
 
     expect(fetchTemplates).toHaveBeenCalledTimes(1);
     expect(fetchTemplates).toHaveBeenCalledWith(CURRENT_PROJECT_ID);
-    expect(
-      screen.getByRole("combobox", { name: /Repository visibility/ }),
-    ).toBeInstanceOf(HTMLSelectElement);
+    expect(screen.getByLabelText(/Repository visibility/)).toBeInstanceOf(
+      HTMLSelectElement,
+    );
 
     await user.type(
       screen.getByLabelText(/Existing secret reference/),
@@ -100,19 +98,18 @@ describe("McpTemplatePicker", () => {
     expect(screen.queryByDisplayValue("$secret:GITHUB_TOKEN")).toBeNull();
     expect(document.body).not.toHaveTextContent("$secret:GITHUB_TOKEN");
 
-    await user.type(screen.getByRole("textbox", { name: "Server name" }), "gh");
-    await user.click(screen.getByRole("button", { name: "Save" }));
+    await user.type(screen.getByLabelText("Server name"), "gh");
+    await user.click(screen.getByText("Save"));
 
     expect(onSave).not.toHaveBeenCalled();
     expect(
       screen.getByText("Repository visibility is required."),
     ).toBeVisible();
 
-    await user.selectOptions(
-      screen.getByRole("combobox", { name: /Repository visibility/ }),
-      ["public"],
-    );
-    await user.click(screen.getByRole("button", { name: "Save" }));
+    await user.selectOptions(screen.getByLabelText(/Repository visibility/), [
+      "public",
+    ]);
+    await user.click(screen.getByText("Save"));
 
     await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
     expect(onSave).toHaveBeenCalledWith(
@@ -136,16 +133,12 @@ describe("McpTemplatePicker", () => {
       saveMcpServerDraft({ mode: "create", draft }),
     );
 
-    await user.type(
-      screen.getByRole("textbox", { name: "Server name" }),
-      "github-work",
-    );
+    await user.type(screen.getByLabelText("Server name"), "github-work");
     await chooseTemplate(user);
-    await user.selectOptions(
-      screen.getByRole("combobox", { name: /Repository visibility/ }),
-      ["private"],
-    );
-    await user.click(screen.getByRole("button", { name: "Save" }));
+    await user.selectOptions(screen.getByLabelText(/Repository visibility/), [
+      "private",
+    ]);
+    await user.click(screen.getByText("Save"));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({
@@ -156,10 +149,8 @@ describe("McpTemplatePicker", () => {
       project_id: CURRENT_PROJECT_ID,
     });
 
-    await user.selectOptions(screen.getByRole("combobox", { name: "Scope" }), [
-      "global",
-    ]);
-    await user.click(screen.getByRole("button", { name: "Save" }));
+    await user.selectOptions(screen.getByLabelText("Scope"), ["global"]);
+    await user.click(screen.getByText("Save"));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body))).toEqual({

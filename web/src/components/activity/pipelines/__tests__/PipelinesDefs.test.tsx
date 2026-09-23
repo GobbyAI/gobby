@@ -101,33 +101,33 @@ describe("Pipelines defs segment", () => {
     await waitFor(() => {
       expect(screen.getByText("Nightly sync")).toBeInTheDocument();
     });
-    expect(screen.getByRole("radio", { name: "Live" })).toHaveAttribute(
+    expect(screen.getByLabelText("Live")).toHaveAttribute(
       "aria-checked",
       "true",
     );
 
-    fireEvent.click(screen.getByRole("radio", { name: "Defs" }));
+    fireEvent.click(screen.getByLabelText("Defs"));
 
     await waitFor(() => {
       expect(
-        within(
-          screen.getByRole("list", { name: "Pipeline definitions" }),
-        ).getByText("deploy-prod"),
+        within(screen.getByLabelText("Pipeline definitions")).getByText(
+          "deploy-prod",
+        ),
       ).toBeInTheDocument();
     });
     // Single-line rows surface the definition name + chips; the description now
     // lives in the detail pane, not inline on the list row.
     expect(
-      within(
-        screen.getByRole("list", { name: "Pipeline definitions" }),
-      ).queryByText("Deploy production services with staged approvals."),
+      within(screen.getByLabelText("Pipeline definitions")).queryByText(
+        "Deploy production services with staged approvals.",
+      ),
     ).not.toBeInTheDocument();
     const pipelineChips = screen.getAllByText("PIPELINE");
     expect(pipelineChips).toHaveLength(2);
     expect(pipelineChips.every((chip) => chip.classList.contains("h-5"))).toBe(
       true,
     );
-    expect(screen.getByRole("radio", { name: "Defs" })).toHaveAttribute(
+    expect(screen.getByLabelText("Defs")).toHaveAttribute(
       "aria-checked",
       "true",
     );
@@ -165,15 +165,15 @@ describe("Pipelines defs segment", () => {
     });
     render(<PipelinesTab projectId="project-1" />);
 
-    fireEvent.click(screen.getByRole("radio", { name: "Defs" }));
+    fireEvent.click(screen.getByLabelText("Defs"));
 
-    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
-    fireEvent.click(screen.getByRole("button", { name: "+ Add Step" }));
-    fireEvent.click(screen.getByRole("button", { name: "Exec" }));
+    fireEvent.click((await screen.findByText("Edit")).closest("button")!);
+    fireEvent.click(screen.getByText("+ Add Step", { selector: "button" }));
+    fireEvent.click(screen.getByText("Exec", { selector: "button" }));
     fireEvent.change(screen.getByPlaceholderText("shell command"), {
       target: { value: "npm test -- --runInBand" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    fireEvent.click(screen.getByText("Save", { selector: "button" }));
 
     await waitFor(() => {
       const saveCall = mockFetch.fn.mock.calls.find(
@@ -206,17 +206,17 @@ describe("Pipelines defs segment", () => {
   it("switches from definition detail to the pipeline editor and back", async () => {
     render(<PipelinesTab projectId="project-1" />);
 
-    fireEvent.click(screen.getByRole("radio", { name: "Defs" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    fireEvent.click(screen.getByLabelText("Defs"));
+    fireEvent.click((await screen.findByText("Edit")).closest("button")!);
 
     expect(screen.getByPlaceholderText("Pipeline name")).toHaveValue(
       "deploy-prod",
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "←" }));
+    fireEvent.click(screen.getByText("←", { selector: "button" }));
 
     expect(
-      await screen.findByRole("button", { name: "Edit" }),
+      (await screen.findByText("Edit")).closest("button"),
     ).toBeInTheDocument();
     expect(
       screen.queryByPlaceholderText("Pipeline name"),

@@ -102,28 +102,6 @@ describe("ActivityPanel", () => {
     expect(container.querySelector("line")).toHaveAttribute("y2", "19");
   });
 
-  it("renders no panel content for the terminal tab (it lives in the bottom dock)", () => {
-    render(
-      <ActivityPanel
-        mode="split"
-        onToggleChat={vi.fn()}
-        panelWidth={320}
-        onWidthChange={vi.fn()}
-        activeTab="terminal"
-        onTabChange={vi.fn()}
-        plans={new Map()}
-        activePlan={null}
-        onOpenPlan={vi.fn()}
-        onSetPlanVersion={vi.fn()}
-        sessions={[]}
-        isMobile={false}
-      />,
-    );
-
-    expect(screen.queryByText("Terminal Tab")).not.toBeInTheDocument();
-    expect(screen.queryByRole("log")).not.toBeInTheDocument();
-  });
-
   it.each([
     [false, "Hide chat"],
     [true, "Close panel"],

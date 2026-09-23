@@ -144,23 +144,20 @@ function lastJsonBodyFor(pathPart: string) {
 async function searchHub(user: ReturnType<typeof userEvent.setup>) {
   render(<SkillsTab projectId="project-1" />);
 
-  await user.click(screen.getByRole("radio", { name: "Hub" }));
-  await screen.findByRole("combobox", { name: "Hub source" });
-
+  await user.click(screen.getByLabelText("Hub"));
   await user.selectOptions(
-    screen.getByRole("combobox", { name: "Hub source" }),
+    await screen.findByLabelText("Hub source"),
     "clawdhub",
   );
   await user.type(
     screen.getByRole("searchbox", { name: "Search hub skills" }),
     "review",
   );
-  await user.click(screen.getByRole("button", { name: "Search hub skills" }));
+  await user.click(
+    screen.getByLabelText("Search hub skills", { selector: "button" }),
+  );
 
-  const result = await screen.findByRole("button", {
-    name: "Select Review Sentinel",
-  });
-  await user.click(result);
+  await user.click(await screen.findByLabelText("Select Review Sentinel"));
 }
 
 describe("Skills activity Hub segment", () => {
@@ -215,15 +212,13 @@ describe("Skills activity Hub segment", () => {
     expect(screen.getByText(/# Review Sentinel/)).toBeInTheDocument();
     expect(screen.getByText("SKILLSMP_API_KEY missing")).toBeInTheDocument();
 
-    const installBeforeScan = screen.getByRole("button", {
-      name: "Install hub skill",
-    });
+    const installBeforeScan = screen.getByLabelText("Install hub skill");
     expect(installBeforeScan).toBeDisabled();
     expect(
       screen.getByText("Run a safety scan before installing."),
     ).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Scan hub skill" }));
+    await user.click(screen.getByLabelText("Scan hub skill"));
     expect((await screen.findAllByText("HIGH")).length).toBeGreaterThanOrEqual(
       2,
     );
@@ -233,13 +228,13 @@ describe("Skills activity Hub segment", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("line 4")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Install hub skill" }));
+    await user.click(screen.getByLabelText("Install hub skill"));
     expect(
       await screen.findByRole("heading", {
         name: "Install despite HIGH findings?",
       }),
     ).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Install anyway" }));
+    await user.click(screen.getByText("Install anyway"));
 
     await waitFor(() =>
       expect(lastJsonBodyFor("/api/skills/hubs/install")).toEqual({
@@ -249,11 +244,12 @@ describe("Skills activity Hub segment", () => {
         project_id: "project-1",
       }),
     );
+    expect(await screen.findByLabelText("Installed")).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
     expect(
-      await screen.findByRole("radio", { name: "Installed" }),
-    ).toHaveAttribute("aria-checked", "true");
-    expect(
-      await screen.findByRole("button", { name: "Select Review Sentinel" }),
+      await screen.findByLabelText("Select Review Sentinel"),
     ).toBeInTheDocument();
   });
 

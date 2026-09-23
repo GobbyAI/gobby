@@ -26,7 +26,7 @@ describe("useAppProjectSelection", () => {
     vi.restoreAllMocks();
   });
 
-  it("flags projects without a checkout on this machine and never flags Personal", () => {
+  it("flags projects without a checkout on this machine and never flags Personal", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(() =>
@@ -57,6 +57,9 @@ describe("useAppProjectSelection", () => {
       }),
     );
 
+    await waitFor(() => {
+      expect(result.current.projectReady).toBe(true);
+    });
     expect(result.current.projectOptions).toEqual([
       { id: "personal", name: "Personal", hasCheckout: true },
       { id: "local", name: "local", hasCheckout: true },

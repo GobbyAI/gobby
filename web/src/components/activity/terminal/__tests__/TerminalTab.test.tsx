@@ -1120,7 +1120,7 @@ describe("native scroll offset", () => {
       streamingId: "stream-native",
     });
     render(<TerminalTab />);
-    await user.click(screen.getByRole("button", { name: "Renderer ready" }));
+    await user.click(screen.getByText("Renderer ready"));
   }
 
   it("sends the wheel as an offset, mirrors it, and reconciles the applied reply", async () => {
@@ -1132,7 +1132,7 @@ describe("native scroll offset", () => {
 
     // The ceiling is unknown until the daemon answers, so max_rows goes out as
     // 0 and the daemon applies what was asked.
-    await user.click(screen.getByRole("button", { name: "Wheel back" }));
+    await user.click(screen.getByText("Wheel back"));
     expect(hookState.setScrollOffset).toHaveBeenCalledWith(3, 0);
     // Mirrored before the reply lands, the way gclient does it: the indicator
     // tracks the gesture, not the round trip.
@@ -1147,7 +1147,7 @@ describe("native scroll offset", () => {
         maxRows: 240,
       });
     });
-    await user.click(screen.getByRole("button", { name: "Wheel back" }));
+    await user.click(screen.getByText("Wheel back"));
     expect(hookState.setScrollOffset).toHaveBeenLastCalledWith(6, 240);
 
     // Wheeling back down walks toward the live edge again.
@@ -1158,7 +1158,7 @@ describe("native scroll offset", () => {
         maxRows: 240,
       });
     });
-    await user.click(screen.getByRole("button", { name: "Wheel forward" }));
+    await user.click(screen.getByText("Wheel forward"));
     expect(hookState.setScrollOffset).toHaveBeenLastCalledWith(3, 240);
   });
 
@@ -1179,7 +1179,7 @@ describe("native scroll offset", () => {
 
     // 5 + 3 is past the deepest offset the host has; the request stops at the
     // ceiling instead of asking for scrollback that does not exist.
-    await user.click(screen.getByRole("button", { name: "Wheel back" }));
+    await user.click(screen.getByText("Wheel back"));
     expect(hookState.setScrollOffset).toHaveBeenLastCalledWith(7, 7);
     expect(screen.getByLabelText("Terminal scroll offset")).toHaveTextContent(
       "7",
@@ -1194,7 +1194,7 @@ describe("native scroll offset", () => {
       });
     });
     const sent = vi.mocked(hookState.setScrollOffset).mock.calls.length;
-    await user.click(screen.getByRole("button", { name: "Wheel back" }));
+    await user.click(screen.getByText("Wheel back"));
     expect(vi.mocked(hookState.setScrollOffset).mock.calls).toHaveLength(sent);
   });
 
@@ -1202,7 +1202,7 @@ describe("native scroll offset", () => {
     const user = userEvent.setup();
     await attachNative(user);
 
-    await user.click(screen.getByRole("button", { name: "Wheel back" }));
+    await user.click(screen.getByText("Wheel back"));
     expect(hookState.setScrollOffset).toHaveBeenLastCalledWith(3, 0);
 
     // The daemon answers a max_rows 0 request with the requested rows as the
@@ -1215,7 +1215,7 @@ describe("native scroll offset", () => {
         maxRows: 3,
       });
     });
-    await user.click(screen.getByRole("button", { name: "Wheel back" }));
+    await user.click(screen.getByText("Wheel back"));
     expect(hookState.setScrollOffset).toHaveBeenLastCalledWith(6, 0);
 
     // gterm's relayed reply carries the real ceiling.
@@ -1226,7 +1226,7 @@ describe("native scroll offset", () => {
         maxRows: 300,
       });
     });
-    await user.click(screen.getByRole("button", { name: "Wheel back" }));
+    await user.click(screen.getByText("Wheel back"));
     expect(hookState.setScrollOffset).toHaveBeenLastCalledWith(9, 300);
 
     // A late echo below the confirmed ceiling does not lower it.
@@ -1237,7 +1237,7 @@ describe("native scroll offset", () => {
         maxRows: 9,
       });
     });
-    await user.click(screen.getByRole("button", { name: "Wheel back" }));
+    await user.click(screen.getByText("Wheel back"));
     expect(hookState.setScrollOffset).toHaveBeenLastCalledWith(12, 300);
   });
 
@@ -1262,7 +1262,7 @@ describe("native scroll offset", () => {
     await attachNative(user);
 
     const scrollBack = async () => {
-      await user.click(screen.getByRole("button", { name: "Wheel back" }));
+      await user.click(screen.getByText("Wheel back"));
       act(() => {
         scrollListener?.({
           streamingId: "stream-native",
@@ -1273,27 +1273,27 @@ describe("native scroll offset", () => {
     };
 
     await scrollBack();
-    await user.click(screen.getByRole("button", { name: "Typed c" }));
+    await user.click(screen.getByText("Typed c"));
     expect(hookState.setScrollOffset).toHaveBeenLastCalledWith(0, 300);
     expect(hookState.sendInput).toHaveBeenCalledWith("c");
 
     await scrollBack();
-    await user.click(screen.getByRole("button", { name: "Paste" }));
+    await user.click(screen.getByText("Paste"));
     expect(hookState.setScrollOffset).toHaveBeenLastCalledWith(0, 300);
     expect(hookState.sendPaste).toHaveBeenCalledWith("pasted");
 
     await scrollBack();
-    await user.click(screen.getByRole("button", { name: "Esc" }));
+    await user.click(screen.getByText("Esc"));
     expect(hookState.setScrollOffset).toHaveBeenLastCalledWith(0, 300);
     expect(hookState.sendInput).toHaveBeenCalledWith("");
 
     await scrollBack();
-    await user.click(screen.getByRole("button", { name: "Jump to live" }));
+    await user.click(screen.getByText("Jump to live"));
     expect(hookState.setScrollOffset).toHaveBeenLastCalledWith(0, 300);
 
     // At the live edge already, typing sends no further offset.
     const sent = vi.mocked(hookState.setScrollOffset).mock.calls.length;
-    await user.click(screen.getByRole("button", { name: "Typed c" }));
+    await user.click(screen.getByText("Typed c"));
     expect(vi.mocked(hookState.setScrollOffset).mock.calls).toHaveLength(sent);
   });
 
