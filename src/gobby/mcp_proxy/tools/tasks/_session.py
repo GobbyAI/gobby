@@ -31,6 +31,51 @@ def create_session_registry(ctx: RegistryContext) -> InternalToolRegistry:
         description="Task-session integration tools",
     )
 
+    def delegate_task(task_id: str, delegated_to_session_ref: str, reason: str) -> dict[str, Any]:
+        """Let a task filer hand an open finding to another live session."""
+        from gobby.utils.session_context import get_current_session_id
+
+        caller_session_id = get_current_session_id()
+        if not caller_session_id:
+            return {"error": "No session context available. Ensure session_id is set."}
+        try:
+            resolved_task_id = resolve_task_id_for_mcp(ctx.task_manager, task_id)
+            filed_task = ctx.task_manager.get_task(resolved_task_id)
+            target_session_id = ctx.session_manager.resolve_session_reference(
+                delegated_to_session_ref, filed_task.project_id
+            )
+            task = ctx.task_manager.delegate_task(
+                resolved_task_id,
+                delegated_by_session_id=caller_session_id,
+                delegated_to_session_id=target_session_id,
+                reason=reason,
+            )
+        except (TaskNotFoundError, ValueError) as exc:
+            return {"error": str(exc)}
+        return {
+            "task_id": task.id,
+            "delegated_to_session_ref": delegated_to_session_ref,
+            "delegated_to_session_id": task.delegated_to_session_id,
+            "delegated_by_session_id": task.delegated_by_session_id,
+            "reason": task.delegation_reason,
+            "delegated_at": task.delegated_at.isoformat() if task.delegated_at else None,
+        }
+
+    registry.register(
+        name="delegate_task",
+        description="Delegate a task you filed to another live session.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string"},
+                "delegated_to_session_ref": {"type": "string"},
+                "reason": {"type": "string"},
+            },
+            "required": ["task_id", "delegated_to_session_ref", "reason"],
+        },
+        func=delegate_task,
+    )
+
     def link_task_to_session(
         task_id: str,
         action: str = "worked_on",

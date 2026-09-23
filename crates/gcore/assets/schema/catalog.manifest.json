@@ -5385,6 +5385,22 @@
       "definition": "uuid|uuid|YES||NEVER"
     },
     {
+      "name": "tasks.delegated_at",
+      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
+    },
+    {
+      "name": "tasks.delegated_by_session_id",
+      "definition": "uuid|uuid|YES||NEVER"
+    },
+    {
+      "name": "tasks.delegated_to_session_id",
+      "definition": "uuid|uuid|YES||NEVER"
+    },
+    {
+      "name": "tasks.delegation_reason",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
       "name": "tasks.description",
       "definition": "text|text|YES||NEVER"
     },
@@ -7941,6 +7957,14 @@
     {
       "name": "tasks.tasks_created_in_session_id_fkey",
       "definition": "FOREIGN KEY (created_in_session_id) REFERENCES sessions(id) DEFERRABLE"
+    },
+    {
+      "name": "tasks.tasks_delegated_by_session_id_fkey",
+      "definition": "FOREIGN KEY (delegated_by_session_id) REFERENCES sessions(id) ON DELETE SET NULL"
+    },
+    {
+      "name": "tasks.tasks_delegated_to_session_id_fkey",
+      "definition": "FOREIGN KEY (delegated_to_session_id) REFERENCES sessions(id) ON DELETE SET NULL"
     },
     {
       "name": "tasks.tasks_implementation_domain_check",

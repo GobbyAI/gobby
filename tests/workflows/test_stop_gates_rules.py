@@ -160,6 +160,30 @@ class TestStopGatesSync:
 
         assert "is_spawned_agent" in (body.when or "")
 
+    def test_unclaimed_found_work_reason_names_delegate_tool(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
+        _sync_bundled(db)
+        row = _get_rule(manager, "block-unclaimed-found-work")
+        body = RuleDefinitionBody.model_validate(row.definition_json)
+        assert body.effects is not None
+        reason = " ".join(effect.reason or "" for effect in body.effects)
+
+        assert "delegate_task" in reason
+        assert "send_message" not in reason
+
+    def test_terminal_failure_reason_names_owner_filed_disposition(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
+        _sync_bundled(db)
+        row = _get_rule(manager, "block-terminal-validation-failure")
+        body = RuleDefinitionBody.model_validate(row.definition_json)
+        assert body.effects is not None
+        reason = " ".join(effect.reason or "" for effect in body.effects)
+
+        assert "owner-filed task" in reason
+        assert "scoped green" in reason
+
 
 class TestStopAttemptsPlumbing:
     """Test hardcoded stop_attempts increment in RuleEngine.
@@ -200,6 +224,37 @@ class TestStopAttemptsPlumbing:
         await engine.evaluate(event, SESSION_ID, variables)
 
         assert variables.get("stop_attempts") == 0
+
+    @pytest.mark.asyncio
+    async def test_blocked_stop_feedback_keeps_attempt_count(self, db: HubDatabase) -> None:
+        engine = RuleEngine(db)
+        variables: dict[str, object] = {"tool_block_pending": True, "stop_attempts": 0}
+
+        blocked = await engine.evaluate(_make_event(HookEventType.STOP), SESSION_ID, variables)
+        assert blocked.decision == "block"
+        assert variables["stop_attempts"] == 1
+
+        await engine.evaluate(_make_event(HookEventType.BEFORE_AGENT), SESSION_ID, variables)
+        assert variables["stop_attempts"] == 1
+
+    async def test_stop_gate_stops_blocking_at_configured_cap(self, db: HubDatabase) -> None:
+        _sync_bundled(db)
+        engine = RuleEngine(db)
+        variables: dict[str, object] = {
+            "is_spawned_agent": True,
+            "current_step": "implement",
+            "step_workflow_complete": False,
+            "stop_attempts": 0,
+            "max_stop_attempts": 1,
+        }
+        event = _make_event(HookEventType.AFTER_AGENT, source=SessionSource.QWEN)
+
+        blocked = await engine.evaluate(event, SESSION_ID, variables)
+        assert blocked.decision == "block"
+        assert variables["stop_attempts"] == 1
+
+        allowed = await engine.evaluate(event, SESSION_ID, variables)
+        assert allowed.decision != "block", allowed.reason
 
     @pytest.mark.asyncio
     async def test_stop_attempts_increments_even_when_force_allowed(self, db: HubDatabase) -> None:

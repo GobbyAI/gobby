@@ -267,6 +267,10 @@ class Task:
     parent_task_id: str | None = None
     created_in_session_id: str | None = None
     claimed_by_session_id: str | None = None
+    delegated_to_session_id: str | None = None
+    delegated_by_session_id: str | None = None
+    delegation_reason: str | None = None
+    delegated_at: datetime | None = None
     closed_in_session_id: str | None = None
     closed_commit_sha: str | None = None
     closed_at: datetime | None = None
@@ -344,6 +348,14 @@ class Task:
             claimed_by_session_id=(
                 row["claimed_by_session_id"] if "claimed_by_session_id" in keys else None
             ),
+            delegated_to_session_id=(
+                row["delegated_to_session_id"] if "delegated_to_session_id" in keys else None
+            ),
+            delegated_by_session_id=(
+                row["delegated_by_session_id"] if "delegated_by_session_id" in keys else None
+            ),
+            delegation_reason=row["delegation_reason"] if "delegation_reason" in keys else None,
+            delegated_at=row["delegated_at"] if "delegated_at" in keys else None,
             closed_in_session_id=(
                 row["closed_in_session_id"] if "closed_in_session_id" in keys else None
             ),
@@ -416,6 +428,10 @@ class Task:
             "parent_task_id": self.parent_task_id,
             "created_in_session_id": self.created_in_session_id,
             "claimed_by_session_id": self.claimed_by_session_id,
+            "delegated_to_session_id": self.delegated_to_session_id,
+            "delegated_by_session_id": self.delegated_by_session_id,
+            "delegation_reason": self.delegation_reason,
+            "delegated_at": self.delegated_at,
             "closed_in_session_id": self.closed_in_session_id,
             "closed_commit_sha": self.closed_commit_sha,
             "closed_at": self.closed_at,

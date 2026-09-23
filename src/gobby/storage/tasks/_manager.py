@@ -35,6 +35,7 @@ from gobby.storage.tasks._creation import (
     create_task_for_agent as _create_task_for_agent,
 )
 from gobby.storage.tasks._decomposition import TaskDecompositionMixin
+from gobby.storage.tasks._delegation import delegate_task as _delegate_task
 from gobby.storage.tasks._id import generate_task_id, resolve_task_reference
 from gobby.storage.tasks._lifecycle import (
     add_label as _add_label,
@@ -501,6 +502,25 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
     def remove_label(self, task_id: str, label: str) -> Task:
         """Remove a label from a task if present."""
         result = _remove_label(self.db, task_id, label)
+        self._notify_listeners()
+        return result
+
+    def delegate_task(
+        self,
+        task_id: str,
+        *,
+        delegated_by_session_id: str,
+        delegated_to_session_id: str,
+        reason: str,
+    ) -> Task:
+        """Record the filer-approved delegation of an open task."""
+        result = _delegate_task(
+            self.db,
+            task_id,
+            delegated_by_session_id=delegated_by_session_id,
+            delegated_to_session_id=delegated_to_session_id,
+            reason=reason,
+        )
         self._notify_listeners()
         return result
 
