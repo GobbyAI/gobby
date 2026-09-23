@@ -323,39 +323,37 @@ class TestTaskSearchBackend:
         assert results == [("task-a", 1.0), ("task-b", 0.5)]
         assert "pdb.score(t.id)" in db.sql
         assert "(t.title @@@ %s OR t.description @@@ %s)" in db.sql
-        assert db.params == (r"alpha\!\!", r"alpha\!\!", "ready", "in_progress", 2)
+        assert db.params == ("alpha", "alpha", "ready", "in_progress", 2)
 
     def test_pg_search_query_sanitization_matches_rust(self) -> None:
-        """Keep Python's pg_search escaping aligned with gcore's sanitizer."""
+        """Keep Python's pg_search terms aligned with gcore's sanitizer."""
         from gobby.search.keyword import sanitize_pg_search_query
 
         assert sanitize_pg_search_query("hello world") == "hello world"
         assert sanitize_pg_search_query("my_func") == "my_func"
         assert sanitize_pg_search_query("   ") == ""
         assert sanitize_pg_search_query('foo::bar baz-qux _id + "drop"') == (
-            r'foo\:\:bar baz-qux _id + "drop"'
+            'foo bar baz-qux _id "drop"'
         )
-        assert sanitize_pg_search_query("-draft stable") == r"\-draft stable"
-        assert sanitize_pg_search_query(r"\-draft -stable") == r"\-draft \-stable"
-        assert sanitize_pg_search_query("alpha\tbeta\x00gamma") == "alpha betagamma"
-        assert sanitize_pg_search_query(":: + compute (fence)") == r"\:\: + compute (fence)"
-        assert sanitize_pg_search_query("_compute_fence_mask()") == r"_compute_fence_mask\(\)"
-        assert sanitize_pg_search_query(r"_compute_fence_mask\(\)") == r"_compute_fence_mask\(\)"
-        assert sanitize_pg_search_query('"_compute_fence_mask()"') == '"_compute_fence_mask()"'
-        assert sanitize_pg_search_query("compute (fence") == r"compute \(fence"
-        assert sanitize_pg_search_query("claude-opus-4-8[1m]") == r"claude-opus-4-8\[1m\]"
-        assert sanitize_pg_search_query(r"claude-opus-4-8\[1m\]") == r"claude-opus-4-8\[1m\]"
+        assert sanitize_pg_search_query("-draft stable") == "draft stable"
+        assert sanitize_pg_search_query(r"\-draft -stable") == "draft stable"
+        assert sanitize_pg_search_query("alpha\tbeta\x00gamma") == "alpha beta gamma"
+        assert sanitize_pg_search_query(":: + compute (fence)") == "compute fence"
+        assert sanitize_pg_search_query("_compute_fence_mask()") == "_compute_fence_mask"
+        assert sanitize_pg_search_query(r"_compute_fence_mask\(\)") == "_compute_fence_mask"
+        assert sanitize_pg_search_query('"_compute_fence_mask()"') == '"_compute_fence_mask"'
+        assert sanitize_pg_search_query("compute (fence") == "compute fence"
+        assert sanitize_pg_search_query("claude-opus-4-8[1m]") == "claude-opus-4-8 1m"
+        assert sanitize_pg_search_query(r"claude-opus-4-8\[1m\]") == "claude-opus-4-8 1m"
 
     def test_pg_search_query_escapes_dsl_syntax_outside_balanced_phrases(self) -> None:
-        """Escaped syntax cannot become a pg_search operator or parse error."""
+        """Punctuation is a separator, so it cannot become a pg_search operator."""
         from gobby.search.keyword import sanitize_pg_search_query
 
         assert sanitize_pg_search_query('"agent-prompt cap"') == '"agent-prompt cap"'
-        assert sanitize_pg_search_query("? ' * : ^ ~ { } / !") == r"\? \' \* \: \^ \~ \{ \} \/ \!"
-        assert sanitize_pg_search_query('title:"Draft? notes') == r"title\:\"Draft\? notes"
-        assert (
-            sanitize_pg_search_query('"proxy\'s foo:bar!? / {x}"') == '"proxy\'s foo:bar!? / {x}"'
-        )
+        assert sanitize_pg_search_query("? ' * : ^ ~ { } / !") == ""
+        assert sanitize_pg_search_query('title:"Draft? notes') == "title Draft notes"
+        assert sanitize_pg_search_query('"proxy\'s foo:bar!? / {x}"') == '"proxy s foo bar x"'
 
     def test_task_search_forwards_a_balanced_phrase_to_pg_search(self) -> None:
         """Task search uses the shared sanitizer without losing phrase syntax."""
@@ -385,7 +383,7 @@ class TestTaskSearchBackend:
             == "salt and pepper or paprika not sugar"
         )
         assert (
-            sanitize_pg_search_query('"salt AND pepper" OR "NOT"') == '"salt AND pepper" or "NOT"'
+            sanitize_pg_search_query('"salt AND pepper" OR "NOT"') == '"salt and pepper" or "not"'
         )
 
     def test_pg_search_query_preserves_plain_legacy_inputs(self) -> None:

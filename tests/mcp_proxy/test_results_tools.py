@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from typing import Any, cast
 from unittest.mock import MagicMock, patch
@@ -14,7 +15,7 @@ from gobby.mcp_proxy.tools.results import (
     _hydrate_matches,
     create_results_registry,
 )
-from gobby.search.keyword import MAX_PG_SEARCH_QUERY_CHARS, SearchHit
+from gobby.search.keyword import MAX_PG_SEARCH_QUERY_CHARS, SearchHit, SearchQuerySyntaxError
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tool_results import ToolResultStore
@@ -265,6 +266,42 @@ async def test_search_tool_result_escapes_an_unbalanced_phrase_quote(
     assert result["result_id"] == result_id
 
 
+async def test_search_tool_result_logs_syntax_errors_as_warnings(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A rejected query is a handled input error, not an ERROR traceback."""
+    config = _config()
+    store = ToolResultStore(temp_db, config)
+    result_id = _save(store, project_id=sample_project["id"], content="Draft notes")
+    backend = MagicMock()
+    backend.search.side_effect = SearchQuerySyntaxError('"name":')
+
+    with (
+        caplog.at_level(logging.WARNING),
+        patch("gobby.mcp_proxy.tools.results.pick_search_backend", return_value=backend),
+    ):
+        rebound = create_results_registry(
+            temp_db,
+            config,
+            default_project_id=sample_project["id"],
+        )
+        result = await rebound.call(
+            "search_tool_result",
+            {"result_id": result_id, "query": '"name":'},
+        )
+
+    assert result.get("success") is False
+    assert "error" in result
+    syntax_records = [
+        record for record in caplog.records if "tool result" in record.getMessage().lower()
+    ]
+    assert syntax_records
+    assert all(record.levelno == logging.WARNING for record in syntax_records)
+    assert all(record.exc_info is None for record in syntax_records)
+
+
 @pytest.mark.asyncio
 @pytest.mark.integration
 async def test_unknown_expired_and_cross_project_ids_share_configured_error(
@@ -405,7 +442,7 @@ async def test_invalid_bounds_and_queries_fail_before_store_or_search(
 
 
 @pytest.mark.asyncio
-async def test_punctuation_only_query_runs_meta_gate_with_escaped_literals() -> None:
+async def test_punctuation_only_query_runs_meta_gate_without_searching() -> None:
     config = _config()
     result_id = str(uuid.uuid4())
     project_id = "11111111-1111-4111-8111-111111111111"
@@ -426,11 +463,7 @@ async def test_punctuation_only_query_runs_meta_gate_with_escaped_literals() -> 
 
     assert result == {"result_id": result_id, "total_chars": 500, "matches": []}
     store.get_meta.assert_called_once_with(result_id, project_id)
-    backend.search.assert_called_once_with(
-        r"\!\!\!\?\?\?",
-        5,
-        filters={"result_id": result_id},
-    )
+    backend.search.assert_not_called()
 
 
 @pytest.mark.asyncio

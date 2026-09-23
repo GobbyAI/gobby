@@ -130,149 +130,63 @@ pub fn rrf_merge(sources: Vec<(&str, Vec<String>)>) -> Vec<SearchResult> {
 }
 
 /// Sanitize user input for pg_search's BM25 query DSL.
-pub fn sanitize_pg_search_query(query: &str) -> String {
-    let cleaned = query
-        .chars()
-        .filter_map(|ch| {
-            if ch.is_control() {
-                ch.is_whitespace().then_some(' ')
-            } else {
-                Some(ch)
-            }
-        })
-        .collect::<String>();
-
-    let chars = cleaned.chars().collect::<Vec<_>>();
-    let (unescaped_quote_count, _) =
-        chars
-            .iter()
-            .fold((0_usize, 0_usize), |(count, backslash_run), &ch| {
-                let unescaped_quote = ch == '"' && backslash_run % 2 == 0;
-                let next_backslash_run = if ch == '\\' { backslash_run + 1 } else { 0 };
-                (count + usize::from(unescaped_quote), next_backslash_run)
-            });
-    let balanced_quotes = unescaped_quote_count % 2 == 0;
-    let literal_parentheses = literal_parenthesis_mask(&chars, balanced_quotes);
-    let mut escaped_literals = String::with_capacity(cleaned.len());
-    let mut backslash_run = 0;
-    let mut in_quotes = false;
-    for (index, ch) in chars.into_iter().enumerate() {
-        let is_escaped = backslash_run % 2 == 1;
-        let unescaped_quote = ch == '"' && !is_escaped;
-        let outside_phrase = !balanced_quotes || !in_quotes;
-        let needs_escape = (unescaped_quote && !balanced_quotes)
-            || (outside_phrase
-                && (matches!(
-                    ch,
-                    '[' | ']' | '?' | '\'' | '*' | ':' | '^' | '~' | '{' | '}' | '/' | '!'
-                ) || literal_parentheses[index]));
-        if needs_escape && !is_escaped {
-            escaped_literals.push('\\');
-        }
-        escaped_literals.push(ch);
-        if balanced_quotes && unescaped_quote {
-            in_quotes = !in_quotes;
-        }
-        backslash_run = if ch == '\\' { backslash_run + 1 } else { 0 };
-    }
-
-    neutralize_boolean_operators(&escaped_literals)
-        .split_whitespace()
-        .map(|token| {
-            if token.starts_with('-') {
-                format!("\\{token}")
-            } else {
-                token.to_string()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-fn neutralize_boolean_operators(query: &str) -> String {
-    let mut sanitized = String::with_capacity(query.len());
+fn push_plain_terms(terms: &mut Vec<String>, text: &str) {
     let mut token = String::new();
-    let mut in_quotes = false;
-    let mut backslash_run = 0;
-
-    let flush_token = |sanitized: &mut String, token: &mut String| {
-        if ["AND", "OR", "NOT"]
-            .iter()
-            .any(|operator| token.eq_ignore_ascii_case(operator))
-        {
-            sanitized.push_str(&token.to_ascii_lowercase());
+    let mut hyphen_pending = false;
+    let flush = |terms: &mut Vec<String>, token: &mut String| {
+        if token.is_empty() || token.chars().all(|ch| ch == '_') {
+            token.clear();
+            return;
+        }
+        if matches!(token.to_ascii_lowercase().as_str(), "and" | "or" | "not") {
+            terms.push(token.to_ascii_lowercase());
         } else {
-            sanitized.push_str(token);
+            terms.push(std::mem::take(token));
+            return;
         }
         token.clear();
     };
 
-    for ch in query.chars() {
-        let unescaped_quote = ch == '"' && backslash_run % 2 == 0;
-        if in_quotes {
-            sanitized.push(ch);
-            if unescaped_quote {
-                in_quotes = false;
+    for ch in text.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '_' {
+            if hyphen_pending {
+                token.push('-');
             }
-        } else if unescaped_quote {
-            flush_token(&mut sanitized, &mut token);
-            sanitized.push(ch);
-            in_quotes = true;
-        } else if ch.is_ascii_alphanumeric() || ch == '_' {
+            hyphen_pending = false;
             token.push(ch);
+        } else if ch == '-' && !token.is_empty() && !hyphen_pending {
+            hyphen_pending = true;
         } else {
-            flush_token(&mut sanitized, &mut token);
-            sanitized.push(ch);
+            hyphen_pending = false;
+            flush(terms, &mut token);
         }
-        backslash_run = if ch == '\\' { backslash_run + 1 } else { 0 };
     }
-    flush_token(&mut sanitized, &mut token);
-    sanitized
+    flush(terms, &mut token);
 }
 
-fn literal_parenthesis_mask(chars: &[char], balanced_quotes: bool) -> Vec<bool> {
-    // pg_search grouping requires balanced, non-empty parentheses. Code-like calls and
-    // unmatched delimiters are literal search text; quoted phrases are already literal.
-    let mut mask = vec![false; chars.len()];
-    let mut open_parentheses = Vec::new();
-    let mut backslash_run = 0;
-    let mut in_quotes = false;
-
-    for (index, ch) in chars.iter().copied().enumerate() {
-        let is_escaped = backslash_run % 2 == 1;
-        if balanced_quotes && ch == '"' && !is_escaped {
-            in_quotes = !in_quotes;
-        } else if !in_quotes && !is_escaped {
-            match ch {
-                '(' => open_parentheses.push(index),
-                ')' => {
-                    let Some(open_index) = open_parentheses.pop() else {
-                        mask[index] = true;
-                        backslash_run = 0;
-                        continue;
-                    };
-                    let follows_identifier = open_index
-                        .checked_sub(1)
-                        .and_then(|previous| chars.get(previous))
-                        .is_some_and(|previous| previous.is_alphanumeric() || *previous == '_');
-                    let is_empty = chars[open_index + 1..index]
-                        .iter()
-                        .all(|inner| inner.is_whitespace());
-                    if follows_identifier || is_empty {
-                        mask[open_index] = true;
-                        mask[index] = true;
-                    }
+pub fn sanitize_pg_search_query(query: &str) -> String {
+    let mut parts = Vec::new();
+    let mut rest = query;
+    while let Some(start) = rest.find('"') {
+        push_plain_terms(&mut parts, &rest[..start]);
+        let after = &rest[start + '"'.len_utf8()..];
+        match after.find('"') {
+            Some(end) => {
+                let mut phrase = Vec::new();
+                push_plain_terms(&mut phrase, &after[..end]);
+                if !phrase.is_empty() {
+                    parts.push(format!("\"{}\"", phrase.join(" ")));
                 }
-                _ => {}
+                rest = &after[end + '"'.len_utf8()..];
+            }
+            None => {
+                push_plain_terms(&mut parts, after);
+                rest = "";
             }
         }
-        backslash_run = if ch == '\\' { backslash_run + 1 } else { 0 };
     }
-
-    for open_index in open_parentheses {
-        mask[open_index] = true;
-    }
-    mask
+    push_plain_terms(&mut parts, rest);
+    parts.join(" ")
 }
 
 #[cfg(test)]
@@ -306,44 +220,38 @@ mod tests {
     fn sanitize_pg_search_query_matches_gobby_rules() {
         assert_eq!(
             sanitize_pg_search_query("foo::bar baz-qux _id + \"drop\""),
-            r#"foo\:\:bar baz-qux _id + "drop""#
+            "foo bar baz-qux _id \"drop\""
         );
-        assert_eq!(sanitize_pg_search_query("-draft stable"), "\\-draft stable");
-        assert_eq!(
-            sanitize_pg_search_query(r"\-draft -stable"),
-            r"\-draft \-stable"
-        );
+        assert_eq!(sanitize_pg_search_query("-draft stable"), "draft stable");
+        assert_eq!(sanitize_pg_search_query(r"\-draft -stable"), "draft stable");
         assert_eq!(
             sanitize_pg_search_query("alpha\tbeta\u{0}gamma"),
-            "alpha betagamma"
+            "alpha beta gamma"
         );
         assert_eq!(
             sanitize_pg_search_query(":: + compute (fence)"),
-            r"\:\: + compute (fence)"
+            "compute fence"
         );
         assert_eq!(
             sanitize_pg_search_query("_compute_fence_mask()"),
-            r"_compute_fence_mask\(\)"
+            "_compute_fence_mask"
         );
         assert_eq!(
             sanitize_pg_search_query(r"_compute_fence_mask\(\)"),
-            r"_compute_fence_mask\(\)"
+            "_compute_fence_mask"
         );
         assert_eq!(
             sanitize_pg_search_query(r#""_compute_fence_mask()""#),
-            r#""_compute_fence_mask()""#
+            "\"_compute_fence_mask\""
         );
-        assert_eq!(
-            sanitize_pg_search_query("compute (fence"),
-            r"compute \(fence"
-        );
+        assert_eq!(sanitize_pg_search_query("compute (fence"), "compute fence");
         assert_eq!(
             sanitize_pg_search_query("claude-opus-4-8[1m]"),
-            r"claude-opus-4-8\[1m\]"
+            "claude-opus-4-8 1m"
         );
         assert_eq!(
             sanitize_pg_search_query(r"claude-opus-4-8\[1m\]"),
-            r"claude-opus-4-8\[1m\]"
+            "claude-opus-4-8 1m"
         );
     }
 
@@ -356,33 +264,30 @@ mod tests {
         );
         assert_eq!(
             sanitize_pg_search_query("(AND) OR-based _NOT_ CANDY ORACLE NOTICE"),
-            "(and) or-based _NOT_ CANDY ORACLE NOTICE"
+            "and OR-based _NOT_ CANDY ORACLE NOTICE"
         );
         assert_eq!(
             sanitize_pg_search_query(r#""salt AND pepper" OR "NOT""#),
-            r#""salt AND pepper" or "NOT""#
+            "\"salt and pepper\" or \"not\""
         );
     }
 
     #[test]
     fn sanitize_escapes_tantivy_metachars() {
-        assert_eq!(
-            sanitize_pg_search_query("? ' * : ^ ~ { } / !"),
-            r"\? \' \* \: \^ \~ \{ \} \/ \!"
-        );
+        assert_eq!(sanitize_pg_search_query("? ' * : ^ ~ { } / !"), "");
         assert_eq!(
             sanitize_pg_search_query(r#""proxy's foo:bar!? / {x}""#),
-            r#""proxy's foo:bar!? / {x}""#
+            "\"proxy s foo bar x\""
         );
         assert_eq!(
             sanitize_pg_search_query(r#"title:"Draft? notes"#),
-            r#"title\:\"Draft\? notes"#
+            "title Draft notes"
         );
         assert_eq!(
             sanitize_pg_search_query(
                 "How does the MCP proxy's progressive tool discovery work and why does it exist?",
             ),
-            r"How does the MCP proxy\'s progressive tool discovery work and why does it exist\?"
+            "How does the MCP proxy s progressive tool discovery work and why does it exist"
         );
     }
 
