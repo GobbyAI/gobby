@@ -3103,6 +3103,25 @@ async def test_non_neutral_grok_native_tool_still_denied(
     assert "Tool 'read_file' is not allowed in the 'claim' step." in response.reason
 
 
+@pytest.mark.asyncio
+async def test_execution_wrapper_denial_names_direct_call_tool(
+    db: "HubDatabase",
+    manager: AgentDefinitionManager,
+    engine: RuleEngine,
+    instance_mgr: AgentStepInstanceManager,
+) -> None:
+    """An execution-wrapper denial names the direct mcp__gobby__call_tool form."""
+    _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
+    event = _make_event(data={"tool_name": "mcp__cua_repl__js"})
+
+    response = await engine.evaluate(event, session_id=SESSION_ID, variables={})
+
+    assert response.decision == "block"
+    assert response.reason is not None
+    assert "execution wrapper" in response.reason
+    assert "Call mcp__gobby__call_tool directly" in response.reason
+
+
 def _send_message_event(arguments: dict[str, Any] | None = None) -> HookEvent:
     tool_input: dict[str, Any] = {
         "server_name": "gobby-agents",

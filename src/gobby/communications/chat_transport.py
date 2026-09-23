@@ -92,6 +92,10 @@ class CommunicationsChatStreamTransport:
 
     async def safe_send(self, msg: dict[str, Any]) -> bool:
         """Collect text chunks and deliver throttled or final updates."""
+        if msg.get("type") == "tool_status" and not self._finalized:
+            # Narration before a tool call is not the answer delivered to the channel.
+            self._text = ""
+            return True
         if msg.get("type") != "chat_stream":
             return True
 

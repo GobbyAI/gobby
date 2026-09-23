@@ -3,7 +3,9 @@ Tests for TelemetryMetrics instruments.
 """
 
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
+from typing import Protocol, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -12,6 +14,10 @@ from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 
 from gobby.telemetry import instruments
 from gobby.telemetry.instruments import TelemetryMetrics
+
+
+class _GaugePoint(Protocol):
+    value: float
 
 
 @pytest.fixture
@@ -130,6 +136,19 @@ def test_observe_histogram(metrics_collector, meter_provider):
     assert all_metrics["histograms"]["http_request_duration_seconds"]["sum"] == 0.5
 
 
+def test_consecutive_daemon_cpu_samples_measure_work(metrics_collector):
+    """Two samples of one daemon process report the CPU used between them."""
+    metrics_collector.update_daemon_metrics()
+    deadline = time.perf_counter() + 0.2
+    spins = 0
+    while time.perf_counter() < deadline:
+        spins += 1
+    metrics_collector.update_daemon_metrics()
+    measured = metrics_collector.get_all_metrics()["gauges"]["daemon_cpu_percent"]["value"]
+    assert spins > 0
+    assert measured > 0
+
+
 def test_update_daemon_metrics(metrics_collector):
     with patch("psutil.Process") as mock_process:
         mock_p = MagicMock()
@@ -145,17 +164,22 @@ def test_update_daemon_metrics(metrics_collector):
         assert all_metrics["gauges"]["daemon_uptime_seconds"]["value"] >= 0
 
 
-def test_observable_gauge_callback(metrics_collector, meter_provider):
+def test_observable_gauge_callback(
+    metrics_collector: TelemetryMetrics,
+    meter_provider: tuple[MeterProvider, InMemoryMetricReader],
+) -> None:
     _, reader = meter_provider
     metrics_collector.set_gauge("daemon_uptime_seconds", value=123.45)
 
     # OTel ObservableGauge will call the callback during collect
     data = reader.get_metrics_data()
+    assert data is not None
     found = False
     for resource_metrics in data.resource_metrics:
         for scope_metrics in resource_metrics.scope_metrics:
             for metric in scope_metrics.metrics:
                 if metric.name == "daemon_uptime_seconds":
                     found = True
-                    assert metric.data.data_points[0].value == 123.45
+                    point = cast(_GaugePoint, metric.data.data_points[0])
+                    assert point.value == 123.45
     assert found

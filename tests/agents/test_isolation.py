@@ -303,6 +303,45 @@ class TestEnsureIsolationCodeIndex:
         )
         assert status.stdout == ""
 
+    async def test_gcode_wrapper_reuses_grant_rewritten_by_credential_rehandshake(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        proc = self._proc()
+        runtime_root = tmp_path / "runtime"
+        workspace = tmp_path / "workspace"
+        source_home = tmp_path / "home"
+        credential = self._credential(tmp_path)
+        canonical_grant_path = credential.bootstrap_path.parent / "grant.json"
+        canonical_grant_path.write_text('{"credential_generation":1}', encoding="utf-8")
+        canonical_grant_path.chmod(0o600)
+        monkeypatch.setenv("GOBBY_HOME", str(source_home))
+        workspace.mkdir()
+        source_home.mkdir()
+        self._write_operator_token(source_home)
+        self._stub_grant_context(monkeypatch)
+        subprocess.run(["git", "init"], cwd=workspace, check=True, capture_output=True)
+
+        with (
+            patch("gobby.agents.code_index.resolve_native_bin", return_value="/tmp/gcode"),
+            patch(
+                "gobby.agents.code_index.subprocess.Popen",
+                side_effect=self._popen_side_effect(proc),
+            ),
+        ):
+            result = await ensure_isolation_code_index(
+                str(workspace),
+                credential=credential,
+                config_snapshot=self._config_snapshot(),
+                runtime_root=runtime_root,
+                identity_env=self._identity_env(),
+            )
+
+        wrapper_grant_path = Path(result.env["GOBBY_MANAGED_EXECUTION_BOOTSTRAP"])
+        assert wrapper_grant_path == canonical_grant_path
+
+        canonical_grant_path.write_text('{"credential_generation":2}', encoding="utf-8")
+        assert wrapper_grant_path.read_text(encoding="utf-8") == '{"credential_generation":2}'
+
     @pytest.mark.asyncio
     async def test_grant_file_isolation(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -720,8 +759,10 @@ class TestEnsureIsolationCodeIndex:
         assert token not in (workspace / ".gobby" / "bin" / "gcode").read_text()
         assert result.runtime_home is not None
         runtime_files = [path for path in Path(result.runtime_home).rglob("*") if path.is_file()]
-        assert runtime_files
         assert not [path for path in runtime_files if token.encode() in path.read_bytes()]
+        grant_path = Path(result.env["GOBBY_MANAGED_EXECUTION_BOOTSTRAP"])
+        assert grant_path == credential.bootstrap_path.parent / "grant.json"
+        assert token.encode() not in grant_path.read_bytes()
 
     @pytest.mark.asyncio
     async def test_no_api_token_inherits_daemon_env_untouched(self, tmp_path: Path) -> None:

@@ -65,7 +65,7 @@ class CoordinationWaitManager:
             ).fetchone()
             existing = conn.execute(
                 "SELECT * FROM coordination_waits WHERE waiter_session_id = %s "
-                "AND owner_session_id = %s AND condition_key = %s",
+                "AND owner_session_id = %s AND condition_key = %s AND outcome = 'waiting'",
                 (waiter_session_id, owner_session_id, condition_key),
             ).fetchone()
             if existing is not None:

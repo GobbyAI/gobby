@@ -88,6 +88,17 @@ def _agent_tool_block_guidance() -> str:
     )
 
 
+def _execution_wrapper_guidance(tool_name: str) -> str:
+    """Name the direct call when a denial hits an execution-wrapper tool."""
+    folded = tool_name.casefold()
+    if "js_repl" not in folded and "cua_repl" not in folded:
+        return ""
+    return (
+        f"\nTool '{tool_name}' is an execution wrapper. "
+        "Call mcp__gobby__call_tool directly instead of the wrapper."
+    )
+
+
 def _reserved_variable_block_guidance(variable_name: str, step_name: str | None) -> str:
     step_scope = f" in the '{step_name}' step" if step_name else ""
     return (
@@ -622,7 +633,8 @@ class EnforcementCheckMixin:
                     step,
                     {**variables, **instance.variables},
                     f"Tool '{tool_name}' is not allowed in the '{step.name}' step.\n"
-                    f"Allowed tools: {', '.join(step.allowed_tools)}",
+                    f"Allowed tools: {', '.join(step.allowed_tools)}"
+                    f"{_execution_wrapper_guidance(tool_name)}",
                 )
                 reason = self._record_enforcement_denial(
                     session_id=session_id,

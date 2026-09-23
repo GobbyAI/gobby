@@ -28,6 +28,13 @@ from gobby.servers.provider_models_grok import models_from_cache
 logger = logging.getLogger(__name__)
 
 _SOURCE_KEY = "local-model-discovery"
+_EFFORT_SOURCE_KEY = "xai-reasoning-docs"
+_EFFORT_SOURCE_URL = "https://docs.x.ai/developers/model-capabilities/text/reasoning"
+_DOCUMENTED_EFFORTS: dict[str, tuple[tuple[str, ...], str]] = {
+    "grok-4.7": (("low", "medium", "high", "xhigh"), "high"),
+    "grok-4.6": (("low", "medium", "high", "xhigh"), "high"),
+    "grok-4.5": (("low", "medium", "high"), "high"),
+}
 _MODELS_CACHE_SOURCE_KEY = "models-cache"
 _MODEL_DISCOVERY_CWD_NAME = "provider-model-discovery"
 _MODEL_BASE_FACTS = frozenset(
@@ -126,6 +133,7 @@ class GrokCollector:
     sources = (
         SourceSpec(_SOURCE_KEY, None, required=True),
         SourceSpec(_MODELS_CACHE_SOURCE_KEY, None, required=False),
+        SourceSpec(_EFFORT_SOURCE_KEY, _EFFORT_SOURCE_URL, required=False),
     )
 
     async def collect(self) -> ProviderSnapshot:
@@ -165,6 +173,7 @@ class GrokCollector:
             sources=(
                 _healthy_source(observed_at),
                 _cache_source(observed_at, cache_error),
+                _effort_source(observed_at),
             ),
         )
 
@@ -184,6 +193,14 @@ def _build_model(
 
     model_facts = set(_MODEL_BASE_FACTS)
     fact_sources: dict[str, str] = {}
+    fact_urls: dict[str, str] = {}
+    documented = _documented_reasoning(canonical_model)
+    if supported_efforts is None and default_effort is None and documented is not None:
+        supported_efforts, default_effort = documented
+        reasoning = ReasoningSupport.KNOWN
+        for fact in ("reasoning", "supported_efforts", "default_effort"):
+            fact_sources[fact] = _EFFORT_SOURCE_KEY
+            fact_urls[fact] = _EFFORT_SOURCE_URL
     if context_length is not None:
         model_facts.add("context_length")
         fact_sources["context_length"] = context_source
@@ -207,7 +224,12 @@ def _build_model(
         latency_class=None,
         input_modalities=None,
         supports_tools=None,
-        provenance=_provenance(model_facts, observed_at, fact_sources=fact_sources),
+        provenance=_provenance(
+            model_facts,
+            observed_at,
+            fact_sources=fact_sources,
+            fact_urls=fact_urls,
+        ),
     )
 
 
@@ -275,21 +297,44 @@ def _optional_bool(value: object, *, default: bool) -> bool:
     return value
 
 
+def _documented_reasoning(canonical_model: str) -> tuple[tuple[str, ...], str] | None:
+    """Effort table from the xAI reasoning docs when discovery omits it."""
+    for prefix, efforts in _DOCUMENTED_EFFORTS.items():
+        if canonical_model == prefix or canonical_model.startswith(f"{prefix}-"):
+            return efforts
+    return None
+
+
 def _provenance(
     facts: Sequence[str] | set[str] | frozenset[str],
     observed_at: datetime,
     *,
     fact_sources: Mapping[str, str] | None = None,
+    fact_urls: Mapping[str, str] | None = None,
 ) -> dict[str, FactProvenance]:
     sources = fact_sources or {}
+    urls = fact_urls or {}
     return {
         fact: FactProvenance(
             source_key=sources.get(fact, _SOURCE_KEY),
-            source_url=None,
+            source_url=urls.get(fact),
             observed_at=observed_at,
         )
         for fact in facts
     }
+
+
+def _effort_source(observed_at: datetime) -> SourceHealth:
+    return SourceHealth(
+        source_key=_EFFORT_SOURCE_KEY,
+        source_url=_EFFORT_SOURCE_URL,
+        required=False,
+        state=SourceState.OK,
+        attempts=1,
+        last_attempt_at=observed_at,
+        last_success_at=observed_at,
+        last_error=None,
+    )
 
 
 def _healthy_source(observed_at: datetime) -> SourceHealth:

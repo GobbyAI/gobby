@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import Any, Protocol, cast
 
@@ -158,6 +158,7 @@ class ChatSessionCommsBackend:
             )
             typing_task = await self._start_typing(context)
             turn_content = await self._turn_content(context)
+            turn_content = await self._with_outbound_session_evidence(context, turn_content)
             await self._host._run_chat_turn(
                 conversation_id=session_key,
                 content=turn_content,
@@ -241,6 +242,31 @@ class ChatSessionCommsBackend:
             f"{passive_context}\n\n"
             "Current wake message:\n"
             f"{context.message.content}"
+        )
+
+    async def _with_outbound_session_evidence(self, context: ResponderContext, content: str) -> str:
+        """Prefix the turn with sessions that sent recent outbound messages."""
+        list_messages = getattr(self._manager, "list_messages", None)
+        if not callable(list_messages):
+            return content
+        messages = await asyncio.to_thread(
+            list_messages,
+            channel_id=context.channel.id,
+            direction="outbound",
+            limit=20,
+        )
+        if not isinstance(messages, list):
+            return content
+        session_ids = recent_outbound_session_ids(
+            messages,
+            conversation_id=context.conversation_id,
+        )
+        if not session_ids:
+            return content
+        listed = ", ".join(session_ids)
+        return (
+            "Recent outbound messages in this conversation were sent from these "
+            f"sessions (comms_messages.session_id): {listed}\n\n{content}"
         )
 
     def _get_tts_provider(self, context: ResponderContext) -> TTSProvider | None:
@@ -381,6 +407,30 @@ def _string_setting(context: ResponderContext, key: str) -> str | None:
 def _boolean_setting(context: ResponderContext, key: str) -> bool:
     """Return a strict boolean responder setting."""
     return context.responder_config.get(key) is True
+
+
+def recent_outbound_session_ids(
+    messages: Sequence[CommsMessage],
+    *,
+    conversation_id: str | None = None,
+) -> list[str]:
+    """Return session ids that sent outbound messages, first-seen order preserved."""
+    found: list[str] = []
+    for message in messages:
+        if message.direction != "outbound":
+            continue
+        if conversation_id is not None:
+            metadata = message.metadata_json
+            destination = metadata.get("platform_destination") or metadata.get(
+                "platform_channel_id"
+            )
+            if destination != conversation_id:
+                continue
+        session_id = message.session_id
+        if not session_id or session_id in found:
+            continue
+        found.append(session_id)
+    return found
 
 
 def _passive_speaker(message: CommsMessage) -> str:

@@ -6755,10 +6755,6 @@
       "definition": "PRIMARY KEY (id)"
     },
     {
-      "name": "coordination_waits.coordination_waits_waiter_session_id_owner_session_id_condi_key",
-      "definition": "UNIQUE (waiter_session_id, owner_session_id, condition_key)"
-    },
-    {
       "name": "cron_jobs.cron_jobs_is_system_check",
       "definition": "CHECK (is_system = ANY (ARRAY[false, true]))"
     },
@@ -8414,7 +8410,7 @@
     },
     {
       "name": "$schema.resolve_coordination_wait(wait_id text, reply_message_id text)",
-      "definition": "CREATE OR REPLACE FUNCTION $schema.resolve_coordination_wait(wait_id text, reply_message_id text DEFAULT NULL::text)\n RETURNS void\n LANGUAGE plpgsql\nAS $function$\nDECLARE\nw coordination_waits%ROWTYPE;\nowner_status text;\nrelease_id text;\nterminal_outcome text;\nBEGIN\nSELECT * INTO w FROM coordination_waits WHERE id = wait_id FOR UPDATE;\nIF NOT FOUND OR w.outcome <> 'waiting' THEN RETURN; END IF;\nSELECT status INTO owner_status FROM sessions WHERE id = w.owner_session_id;\nIF NOT w.reply THEN\nSELECT id INTO release_id FROM inter_session_messages\nWHERE from_session = w.owner_session_id AND to_session = w.waiter_session_id\nAND message_type = 'coordination_release'\nAND metadata_json::jsonb ->> 'coordination_key' = w.coordination_key\nAND sent_at <= w.expires_at\nORDER BY sent_at, id LIMIT 1;\nEND IF;\nterminal_outcome := CASE\nWHEN clock_timestamp() >= w.expires_at THEN 'timeout'\nWHEN w.reply AND reply_message_id IS NOT NULL THEN 'replied'\nWHEN release_id IS NOT NULL THEN 'released'\nWHEN owner_status = ANY(w.statuses) THEN 'status_matched'\nWHEN owner_status IS NULL OR owner_status IN\n('completed', 'cancelled', 'closed', 'expired', 'deleted') THEN 'owner_ended'\nELSE NULL END;\nIF terminal_outcome IS NOT NULL THEN\nUPDATE coordination_waits SET outcome = terminal_outcome,\nmatched_status = CASE WHEN terminal_outcome = 'status_matched' THEN owner_status END,\nmessage_id = CASE WHEN terminal_outcome = 'released' THEN release_id\nWHEN terminal_outcome = 'replied' THEN reply_message_id END,\ncompleted_at = clock_timestamp() WHERE id = wait_id;\nEND IF;\nEND;\n$function$"
+      "definition": "CREATE OR REPLACE FUNCTION $schema.resolve_coordination_wait(wait_id text, reply_message_id text DEFAULT NULL::text)\n RETURNS void\n LANGUAGE plpgsql\nAS $function$\nDECLARE\nw coordination_waits%ROWTYPE;\nowner_status text;\nrelease_id text;\nterminal_outcome text;\nBEGIN\nSELECT * INTO w FROM coordination_waits WHERE id = wait_id FOR UPDATE;\nIF NOT FOUND OR w.outcome <> 'waiting' THEN RETURN; END IF;\nSELECT status INTO owner_status FROM sessions WHERE id = w.owner_session_id;\nIF NOT w.reply THEN\nSELECT id INTO release_id FROM inter_session_messages AS message\nWHERE message.from_session = w.owner_session_id\nAND message.to_session = w.waiter_session_id\nAND message.message_type = 'coordination_release'\nAND message.metadata_json::jsonb ->> 'coordination_key' = w.coordination_key\nAND message.sent_at <= w.expires_at\nAND NOT EXISTS (\nSELECT 1 FROM coordination_waits AS previous\nWHERE previous.message_id = message.id::text\nAND previous.id <> w.id\nAND previous.outcome = 'released'\n)\nORDER BY message.sent_at, message.id\nLIMIT 1;\nEND IF;\nterminal_outcome := CASE\nWHEN clock_timestamp() >= w.expires_at THEN 'timeout'\nWHEN w.reply AND reply_message_id IS NOT NULL THEN 'replied'\nWHEN release_id IS NOT NULL THEN 'released'\nWHEN owner_status = ANY(w.statuses) THEN 'status_matched'\nWHEN owner_status IS NULL OR owner_status IN\n('completed', 'cancelled', 'closed', 'expired', 'deleted') THEN 'owner_ended'\nELSE NULL END;\nIF terminal_outcome IS NOT NULL THEN\nUPDATE coordination_waits SET outcome = terminal_outcome,\nmatched_status = CASE WHEN terminal_outcome = 'status_matched' THEN owner_status END,\nmessage_id = CASE WHEN terminal_outcome = 'released' THEN release_id\nWHEN terminal_outcome = 'replied' THEN reply_message_id END,\ncompleted_at = clock_timestamp() WHERE id = wait_id;\nEND IF;\nEND;\n$function$"
     },
     {
       "name": "$schema.touch_chat_attachments_updated_at()",
@@ -8619,6 +8615,10 @@
       "definition": "CREATE UNIQUE INDEX config_store_pkey ON $schema.config_store USING btree (key)"
     },
     {
+      "name": "coordination_waits_live_identity",
+      "definition": "CREATE UNIQUE INDEX coordination_waits_live_identity ON $schema.coordination_waits USING btree (waiter_session_id, owner_session_id, condition_key) WHERE (outcome = 'waiting'::text)"
+    },
+    {
       "name": "coordination_waits_owner",
       "definition": "CREATE INDEX coordination_waits_owner ON $schema.coordination_waits USING btree (owner_session_id) WHERE (outcome = 'waiting'::text)"
     },
@@ -8629,10 +8629,6 @@
     {
       "name": "coordination_waits_pkey",
       "definition": "CREATE UNIQUE INDEX coordination_waits_pkey ON $schema.coordination_waits USING btree (id)"
-    },
-    {
-      "name": "coordination_waits_waiter_session_id_owner_session_id_condi_key",
-      "definition": "CREATE UNIQUE INDEX coordination_waits_waiter_session_id_owner_session_id_condi_key ON $schema.coordination_waits USING btree (waiter_session_id, owner_session_id, condition_key)"
     },
     {
       "name": "cron_jobs_name_key",

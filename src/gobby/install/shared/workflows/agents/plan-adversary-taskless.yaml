@@ -2,14 +2,14 @@ name: plan-adversary-taskless
 description: |
   Taskless adversarial plan reviewer for /gobby plan. Reviews a plan artifact,
   returns structured findings to the parent session, and never claims or mutates
-  Gobby tasks.
+  Gobby tasks. Runs on grok-4.7 at reasoning effort xhigh.
 
-version: "1.4"
+version: "1.6"
 enabled: true
 priority: 20
 surfaces: [spawn, persona]
-provider: codex
-model: gpt-5.6-sol
+provider: grok
+model: grok-4.7
 reasoning_effort: xhigh
 reasoning_required: false
 isolation: none

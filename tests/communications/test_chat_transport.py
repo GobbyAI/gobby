@@ -139,6 +139,11 @@ class _FakeManager:
         offset: int = 0,
     ) -> list[CommsMessage]:
         assert channel_id == "channel-1"
+        if direction == "outbound":
+            outbound = [
+                message for message in self.stored_messages if message.direction == "outbound"
+            ]
+            return outbound[offset : offset + limit]
         assert session_id == "session-1"
         assert direction == "inbound"
         return self.stored_messages[offset : offset + limit]
@@ -212,6 +217,42 @@ async def test_transport_collects_stream_and_sends_one_final_fallback() -> None:
         )
     ]
     assert manager.edited == []
+
+
+@pytest.mark.asyncio
+async def test_tool_turn_delivers_only_the_final_answer() -> None:
+    manager = _FakeManager(supports_edit=False)
+    transport = CommunicationsChatStreamTransport(manager, _context())
+
+    await transport.safe_send(
+        {"type": "chat_stream", "content": "Checking the coordinator.", "done": False}
+    )
+    await transport.safe_send(
+        {
+            "type": "tool_status",
+            "tool_name": "mcp__gobby__call_tool",
+            "status": "calling",
+        }
+    )
+    await transport.safe_send(
+        {
+            "type": "chat_stream",
+            "content": "You are talking to this chat's comms responder.",
+            "done": False,
+        }
+    )
+    await transport.safe_send(
+        {"type": "chat_stream", "content": "", "done": True, "tool_calls_count": 1}
+    )
+
+    assert manager.sent == [
+        (
+            "telegram",
+            "You are talking to this chat's comms responder.",
+            "session-1",
+            {"platform_destination": "chat-42"},
+        )
+    ]
 
 
 @pytest.mark.asyncio
