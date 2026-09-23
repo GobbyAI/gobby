@@ -197,7 +197,7 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
     EmbeddedMigration {
         version: 446,
         filename: "446_grant_agent_project_resolution.sql",
-        checksum: "c88d1987a657dd9ed7ed7869ca7c8a99575d340dd78bc2fdfc54aeab5b6c4024",
+        checksum: "92af848e93ef46536f40fdb0084dcf5f0fa4bc3b5b7eaf9788ee020c977d3b31",
         sql: include_str!("../../assets/schema/migrations/446_grant_agent_project_resolution.sql"),
     },
 ];

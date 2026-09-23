@@ -50,7 +50,7 @@ def test_manifest_covers_every_rust_database_call_at_head() -> None:
 
 
 def test_manifest_privileges_match_the_managed_relation_set() -> None:
-    """Privilege manifest lists project_checkouts SELECT/UPDATE scoped to machine_id."""
+    """Privilege manifest records table reads and narrow checkout updates."""
     manifest = _load_manifest()
     assert manifest["version"] == 1
     assert manifest["principal"] == "gobby_gcode_capability"
@@ -76,8 +76,10 @@ def test_manifest_privileges_match_the_managed_relation_set() -> None:
     assert "columns" not in relations["projects"]
     assert relations["project_checkouts"] == {
         "relation": "project_checkouts",
-        "operations": ["SELECT", "UPDATE"],
-        "columns": ["machine_id", "project_id", "root_path"],
+        "operations": ["SELECT"],
+        "column_operations": {
+            "UPDATE": ["machine_id", "project_id", "root_path"],
+        },
         "scope_column": "project_id",
         "machine_scope_column": "machine_id",
     }

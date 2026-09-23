@@ -25,11 +25,11 @@ fn embedded_assets_publish_a_complete_schema_identity() {
     );
     assert_eq!(
         identity.latest_asset.checksum,
-        "c88d1987a657dd9ed7ed7869ca7c8a99575d340dd78bc2fdfc54aeab5b6c4024"
+        "92af848e93ef46536f40fdb0084dcf5f0fa4bc3b5b7eaf9788ee020c977d3b31"
     );
     assert_eq!(
         identity.root_hash,
-        "02b325821e4b6c545c93676ba194be0adf82e5afda01701e3c1a626abe6af69e"
+        "a920b26a90a14e6b9338f8501985e046e0372933fa0a5b965a252b51d040da0f"
     );
 
     let _public_runner_type = std::any::type_name::<SchemaRunner<'static>>();
