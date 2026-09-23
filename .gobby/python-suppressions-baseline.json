@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "site_count": 206,
+  "site_count": 202,
   "sites": [
     {
       "fingerprint": "0f66536411482f1a325ea75a3b12fe585163203aa948bb885f30281b874362a0",
@@ -891,46 +891,6 @@
         "method-assign"
       ],
       "statement": "service . fetch_all_memories = fetch"
-    },
-    {
-      "fingerprint": "56a3d19c8fff90394647da8457d63353dac22b8ed9c8bb20b9e39c46f7733596",
-      "path": "tests/memory/test_indexing_service.py",
-      "symbol": "test_project_reindex_holds_writer_admission_across_embedding_and_batch",
-      "directive": "type: ignore",
-      "codes": [
-        "arg-type"
-      ],
-      "statement": "service = _service ( _MemoryStorage ( [ _memory ( \"mem-1\" , \"alpha\" ) ] ) , vector_store , embed_fn = embed )"
-    },
-    {
-      "fingerprint": "7ea52588c12430259130b2a10ffb0cceec0be73b35e9bca3226b5c336a97f0d3",
-      "path": "tests/memory/test_indexing_service.py",
-      "symbol": "test_project_reindex_holds_writer_admission_across_embedding_and_batch",
-      "directive": "type: ignore",
-      "codes": [
-        "arg-type"
-      ],
-      "statement": "vector_store = ProjectFencedVectorStore ( inner , fence )"
-    },
-    {
-      "fingerprint": "66f007891a305545bf9b88a270d86881f56dcfca71be82631ef455561bfbb8d7",
-      "path": "tests/memory/test_indexing_service.py",
-      "symbol": "test_reconcile_backfill_holds_global_admission_across_embedding_and_batch",
-      "directive": "type: ignore",
-      "codes": [
-        "arg-type"
-      ],
-      "statement": "service = _service ( _MemoryStorage ( [ _memory ( \"missing\" , \"alpha\" ) ] ) , vector_store , embed_fn = embed )"
-    },
-    {
-      "fingerprint": "823eb59a02de35f0a8b9c0c6c40ae666a1570ca5e0cbe9b8d80ef7f7c5f2adb7",
-      "path": "tests/memory/test_indexing_service.py",
-      "symbol": "test_reconcile_backfill_holds_global_admission_across_embedding_and_batch",
-      "directive": "type: ignore",
-      "codes": [
-        "arg-type"
-      ],
-      "statement": "vector_store = ProjectFencedVectorStore ( inner , fence )"
     },
     {
       "fingerprint": "6997018f2dd29f8ec70237849c2762c827a06be117b3aaab63873bdf354e050c",

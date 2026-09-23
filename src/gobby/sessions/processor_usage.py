@@ -92,7 +92,8 @@ class ProcessorUsageMixin:
         for msg in messages:
             message_model = msg.model if isinstance(msg.model, str) and msg.model else None
             message_context_window = self._message_context_window(msg)
-            reconciled_context = reconcile_model_context(
+            reconciled_context = await self._run_db(
+                reconcile_model_context,
                 last_model,
                 message_model,
                 message_context_window if message_context_window is not None else context_window,

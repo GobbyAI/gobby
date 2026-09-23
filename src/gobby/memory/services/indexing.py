@@ -254,10 +254,7 @@ class IndexingService:
 
     async def reconcile_stores(self, dry_run: bool = False) -> dict[str, Any]:
         """Reconcile Qdrant and FalkorDB with the memory storage source of truth."""
-        if not dry_run:
-            async with global_write_context(self._vector_store):
-                return await self._reconcile_stores_admitted(dry_run=False)
-        return await self._reconcile_stores_admitted(dry_run=True)
+        return await self._reconcile_stores_admitted(dry_run=dry_run)
 
     async def _reconcile_stores_admitted(self, dry_run: bool) -> dict[str, Any]:
         storage_ids = set(await self._run_storage(self._storage.list_live_ids))
@@ -317,7 +314,8 @@ class IndexingService:
 
                 if not dry_run and orphaned:
                     try:
-                        await self._vector_store.delete_many(list(orphaned))
+                        async with global_write_context(self._vector_store):
+                            await self._vector_store.delete_many(list(orphaned))
                         report["qdrant"]["orphans_deleted"] = len(orphaned)
                     except Exception as e:
                         logger.warning(
@@ -347,8 +345,8 @@ class IndexingService:
                     if failures:
                         report["qdrant"]["reindex_failures"] = failures
             except Exception as e:
-                logger.error("Qdrant reconciliation failed: %s", e)
-                report["qdrant"]["error"] = str(e)
+                logger.exception("Qdrant reconciliation failed: %r", e)
+                report["qdrant"]["error"] = repr(e)
                 report["qdrant"]["errors"] += 1
 
         if self._kg_service:
