@@ -13,6 +13,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, Protocol
+from weakref import WeakKeyDictionary
 
 from gobby.agents.detection.provider import DetectionRegistry
 from gobby.agents.idle_detector import COMPOSER_PROBE_LINES, ComposerRead, IdleDetector
@@ -26,7 +27,11 @@ from gobby.terminals.runtime import (
     TerminalRuntime,
     TerminalWriteError,
 )
-from gobby.terminals.write_coordinator import WriteCoordinator, WriteRequest
+from gobby.terminals.write_coordinator import (
+    IdempotencyConflictError,
+    WriteCoordinator,
+    WriteRequest,
+)
 
 if TYPE_CHECKING:
     from gobby.storage.terminals import Terminal
@@ -189,12 +194,17 @@ class CoordinatorPaneIO:
         *,
         action_key: str,
         idempotency_key: str,
+        skip_delivered_text: bool = False,
+        resume_epoch: int = 0,
     ) -> None:
         self._coordinator = coordinator
         self._runtime_pane = RuntimePaneIO(runtime, terminal)
         self._terminal = terminal
         self._action_key = action_key
         self._idempotency_key = idempotency_key
+        self._skip_delivered_text = skip_delivered_text
+        self._resume_epoch = resume_epoch
+        self._text_accepted = skip_delivered_text
         self._write_count = 0
 
     @property
@@ -209,8 +219,14 @@ class CoordinatorPaneIO:
         return await self._dispatch("key", key, submit=False)
 
     async def type_text(self, text: str) -> SendResult:
+        if self._skip_delivered_text:
+            self._skip_delivered_text = False
+            return True, None
         body = text.rstrip("\n")
-        return await self._dispatch("text", body, submit=body != text)
+        ok, reason = await self._dispatch("text", body, submit=body != text)
+        if ok:
+            self._text_accepted = True
+        return ok, reason
 
     async def snapshot(
         self, lines: int = DEFAULT_SNAPSHOT_LINES, *, mode: SnapshotMode = "text"
@@ -222,15 +238,23 @@ class CoordinatorPaneIO:
     ) -> SendResult:
         index = self._write_count
         self._write_count += 1
+        if self._resume_epoch:
+            # A fresh key: the delivered text latch is already gone, and a latched
+            # indeterminate Enter must not swallow this bare-Enter resume.
+            action_key = f"{self._action_key}:resume:{self._resume_epoch}:{index}"
+            idempotency_key = None
+        else:
+            action_key = self._action_key if index == 0 else f"{self._action_key}:{index}"
+            idempotency_key = self._idempotency_key if index == 0 else None
         outcome = await self._coordinator.write(
             WriteRequest(
                 terminal_id=self._terminal.id,
-                action_key=self._action_key if index == 0 else f"{self._action_key}:{index}",
+                action_key=action_key,
                 origin="daemon",
                 kind=kind,
                 payload=payload,
                 submit=submit,
-                idempotency_key=self._idempotency_key if index == 0 else None,
+                idempotency_key=idempotency_key,
             )
         )
         return _outcome_result(outcome, f"{self.backend} {kind} write")
@@ -466,6 +490,36 @@ async def submit_text(
     )
 
 
+@dataclass
+class _VerifiedSubmitProgress:
+    """How far one idempotent verified submission got."""
+
+    text_delivered: bool = False
+    payload: str | None = None
+    success: SubmitResult | None = None
+    resume_epoch: int = 0
+
+
+_verified_submits: WeakKeyDictionary[
+    WriteCoordinator, dict[tuple[str, str], _VerifiedSubmitProgress]
+] = WeakKeyDictionary()
+
+
+def _verified_submit_progress(
+    coordinator: WriteCoordinator, terminal_id: str, idempotency_key: str
+) -> _VerifiedSubmitProgress:
+    records = _verified_submits.get(coordinator)
+    if records is None:
+        records = {}
+        _verified_submits[coordinator] = records
+    key = (terminal_id, idempotency_key)
+    progress = records.get(key)
+    if progress is None:
+        progress = _VerifiedSubmitProgress()
+        records[key] = progress
+    return progress
+
+
 async def submit_coordinated_text(
     coordinator: WriteCoordinator,
     runtime: TerminalRuntime,
@@ -479,18 +533,40 @@ async def submit_coordinated_text(
     cli_source: str | None,
     composer_read: ComposerReader | None,
 ) -> SubmitResult:
-    """Submit through coordinator locking while retaining composer verification."""
-    return await submit_text(
-        CoordinatorPaneIO(
-            coordinator,
-            runtime,
-            terminal,
-            action_key=action_key,
-            idempotency_key=idempotency_key,
-        ),
+    """Submit through coordinator locking while retaining composer verification.
+
+    A retry of the same key replays a verified success. After the text write has
+    landed, a held or indeterminate finish resumes with a bare Enter and does not
+    retype the payload.
+    """
+    progress = _verified_submit_progress(coordinator, terminal.id, idempotency_key)
+    if progress.payload is not None and progress.payload != text:
+        raise IdempotencyConflictError("idempotency key was already used with a different payload")
+    if progress.success is not None:
+        return progress.success
+    if progress.text_delivered:
+        progress.resume_epoch += 1
+    pane = CoordinatorPaneIO(
+        coordinator,
+        runtime,
+        terminal,
+        action_key=action_key,
+        idempotency_key=idempotency_key,
+        skip_delivered_text=progress.text_delivered,
+        resume_epoch=progress.resume_epoch,
+    )
+    result = await submit_text(
+        pane,
         text,
         session_id,
         label=label,
         cli_source=cli_source,
         composer_read=composer_read,
     )
+    if pane._text_accepted:
+        progress.text_delivered = True
+        progress.payload = text
+    if result.ok:
+        progress.success = result
+        progress.payload = text
+    return result
