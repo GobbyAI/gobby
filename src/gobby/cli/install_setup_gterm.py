@@ -18,6 +18,7 @@ from gobby.install.bin_freshness_promotion import (
     workspace_binary_is_current,
     write_source_hash,
 )
+from gobby.install.bin_set_coherence import _codesign_workspace_binary
 from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS, is_published
 from gobby.install.version_probe import probe_native_bin_version
 
@@ -185,7 +186,11 @@ def install_gterm_from_submodule(module: Any, bin_dir: Path) -> str | None:
             module.logger.warning("gterm: native binary update is already in progress")
             return None
         with lock:
-            stage_and_promote_binary_file(src_bin, destination=dest)
+            stage_and_promote_binary_file(
+                src_bin,
+                destination=dest,
+                prepare_staged=_codesign_workspace_binary,
+            )
             write_source_hash(bin_dir, "gterm", file_sha256(src_bin))
         return "promoted"
     except (FileNotFoundError, module.subprocess.TimeoutExpired, OSError) as e:
