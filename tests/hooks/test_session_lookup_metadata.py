@@ -472,6 +472,7 @@ def test_grok_tool_hook_from_another_process_in_the_pane_auto_registers() -> Non
 
 
 def test_spawned_grok_parent_survives_first_of_three_process_bound_children() -> None:
+    """A process-bound Grok child's session_end leaves the parent run, session, and terminal live."""
     session_manager, session_task_manager, service = _uncached_service()
     parent_context = _live_grok_terminal_context()
     parent = SimpleNamespace(
