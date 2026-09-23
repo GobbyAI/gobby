@@ -13,8 +13,9 @@ Director brief, verbatim:
 'Scope the plan as two milestones: M1 gterm adoption by epoch (host_manager, leases, host_reconcile: a daemon restart never kills an agent terminal; no dependency on #21558), M2 terminal WS plus proxy relay (after #21558 Native WS transport in gdaemon). Implementation starts after #22722 lands. gclient/gterm is the primary and default backend for every agent; tmux is a bounded fallback with the fallback, visibility and recovery criteria the task carries.'
 
 This plan ports the daemon-owned half of the terminal stack behind the Stage 2
-`RouteFamily` seam without changing `gterm`, `gclient`, or any wire protocol. It has two
-milestones and deliberately keeps the #21558 dependency off every M1 deliverable.
+`RouteFamily` seam without changing `gterm`, gclient production/runtime code, or any wire
+protocol. It has two milestones and deliberately keeps the #21558 dependency off every M1
+deliverable.
 
 Decision record:
 
@@ -43,18 +44,30 @@ Decision record:
   gterm is always attempted first. An agent definition containing `terminal_backend` is rejected
   both when stored and when a legacy row is resolved.
 - **Fallback model — restraint rung 6 (minimum new code):** use one closed three-value typed
-  reason set: `host_start_timeout`, `epoch_refused`, and `gterm_missing`. No generic
-  native-error fallback exists. A non-user-settable lifetime enum has only `run` and
-  `persistent_role`; `SpawnRequest` materializes omitted internal lifetime as `run`, and
-  role-bound workspace launch explicitly emits `persistent_role`. Persistent roles fail rather
-  than enter tmux.
+  reason set: `host_start_timeout`, `epoch_refused`, and `gterm_missing`. `epoch_refused` is
+  emitted only after a reachable host completes authenticated hello, protocol validation, ping,
+  and pid-identity validation but its coherent returned epoch is explicitly rejected by the
+  durable adoption matrix. Token, pid, protocol, authentication, pre/post-adoption I/O, and all
+  later runtime failures remain distinct fail-closed results. No generic native-error fallback
+  exists.
+- **Lifetime producer — restraint rung 2 (reuse):** a non-user-settable lifetime enum has only
+  `run` and `persistent_role`. Every bare/public `SpawnRequest` shape materializes omission as
+  `run`. After #22691 supplies nullable `workspace_panes.role`, the exact role-bound producer is
+  `WorkspaceOps._fill`: a non-empty durable `WorkspacePane.role` emits `persistent_role`, while a
+  missing/empty role emits `run`. Persistent roles fail rather than enter tmux; #22691 is a
+  concrete external dependency of the leaves that consume that field.
 - **Fallback persistence — restraint rung 2 (reuse):** keep `terminals.backend = 'tmux'` and
   store the reason as `locator.fallback_reason` on the same terminal row. No migration or
   derived fallback table is needed because `locator` is the existing backend-owned JSON carrier.
-- **Fallback announcement — restraint rung 2 (reuse):** call the existing
-  `MailboxService.send(target='project')` before tmux launch. A failed enqueue fails the spawn;
-  the irreversible tmux launch never precedes its required visibility event, so there is no
-  crash window that creates a silent fallback.
+- **Fallback announcement — restraint rung 2 (reuse):** call the existing, unchanged
+  `MailboxService.send(target='project')` before tmux launch. The message describes an attempt,
+  not an active terminal, until pending-to-live promotion succeeds. A failed enqueue fails the
+  spawn; later failures use the existing attempt-scoped terminal settlement and spawn-key kill
+  paths, without a mailbox/database transaction subsystem.
+- **Tmux runtime parity — restraint rung 6 (minimum new code):** gcode found no Rust tmux runtime
+  owner; Rust tmux references are gclient display/direct-attach consumers only. Add one focused
+  `gobby-terminals` adapter mirroring the existing Python `TmuxTerminalRuntime` contract. Do not
+  add a generic runtime framework or change gclient production code.
 - **Recovery — restraint rung 1 (no migration daemon):** backend selection is evaluated anew
   per spawn. A recovered host automatically serves new spawns; live tmux terminals are never
   mutated. Their next restart or handoff creates a new native terminal and then ends the old
@@ -102,10 +115,18 @@ first implementation claim, not a code workaround.
 
 **#21558 disposition:** #21558 remains the epic blocker during planning. On expansion, stage
 automation must first add #21558 as a blocker to every M2 leaf (sections 2.1–2.4), verify that no
-M1 leaf (sections 1.1–1.7) carries that edge, and only then remove the epic-level #21558 → #21565
+M1 leaf (sections 1.1–1.8) carries that edge, and only then remove the epic-level #21558 → #21565
 edge through `gobby-tasks`. This add-before-remove ordering prevents an unblocked M2 window and
 does not bypass task lifecycle with SQL, REST, the operator CLI, or hand-authored manifest data.
 M2 stays in scope; it is not a deferral.
+
+**#22691 role-field dependency — restraint rung 2 (reuse its durable owner):** #22691,
+`Runbooks: role-bound multi-agent tabs loaded from gclient`, owns migration 446 and the
+`WorkspacePane.role` / `workspace_panes.role` storage and workspace-operation contract. This plan
+owns only the terminal-lifetime consumption of that field in `WorkspaceOps._fill` and
+`spawn_web_terminal`. On expansion, stage automation attaches #22691 as an external blocker to
+the generated 1.6 and 1.7 leaves. No other M1 leaf waits for #22691, and this dependency does not
+introduce #21558 into M1.
 
 ## A3 Scope, invariants, and observed evidence
 
@@ -123,7 +144,9 @@ In scope:
 
 Out of scope:
 
-- Any change under `crates/gterminal/` or `crates/gclient/`.
+- Any change under `crates/gterminal/`; any production/runtime change under
+  `crates/gclient/src/`. The only allowed gclient edit is the named
+  `crates/gclient/tests/client_loop.rs` backend-visibility contract update.
 - Any change to the three existing wire protocols or to canonical fixture bytes.
 - Live migration of an existing tmux terminal, a selectable backend in agent definitions, a
   sticky fallback mode, an operator recovery action, or a new terminal configuration knob.
@@ -131,9 +154,10 @@ Out of scope:
 
 Observed source evidence used by executors:
 
-- `TerminalHostManager._try_adopt` keeps an epoch/protocol/token mismatch host alive and retries;
-  `stop(drain_host=False)` closes clients but preserves it; `reconcile_host_inventory` owns row
-  settlement.
+- `TerminalHostManager._try_adopt` currently keeps protocol/token/pid-identity mismatch hosts alive
+  and retries; it has no explicit semantic epoch-refusal subtype. The Rust port adds that narrow
+  subtype only after a successful handshake and durable epoch check. `stop(drain_host=False)`
+  closes clients but preserves the host; `reconcile_host_inventory` owns row settlement.
 - `TerminalLeaseRegistry` stamps lifecycle messages with daemon epoch and ordered sequence,
   bounds its publication queue, and fails closed; `WriteCoordinator` serializes/revalidates each
   write and resolves the runtime from the row's backend.
@@ -146,6 +170,13 @@ Observed source evidence used by executors:
 - The exact current backend-option producer sweep covers agent spawn models/executor, MCP
   factory/implementation/request, HTTP agent spawn, CLI agents, dispatch actions/spawn, scheduler
   execution, ask agents, config, and agent-definition JSON storage/resolution.
+- #22691 owns the future durable `workspace_panes.role` column and `WorkspacePane.role` projection;
+  the existing terminal creation producer is `WorkspaceOps._fill`, which calls
+  `spawn_web_terminal`. That exact producer becomes the sole `persistent_role` source.
+- A repository-wide Rust tmux sweep found no runtime adapter. The complete current behavior oracle
+  is `src/gobby/terminals/tmux_runtime.py::TmuxTerminalRuntime`: per-row socket routing, raw input
+  and paste/write, resize, bounded snapshot/history, live attach locator, pane/session liveness,
+  and termination.
 
 ## P1: Milestone M1 — gterm adoption by epoch
 
@@ -207,8 +238,10 @@ server implementation, is the seam.
 - 1.1.4 - The frame client enforces the existing length/queue ceilings and reproduces bincode
   attach, input, output, history, lifecycle, and close frames byte-for-byte. test:
   `crates/gterminals/tests/protocol_contract.rs::frame_bytes_match_gterm`.
-- 1.1.5 - The implementation diff contains no change under `crates/gterminal/` or
-  `crates/gclient/`, and all three wire formats retain their existing versions. behavior:
+- 1.1.5 - The implementation diff contains no change under `crates/gterminal/`, no
+  production/runtime change under `crates/gclient/src/`, and no protocol or fixture-byte change.
+  The only allowed gclient edit in the whole plan is the named
+  `crates/gclient/tests/client_loop.rs` backend-visibility contract update. behavior:
   `gterm-gclient-protocol-scope-guard`.
 
 ### 1.2 Epoch adoption, single-owner supervision, and restart preservation [category: code] (depends: 1.1, 1.6)
@@ -232,8 +265,12 @@ Research context:
 - `TerminalHostManager._try_adopt`, `_spawn_candidate`, `_health_loop`, and
   `stop(drain_host=False)` are the behavior oracle. The manager is 909 lines, so it is not edited
   or copied as one Rust module; transport is already isolated in 1.1 and reconciliation in 1.3.
-- A reachable host that refuses adoption remains alive. The daemon must not rotate its token,
-  unlink its sockets, kill it, or spawn a second host. Confirmed absence is the only path to spawn.
+- A reachable host that refuses adoption remains alive. `epoch_refused` is narrower than the
+  Python oracle's current catch-all mismatch: connection, authenticated hello, compatible
+  protocol, ping, and pid identity must all succeed before the durable adoption matrix can reject
+  the returned epoch. Token/pid/protocol/auth/I/O failures retain their own typed failures. The
+  daemon must not rotate credentials, unlink sockets, kill a reachable host, or spawn a second
+  host. Confirmed absence is the only path to spawn.
 - **Choice — restraint rung 2:** use the existing route-family mode as the ownership switch;
   observer mode has no mutation capability. Do not coordinate two active supervisors with a new
   lease or lock.
@@ -263,13 +300,15 @@ Consumers unchanged:
 - 1.2.1 - Same-epoch startup adopts the existing gterm pid and epoch without spawning, rotating
   credentials, or rewriting sockets; two concurrent callers share one adoption/spawn attempt.
   test: `crates/gterminals/tests/host_lifecycle.rs::same_epoch_adopts_singleflight`.
-- 1.2.2 - Protocol/token/pid/epoch refusal preserves the reachable host, records typed
-  `epoch_refused` readiness, schedules health retry, and never spawns or kills a second host.
-  test: `crates/gterminals/tests/host_lifecycle.rs::refused_adoption_is_non_destructive`.
-- 1.2.3 - Confirmed absence launches the installed gterm once; a missing executable yields typed
-  `gterm_missing`, and failure to become ready by 2.5 seconds yields typed
-  `host_start_timeout`. No other host error is fallback-eligible. test:
-  `crates/gterminals/tests/host_lifecycle.rs::absence_timeout_and_missing_binary_are_distinct`.
+- 1.2.2 - Only a reachable, authenticated, protocol-compatible, pid-verified host whose coherent
+  epoch the durable adoption matrix explicitly rejects yields `epoch_refused`; it stays alive,
+  health retry remains armed, and no second host is spawned or killed. test:
+  `crates/gterminals/tests/host_lifecycle.rs::semantic_epoch_refusal_is_non_destructive`.
+- 1.2.3 - An exhaustive subtype matrix proves token mismatch, pid mismatch, protocol mismatch,
+  authentication failure, pre-adoption I/O, and post-adoption I/O never map to `epoch_refused` or
+  fallback; confirmed absence alone may launch once, a missing executable yields `gterm_missing`,
+  and the 2.5-second ready deadline yields `host_start_timeout`. test:
+  `crates/gterminals/tests/host_lifecycle.rs::adoption_result_subtypes_are_exhaustive`.
 - 1.2.4 - In `Proxy` and `Compare`, Rust performs observation only and Python is the active
   supervisor; in `Native`, Rust is the active supervisor and Python constructs none of its host,
   lease, or write owners. test:
@@ -433,6 +472,9 @@ Targets:
 - `src/gobby/servers/routes/agent_spawn.py::AgentSpawnRequest`
 - `src/gobby/servers/routes/agent_spawn.py::create_agent_spawn_router`
 - `src/gobby/servers/websocket/terminal_ws_create.py::TerminalCreateMixin._handle_terminal_create`
+- `src/gobby/terminals/lifetime.py`
+- `src/gobby/terminals/workspace_ops.py::WorkspaceOps._fill`
+- `src/gobby/terminals/web_spawn.py::spawn_web_terminal`
 - `src/gobby/cli/agents.py::spawn_agent_cmd`
 - `src/gobby/dispatch/actions.py::SpawnAgentAction`
 - `src/gobby/dispatch/spawn.py::spawn_agent`
@@ -468,6 +510,7 @@ Targets:
 - `tests/tasks/test_plan_gate.py::*` — scope-reason: remove backend parameter from spawned reviewer fixtures
 - `tests/terminals/test_backend_selection.py::*` — scope-reason: replace configurable selection with fixed-native and lifetime behavior
 - `tests/terminals/test_runtime_contract.py::*` — scope-reason: remove shutdown/backend config fixtures while preserving runtime-per-row behavior
+- `tests/terminals/test_workspace_ops.py::*` — scope-reason: prove durable role-bound panes emit persistent_role while bare panes emit run
 
 Research context:
 
@@ -481,10 +524,13 @@ Research context:
   dispatch action field, and forwarding arguments. A one-value backend knob does not need to
   exist.
 - **Choice — restraint rung 6:** add one internal `TerminalLifetime` discriminator to
-  `SpawnRequest`, materialized as `run` by the model when omitted. It is never exposed in agent
-  definitions or public request schemas. The role-bound workspace producer explicitly supplies
-  `persistent_role`; all existing producer shapes therefore resolve to `run` without signature
-  churn in unrelated provider code.
+  `SpawnRequest`, materialized as `run` by the model when omitted. Put the enum and the narrow
+  role-to-lifetime helper in new `src/gobby/terminals/lifetime.py`; it is never exposed in agent
+  definitions or public request schemas. #22691 owns nullable `workspace_panes.role` and its
+  `WorkspacePane.role` projection. After that dependency lands, `WorkspaceOps._fill` is the exact
+  role-bound producer: it passes `persistent_role` to `spawn_web_terminal` for a non-empty durable
+  role and `run` for a missing/empty role. Every existing agent/public producer shape resolves to
+  `run` without signature churn in unrelated provider code.
 - **Granularity:** the listed production targets exceed the target heuristic but remain one atomic
   trust-boundary leaf. Leaving any producer able to emit or accept backend metadata would violate
   “not selectable” and silently reintroduce the option. Focused tests enumerate every producer
@@ -495,6 +541,11 @@ contract validation and internal lifetime derivation into new `_terminal_contrac
 `spawn_agent_impl` as the orchestrating caller and delete its backend-resolution body. This is a
 real split, not a wrapper added beside unchanged code, and keeps both production modules below the
 1,000-line ceiling.
+
+`workspace_ops.py` is currently 964 lines. Move the new shared lifetime enum/derivation out of
+`workspace_ops.py` into new `src/gobby/terminals/lifetime.py`; `WorkspaceOps._fill` only reads the
+durable role and calls that helper before `spawn_web_terminal`. #22691 separately moves existing
+pane-I/O code, so this plan neither duplicates that owned split nor grows the near-ceiling module.
 
 Remove backend choice at every ingress and reject, rather than ignore, legacy payloads or agent
 definitions that name it. The spawn request carries only internally derived lifetime. Native is
@@ -567,13 +618,15 @@ Consumers unchanged:
 - 1.6.3 - MCP, HTTP, CLI, dispatch, scheduler, and ask-agent paths expose no backend selector and
   forward no backend string; literal legacy MCP/HTTP/dispatch payloads are rejected. test:
   `tests/agents/test_backend_ingress.py::test_every_public_spawn_ingress_rejects_backend`.
-- 1.6.4 - Every current internal producer shape materializes `SpawnRequest.terminal_lifetime` as
-  literal `run`; omission has the observable run result in the model rather than leaking a public
-  `auto`/backend sentinel. test:
+- 1.6.4 - Every bare/public agent producer shape materializes
+  `SpawnRequest.terminal_lifetime` as literal `run`; omission has the observable run result in the
+  model rather than leaking a public `auto`/backend sentinel. test:
   `tests/agents/test_backend_ingress.py::test_all_spawn_request_producers_emit_run_lifetime`.
-- 1.6.5 - A role-bound workspace launch is the only producer of `persistent_role`, and neither
-  `run` nor `persistent_role` changes the native-first choice; the discriminator only governs
-  whether fallback is legal. behavior: `terminal-lifetime-producer-contract`.
+- 1.6.5 - After external dependency #22691 lands, `WorkspaceOps._fill` reads the durable
+  `WorkspacePane.role`: a non-empty role is the only `persistent_role` producer, while an empty or
+  absent role emits `run`. Neither value changes native-first selection; the discriminator only
+  governs whether fallback is legal. test:
+  `tests/terminals/test_workspace_ops.py::test_role_bound_pane_is_persistent_and_bare_pane_is_run`.
 - 1.6.6 - A post-change literal sweep has no production `terminal_backend` authoring field or
   `default_backend`; remaining backend occurrences are row/runtime observation or the internal
   selected result. behavior: `backend-option-consumer-sweep`.
@@ -588,10 +641,11 @@ Targets:
 - `src/gobby/agents/spawn_executor.py::_runtime_spawn`
 - `src/gobby/storage/terminals.py::TerminalManager.create_pending`
 - `src/gobby/storage/terminals.py::TerminalManager.promote_to_live`
-- `src/gobby/sessions/mailbox.py::MailboxService.send`
+- `src/gobby/terminals/web_spawn.py::spawn_web_terminal`
 - `tests/agents/test_spawn_executor.py::*` — scope-reason: cover the complete fallback matrix, message ordering, and recovery
 - `tests/servers/test_terminals_routes.py::*` — scope-reason: pin backend and fallback reason on HTTP inventory rows
 - `tests/servers/test_terminal_ws_list.py::*` — scope-reason: pin backend on WS inventory rows and fallback lifecycle events
+- `tests/terminals/test_workspace_ops.py::*` — scope-reason: prove role-bound workspace panes refuse fallback through the shared lifetime contract
 - `web/src/components/activity/terminal/__tests__/TerminalSessionList.test.tsx::*` — scope-reason: pin visible gterm/tmux labels
 - `crates/gclient/tests/client_loop.rs::*` — scope-reason: pin backend rendering on pane, sidebar, and orphan inventory flows
 
@@ -604,15 +658,22 @@ Research context:
 - `TerminalManager` already persists `backend` and `locator`; no migration is required. HTTP and
   WS inventory already emit backend. gclient parses it for live panes/orphans, and web derives
   `backendLabel` as `gterm` or `tmux`.
-- **Choice — restraint rung 2:** reuse `MailboxService.send(target='project')`, terminal locator
-  JSON, and the existing display fields. Add no fallback table, alert channel, or UI control.
+- `MailboxService.send(target='project')` is a read-only dependency whose signature and semantics
+  remain unchanged; it is deliberately absent from Targets. `spawn_web_terminal` is the existing
+  workspace-pane pending/prepare/commit/promotion owner and receives the internal lifetime from
+  1.6.
+- **Choice — restraint rung 2:** reuse the unchanged mailbox call, terminal locator JSON, and the
+  existing display fields. Add no fallback table, alert channel, transaction subsystem, or UI
+  control.
 - **Failure-boundary check (`edge-case-coverage`):** decide a typed reason, reject persistent
-  lifetime, enqueue the project message, then create/launch tmux. If message enqueue fails, no
-  tmux process or terminal row is created. This ordering makes silent fallback impossible without
-  a cross-service transaction.
+  lifetime, enqueue an “attempting tmux fallback” project message, then create/launch tmux. If
+  enqueue fails, no row or process exists. If pending-row creation, prepare, commit, or promotion
+  fails after enqueue, the existing attempt-generation CAS settles the row to exited and the
+  spawn-key termination path removes any process/session before returning. The announcement never
+  claims activation before pending-to-live promotion.
 - **Sentinel check (`acceptance-observability`):** the three typed reasons, a non-eligible native
   error, `run`, and `persistent_role` each have an observable result test.
-- **Granularity:** eleven targets are one behavior leaf because fallback selection, row evidence,
+- **Granularity:** the listed targets are one behavior leaf because fallback selection, row evidence,
   message-before-launch, recovery, and inventory visibility are one policy. Splitting them would
   permit a fallback that is silent or unidentifiable.
 
@@ -622,19 +683,17 @@ fallback decision/announcement flow from the 998-line facade into new
 retains only the call from `_runtime_spawn`; its net line count decreases.
 
 Move the current service resolver into the support module and make it async so it can await the
-2.5-second native readiness decision. Only the three typed host outcomes are eligible. All other
-native preparation/commit/capacity/write failures remain failures. For an eligible run, enqueue
-one project message containing run/session id, reason, and `backend=tmux`, then create the tmux row
-with the same reason and launch. Do not cache the fallback decision.
+2.5-second native readiness decision. Only the three typed host outcomes are eligible, with
+`epoch_refused` restricted to the semantic subtype defined in 1.2. All token, pid, protocol, auth,
+I/O, preparation, commit, capacity, write, and post-adoption failures remain fail closed. For an
+eligible run, enqueue one project message containing run/session id, reason, `backend=tmux`, and
+attempt status, then create the tmux pending row with the same reason and launch. Promote to live
+before any surface may describe the terminal as active. Do not cache the fallback decision.
 
 Consumers unchanged:
 - `src/gobby/agents/resume_executor.py` — no-edit-reason: It reaches terminal spawning through the stable spawn_executor facade and inherits the new resolver.
-- `src/gobby/terminals/web_spawn.py` — no-edit-reason: It creates non-agent terminal rows without fallback evidence and uses the backward-compatible optional locator path.
 - `src/gobby/terminals/host_reconcile.py` — no-edit-reason: Promotion signature remains compatible; host reconciliation preserves the locator already on the pending row.
 - `src/gobby/terminals/tmux_discovery.py` — no-edit-reason: External tmux discovery is not an agent fallback and supplies its existing locator unchanged.
-- `src/gobby/communications/telegram_actions.py` — no-edit-reason: MailboxService.send signature and message semantics are unchanged.
-- `src/gobby/mcp_proxy/tools/agent_messaging.py` — no-edit-reason: Project messaging remains the same public mailbox call.
-- `src/gobby/servers/routes/tasks_assignment.py` — no-edit-reason: Task assignment uses the same mailbox call and is unrelated to fallback ordering.
 - `tests/agents/terminal_fixtures.py` — no-edit-reason: Existing terminal rows omit optional fallback reason and retain their behavior.
 - `tests/agents/test_tmux_integration.py` — no-edit-reason: Explicit tmux runtime integration is not the agent fallback-selection path.
 - `tests/hooks/test_session_start_handlers.py` — no-edit-reason: Hook-created fixture rows omit optional fallback evidence.
@@ -648,27 +707,31 @@ Consumers unchanged:
 - `tests/terminals/test_native_runtime.py` — no-edit-reason: Native runtime tests neither select nor persist tmux fallback.
 - `tests/terminals/test_tmux_discovery.py` — no-edit-reason: Discovered external tmux sessions have no agent fallback reason by design.
 - `tests/terminals/test_tmux_runtime.py` — no-edit-reason: Runtime tests do not exercise the native-first fallback decision.
-- `tests/terminals/test_workspace_ops.py` — no-edit-reason: Workspace row promotion preserves existing locator data.
 - `tests/agents/test_run_completion.py` — no-edit-reason: Run completion consumes terminal lifecycle and is unchanged by optional fallback evidence.
 - `tests/agents/watchdog/test_close_review_parked_caller.py` — no-edit-reason: Watchdog promotion fixtures retain the compatible repository signature.
-- `tests/communications/test_telegram_actions.py` — no-edit-reason: Mailbox call signature and Telegram action behavior are unchanged.
-- `tests/events/test_wake_recovery.py` — no-edit-reason: Wake recovery uses mailbox delivery but not fallback ordering.
-- `tests/mcp_proxy/tools/test_agent_messaging_broadcast.py` — no-edit-reason: Existing broadcast targets and message payloads are unchanged.
-- `tests/sessions/test_mailbox.py` — no-edit-reason: Mailbox semantics are reused without modification.
 
 **Acceptance:**
 
-- 1.7.1 - A healthy/adopted host always selects gterm. Exactly `host_start_timeout`,
-  `epoch_refused`, and `gterm_missing` may select tmux for `run`; capacity, protocol I/O after
-  adoption, child prepare/commit, auth, database, and arbitrary native errors fail. test:
-  `tests/agents/test_spawn_executor.py::test_tmux_fallback_has_exactly_three_eligible_reasons`.
+- 1.7.1 - A healthy/adopted host always selects gterm. Exactly `host_start_timeout`, semantic
+  `epoch_refused`, and `gterm_missing` may select tmux for `run`; separate fixtures prove token,
+  pid, protocol, auth, pre/post-adoption I/O, capacity, child prepare/commit, database, write, and
+  arbitrary native subtypes fail closed. test:
+  `tests/agents/test_spawn_executor.py::test_tmux_fallback_subtype_matrix_is_exhaustive`.
 - 1.7.2 - `persistent_role` plus any eligible reason fails before message, row creation, or tmux
-  launch and returns a diagnostic naming native unavailability and the reason. test:
-  `tests/agents/test_spawn_executor.py::test_persistent_role_refuses_tmux_fallback`.
-- 1.7.3 - For a run fallback, project-scoped message enqueue completes before row/process creation;
-  message failure fails closed. The message and the terminal row both contain the same stable
-  reason and `backend=tmux`. test:
-  `tests/agents/test_spawn_executor.py::test_fallback_message_precedes_tmux_launch_and_row_records_reason`.
+  launch and returns a diagnostic naming native unavailability and the reason. This holds for a
+  direct internal request and for `WorkspaceOps._fill` when #22691's durable `WorkspacePane.role`
+  is non-empty. test:
+  `tests/agents/test_spawn_executor.py::test_persistent_role_refuses_tmux_fallback`. test:
+  `tests/terminals/test_workspace_ops.py::test_role_bound_pane_refuses_tmux_fallback`.
+- 1.7.3 - For a run fallback, the project-scoped message is durably enqueued before row/process
+  creation and says “attempting” until activation; enqueue failure creates nothing. An injected
+  failure after enqueue but before pending-row creation leaves no row/process, while failures
+  after pending-row creation at prepare, commit, or promotion terminate the spawn key and
+  attempt-CAS the pending row to exited, so no pending/live row or process survives. The attempt
+  message and any resulting live row carry the same stable reason and `backend=tmux`. test:
+  `tests/agents/test_spawn_executor.py::test_fallback_announcement_is_attempt_until_activation`.
+  test:
+  `tests/agents/test_spawn_executor.py::test_fallback_failure_after_pending_row_settles_and_kills`.
 - 1.7.4 - Backend and fallback reason survive pending-to-live promotion on the row; HTTP/WS list
   output contains backend for native and tmux rows and never derives it from logs. test:
   `tests/servers/test_terminals_routes.py::test_terminal_inventory_exposes_backend_and_fallback_reason`.
@@ -680,6 +743,59 @@ Consumers unchanged:
   operator action; restart/handoff creates a new native terminal before the old run-scoped tmux
   terminal exits, while an in-place live migration is impossible. test:
   `tests/agents/test_spawn_executor.py::test_recovery_is_new_spawn_and_handoff_only`.
+
+### 1.8 Rust tmux runtime parity for live fallback rows [category: code] (depends: 1.3, 1.5)
+
+`kind: deliverable`
+
+Targets:
+- `crates/gterminals/src/family.rs`
+- `crates/gterminals/src/tmux_runtime.rs`
+- `crates/gterminals/tests/tmux_runtime.rs`
+
+Research context:
+
+- A gcode Rust sweep found no daemon-side tmux runtime adapter. Existing Rust tmux code is limited
+  to gclient display/direct-attach consumption and does not own terminal operations. The new
+  `tmux_runtime.rs` path is therefore a focused adapter, not a duplicate of an existing Rust
+  owner; its name mirrors the complete Python oracle at
+  `src/gobby/terminals/tmux_runtime.py::TmuxTerminalRuntime`.
+- The Python oracle supplies the exact required operations: per-row configured socket selection,
+  `write_text`/`write_key`/raw `write_input`/bracketed `write_paste`, manual-window resize,
+  bounded/full snapshots with history bounds, live attach locator, pane-process liveness distinct
+  from session presence, and termination on the row's own socket.
+- Memory evidence requires `attach_locator` to resolve `frame_host_epoch` at call time from the
+  terminal row with fallback to the live host manager epoch and derive the frames socket from the
+  live host-manager directory. It also requires `is_live` to use `pane_dead`, while cleanup checks
+  session presence separately because remain-on-exit panes can be dead but capturable.
+- **Choice — restraint rung 6:** add this one adapter because no existing Rust owner provides the
+  complete contract. Reuse the installed tmux executable and current row locator; add no tmux
+  protocol, cache, runtime registry hierarchy, or dependency.
+
+Implement the adapter only for durable `backend=tmux` rows already selected by 1.7. Every command
+uses the row's recorded socket/pane/server identity, never the process default socket. Register it
+with the terminal family so Native mode can operate existing tmux rows without changing their
+backend or migrating them.
+
+**Acceptance:**
+
+- 1.8.1 - Raw input, literal text, named keys, and bracketed paste preserve current byte/size and
+  delivered/indeterminate/partial-failure semantics on the row's own tmux socket, including SGR
+  mouse input used for tmux copy-mode scrolling. test:
+  `crates/gterminals/tests/tmux_runtime.rs::input_and_write_match_python_on_recorded_socket`.
+- 1.8.2 - Resize uses manual window sizing; bounded and full snapshots preserve text, history
+  bounds, and truncation metadata for a live or remain-on-exit row. test:
+  `crates/gterminals/tests/tmux_runtime.rs::resize_and_snapshot_preserve_tmux_history_contract`.
+- 1.8.3 - Attach locator preserves socket path, pane id, server pid/start time, and resolves the
+  live frame host epoch/socket directory at call time rather than caching either generation.
+  test: `crates/gterminals/tests/tmux_runtime.rs::attach_locator_uses_live_host_generation`.
+- 1.8.4 - Pane-process liveness and tmux-session presence are distinct; termination addresses the
+  recorded socket and failed termination leaves the row eligible for existing orphan retry rather
+  than reporting success. test:
+  `crates/gterminals/tests/tmux_runtime.rs::liveness_presence_and_termination_are_socket_scoped`.
+- 1.8.5 - Native terminal-family mode routes every live tmux row operation through this adapter
+  and preserves its backend, locator, and lifecycle; no gclient production/runtime or protocol
+  change is introduced. behavior: `native-family-live-tmux-runtime-parity`.
 
 ## P2: Milestone M2 — terminal WS and proxy relay [category: code] (depends: P1)
 
@@ -729,7 +845,7 @@ reserve, paste bytes, and write sequence capacity before allocation or emission.
   backend-neutral WS contract; no gterm/gclient/protocol source or fixture byte changes. behavior:
   `terminal-ws-wire-scope-guard`.
 
-### 2.2 Native terminal WS connection and operation state machine [category: code] (depends: 2.1)
+### 2.2 Native terminal WS connection and operation state machine [category: code] (depends: 2.1, 1.8)
 
 `kind: deliverable`
 
@@ -743,8 +859,9 @@ Research context:
 - `TerminalWsMixin` is the operation oracle for list, attach, detach, sizing, scroll, input,
   paste, operator write, control, lease-lost fanout, and proxy attach. #21558 supplies connection
   auth/subscription/broadcast and the outer envelope.
-- Runtime resolution remains per terminal row. A terminal id is backend-neutral; native and tmux
-  differ only behind attach/write runtime methods and attach locator shape.
+- Runtime resolution remains per terminal row. A terminal id is backend-neutral; native rows use
+  the native host runtime and live tmux rows use 1.8's complete Rust adapter for input/write,
+  resize, snapshot/history, attach locator, liveness, and termination.
 - **Choice — restraint rung 2:** implement these messages as one #21558 WS route handler backed by
   the M1 repository/lease/write APIs. Do not introduce a terminal-only listener or socket.
 
@@ -860,8 +977,9 @@ Consumers unchanged:
   replacement of an existing tmux run. test:
   `tests/terminals/acceptance/test_native_lifecycle.py::test_bounded_tmux_fallback_visibility_and_recovery`.
 - 2.4.6 - Python and Rust golden replay plus end-to-end gclient attach/render/input all pass with
-  no change to gterm, gclient, the protocols, or canonical fixture bytes. behavior:
-  `terminal-family-cutover-parity-gate`.
+  no change to gterm, no production/runtime change under `crates/gclient/src/`, and no protocol or
+  canonical fixture-byte change. The sole allowed gclient edit remains
+  `crates/gclient/tests/client_loop.rs`. behavior: `terminal-family-cutover-parity-gate`.
 
 ## E1 Verification
 
@@ -870,8 +988,8 @@ Consumers unchanged:
 Executors run focused verification after each leaf and the complete matrix before native cutover:
 
 1. `cargo fmt --all -- --check` and the repository Rust lint/type gate for every changed crate.
-2. `cargo nextest run -p gobby-terminals`; focused `-p gobby-daemon` integration tests for family
-   composition and shutdown.
+2. `cargo nextest run -p gobby-terminals`, including the live-tmux adapter contract; focused
+   `-p gobby-daemon` integration tests for family composition and shutdown.
 3. With isolated `DATABASE_URL` and `GOBBY_TEST_PROTECT=1`, run the changed Python test files only:
    backend ingress/selection, spawn executor, agent definitions, terminal routes/WS, host shutdown,
    and native lifecycle acceptance. Never run the full pytest suite.
@@ -883,12 +1001,16 @@ Executors run focused verification after each leaf and the complete matrix befor
 6. After #21558, run the isolated native route cutover with real gdaemon/gterm/gclient and the
    three fallback simulations. Capture host pid/epoch, terminal id/backend/reason, message id,
    and pre/post-restart I/O as evidence.
-7. Audit `git diff` for the implementation commits: no change under `crates/gterminal/`,
-   `crates/gclient/`, or `tests/fixtures/terminal_ws_golden/`; no production backend-authoring
-   field; every terminal inventory producer emits backend.
+7. Audit `git diff` for the implementation commits: no change under `crates/gterminal/`, no
+   production/runtime change under `crates/gclient/src/`, no gclient edit except
+   `crates/gclient/tests/client_loop.rs`, and no change under
+   `tests/fixtures/terminal_ws_golden/`; no protocol change, no production backend-authoring
+   field, and every terminal inventory producer emits backend.
 8. Re-run a bounded source-agnostic consumer sweep for backend selection and inventory fields.
    This is the whole-plan `edge-case-coverage` / `acceptance-observability` check: every producer,
-   special value, failure boundary, and display consumer named above must have a passing test.
+   special value, error subtype, failure boundary, tmux runtime operation, and display consumer
+   named above must have a passing test. In particular, no separately invoked hook leaves a
+   process, pending/live row, lease, or lifecycle publication without its paired settlement.
 
 ## V1 Plan Changelog
 
@@ -897,3 +1019,5 @@ Executors run focused verification after each leaf and the complete matrix befor
 - 2026-09-22: Initial decision-complete two-milestone draft with verified Stage 0 closure,
   #22722/restart-8 gate, M2-only #21558 disposition, epoch adoption, and bounded visible fallback.
 - 2026-09-22: Clean base validation after full target, derived-carrier, size-split, and consumer-coverage sweep.
+- 2026-09-22: Revision round 2 accepted enhancer opportunities 1–6: exhaustive fallback subtypes,
+  durable role lifetime, mailbox reuse, gclient scope, Rust tmux parity, and post-announcement cleanup.
