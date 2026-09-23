@@ -19,25 +19,25 @@ fn test_evidence_cli_contract() -> anyhow::Result<()> {
 }
 
 #[test]
-fn evidence_help_matches_json_only_contract() -> anyhow::Result<()> {
+fn evidence_help_matches_json_only_contract() {
     let output = Command::new(env!("CARGO_BIN_EXE_gcode"))
         .args(["evidence", "--help"])
-        .output()?;
-    let help = String::from_utf8(output.stdout)?;
-    anyhow::ensure!(
+        .output()
+        .expect("run evidence help");
+    let help = String::from_utf8(output.stdout).expect("utf8 help");
+    assert!(
         output.status.success(),
         "evidence --help failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    anyhow::ensure!(
+    assert!(
         !help.contains("--allow-stale"),
         "evidence help presents --allow-stale as usable:\n{help}"
     );
-    anyhow::ensure!(
+    assert!(
         !help.contains("text"),
         "evidence help presents text as a format value:\n{help}"
     );
-    Ok(())
 }
 
 type LineRangeFixture = (&'static str, &'static [u8], Option<usize>);
