@@ -57,6 +57,61 @@ fn unchanged_partition_skips_write() {
 
 #[test]
 #[serial_test::serial(serial_db)]
+fn stale_label_version_recomputes_unchanged_partition() {
+    let (mut conn, database_url, project_id, _cleanup) = seeded_project("label-version");
+    let root = Path::new("/tmp").join(&project_id);
+    seed_file(&mut conn, &project_id, &root, "pkg/a.py", &["pkg.b"]);
+    seed_file(&mut conn, &project_id, &root, "pkg/b.py", &["pkg.a"]);
+    seed_file(&mut conn, &project_id, &root, "pkg/c.py", &["pkg.d"]);
+    seed_file(&mut conn, &project_id, &root, "pkg/d.py", &["pkg.c"]);
+    let ctx = test_context(database_url, &project_id, ProjectIndexScope::Single);
+    refresh_project_communities(&mut conn, &ctx).expect("first refresh");
+    // Rewind to what a binary before the label version wrote: colliding bare
+    // labels under an unversioned partition signature.
+    let stored = project_state(&mut conn, &project_id)
+        .1
+        .expect("stored signature");
+    let unversioned = stored
+        .split_once(':')
+        .map_or(stored.as_str(), |(_, bare)| bare);
+    let id = db::id_param(&project_id).expect("project uuid");
+    conn.execute(
+        "UPDATE code_communities SET label = 'pkg', label_deterministic = 'pkg'
+         WHERE project_id = $1",
+        &[&id],
+    )
+    .expect("rewind labels");
+    conn.execute(
+        "UPDATE code_indexed_project_states SET partition_signature = $2
+         WHERE project_id = $1",
+        &[&id, &unversioned],
+    )
+    .expect("rewind signature");
+
+    let report = refresh_project_communities(&mut conn, &ctx).expect("stale-version refresh");
+
+    assert!(!report.skipped_unchanged);
+    assert_eq!(
+        (report.new_ids, report.retired_ids, report.changed),
+        (0, 0, 1)
+    );
+    let labels = raw_rows(&mut conn, &project_id)
+        .into_iter()
+        .map(|row| (row.label, row.label_deterministic))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        labels,
+        [
+            ("pkg".to_owned(), "pkg".to_owned()),
+            ("pkg #2".to_owned(), "pkg #2".to_owned()),
+        ]
+    );
+    let again = refresh_project_communities(&mut conn, &ctx).expect("third refresh");
+    assert!(again.skipped_unchanged);
+}
+
+#[test]
+#[serial_test::serial(serial_db)]
 fn refresh_failure_degrades_index_outcome() {
     let (mut conn, database_url, project_id, _cleanup) = seeded_project("degraded");
     let mut ctx = test_context(database_url, &project_id, ProjectIndexScope::Single);

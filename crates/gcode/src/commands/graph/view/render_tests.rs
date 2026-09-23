@@ -40,6 +40,10 @@ fn community(id: &str, label: &str, nodes: &[&str]) -> ViewCommunity {
         label_source: "deterministic".to_string(),
         label_stale: false,
         nodes: nodes.iter().map(|node| (*node).to_string()).collect(),
+        first_member: nodes
+            .first()
+            .map(|node| (*node).to_string())
+            .unwrap_or_default(),
     }
 }
 

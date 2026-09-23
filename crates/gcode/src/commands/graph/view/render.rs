@@ -120,6 +120,9 @@ pub(super) struct ViewCommunity {
     pub label_stale: bool,
     /// Canonical node ids that are present in this view; `size` remains project-wide.
     pub nodes: Vec<String>,
+    /// The stored community's `members[0]`, which breaks size ties in partition order.
+    #[serde(skip)]
+    pub first_member: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -243,7 +246,13 @@ pub(super) fn build_view_payload(
             }
         }
     }
-    communities.sort_by(|left, right| left.id.cmp(&right.id));
+    // Partition order: size desc, then members[0] asc.
+    communities.sort_by(|left, right| {
+        right
+            .size
+            .cmp(&left.size)
+            .then_with(|| left.first_member.cmp(&right.first_member))
+    });
     let members_by_community = communities
         .iter()
         .map(|community| {
