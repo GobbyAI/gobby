@@ -49,6 +49,7 @@ impl Pane {
             generation,
         };
         self.attach_retry_at = None;
+        self.reattach_after_indeterminate = false;
         self.live = false;
         self.control = ControlState::Observe;
         self.clear_pending_input();

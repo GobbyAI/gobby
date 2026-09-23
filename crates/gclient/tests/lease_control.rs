@@ -589,3 +589,94 @@ async fn a_deferred_attach_retries_after_the_backoff() {
     assert_eq!(workspace.pane(pane).status_message(), None);
     mock.shutdown().await;
 }
+
+#[tokio::test]
+async fn take_control_timeout_then_finalized_reattaches_on_the_same_generation() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.suppress_ws("terminal_take_control");
+    let (mut workspace, _home) = single_terminal_loop(&mock).await;
+    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    chrome.keymap = Keymap::defaults(HERDR_PREFIX);
+    let (input_tx, input_rx) = mpsc::channel(256);
+
+    let driver = async {
+        // Attach completes and focus asks for control. The grant is withheld,
+        // so the control deadline retires that attachment.
+        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        wait_for_websocket_requests_within(&mock, "terminal_detach", 1, Duration::from_secs(5))
+            .await;
+        let detach = websocket_requests(&mock, "terminal_detach");
+        mock.send_event(json!({
+            "type": "terminal_attachment_finalized",
+            "daemon_epoch": "epoch-1",
+            "seq": 2,
+            "terminal_id": detach[0].get("terminal_id").cloned(),
+            "attachment_id": detach[0].get("attachment_id").cloned(),
+            "code": "control_timeout",
+            "reason": "take_control deadline",
+        }));
+        mock.allow_ws("terminal_take_control");
+        // The socket generation did not change. attach_ready_panes must issue
+        // another attach; a generation entry left by the retire path skips it.
+        // The resize is sent only after that attach is installed.
+        wait_for_websocket_requests_within(&mock, "terminal_attach", 2, Duration::from_secs(3))
+            .await;
+        wait_for_websocket_requests_within(&mock, "terminal_resize", 2, Duration::from_secs(2))
+            .await;
+        send_key(&input_tx, KeyCode::Char('x'), KeyModifiers::NONE).await;
+        wait_for_websocket_requests_within(
+            &mock,
+            "terminal_take_control",
+            2,
+            Duration::from_secs(3),
+        )
+        .await;
+        wait_for_websocket_requests_within(&mock, "terminal_input", 1, Duration::from_secs(3))
+            .await;
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+
+    let pane = workspace
+        .pane_for_terminal("terminal-a")
+        .expect("terminal pane");
+    assert!(
+        workspace.pane(pane).is_live(),
+        "the pane reattached on the same generation: {:?}",
+        workspace.pane(pane).status_message()
+    );
+    assert!(
+        workspace.pane(pane).is_held(),
+        "input control was restored: {:?}",
+        workspace.pane(pane).status_message()
+    );
+    assert_eq!(websocket_requests(&mock, "terminal_attach").len(), 2);
+
+    let area = Rect::new(0, 0, 140, 30);
+    chrome.compute_view(&workspace, area);
+    let mut screen = Terminal::new(TestBackend::new(140, 30)).expect("test terminal");
+    screen
+        .draw(|frame| {
+            render_workspace(frame, &workspace, &chrome);
+        })
+        .expect("draw the workspace");
+    let text = screen_text(&screen);
+    assert!(
+        !text.contains("Control result indeterminate"),
+        "rendering resumed instead of keeping the retire note:\n{text}"
+    );
+    mock.shutdown().await;
+}
