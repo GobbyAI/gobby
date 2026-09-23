@@ -71,6 +71,8 @@ COMPONENTS: tuple[str, ...] = (
     "voice",
     "embedding",
     "ide-settings",
+    "gclient",
+    "gterm",
 )
 CLI_COMPONENTS: frozenset[str] = frozenset({"claude", "codex", "grok", "qwen", "droid", "agy"})
 # Components that leave something behind to remove; voice, embedding, and
@@ -100,6 +102,8 @@ COMPONENT_LABELS: dict[str, str] = {
     "voice": "Voice",
     "embedding": "Embedding",
     "ide-settings": "IDE settings",
+    "gclient": "gclient",
+    "gterm": "gterm",
 }
 
 _CLI_INSTALLERS: dict[str, Callable[..., dict[str, Any]]] = {
@@ -181,6 +185,24 @@ def reconcile_rtk_step(
     return rtk_status
 
 
+def promote_client_binary(name: str, bin_dir: Path) -> dict[str, Any]:
+    """Install one client binary without claiming the daemon singleton.
+
+    ``install_gclient_from_submodule`` and its gterm twin take the native-bin
+    lock, replace the binary through a new inode, and ad-hoc sign it. A running
+    process keeps its old inode.
+    """
+    from gobby.cli import install_setup
+
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    installer = {
+        "gclient": install_setup._install_gclient_from_submodule,
+        "gterm": install_setup._install_gterm_from_submodule,
+    }[name]
+    outcome = installer(bin_dir)
+    return {"success": bool(outcome), "outcome": outcome}
+
+
 def run_install_components(
     components: Iterable[str],
     *,
@@ -188,6 +210,7 @@ def run_install_components(
     no_interactive: bool,
     embedding: EmbeddingOverrides | None,
     runtime: CliRuntime,
+    bin_dir: Path | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Install the named components, in order, against an existing install."""
     results: dict[str, dict[str, Any]] = {}
@@ -242,6 +265,9 @@ def run_install_components(
         elif name == "ide-settings":
             configure_ide_terminals()
             results["ide-settings"] = {"success": True}
+        elif name in {"gclient", "gterm"}:
+            target = bin_dir if bin_dir is not None else get_gobby_home() / "bin"
+            results[name] = promote_client_binary(name, target)
         else:
             raise click.UsageError(f"Unknown component: {name}")
     return results
