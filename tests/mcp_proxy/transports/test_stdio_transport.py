@@ -456,8 +456,16 @@ class TestStdioConnectSuccess:
             unhooked_params = harness.transport_calls[1][0]
             await unhooked.disconnect()
 
-        assert hooked_params.args == [*chrome_args, "--executable-path=/tmp/chrome"]
+        assert hooked_params.command == sys.executable
+        assert hooked_params.args == [
+            "-m",
+            "gobby.mcp_proxy.transports.chrome_supervisor",
+            "npx",
+            *chrome_args,
+            "--executable-path=/tmp/chrome",
+        ]
         assert hooked_params.env == {"npm_config_prefer_offline": "true"}
+        assert unhooked_params.command == "npx"
         assert unhooked_params.args == chrome_args
         assert unhooked_params.env == {"npm_config_prefer_offline": "true"}
 

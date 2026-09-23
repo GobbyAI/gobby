@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import subprocess
 from collections.abc import Iterator
 from pathlib import Path
@@ -398,6 +399,7 @@ class TestStatusCommand:
         )
         assert _fmt.call_args.kwargs["status_details_error"] is None
 
+    @pytest.mark.parametrize("message", ["database unavailable", "x" * 500])
     @patch("gobby.utils.deps.check_config_mismatches", return_value=[])
     @patch("gobby.utils.deps.collect_all_deps", side_effect=RuntimeError("database unavailable"))
     @patch("gobby.cli.daemon.asyncio.run", return_value={})
@@ -420,8 +422,10 @@ class TestStatusCommand:
         _async: MagicMock,
         _deps: MagicMock,
         _mismatches: MagicMock,
+        message: str,
         runner: CliRunner,
         tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         from gobby.runner_pid_file import ProbeState, SingletonProbe
 
@@ -434,6 +438,7 @@ class TestStatusCommand:
             api_data={"process": {}},
             health_confirmed=True,
         )
+        _deps.side_effect = RuntimeError(message)
 
         config = MagicMock()
         config.logging.dir = str(tmp_path)
@@ -457,7 +462,7 @@ class TestStatusCommand:
                         "minimum_version": None,
                         "expected_version": None,
                         "path": None,
-                        "error": "Dependency status collection failed: RuntimeError",
+                        "error": f"Dependency status collection failed: RuntimeError: {message[:160]}",
                     }
                 },
                 "optional": {},
@@ -465,10 +470,16 @@ class TestStatusCommand:
             "integrations": {
                 "embeddings_provider": {
                     "status": "degraded",
-                    "error": "RuntimeError",
+                    "error": f"RuntimeError: {message[:160]}",
                 }
             },
         }
+        assert any(
+            record.levelno >= logging.WARNING
+            and record.exc_info is not None
+            and "Failed to collect CLI dependency status" in record.message
+            for record in caplog.records
+        )
 
     @patch("gobby.utils.deps.check_config_mismatches", return_value=[])
     @patch(

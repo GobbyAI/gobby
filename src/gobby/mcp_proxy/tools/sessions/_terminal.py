@@ -11,7 +11,7 @@ import asyncio as asyncio
 import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Literal
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 from gobby.agents.provider_capabilities import provider_capabilities
 from gobby.agents.tmux.session_manager import TmuxSessionManager
@@ -75,7 +75,7 @@ from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_activity import reconcile_compact_session_activity
 from gobby.terminal_context import parse_terminal_context_value, terminal_context_has_tmux_target
 from gobby.terminals.lookup import manager_for_terminal_context
-from gobby.terminals.pane_io import PaneIO, RuntimePaneIO, TmuxPaneIO, live_runtime_pane
+from gobby.terminals.pane_io import PaneIO, TmuxPaneIO, context_runtime_pane, live_runtime_pane
 from gobby.workflows.session_feedback_survey import survey_is_active
 from gobby.workflows.state_manager import SessionVariableManager
 
@@ -140,34 +140,6 @@ def _resolve_tmux_target(
     )
 
 
-def _context_terminal(session: Any, terminal_manager: Any) -> Any | None:
-    """Live gterm row named by terminal context when the session row is unbound."""
-    context = getattr(session, "terminal_context", None)
-    if not isinstance(context, dict) or terminal_manager is None:
-        return None
-    raw_id = context.get("gobby_terminal_id")
-    if not isinstance(raw_id, str) or not raw_id:
-        return None
-    try:
-        terminal_id = str(UUID(raw_id))
-    except ValueError:
-        return None
-    getter = getattr(terminal_manager, "get", None)
-    if not callable(getter):
-        return None
-    terminal = getter(terminal_id)
-    if terminal is None or getattr(terminal, "state", None) not in {"pending", "live"}:
-        return None
-    if getattr(terminal, "project_id", None) != getattr(session, "project_id", None):
-        return None
-    if getattr(terminal, "agent_run_id", None) is not None:
-        return None
-    bound = getattr(terminal, "session_id", None)
-    if bound not in {None, getattr(session, "id", None)}:
-        return None
-    return terminal
-
-
 def _resolve_pane_io(
     session_id: str,
     session_manager: SessionManager,
@@ -181,9 +153,9 @@ def _resolve_pane_io(
     if pane is not None:
         return pane, None
     session = session_manager.get(session_id)
-    terminal = _context_terminal(session, terminal_manager)
-    if terminal is not None and terminal_runtime_registry is not None:
-        return RuntimePaneIO(terminal_runtime_registry.resolve(terminal.backend), terminal), None
+    pane = context_runtime_pane(session, terminal_manager, terminal_runtime_registry)
+    if pane is not None:
+        return pane, None
     target, tmux, error = _resolve_tmux_target(session_id, session_manager, agent_run_manager)
     if error:
         return None, error
@@ -836,6 +808,12 @@ def register_terminal_tools(
                     "dropped_bytes": snapshot.dropped_bytes,
                     "total_bytes": snapshot.total_bytes,
                 }
+            session = session_manager.get(session_id)
+            pane = context_runtime_pane(session, terminal_manager, terminal_runtime_registry)
+            if pane is not None:
+                text = await pane.snapshot(lines)
+                if text is not None:
+                    return {"success": True, "output": text, "via": pane.backend}
         target, tmux, error = _resolve_tmux_target(session_id, session_manager, agent_run_manager)
         if error:
             fallback, transcript_error = await _capture_transcript_tail(

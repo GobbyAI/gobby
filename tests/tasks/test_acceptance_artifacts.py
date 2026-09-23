@@ -177,6 +177,19 @@ def test_deliberate_missing_file_reference_keeps_actionable_diagnostic(tmp_path:
     )
 
 
+def test_absolute_file_evidence_explains_repository_relative_requirement(tmp_path: Path) -> None:
+    result = evaluate_acceptance_artifacts(
+        criteria="file: `/tmp/external-report.md`.",
+        repo_path=str(tmp_path),
+        commit_shas=[],
+    )
+
+    assert len(result.findings) == 1
+    finding = result.findings[0]
+    assert "repository-relative" in finding
+    assert "committed evidence report" in finding
+
+
 def test_transcript_evidence_imports_in_fresh_interpreter() -> None:
     result = subprocess.run(
         [

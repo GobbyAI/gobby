@@ -104,7 +104,7 @@ async def launch_close_review(
     store = TaskCloseReviewStore(ctx.task_manager.db)
     reusable_rejection = store.get_delivered_rejected_verdict(
         task_id=task.id,
-        evidence_fingerprint=evidence_fingerprint,
+        review_fingerprint=review_fingerprint,
         expected_task_updated_at=task.updated_at,
     )
     if reusable_rejection is not None and reusable_rejection.result_payload is not None:

@@ -49,6 +49,7 @@ FEEDBACK_FINDINGS_SCHEMA: dict[str, Any] = {
                         "uniqueItems": True,
                     },
                     "cited_paths": {"type": "array", "items": {"type": "string"}},
+                    "implementation_paths": {"type": "array", "items": {"type": "string"}},
                     "theme": {"type": "string"},
                     "classification": {"type": "string", "enum": list(_CLASSIFICATIONS)},
                     "proposed_task": {
@@ -72,6 +73,7 @@ FEEDBACK_FINDINGS_SCHEMA: dict[str, Any] = {
                 "required": [
                     "observation_ids",
                     "cited_paths",
+                    "implementation_paths",
                     "theme",
                     "classification",
                     "digest_note",

@@ -184,11 +184,14 @@ class FeedbackActions:
                 proposed_priority = proposed.get("priority")
                 priority = int(proposed_priority) if isinstance(proposed_priority, int) else 2
                 cited_paths = _cluster_cited_paths(cluster)
+                implementation_paths = _cluster_implementation_paths(cluster)
                 missing_paths: list[str] = []
                 newest_touching_commit: str | None = None
-                if cited_paths:
+                if cited_paths or implementation_paths:
                     if repo_root is None:
                         repo_root = await asyncio.to_thread(self._gobby_repo_root, project_id)
+                if cited_paths:
+                    assert repo_root is not None
                     missing_paths = await _missing_paths_at_head(
                         repo_root,
                         cited_paths,
@@ -197,11 +200,10 @@ class FeedbackActions:
                         labels.append(UNVERIFIED_PREMISE_LABEL)
                         priority = 3
 
+                if implementation_paths:
+                    assert repo_root is not None
                     newest_observation_at = _newest_observation_at(observation_ids, rows_by_id)
-                    newest_touch = await _newest_touching_commit(
-                        repo_root,
-                        cited_paths,
-                    )
+                    newest_touch = await _newest_touching_commit(repo_root, implementation_paths)
                     if (
                         newest_touch is not None
                         and newest_observation_at is not None
@@ -397,7 +399,7 @@ def _task_description(
         description += f"\nPremise verification: missing at HEAD: {', '.join(missing_paths)}"
     if newest_touching_commit:
         description += (
-            "\nRecency check: possibly fixed by newest commit touching cited paths: "
+            "\nRecency check: possibly fixed by newest commit touching implementation paths: "
             f"{newest_touching_commit}"
         )
     return description.strip()
@@ -415,6 +417,20 @@ def _cluster_cited_paths(cluster: dict[str, Any]) -> list[str]:
     if not isinstance(raw_paths, list):
         return []
     return list(dict.fromkeys(str(value).strip() for value in raw_paths if str(value).strip()))
+
+
+def _cluster_implementation_paths(cluster: dict[str, Any]) -> list[str]:
+    raw_paths = cluster.get("implementation_paths")
+    if not isinstance(raw_paths, list):
+        return []
+    return list(
+        dict.fromkeys(
+            path
+            for value in raw_paths
+            if (path := _repo_relative_path(str(value))) is not None
+            and path.startswith(("src/gobby/", "crates/", "web/src/"))
+        )
+    )
 
 
 def _description_observation_ids(description: str) -> set[str]:

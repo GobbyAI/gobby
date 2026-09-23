@@ -447,7 +447,7 @@ class TaskCloseReviewStore:
         self,
         *,
         task_id: str,
-        evidence_fingerprint: str,
+        review_fingerprint: str,
         expected_task_updated_at: datetime,
     ) -> TaskCloseReview | None:
         """Return the newest delivered rejection when no active review owns the task."""
@@ -466,7 +466,7 @@ class TaskCloseReviewStore:
                 SELECT {_QUALIFIED_COLUMNS}
                 FROM task_close_reviews AS r
                 WHERE r.task_id = %s
-                  AND r.evidence_fingerprint = %s
+                  AND r.review_fingerprint = %s
                   AND r.status = 'invalid'
                   AND r.delivered_at IS NOT NULL
                   AND r.result_payload IS NOT NULL
@@ -481,7 +481,7 @@ class TaskCloseReviewStore:
                 """,  # nosec B608 - static column fragment
                 (
                     task_id,
-                    evidence_fingerprint,
+                    review_fingerprint,
                     list(ACTIVE_TASK_CLOSE_REVIEW_STATUSES),
                 ),
             ).fetchone()

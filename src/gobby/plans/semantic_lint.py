@@ -555,10 +555,10 @@ def _lint_production_size_growth(
         line_count = _line_count(source_path)
         if line_count < PRODUCTION_SIZE_GROWTH_THRESHOLD:
             continue
-        if _is_whole_file_deletion(plan_doc, section, file_path) or _has_new_split_target(
-            plan_doc, section, project_root, file_path
-        ):
+        split_status = _new_split_target_status(plan_doc, section, project_root, file_path)
+        if _is_whole_file_deletion(plan_doc, section, file_path) or split_status == "matched":
             continue
+        split_candidates = _new_split_target_candidates(plan_doc, section, project_root, file_path)
         issues.append(
             SemanticLintIssue(
                 code="production-size-growth",
@@ -567,7 +567,10 @@ def _lint_production_size_growth(
                 message=(
                     f"target {file_path} has {line_count:,} lines and is already near the "
                     f"{PRODUCTION_SIZE_CEILING:,}-line production ceiling; target a new "
-                    "same-extension file and name the split or move in this deliverable"
+                    "same-extension file and name the split or move in this deliverable. "
+                    f"{split_status} split path. "
+                    f"Candidate split targets: {', '.join(sorted(split_candidates)) or 'none'}; "
+                    "use an unambiguous qualified path"
                 ),
                 details={
                     "file_path": file_path,
@@ -753,31 +756,54 @@ def _line_count(path: Path) -> int:
     return count
 
 
-def _has_new_split_target(
+def _new_split_target_status(
     plan_doc: PlanDocument,
     section: PlanSection,
     project_root: Path,
     large_file: str,
-) -> bool:
-    extension = _suffix(large_file)
-    candidates = {
-        target
-        for target in _bare_target_paths(plan_doc, section)
-        if _suffix(target) == extension and not (project_root / target).exists()
-    }
+) -> str:
+    targets = _bare_target_paths(plan_doc, section) | {large_file}
+    candidates = _new_split_target_candidates(plan_doc, section, project_root, large_file)
     if not candidates:
-        return False
-    large_names = {large_file, PurePosixPath(large_file).name}
-    candidate_names = candidates | {PurePosixPath(path).name for path in candidates}
+        return "missing"
+    status = "missing"
     for paragraph in _body_paragraphs(
         section_body_lines(plan_doc, section, before_acceptance=True)
     ):
         if _SPLIT_MOVE_RE.search(paragraph) is None:
             continue
         mentioned = find_file_paths_in_text(paragraph)
-        if mentioned & large_names and mentioned & candidate_names:
-            return True
-    return False
+        if not any(_resolve_target_suffix(mention, targets) == large_file for mention in mentioned):
+            continue
+        for mention in mentioned:
+            matches = _matching_target_suffixes(mention, targets)
+            if matches & candidates:
+                if len(matches) == 1:
+                    return "matched"
+                status = "ambiguous"
+            elif not matches and mention != large_file and status != "ambiguous":
+                status = "unmatched"
+    return status
+
+
+def _new_split_target_candidates(
+    plan_doc: PlanDocument, section: PlanSection, project_root: Path, large_file: str
+) -> set[str]:
+    extension = _suffix(large_file)
+    return {
+        target
+        for target in _bare_target_paths(plan_doc, section)
+        if _suffix(target) == extension and not (project_root / target).exists()
+    }
+
+
+def _resolve_target_suffix(mention: str, targets: set[str]) -> str | None:
+    matches = _matching_target_suffixes(mention, targets)
+    return next(iter(matches)) if len(matches) == 1 else None
+
+
+def _matching_target_suffixes(mention: str, targets: set[str]) -> set[str]:
+    return {target for target in targets if target == mention or target.endswith(f"/{mention}")}
 
 
 def _body_paragraphs(lines: list[str]) -> Iterator[str]:
