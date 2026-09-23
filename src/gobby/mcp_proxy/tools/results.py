@@ -115,7 +115,10 @@ def create_results_registry(
 
     registry.register(
         name="search_tool_result",
-        description="Search chunks within one stored oversized tool result.",
+        description=(
+            "Search chunks within one stored oversized tool result. Exact phrases must fit "
+            "within one 2,000-character chunk; phrases spanning a chunk boundary do not match."
+        ),
         input_schema={
             "type": "object",
             "properties": {
@@ -136,6 +139,7 @@ def create_results_registry(
         },
         output_schema={"type": "object"},
         func=search_tool_result,
+        read_only=True,
     )
 
     def get_tool_result(
@@ -200,6 +204,7 @@ def create_results_registry(
         },
         output_schema={"type": "object"},
         func=get_tool_result,
+        read_only=True,
     )
 
     return registry

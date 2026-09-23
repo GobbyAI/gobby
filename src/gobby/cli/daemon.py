@@ -600,7 +600,7 @@ def _do_stop(
     ):
         return False
     try:
-        with protect_pending_handoffs(get_cli_runtime(ctx), wait=wait, report=_step):
+        with protect_pending_handoffs(get_cli_runtime(ctx), force=force, wait=wait, report=_step):
             shutdown_source = "cli_restart" if shutdown_intent == "restart" else "cli_stop"
             # If OS service is installed and running, delegate to it
             docker_stopped = False
@@ -678,7 +678,10 @@ def _do_stop(
     "--force",
     "force",
     is_flag=True,
-    help="Interrupt an active restart-protected cron run (it resumes after the next start)",
+    help=(
+        "Interrupt an active restart-protected cron run and bypass unresolved session handoffs "
+        "(the run resumes after the next start)"
+    ),
 )
 @click.option(
     "--wait",
@@ -722,7 +725,10 @@ def stop(
     "--force",
     "force",
     is_flag=True,
-    help="Interrupt an active restart-protected cron run (it resumes after the restart)",
+    help=(
+        "Interrupt an active restart-protected cron run and bypass unresolved session handoffs "
+        "(the run resumes after the restart)"
+    ),
 )
 @click.option(
     "--wait",

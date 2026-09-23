@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from gobby.dispatch.actions import SpawnAgentAction
 from gobby.dispatch.spawn import _effective_spawn_isolation
+from gobby.dispatch.spawn_artifacts import (
+    _clone_artifact_is_stale,
+    _worktree_artifact_is_stale,
+)
+from gobby.dispatch.spawn_errors import DispatchSpawnFailed
 
 pytestmark = pytest.mark.unit
 
@@ -100,3 +108,51 @@ def test_main_context_isolation_bypasses_stage_lookup() -> None:
     agent_body = SimpleNamespace(isolation="worktree")
 
     assert _effective_spawn_isolation(task=task, action=action, agent_body=agent_body) == "none"
+
+
+def test_missing_worktree_record_is_retained_when_target_cleanup_fails(tmp_path: Path) -> None:
+    storage = MagicMock()
+    storage.get.return_value = SimpleNamespace(
+        id="wt-1",
+        project_id="project-1",
+        task_id="task-1",
+        worktree_path=str(tmp_path / "missing-worktree"),
+    )
+
+    with patch(
+        "gobby.dispatch.spawn_artifacts.cleanup_checkout_cargo_target_dir",
+        return_value="permission denied",
+    ):
+        with pytest.raises(DispatchSpawnFailed, match="cargo_target_cleanup_failed"):
+            _worktree_artifact_is_stale(
+                db=MagicMock(),
+                task=cast(Any, SimpleNamespace(id="task-1")),
+                worktree_id="wt-1",
+                services=SimpleNamespace(worktree_storage=storage),
+            )
+
+    storage.delete.assert_not_called()
+
+
+def test_missing_clone_record_is_retained_when_target_cleanup_fails(tmp_path: Path) -> None:
+    storage = MagicMock()
+    storage.get.return_value = SimpleNamespace(
+        id="clone-1",
+        project_id="project-1",
+        task_id="task-1",
+        clone_path=str(tmp_path / "missing-clone"),
+    )
+
+    with patch(
+        "gobby.dispatch.spawn_artifacts.cleanup_checkout_cargo_target_dir",
+        return_value="permission denied",
+    ):
+        with pytest.raises(DispatchSpawnFailed, match="cargo_target_cleanup_failed"):
+            _clone_artifact_is_stale(
+                db=MagicMock(),
+                task=cast(Any, SimpleNamespace(id="task-1")),
+                clone_id="clone-1",
+                services=SimpleNamespace(clone_storage=storage),
+            )
+
+    storage.delete.assert_not_called()

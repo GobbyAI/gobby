@@ -211,7 +211,7 @@ centrality-only entry for the report.
 
 Targets:
 - `crates/gcore/src/graph_analytics.rs::*` — scope-reason: add the communities entry point and typed input error beside the existing analyze façade, and move the inline test module to a #[path] sibling
-- `crates/gcore/src/graph_analytics/tests.rs`
+- `crates/gcore/src/graph_analytics/tests.rs::*` — scope-reason: the landed extraction and new analytics tests intentionally cover the whole test module
 
 Research context: `analyze` (`graph_analytics.rs:78-95`) runs Tarjan bridges,
 centrality, god nodes, unexpected links, and hotspots; `PreparedGraph` (:127-133) and
@@ -271,7 +271,7 @@ Verify: `cargo fmt -p gobby-core -- --check`, `cargo clippy -p gobby-core --feat
 
 Targets:
 - `crates/gcore/src/graph_analytics.rs::*` — scope-reason: add the centrality entry point sharing the validation of communities
-- `crates/gcore/src/graph_analytics/tests.rs`
+- `crates/gcore/src/graph_analytics/tests.rs::*` — scope-reason: the landed centrality parity cases and shared fixtures intentionally cover the whole test module
 - `crates/gcode/src/graph/report/summary.rs::*` — scope-reason: replace both analyze calls with centrality in gcore_hotspots_for_code_graph and gcore_incoming_call_hotspots
 - `docs/evidence/community-labels-2026-09/report-latency.md`
 
@@ -313,8 +313,8 @@ both reach. No schema, no I/O beyond loading import rows.
 
 Targets:
 - `crates/gcode/src/communities.rs`
-- `crates/gcode/src/communities/identity.rs`
-- `crates/gcode/src/communities/identity_tests.rs`
+- `crates/gcode/src/communities/identity.rs::*` — scope-reason: the landed identity move and connection-taking loader own the complete new module
+- `crates/gcode/src/communities/identity_tests.rs::*` — scope-reason: the landed moved and overlay identity cases own the complete new test module
 - `crates/gcode/src/lib.rs::*` — scope-reason: declare the new communities module beside the other crate modules
 - `crates/gcode/src/commands/graph/view/mcg/identity.rs::*` — scope-reason: remove McgIdentity, providers_for, unique_provider, and from_resolution; keep the seed types
 - `crates/gcode/src/commands/graph/view/mcg/fetch.rs::*` — scope-reason: replace load_identity with communities::identity::load_project_imports on the connection run already opens
@@ -378,9 +378,9 @@ Verify: `cargo nextest run -p gobby-code -E 'test(identity) | test(mcg)'`, `carg
 
 Targets:
 - `crates/gcode/src/communities.rs`
-- `crates/gcode/src/communities/partition.rs`
-- `crates/gcode/src/communities/labels.rs`
-- `crates/gcode/src/communities/partition_tests.rs`
+- `crates/gcode/src/communities/partition.rs::*` — scope-reason: the landed partition kernel owns the complete new module
+- `crates/gcode/src/communities/labels.rs::*` — scope-reason: the landed deterministic labeling helpers own the complete new module
+- `crates/gcode/src/communities/partition_tests.rs::*` — scope-reason: the landed partition, signature, and labeling cases own the complete new test module
 - `docs/evidence/community-labels-2026-09/thresholds.md`
 
 Research context: inputs are `ImportIdentity` and the `(source, module)` rows from 2.1.
@@ -721,7 +721,7 @@ Verify: `cargo nextest run -p gobby-core --features postgres`, `cargo nextest ru
 - 3.1.4 - The privilege manifest grants `code_communities` to the gcode capability with the same scope declaration as `code_indexed_project_states`, and gcode's `schema.rs` contracts include the table and both new columns. file: `crates/gcode/security/managed_postgres_privileges.json`.
 - 3.1.5 - One coherent `uv run gobby cutover --path /Users/josh/.gobby/worktrees/gobby/lane-22581-gcode-import-communities` from the main checkout applies 443 on the live hub and `gdaemon schema plan` reports nothing pending afterwards, as recorded in the apply log. behavior: "nothing pending" in `docs/evidence/community-labels-2026-09/schema-apply.md`.
 - 3.1.6 - The managed-relation set assertion names `code_communities`. test: `tests/code_index/test_gcode_privilege_manifest.py::test_manifest_privileges_match_the_managed_relation_set`.
-- 3.1.7 - The migration number actually used replaces every live occurrence of the provisional 443 named in Constraints in the same commit, and the apply log plus the later 7.1 changelog leaf record it without editing historical V1. behavior: "landed as migration" in `docs/evidence/community-labels-2026-09/schema-apply.md`.
+- 3.1.7 - The migration number actually used replaces every live occurrence of the provisional 443 named in Constraints in the same commit; the apply log records it now, and the later 7.1 changelog leaf is bound to read that landed number from the apply log without editing historical V1. behavior: "landed as migration" in `docs/evidence/community-labels-2026-09/schema-apply.md`.
 
 ### 3.2 Persist the partition at index time and expose the read API [category: code] (depends: 2.3, 3.1)
 `kind: deliverable`
@@ -820,9 +820,12 @@ rows (`representatives` are the top five members by in-degree with ties by path;
 and `commit`. Overlay projects: when `ctx` resolves to an overlay project that has no
 rows of its own, `begin_replace` seeds the prior rows and the watermark from the parent
 project (the same parent lookup `read_for_context` uses) inside the same READ COMMITTED
-transaction, taking `FOR UPDATE` on the parent's `code_indexed_project_states` row before
-reading the parent's `code_communities` rows: the parent's run holds a different advisory
-lock, so that row lock is what serializes the seed against the parent's own replace. The
+transaction, reading the parent's `code_indexed_project_states` row and its
+`code_communities` rows with plain SELECTs in one statement: that single statement's MVCC
+snapshot is what keeps the seeded watermark and rows from different parent commits apart,
+and it takes no parent row locks, because the managed gcode principal has no UPDATE
+privilege on parent rows under RLS and `FOR UPDATE` there returns nothing (Decision 29a).
+A parent replace committing mid-read becomes visible only to a later statement. The
 seed never copies the parent's `partition_signature`; the skip compares against the
 overlay's own stored value. `assign_ids` then carries the parent's ids and label fields
 forward by signature match and only genuinely new communities take fresh ids above the
@@ -876,9 +879,13 @@ issued after `begin_replace` blocks, matches zero rows, and leaves the row queue
 parent's ids and model labels for unchanged communities and issues fresh ids above the
 parent's watermark), `overlay_first_refresh_commits_when_partition_matches_parent` (an
 overlay whose partition equals the parent's commits rows under the overlay id on its
-first refresh and skips on its second), `overlay_seed_locks_parent_state_row` (a seed
-started while a parent replace holds the row lock blocks until the parent commits and
-reads the committed rows), `invalidate_removes_community_rows_with_project_state`
+first refresh and skips on its second), `overlay_seed_reads_parent_snapshot_without_locking`
+(a seed reads the parent's state row and community rows with plain SELECTs, taking no
+parent row locks), `overlay_seed_reads_coherent_parent_snapshot_across_replace_commit`
+(a seed running while a parent replace commits never combines a parent watermark and
+rows from different commits), `overlay_refresh_seeds_parent_rows_as_managed_principal`
+(the seed succeeds as the RLS-enforced managed gcode principal, which has no UPDATE
+privilege on parent rows), `invalidate_removes_community_rows_with_project_state`
 (after `invalidate` neither table holds a row for the machine and project), `edge_change_without_membership_change_rewrites_rows` (adding one
 import between existing members of one community rewrites its `internal_edges`,
 `cohesion`, `representatives`, and `boundary` with every `member_signature` unchanged),
@@ -909,7 +916,7 @@ after the coherent-set cutover.
 - 3.2.12 - Incremental single-file index latency before and after this leaf is recorded against the +250 ms p50 budget on both corpora. behavior: "p50" in `docs/evidence/community-labels-2026-09/refresh-latency.md`.
 - 3.2.13 - `invalidate` removes this machine's `code_communities` rows in the same transaction that removes its `code_indexed_project_states` row. test: `crates/gcode/src/communities/refresh_tests.rs::invalidate_removes_community_rows_with_project_state`.
 - 3.2.14 - An overlay's first refresh commits rows under the overlay id even when its partition equals the parent's, because the skip compares against the overlay's own stored signature. test: `crates/gcode/src/communities/refresh_tests.rs::overlay_first_refresh_commits_when_partition_matches_parent`.
-- 3.2.15 - The overlay seed reads the parent's rows under `FOR UPDATE` on the parent's state row in one READ COMMITTED transaction and observes a concurrent parent replace only after it commits. test: `crates/gcode/src/communities/refresh_tests.rs::overlay_seed_locks_parent_state_row`.
+- 3.2.15 - The overlay seed reads the parent's state row and community rows with plain SELECTs from one coherent READ COMMITTED statement snapshot inside the replacement transaction. It needs no UPDATE visibility and takes no parent row locks, so it succeeds as the RLS-enforced managed gcode principal, and it never combines a parent watermark and rows from different commits when a concurrent parent replace commits during the read. test: `crates/gcode/src/communities/refresh_tests.rs::overlay_seed_reads_parent_snapshot_without_locking`. test: `crates/gcode/src/communities/refresh_tests.rs::overlay_seed_reads_coherent_parent_snapshot_across_replace_commit`. test: `crates/gcode/src/communities/refresh_tests.rs::overlay_refresh_seeds_parent_rows_as_managed_principal`.
 
 ## P4: Surfaces at contract v11
 `kind: framing`
@@ -2171,9 +2178,10 @@ prose defining `D1.1` plus a `deferred_from` key, because the validator rejects 
     3.1.6: The managed-relation set assertion names `code_communities`. test: `tests/code_index/test_gcode_privilege_manifest.py::test_manifest_privileges_match_the_managed_relation_set`.
 
     3.1.7: The migration number actually used replaces every live occurrence of the
-    provisional 443 named in Constraints in the same commit, and the apply log plus
-    the later 7.1 changelog leaf record it without editing historical V1. behavior:
-    "landed as migration" in `docs/evidence/community-labels-2026-09/schema-apply.md`.'
+    provisional 443 named in Constraints in the same commit; the apply log records
+    it now, and the later 7.1 changelog leaf is bound to read that landed number from
+    the apply log without editing historical V1. behavior: "landed as migration" in
+    `docs/evidence/community-labels-2026-09/schema-apply.md`.'
   labels:
   - covers:gcode-import-communities:3.1:3.1.1
   - covers:gcode-import-communities:3.1:3.1.2
@@ -2243,9 +2251,12 @@ prose defining `D1.1` plus a `deferred_from` key, because the validator rejects 
     its partition equals the parent''s, because the skip compares against the overlay''s
     own stored signature. test: `crates/gcode/src/communities/refresh_tests.rs::overlay_first_refresh_commits_when_partition_matches_parent`.
 
-    3.2.15: The overlay seed reads the parent''s rows under `FOR UPDATE` on the parent''s
-    state row in one READ COMMITTED transaction and observes a concurrent parent replace
-    only after it commits. test: `crates/gcode/src/communities/refresh_tests.rs::overlay_seed_locks_parent_state_row`.'
+    3.2.15: The overlay seed reads the parent''s state row and community rows with plain
+    SELECTs from one coherent READ COMMITTED statement snapshot inside the replacement
+    transaction. It needs no UPDATE visibility and takes no parent row locks, so it
+    succeeds as the RLS-enforced managed gcode principal, and it never combines a parent
+    watermark and rows from different commits when a concurrent parent replace commits
+    during the read. test: `crates/gcode/src/communities/refresh_tests.rs::overlay_seed_reads_parent_snapshot_without_locking`. test: `crates/gcode/src/communities/refresh_tests.rs::overlay_seed_reads_coherent_parent_snapshot_across_replace_commit`. test: `crates/gcode/src/communities/refresh_tests.rs::overlay_refresh_seeds_parent_rows_as_managed_principal`.'
   labels:
   - covers:gcode-import-communities:3.2:3.2.1
   - covers:gcode-import-communities:3.2:3.2.2

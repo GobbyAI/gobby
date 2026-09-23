@@ -33,6 +33,7 @@ from gobby.workflows.condition_helpers import (
     touches_docker_policy_path,
     touches_ui_design_path,
 )
+from gobby.workflows.safe_evaluator import build_condition_helpers
 
 pytestmark = pytest.mark.unit
 
@@ -742,6 +743,15 @@ def _rust_store_file(tmp_path: Path) -> str:
 
 
 class TestTddPathHelpers:
+    def test_tdd_gate_matches_absolute_written_path_to_relative_acceptance_path(self) -> None:
+        variables = {
+            "claimed_task_acceptance_test_paths": ["tests/test_app.py"],
+            "tdd_tests_written": ["/repo/tests/test_app.py"],
+        }
+        gate = build_condition_helpers(context={"project": {"path": "/repo"}})["tdd_gate_open"]
+
+        assert gate(variables) is True
+
     def test_first_tdd_code_path_uses_canonical_paths(self) -> None:
         event_data = {
             "canonical_file_paths": ["tests/test_app.py", "src/app.py"],
@@ -768,6 +778,13 @@ class TestTddPathHelpers:
         }
 
         assert first_tdd_test_path(event_data, {}) == "tests/helper.py"
+
+    def test_rust_named_test_module_counts_as_test_path(self) -> None:
+        path = "crates/gcode/src/communities/remap_tests.rs"
+        event_data = {"canonical_file_paths": [path]}
+
+        assert first_tdd_test_path(event_data, {}) == path
+        assert first_tdd_code_path(event_data, {}) == ""
 
     def test_tdd_helpers_fall_back_to_native_tool_input(self) -> None:
         tool_input = {"file_path": "src/new_module.py"}

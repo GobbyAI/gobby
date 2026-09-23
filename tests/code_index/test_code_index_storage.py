@@ -18,12 +18,14 @@ from gobby.code_index.models import (
     IndexedFile,
     IndexedProject,
     IndexWriteMode,
+    StoredCommunity,
     Symbol,
 )
 from gobby.code_index.storage import CodeIndexStorage
 from gobby.code_index.summary_safety import SUMMARY_MAX_CHARS
 from gobby.servers.lease_fence import StaleEpochFence, bind_fenced_writer
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.machine_id import require_machine_id
 from tests.code_index.conftest import FILE_CONTENT_HASH, MISSING_ID, PROJECT_ID, PROJECT_ID_2
 from tests.fixtures.postgres import TEST_USER_ID
 
@@ -91,6 +93,48 @@ def _make_search_symbol(symbol_id: str, name: str, byte_start: int) -> Symbol:
         signature=f"def {name}() -> None:",
         file_content_hash=FILE_CONTENT_HASH,
         content_hash=symbol_id,
+    )
+
+
+def _insert_test_community(
+    storage: CodeIndexStorage,
+    community_id: int,
+    *,
+    member_count: int,
+    member_signature: str,
+    labeled_signature: str | None = None,
+    attempted: bool = False,
+) -> None:
+    members = [f"src/member-{community_id}-{index}.py" for index in range(member_count)]
+    storage.db.execute(
+        """INSERT INTO code_communities (
+               machine_id, project_id, community_id, member_count, members,
+               representatives, internal_edges, cohesion, boundary, member_signature,
+               label_deterministic, label, label_source, label_candidates,
+               labeled_signature, label_attempted_at
+           )
+           VALUES (
+               %s, %s, %s, %s, %s,
+               %s, %s, %s, '[]'::jsonb, %s,
+               %s, %s, 'deterministic', %s,
+               %s, CASE WHEN %s THEN NOW() ELSE NULL END
+           )""",
+        (
+            require_machine_id(),
+            PROJECT_ID,
+            community_id,
+            member_count,
+            members,
+            members[:1],
+            max(member_count - 1, 0),
+            0.5,
+            member_signature,
+            f"Community {community_id}",
+            f"Community {community_id}",
+            [],
+            labeled_signature,
+            attempted,
+        ),
     )
 
 
@@ -1283,6 +1327,152 @@ def test_search_content_fts_surfaces_backend_failure(
     monkeypatch.setattr("gobby.search.keyword.fetch_all", fail_fetch_all)
 
     assert code_storage.search_content_fts("greeting", PROJECT_ID) == []
+
+
+# ── Community labels ──────────────────────────────────────────────────
+
+
+def test_get_unlabeled_communities_respects_signature_and_cooloff(
+    code_storage: CodeIndexStorage,
+) -> None:
+    _insert_test_community(
+        code_storage,
+        1,
+        member_count=3,
+        member_signature="1111111111111111",
+    )
+    _insert_test_community(
+        code_storage,
+        2,
+        member_count=5,
+        member_signature="2222222222222222",
+        labeled_signature="2222222222222222",
+    )
+    _insert_test_community(
+        code_storage,
+        3,
+        member_count=4,
+        member_signature="3333333333333333",
+        attempted=True,
+    )
+
+    queued = code_storage.get_unlabeled_communities(PROJECT_ID, limit=10)
+
+    assert [community.community_id for community in queued] == [1]
+    assert isinstance(queued[0], StoredCommunity)
+    assert queued[0].members == [
+        "src/member-1-0.py",
+        "src/member-1-1.py",
+        "src/member-1-2.py",
+    ]
+    assert queued[0].member_signature == "1111111111111111"
+
+    retried = code_storage.get_unlabeled_communities(
+        PROJECT_ID,
+        limit=10,
+        failure_cooloff_seconds=0,
+    )
+    assert [community.community_id for community in retried] == [3, 1]
+
+
+def test_update_community_label_is_signature_guarded(code_storage: CodeIndexStorage) -> None:
+    member_signature = "1111111111111111"
+    _insert_test_community(
+        code_storage,
+        1,
+        member_count=3,
+        member_signature=member_signature,
+    )
+
+    stale_write = code_storage.update_community_label(
+        PROJECT_ID,
+        1,
+        "ffffffffffffffff",
+        label="Database access",
+        label_source="model",
+        label_confidence=0.91,
+        label_model="jev-latest",
+        labeled_signature=member_signature,
+    )
+
+    assert stale_write is False
+    before = code_storage.db.fetchone(
+        """SELECT label, label_source, label_confidence, label_model, labeled_signature
+           FROM code_communities
+           WHERE machine_id = %s AND project_id = %s AND community_id = %s""",
+        (require_machine_id(), PROJECT_ID, 1),
+    )
+    assert before == {
+        "label": "Community 1",
+        "label_source": "deterministic",
+        "label_confidence": None,
+        "label_model": None,
+        "labeled_signature": None,
+    }
+
+    written = code_storage.update_community_label(
+        PROJECT_ID,
+        1,
+        member_signature,
+        label="Database access",
+        label_source="model",
+        label_confidence=0.91,
+        label_model="jev-latest",
+        labeled_signature=member_signature,
+    )
+
+    assert written is True
+    after = code_storage.db.fetchone(
+        """SELECT label, label_source, label_confidence, label_model, labeled_signature,
+                  label_attempted_at, labeled_at
+           FROM code_communities
+           WHERE machine_id = %s AND project_id = %s AND community_id = %s""",
+        (require_machine_id(), PROJECT_ID, 1),
+    )
+    assert after is not None
+    assert after["label"] == "Database access"
+    assert after["label_source"] == "model"
+    assert after["label_confidence"] == 0.91
+    assert after["label_model"] == "jev-latest"
+    assert after["labeled_signature"] == member_signature
+    assert after["label_attempted_at"] is None
+    assert after["labeled_at"] is not None
+
+
+def test_mark_community_labels_attempted_is_signature_guarded(
+    code_storage: CodeIndexStorage,
+) -> None:
+    current_signature = "1111111111111111"
+    _insert_test_community(
+        code_storage,
+        1,
+        member_count=3,
+        member_signature=current_signature,
+    )
+    _insert_test_community(
+        code_storage,
+        2,
+        member_count=2,
+        member_signature="2222222222222222",
+    )
+
+    updated = code_storage.mark_community_labels_attempted(
+        [
+            (PROJECT_ID, 1, current_signature),
+            (PROJECT_ID, 2, "stale-signature"),
+        ]
+    )
+
+    assert updated == 1
+    attempts = code_storage.db.fetchall(
+        """SELECT community_id, label_attempted_at
+           FROM code_communities
+           WHERE machine_id = %s AND project_id = %s
+           ORDER BY community_id""",
+        (require_machine_id(), PROJECT_ID),
+    )
+    assert attempts[0]["label_attempted_at"] is not None
+    assert attempts[1]["label_attempted_at"] is None
 
 
 # ── Summary freshness ──────────────────────────────────────────────────

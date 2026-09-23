@@ -5,7 +5,17 @@ The machine-readable contract lives at `tests/contracts/gcode.contract.json`.
 
 ## Version
 
-`contract_version`: 10
+`contract_version`: 11
+
+Version 11 adds persisted, per-machine project import communities. `graph view
+--view communities` is seedless for its list form, accepts `--min-size`, and
+uses `--community <ID|LABEL|PATH>` for detail by stable ID, label, or exact
+member path. Community payload entries carry `label`, `size`, `cohesion`,
+`label_source`, `label_stale`, and view-local `nodes`; community node IDs are
+`community:<id>`, and inter-community `edges[].count` records import weight.
+The `index` result includes its `communities` report. The companion
+`communities` evidence operation exposes the same stored partition to evidence
+consumers.
 
 Version 10 adds the daemon-backed `ask` lifecycle. A new run is bound to one
 project and immutable Git snapshot, defaults to `HEAD`, a 600-second absolute
@@ -66,8 +76,11 @@ score`.
 - `callers`, `callees`, `usages` — call/import graph reads (the `graph_read_keys`
   envelope). Each relationship remains a complete page unit; callback references
   require `gcode grep -w`.
-- `graph view` — scoped `fcg` / `mcg` / `class-hierarchy` dump. MCG requires
-  `--file` or `--module`; FCG and class hierarchy require `--symbol`. JSON keys:
+- `graph view` — scoped `fcg` / `mcg` / `class-hierarchy` dump or stored
+  project-wide `communities` view. MCG requires `--file` or `--module`; FCG and
+  class hierarchy require `--symbol`; communities is seedless for a list and
+  accepts `--community <ID|LABEL|PATH>` for detail plus `--min-size` for list
+  filtering. JSON keys:
   `project_id, project_root, view, seed, depth, incoming_truncated,
   outgoing_truncated, hint, nodes, edges, communities, mermaid`. Mermaid is
   always present and is never character/token-sliced

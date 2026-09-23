@@ -32,6 +32,54 @@ class CodeIndexSymbolSummaryConfig(FeatureDefaultConfig):
     )
 
 
+class CodeIndexCommunityLabelConfig(FeatureDefaultConfig):
+    """Configuration for LLM-generated code-index community labels."""
+
+    enabled: bool = Field(
+        default=True,
+        description="Enable LLM-generated import-community labels",
+    )
+    batch_size: int = Field(
+        default=10,
+        ge=1,
+        le=20,
+        description="Max communities to label per maintenance pass",
+    )
+    max_concurrency: int = Field(
+        default=2,
+        ge=1,
+        description="Maximum concurrent community label LLM calls",
+    )
+    max_tokens: int = Field(
+        default=120,
+        ge=1,
+        description="Maximum tokens for each community label generation",
+    )
+    decisions_api_base: str | None = Field(
+        default=None,
+        description="Optional Decisions API base URL for label gating",
+    )
+    decisions_api_key: str | None = Field(
+        default=None,
+        description="Secret reference for the Decisions API key",
+    )
+    decisions_model: str = Field(
+        default="jev-latest",
+        description="Decisions API model used for label gating",
+    )
+    decisions_min_confidence: float = Field(
+        default=0.5,
+        ge=0,
+        le=1,
+        description="Minimum Decisions API confidence for a model label",
+    )
+    decisions_timeout_seconds: int = Field(
+        default=30,
+        ge=1,
+        description="Decisions API request timeout in seconds",
+    )
+
+
 class CodeIndexConfig(BaseModel):
     """Configuration for native AST-based code indexing."""
 
@@ -102,6 +150,10 @@ class CodeIndexConfig(BaseModel):
         default_factory=CodeIndexSymbolSummaryConfig,
         description="LLM-generated symbol summary configuration",
     )
+    community_label: CodeIndexCommunityLabelConfig = Field(
+        default_factory=CodeIndexCommunityLabelConfig,
+        description="LLM-generated import-community label configuration",
+    )
     sync_worker_interval_seconds: float = Field(
         default=5.0,
         gt=0,
@@ -116,6 +168,11 @@ class CodeIndexConfig(BaseModel):
         default=50,
         ge=1,
         description="Max files to sync per poll iteration",
+    )
+    sync_worker_concurrency: int = Field(
+        default=4,
+        ge=1,
+        description="Maximum concurrent per-file projection sync commands",
     )
     sync_worker_breaker_failure_threshold: int = Field(
         default=5,

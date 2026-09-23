@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import replace
 from typing import Protocol, cast
@@ -25,6 +26,7 @@ logger = logging.getLogger(__name__)
 CAPABILITY_REFRESH_INTERVAL_SECONDS = 24 * 60 * 60.0
 CAPABILITY_SOURCE_TIMEOUT_SECONDS = 30.0
 CAPABILITY_REFRESH_DRAIN_TIMEOUT_SECONDS = 7.0
+CAPABILITY_RECOLLECT_COOLDOWN_SECONDS = 60.0
 
 
 class CapabilityStore(Protocol):
@@ -77,6 +79,8 @@ class CapabilityRefreshCoordinator:
         run_db: RunDatabase | None = None,
         sleep: Sleep = asyncio.sleep,
         coverage_auditor: CoverageAuditor | None = None,
+        recollect_cooldown_seconds: float = CAPABILITY_RECOLLECT_COOLDOWN_SECONDS,
+        monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         self.store = store
         self._collectors = dict(
@@ -87,6 +91,10 @@ class CapabilityRefreshCoordinator:
         self._run_db = run_db
         self._sleep = sleep
         self._coverage_auditor = coverage_auditor
+        self._recollect_cooldown_seconds = recollect_cooldown_seconds
+        self._monotonic = monotonic
+        self._recollect_locks: dict[str, asyncio.Lock] = {}
+        self._recollected_at: dict[str, float] = {}
 
     def prepare(self) -> None:
         """Install bundled fallback rows before HTTP starts serving."""
@@ -110,6 +118,29 @@ class CapabilityRefreshCoordinator:
         await asyncio.gather(
             *(self._refresh_provider(collector) for collector in self._collectors.values())
         )
+
+    async def refresh_provider(self, provider: str) -> bool:
+        """Re-collect one provider now, outside the 24-hour cadence.
+
+        Serves callers holding a model the stored catalog does not list, such as
+        the spawn gate after a CLI update ships a model between refreshes. One
+        collection runs per provider at a time and repeats only after the
+        cooldown, so a burst of misses costs one collector run. Returns whether
+        a collection ran; a failed collection records source failures exactly
+        like the periodic refresh and leaves the last good snapshot in place.
+        """
+        collector = self._collectors.get(provider)
+        if collector is None:
+            return False
+        lock = self._recollect_locks.setdefault(provider, asyncio.Lock())
+        async with lock:
+            now = self._monotonic()
+            last = self._recollected_at.get(provider)
+            if last is not None and now - last < self._recollect_cooldown_seconds:
+                return False
+            self._recollected_at[provider] = now
+            await self._refresh_provider(collector)
+            return True
 
     async def run(self, shutdown_requested: Callable[[], bool]) -> None:
         """Refresh immediately and then every 24 hours until shutdown."""

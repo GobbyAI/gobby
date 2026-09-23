@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import subprocess  # nosec B404 # exceptions from CloneGitManager's fixed git argv
+from pathlib import Path
 from typing import Any, Literal
 
+from gobby.agents.cargo_target import cleanup_checkout_cargo_target_dir
 from gobby.clones import git as clone_git
 from gobby.mcp_proxy.tools._clones_context import CloneRegistryContext
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -118,6 +120,19 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
             return {
                 "success": False,
                 "error": f"Failed to delete clone files: {delete_error}",
+            }
+
+        cargo_error = await asyncio.to_thread(
+            cleanup_checkout_cargo_target_dir,
+            Path(clone_path),
+            clone.project_id,
+        )
+        if cargo_error is not None:
+            return {
+                "success": False,
+                "error_code": "cargo_target_cleanup_failed",
+                "error": f"Clone files were deleted, but Cargo target cleanup failed: {cargo_error}",
+                "files_deleted": True,
             }
 
         try:
@@ -431,6 +446,59 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
                 "landing": landing,
             }
 
+        async def _stash_gobby_sync_files() -> str | None:
+            """Stash .gobby/ sync files and return this operation's stash object ID."""
+            stash_marker = new_stash_marker("merge-clone")
+            stash_head_before = await git_manager.run_git_command(
+                ["stash", "list", "-1", "--format=%H"],
+                cwd=git_manager.repo_path,
+                timeout=10,
+            )
+            if stash_head_before.returncode != 0:
+                raise subprocess.CalledProcessError(
+                    stash_head_before.returncode,
+                    ["git", "stash", "list", "-1", "--format=%H"],
+                    output=stash_head_before.stdout,
+                    stderr=stash_head_before.stderr,
+                )
+            stash_result = await git_manager.run_git_command(
+                ["stash", "push", "--keep-index", "-m", stash_marker, "--", ".gobby/"],
+                cwd=git_manager.repo_path,
+                timeout=10,
+            )
+            if stash_result.returncode != 0:
+                raise subprocess.CalledProcessError(
+                    stash_result.returncode,
+                    ["git", "stash", "push", "--keep-index", "--", ".gobby/"],
+                    output=stash_result.stdout,
+                    stderr=stash_result.stderr,
+                )
+            stash_head_after = await git_manager.run_git_command(
+                ["stash", "list", "--format=%H%x00%gs"],
+                cwd=git_manager.repo_path,
+                timeout=10,
+            )
+            if stash_head_after.returncode != 0:
+                raise subprocess.CalledProcessError(
+                    stash_head_after.returncode,
+                    ["git", "stash", "list", "--format=%H%x00%gs"],
+                    output=stash_head_after.stdout,
+                    stderr=stash_head_after.stderr,
+                )
+            before_oid = stash_head_before.stdout.strip() or None
+            after_oid = stash_head_after.stdout.partition("\0")[0].strip() or None
+            stash_oid = stash_oid_for_marker(stash_head_after.stdout, stash_marker)
+            if stash_oid is None and after_oid != before_oid:
+                raise subprocess.CalledProcessError(
+                    1,
+                    ["git", "stash", "list", "--format=%H%x00%gs"],
+                    stderr=(
+                        "stash head changed after push but the operation-owned "
+                        "stash marker was not found"
+                    ),
+                )
+            return stash_oid
+
         await mutation_lock.acquire()
         try:
             if cancellation_requested is not None and cancellation_requested.is_set():
@@ -471,13 +539,14 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
                 if warning:
                     primary_result["warnings"] = [warning]
                 return primary_result
-            status_lines = _non_gobby_status_lines(status_result.stdout)
-            has_staged_status = any(line[0] not in {" ", "?"} for line in status_lines)
+            has_staged_status = any(
+                line and line[0] not in {" ", "?"} for line in status_result.stdout.splitlines()
+            )
             target_staged_paths: set[str] = set()
             if has_staged_status:
                 try:
                     target_staged_paths = await staged_paths(
-                        WorktreeGitManager(git_manager.repo_path),
+                        git_manager,
                         git_manager.repo_path,
                     )
                 except RuntimeError as error:
@@ -549,147 +618,91 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
                         primary_result["warnings"] = [warning]
                     return primary_result
 
-            # Step 2: Stash dirty .gobby/ sync files to prevent merge conflicts.
-            # Record the stash object created by this call so later stashes cannot
-            # change which entry is restored.
+            # Staged .gobby/ entries use the fast-forward path without stashing.
+            # Other landings retain the legacy stash transaction for dirty sync files.
             stash_oid: str | None = None
             warnings: list[str] = []
             stash_restore_error: str | None = None
             try:
                 ctx.clone_storage.record_sync(clone_id)
-                try:
-                    stash_marker = new_stash_marker("merge-clone")
-                    stash_head_before = await git_manager.run_git_command(
-                        ["stash", "list", "-1", "--format=%H"],
-                        cwd=git_manager.repo_path,
-                        timeout=10,
-                    )
-                    if stash_head_before.returncode != 0:
-                        raise subprocess.CalledProcessError(
-                            stash_head_before.returncode,
-                            ["git", "stash", "list", "-1", "--format=%H"],
-                            output=stash_head_before.stdout,
-                            stderr=stash_head_before.stderr,
+                if not any(
+                    path == ".gobby" or path.startswith(".gobby/") for path in target_staged_paths
+                ):
+                    stash_oid = await _stash_gobby_sync_files()
+            except subprocess.CalledProcessError as error:
+                detail = (
+                    error.stderr or error.output or f"git exited with status {error.returncode}"
+                )
+                primary_result = {
+                    "success": False,
+                    "error": f"Stash failed: {detail}",
+                    "step": "stash",
+                }
+            except (subprocess.TimeoutExpired, OSError) as error:
+                primary_result = _git_exception_result("stash", error)
+            else:
+                # Step 3: Merge the fetched ref into target branch.
+                if target_staged_paths:
+                    try:
+                        fallback_result = await land_by_fast_forward(
+                            WorktreeGitManager(git_manager.repo_path),
+                            source_cwd=clone.clone_path,
+                            target_cwd=git_manager.repo_path,
+                            source_ref=source_ref,
+                            target_ref=target_ref,
+                            landing_ref=temp_branch_ref,
+                            separate_repositories=True,
                         )
-                    stash_result = await git_manager.run_git_command(
-                        [
-                            "stash",
-                            "push",
-                            "-m",
-                            stash_marker,
-                            "--",
-                            ".gobby/",
-                        ],
-                        cwd=git_manager.repo_path,
-                        timeout=10,
-                    )
-                    if stash_result.returncode != 0:
-                        raise subprocess.CalledProcessError(
-                            stash_result.returncode,
-                            ["git", "stash", "push", "--", ".gobby/"],
-                            output=stash_result.stdout,
-                            stderr=stash_result.stderr,
-                        )
-                    stash_head_after = await git_manager.run_git_command(
-                        ["stash", "list", "--format=%H%x00%gs"],
-                        cwd=git_manager.repo_path,
-                        timeout=10,
-                    )
-                    if stash_head_after.returncode != 0:
-                        raise subprocess.CalledProcessError(
-                            stash_head_after.returncode,
-                            ["git", "stash", "list", "--format=%H%x00%gs"],
-                            output=stash_head_after.stdout,
-                            stderr=stash_head_after.stderr,
-                        )
-                    before_oid = stash_head_before.stdout.strip() or None
-                    after_oid = stash_head_after.stdout.partition("\0")[0].strip() or None
-                    stash_oid = stash_oid_for_marker(stash_head_after.stdout, stash_marker)
-                    if stash_oid is None and after_oid != before_oid:
-                        raise subprocess.CalledProcessError(
-                            1,
-                            ["git", "stash", "list", "--format=%H%x00%gs"],
-                            stderr=(
-                                "stash head changed after push but the operation-owned "
-                                "stash marker was not found"
-                            ),
-                        )
-                except subprocess.CalledProcessError as error:
-                    detail = (
-                        error.stderr or error.output or f"git exited with status {error.returncode}"
-                    )
-                    primary_result = {
-                        "success": False,
-                        "error": f"Stash failed: {detail}",
-                        "step": "stash",
-                    }
-                except (subprocess.TimeoutExpired, OSError) as error:
-                    primary_result = _git_exception_result("stash", error)
-                else:
-                    # Step 3: Merge the fetched ref into target branch.
-                    if target_staged_paths:
-                        try:
-                            fallback_result = await land_by_fast_forward(
-                                WorktreeGitManager(git_manager.repo_path),
-                                source_cwd=clone.clone_path,
-                                target_cwd=git_manager.repo_path,
-                                source_ref=source_ref,
-                                target_ref=target_ref,
-                                landing_ref=temp_branch_ref,
-                                separate_repositories=True,
-                            )
-                        except (subprocess.TimeoutExpired, OSError) as error:
-                            primary_result = _git_exception_result("merge", error)
+                    except (subprocess.TimeoutExpired, OSError) as error:
+                        primary_result = _git_exception_result("merge", error)
+                    else:
+                        if fallback_result.success:
+                            primary_result = await _success_result("fast-forward")
                         else:
-                            if fallback_result.success:
-                                primary_result = await _success_result("fast-forward")
-                            else:
-                                conflicted_files = list(fallback_result.conflicted_files)
+                            conflicted_files = list(fallback_result.conflicted_files)
+                            primary_result = {
+                                "success": False,
+                                "has_conflicts": bool(conflicted_files),
+                                "conflicted_files": conflicted_files,
+                                "error": fallback_result.error or "Fast-forward landing failed",
+                                "step": fallback_result.step,
+                            }
+                else:
+                    try:
+                        merge_result = await git_manager.merge_branch(
+                            source_branch=temp_branch_ref,
+                            target_branch=target_branch,
+                            source_is_local=True,
+                        )
+                    except (subprocess.TimeoutExpired, OSError) as error:
+                        primary_result = _git_exception_result("merge", error)
+                    else:
+                        if not merge_result.success:
+                            if merge_result.error == "merge_conflict":
+                                conflicted_files = (
+                                    merge_result.output.split("\n") if merge_result.output else []
+                                )
                                 primary_result = {
                                     "success": False,
-                                    "has_conflicts": bool(conflicted_files),
+                                    "has_conflicts": True,
                                     "conflicted_files": conflicted_files,
-                                    "error": fallback_result.error or "Fast-forward landing failed",
-                                    "step": fallback_result.step,
+                                    "error": merge_result.message,
+                                    "step": "merge",
+                                    "message": (
+                                        "Merge conflicts detected in "
+                                        f"{len(conflicted_files)} files. "
+                                        "Use gobby-merge tools to resolve."
+                                    ),
                                 }
-                    else:
-                        try:
-                            merge_result = await git_manager.merge_branch(
-                                source_branch=temp_branch_ref,
-                                target_branch=target_branch,
-                                source_is_local=True,
-                            )
-                        except (subprocess.TimeoutExpired, OSError) as error:
-                            primary_result = _git_exception_result("merge", error)
-                        else:
-                            if not merge_result.success:
-                                if merge_result.error == "merge_conflict":
-                                    conflicted_files = (
-                                        merge_result.output.split("\n")
-                                        if merge_result.output
-                                        else []
-                                    )
-                                    primary_result = {
-                                        "success": False,
-                                        "has_conflicts": True,
-                                        "conflicted_files": conflicted_files,
-                                        "error": merge_result.message,
-                                        "step": "merge",
-                                        "message": (
-                                            "Merge conflicts detected in "
-                                            f"{len(conflicted_files)} files. "
-                                            "Use gobby-merge tools to resolve."
-                                        ),
-                                    }
-                                else:
-                                    primary_result = {
-                                        "success": False,
-                                        "has_conflicts": False,
-                                        "error": merge_result.error or merge_result.message,
-                                        "step": "merge",
-                                    }
                             else:
-                                primary_result = await _success_result("merge")
+                                primary_result = {
+                                    "success": False,
+                                    "has_conflicts": False,
+                                    "error": merge_result.error or merge_result.message,
+                                    "step": "merge",
+                                }
+                        else:
+                            primary_result = await _success_result("merge")
             finally:
                 temp_branch_warning = await _delete_temp_branch()
                 if temp_branch_warning:
@@ -718,7 +731,7 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
                         if stash_ref is None:
                             raise RuntimeError(f"exact stash {stash_oid} is no longer present")
                         pop_result = await git_manager.run_git_command(
-                            ["stash", "pop", stash_ref],
+                            ["stash", "pop", "--index", stash_ref],
                             cwd=git_manager.repo_path,
                             timeout=10,
                         )

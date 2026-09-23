@@ -342,6 +342,7 @@ class TmuxSpawner(TerminalSpawnerBase):
             parent_session_id=parent_session_id,
             agent_run_id=agent_run_id,
             project_id=project_id,
+            checkout_root=Path(cwd),
             workflow_name=workflow_name,
             agent_depth=agent_depth,
             max_agent_depth=max_agent_depth,

@@ -869,6 +869,86 @@
       "definition": "uuid|uuid|NO||NEVER"
     },
     {
+      "name": "code_communities.boundary",
+      "definition": "jsonb|jsonb|NO||NEVER"
+    },
+    {
+      "name": "code_communities.cohesion",
+      "definition": "double precision|float8|NO||NEVER"
+    },
+    {
+      "name": "code_communities.community_id",
+      "definition": "integer|int4|NO||NEVER"
+    },
+    {
+      "name": "code_communities.internal_edges",
+      "definition": "integer|int4|NO||NEVER"
+    },
+    {
+      "name": "code_communities.label",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "code_communities.label_attempted_at",
+      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
+    },
+    {
+      "name": "code_communities.label_candidates",
+      "definition": "ARRAY|_text|NO||NEVER"
+    },
+    {
+      "name": "code_communities.label_confidence",
+      "definition": "double precision|float8|YES||NEVER"
+    },
+    {
+      "name": "code_communities.label_deterministic",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "code_communities.label_model",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
+      "name": "code_communities.label_source",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "code_communities.labeled_at",
+      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
+    },
+    {
+      "name": "code_communities.labeled_signature",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
+      "name": "code_communities.machine_id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "code_communities.member_count",
+      "definition": "integer|int4|NO||NEVER"
+    },
+    {
+      "name": "code_communities.member_signature",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "code_communities.members",
+      "definition": "ARRAY|_text|NO||NEVER"
+    },
+    {
+      "name": "code_communities.project_id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "code_communities.refreshed_at",
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
+    },
+    {
+      "name": "code_communities.representatives",
+      "definition": "ARRAY|_text|NO||NEVER"
+    },
+    {
       "name": "code_content_chunks.chunk_index",
       "definition": "integer|int4|NO||NEVER"
     },
@@ -1057,6 +1137,10 @@
       "definition": "boolean|bool|NO|false|NEVER"
     },
     {
+      "name": "code_indexed_project_states.community_id_watermark",
+      "definition": "integer|int4|NO|0|NEVER"
+    },
+    {
       "name": "code_indexed_project_states.created_at",
       "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
@@ -1075,6 +1159,10 @@
     {
       "name": "code_indexed_project_states.machine_id",
       "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "code_indexed_project_states.partition_signature",
+      "definition": "text|text|YES||NEVER"
     },
     {
       "name": "code_indexed_project_states.project_id",
@@ -6423,6 +6511,42 @@
       "definition": "UNIQUE NULLS NOT DISTINCT (project_id, file_path, content_hash, caller_symbol_id, callee_symbol_id, callee_name, callee_target_kind, callee_external_module, line)"
     },
     {
+      "name": "code_communities.code_communities_boundary_check",
+      "definition": "CHECK (jsonb_typeof(boundary) = 'array'::text)"
+    },
+    {
+      "name": "code_communities.code_communities_check",
+      "definition": "CHECK (member_count = cardinality(members) AND member_count > 0)"
+    },
+    {
+      "name": "code_communities.code_communities_check1",
+      "definition": "CHECK (label_source = 'deterministic'::text OR labeled_signature IS NOT NULL AND label_model IS NOT NULL)"
+    },
+    {
+      "name": "code_communities.code_communities_cohesion_check",
+      "definition": "CHECK (cohesion >= 0::double precision AND cohesion <= 1::double precision)"
+    },
+    {
+      "name": "code_communities.code_communities_label_source_check",
+      "definition": "CHECK (label_source = ANY (ARRAY['deterministic'::text, 'model'::text]))"
+    },
+    {
+      "name": "code_communities.code_communities_machine_id_fkey",
+      "definition": "FOREIGN KEY (machine_id) REFERENCES machines(id)"
+    },
+    {
+      "name": "code_communities.code_communities_member_signature_check",
+      "definition": "CHECK (member_signature ~ '^[0-9a-f]{16}$'::text)"
+    },
+    {
+      "name": "code_communities.code_communities_pkey",
+      "definition": "PRIMARY KEY (machine_id, project_id, community_id)"
+    },
+    {
+      "name": "code_communities.code_communities_project_id_fkey",
+      "definition": "FOREIGN KEY (project_id) REFERENCES code_indexed_projects(id) ON DELETE CASCADE"
+    },
+    {
       "name": "code_content_chunks.code_content_chunks_content_fkey",
       "definition": "FOREIGN KEY (project_id, file_path, content_hash) REFERENCES code_indexed_files(project_id, file_path, content_hash) ON DELETE CASCADE"
     },
@@ -7676,7 +7800,7 @@
     },
     {
       "name": "task_close_reviews.task_close_reviews_status_check",
-      "definition": "CHECK (status = ANY (ARRAY['launching'::text, 'running'::text, 'finalizing'::text, 'closed'::text, 'invalid'::text, 'external_pending'::text, 'stale'::text, 'error'::text]))"
+      "definition": "CHECK (status = ANY (ARRAY['queued'::text, 'launching'::text, 'running'::text, 'finalizing'::text, 'closed'::text, 'invalid'::text, 'external_pending'::text, 'stale'::text, 'error'::text]))"
     },
     {
       "name": "task_close_reviews.task_close_reviews_test_bodies_sha_valid",
@@ -8387,6 +8511,10 @@
       "definition": "CREATE UNIQUE INDEX code_calls_unique_call_target ON $schema.code_calls USING btree (project_id, file_path, content_hash, caller_symbol_id, callee_symbol_id, callee_name, callee_target_kind, callee_external_module, line) NULLS NOT DISTINCT"
     },
     {
+      "name": "code_communities_pkey",
+      "definition": "CREATE UNIQUE INDEX code_communities_pkey ON $schema.code_communities USING btree (machine_id, project_id, community_id)"
+    },
+    {
       "name": "code_content_chunks_pkey",
       "definition": "CREATE UNIQUE INDEX code_content_chunks_pkey ON $schema.code_content_chunks USING btree (id)"
     },
@@ -8693,6 +8821,10 @@
     {
       "name": "idx_cc_file",
       "definition": "CREATE INDEX idx_cc_file ON $schema.code_calls USING btree (project_id, file_path)"
+    },
+    {
+      "name": "idx_cc_label_queue",
+      "definition": "CREATE INDEX idx_cc_label_queue ON $schema.code_communities USING btree (machine_id, project_id) WHERE (labeled_signature IS DISTINCT FROM member_signature)"
     },
     {
       "name": "idx_cc_target",
@@ -10132,7 +10264,7 @@
     },
     {
       "name": "uq_task_close_reviews_active_task",
-      "definition": "CREATE UNIQUE INDEX uq_task_close_reviews_active_task ON $schema.task_close_reviews USING btree (task_id) WHERE (status = ANY (ARRAY['launching'::text, 'running'::text, 'finalizing'::text]))"
+      "definition": "CREATE UNIQUE INDEX uq_task_close_reviews_active_task ON $schema.task_close_reviews USING btree (task_id) WHERE (status = ANY (ARRAY['queued'::text, 'launching'::text, 'running'::text, 'finalizing'::text]))"
     },
     {
       "name": "uq_task_close_reviews_agent_run",

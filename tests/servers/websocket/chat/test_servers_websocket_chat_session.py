@@ -58,22 +58,23 @@ class TestResolveWebChatReasoning:
         ):
             assert _resolve_web_chat_reasoning("codex", "gpt-5.6-luna", None) is None
 
-    def test_auto_omits_effort(self) -> None:
+    def test_auto_uses_codex_fallback_effort(self) -> None:
         resolver = MagicMock(spec=CapabilityResolver)
+        resolver.find_model.return_value = None
         resolver.resolve_reasoning.return_value = ReasoningResolution(
-            "auto",
-            None,
+            "medium",
+            "medium",
             ReasoningStatus.VERIFIED,
             None,
         )
         with patch("gobby.agents.reasoning._get_capability_resolver", return_value=resolver):
             result = _resolve_web_chat_reasoning("codex", "gpt-5.6-luna", "auto")
 
-        assert result is None
+        assert result == "medium"
         resolver.resolve_reasoning.assert_called_once_with(
             "codex",
             "gpt-5.6-luna",
-            "auto",
+            "medium",
             transport_supports_effort=True,
         )
 
@@ -342,7 +343,7 @@ class TestCreateChatSessionInner:
     @pytest.mark.parametrize(
         ("requested", "backend_effort", "session_effort"),
         [
-            ("auto", None, "unset"),
+            ("auto", "medium", "medium"),
             ("high", "high", "high"),
         ],
     )

@@ -134,6 +134,7 @@ def apply_safe_runner_config_defaults(config: MagicMock) -> MagicMock:
     )
     set_mock_default(config.code_index, "sync_worker_interval_seconds", 5)
     set_mock_default(config.code_index, "sync_worker_batch_size", 50)
+    set_mock_default(config.code_index, "sync_worker_concurrency", 4)
 
     return config
 

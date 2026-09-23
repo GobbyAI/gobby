@@ -92,8 +92,8 @@ fn main() {
         "zig build for vendored libghostty-vt failed: {status}"
     );
 
-    // Link against a copy in OUT_DIR: checkouts share one Cargo target dir, so the
-    // cached build-script output must not name a checkout that may be deleted.
+    // Link against a copy in OUT_DIR so cached build-script output names only
+    // Cargo-owned artifacts, never a source checkout that may be deleted.
     let archive_name = if target.contains("windows-msvc") {
         "ghostty-vt-static.lib"
     } else {

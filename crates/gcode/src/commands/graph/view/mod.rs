@@ -1,6 +1,7 @@
 //! Shared `gcode graph view` scaffold: clap/dispatch glue, payload, visibility.
 
 mod class_hierarchy;
+mod communities;
 mod fcg;
 mod mcg;
 mod render;
@@ -381,21 +382,51 @@ fn empty_view_payload(
     )
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ViewRoute {
+    McgFile,
+    McgModule,
+    Fcg,
+    ClassHierarchy,
+    CommunitiesList,
+    CommunitiesDetail,
+}
+
+fn route_for(view: GraphViewKind, seed: Option<&GraphViewSeed>) -> Option<ViewRoute> {
+    match (view, seed) {
+        (GraphViewKind::Mcg, Some(GraphViewSeed::File(_))) => Some(ViewRoute::McgFile),
+        (GraphViewKind::Mcg, Some(GraphViewSeed::Module(_))) => Some(ViewRoute::McgModule),
+        (GraphViewKind::Fcg, Some(GraphViewSeed::Symbol(_))) => Some(ViewRoute::Fcg),
+        (GraphViewKind::ClassHierarchy, Some(GraphViewSeed::Symbol(_))) => {
+            Some(ViewRoute::ClassHierarchy)
+        }
+        (GraphViewKind::Communities, None) => Some(ViewRoute::CommunitiesList),
+        (GraphViewKind::Communities, Some(GraphViewSeed::Community(_))) => {
+            Some(ViewRoute::CommunitiesDetail)
+        }
+        _ => None,
+    }
+}
+
 pub(crate) fn run(ctx: &Context, args: &GraphViewArgs, format: Format) -> anyhow::Result<()> {
-    match (args.view, &args.seed) {
-        (GraphViewKind::Mcg, GraphViewSeed::File(file)) => {
+    match (route_for(args.view, args.seed.as_ref()), args.seed.as_ref()) {
+        (Some(ViewRoute::McgFile), Some(GraphViewSeed::File(file))) => {
             mcg::run(ctx, args, mcg::McgSeedSelector::File(file), format)
         }
-        (GraphViewKind::Mcg, GraphViewSeed::Module(module)) => {
+        (Some(ViewRoute::McgModule), Some(GraphViewSeed::Module(module))) => {
             mcg::run(ctx, args, mcg::McgSeedSelector::Module(module), format)
         }
-        (GraphViewKind::Fcg, GraphViewSeed::Symbol(seed)) => {
+        (Some(ViewRoute::Fcg), Some(GraphViewSeed::Symbol(seed))) => {
             let symbol = resolve_view_seed(ctx, seed).context("resolve graph view seed")?;
             fcg::run(ctx, args, &symbol, format)
         }
-        (GraphViewKind::ClassHierarchy, GraphViewSeed::Symbol(seed)) => {
+        (Some(ViewRoute::ClassHierarchy), Some(GraphViewSeed::Symbol(seed))) => {
             let symbol = resolve_view_seed(ctx, seed).context("resolve graph view seed")?;
             class_hierarchy::run(ctx, args, &symbol, format)
+        }
+        (Some(ViewRoute::CommunitiesList), None) => communities::run_list(ctx, args, format),
+        (Some(ViewRoute::CommunitiesDetail), Some(GraphViewSeed::Community(selector))) => {
+            communities::run_detail(ctx, args, selector, format)
         }
         _ => anyhow::bail!("invalid graph view selector for {}", args.view.as_str()),
     }

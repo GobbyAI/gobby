@@ -132,6 +132,7 @@ class TestReviewLearningRule:
         assert effect.tool == "recall_review_lessons_for_files"
         assert effect.background is False
         assert effect.inject_result is True
+        assert effect.timeout_seconds == 2.0
 
     @pytest.mark.asyncio
     async def test_broad_read_injects_compact_review_guidance(self, temp_db: HubDatabase) -> None:

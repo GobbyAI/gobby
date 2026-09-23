@@ -322,7 +322,6 @@ class AskSnapshotManager:
                             "--project",
                             str(root),
                         ],
-                        cwd=root,
                         timeout=min(_remaining_seconds(deadline), cap),
                         timeout_code=f"ask_bind_{phase}_timeout",
                         failure_code=f"ask_bind_{phase}_failed",

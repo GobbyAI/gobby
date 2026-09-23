@@ -7,7 +7,7 @@
 //! whether the chrome consumes the key. Text commits and bracketed pastes
 //! bypass the keymap through [`text_bytes`].
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use gobby_terminal::input::{encode_terminal_key, KeyboardProtocol};
 use gobby_terminal::raw_input::RawInputEvent;
 
@@ -27,7 +27,7 @@ pub struct KeyInput {
 /// other event.
 pub fn key_input(event: &RawInputEvent, protocol: KeyboardProtocol) -> Option<KeyInput> {
     match event {
-        RawInputEvent::Key(key) => Some(KeyInput {
+        RawInputEvent::Key(key) if key.kind != KeyEventKind::Release => Some(KeyInput {
             key: key.as_key_event(),
             bytes: encode_terminal_key(key.clone(), protocol),
         }),
@@ -103,6 +103,29 @@ mod tests {
 
     fn key(code: KeyCode, modifiers: KeyModifiers) -> RawInputEvent {
         RawInputEvent::Key(TerminalKey::new(code, modifiers))
+    }
+
+    #[test]
+    fn ctrl_enter_encodes_csi_u_under_kitty_protocol() {
+        let kitty = KeyboardProtocol::Kitty { flags: 1 };
+        for (modifiers, expected) in [
+            (KeyModifiers::NONE, b"\r".as_slice()),
+            (KeyModifiers::SHIFT, b"\x1b[13;2u".as_slice()),
+            (KeyModifiers::CONTROL, b"\x1b[13;5u".as_slice()),
+        ] {
+            let input = key_input(&key(KeyCode::Enter, modifiers), kitty).expect("key input");
+            assert_eq!(input.bytes, expected);
+        }
+
+        for modifiers in [
+            KeyModifiers::NONE,
+            KeyModifiers::SHIFT,
+            KeyModifiers::CONTROL,
+        ] {
+            let input = key_input(&key(KeyCode::Enter, modifiers), KeyboardProtocol::Legacy)
+                .expect("key input");
+            assert_eq!(input.bytes, b"\r");
+        }
     }
 
     #[test]

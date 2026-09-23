@@ -208,6 +208,7 @@ def register_agent_query_tools(
 
     @registry.tool(
         name="get_agent_result",
+        read_only=True,
         description=(
             "Look up an agent run's current status and result. Safe for explicit polling; "
             "creates no completion subscription. The run's prompt is static metadata the "
@@ -327,10 +328,12 @@ def register_agent_query_tools(
             "required": ["run_id"],
         },
         func=get_agent_capture,
+        read_only=True,
     )
 
     @registry.tool(
         name="get_agent_live_output",
+        read_only=True,
         description=(
             f"Read up to {LIVE_OUTPUT_MAX_LINES} lines and {LIVE_OUTPUT_MAX_CHARS:,} Unicode "
             "characters from an active agent's terminal snapshot in oldest-to-newest order. "
@@ -727,6 +730,7 @@ def register_agent_query_tools(
 
     @registry.tool(
         name="list_agent_runs",
+        read_only=True,
         description=(
             "List agent runs for a session. Defaults to current session. "
             "Accepts #N, N, UUID, or prefix for session_id."
@@ -760,6 +764,7 @@ def register_agent_query_tools(
 
     @registry.tool(
         name="can_spawn_agent",
+        read_only=True,
         description=(
             "Check if an agent can be spawned. Defaults to checking for the current session. "
             "Accepts #N, N, UUID, or prefix for session_id."
@@ -792,6 +797,7 @@ def register_agent_query_tools(
 
     @registry.tool(
         name="list_running_agents",
+        read_only=True,
         description=(
             "List active agent runs. Defaults to build-wide scope. Pass "
             "scope='parent' or parent_session_id to filter by parent session; "
@@ -904,6 +910,7 @@ def register_agent_query_tools(
 
     @registry.tool(
         name="get_running_agent",
+        read_only=True,
         description="Get process state for a running agent.",
     )
     async def get_running_agent(
@@ -980,6 +987,7 @@ def register_agent_query_tools(
 
     @registry.tool(
         name="running_agent_stats",
+        read_only=True,
         description="Get statistics about running agents.",
     )
     def running_agent_stats() -> dict[str, Any]:

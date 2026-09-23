@@ -11,6 +11,7 @@ import logging
 import re
 import textwrap
 from collections.abc import Callable, Iterable, Mapping, Sequence
+from pathlib import Path
 from typing import Any, Protocol
 from uuid import UUID
 
@@ -163,19 +164,29 @@ def first_tdd_test_path(
     return _first_matching_path(event_data, tool_input, _is_tdd_test_path)
 
 
-def tdd_gate_open(variables: Mapping[str, Any]) -> bool:
+def tdd_gate_open(variables: Mapping[str, Any], project_path: str | None = None) -> bool:
     """Return whether a qualifying test write has opened the production-write gate."""
+    root = Path(project_path).resolve() if project_path else None
+
+    def identity(path: str) -> str:
+        candidate = Path(path)
+        if root is not None:
+            resolved = (candidate if candidate.is_absolute() else root / candidate).resolve()
+            if resolved.is_relative_to(root):
+                return resolved.relative_to(root).as_posix()
+        return _normalize_condition_path(path).rstrip("/")
+
     written = {
-        path for path in variables.get("tdd_tests_written", []) if isinstance(path, str) and path
+        identity(path)
+        for path in variables.get("tdd_tests_written", [])
+        if isinstance(path, str) and path
     }
-    acceptance_paths = [
-        path
+    acceptance_paths = {
+        identity(path)
         for path in variables.get("claimed_task_acceptance_test_paths", [])
         if isinstance(path, str) and path
-    ]
-    if acceptance_paths:
-        return any(path in written for path in acceptance_paths)
-    return bool(written)
+    }
+    return bool(written & acceptance_paths) if acceptance_paths else bool(written)
 
 
 def touches_claude_memory_path(

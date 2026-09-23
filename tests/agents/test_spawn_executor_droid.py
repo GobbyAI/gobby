@@ -210,6 +210,26 @@ class TestExecuteSpawnDroid:
         assert result.child_session_id == "gobby-sess-123"
         assert result.error == "tmux failed"
 
+    @pytest.mark.asyncio
+    async def test_droid_interactive_terminal_builds_tui_command(self) -> None:
+        request = _droid_request(
+            prompt="Ask a question",
+            droid_mode="interactive",
+            session_manager=MagicMock(),
+        )
+
+        with (
+            patch("gobby.agents.spawn_executor.shutil.which", return_value="/usr/bin/droid"),
+            patch("gobby.agents.spawn_executor_providers.pre_approve_directory"),
+        ):
+            result = await execute_spawn(request)
+
+        assert result.success is True
+        assert _spawn_kwargs(request)["command"] == [
+            "droid",
+            "Ask a question",
+        ]
+
 
 @pytest.mark.integration
 @pytest.mark.skipif(shutil.which("droid") is None, reason="droid CLI not installed")

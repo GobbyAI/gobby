@@ -54,6 +54,34 @@ async def test_orphaned_launch_becomes_error_and_wakes_origin_without_relaunch(
     assert subscribers.added == []
 
 
+async def test_queued_review_rehydrates_wait_and_promotes_on_startup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _Store(_review(status="queued", run_id="queued-run"))
+    subscribers = _Subscribers()
+    wake = AsyncMock(return_value={"ism_persisted": True})
+    _install(
+        monkeypatch,
+        store=store,
+        run=SimpleNamespace(id="queued-run", status="queued"),
+        subscribers=subscribers,
+    )
+    promoter = AsyncMock(return_value=["review"])
+    registry = SimpleNamespace(
+        get_private_callback=lambda name: promoter if name == "promote_close_reviews" else None
+    )
+    manager = SimpleNamespace(get_registry=lambda name: registry if name == "gobby-tasks" else None)
+    runner = _runner(wake)
+    runner.http_server = SimpleNamespace(_internal_manager=manager)
+
+    recovered = await lifecycle_agents._reconcile_task_close_reviews_on_startup(runner)
+
+    assert recovered == 1
+    assert subscribers.added == [("queued-run", ["parent"])]
+    promoter.assert_awaited_once_with()
+    wake.assert_not_awaited()
+
+
 @pytest.mark.asyncio
 async def test_running_review_rehydrates_durable_parent_subscription(
     monkeypatch: pytest.MonkeyPatch,
@@ -124,7 +152,7 @@ async def test_periodic_reconciliation_expires_review_and_wakes_subscriber(
     assert recovered == 2
     cleanup.assert_awaited_once_with(
         run,
-        terminal_payload="Task-close validator exceeded its durable deadline.",
+        terminal_payload="Task-close reviewer exceeded its durable deadline.",
         is_timeout=True,
     )
     assert store.finished_status == "error"
@@ -151,7 +179,7 @@ async def test_periodic_reconciliation_delivers_terminal_run_without_verdict(
     _install(monkeypatch, store=store, run=run, subscribers=subscribers)
 
     def terminal_review_delivery(_db: object, _run_id: str) -> tuple[dict[str, Any], str]:
-        message = "validator ended without a verdict"
+        message = "reviewer ended without a verdict"
         payload = {
             "event": "task_close_review_completed",
             "review_id": "review",
@@ -378,10 +406,10 @@ async def test_a_reviving_submission_wins_the_periodic_sweep_race(
 
 
 @pytest.mark.asyncio
-async def test_daemon_stop_parked_validator_retries_on_a_short_window(
+async def test_daemon_stop_parked_reviewer_retries_on_a_short_window(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A validator parked by the daemon's own stop waits seconds, not 900s."""
+    """A reviewer parked by the daemon's own stop waits seconds, not 900s."""
     now = datetime(2026, 9, 8, 12, 0, tzinfo=UTC)
     store = _Store(_review(status="running", run_id="run"))
     run = SimpleNamespace(

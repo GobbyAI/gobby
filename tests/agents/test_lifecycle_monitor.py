@@ -44,7 +44,7 @@ from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.executor import DatabaseExecutor
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
-from gobby.storage.task_close_reviews import TaskCloseReviewStore
+from gobby.storage.task_close_reviews import QueuedAgentRunSpec, TaskCloseReviewStore
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._stage_states import StageManifestSpec
@@ -1033,13 +1033,25 @@ async def test_stuck_check_skips_session_awaiting_close_review(
         task_id=task.id,
         task_ref=f"#{task.seq_num}",
         caller_session_id=sample_session["id"],
-        close_arguments={"preview": False},
+        commit_shas=(),
+        close_arguments={"preview": True},
         expected_task_updated_at=task.updated_at,
         review_fingerprint="review",
         evidence_fingerprint="evidence",
         diff_sha="d" * 64,
         test_bodies_sha="e" * 64,
         stable_facts={},
+        review_id=str(uuid.uuid4()),
+        run=QueuedAgentRunSpec(
+            id=str(uuid.uuid4()),
+            machine_id=run.machine_id,
+            provider="codex",
+            model=None,
+            agent_name="task-close-reviewer",
+            prompt="Review close evidence.",
+            timeout_seconds=1200,
+            requested_reasoning_effort=None,
+        ),
     )
 
     with patch.object(

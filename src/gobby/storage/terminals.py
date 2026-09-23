@@ -7,7 +7,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 from uuid import UUID, uuid4
 
 from psycopg.types.json import Jsonb
@@ -244,6 +244,74 @@ class Terminal:
             agent_run_id=_as_optional_str(row["agent_run_id"]),
             liveness_at=row["liveness_at"],
         )
+
+
+class TerminalLocatorRecord(Protocol):
+    """Terminal fields required to build an attach locator."""
+
+    @property
+    def backend(self) -> str: ...
+
+    @property
+    def machine_id(self) -> str: ...
+
+    @property
+    def host_epoch(self) -> str | None: ...
+
+    @property
+    def locator(self) -> Mapping[str, object] | None: ...
+
+
+def native_attach_locator(
+    row: TerminalLocatorRecord,
+    *,
+    live_host_epoch: str,
+    host_socket: str | None,
+) -> AttachLocator:
+    """Build a native attach locator after validating the live host identity."""
+    if row.host_epoch != live_host_epoch:
+        raise HostEpochMismatchError("Live host epoch does not match the terminal row")
+    host_terminal_id = None
+    if row.locator is not None:
+        host_terminal_id = str(row.locator["host_terminal_id"])
+    return AttachLocator(
+        backend="native",
+        frame_host_epoch=str(row.host_epoch),
+        host_socket=host_socket,
+        host_terminal_id=host_terminal_id,
+    )
+
+
+def attach_locator_for_terminal(
+    row: TerminalLocatorRecord,
+    *,
+    live_host_epoch: str,
+    socket_dir: Path | str,
+) -> AttachLocator:
+    """Compute an attach handle from an already-loaded terminal row."""
+    if row.machine_id != require_machine_id():
+        raise MachineOwnershipMismatchError
+    stored = row.locator or {}
+    host_socket = str(Path(socket_dir) / FRAMES_SOCKET_NAME)
+    if row.backend == "native":
+        return native_attach_locator(
+            row,
+            live_host_epoch=live_host_epoch,
+            host_socket=host_socket,
+        )
+    pid = stored.get("server_pid")
+    start = stored.get("server_start_time")
+    return AttachLocator(
+        backend="tmux",
+        frame_host_epoch=live_host_epoch,
+        host_socket=host_socket,
+        socket_path=None if stored.get("socket_path") is None else str(stored.get("socket_path")),
+        pane_id=None if stored.get("pane_id") is None else str(stored.get("pane_id")),
+        server_pid=pid if isinstance(pid, int) and not isinstance(pid, bool) else None,
+        server_start_time=(
+            start if isinstance(start, int) and not isinstance(start, bool) else None
+        ),
+    )
 
 
 def _native_locator(locator: Mapping[str, object]) -> dict[str, str]:
@@ -566,6 +634,32 @@ class TerminalManager(TerminalSettlementMixin):
         )
         return None if row is None else Terminal.from_row(row)
 
+    def resolve_live_for_session(self, session: Session) -> Terminal | None:
+        """Resolve a bound row or an eligible row named by terminal context."""
+        bound = self.get_live_for_session(session.id)
+        if bound is not None:
+            return bound
+        if session.session_type != "terminal" or not isinstance(session.terminal_context, dict):
+            return None
+
+        terminal_id = session.terminal_context.get("gobby_terminal_id")
+        if not isinstance(terminal_id, str):
+            return None
+        try:
+            terminal_id = str(UUID(terminal_id))
+        except ValueError:
+            return None
+        terminal = self.get(terminal_id)
+        if (
+            terminal is None
+            or terminal.state not in {"pending", "live"}
+            or terminal.project_id != session.project_id
+            or terminal.agent_run_id is not None
+            or terminal.session_id not in {None, session.id}
+        ):
+            return None
+        return terminal
+
     def bind_session(self, terminal_id: str, session_id: str, project_id: str) -> Terminal | None:
         """Bind a CLI session to the terminal it started in, or refuse with None.
 
@@ -600,6 +694,7 @@ class TerminalManager(TerminalSettlementMixin):
             WHERE t.id = %s AND s.id = %s
               AND t.agent_run_id IS NULL
               AND t.project_id = %s
+              AND t.state IN ('pending', 'live')
               AND s.session_type = 'terminal'
               AND (t.session_id IS NOT DISTINCT FROM %s OR t.session_id = s.id)
             RETURNING t.*
@@ -611,7 +706,19 @@ class TerminalManager(TerminalSettlementMixin):
                 previous_session_id,
             ),
         )
-        return None if row is None else Terminal.from_row(row)
+        if row is None:
+            return None
+        self.db.execute(
+            """
+            UPDATE terminals
+            SET session_id = NULL, updated_at = now()
+            WHERE session_id = %s AND id <> %s
+              AND ownership = 'gobby' AND agent_run_id IS NULL
+              AND state NOT IN ('pending', 'live')
+            """,
+            (str(UUID(session_id)), terminal_id),
+        )
+        return Terminal.from_row(row)
 
     def release_session(self, terminal_id: str, session_id: str) -> Terminal | None:
         """Unbind an ended session from a gobby-owned terminal with no agent run.
@@ -643,6 +750,18 @@ class TerminalManager(TerminalSettlementMixin):
         )
         return [Terminal.from_row(row) for row in rows]
 
+    def list_reconcilable_by_machine(self, machine_id: str) -> list[Terminal]:
+        """Pending, live, and orphaned native-host candidates on a machine."""
+        rows = self.db.fetchall(
+            """
+            SELECT * FROM terminals
+            WHERE machine_id = %s AND state IN ('pending', 'live', 'orphaned')
+            ORDER BY created_at ASC
+            """,
+            (str(UUID(machine_id)),),
+        )
+        return [Terminal.from_row(row) for row in rows]
+
     def attach_locator(
         self,
         terminal_id: str,
@@ -654,36 +773,10 @@ class TerminalManager(TerminalSettlementMixin):
         row = self.get(terminal_id)
         if row is None:
             raise KeyError(terminal_id)
-        if row.machine_id != require_machine_id():
-            raise MachineOwnershipMismatchError
-        stored = row.locator or {}
-        host_socket = str(Path(socket_dir) / FRAMES_SOCKET_NAME)
-        if row.backend == "native":
-            if row.host_epoch != live_host_epoch:
-                raise HostEpochMismatchError("Live host epoch does not match the terminal row")
-            host_terminal_id = None
-            if row.locator is not None:
-                host_terminal_id = str(row.locator["host_terminal_id"])
-            return AttachLocator(
-                backend="native",
-                frame_host_epoch=str(row.host_epoch),
-                host_socket=host_socket,
-                host_terminal_id=host_terminal_id,
-            )
-        pid = stored.get("server_pid")
-        start = stored.get("server_start_time")
-        return AttachLocator(
-            backend="tmux",
-            frame_host_epoch=live_host_epoch,
-            host_socket=host_socket,
-            socket_path=None
-            if stored.get("socket_path") is None
-            else str(stored.get("socket_path")),
-            pane_id=None if stored.get("pane_id") is None else str(stored.get("pane_id")),
-            server_pid=pid if isinstance(pid, int) and not isinstance(pid, bool) else None,
-            server_start_time=(
-                start if isinstance(start, int) and not isinstance(start, bool) else None
-            ),
+        return attach_locator_for_terminal(
+            row,
+            live_host_epoch=live_host_epoch,
+            socket_dir=socket_dir,
         )
 
     def revalidate_tmux_generation(

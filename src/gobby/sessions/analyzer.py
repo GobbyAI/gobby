@@ -424,7 +424,7 @@ class TranscriptAnalyzer:
                 elif tool == "close_task":
                     task_id = args.get("task_id", "?")
                     if args.get("preview") is True:
-                        return f"Previewed close readiness for task {task_id}"
+                        return f"Conditionally closed task {task_id}"
                     reason = args.get("reason", "")
                     if reason:
                         # Truncate long reasons

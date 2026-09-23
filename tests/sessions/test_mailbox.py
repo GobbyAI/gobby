@@ -361,8 +361,9 @@ class TestMailboxDirectSend:
                 "delivered": True,
                 "method": "tmux_pane",
                 "session_status": "paused",
+                "message_id": result.message_ids[index],
             }
-            for recipient in result.recipient_session_ids
+            for index, recipient in enumerate(result.recipient_session_ids)
         ]
         persisted = temp_db.fetchall("SELECT id FROM inter_session_messages")
         assert {row["id"] for row in persisted} == set(result.message_ids)
@@ -402,8 +403,10 @@ class TestMailboxDirectSend:
                     "delivered": False,
                     "method": "next_call_context",
                     "skipped": "session_active",
+                    "decline_reason": "session_active",
                     "ism_persisted": True,
                     "session_status": "active",
+                    "message_id": result.message_ids[0],
                 }
             ]
             pane_sender.assert_not_awaited()
@@ -414,6 +417,7 @@ class TestMailboxDirectSend:
                     "delivered": True,
                     "method": "tmux_pane",
                     "session_status": "active",
+                    "message_id": result.message_ids[0],
                 }
             ]
             pane_sender.assert_awaited_once()
@@ -550,6 +554,7 @@ class TestMailboxDirectSend:
         assert json.loads(row["metadata_json"]) == {
             "purpose": "regression",
             "redirected_from": predecessor.id,
+            "wake_requested": False,
         }
 
         get_session = session_manager.get
@@ -702,6 +707,7 @@ class TestMailboxDirectSend:
                 "delivered": True,
                 "method": "fake",
                 "session_status": "active",
+                "message_id": result.message_ids[0],
             }
         ]
         assert wake_dispatcher.calls == [recipient.id]
@@ -716,7 +722,10 @@ class TestMailboxDirectSend:
         assert row["content"] == "Assigned task"
         assert row["priority"] == "high"
         assert row["message_type"] == "task_assignment"
-        assert json.loads(row["metadata_json"]) == {"task_id": "#14760"}
+        assert json.loads(row["metadata_json"]) == {
+            "task_id": "#14760",
+            "wake_requested": True,
+        }
 
     @pytest.mark.asyncio
     async def test_system_session_direct_send_uses_explicit_project_scope(
@@ -849,6 +858,7 @@ class TestMailboxDirectSend:
                 "error_code": "wake_dispatcher_unavailable",
                 "error_message": "Wake dispatcher is unavailable",
                 "session_status": "active",
+                "message_id": result.message_ids[0],
             }
         ]
 
@@ -883,6 +893,7 @@ class TestMailboxDirectSend:
                 "error_code": "wake_dispatch_failed",
                 "error_message": f"wake failed for {recipient.id}",
                 "session_status": "active",
+                "message_id": result.message_ids[0],
             }
         ]
 
@@ -1631,3 +1642,129 @@ async def test_parent_target_rejects_interactive_sender(
         "SELECT id FROM inter_session_messages WHERE from_session = %s", (successor.id,)
     )
     assert row is None
+
+
+@pytest.mark.asyncio
+async def test_send_reserves_wake_requested_for_direct_fanout_and_nonwake_rows(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+) -> None:
+    sender = _register_session(session_manager, sample_project["id"], "marker-sender")
+    recipients = [
+        _register_session(session_manager, sample_project["id"], f"marker-recipient-{index}")
+        for index in range(2)
+    ]
+    mailbox = _mailbox(temp_db, session_manager, FakeWakeDispatcher())
+
+    direct = await mailbox.send(
+        from_session_id=sender.id,
+        target="session",
+        target_id=recipients[0].id,
+        content="direct",
+        wake=True,
+        metadata={"wake_requested": False},
+    )
+    nonwake = await mailbox.send(
+        from_session_id=sender.id,
+        target="session",
+        target_id=recipients[1].id,
+        content="nonwake",
+        wake=False,
+        metadata={"wake_requested": True},
+    )
+    fanout = await mailbox.send(
+        from_session_id=sender.id,
+        target="project",
+        content="fanout",
+        wake=True,
+        metadata={"wake_requested": False},
+    )
+
+    direct_row = temp_db.fetchone(
+        "SELECT metadata_json FROM inter_session_messages WHERE id = %s",
+        (direct.message_ids[0],),
+    )
+    nonwake_row = temp_db.fetchone(
+        "SELECT metadata_json FROM inter_session_messages WHERE id = %s",
+        (nonwake.message_ids[0],),
+    )
+    assert direct_row is not None
+    assert json.loads(direct_row["metadata_json"])["wake_requested"] is True
+    assert nonwake_row is not None
+    assert json.loads(nonwake_row["metadata_json"])["wake_requested"] is False
+    fanout_rows = temp_db.fetchall(
+        "SELECT metadata_json FROM inter_session_messages WHERE id = ANY(%s)",
+        (fanout.message_ids,),
+    )
+    assert fanout_rows
+    assert all(json.loads(row["metadata_json"])["wake_requested"] is True for row in fanout_rows)
+
+
+@pytest.mark.asyncio
+async def test_mailbox_boundary_correlates_and_logs_one_decline_per_message(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    sender = _register_session(session_manager, sample_project["id"], "decline-sender")
+    recipient = _register_session(session_manager, sample_project["id"], "decline-recipient")
+    dispatcher = WakeDispatcher(
+        session_manager=session_manager,
+        ism_manager=InterSessionMessageManager(temp_db),
+    )
+
+    with caplog.at_level(logging.DEBUG, logger="gobby.sessions.mailbox_delivery"):
+        result = await _mailbox(temp_db, session_manager, dispatcher).send(
+            from_session_id=sender.id,
+            target="session",
+            target_id=recipient.id,
+            content="declined",
+            wake=True,
+        )
+
+    assert result.wake_results[0]["message_id"] == result.message_ids[0]
+    assert result.wake_results[0]["decline_reason"] == "session_active"
+    records = [record for record in caplog.records if "declined" in record.getMessage()]
+    assert [record.getMessage() for record in records] == [
+        f"mailbox wake declined for session {recipient.id} message "
+        f"{result.message_ids[0]}: session_active"
+    ]
+    assert records[0].levelno == logging.DEBUG
+
+
+@pytest.mark.asyncio
+async def test_mailbox_nonroutine_decline_stays_at_info(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class DecliningDispatcher:
+        async def dispatch_live_wake(
+            self, session_id: str, *, priority: str = "normal"
+        ) -> dict[str, Any]:
+            return {
+                "session_id": session_id,
+                "delivered": False,
+                "method": None,
+                "decline_reason": "composer_occupied",
+            }
+
+    sender = _register_session(session_manager, sample_project["id"], "info-decline-sender")
+    recipient = _register_session(session_manager, sample_project["id"], "info-decline-recipient")
+
+    with caplog.at_level(logging.DEBUG, logger="gobby.sessions.mailbox_delivery"):
+        result = await _mailbox(temp_db, session_manager, DecliningDispatcher()).send(
+            from_session_id=sender.id,
+            target="session",
+            target_id=recipient.id,
+            content="declined",
+            wake=True,
+        )
+
+    assert result.wake_results[0]["decline_reason"] == "composer_occupied"
+    records = [record for record in caplog.records if "declined" in record.getMessage()]
+    assert len(records) == 1
+    assert records[0].levelno == logging.INFO

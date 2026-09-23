@@ -73,7 +73,6 @@ def manager(db: HubDatabase) -> RuleDefinitionManager:
 def _sync_bundled(db: HubDatabase) -> None:
     """Sync bundled rules from the real rules directory."""
     sync_bundled_rules(db, get_bundled_rules_path())
-    db.execute("UPDATE rule_definitions SET source = 'installed' WHERE source = 'template'")
 
 
 def _get_rule(manager: RuleDefinitionManager, name: str) -> RuleDefinitionBody:
@@ -135,11 +134,15 @@ class TestRuleShape:
         self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
         _sync_bundled(db)
-        reason = _get_rule(manager, RULE_NAME).resolved_effects[0].reason or ""
+        row = manager.get_by_name(RULE_NAME)
+        assert row is not None
+        assert row.source == "installed"
+        body = RuleDefinitionBody.model_validate(row.definition_json)
+        reason = body.resolved_effects[0].reason or ""
 
         assert reason.startswith("Run the validation bare")
         assert "close-gate credit" in reason
-        assert "`uv run mypy src/`" in reason
+        assert "`cargo nextest run -p gobby-client --status-level fail`" in reason
 
     def test_group_and_default_tag_match_the_worker_safety_family(
         self, db: HubDatabase, manager: RuleDefinitionManager

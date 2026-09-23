@@ -326,12 +326,13 @@ sudo launchctl bootstrap system /Library/LaunchDaemons/local.gobby.maxvnodes.pli
 
 Cached vnodes climbing past the old ceiling afterwards confirms it took effect.
 
-Keep the file count down as well. Gobby points every checkout of a Cargo project
-at one shared build directory under `~/.gobby/cache/cargo-target/`, so per-worktree
-`target/` trees do not multiply. A checkout that already has a real `target/`
-directory keeps it: move that directory aside to join the share. Any other large
-untracked tree inside a checkout costs the same on every walk, so keep scratch
-output outside the repository or in an ignored path.
+Keep the file count down as well. Gobby gives each Cargo checkout a deterministic
+build directory under `~/.gobby/cache/cargo-target-v2/<project_id>/` and removes it
+with the managed worktree or clone. This prevents cross-checkout artifact reuse but
+means concurrent checkouts can each hold a large target tree. A checkout that already
+has a real `target/` directory or foreign symlink keeps it. Any other large untracked
+tree inside a checkout costs the same on every walk, so keep scratch output outside
+the repository or in an ignored path.
 
 ### Local Embeddings Are Slow
 

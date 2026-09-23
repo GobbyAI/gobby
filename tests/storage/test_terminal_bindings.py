@@ -19,7 +19,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
-from gobby.storage.terminals import Terminal, TerminalManager
+from gobby.storage.terminals import Terminal, TerminalManager, native_locator_key
 from tests.storage.test_terminals import LOCAL_MACHINE_ID
 
 pytestmark = pytest.mark.unit
@@ -59,7 +59,11 @@ def _session(
 
 
 def _native_row(
-    terminals: TerminalManager, project_id: str, *, agent_run_id: str | None = None
+    terminals: TerminalManager,
+    project_id: str,
+    *,
+    session_id: str | None = None,
+    agent_run_id: str | None = None,
 ) -> Terminal:
     terminal_id = str(uuid.uuid4())
     return terminals.create_pending(
@@ -69,6 +73,7 @@ def _native_row(
         ownership="gobby",
         spawn_key=terminal_id,
         machine_id=LOCAL_MACHINE_ID,
+        session_id=session_id,
         agent_run_id=agent_run_id,
     )
 
@@ -133,3 +138,127 @@ def test_bind_session_guards(
 
     # GOBBY_TERMINAL_ID arrives from the pane environment, which a user can overwrite.
     assert terminals.bind_session("not-a-terminal-id", interactive.id, project_id) is None
+
+
+def test_resolve_live_for_session_context_id_guard_matrix(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    session_manager: SessionManager,
+    project_manager: LocalProjectManager,
+) -> None:
+    terminals = TerminalManager(temp_db)
+    project_id = sample_project["id"]
+    session = _session(session_manager, project_id, {})
+
+    bound = _native_row(terminals, project_id)
+    assert terminals.bind_session(bound.id, session.id, project_id) is not None
+    resolved = terminals.resolve_live_for_session(session)
+    assert resolved is not None
+    assert resolved.id == bound.id
+    assert terminals.release_session(bound.id, session.id) is not None
+
+    session.terminal_context = {"gobby_terminal_id": bound.id}
+    resolved = terminals.resolve_live_for_session(session)
+    assert resolved is not None
+    assert resolved.id == bound.id
+
+    session.terminal_context = {"gobby_terminal_id": "not-a-uuid"}
+    assert terminals.resolve_live_for_session(session) is None
+
+    foreign_project = project_manager.create(name="resolver-foreign-project")
+    foreign = _native_row(terminals, foreign_project.id)
+    session.terminal_context = {"gobby_terminal_id": foreign.id}
+    assert terminals.resolve_live_for_session(session) is None
+
+    run = LocalAgentRunManager(temp_db).create(
+        parent_session_id=session.id,
+        provider="claude",
+        prompt="resolver must not take agent terminals",
+    )
+    agent = _native_row(terminals, project_id, agent_run_id=run.id)
+    session.terminal_context = {"gobby_terminal_id": agent.id}
+    assert terminals.resolve_live_for_session(session) is None
+
+    exited = _native_row(terminals, project_id)
+    assert terminals.transition_for_test(exited.id, "pending", "exited") is not None
+    session.terminal_context = {"gobby_terminal_id": exited.id}
+    assert terminals.resolve_live_for_session(session) is None
+
+    other = _session(session_manager, project_id, _live_cli())
+    held = _native_row(terminals, project_id)
+    assert terminals.bind_session(held.id, other.id, project_id) is not None
+    session.terminal_context = {"gobby_terminal_id": held.id}
+    assert terminals.resolve_live_for_session(session) is None
+
+
+def test_rebind_releases_only_stale_non_agent_owner_rows(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    session_manager: SessionManager,
+) -> None:
+    terminals = TerminalManager(temp_db)
+    project_id = sample_project["id"]
+    session = _session(session_manager, project_id, _live_cli())
+
+    stale = _native_row(terminals, project_id, session_id=session.id)
+    orphaned = _native_row(terminals, project_id, session_id=session.id)
+    pending = _native_row(terminals, project_id, session_id=session.id)
+    live = _native_row(terminals, project_id, session_id=session.id)
+    assert terminals.transition_for_test(stale.id, "pending", "exited") is not None
+    host_epoch = "cleanup-test-epoch"
+    host_terminal_id = "cleanup-test-host"
+    assert (
+        terminals.promote_to_live(
+            orphaned.id,
+            locator={"host_terminal_id": host_terminal_id},
+            locator_key=native_locator_key(host_epoch, host_terminal_id),
+            host_epoch=host_epoch,
+        )
+        is not None
+    )
+    assert terminals.transition_for_test(orphaned.id, "live", "orphaned") is not None
+    live_host_epoch = "cleanup-live-epoch"
+    live_host_terminal_id = "cleanup-live-host"
+    assert (
+        terminals.promote_to_live(
+            live.id,
+            locator={"host_terminal_id": live_host_terminal_id},
+            locator_key=native_locator_key(live_host_epoch, live_host_terminal_id),
+            host_epoch=live_host_epoch,
+        )
+        is not None
+    )
+
+    run = LocalAgentRunManager(temp_db).create(
+        parent_session_id=session.id,
+        provider="claude",
+        prompt="preserve agent terminal history",
+    )
+    agent = _native_row(
+        terminals,
+        project_id,
+        session_id=session.id,
+        agent_run_id=run.id,
+    )
+    assert terminals.transition_for_test(agent.id, "pending", "exited") is not None
+    external_host_epoch = "cleanup-external-epoch"
+    external_host_terminal_id = "cleanup-external-host"
+    external = terminals.upsert_external(
+        project_id=project_id,
+        backend="native",
+        locator={"host_terminal_id": external_host_terminal_id},
+        locator_key=native_locator_key(external_host_epoch, external_host_terminal_id),
+        host_epoch=external_host_epoch,
+        session_id=session.id,
+    )
+    assert terminals.mark_exited(external.id) is not None
+
+    target = _native_row(terminals, project_id)
+    assert terminals.bind_session(target.id, session.id, project_id) is not None
+
+    assert _bound_session_id(terminals, stale.id) is None
+    assert _bound_session_id(terminals, orphaned.id) is None
+    assert _bound_session_id(terminals, pending.id) == session.id
+    assert _bound_session_id(terminals, live.id) == session.id
+    assert _bound_session_id(terminals, agent.id) == session.id
+    assert _bound_session_id(terminals, external.id) == session.id

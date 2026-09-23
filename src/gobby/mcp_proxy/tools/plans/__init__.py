@@ -124,6 +124,7 @@ def create_plan_registry(
             "required": ["plan_id_or_ref"],
         },
         func=get_plan,
+        read_only=True,
     )
 
     def list_plans(
@@ -157,6 +158,7 @@ def create_plan_registry(
             },
         },
         func=list_plans,
+        read_only=True,
     )
 
     def archive_plan(
@@ -343,6 +345,7 @@ def create_plan_registry(
             "required": ["plan_file"],
         },
         func=validate_plan,
+        read_only=True,
     )
 
     register_review_evidence_tools(

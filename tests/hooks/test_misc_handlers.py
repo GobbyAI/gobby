@@ -543,6 +543,44 @@ class TestWorktreeHandlers:
         assert mock_dependencies["worktree_manager"].create.call_count == 1
         assert mock_dependencies["worktree_manager"].create.call_args is not None
 
+    async def test_worktree_create_retains_stale_record_when_target_cleanup_fails(
+        self, mock_dependencies: dict, tmp_path: Path
+    ) -> None:
+        worktree_manager = mock_dependencies["worktree_manager"]
+        worktree_manager.get_by_branch.return_value = MagicMock(
+            id="wt-stale",
+            project_id="proj-123",
+            worktree_path=str(tmp_path / "missing-worktree"),
+        )
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.WORKTREE_CREATE,
+            data={"name": "feature-auth"},
+            source="claude",
+        )
+
+        with (
+            patch(
+                "gobby.hooks.event_handlers._misc.resolve_project_context",
+                return_value=(MagicMock(), "proj-123", None),
+            ) as resolve_context,
+            patch(
+                "gobby.hooks.event_handlers._misc.cleanup_checkout_cargo_target_dir",
+                return_value="permission denied",
+            ) as cleanup_target,
+        ):
+            response = await handlers.handle_worktree_create(event)
+
+        assert response.decision == "allow"
+        assert response.worktree_path is None
+        assert resolve_context.call_count == 1
+        assert cleanup_target.call_count == 1
+        assert worktree_manager.get_by_branch.call_count == 1
+        assert worktree_manager.delete.call_count == 0
+        assert worktree_manager.create.call_count == 0
+        worktree_manager.delete.assert_not_called()
+        worktree_manager.create.assert_not_called()
+
     async def test_worktree_create_fails_closed_when_base_divergence_is_unavailable(
         self, mock_dependencies: dict
     ) -> None:
@@ -578,8 +616,10 @@ class TestWorktreeHandlers:
         mock_dependencies["worktree_manager"].has_path_on_other_machine.return_value = False
         mock_dependencies["worktree_manager"].get_by_path.return_value = MagicMock(
             id="wt-123",
+            project_id="proj-123",
             branch_name="feature-auth",
             base_branch="main",
+            worktree_path="/tmp/worktrees/feature-auth",
         )
 
         handlers = EventHandlers(**mock_dependencies)
@@ -595,6 +635,11 @@ class TestWorktreeHandlers:
                 return_value=Path("/repo"),
             ),
             patch("gobby.hooks.event_handlers._misc.WorktreeGitManager") as mock_git_cls,
+            patch(
+                "gobby.hooks.event_handlers._misc.cleanup_checkout_cargo_target_dir",
+                return_value=None,
+            ) as cleanup_target,
+            patch("gobby.worktrees.deletion.Path.exists", return_value=True),
         ):
             mock_git_manager = mock_git_cls.return_value
             mock_git_manager.delete_worktree = AsyncMock(
@@ -613,8 +658,69 @@ class TestWorktreeHandlers:
         assert mock_git_manager.delete_worktree.call_count == 1
         assert mock_git_manager.delete_worktree.call_args is not None
         mock_dependencies["worktree_manager"].delete.assert_called_once_with("wt-123")
+        cleanup_target.assert_called_once_with(
+            Path("/tmp/worktrees/feature-auth"),
+            "proj-123",
+        )
         assert mock_dependencies["worktree_manager"].delete.call_count == 1
         assert mock_dependencies["worktree_manager"].delete.call_args is not None
+
+    async def test_worktree_remove_retries_target_without_repeating_git_delete(
+        self, mock_dependencies: dict
+    ) -> None:
+        worktree_manager = mock_dependencies["worktree_manager"]
+        worktree_manager.has_path_on_other_machine.return_value = False
+        worktree_manager.get_by_path.return_value = MagicMock(
+            id="wt-123",
+            project_id="proj-123",
+            branch_name="feature-auth",
+            base_branch="main",
+            worktree_path="/tmp/worktrees/feature-auth",
+        )
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.WORKTREE_REMOVE,
+            data={"worktree_path": "/tmp/worktrees/feature-auth"},
+            source="claude",
+        )
+
+        with (
+            patch(
+                "gobby.hooks.event_handlers._misc.get_workflow_project_path",
+                return_value=Path("/repo"),
+            ),
+            patch("gobby.hooks.event_handlers._misc.WorktreeGitManager") as mock_git_cls,
+            patch(
+                "gobby.hooks.event_handlers._misc.cleanup_checkout_cargo_target_dir",
+                side_effect=["permission denied", None],
+            ) as cleanup_target,
+            patch("gobby.worktrees.deletion.Path.exists", side_effect=[True, False]),
+        ):
+            mock_git_manager = mock_git_cls.return_value
+            mock_git_manager.delete_worktree = AsyncMock(
+                return_value=MagicMock(success=True, message="ok")
+            )
+            mock_git_manager.run_git_command = AsyncMock(
+                return_value=MagicMock(returncode=1, stderr="")
+            )
+            mock_git_manager.prune_worktrees = AsyncMock(
+                return_value=MagicMock(success=True, error=None)
+            )
+            failed = await handlers.handle_worktree_remove(event)
+            retried = await handlers.handle_worktree_remove(event)
+
+        assert failed.decision == "allow"
+        assert failed.worktree_path is None
+        assert retried.decision == "allow"
+        assert mock_git_manager.delete_worktree.await_count == 1
+        mock_git_manager.run_git_command.assert_awaited_once_with(
+            ["show-ref", "--verify", "--quiet", "refs/heads/feature-auth"],
+            timeout=5,
+        )
+        mock_git_manager.prune_worktrees.assert_awaited_once_with()
+        assert cleanup_target.call_count == 2
+        assert worktree_manager.get_by_path.call_count == 2
+        worktree_manager.delete.assert_called_once_with("wt-123")
 
     async def test_worktree_remove_ignores_remote_record(self, mock_dependencies: dict) -> None:
         worktree_manager = mock_dependencies["worktree_manager"]
@@ -710,7 +816,7 @@ class TestAcpHandlerEdgeCases:
 
         assert response.decision == "allow"
 
-    def test_before_model_no_session_id(self, mock_dependencies: dict) -> None:
+    def test_before_model_no_session_id(self, mock_dependencies: dict[str, Any]) -> None:
         """Test BEFORE_MODEL handles missing session_id."""
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
@@ -723,7 +829,7 @@ class TestAcpHandlerEdgeCases:
 
         assert response.decision == "allow"
 
-    def test_after_model_with_session_id(self, mock_dependencies: dict) -> None:
+    def test_after_model_with_session_id(self, mock_dependencies: dict[str, Any]) -> None:
         """Test AFTER_MODEL with session_id."""
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(

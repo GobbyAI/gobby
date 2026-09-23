@@ -630,6 +630,43 @@ class TestDeleteClone:
         mock_clone_storage.delete.assert_called_once_with("clone-123")
 
     @pytest.mark.asyncio
+    async def test_delete_clone_retries_cargo_target_before_record_delete(
+        self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
+    ) -> None:
+        clone = Clone(
+            id="clone-target-retry",
+            project_id="11111111-1111-4111-8111-111111110001",
+            branch_name="main",
+            clone_path="/tmp/clones/target-retry",
+            base_branch="main",
+            task_id=None,
+            agent_session_id=None,
+            status=CloneStatus.DELETING.value,
+            remote_url=None,
+            last_sync_at=None,
+            cleanup_after=None,
+            created_at=RECENT_TIMESTAMP,
+            updated_at=RECENT_TIMESTAMP,
+        )
+        mock_clone_storage.get.return_value = clone
+        mock_git_manager.delete_clone.return_value = MagicMock(success=True)
+        mock_clone_storage.delete.return_value = True
+
+        with patch(
+            "gobby.mcp_proxy.tools._clones_operations.cleanup_checkout_cargo_target_dir",
+            side_effect=["permission denied", None],
+        ) as cleanup_target:
+            failed = await registry.call("delete_clone", {"clone_id": clone.id})
+            retried = await registry.call("delete_clone", {"clone_id": clone.id})
+
+        assert failed["success"] is False
+        assert failed["error_code"] == "cargo_target_cleanup_failed"
+        assert failed["files_deleted"] is True
+        assert retried["success"] is True
+        assert cleanup_target.call_count == 2
+        mock_clone_storage.delete.assert_called_once_with(clone.id)
+
+    @pytest.mark.asyncio
     async def test_delete_clone_not_found(self, registry: Any, mock_clone_storage: Any) -> None:
         """Delete clone returns error for nonexistent clone."""
         mock_clone_storage.get.return_value = None
@@ -1477,7 +1514,7 @@ class TestMergeCloneToTarget:
         lock.release()
 
         commands = [call.args[0] for call in mock_git_manager.run_git_command.call_args_list]
-        assert ["stash", "pop", "stash@{0}"] in commands
+        assert ["stash", "pop", "--index", "stash@{0}"] in commands
         assert ["branch", "-D", "clone-merge/feature/test"] in commands
         mock_git_manager.merge_branch.assert_called_once()
         mock_clone_storage.mark_merged.assert_called_once()
@@ -1792,7 +1829,7 @@ class TestMergeCloneToTarget:
 
         assert result["success"] is True
         pop_call = mock_git_manager.run_git_command.call_args_list[-1]
-        assert pop_call.args[0] == ["stash", "pop", "stash@{1}"]
+        assert pop_call.args[0] == ["stash", "pop", "--index", "stash@{1}"]
 
     @pytest.mark.asyncio
     async def test_merge_clone_stash_restore_failure_surfaces_after_success(
@@ -2330,6 +2367,50 @@ class TestCleanupStaleClones:
         mock_clone_storage.mark_cleanup.assert_called_once_with("clone-1")
         mock_git_manager.delete_clone.assert_called_once_with("/tmp/clones/old", force=True)
         mock_clone_storage.delete.assert_called_once_with("clone-1")
+
+    @pytest.mark.asyncio
+    async def test_cleanup_target_failure_keeps_terminal_record_for_retry(
+        self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
+    ) -> None:
+        clone = Clone(
+            id="clone-1",
+            project_id="11111111-1111-4111-8111-111111110001",
+            branch_name="old-feature",
+            clone_path="/tmp/clones/old",
+            base_branch="main",
+            task_id=None,
+            agent_session_id=None,
+            status=CloneStatus.STALE.value,
+            remote_url=None,
+            last_sync_at=None,
+            cleanup_after=None,
+            created_at=STALE_TIMESTAMP,
+            updated_at=STALE_TIMESTAMP,
+        )
+        mock_clone_storage.cleanup_stale.return_value = [clone]
+        mock_clone_storage.mark_cleanup.return_value = replace(
+            clone,
+            status=CloneStatus.CLEANUP.value,
+        )
+        mock_git_manager.delete_clone.return_value = MagicMock(success=True)
+
+        with patch(
+            "gobby.mcp_proxy.tools._clones_cleanup.cleanup_checkout_cargo_target_dir",
+            return_value="permission denied",
+        ):
+            result = await registry.call(
+                "cleanup_stale_clones",
+                {"hours": 24, "dry_run": False, "delete_files": True},
+            )
+
+        assert result["success"] is False
+        assert result["cleaned"][0]["files_deleted"] is True
+        assert result["cleaned"][0]["record_deleted"] is False
+        assert result["cleaned"][0]["record_terminal"] is True
+        assert result["cleaned"][0]["error_code"] == "cargo_target_cleanup_failed"
+        assert "files were deleted" in result["cleaned"][0]["delete_error"]
+        mock_clone_storage.delete.assert_not_called()
+        mock_clone_storage.update.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_cleanup_slow_git_does_not_block_event_loop(

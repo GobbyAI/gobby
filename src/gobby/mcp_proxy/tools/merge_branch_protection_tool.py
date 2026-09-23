@@ -18,6 +18,7 @@ def register_branch_protection_tool(
 ) -> None:
     @registry.tool(
         name="probe_branch_protection",
+        read_only=True,
         description="Probe whether a target branch rejects a direct push via git dry-run.",
     )
     async def probe_branch_protection(

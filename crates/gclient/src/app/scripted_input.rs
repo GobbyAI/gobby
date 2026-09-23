@@ -37,21 +37,26 @@ impl Workspace {
                     "pane requires explicit control recovery",
                 ));
             }
-            if pane.pending_input.is_some() {
+            if !pane.queue_input(data, false) {
                 return Err(DaemonError::new(
-                    409,
-                    "control_pending",
-                    "a take-control request is already pending",
+                    429,
+                    "input_queue_full",
+                    "too much typed while acquiring control",
                 ));
             }
-            pane.pending_input = Some(data.to_vec());
+            // A second key while the first take-control is still out joins
+            // the queue rather than asking again (#22573).
+            let pending = pane.pending_input.len() > 1;
             let attachment = pane.attachment_id().to_string();
             let terminal_id = pane.terminal_id.clone();
+            if pending {
+                return Ok(());
+            }
             return self.daemon.send_ws(json!({
                 "type": "terminal_take_control",
                 "terminal_id": terminal_id,
                 "attachment_id": attachment,
-                "takeover": false
+                "takeover": true
             }));
         }
         let pane = self.panes.get_mut(&id).expect("pane");

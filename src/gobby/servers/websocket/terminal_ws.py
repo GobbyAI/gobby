@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from gobby.servers.websocket.terminal_input import WriteOutcome, record_turn_observation
 from gobby.storage.projects import GLOBAL_PROJECT_ID
 from gobby.storage.sessions import LIVE_SESSION_STATUS_ORDER
-from gobby.storage.terminals import AttachLocator
+from gobby.storage.terminals import AttachLocator, HostEpochMismatchError
 from gobby.terminals.foreground import foreground_commands, shell_pid
 from gobby.terminals.leases import (
     LifecyclePublicationError,
@@ -78,6 +78,8 @@ PROXY_FRAME_OPEN_SECONDS = 1.0
 PROXY_START_SECONDS = 1.0
 
 PROXY_ATTACH_FAILURE_REASONS: dict[str, str] = {
+    "terminal_exited": "terminal row is exited or orphaned; nothing to attach",
+    "host_epoch_stale": "terminal belongs to an earlier gterm host incarnation",
     "host_not_ready": "terminal host has not finished starting",
     "runtime_unavailable": "no terminal runtime for backend",
     "proxy_unavailable": "proxy frame opener is not available",
@@ -92,7 +94,9 @@ PROXY_ATTACH_FAILURE_REASONS: dict[str, str] = {
 
 
 def _log_proxy_attach_failure(terminal_id: str, code: str, *, exc_info: bool = False) -> str:
-    logger.warning(
+    level = logging.DEBUG if code == "terminal_exited" else logging.WARNING
+    logger.log(
+        level,
         "proxy attach failed terminal_id=%s code=%s reason=%s",
         terminal_id,
         code,
@@ -715,6 +719,8 @@ class TerminalWsMixin:
         return runtime
 
     async def _resolve_attach_locator(self, row: Any) -> tuple[AttachLocator | None, str | None]:
+        if row.state in {"exited", "orphaned"}:
+            return None, _log_proxy_attach_failure(row.id, "terminal_exited")
         host = self.terminal_host_manager
         if host is not None and not await host.wait_startup_settled(
             HOST_STARTUP_ATTACH_WAIT_SECONDS
@@ -725,6 +731,8 @@ class TerminalWsMixin:
             return None, _log_proxy_attach_failure(row.id, "runtime_unavailable")
         try:
             locator = await runtime.attach_locator(row)
+        except HostEpochMismatchError:
+            return None, _log_proxy_attach_failure(row.id, "host_epoch_stale")
         except Exception:
             return None, _log_proxy_attach_failure(row.id, "locator_failed", exc_info=True)
         if not isinstance(locator, AttachLocator):

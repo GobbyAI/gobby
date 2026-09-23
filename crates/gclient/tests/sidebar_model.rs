@@ -82,8 +82,8 @@ fn agent_state_follows_attention_and_terminal() {
 
     assert_eq!(
         agent_state(&running, Some(&quiet)),
-        RowState::Idle,
-        "no attention and no new output is idle"
+        RowState::Working,
+        "a running agent is working at the live edge"
     );
     assert_eq!(
         agent_state(&running, Some(&busy)),
@@ -92,14 +92,19 @@ fn agent_state_follows_attention_and_terminal() {
     );
     assert_eq!(
         agent_state(&running, Some(&detached)),
-        RowState::Unseen,
-        "output on a pane that is no longer live waits to be seen"
+        RowState::Working,
+        "a running agent is working even when its pane is detached"
     );
     assert_eq!(
         agent_state(&running, None),
-        RowState::Idle,
-        "without a pane there is no output to report"
+        RowState::Working,
+        "a running agent is working without an open pane"
     );
+
+    let mut active = running.clone();
+    active.lifecycle_status = Some("active".to_string());
+    assert_eq!(agent_state(&active, Some(&quiet)), RowState::Working);
+    assert_eq!(agent_state(&active, None), RowState::Working);
 
     let mut finished = running.clone();
     finished.lifecycle_status = Some("completed".to_string());
@@ -107,6 +112,11 @@ fn agent_state_follows_attention_and_terminal() {
         agent_state(&finished, Some(&busy)),
         RowState::Unseen,
         "output after the run ended is unseen, never working"
+    );
+    assert_eq!(
+        agent_state(&finished, Some(&quiet)),
+        RowState::Idle,
+        "without new output an ended run is idle"
     );
 
     let mut blocked_entry = running.clone();
@@ -117,7 +127,12 @@ fn agent_state_follows_attention_and_terminal() {
         "only a set attention renders blocked"
     );
 
-    for status in ["awaiting_input", "awaiting_approval", "awaiting_handoff"] {
+    for status in [
+        "paused",
+        "awaiting_input",
+        "awaiting_approval",
+        "awaiting_handoff",
+    ] {
         let mut waiting = running.clone();
         waiting.lifecycle_status = Some(status.to_string());
         assert_eq!(

@@ -699,3 +699,57 @@ async def test_atomic_snapshot_swap(postgres_db: HubDatabase) -> None:
     assert set(observed) <= {("gpt-old",), ("gpt-new-a", "gpt-new-b")}
     assert observed[0] == ("gpt-old",)
     assert observed[-1] == ("gpt-new-a", "gpt-new-b")
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_refresh_provider_recollects_only_that_provider() -> None:
+    store = _MemoryStore(_snapshot("grok", "grok-4.6"))
+    collected: list[str] = []
+
+    async def collect(provider: str) -> ProviderSnapshot:
+        collected.append(provider)
+        return _snapshot(provider, f"{provider}-new")
+
+    coordinator = CapabilityRefreshCoordinator(
+        store,
+        {
+            "grok": _Collector(lambda: collect("grok"), provider="grok"),
+            "codex": _Collector(lambda: collect("codex")),
+        },
+    )
+
+    assert await coordinator.refresh_provider("grok") is True
+
+    assert collected == ["grok"]
+    assert [model.canonical_model for model in store.snapshot.models] == ["grok-new"]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_refresh_provider_skips_unknown_provider_and_within_cooldown() -> None:
+    store = _MemoryStore(_snapshot("grok", "grok-4.6"))
+    clock = 100.0
+    runs = 0
+
+    async def collect() -> ProviderSnapshot:
+        nonlocal runs
+        runs += 1
+        return _snapshot("grok", "grok-4.7")
+
+    coordinator = CapabilityRefreshCoordinator(
+        store,
+        {"grok": _Collector(collect, provider="grok")},
+        recollect_cooldown_seconds=60.0,
+        monotonic=lambda: clock,
+    )
+
+    assert await coordinator.refresh_provider("droid") is False
+    assert await coordinator.refresh_provider("grok") is True
+    clock += 30.0
+    assert await coordinator.refresh_provider("grok") is False
+    clock += 31.0
+    assert await coordinator.refresh_provider("grok") is True
+
+    assert runs == 2
+    assert [model.canonical_model for model in store.snapshot.models] == ["grok-4.7"]

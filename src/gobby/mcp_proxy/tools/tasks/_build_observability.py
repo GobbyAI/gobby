@@ -70,6 +70,7 @@ def create_build_observability_registry(ctx: RegistryContext) -> InternalToolReg
             "required": ["input_ref"],
         },
         func=get_build_status_tool,
+        read_only=True,
     )
     registry.register(
         name="explain_dispatch",
@@ -84,6 +85,7 @@ def create_build_observability_registry(ctx: RegistryContext) -> InternalToolReg
             "required": ["task_id"],
         },
         func=explain_dispatch_tool,
+        read_only=True,
     )
     registry.register(
         name="list_build_history",
@@ -98,6 +100,7 @@ def create_build_observability_registry(ctx: RegistryContext) -> InternalToolReg
             "required": ["input_ref"],
         },
         func=list_build_history_tool,
+        read_only=True,
     )
 
     return registry

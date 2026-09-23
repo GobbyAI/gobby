@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import shutil
+import time
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime
 from typing import TYPE_CHECKING, cast
@@ -20,6 +21,7 @@ from gobby.agents.spawn_executor_providers import (
     prepare_droid_spawn,
     prepare_grok_spawn,
     prepare_qwen_spawn,
+    seed_heuristic_title_from_prompt,
 )
 from gobby.agents.spawn_executor_support import (
     _CODEX_GOBBY_MCP_TOOL_TIMEOUT_SEC,
@@ -58,6 +60,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 _TIMEOUT_CLEANUP_TASKS: set[asyncio.Task[None]] = set()
+_SLOW_SPAWN_THRESHOLD_MS = 1_000.0
 
 __all__ = [
     "SpawnRequest",
@@ -157,6 +160,7 @@ def _spawn_in_doubt_seconds(request: SpawnRequest) -> float:
 
 async def execute_spawn(request: SpawnRequest) -> SpawnResult:
     """Unified spawn dispatch — all agents spawn via TerminalRuntime."""
+    started_at = time.perf_counter()
     try:
         result = _unsupported_sandbox_request_error(request)
         if result is None:
@@ -183,12 +187,19 @@ async def execute_spawn(request: SpawnRequest) -> SpawnResult:
 
         return result
     finally:
-        logger.info(
+        phase_timings_ms = complete_spawn_phase_timings(request.phase_timings_ms)
+        level = (
+            logging.INFO
+            if (time.perf_counter() - started_at) * 1000 >= _SLOW_SPAWN_THRESHOLD_MS
+            else logging.DEBUG
+        )
+        logger.log(
+            level,
             "Spawn phase timings",
             extra={
                 "run_id": request.run_id,
                 "provider": request.provider,
-                "phase_timings_ms": complete_spawn_phase_timings(request.phase_timings_ms),
+                "phase_timings_ms": phase_timings_ms,
             },
         )
 
@@ -223,6 +234,11 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
         if plan.inject_persona and request.session_manager is not None:
             from gobby.workflows.state_manager import SessionVariableManager
 
+            await asyncio.to_thread(
+                seed_heuristic_title_from_prompt,
+                request,
+                plan.child_session_id,
+            )
             await asyncio.to_thread(
                 SessionVariableManager(request.session_manager._storage.db).merge_variables,
                 plan.child_session_id,

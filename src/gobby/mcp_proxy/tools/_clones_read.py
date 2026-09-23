@@ -49,6 +49,7 @@ def create_clone_read_registry(ctx: CloneRegistryContext) -> InternalToolRegistr
             "required": ["clone_id"],
         },
         func=get_clone,
+        read_only=True,
     )
 
     def list_clones(
@@ -96,6 +97,7 @@ def create_clone_read_registry(ctx: CloneRegistryContext) -> InternalToolRegistr
             },
         },
         func=list_clones,
+        read_only=True,
     )
 
     def claim_clone(
@@ -208,6 +210,7 @@ def create_clone_read_registry(ctx: CloneRegistryContext) -> InternalToolRegistr
             "required": ["task_id"],
         },
         func=get_clone_by_task,
+        read_only=True,
     )
 
     def link_task_to_clone(
@@ -279,6 +282,7 @@ def create_clone_read_registry(ctx: CloneRegistryContext) -> InternalToolRegistr
             "properties": {},
         },
         func=get_clone_stats,
+        read_only=True,
     )
 
     return registry

@@ -192,6 +192,20 @@ gobby sessions restore --all [--json]
 Use this when a CLI deleted its original transcript file but you need the file
 back on disk for resume or inspection.
 
+### `gobby sessions terminate-terminal`
+
+Explicitly terminate a daemon-tracked terminal by terminal ID or root-session
+reference. This operation can kill an externally owned terminal and marks the
+tracked terminal row exited before returning.
+
+```bash
+gobby sessions terminate-terminal TERMINAL_OR_SESSION [--json]
+```
+
+Workspace `close_pane`, `close_tab`, and `close_workspace` operations retain
+their narrower ownership rule and release externally owned terminals without
+killing them.
+
 ### `gobby sessions delete`
 
 Delete a session after confirmation.
@@ -204,9 +218,10 @@ gobby sessions delete SESSION_ID --yes
 ## MCP Tools
 
 Use the `gobby-sessions` server for session CRUD, transcripts, handoffs,
-registration, usage, terminal capture, and archive restoration. Session deletion
-and bulk maintenance are operator/client surfaces, not MCP CRUD tools. Fetch schemas
-with `get_tool_schema` before writing examples or automating calls.
+registration, usage, terminal capture and termination, and archive restoration.
+Session deletion and bulk maintenance are operator/client surfaces, not MCP CRUD
+tools. Fetch schemas with `get_tool_schema` before writing examples or automating
+calls.
 
 | Tool | Purpose |
 | :--- | :--- |
@@ -229,6 +244,7 @@ with `get_tool_schema` before writing examples or automating calls.
 | `get_transcript_status` | Check archive availability and transcript file stats. |
 | `send_keys` | Send authorized terminal input through the managed runtime or tmux. |
 | `capture_output` | Capture a diagnostic runtime/tmux snapshot, with transcript-tail fallback. |
+| `terminate_terminal` | Explicitly terminate an authorized daemon-tracked terminal or root-session terminal and mark its row exited synchronously. |
 
 ### Finding Your Own Session
 
@@ -292,9 +308,9 @@ neither does a stale one: a marker that last moved more than thirty minutes ago
 nothing automatic will consume it and `get_handoff` still reads it after the
 restart.
 `gobby stop --wait` and `gobby restart --wait` wait up to ten minutes for handoffs;
-`--force` does not bypass this protection. Once shutdown passes the check, new
-handoffs cannot stage until it finishes or is cancelled. A blocked restart names
-the sessions and attempts to finish; it never consumes or discards their content.
+`--force` bypasses this protection without consuming or discarding handoff content.
+Once a non-forced shutdown passes the check, new handoffs cannot stage until it
+finishes or is cancelled. A blocked restart names the sessions and attempts to finish.
 
 Load `gobby:references/sessions/handoffs.md` before authoring `set_handoff` or
 cooperative `end_agent_run` content. A before-tool block teaches this requirement;
@@ -473,6 +489,9 @@ Capture can fall back to transcript-tail evidence; inspect `via` and truncation
 metadata before treating it as a live screen. `send_keys` requires caller context,
 rejects autonomous agent-run callers, and permits only self, same-project, or
 ancestor/descendant targets. Use `gobby-agents:send_message` for messages.
+`terminate_terminal` applies the same actor scope and is the explicit operation
+that may kill an external terminal; workspace close operations still release
+external terminals without killing them.
 A literal trailing newline requests one Enter. `/fast` is operator-only; an
 indeterminate write requires inspecting state before retrying.
 
@@ -486,6 +505,10 @@ call_tool("gobby-sessions", "send_keys", {
     "session_id": "#42",
     "keys": "status\n",
     "literal": True
+})
+
+call_tool("gobby-sessions", "terminate_terminal", {
+    "reference": "#42"
 })
 ```
 

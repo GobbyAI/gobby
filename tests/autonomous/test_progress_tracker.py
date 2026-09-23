@@ -15,9 +15,14 @@ from gobby.autonomous.progress_tracker import (
 )
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
-from gobby.storage.task_close_reviews import TaskCloseReview, TaskCloseReviewStore
+from gobby.storage.task_close_reviews import (
+    QueuedAgentRunSpec,
+    TaskCloseReview,
+    TaskCloseReviewStore,
+)
 from gobby.storage.tasks import LocalTaskManager
 from gobby.tasks.close_review_delivery import mark_terminal_review_delivered
+from gobby.utils.machine_id import require_machine_id
 
 pytestmark = pytest.mark.unit
 
@@ -49,13 +54,25 @@ def _create_active_review(
         task_id=task.id,
         task_ref=f"#{task.seq_num}",
         caller_session_id=session_id,
-        close_arguments={"preview": False},
+        commit_shas=(),
+        close_arguments={"preview": True},
         expected_task_updated_at=task.updated_at,
         review_fingerprint="review",
         evidence_fingerprint="evidence",
         diff_sha="d" * 64,
         test_bodies_sha="e" * 64,
         stable_facts={},
+        review_id=str(uuid4()),
+        run=QueuedAgentRunSpec(
+            id=str(uuid4()),
+            machine_id=require_machine_id(),
+            provider="codex",
+            model=None,
+            agent_name="task-close-reviewer",
+            prompt="Review close evidence.",
+            timeout_seconds=1200,
+            requested_reasoning_effort=None,
+        ),
     )
     assert created is True
     return review

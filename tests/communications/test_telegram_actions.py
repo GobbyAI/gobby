@@ -116,6 +116,67 @@ def _controller(
     )
 
 
+@pytest.mark.parametrize(
+    "content_type,metadata",
+    [
+        ("text", {"reply_to_message_id": "ordinary-post"}),
+        ("callback", {"callback_value": "approved", "callback_session_id": SESSION_ID}),
+        ("text", {}),
+    ],
+)
+async def test_live_session_inbound_uses_mailbox_without_responder_event(
+    content_type: str, metadata: dict[str, object]
+) -> None:
+    controller, manager, sessions, mailbox = _controller()
+    sessions.get.return_value = SimpleNamespace(id=SESSION_ID, status="active", source="claude")
+    manager.store.get_message_by_platform_id.return_value = (
+        CommsMessage(
+            id="ordinary-post",
+            channel_id=_channel().id,
+            direction="outbound",
+            content="Original post",
+            metadata_json={"platform_destination": "chat-1"},
+            created_at=NOW,
+        )
+        if "reply_to_message_id" in metadata
+        else None
+    )
+    message = _message(content="answer", content_type=content_type, metadata=metadata)
+
+    assert await controller.handle(_channel().name, message) is True
+
+    mailbox.send.assert_awaited_once()
+    delivery = mailbox.send.await_args.kwargs
+    assert delivery["target_id"] == SESSION_ID
+    assert delivery["wake"] is True
+    assert delivery["metadata"]["channel"] == _channel().name
+    assert delivery["metadata"]["sender"] == "42"
+    assert delivery["metadata"]["reply_to_message_id"] == metadata.get("reply_to_message_id")
+    assert delivery["metadata"]["replied_to_post"] == (
+        "Original post" if "reply_to_message_id" in metadata else None
+    )
+    assert delivery["metadata"]["callback_data"] == metadata.get("callback_value")
+    manager.send_message.assert_not_awaited()
+
+
+async def test_comms_session_inbound_remains_for_responder() -> None:
+    controller, _, sessions, mailbox = _controller()
+    sessions.get.return_value = SimpleNamespace(id=SESSION_ID, status="active", source="comms")
+
+    assert await controller.handle(_channel().name, _message(content="plain")) is False
+    mailbox.send.assert_not_awaited()
+
+
+async def test_mailbox_failure_cannot_start_responder_turn() -> None:
+    controller, manager, sessions, mailbox = _controller()
+    sessions.get.return_value = SimpleNamespace(id=SESSION_ID, status="active", source="codex")
+    mailbox.send.side_effect = RuntimeError("mailbox unavailable")
+
+    assert await controller.handle(_channel().name, _message(content="reply")) is True
+    manager.send_message.assert_awaited_once()
+    assert "send your message again" in manager.send_message.await_args.args[1]
+
+
 async def test_continue_callback_delivers_exact_answer_and_reports_live_wake() -> None:
     controller, manager, _, mailbox = _controller(
         wake_results=[{"session_id": SESSION_ID, "delivered": True}]

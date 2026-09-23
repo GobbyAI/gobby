@@ -10,12 +10,12 @@ from typing import TYPE_CHECKING, Any
 from gobby.config.bootstrap import DEFAULT_WEBSOCKET_PORT
 from gobby.config.logging import UI_LOG_FILENAME, resolved_log_path
 from gobby.hooks.background_tasks import create_background_task
+from gobby.runner_hook_replay import _run_agent_hook_replay_barrier
 from gobby.runner_lifecycle_agents import (
     _reap_orphaned_srt_runners_on_startup,
     _reconcile_task_close_reviews,
     _recover_agent_completion_subscribers_on_startup,
     _retry_parked_non_task_resumes,
-    _run_agent_hook_replay_barrier,
 )
 from gobby.runner_lifecycle_reconcile import (
     _reclassify_reconciliation_pending_runs,
@@ -625,7 +625,20 @@ async def init_subsystems(
     # terminals, so the surviving gterm host must be adopted (or a fresh one
     # spawned) before the slow recovery steps below (#22002).
     await _start_terminal_host(runner, tracker)
-    await _run_agent_hook_replay_barrier(runner)
+    barrier_outcome = await _run_agent_hook_replay_barrier(runner)
+    paused_sessions = await runner.wake_dispatcher.reconcile_restart_active_sessions(
+        restart_horizon_ms=getattr(runner, "http_bound_at_ms", None),
+        excluded_session_ids=barrier_outcome.excluded_session_ids,
+        recovery_safe=barrier_outcome.session_recovery_safe,
+    )
+    if paused_sessions:
+        logger.info(
+            "Reconciled %d restart-stale active session(s)",
+            len(paused_sessions),
+        )
+    wake_replay_coordinator = getattr(runner, "wake_replay_coordinator", None)
+    if wake_replay_coordinator is not None:
+        await wake_replay_coordinator.open()
     reconciled_runs = (
         await reconcile_agent_runs_after_restart(runner)
         if getattr(runner, "agent_runner", None) is not None

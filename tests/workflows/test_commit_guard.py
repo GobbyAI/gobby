@@ -27,6 +27,8 @@ from gobby.workflows.commit_guard import (
     ForeignPathOwner,
     _format_dirty_edit_reason,
     _format_ref,
+    active_owned_dirty_paths,
+    foreign_owned_dirty_paths,
     parse_git_commit_invocations,
 )
 from gobby.workflows.definitions import RuleDefinitionBody
@@ -172,7 +174,7 @@ class GuardHarness:
                     "arguments": {
                         "task_id": f"#{self.foreign_task.seq_num}",
                         "commit_sha": "abc123",
-                        "preview": False,
+                        "preview": True,
                     },
                 },
             },
@@ -276,6 +278,28 @@ def guard_harness(
         foreign_task=foreign_task,
         repo=repo,
     )
+
+
+def test_active_owner_lookup_includes_the_current_session(guard_harness: GuardHarness) -> None:
+    paths = {"owned.txt", "foreign.txt"}
+
+    foreign_only = foreign_owned_dirty_paths(
+        guard_harness.db,
+        session_id=guard_harness.current_session.id,
+        project_id=guard_harness.project.id,
+        checkout_root=str(guard_harness.repo),
+        paths=paths,
+    )
+    all_active = active_owned_dirty_paths(
+        guard_harness.db,
+        project_id=guard_harness.project.id,
+        checkout_root=str(guard_harness.repo),
+        paths=paths,
+    )
+
+    assert set(foreign_only) == {"foreign.txt"}
+    assert set(all_active) == paths
+    assert all_active["owned.txt"][0].session_ref == guard_harness.current_session.ref
 
 
 @pytest.mark.asyncio

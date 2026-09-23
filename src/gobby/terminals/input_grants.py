@@ -64,7 +64,12 @@ async def sync_host_input_grant(
         try:
             await runtime.revoke_input(terminal)
         except _HOST_FAILURES as exc:
-            logger.warning("revoke_input for terminal %s failed: %s", terminal.id, exc)
+            level = (
+                logging.DEBUG
+                if isinstance(exc, HostCommandError) and exc.code == "not_found"
+                else logging.WARNING
+            )
+            logger.log(level, "revoke_input for terminal %s failed: %s", terminal.id, exc)
         return None
     try:
         await runtime.grant_input(terminal, holder.attachment_id)

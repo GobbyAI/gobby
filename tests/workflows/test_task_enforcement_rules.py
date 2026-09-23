@@ -287,6 +287,7 @@ NATIVE_TRACKER_TOOLS = {
 
 TASK_ENFORCEMENT_RULES = {
     "block-cross-session-foreign-dirty-edit",
+    "block-unresolved-scope-shell-write",
     "block-native-task-tracker-unclaimed",
     "block-spawned-agent-create-task",
     "block-reopen-task",
@@ -361,6 +362,215 @@ class TestTaskEnforcementSync:
                     "mcp_call",
                     "rewrite_input",
                 }
+
+
+class TestBlockUnresolvedScopeShellWrite:
+    """Unknown-target shell mutations must stop before provider execution."""
+
+    def test_rule_uses_canonical_unknown_scope_metadata(self, db, manager) -> None:
+        _sync_bundled(db)
+
+        row = manager.get_by_name("block-unresolved-scope-shell-write")
+        assert row is not None
+        body = RuleDefinitionBody.model_validate(row.definition_json)
+
+        assert row.enabled is True
+        assert row.source == "installed"
+        assert body.event.value == "before_tool"
+        assert body.when is not None
+        assert "canonical_repo_mutation_scope_unknown" in body.when
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            'for RANDOM in a.py b.py; do sed -i "s/x/y/" "$RANDOM"; done',
+            'for f in a.py b.py; do sed -i "s/x/y/" "${f:-fallback.py}"; done',
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_rule_blocks_untrusted_loop_binding_scope(
+        self,
+        db: HubDatabase,
+        tmp_path: Path,
+        command: str,
+    ) -> None:
+        _sync_bundled(db)
+        data: dict[str, object] = {
+            "tool_name": "Bash",
+            "tool_input": {"command": command, "cwd": str(tmp_path)},
+            "project_path": str(tmp_path),
+        }
+        normalize_tool_fields(data)
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id=SESSION_ID,
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data=data,
+        )
+
+        response = await RuleEngine(db).evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables={
+                "require_task_before_edit": True,
+                "task_claimed": True,
+                "plan_mode": False,
+                "loaded_skills": ["python", "restraint"],
+            },
+        )
+
+        assert data.get("canonical_file_paths") in (None, [])
+        assert data["canonical_repo_mutation_scope_unknown"] is True
+        assert response.decision == "block"
+
+    @pytest.mark.asyncio
+    async def test_rule_distinguishes_resolved_rebound_partial_and_opaque_shell_targets(
+        self,
+        db: HubDatabase,
+        tmp_path: Path,
+    ) -> None:
+        _sync_bundled(db)
+        variables = {
+            "require_task_before_edit": True,
+            "task_claimed": True,
+            "plan_mode": False,
+            "loaded_skills": ["python", "restraint"],
+        }
+
+        resolved_loop_data: dict[str, object] = {
+            "tool_name": "Bash",
+            "tool_input": {
+                "command": 'for f in a.py b.py; do sed -i "s/x/y/" "$f"; done',
+                "cwd": str(tmp_path),
+            },
+            "project_path": str(tmp_path),
+        }
+        normalize_tool_fields(resolved_loop_data)
+        resolved_loop_event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id=SESSION_ID,
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data=resolved_loop_data,
+        )
+
+        resolved_loop_response = await RuleEngine(db).evaluate(
+            resolved_loop_event,
+            session_id=SESSION_ID,
+            variables=variables,
+        )
+
+        assert resolved_loop_data["canonical_file_paths"] == ["a.py", "b.py"]
+        assert "canonical_repo_mutation_scope_unknown" not in resolved_loop_data
+        assert resolved_loop_response.decision == "allow", resolved_loop_response.reason
+
+        eval_rebound_data: dict[str, object] = {
+            "tool_name": "Bash",
+            "tool_input": {
+                "command": ('for f in a.py b.py; do eval \'f="$SRC"\'; sed -i "s/x/y/" "$f"; done'),
+                "cwd": str(tmp_path),
+            },
+            "project_path": str(tmp_path),
+        }
+        normalize_tool_fields(eval_rebound_data)
+        eval_rebound_event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id=SESSION_ID,
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data=eval_rebound_data,
+        )
+
+        eval_rebound_response = await RuleEngine(db).evaluate(
+            eval_rebound_event,
+            session_id=SESSION_ID,
+            variables=variables,
+        )
+
+        assert eval_rebound_data.get("canonical_file_paths") in (None, [])
+        assert eval_rebound_data["canonical_repo_mutation_scope_unknown"] is True
+        assert eval_rebound_response.decision == "block"
+
+        partial_data: dict[str, object] = {
+            "tool_name": "Bash",
+            "tool_input": {
+                "command": 'mv "$SRC" dst.txt',
+                "cwd": str(tmp_path),
+            },
+            "project_path": str(tmp_path),
+        }
+        normalize_tool_fields(partial_data)
+        partial_event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id=SESSION_ID,
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data=partial_data,
+        )
+
+        partial_response = await RuleEngine(db).evaluate(
+            partial_event,
+            session_id=SESSION_ID,
+            variables=variables,
+        )
+
+        assert partial_data["canonical_file_paths"] == ["dst.txt"]
+        assert partial_data["canonical_repo_mutation_scope_unknown"] is True
+        assert partial_response.decision == "block"
+
+        opaque_data: dict[str, object] = {
+            "tool_name": "Bash",
+            "tool_input": {
+                "command": 'TARGET=src/generated\nmkdir -p "$TARGET"',
+                "cwd": str(tmp_path),
+            },
+            "project_path": str(tmp_path),
+        }
+        normalize_tool_fields(opaque_data)
+        opaque_event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id=SESSION_ID,
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data=opaque_data,
+        )
+
+        opaque_response = await RuleEngine(db).evaluate(
+            opaque_event,
+            session_id=SESSION_ID,
+            variables=variables,
+        )
+
+        assert opaque_data.get("canonical_file_paths") in (None, [])
+        assert opaque_data["canonical_repo_mutation_scope_unknown"] is True
+        assert opaque_response.decision == "block"
+        assert "literal path" in (opaque_response.reason or "")
+        assert "Write/Edit" in (opaque_response.reason or "")
+
+        structured_data: dict[str, object] = {
+            "tool_name": "Write",
+            "tool_input": {"file_path": str(tmp_path / "src" / "structured.txt")},
+            "project_path": str(tmp_path),
+        }
+        normalize_tool_fields(structured_data)
+        structured_event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id=SESSION_ID,
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data=structured_data,
+        )
+
+        structured_response = await RuleEngine(db).evaluate(
+            structured_event,
+            session_id=SESSION_ID,
+            variables=variables,
+        )
+
+        assert structured_data["canonical_structured_mutation"] is True
+        assert "canonical_repo_mutation_scope_unknown" not in structured_data
+        assert structured_response.decision == "allow", structured_response.reason
 
 
 class TestRequireTaskBeforeCommit:
@@ -1974,7 +2184,7 @@ class TestRequireCommitBeforeStatus:
         assert "preview" not in body.when
 
     @pytest.mark.asyncio
-    async def test_close_preview_requires_commit_for_edits(self, db) -> None:
+    async def test_conditional_close_preview_requires_commit_for_edits(self, db) -> None:
         variables = _status_gate_variables(
             active_task_id="task-1",
             task_edited_files={"task-1": ["src/owned.py"]},

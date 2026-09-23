@@ -865,6 +865,67 @@ async def test_delete_worktree_success(
 
 
 @pytest.mark.asyncio
+async def test_delete_worktree_retries_cargo_target_before_record_delete(
+    registry: InternalToolRegistry,
+    mock_worktree_storage: MagicMock,
+    mock_git_manager: MagicMock,
+    tmp_path: Path,
+) -> None:
+    worktree_path = tmp_path / "p1-retry"
+    worktree_path.mkdir()
+    wt = Worktree(
+        id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee02",
+        project_id="p1",
+        branch_name="b1",
+        worktree_path=str(worktree_path),
+        base_branch="main",
+        status="active",
+        created_at=_VALID_TIMESTAMP,
+        updated_at=_VALID_TIMESTAMP,
+        task_id=None,
+        agent_session_id=None,
+        merged_at=None,
+    )
+    mock_worktree_storage.get.return_value = wt
+    mock_git_manager.get_worktree_status.return_value.has_uncommitted_changes = False
+
+    async def delete_once(*_args: object, **_kwargs: object) -> MagicMock:
+        worktree_path.rmdir()
+        return MagicMock(success=True)
+
+    mock_git_manager.delete_worktree.side_effect = delete_once
+    mock_git_manager.run_git_command.side_effect = None
+    mock_git_manager.run_git_command.return_value = MagicMock(
+        returncode=1,
+        stdout="",
+        stderr="",
+    )
+    mock_git_manager.prune_worktrees.return_value = MagicMock(success=True, error=None)
+    mock_worktree_storage.delete.return_value = True
+
+    with patch(
+        "gobby.worktrees.deletion.cleanup_checkout_cargo_target_dir",
+        side_effect=["permission denied", None],
+    ) as cleanup_target:
+        failed = await registry.call("delete_worktree", {"worktree_id": wt.id})
+        retried = await registry.call("delete_worktree", {"worktree_id": wt.id})
+
+    assert failed["success"] is False
+    assert failed["error_code"] == "cargo_target_cleanup_failed"
+    assert "Git worktree files were deleted" in failed["error"]
+    assert "permission denied" in failed["error"]
+    assert retried["success"] is True
+    assert cleanup_target.call_count == 2
+    mock_git_manager.delete_worktree.assert_awaited_once()
+    mock_git_manager.run_git_command.assert_awaited_once_with(
+        ["show-ref", "--verify", "--quiet", "refs/heads/b1"],
+        timeout=5,
+    )
+    mock_git_manager.prune_worktrees.assert_awaited_once_with()
+    mock_worktree_storage.delete.assert_called_once_with(wt.id)
+
+
+@pytest.mark.asyncio
 async def test_delete_worktree_uncommitted_changes(
     registry: InternalToolRegistry, mock_worktree_storage: MagicMock, mock_git_manager: MagicMock
 ) -> None:
@@ -940,12 +1001,18 @@ async def test_delete_worktree_path_not_exists(
     mock_worktree_storage.get.return_value = wt
     mock_worktree_storage.delete.return_value = True
     mock_git_manager.delete_worktree.return_value.success = True
+    mock_git_manager.run_git_command.side_effect = None
+    mock_git_manager.run_git_command.return_value = MagicMock(
+        returncode=0,
+        stdout="",
+        stderr="",
+    )
     with patch("pathlib.Path.exists", return_value=False):
         result = await registry.call(
             "delete_worktree", {"worktree_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01"}
         )
         assert result["success"] is True
-        mock_git_manager.delete_worktree.assert_called_once_with(
+        mock_git_manager.delete_worktree.assert_awaited_once_with(
             wt.worktree_path,
             force=False,
             delete_branch=True,
@@ -975,8 +1042,12 @@ async def test_delete_worktree_missing_path_prune_failure_preserves_record(
         merged_at=None,
     )
     mock_worktree_storage.get.return_value = wt
-    mock_git_manager.delete_worktree.return_value.success = False
-    mock_git_manager.delete_worktree.return_value.error = "Git delete failed"
+    mock_git_manager.run_git_command.side_effect = None
+    mock_git_manager.run_git_command.return_value = MagicMock(
+        returncode=1,
+        stdout="",
+        stderr="",
+    )
     mock_git_manager.prune_worktrees.return_value.success = False
     mock_git_manager.prune_worktrees.return_value.error = "Prune failed"
 
@@ -985,7 +1056,44 @@ async def test_delete_worktree_missing_path_prune_failure_preserves_record(
 
     assert result["success"] is False
     assert result["error"] == "Prune failed"
-    mock_git_manager.prune_worktrees.assert_called_once_with()
+    mock_git_manager.delete_worktree.assert_not_called()
+    mock_git_manager.prune_worktrees.assert_awaited_once_with()
+    mock_worktree_storage.delete.assert_not_called()
+
+
+async def test_delete_worktree_missing_path_branch_lookup_failure_preserves_record(
+    registry: InternalToolRegistry,
+    mock_worktree_storage: MagicMock,
+    mock_git_manager: MagicMock,
+) -> None:
+    wt = Worktree(
+        id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
+        project_id="p1",
+        branch_name="b1",
+        worktree_path="/nonexistent",
+        base_branch="main",
+        status="active",
+        created_at=_VALID_TIMESTAMP,
+        updated_at=_VALID_TIMESTAMP,
+        task_id=None,
+        agent_session_id=None,
+        merged_at=None,
+    )
+    mock_worktree_storage.get.return_value = wt
+    mock_git_manager.run_git_command.side_effect = None
+    mock_git_manager.run_git_command.return_value = MagicMock(
+        returncode=128,
+        stdout="",
+        stderr="repository unavailable",
+    )
+
+    with patch("pathlib.Path.exists", return_value=False):
+        result = await registry.call("delete_worktree", {"worktree_id": wt.id})
+
+    assert result["success"] is False
+    assert result["error"] == "repository unavailable"
+    mock_git_manager.delete_worktree.assert_not_called()
+    mock_git_manager.prune_worktrees.assert_not_called()
     mock_worktree_storage.delete.assert_not_called()
 
 
@@ -1109,7 +1217,7 @@ async def test_delete_worktree_continues_when_git_failure_removed_path(
     mock_git_manager.delete_worktree.return_value.success = False
     mock_git_manager.delete_worktree.return_value.error = "Git delete failed after unlink"
 
-    with patch("pathlib.Path.exists", side_effect=[True, False]):
+    with patch("pathlib.Path.exists", side_effect=[True, True, False]):
         result = await registry.call(
             "delete_worktree", {"worktree_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01"}
         )
@@ -1475,6 +1583,56 @@ async def test_cleanup_expired_worktree_rechecks_git_merge_state(
     assert "no longer reports" in result["cleaned"][0]["git_skip_reason"]
     mock_git_manager.delete_worktree.assert_not_called()
     mock_worktree_storage.delete.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_cleanup_expired_worktree_retries_target_before_record_delete(
+    registry: InternalToolRegistry, mock_worktree_storage: MagicMock, mock_git_manager: MagicMock
+) -> None:
+    wt = Worktree(
+        id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee02",
+        project_id="p1",
+        branch_name="b2",
+        worktree_path="/tmp/p2",
+        base_branch="main",
+        status="merged",
+        created_at=_VALID_TIMESTAMP,
+        updated_at=_VALID_TIMESTAMP,
+        task_id=None,
+        agent_session_id=None,
+        merged_at=_VALID_TIMESTAMP,
+        cleanup_after=_VALID_TIMESTAMP,
+    )
+    mock_worktree_storage.cleanup_stale.return_value = []
+    mock_worktree_storage.find_expired.return_value = [wt]
+    mock_git_manager.get_worktree_status.return_value.has_uncommitted_changes = False
+    mock_git_manager.delete_worktree.return_value.success = True
+
+    with (
+        patch(
+            "gobby.mcp_proxy.tools.worktrees._cleanup.is_worktree_git_merged",
+            return_value=True,
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.worktrees._cleanup.cleanup_checkout_cargo_target_dir",
+            side_effect=["permission denied", None],
+        ) as cleanup_target,
+    ):
+        failed = await registry.call(
+            "cleanup_stale_worktrees",
+            {"hours": 24, "dry_run": False, "delete_git": True},
+        )
+        retried = await registry.call(
+            "cleanup_stale_worktrees",
+            {"hours": 24, "dry_run": False, "delete_git": True},
+        )
+
+    assert failed["success"] is False
+    assert failed["cleaned"][0]["git_deleted"] is True
+    assert failed["cleaned"][0]["error_code"] == "cargo_target_cleanup_failed"
+    assert retried["success"] is True
+    assert cleanup_target.call_count == 2
+    mock_worktree_storage.delete.assert_called_once_with(wt.id)
 
 
 @pytest.mark.asyncio

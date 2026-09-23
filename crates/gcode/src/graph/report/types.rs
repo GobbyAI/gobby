@@ -97,7 +97,7 @@ pub struct GraphReportSummary {
     pub code_edge_counts: BTreeMap<String, usize>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GraphReportHotspots {
     pub high_degree_files: Vec<GraphHotspot>,
     pub high_degree_symbols: Vec<GraphHotspot>,

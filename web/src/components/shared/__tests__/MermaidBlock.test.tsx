@@ -132,7 +132,9 @@ it("falls back to a highlighted code block with a note when rendering fails", as
   render(<MermaidBlock className="language-mermaid">{DIAGRAM}</MermaidBlock>);
 
   expect(await screen.findByText(/diagram failed to render/i)).toBeTruthy();
-  const fallback = screen.getByTestId("syntax-highlighter");
+  // The note commits outside act(), with the lazy CodeBlock placeholder; the
+  // highlighter mounts in a later commit once the observer effect runs.
+  const fallback = await screen.findByTestId("syntax-highlighter");
   expect(fallback.getAttribute("data-language")).toBe("mermaid");
   expect(fallback.textContent).toContain("A-->B");
   expect(screen.queryByTestId("mermaid-svg")).toBeNull();

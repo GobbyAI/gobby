@@ -572,7 +572,6 @@ Stages with required review must be submitted through `tasks review --submit`.
 ```bash
 gobby tasks search QUERY [OPTIONS]
 gobby tasks reindex [OPTIONS]
-gobby tasks validate TASK --summary SUMMARY
 gobby tasks validation-history TASK [--clear] [--json]
 gobby tasks doctor
 gobby tasks clean
@@ -585,8 +584,9 @@ gobby tasks restore [--input PATH] [--quiet]
 `--limit`, `--min-score`, and `--json`. `tasks reindex` supports
 `--all-projects`.
 
-Leaf validation requires `--summary` or `--file`; it runs a bounded criteria
-review and does not replace the agent close checklist.
+Leaf close review runs through the agent-facing `gobby-tasks:close_task` MCP
+workflow. `validation-history` remains an operator inspection and maintenance
+surface for past review outcomes.
 
 ### Dependencies, Labels, Commits, And Diffs
 
@@ -732,6 +732,7 @@ gobby sessions stats [--project PROJECT]
 gobby sessions summarize [NOTES] [--session-id SESSION] [--output db|file|all] [--path DIR]
 gobby sessions restore SESSION [--path PATH] [--json]
 gobby sessions restore --all [--json]
+gobby sessions terminate-terminal TERMINAL_OR_SESSION [--json]
 gobby sessions delete SESSION [--yes]
 gobby sessions renumber --project PROJECT [--apply]
 gobby sessions backfill-context-windows [--dry-run]
@@ -740,6 +741,9 @@ gobby sessions backfill-context-windows [--dry-run]
 `summarize` creates archival output; it never stages a recoverable handoff.
 `renumber` previews until `--apply`; context-window backfill writes unless
 `--dry-run` is present. Restoration does not overwrite an existing transcript.
+`terminate-terminal` explicitly kills a daemon-tracked terminal, including an
+external terminal, and marks its terminal row exited before returning. It does
+not change the ownership protections on workspace close operations.
 See the [session guide](sessions.md#cli-commands) for workflows and recovery.
 
 ### Agents

@@ -54,6 +54,9 @@ def _build_step_trace(definition: WorkflowDefinition, result: WorkflowEvaluation
                 blocked_tools=step.blocked_tools,
                 allowed_mcp_tools=step.allowed_mcp_tools,
                 blocked_mcp_tools=step.blocked_mcp_tools,
+                mcp_tool_exemptions=(
+                    ["read-only internal tools"] if isinstance(step.allowed_mcp_tools, list) else []
+                ),
                 transitions=transitions,
                 on_mcp_success=mcp_success,
                 on_mcp_error=mcp_error,

@@ -941,7 +941,7 @@ class TestSpawnAgentTaskResolution:
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn"
             ) as mock_execute,
             patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.resolve_task_id_for_mcp"
+                "gobby.mcp_proxy.tools.spawn_agent._spawn_guards.resolve_task_id_for_mcp"
             ) as mock_resolve,
             patch("gobby.mcp_proxy.tools.spawn_agent._implementation.TaskSpawnLease") as lease_cls,
         ):

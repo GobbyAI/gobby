@@ -13,7 +13,9 @@ use gobby_client::startup::{
 };
 use gobby_client::teardown::{ModeBackend, RecordingBackend, TerminalGuard};
 use gobby_client::ui::keymap::{default_prefix, Action, Keymap, HERDR_PREFIX};
-use gobby_client::ui::settings::{render_settings, AgentSort, ClientPrefs, PassthroughModifier};
+use gobby_client::ui::settings::{
+    render_settings, AgentSort, ClientPrefs, PassthroughModifier, TitleScrolling,
+};
 use gobby_client::ui::Chrome;
 use gobby_client::{FrameDelivery, Workspace};
 use gobby_core::project::PERSONAL_PROJECT_ID;
@@ -620,6 +622,7 @@ fn prefs_round_trip_and_reject_unknown_keys() {
         pane_gaps: false,
         sidebar_width: 32,
         right_click_passthrough_modifier: PassthroughModifier::Alt,
+        title_scrolling: TitleScrolling::Right,
         ..ClientPrefs::default()
     };
     let path = save_prefs(&home, &prefs).expect("save");
@@ -632,6 +635,7 @@ fn prefs_round_trip_and_reject_unknown_keys() {
         text.contains("right_click_passthrough_modifier = \"alt\"\n"),
         "{text}"
     );
+    assert!(text.contains("title_scrolling = \"right\"\n"), "{text}");
     assert!(
         text.contains("[keymap]\npath = \"/tmp/keys.toml\"\n"),
         "{text}"

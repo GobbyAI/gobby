@@ -7,7 +7,7 @@ from collections.abc import Iterator
 from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
@@ -21,7 +21,12 @@ from gobby.code_index.nightly_repair import (
 )
 from gobby.config.code_index import CodeIndexConfig
 from gobby.runtime_grants.launch import ManagedLaunch
+from gobby.storage.cron import CronJobStorage
+from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.utils.datetime import resolve_local_timezone
+
+if TYPE_CHECKING:
+    from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.unit
 
@@ -288,18 +293,9 @@ async def test_nightly_repair_does_not_call_gateway_without_launch_factory(
     assert gateway.calls == []
 
 
-def test_register_nightly_repair_cron_creates_global_system_job() -> None:
-    class CronStorage:
-        def __init__(self) -> None:
-            self.created: dict[str, Any] | None = None
-
-        def get_job_by_name(self, name: str) -> None:
-            assert name == CODE_INDEX_NIGHTLY_REPAIR_JOB_NAME
-            return None
-
-        def create_job(self, **kwargs: Any) -> None:
-            self.created = kwargs
-
+def test_register_nightly_repair_cron_creates_global_system_job(
+    temp_db: HubDatabase,
+) -> None:
     class CronExecutor:
         def __init__(self) -> None:
             self.handlers: dict[str, Any] = {}
@@ -307,7 +303,7 @@ def test_register_nightly_repair_cron_creates_global_system_job() -> None:
         def register_handler(self, name: str, handler: Any) -> None:
             self.handlers[name] = handler
 
-    storage = CronStorage()
+    storage = CronJobStorage(temp_db)
     executor = CronExecutor()
     config = CodeIndexConfig()
     repairer = CodeIndexNightlyRepairer(
@@ -317,26 +313,28 @@ def test_register_nightly_repair_cron_creates_global_system_job() -> None:
     )
 
     register_code_index_nightly_repair_cron(
-        cron_storage=storage,  # type: ignore[arg-type]
+        cron_storage=storage,
         cron_executor=executor,
         repairer=repairer,
         config=config,
-        project_id="personal",
+        project_id=None,
     )
 
+    created = storage.get_job_by_name(CODE_INDEX_NIGHTLY_REPAIR_JOB_NAME)
+    assert created is not None
     assert CODE_INDEX_NIGHTLY_REPAIR_JOB_NAME == "gobby:code-index-nightly-repair"
     assert CODE_INDEX_NIGHTLY_REPAIR_HANDLER == "code-index:nightly-repair"
     assert CODE_INDEX_NIGHTLY_REPAIR_HANDLER in executor.handlers
-    assert storage.created is not None
-    assert storage.created["name"] == CODE_INDEX_NIGHTLY_REPAIR_JOB_NAME
-    assert storage.created["schedule_type"] == "cron"
-    assert storage.created["cron_expr"] == "0 2 * * *"
+    assert created.project_id == PERSONAL_PROJECT_ID
+    assert created.schedule_type == "cron"
+    assert created.cron_expr == "0 2 * * *"
     # Unconfigured schedules read as host-local wall clock, not UTC.
-    assert storage.created["timezone"] == resolve_local_timezone()
-    assert storage.created["enabled"] is True
-    assert storage.created["is_system"] is True
-    assert storage.created["action_config"]["handler"] == CODE_INDEX_NIGHTLY_REPAIR_HANDLER
-    assert storage.created["action_config"]["timeout_seconds"] == 8 * 60 * 60
+    assert created.timezone == resolve_local_timezone()
+    assert created.enabled is True
+    assert created.is_system is True
+    assert created.next_run_at is not None
+    assert created.action_config["handler"] == CODE_INDEX_NIGHTLY_REPAIR_HANDLER
+    assert created.action_config["timeout_seconds"] == 8 * 60 * 60
 
 
 def test_register_nightly_repair_cron_reconciles_timeout() -> None:
@@ -373,3 +371,82 @@ def test_register_nightly_repair_cron_reconciles_timeout() -> None:
 
     assert storage.reconciled is not None
     assert storage.reconciled["action_config"]["timeout_seconds"] == 8 * 60 * 60
+
+
+def test_register_nightly_repair_cron_preserves_parked_job_through_definition_repair(
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    storage = CronJobStorage(temp_db)
+    parked_job = storage.create_job(
+        project_id=PERSONAL_PROJECT_ID,
+        name=CODE_INDEX_NIGHTLY_REPAIR_JOB_NAME,
+        schedule_type="cron",
+        action_type="handler",
+        action_config={"handler": CODE_INDEX_NIGHTLY_REPAIR_HANDLER},
+        description="stale nightly repair definition",
+        cron_expr="15 3 * * *",
+        enabled=True,
+        is_system=True,
+    )
+    storage.park_system_job(parked_job.id)
+
+    def fail_if_woken(_job_id: str) -> None:
+        pytest.fail("parked jobs must not be woken")
+
+    monkeypatch.setattr(storage, "wake_system_job", fail_if_woken)
+    repairer = CodeIndexNightlyRepairer(
+        cast(
+            Any,
+            NightlyContext(projects=[], gateway=NightlyGateway(), log_file=Path("/tmp/log")),
+        )
+    )
+
+    register_code_index_nightly_repair_cron(
+        cron_storage=storage,
+        cron_executor=cast(Any, SimpleNamespace(register_handler=lambda *_args: None)),
+        repairer=repairer,
+        config=CodeIndexConfig(),
+        project_id=None,
+    )
+
+    repaired = storage.get_job(parked_job.id)
+    assert repaired is not None
+    assert repaired.cron_expr == "0 2 * * *"
+    assert repaired.action_config["timeout_seconds"] == 8 * 60 * 60
+    assert repaired.next_run_at is None
+
+
+def test_register_nightly_repair_cron_schedules_reenabled_job(
+    temp_db: HubDatabase,
+) -> None:
+    storage = CronJobStorage(temp_db)
+    disabled_job = storage.create_job(
+        project_id=PERSONAL_PROJECT_ID,
+        name=CODE_INDEX_NIGHTLY_REPAIR_JOB_NAME,
+        schedule_type="cron",
+        action_type="handler",
+        action_config={"handler": CODE_INDEX_NIGHTLY_REPAIR_HANDLER},
+        cron_expr="0 2 * * *",
+        enabled=False,
+        is_system=True,
+    )
+    repairer = CodeIndexNightlyRepairer(
+        cast(
+            Any,
+            NightlyContext(projects=[], gateway=NightlyGateway(), log_file=Path("/tmp/log")),
+        )
+    )
+
+    register_code_index_nightly_repair_cron(
+        cron_storage=storage,
+        cron_executor=cast(Any, SimpleNamespace(register_handler=lambda *_args: None)),
+        repairer=repairer,
+        config=CodeIndexConfig(),
+        project_id=None,
+    )
+
+    repaired = storage.get_job(disabled_job.id)
+    assert repaired is not None
+    assert repaired.enabled is True
+    assert repaired.next_run_at is not None

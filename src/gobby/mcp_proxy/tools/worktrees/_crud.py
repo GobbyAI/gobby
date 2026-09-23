@@ -30,6 +30,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
     @registry.tool(
         name="get_worktree",
+        read_only=True,
         description="Get details of a specific worktree.",
     )
     async def get_worktree(worktree_id: str) -> dict[str, Any]:
@@ -71,6 +72,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
     @registry.tool(
         name="list_worktrees",
+        read_only=True,
         description="List worktrees with optional filters. Accepts #N, N, UUID, or prefix for agent_session_id.",
     )
     def list_worktrees(
@@ -139,6 +141,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
     @registry.tool(
         name="get_worktree_stats",
+        read_only=True,
         description="Get worktree statistics for the project.",
     )
     def get_worktree_stats(project_path: str | None = None) -> dict[str, Any]:
@@ -170,6 +173,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
     @registry.tool(
         name="get_worktree_by_task",
+        read_only=True,
         description="Get worktree linked to a specific task.",
     )
     async def get_worktree_by_task(task_id: str) -> dict[str, Any]:

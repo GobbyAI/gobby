@@ -11,6 +11,7 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from gobby.agents.cargo_target import cleanup_checkout_cargo_target_dir
 from gobby.utils.git import run_thread_to_completion
 from gobby.worktrees.events import WorktreeEvent, emit_worktree_event
 from gobby.worktrees.executor import DestructiveBoundary
@@ -126,6 +127,14 @@ async def _delete_worktree(
             error_code="merged_into_requires_git_manager",
         )
     worktree_exists = Path(worktree.worktree_path).exists()
+    if worktree_exists and git_manager is None:
+        return WorktreeDeletionResult(
+            success=False,
+            error=(
+                "Cannot delete an on-disk worktree without a resolved git manager; "
+                "the worktree record was preserved"
+            ),
+        )
     if request.surface is not DeletionSurface.HTTP:
         precheck = await _mcp_precheck(request, worktree, git_manager, worktree_exists)
         if precheck is not None:
@@ -137,6 +146,23 @@ async def _delete_worktree(
     git_failure = await _delete_git_worktree(request, worktree, git_manager)
     if git_failure is not None:
         return git_failure
+
+    cargo_cleanup_error = await run_thread_to_completion(
+        context.run,
+        cleanup_checkout_cargo_target_dir,
+        Path(worktree.worktree_path),
+        worktree.project_id,
+    )
+    if cargo_cleanup_error is not None:
+        return WorktreeDeletionResult(
+            success=False,
+            git_deleted=True,
+            error=(
+                "Git worktree files were deleted, but Cargo target cleanup failed: "
+                f"{cargo_cleanup_error}"
+            ),
+            error_code="cargo_target_cleanup_failed",
+        )
 
     return await run_thread_to_completion(
         context.run, _finish_storage_deletion, request, worktree, worktree_storage, task_manager
@@ -192,14 +218,6 @@ async def _mcp_precheck(
             return WorktreeDeletionResult(
                 success=False, git_deleted=False, error="Cannot verify the expired worktree branch"
             )
-    if worktree_exists and git_manager is None:
-        return WorktreeDeletionResult(
-            success=False,
-            error=(
-                "Cannot delete an on-disk worktree without a resolved git manager; "
-                "the worktree record was preserved"
-            ),
-        )
     if git_manager is None or not worktree_exists:
         return None
 
@@ -230,6 +248,16 @@ async def _delete_git_worktree(
             "Worktree path %s doesn't exist, cleaning up DB record only",
             worktree.worktree_path,
         )
+        return None
+
+    git_already_deleted, retry_error = await probe_missing_worktree_git_state(
+        git_manager,
+        worktree_path=worktree.worktree_path,
+        branch_name=worktree.branch_name,
+    )
+    if retry_error is not None:
+        return WorktreeDeletionResult(success=False, git_deleted=False, error=retry_error)
+    if git_already_deleted:
         return None
 
     try:
@@ -290,6 +318,38 @@ async def _delete_git_worktree(
         git_deleted=False,
         error=prune_result.error or result.error or "Failed to prune missing git worktree",
     )
+
+
+async def probe_missing_worktree_git_state(
+    git_manager: WorktreeGitManager,
+    *,
+    worktree_path: str | Path,
+    branch_name: str | None,
+) -> tuple[bool, str | None]:
+    """Confirm a missing checkout and branch need no repeated Git deletion.
+
+    Returns ``(True, None)`` only after pruning a missing worktree registration.
+    A present path or branch returns ``(False, None)`` so normal deletion still runs.
+    """
+    if Path(worktree_path).exists():
+        return False, None
+    if not branch_name:
+        return False, "Cannot verify missing worktree without its source branch"
+    try:
+        branch_result = await git_manager.run_git_command(
+            ["show-ref", "--verify", "--quiet", f"refs/heads/{branch_name}"],
+            timeout=5,
+        )
+    except Exception as exc:
+        return False, f"Failed to verify missing worktree branch: {exc}"
+    if branch_result.returncode == 0:
+        return False, None
+    if branch_result.returncode != 1:
+        return False, branch_result.stderr.strip() or "Failed to verify missing worktree branch"
+    prune_result = await git_manager.prune_worktrees()
+    if not prune_result.success:
+        return False, prune_result.error or "Failed to prune missing git worktree"
+    return True, None
 
 
 def _clear_artifact_references(

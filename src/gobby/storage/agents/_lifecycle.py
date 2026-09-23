@@ -104,6 +104,96 @@ class _AgentRunLifecycleHost(Protocol):
 
 
 class _AgentRunLifecycleMixin:
+    def update_queued_prompt(
+        self: _AgentRunLifecycleHost,
+        run_id: str,
+        prompt: str,
+    ) -> AgentRun | None:
+        """Refresh launch-only evidence while retaining the durable queued identity."""
+        now = utc_now()
+        cursor = self.db.execute(
+            """
+            UPDATE agent_runs
+            SET prompt = %s, updated_at = %s
+            WHERE id = %s AND status = 'queued'
+            """,
+            (prompt, now, run_id),
+        )
+        if not _positive_rowcount(cursor):
+            return None
+        return self.get(run_id)
+
+    def activate_queued(
+        self: _AgentRunLifecycleHost,
+        run_id: str,
+        *,
+        child_session_id: str,
+        provider: str,
+        prompt: str,
+        workflow_name: str | None,
+        agent_name: str | None,
+        model: str | None,
+        is_local: bool,
+        requested_reasoning_effort: str | None,
+        effective_reasoning_effort: str | None,
+        reasoning_required: bool,
+        reasoning_status: str,
+        reasoning_message: str | None,
+        timeout_seconds: float | None,
+        resume_metadata_json: Mapping[str, object] | None,
+        worktree_id: str | None,
+        clone_id: str | None,
+    ) -> AgentRun | None:
+        """Promote a durable queued run into the ordinary prelaunch state."""
+        now = utc_now()
+        cursor = self.db.execute(
+            """
+            UPDATE agent_runs
+            SET child_session_id = %s,
+                provider = %s,
+                prompt = %s,
+                workflow_name = %s,
+                agent_name = %s,
+                model = %s,
+                is_local = %s,
+                requested_reasoning_effort = %s,
+                effective_reasoning_effort = %s,
+                reasoning_required = %s,
+                reasoning_status = %s,
+                reasoning_message = %s,
+                timeout_seconds = %s,
+                resume_metadata_json = %s,
+                worktree_id = %s,
+                clone_id = %s,
+                status = 'pending',
+                updated_at = %s
+            WHERE id = %s AND status = 'queued'
+            """,
+            (
+                child_session_id,
+                provider,
+                prompt,
+                workflow_name,
+                agent_name,
+                model,
+                is_local,
+                requested_reasoning_effort,
+                effective_reasoning_effort,
+                reasoning_required,
+                reasoning_status,
+                reasoning_message,
+                timeout_seconds,
+                dump_resume_metadata(resume_metadata_json),
+                worktree_id,
+                clone_id,
+                now,
+                run_id,
+            ),
+        )
+        if not _positive_rowcount(cursor):
+            return None
+        return self.get(run_id)
+
     def create(
         self: _AgentRunLifecycleHost,
         parent_session_id: str,
@@ -382,7 +472,7 @@ class _AgentRunLifecycleMixin:
                 completed_at = %s,
                 updated_at = %s
             WHERE id = %s
-              AND status IN ('pending', 'running')
+              AND status IN ('queued', 'pending', 'running')
             """,
             params=(
                 error,
@@ -424,7 +514,7 @@ class _AgentRunLifecycleMixin:
                 completed_at = %s,
                 updated_at = %s
             WHERE id = %s
-              AND status IN ('pending', 'running')
+              AND status IN ('queued', 'pending', 'running')
             """,
             params=(error, result, tool_calls_count, turns_used, now, now, run_id),
         )
@@ -453,7 +543,7 @@ class _AgentRunLifecycleMixin:
                 completed_at = %s,
                 updated_at = %s
             WHERE id = %s
-              AND status IN ('pending', 'running')
+              AND status IN ('queued', 'pending', 'running')
             """,
             params=(terminal_reason, result, now, now, run_id),
         )

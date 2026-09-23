@@ -299,6 +299,32 @@ class InterSessionMessageManager:
         )
         return [InterSessionMessage.from_row(row) for row in rows]
 
+    def get_undelivered_wake_messages(self, to_session: str) -> list[InterSessionMessage]:
+        """Return pending mailbox rows whose sender requested a live wake."""
+        rows = self.db.fetchall(
+            """SELECT * FROM inter_session_messages
+               WHERE to_session = %s
+                 AND delivered_at IS NULL
+                 AND metadata_json IS NOT NULL
+                 AND metadata_json::jsonb ->> 'wake_requested' = 'true'
+               ORDER BY sent_at ASC, id ASC""",
+            (to_session,),
+        )
+        return [InterSessionMessage.from_row(row) for row in rows]
+
+    def get_undelivered_wake_recipients(self) -> list[str]:
+        """Return recipients with pending wake-marked mailbox rows in send order."""
+        rows = self.db.fetchall(
+            """SELECT to_session, MIN(sent_at) AS first_sent_at
+               FROM inter_session_messages
+               WHERE delivered_at IS NULL
+                 AND metadata_json IS NOT NULL
+                 AND metadata_json::jsonb ->> 'wake_requested' = 'true'
+               GROUP BY to_session
+               ORDER BY first_sent_at ASC, to_session ASC"""
+        )
+        return [str(row["to_session"]) for row in rows]
+
     def mark_delivered_batch(
         self,
         message_ids: list[str],

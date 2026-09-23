@@ -1,4 +1,4 @@
-"""Gobby behavior against sanitized live Droid 0.219.0 hook and session captures."""
+"""Gobby behavior against sanitized live Droid provider captures."""
 
 from __future__ import annotations
 
@@ -23,6 +23,7 @@ pytestmark = pytest.mark.unit
 CAPTURES = Path(__file__).parents[1] / "fixtures" / "provider_contracts" / "droid"
 HOOK_PAYLOADS = CAPTURES / "hook-payloads-0.219.0.jsonl"
 SESSION = CAPTURES / "session-0.219.0.json"
+LIFECYCLE = CAPTURES / "turn-lifecycle-0.223.0.json"
 
 
 def _hook_captures() -> dict[str, dict[str, Any]]:
@@ -36,6 +37,12 @@ def _session_capture() -> dict[str, Any]:
     assert isinstance(capture, dict)
     assert capture["cli_version"] == "0.219.0"
     assert capture["capture_status"] == "live_proven"
+    return capture
+
+
+def _lifecycle_capture() -> dict[str, Any]:
+    capture = json.loads(LIFECYCLE.read_text(encoding="utf-8"))
+    assert isinstance(capture, dict)
     return capture
 
 
@@ -184,3 +191,128 @@ async def test_captured_sidecar_occupancy_is_the_last_model_call(
     await processor._persist_usage_events("session", messages)
 
     assert [snapshot.context_used_tokens for snapshot in snapshots] == [21213]
+
+
+def test_lifecycle_capture_has_managed_distinct_provenance() -> None:
+    capture = _lifecycle_capture()
+    cases = capture["cases"]
+
+    assert capture["version"] == "0.223.0"
+    assert capture["capture_date"] == "2026-09-19"
+    assert capture["binary_sha256"] == (
+        "efed63e905bcc6f7e17d9deaf6542b4a4d5cff7dcb3a7a4315a31c471050f925"
+    )
+    assert capture["provenance"]["launcher"] == "gobby-agents:spawn_agent"
+    assert capture["provenance"]["direct_binary_invocation"] is False
+    assert set(cases) == {
+        "normal_answer",
+        "prose_question",
+        "structured_question",
+        "permission_wait",
+        "approval",
+        "denial",
+        "user_interruption",
+        "non_user_failure",
+        "replacement_prompt_race",
+        "session_exit",
+    }
+    for identity_key in ("run_id", "child_session_id", "external_session_id"):
+        assert len({case[identity_key] for case in cases.values()}) == 10
+    assert "/Users/" not in LIFECYCLE.read_text(encoding="utf-8")
+
+
+def test_lifecycle_completion_and_structured_wait_slices() -> None:
+    cases = _lifecycle_capture()["cases"]
+
+    normal = cases["normal_answer"]
+    assert normal["hook_slice"][-1]["event"] == "Stop"
+    assert normal["transcript_slice"][-1]["text"] == "GOBBY_TL_NORMAL_OK"
+
+    prose = cases["prose_question"]
+    assert prose["hook_slice"][-1]["event"] == "Stop"
+    assert prose["transcript_slice"][-1]["text"] == "Should I continue?"
+
+    structured = cases["structured_question"]
+    structured_hooks = structured["hook_slice"]
+    structured_transcript = structured["transcript_slice"]
+    assert structured_hooks[-1]["notification_type"] == "elicitation_dialog"
+    assert all(event["event"] != "Stop" for event in structured_hooks)
+    assert structured_transcript[1]["hook_tool_call_id"] == structured["tool_id"]
+    assert structured_transcript[1]["parent_id"] == structured_transcript[2]["parent_id"]
+
+
+def test_lifecycle_permission_resolution_slices() -> None:
+    cases = _lifecycle_capture()["cases"]
+
+    waiting = cases["permission_wait"]
+    waiting_events = waiting["hook_slice"]
+    assert waiting_events[1]["permission_decision"] == "ask"
+    assert waiting_events[-1]["notification_type"] == "permission_prompt"
+    assert not {"PostToolUse", "Stop"} & {event["event"] for event in waiting_events}
+
+    approval = cases["approval"]
+    assert approval["hook_slice"][-1]["event"] == "PostToolUse"
+    approved_result = approval["transcript_slice"][-1]
+    assert approved_result["tool_id"] == approval["tool_id"]
+    assert approved_result["is_error"] is False
+
+    denial = cases["denial"]
+    denied_result = denial["transcript_slice"][-1]
+    assert denied_result == {
+        "id": "291439e2-4f3f-4ed8-837b-862006b0def4",
+        "at": "2026-09-20T03:48:29.532Z",
+        "kind": "tool_result",
+        "tool_id": denial["tool_id"],
+        "is_error": True,
+        "content": "Tool execution cancelled by user",
+    }
+    assert "no whole-turn cancellation marker in bounded slice" in denial["negative_evidence"]
+
+
+def test_lifecycle_interruption_and_non_user_failure_remain_distinct() -> None:
+    cases = _lifecycle_capture()["cases"]
+
+    interruption = cases["user_interruption"]
+    assert [event["event"] for event in interruption["hook_slice"]][-2:] == [
+        "Stop",
+        "Notification",
+    ]
+    assert interruption["hook_slice"][-1]["notification_type"] == "idle_prompt"
+    records_by_id = {
+        record["id"]: record for record in interruption["transcript_slice"] if "id" in record
+    }
+    lineage = set()
+    current_id = interruption["hook_slice"][-1]["message_id"]
+    while current_id in records_by_id:
+        lineage.add(current_id)
+        current_id = records_by_id[current_id].get("parent_id")
+    assert interruption["provider_turn_id"] == current_id
+    outcome = interruption["transcript_slice"][-1]
+    assert outcome["kind"] == "agent_turn_outcome"
+    assert outcome["turn_id"] == interruption["provider_turn_id"]
+    assert outcome["reason"] == "cancelled"
+
+    failure = cases["non_user_failure"]
+    stopped = failure["hook_slice"][1]
+    assert stopped["continue"] is False
+    assert stopped["stop_reason"] == "GOBBY_TL_NON_USER_FAILURE:n22308i"
+    assert failure["transcript_slice"][-1]["reason"] == "completed"
+    assert "no whole-turn cancellation marker in bounded slice" in failure["negative_evidence"]
+
+
+def test_lifecycle_replacement_race_and_session_exit_slices() -> None:
+    cases = _lifecycle_capture()["cases"]
+
+    race = cases["replacement_prompt_race"]
+    stale_result = race["transcript_slice"][1]
+    replacement = race["transcript_slice"][-1]
+    assert stale_result["content"] == "Error: GOBBY_TL_STALE_RESULT:n22309i"
+    assert replacement["text"] == "GOBBY_TL_REPLACEMENT_OK_n22309i"
+    assert replacement["at"] > stale_result["at"]
+    assert race["message_action"]["surface"] == "gobby-agents:send_message"
+
+    session_exit = cases["session_exit"]
+    end_event = session_exit["hook_slice"][-1]
+    assert end_event["event"] == "SessionEnd"
+    assert end_event["reason"] == "other"
+    assert session_exit["transcript_slice"][-1]["event"] == "SessionEnd"

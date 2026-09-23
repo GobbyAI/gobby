@@ -80,6 +80,7 @@ def register_transcript_tools(
 
     @registry.tool(
         name="get_transcript_status",
+        read_only=True,
         description="Check if a transcript archive exists for a session and get file stats.",
     )
     def get_transcript_status(session_id: str) -> dict[str, Any]:

@@ -634,6 +634,9 @@ class TestInitSubsystems:
     async def test_init_subsystems_uses_embedding_readiness_helper_and_stays_alive(self) -> None:
         runner = SimpleNamespace(
             http_server=SimpleNamespace(),
+            wake_dispatcher=SimpleNamespace(
+                reconcile_restart_active_sessions=AsyncMock(return_value=[])
+            ),
             mcp_proxy=SimpleNamespace(connect_all=AsyncMock()),
             config=SimpleNamespace(
                 databases=SimpleNamespace(
@@ -722,6 +725,9 @@ class TestInitSubsystems:
         )
         runner = SimpleNamespace(
             http_server=SimpleNamespace(),
+            wake_dispatcher=SimpleNamespace(
+                reconcile_restart_active_sessions=AsyncMock(return_value=[])
+            ),
             mcp_proxy=SimpleNamespace(connect_all=AsyncMock()),
             config=SimpleNamespace(
                 databases=SimpleNamespace(
@@ -887,6 +893,9 @@ class TestInitSubsystems:
                 capture=static_runtime_capture(DaemonConfig(code_index={"enabled": False}))
             ),
             http_server=SimpleNamespace(services=services),
+            wake_dispatcher=SimpleNamespace(
+                reconcile_restart_active_sessions=AsyncMock(return_value=[])
+            ),
             message_processor=SimpleNamespace(start=AsyncMock()),
             agent_runner=None,
             communications_manager=SimpleNamespace(
@@ -1020,6 +1029,9 @@ class TestShutdownDaemonServices:
                 services=SimpleNamespace(startup_ready=True, shutdown_in_progress=False),
                 _terminate_streamable_http_sessions=AsyncMock(),
             ),
+            wake_dispatcher=SimpleNamespace(
+                reconcile_restart_active_sessions=AsyncMock(return_value=[])
+            ),
             lifecycle_manager=SimpleNamespace(stop=AsyncMock()),
             agent_lifecycle_monitor=None,
             cron_scheduler=None,
@@ -1042,6 +1054,9 @@ class TestShutdownDaemonServices:
                 capture=static_runtime_capture(DaemonConfig(code_index={"enabled": False}))
             ),
             http_server=SimpleNamespace(services=services),
+            wake_dispatcher=SimpleNamespace(
+                reconcile_restart_active_sessions=AsyncMock(return_value=[])
+            ),
         )
 
         async def begin_shutdown_during_pipeline_recovery(
@@ -4458,16 +4473,22 @@ class TestMainFunctionExtended:
 
 @pytest.mark.asyncio
 async def test_startup_barrier_precedes_subscriber_recovery_and_optional_failure() -> None:
+    from gobby.runner_hook_replay import HookReplayBarrierOutcome
+
     events: list[str] = []
     monitor = SimpleNamespace(
         set_reconciliation_callback=MagicMock(),
         set_non_task_resume_callback=MagicMock(),
     )
 
-    async def barrier(_runner: object) -> bool:
+    async def barrier(_runner: object) -> HookReplayBarrierOutcome:
         assert monitor.set_reconciliation_callback.call_count == 1
         events.append("barrier")
-        return True
+        return HookReplayBarrierOutcome(settled=True, session_recovery_safe=True)
+
+    async def reconcile_sessions(**_kwargs: object) -> tuple[str, ...]:
+        events.append("sessions")
+        return ()
 
     async def reconcile(_runner: object) -> int:
         events.append("classify")
@@ -4502,6 +4523,10 @@ async def test_startup_barrier_precedes_subscriber_recovery_and_optional_failure
             SimpleNamespace(
                 agent_runner=object(),
                 agent_lifecycle_monitor=monitor,
+                http_bound_at_ms=1_700_000_000_000,
+                wake_dispatcher=SimpleNamespace(
+                    reconcile_restart_active_sessions=reconcile_sessions
+                ),
             ),
             AsyncMock(),
             None,
@@ -4510,7 +4535,7 @@ async def test_startup_barrier_precedes_subscriber_recovery_and_optional_failure
             recover_agent_completion_subscribers=recover,
         )
 
-    assert events == ["barrier", "classify", "reap", "recover", "connect"]
+    assert events == ["barrier", "sessions", "classify", "reap", "recover", "connect"]
 
 
 @pytest.mark.asyncio

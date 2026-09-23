@@ -34,6 +34,7 @@ from gobby.hooks.events import (
 from gobby.hooks.factory import HookManagerFactory
 from gobby.hooks.health_gate import ensure_daemon_ready, ensure_daemon_ready_async
 from gobby.hooks.hook_manager_dispatch import HookManagerDispatchMixin
+from gobby.hooks.phase_timing import measure_hook_phase
 from gobby.hooks.project_context import ProjectIdResolver, resolve_hook_project_context
 from gobby.hooks.rule_evaluator import WorkflowRuleEvaluator
 from gobby.hooks.session_activation import reconcile_session_activation
@@ -379,13 +380,14 @@ class HookManager(HookManagerDispatchMixin):
             # Caller-supplied _platform_session_id (e.g. the X-Gobby-Session-Id
             # header) must be validated against storage before anything reads
             # it; unknown ids are popped so the handler binds the real session.
-            self._session_lookup.validate_platform_session_metadata(event)
-            project_resolution = resolve_hook_project_context(
-                event,
-                session_manager=self._session_manager,
-                resolve_project_id=self._resolve_project_id,
-                logger=self.logger,
-            )
+            with measure_hook_phase("session_resolution"):
+                self._session_lookup.validate_platform_session_metadata(event)
+                project_resolution = resolve_hook_project_context(
+                    event,
+                    session_manager=self._session_manager,
+                    resolve_project_id=self._resolve_project_id,
+                    logger=self.logger,
+                )
             if project_resolution.skipped:
                 self.logger.debug(
                     "Skipping SESSION_START without project context: %s",
@@ -393,12 +395,13 @@ class HookManager(HookManagerDispatchMixin):
                 )
                 return HookResponse(decision="allow")
         else:
-            project_resolution = resolve_hook_project_context(
-                event,
-                session_manager=self._session_manager,
-                resolve_project_id=self._resolve_project_id,
-                logger=self.logger,
-            )
+            with measure_hook_phase("session_resolution"):
+                project_resolution = resolve_hook_project_context(
+                    event,
+                    session_manager=self._session_manager,
+                    resolve_project_id=self._resolve_project_id,
+                    logger=self.logger,
+                )
             if project_resolution.skipped:
                 self.logger.debug(
                     "Skipping hook without project context: event=%s reason=%s",
@@ -412,10 +415,21 @@ class HookManager(HookManagerDispatchMixin):
             # must not write dead-process terminal identity onto the
             # durable session.
             gated = event.event_type in TERMINAL_INGRESS_HOOK_TYPES
-            platform_session_id = self._session_lookup.resolve(
-                event,
-                apply_session_mutations=not gated,
-            )
+            with measure_hook_phase("session_resolution"):
+                platform_session_id = self._session_lookup.resolve(
+                    event,
+                    apply_session_mutations=not gated,
+                )
+            if event.metadata.get("_native_subagent_binding") and event.event_type in (
+                HookEventType.STOP,
+                HookEventType.SESSION_END,
+            ):
+                self.logger.debug(
+                    "Ignoring process-bound native child terminal hook: event=%s parent=%s",
+                    event.event_type.value,
+                    platform_session_id,
+                )
+                return HookResponse(decision="allow")
             if gated:
                 ingress = validate_managed_agent_hook(
                     event,
@@ -499,7 +513,8 @@ class HookManager(HookManagerDispatchMixin):
         if event.event_type == HookEventType.SESSION_START:
             with create_span("hook.session_start.handler"):
                 try:
-                    response = handler(event)
+                    with measure_hook_phase("handler_body"):
+                        response = handler(event)
                 except HookIngressError:
                     raise
                 except Exception as e:
@@ -542,7 +557,8 @@ class HookManager(HookManagerDispatchMixin):
         elif event.event_type == HookEventType.POST_COMPACT and event.source == SessionSource.GROK:
             with create_span("hook.post_compact.handler"):
                 try:
-                    response = handler(event)
+                    with measure_hook_phase("handler_body"):
+                        response = handler(event)
                 except Exception as e:
                     self.logger.exception("Event handler %s failed: %s", event.event_type, e)
                     return HookResponse(decision="allow", reason=f"Handler error: {e}")
@@ -580,7 +596,8 @@ class HookManager(HookManagerDispatchMixin):
                 )
 
             try:
-                response = handler(event)
+                with measure_hook_phase("handler_body"):
+                    response = handler(event)
                 if inspect.isawaitable(response):
                     return self._complete_async_handler(event, response, workflow_context)
             except Exception as e:
@@ -596,7 +613,8 @@ class HookManager(HookManagerDispatchMixin):
         workflow_context: list[ContextPart] | None,
     ) -> HookResponse:
         try:
-            resolved = await response
+            with measure_hook_phase("handler_body"):
+                resolved = await response
         except Exception as exc:
             self.logger.exception("Event handler %s failed: %s", event.event_type, exc)
             return HookResponse(decision="allow", reason=f"Handler error: {exc}")
@@ -663,14 +681,21 @@ class HookManager(HookManagerDispatchMixin):
             observer_response.decision = original_decision
             observer_response.reason = original_reason
 
-        schedule_hook_broadcast(self.broadcaster, event, observer_response, self._loop, self.logger)
+        with measure_hook_phase("persistence_broadcast"):
+            schedule_hook_broadcast(
+                self.broadcaster,
+                event,
+                observer_response,
+                self._loop,
+                self.logger,
+            )
 
-        # Dispatch non-blocking webhooks (fire-and-forget)
-        if not suppress_webhooks:
-            try:
-                self._dispatch_webhooks_async(event, observer_response)
-            except Exception as e:
-                self.logger.warning("Non-blocking webhook dispatch failed: %s", e)
+            # Dispatch non-blocking webhooks (fire-and-forget)
+            if not suppress_webhooks:
+                try:
+                    self._dispatch_webhooks_async(event, observer_response)
+                except Exception as e:
+                    self.logger.warning("Non-blocking webhook dispatch failed: %s", e)
 
         return response if preserve_original else observer_response
 
@@ -776,7 +801,8 @@ class HookManager(HookManagerDispatchMixin):
         blocking_deadline: BlockingEffectDeadline | None = None,
     ) -> tuple[list[ContextPart] | None, HookResponse | None]:
         """Evaluate workflow rules and dispatch mcp_call effects."""
-        return self._create_rule_evaluator(blocking_deadline).evaluate(event)
+        with measure_hook_phase("rule_evaluation"):
+            return self._create_rule_evaluator(blocking_deadline).evaluate(event)
 
     def _create_rule_evaluator(
         self,

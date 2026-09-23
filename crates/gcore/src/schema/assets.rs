@@ -174,6 +174,26 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
         checksum: "a9751a8ab49b65c1e0ad4c4a540a12f1aa0824cb582bd77c6f474c35d2315697",
         sql: include_str!("../../assets/schema/migrations/442_zero_based_refs.sql"),
     },
+    EmbeddedMigration {
+        version: 443,
+        filename: "443_add_code_communities.sql",
+        checksum: "ff143a0c2d040ebd44b5138e717608705e81d42176dece35561802fcd1e06229",
+        sql: include_str!("../../assets/schema/migrations/443_add_code_communities.sql"),
+    },
+    EmbeddedMigration {
+        version: 444,
+        filename: "444_add_queued_close_reviews.sql",
+        checksum: "c58e6345ec07b37f79c423f8dcbeb1a72ce924145abf9880c3cfe58319d0db03",
+        sql: include_str!("../../assets/schema/migrations/444_add_queued_close_reviews.sql"),
+    },
+    EmbeddedMigration {
+        version: 445,
+        filename: "445_drop_task_validation_system_prompt.sql",
+        checksum: "55650f9d4147ec2c37f76512f88bcc5252a5f8247a35b4795b3e49e2b3dca03a",
+        sql: include_str!(
+            "../../assets/schema/migrations/445_drop_task_validation_system_prompt.sql"
+        ),
+    },
 ];
 // Numbered migrations after canonical baseline@420 land here.
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");

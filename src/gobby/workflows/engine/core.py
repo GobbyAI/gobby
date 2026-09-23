@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.metrics_events import MetricsEventStore
+    from gobby.mcp_proxy.tools.internal import InternalRegistryManager
 
 from opentelemetry.trace import Status, StatusCode
 from pydantic import ValidationError
@@ -140,6 +141,7 @@ class RuleEngine(
         task_manager: Any | None = None,
         config_runtime: ConfigRuntimeReader | None = None,
         skill_script_materializer: SkillScriptMaterializer | None = None,
+        internal_manager: "InternalRegistryManager | None" = None,
     ):
         self.db = db
         self.rule_manager = RuleDefinitionManager(db)
@@ -152,6 +154,7 @@ class RuleEngine(
         self._runner = runner
         self._completion_registry = completion_registry
         self._task_manager = task_manager
+        self._internal_manager = internal_manager
         self._pending_terminal_denials: dict[str, tuple[Any, Any, str]] = {}
         self._config_runtime = config_runtime
         self.skill_script_materializer = skill_script_materializer or get_skill_script_materializer(
@@ -160,6 +163,7 @@ class RuleEngine(
         self._agent_def_cache_revision = get_definitions_revision("agents")
         self._agent_def_cache: dict[tuple[str, str | None], AgentDefinitionBody | None] = {}
         self._background_run_commands: dict[tuple[str, str], asyncio.Task[None]] = {}
+        self._initialize_cached_mcp_injections()
 
     async def prewarm_skill_scripts(self, *, project_id: str | None) -> None:
         """Prepare skill scripts referenced by enabled rules."""
@@ -382,7 +386,6 @@ class RuleEngine(
                     block_tool_name=_block_tool_name(event),
                     mcp_calls=mcp_calls,
                 )
-
                 # Auto-track consecutive retries after a blocked BEFORE_TOOL.
                 # _last_blocked_tool is only set by pre-execution gate/enforcement blocks.
                 # tool_block_pending is reserved for real tool execution failures.

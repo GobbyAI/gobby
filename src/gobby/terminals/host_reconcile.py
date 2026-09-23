@@ -10,6 +10,7 @@ from typing import Any, Protocol
 from uuid import UUID
 
 from gobby.storage.terminals import Terminal, native_locator_key
+from gobby.terminals.host_reap import recorded_process_group_is_alive
 from gobby.utils.datetime import utc_now
 
 logger = logging.getLogger(__name__)
@@ -102,9 +103,13 @@ async def reconcile_host_inventory(
     settle_indeterminate: bool = False,
 ) -> str | None:
     """Apply the 3.1.9 adoption matrix. Returns last error or None."""
-    db_rows = [
-        row for row in terminal_manager.list_live_by_machine(machine_id) if row.backend == "native"
-    ]
+    list_reconcilable = getattr(terminal_manager, "list_reconcilable_by_machine", None)
+    durable_rows = (
+        list_reconcilable(machine_id)
+        if callable(list_reconcilable)
+        else terminal_manager.list_live_by_machine(machine_id)
+    )
+    db_rows = [row for row in durable_rows if row.backend == "native"]
 
     host_by_id = {(str(row.terminal_id), str(row.spawn_key)): row for row in host_rows}
     seen: set[str] = set()
@@ -196,4 +201,11 @@ async def reconcile_host_inventory(
         if durable.state == "live" and durable.host_epoch != host_epoch:
             terminal_manager.mark_orphaned(durable.id)
             _interrupt_run(run_manager, durable.agent_run_id)
+            continue
+        if (
+            durable.state == "orphaned"
+            and durable.host_epoch != host_epoch
+            and not recorded_process_group_is_alive(durable.process)
+        ):
+            terminal_manager.mark_exited(durable.id)
     return None

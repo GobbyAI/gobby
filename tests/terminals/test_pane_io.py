@@ -258,8 +258,11 @@ class _ScriptedPane:
 async def _submit(
     pane: _ScriptedPane, monkeypatch: pytest.MonkeyPatch, *, verify_seconds: float = 0.0
 ) -> SubmitResult:
+    async def no_sleep(_seconds: float) -> None:
+        return None
+
     monkeypatch.setattr("gobby.terminals.pane_io.SUBMIT_ENTER_GAP_SECONDS", 0.0)
-    monkeypatch.setattr("gobby.terminals.pane_io._SUBMIT_VERIFY_POLL_SECONDS", 0.0)
+    monkeypatch.setattr("gobby.terminals.pane_io.asyncio.sleep", no_sleep)
     return await submit_text(
         cast(PaneIO, pane),
         _TEXT,
@@ -301,7 +304,7 @@ async def test_a_repaint_after_enter_is_polled_until_the_composer_settles(
 
 
 @pytest.mark.asyncio
-async def test_an_unreadable_composer_trusts_the_delivered_write_and_enter(
+async def test_unreadable_composer_after_enter_logs_at_debug(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     """No frame after the Enter is no evidence of a failure.
@@ -312,35 +315,67 @@ async def test_an_unreadable_composer_trusts_the_delivered_write_and_enter(
     """
     pane = _ScriptedPane([ComposerRead("unknown")])
 
-    with caplog.at_level(logging.WARNING, logger="gobby.terminals.pane_io"):
+    with caplog.at_level(logging.DEBUG, logger="gobby.terminals.pane_io"):
         result = await _submit(pane, monkeypatch)
 
     assert result.ok is True
     assert pane.typed == [f"{_TEXT}\n"]
     assert pane.keys == ["enter"]
-    assert "could not be read after submitting the prompt" in caplog.text
+    records = [
+        record
+        for record in caplog.records
+        if "could not be read after submitting the prompt" in record.getMessage()
+    ]
+    assert len(records) == 1
+    assert records[0].levelno == logging.DEBUG
 
 
 @pytest.mark.asyncio
-async def test_a_draft_the_first_enter_left_behind_is_retyped_and_submitted(
+async def test_held_draft_is_submitted_by_a_second_enter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     pane = _ScriptedPane([ComposerRead("draft", _TEXT), ComposerRead("empty")])
 
     assert (await _submit(pane, monkeypatch)).ok is True
-    assert pane.typed == [f"{_TEXT}\n", f"{_TEXT}\n"]
-    assert pane.keys == ["enter", *composer_clear_sequence("claude"), "enter"]
+    assert pane.typed == [f"{_TEXT}\n"]
+    assert pane.keys == ["enter", "enter"]
 
 
 @pytest.mark.asyncio
-async def test_a_draft_that_survives_the_whole_ladder_is_retyped_then_reported(
-    monkeypatch: pytest.MonkeyPatch,
+async def test_held_retry_logs_at_debug_and_exhaustion_still_fails(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     pane = _ScriptedPane([ComposerRead("draft", _TEXT)])
+    monkeypatch.setattr("gobby.terminals.pane_io.SUBMIT_HELD_RETRY_SECONDS", 0.02)
 
-    result = await _submit(pane, monkeypatch)
+    with caplog.at_level(logging.DEBUG, logger="gobby.terminals.pane_io"):
+        result = await _submit(pane, monkeypatch, verify_seconds=0.01)
 
     assert result.ok is False
     assert result.error_code == TEXT_NOT_SUBMITTED_ERROR_CODE
-    assert pane.typed == [f"{_TEXT}\n", f"{_TEXT}\n"]
-    assert pane.keys == ["enter", *composer_clear_sequence("claude"), "enter"]
+    assert pane.typed == [f"{_TEXT}\n"]
+    assert pane.keys == ["enter", "enter"]
+    records = [record for record in caplog.records if "re-sending Enter" in record.getMessage()]
+    assert len(records) == 1
+    assert records[0].levelno == logging.DEBUG
+
+
+@pytest.mark.asyncio
+async def test_an_unreadable_composer_after_a_held_read_trusts_the_enter(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    pane = _ScriptedPane([ComposerRead("draft", _TEXT), ComposerRead("unknown")])
+
+    with caplog.at_level(logging.DEBUG, logger="gobby.terminals.pane_io"):
+        result = await _submit(pane, monkeypatch)
+
+    assert result.ok is True
+    assert pane.typed == [f"{_TEXT}\n"]
+    assert pane.keys == ["enter", "enter"]
+    records = [
+        record
+        for record in caplog.records
+        if "re-sending Enter" in record.getMessage()
+        or "could not be read after submitting the prompt" in record.getMessage()
+    ]
+    assert [record.levelno for record in records] == [logging.DEBUG, logging.DEBUG]

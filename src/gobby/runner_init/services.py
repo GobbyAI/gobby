@@ -544,12 +544,7 @@ def _build_message_processor(
 def _build_task_validator(runner: GobbyRunner, config: DaemonConfig) -> TaskValidator | None:
     if not config.gobby_tasks.validation.enabled:
         return None
-    text_generation = build_daemon_text_generation_service(config)
-    return TaskValidator(
-        llm_service=create_llm_service(config, text_generation=text_generation),
-        config=config.gobby_tasks.validation,
-        db=runner.database,
-    )
+    return TaskValidator(config.gobby_tasks.validation)
 
 
 def _dispose_async(
@@ -807,16 +802,8 @@ def _init_task_validator(runner: GobbyRunner) -> None:
     gobby_tasks_config = runner.startup_config.gobby_tasks
     if not gobby_tasks_config.validation.enabled:
         return
-    if runner.llm_service is None:
-        mark_service_degraded(runner, "task_validator")
-        logger.warning("Skipping TaskValidator initialization; LLM service is unavailable")
-        return
     try:
-        runner.task_validator = TaskValidator(
-            llm_service=runner.llm_service,
-            config=gobby_tasks_config.validation,
-            db=runner.database,
-        )
+        runner.task_validator = TaskValidator(gobby_tasks_config.validation)
     except Exception:
         mark_service_degraded(runner, "task_validator")
         logger.exception("Failed to initialize TaskValidator")

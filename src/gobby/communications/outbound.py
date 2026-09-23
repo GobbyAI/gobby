@@ -33,6 +33,14 @@ class OutboundCommunications:
         """Build effective metadata for outbound messages/attachments."""
         manager = self._manager
         effective = dict(metadata) if metadata else {}
+        if session_id:
+            attached = await asyncio.to_thread(manager.attached_destination, channel.id, session_id)
+            if attached is not None:
+                kind, _, destination = attached.partition(":")
+                chat_id, _, thread_id = destination.partition(":")
+                effective.setdefault("platform_destination", chat_id)
+                if kind == "topic":
+                    effective.setdefault("thread_id", thread_id)
         if "platform_destination" not in effective:
             default_dest = channel.config_json.get("default_destination")
             if default_dest:

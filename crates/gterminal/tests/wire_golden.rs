@@ -121,9 +121,25 @@ fn golden_corpus_bytes_and_fragmented_reads() {
         },
     );
     write_bin(
+        "read_text.bin",
+        &ClientMessage::ReadText {
+            start_rows_from_live_edge: 31,
+            start_col: 2,
+            end_rows_from_live_edge: 4,
+            end_col: 17,
+        },
+    );
+    write_bin(
         "frame_input_refused.bin",
         &ServerMessage::InputRefused {
             code: "input_not_granted".into(),
+        },
+    );
+    write_bin(
+        "text_read.bin",
+        &ServerMessage::TextRead {
+            text: "retained text".into(),
+            truncated: false,
         },
     );
     let frame = FrameData {
@@ -467,6 +483,7 @@ fn frame_modes_expose_mouse_tracking() {
         mouse_all: true,
         mouse_sgr: true,
         alternate_on: true,
+        kitty_keyboard_flags: 5,
         ..Default::default()
     };
     let message = ServerMessage::Frame(frame);
@@ -479,4 +496,5 @@ fn frame_modes_expose_mouse_tracking() {
     };
     assert_eq!(frame.modes.mouse_tracking(), MouseTracking::AnyMotion);
     assert!(frame.modes.mouse_sgr && frame.modes.alternate_on);
+    assert_eq!(frame.modes.kitty_keyboard_flags, 5);
 }

@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
@@ -21,7 +20,11 @@ from gobby.code_index.prune import (
     CodeIndexPruner,
     register_code_index_prune_cron,
 )
-from gobby.storage.cron_models import CronJob
+from gobby.storage.cron import CronJobStorage
+from gobby.storage.projects import PERSONAL_PROJECT_ID
+
+if TYPE_CHECKING:
+    from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.unit
 
@@ -604,18 +607,9 @@ async def test_targeted_retry_defers_while_sync_file_work_is_pending(tmp_path: P
     assert storage.failures == []
 
 
-def test_register_code_index_prune_cron_creates_hourly_system_job() -> None:
-    class CronStorage:
-        def __init__(self) -> None:
-            self.created: dict[str, Any] | None = None
-
-        def get_job_by_name(self, name: str) -> None:
-            assert name == CODE_INDEX_PRUNE_JOB_NAME
-            return None
-
-        def create_job(self, **kwargs: Any) -> None:
-            self.created = kwargs
-
+def test_register_code_index_prune_cron_creates_hourly_system_job(
+    temp_db: HubDatabase,
+) -> None:
     class CronExecutor:
         def __init__(self) -> None:
             self.handlers: dict[str, Any] = {}
@@ -623,128 +617,108 @@ def test_register_code_index_prune_cron_creates_hourly_system_job() -> None:
         def register_handler(self, name: str, handler: Any) -> None:
             self.handlers[name] = handler
 
-    storage = CronStorage()
+    storage = CronJobStorage(temp_db)
     executor = CronExecutor()
     context = PruneContext(PruneStorage(), PruneGateway(), Path("/tmp/maintenance.log"))
     pruner = CodeIndexPruner(context)  # type: ignore[arg-type]
 
     register_code_index_prune_cron(
-        cron_storage=storage,  # type: ignore[arg-type]
+        cron_storage=storage,
         cron_executor=executor,
         pruner=pruner,
-        project_id="personal",
+        project_id=None,
     )
 
+    created = storage.get_job_by_name(CODE_INDEX_PRUNE_JOB_NAME)
+    assert created is not None
     assert CODE_INDEX_PRUNE_HANDLER in executor.handlers
-    assert storage.created is not None
-    assert storage.created["name"] == CODE_INDEX_PRUNE_JOB_NAME
-    assert storage.created["interval_seconds"] == CODE_INDEX_PRUNE_INTERVAL_SECONDS
-    assert storage.created["is_system"] is True
-    assert storage.created["action_config"]["handler"] == CODE_INDEX_PRUNE_HANDLER
-    assert "orphan Qdrant collection cleanup" in storage.created["description"]
-    assert "limit" not in storage.created["action_config"]
+    assert created.project_id == PERSONAL_PROJECT_ID
+    assert created.interval_seconds == CODE_INDEX_PRUNE_INTERVAL_SECONDS
+    assert created.is_system is True
+    assert created.next_run_at is not None
+    assert created.action_config["handler"] == CODE_INDEX_PRUNE_HANDLER
+    assert created.description is not None
+    assert "orphan Qdrant collection cleanup" in created.description
+    assert "limit" not in created.action_config
 
 
-def test_register_code_index_prune_cron_preserves_disabled_job() -> None:
-    now = datetime.now(UTC)
-    disabled_job = CronJob(
-        id="prune-job",
-        project_id="personal",
+def test_register_code_index_prune_cron_preserves_disabled_job(
+    temp_db: HubDatabase,
+) -> None:
+    storage = CronJobStorage(temp_db)
+    disabled_job = storage.create_job(
+        project_id=PERSONAL_PROJECT_ID,
         name=CODE_INDEX_PRUNE_JOB_NAME,
         schedule_type="interval",
         action_type="handler",
         action_config={"handler": CODE_INDEX_PRUNE_HANDLER},
-        created_at=now,
-        updated_at=now,
         interval_seconds=CODE_INDEX_PRUNE_INTERVAL_SECONDS,
         enabled=False,
         is_system=True,
-        next_run_at=None,
     )
-
-    class CronStorage:
-        def __init__(self) -> None:
-            self.definition_update: dict[str, Any] | None = None
-
-        def get_job_by_name(self, _name: str) -> CronJob:
-            return disabled_job
-
-        def reconcile_system_job_definition(self, _job_id: str, **fields: Any) -> CronJob:
-            self.definition_update = fields
-            return disabled_job
-
-        def reconcile_system_job_identity(self, _job_id: str, **_fields: Any) -> None:
-            pytest.fail("disabled jobs must retain their operator-controlled enabled state")
-
-        def wake_system_job(self, _job_id: str) -> None:
-            pytest.fail("disabled jobs must not be woken")
 
     class CronExecutor:
         def register_handler(self, _name: str, _handler: Any) -> None:
             pass
 
-    storage = CronStorage()
     context = PruneContext(PruneStorage(), PruneGateway(), Path("/tmp/maintenance.log"))
-    pruner = CodeIndexPruner(context)  # type: ignore[arg-type]
+    pruner = CodeIndexPruner(cast(Any, context))
 
     register_code_index_prune_cron(
-        cron_storage=storage,  # type: ignore[arg-type]
+        cron_storage=storage,
         cron_executor=CronExecutor(),
         pruner=pruner,
-        project_id="personal",
+        project_id=None,
     )
 
-    assert disabled_job.enabled is False
-    assert storage.definition_update is not None
-    assert "orphan Qdrant collection cleanup" in storage.definition_update["description"]
+    repaired = storage.get_job(disabled_job.id)
+    assert repaired is not None
+    assert repaired.enabled is False
+    assert repaired.next_run_at is None
+    assert repaired.description is not None
+    assert "orphan Qdrant collection cleanup" in repaired.description
 
 
-def test_register_code_index_prune_cron_wakes_enabled_job_without_next_run() -> None:
-    now = datetime.now(UTC)
-    enabled_job = CronJob(
-        id="prune-job",
-        project_id="personal",
+def test_register_code_index_prune_cron_preserves_parked_enabled_job_through_definition_repair(
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    storage = CronJobStorage(temp_db)
+    parked_job = storage.create_job(
+        project_id=PERSONAL_PROJECT_ID,
         name=CODE_INDEX_PRUNE_JOB_NAME,
         schedule_type="interval",
         action_type="handler",
         action_config={"handler": CODE_INDEX_PRUNE_HANDLER},
-        created_at=now,
-        updated_at=now,
-        interval_seconds=CODE_INDEX_PRUNE_INTERVAL_SECONDS,
+        description="stale prune definition",
+        interval_seconds=CODE_INDEX_PRUNE_INTERVAL_SECONDS * 2,
         enabled=True,
         is_system=True,
-        next_run_at=None,
     )
+    storage.park_system_job(parked_job.id)
 
-    class CronStorage:
-        def __init__(self) -> None:
-            self.woken: list[str] = []
+    def fail_if_woken(_job_id: str) -> None:
+        pytest.fail("parked jobs must not be woken")
 
-        def get_job_by_name(self, _name: str) -> CronJob:
-            return enabled_job
-
-        def reconcile_system_job_definition(self, _job_id: str, **_fields: Any) -> CronJob:
-            return enabled_job
-
-        def reconcile_system_job_identity(self, _job_id: str, **_fields: Any) -> None:
-            pytest.fail("enabled identity must not be rewritten")
-
-        def wake_system_job(self, job_id: str) -> None:
-            self.woken.append(job_id)
+    monkeypatch.setattr(storage, "wake_system_job", fail_if_woken)
 
     class CronExecutor:
         def register_handler(self, _name: str, _handler: Any) -> None:
             pass
 
-    storage = CronStorage()
     context = PruneContext(PruneStorage(), PruneGateway(), Path("/tmp/maintenance.log"))
-    pruner = CodeIndexPruner(context)  # type: ignore[arg-type]
+    pruner = CodeIndexPruner(cast(Any, context))
 
     register_code_index_prune_cron(
-        cron_storage=storage,  # type: ignore[arg-type]
+        cron_storage=storage,
         cron_executor=CronExecutor(),
         pruner=pruner,
-        project_id="personal",
+        project_id=None,
     )
 
-    assert storage.woken == ["prune-job"]
+    repaired = storage.get_job(parked_job.id)
+    assert repaired is not None
+    assert repaired.interval_seconds == CODE_INDEX_PRUNE_INTERVAL_SECONDS
+    assert repaired.description is not None
+    assert "orphan Qdrant collection cleanup" in repaired.description
+    assert repaired.next_run_at is None

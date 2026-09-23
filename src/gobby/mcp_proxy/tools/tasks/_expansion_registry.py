@@ -499,6 +499,7 @@ def _register_read_tools(registry: InternalToolRegistry, ctx: RegistryContext) -
             "required": ["run_id"],
         },
         func=get_expansion_run,
+        read_only=True,
     )
 
     def get_latest_expansion_run(
@@ -537,6 +538,7 @@ def _register_read_tools(registry: InternalToolRegistry, ctx: RegistryContext) -
             "required": ["task_id"],
         },
         func=get_latest_expansion_run,
+        read_only=True,
     )
 
 
@@ -839,6 +841,7 @@ def _register_qa_tools(registry: InternalToolRegistry, ctx: RegistryContext) -> 
             "required": ["run_id"],
         },
         func=check_expansion_qa_result,
+        read_only=True,
     )
 
 

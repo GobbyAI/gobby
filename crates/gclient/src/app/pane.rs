@@ -12,6 +12,7 @@ use crate::daemon::Generation;
 use crate::frame_source::{
     FrameError, FrameSource, PaneFrameSource, ScriptedFrameSource, Transport,
 };
+use gobby_terminal::input::KeyboardProtocol;
 use gobby_terminal::protocol::{ClientMessage, FrameData};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -87,6 +88,40 @@ pub fn short_terminal_id(terminal_id: &str) -> &str {
     }
 }
 
+/// What the input queue will hold while a grant is in flight. A round trip to
+/// a healthy daemon costs a few keys; this is sized for a slow one plus a
+/// pasted file, and it exists so a daemon that never answers cannot grow the
+/// queue without bound.
+const MAX_PENDING_INPUT_BYTES: usize = 256 * 1024;
+
+/// One keystroke or paste waiting for an input grant. Keys and pastes travel
+/// as different messages to the terminal host, and a paste that overtook the
+/// keys typed before it would reorder what the person wrote, so the queue
+/// holds both in one line.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PendingInput {
+    Keys(Vec<u8>),
+    Paste(String),
+}
+
+impl PendingInput {
+    pub(super) fn new(data: &[u8], paste: bool) -> Self {
+        if paste {
+            Self::Paste(String::from_utf8_lossy(data).into_owned())
+        } else {
+            Self::Keys(data.to_vec())
+        }
+    }
+
+    /// The pair `send_host_input` and the daemon write path both take.
+    pub(super) fn parts(&self) -> (&[u8], bool) {
+        match self {
+            Self::Keys(data) => (data.as_slice(), false),
+            Self::Paste(text) => (text.as_bytes(), true),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ControlState {
     Observe,
@@ -129,7 +164,18 @@ pub struct Pane {
     pub copy_seeded_from_history: bool,
     pub required_created_flag: bool,
     pub in_flight_write: Option<u64>,
-    pub(super) pending_input: Option<Vec<u8>>,
+    /// Keys and pastes typed between a focus change and the input grant that
+    /// focus asked for, kept in the order they were typed. A person typing
+    /// into a pane they just clicked is not asking to lose the first word
+    /// (#22573), so this queue is flushed on the grant rather than dropped.
+    pub(super) pending_input: Vec<PendingInput>,
+    /// Cached byte count for `pending_input`. Recomputing the sum for every
+    /// key turns a stalled 256 KiB queue into quadratic work.
+    pending_input_bytes: usize,
+    /// The control request this pane is waiting on. The request runs beside
+    /// the loop so no click waits on the daemon, which means a reply has to
+    /// prove it is still the one this pane wants before it moves any state.
+    pub(super) control_request: Option<u64>,
     /// The daemon granted this attachment input at the terminal's host, so its
     /// keystrokes belong on the frame stream rather than in a daemon request
     /// (#22573). Every control result rewrites it; only `Held` panes read it.
@@ -200,7 +246,9 @@ impl Pane {
             copy_seeded_from_history: false,
             required_created_flag: false,
             in_flight_write: None,
-            pending_input: None,
+            pending_input: Vec::new(),
+            pending_input_bytes: 0,
+            control_request: None,
             host_input_granted: false,
             host_bound_attachment: None,
             client_write_seq: 0,
@@ -272,6 +320,24 @@ impl Pane {
 
     pub fn is_lease_lost(&self) -> bool {
         self.control == ControlState::LeaseLost
+    }
+
+    /// True while the grant this pane asked for is still in flight. The pane
+    /// reads as focused and typing into it queues, so the toggle that gives
+    /// control up has to count it as holding (#22573).
+    pub fn is_acquiring(&self) -> bool {
+        self.control_request.is_some()
+    }
+
+    /// The control state shown to a person. Acquisition is intentionally the
+    /// normal focused state: input queues until the grant lands, so rendering
+    /// it as observe would advertise the wrong interaction contract (#22573).
+    pub fn displayed_control(&self) -> ControlState {
+        if self.is_acquiring() {
+            ControlState::Held
+        } else {
+            self.control
+        }
     }
 
     pub fn is_uncertain_readonly(&self) -> bool {
@@ -380,6 +446,28 @@ impl Pane {
     /// Type `data` into the host on the frame stream, binding this attachment
     /// the first time. Never awaits: a full write channel drops the key and
     /// names the backlog on the pane instead of stalling the render loop.
+    /// Holds one key or paste until the grant focus asked for lands. `false`
+    /// means the queue is full and the caller has to say so: swallowing it
+    /// here would be the dropped keystroke this queue exists to prevent.
+    pub(super) fn queue_input(&mut self, data: &[u8], paste: bool) -> bool {
+        if self.pending_input_bytes.saturating_add(data.len()) > MAX_PENDING_INPUT_BYTES {
+            return false;
+        }
+        self.pending_input.push(PendingInput::new(data, paste));
+        self.pending_input_bytes += data.len();
+        true
+    }
+
+    pub(super) fn take_pending_input(&mut self) -> Vec<PendingInput> {
+        self.pending_input_bytes = 0;
+        std::mem::take(&mut self.pending_input)
+    }
+
+    pub(super) fn clear_pending_input(&mut self) {
+        self.pending_input.clear();
+        self.pending_input_bytes = 0;
+    }
+
     pub(super) fn send_host_input(&mut self, data: &[u8], paste: bool) -> Result<(), FrameError> {
         let attachment_id = self.attachment_id().to_string();
         let needs_bind = self.host_bound_attachment.as_deref() != Some(attachment_id.as_str());
@@ -425,7 +513,7 @@ impl Pane {
         }
         self.control = ControlState::Observe;
         self.take_back = true;
-        self.pending_input = None;
+        self.clear_pending_input();
         self.status_message = Some(HOST_GRANT_UNAVAILABLE.to_string());
         false
     }
@@ -437,7 +525,7 @@ impl Pane {
         self.host_input_granted = false;
         self.control = ControlState::Observe;
         self.take_back = true;
-        self.pending_input = None;
+        self.clear_pending_input();
         self.status_message = Some(format!(
             "terminal refused input ({code}); take control again"
         ));
@@ -445,6 +533,27 @@ impl Pane {
 
     pub fn frame_source(&self) -> Option<&PaneFrameSource> {
         self.frame_source.as_ref()
+    }
+
+    pub async fn request_text(
+        &mut self,
+        start_rows_from_live_edge: u32,
+        start_col: u16,
+        end_rows_from_live_edge: u32,
+        end_col: u16,
+    ) -> Result<(), FrameError> {
+        let source = self
+            .frame_source
+            .as_mut()
+            .ok_or_else(|| FrameError::Other("pane has no frame source".into()))?;
+        source
+            .send(&ClientMessage::ReadText {
+                start_rows_from_live_edge,
+                start_col,
+                end_rows_from_live_edge,
+                end_col,
+            })
+            .await
     }
 
     pub(super) fn frame_source_mut(&mut self) -> Option<&mut PaneFrameSource> {
@@ -474,6 +583,13 @@ impl Pane {
         self.latest_frame.as_ref()
     }
 
+    pub fn keyboard_protocol(&self) -> KeyboardProtocol {
+        KeyboardProtocol::from_kitty_flags(
+            self.latest_frame()
+                .map_or(0, |frame| frame.modes.kitty_keyboard_flags),
+        )
+    }
+
     pub fn viewport(&self) -> (u16, u16) {
         self.viewport
     }
@@ -501,5 +617,43 @@ impl Pane {
         self.frame_source = Some(source);
         self.fallback_in_flight = false;
         self.host_bound_attachment = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pane() -> Pane {
+        Pane::new_detached(PaneId(1), "terminal-1", Backend::Native, "epoch-1")
+    }
+
+    #[test]
+    fn acquiring_control_displays_as_held() {
+        let mut pane = pane();
+        pane.control = ControlState::Observe;
+        pane.control_request = Some(1);
+
+        assert_eq!(pane.displayed_control(), ControlState::Held);
+        // The edge metadata agrees: asking is the normal focused state, even
+        // while the request is the take-back a Read-only pane offered.
+        let reads = |pane: &Pane| crate::ui::pane_chrome::pane_metadata(pane, true).text;
+        assert_eq!(reads(&pane), "gclient · Focused");
+        pane.control = ControlState::LeaseLost;
+        pane.take_back = true;
+        assert_eq!(reads(&pane), "gclient · Focused");
+        pane.control_request = None;
+        assert_eq!(reads(&pane), "gclient · Read-only");
+    }
+
+    #[test]
+    fn pending_input_cap_resets_when_the_queue_is_cleared() {
+        let mut pane = pane();
+        let full = vec![b'x'; MAX_PENDING_INPUT_BYTES];
+
+        assert!(pane.queue_input(&full, false));
+        assert!(!pane.queue_input(b"x", false));
+        pane.clear_pending_input();
+        assert!(pane.queue_input(b"x", false));
     }
 }

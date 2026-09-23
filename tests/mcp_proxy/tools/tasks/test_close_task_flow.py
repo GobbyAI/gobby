@@ -1,4 +1,4 @@
-"""Checklist evaluation, readiness preview, and close flow contracts."""
+"""Checklist evaluation and conditional-close flow contracts."""
 
 from __future__ import annotations
 
@@ -18,7 +18,6 @@ import gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization as close_finali
 import gobby.mcp_proxy.tools.tasks._lifecycle_close_tool as close_tool
 import gobby.mcp_proxy.tools.tasks._lifecycle_validation as lifecycle_validation
 from gobby.config.tasks import TaskValidationConfig
-from gobby.llm import LLMService
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._close_evaluation_support import (
     CloseAttributionSnapshot,
@@ -39,7 +38,7 @@ from gobby.mcp_proxy.tools.tasks._task_scope import TaskScopeEvaluation
 from gobby.sessions.machine_scope import RemoteSessionOwnershipError
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
-from gobby.storage.task_close_reviews import TaskCloseReviewStore
+from gobby.storage.task_close_reviews import TaskCloseReview, TaskCloseReviewStore
 from gobby.storage.tasks import LocalTaskManager, Task, TaskHasOpenChildrenError
 from gobby.tasks.acceptance_artifacts import AcceptanceArtifactResult, AcceptanceTest
 from gobby.tasks.close_checklist import evaluate_validation_commands
@@ -54,6 +53,7 @@ from gobby.tasks.validation import TaskValidator
 from gobby.utils.machine_id import require_machine_id
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.state_manager import SessionVariableManager
+from tests._timing import wait_for_awaitable_or_background_task
 
 pytestmark = pytest.mark.unit
 
@@ -199,7 +199,7 @@ async def _evaluate_named_test_close(
         patch.object(lifecycle, "evaluate_acceptance_artifacts", return_value=artifacts),
         patch.object(lifecycle, "evaluate_tdd_evidence", tdd_check),
         patch.object(lifecycle, "collect_commit_diff_text", return_value="diff"),
-        patch.object(lifecycle, "evaluate_criteria_review", review),
+        patch.object(lifecycle, "evaluate_close_review", review),
         patch("gobby.workflows.task_claim_state.target_task_has_edits", return_value=False),
         patch("gobby.workflows.task_claim_state.task_edited_file_set", return_value=set()),
     ):
@@ -243,7 +243,7 @@ def _ready_evaluation(
         attribution=attribution,
     )
     evaluation.scope_snapshot = ((), (), (), (), ())
-    evaluation.pass_gate(11, "criteria_review", "Passed.")
+    evaluation.pass_gate(13, "close_review", "Passed.")
     return evaluation
 
 
@@ -256,7 +256,7 @@ async def test_missing_criteria_stops_before_llm() -> None:
     with (
         patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
         patch.object(lifecycle, "resolve_task_repo_path", return_value="/repo"),
-        patch.object(lifecycle, "evaluate_criteria_review", review),
+        patch.object(lifecycle, "evaluate_close_review", review),
     ):
         evaluation = await _evaluate_close(
             ctx,
@@ -277,7 +277,7 @@ async def test_missing_criteria_stops_before_llm() -> None:
     criteria_fed = [
         gate
         for gate in evaluation.gates
-        if gate.name in {"acceptance_artifacts", "tdd_evidence", "criteria_review"}
+        if gate.name in {"acceptance_artifacts", "tdd_evidence", "close_review"}
     ]
     assert [gate.status for gate in criteria_fed] == ["skipped", "skipped", "skipped"]
     assert all("criteria_present" in gate.message for gate in criteria_fed)
@@ -312,7 +312,7 @@ async def test_empty_task_edit_entry_allows_no_edit_research_close() -> None:
             "_derive_close_transcript_evidence",
             AsyncMock(return_value=TranscriptEvidence()),
         ),
-        patch.object(lifecycle, "evaluate_criteria_review", review),
+        patch.object(lifecycle, "evaluate_close_review", review),
     ):
         evaluation = await _evaluate_close(
             ctx,
@@ -365,7 +365,7 @@ async def test_close_attaches_indexed_edit_languages(
     storage = MagicMock()
     storage.get_file.side_effect = get_file
     review = AsyncMock(
-        return_value=ValidationResult(can_close=False, error_type="agentic_review_required")
+        return_value=ValidationResult(can_close=False, error_type="close_review_required")
     )
     with (
         patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
@@ -377,7 +377,7 @@ async def test_close_attaches_indexed_edit_languages(
             lifecycle, "_derive_close_transcript_evidence", AsyncMock(return_value=evidence)
         ),
         patch.object(lifecycle, "active_validation_backoff"),
-        patch.object(lifecycle, "evaluate_criteria_review", review),
+        patch.object(lifecycle, "evaluate_close_review", review),
         patch(
             "gobby.mcp_proxy.tools.tasks._close_evaluation_support.CodeIndexStorage",
             return_value=storage,
@@ -430,7 +430,7 @@ async def test_manual_close_supplies_available_command_evidence_to_review(outcom
     elif outcome == "remote":
         derive.side_effect = RemoteSessionOwnershipError("Transcript belongs to another machine")
     review = AsyncMock(
-        return_value=ValidationResult(can_close=False, error_type="agentic_review_required")
+        return_value=ValidationResult(can_close=False, error_type="close_review_required")
     )
     with (
         patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
@@ -440,7 +440,7 @@ async def test_manual_close_supplies_available_command_evidence_to_review(outcom
         patch.object(lifecycle, "collect_commit_diff_text", return_value=""),
         patch.object(lifecycle, "_derive_close_transcript_evidence", derive),
         patch.object(lifecycle, "active_validation_backoff") as backoff,
-        patch.object(lifecycle, "evaluate_criteria_review", review),
+        patch.object(lifecycle, "evaluate_close_review", review),
     ):
         evaluation = await _evaluate_close(
             ctx,
@@ -454,7 +454,7 @@ async def test_manual_close_supplies_available_command_evidence_to_review(outcom
     derive.assert_awaited_once()
     backoff.assert_not_called()
     review.assert_awaited_once()
-    assert evaluation.error == "agentic_review_required"
+    assert evaluation.error == "close_review_required"
     assert next(gate for gate in evaluation.gates if gate.item == 10).status == "skipped"
     facts = review.call_args.kwargs["checklist_facts"]["validation_commands"]
     assert facts == evaluation.extra["validation_commands"]
@@ -499,7 +499,7 @@ async def test_no_work_disposition_skips_delivery_gates_but_runs_review() -> Non
             "_derive_close_transcript_evidence",
             AsyncMock(return_value=TranscriptEvidence()),
         ),
-        patch.object(lifecycle, "evaluate_criteria_review", review),
+        patch.object(lifecycle, "evaluate_close_review", review),
     ):
         evaluation = await _evaluate_close(
             ctx,
@@ -521,13 +521,13 @@ async def test_no_work_disposition_skips_delivery_gates_but_runs_review() -> Non
 
 
 @pytest.mark.asyncio
-async def test_ready_leaf_detaches_criteria_review_and_records_latency() -> None:
+async def test_ready_leaf_detaches_close_review_and_records_latency() -> None:
     task = _task()
     ctx = _ctx(task, validator=object())
     review = AsyncMock(
         return_value=ValidationResult(
             can_close=False,
-            error_type="agentic_review_required",
+            error_type="close_review_required",
             extra={
                 "review_fingerprint": "review",
                 "deterministic_evidence_fingerprint": "evidence",
@@ -579,7 +579,7 @@ async def test_ready_leaf_detaches_criteria_review_and_records_latency() -> None
             AsyncMock(return_value=transcript),
         ),
         patch.object(lifecycle, "collect_commit_diff_text", return_value="diff"),
-        patch.object(lifecycle, "evaluate_criteria_review", review),
+        patch.object(lifecycle, "evaluate_close_review", review),
         patch.object(lifecycle, "perf_counter", side_effect=[10.0, 10.0125]),
         patch(
             "gobby.workflows.task_claim_state.target_task_has_edits",
@@ -601,8 +601,8 @@ async def test_ready_leaf_detaches_criteria_review_and_records_latency() -> None
         )
 
     assert evaluation.ready is False
-    assert evaluation.error == "agentic_review_required"
-    assert evaluation.extra["criteria_review_duration_ms"] == 12.5
+    assert evaluation.error == "close_review_required"
+    assert evaluation.extra["close_review_duration_ms"] == 12.5
     assert [gate.item for gate in evaluation.gates] == list(range(1, 14))
     linked_paths.assert_awaited_once_with(task, "/repo", ("base123", "abc123"))
     review.assert_awaited_once()
@@ -661,7 +661,7 @@ async def _evaluate_with_tagged_scan(
         patch.object(lifecycle, "active_validation_backoff", return_value=None),
         patch.object(lifecycle, "_derive_close_transcript_evidence", derive_transcript),
         patch.object(lifecycle, "collect_commit_diff_text", return_value="diff"),
-        patch.object(lifecycle, "evaluate_criteria_review", review),
+        patch.object(lifecycle, "evaluate_close_review", review),
         patch("gobby.workflows.task_claim_state.target_task_has_edits", return_value=False),
         patch("gobby.workflows.task_claim_state.task_edited_file_set", return_value=set()),
     ):
@@ -852,7 +852,7 @@ async def test_scope_justification_controls_downstream_close_evidence(
         patch.object(lifecycle, "collect_commit_diff_text", diff),
         patch.object(lifecycle, "evaluate_acceptance_artifacts", acceptance),
         patch.object(lifecycle, "evaluate_tdd_evidence", tdd),
-        patch.object(lifecycle, "evaluate_criteria_review", review),
+        patch.object(lifecycle, "evaluate_close_review", review),
         patch(
             "gobby.workflows.task_claim_state.target_task_has_edits",
             return_value=True,
@@ -947,7 +947,7 @@ async def test_blocked_preview_returns_diagnostics_without_commit() -> None:
 
 
 @pytest.mark.asyncio
-async def test_ready_preview_returns_same_evaluation_without_commit() -> None:
+async def test_ready_preview_returns_same_evaluation_without_committing() -> None:
     ctx = _ctx(_task())
     evaluation = CloseEvaluation("task")
     evaluation.pass_gate(1, "task_exists", "Task exists.")
@@ -976,68 +976,26 @@ async def test_ready_preview_returns_same_evaluation_without_commit() -> None:
 
     assert result["closed"] is False
     assert result["preview"] is True
-    assert result["can_close"] is True
     launch.assert_not_awaited()
     evaluate.assert_awaited_once()
-    commit.assert_not_awaited()
-
-
-async def test_ready_leaf_preview_does_not_launch_validator() -> None:
-    ctx = _ctx(_task())
-    evaluation = CloseEvaluation("task", response_detail="diagnostic")
-    for item, name in CLOSE_GATE_ORDER[:-1]:
-        evaluation.pass_gate(item, name, f"Gate {item} passed.")
-    evaluation.fail(
-        13,
-        "criteria_review",
-        "agentic_review_required",
-        "A task-close validator is required.",
-    )
-    evaluate = AsyncMock(return_value=evaluation)
-    commit = AsyncMock()
-    launch = AsyncMock()
-    registry = InternalToolRegistry("gobby-tasks")
-    register_close_task(registry, ctx)
-
-    with (
-        patch.object(close_tool, "_evaluate_close", evaluate),
-        patch.object(close_tool, "_commit_close", commit),
-        patch.object(close_tool, "active_review_response", return_value=None),
-        patch.object(close_tool, "launch_close_review", launch),
-    ):
-        result = await registry.call(
-            "close_task",
-            {
-                "task_id": "task",
-                "changes_summary": "Implemented.",
-                "preview": True,
-                "response_detail": "diagnostic",
-            },
-        )
-
-    assert result["error"] == "agentic_review_required"
-    assert result["closed"] is False
-    assert result["preview"] is True
-    assert result["can_close"] is False
-    assert [gate["status"] for gate in result["gates"][:12]] == ["passed"] * 12
-    assert result["gates"][12]["status"] == "not_run"
-    assert result["checklist"][12]["passed"] is False
-    launch.assert_not_awaited()
     commit.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_concurrent_ordinary_closes_share_review_without_closing_or_releasing_claim() -> None:
     task = _task()
+    caller_session_id = task.claimed_by_session_id
+    assert caller_session_id is not None
     spawn_started = asyncio.Event()
     release_spawn = asyncio.Event()
 
-    async def spawn_validator(*_args: object, **_kwargs: object) -> dict[str, object]:
+    async def spawn_reviewer(*_args: object, **kwargs: object) -> dict[str, object]:
         spawn_started.set()
         await release_spawn.wait()
-        return {"success": True, "run_id": "00000000-0000-4000-8000-000000000778"}
+        arguments = cast(dict[str, object], kwargs or _args[1])
+        return {"success": True, "run_id": arguments["reserved_run_id"]}
 
-    agent_registry = SimpleNamespace(call=AsyncMock(side_effect=spawn_validator))
+    agent_registry = SimpleNamespace(call=AsyncMock(side_effect=spawn_reviewer))
     ctx = _ctx(task, validator=object(), agent_registry=agent_registry)
     evaluation = CloseEvaluation(task.id)
     evaluation.task = task
@@ -1045,7 +1003,7 @@ async def test_concurrent_ordinary_closes_share_review_without_closing_or_releas
     evaluation.repo_path = "/repo"
     evaluation.resolved_session_id = task.claimed_by_session_id
     evaluation.commit_shas = ["abc123"]
-    evaluation.error = "agentic_review_required"
+    evaluation.error = "close_review_required"
     evaluation.extra.update(
         {
             "review_fingerprint": "review-fingerprint",
@@ -1054,25 +1012,62 @@ async def test_concurrent_ordinary_closes_share_review_without_closing_or_releas
             "test_bodies_sha": "test-bodies-sha",
             "stable_facts": {},
             "criterion_count": 1,
-            "criteria_review_duration_ms": 4.25,
+            "close_review_duration_ms": 4.25,
         }
     )
-    review_fields = {
-        "id": "review-id",
-        "caller_session_id": task.claimed_by_session_id,
-        "review_fingerprint": "review-fingerprint",
-        "evidence_fingerprint": "evidence-fingerprint",
-        "task_id": task.id,
-        "close_arguments": {"preview": False},
-    }
-    launching_review = SimpleNamespace(**review_fields, status="launching")
-    running_review = SimpleNamespace(**review_fields, status="running")
+    queued_review = TaskCloseReview(
+        id="review-id",
+        task_id=task.id,
+        task_ref=task.id,
+        caller_session_id=caller_session_id,
+        agent_run_id="00000000-0000-4000-8000-000000000778",
+        close_arguments={
+            "task_id": task.id,
+            "reason": "completed",
+            "changes_summary": "Implemented and tested.",
+            "commit_sha": "abc123",
+            "project_path": "/repo",
+            "preview": False,
+            "response_detail": "concise",
+            "_criterion_count": 1,
+        },
+        review_fingerprint="review-fingerprint",
+        evidence_fingerprint="evidence-fingerprint",
+        status="queued",
+        result_payload=None,
+        error=None,
+        launched_at=None,
+        completed_at=None,
+        delivered_at=None,
+        created_at=datetime(2026, 7, 27, 12, tzinfo=UTC),
+        updated_at=datetime(2026, 7, 27, 12, tzinfo=UTC),
+        diff_sha="diff-sha",
+        test_bodies_sha="test-bodies-sha",
+        stable_facts={},
+    )
+    launching_review = replace(queued_review, status="launching")
+    running_review = replace(queued_review, status="running")
     store = MagicMock()
-    store.create_or_get_active.side_effect = [
-        (launching_review, True),
-        (launching_review, False),
-    ]
+    review_results = iter([(queued_review, True), (launching_review, False)])
+    snapshot_updated_at = task.updated_at
+
+    def create_or_get_active(**kwargs: object) -> tuple[TaskCloseReview, bool]:
+        assert kwargs["expected_task_updated_at"] == snapshot_updated_at
+        review, created = next(review_results)
+        if created:
+            commit_shas = cast(list[str], kwargs["commit_shas"])
+            task.commits = list(dict.fromkeys([*(task.commits or []), *commit_shas]))
+            assert task.updated_at == snapshot_updated_at
+        return review, created
+
+    store.create_or_get_active.side_effect = create_or_get_active
+    store.claim_queued.side_effect = [[launching_review], []]
+    store.get.return_value = running_review
+    store.get_delivered_rejected_verdict.return_value = None
+    store.count_unjudged_attempts.return_value = 0
     store.bind_run.return_value = running_review
+    run_manager = MagicMock()
+    run_manager.update_queued_prompt.return_value = SimpleNamespace(status="queued")
     registry = InternalToolRegistry("gobby-tasks")
     register_close_task(registry, ctx)
 
@@ -1083,9 +1078,29 @@ async def test_concurrent_ordinary_closes_share_review_without_closing_or_releas
             "gobby.mcp_proxy.tools.tasks._lifecycle_close_orchestration.TaskCloseReviewStore",
             return_value=store,
         ),
+        patch(
+            "gobby.mcp_proxy.tools.tasks._lifecycle_close_orchestration.LocalAgentRunManager",
+            return_value=run_manager,
+        ),
     ):
-        first_close = asyncio.create_task(
-            registry.call(
+        async with asyncio.timeout(5), asyncio.TaskGroup() as task_group:
+            first_close = task_group.create_task(
+                registry.call(
+                    "close_task",
+                    {
+                        "task_id": task.id,
+                        "changes_summary": "Implemented and tested.",
+                        "commit_sha": "abc123",
+                        "preview": False,
+                    },
+                )
+            )
+            await wait_for_awaitable_or_background_task(
+                spawn_started.wait(),
+                first_close,
+                description="task-close reviewer spawn",
+            )
+            pending_result = await registry.call(
                 "close_task",
                 {
                     "task_id": task.id,
@@ -1094,27 +1109,17 @@ async def test_concurrent_ordinary_closes_share_review_without_closing_or_releas
                     "preview": False,
                 },
             )
-        )
-        await spawn_started.wait()
-        pending_result = await registry.call(
-            "close_task",
-            {
-                "task_id": task.id,
-                "changes_summary": "Implemented and tested.",
-                "commit_sha": "abc123",
-                "preview": False,
-            },
-        )
-        release_spawn.set()
-        result = await first_close
+            release_spawn.set()
+        result = first_close.result()
 
-    assert result["error"] == "agentic_review_required"
+    assert result["error"] == "close_review_required"
     assert result["closed"] is False
     assert result["can_close"] is False
     assert result["review_id"] == "review-id"
-    assert result["validator_run_id"] == "00000000-0000-4000-8000-000000000778"
-    assert result["criteria_review_duration_ms"] == 4.25
-    assert pending_result["error"] == "agentic_review_pending"
+    assert result["reviewer_run_id"] == "00000000-0000-4000-8000-000000000778"
+    assert result["close_review_duration_ms"] == 4.25
+    assert pending_result["error"] == "close_review_required"
+    assert pending_result["review_status"] == "launching"
     assert pending_result["review_id"] == "review-id"
     assert task.closed_at is None
     assert task.claimed_by_session_id == "00000000-0000-4000-8000-000000000301"
@@ -1149,21 +1154,19 @@ async def test_ordinary_close_detaches_real_validation_and_preserves_persisted_c
         validation_criteria="Focused tests pass.",
     )
     claimed = manager.claim_task(task.id, session.id)
-    provider_call = AsyncMock()
-    validator = TaskValidator(
-        TaskValidationConfig(),
-        cast(LLMService, SimpleNamespace(call_json_feature=provider_call)),
-        temp_db,
-    )
-    render_prompt = MagicMock(
-        side_effect=lambda _path, context: "\n".join(str(value) for value in context.values())
-    )
-    agent_call = AsyncMock(
-        return_value={
-            "success": True,
-            "run_id": "00000000-0000-4000-8000-000000000777",
-        }
-    )
+    validator = TaskValidator(TaskValidationConfig())
+
+    commit_sha = "abc123"
+    worktree_path = f"{sample_git_project['repo_path']}-worker"
+
+    async def spawn_reviewer(_tool: str, arguments: dict[str, Any]) -> dict[str, object]:
+        persisted_at_launch = manager.get_task(task.id)
+        assert persisted_at_launch is not None
+        assert persisted_at_launch.commits == [commit_sha]
+        assert arguments["project_path"] == worktree_path
+        return {"success": True, "run_id": arguments["reserved_run_id"]}
+
+    agent_call = AsyncMock(side_effect=spawn_reviewer)
     ctx = RegistryContext(
         task_manager=manager,
         task_validator_resolver=lambda: validator,
@@ -1182,18 +1185,17 @@ async def test_ordinary_close_detaches_real_validation_and_preserves_persisted_c
 
     with (
         session_context_for_test(session.id),
-        patch.object(validator._loader, "render", render_prompt),
         patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
         patch.object(
             lifecycle,
             "resolve_task_repo_path",
-            return_value=sample_git_project["repo_path"],
+            return_value=worktree_path,
         ),
         patch.object(close_finalization, "_claimed_session_window_start", return_value=None),
         patch.object(close_finalization, "_linked_commit_paths", return_value=frozenset()),
         patch.object(close_finalization, "_committable_task_paths", return_value=set()),
         patch.object(lifecycle_validation, "task_dirty_paths_async", return_value=set()),
-        patch.object(lifecycle, "resolve_close_commit_shas", return_value=(["abc123"], None)),
+        patch.object(lifecycle, "resolve_close_commit_shas", return_value=([commit_sha], None)),
         patch.object(
             lifecycle,
             "validate_commit_requirements",
@@ -1213,26 +1215,31 @@ async def test_ordinary_close_detaches_real_validation_and_preserves_persisted_c
             {
                 "task_id": task.id,
                 "changes_summary": "Implemented and tested.",
-                "commit_sha": "abc123",
+                "commit_sha": commit_sha,
+                "project_path": worktree_path,
                 "preview": False,
             },
         )
 
-    assert result["error"] == "agentic_review_required"
+    assert result["error"] == "close_review_required"
     assert result["closed"] is False
     assert result["can_close"] is False
     assert result["review_id"]
-    assert result["validator_run_id"] == "00000000-0000-4000-8000-000000000777"
+    await_args = agent_call.await_args
+    assert await_args is not None
+    reviewer_run_id = await_args.args[1]["reserved_run_id"]
+    assert result["reviewer_run_id"] == reviewer_run_id
     assert result["prompt_chars"] < result["prompt_limit"]
-    assert 0 <= result["criteria_review_duration_ms"] < 50
-    provider_call.assert_not_awaited()
+    assert 0 <= result["close_review_duration_ms"] < 50
     persisted = manager.get_task(task.id)
+    assert persisted is not None
+    assert persisted.commits == [commit_sha]
     assert persisted.closed_at is None
     assert persisted.claimed_by_session_id == session.id
     stored_review = TaskCloseReviewStore(temp_db).get(result["review_id"])
     assert stored_review is not None
     assert stored_review.task_id == task.id
-    assert stored_review.agent_run_id == "00000000-0000-4000-8000-000000000777"
+    assert stored_review.agent_run_id == reviewer_run_id
     assert any("mode=detached" in message for message in caplog.messages)
 
 
@@ -1244,11 +1251,7 @@ def test_close_task_schema_has_automated_review_surface() -> None:
     submit_schema = registry.get_schema("submit_close_review")
 
     assert close_schema is not None
-    assert "deterministic gates only" in close_schema["description"]
     assert "review_run_id" not in close_schema["inputSchema"]["properties"]
-    preview_schema = close_schema["inputSchema"]["properties"]["preview"]
-    assert "without launching" in preview_schema["description"]
-    assert "not_run" in preview_schema["description"]
     assert submit_schema is not None
     assert submit_schema["inputSchema"]["required"] == ["review_id", "verdict"]
 
@@ -1262,7 +1265,7 @@ async def test_commit_set_change_returns_stale_without_close() -> None:
     evaluation.task_id = task.id
     evaluation.repo_path = "/repo"
     evaluation.commit_shas = ["before"]
-    evaluation.pass_gate(11, "criteria_review", "Passed.")
+    evaluation.pass_gate(13, "close_review", "Passed.")
 
     with patch.object(
         close_finalization,
@@ -1538,7 +1541,7 @@ async def test_justified_escalated_close_skips_review_and_persists_override() ->
         patch.object(lifecycle, "resolve_task_repo_path", return_value="/repo"),
         patch.object(close_finalization, "_claimed_session_window_start", return_value=None),
         patch.object(lifecycle, "resolve_close_commit_shas", return_value=([], None)),
-        patch.object(lifecycle, "evaluate_criteria_review", review),
+        patch.object(lifecycle, "evaluate_close_review", review),
     ):
         evaluation = await _evaluate_close(
             ctx,
@@ -1608,7 +1611,7 @@ async def test_escalated_close_without_justification_converges_on_actionable_blo
         patch.object(lifecycle, "resolve_task_repo_path", return_value="/repo"),
         patch.object(close_finalization, "_claimed_session_window_start", return_value=None),
         patch.object(lifecycle, "resolve_close_commit_shas", return_value=([], None)),
-        patch.object(lifecycle, "evaluate_criteria_review", review),
+        patch.object(lifecycle, "evaluate_close_review", review),
     ):
         results = [
             await _evaluate_close(
@@ -1652,7 +1655,7 @@ async def test_escalated_structural_parent_requires_justification(
         patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
         patch.object(lifecycle, "resolve_task_repo_path", return_value="/repo"),
         patch.object(lifecycle, "resolve_close_commit_shas", return_value=([], None)),
-        patch.object(lifecycle, "evaluate_criteria_review", review),
+        patch.object(lifecycle, "evaluate_close_review", review),
     ):
         evaluation = await _evaluate_close(
             ctx,
@@ -1688,7 +1691,7 @@ async def test_justified_escalated_structural_parent_closes_and_persists_overrid
         patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
         patch.object(lifecycle, "resolve_task_repo_path", return_value="/repo"),
         patch.object(lifecycle, "resolve_close_commit_shas", return_value=([], None)),
-        patch.object(lifecycle, "evaluate_criteria_review", review),
+        patch.object(lifecycle, "evaluate_close_review", review),
     ):
         evaluation = await _evaluate_close(
             ctx,
@@ -1777,7 +1780,7 @@ async def test_dirty_attributed_edit_is_collected_before_acceptance() -> None:
         patch.object(lifecycle, "_derive_close_transcript_evidence", transcript),
         patch.object(lifecycle, "collect_commit_diff_text", return_value="diff"),
         patch.object(lifecycle, "evaluate_acceptance_artifacts", acceptance),
-        patch.object(lifecycle, "evaluate_criteria_review", review),
+        patch.object(lifecycle, "evaluate_close_review", review),
         patch(
             "gobby.workflows.task_claim_state.target_task_has_edits",
             return_value=True,
@@ -1824,7 +1827,7 @@ async def test_epic_skips_leaf_gates_without_llm() -> None:
     with (
         patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
         patch.object(lifecycle, "resolve_task_repo_path", return_value="/repo"),
-        patch.object(lifecycle, "evaluate_criteria_review", review),
+        patch.object(lifecycle, "evaluate_close_review", review),
     ):
         evaluation = await _evaluate_close(
             ctx,
@@ -1906,7 +1909,7 @@ async def test_unworked_parent_with_a_closed_child_still_skips_leaf_gates() -> N
     with (
         patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
         patch.object(lifecycle, "resolve_task_repo_path", return_value="/repo"),
-        patch.object(lifecycle, "evaluate_criteria_review", review),
+        patch.object(lifecycle, "evaluate_close_review", review),
     ):
         evaluation = await _evaluate_close(
             ctx,
@@ -2050,7 +2053,7 @@ async def test_close_awaits_commit_resolution_and_validation() -> None:
         patch.object(lifecycle, "_derive_close_transcript_evidence", transcript),
         patch.object(lifecycle, "collect_commit_diff_text", return_value="diff"),
         patch.object(lifecycle, "evaluate_acceptance_artifacts", return_value=artifacts),
-        patch.object(lifecycle, "evaluate_criteria_review", AsyncMock()),
+        patch.object(lifecycle, "evaluate_close_review", AsyncMock()),
         patch(
             "gobby.workflows.task_claim_state.target_task_has_edits",
             return_value=True,
@@ -2205,7 +2208,7 @@ async def test_commit_close_runs_every_storage_call_off_the_event_loop() -> None
         attribution=None,
     )
     evaluation.scope_snapshot = ((), (), ())
-    evaluation.pass_gate(11, "criteria_review", "Passed.")
+    evaluation.pass_gate(13, "close_review", "Passed.")
 
     with (
         patch.object(close_finalization, "resolve_close_commit_shas", return_value=([], None)),
@@ -2264,7 +2267,7 @@ def _epic_close_evaluation(task: Task) -> CloseEvaluation:
         task, children_state=(), attribution=None
     )
     evaluation.scope_snapshot = ((), (), ())
-    evaluation.pass_gate(11, "criteria_review", "Passed.")
+    evaluation.pass_gate(13, "close_review", "Passed.")
     return evaluation
 
 
@@ -2397,7 +2400,7 @@ async def test_worked_leaf_with_a_closed_child_passes_the_commit_recheck() -> No
     evaluation.fingerprint = CloseEvaluationFingerprint.capture(
         task, children_state=state, attribution=attribution
     )
-    evaluation.pass_gate(11, "criteria_review", "Passed.")
+    evaluation.pass_gate(13, "close_review", "Passed.")
 
     with patch.object(
         close_finalization,

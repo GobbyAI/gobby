@@ -78,5 +78,5 @@
 37 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
 38 |                         │                                                                                              |
 38 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
-39 |                     [«] │ No pane. │ prefix ctrl+b                                                                     |
-39 : -/surface0*21 overlay0/surface0*3 -/surface0*1 surface_dim/panel_bg*1 overlay1/surface_dim*9 subtext0/surface_dim*16 -/surface_dim*69
+39 |                     [«] │ prefix ctrl+b                                                                                |
+39 : -/surface0*21 overlay0/surface0*3 -/surface0*1 surface_dim/panel_bg*1 -/surface_dim*1 subtext0/surface_dim*13 -/surface_dim*80

@@ -616,7 +616,7 @@ def test_context_reuse_expiry_runs_after_the_successor_binds(
     assert seen == [(staged.predecessor_id, "expired")]
 
 
-def test_clear_successor_rebinds_native_terminal_after_context_reuse_expiry(
+def test_native_bind_retries_after_clear_predecessor_expiry(
     temp_db: HubDatabase,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

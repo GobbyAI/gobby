@@ -650,6 +650,144 @@
     },
     {
       "activation": "live",
+      "default": 10,
+      "description": "Max communities to label per maintenance pass",
+      "key": "code_index.community_label.batch_size",
+      "machineExport": false,
+      "namespace": "code_index",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [
+        {
+          "candidate": "codex/gpt-5.6-luna",
+          "reasoning_effort": null
+        },
+        {
+          "candidate": "claude/haiku",
+          "reasoning_effort": null
+        }
+      ],
+      "description": "Ordered provider/model candidates with optional reasoning pins, for example [{'candidate': 'codex/gpt-5.6-sol', 'reasoning_effort': 'xhigh'}, {'candidate': 'claude/haiku'}].",
+      "key": "code_index.community_label.candidates",
+      "machineExport": false,
+      "namespace": "code_index",
+      "secrecy": "none",
+      "type": [
+        "string"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Optional Decisions API base URL for label gating",
+      "key": "code_index.community_label.decisions_api_base",
+      "machineExport": false,
+      "namespace": "code_index",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Secret reference for the Decisions API key",
+      "key": "code_index.community_label.decisions_api_key",
+      "machineExport": false,
+      "namespace": "code_index",
+      "secrecy": "reference",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 0.5,
+      "description": "Minimum Decisions API confidence for a model label",
+      "key": "code_index.community_label.decisions_min_confidence",
+      "machineExport": false,
+      "namespace": "code_index",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "jev-latest",
+      "description": "Decisions API model used for label gating",
+      "key": "code_index.community_label.decisions_model",
+      "machineExport": false,
+      "namespace": "code_index",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 30,
+      "description": "Decisions API request timeout in seconds",
+      "key": "code_index.community_label.decisions_timeout_seconds",
+      "machineExport": false,
+      "namespace": "code_index",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Enable LLM-generated import-community labels",
+      "key": "code_index.community_label.enabled",
+      "machineExport": false,
+      "namespace": "code_index",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 2,
+      "description": "Maximum concurrent community label LLM calls",
+      "key": "code_index.community_label.max_concurrency",
+      "machineExport": false,
+      "namespace": "code_index",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 120,
+      "description": "Maximum tokens for each community label generation",
+      "key": "code_index.community_label.max_tokens",
+      "machineExport": false,
+      "namespace": "code_index",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "feature_low",
+      "description": "Provider-agnostic capability profile requested by this feature.",
+      "key": "code_index.community_label.profile",
+      "machineExport": false,
+      "namespace": "code_index",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
       "default": 1,
       "description": "Days to retain unreferenced indexed content and recent Git history",
       "key": "code_index.content_retention_days",
@@ -913,6 +1051,17 @@
       "namespace": "code_index",
       "secrecy": "none",
       "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 4,
+      "description": "Maximum concurrent per-file projection sync commands",
+      "key": "code_index.sync_worker_concurrency",
+      "machineExport": false,
+      "namespace": "code_index",
+      "secrecy": "none",
+      "type": "integer",
       "visibility": "public"
     },
     {
@@ -1847,13 +1996,24 @@
     },
     {
       "activation": "live",
-      "default": 50000,
-      "description": "Working character budget for the task-close criteria-review prompt. Diff evidence is truncated per file to fit, keeping every changed file represented, declaring omitted spans, and always retaining lines that match strings named by the criteria. close_review_prompt_max_chars remains the hard failure cap.",
-      "key": "gobby-tasks.validation.close_review_prompt_budget_chars",
+      "default": 3,
+      "description": "Maximum launching, running, or finalizing close reviewers per project.",
+      "key": "gobby-tasks.validation.close_review_max_concurrency_per_project",
       "machineExport": false,
       "namespace": "gobby-tasks",
       "secrecy": "none",
       "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "low",
+      "description": "Minimum close-review code-finding severity that blocks closure. Criterion gaps always block regardless of this setting.",
+      "key": "gobby-tasks.validation.close_review_min_severity",
+      "machineExport": false,
+      "namespace": "gobby-tasks",
+      "secrecy": "none",
+      "type": "string",
       "visibility": "public"
     },
     {
@@ -1881,7 +2041,7 @@
     {
       "activation": "live",
       "default": 1200.0,
-      "description": "Wall-clock bound on a spawned task-close validator and its durable review deadline.",
+      "description": "Wall-clock bound on a spawned task-close reviewer and its durable review deadline.",
       "key": "gobby-tasks.validation.close_review_validator_timeout_seconds",
       "machineExport": false,
       "namespace": "gobby-tasks",
@@ -1996,20 +2156,6 @@
     },
     {
       "activation": "live",
-      "default": null,
-      "description": "Path to custom validation prompt template (e.g., 'validation/validate')",
-      "key": "gobby-tasks.validation.prompt_path",
-      "machineExport": false,
-      "namespace": "gobby-tasks",
-      "secrecy": "none",
-      "type": [
-        "string",
-        "null"
-      ],
-      "visibility": "public"
-    },
-    {
-      "activation": "live",
       "default": true,
       "description": "Require a path-scoped Git status proof that task-attributed paths are clean before final close.",
       "key": "gobby-tasks.validation.require_clean_attributed_paths_on_close",
@@ -2017,17 +2163,6 @@
       "namespace": "gobby-tasks",
       "secrecy": "none",
       "type": "boolean",
-      "visibility": "public"
-    },
-    {
-      "activation": "live",
-      "default": "You are a QA validator. Output only the raw JSON object — markdown, explanations, or code blocks break the parser.",
-      "description": "System prompt for task validation",
-      "key": "gobby-tasks.validation.system_prompt",
-      "machineExport": false,
-      "namespace": "gobby-tasks",
-      "secrecy": "none",
-      "type": "string",
       "visibility": "public"
     },
     {

@@ -85,7 +85,7 @@ class MergeRecovery:
             if stash_ref is None:
                 raise RuntimeError(f"Failed to locate exact merge_worktree stash {self.stash_oid}")
             step = "stash-pop"
-            result = await self._run(["stash", "pop", stash_ref])
+            result = await self._run(["stash", "pop", "--index", stash_ref])
             if result.returncode != 0:
                 raise RuntimeError(f"Failed to restore stashed .gobby/ files: {result.stderr}")
             self.stash_oid = None

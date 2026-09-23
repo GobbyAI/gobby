@@ -96,7 +96,7 @@ pub fn spawn_host(socket_dir: &Path) -> HostProc {
 }
 
 /// Copy `gterm` onto a private inode. Sibling tests (`build_env`,
-/// `frame_source_live`) invoke Cargo against the shared target dir and can
+/// `frame_source_live`) invoke Cargo against this checkout's target dir and can
 /// replace `CARGO_BIN_EXE_gterm` while a host is starting; macOS kills a
 /// process that execs an in-place-overwritten signed binary.
 fn private_gterm(socket_dir: &Path) -> PathBuf {

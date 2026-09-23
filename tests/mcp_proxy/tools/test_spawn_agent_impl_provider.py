@@ -674,7 +674,7 @@ class TestSpawnAutoClaimOwner:
                 return_value="21000000-0000-4000-8000-000000000001",
             ),
             patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.resolve_task_id_for_mcp",
+                "gobby.mcp_proxy.tools.spawn_agent._spawn_guards.resolve_task_id_for_mcp",
                 return_value="task-uuid-123",
             ),
         ):
@@ -734,7 +734,7 @@ class TestSpawnAutoClaimOwner:
                 return_value="21000000-0000-4000-8000-000000000001",
             ),
             patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.resolve_task_id_for_mcp",
+                "gobby.mcp_proxy.tools.spawn_agent._spawn_guards.resolve_task_id_for_mcp",
                 return_value="task-uuid-456",
             ),
         ):
@@ -796,7 +796,7 @@ class TestSpawnAutoClaimOwner:
                 return_value="21000000-0000-4000-8000-000000000001",
             ),
             patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.resolve_task_id_for_mcp",
+                "gobby.mcp_proxy.tools.spawn_agent._spawn_guards.resolve_task_id_for_mcp",
                 return_value="task-uuid-789",
             ),
         ):
@@ -856,7 +856,7 @@ class TestSpawnAutoClaimOwner:
                 return_value="21000000-0000-4000-8000-000000000001",
             ),
             patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.resolve_task_id_for_mcp",
+                "gobby.mcp_proxy.tools.spawn_agent._spawn_guards.resolve_task_id_for_mcp",
                 return_value="task-uuid-201",
             ),
         ):

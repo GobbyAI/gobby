@@ -100,7 +100,7 @@ async def _copy_cli_hooks(
 
     try:
         await asyncio.to_thread(shutil.copytree, src_path, dst_path, dirs_exist_ok=True)
-        logger.info("Copied CLI hooks from %s to %s", src_path, dst_path)
+        logger.debug("Copied CLI hooks from %s to %s", src_path, dst_path)
     except shutil.Error:
         logger.warning(
             "Failed to copy CLI hooks: provider=%s, src=%s, dst=%s",

@@ -46,6 +46,7 @@ def register_crud_tools(
 
     @registry.tool(
         name="get_session",
+        read_only=True,
         description="Get session details by ID. Accepts <project>#N, local #N, UUID, or prefix. Use the session_id from your injected context.",
     )
     def get_session(session_id: str) -> dict[str, Any]:
@@ -89,6 +90,7 @@ def register_crud_tools(
 
     @registry.tool(
         name="get_current_session",
+        read_only=True,
         description="""Get YOUR current session ID - the CORRECT way to look up your session.
 
 Use this when session_id wasn't in your injected context. Pass your external_id
@@ -155,6 +157,7 @@ DO NOT use list_sessions to find your session - it won't work with multiple acti
 
     @registry.tool(
         name="list_sessions",
+        read_only=True,
         description="""List sessions with optional filtering.
 
 WARNING: Do NOT use this to find your own session_id!
@@ -244,6 +247,7 @@ This tool is for browsing/listing sessions, not for self-identification.""",
 
     @registry.tool(
         name="session_stats",
+        read_only=True,
         description="Get session statistics for a project.",
     )
     def session_stats(project_id: str | None = None) -> dict[str, Any]:
@@ -278,6 +282,7 @@ This tool is for browsing/listing sessions, not for self-identification.""",
 
     @registry.tool(
         name="get_usage_breakdown",
+        read_only=True,
         description="Get token usage breakdown by source (CLI adapter) and model over a time period.",
     )
     def get_usage_breakdown(

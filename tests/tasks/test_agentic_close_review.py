@@ -16,7 +16,7 @@ from gobby.storage.task_close_reviews import (
     TerminalTaskCloseReviewStatus,
 )
 from gobby.tasks.agentic_close_review import (
-    TASK_CLOSE_VALIDATOR_AGENT,
+    TASK_CLOSE_REVIEWER_AGENT,
     build_agentic_review_prompt,
     build_terminal_review_payload,
 )
@@ -229,14 +229,17 @@ def test_launch_prompt_renders_prior_requirements() -> None:
     assert "prior_requirements=" not in prompt_without_prior
 
 
-def test_task_close_validator_definition_submits_then_terminates() -> None:
+def test_task_close_reviewer_definition_submits_then_terminates() -> None:
     path = (
         Path(__file__).parents[2]
-        / "src/gobby/install/shared/workflows/agents/task-close-validator.yaml"
+        / "src/gobby/install/shared/workflows/agents/task-close-reviewer.yaml"
     )
     body = yaml.safe_load(path.read_text())
-    assert body["name"] == TASK_CLOSE_VALIDATOR_AGENT
+    assert body["name"] == TASK_CLOSE_REVIEWER_AGENT
     assert body["isolation"] == "none"
+    assert body["provider"] == "codex"
+    assert body["model"] == "gpt-5.6-terra"
+    assert body["reasoning_effort"] == "medium"
     blocked = set(body["blocked_mcp_tools"])
     assert {
         "gobby-tasks:close_task",
@@ -245,19 +248,19 @@ def test_task_close_validator_definition_submits_then_terminates() -> None:
         "gobby-agents:stop_agent",
         "gobby-agents:kill_agent",
     } <= blocked
-    step = body["step_workflow"]["steps"][0]
+    step = next(step for step in body["step_workflow"]["steps"] if step["name"] == "review")
     assert "gobby-tasks:submit_close_review" in step["allowed_mcp_tools"]
     assert "gobby-agents:end_agent_run" in step["allowed_mcp_tools"]
     assert "gobby-agents:send_message" not in step["allowed_mcp_tools"]
     assert "submit_close_review" in body["prompts"]["agent"]
-    assert body["version"] == "1.10"
+    assert body["version"] == "2.0"
     assert "First apply the stated closure_reason" in body["prompts"]["agent"]
     assert '"state": "satisfied|gap|pending_external"' in body["prompts"]["agent"]
     assert "criterion beginning `Live:` case-insensitively" in body["prompts"]["agent"]
     assert "terminal closed, invalid, external_pending" in body["prompts"]["agent"]
     assert '"required_evidence": null|"complete evidence set"' in body["prompts"]["agent"]
     assert "complete evidence set the next close has to supply" in body["prompts"]["agent"]
-    # Gate 10's run record is the authority on command runs; the validator must
+    # Gate 10's run record is the authority on command runs; the reviewer must
     # never demand a committed receipt or its own reproduction instead.
     guidance = body["prompts"]["agent"]
     assert "validation_commands facts are gate 10's transcript-derived" in guidance
@@ -271,6 +274,13 @@ def test_task_close_validator_definition_submits_then_terminates() -> None:
     assert "run, never ask for a run to be repeated" in guidance
     assert "never reject a criterion because" in guidance
     assert "your own sandbox cannot reproduce it" in guidance
+    # A retry reads the task row after an earlier verdict was persisted. Those
+    # fields are history, not fresh deterministic evidence; treating them as
+    # current creates a self-reinforcing invalid-review loop.
+    assert "A launched review means deterministic gates 1-12 passed" in guidance
+    assert "validation_status, validation_feedback, and validation_fail_count" in guidance
+    assert "prior review history" in guidance
+    assert "must not use them as current gate evidence" in guidance
     assert "receipt or artifact that must result" not in guidance
 
 
@@ -408,7 +418,7 @@ def _review(*, status: str) -> TaskCloseReview:
         task_ref="#42",
         caller_session_id="parent",
         agent_run_id="run",
-        close_arguments={"preview": False},
+        close_arguments={"preview": True},
         review_fingerprint="close",
         evidence_fingerprint="evidence",
         status=cast(TaskCloseReviewStatus, status),

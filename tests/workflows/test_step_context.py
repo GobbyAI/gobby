@@ -199,11 +199,11 @@ def _step_snapshot(step: WorkflowStep, exit_condition: str | None) -> AgentStepW
 def test_step_gated_only_on_mcp_success_is_flagged_mcp_progress_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The task-close-validator review step: allowed_tools 'all', MCP-only exit."""
+    """The task-close-reviewer review step: allowed_tools 'all', MCP-only exit."""
     _patch_step_instance(
         monkeypatch,
         _instance(
-            "task-close-validator",
+            "task-close-reviewer",
             "review",
             snapshot=_step_snapshot(_mcp_handler_step("review"), "vars.review_complete"),
         ),
@@ -232,7 +232,7 @@ def test_step_with_transitions_is_not_mcp_progress_only(
     _patch_step_instance(
         monkeypatch,
         _instance(
-            "task-close-validator",
+            "task-close-reviewer",
             "review",
             snapshot=_step_snapshot(step, "vars.review_complete"),
         ),
@@ -254,7 +254,7 @@ def test_step_with_exit_when_is_not_mcp_progress_only(
     _patch_step_instance(
         monkeypatch,
         _instance(
-            "task-close-validator",
+            "task-close-reviewer",
             "review",
             snapshot=_step_snapshot(step, "vars.review_complete"),
         ),

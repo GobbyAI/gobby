@@ -11,6 +11,7 @@ from gobby.hooks._normalization_canonical import (
     _set_canonical_tool_metadata,
 )
 from gobby.hooks._normalization_segments import _ShellSegmentMetadata
+from gobby.hooks._normalization_shell import _BASH_LOOP_BINDING_UNSTABLE_PARAMETERS
 
 pytestmark = pytest.mark.unit
 
@@ -107,6 +108,46 @@ def test_in_project_shell_write_still_attributes_its_own_path(tmp_path: Path) ->
     assert data["canonical_repo_mutation"] is True
 
 
+def test_unresolved_shell_write_exposes_its_unknown_scope(tmp_path: Path) -> None:
+    """A variable target is a repository write but has no safe attribution path."""
+    data: dict[str, Any] = {
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": 'TARGET=src/generated\nmkdir -p "$TARGET"',
+            "cwd": str(tmp_path),
+        },
+        "project_path": str(tmp_path),
+    }
+
+    _set_canonical_tool_metadata(data)
+
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+    assert data.get("canonical_file_paths") in (None, [])
+
+
+def test_dynamic_python_write_exposes_its_unknown_scope(tmp_path: Path) -> None:
+    """A proven Python write with a dynamic target remains fail-closed."""
+    data: dict[str, Any] = {
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": (
+                "uv run python -c \"from pathlib import Path; Path(input()).write_text('x')\""
+            ),
+            "cwd": str(tmp_path),
+        },
+        "project_path": str(tmp_path),
+    }
+
+    _set_canonical_tool_metadata(data)
+
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+    assert data.get("canonical_file_paths") in (None, [])
+
+
 def test_loop_header_still_scopes_a_mutating_body_with_unexpanded_paths() -> None:
     """Guard: `for f in a.py b.py; do sed -i ... "$f"; done` still attributes both.
 
@@ -115,10 +156,345 @@ def test_loop_header_still_scopes_a_mutating_body_with_unexpanded_paths() -> Non
     """
     metadata = _merge_shell_segment_metadata(
         [
-            _ShellSegmentMetadata(kind="execute", paths=("a.py", "b.py")),
-            _ShellSegmentMetadata(kind="write", paths=("$f",), repo_mutation=True),
+            _ShellSegmentMetadata(
+                kind="execute",
+                paths=("a.py", "b.py"),
+                loop_binding_variable="f",
+            ),
+            _ShellSegmentMetadata(
+                kind="write",
+                paths=("$f",),
+                repo_mutation=True,
+                shell_words=("$f",),
+                shell_raw_words=('"$f"',),
+            ),
         ]
     )
 
     assert metadata["canonical_file_paths"] == ["a.py", "b.py"]
     assert metadata["_canonical_repo_mutation_scope_unknown"] is True
+    assert metadata["_canonical_repo_mutation_scope_resolved_by_loop_binding"] is True
+
+
+def test_loop_binding_clears_only_the_public_unknown_scope(tmp_path: Path) -> None:
+    data: dict[str, Any] = {
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": 'for f in a.py b.py; do sed -i "s/x/y/" "$f"; done',
+            "cwd": str(tmp_path),
+        },
+        "project_path": str(tmp_path),
+    }
+
+    _set_canonical_tool_metadata(data)
+
+    assert data["canonical_file_paths"] == ["a.py", "b.py"]
+    assert data["canonical_repo_mutation"] is True
+    assert "canonical_repo_mutation_scope_unknown" not in data
+
+
+def test_bash_loop_binding_unstable_parameters_are_pinned() -> None:
+    assert _BASH_LOOP_BINDING_UNSTABLE_PARAMETERS == frozenset(
+        {
+            "RANDOM",
+            "SRANDOM",
+            "SECONDS",
+            "LINENO",
+            "BASHPID",
+            "BASH_COMMAND",
+            "BASH_SUBSHELL",
+            "BASH_ARGV",
+            "BASH_ARGC",
+            "BASH_ARGV0",
+            "BASH_SOURCE",
+            "BASH_LINENO",
+            "BASH_VERSINFO",
+            "BASH_VERSION",
+            "BASH_ALIASES",
+            "BASH_CMDS",
+            "BASH_EXECUTION_STRING",
+            "BASH_REMATCH",
+            "FUNCNAME",
+            "HISTCMD",
+            "EPOCHSECONDS",
+            "EPOCHREALTIME",
+            "PIPESTATUS",
+            "DIRSTACK",
+            "GROUPS",
+            "UID",
+            "EUID",
+            "PPID",
+            "SHELLOPTS",
+            "BASHOPTS",
+            "OPTIND",
+            "OPTARG",
+            "OPTERR",
+            "REPLY",
+            "COMP_WORDS",
+            "COMP_CWORD",
+            "COMP_LINE",
+            "COMP_POINT",
+            "COMP_KEY",
+            "COMP_TYPE",
+            "COMPREPLY",
+            "IFS",
+            "PATH",
+            "HOME",
+            "PWD",
+            "OLDPWD",
+            "SHLVL",
+            "_",
+        }
+    )
+
+
+@pytest.mark.parametrize("variable", sorted(_BASH_LOOP_BINDING_UNSTABLE_PARAMETERS))
+def test_bash_unstable_parameter_cannot_supply_loop_binding(
+    tmp_path: Path,
+    variable: str,
+) -> None:
+    data: dict[str, Any] = {
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": (f'for {variable} in a.py b.py; do sed -i "s/x/y/" "${{{variable}}}"; done'),
+            "cwd": str(tmp_path),
+        },
+        "project_path": str(tmp_path),
+    }
+
+    _set_canonical_tool_metadata(data)
+
+    assert data.get("canonical_file_paths") in (None, [])
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.parametrize("reference", ['"$f"', '"${f}"'])
+def test_double_quoted_loop_parameter_references_preserve_binding(
+    tmp_path: Path,
+    reference: str,
+) -> None:
+    data: dict[str, Any] = {
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": f'for f in a.py b.py; do sed -i "s/x/y/" {reference}; done',
+            "cwd": str(tmp_path),
+        },
+        "project_path": str(tmp_path),
+    }
+
+    _set_canonical_tool_metadata(data)
+
+    assert data["canonical_file_paths"] == ["a.py", "b.py"]
+    assert "canonical_repo_mutation_scope_unknown" not in data
+
+
+@pytest.mark.parametrize("header_word", ["'src/a.py src/b.py'", "'src/*.py'"])
+def test_unquoted_loop_parameter_reference_keeps_scope_unknown(
+    tmp_path: Path,
+    header_word: str,
+) -> None:
+    data: dict[str, Any] = {
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": f"for f in {header_word}; do rm $f; done",
+            "cwd": str(tmp_path),
+        },
+        "project_path": str(tmp_path),
+    }
+
+    _set_canonical_tool_metadata(data)
+
+    assert data.get("canonical_file_paths") in (None, [])
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.parametrize(
+    ("header_word", "expected_path"),
+    [
+        ("'src/a.py src/b.py'", "src/a.py src/b.py"),
+        ("'src/*.py'", "src/*.py"),
+    ],
+)
+def test_double_quoted_loop_parameter_reference_preserves_literal_header_path(
+    tmp_path: Path,
+    header_word: str,
+    expected_path: str,
+) -> None:
+    data: dict[str, Any] = {
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": f'for f in {header_word}; do rm "$f"; done',
+            "cwd": str(tmp_path),
+        },
+        "project_path": str(tmp_path),
+    }
+
+    _set_canonical_tool_metadata(data)
+
+    assert data["canonical_file_paths"] == [expected_path]
+    assert "canonical_repo_mutation_scope_unknown" not in data
+
+
+@pytest.mark.parametrize(
+    "reference",
+    [
+        "${f:-x}",
+        "${f#p}",
+        "${f//a/b}",
+        "${f^^}",
+        "${!f}",
+        "${f[0]}",
+        "${f[@]}",
+        "'$f'",
+        r"\$f",
+        "$1",
+        "$@",
+        "$*",
+        "$#",
+        "$?",
+        "$!",
+        "$0",
+        "$-",
+        "$$",
+    ],
+)
+def test_non_plain_loop_parameter_reference_drops_binding(
+    tmp_path: Path,
+    reference: str,
+) -> None:
+    data: dict[str, Any] = {
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": f'for f in a.py b.py; do sed -i "s/x/y/" {reference}; done',
+            "cwd": str(tmp_path),
+        },
+        "project_path": str(tmp_path),
+    }
+
+    _set_canonical_tool_metadata(data)
+
+    assert data.get("canonical_file_paths") in (None, [])
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.parametrize(
+    "header_words",
+    [
+        "*.py",
+        "a.py $FILES",
+        "$(printf a.py)",
+        "`printf a.py`",
+        "{a,b}.py",
+    ],
+)
+def test_non_literal_loop_header_words_drop_binding(
+    tmp_path: Path,
+    header_words: str,
+) -> None:
+    data: dict[str, Any] = {
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": f'for f in {header_words}; do sed -i "s/x/y/" "$f"; done',
+            "cwd": str(tmp_path),
+        },
+        "project_path": str(tmp_path),
+    }
+
+    _set_canonical_tool_metadata(data)
+
+    assert data.get("canonical_file_paths") in (None, [])
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.parametrize(
+    "declaration",
+    [
+        "readonly f",
+        "declare -r f",
+        "declare -n f=target",
+        "declare -i f",
+        "typeset -in f",
+        "f=seed for",
+        "env f=seed for",
+    ],
+)
+def test_shell_declaration_attributes_disqualify_later_loop_binding(
+    tmp_path: Path,
+    declaration: str,
+) -> None:
+    if declaration.endswith("for"):
+        command = f'{declaration} f in a.py b.py; do sed -i "s/x/y/" "$f"; done'
+    else:
+        command = f'{declaration}; for f in a.py b.py; do sed -i "s/x/y/" "$f"; done'
+    data: dict[str, Any] = {
+        "tool_name": "Bash",
+        "tool_input": {"command": command, "cwd": str(tmp_path)},
+        "project_path": str(tmp_path),
+    }
+
+    _set_canonical_tool_metadata(data)
+
+    assert data.get("canonical_file_paths") in (None, [])
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.parametrize(
+    "intervening_segment",
+    [
+        'f="$SRC"',
+        "unset x",
+        'printf -v x %s "$SRC"',
+        "read -p f response",
+        "((f = 1))",
+        "eval 'f=\"$SRC\"'",
+        "source ./rebind.sh",
+        ". ./rebind.sh",
+        "readarray f",
+        "mapfile f",
+        "getopts x f",
+        'declare f="$SRC"',
+        "x=$(rebind_f)",
+        "rebind_f",
+    ],
+)
+def test_unproven_intervening_segment_restores_unknown_write_scope(
+    tmp_path: Path,
+    intervening_segment: str,
+) -> None:
+    data: dict[str, Any] = {
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": (
+                f'for f in a.py b.py; do {intervening_segment}; sed -i "s/x/y/" "$f"; done'
+            ),
+            "cwd": str(tmp_path),
+        },
+        "project_path": str(tmp_path),
+    }
+
+    _set_canonical_tool_metadata(data)
+
+    assert data.get("canonical_file_paths") in (None, [])
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.parametrize("safe_segment", ["x=value", "echo processing"])
+def test_proven_safe_intervening_segment_preserves_loop_binding(
+    tmp_path: Path,
+    safe_segment: str,
+) -> None:
+    data: dict[str, Any] = {
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": (f'for f in a.py b.py; do {safe_segment}; sed -i "s/x/y/" "$f"; done'),
+            "cwd": str(tmp_path),
+        },
+        "project_path": str(tmp_path),
+    }
+
+    _set_canonical_tool_metadata(data)
+
+    assert data["canonical_file_paths"] == ["a.py", "b.py"]
+    assert data["canonical_repo_mutation"] is True
+    assert "canonical_repo_mutation_scope_unknown" not in data

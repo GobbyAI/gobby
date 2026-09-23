@@ -8,8 +8,10 @@ import os
 import subprocess
 from collections.abc import Awaitable, Callable
 from functools import partial
+from pathlib import Path
 from typing import Any
 
+from gobby.agents.cargo_target import cleanup_checkout_cargo_target_dir
 from gobby.agents.tmux.session_manager import TmuxProbeState
 from gobby.clones.git import CloneGitManager, GitOperationResult
 from gobby.runner_maintenance.isolation_reconciliation import reconcile_isolation_registry
@@ -315,8 +317,20 @@ async def _delete_expired_clone(
         if not boundary.begin_mutation():
             return GitOperationResult(False, "Clone cleanup cancelled before mutation")
         result = await manager.delete_clone(path, force=False)
-        if result.success and not storage.delete(clone_id):
-            return GitOperationResult(False, "Failed to delete clone record")
+        if result.success:
+            cargo_error = await asyncio.to_thread(
+                cleanup_checkout_cargo_target_dir,
+                Path(clone.clone_path),
+                clone.project_id,
+            )
+            if cargo_error is not None:
+                return GitOperationResult(
+                    False,
+                    f"Clone files were deleted, but Cargo target cleanup failed: {cargo_error}",
+                    error="cargo_target_cleanup_failed",
+                )
+            if not storage.delete(clone_id):
+                return GitOperationResult(False, "Failed to delete clone record")
         return result
 
 
@@ -350,7 +364,13 @@ async def _cleanup_missing_isolation_records_async(
 ) -> dict[str, int]:
     """Keep each complete guarded metadata deletion off the event loop."""
     worktrees = await _run_db(run_db, worktree_storage.list_worktrees, limit=limit)
-    clones = await _run_db(run_db, clone_storage.list_clones, limit=limit)
+    cleanup_pending = await _run_db(run_db, clone_storage.list_cleanup_pending, limit=limit)
+    remaining = max(0, limit - len(cleanup_pending))
+    clones = cleanup_pending + await _run_db(
+        run_db,
+        clone_storage.list_clones,
+        limit=remaining,
+    )
     counts = {"worktrees": 0, "clones": 0}
     for worktree in worktrees:
         counts["worktrees"] += await run_worktree_delete(
@@ -418,6 +438,17 @@ def _delete_verified_missing_worktree_record(
             return 0
         if not boundary.begin_mutation():
             return 0
+        cargo_error = cleanup_checkout_cargo_target_dir(
+            Path(current.worktree_path),
+            current.project_id,
+        )
+        if cargo_error is not None:
+            logger.warning(
+                "Keeping missing worktree record %s after Cargo target cleanup failure: %s",
+                current.id,
+                cargo_error,
+            )
+            return 0
         if not worktree_storage.delete(current.id):
             return 0
         logger.info(
@@ -430,10 +461,13 @@ def _delete_verified_missing_worktree_record(
 
 
 async def _delete_missing_clone_records(clone_storage: LocalCloneManager, *, limit: int) -> int:
+    cleanup_pending = clone_storage.list_cleanup_pending(limit=limit)
+    remaining = max(0, limit - len(cleanup_pending))
+    rows = cleanup_pending + clone_storage.list_clones(limit=remaining)
     return sum(
         [
             await _delete_missing_clone_record(clone_storage, row.id, DestructiveBoundary())
-            for row in clone_storage.list_clones(limit=limit)
+            for row in rows
         ]
     )
 
@@ -455,6 +489,17 @@ def _delete_missing_clone_record_sync(
         if current is None or (current.clone_path and os.path.isdir(current.clone_path)):
             return 0
         if not boundary.begin_mutation():
+            return 0
+        cargo_error = cleanup_checkout_cargo_target_dir(
+            Path(current.clone_path),
+            current.project_id,
+        )
+        if cargo_error is not None:
+            logger.warning(
+                "Keeping missing clone record %s after Cargo target cleanup failure: %s",
+                current.id,
+                cargo_error,
+            )
             return 0
         if not clone_storage.delete(current.id):
             return 0

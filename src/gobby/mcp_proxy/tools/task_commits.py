@@ -484,6 +484,7 @@ def create_commit_registry(
             "required": ["task_id"],
         },
         func=get_task_diff_tool,
+        read_only=True,
     )
 
     return registry

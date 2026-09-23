@@ -15,6 +15,7 @@ use crate::ui::hit::{Hit, SidebarSection};
 use crate::ui::keybind_help::KeybindHelpState;
 use crate::ui::keymap::{Keymap, HERDR_PREFIX};
 use crate::ui::navigator::NavigatorState;
+use crate::ui::pane_chrome;
 use crate::ui::pane_layout;
 use crate::ui::settings::{ClientPrefs, SettingsState};
 use crate::ui::sidebar;
@@ -106,7 +107,7 @@ pub mod labels;
 
 pub use labels::{
     attention_label, attention_pane, attention_subject, row_state, terminal_address,
-    terminal_label, terminal_title, RowState,
+    terminal_label, RowState,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -283,11 +284,15 @@ pub struct ViewState {
     pub tab_scroll_right_hit_area: Option<Rect>,
     pub new_tab_hit_area: Option<Rect>,
     pub terminal_area: Rect,
-    /// Bottom row of the content column: control state and focused terminal.
+    /// Bottom row of the content column: prefix, mode and daemon health,
+    /// plus whatever the focused pane's edges cannot carry.
     pub status_rect: Rect,
     pub toast_hit_area: Option<Rect>,
     pub pane_infos: Vec<PaneInfo>,
     pub split_borders: Vec<SplitBorder>,
+    /// The longest overrun of any scrolling title in the frame, pane header
+    /// or Sessions row: the one ticker period they all share (D7).
+    pub title_travel: usize,
     /// Project cards drawn in the sidebar, by project id.
     pub project_hit_areas: Vec<(String, Rect)>,
     /// Worktree rows drawn under their cards, by worktree id.
@@ -313,7 +318,9 @@ pub struct ViewState {
     pub sidebar_toggle_hit_area: Option<Rect>,
     /// Scrollbar lane beside each section, by `SidebarSection::index`.
     pub sidebar_scrollbar_hit_areas: [Option<Rect>; 3],
-    /// Leading control-state span of the status line.
+    /// The focused pane's metadata while it offers take-control (Read-only,
+    /// Uncertain): on its edge, or leading the status line when the edge
+    /// has no room for it.
     pub control_indicator_hit_area: Option<Rect>,
     /// Settings popup including its border, while the overlay is drawn.
     pub settings_dialog_area: Option<Rect>,
@@ -822,6 +829,7 @@ impl Chrome {
             .iter()
             .filter_map(|terminal| ws.pane_for_terminal(terminal))
             .collect();
+        let mut title_travel = 0;
         if let Some(tab) = self.active_tab() {
             for info in &mut pane_infos {
                 let Some(pane) = tab
@@ -842,6 +850,7 @@ impl Chrome {
                     self.prefs.pane_scrollbars,
                     metrics,
                 );
+                title_travel = title_travel.max(pane_chrome::title_travel(ws, pane, info));
             }
         }
         let rows = sidebar_rows::project_rows(ws, self).len();
@@ -851,6 +860,9 @@ impl Chrome {
         let sidebar_divider_x =
             (sidebar_rect.width > 0).then(|| sidebar_rect.x + sidebar_rect.width - 1);
         let sidebar_section_rects = sidebar::section_rects(ws, self, sidebar_rect);
+        let sessions_rect = sidebar_section_rects[SidebarSection::Sessions.index()];
+        let title_travel =
+            title_travel.max(sidebar::sessions_title_travel(ws, self, sessions_rect));
         self.view = ViewState {
             sidebar_rect,
             tab_bar_rect,
@@ -858,6 +870,7 @@ impl Chrome {
             status_rect,
             pane_infos,
             split_borders,
+            title_travel,
             sidebar_divider_x,
             sidebar_section_rects,
             ..ViewState::default()

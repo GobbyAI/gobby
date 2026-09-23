@@ -8,12 +8,12 @@ import uuid
 from typing import TYPE_CHECKING, Any, cast
 
 from gobby.agents.recovery_state import is_reconciliation_pending
+from gobby.runner_hook_replay import _run_agent_hook_replay_barrier
 from gobby.runner_lifecycle_agents import (
     _RUN_REPLAY_PAGE_SIZE,
     _list_active_agent_runs_once,
     _recover_agent_runs_after_restart,
     _refresh_active_run_dispatch_mutex,
-    _run_agent_hook_replay_barrier,
     _run_db,
 )
 from gobby.terminals.tmux_runtime import TmuxTerminalRuntime, configured_tmux_runtime
@@ -456,11 +456,11 @@ async def _reclassify_reconciliation_pending_runs(runner: GobbyRunner) -> int:
     # Capture before yielding to inbox replay: fresh runs admitted during the
     # barrier belong to the live monitor, not daemon-restart reconciliation.
     run_ids = frozenset(str(run.id) for run in pending)
-    settled = await _run_agent_hook_replay_barrier(
+    outcome = await _run_agent_hook_replay_barrier(
         runner,
         timeout_seconds=_RECLASSIFY_SETTLE_TIMEOUT_SECONDS,
     )
-    if not settled:
+    if not outcome.settled:
         return 0
     resolved_run_ids: set[str] = set()
     reconciled = await _reconcile_agent_runs_after_restart(

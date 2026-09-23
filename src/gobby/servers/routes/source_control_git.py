@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import subprocess  # nosec B404 # subprocess needed for git operations
 import threading
 import time
@@ -32,6 +33,7 @@ logger = logging.getLogger(__name__)
 _cache: dict[str, tuple[float, Any]] = {}
 _cache_lock = threading.Lock()
 _GIT_TTL = 10.0
+_STATUS_TTL = 30.0
 _MAX_CACHE_SIZE = 256
 
 
@@ -60,11 +62,16 @@ def _delete_cached(key: str) -> None:
         _cache.pop(key, None)
 
 
+def _status_cache_key(repo_path: str) -> str:
+    """Key source status by canonical repository path, not project alias."""
+    return f"status:{os.path.realpath(repo_path)}"
+
+
 async def _run_git(
     args: list[str], cwd: str, timeout: int = 10
 ) -> subprocess.CompletedProcess[str]:
     """Run a git command and return result (non-blocking)."""
-    result = await daemon_git.run(args, cwd=cwd, timeout=timeout)
+    result = await daemon_git.run_posix_spawn(args, cwd=cwd, timeout=timeout)
     if isinstance(result, GitTimeout):
         raise subprocess.TimeoutExpired(
             result.argv, result.timeout, output=result.stdout, stderr=result.stderr

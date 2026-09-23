@@ -64,6 +64,8 @@ export default defineConfig({
     include: ["src/**/*.test.{ts,tsx}"],
     environment: "jsdom",
     globals: true,
+    // One jsdom worker per core starves component tests into 5s timeouts here (#22640).
+    maxWorkers: 4,
     setupFiles: ["src/test/setup.ts"],
     coverage: {
       provider: "v8",

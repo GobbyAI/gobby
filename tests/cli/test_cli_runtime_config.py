@@ -35,7 +35,7 @@ def test_cli_runtime_closes_config_resources(monkeypatch: pytest.MonkeyPatch) ->
     database = MagicMock()
     repository = MagicMock()
     repository.read.return_value = SimpleNamespace(
-        overrides={"hooks.provider_timeout": 321}, secret_bindings={}
+        overrides={"hooks.provider_timeout": 321}, secret_bindings={}, unknown_keys=()
     )
     repository.runtime_candidate.return_value = DaemonConfig()
 
@@ -56,6 +56,6 @@ def test_cli_runtime_closes_config_resources(monkeypatch: pytest.MonkeyPatch) ->
     assert runtime.require_config() is repository.runtime_candidate.return_value
     runtime.close()
 
-    repository.read.assert_called_once_with(resolve_secrets=True)
+    repository.read.assert_called_once_with(resolve_secrets=True, unknown_keys="raise")
     repository.runtime_candidate.assert_called_once_with({"hooks.provider_timeout": 321}, {})
     database.close.assert_called_once_with()

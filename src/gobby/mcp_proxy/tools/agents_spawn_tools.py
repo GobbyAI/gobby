@@ -14,6 +14,7 @@ def register_agent_spawn_tools(
 ) -> None:
     @registry.tool(
         name="evaluate_spawn",
+        read_only=True,
         description="Dry-run evaluation of spawn_agent. Defaults parent_session_id to current session.",
     )
     async def evaluate_spawn_tool(

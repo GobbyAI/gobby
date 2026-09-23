@@ -143,6 +143,7 @@ def create_workflows_registry(
 
     @registry.tool(
         name="get_step_status",
+        read_only=True,
         description=(
             "Get agent-step status for the current session. "
             "Shows the snapshot step list and session variables."
@@ -163,6 +164,7 @@ def create_workflows_registry(
 
     @registry.tool(
         name="evaluate_pipeline",
+        read_only=True,
         description="Validate a pipeline definition — structural checks without executing.",
     )
     async def _evaluate_pipeline(name: str) -> dict[str, Any]:
@@ -183,6 +185,7 @@ def create_workflows_registry(
 
     @registry.tool(
         name="evaluate_agent",
+        read_only=True,
         description=(
             "Validate an agent definition — tool gates plus inline step workflow, "
             "without executing."
@@ -241,6 +244,7 @@ def create_workflows_registry(
 
     @registry.tool(
         name="list_rules",
+        read_only=True,
         description="List standalone rules. Supports filtering by event, group, and enabled status. Use brief=True for minimal output (name, event, group, enabled only).",
     )
     def _list_rules(
@@ -255,6 +259,7 @@ def create_workflows_registry(
 
     @registry.tool(
         name="get_rule",
+        read_only=True,
         description="Get full details of a standalone rule by name.",
     )
     def _get_rule(name: str) -> dict[str, Any]:
@@ -338,6 +343,7 @@ def create_workflows_registry(
 
     @registry.tool(
         name="list_variables",
+        read_only=True,
         description="List variable definitions. Supports filtering by enabled status.",
     )
     def _list_variables(
@@ -349,6 +355,7 @@ def create_workflows_registry(
 
     @registry.tool(
         name="get_variable_definition",
+        read_only=True,
         description="Get a variable definition by name. Returns the definition details including default value.",
     )
     def _get_variable_definition(name: str) -> dict[str, Any]:
@@ -416,6 +423,7 @@ def create_workflows_registry(
 
     @registry.tool(
         name="export_variable",
+        read_only=True,
         description="Export a variable definition as YAML content.",
     )
     def _export_variable(name: str) -> dict[str, Any]:
@@ -427,6 +435,7 @@ def create_workflows_registry(
 
     @registry.tool(
         name="list_agent_definitions",
+        read_only=True,
         description="List agent definitions. Supports filtering by enabled status, project ID, and usage surface.",
     )
     def _list_agent_definitions(
@@ -440,6 +449,7 @@ def create_workflows_registry(
 
     @registry.tool(
         name="get_agent_definition",
+        read_only=True,
         description="Get full details of an agent definition by name.",
     )
     def _get_agent_definition(name: str) -> dict[str, Any]:
@@ -573,6 +583,7 @@ def create_workflows_registry(
 
     @registry.tool(
         name="pipeline_eval",
+        read_only=True,
         description="Evaluate and return structured data within a pipeline. Pass a dict of key-value pairs; they become the step output. Use with template expressions to compute values from prior step outputs.",
     )
     def _pipeline_eval(data: dict[str, Any]) -> dict[str, Any]:

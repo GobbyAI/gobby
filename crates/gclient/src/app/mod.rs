@@ -17,7 +17,7 @@ mod window_state;
 pub mod workspace_ops;
 
 pub use attach::AttachState;
-pub use live::{SidebarFetch, SidebarFetchFuture};
+pub use live::{ControlOutcome, SidebarFetch, SidebarFetchFuture};
 pub use live_loop::menu::{
     item_rects, menu_rect, ContextMenuKind, ContextMenuState, MenuAction, MenuItem,
 };
@@ -128,6 +128,20 @@ pub struct Workspace<D: Daemon = ScriptedDaemon> {
     /// `(tab, pane)` of the panes pending placements landed in, drained by
     /// the chrome sync that focuses them.
     placed_panes: Vec<(String, String)>,
+    /// The control request a focus change or a queued key asked for. The loop
+    /// starts it beside the select, which is what keeps every daemon round
+    /// trip out of the click and the keystroke (#22573).
+    pending_control: Option<PendingControl>,
+    /// Stamps each started control request so a reply that outlived its focus
+    /// change can be told from the one the pane is waiting on.
+    next_control_seq: u64,
+}
+
+/// A control request recorded but not yet started.
+#[derive(Debug, Clone, Copy)]
+pub struct PendingControl {
+    pub(super) pane_id: PaneId,
+    pub(super) takeover: bool,
 }
 
 impl<D: Daemon> crate::teardown::ShutdownWorkspace for Workspace<D> {
@@ -210,6 +224,8 @@ impl Workspace {
             shutdown_started: false,
             workspace_model: None,
             pending_placements: HashSet::new(),
+            pending_control: None,
+            next_control_seq: 0,
             placed_panes: Vec::new(),
         }
     }

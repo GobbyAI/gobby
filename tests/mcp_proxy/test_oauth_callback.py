@@ -41,7 +41,18 @@ async def test_callback_rejects_bad_state_then_accepts_valid_code() -> None:
 
 
 @pytest.mark.asyncio
-async def test_denied_consent_surfaces_without_reflecting_server_error() -> None:
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        ("invalid_client", "OAuth authorization failed: invalid_client"),
+        ("vendor_private_error", "OAuth authorization failed"),
+        ("access_denied", "OAuth authorization was denied"),
+    ],
+)
+async def test_callback_distinguishes_oauth_error_from_unknown_error_and_user_denial(
+    error: str,
+    expected: str,
+) -> None:
     async def open_browser(_url: str) -> None:
         pass
 
@@ -49,11 +60,11 @@ async def test_denied_consent_surfaces_without_reflecting_server_error() -> None
         await callback.redirect("https://auth.example/authorize?state=expected")
         async with httpx2.AsyncClient() as client:
             response = await client.get(
-                callback.redirect_uri
-                + "?state=expected&error=access_denied&error_description=secret"
+                callback.redirect_uri + f"?state=expected&error={error}&error_description=secret"
             )
         assert "secret" not in response.text
-        with pytest.raises(OAuthFlowError, match="denied"):
+        assert error not in response.text
+        with pytest.raises(OAuthFlowError, match=f"^{expected}$"):
             await callback.wait()
 
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import time
@@ -10,10 +9,11 @@ import uuid
 from collections import OrderedDict
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any
 
 from gobby.build.coordinator import summary_allows_cross_project_coordinator
 from gobby.sessions.clear_continuation import resolve_clear_successor
+from gobby.sessions.mailbox_delivery import WakeDispatcherProtocol, dispatch_mailbox_wakes
 from gobby.sessions.mailbox_targets import resolve_broadcast_selection
 from gobby.storage.build_history import BuildHistoryStorage
 from gobby.storage.sessions import (
@@ -38,19 +38,13 @@ if TYPE_CHECKING:
     from gobby.storage.sessions import SessionManager
 
 
-ACTIVE_AGENT_RUN_STATUSES = ("pending", "running")
+ACTIVE_AGENT_RUN_STATUSES = ("queued", "pending", "running")
 DELIVERABLE_SESSION_STATUSES = LIVE_SESSION_STATUS_ORDER
 MESSAGE_TARGETS = ("global", "project", "parent", "session", "agent", "build")
 AGENT_CROSS_PROJECT_AUTH_CACHE_TTL_SECONDS = 30.0
 AGENT_CROSS_PROJECT_AUTH_CACHE_MAX_SIZE = 256
 
 logger = logging.getLogger(__name__)
-
-
-class WakeDispatcherProtocol(Protocol):
-    async def dispatch_live_wake(
-        self, session_id: str, *, priority: str = "normal"
-    ) -> dict[str, Any]: ...
 
 
 @dataclass
@@ -197,6 +191,7 @@ class MailboxService:
                     metadata=message_metadata,
                     broadcast_id=broadcast_id,
                     resolution=resolution,
+                    wake_requested=wake,
                 )
                 messages.append(
                     self._message_manager.create_message(
@@ -214,7 +209,13 @@ class MailboxService:
         if wake:
             # Persistence is complete. The dispatcher owns live-wake policy and
             # channel-specific bounds; an outer timeout can interrupt tmux submission.
-            wake_results = await self._wake_many(recipient_ids, priority=priority)
+            wake_results = await dispatch_mailbox_wakes(
+                self._wake_dispatcher,
+                self._session_manager,
+                messages,
+                recipient_ids,
+                priority=priority,
+            )
 
         return MailboxSendResult(
             messages=messages,
@@ -345,26 +346,6 @@ class MailboxService:
             },
             fanout=True,
         )
-
-    def _normalize_wake_result(self, session_id: str, result: Any) -> dict[str, Any]:
-        if isinstance(result, dict):
-            normalized = dict(result)
-        elif isinstance(result, BaseException):
-            detail = str(result) or type(result).__name__
-            normalized = {
-                "session_id": session_id,
-                "delivered": False,
-                "method": None,
-                "error": detail,
-                "error_code": "wake_dispatch_failed",
-                "error_message": detail,
-            }
-        else:
-            normalized = {"session_id": session_id, "delivered": False, "method": None}
-        session = self._session_manager.get(session_id)
-        normalized.setdefault("session_id", session_id)
-        normalized.setdefault("session_status", getattr(session, "status", None))
-        return normalized
 
     def _resolve_project_id(self, from_session_id: str, project_id: str | None) -> str:
         if project_id is not None:
@@ -800,11 +781,10 @@ class MailboxService:
         metadata: Mapping[str, Any] | None,
         broadcast_id: str | None,
         resolution: MailboxTargetResolution,
-    ) -> str | None:
-        if metadata is None and broadcast_id is None:
-            return None
-
+        wake_requested: bool,
+    ) -> str:
         payload = dict(metadata or {})
+        payload["wake_requested"] = wake_requested
         if broadcast_id is not None:
             payload["broadcast_id"] = broadcast_id
             payload["broadcast"] = {
@@ -813,98 +793,3 @@ class MailboxService:
                 "selector": resolution.selector_metadata,
             }
         return json.dumps(payload, default=str, sort_keys=True)
-
-    async def _wake(self, session_id: str, *, priority: str) -> dict[str, Any]:
-        if self._wake_dispatcher is None:
-            return {
-                "session_id": session_id,
-                "delivered": False,
-                "method": None,
-                "error": "wake_dispatcher_unavailable",
-                "error_code": "wake_dispatcher_unavailable",
-                "error_message": "Wake dispatcher is unavailable",
-            }
-        try:
-            result = await self._wake_dispatcher.dispatch_live_wake(session_id, priority=priority)
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            logger.warning(
-                "Mailbox wake dispatch failed for session %s: %s",
-                session_id,
-                exc,
-                exc_info=True,
-            )
-            return {
-                "session_id": session_id,
-                "delivered": False,
-                "method": None,
-                "error": str(exc),
-                "error_code": "wake_dispatch_failed",
-                "error_message": str(exc),
-            }
-        if isinstance(result, dict):
-            return result
-        return {"session_id": session_id, "delivered": False, "method": None}
-
-    async def _wake_many(
-        self,
-        session_ids: list[str],
-        *,
-        priority: str,
-    ) -> list[dict[str, Any]]:
-        dispatcher = self._wake_dispatcher
-        batch_wake = getattr(dispatcher, "dispatch_live_wakes", None)
-        if len(session_ids) > 1 and callable(batch_wake):
-            try:
-                raw_results = await batch_wake(session_ids, priority=priority)
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                logger.warning("Mailbox batch wake dispatch failed: %s", exc, exc_info=True)
-                raw_results = [
-                    {
-                        "session_id": session_id,
-                        "delivered": False,
-                        "method": None,
-                        "error": str(exc),
-                        "error_code": "wake_dispatch_failed",
-                        "error_message": str(exc),
-                    }
-                    for session_id in session_ids
-                ]
-            if not isinstance(raw_results, list):
-                raw_results = []
-            by_session = {
-                str(result.get("session_id")): result
-                for result in raw_results
-                if isinstance(result, dict) and result.get("session_id") is not None
-            }
-            return [
-                self._normalize_wake_result(
-                    session_id,
-                    by_session.get(
-                        session_id,
-                        {
-                            "session_id": session_id,
-                            "delivered": False,
-                            "method": None,
-                            "error_code": "wake_result_missing",
-                            "error_message": "Wake dispatcher returned no result",
-                        },
-                    ),
-                )
-                for session_id in session_ids
-            ]
-
-        async with asyncio.TaskGroup() as group:
-            wakes = [
-                group.create_task(self.wake(session_id, priority=priority))
-                for session_id in session_ids
-            ]
-        return [wake.result() for wake in wakes]
-
-    async def wake(self, session_id: str, *, priority: str = "normal") -> dict[str, Any]:
-        """Wake after durable storage using the dispatcher's policy and bounds."""
-        result = await self._wake(session_id, priority=priority)
-        return self._normalize_wake_result(session_id, result)

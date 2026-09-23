@@ -237,6 +237,37 @@ fn self_view_refused_from_client_identity() {
 }
 
 #[test]
+fn tmux_read_text_is_refused_without_closing_the_stream() {
+    let tmux = start_tmux();
+    let mut host = spawn_host(&[]);
+    let mut frames = connect_frames(&host, None);
+    assert!(matches!(
+        attach(&mut frames, tmux.locator()),
+        ServerMessage::Attached { .. }
+    ));
+    let request = ClientMessage::ReadText {
+        start_rows_from_live_edge: 3,
+        start_col: 0,
+        end_rows_from_live_edge: 0,
+        end_col: 79,
+    };
+
+    for _ in 0..2 {
+        write_msg(&mut frames, &request);
+        let replies = collect_until(
+            &mut frames,
+            Duration::from_secs(2),
+            |message| matches!(message, ServerMessage::Error { code, .. } if code == "not_native"),
+        );
+        assert!(replies.iter().any(
+            |message| matches!(message, ServerMessage::Error { code, .. } if code == "not_native")
+        ));
+    }
+
+    let _ = host.kill();
+}
+
+#[test]
 fn poll_never_mutates_and_identity_survives_layout_changes() {
     let pane = start_tmux();
     pane.tmux(&["split-window", "-v"]);

@@ -4,7 +4,7 @@ use crossterm::event::{KeyModifiers, MouseButton, MouseEvent};
 use gobby_terminal::layout::{self, Node, ScrollMetrics};
 use ratatui::layout::{Direction, Rect};
 
-use crate::app::{ControlState, PaneId};
+use crate::app::PaneId;
 use crate::ui::chrome::Tab;
 use crate::ui::hit::{Hit, SidebarSection};
 use crate::ui::pane_layout::metrics_for;
@@ -59,12 +59,11 @@ use super::{
 /// (herdr `SetSplitRatio`); a pane scrollbar thumb starts a thumb drag and
 /// the track beside it jumps the scrollback there.
 ///
-/// The status line's control indicator is a button for the focused pane's
-/// lease, dispatched as the chord would be: held releases control, observed
-/// (or lease lost, or read-only after an indeterminate write) takes it, and a
-/// pending take-back accepts it. It is the mouse escape from a held lease
-/// that the keyboard lacks under a captured prefix. Every other region is
-/// ignored until its section lands.
+/// The focused pane's metadata is a button while it reads Read-only or
+/// Uncertain, on its edge or leading the status line: a press accepts a
+/// pending take-back, and otherwise takes control again. Focus alone is a
+/// condition, not a button. Every other region is ignored until its section
+/// lands.
 pub(super) fn down<W: WorkspaceView>(
     ws: &W,
     chrome: &mut Chrome,
@@ -291,11 +290,10 @@ pub(super) fn down<W: WorkspaceView>(
             let Some(pane) = chrome.focused_pane().filter(|pane| on_roster(ws, *pane)) else {
                 return MouseOutcome::Ignore;
             };
-            let pane = ws.pane(pane);
-            MouseOutcome::Action(if pane.take_back {
+            // The indicator is drawn only for Read-only and Uncertain, so a
+            // press always asks for control back.
+            MouseOutcome::Action(if ws.pane(pane).take_back {
                 Action::TakeBack
-            } else if pane.control == ControlState::Held {
-                Action::ReleaseControl
             } else {
                 Action::TakeControl
             })

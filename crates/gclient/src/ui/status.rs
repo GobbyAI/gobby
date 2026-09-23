@@ -4,10 +4,11 @@
 
 use std::time::{Duration, Instant};
 
-use crate::app::ControlState;
+use crate::app::{ControlState, Pane};
 use crate::theme::Palette;
-use crate::ui::chrome::{terminal_address, terminal_title, Chrome, Mode, RowState, WorkspaceView};
+use crate::ui::chrome::{Chrome, Mode, RowState, WorkspaceView};
 use crate::ui::hit::Hit;
+use crate::ui::pane_chrome::{metadata_rect, pane_metadata, pane_title};
 use crate::ui::text::display_width_u16;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -128,20 +129,6 @@ pub fn control_indicator(
         ControlState::Held => ("●", "held", p.accent),
         ControlState::LeaseLost => ("◌", "lease lost", p.red),
         ControlState::UncertainReadOnly => ("◌", "read-only", p.yellow),
-    }
-}
-
-/// The colour-free half of `control_indicator`, for titles built without a
-/// palette in hand.
-pub fn control_glyph_label(control: ControlState, take_back: bool) -> (&'static str, &'static str) {
-    if take_back {
-        return ("▲", "take-back");
-    }
-    match control {
-        ControlState::Observe => ("○", "observe"),
-        ControlState::Held => ("●", "held"),
-        ControlState::LeaseLost => ("◌", "lease lost"),
-        ControlState::UncertainReadOnly => ("◌", "read-only"),
     }
 }
 
@@ -331,13 +318,16 @@ pub fn render_copy_feedback(frame: &mut Frame, area: Rect, chrome: &Chrome, mess
     frame.render_widget(Paragraph::new(text), inner);
 }
 
-/// Gobby status line: daemon reachability, focused pane control state, mode.
-/// Returns the control indicator's cells, when a focused pane put one there.
+/// Global status line: prefix, mode, and daemon reachability. A pane's
+/// title and metadata live on its edges. What the focused pane's edges
+/// cannot carry falls here instead: its metadata leads this line when no
+/// edge has room for it, and its title ends the line when the pane has no
+/// border at all (a lone pane, or borders off), the segment that gives way
+/// when width runs out.
 ///
-/// The indicator is a button (`pointer::down` dispatches its press): the
-/// glyph and label sit in brackets, and the pointer resting on it
-/// (`Chrome::hover`) underlines it. Colour stays the state's own token
-/// because glyph and label already carry the state without hue.
+/// Returns the metadata's cells while they offer take-control (Read-only,
+/// Uncertain): a button `pointer::down` dispatches, underlined while the
+/// pointer rests on it. Focus alone is a condition, not a button.
 pub fn render_status_line<W: WorkspaceView>(
     frame: &mut Frame,
     area: Rect,
@@ -349,41 +339,26 @@ pub fn render_status_line<W: WorkspaceView>(
     }
     let p = &chrome.palette;
     let base = Style::default().bg(p.surface_dim);
-    let mut spans = Vec::new();
+    let mut spans = vec![Span::styled(" ", base)];
     let mut indicator = None;
-
-    // D4: control, address, backend, prefix, mode, then the title last so it
-    // is the segment that gives way when the line runs out of width.
-    let pane = chrome.focused_pane().map(|id| ws.pane(id));
-    match pane {
-        Some(pane) => {
-            let (glyph, label, color) = control_indicator(pane.control, pane.take_back, p);
-            let text = format!(" [{glyph} {label}]");
-            indicator = Some(Rect::new(
-                area.x,
-                area.y,
-                display_width_u16(&text).min(area.width),
-                1,
-            ));
-            let mut style = base.fg(color).add_modifier(Modifier::BOLD);
+    let overflow = focused_overflow(ws, chrome);
+    if let Some((pane, _)) = overflow {
+        let meta = pane_metadata(pane, true);
+        let mut style = base.fg(meta.tone.color(p)).add_modifier(Modifier::BOLD);
+        if meta.actionable {
+            let width = display_width_u16(&meta.text).saturating_add(1);
+            indicator = Some(Rect::new(area.x, area.y, width.min(area.width), 1));
             if matches!(chrome.hover, Some(Hit::ControlIndicator)) {
                 style = style.add_modifier(Modifier::UNDERLINED);
             }
-            spans.push(Span::styled(text, style));
-            if let Some(address) = terminal_address(ws, &pane.terminal_id) {
-                spans.push(Span::styled(format!(" │ {address}"), base.fg(p.text)));
-            }
-            spans.push(Span::styled(
-                format!(" │ {}", pane.backend),
-                base.fg(p.subtext0),
-            ));
         }
-        None => spans.push(Span::styled(" No pane.", base.fg(p.overlay1))),
+        spans.push(Span::styled(meta.text, style));
+        spans.push(Span::styled(" │ ", base.fg(p.subtext0)));
     }
     // The prefix is the way into every chord, quit included, so the status
     // line always names it; under an outer tmux it is the shifted chord.
     spans.push(Span::styled(
-        format!(" │ prefix {}", chrome.keymap.prefix_label),
+        format!("prefix {}", chrome.keymap.prefix_label),
         base.fg(p.subtext0),
     ));
     if let Some(name) = mode_name(chrome.mode) {
@@ -393,15 +368,31 @@ pub fn render_status_line<W: WorkspaceView>(
     if !ws.daemon_ready() {
         spans.push(Span::styled(" │ Daemon unreachable.", base.fg(p.red)));
     }
-    if let Some(pane) = pane {
+    if let Some((pane, true)) = overflow {
         spans.push(Span::styled(
-            format!(" │ {}", terminal_title(ws, &pane.terminal_id)),
+            format!(" │ {}", pane_title(ws, pane)),
             base.fg(p.text),
         ));
     }
-
     frame.render_widget(Paragraph::new(Line::from(spans)).style(base), area);
     indicator
+}
+
+/// The focused pane when its edges cannot place its metadata, paired with
+/// whether it has no border for its title either.
+fn focused_overflow<'a, W: WorkspaceView>(ws: &'a W, chrome: &Chrome) -> Option<(&'a Pane, bool)> {
+    let pane = ws.pane(chrome.focused_pane()?);
+    let bordered = chrome
+        .view
+        .pane_infos
+        .iter()
+        .find(|info| info.is_focused && !info.borders.is_empty());
+    match bordered {
+        None => Some((pane, true)),
+        Some(info) => metadata_rect(info, &pane_metadata(pane, true))
+            .is_none()
+            .then_some((pane, false)),
+    }
 }
 
 #[cfg(test)]
@@ -455,8 +446,17 @@ mod tests {
         assert!(rects.iter().all(|rect| rect.x + rect.width == 70));
     }
 
+    fn draw_status(ws: &Workspace, chrome: &Chrome) -> (String, Option<Rect>) {
+        let mut terminal = Terminal::new(TestBackend::new(80, 1)).unwrap();
+        let mut indicator = None;
+        terminal
+            .draw(|frame| indicator = render_status_line(frame, frame.area(), ws, chrome))
+            .unwrap();
+        (screen(&terminal), indicator)
+    }
+
     #[test]
-    fn status_line_shows_control_state_terminal_and_mode() {
+    fn status_line_shows_only_global_prefix_mode_and_health() {
         let mut ws = Workspace::scripted();
         ws.daemon_mut().set_roster(json!({
             "epoch": "e1",
@@ -465,54 +465,37 @@ mod tests {
         }));
         ws.reconcile_subscribe_first().unwrap();
         ws.open_terminal("term-alpha", "native", "epoch").unwrap();
+        ws.open_terminal("term-beta", "tmux", "epoch").unwrap();
         let mut chrome = Chrome::dark();
         chrome.open_pane(ws.pane_for_terminal("term-alpha").unwrap(), "alpha");
+        chrome.open_pane(ws.pane_for_terminal("term-beta").unwrap(), "alpha");
+        chrome.compute_view(&ws, Rect::new(0, 0, 120, 20));
         chrome.mode = Mode::Navigate;
 
-        let mut terminal = Terminal::new(TestBackend::new(80, 1)).unwrap();
-        terminal
-            .draw(|frame| {
-                render_status_line(frame, frame.area(), &ws, &chrome);
-            })
-            .unwrap();
-        let text = screen(&terminal);
-        for needle in ["○ observe", "gclient", "navigate", "term-alpha"] {
-            assert!(text.contains(needle), "status lacks {needle:?}: {text}");
+        // The focused pane's border carries its title and metadata.
+        let (text, indicator) = draw_status(&ws, &chrome);
+        assert_eq!(text.trim_end(), " prefix ctrl+b │ navigate");
+        assert_eq!(indicator, None);
+        for pane_local in ["observe", "tmux", "Focused", "term-beta"] {
+            assert!(
+                !text.contains(pane_local),
+                "status duplicates {pane_local:?}: {text}"
+            );
         }
-        // D4 order: the mode comes after the prefix and the title comes last.
-        let at = |needle: &str| text.find(needle).unwrap_or(usize::MAX);
-        assert!(at("gclient") < at("prefix"), "backend after prefix: {text}");
-        assert!(at("prefix") < at("navigate"), "mode before prefix: {text}");
-        assert!(at("navigate") < at("term-alpha"), "title not last: {text}");
-        assert!(!text.contains('!'));
-        assert!(
-            text.contains("│ prefix ctrl+b"),
-            "status lacks the prefix cue: {text}"
-        );
 
         // Under an outer tmux the shifted prefix is named instead.
         chrome.nested = true;
         chrome.keymap = Keymap::defaults(default_prefix(true));
-        terminal
-            .draw(|frame| {
-                render_status_line(frame, frame.area(), &ws, &chrome);
-            })
-            .unwrap();
-        let text = screen(&terminal);
+        let (text, _) = draw_status(&ws, &chrome);
         assert!(
-            text.contains("│ prefix ctrl+]"),
+            text.contains("prefix ctrl+]"),
             "status lacks the prefix cue: {text}"
         );
     }
 
     #[test]
-    fn status_line_names_the_backend_per_pane() {
-        // The backend changes what the keys do (a tmux pane still answers to
-        // the tmux prefix), so the status line names it rather than the
-        // transport, which the operator cannot act on.
-        for (backend, expected, unexpected) in
-            [("native", "gclient", "tmux"), ("tmux", "tmux", "gclient")]
-        {
+    fn borderless_focused_pane_keeps_its_metadata_and_title_here() {
+        for (backend, name) in [("native", "gclient"), ("tmux", "tmux")] {
             let mut ws = Workspace::scripted();
             ws.daemon_mut().set_roster(json!({
                 "epoch": "e1",
@@ -524,20 +507,81 @@ mod tests {
             let id = ws.pane_for_terminal("term-alpha").unwrap();
             let mut chrome = Chrome::dark();
             chrome.open_pane(id, "alpha");
+            // A lone pane draws no border, so nothing else shows these.
+            chrome.compute_view(&ws, Rect::new(0, 0, 80, 20));
+            assert!(chrome.view.pane_infos[0].borders.is_empty());
 
+            let (text, indicator) = draw_status(&ws, &chrome);
+            assert_eq!(
+                text.trim_end(),
+                format!(" {name} · Focused │ prefix ctrl+b │ term-alpha")
+            );
+            assert_eq!(indicator, None, "focus is not a button");
+
+            // An exception is the one actionable state: its words are the
+            // button, and the pointer resting there underlines them.
+            ws.pane_mut(id).control = ControlState::LeaseLost;
+            ws.pane_mut(id).take_back = true;
+            chrome.hover = Some(Hit::ControlIndicator);
             let mut terminal = Terminal::new(TestBackend::new(80, 1)).unwrap();
+            let mut indicator = None;
             terminal
                 .draw(|frame| {
-                    render_status_line(frame, frame.area(), &ws, &chrome);
+                    indicator = render_status_line(frame, frame.area(), &ws, &chrome);
                 })
                 .unwrap();
             let text = screen(&terminal);
-            assert!(text.contains(expected), "status lacks {expected:?}: {text}");
-            assert!(
-                !text.contains(unexpected),
-                "status names {unexpected:?}: {text}"
-            );
+            let label = format!("{name} · Read-only");
+            assert!(text.starts_with(&format!(" {label} │ prefix")), "{text}");
+            let width = display_width_u16(&label) + 1;
+            assert_eq!(indicator, Some(Rect::new(0, 0, width, 1)));
+            let buffer = terminal.backend().buffer();
+            assert!(buffer[(1, 0)].modifier.contains(Modifier::UNDERLINED));
+            assert!(!buffer[(width + 1, 0)]
+                .modifier
+                .contains(Modifier::UNDERLINED));
         }
+    }
+
+    #[test]
+    fn metadata_too_wide_for_its_pane_edge_lands_here_without_the_title() {
+        let mut ws = Workspace::scripted();
+        ws.daemon_mut().set_roster(json!({
+            "epoch": "e1",
+            "seq": 1,
+            "entries": []
+        }));
+        ws.reconcile_subscribe_first().unwrap();
+        ws.open_terminal("term-alpha", "native", "epoch").unwrap();
+        ws.open_terminal("term-beta", "native", "epoch").unwrap();
+        let mut chrome = Chrome::dark();
+        chrome.open_pane(ws.pane_for_terminal("term-alpha").unwrap(), "alpha");
+        chrome.open_pane(ws.pane_for_terminal("term-beta").unwrap(), "alpha");
+        chrome.compute_view(&ws, Rect::new(0, 0, 60, 20));
+        let focused = chrome.focused_pane().unwrap();
+        let info = chrome.view.pane_infos.iter().find(|info| info.is_focused);
+        let info = info.unwrap();
+        // Bordered, but narrower than its padded metadata.
+        assert!(!info.borders.is_empty());
+        let meta = pane_metadata(ws.pane(focused), true);
+        assert_eq!(metadata_rect(info, &meta), None, "{:?}", info.rect);
+
+        // The title keeps the pane's top edge; only the metadata moves.
+        let (text, indicator) = draw_status(&ws, &chrome);
+        assert_eq!(text.trim_end(), " gclient · Focused │ prefix ctrl+b");
+        assert_eq!(indicator, None);
+
+        // An exception with no room on the edge is still a button, here.
+        ws.pane_mut(focused).control = ControlState::LeaseLost;
+        let (text, indicator) = draw_status(&ws, &chrome);
+        assert_eq!(text.trim_end(), " gclient · Read-only │ prefix ctrl+b");
+        let width = display_width_u16("gclient · Read-only") + 1;
+        assert_eq!(indicator, Some(Rect::new(0, 0, width, 1)));
+        assert_eq!(
+            crate::ui::pane_chrome::control_indicator_hit_area(&ws, &chrome),
+            None,
+            "the edge offers no second button"
+        );
     }
 
     #[test]

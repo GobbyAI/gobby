@@ -30,6 +30,7 @@ from gobby.terminals.host_events import (
 )
 from gobby.terminals.host_protocol import HostListRow
 from gobby.terminals.host_reconcile import ReconcileError, reconcile_host_inventory
+from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.utils.machine_id import require_machine_id
 from tests._timing import wait_for_condition
 from tests.terminals.host_fakes import (
@@ -129,6 +130,37 @@ def _host(
         spawner=spawn,
         pid_identity=lambda _pid: pid_ok,
     )
+
+
+def _capture_terminal_lifecycle(
+    terminals: TerminalManager,
+) -> tuple[list[dict[str, Any]], asyncio.Event, TerminalLeaseRegistry]:
+    from gobby.runner_broadcasting import setup_terminal_lifecycle_broadcasting
+
+    loop = asyncio.get_running_loop()
+    events: list[dict[str, Any]] = []
+    emitted = asyncio.Event()
+    registry = TerminalLeaseRegistry(daemon_epoch="test-daemon")
+
+    async def publish(event: dict[str, Any]) -> None:
+        events.append(event)
+        emitted.set()
+
+    setup_terminal_lifecycle_broadcasting(
+        terminals,
+        registry,
+        publish,
+        loop_getter=lambda: loop,
+    )
+    return events, emitted, registry
+
+
+async def _stop_terminal_lifecycle_capture(
+    terminals: TerminalManager,
+    registry: TerminalLeaseRegistry,
+) -> None:
+    terminals.set_transition_observer(None)
+    await registry.shutdown_lifecycle_publication()
 
 
 def test_health_state_observes_recorded_host_pid(
@@ -242,7 +274,7 @@ async def test_reconcile_catches_only_typed_errors(
 
     with patch.object(
         terminals,
-        "list_live_by_machine",
+        "list_reconcilable_by_machine",
         side_effect=RuntimeError("database read failed"),
     ):
         with pytest.raises(RuntimeError, match="database read failed"):
@@ -489,6 +521,134 @@ async def test_input_activity_reaches_sink_not_settle_exit(
 
 
 @pytest.mark.asyncio
+async def test_host_terminal_exited_event_broadcasts_exited(
+    tmp_path: Path,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    epoch = "epoch-exit-event"
+    terminals = TerminalManager(temp_db)
+    pending = _pending(terminals, sample_project["id"])
+    terminals.record_process(
+        pending.id,
+        {"host_terminal_id": "ht-exited"},
+        attempt_generation=pending.attempt_generation,
+        attempt_started_at=pending.attempt_started_at,
+    )
+    row = terminals.promote_to_live(
+        pending.id,
+        locator={"host_terminal_id": "ht-exited"},
+        locator_key=native_locator_key(epoch, "ht-exited"),
+        host_epoch=epoch,
+    )
+    assert row is not None
+    client = FakeControlClient(host_epoch=epoch)
+    host = _host(tmp_path, terminals, client)
+    host.last_event_epoch = epoch
+    events, emitted, registry = _capture_terminal_lifecycle(terminals)
+
+    try:
+        await host_event_reader.apply_host_event(
+            host,
+            TerminalExitedEvent(row.id, "ht-exited", 0, epoch, 1),
+        )
+        await asyncio.wait_for(emitted.wait(), timeout=1.0)
+        assert terminals.mark_exited(row.id) is None
+    finally:
+        await _stop_terminal_lifecycle_capture(terminals, registry)
+
+    assert _loaded(terminals, row.id).state == "exited"
+    assert len(events) == 1
+    assert events[0]["daemon_epoch"] == "test-daemon"
+    assert events[0]["seq"] == 1
+    assert events[0]["type"] == "terminal_event"
+    assert events[0]["event"] == "exited"
+    assert events[0]["terminal_id"] == row.id
+
+
+@pytest.mark.asyncio
+async def test_reconcile_orphan_marking_broadcasts_orphaned(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    terminals = TerminalManager(temp_db)
+    old_epoch = "epoch-before-restart"
+    row = _live(terminals, sample_project["id"], old_epoch)
+    events, emitted, registry = _capture_terminal_lifecycle(terminals)
+
+    try:
+        await reconcile_host_inventory(
+            terminal_manager=terminals,
+            machine_id=LOCAL_MACHINE_ID,
+            host_epoch="epoch-after-restart",
+            host_rows=[],
+            spawn_in_doubt_seconds=0.0,
+            run_manager=None,
+            kill=AsyncMock(),
+        )
+        await asyncio.wait_for(emitted.wait(), timeout=1.0)
+    finally:
+        await _stop_terminal_lifecycle_capture(terminals, registry)
+
+    assert _loaded(terminals, row.id).state == "orphaned"
+    assert len(events) == 1
+    assert events[0]["type"] == "terminal_event"
+    assert events[0]["event"] == "orphaned"
+    assert events[0]["terminal_id"] == row.id
+
+
+@pytest.mark.asyncio
+async def test_reconcile_exits_dead_epoch_orphan_with_absent_process_group(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    terminals = TerminalManager(temp_db)
+    pending = _pending(terminals, sample_project["id"])
+    terminals.record_process(
+        pending.id,
+        {"host_terminal_id": "ht-orphaned", "pgid": 987654321},
+        attempt_generation=pending.attempt_generation,
+        attempt_started_at=pending.attempt_started_at,
+    )
+    row = terminals.promote_to_live(
+        pending.id,
+        locator={"host_terminal_id": "ht-orphaned"},
+        locator_key=native_locator_key("dead-epoch", "ht-orphaned"),
+        host_epoch="dead-epoch",
+    )
+    assert row is not None
+    orphaned = terminals.mark_orphaned(row.id)
+    assert orphaned is not None
+    events, emitted, registry = _capture_terminal_lifecycle(terminals)
+
+    try:
+        with (
+            patch("gobby.terminals.host_reap.os.killpg", side_effect=ProcessLookupError) as killpg,
+            patch("gobby.terminals.host_reap.os.kill", side_effect=ProcessLookupError) as kill,
+        ):
+            await reconcile_host_inventory(
+                terminal_manager=terminals,
+                machine_id=LOCAL_MACHINE_ID,
+                host_epoch="current-epoch",
+                host_rows=[],
+                spawn_in_doubt_seconds=0.0,
+                run_manager=None,
+                kill=AsyncMock(),
+            )
+        await asyncio.wait_for(emitted.wait(), timeout=1.0)
+    finally:
+        await _stop_terminal_lifecycle_capture(terminals, registry)
+
+    killpg.assert_called_once_with(987654321, 0)
+    kill.assert_called_once_with(987654321, 0)
+    assert _loaded(terminals, row.id).state == "exited"
+    assert len(events) == 1
+    assert events[0]["type"] == "terminal_event"
+    assert events[0]["event"] == "exited"
+    assert events[0]["terminal_id"] == row.id
+
+
+@pytest.mark.asyncio
 async def test_event_reader_joins_singleflight_and_stops_cleanly(
     tmp_path: Path,
     temp_db: HubDatabase,
@@ -592,7 +752,7 @@ async def test_crash_orphans_and_interrupts(
     await host.handle_host_death()
     updated = terminals.get(row.id)
     assert updated is not None
-    assert updated.state == "orphaned"
+    assert updated.state == "exited"
     host._interrupt("run-orphaned")
     assert "run-orphaned" in runs.interrupted
 
@@ -1043,11 +1203,15 @@ async def test_adoption_reconciliation_matrix(
     assert _loaded(terminals, pending_miss_fresh.id).state in {"pending", "exited"}
     assert _loaded(terminals, live_present.id).state == "live"
     assert _loaded(terminals, live_missing.id).state == "exited"
-    assert _loaded(terminals, old.id).state == "orphaned"
+    assert _loaded(terminals, old.id).state == "exited"
     assert "ht-ghost" in client.kill_calls
 
     client.kill_calls.clear()
-    with patch.object(terminals, "list_live_by_machine", side_effect=RuntimeError("db down")):
+    with patch.object(
+        terminals,
+        "list_reconcilable_by_machine",
+        side_effect=RuntimeError("db down"),
+    ):
         with pytest.raises(RuntimeError, match="db down"):
             await host.reconcile()
     assert client.kill_calls == []

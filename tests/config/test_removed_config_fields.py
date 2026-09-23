@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import fields
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -17,6 +18,7 @@ from gobby.config.communications import CommunicationsConfig
 from gobby.config.tasks import TaskExpansionConfig
 from gobby.storage.config_repository import ConfigRepository, UnknownStoredConfigKeyError
 from gobby.storage.config_store import flatten_config
+from gobby.storage.hub.protocol import Row
 
 pytestmark = pytest.mark.unit
 
@@ -148,3 +150,19 @@ def test_runtime_candidate_rejects_removed_config_fields() -> None:
 
     with pytest.raises(UnknownStoredConfigKeyError):
         repository.runtime_candidate(dict(REMOVED_CONFIG_STORE_ROWS), {})
+
+
+def test_read_only_snapshot_skips_removed_rows_and_names_them() -> None:
+    repository = ConfigRepository(MagicMock())
+    rows: list[Row] = [
+        {"key": key, "value": json.dumps(value), "revision": 1}
+        for key, value in REMOVED_CONFIG_STORE_ROWS.items()
+    ]
+
+    with pytest.raises(UnknownStoredConfigKeyError):
+        repository.snapshot_from_rows(MagicMock(), 1, rows)
+
+    snapshot = repository.snapshot_from_rows(MagicMock(), 1, rows, unknown_keys="skip")
+
+    assert snapshot.unknown_keys == tuple(REMOVED_CONFIG_STORE_ROWS)
+    assert dict(snapshot.overrides) == {}

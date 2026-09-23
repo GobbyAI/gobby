@@ -45,6 +45,7 @@ from gobby.agents.srt_runtime import (
     prepare_sandbox_launch,
 )
 from gobby.agents.trust import pre_approve_directory
+from gobby.sessions.title_lifecycle import promote_heuristic_title
 
 if TYPE_CHECKING:
     from gobby.providers.version_gate import AgySupportRecord
@@ -105,6 +106,18 @@ def _agent_prompt_prefix(request: SpawnRequest) -> str:
     if not agent_body:
         return ""
     return agent_body.prompt_for("agent") or ""
+
+
+def seed_heuristic_title_from_prompt(request: SpawnRequest, child_session_id: str) -> None:
+    """Seed the child title from the clean task prompt before Codex receives a preamble."""
+    session_manager = request.session_manager
+    if session_manager is None:
+        return
+    promote_heuristic_title(
+        session_manager._storage,
+        child_session_id,
+        request.prompt or "",
+    )
 
 
 async def _prepare_provider_sandbox(
@@ -201,6 +214,7 @@ async def _prepare_managed_code_index(
             credential=credential,
             api_token=run_api_token or request.code_index_api_token,
             identity_env=identity_env,
+            config_snapshot=spawn_context.config_snapshot,
             phase_timings_ms=request.phase_timings_ms,
         )
         spawn_context.env_vars.update(preflight.env)
@@ -515,6 +529,7 @@ async def prepare_droid_spawn(request: SpawnRequest) -> ProviderSpawnPlan | Spaw
         model=request.model,
         reasoning_effort=request.effective_reasoning_effort,
         sandbox_args=launch.provider_args or None,
+        mode="interactive" if request.droid_mode == "interactive" else "agent",
     )
     await asyncio.to_thread(
         _record_resume_launch_details,

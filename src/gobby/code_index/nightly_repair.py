@@ -201,8 +201,6 @@ def _reconcile_enabled_state(
     enabled: bool,
 ) -> None:
     if job.enabled == enabled:
-        if enabled and job.next_run_at is None:
-            cron_storage.wake_system_job(job.id)
         return
 
     if not enabled:

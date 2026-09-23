@@ -7,13 +7,15 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
 from gobby.projects.purge import (
     PROJECT_PURGE_CONCURRENCY,
+    PROJECT_PURGE_DESCRIPTION,
     PROJECT_PURGE_HANDLER_NAME,
+    PROJECT_PURGE_INTERVAL_SECONDS,
     PROJECT_PURGE_JOB_NAME,
     ProjectPurgeService,
     ProjectPurgeVectorStoreUnavailable,
@@ -22,6 +24,12 @@ from gobby.projects.purge import (
     register_project_purge_cron,
 )
 from gobby.runtime_grants.launch import ManagedLaunch
+from gobby.storage.cron import CronJobStorage
+from gobby.storage.cron_models import CronJob
+from gobby.storage.projects import PERSONAL_PROJECT_ID
+
+if TYPE_CHECKING:
+    from gobby.storage.hub.protocol import HubDatabase
 
 
 @dataclass
@@ -265,11 +273,10 @@ async def test_purge_orders_quiescence_projections_cleanup_and_hub_transaction()
         "vectors:clear",
         "graph:clear",
         # Tombstone batches run one hub transaction per batch: the memory batch
-        # deletes and tombstones, then each source kind drains with an empty SELECT.
+        # deletes and tombstones, then the memory and tool kinds drain with an
+        # empty SELECT.
         "hub:begin",
         "sql:memories",
-        "hub:commit",
-        "hub:begin",
         "hub:commit",
         "hub:begin",
         "hub:commit",
@@ -383,48 +390,115 @@ async def test_daily_handler_isolates_failures_and_bounds_id_lists() -> None:
     assert service.max_active == PROJECT_PURGE_CONCURRENCY
 
 
-def test_purge_cron_registration_preserves_disabled_state_and_wakes_enabled_null() -> None:
-    class Executor:
-        def __init__(self) -> None:
-            self.handlers: dict[str, Any] = {}
+def _create_purge_cron_job(
+    storage: CronJobStorage,
+    *,
+    enabled: bool = True,
+    drifted: bool = False,
+) -> CronJob:
+    return storage.create_job(
+        project_id=PERSONAL_PROJECT_ID,
+        name=PROJECT_PURGE_JOB_NAME,
+        description="stale purge definition" if drifted else PROJECT_PURGE_DESCRIPTION,
+        schedule_type="interval",
+        interval_seconds=(
+            PROJECT_PURGE_INTERVAL_SECONDS * 2 if drifted else PROJECT_PURGE_INTERVAL_SECONDS
+        ),
+        action_type="handler",
+        action_config=(
+            {"handler": PROJECT_PURGE_HANDLER_NAME}
+            if drifted
+            else {
+                "handler": PROJECT_PURGE_HANDLER_NAME,
+                "purpose": PROJECT_PURGE_DESCRIPTION,
+            }
+        ),
+        enabled=enabled,
+        is_system=True,
+    )
 
-        def register_handler(self, name: str, handler: Any) -> None:
-            self.handlers[name] = handler
 
-    class Storage:
-        def __init__(self) -> None:
-            self.job = SimpleNamespace(
-                id="job",
-                name=PROJECT_PURGE_JOB_NAME,
-                enabled=False,
-                next_run_at=None,
-                is_system=True,
-            )
-            self.woke = False
+def _register_purge_cron(storage: CronJobStorage) -> dict[str, Any]:
+    handlers: dict[str, Any] = {}
+    executor = SimpleNamespace(
+        register_handler=lambda name, handler: handlers.__setitem__(name, handler)
+    )
+    register_project_purge_cron(storage, executor, cast(Any, SimpleNamespace()))
+    return handlers
 
-        def get_job_by_name(self, name: str) -> Any:
-            assert name == PROJECT_PURGE_JOB_NAME
-            return self.job
 
-        def reconcile_system_job_definition(self, job_id: str, **fields: Any) -> Any:
-            assert job_id == "job"
-            assert fields["action_config"]["handler"] == PROJECT_PURGE_HANDLER_NAME
-            return self.job
+def test_purge_cron_registration_preserves_parked_job_without_drift(
+    temp_db: HubDatabase,
+) -> None:
+    storage = CronJobStorage(temp_db)
+    parked = _create_purge_cron_job(storage)
+    storage.park_system_job(parked.id)
 
-        def wake_system_job(self, job_id: str) -> Any:
-            del job_id
-            self.woke = True
-            return self.job
+    _register_purge_cron(storage)
 
-    executor = Executor()
-    storage = Storage()
-    register_project_purge_cron(storage, executor, SimpleNamespace())
+    reconciled = storage.get_job(parked.id)
+    assert reconciled is not None
+    assert reconciled.enabled
+    assert reconciled.next_run_at is None
 
-    assert PROJECT_PURGE_HANDLER_NAME in executor.handlers
-    assert not storage.woke
-    storage.job.enabled = True
-    register_project_purge_cron(storage, executor, SimpleNamespace())
-    assert storage.woke
+
+def test_purge_cron_registration_preserves_parked_job_with_drift(
+    temp_db: HubDatabase,
+) -> None:
+    storage = CronJobStorage(temp_db)
+    parked = _create_purge_cron_job(storage, drifted=True)
+    storage.park_system_job(parked.id)
+
+    _register_purge_cron(storage)
+
+    reconciled = storage.get_job(parked.id)
+    assert reconciled is not None
+    assert reconciled.description == PROJECT_PURGE_DESCRIPTION
+    assert reconciled.interval_seconds == PROJECT_PURGE_INTERVAL_SECONDS
+    assert reconciled.action_config["purpose"] == PROJECT_PURGE_DESCRIPTION
+    assert reconciled.next_run_at is None
+
+
+def test_purge_cron_registration_recomputes_scheduled_job_with_drift(
+    temp_db: HubDatabase,
+) -> None:
+    storage = CronJobStorage(temp_db)
+    scheduled = _create_purge_cron_job(storage, drifted=True)
+    previous_next_run = scheduled.next_run_at
+
+    _register_purge_cron(storage)
+
+    reconciled = storage.get_job(scheduled.id)
+    assert reconciled is not None
+    assert reconciled.interval_seconds == PROJECT_PURGE_INTERVAL_SECONDS
+    assert reconciled.next_run_at is not None
+    assert reconciled.next_run_at != previous_next_run
+
+
+def test_purge_cron_registration_schedules_created_job(temp_db: HubDatabase) -> None:
+    storage = CronJobStorage(temp_db)
+
+    handlers = _register_purge_cron(storage)
+
+    created = storage.get_job_by_name(PROJECT_PURGE_JOB_NAME)
+    assert created is not None
+    assert created.enabled
+    assert created.is_system
+    assert created.next_run_at is not None
+    assert PROJECT_PURGE_HANDLER_NAME in handlers
+
+
+def test_purge_cron_registration_preserves_disabled_job(temp_db: HubDatabase) -> None:
+    storage = CronJobStorage(temp_db)
+    disabled = _create_purge_cron_job(storage, enabled=False, drifted=True)
+
+    _register_purge_cron(storage)
+
+    reconciled = storage.get_job(disabled.id)
+    assert reconciled is not None
+    assert not reconciled.enabled
+    assert reconciled.next_run_at is None
+    assert reconciled.description == PROJECT_PURGE_DESCRIPTION
 
 
 @pytest.mark.asyncio

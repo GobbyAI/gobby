@@ -200,7 +200,7 @@ cases, and share the same per-client rate limit.
 | `GET` | `/api/sessions/usage` | Return session usage breakdowns. |
 | `POST` | `/api/sessions/bulk-move` | Move session rows to another project. |
 | `GET` | `/api/sessions/{session_id}` | Get one session. |
-| `POST` | `/api/sessions/{session_id}/expire` | Expire a session. |
+| `POST` | `/api/sessions/{session_id}/expire` | Expire a session; terminate any daemon-tracked terminal and mark its row exited before returning. |
 | `POST` | `/api/sessions/{session_id}/rename` | Rename a session. |
 | `POST` | `/api/sessions/{session_id}/generate-summary` | Generate a session summary. |
 | `GET` | `/api/sessions/{session_id}/messages` | Read rendered transcript windows. |

@@ -41,6 +41,7 @@ def register_message_tools(
 
     @registry.tool(
         name="get_session_messages",
+        read_only=True,
         description="Get messages for a session. Returns rendered messages with content blocks. Accepts <project>#N, local #N/N, UUID, or prefix for session_id.",
     )
     # Entry point for get_session_messages tool
@@ -94,6 +95,7 @@ def register_message_tools(
 
     @registry.tool(
         name="search_session_messages",
+        read_only=True,
         description="Search rendered transcript messages by substring. Accepts <project>#N, local #N/N, UUID, or prefix for session_id.",
     )
     async def search_session_messages(

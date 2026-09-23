@@ -326,12 +326,13 @@ class ToolEventHandlerMixin(EventHandlersBase):
             if repo_edit is None:
                 continue
             repo_root, repo_relative_path = repo_edit
-            if Path(repo_relative_path).parts[:1] == (".gobby",):
-                continue
 
             if repo_relative_path not in committable_paths:
                 committable_paths.append(repo_relative_path)
-                self._notify_code_index(repo_root, repo_relative_path)
+                # `.gobby` files participate in task ownership like every
+                # other repository path, but are not source files for gcode.
+                if Path(repo_relative_path).parts[:1] != (".gobby",):
+                    self._notify_code_index(repo_root, repo_relative_path)
             checkout_paths = paths_by_checkout.setdefault(os.fspath(repo_root), [])
             if repo_relative_path not in checkout_paths:
                 checkout_paths.append(repo_relative_path)

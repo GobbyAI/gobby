@@ -19,6 +19,7 @@ def test_code_index_config_uses_nested_symbol_summary_defaults() -> None:
     config = CodeIndexConfig()
 
     assert config.sync_worker_projection_timeout_seconds == 300.0
+    assert config.sync_worker_concurrency == 4
     assert config.symbol_summary.enabled is True
     assert config.symbol_summary.batch_size == 20
     assert config.symbol_summary.profile == FeatureProfile.LOW
@@ -47,6 +48,7 @@ def test_code_index_config_still_rejects_unknown_fields() -> None:
         pytest.param("sync_worker_interval_seconds", -0.1, id="negative-sync-interval"),
         pytest.param("sync_worker_batch_size", 0, id="zero-sync-batch"),
         pytest.param("sync_worker_batch_size", -1, id="negative-sync-batch"),
+        pytest.param("sync_worker_concurrency", 0, id="zero-sync-concurrency"),
     ],
 )
 def test_code_index_config_rejects_non_positive_worker_limits(

@@ -10,6 +10,7 @@ from gobby import runner_lifecycle_subsystems as lifecycle
 from gobby import runner_startup_code_index as startup_code_index
 from gobby.code_index import bm25_health
 from gobby.runner import GobbyRunner
+from gobby.runner_hook_replay import HookReplayBarrierOutcome
 
 
 def _runner() -> SimpleNamespace:
@@ -72,6 +73,10 @@ async def test_init_subsystems_skips_code_index_workers_after_failed_repair(
     runner.http_server = SimpleNamespace(
         services=SimpleNamespace(shutdown_in_progress=False, startup_ready=False)
     )
+    runner.http_bound_at_ms = 1_700_000_000_000
+    runner.wake_dispatcher = SimpleNamespace(
+        reconcile_restart_active_sessions=AsyncMock(return_value=())
+    )
     async_steps = [
         "_connect_mcp_servers",
         "_check_embedding_service",
@@ -87,7 +92,12 @@ async def test_init_subsystems_skips_code_index_workers_after_failed_repair(
         "_run_agent_hook_replay_barrier",
     ]
     for name in async_steps:
-        monkeypatch.setattr(lifecycle, name, AsyncMock())
+        result = (
+            HookReplayBarrierOutcome(settled=True, session_recovery_safe=True)
+            if name == "_run_agent_hook_replay_barrier"
+            else None
+        )
+        monkeypatch.setattr(lifecycle, name, AsyncMock(return_value=result))
     monkeypatch.setattr(lifecycle, "_repair_code_index_bm25", AsyncMock(return_value=False))
     monkeypatch.setattr(lifecycle, "_schedule_workflow_skill_prewarm", lambda *_args: None)
     tracked: list[str] = []

@@ -68,7 +68,7 @@ class CloseGateResult:
 
     @property
     def passed(self) -> bool:
-        return self.status in {"passed", "skipped"}
+        return self.status != "failed"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -93,12 +93,12 @@ class CloseChecklist:
 
     @property
     def first_failure(self) -> CloseGateResult | None:
-        return next((gate for gate in self.gates if gate.status == "failed"), None)
+        return next((gate for gate in self.gates if not gate.passed), None)
 
     @property
     def all_failures(self) -> tuple[CloseGateResult, ...]:
         """Every failed gate, so one response names every blocker the caller must fix."""
-        return tuple(gate for gate in self.gates if gate.status == "failed")
+        return tuple(gate for gate in self.gates if not gate.passed)
 
     def summary(self) -> list[dict[str, Any]]:
         """Gate statuses without the detail payloads, which run to tens of kilobytes."""

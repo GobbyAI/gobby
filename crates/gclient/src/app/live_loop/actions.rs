@@ -5,7 +5,7 @@ use std::io::{self, Write};
 use std::process::{Command, Stdio};
 
 use crate::app::ViewerState;
-use crate::copy_mode::copy_selection;
+use crate::copy_mode::copy_or_request_selection;
 use crate::daemon::{Daemon, KillOutcome, LiveDaemon, SpawnOutcome, SpawnRequest};
 use crate::frame_source::FrameError;
 use crate::prefs::{load_prefs, prefs_path};
@@ -23,7 +23,7 @@ use ratatui::layout::Rect;
 use super::super::attention::open_response_dialog;
 use super::super::{PaneId, Workspace};
 use super::control::{
-    focus_live_pane, observe_live_pane, release_live_control, send_live_write,
+    focus_live_pane, observe_live_pane, release_live_control, send_live_report,
     set_live_scroll_offset, take_live_control,
 };
 use super::menu::{apply_local_menu_action, ContextMenuKind, MenuAction};
@@ -31,8 +31,8 @@ use super::modal_input::{apply_rename, open_alerts_dialog, persist_prefs, ModalO
 use super::mouse::{MouseOutcome, Placement};
 use super::orphans::{agent_orphan, destroy_orphans, open_destroy_orphans_dialog};
 use super::projects::{
-    close_project, close_project_confirmed, create_worktree, focus_agent, focus_project,
-    focus_terminal, mark_agent_seen, open_agent_in_new_tab, open_new_project_dialog,
+    close_live_terminal, close_project, close_project_confirmed, create_worktree, focus_agent,
+    focus_project, focus_terminal, mark_agent_seen, open_agent_in_new_tab, open_new_project_dialog,
     open_new_worktree_dialog, open_open_worktree_dialog, open_remove_worktree_dialog,
     open_worktree, remove_worktree, rename_project, reveal_agent, submit_new_project,
 };
@@ -171,19 +171,19 @@ pub(super) async fn apply_live_mouse_outcome(
             spawn_live_terminal(workspace, chrome, placement).await?;
         }
         MouseOutcome::Write { pane, bytes } => {
-            send_live_write(workspace, pane, &bytes, false).await?;
+            send_live_report(workspace, pane, &bytes).await?;
         }
         MouseOutcome::FocusWrite { pane, bytes } => {
             chrome.focus_pane(pane);
             focus_live_pane(workspace, pane).await?;
-            send_live_write(workspace, pane, &bytes, false).await?;
+            send_live_report(workspace, pane, &bytes).await?;
         }
         MouseOutcome::Scroll { pane, rows } => {
             set_live_scroll_offset(workspace, pane, rows).await?;
         }
         MouseOutcome::Copy => {
             let mut output = std::io::stdout();
-            copy_selection(workspace, chrome, &mut output)?;
+            copy_or_request_selection(workspace, chrome, &mut output).await?;
             output.flush()?;
         }
         MouseOutcome::OpenLink(url) => {
@@ -339,6 +339,17 @@ async fn apply_live_menu_action(
             let target = agent_orphan(workspace, &terminal_id);
             destroy_orphans(workspace, chrome, vec![target]).await?;
         }
+        MenuAction::CloseTerminal(pane) => {
+            close_live_terminal(workspace, chrome, pane).await?;
+        }
+        MenuAction::TakeControl(pane) => {
+            focus_menu_target(workspace, chrome, &kind).await?;
+            take_live_control(workspace, pane);
+        }
+        MenuAction::ReleaseControl(pane) => {
+            focus_menu_target(workspace, chrome, &kind).await?;
+            release_live_control(workspace, pane).await?;
+        }
         _ => {
             if !apply_daemon_menu_action(workspace, chrome, &action).await? {
                 apply_local_menu_action(workspace, chrome, &action);
@@ -409,17 +420,7 @@ pub(super) async fn handle_live_action(
         Action::NewProject => open_new_project_dialog(chrome),
         Action::CloseTerminal => {
             if let Some(pane_id) = chrome.focused_pane() {
-                // An external pane is a terminal the user attached rather than
-                // one gclient spawned, so closing it is a detach: release the
-                // lease and drop the pane, the way `close_live_pane` already
-                // does. Killing it would destroy a tmux pane gclient never
-                // created.
-                if workspace.pane(pane_id).external {
-                    close_live_pane(workspace, chrome).await?;
-                } else {
-                    terminate_live_terminal(workspace, pane_id).await?;
-                    sync_live_chrome(workspace, chrome);
-                }
+                close_live_terminal(workspace, chrome, pane_id).await?;
             }
         }
         Action::ClosePane => close_live_pane(workspace, chrome).await?,
@@ -443,7 +444,7 @@ pub(super) async fn handle_live_action(
         }
         Action::TakeControl | Action::TakeBack => {
             if let Some(pane_id) = chrome.focused_pane() {
-                take_live_control(workspace, pane_id).await?;
+                take_live_control(workspace, pane_id);
             }
         }
         Action::Respond => open_response_dialog(workspace, chrome, None).await?,

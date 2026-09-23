@@ -13,7 +13,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from gobby.agents.constants import UV_CACHE_DIR
+from gobby.agents.cargo_target import checkout_cargo_target_dir
+from gobby.agents.constants import CARGO_HOME, CARGO_TARGET_DIR, UV_CACHE_DIR
 from gobby.agents.session import ChildSessionConfig
 from gobby.agents.spawn import (
     PreparedSpawn,
@@ -47,7 +48,9 @@ class TestPrepareTerminalSpawnMetadata:
         # These tests pin the pickup-metadata contract, not run storage.
         # The real LocalAgentRunManager would decode AgentRun rows from the
         # mocked db, and datetime normalization rejects Mock values.
-        monkeypatch.setattr("gobby.storage.agents.LocalAgentRunManager", MagicMock())
+        run_manager_cls = MagicMock()
+        run_manager_cls.return_value.get.return_value = None
+        monkeypatch.setattr("gobby.storage.agents.LocalAgentRunManager", run_manager_cls)
 
     def test_calls_update_terminal_pickup_metadata(self) -> None:
         """prepare_terminal_spawn persists agent_run_id to session record."""
@@ -198,6 +201,7 @@ class TestPrepareTerminalSpawnMetadata:
                 agent_run_id=run_id,
                 timeout_seconds=timeout_seconds,
                 credential_manager=credential_manager,
+                config_snapshot=MagicMock(),
             )
 
         credential_manager.issue.assert_called_once_with(
@@ -225,6 +229,7 @@ class TestPrepareTerminalSpawnMetadata:
         credential.bootstrap_path = Path("/private/runtime/bootstrap.json")
         credential.expires_at = datetime(2026, 8, 12, tzinfo=UTC) + timedelta(hours=1)
         run_manager_cls = MagicMock()
+        run_manager_cls.return_value.get.return_value = None
         monkeypatch.setattr("gobby.storage.agents.LocalAgentRunManager", run_manager_cls)
         order: list[str] = []
 
@@ -258,6 +263,7 @@ class TestPrepareTerminalSpawnMetadata:
                 worktree_id="wt-1",
                 clone_id=None,
                 credential_manager=credential_manager,
+                config_snapshot=MagicMock(),
             )
 
         assert order == ["create", "issue"]
@@ -284,6 +290,26 @@ class TestPrepareTerminalSpawnMetadata:
         assert uv_cache.parts[-3:-1] == ("gobby", "uv-cache")
         assert uv_cache.parts[-1].startswith("child-sess-1-")
         assert uv_cache.is_dir()
+
+    def test_env_uses_spawn_checkout_cargo_target(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "home"))
+        workspace = tmp_path / "worktree"
+        sm = _make_session_manager()
+
+        result = prepare_terminal_spawn(
+            session_manager=sm,
+            parent_session_id="parent-1",
+            project_id="proj-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
+            workspace_path=str(workspace),
+        )
+
+        assert result.env_vars[CARGO_TARGET_DIR] == str(
+            checkout_cargo_target_dir(workspace, "proj-1")
+        )
+        assert result.env_vars[CARGO_HOME] == str(tmp_path / "home" / "cache" / "cargo-home")
 
     def test_env_includes_managed_tool_bin_path(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -418,7 +444,9 @@ class TestPrepareRunForSessionPromptCleanup:
 
         sm = _make_session_manager()
         prompt_path = tmp_path / "prompt-child-sess-1.txt"
-        monkeypatch.setattr("gobby.storage.agents.LocalAgentRunManager", MagicMock())
+        run_manager_cls = MagicMock()
+        run_manager_cls.return_value.get.return_value = None
+        monkeypatch.setattr("gobby.storage.agents.LocalAgentRunManager", run_manager_cls)
 
         def _create_prompt(prompt: str, session_id: str) -> str:
             prompt_path.write_text(prompt, encoding="utf-8")
@@ -478,6 +506,7 @@ class TestIssuePrelaunchCredential:
             workflow_name=None,
             agent_depth=1,
             env_vars={},
+            config_snapshot=MagicMock(),
         )
 
     @staticmethod
@@ -524,6 +553,7 @@ class TestIssuePrelaunchCredential:
             project_id="proj-1",
             session_id=prepared.session_id,
             context=mock_context.return_value,
+            config_snapshot=prepared.config_snapshot,
         )
         materialize_kwargs = mock_materialize.call_args.kwargs
         assert materialize_kwargs["dest_dir"] == tmp_path / "run"
@@ -540,6 +570,21 @@ class TestIssuePrelaunchCredential:
             _issue_prelaunch_credential(
                 sm,
                 self._prepared(),
+                timeout_seconds=None,
+                credential_manager=manager,
+            )
+
+        manager.issue.assert_not_called()
+
+    def test_missing_config_snapshot_fails_closed_before_issuing(self, tmp_path: Path) -> None:
+        sm, manager = self._session_manager_with_credential(tmp_path)
+        prepared = self._prepared()
+        prepared.config_snapshot = None
+
+        with pytest.raises(RuntimeError, match="config snapshot"):
+            _issue_prelaunch_credential(
+                sm,
+                prepared,
                 timeout_seconds=None,
                 credential_manager=manager,
             )

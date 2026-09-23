@@ -190,7 +190,7 @@ async def _reconcile_task_close_reviews(
                 or (run is not None and run.status not in TERMINAL_AGENT_RUN_STATUSES)
             )
         ):
-            message = "Task-close validator exceeded its durable deadline."
+            message = "Task-close reviewer exceeded its durable deadline."
             get_cleanup = getattr(
                 getattr(runner, "agent_lifecycle_monitor", None),
                 "get_cleanup_agent",
@@ -223,25 +223,37 @@ async def _reconcile_task_close_reviews(
                 )
             reconciled += 1
         elif review.status == "launching" and startup:
-            message = "Daemon restarted before the task-close validator launch was bound."
-            payload = build_terminal_review_payload(
-                review,
-                status="error",
-                message=message,
-                error_class="retryable_infrastructure",
-            )
-            current = (
-                await _run_db(
+            if run is not None and run.status == "queued":
+                restored = await _run_db(
                     runner,
-                    store.finish,
+                    store.restore_unlaunched,
                     review.id,
-                    status="error",
-                    result_payload=payload,
-                    error=message,
+                    run.id,
+                    error="Daemon restarted before queued reviewer launch.",
                 )
-                or review
-            )
-            reconciled += 1
+                if restored:
+                    current = await _run_db(runner, store.get, review.id) or review
+                    reconciled += 1
+            else:
+                message = "Daemon restarted before the task-close reviewer launch was bound."
+                payload = build_terminal_review_payload(
+                    review,
+                    status="error",
+                    message=message,
+                    error_class="retryable_infrastructure",
+                )
+                current = (
+                    await _run_db(
+                        runner,
+                        store.finish,
+                        review.id,
+                        status="error",
+                        result_payload=payload,
+                        error=message,
+                    )
+                    or review
+                )
+                reconciled += 1
         elif review.active and run is None and review.status != "launching":
             # A `finalizing` review whose run row was purged can still belong to
             # a task that did close. terminal_review_delivery reconstructs that
@@ -255,7 +267,7 @@ async def _reconcile_task_close_reviews(
             if reconstructed is not None:
                 current = await _run_db(runner, store.get, review.id) or review
             else:
-                message = "Persisted task-close validator run is missing."
+                message = "Persisted task-close reviewer run is missing."
                 payload = build_terminal_review_payload(review, status="error", message=message)
                 current = (
                     await _run_db(
@@ -320,7 +332,26 @@ async def _reconcile_task_close_reviews(
                         session_ids=[current.caller_session_id],
                     )
                 reconciled += 1
+    reconciled += await _promote_queued_close_reviews(runner)
     return reconciled
+
+
+async def _promote_queued_close_reviews(runner: GobbyRunner) -> int:
+    """Invoke the task registry's private promoter after recovery frees capacity."""
+    http_server = getattr(runner, "http_server", None)
+    manager = getattr(http_server, "_internal_manager", None)
+    registry = manager.get_registry("gobby-tasks") if manager is not None else None
+    promoter = registry.get_private_callback("promote_close_reviews") if registry else None
+    if not callable(promoter):
+        return 0
+    try:
+        promoted = await promoter()
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.exception("Queued task-close review promotion failed")
+        return 0
+    return len(promoted) if isinstance(promoted, list) else 0
 
 
 def _finalizing_orphan_proven(review: TaskCloseReview, run: Any) -> bool:
@@ -332,7 +363,7 @@ def _finalizing_orphan_proven(review: TaskCloseReview, run: Any) -> bool:
     the reconciler win the write and contradict a live caller. Three facts
     together rule that out, and all three are required:
 
-    - The validator run belongs to this machine. `task_close_reviews` carries
+    - The reviewer run belongs to this machine. `task_close_reviews` carries
       no owner or lease column, so `agent_runs.machine_id` is the only scope
       available and another machine's daemon is the only process that could
       hold the row without appearing below.
@@ -379,7 +410,7 @@ async def _terminalize_orphaned_finalizing(
     A verdict is never reapplied here: `commit_close` resolves project context
     from the process cwd, which in the daemon loop is the daemon's own, so a
     reconciler-driven reapply could evaluate a different commit set than the
-    validator reviewed. A fresh `close_task` re-derives every input.
+    reviewer inspected. A fresh `close_task` re-derives every input.
     """
     from gobby.tasks.agentic_close_review import (
         CLOSE_REVIEW_DAEMON_STOP_RETRY_SECONDS,
@@ -646,114 +677,6 @@ def _list_active_agent_runs_once(
         if len(batch) < _RUN_REPLAY_PAGE_SIZE:
             break
     return active_runs
-
-
-async def _run_agent_hook_replay_barrier(
-    runner: GobbyRunner,
-    *,
-    timeout_seconds: float = 5.0,
-) -> bool:
-    """Replay hook ingress and fence unresolved runs from restart classification."""
-    agent_runner = getattr(runner, "agent_runner", None)
-    http_server = getattr(runner, "http_server", None)
-    app = getattr(http_server, "app", None)
-    if app is None:
-        return True
-
-    from gobby.hooks.inbox import drain_hook_inbox_barrier
-
-    horizon = getattr(runner, "http_bound_at_ms", None)
-    result = await drain_hook_inbox_barrier(
-        app,
-        timeout_seconds=timeout_seconds,
-        restart_horizon_ms=horizon if isinstance(horizon, int) else None,
-    )
-    if not result.timed_out:
-        return True
-
-    unresolved_run_ids = set(result.unresolved_run_ids)
-    unresolved_session_ids = result.unresolved_session_ids
-    session_manager = getattr(runner, "session_manager", None)
-    if unresolved_session_ids and session_manager is None:
-        logger.warning("Hook replay timed out while session services were unavailable")
-        return False
-    if session_manager is not None:
-        for session_id in unresolved_session_ids:
-            session = await _run_db(runner, session_manager.get, session_id)
-            run_id = getattr(session, "agent_run_id", None)
-            if isinstance(run_id, str) and run_id:
-                unresolved_run_ids.add(run_id)
-
-    if not unresolved_run_ids:
-        logger.info(
-            "Hook inbox replay timed out after replaying %d envelope(s); "
-            "%d session identity/identities produced no agent runs "
-            "(residue_hooks=%d live_hooks=%d receipts=%d)",
-            result.replayed,
-            len(unresolved_session_ids),
-            result.residue_hook_count,
-            result.live_hook_count,
-            result.receipt_count,
-        )
-        return True
-    if agent_runner is None:
-        logger.warning("Hook replay timed out while agent services were unavailable")
-        return False
-
-    run_storage = agent_runner.run_storage
-    active_run_ids: set[str] = set()
-    terminal_run_ids: set[str] = set()
-    missing_run_ids: set[str] = set()
-    unclassified_run_ids: set[str] = set()
-    for run_id in unresolved_run_ids:
-        try:
-            run = await _run_db(runner, run_storage.get, run_id)
-        except Exception:
-            logger.warning("Failed to load unresolved agent run %s", run_id, exc_info=True)
-            unclassified_run_ids.add(run_id)
-            continue
-        if run is None:
-            missing_run_ids.add(run_id)
-            continue
-        if run.status in TERMINAL_AGENT_RUN_STATUSES:
-            terminal_run_ids.add(run_id)
-            continue
-        if run.status not in {"pending", "running"}:
-            logger.warning(
-                "Unclassified unresolved agent run %s with status %r",
-                run_id,
-                run.status,
-            )
-            unclassified_run_ids.add(run_id)
-            continue
-        await _run_db(
-            runner,
-            run_storage.merge_resume_metadata,
-            run_id,
-            {"reconciliation_pending": True},
-        )
-        active_run_ids.add(run_id)
-
-    if terminal_run_ids or missing_run_ids:
-        logger.info(
-            "Agent hook replay barrier settled %d terminal and %d missing run reference(s)",
-            len(terminal_run_ids),
-            len(missing_run_ids),
-        )
-    if active_run_ids or unclassified_run_ids:
-        logger.warning(
-            "Agent hook replay barrier timed out with %d active fenced run(s) and "
-            "%d unclassified run lookup(s) (runs=%s residue_hooks=%d live_hooks=%d "
-            "receipts=%d)",
-            len(active_run_ids),
-            len(unclassified_run_ids),
-            ",".join(sorted(active_run_ids)) or "-",
-            result.residue_hook_count,
-            result.live_hook_count,
-            result.receipt_count,
-        )
-        return False
-    return True
 
 
 _MAX_NON_TASK_RESUME_FAILURES = 3

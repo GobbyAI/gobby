@@ -18,16 +18,6 @@ def db(temp_db: HubDatabase) -> HubDatabase:
     return temp_db
 
 
-def test_turn_record_sync_carries_ledger_instruction(db: HubDatabase) -> None:
-    sync_bundled_prompts(db)
-
-    record = LocalPromptManager(db).get_bundled("memory/turn_record")
-
-    assert record is not None
-    assert "[tool activity]" in record.content
-    assert set(record.variables or {}) == {"prompt_text", "response_text"}
-
-
 class TestSyncBundledPrompts:
     """Tests for sync_bundled_prompts()."""
 
@@ -112,9 +102,7 @@ class TestSyncBundledPrompts:
         known_templates = [
             "expansion/system",
             "expansion/user",
-            "handoff/session_delta_merge",
             "handoff/session_end",
-            "validation/validate",
         ]
 
         for name in known_templates:
@@ -122,7 +110,7 @@ class TestSyncBundledPrompts:
             assert record is not None, f"Expected bundled template '{name}' not found"
             assert record.content != ""
 
-        for name in ("handoff/session_delta_merge", "handoff/session_end"):
+        for name in ("handoff/session_end",):
             record = manager.get_by_name(name)
             assert record is not None
             assert "## Current State" in record.content

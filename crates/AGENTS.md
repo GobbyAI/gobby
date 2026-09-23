@@ -48,21 +48,18 @@ ships, including 27; no `DEVELOPER_DIR` or Xcode selection is involved.
 cargo build --release -p gobby-terminal --features vt-engine --bin gterm
 ```
 
-Builds land in one shared directory per project,
-`~/.gobby/cache/cargo-target/<project_id>/`: Gobby links `<checkout>/target` there
-for every registered checkout and worktree, and sets `CARGO_TARGET_DIR` for spawned
-agents. Cargo's build-directory lock serializes concurrent builds across worktrees
-("Blocking waiting for file lock on build directory"). A pre-existing real `target/`
-directory is left alone; move it aside to join the share. On macOS also raise
-the vnode ceiling once per machine, or the daemon's Git commands time out
-while cargo runs: see `docs/guides/system-requirements.md`, Troubleshooting.
+Builds land in deterministic checkout-specific directories under
+`~/.gobby/cache/cargo-target-v2/<project_id>/`. Gobby links each registered
+checkout's `target` there and sets the same `CARGO_TARGET_DIR` for spawned agents.
+The Cargo home remains shared, so registry and Git inputs are reused without
+allowing different checkout revisions to exchange compiled artifacts. A pre-existing
+real `target/` directory or foreign symlink is left alone. On macOS, large concurrent
+target trees can still require a higher vnode ceiling; see
+`docs/guides/system-requirements.md`, Troubleshooting.
 
-Because the directory is shared, `target/debug/<bin>` is whatever checkout built
-it last, and every worktree sees that same file. Cargo rebuilds when it notices
-the sources changed, so building is safe; reading is not. Anything that execs a
-binary by path — a test, a script, a probe — must build the crate it needs first
-in the checkout it means to test, or it silently runs another branch's build.
-Never assume a binary present under `target/` came from the branch you are on.
+Each checkout therefore owns the binaries below its `target/` link. Tests and probes
+that execute a binary by path should still build it first so their source-to-binary
+provenance is explicit.
 
 Inline `#[cfg(test)]` modules count toward the owning production file's
 1,000-line ceiling. Keep large unit-test modules out of production Rust files.

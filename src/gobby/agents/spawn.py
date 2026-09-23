@@ -33,6 +33,7 @@ from gobby.storage.managed_credentials import MANAGED_EXECUTION_BOOTSTRAP_ENV
 from gobby.utils.local_token import read_local_api_token
 
 if TYPE_CHECKING:
+    from gobby.config.runtime_models import ConfigSnapshot
     from gobby.storage.managed_credentials import ManagedCredential, ManagedCredentialManager
 
 __all__ = [
@@ -85,6 +86,9 @@ class PreparedSpawn:
 
     managed_credential: ManagedCredential | None = None
     """Run-scoped database credential issued before provider launch."""
+
+    config_snapshot: ConfigSnapshot | None = None
+    """Single runtime snapshot used for every launch-grant materialization."""
 
     prompt_file: str | None = None
     """On-disk prompt file created during preparation, if any."""
@@ -191,6 +195,7 @@ def prepare_terminal_spawn(
     clone_id: str | None = None,
     workspace_path: str | None = None,
     credential_manager: ManagedCredentialManager | None = None,
+    config_snapshot: ConfigSnapshot | None = None,
 ) -> PreparedSpawn:
     """
     Prepare a terminal spawn by creating the child session.
@@ -316,8 +321,10 @@ def prepare_terminal_spawn(
             bind_run=bind_fresh_run,
             worktree_id=worktree_id,
             clone_id=clone_id,
+            checkout_root=workspace_path,
         )
         prompt_file = prepared.prompt_file
+        prepared.config_snapshot = config_snapshot
         return _issue_prelaunch_credential(
             session_manager,
             prepared,
@@ -365,7 +372,9 @@ def prepare_terminal_resume(
     resume_metadata_json: dict[str, Any],
     worktree_id: str | None,
     clone_id: str | None,
+    workspace_path: str,
     credential_manager: ManagedCredentialManager | None = None,
+    config_snapshot: ConfigSnapshot | None = None,
 ) -> PreparedSpawn:
     """Prepare a successor run against an existing durable child session."""
     child_session = session_manager._storage.get(existing_session_id)
@@ -435,7 +444,9 @@ def prepare_terminal_resume(
             bind_run=bind_successor_run,
             worktree_id=worktree_id,
             clone_id=clone_id,
+            checkout_root=workspace_path,
         )
+    prepared.config_snapshot = config_snapshot
     return _issue_prelaunch_credential(
         session_manager,
         prepared,
@@ -460,6 +471,8 @@ def _issue_prelaunch_credential(
 
     if credential_manager is None:
         return prepared
+    if prepared.config_snapshot is None:
+        raise RuntimeError("prelaunch credential requires a config snapshot")
     # Grant identity and HMAC come from the live daemon lease; fail closed
     # before issuing anything a broken bootstrap could leak into the launch.
     operator_token = read_local_api_token()
@@ -486,6 +499,7 @@ def _issue_prelaunch_credential(
         project_id=prepared.project_id,
         session_id=prepared.session_id,
         context=context,
+        config_snapshot=prepared.config_snapshot,
     )
     remaining_seconds = (credential.expires_at - datetime.now(UTC)).total_seconds()
     launch = materialize_managed_launch(
@@ -531,6 +545,7 @@ def _prepare_run_for_session(
     bind_run: Callable[[str], None],
     worktree_id: str | None,
     clone_id: str | None,
+    checkout_root: str | None = None,
 ) -> PreparedSpawn:
     """Create and bind a run, then construct its terminal identity."""
     from gobby.storage.agents import LocalAgentRunManager
@@ -541,28 +556,54 @@ def _prepare_run_for_session(
         session_id,
     )
     agent_run_mgr = LocalAgentRunManager(session_manager._storage.db)
-    agent_run_mgr.create(
-        parent_session_id=parent_session_id,
-        provider=provider,
-        prompt=prompt or "",
-        workflow_name=workflow_name,
-        agent_name=agent_name,
-        model=model,
-        is_local=is_local,
-        child_session_id=session_id,
-        claimed_session_id=claimed_session_id,
-        run_id=agent_run_id,
-        task_id=task_id,
-        timeout_seconds=timeout_seconds,
-        requested_reasoning_effort=requested_reasoning_effort,
-        effective_reasoning_effort=effective_reasoning_effort,
-        reasoning_required=reasoning_required,
-        reasoning_status=reasoning_status,
-        reasoning_message=reasoning_message,
-        resume_metadata_json=resume_metadata_json,
-        worktree_id=worktree_id,
-        clone_id=clone_id,
-    )
+    existing_run = agent_run_mgr.get(agent_run_id)
+    if existing_run is not None and existing_run.status == "queued":
+        activated = agent_run_mgr.activate_queued(
+            agent_run_id,
+            child_session_id=session_id,
+            provider=provider,
+            prompt=prompt or "",
+            workflow_name=workflow_name,
+            agent_name=agent_name,
+            model=model,
+            is_local=is_local,
+            requested_reasoning_effort=requested_reasoning_effort,
+            effective_reasoning_effort=effective_reasoning_effort,
+            reasoning_required=reasoning_required,
+            reasoning_status=reasoning_status,
+            reasoning_message=reasoning_message,
+            timeout_seconds=timeout_seconds,
+            resume_metadata_json=resume_metadata_json,
+            worktree_id=worktree_id,
+            clone_id=clone_id,
+        )
+        if activated is None:
+            raise RuntimeError(f"Queued agent run {agent_run_id} could not be activated")
+    elif existing_run is None:
+        agent_run_mgr.create(
+            parent_session_id=parent_session_id,
+            provider=provider,
+            prompt=prompt or "",
+            workflow_name=workflow_name,
+            agent_name=agent_name,
+            model=model,
+            is_local=is_local,
+            child_session_id=session_id,
+            claimed_session_id=claimed_session_id,
+            run_id=agent_run_id,
+            task_id=task_id,
+            timeout_seconds=timeout_seconds,
+            requested_reasoning_effort=requested_reasoning_effort,
+            effective_reasoning_effort=effective_reasoning_effort,
+            reasoning_required=reasoning_required,
+            reasoning_status=reasoning_status,
+            reasoning_message=reasoning_message,
+            resume_metadata_json=resume_metadata_json,
+            worktree_id=worktree_id,
+            clone_id=clone_id,
+        )
+    else:
+        raise RuntimeError(f"Agent run {agent_run_id} already exists with {existing_run.status}")
     bind_run(agent_run_id)
 
     prompt_env: str | None = None
@@ -579,6 +620,7 @@ def _prepare_run_for_session(
             parent_session_id=parent_session_id,
             agent_run_id=agent_run_id,
             project_id=project_id,
+            checkout_root=checkout_root,
             workflow_name=workflow_name,
             agent_depth=session_depth,
             max_agent_depth=max_agent_depth,

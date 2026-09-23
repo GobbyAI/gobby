@@ -10,8 +10,8 @@ from uuid import UUID
 
 import pytest
 
-from gobby.agents.idle_detector import ComposerRead
-from gobby.events.live_wake import ComposerProbe, composer_occupied_result
+from gobby.agents.idle_detector import IdleDetector
+from gobby.events.live_wake import ActivityProbe, TerminalActivity, composer_occupied_result
 from gobby.events.wake import CONTINUE_WAKE_MESSAGE, WakeDispatcher
 from gobby.runner_init.orchestration import _send_tmux_session_wake
 from gobby.storage.terminals import Terminal
@@ -19,6 +19,7 @@ from gobby.terminals.composer import composer_clear_sequence
 from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.runtime import Delivered, IndeterminateWrite
 from gobby.terminals.write_coordinator import UnresolvedWriteStore, WriteCoordinator
+from tests.agents.detection_test_support import BundledDetectionRegistry
 from tests.terminals.fakes import (
     FakeRuntime,
     MemoryTerminalStore,
@@ -44,6 +45,7 @@ WAKE_SEQUENCE = [
 @dataclass
 class FakeSession:
     id: str
+    project_id: str | None = None
     agent_depth: int = 0
     terminal_context: object | None = None
     status: str = "paused"
@@ -133,6 +135,30 @@ async def test_native_backed_interactive_session_wakes_through_its_terminal_row(
     # FakeRuntime ignores Terminal.backend, so the tmux runtime staying untouched
     # is the only thing separating a routed write from a bound one.
     assert managed_chain.tmux.write_log == []
+    pane_sender.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_native_context_id_wakes_through_unbound_terminal_row(
+    managed_chain: ManagedChain,
+) -> None:
+    managed_chain.row.session_id = None
+    pane_sender = AsyncMock()
+    session_manager = _session_manager({"gobby_terminal_id": managed_chain.row.id})
+    session_manager.get.return_value.project_id = managed_chain.row.project_id
+    dispatcher = WakeDispatcher(
+        session_manager=session_manager,
+        ism_manager=MagicMock(),
+        tmux_sender=_send_tmux_session_wake,
+        tmux_pane_sender=pane_sender,
+        terminal_manager=managed_chain.store,
+    )
+
+    result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
+
+    assert result["delivered"] is True
+    assert result["method"] == "terminal"
+    assert managed_chain.native.write_log == WAKE_SEQUENCE
     pane_sender.assert_not_awaited()
 
 
@@ -486,7 +512,7 @@ async def test_quarantined_terminal_wake_is_a_structured_decline_without_traceba
     assert result["error_code"] == "automatic_write_quarantined"
     assert managed_chain.native.write_log == []
     assert not [record for record in caplog.records if record.levelno >= logging.WARNING]
-    assert [record for record in caplog.records if "declined" in record.getMessage()]
+    assert not [record for record in caplog.records if "declined" in record.getMessage()]
     pane_sender.assert_not_awaited()
 
 
@@ -561,7 +587,7 @@ async def test_failed_terminal_wake_is_structured_and_does_not_fall_back_to_the_
 async def test_terminal_row_lookup_failure_degrades_to_the_tmux_pane() -> None:
     """A lookup error must not cost a tmux-hosted session the wake it used to get."""
     failing_manager = MagicMock()
-    failing_manager.get_live_for_session.side_effect = RuntimeError("hub down")
+    failing_manager.resolve_live_for_session.side_effect = RuntimeError("hub down")
     pane_sender = AsyncMock()
     dispatcher = WakeDispatcher(
         session_manager=_session_manager({"tmux_pane": "%12"}),
@@ -578,26 +604,40 @@ async def test_terminal_row_lookup_failure_degrades_to_the_tmux_pane() -> None:
     pane_sender.assert_awaited_once()
 
 
-async def _draft(_session: object, _terminal: object) -> ComposerRead:
-    return ComposerRead("draft", "hello draft")
+def _claude_composer_activity(prompt: str) -> TerminalActivity:
+    snapshot = "\n".join(
+        (
+            "⏺ done",
+            "──────────── epic-22508-feedback-triage ─",
+            prompt,
+            "────────────────────",
+            "   Fable 5.1  12%   ⎇ main",
+        )
+    )
+    detector = IdleDetector(BundledDetectionRegistry(), "claude")
+    return TerminalActivity(detector.composer_read(snapshot))
 
 
-async def _empty(_session: object, _terminal: object) -> ComposerRead:
-    return ComposerRead("empty")
+async def _draft(_session: object, _terminal: object) -> TerminalActivity:
+    return _claude_composer_activity("❯ hello draft")
 
 
-async def _broken(_session: object, _terminal: object) -> ComposerRead:
+async def _empty(_session: object, _terminal: object) -> TerminalActivity:
+    return _claude_composer_activity("❯")
+
+
+async def _broken(_session: object, _terminal: object) -> TerminalActivity:
     raise RuntimeError("no pane")
 
 
-def _pane_dispatcher(probe: ComposerProbe | None, pane_sender: AsyncMock) -> WakeDispatcher:
+def _pane_dispatcher(probe: ActivityProbe | None, pane_sender: AsyncMock) -> WakeDispatcher:
     return WakeDispatcher(
         session_manager=_session_manager({"tmux_pane": "%12", "tmux_socket_path": "/tmp/s"}),
         ism_manager=MagicMock(),
         tmux_sender=AsyncMock(),
         tmux_pane_sender=pane_sender,
         terminal_manager=MemoryTerminalStore(),
-        composer_probe=probe,
+        activity_probe=probe,
     )
 
 
@@ -615,20 +655,38 @@ async def test_pane_wake_is_withheld_while_the_composer_holds_a_draft() -> None:
 
 
 @pytest.mark.asyncio
-async def test_urgent_wake_drains_over_a_draft() -> None:
+async def test_urgent_wake_is_withheld_while_the_composer_holds_a_draft() -> None:
     pane_sender = AsyncMock()
     dispatcher = _pane_dispatcher(_draft, pane_sender)
 
     result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID, priority="urgent")
 
+    assert result == composer_occupied_result(WAKE_SESSION_ID, method="tmux_pane")
+    pane_sender.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_urgent_wake_injects_an_empty_composer() -> None:
+    pane_sender = AsyncMock()
+    dispatcher = _pane_dispatcher(_empty, pane_sender)
+
+    result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID, priority="urgent")
+
     assert result["delivered"] is True
-    pane_sender.assert_awaited_once()
+    pane_sender.assert_awaited_once_with(
+        "%12",
+        CONTINUE_WAKE_MESSAGE,
+        "/tmp/s",
+        submit=True,
+        clear_before_submit=True,
+        cli_source=ANY,
+    )
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("probe", [_empty, _broken, None])
 async def test_anything_short_of_a_draft_keeps_the_blind_drain(
-    probe: ComposerProbe | None,
+    probe: ActivityProbe | None,
 ) -> None:
     pane_sender = AsyncMock()
     dispatcher = _pane_dispatcher(probe, pane_sender)
@@ -653,7 +711,7 @@ async def test_managed_terminal_wake_is_withheld_for_a_draft(managed_chain: Mana
         ism_manager=MagicMock(),
         tmux_sender=_send_tmux_session_wake,
         terminal_manager=managed_chain.store,
-        composer_probe=_draft,
+        activity_probe=_draft,
     )
 
     result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
@@ -662,7 +720,7 @@ async def test_managed_terminal_wake_is_withheld_for_a_draft(managed_chain: Mana
     assert managed_chain.native.write_log == []
 
 
-def _batch_dispatcher(probe: ComposerProbe) -> tuple[WakeDispatcher, AsyncMock]:
+def _batch_dispatcher(probe: ActivityProbe) -> tuple[WakeDispatcher, AsyncMock]:
     row = replace(make_memory_terminal(backend="native"), session_id=WAKE_SESSION_ID)
     store = MemoryTerminalStore(row)
     batch_sender = AsyncMock(
@@ -674,7 +732,7 @@ def _batch_dispatcher(probe: ComposerProbe) -> tuple[WakeDispatcher, AsyncMock]:
         tmux_sender=AsyncMock(),
         native_batch_sender=batch_sender,
         terminal_manager=store,
-        composer_probe=probe,
+        activity_probe=probe,
     )
     return dispatcher, batch_sender
 
@@ -715,7 +773,7 @@ async def test_native_spawned_agent_wakes_through_its_terminal_row(
         tmux_pane_sender=pane_sender,
         sdk_resumer=sdk_resumer,
         terminal_manager=managed_chain.store,
-        composer_probe=_empty,
+        activity_probe=_empty,
     )
 
     result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
@@ -736,7 +794,7 @@ async def test_native_spawned_agent_wake_is_withheld_for_a_draft(
         ism_manager=MagicMock(),
         tmux_sender=_send_tmux_session_wake,
         terminal_manager=managed_chain.store,
-        composer_probe=_draft,
+        activity_probe=_draft,
     )
 
     result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
@@ -758,7 +816,7 @@ async def test_spawned_agent_without_a_managed_row_still_uses_its_tmux_session()
         tmux_sender=managed_sender,
         tmux_pane_sender=pane_sender,
         terminal_manager=MemoryTerminalStore(),
-        composer_probe=_empty,
+        activity_probe=_empty,
     )
 
     result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)

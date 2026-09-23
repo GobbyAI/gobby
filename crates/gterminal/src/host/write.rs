@@ -9,7 +9,7 @@ use tokio::time::{sleep_until, Instant};
 
 use super::events::InputActivity;
 use super::helpers::{err, named_key_bytes, s};
-use super::state::{HostState, Identity, Inner, TerminalSlot};
+use super::state::{HostState, Inner, TerminalSlot};
 use crate::protocol::MAX_WRITE_BYTES;
 
 pub const MAX_WRITE_BATCH_TARGETS: usize = 64;
@@ -32,7 +32,7 @@ struct ScheduledOperation {
     due_ms: u64,
     target_index: usize,
     operation_index: usize,
-    identity: Identity,
+    host_terminal_id: String,
     payload: Vec<u8>,
 }
 
@@ -223,11 +223,11 @@ impl HostState {
                     continue;
                 }
             };
-            let Some(identity) = inner.by_host_id.get(&target.host_terminal_id).cloned() else {
+            let Some(identity) = inner.by_host_id.get(&target.host_terminal_id) else {
                 results.push(batch_error(&target, "not_found"));
                 continue;
             };
-            if !inner.terminals.contains_key(&identity) {
+            if !inner.terminals.contains_key(identity) {
                 results.push(batch_error(&target, "not_found"));
                 continue;
             }
@@ -238,7 +238,7 @@ impl HostState {
                     due_ms,
                     target_index,
                     operation_index,
-                    identity: identity.clone(),
+                    host_terminal_id: target.host_terminal_id.clone(),
                     payload: operation.payload,
                 });
             }
@@ -249,6 +249,7 @@ impl HostState {
                 "written": true,
             }));
         }
+        drop(inner);
         scheduled.sort_by_key(|operation| {
             (
                 operation.due_ms,
@@ -266,7 +267,16 @@ impl HostState {
                 continue;
             }
             sleep_until(started + Duration::from_millis(operation.due_ms)).await;
-            let Some(slot) = inner.terminals.get(&operation.identity) else {
+            let inner = self.inner.lock().await;
+            let Some(identity) = inner.by_host_id.get(&operation.host_terminal_id) else {
+                mark_batch_failure(
+                    &mut results[operation.target_index],
+                    "not_found",
+                    operation.operation_index,
+                );
+                continue;
+            };
+            let Some(slot) = inner.terminals.get(identity) else {
                 mark_batch_failure(
                     &mut results[operation.target_index],
                     "not_found",
@@ -490,7 +500,9 @@ fn batch_error(target: &BatchTarget, code: &'static str) -> Value {
 mod tests {
     use super::*;
     use crate::host::config::HostConfig;
+    use crate::protocol::RenderEncoding;
     use tokio::sync::watch;
+    use tokio::time::timeout;
 
     fn state() -> std::sync::Arc<HostState> {
         let (shutdown, _) = watch::channel(false);
@@ -513,6 +525,15 @@ mod tests {
                 {"kind": "text", "encoding": "utf8-b64", "data": "eA==", "delay_ms": 0},
             ],
         })
+    }
+
+    async fn remove_terminal(state: &HostState, host_terminal_id: &str) {
+        let mut inner = state.inner.lock().await;
+        let identity = inner
+            .by_host_id
+            .remove(host_terminal_id)
+            .expect("terminal identity");
+        inner.terminals.remove(&identity).expect("terminal slot");
     }
 
     #[tokio::test]
@@ -594,5 +615,123 @@ mod tests {
             deliver_native(slot, NativeInput::Paste("x".to_owned())),
             Err("terminal_gone"),
         );
+    }
+
+    #[tokio::test]
+    async fn batch_delay_does_not_block_input_on_another_terminal() {
+        let state = state();
+        crate::host::state::insert_native_slot(&state, "batch", 24, 80).await;
+        crate::host::state::insert_native_slot(&state, "interactive", 24, 80).await;
+        let (attachment_id, _mailbox) = state
+            .attach("interactive", None, RenderEncoding::SemanticFrame, 24, 80)
+            .await
+            .expect("attach interactive terminal");
+        state
+            .bind_attachment(attachment_id, "client".to_owned())
+            .await
+            .expect("bind interactive terminal");
+
+        let batch = json!({
+            "targets": [{
+                "recipient_id": "recipient",
+                "host_terminal_id": "batch",
+                "operations": [
+                    {"kind": "text", "encoding": "utf8-b64", "data": "eA==", "delay_ms": 1_000},
+                    {"kind": "text", "encoding": "utf8-b64", "data": "eA==", "delay_ms": 1_000},
+                ],
+            }],
+        });
+        let batch_state = state.clone();
+        let batch_task = tokio::spawn(async move {
+            batch_state
+                .write_batch(batch.as_object().expect("batch object"))
+                .await
+        });
+        tokio::task::yield_now().await;
+
+        let grant = json!({
+            "host_terminal_id": "interactive",
+            "attachment_id": "client",
+        });
+        let granted = timeout(
+            Duration::from_millis(250),
+            state.grant_input(grant.as_object().expect("grant object")),
+        )
+        .await
+        .expect("grant_input blocked behind batch delay");
+        assert_eq!(granted["ok"], true);
+
+        let framed = timeout(
+            Duration::from_millis(250),
+            state.frame_input(Some(attachment_id), NativeInput::Bytes(b"x".to_vec())),
+        )
+        .await
+        .expect("frame_input blocked behind batch delay");
+        assert_eq!(framed, Err("terminal_gone"));
+
+        let revoke = json!({
+            "host_terminal_id": "interactive",
+            "attachment_id": "client",
+        });
+        let revoked = timeout(
+            Duration::from_millis(250),
+            state.revoke_input(revoke.as_object().expect("revoke object")),
+        )
+        .await
+        .expect("revoke_input blocked behind batch delay");
+        assert_eq!(revoked["ok"], true);
+
+        batch_task.abort();
+        assert!(batch_task
+            .await
+            .expect_err("batch task should be cancelled")
+            .is_cancelled());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn batch_reports_removed_targets_and_continues_later_operations() {
+        let state = state();
+        crate::host::state::insert_native_slot(&state, "removed-first", 24, 80).await;
+        crate::host::state::insert_native_slot(&state, "removed-later", 24, 80).await;
+        let batch = json!({
+            "targets": [
+                {
+                    "recipient_id": "first",
+                    "host_terminal_id": "removed-first",
+                    "operations": [
+                        {"kind": "text", "encoding": "utf8-b64", "data": "eA==", "delay_ms": 0},
+                        {"kind": "text", "encoding": "utf8-b64", "data": "eA==", "delay_ms": 100},
+                    ],
+                },
+                {
+                    "recipient_id": "later",
+                    "host_terminal_id": "removed-later",
+                    "operations": [
+                        {"kind": "text", "encoding": "utf8-b64", "data": "eA==", "delay_ms": 500},
+                    ],
+                },
+            ],
+        });
+        let batch_state = state.clone();
+        let batch_task = tokio::spawn(async move {
+            batch_state
+                .write_batch(batch.as_object().expect("batch object"))
+                .await
+        });
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_millis(1)).await;
+        tokio::task::yield_now().await;
+
+        remove_terminal(&state, "removed-first").await;
+        tokio::time::advance(Duration::from_millis(249)).await;
+        tokio::task::yield_now().await;
+        remove_terminal(&state, "removed-later").await;
+        tokio::time::advance(Duration::from_millis(250)).await;
+
+        let response = batch_task.await.expect("batch task");
+        assert_eq!(response["results"][0]["error"], "not_found");
+        assert_eq!(response["results"][0]["stage"], "partial");
+        assert_eq!(response["results"][1]["error"], "not_found");
+        assert_eq!(response["results"][1]["stage"], "none");
     }
 }

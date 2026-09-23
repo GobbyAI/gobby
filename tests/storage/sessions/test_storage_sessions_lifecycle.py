@@ -196,6 +196,59 @@ class TestSessionManagerLifecycle:
         assert updated is not None
         assert updated.status == "paused"
 
+    def test_restart_stale_pause_uses_exact_updated_at_and_preserves_activity(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict[str, str],
+    ) -> None:
+        session = session_manager.register(
+            external_id="restart-stale-cas",
+            machine_id=LOCAL_MACHINE_ID,
+            source="codex",
+            project_id=sample_project["id"],
+        )
+        observed_at = datetime(2026, 9, 21, 6, 0, tzinfo=UTC)
+        with session_manager.db.transaction():
+            session_manager.db.execute(
+                "UPDATE sessions SET updated_at = %s, last_activity = %s WHERE id = %s",
+                (observed_at, observed_at, session.id),
+            )
+        observed = session_manager.get(session.id)
+        assert observed is not None
+
+        paused = session_manager._pause_restart_stale_active(
+            session.id,
+            observed_updated_at=observed.updated_at,
+            restart_horizon_ms=int(observed_at.timestamp() * 1_000),
+        )
+
+        assert paused is not None and paused.status == "paused"
+        assert paused.last_activity == observed_at
+
+        with session_manager.db.transaction():
+            session_manager.db.execute(
+                "UPDATE sessions SET status = 'active', updated_at = %s WHERE id = %s",
+                (observed_at, session.id),
+            )
+        raced = session_manager.get(session.id)
+        assert raced is not None
+        with session_manager.db.transaction():
+            session_manager.db.execute(
+                "UPDATE sessions SET updated_at = %s WHERE id = %s",
+                (observed_at + timedelta(microseconds=1), session.id),
+            )
+
+        assert (
+            session_manager._pause_restart_stale_active(
+                session.id,
+                observed_updated_at=raced.updated_at,
+                restart_horizon_ms=int(observed_at.timestamp() * 1_000),
+            )
+            is None
+        )
+        current = session_manager.get(session.id)
+        assert current is not None and current.status == "active"
+
     def test_status_transition_listeners_receive_committed_pause_and_expiry(
         self,
         session_manager: SessionManager,

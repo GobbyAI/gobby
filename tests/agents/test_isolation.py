@@ -38,12 +38,15 @@ from gobby.agents.isolation import (
     provider_mcp_config_error,
     repair_isolation_environment,
 )
+from gobby.agents.isolation_models import spawn_state_key
 from gobby.clones.git import CloneGitManager
+from gobby.config.runtime_models import ConfigSnapshot
 from gobby.runtime_grants.service import DeploymentGrantContext
 from gobby.storage.managed_credentials import ManagedCredential
 from gobby.storage.schema_contract import expected_schema_identity
 from gobby.utils.local_token import verify_agent_api_token
 from gobby.worktrees.git import WorktreeGitManager
+from tests.runtime_grants.support import config_snapshot, daemon_config
 
 _REAL_POPEN = subprocess.Popen
 
@@ -190,15 +193,27 @@ class TestEnsureIsolationCodeIndex:
             "GOBBY_SESSION_ID": self._SESSION_ID,
         }
 
+    @staticmethod
+    def _config_snapshot() -> ConfigSnapshot:
+        return config_snapshot(daemon_config(), revision=1)
+
     @pytest.mark.asyncio
     async def test_runs_gcode_index_in_workspace(self, tmp_path: Path) -> None:
         proc = self._proc()
+        loop_thread = threading.get_ident()
+        popen_threads: list[int] = []
+        launch = self._popen_side_effect(proc)
+
+        def recording_launch(args: list[str], *popen_args: Any, **kwargs: Any) -> Any:
+            if args[0] != "git":
+                popen_threads.append(threading.get_ident())
+            return launch(args, *popen_args, **kwargs)
 
         with (
             patch("gobby.agents.code_index.resolve_native_bin", return_value="/tmp/gcode"),
             patch(
                 "gobby.agents.code_index.subprocess.Popen",
-                side_effect=self._popen_side_effect(proc),
+                side_effect=recording_launch,
             ) as popen,
         ):
             result = await ensure_isolation_code_index(str(tmp_path))
@@ -220,8 +235,13 @@ class TestEnsureIsolationCodeIndex:
         ]
         assert "--allow-stale" in calls[2].args[0]
         assert "--no-freshness" not in calls[2].args[0]
-        assert calls[0].kwargs["cwd"] == str(tmp_path)
-        assert proc.communicate_timeouts == pytest.approx([5.0, 120.0, 10.0], abs=0.01)
+        assert popen_threads and all(thread_id != loop_thread for thread_id in popen_threads)
+        for gcode_call in calls:
+            assert Path(gcode_call.args[0][0]).is_absolute()
+            assert "cwd" not in gcode_call.kwargs
+            assert "start_new_session" not in gcode_call.kwargs
+            assert "preexec_fn" not in gcode_call.kwargs
+        assert proc.communicate_timeouts == pytest.approx([5.0, 120.0, 10.0], abs=0.25)
 
     @pytest.mark.asyncio
     async def test_scoped_credential_creates_gcode_wrapper_runtime(
@@ -249,6 +269,7 @@ class TestEnsureIsolationCodeIndex:
             result = await ensure_isolation_code_index(
                 str(workspace),
                 credential=credential,
+                config_snapshot=self._config_snapshot(),
                 runtime_root=runtime_root,
                 identity_env=self._identity_env(),
             )
@@ -316,6 +337,7 @@ class TestEnsureIsolationCodeIndex:
             result = await ensure_isolation_code_index(
                 str(workspace),
                 credential=credential,
+                config_snapshot=self._config_snapshot(),
                 runtime_root=runtime_root,
                 identity_env=self._identity_env(),
             )
@@ -462,6 +484,7 @@ class TestEnsureIsolationCodeIndex:
             workspace=workspace,
             gcode_bin=Path("/tmp/gcode"),
             credential=credential,
+            config_snapshot=self._config_snapshot(),
             runtime_root=runtime_root,
             project_id=self._PROJECT_ID,
         )
@@ -499,6 +522,7 @@ class TestEnsureIsolationCodeIndex:
             result = await ensure_isolation_code_index(
                 str(workspace),
                 credential=self._credential(tmp_path),
+                config_snapshot=self._config_snapshot(),
                 runtime_root=runtime_root,
                 identity_env=self._identity_env(),
             )
@@ -621,6 +645,7 @@ class TestEnsureIsolationCodeIndex:
             result = await ensure_isolation_code_index(
                 str(workspace),
                 credential=self._credential(tmp_path),
+                config_snapshot=self._config_snapshot(),
                 runtime_root=runtime_root,
                 api_token="operator-token-value",
                 identity_env=self._identity_env(),
@@ -673,6 +698,7 @@ class TestEnsureIsolationCodeIndex:
             result = await ensure_isolation_code_index(
                 str(workspace),
                 credential=credential,
+                config_snapshot=self._config_snapshot(),
                 runtime_root=runtime_root,
                 identity_env=self._identity_env(),
             )
@@ -1347,10 +1373,12 @@ class TestWorktreeIsolationHandler:
         mock_git_manager.has_unpushed_commits.return_value = (False, 0)
         mock_git_manager.create_worktree.return_value = MagicMock(success=True)
         mock_git_manager.delete_worktree.return_value = MagicMock(success=True, error=None)
+        mock_git_manager.run_git_command.return_value = MagicMock(returncode=0, stderr="")
 
         mock_worktree_storage = MagicMock()
         mock_worktree_storage.get_by_branch.return_value = MagicMock(
             id="stale-wt-456",
+            project_id="proj-123",
             worktree_path="/tmp/worktrees/stale-branch",
             branch_name="stale-branch",
             base_branch="main",
@@ -1385,6 +1413,10 @@ class TestWorktreeIsolationHandler:
             ),
             patch("pathlib.Path.is_dir", return_value=False),
             patch(
+                "gobby.agents.worktree_reuse.cleanup_checkout_cargo_target_dir",
+                return_value=None,
+            ) as cleanup_target,
+            patch(
                 "gobby.agents.isolation_worktree.repair_isolation_environment",
                 new=AsyncMock(),
             ) as repair,
@@ -1401,6 +1433,10 @@ class TestWorktreeIsolationHandler:
             base_branch="main",
         )
         mock_worktree_storage.delete.assert_called_once_with("stale-wt-456")
+        cleanup_target.assert_called_once_with(
+            Path("/tmp/worktrees/stale-branch"),
+            "proj-123",
+        )
         mock_git_manager.create_worktree.assert_called_once_with(
             worktree_path="/tmp/worktrees/stale-branch",
             branch_name="stale-branch",
@@ -1420,6 +1456,49 @@ class TestWorktreeIsolationHandler:
             isolated_path="/tmp/worktrees/stale-branch",
             provider="claude",
         )
+
+    async def test_stale_worktree_retries_target_without_repeating_git_delete(
+        self, tmp_path: Path
+    ) -> None:
+        from gobby.agents.worktree_reuse import cleanup_stale_worktree_registration
+
+        git_manager = MagicMock(spec=WorktreeGitManager)
+        worktree_path = tmp_path / "stale"
+        worktree_path.mkdir()
+
+        async def delete_once(**_kwargs: object) -> MagicMock:
+            worktree_path.rmdir()
+            return MagicMock(success=True, error=None)
+
+        git_manager.delete_worktree.side_effect = delete_once
+        git_manager.run_git_command.return_value = MagicMock(returncode=1, stderr="")
+        git_manager.prune_worktrees.return_value = MagicMock(success=True, error=None)
+        storage = MagicMock()
+        worktree = SimpleNamespace(
+            id="stale-wt",
+            project_id="proj-123",
+            worktree_path=str(worktree_path),
+            branch_name="stale",
+            base_branch="main",
+        )
+
+        with patch(
+            "gobby.agents.worktree_reuse.cleanup_checkout_cargo_target_dir",
+            side_effect=["permission denied", None],
+        ) as cleanup_target:
+            with pytest.raises(RuntimeError, match="cargo_target_cleanup_failed") as error_info:
+                await cleanup_stale_worktree_registration(git_manager, storage, worktree)
+            await cleanup_stale_worktree_registration(git_manager, storage, worktree)
+
+        assert "permission denied" in str(error_info.value)
+        assert git_manager.delete_worktree.await_count == 1
+        git_manager.run_git_command.assert_awaited_once_with(
+            ["show-ref", "--verify", "--quiet", "refs/heads/stale"],
+            timeout=5,
+        )
+        git_manager.prune_worktrees.assert_awaited_once_with()
+        assert cleanup_target.call_count == 2
+        storage.delete.assert_called_once_with("stale-wt")
 
     def test_build_context_prompt_prepends_warning(self) -> None:
         """Test build_context_prompt prepends the worktree context banner."""
@@ -1614,6 +1693,62 @@ class TestWorktreeIsolationHandler:
         assert handler._partial_worktrees == {}
         mock_git_manager.delete_worktree.assert_called_once()
         mock_worktree_storage.delete.assert_called_once_with("wt-123")
+
+    @pytest.mark.asyncio
+    async def test_partial_cleanup_retains_worktree_record_when_target_cleanup_fails(self) -> None:
+        mock_git_manager = MagicMock(spec=WorktreeGitManager)
+        mock_git_manager.repo_path = "/path/to/main/repo"
+        mock_git_manager.create_worktree.return_value = MagicMock(success=True)
+        mock_git_manager.delete_worktree.return_value = MagicMock(success=True)
+        mock_git_manager.get_current_branch.return_value = "main"
+        mock_git_manager.has_unpushed_commits.return_value = (False, 0)
+        mock_worktree_storage = MagicMock()
+        mock_worktree_storage.get_by_branch.return_value = None
+        mock_worktree_storage.create.return_value = MagicMock(
+            id="wt-123",
+            worktree_path="/tmp/worktrees/my-branch",
+            branch_name="my-branch",
+        )
+        handler = WorktreeIsolationHandler(
+            git_manager=mock_git_manager,
+            worktree_storage=mock_worktree_storage,
+        )
+        config = SpawnConfig(
+            prompt="Test",
+            task_id=None,
+            task_title=None,
+            task_seq_num=None,
+            branch_name="my-branch",
+            branch_prefix=None,
+            base_branch="main",
+            project_id="proj-123",
+            project_path="/path/to/main/repo",
+            provider="claude",
+            parent_session_id="sess-456",
+        )
+
+        with patch(
+            "gobby.agents.isolation_worktree.cleanup_checkout_cargo_target_dir",
+            return_value="permission denied",
+        ) as cleanup_target:
+            with (
+                patch(
+                    "gobby.agents.isolation_repair._copy_cli_hooks",
+                    side_effect=OSError("Permission denied"),
+                ),
+                pytest.raises(OSError, match="Permission denied"),
+            ):
+                await handler.prepare_environment(config)
+            await handler.cleanup_environment(config)
+
+        assert handler._partial_worktrees == {}
+        mock_git_manager.delete_worktree.assert_called_once()
+        delete_kwargs = mock_git_manager.delete_worktree.call_args.kwargs
+        deleted_path = Path(delete_kwargs["worktree_path"])
+        assert deleted_path.name == "my-branch"
+        assert delete_kwargs["force"] is True
+        cleanup_target.assert_called_once_with(deleted_path, "proj-123")
+        mock_worktree_storage.delete.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_cleanup_noop_after_environment_commit(self) -> None:
@@ -1915,6 +2050,43 @@ class TestCloneIsolationHandler:
         # Should NOT create a new clone
         mock_clone_manager.create_clone.assert_not_called()
 
+    async def test_stale_clone_retains_record_when_target_cleanup_fails(
+        self, tmp_path: Path
+    ) -> None:
+        clone_path = tmp_path / "missing-clone"
+        clone_manager = MagicMock(spec=CloneGitManager)
+        clone_storage = MagicMock()
+        clone_storage.get_by_branch.return_value = SimpleNamespace(
+            id="stale-clone",
+            project_id="proj-123",
+            clone_path=str(clone_path),
+            branch_name="stale",
+        )
+        handler = CloneIsolationHandler(clone_manager, clone_storage)
+        config = SpawnConfig(
+            prompt="Test",
+            task_id=None,
+            task_title=None,
+            task_seq_num=None,
+            branch_name="stale",
+            branch_prefix=None,
+            base_branch="main",
+            project_id="proj-123",
+            project_path="/path/to/main/repo",
+            provider="claude",
+            parent_session_id="sess-456",
+        )
+
+        with patch(
+            "gobby.agents.isolation_clone.cleanup_checkout_cargo_target_dir",
+            return_value="permission denied",
+        ):
+            with pytest.raises(RuntimeError, match="cargo_target_cleanup_failed"):
+                await handler.prepare_environment(config)
+
+        clone_storage.delete.assert_not_called()
+        clone_manager.create_clone.assert_not_called()
+
     @pytest.mark.asyncio
     async def test_prepare_environment_concurrent_same_branch_uses_distinct_paths(self) -> None:
         """Test concurrent clone creation for same branch targets distinct paths."""
@@ -2094,6 +2266,111 @@ class TestCloneIsolationHandler:
         assert handler._partial_clones == {}
         mock_clone_manager.delete_clone.assert_called_once()
         mock_clone_storage.delete.assert_called_once_with("clone-123")
+
+    @pytest.mark.asyncio
+    async def test_partial_cleanup_retains_clone_record_when_target_cleanup_fails(self) -> None:
+        mock_clone_manager = MagicMock(spec=CloneGitManager)
+        mock_clone_manager.create_clone.return_value = MagicMock(success=True)
+        mock_clone_manager.delete_clone.return_value = MagicMock(success=True)
+        mock_clone_storage = MagicMock()
+        mock_clone_storage.get_by_branch.return_value = None
+        mock_clone_storage.create.return_value = MagicMock(
+            id="clone-123",
+            clone_path="/tmp/clones/my-branch",
+            branch_name="my-branch",
+        )
+        handler = CloneIsolationHandler(
+            clone_manager=mock_clone_manager,
+            clone_storage=mock_clone_storage,
+        )
+        config = SpawnConfig(
+            prompt="Test",
+            task_id=None,
+            task_title=None,
+            task_seq_num=None,
+            branch_name="my-branch",
+            branch_prefix=None,
+            base_branch="main",
+            project_id="proj-123",
+            project_path="/path/to/main/repo",
+            provider="claude",
+            parent_session_id="sess-456",
+        )
+
+        with patch(
+            "gobby.agents.isolation_clone.cleanup_checkout_cargo_target_dir",
+            return_value="permission denied",
+        ) as cleanup_target:
+            with (
+                patch(
+                    "gobby.agents.isolation_repair._copy_cli_hooks",
+                    side_effect=OSError("Permission denied"),
+                ),
+                pytest.raises(OSError, match="Permission denied"),
+            ):
+                await handler.prepare_environment(config)
+            await handler.cleanup_environment(config)
+
+        assert handler._partial_clones == {}
+        mock_clone_manager.delete_clone.assert_called_once()
+        delete_kwargs = mock_clone_manager.delete_clone.call_args.kwargs
+        deleted_path = Path(delete_kwargs["clone_path"])
+        assert deleted_path.name.startswith("my-branch-")
+        assert delete_kwargs["force"] is True
+        cleanup_target.assert_called_once_with(deleted_path, "proj-123")
+        mock_clone_storage.mark_cleanup.assert_called_once_with("clone-123")
+        mock_clone_storage.delete.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_partial_cleanup_keeps_surviving_clone_visible_for_retry(
+        self, tmp_path: Path
+    ) -> None:
+        clone_path = tmp_path / "partial-clone"
+        clone_path.mkdir()
+        mock_clone_manager = MagicMock(spec=CloneGitManager)
+        mock_clone_manager.delete_clone.return_value = MagicMock(success=False)
+        mock_clone_storage = MagicMock()
+        handler = CloneIsolationHandler(
+            clone_manager=mock_clone_manager,
+            clone_storage=mock_clone_storage,
+        )
+        config = SpawnConfig(
+            prompt="Test",
+            task_id=None,
+            task_title=None,
+            task_seq_num=None,
+            branch_name="my-branch",
+            branch_prefix=None,
+            base_branch="main",
+            project_id="proj-123",
+            project_path="/path/to/main/repo",
+            provider="claude",
+            parent_session_id="sess-456",
+        )
+        handler._partial_clones[spawn_state_key(config)] = {
+            "id": "clone-123",
+            "path": str(clone_path),
+            "branch": "my-branch",
+        }
+
+        with patch(
+            "gobby.agents.isolation_clone.cleanup_checkout_cargo_target_dir"
+        ) as cleanup_target:
+            await handler.cleanup_environment(config)
+
+        assert clone_path.is_dir()
+        assert handler._partial_clones == {}
+        assert mock_clone_manager.delete_clone.call_count == 1
+        assert cleanup_target.call_count == 0
+        assert mock_clone_storage.mark_cleanup.call_count == 0
+        assert mock_clone_storage.delete.call_count == 0
+        mock_clone_manager.delete_clone.assert_called_once_with(
+            clone_path=str(clone_path),
+            force=True,
+        )
+        mock_clone_storage.mark_cleanup.assert_not_called()
+        cleanup_target.assert_not_called()
+        mock_clone_storage.delete.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_cleanup_noop_on_success(self) -> None:

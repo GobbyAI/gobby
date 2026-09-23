@@ -426,7 +426,7 @@ class TestRegisterTerminalTools:
         assert result["command"] == "/clear"
         send_command.assert_not_awaited()
 
-    def test_send_keys_uses_tmux_manager_for_recorded_socket(self) -> None:
+    def assert_send_keys_preserves_raw_tmux_fallback_after_native_lookup(self) -> None:
         """Interactive sessions should route through the manager for their recorded tmux server."""
         registry = _TestRegistry(name="test", description="test")
 
@@ -449,6 +449,9 @@ class TestRegisterTerminalTools:
         tmux_manager = MagicMock()
         tmux_manager.send_keys = AsyncMock(return_value=True)
         tmux_manager.dispatch_keys = tmux_manager.send_keys
+        terminal_manager = MagicMock()
+        terminal_manager.resolve_live_for_session.return_value = None
+        write_coordinator = MagicMock()
 
         with (
             patch(
@@ -457,7 +460,11 @@ class TestRegisterTerminalTools:
             ),
         ):
             register_terminal_tools(
-                registry, session_manager, MagicMock(fetchone=MagicMock(return_value=None))
+                registry,
+                session_manager,
+                MagicMock(fetchone=MagicMock(return_value=None)),
+                terminal_manager=terminal_manager,
+                write_coordinator=write_coordinator,
             )
 
         send_keys_metadata = registry.get_tool_metadata("send_keys")
@@ -487,6 +494,8 @@ class TestRegisterTerminalTools:
 
         assert result["success"] is True
         assert isinstance(result["idempotency_key"], str)
+        terminal_manager.resolve_live_for_session.assert_called_once_with(session)
+        write_coordinator.write.assert_not_called()
         mock_get_tmux_manager.assert_called_once_with(session.terminal_context)
         tmux_manager.send_keys.assert_awaited_once_with("%12", "hello\n", literal=True)
 
@@ -810,6 +819,10 @@ class TestRegisterTerminalTools:
         assert result["success"] is False
         assert result["error_code"] == "no_live_pane_or_transcript"
         assert result["transcript_error"] == "missing_transcript_path"
+
+
+def test_send_keys_preserves_raw_tmux_fallback_after_native_lookup() -> None:
+    TestRegisterTerminalTools().assert_send_keys_preserves_raw_tmux_fallback_after_native_lookup()
 
 
 class TestSetHandoffFeedback:

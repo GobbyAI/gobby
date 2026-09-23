@@ -54,6 +54,7 @@ def create_metrics_registry(
 
     @registry.tool(
         name="get_tool_metrics",
+        read_only=True,
         description="Get metrics for MCP tools including call count, success rate, and latency.",
     )
     def get_tool_metrics(
@@ -84,6 +85,7 @@ def create_metrics_registry(
 
     @registry.tool(
         name="get_provider_capacity",
+        read_only=True,
         description="Get normalized provider usage capacity without starting an agent turn.",
     )
     async def get_provider_capacity(provider: str) -> dict[str, object]:
@@ -99,6 +101,7 @@ def create_metrics_registry(
 
     @registry.tool(
         name="get_top_tools",
+        read_only=True,
         description="Get top tools by usage, success rate, or latency.",
     )
     def get_top_tools(
@@ -133,6 +136,7 @@ def create_metrics_registry(
 
     @registry.tool(
         name="get_failing_tools",
+        read_only=True,
         description="Get tools with high failure rates above a threshold.",
     )
     def get_failing_tools(
@@ -168,6 +172,7 @@ def create_metrics_registry(
 
     @registry.tool(
         name="get_tool_success_rate",
+        read_only=True,
         description="Get success rate for a specific tool.",
     )
     def get_tool_success_rate(
@@ -307,6 +312,7 @@ def create_metrics_registry(
 
     @registry.tool(
         name="get_retention_stats",
+        read_only=True,
         description="Get statistics about metrics retention and age.",
     )
     def get_retention_stats() -> dict[str, Any]:
@@ -325,6 +331,7 @@ def create_metrics_registry(
     # Usage reporting tools (only available if session_storage provided)
     @registry.tool(
         name="get_usage_report",
+        read_only=True,
         description="Get token usage report for a specified time period.",
     )
     def get_usage_report(days: int = 1) -> dict[str, Any]:
@@ -350,6 +357,7 @@ def create_metrics_registry(
 
     @registry.tool(
         name="get_session_tools",
+        read_only=True,
         description="Get per-tool call breakdown for a specific session.",
     )
     def get_session_tools(session_id: str) -> dict[str, Any]:
@@ -377,6 +385,7 @@ def create_metrics_registry(
 
     @registry.tool(
         name="get_rule_metrics",
+        read_only=True,
         description="Get historical rule block counts and block latency.",
     )
     def get_rule_metrics(
@@ -412,6 +421,7 @@ def create_metrics_registry(
 
     @registry.tool(
         name="get_skill_metrics",
+        read_only=True,
         description="Get skill search and invocation stats.",
     )
     def get_skill_metrics(
@@ -449,6 +459,7 @@ def create_metrics_registry(
 
     @registry.tool(
         name="get_metrics_timeseries",
+        read_only=True,
         description="Get time-bucketed metrics for dashboard charts. Supports 1h/6h/12h/24h/7d/30d/all ranges.",
     )
     def get_metrics_timeseries(

@@ -61,9 +61,13 @@ prompts:
 
     Handoff:
     Inspect the assigned task's stage manifest. If the current development row has
-    no review gate, commit the implementation, run close_task with preview=false,
-    and repair every blocker until that call closes the task. If review is
-    enabled, commit the implementation and call
+    no review gate, commit the implementation, run close_task with preview=true,
+    and repair every deterministic blocker. When preview passes, repeat the same
+    close with preview=false. If it returns close_review_required, call
+    wait_for_agent once with reviewer_run_id and yield; after delivery, call
+    get_task. Repair reviewer feedback and restart the preview when the task is
+    still open, or finish when it is closed. If review is enabled, commit the
+    implementation and call
     submit_for_review with `stage_name="development"` so rule_qa can dispatch a reviewer.
 
     Boundaries:
@@ -218,7 +222,9 @@ step_workflow:
       status_message: |
         Implement the backend leaf. Commit changes, then inspect the assigned task
         manifest. If development review is disabled, call close_task with
-        preview=false and commit_sha, then repair every blocker until it closes;
+        preview=true and commit_sha, repair deterministic blockers, then repeat
+        with preview=false. Wait once on reviewer_run_id when review is required,
+        then read the task after delivery;
         otherwise submit_for_review(stage_name="development") for QA.
         Message the parent with target=parent.
         Sending the parent a task_blocker message ends this run after delivery;
@@ -240,6 +246,14 @@ step_workflow:
               tool_output.get('closed') is True
               or (tool_output.get('result') or {}).get('closed') is True
             )
+          action: set_variable
+          variable: implementation_complete
+          value: true
+        - server: gobby-tasks
+          tool: get_task
+          when: >-
+            tool_input.get('task_id') in (vars.get('assigned_task_id'), vars.get('assigned_task_uuid'))
+            and ((tool_output.get('result') or {}).get('state') or {}).get('is_closed') is True
           action: set_variable
           variable: implementation_complete
           value: true

@@ -51,7 +51,7 @@ impl Pane {
         self.attach_retry_at = None;
         self.live = false;
         self.control = ControlState::Observe;
-        self.pending_input = None;
+        self.clear_pending_input();
         self.status_message = None;
     }
 
@@ -73,7 +73,7 @@ impl Pane {
         self.live = true;
         self.control = ControlState::Observe;
         self.take_back = false;
-        self.pending_input = None;
+        self.clear_pending_input();
         self.status_message = None;
         self.attach_retry_at = None;
         self.attach_retry_delay = ATTACH_RETRY_BASE;
@@ -104,7 +104,7 @@ impl Pane {
         self.live = false;
         self.control = ControlState::Observe;
         self.take_back = false;
-        self.pending_input = None;
+        self.clear_pending_input();
         let _ = self.take_frame_source();
         Some((old_attachment_id, generation))
     }
@@ -135,7 +135,7 @@ impl Pane {
         self.live = false;
         self.control = ControlState::Observe;
         self.take_back = false;
-        self.pending_input = None;
+        self.clear_pending_input();
         self.in_flight_write = None;
         self.status_message = reason;
         let _ = self.take_frame_source();
@@ -147,7 +147,7 @@ impl Pane {
         self.live = false;
         self.control = ControlState::Observe;
         self.take_back = false;
-        self.pending_input = None;
+        self.clear_pending_input();
         self.in_flight_write = None;
         self.status_message = Some(format!("{code}: {reason}"));
         let _ = self.take_frame_source();
@@ -177,7 +177,7 @@ impl Pane {
     pub(super) fn clear_control(&mut self, reason: impl Into<String>) {
         self.control = ControlState::Observe;
         self.take_back = false;
-        self.pending_input = None;
+        self.clear_pending_input();
         self.in_flight_write = None;
         self.status_message = Some(reason.into());
     }

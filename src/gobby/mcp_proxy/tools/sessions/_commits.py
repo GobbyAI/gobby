@@ -64,6 +64,7 @@ def register_commits_tools(
 
     @registry.tool(
         name="get_session_commits",
+        read_only=True,
         description="Get git commits made during a session timeframe. Accepts <project>#N, local #N/N, UUID, or prefix for session_id.",
     )
     async def get_session_commits(

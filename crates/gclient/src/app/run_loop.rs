@@ -120,7 +120,11 @@ fn route_scripted_input(
     {
         return Ok(false);
     }
-    if let Some(input) = key_input(event, KeyboardProtocol::Legacy) {
+    let protocol = chrome
+        .focused_pane()
+        .map(|pane_id| workspace.pane(pane_id).keyboard_protocol())
+        .unwrap_or(KeyboardProtocol::Legacy);
+    if let Some(input) = key_input(event, protocol) {
         let outcome = route_modal_key(&*workspace, chrome, &input);
         if outcome != ModalOutcome::Passthrough {
             *prefix_armed = false;

@@ -79,6 +79,9 @@ class _PausedCloseFrame:
         await self.read_forever.wait()
         return {}
 
+    async def read_relay_message(self) -> dict[str, Any]:
+        return await self.read_message()
+
     async def close(self) -> None:
         self.close_started.set()
         await self.release_close.wait()

@@ -40,7 +40,9 @@ from .handoff import (
 )
 from .profile import seed_user_profile_content
 from .terminal_runtime import (
+    discover_and_bind_external_terminal,
     expire_stale_terminal_sessions_for_context,
+    retry_native_terminal_bind,
     session_start_is_nested_cli_child,
 )
 from .transcripts import replace_session_message_processor
@@ -322,39 +324,12 @@ def activate_materialized_session(
             None,
         )
 
-    # handler is typed Any and the mixins never declare terminal_manager; only
-    # the concrete HookEventHandlers assigns it. Match _session_end.py:192 so a
-    # handler without the attribute takes the same skip path as one holding None.
-    terminal_manager = getattr(handler, "terminal_manager", None)
-    pending_native_terminal_bind: tuple[str, str] | None = None
-    if (
-        terminal_manager is not None
-        and isinstance(terminal_context, dict)
-        and isinstance(project_id, str)
-        and session_id
-    ):
-        from gobby.storage.terminals import ProjectOwnershipConflictError
-        from gobby.terminals.discovery import seed_external_terminal
-
-        try:
-            seed_external_terminal(
-                terminal_manager,
-                project_id=project_id,
-                session_id=session_id,
-                terminal_context=terminal_context,
-            )
-        except ProjectOwnershipConflictError:
-            handler.logger.info("external terminal discovery conflict for session %s", session_id)
-        # tmux identity wins: a tmux started by hand inside a pane is the
-        # session's innermost terminal, so the outer native row stays unbound.
-        native_terminal_id = terminal_context.get("gobby_terminal_id")
-        if (
-            isinstance(native_terminal_id, str)
-            and native_terminal_id
-            and not terminal_context.get("tmux_pane")
-            and terminal_manager.bind_session(native_terminal_id, session_id, project_id) is None
-        ):
-            pending_native_terminal_bind = (native_terminal_id, project_id)
+    pending_native_terminal_bind = discover_and_bind_external_terminal(
+        handler,
+        session_id=session_id,
+        project_id=project_id,
+        terminal_context=terminal_context,
+    )
 
     handler._setup_code_index(session_id, project_id)
 
@@ -400,12 +375,11 @@ def activate_materialized_session(
     )
     # A reused native terminal can still be held by the live predecessor until
     # context expiry; retry only the bind that the ownership guard refused.
-    if pending_native_terminal_bind is not None and terminal_manager is not None:
-        native_terminal_id, native_project_id = pending_native_terminal_bind
-        if terminal_manager.bind_session(native_terminal_id, session_id, native_project_id) is None:
-            handler.logger.info(
-                "native terminal %s not bound to session %s", native_terminal_id, session_id
-            )
+    retry_native_terminal_bind(
+        handler,
+        session_id=session_id,
+        pending_bind=pending_native_terminal_bind,
+    )
     if session_obj:
         _schedule_tmux_window_rename_for_session(handler, session_obj)
 

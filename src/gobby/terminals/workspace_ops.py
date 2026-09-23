@@ -37,7 +37,6 @@ from gobby.agents.constants import (
     GOBBY_WORKSPACE_ID,
 )
 from gobby.agents.detection.safe_regex import InvalidPatternError, RegexOutcome, compile_safe_regex
-from gobby.servers.websocket.terminal_ws_create import kill_terminal
 from gobby.storage.machines import Machine, MachineNotRegisteredError
 from gobby.storage.project_checkouts import (
     CheckoutNotFoundError,
@@ -74,6 +73,7 @@ from gobby.terminals.runtime import (
     UnregisteredBackendError,
     is_named_key,
 )
+from gobby.terminals.termination import kill_terminal
 from gobby.terminals.web_spawn import spawn_web_terminal
 from gobby.terminals.write_coordinator import (
     IdempotencyConflictError,
@@ -93,7 +93,13 @@ IDEMPOTENCY_KEY_PATTERN = re.compile(r"[A-Za-z0-9._:-]{1,128}\Z")
 _ACTIVE_STATES = frozenset({"pending", "live"})
 
 WorkspaceOpErrorCode = Literal[
-    "not_found", "invalid_ref", "invalid_op", "terminal_failed", "busy", "forbidden"
+    "not_found",
+    "invalid_ref",
+    "invalid_op",
+    "terminal_failed",
+    "busy",
+    "forbidden",
+    "shutdown_in_progress",
 ]
 WorkspaceEventKind = Literal[
     "workspace.created",

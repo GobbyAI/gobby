@@ -163,7 +163,7 @@ class TestSpawnAgentImplErrorBranches:
                 },
             ),
             patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.resolve_task_id_for_mcp",
+                "gobby.mcp_proxy.tools.spawn_agent._spawn_guards.resolve_task_id_for_mcp",
                 side_effect=TaskNotFoundError("Task #99999 not found in project"),
             ),
             patch(
@@ -225,6 +225,7 @@ class TestSpawnAgentImplErrorBranches:
 
         mock_wt = MagicMock()
         mock_wt.id = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01"
+        mock_wt.project_id = "11111111-1111-4111-8111-111111110001"
         mock_wt.worktree_path = str(tmp_path / "nonexistent_dir")
         mock_wt.branch_name = "test-branch"
 
@@ -232,10 +233,33 @@ class TestSpawnAgentImplErrorBranches:
         worktree_storage.resolve_reference.side_effect = lambda ref: ref
         worktree_storage.get.return_value = mock_wt
 
-        with patch(
-            "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context",
-            return_value={"id": "11111111-1111-4111-8111-111111110001", "project_path": "/path"},
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context",
+                return_value={
+                    "id": "11111111-1111-4111-8111-111111110001",
+                    "project_path": "/path",
+                },
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation."
+                "cleanup_checkout_cargo_target_dir",
+                side_effect=["permission denied", None],
+            ) as cleanup_target,
         ):
+            failed = await spawn_agent_impl(
+                terminal_backend="tmux",
+                prompt="test",
+                runner=runner,
+                provider="claude",
+                parent_session_id="sess-1",
+                worktree_id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
+                worktree_storage=worktree_storage,
+            )
+            assert failed["success"] is False
+            assert failed["error_code"] == "cargo_target_cleanup_failed"
+            worktree_storage.delete.assert_not_called()
+
             result = await spawn_agent_impl(
                 terminal_backend="tmux",
                 prompt="test",
@@ -247,6 +271,7 @@ class TestSpawnAgentImplErrorBranches:
             )
             assert result["success"] is False
             assert "missing" in result["error"].lower()
+            assert cleanup_target.call_count == 2
             worktree_storage.delete.assert_called_once_with("eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01")
 
     @pytest.mark.asyncio
@@ -286,16 +311,40 @@ class TestSpawnAgentImplErrorBranches:
 
         mock_clone = MagicMock()
         mock_clone.id = "clone-1"
+        mock_clone.project_id = "11111111-1111-4111-8111-111111110001"
         mock_clone.clone_path = str(tmp_path / "nonexistent_clone")
         mock_clone.branch_name = "test-branch"
 
         clone_storage = MagicMock()
         clone_storage.get.return_value = mock_clone
 
-        with patch(
-            "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context",
-            return_value={"id": "11111111-1111-4111-8111-111111110001", "project_path": "/path"},
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context",
+                return_value={
+                    "id": "11111111-1111-4111-8111-111111110001",
+                    "project_path": "/path",
+                },
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation."
+                "cleanup_checkout_cargo_target_dir",
+                side_effect=["permission denied", None],
+            ) as cleanup_target,
         ):
+            failed = await spawn_agent_impl(
+                terminal_backend="tmux",
+                prompt="test",
+                runner=runner,
+                provider="claude",
+                parent_session_id="sess-1",
+                clone_id="clone-1",
+                clone_storage=clone_storage,
+            )
+            assert failed["success"] is False
+            assert failed["error_code"] == "cargo_target_cleanup_failed"
+            clone_storage.delete.assert_not_called()
+
             result = await spawn_agent_impl(
                 terminal_backend="tmux",
                 prompt="test",
@@ -307,6 +356,7 @@ class TestSpawnAgentImplErrorBranches:
             )
             assert result["success"] is False
             assert "missing" in result["error"].lower()
+            assert cleanup_target.call_count == 2
             clone_storage.delete.assert_called_once_with("clone-1")
 
     @pytest.mark.asyncio
@@ -892,7 +942,7 @@ test"""
                 },
             ),
             patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.resolve_task_id_for_mcp",
+                "gobby.mcp_proxy.tools.spawn_agent._spawn_guards.resolve_task_id_for_mcp",
                 return_value="task-1",
             ),
             patch(

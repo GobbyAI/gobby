@@ -951,8 +951,8 @@ class TestPullPromptFallback:
 
         assert await _send_pull_prompt(tmux, on_send_failure=lambda: failures.append(0)) is False
         assert failures == [0]
-        # Every rung ran: the write and its Enter, then a drain, a retype and its Enter.
-        assert tmux.typed == [f"{_PULL_PROMPT}\n", f"{_PULL_PROMPT}\n"]
+        # The held draft gets one bare-Enter retry, without a retype.
+        assert tmux.typed == [f"{_PULL_PROMPT}\n"]
         assert tmux.enters == 2
         # The draft is ours, so it is drained before the durable fallback delivers it.
         assert tmux.sent_keys[-len(_CLAUDE_DRAIN) :] == _CLAUDE_DRAIN

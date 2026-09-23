@@ -905,6 +905,7 @@ class TestSendMessage:
                 "delivered": True,
                 "method": "tmux_pane",
                 "session_status": "paused",
+                "message_id": result["message_ids"][0],
             }
         ]
         tmux_pane_sender.assert_awaited_once_with(
@@ -1158,6 +1159,67 @@ class TestSendMessage:
         assert retrieved["success"] is True
         assert retrieved["message"]["id"] == created.id
         mock_message_manager.mark_delivered_batch.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_brief_response_reports_correlated_wake_decline(
+        self,
+        mock_session_manager,
+        mock_message_manager,
+        mock_db,
+    ) -> None:
+        from gobby.mcp_proxy.tools.agent_messaging import add_messaging_tools
+
+        registry = InternalToolRegistry(name="gobby-agents", description="Agent messaging v2")
+        wake_dispatcher = WakeDispatcher(
+            session_manager=mock_session_manager,
+            ism_manager=mock_message_manager,
+        )
+        add_messaging_tools(
+            registry=registry,
+            message_manager=mock_message_manager,
+            session_manager=mock_session_manager,
+            db=mock_db,
+            wake_dispatcher=wake_dispatcher,
+        )
+        mock_message_manager.create_message.return_value = MockMessage(id="msg-declined")
+        mock_session_manager.get.side_effect = lambda session_id: {
+            "s-from": MockSession(
+                id="s-from",
+                project_id="11111111-1111-4111-8111-111111110001",
+            ),
+            "s-to": MockSession(
+                id="s-to",
+                project_id="11111111-1111-4111-8111-111111110001",
+                status="active",
+            ),
+        }.get(session_id)
+
+        result = await registry.call(
+            "send_message",
+            {
+                "from_session": "s-from",
+                "target": "session",
+                "target_id": "s-to",
+                "wake": True,
+                "content": "hello",
+            },
+        )
+
+        assert result["success"] is True
+        assert result["delivery_status"] == "sent_with_declined_wakes"
+        assert result["wake_declines"] == [
+            {
+                "session_id": "s-to",
+                "delivered": False,
+                "method": "next_call_context",
+                "skipped": "session_active",
+                "ism_persisted": True,
+                "decline_reason": "session_active",
+                "session_status": "active",
+                "message_id": "msg-declined",
+            }
+        ]
+        assert "wake_failures" not in result
 
     @pytest.mark.asyncio
     async def test_send_message_different_project_delivered(
@@ -1528,7 +1590,7 @@ class TestGetInterSessionMessage:
 class TestToolRegistration:
     """All expected tools are registered."""
 
-    def test_all_tools_registered(self, messaging_registry) -> None:
+    def test_all_tools_registered(self, messaging_registry: InternalToolRegistry) -> None:
         tools = messaging_registry.list_tools()
         tool_names = {t["name"] for t in tools}
 

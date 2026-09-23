@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from gobby.agents.cargo_target import cleanup_checkout_cargo_target_dir
 from gobby.agents.isolation_models import (
     IsolationContext,
     IsolationHandler,
@@ -108,6 +109,16 @@ class CloneIsolationHandler(IsolationHandler):
                     existing.clone_path,
                     existing.id,
                 )
+                cargo_error = await asyncio.to_thread(
+                    cleanup_checkout_cargo_target_dir,
+                    Path(existing.clone_path),
+                    existing.project_id,
+                )
+                if cargo_error is not None:
+                    raise RuntimeError(
+                        "cargo_target_cleanup_failed: Clone files were already absent, but "
+                        f"Cargo target cleanup failed: {cargo_error}"
+                    )
                 await asyncio.to_thread(self._clone_storage.delete, existing.id)
 
         # Determine base branch - use parent's current branch if default "main" was passed
@@ -215,18 +226,45 @@ class CloneIsolationHandler(IsolationHandler):
             return
         clone_path = partial_state.get("path")
         clone_id = partial_state.get("id")
+        files_deleted = not clone_path or not Path(clone_path).exists()
 
         if clone_path:
             try:
-                await self._clone_manager.delete_clone(
+                result = await self._clone_manager.delete_clone(
                     clone_path=clone_path,
                     force=True,
                 )
-                logger.info("Cleaned up partial clone: %s", clone_path)
+                files_deleted = bool(result.success) or not Path(clone_path).exists()
+                if files_deleted:
+                    logger.info("Cleaned up partial clone: %s", clone_path)
+                else:
+                    logger.warning("Failed to clean up clone %s: %s", clone_path, result)
             except Exception as e:
                 logger.warning("Failed to clean up clone %s: %s", clone_path, e)
 
-        if clone_id:
+        record_terminal = clone_id is None
+        if clone_id and files_deleted:
+            try:
+                terminal = await asyncio.to_thread(self._clone_storage.mark_cleanup, clone_id)
+                record_terminal = terminal is not None
+            except Exception as e:
+                logger.warning("Failed to mark partial clone %s for cleanup: %s", clone_id, e)
+
+        cargo_error = None
+        if clone_path and files_deleted:
+            cargo_error = await asyncio.to_thread(
+                cleanup_checkout_cargo_target_dir,
+                Path(clone_path),
+                config.project_id,
+            )
+            if cargo_error is not None:
+                logger.warning(
+                    "cargo_target_cleanup_failed for deleted clone %s: %s",
+                    clone_path,
+                    cargo_error,
+                )
+
+        if clone_id and files_deleted and cargo_error is None and record_terminal:
             try:
                 await asyncio.to_thread(self._clone_storage.delete, clone_id)
                 logger.info("Cleaned up clone storage record: %s", clone_id)

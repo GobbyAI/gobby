@@ -1,6 +1,6 @@
 //! 4.2.1: committed screen goldens for the whole gclient chrome.
 //!
-//! Five scripted workspace states render through the real `render_workspace`
+//! Six scripted workspace states render through the real `render_workspace`
 //! into a 120x40 `TestBackend`, then serialise one line per row: the glyphs,
 //! then the run-length-encoded style of every cell with each colour normalised
 //! to its `theme::Palette` role name.
@@ -17,7 +17,10 @@
 //! Regenerate with:
 //!   `GOBBY_UPDATE_SCREENS=1 cargo nextest run -p gobby-client --test screens`
 
-use gobby_client::daemon::{Checkout, ProjectRow, SidebarRows, SourceStatus, WorktreeRow};
+use gobby_client::app::ControlState;
+use gobby_client::daemon::{
+    Checkout, ProjectRow, SessionRow, SidebarRows, SourceStatus, WorktreeRow,
+};
 use gobby_client::theme::{Palette, Theme, ThemeKind};
 use gobby_client::ui::chrome::Mode;
 use gobby_client::ui::{render_workspace, Chrome};
@@ -41,12 +44,13 @@ const UPDATE_ENV: &str = "GOBBY_UPDATE_SCREENS";
 type ScriptedState = fn() -> (Workspace, Chrome);
 
 /// The scripted states, in the order the plan names them.
-const STATES: [(&str, ScriptedState); 5] = [
+const STATES: [(&str, ScriptedState); 6] = [
     ("empty_workspace", empty_workspace),
     ("projects_agents", projects_agents),
     ("split_live", split_live),
     ("help_dialog", help_dialog),
     ("label_ladder", label_ladder),
+    ("pane_edges", pane_edges),
 ];
 
 // ---------------------------------------------------------------- the states
@@ -123,9 +127,9 @@ fn projects_agents() -> (Workspace, Chrome) {
 /// Two live panes split in the first tab, with a second tab behind them.
 ///
 /// `open_terminal` attaches direct and pushes the first frame, so both panes
-/// are already live; reattaching `term-beta` moves it to the proxy transport
-/// and focusing it puts that transport in the status line, which is the field
-/// that distinguishes the two attach paths.
+/// are already live; `term-beta` is reattached through the proxy and focused,
+/// which draws its focus marker and `Focused` metadata. The transport itself
+/// is not drawn: the operator cannot act on it.
 fn split_live() -> (Workspace, Chrome) {
     let (mut ws, mut chrome) = projects_agents();
     let alpha = ws.pane_for_terminal("term-alpha").expect("term-alpha pane");
@@ -146,8 +150,8 @@ fn split_live() -> (Workspace, Chrome) {
 /// under a name and keeps it. This one takes those names away so the
 /// rungs below get their turn — `term-alpha` hosts a `codex` session,
 /// `term-beta` has `nvim` in its foreground, and `term-gamma` has nothing left
-/// to say and falls to the literal. Focus sits on `term-gamma` so the status
-/// line carries that literal too, and no row here can be an id.
+/// to say and falls to the literal. Focus sits on `term-gamma`, and no row
+/// here can be an id.
 ///
 /// The second reconcile is the roster refresh that follows an attach, and it
 /// is the only point at which a provider can reach a pane: the first one ran
@@ -189,6 +193,56 @@ fn label_ladder() -> (Workspace, Chrome) {
     }
     let gamma = ws.pane_for_terminal("term-gamma").expect("term-gamma pane");
     assert!(chrome.focus_pane(gamma), "focus term-gamma");
+    (ws, chrome)
+}
+
+/// The pane edges with pane gaps off, where they share lines: two panes
+/// stacked in one tab.
+///
+/// The upper pane hosts a session whose Unicode title outranks the pane's
+/// name. Its lease is lost, so its metadata reads `Read-only` in the warning
+/// tone. It shares its bottom line with the pane below, so that metadata sits
+/// top-right beside the title. The focused lower pane runs under tmux and
+/// keeps `tmux · Focused` bottom-right. The Sessions row puts the same title
+/// behind its stationary `#1742:` prefix.
+fn pane_edges() -> (Workspace, Chrome) {
+    let mut ws = Workspace::scripted();
+    let mut rows = project_rows();
+    rows.sessions.insert(
+        "proj-alpha".to_string(),
+        vec![SessionRow {
+            id: "sess-alpha".to_string(),
+            reference: Some("#1742".to_string()),
+            title: Some("Ship the Unicode 修复 to pane headers".to_string()),
+            status: "active".to_string(),
+            ..SessionRow::default()
+        }],
+    );
+    ws.daemon_mut().set_sidebar_rows(rows);
+    ws.daemon_mut().set_roster(json!({
+        "epoch": "e1",
+        "seq": 1,
+        "entries": [{
+            "entry_id": "session:sess-alpha",
+            "session_id": "sess-alpha",
+            "terminal": {"terminal_id": "term-alpha", "backend": "native"}
+        }]
+    }));
+    ws.select_project("proj-alpha");
+    ws.reconcile_subscribe_first().expect("install roster");
+    ws.open_terminal("term-alpha", "native", "epoch")
+        .expect("open term-alpha");
+    ws.open_terminal("term-beta", "tmux", "epoch")
+        .expect("open term-beta");
+    let alpha = ws.pane_for_terminal("term-alpha").expect("term-alpha pane");
+    let beta = ws.pane_for_terminal("term-beta").expect("term-beta pane");
+    ws.pane_mut(alpha).control = ControlState::LeaseLost;
+
+    let mut chrome = Chrome::dark();
+    chrome.prefs.pane_gaps = false;
+    chrome.open_pane(alpha, "alpha");
+    chrome.open_pane_below(beta, "alpha");
+    assert!(chrome.focus_pane(beta), "focus term-beta");
     (ws, chrome)
 }
 

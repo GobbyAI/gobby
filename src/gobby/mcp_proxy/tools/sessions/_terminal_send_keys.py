@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from uuid import uuid4
 
 from gobby.agents.tmux.session_manager import TmuxSessionManager
+from gobby.events.wake_terminal_resolution import resolve_session_terminal_route
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.terminals.actor_scope import SESSION_ACTOR_PREFIX, ActorScopeError, resolve_actor_scope
 from gobby.terminals.lookup import manager_for_terminal_context
@@ -185,8 +186,16 @@ def register_send_keys_tool(
             }
 
         assert resolved_session_id is not None
-        if write_coordinator is not None and terminal_manager is not None:
-            terminal = terminal_manager.get_live_for_session(resolved_session_id)
+        target_session = session_manager.get(resolved_session_id)
+        if (
+            write_coordinator is not None
+            and terminal_manager is not None
+            and target_session is not None
+        ):
+            terminal = resolve_session_terminal_route(
+                target_session,
+                terminal_manager,
+            ).managed_terminal
             if terminal is not None:
                 kind: Literal["text", "key", "paste"] = "text"
                 payload = keys

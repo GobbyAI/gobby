@@ -92,6 +92,11 @@ class ToolProxyService:
         self._operation_context_factory = operation_context_factory
 
     @property
+    def internal_manager(self) -> "InternalRegistryManager | None":
+        """Return the registry manager used for internal tool dispatch."""
+        return self._internal_manager
+
+    @property
     def session_manager(self) -> "SessionManager | None":
         """Expose the runtime session manager for shared context helpers."""
         session_manager = cast(

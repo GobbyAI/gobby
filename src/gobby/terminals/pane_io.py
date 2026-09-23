@@ -31,6 +31,7 @@ __all__ = [
     "COMPOSER_NOT_CLEAN_ERROR_CODE",
     "DEFAULT_SNAPSHOT_LINES",
     "SUBMIT_ENTER_GAP_SECONDS",
+    "SUBMIT_HELD_RETRY_SECONDS",
     "SUBMIT_VERIFY_SECONDS",
     "TEXT_NOT_SUBMITTED_ERROR_CODE",
     "ComposerReader",
@@ -68,6 +69,7 @@ ComposerVerdict = Literal["left", "held", "unreadable"]
 COMPOSER_MATCH_CHARS = 24
 #: How long a submitted text is given to leave the composer before the next rung.
 SUBMIT_VERIFY_SECONDS = 2.0
+SUBMIT_HELD_RETRY_SECONDS = 30.0
 _SUBMIT_VERIFY_POLL_SECONDS = 0.1
 #: Gap held between the write and its Enter. Claude Code folds a newline into any
 #: single stdin read of 64 bytes or more and inserts the whole run literally (read
@@ -321,55 +323,64 @@ async def submit_text(
 
     Only after the Enter is the composer read back, because only then does a read
     mean anything. ``left`` is proof. A draft that still starts with the text after
-    the verify window is a newline the CLI kept, so the composer is drained and the
-    text goes in once more before the ladder reports ``command_not_submitted`` and
-    the caller's durable fallback delivers it. A frame the manifest cannot classify
-    after the Enter is not evidence of a failure: the write and the key were both
-    delivered, so the text is reported submitted with a warning rather than retyped
-    into a composer that may already have taken it. Without a ``composer_read`` the
-    delivered write and key are all there is.
+    the verify window means the CLI has not accepted the Enter yet, so bare Enters
+    are re-sent and verified until the draft leaves or
+    ``SUBMIT_HELD_RETRY_SECONDS`` is spent. The text is never retyped. A frame the
+    manifest cannot classify after an Enter is not evidence of a failure: the write
+    and key were both delivered, so the text is reported submitted with a warning.
+    Without a ``composer_read`` the delivered write and key are all there is.
     """
-    for attempt in range(2):
-        if attempt:
-            logger.warning(
-                "Session %s still held %s in its composer after Enter; draining and retyping",
-                session_id,
-                label,
-            )
-            cleared, clear_reason = await clear_composer(pane, cli_source)
-            if not cleared:
-                log_pane_failure(pane, session_id, "clearing the composer", clear_reason)
-                return SubmitResult(
-                    False,
-                    f"composer could not be cleared before {label}: {clear_reason}",
-                    COMPOSER_NOT_CLEAN_ERROR_CODE,
-                )
-        ok, reason = await pane.type_text(f"{text}\n")
-        if not ok:
-            log_pane_failure(pane, session_id, f"typing {label}", reason)
-            return SubmitResult(False, reason)
-        await asyncio.sleep(SUBMIT_ENTER_GAP_SECONDS)
+    ok, reason = await pane.type_text(f"{text}\n")
+    if not ok:
+        log_pane_failure(pane, session_id, f"typing {label}", reason)
+        return SubmitResult(False, reason)
+    await asyncio.sleep(SUBMIT_ENTER_GAP_SECONDS)
+
+    enter_count = 0
+    verify_window = max(verify_seconds, 0.0)
+    held_seconds = 0.0
+    retried_zero_window = False
+    while True:
         ok, reason = await send_pane_key(pane, "enter", session_id, action=f"submitting {label}")
         if not ok:
             return SubmitResult(False, reason)
+        enter_count += 1
         if composer_read is None:
             return SubmitResult(True)
-        verdict = await composer_verdict(pane, text, composer_read, window_seconds=verify_seconds)
+        verdict = await composer_verdict(
+            pane,
+            text,
+            composer_read,
+            window_seconds=verify_window,
+        )
         if verdict == "held":
+            held_seconds += verify_window
+            if verify_window == 0:
+                if retried_zero_window:
+                    break
+                retried_zero_window = True
+            elif held_seconds + verify_window > SUBMIT_HELD_RETRY_SECONDS:
+                break
+            if enter_count == 1:
+                logger.debug(
+                    "Session %s still held %s in its composer after Enter; re-sending Enter",
+                    session_id,
+                    label,
+                )
             continue
         if verdict == "unreadable":
-            logger.warning(
+            logger.debug(
                 "Session %s: composer could not be read after submitting %s; "
                 "trusting the delivered write and Enter",
                 session_id,
                 label,
             )
         else:
-            logger.info(
-                "Session %s submitted %s; the composer was empty after Enter (rung %d)",
+            logger.debug(
+                "Session %s submitted %s after %d Enter(s); the composer left the draft",
                 session_id,
                 label,
-                attempt,
+                enter_count,
             )
         return SubmitResult(True)
     return SubmitResult(

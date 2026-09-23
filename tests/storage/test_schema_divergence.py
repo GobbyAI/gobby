@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import json
+import logging
 import subprocess
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -74,7 +75,9 @@ def _stub_config_projection(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     monkeypatch.setattr(
         "gobby.storage.config_repository.ConfigRepository.read",
-        lambda self, resolve_secrets=False: SimpleNamespace(overrides={}, secret_bindings={}),
+        lambda self, resolve_secrets=False, unknown_keys="raise": SimpleNamespace(
+            overrides={}, secret_bindings={}, unknown_keys=()
+        ),
     )
     monkeypatch.setattr(
         "gobby.storage.config_repository.ConfigRepository.runtime_candidate",
@@ -210,7 +213,9 @@ def test_read_only_operational_config_opens_the_database_without_migrations(
     """gobby status/health/stop must not run a schema apply to read three DB fields."""
     opened: list[bool] = []
     repository = MagicMock()
-    repository.read.return_value = SimpleNamespace(overrides={}, secret_bindings={})
+    repository.read.return_value = SimpleNamespace(
+        overrides={}, secret_bindings={}, unknown_keys=()
+    )
     repository.runtime_candidate.return_value = DaemonConfig()
 
     @contextmanager
@@ -228,11 +233,41 @@ def test_read_only_operational_config_opens_the_database_without_migrations(
     assert isinstance(config, DaemonConfig)
 
 
+def test_read_only_operational_config_tolerates_residual_keys_and_names_them(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The restart's stop half reads here before its start half can drop the row."""
+    repository = MagicMock()
+    repository.read.return_value = SimpleNamespace(
+        overrides={},
+        secret_bindings={},
+        unknown_keys=("gobby-tasks.validation.system_prompt",),
+    )
+    repository.runtime_candidate.return_value = DaemonConfig()
+
+    @contextmanager
+    def open_database(_config_file: object, *, apply_migrations: bool) -> Iterator[MagicMock]:
+        yield MagicMock()
+
+    monkeypatch.setattr("gobby.cli.runtime.runtime_hub_database", open_database)
+    runtime = CliRuntime(config_file=None, config_repository_factory=lambda _db: repository)
+
+    with caplog.at_level(logging.WARNING, logger="gobby.cli.runtime"):
+        config = runtime.read_only_operational_config()
+    runtime.close()
+
+    repository.read.assert_called_once_with(resolve_secrets=True, unknown_keys="skip")
+    assert isinstance(config, DaemonConfig)
+    assert "gobby-tasks.validation.system_prompt" in caplog.text
+
+
 def test_operational_config_still_applies_migrations(monkeypatch: pytest.MonkeyPatch) -> None:
     """gobby start stays fail-closed on the same accessor it uses today."""
     opened: list[bool] = []
     repository = MagicMock()
-    repository.read.return_value = SimpleNamespace(overrides={}, secret_bindings={})
+    repository.read.return_value = SimpleNamespace(
+        overrides={}, secret_bindings={}, unknown_keys=()
+    )
     repository.runtime_candidate.return_value = DaemonConfig()
 
     @contextmanager
@@ -247,6 +282,7 @@ def test_operational_config_still_applies_migrations(monkeypatch: pytest.MonkeyP
     runtime.close()
 
     assert opened == [True]
+    repository.read.assert_called_once_with(resolve_secrets=True, unknown_keys="raise")
     assert isinstance(config, DaemonConfig)
 
 

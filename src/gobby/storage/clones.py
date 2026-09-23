@@ -425,6 +425,18 @@ class LocalCloneManager:
         )
         return [Clone.from_row(row) for row in rows]
 
+    def list_cleanup_pending(self, limit: int = 50) -> list[Clone]:
+        """List terminal cleanup rows for maintenance retry."""
+        rows = self.db.fetchall(
+            """
+            SELECT * FROM clones
+            WHERE status = %s AND machine_id = %s
+            ORDER BY created_at DESC LIMIT %s
+            """,
+            (CloneStatus.CLEANUP.value, require_machine_id(), limit),
+        )
+        return [Clone.from_row(row) for row in rows]
+
     # Allowlist of valid clone column names to prevent SQL injection
     _VALID_UPDATE_FIELDS = frozenset(
         {

@@ -113,38 +113,46 @@ call_tool(server_name="gobby-tasks", tool_name="close_task", arguments={
     "task_id": "#14390",
     "commit_sha": "abc1234",
     "changes_summary": "Refreshed the task guide for stage manifests and MCP-first task flow.",
+    "preview": True,
+})
+```
+
+The `preview=true` call evaluates deterministic gates 1–12: task/session/repository context,
+closed children, criteria and summary, prospective linked commits, clean
+task-attributed files, and transcript-visible validation. It returns the whole
+checklist, resolved commit SHAs, and a transcript evidence summary. Gate 13,
+`close_review`, is `not_run` when the deterministic gates pass. A `preview=true`
+call never closes the task; it also never links a commit or launches a reviewer.
+
+After a clean preview, repeat the close with `preview=false`:
+
+```python
+call_tool(server_name="gobby-tasks", tool_name="close_task", arguments={
+    "task_id": "#14390",
+    "commit_sha": "abc1234",
+    "changes_summary": "Refreshed the task guide for stage manifests and MCP-first task flow.",
     "preview": False,
 })
 ```
 
-The close call evaluates an ordered checklist: task/session/repository
-context, closed children, criteria and summary, linked commits, clean
-task-attributed files, transcript-visible validation, then one bounded criteria
-review. It returns per-item results, resolved commit SHAs, a transcript evidence
-summary, and the verdict. Blocked calls remain read-only and name the first
-repair action. Use `preview=true` for a read-only deterministic check: it never
-launches the reviewer or closes the task, and reports gate 13 as `not_run` when
-gates 1-12 pass. Use `preview=false` when the call should proceed through review
-and close when ready.
+The real close rechecks gates 1–12, persists a taskless close-review intent, and
+returns `close_review_required` with `review_id`, `reviewer_run_id`, and a
+`queued` or `running` review status. Register `gobby-agents:wait_for_agent` once
+with that `reviewer_run_id`, then yield. The daemon applies the verdict and
+notifies the session; do not poll or repeat `close_task` while the review is
+active. After successful closure, call `gobby-memory:review_task_memories` with
+the task and the same summary.
 
-If the response is `agentic_review_required`, register
-`gobby-agents:wait_for_agent` with the returned `validator_run_id` and yield.
-The daemon applies the verdict and notifies the session. Do not poll or repeat
-`close_task` while that review runs. After successful closure, call
-`gobby-memory:review_task_memories` with the task and the same summary.
-
-The bounded criteria review runs once per evidence state, not once per attempt.
-Its verdict is memoized against the review and evidence fingerprints the
-validator already computes, so a blocked attempt followed by an unchanged retry
-serves the stored verdict and makes no second provider call. Anything that
-changes what the reviewer would see — a new task-attributed edit, a different
-commit set, edited criteria, a changed summary — moves a fingerprint and earns
-a fresh review. The in-process criteria-review provider chain is wall-clock bounded by
-`gobby-tasks.validation.close_review_total_timeout_seconds` (120s by default);
-expiry fails closed into the same 15–120 second validation backoff as any other
-provider outage. A spawned task-close validator has the separate
-`gobby-tasks.validation.close_review_validator_timeout_seconds` bound (1200s by
-default); that same bound drives its durable reconciliation deadline.
+Close reviews persist across daemon restarts. Each project promotes them FIFO up
+to `gobby-tasks.validation.close_review_max_concurrency_per_project` active
+reviewers (three by default), and the execution deadline starts only when a
+queued review is promoted. The public
+`gobby-tasks.validation.close_review_validator_timeout_seconds` setting controls
+that reviewer deadline (1200 seconds by default). Review fingerprints include
+structured task, net-patch, test-body, deterministic gate-fact, and review-policy
+evidence. Evidence or policy drift makes an active verdict stale and requires a
+fresh real-close attempt after the drift is resolved; there is no memoized
+one-shot criteria-review path.
 Validation runs when the task has validation criteria. Skip-style reasons such as `duplicate`,
 `already_implemented`, `wont_fix`, `obsolete`, and `out_of_repo` are for
 no-work or out-of-repo closes; they still require a useful `changes_summary`.
@@ -337,9 +345,10 @@ call_tool(server_name="gobby-tasks", tool_name="close_task", arguments={
     "task_id": "#14390",
     "commit_sha": "abc1234",
     "changes_summary": "Updated the task guide against current MCP and stage behavior.",
-    "preview": False,
+    "preview": True,
 })
-# Repair deterministic blockers before retrying. Wait for background reviews.
+# Repair deterministic blockers, then repeat with preview=False.
+# Wait once on reviewer_run_id when the real close queues or starts a review.
 ```
 
 Related MCP tools:
@@ -359,7 +368,6 @@ gobby tasks commit link '#14390' abc1234
 gobby tasks commit unlink '#14390' abc1234
 gobby tasks commit auto
 gobby tasks diff '#14390'
-gobby tasks validate '#14390' --summary "Updated task guide"
 gobby tasks validation-history '#14390'
 ```
 
@@ -389,18 +397,17 @@ Carry `snapshot_hash` and `view_hash` on every subsequent page and restart on a
 stale snapshot/view error. Do not treat a complete diff-text page as a complete
 commit list or file manifest.
 
-The rendered criteria-review prompt has two bounds. The working budget
-`gobby-tasks.validation.close_review_prompt_budget_chars` (default 50,000
-characters) is what typical prompts are scoped to: when the fully rendered
-prompt exceeds it, the diff evidence is truncated per file — every changed
-file keeps its complete manifest statistics and a diff section, omitted spans
-are declared inline, and lines matching strings named by the criteria
-(commands, paths, measured numbers) are always retained. Criteria, changes
-summary, acceptance-test bodies, and checklist facts are never truncated. The
-hard cap `gobby-tasks.validation.close_review_prompt_max_chars` (default
-256,000 characters) still measures the fully rendered prompt; a prompt over
-the cap routes to the background task-close validator rather than being
-trimmed further.
+The close-review launch prompt is capped by
+`gobby-tasks.validation.close_review_prompt_max_chars` (default 256,000
+characters). The taskless reviewer reads Gobby's authoritative linked-commit net
+patch through `get_task_diff`, follows every diff, commit, and manifest page,
+and runs OCR against the manifest paths to select per-file rules. OCR selects
+rules only; it never selects the commit range. The reviewer uses the code-review
+fallback checklist for files OCR does not support and must cover every manifest
+entry. Passed gate 1–12 facts remain authoritative even when the reviewer's
+sandbox cannot reproduce a credited command. Criterion gaps always block; code
+findings block at or above `close_review_min_severity` and remain visible below
+it.
 
 ## CLI Reference
 
@@ -444,7 +451,6 @@ gobby tasks expand apply RUN_ID
 gobby tasks expand status RUN_ID
 gobby tasks expand resume RUN_ID
 gobby tasks expand reset TASK
-gobby tasks validate TASK --summary SUMMARY
 gobby tasks validation-history TASK
 gobby tasks search QUERY [--limit N] [--json]
 gobby tasks reindex

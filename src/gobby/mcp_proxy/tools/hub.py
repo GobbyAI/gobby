@@ -110,6 +110,7 @@ def create_hub_registry(
 
     @registry.tool(
         name="get_machine_id",
+        read_only=True,
         description="Get the daemon's machine identifier. Use this from sandboxed agents that cannot read ~/.gobby/machine_id directly.",
     )
     def get_machine_id() -> dict[str, Any]:
@@ -136,6 +137,7 @@ def create_hub_registry(
 
     @registry.tool(
         name="list_all_projects",
+        read_only=True,
         description="List all initialized gobby projects with names. Use project names with create_task(project='name') for cross-project task creation.",
     )
     async def list_all_projects(
@@ -203,6 +205,7 @@ def create_hub_registry(
 
     @registry.tool(
         name="list_cross_project_tasks",
+        read_only=True,
         description="Query tasks across all projects in the hub database.",
     )
     async def list_cross_project_tasks(
@@ -287,6 +290,7 @@ def create_hub_registry(
 
     @registry.tool(
         name="list_cross_project_sessions",
+        read_only=True,
         description="List recent sessions across all projects in the hub database.",
     )
     async def list_cross_project_sessions(
@@ -340,6 +344,7 @@ def create_hub_registry(
 
     @registry.tool(
         name="hub_stats",
+        read_only=True,
         description="Get aggregate statistics from the hub database.",
     )
     async def hub_stats() -> dict[str, Any]:

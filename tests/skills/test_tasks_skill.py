@@ -81,16 +81,16 @@ def test_core_is_compact_and_keeps_creation_and_exact_close_sequence() -> None:
         "1. Finish all edits; resolve every owned finding",
         "2. Run focused validation after the final edit",
         "3. Stage only task paths and commit",
-        "4. Call `close_task` once",
-        "5. Repair any deterministic blocker",
+        "4. Call `close_task` with",
+        "5. Repair every deterministic blocker",
         "6. After `closed=true` or a closure notification",
     )
     positions = [content.index(step) for step in steps]
     assert positions == sorted(positions)
     assert "exact validation commands and results" in content
-    assert "`preview=true` is a read-only deterministic readiness check" in content
+    assert "`preview=true` is a deterministic-only readiness check" in content
+    assert "repeat the same close with\n   `preview=false`" in content
     assert "review_task_memories" in content[positions[-1] :]
-    assert "Repeat the same `close_task` call without `preview`" not in content
     overview = (SKILL_DIR / "overview.md").read_text()
     for topic in ("creation", "implementation", "closing", "reviews"):
         assert topic in overview
@@ -98,10 +98,10 @@ def test_core_is_compact_and_keeps_creation_and_exact_close_sequence() -> None:
 
 def test_agentic_close_review_waits_once_and_parks_the_caller() -> None:
     content = SKILL_PATH.read_text()
-    assert "`agentic_review_required`, register `wait_for_agent`" in content
-    assert "`validator_run_id`" in content
+    assert "`close_review_required`, register\n   `wait_for_agent` once" in content
+    assert "`reviewer_run_id`" in content
     assert "and yield" in content
-    assert "Do not poll or repeatedly call close while review is running" in content
+    assert "Do not poll or\n   repeatedly call close while review is queued or running" in content
 
 
 def test_creation_guidance_uses_structured_named_test_references() -> None:
@@ -211,22 +211,24 @@ def test_wait_guidance_is_event_driven_in_agent_and_task_contracts() -> None:
     ):
         assert expected in agents
     closing = SKILL_PATH.read_text()
-    assert "register `wait_for_agent`" in closing
+    assert "register\n   `wait_for_agent` once" in closing
     assert "and yield" in closing
-    assert "Do not poll or repeatedly call close" in closing
+    assert "Do not poll or" in closing
+    assert "repeatedly call close" in closing
 
 
-def test_guides_distinguish_preview_from_real_close() -> None:
+def test_guides_document_deterministic_preview_then_real_close() -> None:
     for path in (TASKS_GUIDE_PATH, SKILL_PATH):
         content = path.read_text()
         assert "preview=true" in content
         assert "preview=false" in content
-        assert "read-only deterministic" in content
-        assert "agentic_review_required" in content
+        assert "never closes" in content
+        assert "close_review_required" in content
+        assert "reviewer_run_id" in content
         assert "review_task_memories" in content
 
 
-def test_lifecycle_scenario_closes_with_one_real_close_call() -> None:
+def test_lifecycle_scenario_previews_then_runs_close_review() -> None:
     result = run_recorded_skill_scenario(LIFECYCLE_SCENARIO_PATH)
 
     assert result.loaded.action_names == (
@@ -234,11 +236,13 @@ def test_lifecycle_scenario_closes_with_one_real_close_call() -> None:
         "edit",
         "run_validation",
         "commit",
+        "preview_close",
         "close_task",
+        "wait_for_agent",
         "review_memory",
         "respond",
     )
-    assert "committed, closed" in result.loaded.combined_text
+    assert "close-reviewed" in result.loaded.combined_text
 
 
 def test_ownership_and_handoff_pressure_scenario_stays_inside_one_task() -> None:

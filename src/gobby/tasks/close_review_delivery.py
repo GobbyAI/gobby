@@ -9,7 +9,7 @@ from gobby.autonomous.progress_tracker import ProgressTracker, ProgressType
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.task_close_reviews import (
-    VALIDATOR_RUN_ENDED_SUCCESS_ERROR,
+    REVIEWER_RUN_ENDED_SUCCESS_ERROR,
     TaskCloseReviewErrorClass,
     TaskCloseReviewStore,
 )
@@ -55,12 +55,12 @@ def terminal_review_delivery(
             run_status = run.status if run is not None else "missing"
             run_error = run.error if run is not None else None
             if run_status == "success" and not run_error:
-                message = VALIDATOR_RUN_ENDED_SUCCESS_ERROR
+                message = REVIEWER_RUN_ENDED_SUCCESS_ERROR
             elif run_error:
-                message = f"Task-close validator run ended with status {run_status}: {run_error}"
+                message = f"Task-close reviewer run ended with status {run_status}: {run_error}"
             else:
                 message = (
-                    f"Task-close validator run ended with status {run_status} before finalization."
+                    f"Task-close reviewer run ended with status {run_status} before finalization."
                 )
             error_class, retry_seconds = _run_ended_retry(run)
             payload = build_terminal_review_payload(
@@ -81,7 +81,7 @@ def terminal_review_delivery(
 
 
 def _run_ended_retry(run: AgentRun | None) -> tuple[TaskCloseReviewErrorClass, int]:
-    """Classify a validator run that ended without a verdict, and how long to wait.
+    """Classify a reviewer run that ended without a verdict, and how long to wait.
 
     A run ending `success` with no error stays `action_required` on purpose:
     the correct action is immediate, and a retry wait would only park the
@@ -92,7 +92,7 @@ def _run_ended_retry(run: AgentRun | None) -> tuple[TaskCloseReviewErrorClass, i
         return "action_required", CLOSE_REVIEW_RETRY_SECONDS
     if run.terminal_reason == "daemon_stop":
         # The daemon parked this run on its own shutdown, so the cause is known
-        # to be a restart rather than anything about the validator, and it is
+        # to be a restart rather than anything about the reviewer, and it is
         # already over by the time the caller reads this payload.
         return "retryable_infrastructure", CLOSE_REVIEW_DAEMON_STOP_RETRY_SECONDS
     retryable = (

@@ -109,6 +109,26 @@ def test_distinctive_terms_priorities() -> None:
     ]
 
 
+@pytest.mark.unit
+def test_distinctive_terms_keeps_a_balanced_phrase_safe_for_related_search() -> None:
+    """Related-term normalization preserves a balanced phrase as valid query syntax."""
+    assert _distinctive_terms('"agent-prompt cap"') == '"agent-prompt cap"'
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "phrase",
+    [
+        '"a go x"',
+        '"the and for"',
+        '"alpha foo_bar omega"',
+    ],
+)
+def test_distinctive_terms_keeps_quoted_phrase_tokens_together(phrase: str) -> None:
+    """Filtering and prioritization treat a quoted phrase as one search term."""
+    assert _distinctive_terms(phrase) == phrase
+
+
 @pytest.mark.parametrize(
     ("options", "include_global", "expected"),
     [

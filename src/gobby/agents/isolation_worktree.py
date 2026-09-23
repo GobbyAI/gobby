@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from gobby.agents import worktree_reuse
+from gobby.agents.cargo_target import cleanup_checkout_cargo_target_dir
 from gobby.agents.isolation_models import (
     IsolationContext,
     IsolationHandler,
@@ -211,21 +212,40 @@ class WorktreeIsolationHandler(IsolationHandler):
         worktree_path = partial_state.get("path")
         worktree_id = partial_state.get("id")
         branch_name = partial_state.get("branch")
+        files_deleted = not worktree_path or not Path(worktree_path).exists()
 
         if worktree_path:
             try:
-                await self._git_manager.delete_worktree(
+                result = await self._git_manager.delete_worktree(
                     worktree_path=worktree_path,
                     force=True,
                     delete_branch=True,
                     force_delete_branch=True,
                     branch_name=branch_name,
                 )
-                logger.info("Cleaned up partial worktree: %s", worktree_path)
+                files_deleted = bool(result.success) or not Path(worktree_path).exists()
+                if files_deleted:
+                    logger.info("Cleaned up partial worktree: %s", worktree_path)
+                else:
+                    logger.warning("Failed to clean up worktree %s: %s", worktree_path, result)
             except Exception as e:
                 logger.warning("Failed to clean up worktree %s: %s", worktree_path, e)
 
-        if worktree_id:
+        cargo_error = None
+        if worktree_path and files_deleted:
+            cargo_error = await asyncio.to_thread(
+                cleanup_checkout_cargo_target_dir,
+                Path(worktree_path),
+                config.project_id,
+            )
+            if cargo_error is not None:
+                logger.warning(
+                    "cargo_target_cleanup_failed for deleted worktree %s: %s",
+                    worktree_path,
+                    cargo_error,
+                )
+
+        if worktree_id and files_deleted and cargo_error is None:
             try:
                 await asyncio.to_thread(
                     TaskArtifactManager(self._worktree_storage.db).clear_worktree_references,

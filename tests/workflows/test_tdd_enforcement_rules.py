@@ -18,6 +18,7 @@ from gobby.hooks.normalization import normalize_tool_fields
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody
+from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
 from gobby.workflows.sync_rules import sync_bundled_rules
 from gobby.workflows.templates import TemplateEngine
@@ -138,6 +139,167 @@ def test_block_holds_until_named_acceptance_test_is_written(
     assert tracked is True
     fallback_variables["tdd_tests_written"] = fallback_evaluator.evaluate_value(track_effect.value)
     assert evaluate(block, fallback_variables, "web/src/app.ts")[0] is False
+
+
+@pytest.mark.parametrize("absolute", [False, True], ids=["relative", "absolute"])
+@pytest.mark.parametrize("tool_name", ["Write", "Edit", "apply_patch"])
+@pytest.mark.asyncio
+async def test_named_rust_acceptance_file_is_tracked_before_source_writes(
+    db: HubDatabase,
+    *,
+    absolute: bool,
+    tool_name: str,
+) -> None:
+    _sync_bundled(db)
+    with db.transaction() as conn:
+        conn.execute("UPDATE rule_definitions SET enabled = FALSE")
+        conn.execute(
+            "UPDATE rule_definitions SET enabled = TRUE WHERE name IN (%s, %s)",
+            ("enforce-tdd-block", "enforce-tdd-track-tests"),
+        )
+    engine = RuleEngine(db)
+    acceptance_path = "crates/gcode/src/communities/remap_tests.rs"
+    source_path = "crates/gcode/src/communities/remap.rs"
+    tool_path = f"/repo/{acceptance_path}" if absolute else acceptance_path
+
+    def acceptance_event(event_type: HookEventType) -> HookEvent:
+        if tool_name == "apply_patch":
+            tool_input: object = (
+                "*** Begin Patch\n"
+                f"*** Update File: {tool_path}\n"
+                "@@\n"
+                "-fn old_test() {}\n"
+                "+fn new_test() {}\n"
+                "*** End Patch\n"
+            )
+        elif tool_name == "Edit":
+            tool_input = {
+                "file_path": tool_path,
+                "old_string": "fn old_test() {}",
+                "new_string": "fn new_test() {}",
+            }
+        else:
+            tool_input = {"file_path": tool_path, "content": "fn new_test() {}\n"}
+        return HookEvent(
+            event_type=event_type,
+            session_id="test-session",
+            source=SessionSource.CODEX if tool_name == "apply_patch" else SessionSource.CLAUDE,
+            timestamp=datetime.now(UTC),
+            cwd="/repo",
+            data={"tool_name": tool_name, "tool_input": tool_input},
+            metadata={"project_path": "/repo"},
+        )
+
+    def source_event() -> HookEvent:
+        return HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id="test-session",
+            source=SessionSource.CLAUDE,
+            timestamp=datetime.now(UTC),
+            cwd="/repo",
+            data={
+                "tool_name": "Write",
+                "tool_input": {"file_path": source_path, "content": "pub fn remap() {}\n"},
+            },
+            metadata={"project_path": "/repo"},
+        )
+
+    def tdd_variables() -> dict[str, object]:
+        return {
+            "enforce_tdd": False,
+            "claimed_task_requires_tdd": True,
+            "claimed_task_acceptance_test_paths": [acceptance_path],
+            "tdd_tests_written": [],
+            "project": {"path": "/repo"},
+        }
+
+    unopened_variables = tdd_variables()
+    blocked = await engine.evaluate(
+        source_event(), session_id="test-session", variables=unopened_variables
+    )
+    assert blocked.decision == "block"
+
+    variables = tdd_variables()
+    before_test = await engine.evaluate(
+        acceptance_event(HookEventType.BEFORE_TOOL),
+        session_id="test-session",
+        variables=variables,
+    )
+    assert before_test.decision == "allow"
+    await engine.evaluate(
+        acceptance_event(HookEventType.AFTER_TOOL),
+        session_id="test-session",
+        variables=variables,
+    )
+    assert variables["tdd_tests_written"] == [acceptance_path]
+    after_test = await engine.evaluate(
+        source_event(), session_id="test-session", variables=variables
+    )
+    assert after_test.decision == "allow"
+
+
+@pytest.mark.asyncio
+async def test_multi_file_patch_with_acceptance_and_source_is_blocked(
+    db: HubDatabase,
+) -> None:
+    _sync_bundled(db)
+    with db.transaction() as conn:
+        conn.execute("UPDATE rule_definitions SET enabled = FALSE")
+        conn.execute(
+            "UPDATE rule_definitions SET enabled = TRUE WHERE name = %s",
+            ("enforce-tdd-block",),
+        )
+    engine = RuleEngine(db)
+    acceptance_path = "crates/gcode/src/communities/remap_acceptance.rs"
+    source_path = "crates/gcode/src/communities/remap.rs"
+    patch = (
+        "*** Begin Patch\n"
+        f"*** Update File: {acceptance_path}\n"
+        "@@\n"
+        "-fn old_test() {}\n"
+        "+fn new_test() {}\n"
+        f"*** Update File: {source_path}\n"
+        "@@\n"
+        "-pub fn old_remap() {}\n"
+        "+pub fn new_remap() {}\n"
+        "*** End Patch\n"
+    )
+    event = HookEvent(
+        event_type=HookEventType.BEFORE_TOOL,
+        session_id="test-session",
+        source=SessionSource.CODEX,
+        timestamp=datetime.now(UTC),
+        cwd="/repo",
+        data={"tool_name": "apply_patch", "tool_input": patch},
+        metadata={"project_path": "/repo"},
+    )
+    variables: dict[str, object] = {
+        "enforce_tdd": False,
+        "claimed_task_requires_tdd": True,
+        "claimed_task_acceptance_test_paths": [acceptance_path],
+        "tdd_tests_written": [],
+        "project": {"path": "/repo"},
+    }
+
+    result = await engine.evaluate(event, session_id="test-session", variables=variables)
+
+    assert result.decision == "block"
+
+
+def test_named_acceptance_path_overrides_test_convention_classifier() -> None:
+    acceptance_path = "crates/gcode/src/communities/remap_acceptance.rs"
+    event_data = {
+        "canonical_file_path": f"/repo/{acceptance_path}",
+        "canonical_file_paths": [f"/repo/{acceptance_path}"],
+    }
+    context: dict[str, object] = {
+        "variables": {"claimed_task_acceptance_test_paths": [acceptance_path]},
+        "project": {"path": "/repo"},
+    }
+    helpers = build_condition_helpers(context=context)
+
+    assert helpers["first_tdd_code_path"](event_data, {}) == ""
+    assert helpers["first_tdd_test_path"](event_data, {}) == acceptance_path
 
 
 # --- Sync tests ---

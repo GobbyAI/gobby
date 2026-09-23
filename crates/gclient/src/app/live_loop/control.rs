@@ -10,7 +10,7 @@ use crate::frame_source::{FrameError, FrameSource};
 use crate::ui::status::Toast;
 use crate::ui::Chrome;
 
-use super::super::{ControlState, PaneId, Workspace, HOST_GRANT_UNAVAILABLE};
+use super::super::{ControlOutcome, ControlState, PaneId, Workspace, HOST_GRANT_UNAVAILABLE};
 
 /// Status shown when a key lands in a pane whose lease another viewer took.
 pub const LEASE_LOST_INPUT: &str =
@@ -19,8 +19,9 @@ pub const LEASE_LOST_INPUT: &str =
 /// unknown.
 pub const READ_ONLY_INPUT: &str =
     "read-only after an unconfirmed write: take control (prefix+t) to type";
-/// Status shown when a key lands while a take-control request is pending.
-pub const ACQUIRING_CONTROL: &str = "acquiring control: keys typed before the grant are dropped";
+/// Status shown when so much was typed while a grant was in flight that the
+/// queue holding it filled. Only a daemon that stopped answering gets here.
+pub const INPUT_QUEUE_FULL: &str = "too much typed while acquiring control; the rest was dropped";
 pub const HELD_BY_PEER: &str =
     "another viewer holds control: take control again or take back (prefix+shift+a) to type";
 
@@ -32,7 +33,12 @@ pub(super) async fn focus_live_pane(
         return Ok(());
     }
     if !workspace.pane(pane_id).is_held() {
-        request_live_control(workspace, pane_id, false).await?;
+        // Focus is the whole gesture. Clicking a pane is a person saying they
+        // want to type in it, so it takes the input grant over rather than
+        // asking and offering a second button when someone else holds it
+        // (#22573). The request runs beside the loop, so the click itself
+        // never waits on the daemon.
+        workspace.request_control(pane_id, true);
     }
     Ok(())
 }
@@ -72,45 +78,37 @@ async fn move_live_focus(
 /// holds the lease, so without this the documented take-back path could
 /// never succeed and a held pane had no way out. Focus stays polite: see
 /// `focus_live_pane`.
-pub(super) async fn take_live_control(
-    workspace: &mut Workspace<LiveDaemon>,
-    pane_id: PaneId,
-) -> Result<(), FrameError> {
-    let takeover = workspace
-        .panes
-        .get(&pane_id)
-        .is_some_and(|pane| pane.has_take_back());
-    request_live_control(workspace, pane_id, takeover).await
+pub(super) fn take_live_control(workspace: &mut Workspace<LiveDaemon>, pane_id: PaneId) {
+    workspace.request_control(pane_id, true);
 }
 
-async fn request_live_control(
+/// Applies the reply to a control request the loop started beside it. Every
+/// key typed since the click is still queued, so a grant flushes them in the
+/// order they were typed instead of crediting the first one and losing the
+/// rest (#22573).
+pub(super) async fn apply_control_outcome(
     workspace: &mut Workspace<LiveDaemon>,
-    pane_id: PaneId,
-    takeover: bool,
-) -> Result<(), FrameError> {
-    if workspace.exit_reason().is_some() || !workspace.daemon_ready() {
-        return Ok(());
+    chrome: &mut Chrome,
+    outcome: ControlOutcome,
+) {
+    let (pane_id, request) = (outcome.pane_id, outcome.request);
+    // Focus moved while this was in flight, so the pane no longer wants it.
+    let current = workspace
+        .panes
+        .get(&pane_id)
+        .and_then(|pane| pane.control_request);
+    if current != Some(request) {
+        return;
     }
-    let pane = workspace.pane(pane_id);
-    if !pane.is_live() {
-        return Ok(());
+    if let Some(pane) = workspace.panes.get_mut(&pane_id) {
+        pane.control_request = None;
     }
-    let attachment_id = pane.attachment_id().to_string();
-    let terminal_id = pane.terminal_id.clone();
-    let reply = match workspace
-        .daemon()
-        .send(json!({
-            "type": "terminal_take_control",
-            "terminal_id": terminal_id,
-            "attachment_id": attachment_id,
-            "takeover": takeover,
-        }))
-        .await
-    {
+    let reply = match outcome.reply {
         Ok(reply) => reply,
         Err(error) => {
             retire_live_control(workspace, pane_id).await;
-            return Err(FrameError::from(error));
+            chrome.notify(Toast::error(error.to_string()));
+            return;
         }
     };
     let generation = reply
@@ -130,7 +128,7 @@ async fn request_live_control(
     let pending = {
         let pane = workspace.panes.get_mut(&pane_id).expect("pane exists");
         if generation < pane.lease_generation() {
-            return Ok(());
+            return;
         }
         pane.set_lease_generation(generation);
         pane.control = if granted {
@@ -140,23 +138,27 @@ async fn request_live_control(
         };
         pane.take_back = !granted;
         if !granted {
-            pane.pending_input = None;
-            None
-        } else if pane.apply_host_grant(host_input_granted) {
-            pane.pending_input.take()
-        } else {
-            // The lease is ours and the host grant is not, so there is nowhere
-            // to type: take-back is the honest offer (#22573).
-            return Err(FrameError::Refused(HOST_GRANT_UNAVAILABLE.to_string()));
+            pane.clear_pending_input();
+            chrome.notify(Toast::warning(refusal_reason));
+            return;
         }
+        if !pane.apply_host_grant(host_input_granted) {
+            // The lease is ours and the host grant is not, so there is
+            // nowhere to type. This is the terminal being gone for input
+            // rather than an ordinary pane, and take-back is the only thing
+            // that can recover it (#22573).
+            chrome.notify(Toast::error(HOST_GRANT_UNAVAILABLE));
+            return;
+        }
+        pane.take_pending_input()
     };
-    if let Some(data) = pending {
-        send_live_write(workspace, pane_id, &data, false).await?;
+    for input in pending {
+        let (data, paste) = input.parts();
+        if let Err(error) = send_live_write(workspace, pane_id, data, paste).await {
+            chrome.notify(Toast::error(error.to_string()));
+            break;
+        }
     }
-    if !granted {
-        return Err(FrameError::Refused(refusal_reason));
-    }
-    Ok(())
 }
 
 pub(super) async fn retire_live_control(workspace: &mut Workspace<LiveDaemon>, pane_id: PaneId) {
@@ -184,7 +186,10 @@ pub(super) async fn release_live_control(
         return Ok(());
     }
     let pane = workspace.pane(pane_id);
-    if !pane.is_live() || !pane.is_held() {
+    // A pane whose grant is still in flight holds a lease the daemon is about
+    // to give it, so leaving without releasing would leak it. The release verb
+    // is idempotent, which is what makes this safe to send either way.
+    if !pane.is_live() || !(pane.is_held() || pane.control_request.is_some()) {
         return Ok(());
     }
     let message = json!({
@@ -195,6 +200,13 @@ pub(super) async fn release_live_control(
     let pane = workspace.panes.get_mut(&pane_id).expect("pane exists");
     pane.control = ControlState::Observe;
     pane.take_back = false;
+    // A grant still in flight for a pane we just left must not move it.
+    pane.control_request = None;
+    // The queue bridges the gap between asking for a grant and getting it. This
+    // pane gave the grant up instead, so the gap closed: replaying those keys
+    // whenever it next wins control would run a command long after it was
+    // typed, which is worse than the words never landing (#22573).
+    pane.clear_pending_input();
     workspace
         .daemon()
         .notify(message)
@@ -213,29 +225,62 @@ pub(super) async fn send_live_input(
     chrome: &mut Chrome,
     pane_id: PaneId,
     data: &[u8],
+    paste: bool,
 ) -> Result<(), FrameError> {
     if workspace.exit_reason().is_some() || !workspace.daemon_ready() {
         return Ok(());
     }
     if workspace.pane(pane_id).writable() {
-        return send_live_write(workspace, pane_id, data, false).await;
+        return send_live_write(workspace, pane_id, data, paste).await;
     }
-    let pane = workspace.panes.get_mut(&pane_id).expect("pane exists");
-    if !pane.is_live() {
+    if !workspace.pane(pane_id).is_live() {
         return Ok(());
     }
+    // A lost lease and an unknown write outcome both wait on a person, so
+    // typing into them says what is wrong instead of queueing. Once that
+    // person has asked for control, the decision is made and the keys they
+    // type next belong in the queue like any other (#22573).
+    let acquiring = workspace.awaiting_control(pane_id);
+    let pane = workspace.panes.get_mut(&pane_id).expect("pane exists");
     let refusal = match pane.control {
-        ControlState::LeaseLost => Some(LEASE_LOST_INPUT),
-        ControlState::UncertainReadOnly => Some(READ_ONLY_INPUT),
-        _ if pane.pending_input.is_some() => Some(ACQUIRING_CONTROL),
+        ControlState::LeaseLost if !acquiring => Some(LEASE_LOST_INPUT),
+        ControlState::UncertainReadOnly if !acquiring => Some(READ_ONLY_INPUT),
         _ => None,
     };
     if let Some(refusal) = refusal {
         chrome.notify(Toast::warning(refusal));
         return Ok(());
     }
-    pane.pending_input = Some(data.to_vec());
-    take_live_control(workspace, pane_id).await
+    if !pane.queue_input(data, paste) {
+        chrome.notify(Toast::warning(INPUT_QUEUE_FULL));
+        return Ok(());
+    }
+    // Focus already asked for this grant; this covers the pane that gained
+    // focus before the daemon was ready to be asked.
+    workspace.request_control(pane_id, true);
+    Ok(())
+}
+
+/// A forwarded mouse report. Unlike a keystroke it never asks for control: an
+/// alt+clicked pane was deliberately left observing, and a pointer report must
+/// not take its lease back behind the person who did that. It does queue behind
+/// a grant already in flight, so the click that asked for that grant does not
+/// lose the report it produced (#22573). A report that overruns the queue is
+/// dropped without a toast, because pointer motion would make a storm of them.
+pub(super) async fn send_live_report(
+    workspace: &mut Workspace<LiveDaemon>,
+    pane_id: PaneId,
+    data: &[u8],
+) -> Result<(), FrameError> {
+    if workspace.pane(pane_id).writable() {
+        return send_live_write(workspace, pane_id, data, false).await;
+    }
+    if !workspace.awaiting_control(pane_id) {
+        return Ok(());
+    }
+    let pane = workspace.panes.get_mut(&pane_id).expect("pane exists");
+    pane.queue_input(data, false);
+    Ok(())
 }
 
 pub(super) async fn send_live_write(

@@ -58,6 +58,38 @@ EvidenceOutcome = Literal["success", "failure", "unknown"]
         ("pytest -ra tests/a.py", "pytest -ra tests/"),
         ("pytest tests/a.py -k foo -p no:randomly", "pytest -p no:randomly tests/a.py -k foo"),
         ("uv run pytest -k close_gate", "uv run pytest -q -k close_gate"),
+        (
+            "cargo nextest run -p gobby-client",
+            "cargo nextest run -p gobby-client --status-level fail",
+        ),
+        (
+            "cargo nextest run -p gobby-client",
+            "cargo nextest run -p gobby-client --failure-output immediate",
+        ),
+        (
+            "cargo nextest run -p gobby-client",
+            "cargo nextest run -p gobby-client --no-fail-fast",
+        ),
+        (
+            "cargo nextest run -p gobby-client --status-level fail",
+            "cargo nextest run -p gobby-client",
+        ),
+        (
+            "cargo nextest run -p gobby-client --failure-output immediate",
+            "cargo nextest run -p gobby-client",
+        ),
+        (
+            "cargo nextest run -p gobby-client --no-fail-fast",
+            "cargo nextest run -p gobby-client",
+        ),
+        (
+            "cargo clippy -- -D warnings",
+            "cargo clippy --all-targets -- -D warnings",
+        ),
+        ("uv run ruff check src/", "uv run ruff check src/ --output-format=concise"),
+        ("uv run ruff check src/ --output-format concise", "uv run ruff check src/"),
+        ("uv run mypy src/", "uv run mypy src/ --no-error-summary"),
+        ("uv run mypy src/ --no-error-summary", "uv run mypy src/"),
     ],
 )
 def test_equivalent_criterion_execution_is_credited(required: str, executed: str) -> None:
@@ -100,6 +132,70 @@ def test_narrowed_or_obscured_criterion_execution_cannot_pass(executed: str) -> 
     )
     assert gate.status == "failed"
     assert "Run `uv run pytest tests/ -q` clean" in gate.message
+
+
+@pytest.mark.parametrize(
+    ("required", "executed"),
+    [
+        (
+            "cargo nextest run -p gobby-client",
+            "cargo nextest run -p gobby-client -E 'test(test_name)'",
+        ),
+        (
+            "cargo nextest run -p gobby-client",
+            "cargo nextest run -p gobby-client --filter-expr 'test(test_name)'",
+        ),
+        (
+            "cargo nextest run -p gobby-client",
+            "cargo nextest run -p gobby-client --all-targets",
+        ),
+        (
+            "cargo nextest run -p gobby-client",
+            "cargo nextest run -p gobby-client -- --status-level fail",
+        ),
+        (
+            "cargo clippy -- -D warnings",
+            "cargo clippy --failure-output immediate -- -D warnings",
+        ),
+        (
+            "cargo clippy --all-targets -- -D warnings",
+            "cargo clippy -- -D warnings",
+        ),
+        ("uv run ruff check src/", "uv run ruff check src/ --fix"),
+        ("uv run mypy src/", "uv run mypy src/ --ignore-missing-imports"),
+    ],
+)
+def test_runner_specific_allowances_do_not_credit_unsafe_forms(
+    required: str, executed: str
+) -> None:
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(validation_runs=(_run(1, command=executed),)),
+        has_attributed_edits=True,
+        validation_criteria=f"Run `{required}`.",
+    )
+
+    assert gate.status == "failed"
+
+
+@pytest.mark.parametrize("outcome", ["failure", "unknown"])
+def test_nextest_no_fail_fast_requires_a_definitive_success(outcome: str) -> None:
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(
+            validation_runs=(
+                _run(
+                    1,
+                    command="cargo nextest run -p gobby-client --no-fail-fast",
+                    outcome=outcome,
+                ),
+            )
+        ),
+        has_attributed_edits=True,
+        validation_criteria="Run `cargo nextest run -p gobby-client`.",
+    )
+
+    assert gate.status == "failed"
 
 
 def test_scope_mismatch_names_the_differing_arguments() -> None:
@@ -1749,7 +1845,7 @@ async def test_every_independent_deterministic_blocker_lands_in_one_response() -
                 )
             ),
         ),
-        patch.object(lifecycle, "evaluate_criteria_review", review),
+        patch.object(lifecycle, "evaluate_close_review", review),
         patch("gobby.workflows.task_claim_state.target_task_has_edits", return_value=True),
         patch(
             "gobby.workflows.task_claim_state.task_edited_file_set",
@@ -1838,7 +1934,7 @@ async def test_commit_dependent_gates_report_skipped_instead_of_a_borrowed_failu
             AsyncMock(return_value=transcript),
         ),
         patch.object(lifecycle, "evaluate_acceptance_artifacts", acceptance),
-        patch.object(lifecycle, "evaluate_criteria_review", review),
+        patch.object(lifecycle, "evaluate_close_review", review),
         patch("gobby.workflows.task_claim_state.target_task_has_edits", return_value=True),
         patch(
             "gobby.workflows.task_claim_state.task_edited_file_set",

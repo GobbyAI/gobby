@@ -301,6 +301,14 @@ def dispatch_mcp_calls(
         block_on_failure = call.get("block_on_failure", False)
         block_on_success = call.get("block_on_success", False)
         needs_capture = inject_result or block_on_failure or block_on_success
+        configured_timeout = call.get("timeout_seconds")
+        timeout_cap = (
+            float(configured_timeout)
+            if isinstance(configured_timeout, (int, float))
+            and not isinstance(configured_timeout, bool)
+            and configured_timeout > 0
+            else 30.0
+        )
 
         if not server or not tool:
             logger.warning(
@@ -428,7 +436,7 @@ def dispatch_mcp_calls(
         if needs_capture:
             event_type_label = getattr(event.event_type, "value", event.event_type)
             label = f"{event_type_label}:{server}/{tool}"
-            timeout_seconds = remaining_blocking_effect_seconds(deadline, maximum=30.0)
+            timeout_seconds = remaining_blocking_effect_seconds(deadline, maximum=timeout_cap)
             if timeout_seconds <= 0:
                 logger.error("dispatch_mcp_calls[%s]: aggregate blocking deadline exceeded", label)
                 result = None
@@ -507,7 +515,7 @@ def dispatch_mcp_calls(
             # Blocking dispatch -- must await completion, not fire-and-forget
             event_type_label = getattr(event.event_type, "value", event.event_type)
             label = f"{event_type_label}:{server}/{tool}"
-            timeout_seconds = remaining_blocking_effect_seconds(deadline, maximum=30.0)
+            timeout_seconds = remaining_blocking_effect_seconds(deadline, maximum=timeout_cap)
             if timeout_seconds <= 0:
                 coro.close()
                 logger.error("dispatch_mcp_calls[%s]: aggregate blocking deadline exceeded", label)

@@ -116,6 +116,7 @@ class WebSocketServer(
         web_chat_session_registry: WebChatSessionRegistry | None = None,
         tool_proxy_getter: Callable[[], Any | None] | None = None,
         completion_registry: Any = None,
+        shutdown_in_progress: Callable[[], bool] | None = None,
     ):
         """
         Initialize WebSocket server.
@@ -131,6 +132,7 @@ class WebSocketServer(
             internal_manager: Optional InternalRegistryManager for routing to internal MCP servers.
             web_chat_session_registry: Shared live web-chat session registry.
             tool_proxy_getter: Lazy accessor for schema-validating internal tool dispatch.
+            shutdown_in_progress: Read-only daemon shutdown state accessor.
         """
         self.config = config
         self.mcp_manager = mcp_manager
@@ -139,6 +141,7 @@ class WebSocketServer(
         self.internal_manager = internal_manager
         self.tool_proxy_getter = tool_proxy_getter
         self.completion_registry = completion_registry
+        self.shutdown_in_progress = shutdown_in_progress or (lambda: False)
         self.session_manager = cast(Any, session_manager)
         self.db_executor = db_executor
         self._startup_daemon_config = daemon_config.model_copy(deep=True) if daemon_config else None
