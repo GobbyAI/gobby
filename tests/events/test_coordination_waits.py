@@ -8,7 +8,6 @@ import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -71,28 +70,8 @@ class CoordinationHarness:
         self.db.execute("UPDATE sessions SET status = %s WHERE id = %s", (status, self.owner))
 
 
-def _install_live_wait_identity(db: PostgresHubDatabase) -> None:
-    """Apply this branch's migration. Installed gdaemon does not embed it yet."""
-    sql_path = (
-        Path(__file__).resolve().parents[2]
-        / "crates/gcore/assets/schema/migrations/447_coordination_wait_live_identity.sql"
-    )
-    statement: list[str] = []
-    in_dollar = False
-    for line in sql_path.read_text(encoding="utf-8").splitlines():
-        if line.strip().startswith("--") and not in_dollar:
-            continue
-        if line.count("$$") % 2 == 1:
-            in_dollar = not in_dollar
-        statement.append(line)
-        if not in_dollar and line.rstrip().endswith(";"):
-            db.execute("\n".join(statement))
-            statement = []
-
-
 @pytest.fixture
 def harness(postgres_db: PostgresHubDatabase) -> CoordinationHarness:
-    _install_live_wait_identity(postgres_db)
     owner, waiter, stranger = (str(uuid.uuid4()) for _ in range(3))
     for session_id in (owner, waiter, stranger):
         postgres_db.execute(

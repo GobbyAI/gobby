@@ -315,20 +315,6 @@ def authorization_fixture(postgres_database_url: str) -> Iterator[AuthorizationF
         with psycopg.connect(isolated_url, autocommit=True) as connection:
             connection.execute("CREATE EXTENSION pg_search")
         apply_schema(isolated_url)
-        # Installed gdaemon does not embed this branch's migration yet.
-        migration_446 = (
-            Path(__file__).resolve().parents[2]
-            / "crates/gcore/assets/schema/migrations/446_grant_agent_project_resolution.sql"
-        )
-        with psycopg.connect(isolated_url, autocommit=True) as connection:
-            for statement in migration_446.read_text(encoding="utf-8").split(";"):
-                sql_text = "\n".join(
-                    line
-                    for line in statement.splitlines()
-                    if not line.lstrip().startswith("--")
-                ).strip()
-                if sql_text:
-                    connection.execute(sql_text)
         fixture = AuthorizationFixture(
             database_url=isolated_url,
             project_id=uuid4(),
