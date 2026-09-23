@@ -166,8 +166,7 @@ def test_agent_and_operator_plan_validation_match_with_project_flag(
     database.open()
     try:
         database.execute(
-            "UPDATE project_checkouts SET root_path = %s "
-            "WHERE machine_id = %s AND project_id = %s",
+            "UPDATE project_checkouts SET root_path = %s WHERE machine_id = %s AND project_id = %s",
             (str(tmp_path), fixture.machine_id, fixture.project_id),
         )
     finally:

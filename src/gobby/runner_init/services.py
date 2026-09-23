@@ -25,7 +25,7 @@ from gobby.config.persistence import EmbeddingsConfig, is_falkordb_enabled
 from gobby.llm import create_llm_service
 from gobby.mcp_proxy.manager import MCPClientManager
 from gobby.mcp_proxy.oauth import automatic_oauth_authorization
-from gobby.mcp_proxy.oauth_keepalive import schedule_oauth_keepalive
+from gobby.mcp_proxy.oauth_keepalive import cancel_oauth_keepalive, schedule_oauth_keepalive
 from gobby.memory.manager import MemoryManager
 from gobby.memory.vectorstore import VectorStore
 from gobby.sessions.processor import SessionMessageProcessor
@@ -494,7 +494,12 @@ def _build_mcp_manager(
         stdio_errlog_path=str(resolved_log_path(config.logging, RUNTIME_LOG_FILENAME)),
     )
     schedule_oauth_keepalive(manager, loop)
-    return PreparedService(manager, lambda: _dispose_async(loop, manager.disconnect_all))
+
+    def _dispose_mcp_manager() -> None:
+        cancel_oauth_keepalive(loop)
+        _dispose_async(loop, manager.disconnect_all)
+
+    return PreparedService(manager, _dispose_mcp_manager)
 
 
 def _build_message_processor(

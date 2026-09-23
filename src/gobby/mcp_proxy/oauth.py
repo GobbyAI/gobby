@@ -6,7 +6,6 @@ import json
 import logging
 import shlex
 import time
-import webbrowser
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from typing import Any, Literal
 from urllib.parse import urlsplit
@@ -205,11 +204,14 @@ class PersistentOAuthProvider(OAuthClientProvider):
     ) -> AsyncGenerator[httpx2.Request, httpx2.Response]:
         if not self._initialized:
             await self._initialize()
-        if backoff_active(self.persistent_storage.state, time.time()):
+        if backoff_active(self.persistent_storage.state, time.time()) and (
+            not self.context.is_token_valid()
+        ):
             raise OAuthFlowError("OAuth token endpoint is in backoff")
-        await self._enter_refresh_lock()
+        lock = await self._enter_refresh_lock()
         flow = super().async_auth_flow(request)
         saw_token = False
+        retried_401 = False
         try:
             outgoing = await anext(flow)
             while True:
@@ -250,6 +252,19 @@ class PersistentOAuthProvider(OAuthClientProvider):
                         self.context.get_authorization_base_url(self.context.server_url),
                     )
                 response = yield outgoing
+                if (
+                    response.status_code == 401
+                    and str(outgoing.url) == str(request.url)
+                    and not retried_401
+                    and await self._reload_rotated_token()
+                ):
+                    await self._exit_refresh_lock(lock)
+                    lock = None
+                    await flow.aclose()
+                    retried_401 = True
+                    flow = super().async_auth_flow(request)
+                    outgoing = await anext(flow)
+                    continue
                 if response.is_success:
                     model = (
                         OAuthClientInformationFull
@@ -274,18 +289,9 @@ class PersistentOAuthProvider(OAuthClientProvider):
                     )
                     summary = None
                     if token_exchange:
-                        await response.aread()
-                        summary = _safe_oauth_failure_summary(response)
-                        logger.warning("OAuth token endpoint failed: %s", summary)
-                        payload = _token_error_payload(response)
-                        if consent_required(payload):
-                            self.persistent_storage.state.tokens = None
-                            self.persistent_storage.state.expires_at = None
-                            self.context.clear_tokens()
-                            await self.persistent_storage.save()
-                            raise MCPAuthorizationRequired(self.auth_command)
-                    if token_exchange or (
-                        registering and (response.status_code == 429 or response.status_code >= 500)
+                        summary = await self._record_token_endpoint_failure(response)
+                    elif registering and (
+                        response.status_code == 429 or response.status_code >= 500
                     ):
                         schedule_backoff(
                             self.persistent_storage.state,
@@ -308,10 +314,11 @@ class PersistentOAuthProvider(OAuthClientProvider):
                 except StopAsyncIteration:
                     break
                 if saw_token:
-                    await self._exit_refresh_lock()
+                    await self._exit_refresh_lock(lock)
+                    lock = None
                     saw_token = False
         finally:
-            await self._exit_refresh_lock()
+            await self._exit_refresh_lock(lock)
             await flow.aclose()
 
     def _apply_stored_state(self) -> None:
@@ -324,39 +331,85 @@ class PersistentOAuthProvider(OAuthClientProvider):
         if state.issuer:
             self.context.auth_server_url = state.issuer
 
-    async def _enter_refresh_lock(self) -> None:
-        self._refresh_lock: Any = None
+    async def _enter_refresh_lock(self) -> Any:
+        """Return this flow's advisory lock, or None when the stored token is usable."""
         if oauth_lock_is_held():
-            return
+            return None
         conninfo = conninfo_for_store(self.persistent_storage.store)
         if not isinstance(conninfo, str):
-            return
+            return None
         state = self.persistent_storage.state
         if state.tokens is None:
-            return
+            return None
         if state.expires_at is not None and state.expires_at > time.time():
-            return
+            return None
         lock = oauth_server_lock(self.persistent_storage.name, conninfo)
         await lock.__aenter__()
-        self._refresh_lock = lock
         try:
             await self.persistent_storage.load()
             self._apply_stored_state()
             now = time.time()
             if backoff_active(self.persistent_storage.state, now):
-                await self._exit_refresh_lock()
                 raise OAuthFlowError("OAuth token endpoint is in backoff")
             if self.context.is_token_valid():
-                await self._exit_refresh_lock()
+                await lock.__aexit__(None, None, None)
+                return None
         except Exception:
-            await self._exit_refresh_lock()
+            await lock.__aexit__(None, None, None)
             raise
+        return lock
 
-    async def _exit_refresh_lock(self) -> None:
-        lock = getattr(self, "_refresh_lock", None)
-        self._refresh_lock = None
+    async def _exit_refresh_lock(self, lock: Any) -> None:
         if lock is not None:
             await lock.__aexit__(None, None, None)
+
+    async def _reload_rotated_token(self) -> bool:
+        await self.persistent_storage.load()
+        stored = self.persistent_storage.state
+        current = self.context.current_tokens
+        stored_access = stored.tokens.access_token if stored.tokens is not None else None
+        current_access = current.access_token if current is not None else None
+        expires_at = stored.expires_at
+        if stored_access is None or stored_access == current_access:
+            return False
+        if expires_at is None or float(expires_at) <= time.time():
+            return False
+        self._apply_stored_state()
+        return True
+
+    async def _record_token_endpoint_failure(self, response: httpx2.Response) -> str:
+        await response.aread()
+        summary = _safe_oauth_failure_summary(response)
+        logger.warning("OAuth token endpoint failed: %s", summary)
+        payload = _token_error_payload(response)
+        if consent_required(payload):
+            self.persistent_storage.state.tokens = None
+            self.persistent_storage.state.expires_at = None
+            self.context.clear_tokens()
+            await self.persistent_storage.save()
+            raise MCPAuthorizationRequired(self.auth_command)
+        schedule_backoff(
+            self.persistent_storage.state,
+            status=response.status_code,
+            retry_after=response.headers.get("retry-after"),
+            now=time.time(),
+        )
+        await self.persistent_storage.save()
+        return summary
+
+    async def refresh_persisted_token(
+        self, *, transport: httpx2.AsyncBaseTransport | None = None
+    ) -> bool:
+        """Refresh at the token endpoint and persist. Does not call the MCP URL."""
+        if not self._initialized:
+            await self._initialize()
+        request = await self._refresh_token()
+        async with httpx2.AsyncClient(transport=transport, timeout=30) as client:
+            response = await client.send(request)
+        if response.status_code >= 400:
+            await self._record_token_endpoint_failure(response)
+            return False
+        return await self._handle_refresh_response(response)
 
     async def _save_context(self) -> None:
         state = self.persistent_storage.state
@@ -453,21 +506,3 @@ async def _authorize_loaded_server(
                 "The MCP server did not request OAuth during initialization or tool discovery; "
                 "check the server URL and authentication requirements"
             )
-
-
-async def authorize_server_in_browser(
-    config: MCPServerConfig,
-    store: SecretStore,
-    timeout: float = DEFAULT_OAUTH_TIMEOUT_SECONDS,
-    *,
-    browser_open: Callable[[str], bool] | None = None,
-) -> None:
-    """Launch the system browser and complete OAuth for a daemon-owned request."""
-    opener = browser_open or webbrowser.open
-
-    async def open_browser(url: str) -> None:
-        opened = await asyncio.to_thread(opener, url)
-        if not opened:
-            raise MCPAuthorizationRequired(oauth_auth_command(config))
-
-    await authorize_server(config, store, timeout, open_browser)

@@ -21,8 +21,9 @@ from gobby.mcp_proxy.oauth_keepalive import (
     oauth_lock_key,
     oauth_server_lock,
     oauth_state_shape,
-    refresh_expired_token,
+    refresh_server_if_due,
     schedule_backoff,
+    schedule_oauth_keepalive,
     token_refresh_due,
 )
 from gobby.storage.hub.postgres import PostgresHubDatabase
@@ -157,48 +158,6 @@ async def test_oauth_lock_releases_on_exception() -> None:
     async with asyncio.timeout(2):
         async with oauth_server_lock(name, _conninfo(), timeout_seconds=2):
             return
-
-
-@pytest.mark.asyncio
-async def test_concurrent_expired_token_calls_refresh_once() -> None:
-    store = _store()
-    config = _config("refresh-once")
-    storage = MCPOAuthStorage(store, config)
-    storage.state.tokens = OAuthToken(
-        access_token="old-access", token_type="Bearer", refresh_token="old-refresh"
-    )
-    storage.state.expires_at = 1.0
-    await storage.save()
-    calls = 0
-    inside = asyncio.Event()
-    release = asyncio.Event()
-
-    async def refresh() -> None:
-        nonlocal calls
-        calls += 1
-        inside.set()
-        await release.wait()
-        storage.state.tokens = OAuthToken(
-            access_token="new-access", token_type="Bearer", refresh_token="new-refresh"
-        )
-        storage.state.expires_at = time.time() + 3600
-
-    async def once() -> bool:
-        return await refresh_expired_token(
-            storage, now=100.0, refresh=refresh, conninfo=_conninfo()
-        )
-
-    first = asyncio.create_task(once())
-    await inside.wait()
-    second = asyncio.create_task(once())
-    turned = asyncio.get_running_loop().create_future()
-    asyncio.get_running_loop().call_soon(turned.set_result, None)
-    await turned
-    assert calls == 1
-    release.set()
-    did_first, did_second = await asyncio.gather(first, second)
-    assert did_first is True
-    assert did_second is False
 
 
 @pytest.mark.asyncio
@@ -471,3 +430,233 @@ async def test_async_auth_flow_refreshes_once_and_reuses_persisted_tokens(
     assert finished.state.tokens is not None
     assert finished.state.tokens.access_token == "rotated-access"
     assert finished.state.tokens.refresh_token == "rotated-refresh"
+
+
+def _oauth_client(client_id: str = "client") -> OAuthClientInformationFull:
+    return OAuthClientInformationFull(
+        client_id=client_id,
+        redirect_uris=[AnyUrl("http://127.0.0.1:9/callback")],
+    )
+
+
+def _oauth_metadata() -> OAuthMetadata:
+    return OAuthMetadata(
+        issuer=AnyUrl("https://auth.example"),
+        authorization_endpoint=AnyUrl("https://auth.example/authorize"),
+        token_endpoint=AnyUrl("https://auth.example/token"),
+        response_types_supported=["code"],
+    )
+
+
+async def _flush() -> None:
+    future = asyncio.get_running_loop().create_future()
+    asyncio.get_running_loop().call_soon(future.set_result, None)
+    await future
+
+
+@pytest.mark.asyncio
+async def test_keepalive_lead_refresh_posts_token_once_and_skips_mcp_url(
+    postgres_db: PostgresHubDatabase, tmp_path: Path
+) -> None:
+    """A lead-window keep-alive refresh is locked, direct, and skips the MCP URL."""
+    config = _config("keepalive-lead")
+    now = time.time()
+    seeded = MCPOAuthStorage(SecretStore(postgres_db, gobby_home=tmp_path), config)
+    seeded.state.tokens = OAuthToken(
+        access_token="old-access", token_type="Bearer", refresh_token="old-refresh"
+    )
+    seeded.state.client = _oauth_client()
+    seeded.state.metadata = _oauth_metadata()
+    seeded.state.expires_at = now + 300
+    await seeded.save()
+    posts: list[str] = []
+    urls: list[str] = []
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def respond(request: httpx2.Request) -> httpx2.Response:
+        urls.append(str(request.url))
+        if request.method == "POST":
+            posts.append(request.url.path)
+            if len(posts) == 1:
+                started.set()
+                await release.wait()
+            return httpx2.Response(
+                200,
+                json={
+                    "access_token": "rotated-access",
+                    "token_type": "Bearer",
+                    "refresh_token": "rotated-refresh",
+                    "expires_in": 3600,
+                },
+            )
+        return httpx2.Response(200, json={"ok": True})
+
+    transport = httpx2.MockTransport(respond)
+
+    async def once(home: Path) -> bool:
+        store = SecretStore(postgres_db, gobby_home=home)
+        return await refresh_server_if_due(config, store, now=now, transport=transport)
+
+    try:
+        first = asyncio.create_task(once(tmp_path))
+        async with asyncio.timeout(2):
+            await started.wait()
+        second = asyncio.create_task(once(tmp_path))
+        assert await _refresh_waiter_blocked(postgres_db, seeded.name)
+        midpoint = MCPOAuthStorage(SecretStore(postgres_db, gobby_home=tmp_path), config)
+        await midpoint.load()
+        assert midpoint.state.tokens is not None
+        assert midpoint.state.tokens.access_token == "old-access"
+        release.set()
+        did_first, did_second = await asyncio.gather(first, second)
+    finally:
+        release.set()
+    assert did_first is True
+    assert did_second is False
+    assert posts == ["/token"]
+    assert config.url not in urls
+
+
+@pytest.mark.asyncio
+async def test_one_provider_two_flows_refresh_once_and_release_lock(
+    postgres_db: PostgresHubDatabase, tmp_path: Path
+) -> None:
+    """Concurrent flows on one provider refresh once and drop the advisory lock."""
+    config = _config("one-provider")
+    seeded = MCPOAuthStorage(SecretStore(postgres_db, gobby_home=tmp_path), config)
+    seeded.state.tokens = OAuthToken(
+        access_token="old-access", token_type="Bearer", refresh_token="old-refresh"
+    )
+    seeded.state.client = _oauth_client()
+    seeded.state.metadata = _oauth_metadata()
+    seeded.state.expires_at = 1.0
+    await seeded.save()
+    posts: list[str] = []
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def respond(request: httpx2.Request) -> httpx2.Response:
+        if request.method == "POST":
+            posts.append(request.url.path)
+            if len(posts) == 1:
+                started.set()
+                await release.wait()
+            return httpx2.Response(
+                200,
+                json={
+                    "access_token": "rotated-access",
+                    "token_type": "Bearer",
+                    "refresh_token": "rotated-refresh",
+                    "expires_in": 3600,
+                },
+            )
+        return httpx2.Response(200, json={"ok": True})
+
+    provider = PersistentOAuthProvider(
+        config, MCPOAuthStorage(SecretStore(postgres_db, gobby_home=tmp_path), config)
+    )
+
+    async def drive() -> None:
+        async with httpx2.AsyncClient(
+            auth=provider, transport=httpx2.MockTransport(respond)
+        ) as client:
+            response = await client.get(config.url or "")
+        assert response.status_code == 200
+
+    try:
+        first = asyncio.create_task(drive())
+        async with asyncio.timeout(2):
+            await started.wait()
+        second = asyncio.create_task(drive())
+        assert await _refresh_waiter_blocked(postgres_db, seeded.name)
+        release.set()
+        await asyncio.gather(first, second)
+    finally:
+        release.set()
+    assert posts == ["/token"]
+    async with asyncio.timeout(2):
+        async with oauth_server_lock(seeded.name, str(postgres_db._conninfo), timeout_seconds=1):
+            acquired = True
+    assert acquired
+
+
+@pytest.mark.asyncio
+async def test_reschedule_leaves_one_keepalive_task() -> None:
+    """Rebuilding the manager replaces the keep-alive instead of adding another."""
+    schedule_oauth_keepalive(object())
+    schedule_oauth_keepalive(object())
+    await _flush()
+    await _flush()
+    live = [
+        task
+        for task in asyncio.all_tasks()
+        if task.get_name() == "mcp-oauth-keepalive" and not task.done()
+    ]
+    try:
+        assert len(live) == 1
+    finally:
+        for task in live:
+            task.cancel()
+        await _flush()
+
+
+@pytest.mark.asyncio
+async def test_valid_token_is_used_while_backoff_is_active() -> None:
+    """Backoff blocks token and registration calls, not a still-valid access token."""
+    config = _config("backoff-valid")
+    storage = MCPOAuthStorage(_store(), config)
+    storage.state.tokens = OAuthToken(
+        access_token="still-good", token_type="Bearer", refresh_token="refresh"
+    )
+    storage.state.client = _oauth_client()
+    storage.state.metadata = _oauth_metadata()
+    storage.state.expires_at = time.time() + 3600
+    storage.state.retry_not_before = time.time() + 100
+    await storage.save()
+    posts: list[str] = []
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        if request.method == "POST":
+            posts.append(request.url.path)
+        assert request.headers.get("Authorization") == "Bearer still-good"
+        return httpx2.Response(200, json={"ok": True})
+
+    provider = PersistentOAuthProvider(config, storage)
+    async with httpx2.AsyncClient(auth=provider, transport=httpx2.MockTransport(respond)) as client:
+        response = await client.get(config.url or "")
+    assert response.status_code == 200
+    assert posts == []
+
+
+@pytest.mark.asyncio
+async def test_401_retries_once_with_reloaded_token() -> None:
+    """A 401 uses a newer stored token once instead of starting a browser login."""
+    config = _config("reload-401")
+    storage = MCPOAuthStorage(_store(), config)
+    storage.state.tokens = OAuthToken(
+        access_token="old-access", token_type="Bearer", refresh_token="old-refresh"
+    )
+    storage.state.client = _oauth_client()
+    storage.state.metadata = _oauth_metadata()
+    storage.state.expires_at = time.time() + 3600
+    await storage.save()
+    seen: list[str | None] = []
+
+    async def respond(request: httpx2.Request) -> httpx2.Response:
+        authorization = request.headers.get("Authorization")
+        seen.append(authorization)
+        if authorization == "Bearer old-access":
+            storage.state.tokens = OAuthToken(
+                access_token="new-access", token_type="Bearer", refresh_token="new-refresh"
+            )
+            storage.state.expires_at = time.time() + 3600
+            await storage.save()
+            return httpx2.Response(401)
+        return httpx2.Response(200, json={"ok": True})
+
+    provider = PersistentOAuthProvider(config, storage)
+    async with httpx2.AsyncClient(auth=provider, transport=httpx2.MockTransport(respond)) as client:
+        response = await client.get(config.url or "")
+    assert response.status_code == 200
+    assert seen == ["Bearer old-access", "Bearer new-access"]

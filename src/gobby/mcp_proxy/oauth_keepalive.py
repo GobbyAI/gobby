@@ -12,14 +12,15 @@ import logging
 import math
 import random
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from typing import Any
 
+import httpx2
 import psycopg
 from psycopg import sql
 
-from gobby.mcp_proxy.models import MCPServerConfig
+from gobby.mcp_proxy.models import MCPAuthorizationRequired, MCPServerConfig
 from gobby.storage.secrets import SecretStore
 
 logger = logging.getLogger(__name__)
@@ -32,6 +33,7 @@ _LOCK_HELD: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "gobby_oauth_lock_held", default=False
 )
 _TASKS: set[asyncio.Task[None]] = set()
+_keepalive_task: asyncio.Task[None] | None = None
 
 
 def oauth_lock_key(name: str) -> int:
@@ -153,55 +155,47 @@ async def oauth_server_lock(
             await connection.close()
 
 
-async def refresh_expired_token(
-    storage: Any,
+def _refresh_ready(state: Any, now: float) -> bool:
+    tokens = state.tokens
+    if state.client is None or tokens is None or tokens.refresh_token is None:
+        return False
+    return not backoff_active(state, now) and token_refresh_due(state.expires_at, now)
+
+
+async def refresh_server_if_due(
+    config: MCPServerConfig,
+    store: SecretStore,
     *,
     now: float,
-    refresh: Callable[[], Awaitable[None]],
-    conninfo: str,
+    transport: httpx2.AsyncBaseTransport | None = None,
 ) -> bool:
-    """Refresh once under the server lock. A waiter reloads the persisted token."""
-    if backoff_active(storage.state, now):
-        return False
-    async with oauth_server_lock(storage.name, conninfo):
-        await storage.load()
-        expires_at = storage.state.expires_at
-        if expires_at is not None and float(expires_at) > now:
-            return False
-        if backoff_active(storage.state, now):
-            return False
-        await refresh()
-        await storage.save()
-        return True
-
-
-async def refresh_server_if_due(config: MCPServerConfig, store: SecretStore, *, now: float) -> bool:
-    """Refresh one server when its access token is inside the lead window."""
+    """Refresh one due server under the cross-process lock, at the token endpoint."""
     from gobby.mcp_proxy.oauth import MCPOAuthStorage, PersistentOAuthProvider
 
     storage = MCPOAuthStorage(store, config)
     await storage.load()
-    state = storage.state
-    if state.client is None or state.tokens is None or state.tokens.refresh_token is None:
+    if not _refresh_ready(storage.state, now):
         return False
-    if backoff_active(state, now) or not token_refresh_due(state.expires_at, now):
+    conninfo = conninfo_for_store(store)
+    if not isinstance(conninfo, str):
         return False
-    before = state.tokens.access_token
-    provider = PersistentOAuthProvider(config, storage)
-    await provider._initialize()
-    provider.context.token_expiry_time = 0
-    if config.url is None:
-        return False
-    import httpx2
-
-    try:
-        async with httpx2.AsyncClient(auth=provider, timeout=30) as client:
-            await client.get(config.url)
-    except Exception:
-        logger.warning("OAuth keep-alive refresh failed for %s", config.name)
+    before = storage.state.tokens.access_token if storage.state.tokens is not None else None
+    async with oauth_server_lock(storage.name, conninfo):
+        with hold_oauth_lock():
+            await storage.load()
+            if not _refresh_ready(storage.state, now):
+                return False
+            provider = PersistentOAuthProvider(config, storage)
+            try:
+                refreshed = await provider.refresh_persisted_token(transport=transport)
+            except MCPAuthorizationRequired:
+                raise
+            except Exception:
+                logger.warning("OAuth keep-alive refresh failed for %s", config.name)
+                return False
     await storage.load()
-    current = storage.state.tokens.access_token if storage.state.tokens else None
-    return current is not None and current != before
+    current = storage.state.tokens.access_token if storage.state.tokens is not None else None
+    return bool(refreshed) and current is not None and current != before
 
 
 async def refresh_due_oauth_servers(manager: object) -> None:
@@ -242,13 +236,42 @@ async def oauth_keepalive_loop(manager: object) -> None:
         await asyncio.sleep(KEEPALIVE_TICK_SECONDS)
 
 
+def _replace_keepalive_task(manager: object, loop: asyncio.AbstractEventLoop) -> None:
+    global _keepalive_task
+    previous = _keepalive_task
+    task = loop.create_task(oauth_keepalive_loop(manager), name="mcp-oauth-keepalive")
+    _keepalive_task = task
+    _TASKS.add(task)
+    task.add_done_callback(_TASKS.discard)
+    if previous is not None and not previous.done():
+        previous.cancel()
+
+
 def schedule_oauth_keepalive(
     manager: object, loop: asyncio.AbstractEventLoop | None = None
 ) -> None:
-    try:
-        running = loop or asyncio.get_running_loop()
-    except RuntimeError:
-        return
-    task = running.create_task(oauth_keepalive_loop(manager), name="mcp-oauth-keepalive")
-    _TASKS.add(task)
-    task.add_done_callback(_TASKS.discard)
+    if loop is None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+    loop.call_soon_threadsafe(_replace_keepalive_task, manager, loop)
+
+
+def cancel_oauth_keepalive(loop: asyncio.AbstractEventLoop | None = None) -> None:
+    """Stop the one daemon keep-alive. Safe to call from a pool thread."""
+
+    def stop() -> None:
+        global _keepalive_task
+        task = _keepalive_task
+        _keepalive_task = None
+        if task is not None and not task.done():
+            task.cancel()
+
+    if loop is None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            stop()
+            return
+    loop.call_soon_threadsafe(stop)
