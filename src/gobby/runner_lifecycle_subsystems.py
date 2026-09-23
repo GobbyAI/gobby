@@ -22,7 +22,7 @@ from gobby.runner_lifecycle_reconcile import (
     _reconcile_agent_runs_after_restart,
     _rotate_due_managed_credentials,
 )
-from gobby.runner_lifecycle_startup import StartupTracker
+from gobby.runner_lifecycle_startup import StartupTracker, timed_startup_phase
 from gobby.runner_startup_code_index import _repair_code_index_bm25, _start_code_index_tasks
 
 if TYPE_CHECKING:
@@ -624,12 +624,17 @@ async def init_subsystems(
     # First: clients reconnect as soon as HTTP serves and re-attach their
     # terminals, so the surviving gterm host must be adopted (or a fresh one
     # spawned) before the slow recovery steps below (#22002).
-    await _start_terminal_host(runner, tracker)
-    barrier_outcome = await _run_agent_hook_replay_barrier(runner)
-    paused_sessions = await runner.wake_dispatcher.reconcile_restart_active_sessions(
-        restart_horizon_ms=getattr(runner, "http_bound_at_ms", None),
-        excluded_session_ids=barrier_outcome.excluded_session_ids,
-        recovery_safe=barrier_outcome.session_recovery_safe,
+    await timed_startup_phase("terminal_host", _start_terminal_host(runner, tracker))
+    barrier_outcome = await timed_startup_phase(
+        "hook_replay_barrier", _run_agent_hook_replay_barrier(runner)
+    )
+    paused_sessions = await timed_startup_phase(
+        "restart_session_reconciliation",
+        runner.wake_dispatcher.reconcile_restart_active_sessions(
+            restart_horizon_ms=getattr(runner, "http_bound_at_ms", None),
+            excluded_session_ids=barrier_outcome.excluded_session_ids,
+            recovery_safe=barrier_outcome.session_recovery_safe,
+        ),
     )
     if paused_sessions:
         logger.info(
@@ -638,9 +643,11 @@ async def init_subsystems(
         )
     wake_replay_coordinator = getattr(runner, "wake_replay_coordinator", None)
     if wake_replay_coordinator is not None:
-        await wake_replay_coordinator.open()
+        await timed_startup_phase("wake_replay_open", wake_replay_coordinator.open())
     reconciled_runs = (
-        await reconcile_agent_runs_after_restart(runner)
+        await timed_startup_phase(
+            "agent_run_reconciliation", reconcile_agent_runs_after_restart(runner)
+        )
         if getattr(runner, "agent_runner", None) is not None
         else 0
     )
@@ -650,11 +657,13 @@ async def init_subsystems(
             reconciled_runs,
         )
     try:
-        await reap_orphaned_srt_runners(runner)
+        await timed_startup_phase("sandbox_reaping", reap_orphaned_srt_runners(runner))
     except Exception:
         logger.exception("SRT sandbox runner cleanup failed during startup")
     try:
-        recovered_subscribers = await recover_agent_completion_subscribers(runner)
+        recovered_subscribers = await timed_startup_phase(
+            "completion_subscriber_recovery", recover_agent_completion_subscribers(runner)
+        )
         if recovered_subscribers > 0:
             logger.info(
                 "Recovered %d agent completion subscriber notification(s)",
@@ -662,26 +671,29 @@ async def init_subsystems(
             )
     except Exception:
         logger.exception("Agent completion subscriber recovery failed during startup")
-    await _connect_mcp_servers(runner, tracker)
-    code_index_bm25_ready = await _repair_code_index_bm25(runner, tracker)
-    await _check_embedding_service(runner, tracker)
-    await _cleanup_metrics_on_startup(runner)
-    await _cleanup_stale_expansion_runs_on_startup(runner)
-    await _initialize_vector_store(runner, rebuild_vector_store, tracker)
-    await _start_core_services(runner, tracker)
-    await _check_tmux_health(tracker)
-    await _start_agent_lifecycle_monitor(
-        runner,
-        tracker,
+    await timed_startup_phase("mcp_connections", _connect_mcp_servers(runner, tracker))
+    code_index_bm25_ready = await timed_startup_phase(
+        "code_index_bm25", _repair_code_index_bm25(runner, tracker)
     )
-    await _start_cron_scheduler(runner, tracker)
+    await timed_startup_phase("embedding_check", _check_embedding_service(runner, tracker))
+    await timed_startup_phase("metrics_cleanup", _cleanup_metrics_on_startup(runner))
+    await timed_startup_phase("expansion_cleanup", _cleanup_stale_expansion_runs_on_startup(runner))
+    await timed_startup_phase(
+        "vector_store", _initialize_vector_store(runner, rebuild_vector_store, tracker)
+    )
+    await timed_startup_phase("core_services", _start_core_services(runner, tracker))
+    await timed_startup_phase("tmux_health", _check_tmux_health(tracker))
+    await timed_startup_phase(
+        "agent_lifecycle_monitor", _start_agent_lifecycle_monitor(runner, tracker)
+    )
+    await timed_startup_phase("cron_scheduler", _start_cron_scheduler(runner, tracker))
     if code_index_bm25_ready:
         _run_tracked_start(
             lambda: _start_code_index_tasks(runner, tracker),
             "Code index tasks",
             tracker,
         )
-    await _recover_pipelines(runner, tracker)
+    await timed_startup_phase("pipeline_recovery", _recover_pipelines(runner, tracker))
     services = getattr(getattr(runner, "http_server", None), "services", None)
     if services is not None and bool(getattr(services, "shutdown_in_progress", False)):
         logger.info("Subsystem initialization stopped because daemon shutdown is in progress")
@@ -692,12 +704,17 @@ async def init_subsystems(
         "WebSocket server",
         tracker,
     )
-    await _run_tracked_start_async(
-        lambda: asyncio.to_thread(_maybe_start_ui_dev_server, runner),
-        "UI development server",
-        tracker,
+    await timed_startup_phase(
+        "ui_development_server",
+        _run_tracked_start_async(
+            lambda: asyncio.to_thread(_maybe_start_ui_dev_server, runner),
+            "UI development server",
+            tracker,
+        ),
     )
-    await _start_system_automation_loop(runner, tracker)
+    await timed_startup_phase(
+        "system_automation_start", _start_system_automation_loop(runner, tracker)
+    )
     if services is not None and bool(getattr(services, "shutdown_in_progress", False)):
         logger.info("Subsystem initialization stopped because daemon shutdown is in progress")
         return
