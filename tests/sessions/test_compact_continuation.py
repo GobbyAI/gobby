@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -21,6 +21,7 @@ from gobby.runner_lifecycle_shutdown import _settle_finalizers_under_cancellatio
 from gobby.sessions.compact_continuation import (
     _HANDOFF_COMPACT_CONTINUATION_TASKS,
     HANDOFF_COMPACT_CONTINUE_VARIABLE,
+    _continuation_pane,
     _continue_after_codex_compaction_ready,
     _count_codex_compact_ready_status_lines,
     _merge_session_variable,
@@ -39,7 +40,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.terminals.composer import composer_clear_sequence
 from gobby.terminals.key_bytes import tmux_key_name
-from gobby.terminals.pane_io import TmuxPaneIO
+from gobby.terminals.pane_io import RuntimePaneIO, TmuxPaneIO
 from gobby.terminals.runtime import Delivered, SnapshotMode
 from gobby.workflows.state_manager import SessionVariableManager
 from tests._timing import drain_asyncio_tasks
@@ -1072,3 +1073,34 @@ async def test_schedule_continuation_resolves_native_terminal_without_tmux() -> 
     assert writes.index(("text", prompt, True)) < writes.index(("key", "enter"))
     assert writes[-1] == ("key", "enter")
     assert not _HANDOFF_COMPACT_CONTINUATION_TASKS
+
+
+def test_continuation_pane_uses_unbound_gterm_named_by_context() -> None:
+    """Compact continuation uses the gterm row named by context when the session is unbound."""
+    terminal_id = "11111111-1111-4111-8111-111111111111"
+    terminal = SimpleNamespace(
+        backend="native",
+        id=terminal_id,
+        state="live",
+        project_id="proj-1",
+        agent_run_id=None,
+        session_id=None,
+    )
+    session = SimpleNamespace(
+        id="session-1",
+        project_id="proj-1",
+        terminal_context={
+            "gobby_terminal_id": terminal_id,
+            "tmux_pane": None,
+            "tmux_session": None,
+        },
+    )
+    terminal_manager = MagicMock()
+    terminal_manager.get_live_for_session.return_value = None
+    terminal_manager.get.return_value = terminal
+    registry = MagicMock()
+
+    pane = _continuation_pane(session, "session-1", terminal_manager, registry)
+
+    assert isinstance(pane, RuntimePaneIO)
+    assert (pane.backend, pane.target) == ("native", terminal_id)

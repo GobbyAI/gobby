@@ -821,6 +821,54 @@ class TestRegisterTerminalTools:
         assert result["error_code"] == "no_live_pane_or_transcript"
         assert result["transcript_error"] == "missing_transcript_path"
 
+    def test_capture_output_uses_unbound_gterm_named_by_context(self) -> None:
+        """An unbound gterm row named by context is captured instead of the transcript."""
+        terminal_id = "11111111-1111-4111-8111-111111111111"
+        terminal = MagicMock(
+            backend="native",
+            id=terminal_id,
+            state="live",
+            project_id="proj-1",
+            agent_run_id=None,
+            session_id=None,
+        )
+        session = MagicMock(
+            id="session-1",
+            project_id="proj-1",
+            terminal_context={"gobby_terminal_id": terminal_id, "tmux_pane": None},
+            transcript_path=None,
+        )
+        session_manager = MagicMock()
+        session_manager.get.return_value = session
+        terminal_manager = MagicMock()
+        terminal_manager.get_live_for_session.return_value = None
+        terminal_manager.get.return_value = terminal
+        runtime = MagicMock()
+        runtime.snapshot = AsyncMock(return_value=SimpleNamespace(text="live pane"))
+        runtime_registry = MagicMock()
+        runtime_registry.resolve.return_value = runtime
+        registry = _TestRegistry(name="test", description="test")
+
+        with patch(
+            "gobby.mcp_proxy.tools.sessions._terminal.LocalAgentRunManager",
+            return_value=MagicMock(),
+        ):
+            register_terminal_tools(
+                registry,
+                session_manager,
+                MagicMock(fetchone=MagicMock(return_value=None)),
+                terminal_manager=terminal_manager,
+                terminal_runtime_registry=runtime_registry,
+            )
+
+        capture_output = registry.get_tool("capture_output")
+        assert capture_output is not None
+        result = asyncio.run(capture_output(session_id="session-1", lines=20))
+
+        assert result["success"] is True
+        assert result["via"] == "native"
+        assert result["output"] == "live pane"
+
 
 def test_send_keys_preserves_raw_tmux_fallback_after_native_lookup() -> None:
     TestRegisterTerminalTools().assert_send_keys_preserves_raw_tmux_fallback_after_native_lookup()
