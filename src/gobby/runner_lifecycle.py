@@ -23,7 +23,11 @@ from gobby.runner_lifecycle_shutdown import (
     _shutdown_websocket_server,
     shutdown_daemon_services,
 )
-from gobby.runner_lifecycle_startup import StartupTracker, _log_subsystem_init_result
+from gobby.runner_lifecycle_startup import (
+    StartupTracker,
+    _log_subsystem_init_result,
+    start_startup_lag_probe,
+)
 from gobby.runner_lifecycle_subsystems import init_subsystems
 from gobby.runner_pid_file import FailOpenPidOwnership, PidOwnershipResolution
 from gobby.shutdown_intent import clear_active_shutdown_intent
@@ -62,6 +66,7 @@ def get_startup_tracker() -> StartupTracker | None:
 
 async def _init_subsystems(runner: GobbyRunner, rebuild_vector_store: Any) -> None:
     """Compatibility wrapper for progressive subsystem initialization."""
+    start_startup_lag_probe(asyncio.get_running_loop())
     await init_subsystems(
         runner,
         rebuild_vector_store,
