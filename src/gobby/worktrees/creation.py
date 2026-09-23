@@ -14,6 +14,7 @@ from gobby.storage.worktrees import LocalWorktreeManager, Worktree
 from gobby.utils import project_context
 from gobby.utils.project_context import IsolationProjectJsonError
 from gobby.worktrees import events
+from gobby.worktrees.base_branch import rejects_unreferenced_sha_base
 from gobby.worktrees.git import WorktreeGitManager
 
 logger = logging.getLogger(__name__)
@@ -78,6 +79,19 @@ async def create_worktree(
             success=False,
             error=f"Remote-style base branch is not allowed: {base_branch}",
             error_code="remote_base_branch_not_allowed",
+        )
+    try:
+        if await rejects_unreferenced_sha_base(git_manager, base_branch):
+            return WorktreeCreationResult(
+                success=False,
+                error=f"base_branch must be a branch name, not a commit sha: {base_branch}",
+                error_code="base_branch_is_commit_sha",
+            )
+    except RuntimeError as exc:
+        return WorktreeCreationResult(
+            success=False,
+            error=f"Unable to verify base_branch '{base_branch}': {exc}",
+            error_code="base_branch_refs_unavailable",
         )
 
     existing = await asyncio.to_thread(worktree_storage.get_by_branch, project_id, branch_name)
