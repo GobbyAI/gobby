@@ -63,6 +63,22 @@ def _evaluate_declared_types(
     return False, supported
 
 
+def _enum_contains(value: Any, allowed: list[Any]) -> bool:
+    """JSON Schema enum membership.
+
+    Booleans are not numbers: ``True`` does not match ``1`` and ``False`` does
+    not match ``0``. Numeric values still match, so ``1`` matches ``1.0``.
+    """
+    for item in allowed:
+        if isinstance(value, bool) or isinstance(item, bool):
+            if isinstance(value, bool) and isinstance(item, bool) and value is item:
+                return True
+            continue
+        if item == value:
+            return True
+    return False
+
+
 def _evaluate_type_schema(
     value: Any,
     schema: Any,
@@ -86,7 +102,7 @@ def _evaluate_type_schema(
 
     allowed = schema.get("enum")
     if isinstance(allowed, list):
-        if value in allowed:
+        if _enum_contains(value, allowed):
             checks.append(True)
         else:
             checks.append(False)

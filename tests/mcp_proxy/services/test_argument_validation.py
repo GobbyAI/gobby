@@ -40,3 +40,31 @@ def test_enum_inside_anyof_branch_is_enforced() -> None:
     assert check_arguments({"mode": "summary"}, schema) == [
         "Invalid value for parameter 'mode': expected one of 'concise', 'diagnostic'"
     ]
+
+
+def test_enum_distinguishes_bool_from_number() -> None:
+    number_schema = {
+        "type": "object",
+        "properties": {"flag": {"enum": [1, 0]}},
+    }
+    bool_schema = {
+        "type": "object",
+        "properties": {"flag": {"enum": [True, False]}},
+    }
+
+    assert check_arguments({"flag": 1}, number_schema) == []
+    assert check_arguments({"flag": 1.0}, number_schema) == []
+    assert check_arguments({"flag": True}, number_schema) == [
+        "Invalid value for parameter 'flag': expected one of 1, 0"
+    ]
+    assert check_arguments({"flag": False}, number_schema) == [
+        "Invalid value for parameter 'flag': expected one of 1, 0"
+    ]
+    assert check_arguments({"flag": True}, bool_schema) == []
+    assert check_arguments({"flag": False}, bool_schema) == []
+    assert check_arguments({"flag": 1}, bool_schema) == [
+        "Invalid value for parameter 'flag': expected one of True, False"
+    ]
+    assert check_arguments({"flag": 0}, bool_schema) == [
+        "Invalid value for parameter 'flag': expected one of True, False"
+    ]
