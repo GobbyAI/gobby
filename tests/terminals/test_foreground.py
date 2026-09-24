@@ -13,6 +13,7 @@ from gobby.terminals.foreground import (
     _process_snapshot,
     command_name,
     foreground_commands,
+    process_shell,
     shell_pid,
 )
 
@@ -120,3 +121,21 @@ def test_shell_pid_reads_the_native_process_record() -> None:
 )
 def test_shell_pid_rejects_a_row_without_a_usable_pid(process: dict[str, Any] | None) -> None:
     assert shell_pid(Row(process=process)) is None
+
+
+@pytest.mark.parametrize(
+    ("process", "shell"),
+    [
+        ({"pgid": 42, "host_terminal_id": "ht-1", "shell": "zsh"}, "zsh"),
+        (None, None),
+        ({"pgid": 42}, None),
+        ({"shell": ""}, None),
+        ({"shell": None}, None),
+        ({"shell": 7}, None),
+    ],
+    ids=["recorded", "absent", "unrecorded", "empty", "null", "not-a-string"],
+)
+def test_process_shell_reads_the_recorded_basename(
+    process: dict[str, Any] | None, shell: str | None
+) -> None:
+    assert process_shell(Row(process=process)) == shell

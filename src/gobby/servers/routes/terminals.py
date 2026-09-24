@@ -10,7 +10,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query
 
 from gobby.storage.terminals import AttachLocator, Terminal, TerminalManager
-from gobby.terminals.foreground import foreground_commands, shell_pid
+from gobby.terminals.foreground import foreground_commands, process_shell, shell_pid
 from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.ws_protocol import (
     TERMINAL_LIST_DEFAULT_PAGE_SIZE,
@@ -178,5 +178,5 @@ def _row_json(
     payload["id"] = row.id
     payload["created_at"] = row.created_at.isoformat()
     payload["attach"] = None if attach is None else asdict(attach)
-    payload["command"] = command
+    payload["command"] = command or process_shell(row)
     return payload
