@@ -442,6 +442,79 @@ async def test_subscriptions_command_requires_allowlisted_private_chat() -> None
     manager.list_event_subscriptions.assert_not_called()
 
 
+async def test_agent_command_lists_live_agents_and_marks_current_target() -> None:
+    controller, manager, sessions, _ = _controller()
+    other_id = "44444444-4444-4444-8444-444444444444"
+    sessions.list.return_value = [
+        SimpleNamespace(id=SESSION_ID, status="active", title="Assistant", source="claude"),
+        SimpleNamespace(id=other_id, status="paused", title="Lane Developer", source="codex"),
+    ]
+    manager.attached_session.return_value = SESSION_ID
+
+    consumed = await controller.handle(_channel().name, _message(content="/agent"))
+
+    assert consumed is True
+    menu = manager.send_message.await_args
+    keyboard = menu.kwargs["metadata"]["inline_keyboard"]
+    assert [row[0]["text"] for row in keyboard] == ["✓ Assistant", "Lane Developer"]
+    assert all("#" not in row[0]["text"] for row in keyboard)
+    assert menu.kwargs["metadata"]["callback_action"] == "agent_target"
+
+
+async def test_agent_command_is_published_in_telegram_menu() -> None:
+    from gobby.communications.commands import telegram_bot_commands
+
+    assert "agent" in {item["command"] for item in telegram_bot_commands()}
+
+
+async def test_agent_command_reports_when_no_agents_are_running() -> None:
+    controller, manager, sessions, _ = _controller()
+    sessions.list.return_value = []
+    manager.attached_session.return_value = None
+
+    await controller.handle(_channel().name, _message(content="/agent"))
+
+    assert manager.send_message.await_args.args[1] == "No agents are running."
+    assert manager.send_message.await_args.kwargs["metadata"]["inline_keyboard"] == []
+
+
+async def test_agent_button_switches_the_chat_target() -> None:
+    controller, manager, sessions, _ = _controller()
+    target_id = "44444444-4444-4444-8444-444444444444"
+    sessions.get.side_effect = lambda session_id: SimpleNamespace(
+        id=session_id, status="active", source="codex", title="Lane Developer"
+    )
+    sessions.list.return_value = [
+        SimpleNamespace(id=target_id, status="active", source="codex", title="Lane Developer")
+    ]
+    manager.attached_session.return_value = target_id
+    source = _source_message(actionable=False)
+    source.metadata_json.update(
+        {"callback_action": "agent_target", "agent_channel_id": _channel().id}
+    )
+    manager.store.get_message_by_platform_id.return_value = source
+    callback = _message(
+        content="select",
+        content_type="callback",
+        metadata={
+            "callback_action": "agent_target",
+            "callback_source_message_id": "900",
+            "callback_value": json.dumps(
+                {"op": "set", "channel_id": _channel().id, "session_id": target_id}
+            ),
+        },
+    )
+
+    consumed = await controller.handle(_channel().name, callback)
+
+    assert consumed is True
+    assert (
+        manager.send_message.await_args.args[1] == "Active agent: Lane Developer\nChoose an agent:"
+    )
+    manager.switch_conversation.assert_called_once_with(_channel().name, "dm:chat-1", target_id)
+    assert "Lane Developer" in manager.send_message.await_args.args[1]
+
+
 async def test_subscriptions_menu_paginates_six_rules_with_eight_rows_maximum() -> None:
     controller, manager, _, _ = _controller()
     manager.list_event_subscriptions.return_value = [

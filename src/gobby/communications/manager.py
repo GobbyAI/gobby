@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.communications.adapters import get_adapter_class
 from gobby.communications.adapters.base import BaseChannelAdapter
+from gobby.communications.agent_labels import agent_label
 from gobby.communications.attachments import AttachmentManager
 from gobby.communications.group_policy import evaluate_group_message
 from gobby.communications.identities import IdentityManager
@@ -235,18 +236,37 @@ class CommunicationsManager:
             )
         channel = self._channel_by_name[channel_name]
         await self._rate_limiter.wait_if_needed(channel.id)
-        await adapter.edit_message(platform_message_id, content, conversation_id)
         stored_message = await asyncio.to_thread(
             self._store.get_message_by_platform_id,
             channel_name,
             platform_message_id,
         )
+        display_content = await asyncio.to_thread(
+            self.identify_outbound_content,
+            channel,
+            stored_message.session_id if stored_message is not None else None,
+            content,
+        )
+        await adapter.edit_message(platform_message_id, display_content, conversation_id)
         if stored_message is not None:
             await asyncio.to_thread(
                 self._store.update_message_content,
                 stored_message.id,
-                content,
+                display_content,
             )
+
+    def identify_outbound_content(
+        self, channel: ChannelConfig, session_id: str | None, content: str
+    ) -> str:
+        """Name a live agent on its Telegram message or attachment caption."""
+        if channel.channel_type != "telegram" or session_id is None:
+            return content
+        session = self._session_store.get(session_id)
+        if session is None or session.source in {"comms", "web-chat", "web_chat", "system"}:
+            return content
+        label = agent_label(session)
+        prefix = f"{label}: "
+        return content if content.startswith(prefix) else f"{prefix}{content}".rstrip()
 
     async def send_attachment(
         self,
@@ -380,7 +400,7 @@ class CommunicationsManager:
         self._telegram_actions = controller
 
     def attached_session(self, channel_id: str, conversation_id: str) -> str | None:
-        """Return the live holder, dropping stale process-local bindings."""
+        """Return the live holder while retaining stale bindings for status fallback."""
         with self._attachment_lock:
             key = (channel_id, conversation_id)
             session_id = self._conversation_attachments.get(key)
@@ -388,7 +408,6 @@ class CommunicationsManager:
                 return None
             session = self._session_store.get(session_id)
             if session is None or session.status not in LIVE_SESSION_STATUSES:
-                self._conversation_attachments.pop(key, None)
                 return None
             return session_id
 
@@ -429,6 +448,21 @@ class CommunicationsManager:
                     raise ValueError("Session is already attached to another conversation")
             self._conversation_attachments[(channel.id, conversation_id)] = session_id
 
+    def switch_conversation(self, channel_name: str, conversation_id: str, session_id: str) -> None:
+        """Replace a Telegram chat holder without exposing an unattached interval."""
+        channel = self.get_channel_by_name(channel_name)
+        if channel is None:
+            raise ValueError("Channel not found")
+        key = (channel.id, conversation_id)
+        with self._attachment_lock:
+            previous = self._conversation_attachments.pop(key, None)
+            try:
+                self.attach_conversation(channel_name, conversation_id, session_id)
+            except (ValueError, RuntimeError):
+                if previous is not None:
+                    self._conversation_attachments[key] = previous
+                raise
+
     def detach_conversation(self, channel_name: str, conversation_id: str, session_id: str) -> None:
         channel = self.get_channel_by_name(channel_name)
         if channel is None:
@@ -454,12 +488,67 @@ class CommunicationsManager:
         transition: SessionStatusTransition,
     ) -> None:
         """Route a committed status transition through the attached notifier."""
+        if transition.status not in LIVE_SESSION_STATUSES:
+            await self._fallback_telegram_targets(transition)
         if self._session_notifications is not None:
             await self._session_notifications.route_transition(transition)
             return
         from gobby.communications.session_events import route_session_status_transition
 
         await route_session_status_transition(self, transition)
+
+    async def _fallback_telegram_targets(self, transition: SessionStatusTransition) -> None:
+        with self._attachment_lock:
+            attached = [
+                (channel_id, conversation_id)
+                for (channel_id, conversation_id), holder in self._conversation_attachments.items()
+                if holder == transition.session_id
+            ]
+        if not attached:
+            return
+        sessions = await asyncio.to_thread(
+            self._session_store.list,
+            project_id=transition.project_id,
+            statuses=list(LIVE_SESSION_STATUSES),
+            exclude_subagents=True,
+            limit=1000,
+        )
+        assistant = next(
+            (
+                session
+                for session in sessions
+                if session.status in LIVE_SESSION_STATUSES
+                and session.source not in {"comms", "web-chat", "web_chat", "system"}
+                and agent_label(session).casefold() == "assistant"
+            ),
+            None,
+        )
+        for channel_id, conversation_id in attached:
+            channel = self.get_channel(channel_id)
+            if channel is None or channel.channel_type != "telegram":
+                continue
+            with self._attachment_lock:
+                if (
+                    self._conversation_attachments.get((channel_id, conversation_id))
+                    != transition.session_id
+                ):
+                    continue
+                if assistant is not None:
+                    self.switch_conversation(channel.name, conversation_id, assistant.id)
+                    continue
+                self._conversation_attachments.pop((channel_id, conversation_id), None)
+            kind, _, address = conversation_id.partition(":")
+            chat_id, _, thread_id = address.partition(":")
+            if kind not in {"dm", "topic"} or not chat_id:
+                continue
+            metadata = {"platform_destination": chat_id}
+            if kind == "topic" and thread_id:
+                metadata["thread_id"] = thread_id
+            await self.send_message(
+                channel.name,
+                "No Assistant is running. Use /agent when one is available.",
+                metadata=metadata,
+            )
 
     async def handle_session_action(
         self,

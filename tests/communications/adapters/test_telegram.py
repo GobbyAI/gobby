@@ -88,6 +88,7 @@ async def test_initialize_success(
                             "command": "subscriptions",
                             "description": "Manage event subscriptions",
                         },
+                        {"command": "agent", "description": "Choose the active agent"},
                         {"command": "help", "description": "Show available commands"},
                     ]
                 },

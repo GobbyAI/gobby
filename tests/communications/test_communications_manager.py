@@ -2580,10 +2580,11 @@ async def test_attached_telegram_plain_message_routes_to_live_holder_then_falls_
     store.get_message_by_platform_id.return_value = None
     store.create_message.side_effect = lambda message: message
     sessions = MagicMock()
-    holder = MagicMock(id="live-session", status="active", source="claude")
+    holder = MagicMock(id="11111111-1111-4111-8111-111111111111", status="active", source="claude")
+    lane = MagicMock(id="44444444-4444-4444-8444-444444444444", status="active", source="codex")
     comms_session = MagicMock(id="comms-session", status="active", source="comms")
     sessions.get.side_effect = lambda session_id: (
-        holder if session_id == holder.id else comms_session
+        holder if session_id == holder.id else lane if session_id == lane.id else comms_session
     )
     manager = CommunicationsManager(make_config(), store, make_secret_store(), sessions)
     manager._channel_by_name[channel.name] = channel
@@ -2629,7 +2630,13 @@ async def test_attached_telegram_plain_message_routes_to_live_holder_then_falls_
     assert mailbox.send.await_count == 2
     manager.event_callback.assert_not_awaited()
 
-    manager.detach_conversation(channel.name, "dm:99", holder.id)
+    manager.switch_conversation(channel.name, "dm:99", lane.id)
+    switched = await manager.handle_inbound_messages(channel.name, [inbound()])
+    later = await manager.handle_inbound_messages(channel.name, [inbound()])
+    assert [switched[0].session_id, later[0].session_id] == [lane.id, lane.id]
+    assert mailbox.send.await_count == 4
+
+    manager.detach_conversation(channel.name, "dm:99", lane.id)
     second = await manager.handle_inbound_messages(channel.name, [inbound()])
     assert second[0].session_id == "comms-session"
     manager.event_callback.assert_awaited_once()
@@ -2694,3 +2701,172 @@ def test_concurrent_attachment_claims_have_one_holder() -> None:
         results = list(pool.map(claim, ("session-a", "session-b")))
     assert results.count(True) == 1
     assert results.count(False) == 1
+
+
+def test_switch_telegram_conversation_replaces_holder_atomically() -> None:
+    channel = make_channel(channel_type="telegram")
+    sessions = MagicMock()
+    sessions.get.side_effect = lambda session_id: MagicMock(
+        id=session_id, status="active", source="claude"
+    )
+    manager = CommunicationsManager(
+        make_config(), make_store([channel]), make_secret_store(), sessions
+    )
+    manager._channel_by_name[channel.name] = channel
+    manager.attach_conversation(channel.name, "dm:99", "assistant")
+
+    manager.switch_conversation(channel.name, "dm:99", "lane")
+
+    assert manager.attached_session(channel.id, "dm:99") == "lane"
+    assert manager.attached_destination(channel.id, "assistant") is None
+    assert manager.attached_destination(channel.id, "lane") == "dm:99"
+
+
+async def test_ended_target_falls_back_to_live_assistant() -> None:
+    from gobby.sessions.status_events import SessionStatusTransition
+
+    channel = make_channel(channel_type="telegram")
+    sessions = MagicMock()
+    target = MagicMock(id="11111111-1111-4111-8111-111111111111", status="active")
+    assistant = MagicMock(
+        id="22222222-2222-4222-8222-222222222222",
+        status="active",
+        source="claude",
+        title="Assistant",
+    )
+    sessions.get.side_effect = lambda session_id: (
+        target if session_id == target.id else assistant if session_id == assistant.id else None
+    )
+    sessions.list.return_value = [assistant]
+    store = make_store([channel])
+    store.get_channel.return_value = channel
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), sessions)
+    manager._channel_by_name[channel.name] = channel
+    manager._session_notifications = MagicMock(route_transition=AsyncMock())
+    manager.attach_conversation(channel.name, "dm:99", target.id)
+    target.status = "expired"
+    assert manager.attached_session(channel.id, "dm:99") is None
+
+    await manager.handle_session_status_transition(
+        SessionStatusTransition(
+            session_id=target.id,
+            project_id="project-1",
+            agent_run_id=None,
+            status="expired",
+            transitioned_at=_FIXED_TS,
+            seq_num=1,
+            title="Lane Developer",
+            source="claude",
+        )
+    )
+
+    assert manager.attached_session(channel.id, "dm:99") == assistant.id
+    assert manager.attached_destination(channel.id, target.id) is None
+    assert manager.attached_destination(channel.id, assistant.id) == "dm:99"
+
+
+async def test_ended_target_with_no_assistant_replies_without_switching() -> None:
+    from gobby.sessions.status_events import SessionStatusTransition
+
+    channel = make_channel(channel_type="telegram")
+    store = make_store([channel])
+    store.get_channel.return_value = channel
+    sessions = MagicMock()
+    target = MagicMock(id="11111111-1111-4111-8111-111111111111", status="active")
+    sessions.get.side_effect = lambda session_id: target if session_id == target.id else None
+    sessions.list.return_value = []
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), sessions)
+    manager._channel_by_name[channel.name] = channel
+    adapter = make_adapter(channel_type="telegram")
+    manager._adapters[channel.name] = adapter
+    manager._session_notifications = MagicMock(route_transition=AsyncMock())
+    manager.attach_conversation(channel.name, "dm:99", target.id)
+    target.status = "expired"
+
+    await manager.handle_session_status_transition(
+        SessionStatusTransition(
+            session_id=target.id,
+            project_id="project-1",
+            agent_run_id=None,
+            status="expired",
+            transitioned_at=_FIXED_TS,
+            seq_num=1,
+            title="Lane Developer",
+            source="claude",
+        )
+    )
+
+    assert manager.attached_session(channel.id, "dm:99") is None
+    assert "No Assistant is running" in adapter.send_message.await_args.args[0].content
+
+
+async def test_telegram_outbound_names_active_and_other_agent_senders() -> None:
+    channel = make_channel(channel_type="telegram")
+    sessions = MagicMock()
+    assistant = MagicMock(
+        id="11111111-1111-4111-8111-111111111111",
+        status="active",
+        source="claude",
+        title="Assistant",
+    )
+    lane = MagicMock(
+        id="44444444-4444-4444-8444-444444444444",
+        status="active",
+        source="codex",
+        title="Lane Developer",
+    )
+    sessions.get.side_effect = lambda session_id: (
+        assistant if session_id == assistant.id else lane if session_id == lane.id else None
+    )
+    manager = CommunicationsManager(
+        make_config(), make_store([channel]), make_secret_store(), sessions
+    )
+    manager._channel_by_name[channel.name] = channel
+    manager._adapters[channel.name] = make_adapter(channel_type="telegram")
+    manager._identity_manager = MagicMock()
+    manager._identity_manager.get_identity_by_session.return_value = None
+    manager.attach_conversation(channel.name, "dm:99", assistant.id)
+
+    active = await manager.send_message(
+        channel.name, "Hello", session_id=assistant.id, metadata={"platform_destination": "99"}
+    )
+    other = await manager.send_message(
+        channel.name, "Update", session_id=lane.id, metadata={"platform_destination": "99"}
+    )
+
+    assert active.content.startswith("Assistant: ")
+    assert other.content.startswith("Lane Developer: ")
+
+
+async def test_telegram_stream_edit_keeps_the_agent_name() -> None:
+    channel = make_channel(channel_type="telegram")
+    store = make_store([channel])
+    session_id = "11111111-1111-4111-8111-111111111111"
+    stored_message = CommsMessage(
+        id="outbound-1",
+        channel_id=channel.id,
+        direction="outbound",
+        content="Assistant: partial",
+        session_id=session_id,
+        created_at=_FIXED_TS,
+    )
+    store.get_message_by_platform_id.return_value = stored_message
+    store.update_message_content.side_effect = lambda _id, content: setattr(
+        stored_message, "content", content
+    )
+    sessions = MagicMock()
+    sessions.get.return_value = MagicMock(
+        id=session_id, status="active", source="claude", title="Assistant"
+    )
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), sessions)
+    manager._channel_by_name[channel.name] = channel
+    adapter = make_adapter(channel_type="telegram")
+    adapter.supports_message_edit = True
+    adapter.edit_message = AsyncMock()
+    manager._adapters[channel.name] = adapter
+
+    await manager.edit_message(channel.name, "platform-1", "Finished", "99")
+
+    adapter.edit_message.assert_awaited_once_with("platform-1", "Assistant: Finished", "99")
+    assert stored_message.content == "Assistant: Finished"
+    store.update_message_content.assert_called_once_with("outbound-1", "Assistant: Finished")

@@ -9,6 +9,7 @@ from collections.abc import Awaitable
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
+from gobby.communications.agent_labels import agent_label
 from gobby.communications.models import ChannelConfig, CommsMessage, CommsRoutingRule
 from gobby.communications.native_plan_actions import decode_native_plan_option
 from gobby.communications.telegram_access import allowed_senders
@@ -24,6 +25,7 @@ if TYPE_CHECKING:
 _PAGE_SIZE = 6
 _SESSION_ACTION = "session_action"
 _SUBSCRIPTION_ACTION = "subscription_control"
+_AGENT_TARGET_ACTION = "agent_target"
 
 logger = logging.getLogger(__name__)
 
@@ -64,12 +66,22 @@ class TelegramActionController:
                 self._handle_subscription_callback(channel, message),
             )
             return True
+        if message.content_type == "callback" and action == _AGENT_TARGET_ACTION:
+            await self._consume_safely(
+                channel,
+                message,
+                self._handle_agent_target_callback(channel, message),
+            )
+            return True
         if _command_name(message.content) == "subscriptions":
             await self._consume_safely(
                 channel,
                 message,
                 self._handle_subscriptions_command(channel, message),
             )
+            return True
+        if _command_name(message.content) == "agent":
+            await self._consume_safely(channel, message, self._send_agent_menu(channel, message))
             return True
 
         reply_id = _string_value(message.metadata_json.get("reply_to_message_id"))
@@ -339,6 +351,148 @@ class TelegramActionController:
             return
         await self._send_subscription_menu(channel, message, page=0)
 
+    async def _send_agent_menu(
+        self,
+        channel: ChannelConfig,
+        message: CommsMessage,
+        *,
+        page: int = 0,
+    ) -> None:
+        if not await self._subscription_authorized(channel, message):
+            await self._feedback(
+                channel, message, "Agent controls require an authorized private chat."
+            )
+            return
+        conversation_id = _agent_conversation_key(message)
+        if conversation_id is None:
+            await self._feedback(channel, message, "This chat has no stable Telegram address.")
+            return
+
+        sessions = await asyncio.to_thread(
+            self._session_manager.list,
+            statuses=list(LIVE_SESSION_STATUSES),
+            exclude_subagents=True,
+            limit=1000,
+        )
+        agents = sorted(
+            (
+                session
+                for session in sessions
+                if session.status in LIVE_SESSION_STATUSES
+                and session.source not in {"comms", "web-chat", "web_chat", "system"}
+            ),
+            key=lambda session: (agent_label(session).casefold(), session.id),
+        )
+        current = await asyncio.to_thread(
+            self._manager.attached_session, channel.id, conversation_id
+        )
+        page_count = max(1, (len(agents) + _PAGE_SIZE - 1) // _PAGE_SIZE)
+        bounded_page = min(max(page, 0), page_count - 1)
+        visible = agents[bounded_page * _PAGE_SIZE : (bounded_page + 1) * _PAGE_SIZE]
+        keyboard = [
+            [
+                {
+                    "text": f"{'✓ ' if agent.id == current else ''}{agent_label(agent)}",
+                    "value": json.dumps(
+                        {"op": "set", "channel_id": channel.id, "session_id": agent.id}
+                    ),
+                }
+            ]
+            for agent in visible
+        ]
+        if page_count > 1:
+            navigation = []
+            for label, next_page in (("Previous", bounded_page - 1), ("Next", bounded_page + 1)):
+                if 0 <= next_page < page_count:
+                    navigation.append(
+                        {
+                            "text": label,
+                            "value": json.dumps(
+                                {"op": "page", "channel_id": channel.id, "page": next_page}
+                            ),
+                        }
+                    )
+            keyboard.append(navigation)
+        current_label = next(
+            (agent_label(agent) for agent in agents if agent.id == current), "None"
+        )
+        menu_text = (
+            f"Active agent: {current_label}\nChoose an agent:"
+            if agents
+            else "No agents are running."
+        )
+        await self._manager.send_message(
+            channel.name,
+            menu_text,
+            session_id=message.session_id,
+            metadata={
+                **_reply_destination(message),
+                "callback_action": _AGENT_TARGET_ACTION,
+                "agent_channel_id": channel.id,
+                "inline_keyboard": keyboard,
+            },
+        )
+
+    async def _handle_agent_target_callback(
+        self,
+        channel: ChannelConfig,
+        message: CommsMessage,
+    ) -> None:
+        if not await self._subscription_authorized(channel, message):
+            await self._feedback(
+                channel, message, "Agent controls require an authorized private chat."
+            )
+            return
+        source_id = _string_value(message.metadata_json.get("callback_source_message_id"))
+        source = await self._source_message(channel.name, source_id)
+        if (
+            source is None
+            or source.metadata_json.get("callback_action") != _AGENT_TARGET_ACTION
+            or source.metadata_json.get("agent_channel_id") != channel.id
+            or not _same_telegram_chat(source, message)
+        ):
+            await self._feedback(channel, message, "This agent menu is invalid.")
+            return
+        raw_value = message.metadata_json.get("callback_value")
+        try:
+            payload = json.loads(raw_value) if isinstance(raw_value, str) else None
+        except json.JSONDecodeError:
+            payload = None
+        if not isinstance(payload, dict) or payload.get("channel_id") != channel.id:
+            await self._feedback(channel, message, "This agent choice is invalid.")
+            return
+        if payload.get("op") == "page" and isinstance(payload.get("page"), int):
+            await self._send_agent_menu(channel, message, page=payload["page"])
+            return
+        target_id = payload.get("session_id")
+        if (
+            payload.get("op") != "set"
+            or not isinstance(target_id, str)
+            or not is_session_uuid(target_id)
+        ):
+            await self._feedback(channel, message, "This agent choice is invalid.")
+            return
+        target = await asyncio.to_thread(self._session_manager.get, target_id)
+        if (
+            target is None
+            or target.status not in LIVE_SESSION_STATUSES
+            or target.source in {"comms", "web-chat", "web_chat", "system"}
+        ):
+            await self._feedback(channel, message, "This agent is no longer running.")
+            return
+        conversation_id = _agent_conversation_key(message)
+        if conversation_id is None:
+            await self._feedback(channel, message, "This chat has no stable Telegram address.")
+            return
+        try:
+            await asyncio.to_thread(
+                self._manager.switch_conversation, channel.name, conversation_id, target_id
+            )
+        except ValueError:
+            await self._feedback(channel, message, "This agent is attached to another chat.")
+            return
+        await self._send_agent_menu(channel, message)
+
     async def _handle_subscription_callback(
         self,
         channel: ChannelConfig,
@@ -583,6 +737,14 @@ def _reply_destination(message: CommsMessage) -> dict[str, Any]:
     if thread_id is not None:
         metadata["thread_id"] = thread_id
     return metadata
+
+
+def _agent_conversation_key(message: CommsMessage) -> str | None:
+    chat_id = _string_value(message.metadata_json.get("chat_id"))
+    if chat_id is None:
+        return None
+    thread_id = _string_value(message.metadata_json.get("message_thread_id"))
+    return f"topic:{chat_id}:{thread_id}" if thread_id else f"dm:{chat_id}"
 
 
 def _same_telegram_chat(source: CommsMessage, inbound: CommsMessage) -> bool:
