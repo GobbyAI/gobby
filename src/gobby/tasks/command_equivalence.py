@@ -341,3 +341,25 @@ def _ignorable_runner_option(
 def _pytest_reporting_option(option: str) -> bool:
     name = option.split("=", 1)[0]
     return name in _PYTEST_REPORTING_OPTIONS or name.startswith("-r")
+
+
+def pytest_targets(command: str) -> tuple[str, ...] | None:
+    """Return path targets for a pytest command.
+
+    ``None`` means the command is not pytest. No path arguments cover the
+    whole tree. A node id covers its file.
+    """
+    scoped = _path_scope(command)
+    if scoped is None:
+        return None
+    prefix, paths = scoped
+    if "pytest" not in prefix:
+        return None
+    if not paths:
+        return (".",)
+    normalized: list[str] = []
+    for path in paths:
+        file_path = path.split("::", 1)[0]
+        if file_path and file_path not in normalized:
+            normalized.append(file_path)
+    return tuple(normalized)
