@@ -20,6 +20,7 @@ from gobby.agents.spawners.auth_env import split_credential_env
 from gobby.agents.tmux.errors import TmuxSessionError
 from gobby.agents.tmux.launcher import INLINE_LAUNCH_LIMIT, write_launcher
 from gobby.agents.tmux.wsl_compat import convert_windows_path_to_wsl, needs_wsl
+from gobby.utils import spawn
 
 if TYPE_CHECKING:
     from gobby.agents.tmux.session_manager import TmuxSessionManager
@@ -96,18 +97,15 @@ async def run_tmux_command(
 ) -> tuple[int, str, str]:
     """Run a full tmux command line and return (returncode, stdout, stderr).
 
-    The spawn runs in a worker thread rather than through
-    ``asyncio.create_subprocess_exec``, whose ``Popen.__init__`` forks
-    inline on the event loop. With the daemon around a gigabyte resident
-    that fork is expensive, and it is on the hot path: the pane monitor
-    polls tmux continuously and the window-name repair loop spawns per
-    session, so a stack sampler caught this reaching
-    ``Popen._execute_child`` on the loop thread during multi-second
-    stalls (#20841).
+    This is on the hot path: the pane monitor polls tmux continuously and
+    the window-name repair loop spawns per session. A stack sampler caught
+    ``Popen._execute_child`` on the loop thread during multi-second stalls
+    (#20841), and a fork holds the GIL even from a worker thread (#22815),
+    so the command starts through posix_spawn and waits in a worker thread.
     """
     try:
         completed = await asyncio.to_thread(
-            subprocess.run,
+            spawn.run,
             cmd,
             capture_output=True,
             timeout=timeout,

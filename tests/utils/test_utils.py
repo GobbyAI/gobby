@@ -87,7 +87,7 @@ class TestGitUtils:
         result = run_git_command(["git", "status"], temp_dir)
         assert result is None
 
-    @patch("subprocess.run")
+    @patch("gobby.utils.spawn.run")
     def test_run_git_command_timeout(self, mock_run: MagicMock, temp_dir: Path) -> None:
         """Test git command timeout handling."""
         mock_run.side_effect = subprocess.TimeoutExpired(cmd="git", timeout=5)
@@ -95,7 +95,7 @@ class TestGitUtils:
         result = run_git_command(["git", "status"], temp_dir, timeout=5)
         assert result is None
 
-    @patch("subprocess.run")
+    @patch("gobby.utils.spawn.run")
     def test_run_git_command_not_found(self, mock_run: MagicMock, temp_dir: Path) -> None:
         """Test git executable not found."""
         mock_run.side_effect = FileNotFoundError()

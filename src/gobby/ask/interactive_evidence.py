@@ -8,6 +8,8 @@ import json
 from pathlib import Path
 from typing import Any, Literal
 
+from gobby.utils import spawn
+
 
 async def retrieve_evidence(
     *,
@@ -24,7 +26,7 @@ async def retrieve_evidence(
     }
     if continuation is not None:
         request["continuation"] = continuation
-    process = await asyncio.create_subprocess_exec(
+    process = await spawn.create_subprocess_exec(
         str(executable),
         "--quiet",
         "--format",

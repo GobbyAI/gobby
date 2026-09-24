@@ -129,9 +129,7 @@ async def test_daemon_git_timeout_is_unavailable_without_blocking_loop(
         return GitTimeout("timeout", ("git", *args), 0.01)
 
     monkeypatch.setattr(source_control, "_resolve_project", lambda *_args: "/tmp/repo")
-    monkeypatch.setattr(
-        "gobby.servers.routes.source_control_git.daemon_git.run_posix_spawn", timeout_git
-    )
+    monkeypatch.setattr("gobby.servers.routes.source_control_git.daemon_git.run", timeout_git)
     async with AsyncClient(transport=ASGITransport(app=client.app), base_url="http://test") as http:
         request = asyncio.create_task(http.get("/api/source-control/status"))
         try:

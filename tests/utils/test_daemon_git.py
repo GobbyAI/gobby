@@ -9,10 +9,10 @@ import threading
 import time
 from pathlib import Path
 from typing import Any, cast
-from unittest.mock import AsyncMock
 
 import pytest
 
+from gobby.utils import daemon_git
 from gobby.utils.daemon_git import (
     DaemonGitService,
     GitFailed,
@@ -48,6 +48,7 @@ def _write_fake_git(tmp_path: Path) -> None:
     executable = tmp_path / "git"
     executable.write_text(
         "#!/bin/sh\n"
+        'if [ "$1" = "-C" ]; then cd "$2" || exit 128; shift 2; fi\n'
         'if [ -n "$GIT_TEST_COUNT" ]; then printf x >> "$GIT_TEST_COUNT"; fi\n'
         'if [ -n "$GIT_TEST_PIDS" ]; then\n'
         "  /bin/sleep 30 &\n"
@@ -92,7 +93,7 @@ class _CompletedStreamProcess:
     returncode = 0
 
     def __init__(self, *_args: object, **kwargs: object) -> None:
-        stdout = cast(Any, kwargs["stdout"])
+        stdout = cast(Any, kwargs["stdout_file"])
         stdout.write(b"chunk")
 
     def wait(self) -> int:
@@ -157,38 +158,43 @@ async def test_run_returns_typed_success_and_failure(tmp_path: Path) -> None:
     [
         ("nt", None),
         ("posix", "posix_spawn"),
+        ("posix", "POSIX_SPAWN_OPEN"),
         ("posix", "POSIX_SPAWN_DUP2"),
         ("posix", "POSIX_SPAWN_CLOSE"),
     ],
 )
-async def test_run_posix_spawn_falls_back_when_platform_support_is_unavailable(
+async def test_run_uses_a_popen_session_where_posix_spawn_is_unavailable(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     platform_name: str,
     missing_attribute: str | None,
 ) -> None:
-    service = DaemonGitService()
-    expected = GitOk("ok", ("git", "status"), "", "")
-    fallback = AsyncMock(return_value=expected)
-    monkeypatch.setattr(service, "run", fallback)
+    _write_fake_git(tmp_path)
+    real_popen = subprocess.Popen
+    popen_calls: list[tuple[object, dict[str, Any]]] = []
+
+    def recording_popen(argv: object, **kwargs: Any) -> subprocess.Popen[bytes]:
+        popen_calls.append((argv, kwargs))
+        return real_popen(cast(Any, argv), **kwargs)
+
+    monkeypatch.setattr("gobby.utils.daemon_git.subprocess.Popen", recording_popen)
     monkeypatch.setattr("gobby.utils.daemon_git.os.name", platform_name)
     if missing_attribute is not None:
         monkeypatch.delattr(f"gobby.utils.daemon_git.os.{missing_attribute}")
 
-    result = await service.run_posix_spawn(["status"], cwd=tmp_path)
-
-    assert result is expected
-    fallback.assert_awaited_once_with(
-        ["status"],
-        cwd=tmp_path,
-        timeout=10.0,
-        env=None,
-        input_text=None,
+    result = await DaemonGitService().run(
+        ["rev-parse", "HEAD"], cwd=tmp_path, timeout=2.0, env=_git_env(tmp_path)
     )
+
+    assert isinstance(result, GitOk)
+    assert result.stdout == "rev-parse\0HEAD"
+    assert [(argv, kwargs["cwd"], kwargs["start_new_session"]) for argv, kwargs in popen_calls] == [
+        (("git", "rev-parse", "HEAD"), str(tmp_path), True)
+    ]
 
 
 @pytest.mark.asyncio
-async def test_run_posix_spawn_uses_owned_posix_spawn_process_group(
+async def test_git_commands_start_their_own_process_group_without_forking(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -206,70 +212,53 @@ async def test_run_posix_spawn_uses_owned_posix_spawn_process_group(
         spawn_calls.append((path, argv, kwargs, threading.get_ident()))
         return real_posix_spawn(path, argv, env, **kwargs)
 
+    def forking_popen(*_args: object, **_kwargs: object) -> subprocess.Popen[bytes]:
+        raise AssertionError("Popen with cwd and a new session forks the daemon")
+
     monkeypatch.setattr("gobby.utils.daemon_git.os.posix_spawn", recording_posix_spawn)
+    monkeypatch.setattr("gobby.utils.daemon_git.subprocess.Popen", forking_popen)
+    service = DaemonGitService()
+    env = _git_env(tmp_path)
+    chunks: list[bytes] = []
 
-    result = await DaemonGitService().run_posix_spawn(
-        ["rev-parse", "HEAD"],
-        cwd=tmp_path,
-        timeout=2.0,
-        env=_git_env(tmp_path),
+    ran = await service.run(["rev-parse", "HEAD"], cwd=tmp_path, timeout=2.0, env=env)
+    status = await service.status(tmp_path, ["same.py"], env=env)
+    streamed = await service.stream_bytes(
+        ["show"], cwd=tmp_path, consume=chunks.append, timeout=2.0, env=env
     )
 
-    assert isinstance(result, GitOk)
-    assert len(spawn_calls) == 1
-    path, argv, kwargs, spawn_thread = spawn_calls[0]
-    assert path == str(tmp_path / "git")
-    assert argv == (str(tmp_path / "git"), "-C", str(tmp_path), "rev-parse", "HEAD")
-    assert spawn_thread != loop_thread
-    assert kwargs["setpgroup"] == 0
-    assert kwargs["file_actions"]
+    assert isinstance(ran, GitOk)
+    assert ran.argv == ("git", "rev-parse", "HEAD")
+    assert ran.stdout == "rev-parse\0HEAD"
+    assert isinstance(status, GitOk)
+    assert isinstance(streamed, GitOk)
+    assert b"".join(chunks) == b"show"
+    git = str(tmp_path / "git")
+    assert [(path, argv[:3]) for path, argv, _kwargs, _thread in spawn_calls] == [
+        (git, (git, "-C", str(tmp_path)))
+    ] * 3
+    assert spawn_calls[0][1][3:] == ("rev-parse", "HEAD")
+    # Its own session, as Popen's start_new_session: killpg still reaches the group, and a
+    # credential prompt cannot stop Git with SIGTTIN from the daemon's terminal.
+    assert all(
+        kwargs.get("setsid") is True and "setpgroup" not in kwargs
+        for _path, _argv, kwargs, _thread in spawn_calls
+    )
+    assert loop_thread not in {thread for _path, _argv, _kwargs, thread in spawn_calls}
 
 
 @pytest.mark.asyncio
-async def test_run_posix_spawn_timeout_kills_children_and_settles_worker(tmp_path: Path) -> None:
+async def test_run_reports_a_missing_directory_as_git_never_starting(tmp_path: Path) -> None:
     _write_fake_git(tmp_path)
-    pids_file = tmp_path / "pids"
-    baseline_workers = set(threading.enumerate())
+    missing = tmp_path / "missing"
 
-    result = await DaemonGitService().run_posix_spawn(
-        ["status"],
-        cwd=tmp_path,
-        timeout=0.5,
-        env=_git_env(tmp_path, GIT_TEST_DELAY="30", GIT_TEST_PIDS=str(pids_file)),
+    result = await DaemonGitService().run(
+        ["status"], cwd=missing, timeout=2.0, env=_git_env(tmp_path)
     )
 
-    assert isinstance(result, GitTimeout)
-    process_ids = tuple(map(int, pids_file.read_text(encoding="utf-8").split()))
-    assert len(process_ids) == 3
-    await _assert_processes_gone(*process_ids)
-    _assert_no_new_git_workers(baseline_workers)
-
-
-@pytest.mark.asyncio
-async def test_run_posix_spawn_cancellation_kills_children_and_settles_worker(
-    tmp_path: Path,
-) -> None:
-    _write_fake_git(tmp_path)
-    pids_file = tmp_path / "pids"
-    baseline_workers = set(threading.enumerate())
-    request = asyncio.create_task(
-        DaemonGitService().run_posix_spawn(
-            ["status"],
-            cwd=tmp_path,
-            timeout=30,
-            env=_git_env(tmp_path, GIT_TEST_DELAY="30", GIT_TEST_PIDS=str(pids_file)),
-        )
-    )
-    await _wait_for_file(pids_file)
-
-    request.cancel()
-
-    with pytest.raises(asyncio.CancelledError):
-        await request
-    process_ids = tuple(map(int, pids_file.read_text(encoding="utf-8").split()))
-    assert len(process_ids) == 3
-    await _assert_processes_gone(*process_ids)
-    _assert_no_new_git_workers(baseline_workers)
+    assert isinstance(result, GitFailed)
+    assert result.returncode is None
+    assert str(missing) in result.stderr
 
 
 @pytest.mark.asyncio
@@ -280,14 +269,14 @@ async def test_stream_bytes_spools_and_preserves_raw_output(
     payload = b"prefix\r\nraw-cr\r\x00\xff" + bytes(range(256)) * 1024
     output = tmp_path / "output.bin"
     output.write_bytes(payload)
-    real_popen = subprocess.Popen
+    real_spawn = daemon_git._spawn_git
     process_streams: list[tuple[object, object]] = []
 
-    def recording_popen(*args: Any, **kwargs: Any) -> subprocess.Popen[bytes]:
-        process_streams.append((kwargs.get("stdout"), kwargs.get("stderr")))
-        return real_popen(*args, **kwargs)
+    def recording_spawn(*args: Any, **kwargs: Any) -> daemon_git._GitProcess:
+        process_streams.append((kwargs.get("stdout_file"), kwargs.get("stderr_file")))
+        return real_spawn(*args, **kwargs)
 
-    monkeypatch.setattr("gobby.utils.daemon_git.subprocess.Popen", recording_popen)
+    monkeypatch.setattr(daemon_git, "_spawn_git", recording_spawn)
     chunks: list[bytes] = []
 
     result = await DaemonGitService().stream_bytes(
@@ -509,11 +498,11 @@ async def test_nonstream_timeout_waits_for_worker_cleanup(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _write_fake_git(tmp_path)
-    real_popen = subprocess.Popen
+    real_spawn = daemon_git._spawn_git
     release_cleanup = threading.Event()
 
     class DelayedCompletionProcess:
-        def __init__(self, process: subprocess.Popen[bytes]) -> None:
+        def __init__(self, process: daemon_git._GitProcess) -> None:
             self._process = process
 
         def __getattr__(self, name: str) -> object:
@@ -524,10 +513,10 @@ async def test_nonstream_timeout_waits_for_worker_cleanup(
             assert release_cleanup.wait(1)
             return output
 
-    def delayed_popen(*args: Any, **kwargs: Any) -> DelayedCompletionProcess:
-        return DelayedCompletionProcess(real_popen(*args, **kwargs))
+    def delayed_spawn(*args: Any, **kwargs: Any) -> DelayedCompletionProcess:
+        return DelayedCompletionProcess(real_spawn(*args, **kwargs))
 
-    monkeypatch.setattr("gobby.utils.daemon_git.subprocess.Popen", delayed_popen)
+    monkeypatch.setattr(daemon_git, "_spawn_git", delayed_spawn)
     asyncio.get_running_loop().call_later(0.35, release_cleanup.set)
 
     started = time.monotonic()
@@ -552,7 +541,7 @@ async def test_stream_timeout_waits_for_callback_longer_than_cleanup_grace(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("gobby.utils.daemon_git.subprocess.Popen", _CompletedStreamProcess)
+    monkeypatch.setattr(daemon_git, "_spawn_git", _CompletedStreamProcess)
     entered = threading.Event()
     release = threading.Event()
     finished = threading.Event()
@@ -601,7 +590,7 @@ async def test_stream_cancellation_waits_for_callback_longer_than_cleanup_grace(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("gobby.utils.daemon_git.subprocess.Popen", _CompletedStreamProcess)
+    monkeypatch.setattr(daemon_git, "_spawn_git", _CompletedStreamProcess)
     entered = threading.Event()
     release = threading.Event()
     finished = threading.Event()
@@ -675,19 +664,19 @@ async def test_deadline_includes_slow_spawn(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _write_fake_git(tmp_path)
-    real_popen = subprocess.Popen
-    created: list[subprocess.Popen[str]] = []
+    real_spawn = daemon_git._spawn_git
+    created: list[daemon_git._GitProcess] = []
     release_spawn = threading.Event()
     finished = threading.Event()
 
-    def slow_popen(*args: Any, **kwargs: Any) -> subprocess.Popen[str]:
+    def slow_spawn(*args: Any, **kwargs: Any) -> daemon_git._GitProcess:
         release_spawn.wait(5)
-        process = real_popen(*args, **kwargs)
+        process = real_spawn(*args, **kwargs)
         created.append(process)
         finished.set()
         return process
 
-    monkeypatch.setattr("gobby.utils.daemon_git.subprocess.Popen", slow_popen)
+    monkeypatch.setattr(daemon_git, "_spawn_git", slow_spawn)
     service = DaemonGitService()
     asyncio.get_running_loop().call_later(0.08, release_spawn.set)
 
@@ -708,7 +697,7 @@ async def test_deadline_includes_slow_spawn(
     assert finished.is_set()
     assert len(created) == 1
     await _assert_processes_gone(created[0].pid)
-    assert created[0].poll() is not None
+    assert created[0].returncode is not None
 
 
 @pytest.mark.unit
@@ -777,16 +766,16 @@ async def test_status_does_not_coalesce_across_event_loop_threads(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _write_fake_git(tmp_path)
-    real_popen = subprocess.Popen
+    real_spawn = daemon_git._spawn_git
     barrier = threading.Barrier(2)
     count = tmp_path / "count"
     env = _git_env(tmp_path, GIT_TEST_COUNT=str(count))
 
-    def overlapping_popen(*args: Any, **kwargs: Any) -> subprocess.Popen[str]:
+    def overlapping_spawn(*args: Any, **kwargs: Any) -> daemon_git._GitProcess:
         barrier.wait(timeout=2)
-        return real_popen(*args, **kwargs)
+        return real_spawn(*args, **kwargs)
 
-    monkeypatch.setattr("gobby.utils.daemon_git.subprocess.Popen", overlapping_popen)
+    monkeypatch.setattr(daemon_git, "_spawn_git", overlapping_spawn)
     service = DaemonGitService()
 
     def other_loop() -> GitOk | GitFailed | GitTimeout:

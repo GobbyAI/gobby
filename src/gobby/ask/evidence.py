@@ -22,6 +22,7 @@ from gobby.ask.evidence_authority import load_evidence_authority
 from gobby.ask.snapshots import SnapshotIndexRuntime
 from gobby.ask.storage import AskRunStorage
 from gobby.storage.hub.operation_deadline import database_operation_deadline
+from gobby.utils import spawn
 from gobby.utils.terminal_output import redact_terminal_output
 
 _MAX_PAGE_SIZE = 1024 * 1024
@@ -200,7 +201,7 @@ class EvidenceAdmission:
         return pointer
 
     async def _spawn_process(self, *argv: str, **kwargs: Any) -> Any:
-        spawn_task = asyncio.create_task(asyncio.create_subprocess_exec(*argv, **kwargs))
+        spawn_task = asyncio.create_task(spawn.create_subprocess_exec(*argv, **kwargs))
         try:
             async with asyncio.timeout(self._remaining_seconds()):
                 return await asyncio.shield(spawn_task)

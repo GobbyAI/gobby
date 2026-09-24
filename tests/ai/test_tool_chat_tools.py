@@ -277,7 +277,7 @@ async def test_run_argv_managed_context_strips_operator_database_env(
 
     monkeypatch.setenv("DATABASE_URL", "postgresql://operator/database-url")
     monkeypatch.setattr(
-        "gobby.ai._tool_chat_tools.asyncio.create_subprocess_exec",
+        "gobby.ai._tool_chat_tools.spawn.create_subprocess_exec",
         create_process,
     )
 

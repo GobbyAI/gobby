@@ -40,17 +40,20 @@ async def sweep_test_schemas_loop(
     *,
     interval_seconds: int = _TEST_SCHEMA_SWEEP_INTERVAL_SECONDS,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    capture_database_url: Callable[[], str | None] | None = None,
 ) -> None:
     """Sweep abandoned test schemas at startup and periodically thereafter."""
-    if not database_url:
+    if capture_database_url is None and not database_url:
         return
     while not is_shutdown_requested():
-        try:
-            await asyncio.to_thread(sweep_orphaned_test_schemas, database_url)
-        except asyncio.CancelledError:
-            break
-        except Exception:
-            logger.exception("Failed to sweep orphaned Postgres test schemas")
+        url = capture_database_url() if capture_database_url is not None else database_url
+        if url:
+            try:
+                await asyncio.to_thread(sweep_orphaned_test_schemas, url)
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                logger.exception("Failed to sweep orphaned Postgres test schemas")
         try:
             await sleep(interval_seconds)
         except asyncio.CancelledError:

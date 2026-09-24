@@ -653,7 +653,7 @@ class TestTmuxInventory:
         ]
 
     def test_probe_error_returns_none(self, monitor: SessionLivenessMonitor) -> None:
-        with patch("subprocess.run", side_effect=OSError("tmux unavailable")):
+        with patch("gobby.utils.spawn.run", side_effect=OSError("tmux unavailable")):
             inventory = monitor._list_tmux_inventory(_TmuxSocketIdentity(None, "gobby"))
 
         assert inventory is None

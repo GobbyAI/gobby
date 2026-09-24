@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import IO
 
 from gobby.install.bin_freshness_github import SourceUnavailableError
+from gobby.utils import spawn
 from gobby.utils.native_bin import native_bin_dir
 
 NATIVE_BINARY_MODE = 0o755
@@ -209,7 +210,7 @@ def last_source_commit_time(crates_root: Path, crates: tuple[str, ...]) -> float
     """
     paths = [str(crates_root / crate) for crate in crates]
     try:
-        result = subprocess.run(  # nosec B603 B607 - fixed arguments, repo-relative paths
+        result = spawn.run(
             ["git", "log", "-1", "--format=%ct", "--", *paths],
             cwd=crates_root.parent,
             capture_output=True,

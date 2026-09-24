@@ -44,6 +44,7 @@ from gobby.runtime_grants.service import DeploymentGrantContext, capabilities_fr
 from gobby.runtime_grants.signing import sign_grant
 from gobby.storage.managed_credentials import MANAGED_EXECUTION_BOOTSTRAP_ENV
 from gobby.storage.schema_contract import installed_schema_identity
+from gobby.utils import spawn
 from gobby.utils.daemon_git import GitOk, daemon_git
 from gobby.utils.local_token import GOBBY_AGENT_API_TOKEN_ENV, read_local_api_token
 from gobby.utils.native_bin import resolve_native_bin
@@ -731,7 +732,7 @@ async def _run_gcode(
     proc: subprocess.Popen[bytes] | None = None
     try:
         proc = await asyncio.to_thread(
-            subprocess.Popen,  # nosec B603 # fixed gcode binary with controlled arguments.
+            spawn.popen,
             args,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,

@@ -255,6 +255,28 @@ class CodeIndexFileStorageMixin:
             )
             return cursor.rowcount > 0
 
+    def requeue_vector_sync(self, file_id: str) -> bool:
+        """Clear the cooloff stamp so an exhausted vector sync is pending again."""
+        with self.db.transaction() as conn:
+            cursor = conn.execute(
+                """UPDATE code_indexed_files
+                   SET vectors_synced = FALSE, vector_sync_attempted_at = NULL
+                   WHERE id = %s AND vectors_synced IS FALSE""",
+                (file_id,),
+            )
+            return cursor.rowcount > 0
+
+    def requeue_graph_sync(self, file_id: str) -> bool:
+        """Clear the cooloff stamp so an exhausted graph sync is pending again."""
+        with self.db.transaction() as conn:
+            cursor = conn.execute(
+                """UPDATE code_indexed_files
+                   SET graph_synced = FALSE, graph_sync_attempted_at = NULL
+                   WHERE id = %s AND graph_synced IS FALSE""",
+                (file_id,),
+            )
+            return cursor.rowcount > 0
+
     def reset_graph_sync_for_project(self, project_id: str) -> int:
         """Mark every file in a project as needing graph rebuild."""
         with self.db.transaction() as conn:

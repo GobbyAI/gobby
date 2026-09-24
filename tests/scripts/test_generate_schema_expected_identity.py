@@ -30,7 +30,7 @@ def test_generate_writes_stable_exact_identity(
         command = ["/managed/gdaemon", "schema", "version", "--json"]
         return subprocess.CompletedProcess(command, 0, stdout=json.dumps(identity), stderr="")
 
-    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr("gobby.utils.spawn.run", run)
     output = tmp_path / "identity.json"
 
     generator.generate(Path("/managed/gdaemon"), output)

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import subprocess  # nosec B404 - the test's child is started through gobby.utils.spawn
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -11,6 +13,7 @@ import pytest
 from gobby.agents.constants import IDENTITY_ENV_VARS
 from gobby.runner import main
 from gobby.runner_pid_file import SERVICE_LAUNCH_ENV, SERVICE_NONCE_ENV
+from gobby.utils import spawn
 
 pytestmark = pytest.mark.unit
 
@@ -75,4 +78,52 @@ def test_main_pops_the_service_marker_once_admission_consumed_it(
 
     assert marker_at_admission == [{SERVICE_LAUNCH_ENV: "1", SERVICE_NONCE_ENV: nonce_path}]
     assert marker_at_runner_start == [set()]
+    ownership.release.assert_called_once_with()
+
+
+def test_main_seals_inherited_descriptors_before_the_runner_starts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Spawns keep close_fds=False, so no descriptor the launcher left inheritable reaches them."""
+    for name in IDENTITY_ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
+    read_fd, write_fd = os.pipe()
+    os.set_inheritable(write_fd, True)
+    inheritable_at_runner_start: list[bool] = []
+    children: list[subprocess.Popen[bytes]] = []
+
+    def start_a_child(**_kwargs: object) -> None:
+        inheritable_at_runner_start.append(os.get_inheritable(write_fd))
+        children.append(
+            spawn.popen(
+                [sys.executable, "-c", "import sys; sys.stdin.read()"], stdin=subprocess.PIPE
+            )
+        )
+
+    ownership = MagicMock()
+    bootstrap = MagicMock(daemon_port=8765, bind_host="localhost")
+    try:
+        with (
+            patch("gobby.config.bootstrap.load_bootstrap", return_value=bootstrap),
+            patch("gobby.runner._healthy_daemon_running", return_value=False),
+            patch("gobby.cli.utils.get_gobby_home", return_value=tmp_path),
+            patch("gobby.runner_pid_file.adopt_inherited_claim", return_value=ownership),
+            patch("gobby.runner.run_gobby", new=start_a_child),
+            patch("asyncio.run"),
+        ):
+            main()
+    finally:
+        os.close(write_fd)
+    try:
+        # With the parent's copy closed, EOF means the running child holds none.
+        os.set_blocking(read_fd, False)
+        end_of_pipe = os.read(read_fd, 1)
+    finally:
+        os.close(read_fd)
+        for child in children:
+            child.communicate(b"")
+
+    assert inheritable_at_runner_start == [False]
+    assert end_of_pipe == b""
+    assert len(children) == 1
     ownership.release.assert_called_once_with()

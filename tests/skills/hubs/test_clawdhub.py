@@ -50,7 +50,7 @@ class TestClawdHubProviderCLI:
             base_url="https://clawdhub.com",
         )
 
-        with patch("gobby.skills.hubs.clawdhub.asyncio.create_subprocess_exec") as mock_exec:
+        with patch("gobby.skills.hubs.clawdhub.spawn.create_subprocess_exec") as mock_exec:
             mock_process = AsyncMock()
             mock_process.returncode = 0
             mock_process.communicate.return_value = (b"1.0.0\n", b"")
@@ -76,7 +76,7 @@ class TestClawdHubProviderCLI:
             base_url="https://clawdhub.com",
         )
 
-        with patch("gobby.skills.hubs.clawdhub.asyncio.create_subprocess_exec") as mock_exec:
+        with patch("gobby.skills.hubs.clawdhub.spawn.create_subprocess_exec") as mock_exec:
             mock_exec.side_effect = FileNotFoundError("clawhub not found")
 
             result = await provider._check_cli_available()
@@ -91,7 +91,7 @@ class TestClawdHubProviderCLI:
         )
         provider._cli_binary = "clawhub"
 
-        with patch("gobby.skills.hubs.clawdhub.asyncio.create_subprocess_exec") as mock_exec:
+        with patch("gobby.skills.hubs.clawdhub.spawn.create_subprocess_exec") as mock_exec:
             mock_process = AsyncMock()
             mock_process.returncode = 0
             mock_process.communicate.return_value = (b"some output\n", b"")
@@ -111,7 +111,7 @@ class TestClawdHubProviderCLI:
 
         json_output = '{"skills": [{"name": "test-skill"}]}'
 
-        with patch("gobby.skills.hubs.clawdhub.asyncio.create_subprocess_exec") as mock_exec:
+        with patch("gobby.skills.hubs.clawdhub.spawn.create_subprocess_exec") as mock_exec:
             mock_process = AsyncMock()
             mock_process.returncode = 0
             mock_process.communicate.return_value = (json_output.encode(), b"")

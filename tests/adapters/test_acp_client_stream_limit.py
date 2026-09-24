@@ -98,7 +98,7 @@ async def test_start_widens_subprocess_stream_limit(monkeypatch: pytest.MonkeyPa
         captured.update(kwargs)
         raise _Sentinel
 
-    monkeypatch.setattr(acp_client.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr(acp_client.spawn, "create_subprocess_exec", fake_create_subprocess_exec)
 
     client = _StubACPClient(cli_path="/stub")
     monkeypatch.setattr(client, "_build_launch_command", lambda *a, **k: ["/stub", "--acp"])

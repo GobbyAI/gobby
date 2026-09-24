@@ -843,6 +843,62 @@ fn remote_endpoint_refused_before_auth() {
 }
 
 #[test]
+fn concurrent_acquires_share_one_slow_handshake() {
+    let harness = std::sync::Arc::new(Harness::new());
+    let mut grant = fixture_grant(PrincipalKind::Interactive);
+    grant.deployment.token = deployment_token(&harness.home);
+    grant = grant.with_checksum();
+    let scripted = spawn_scripted(vec![
+        Step::Challenge {
+            valid: true,
+            token: TOKEN.into(),
+        },
+        Step::Handshake {
+            grant: Box::new(grant.clone()),
+        },
+        Step::Config {
+            revision: grant.config_revision,
+        },
+    ]);
+    let url = scripted.url.clone();
+    let mut handles = Vec::new();
+    for _ in 0..4 {
+        let harness = std::sync::Arc::clone(&harness);
+        let url = url.clone();
+        handles.push(thread::spawn(move || {
+            let request = harness.request(Some(url));
+            acquire_with(&request).map(|acquired| acquired.source)
+        }));
+    }
+    let mut sources = Vec::new();
+    let mut errors = Vec::new();
+    for handle in handles {
+        match handle.join().expect("acquire thread") {
+            Ok(source) => sources.push(source),
+            Err(error) => errors.push(error),
+        }
+    }
+    assert!(
+        errors.is_empty(),
+        "concurrent acquires failed: {errors:?}; successes: {sources:?}"
+    );
+    assert!(
+        sources.contains(&GrantSource::Handshake),
+        "one caller performs the handshake: {sources:?}"
+    );
+    assert!(
+        sources
+            .iter()
+            .filter(|source| **source == GrantSource::Cache)
+            .count()
+            >= 3,
+        "the other callers reuse that grant: {sources:?}"
+    );
+    let requests = join(scripted);
+    assert_eq!(requests.len(), 3, "one handshake, not one per caller");
+}
+
+#[test]
 fn substituted_listener_gets_no_bearer() {
     let harness = Harness::new();
     let scripted = spawn_scripted(vec![Step::Challenge {
@@ -1092,6 +1148,33 @@ fn renewal_is_non_blocking_past_half_ttl() {
         acquire_with(&harness.request(Some("http://127.0.0.1:9".into()))).expect("serve");
     assert!(started.elapsed() < Duration::from_millis(400));
     assert_eq!(acquired.bundle.expires_at, grant.expires_at);
+}
+
+#[test]
+fn past_half_ttl_grant_waits_for_the_acquire_lock() {
+    let harness = Harness::new();
+    let mut grant = fixture_grant(PrincipalKind::Interactive);
+    grant.issued_at = NOW - 100;
+    grant.expires_at = NOW + 10;
+    grant = grant.with_checksum();
+    let settings = CachedSettings {
+        config_revision: grant.config_revision,
+        settings: Default::default(),
+    };
+    write_binding_for(&harness, "http://127.0.0.1:9", &grant.deployment.token);
+    write_cache(&harness, &grant, Some(&settings));
+    let lock_path = harness.home.join("grants").join(".acquire.lock");
+    let _held = try_lock(&lock_path).expect("lock").expect("held");
+    let mut request = harness.request(Some("http://127.0.0.1:9".into()));
+    request.deadline = Some(Duration::from_millis(300));
+    request.stale_lock_after = Some(Duration::from_secs(30));
+    let started = Instant::now();
+    let result = acquire_with(&request);
+    assert!(
+        started.elapsed() >= Duration::from_millis(250),
+        "past-half grant returned without waiting on the acquire lock"
+    );
+    assert!(result.is_err());
 }
 
 #[test]

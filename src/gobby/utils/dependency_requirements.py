@@ -13,6 +13,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Literal
 
+from gobby.utils import spawn
+
 DependencyState = Literal["healthy", "missing", "outdated", "invalid"]
 DependencyPayload = dict[str, str | None]
 
@@ -347,7 +349,7 @@ def _command_status(
         )
     try:
         path = str(Path(raw_path).resolve(strict=True))
-        result = subprocess.run(  # Executable resolved from PATH. # nosec B603
+        result = spawn.run(  # Executable resolved from PATH. # nosec B603
             [path, *arguments],
             capture_output=True,
             text=True,
@@ -467,7 +469,7 @@ def _docker_running(path: str | None) -> bool:
     if path is None:
         return False
     try:
-        result = subprocess.run(  # Absolute Docker executable. # nosec B603
+        result = spawn.run(  # Absolute Docker executable. # nosec B603
             [path, "info"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,

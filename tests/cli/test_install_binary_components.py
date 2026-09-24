@@ -117,7 +117,10 @@ def _unsigned_executable(destination: Path) -> None:
     assert "Signature=adhoc" not in _signature_text(destination)
 
 
-def _which_build_tools(name: str) -> str | None:
+def _which_build_tools(
+    name: str, mode: int = os.F_OK | os.X_OK, path: str | None = None
+) -> str | None:
+    # shutil.which's signature: the spawn helper that runs codesign passes a PATH.
     if name in {"cargo", "zig", "codesign"}:
         return f"/usr/bin/{name}"
     return None

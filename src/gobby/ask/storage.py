@@ -6,7 +6,6 @@ import hashlib
 import json
 import math
 import os
-import subprocess
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
@@ -25,6 +24,7 @@ from gobby.ask.contracts import (
 )
 from gobby.storage.hub.operation_deadline import database_operation_deadline
 from gobby.storage.pipelines import LocalPipelineExecutionManager
+from gobby.utils import spawn
 from gobby.workflows.agent_resolver import resolve_agent_with_row
 from gobby.workflows.pipeline_state import ExecutionStatus
 
@@ -51,7 +51,7 @@ def _run_git(project_root: Path, *arguments: str, timeout: float) -> str:
             "GIT_TERMINAL_PROMPT": "0",
         }
     )
-    completed = subprocess.run(
+    completed = spawn.run(
         [
             "git",
             "--no-replace-objects",

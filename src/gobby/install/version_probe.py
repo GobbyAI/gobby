@@ -15,6 +15,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from gobby.utils import spawn
+
 __all__ = ["probe_native_bin_version"]
 
 _VERSION_PATTERN = re.compile(r"\bv?(\d+(?:\.\d+){1,3})(?:[-+][^\s]+)?\b")
@@ -23,7 +25,7 @@ _VERSION_PATTERN = re.compile(r"\bv?(\d+(?:\.\d+){1,3})(?:[-+][^\s]+)?\b")
 def probe_native_bin_version(
     binary_path: Path | str,
     *,
-    runner: Callable[..., subprocess.CompletedProcess[Any]] = subprocess.run,
+    runner: Callable[..., subprocess.CompletedProcess[Any]] = spawn.run,
     logger: logging.Logger | None = None,
     label: str | None = None,
 ) -> str | None:

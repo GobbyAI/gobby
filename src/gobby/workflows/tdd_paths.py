@@ -7,6 +7,8 @@ from collections.abc import Callable
 from functools import lru_cache
 from pathlib import Path
 
+from gobby.utils import spawn
+
 
 def tdd_path_identity(path: str, root: Path | None, normalize: Callable[[str], str]) -> str:
     """Return the repo-relative form of path, or its normalized absolute form."""
@@ -60,7 +62,7 @@ def _git_identity(directory: str) -> tuple[str | None, str | None]:
 
 def _git_out(cwd: Path, *args: str) -> str | None:
     try:
-        completed = subprocess.run(
+        completed = spawn.run(
             ["git", "-C", str(cwd), *args],
             check=False,
             capture_output=True,

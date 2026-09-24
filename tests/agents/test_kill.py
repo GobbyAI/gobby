@@ -41,7 +41,7 @@ class TestRunSubprocess:
         assert err == ""
 
     @pytest.mark.asyncio
-    @patch("gobby.agents.kill.asyncio.create_subprocess_exec")
+    @patch("gobby.agents.kill.spawn.create_subprocess_exec")
     async def test_run_subprocess_timeout(self, mock_create):
         mock_proc = MagicMock()
         mock_proc.communicate = AsyncMock(side_effect=TimeoutError("timeout"))

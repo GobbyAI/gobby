@@ -428,3 +428,46 @@ def test_linked_checkout_generated_paths_remain_accessible(repo: Path) -> None:
     (linked / ".git").write_text(f"gitdir: {gitdir}\n")
     assert not navigation_requires_index(event(repo, f"rg VALUE {linked}/dist/assets"), {})
     assert navigation_requires_index(event(repo, f"rg VALUE {linked}/src"), {})
+
+
+def test_one_event_asks_git_once_for_all_its_paths(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # #22815: every spawn forks the daemon with the GIL held. The adapter, the
+    # workflow hook and the rule engine each normalize the same event, and each
+    # pass asked Git once per path.
+    spawns: list[list[str]] = []
+    run = subprocess.run
+
+    def counting_run(argv: list[str], *args: Any, **kwargs: Any) -> Any:
+        if "check-ignore" in argv:
+            spawns.append(list(argv))
+        return run(argv, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", counting_run)
+    data = event(repo, "rg VALUE custom-output src/constants.py src/short.py")
+    normalize_tool_fields(data)
+    normalize_tool_fields(data)
+
+    assert len(spawns) == 1
+    assert navigation_requires_index(data, {})
+    assert not navigation_requires_index(event(repo, "rg VALUE custom-output"), {})
+    assert len(spawns) == 2
+
+
+def test_a_path_git_refuses_does_not_hide_later_answers(repo: Path) -> None:
+    # A path inside a submodule stops `check-ignore --stdin` with exit 128,
+    # dropping the answers for every path after it in the batch.
+    subprocess.run(
+        [
+            *("git", "-C", str(repo), "update-index", "--add", "--cacheinfo"),
+            "160000,1111111111111111111111111111111111111111,a-sub",
+        ],
+        check=True,
+    )
+    data = event(repo, "rg VALUE custom-output && rg VALUE a-sub/file.py")
+    segments = data["canonical_code_navigation_segments"]
+    assert [segment["canonical_code_navigation_excluded"] for segment in segments] == [
+        True,
+        False,
+    ]

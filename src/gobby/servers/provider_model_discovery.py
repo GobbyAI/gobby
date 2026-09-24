@@ -17,6 +17,7 @@ from gobby.llm.context_windows import (
     CONTEXT_LENGTH_SOURCE_KEY,
     extract_context_length_candidate,
 )
+from gobby.utils import spawn
 
 if TYPE_CHECKING:
     from gobby.adapters.codex_impl.client import CodexAppServerClient
@@ -363,7 +364,7 @@ async def probe_claude_model(
 ) -> dict[str, Any]:
     env = os.environ.copy()
     env["GOBBY_HOOKS_DISABLED"] = "1"
-    proc = await asyncio.create_subprocess_exec(
+    proc = await spawn.create_subprocess_exec(
         "claude",
         "--print",
         "--output-format",
@@ -429,7 +430,7 @@ async def get_cli_version(provider: str, *, which: Which) -> str | None:
     else:
         args = [executable, "--version"]
 
-    proc = await asyncio.create_subprocess_exec(
+    proc = await spawn.create_subprocess_exec(
         *args,
         stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE,

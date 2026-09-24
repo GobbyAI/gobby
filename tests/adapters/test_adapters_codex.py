@@ -359,9 +359,7 @@ class TestCodexAppServerClientStart:
 
         mock_process.stdout.readline = mock_readline
 
-        with patch(
-            "gobby.adapters.codex_impl.client.subprocess.Popen", return_value=mock_process
-        ) as mock_popen:
+        with patch("gobby.utils.spawn.popen", return_value=mock_process) as mock_popen:
             # Create a task that will complete quickly
             async def run_start() -> None:
                 try:
@@ -400,9 +398,7 @@ class TestCodexAppServerClientStart:
 
         mock_process.stdout.readline = mock_readline
 
-        with patch(
-            "gobby.adapters.codex_impl.client.subprocess.Popen", return_value=mock_process
-        ) as mock_popen:
+        with patch("gobby.utils.spawn.popen", return_value=mock_process) as mock_popen:
 
             async def run_start() -> None:
                 try:
@@ -453,7 +449,7 @@ class TestCodexAppServerClientStart:
 
         with (
             patch(
-                "gobby.adapters.codex_impl.client.subprocess.Popen",
+                "gobby.utils.spawn.popen",
                 return_value=process,
             ) as popen,
             patch.dict(os.environ, {}, clear=False),
@@ -476,7 +472,7 @@ class TestCodexAppServerClientStart:
 
         with (
             patch(
-                "gobby.adapters.codex_impl.client.subprocess.Popen",
+                "gobby.utils.spawn.popen",
                 side_effect=RuntimeError(f"failed with {secret}"),
             ),
             pytest.raises(RuntimeError) as exc_info,
@@ -492,7 +488,7 @@ class TestCodexAppServerClientStart:
 
         with (
             patch(
-                "gobby.adapters.codex_impl.client.subprocess.Popen",
+                "gobby.utils.spawn.popen",
                 side_effect=RuntimeError("startup failed"),
             ),
             pytest.raises(RuntimeError, match="startup failed"),
@@ -515,7 +511,7 @@ class TestCodexAppServerClientStart:
         )
 
         with patch(
-            "gobby.adapters.codex_impl.client.subprocess.Popen",
+            "gobby.utils.spawn.popen",
             return_value=process,
         ) as popen:
             await client.start()
@@ -547,7 +543,7 @@ class TestCodexAppServerClientStart:
         client = CodexAppServerClient()
 
         with patch(
-            "gobby.adapters.codex_impl.client.subprocess.Popen",
+            "gobby.utils.spawn.popen",
             side_effect=OSError("Command not found"),
         ):
             with pytest.raises(RuntimeError, match="Failed to start"):
@@ -570,7 +566,7 @@ class TestCodexAppServerClientStart:
 
         with (
             patch(
-                "gobby.adapters.codex_impl.client.subprocess.Popen",
+                "gobby.utils.spawn.popen",
                 return_value=process,
             ),
             patch.object(client, "_read_loop", new=AsyncMock()),

@@ -66,7 +66,7 @@ async def test_terminal_create_env_uses_minimal_allowlist(
     monkeypatch.setenv(UV_CACHE_DIR, "/tmp/gobby-uv-cache")
     monkeypatch.setenv("SECRET_TOKEN", "should-not-leak")
     monkeypatch.setattr(
-        acp_terminal.asyncio,
+        acp_terminal.spawn,
         "create_subprocess_exec",
         fake_create_subprocess_exec,
     )

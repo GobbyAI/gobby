@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import importlib.resources
 import json
 import logging
@@ -10,6 +11,7 @@ import subprocess
 from pathlib import Path
 
 from gobby.storage.schema_identity_pin import SchemaIdentityError, probe_identity, validate_identity
+from gobby.utils import spawn
 from gobby.utils.native_bin import resolve_native_bin
 
 logger = logging.getLogger(__name__)
@@ -38,13 +40,40 @@ def expected_schema_identity_json() -> str:
 
 
 def installed_schema_identity() -> dict[str, int | str]:
-    """Read the schema identity embedded in the installed gdaemon."""
+    """Read the schema identity embedded in the installed gdaemon.
+
+    Every grant presentation asks, and the probe forks the daemon (#22815), so
+    the answer is kept per installed file. Promotion replaces gdaemon with a new
+    inode, which changes the key.
+    """
     binary = resolve_native_bin("gdaemon")
     if binary is None:
         raise SchemaContractError(
             "gdaemon is required to read the installed schema identity; "
             "run `gobby install` to install it"
         )
+    try:
+        installed = os.stat(binary)
+    except OSError:
+        return _probe_installed(binary)
+    return dict(
+        _probe_installed_file(
+            binary,
+            installed.st_dev,
+            installed.st_ino,
+            installed.st_size,
+            installed.st_mtime_ns,
+            installed.st_ctime_ns,
+        )
+    )
+
+
+@functools.lru_cache(maxsize=8)
+def _probe_installed_file(binary: str, *_file_identity: int) -> dict[str, int | str]:
+    return _probe_installed(binary)
+
+
+def _probe_installed(binary: str) -> dict[str, int | str]:
     try:
         return probe_identity(Path(binary))
     except SchemaIdentityError as exc:
@@ -82,7 +111,7 @@ def _run_gdaemon(
     env[DATABASE_URL_ENV] = database_url
     env.pop("GOBBY_EXPECTED_SCHEMA_IDENTITY", None)
     try:
-        result = subprocess.run(
+        result = spawn.run(
             [resolved, *args],
             check=False,
             capture_output=True,

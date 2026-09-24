@@ -248,7 +248,7 @@ class TestForcedRacesPerWriter:
             WRITERS[writer_name](store.row)
             return process
 
-        monkeypatch.setattr("asyncio.create_subprocess_exec", spawn_and_race)
+        monkeypatch.setattr("gobby.utils.spawn.create_subprocess_exec", spawn_and_race)
         backend = _Backend(lambda **kwargs: _StubACPClient(cli_path="/usr/bin/stub-acp", **kwargs))
         service = ACPSessionLifecycleService(
             session_manager=cast(Any, store),

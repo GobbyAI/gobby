@@ -15,6 +15,7 @@ import pytest
 from gobby.code_index.context import CodeIndexContext
 from gobby.code_index.gcode_gateway import (
     GcodeCommandError,
+    GcodeDaemonConfigUnavailableError,
     GcodeFalkorTransportError,
     GcodeGateway,
     GcodeIndexedFileNotFoundError,
@@ -139,6 +140,35 @@ class IndexedFileNotFoundGcodeGateway(GcodeGateway):
             (project_root / file_path).unlink()
         stderr = f"indexed file `{file_path}` was not found for project {PROJECT_ID}"
         raise GcodeIndexedFileNotFoundError(["gcode"], 2, stderr, file_path, PROJECT_ID)
+
+
+def _effective_config_timeout(command: list[str]) -> GcodeDaemonConfigUnavailableError:
+    return GcodeDaemonConfigUnavailableError(
+        command,
+        1,
+        "failed to resolve effective AI config: daemon effective config request failed: "
+        "daemon could not be reached (timeout)",
+    )
+
+
+class EffectiveConfigTimeoutGateway(GcodeGateway):
+    async def vector_sync_file(
+        self,
+        project_root: Path,
+        file_path: str,
+        *,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        raise _effective_config_timeout(["gcode", "vector", "sync-file"])
+
+    async def graph_sync_file(
+        self,
+        project_root: Path,
+        file_path: str,
+        *,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        raise _effective_config_timeout(["gcode", "graph", "sync-file"])
 
 
 class CommandErrorGcodeGateway(GcodeGateway):
@@ -1064,7 +1094,7 @@ async def test_sync_file_warns_and_retries_when_vector_sync_times_out(
     code_storage: CodeIndexStorage,
     tmp_path: Path,
 ) -> None:
-    """Vector gcode timeouts exhaust bounded retries and stay pending."""
+    """Vector gcode timeouts exhaust bounded retries and return to the pending queue."""
     project_id = PROJECT_ID
     file_path = "src/app.py"
     _write_source(tmp_path)
@@ -1097,7 +1127,7 @@ async def test_sync_file_warns_and_retries_when_vector_sync_times_out(
     synced_file = code_storage.get_file(project_id, file_path)
     assert synced_file is not None
     assert synced_file.vectors_synced is False
-    assert synced_file.vector_sync_attempted_at is not None
+    assert synced_file.vector_sync_attempted_at is None
     assert code_storage.list_projection_cleanup_pending()
     assert any(
         record.levelno == logging.WARNING
@@ -1443,3 +1473,132 @@ async def test_degraded_projection_stays_pending(
     if result.get("degraded"):
         assert "projection_reconcile_failed" in caplog.text
         assert "backend unavailable" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_sync_worker_applies_captured_config_on_the_next_pass(tmp_path: Path) -> None:
+    """A live sync_worker batch size applies on the pass after the capture changes."""
+    limits: list[int] = []
+    shutdown = asyncio.Event()
+    holder = [
+        CodeIndexConfig(
+            embedding_enabled=False,
+            graph_enabled=False,
+            sync_worker_batch_size=1,
+            sync_worker_interval_seconds=0.01,
+        )
+    ]
+
+    def pending_files(*_args: Any, **kwargs: Any) -> list[IndexedFile]:
+        limits.append(kwargs["limit"])
+        if len(limits) == 1:
+            holder[0] = holder[0].model_copy(update={"sync_worker_batch_size": 20})
+            return []
+        shutdown.set()
+        return []
+
+    storage = MagicMock()
+    storage.list_indexed_projects.return_value = [_indexed_project(tmp_path)]
+    storage.get_pending_sync_files.side_effect = pending_files
+    context = MagicMock()
+    context.gcode_gateway = None
+    context.daemon_config_breaker = None
+
+    await asyncio.wait_for(
+        sync_worker_loop(
+            storage=storage,
+            context=context,
+            config=holder[0],
+            shutdown_flag=shutdown,
+            run_db=RecordingRunDb(),
+            capture_config=lambda: holder[0],
+        ),
+        timeout=2,
+    )
+
+    assert limits == [1, 20]
+
+
+@pytest.mark.asyncio
+async def test_exhausted_vector_sync_requeues_the_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Retries that run out put the file back on the pending queue."""
+    monkeypatch.setattr(
+        "gobby.code_index.sync_worker._VECTOR_SYNC_RETRY_BACKOFF_SECONDS",
+        (),
+    )
+    _write_source(tmp_path)
+    pending = _indexed_file(vectors_synced=False, graph_synced=True)
+    storage = MagicMock()
+    storage.get_file.return_value = pending
+    gateway = RecordingGcodeGateway(vector_timeout=True)
+
+    did_work = await _sync_file(
+        storage=storage,
+        gcode_gateway=gateway,
+        config=CodeIndexConfig(embedding_enabled=True, graph_enabled=False),
+        project_id=PROJECT_ID,
+        root=tmp_path,
+        file=pending,
+    )
+
+    assert did_work is False
+    storage.requeue_vector_sync.assert_called_once_with(pending.id)
+
+
+@pytest.mark.asyncio
+async def test_exhausted_effective_config_timeout_requeues_the_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An effective-config timeout is a retryable daemon miss, so exhaustion requeues."""
+    monkeypatch.setattr(
+        "gobby.code_index.sync_worker._VECTOR_SYNC_RETRY_BACKOFF_SECONDS",
+        (),
+    )
+    _write_source(tmp_path)
+    pending = _indexed_file(vectors_synced=False, graph_synced=True)
+    storage = MagicMock()
+    storage.get_file.return_value = pending
+
+    did_work = await _sync_file(
+        storage=storage,
+        gcode_gateway=EffectiveConfigTimeoutGateway(),
+        config=CodeIndexConfig(embedding_enabled=True, graph_enabled=False),
+        project_id=PROJECT_ID,
+        root=tmp_path,
+        file=pending,
+    )
+
+    assert did_work is False
+    storage.requeue_vector_sync.assert_called_once_with(pending.id)
+
+
+@pytest.mark.asyncio
+async def test_exhausted_effective_config_timeout_requeues_the_graph(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The same daemon miss requeues an exhausted graph sync."""
+    monkeypatch.setattr(
+        "gobby.code_index.sync_worker._GRAPH_SYNC_RETRY_BACKOFF_SECONDS",
+        (),
+    )
+    _write_source(tmp_path)
+    pending = _indexed_file(vectors_synced=True, graph_synced=False)
+    storage = MagicMock()
+    storage.get_file.return_value = pending
+
+    did_work = await _sync_file(
+        storage=storage,
+        gcode_gateway=EffectiveConfigTimeoutGateway(),
+        config=CodeIndexConfig(embedding_enabled=False, graph_enabled=True),
+        project_id=PROJECT_ID,
+        root=tmp_path,
+        file=pending,
+    )
+
+    assert did_work is False
+    storage.requeue_graph_sync.assert_called_once_with(pending.id)
