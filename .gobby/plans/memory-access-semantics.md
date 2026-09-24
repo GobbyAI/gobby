@@ -946,3 +946,367 @@ Per-leaf gates are the commands listed under each deliverable plus format, lint,
 and the scoped test-types audit. Contract freshness:
 `tests/config/test_runtime_config_contract.py` (1.3),
 `crates/gcore/tests/catalog_manifest_freshness.rs` and the identity regeneration (2.1).
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Retire the shadow judge, drift monitor, judge rule, judge tool, and recall-signals
+    CLI
+  category: refactor
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.1.1: The judge, drift evaluator, and CLI group modules no
+    longer exist and nothing under `src/` imports them. file: `src/gobby/memory/shadow_relevance.py`.
+    file: `src/gobby/memory/recall_drift.py`. file: `src/gobby/cli/memory/signals.py`.
+
+    1.1.2: The memory tool registry no longer registers `judge_shadow_relevance` and
+    the bundled rule that dispatched it is gone. file: `src/gobby/mcp_proxy/tools/memory.py`.
+    file: `src/gobby/install/shared/workflows/rules/memory-lifecycle/judge-shadow-relevance-on-response.yaml`.
+
+    1.1.3: The runner starts and shuts down without a drift-monitor loop. symbol:
+    `recall_drift_monitor_loop`. behavior: `uv run python -c "import gobby.runner"`
+    succeeds after the deletions.
+
+    1.1.4: The rules table in `docs/guides/memory.md` and the reference audit match
+    the bundled rules and tools. test: `tests/docs/test_memory_guides.py::test_memory_guide_lists_every_bundled_lifecycle_rule`.
+    test: `tests/skills/test_reference_library.py::test_reference_contract_3_2_1`.
+
+    1.1.5: The four deleted test modules are gone and the four edited test modules
+    pass without the judge. behavior: the verification command above passes.'
+  labels:
+  - covers:memory-access-semantics:1.1:1.1.1
+  - covers:memory-access-semantics:1.1:1.1.2
+  - covers:memory-access-semantics:1.1:1.1.3
+  - covers:memory-access-semantics:1.1:1.1.4
+  - covers:memory-access-semantics:1.1:1.1.5
+  tdd: false
+  source_section: '1.1'
+  assigned_agent: backend-developer
+- title: Retire the telemetry sinks, fit, gate, replay, storage layer, and search-debug
+    plumbing
+  category: refactor
+  task_type: feature
+  depends_on:
+  - '1.1'
+  validation_criteria: '1.2.1: The eight `memory/recall_*.py` modules, the seven `storage/recall_*.py`
+    modules, `_search_debug.py`, and the usefulness-label contract no longer exist
+    and nothing under `src/` imports them. file: `src/gobby/memory/recall_signal_log.py`.
+    file: `src/gobby/storage/recall_signals.py`. file: `docs/contracts/memory-usefulness-label.md`.
+
+    1.2.2: `SearchService` takes no constants object or debug sink; the half-life
+    comes from `temporal_decay_half_life_days` and the graph discount from `_search_constants`.
+    symbol: `SearchService`. file: `src/gobby/memory/services/search.py`.
+
+    1.2.3: `MemoryManager` builds no sink, constants, or outcome recorder and the
+    graph reader and writer receive `None` co-occurrence parameters. file: `src/gobby/memory/manager.py`.
+
+    1.2.4: The `search_memories` payload, the review tool, and the surface tool carry
+    no `recall_request_id`, and the search entry points accept none. file: `src/gobby/mcp_proxy/tools/memory.py`.
+    file: `src/gobby/memory/facade.py`.
+
+    1.2.5: Ranking behavior is unchanged: the synthetic benchmark arms still pass.
+    test: `tests/memory/test_recall_benchmark.py::test_recall_benchmark_arms`.
+
+    1.2.6: Docs and the two active plans no longer describe the stack as live. behavior:
+    "recall-signal" prose in `docs/guides/memory.md` and `docs/guides/observability.md`
+    describes only the retirement; scope notes in `.gobby/plans/hub-data-retention.md`
+    and `.gobby/plans/memory-surfacing.md`.'
+  labels:
+  - covers:memory-access-semantics:1.2:1.2.1
+  - covers:memory-access-semantics:1.2:1.2.2
+  - covers:memory-access-semantics:1.2:1.2.3
+  - covers:memory-access-semantics:1.2:1.2.4
+  - covers:memory-access-semantics:1.2:1.2.5
+  - covers:memory-access-semantics:1.2:1.2.6
+  tdd: false
+  source_section: '1.2'
+  assigned_agent: backend-developer
+- title: 'Config: remove the stack keys, add the re-show horizon, regenerate the runtime
+    contract'
+  category: config
+  task_type: feature
+  depends_on:
+  - '1.2'
+  validation_criteria: '1.3.1: `MemoryConfig` has no recall-signal, shadow-judge,
+    fitted-constant, or drift field, and loading a config that names one raises with
+    the key in the message. symbol: `MemoryConfig`. test: `tests/config/test_persistence.py::test_removed_memory_keys_raise`.
+
+    1.3.2: `DaemonConfig` has no `memory_usefulness` section and rejects one. symbol:
+    `reject_removed_session_title_config`. test: `tests/config/test_app_config.py::test_memory_usefulness_section_rejected`.
+
+    1.3.3: `memory.index_reshow_after_injections` defaults to 5, rejects values below
+    1, and appears in the regenerated contract. test: `tests/config/test_memory_config.py::test_index_reshow_after_injections_default`.
+    test: `tests/config/test_runtime_config_contract.py::test_contract_matches_generator`.
+
+    1.3.4: Persisted `config_store` rows for the thirteen removed keys are deleted
+    at load. test: `tests/storage/test_config_store.py::test_removed_memory_keys_swept`.
+
+    1.3.5: The web settings section renders neither retired toggle and its tests and
+    style spec pass. file: `web/src/components/settings/sections/MemoryKnowledgeSection.tsx`.
+    behavior: the vitest command above passes.
+
+    1.3.6: Guides list the new key and the audit matrix''s half-life row describes
+    the new anchor. file: `docs/guides/memory.md`. file: `docs/guides/configuration.md`.
+    file: `docs/audits/configuration-audit.md`.'
+  labels:
+  - covers:memory-access-semantics:1.3:1.3.1
+  - covers:memory-access-semantics:1.3:1.3.2
+  - covers:memory-access-semantics:1.3:1.3.3
+  - covers:memory-access-semantics:1.3:1.3.4
+  - covers:memory-access-semantics:1.3:1.3.5
+  - covers:memory-access-semantics:1.3:1.3.6
+  tdd: true
+  source_section: '1.3'
+  assigned_agent: backend-developer
+- title: Migration 452 and its schema carriers
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.3'
+  validation_criteria: '2.1.1: Migration 452 adds both columns, copies the counts
+    across, resets access, and drops the nine tables in one plain file with no destructive
+    directive. file: `crates/gcore/assets/schema/migrations/452_memory_surfaced_stats_retire_recall_signals.sql`.
+
+    2.1.2: The catalog manifest lists `memories.surfaced_count` and `memories.last_surfaced_at`
+    and no `recall_*` table, and the freshness test passes. file: `crates/gcore/assets/schema/catalog.manifest.json`.
+    behavior: `GOBBY_SCHEMA_TEST_DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test
+    cargo test --manifest-path crates/gcore/Cargo.toml --features postgres --test
+    catalog_manifest_freshness` passes with the database reached (no skip line).
+
+    2.1.3: Every identity carrier agrees with the checkout binary. file: `src/gobby/storage/schema_expected_identity.json`.
+    test: `tests/storage/test_schema_contract.py::test_expected_identity_matches_gdaemon`.
+
+    2.1.4: The reset fixture''s RESTRICT-FK pair is a surviving pair. test: `tests/fixtures/test_postgres_db_reset.py::test_reset_handles_restrict_fk_order`.
+
+    2.1.5: The domain-table pin covers both new columns. test: `tests/storage/test_domain_tables_schema.py::test_memories_surfaced_columns`.
+
+    2.1.6: The five golden grant vectors carry identity 452 and verify against `GOLDEN_SECRET`.
+    test: `tests/runtime_grants/test_golden_vectors.py::test_grant_vectors_round_trip`.
+    test: `tests/runtime_grants/test_golden_vectors.py::test_config_revision_signed`.'
+  labels:
+  - covers:memory-access-semantics:2.1:2.1.1
+  - covers:memory-access-semantics:2.1:2.1.2
+  - covers:memory-access-semantics:2.1:2.1.3
+  - covers:memory-access-semantics:2.1:2.1.4
+  - covers:memory-access-semantics:2.1:2.1.5
+  - covers:memory-access-semantics:2.1:2.1.6
+  tdd: true
+  source_section: '2.1'
+  implementation_domain: backend
+- title: Thread surfaced_count and last_surfaced_at through storage, protocol, dream,
+    CLI, and web
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.1'
+  validation_criteria: '2.2.1: `Memory` carries `surfaced_count` and `last_surfaced_at`
+    through `from_row`, `to_dict`, both INSERTs, the protocol shapes, the adapter,
+    and the repository. symbol: `Memory`. test: `tests/storage/test_storage_memories.py::test_memory_round_trips_surfaced_stats`.
+
+    2.2.2: `update_surfaced_stats` increments `surfaced_count` and sets `last_surfaced_at`,
+    leaving `access_count` untouched. symbol: `MemoryQueryMixin.update_surfaced_stats`.
+    test: `tests/storage/test_storage_memories.py::test_update_surfaced_stats`.
+
+    2.2.3: `record_memory_access` on the facade increments `access_count` and sets
+    `last_accessed_at`, and `_update_access_stats` no longer exists. symbol: `MemoryManagerFacadeMethods.record_memory_access`.
+    test: `tests/memory/test_memory_manager_1.py::test_record_memory_access`.
+
+    2.2.4: Dream candidates, curator payloads, and the journal round-trip carry both
+    counters, and the fake-DB INSERT width matches `_MEMORY_COLUMNS`. file: `src/gobby/memory/dream/storage_journal.py`.
+    test: `tests/memory/test_dream.py::test_journal_round_trip_keeps_surfaced_stats`.
+
+    2.2.5: `gobby memory show` prints `Surfaced:` and the web detail panel renders
+    a `Surfaced` row. test: `tests/cli/test_memory_cli.py::test_show_prints_surfaced_line`.
+    file: `web/src/components/activity/memory/MemoryDetailPanel.tsx`.
+
+    2.2.6: The vector-reindex methods live in `memories_vector_reindex.py`, `memories_crud.py`
+    is under 850 lines, and `LocalMemoryManager` still exposes them. file: `src/gobby/storage/memories_vector_reindex.py`.
+    symbol: `LocalMemoryManager`.'
+  labels:
+  - covers:memory-access-semantics:2.2:2.2.1
+  - covers:memory-access-semantics:2.2:2.2.2
+  - covers:memory-access-semantics:2.2:2.2.3
+  - covers:memory-access-semantics:2.2:2.2.4
+  - covers:memory-access-semantics:2.2:2.2.5
+  - covers:memory-access-semantics:2.2:2.2.6
+  tdd: true
+  source_section: '2.2'
+  implementation_domain: backend
+- title: Increment split, caller gating, ranking anchor, and dream prompt
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.2'
+  validation_criteria: '3.1.1: A search from a caller in `SURFACED_CALLERS` increments
+    `surfaced_count` and sets `last_surfaced_at` on returned hits, debounced by `access_debounce_seconds`,
+    and never touches `access_count`. symbol: `SURFACED_CALLERS`. test: `tests/memory/test_search_access_gating.py::test_surfaced_callers_increment_surfaced_stats`.
+
+    3.1.2: A probe caller (`memory.search` default, `create_memory.similar_existing`,
+    `review_learning.related_lessons`) increments nothing. test: `tests/memory/test_search_access_gating.py::test_probe_callers_do_not_increment`.
+
+    3.1.3: `recency_anchor` returns the later of `updated_at` and `last_accessed_at`
+    and tolerates None, and a fetched older memory outranks an unfetched newer one
+    at equal similarity. symbol: `recency_anchor`. test: `tests/memory/test_scoring.py::test_recency_anchor_prefers_later_access`.
+    test: `tests/memory/test_search_access_gating.py::test_fetched_older_memory_outranks_unfetched_newer`.
+
+    3.1.4: The dream prompt and curator payload carry both counters with the Decision
+    13 wording and no `useful_labels` / `total_labels`. file: `src/gobby/install/shared/prompts/memory/dream.md`.
+    file: `src/gobby/install/shared/workflows/agents/memory-curator.yaml`.
+
+    3.1.5: The guide, the search reference, and the maintenance reference describe
+    the anchor and the dedupe keep-rule as the code implements them. file: `docs/guides/memory.md`.
+    file: `src/gobby/install/shared/skills/gobby/references/memory/maintenance.md`.'
+  labels:
+  - covers:memory-access-semantics:3.1:3.1.1
+  - covers:memory-access-semantics:3.1:3.1.2
+  - covers:memory-access-semantics:3.1:3.1.3
+  - covers:memory-access-semantics:3.1:3.1.4
+  - covers:memory-access-semantics:3.1:3.1.5
+  tdd: true
+  source_section: '3.1'
+  implementation_domain: backend
+- title: get_memory records access and the fetching task
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.2'
+  validation_criteria: '3.2.1: `get_memory` requires `session_id`, is awaitable, and
+    each call increments `access_count`, sets `last_accessed_at`, and returns both
+    counters. test: `tests/mcp_proxy/tools/test_memory_get_access.py::test_get_memory_records_access`.
+
+    3.2.2: The fetch appends `{memory_id, task_id}` to `accessed_memory_ids`, tagged
+    with the task the session has claimed or `None`, bounded at `_ACCESSED_MEMORY_IDS_MAX`
+    (1000) records with identity on the `(memory_id, task_id)` pair, so the same memory
+    fetched under two tasks keeps both records. test: `tests/mcp_proxy/tools/test_memory_get_access.py::test_get_memory_records_accessed_id_with_claimed_task`.
+    test: `tests/mcp_proxy/tools/test_memory_get_access.py::test_get_memory_untagged_without_claimed_task`.
+    test: `tests/mcp_proxy/tools/test_memory_get_access.py::test_get_memory_keeps_a_record_per_task`.
+
+    3.2.3: `resolve_session` and `resolve_claimed_task_id` are the only session and
+    claimed-task resolvers in the memory tools; the review, surface, and write tools
+    import them. file: `src/gobby/mcp_proxy/tools/memory_session.py`. symbol: `resolve_claimed_task_id`.
+
+    3.2.4: A `get_memory` call whose session cannot be resolved still returns the
+    memory and increments `access_count` (Decision 1), and writes no `accessed_memory_ids`
+    record. test: `tests/mcp_proxy/tools/test_memory_get_access.py::test_get_memory_unresolved_session_records_access_without_tracking`.
+
+    3.2.5: At the cap a fetch evicts the oldest record only, and the cap is the tool''s
+    `_ACCESSED_MEMORY_IDS_MAX` constant. symbol: `_ACCESSED_MEMORY_IDS_MAX`. test:
+    `tests/mcp_proxy/tools/test_memory_get_access.py::test_accessed_memory_ids_evict_oldest_at_cap`.'
+  labels:
+  - covers:memory-access-semantics:3.2:3.2.1
+  - covers:memory-access-semantics:3.2:3.2.2
+  - covers:memory-access-semantics:3.2:3.2.3
+  - covers:memory-access-semantics:3.2:3.2.4
+  - covers:memory-access-semantics:3.2:3.2.5
+  tdd: true
+  source_section: '3.2'
+  implementation_domain: backend
+- title: Surfaced set, injection sequence, K delivery, reset rules, and the dead dedupe
+    chain
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.1'
+  - '3.2'
+  validation_criteria: '3.3.1: An id with any record in `accessed_memory_ids`, whichever
+    task tagged it, is never rendered again in the epoch. test: `tests/workflows/test_memory_index_delivery.py::test_accessed_memory_never_reshown`.
+
+    3.3.2: A shown-but-unread id is suppressed while `seq_now - seq < K` and rendered
+    again on the K-th further surfacing (`seq_now - seq == K`), with the stamp refreshed.
+    test: `tests/workflows/test_memory_index_delivery.py::test_surfaced_memory_reshown_after_horizon`.
+
+    3.3.3: Stamps and the sequence are staged in the receipt and committed only on
+    acknowledgement. test: `tests/hooks/test_receipt_effects.py::test_surface_seq_and_stamps_commit_on_ack`.
+
+    3.3.4: `surface_memories` returns `reshow_after_injections` from `memory.index_reshow_after_injections`
+    and the formatter uses it. test: `tests/mcp_proxy/tools/test_memory_surface.py::test_payload_carries_reshow_after_injections`.
+    symbol: `DeliveryFormattingMixin._format_memory_index_result`.
+
+    3.3.5: Both lifecycle rules reset `surfaced_memory_ids`, `accessed_memory_ids`,
+    `_memory_surface_seq`, and `injected_review_lesson_ids`, and no rule or code path
+    names `injected_memory_ids`. test: `tests/workflows/test_memory_lifecycle_rules.py::test_reset_rule_clears_memory_tracking_variables`.
+    test: `tests/workflows/test_context_handoff_rules.py::test_compact_rule_clears_memory_tracking_variables`.
+
+    3.3.6: `_dedup_memory_results`, `dedup_memory_results`, and `TestDedupMemoryResults`
+    no longer exist. file: `src/gobby/hooks/rule_evaluator.py`. file: `tests/hooks/test_hook_manager_extra.py`.
+
+    3.3.7: The ingress helpers live in `hook_manager_ingress.py`, `hook_manager.py`
+    is under 850 lines, and the hook suite passes. file: `src/gobby/hooks/hook_manager_ingress.py`.
+    behavior: `$PG tests/hooks -q` passes.'
+  labels:
+  - covers:memory-access-semantics:3.3:3.3.1
+  - covers:memory-access-semantics:3.3:3.3.2
+  - covers:memory-access-semantics:3.3:3.3.3
+  - covers:memory-access-semantics:3.3:3.3.4
+  - covers:memory-access-semantics:3.3:3.3.5
+  - covers:memory-access-semantics:3.3:3.3.6
+  - covers:memory-access-semantics:3.3:3.3.7
+  tdd: true
+  source_section: '3.3'
+  implementation_domain: backend
+- title: Post-task review lists accessed memories first
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.3'
+  validation_criteria: '3.4.1: Accessed candidates tagged with the closing task or
+    untagged come first with `source: accessed`, in fetch order. test: `tests/mcp_proxy/tools/test_memory_review.py::test_accessed_candidates_listed_first`.
+
+    3.4.2: Accessed records tagged with another task are excluded, and a memory fetched
+    under two tasks is found by each task''s review. test: `tests/mcp_proxy/tools/test_memory_review.py::test_other_task_accessed_records_excluded`.
+    test: `tests/mcp_proxy/tools/test_memory_review.py::test_memory_fetched_under_two_tasks_found_by_each_review`.
+
+    3.4.3: Records from `task.closed_in_session_id` join those of the calling session
+    when the two differ. test: `tests/mcp_proxy/tools/test_memory_review.py::test_closing_session_accessed_records_included`.
+
+    3.4.4: Search candidates already listed as accessed are not repeated, and `candidate_ids`
+    in the review record spans both tiers. test: `tests/mcp_proxy/tools/test_memory_review.py::test_search_tier_deduped_against_accessed`.
+
+    3.4.5: The guide and the post-task reference describe the two tiers. file: `docs/guides/memory.md`.
+    file: `src/gobby/install/shared/skills/gobby/references/memory/post-task.md`.'
+  labels:
+  - covers:memory-access-semantics:3.4:3.4.1
+  - covers:memory-access-semantics:3.4:3.4.2
+  - covers:memory-access-semantics:3.4:3.4.3
+  - covers:memory-access-semantics:3.4:3.4.4
+  - covers:memory-access-semantics:3.4:3.4.5
+  tdd: true
+  source_section: '3.4'
+  implementation_domain: backend
+- title: Retire the destructive-migration directive path
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.1'
+  validation_criteria: '4.1.1: The runner executes a directive-marked migration like
+    any other and never stamps a receipt without executing. file: `crates/gcore/src/schema/runner.rs`.
+    behavior: the gcore schema command in this leaf''s verification passes with no
+    `stamps_destructive_migrations` symbol.
+
+    4.1.2: `gdaemon schema apply` has no `--destructive` flag and requires no maintenance
+    epoch or backup manifest. file: `crates/gdaemon/src/main.rs`. behavior: `cargo
+    test --manifest-path crates/gdaemon/Cargo.toml` passes.
+
+    4.1.3: `gobby schema apply` has no destructive branch and no `schema-apply` campaign
+    executor is registered. symbol: `apply_schema`. test: `tests/cli/test_cli_schema.py::test_apply_schema_plain`.
+
+    4.1.4: Hub backup, restore, and the maintenance-epoch framework are untouched.
+    behavior: the hub-maintenance CLI module, the `cli/hub_backup/` package, and `DestructiveBatch`
+    are not in this leaf''s diff and the three test modules pass unchanged. test:
+    `tests/cli/hub_backup/test_cli_hub_backup_cli.py::TestRestore::test_restore_uses_explicit_target_and_verified_hub_artifact`.
+    test: `tests/cli/hub_backup/test_verify.py::test_verify_postgres_restore_happy_path_drives_prod_image_without_ports_or_volumes`.
+    test: `tests/cli/test_hub_maintenance.py::test_run_owns_open_backup_apply_verify_release_and_restart`.
+
+    4.1.5: The install contract no longer describes a destructive-migration ceremony.
+    file: `docs/guides/hub-install-contract.md`.'
+  labels:
+  - covers:memory-access-semantics:4.1:4.1.1
+  - covers:memory-access-semantics:4.1:4.1.2
+  - covers:memory-access-semantics:4.1:4.1.3
+  - covers:memory-access-semantics:4.1:4.1.4
+  - covers:memory-access-semantics:4.1:4.1.5
+  tdd: true
+  source_section: '4.1'
+  implementation_domain: backend
+```
