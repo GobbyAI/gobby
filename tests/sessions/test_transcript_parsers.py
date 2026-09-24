@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 
+from gobby.llm.context_windows import reconcile_observed_model
 from gobby.sessions.message_stats import compute_message_stats
 from gobby.sessions.transcript_normalization import normalize_transcript_records
 from gobby.sessions.transcript_renderer import render_transcript
@@ -1658,6 +1659,44 @@ class TestCodexTranscriptParser:
 
     def test_skip_turn_context(self, parser) -> None:
         assert parser.parse_line(self._turn_context(), 0) is None
+
+    def test_current_turn_context_records_model_and_later_turn_replaces_it(
+        self, parser: CodexTranscriptParser
+    ) -> None:
+        """Record payload.model from a current rollout, then replace it.
+
+        The fixture is an excerpt of a 2026-09-22 Codex rollout: turn_context
+        with payload.model, a token_count event whose usage has no model, then
+        a later turn_context that changes the model. output_tokens already
+        includes reasoning tokens.
+        """
+        fixture = (
+            Path(__file__).parent / "transcripts" / "fixtures" / "codex_turn_context_model.jsonl"
+        )
+        lines = fixture.read_text(encoding="utf-8").splitlines()
+        assert [json.loads(line)["type"] for line in lines] == [
+            "turn_context",
+            "event_msg",
+            "turn_context",
+        ]
+        token_payload = json.loads(lines[1])["payload"]
+        assert token_payload["type"] == "token_count"
+        assert "model" not in token_payload
+        assert "model" not in token_payload["info"]["last_token_usage"]
+
+        records = parser.parse_lines(lines)
+        messages = [record for record in records if isinstance(record, ParsedMessage)]
+        assert [message.model for message in messages] == [
+            "gpt-5.6-terra",
+            None,
+            "gpt-5.6-sol",
+        ]
+        assert messages[1].usage is not None
+        assert messages[1].usage.output_tokens == 125
+        recorded = None
+        for message in messages:
+            recorded = reconcile_observed_model(recorded, message.model)
+        assert recorded == "gpt-5.6-sol"
 
     # -- parse_line: error handling --
 
