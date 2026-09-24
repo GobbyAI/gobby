@@ -397,11 +397,12 @@ Targets:
 - `tests/storage/test_domain_tables_schema.py::*` — scope-reason: pin `memories.surfaced_count` and `memories.last_surfaced_at`
 
 **Research context:** Schema authority is Rust: Python has no DDL
-(`tests/storage/test_schema_contract.py`). Baseline is at 420; the newest committed migration is
-449 (`449_workspace_default_project.sql`), 450 is #22740's
-(`450_drop_session_heuristic_title.sql`, being built on epic-rust-gclient and landing first)
-and 451 is the runbooks plan's (#22808), so this plan takes 452 (Program Director,
-2026-09-24; the epic asked for the renumber at review). Templates: migration 436 (add columns, commit `faadba03d1`) and
+(`tests/storage/test_schema_contract.py`). Baseline is at 420; the newest committed migration on
+0.5.0 is 450 (`450_drop_session_heuristic_title.sql`, #22740, `b9303f8183`, merged in
+`8de59a666f`); 451 is the runbooks plan's (#22808, `451_add_runbook_roles.sql`, not yet in
+the tree), so this plan takes 452 (Program Director, 2026-09-24; the epic asked for the
+renumber at review). The identity literals named below read 450 on HEAD; this leaf bumps
+them to 452 from 450, or from 451 if the runbooks migration has landed first. Templates: migration 436 (add columns, commit `faadba03d1`) and
 `439_retire_linear_github_issue_bridge.sql` (multi-table drop as a plain migration). The
 single file, in order: `ALTER TABLE memories ADD COLUMN surfaced_count integer DEFAULT 0,
 ADD COLUMN last_surfaced_at timestamp with time zone;` then `UPDATE memories SET
@@ -425,9 +426,9 @@ next apply on installed hubs. Carriers per the derived-carriers table: append th
 (the integer definition is the one `memories.access_count` carries at line 2368)
 and remove the about 140 entries for the nine tables; bump the identity literals:
 `crates/gcore/tests/schema_contract.rs` lines 21 and 24 (the version and the newest file
-name), `crates/gcore/src/grant/bundle.rs` line 218 (`latest_version: 449` in the
-`#[cfg(not(feature = "postgres"))]` fallback beside `GOLDEN_LATEST_CHECKSUM`, set by #22809
-in `8039cebc41`; its guard `grant::tests::expected_schema_identity_tracks_catalog_head` runs
+name), `crates/gcore/src/grant/bundle.rs` line 218 (`latest_version: 450` in the
+`#[cfg(not(feature = "postgres"))]` fallback beside `GOLDEN_LATEST_CHECKSUM`, set by #22740
+in `b9303f8183`; its guard `grant::tests::expected_schema_identity_tracks_catalog_head` runs
 only under gcore's default features, memory 24090e86), and
 `crates/gdaemon/tests/cli_contract.rs` line 58. The grant bundle names no recall table (the
 nine appear only in `baseline.sql` and the catalog manifest), so nothing else in
