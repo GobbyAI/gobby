@@ -8,7 +8,7 @@ Flow (Josh, verbatim in #22808, superseding the prompt book's two-round cap): "I
 
 Participants:
 - Writer: gobby#14425 (`912b3959-4924-4d93-a092-1a18636f2e31`), claude-fable-5-1, pane "plan writer".
-- Enhancer: gobby#14422 (Codex gpt-5.6-sol), on hold until the 21:00 CDT gterm cutover; relaunched on the newer model with a new ref supplied by the PD.
+- Enhancer: gobby#14422 (Codex), relaunched after the cutover as session `402a0450-e503-4285-9fab-1c6b56fa8d37`; the PD relayed the S5 hash with GO and the writer confirmed the immutable handoff in message `d1268124` (22:4x CDT).
 - Adversary: gobby#14423 (Grok 4.7), attacks the folded hash after the enhancer round.
 - Program Director: gobby#14018 (`44738b98-9535-4ec5-8be5-57b345780be5`); gate and finalization recipient.
 - Symbol lookup: gobby#14332 (read-only). Comms hub: gobby#14069.
@@ -44,10 +44,25 @@ Josh's five standing instructions (memories 33cb3885, b8f8c9df, cdd18230, c3c59c
 Q1 roster (decision 8 vs. #22691 criterion 10, Golden Path track 3, rulings 15/21/22/23); Q2 layout (decision 10 vs. the live tabs); Q3 #22713 fold (rulings 7, 10); Q4 terminal-backend criteria 1-7 (ruling 16; daemon side is #21565's); Q5 #22695 placement (ruling 10); Q6 which council flow the definitions encode (#22808 FLOW vs. ruling 21). Full text in the PD message recorded below.
 
 ## Enhancer items (round 2)
-Pending the enhancer's relaunch after the 21:00 CDT cutover. Format per item: enhancer position; writer verification; move (FOLD with the change named, or CONTEST with reasoning); resolution (folded or withdrawn).
+Reviewed hash: S5 `c8a9238f...843bad` at `90c38956`. Format per item: enhancer position; writer verification; move (FOLD with the change named, or CONTEST with reasoning); resolution (folded or withdrawn).
+
+### E2.1 cr-1 (lens better, clarity; 1.2/1.3/1.4 and V1 step 6; enhancer message `209a6ed8`, 22:52 CDT)
+Enhancer: state that `pane.set_role` persists the binding for the next SessionStart and does not switch the already-running session; an immediate live switch is `apply_agent_definition`; V1 step 6 verifies the active `_agent_type` before and after that call and after `/clear`.
+Writer verification: true of the design. 1.2's `pane_set_role` writes the pane row and emits `pane.role_set`; 1.3 reads `pane.role` only at the two SessionStart activation sites; decision 1 names `apply_agent_definition` as recovery and manual switching. The plan never said the running session is untouched, and V1 step 6 checked only the after state.
+Move: FOLD. 1.2's surfaces paragraph and 1.2.6 say `pane.set_role` binds the next SessionStart only and that the tool description and docs say both paths; 1.3.4's guide behavior names both; 1.4's registration sentence calls the tool the one live switch; V1 step 6 now runs in the log-monitor pane and checks `_agent_type` before set-role, after `apply_agent_definition` and after `/clear`. No new op or automatic mutation.
+Resolution: folded in the E2 commit.
+
+### E2.2 cr-2 (lens better, testability; 2.1 scripts and V1 step 7; enhancer message `209a6ed8`)
+Enhancer: after each successful `new-tab`, print `CREATED_TAB=<ref>` to stderr; document manual cleanup with the planned `gclient kill <tab-ref>`; add one mock-daemon script test that refuses a later op and asserts nonzero exit plus the printed ref; keep `set -e` and leave partial tabs in place.
+Writer verification: the scripts capture refs into shell variables that die with the script; `kill REF` already sends `tab.close` for a three-segment ref; 2.1.5 and 2.1.8 test only the happy path against the mock daemon and V1 step 7 is live-only. Lookup gobby#14332 (asked by the enhancer) confirmed no cross-call script cleanup or tracking exists today.
+Move: FOLD. Scripts paragraph: each successful `new-tab` is followed by `echo "CREATED_TAB=<tab ref>" >&2`, no rollback; 2.1.6 adds the failure path to the guide; new 2.1.9 with test `script_stops_at_refused_op_and_names_created_tabs` (the mock daemon refuses the first `split` after the second `new-tab`: nonzero exit, `code: reason`, one `CREATED_TAB=` line per tab, no further op); V1 step 7 names the lines.
+Resolution: folded in the E2 commit.
+
+### Enhancer consensus (enhancer message, 2026-09-23 23:0x CDT)
+Verbatim: "CONSENSUS on .gobby/plans/runbooks.md at commit f6388d0534366a8f6023bed1bdb36e8a81fbca62, sha256 d9d65815736a1cd0b384860228d34241ec36190ee96b5dba1ff7be114e03afcf. I verified both working file and committed blob against the hash, reviewed the E2 diff and council-log entries, and independently ran bare `uv run gobby plans validate .gobby/plans/runbooks.md` (clean, 3 phases). cr-1 folded ... cr-2 folded ... No further enhancement items on this hash; enhancer round converged. Please hand this exact commit/hash to adversary gobby#14423 per #22808 FLOW." Writer: hash handed to the adversary in the same minute (waking message).
 
 ## Adversary findings
-Pending; the adversary attacks the folded hash. Same format, plus `check_keys`.
+The adversary attacks the enhancement-consensus hash `d9d65815...afcf` at `f6388d05` (handed over 23:0x CDT). Same format as the enhancer items, plus `check_key`.
 Check-in (adversary message, 2026-09-23 21:0x CDT): "Send me the folded hash of .gobby/plans/runbooks.md ... only after enhancement consensus, with the commit sha. I attack that hash and no earlier one. I edit no files. Debate each finding until you fold it or I withdraw it; I finalize to gobby#14018." Writer acknowledgment sent 21:3x CDT (non-waking): the hash goes out only after enhancement consensus, in one message with the sha256, the commit sha and the bare validate result; no hash yet.
 
 ## Program Director rulings
@@ -105,7 +120,8 @@ Pre-round fold commit `d42521cc0981f36430ff1f2505fcd1704b572498`; plan sha256 `a
 S1 commit `eebfc0ad2db67f2b82168cf3517da46a5f18ed91` (decisions 13-15 recorded; bare validate clean; `git diff --check` clean, 20:3x CDT).
 S2 commit `9d082c7db47a160ef6b980831e32aad604332a97`, S3 commit `e7d05fac306c75ba23574e4711675f1362b0b5ce`, S4 commit `e413116cb9302b1169e19b97f91719bec642e7e5`; sweep hash (sent to the PD in message `26982800`, 21:1x CDT): plan sha256 `8987dd5ebb02f3cd6c5a6563b202f5488da9834df66424f1ea4ed68c3692342c`; bare validate clean (Phases 3); `git diff --check` clean. Its five positions were accepted in R2.
 S5 (this entry): plan sha256 `c8a9238f6ad8e2fcf9ebcc579b6cc8797b2ba876e59302cc194169bfdb843bad`; bare validate clean; `git diff --check` clean (21:3x CDT). This is the hash the enhancer starts on unless the PD rules otherwise.
-Pending: the enhancer round, the adversary round, the final commit and hash, validation output, the adversary's finalization message, the PD's review and hand-off to the assistant.
+E2 (this entry; cr-1 and cr-2 folded): plan sha256 `d9d65815736a1cd0b384860228d34241ec36190ee96b5dba1ff7be114e03afcf`; bare validate clean; `git diff --check` clean (23:0x CDT). Enhancer consensus on this hash at 23:0x CDT; it is the hash the adversary attacks.
+Pending: the adversary round, the final commit and hash, validation output, the adversary's finalization message, the PD's review and hand-off to the assistant.
 
 ### Writer refinements while writing S2 and S3 (named to the Program Director with the hash)
 - Registration source (criterion 1 versus 3): the design of record had the persona say "gterm for a workspace pane". Criterion 1's sentence "A definition that names one fails validation" is literal, so no definition names a backend; instead 1.2's pane view gains `backend` from the terminals row the `session_ref` JOIN already reads, and the registration line repeats what `get_workspace` shows. Cost: one derived field. The adopted-terminal case then needs no caveat text.

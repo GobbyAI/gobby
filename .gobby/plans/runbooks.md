@@ -415,7 +415,11 @@ registered after `rename_workspace_item` with a description that names the roste
 contract (tabs carry `runbook`, panes carry `role`, `session_ref` and `backend`). CLI:
 `gobby panes split --role`, new `gobby panes set-role REF [ROLE]` (omit ROLE to clear),
 and `_pane_line` prints `role`, `session_ref` and `backend` when present; there is no `tabs create`
-CLI, so `runbook` is WS/MCP-only and the docs say so. Docs: op vocabulary, snapshot row
+CLI, so `runbook` is WS/MCP-only and the docs say so. `pane.set_role` and `set-role`
+write the binding only: the session already running in that pane keeps its active
+definition until its next SessionStart (`/clear` or a relaunch, 1.3); an immediate switch
+is `apply_agent_definition` (1.4) called from that session, and the tool description and
+the docs say both. Docs: op vocabulary, snapshot row
 fields, and the `pane.role_set` event in `docs/contracts/gterm-protocols.md`; the CLI
 block in `docs/guides/cli-commands.md`; a "Tabs and panes" paragraph in
 `docs/guides/gclient-user-guide.md`; the tool list in the gobby skill's
@@ -494,7 +498,8 @@ by the size guard, not separate outcomes.
   file: `src/gobby/terminals/workspace_pane_io.py`.
   test: `tests/servers/test_terminal_ws_golden.py::test_python_matches_terminal_ws_golden_corpus`.
 - 1.2.6 - Protocol, CLI, and user-guide docs describe `role`, `runbook`, `session_ref`,
-  `backend`, `pane.set_role`, and `pane.role_set`. behavior: "Workspace messages" in
+  `backend`, `pane.set_role` (a binding for the next SessionStart, never a live switch),
+  and `pane.role_set`. behavior: "Workspace messages" in
   `docs/contracts/gterm-protocols.md`.
 - 1.2.7 - Both bundled runbook scripts bind each tab's runbook and every seat's role
   through the `--runbook` and `--role` flags. file:
@@ -565,8 +570,10 @@ Research context:
   `tests/hooks/test_session_start_handlers.py::test_pane_role_activates_definition_after_native_bind`.
 - 1.3.3 - The role also applies when the native bind lands on the retry path. test:
   `tests/hooks/test_session_materialize.py::test_pane_role_applies_on_retry_bind_path`.
-- 1.3.4 - Guides describe pane-bound roles, the `/clear` and relaunch behavior, and the
-  tmux limitation. behavior: "pane-bound roles" in `docs/guides/agents.md`.
+- 1.3.4 - Guides describe pane-bound roles, the `/clear` and relaunch behavior, that a
+  role set on a pane reaches its running session only at that session's next
+  SessionStart while `apply_agent_definition` switches it now, and the tmux limitation.
+  behavior: "pane-bound roles" in `docs/guides/agents.md`.
 
 ### 1.4 gobby-agents:apply_agent_definition [category: code]
 `kind: deliverable`
@@ -599,7 +606,8 @@ exactly `_agent_type`, `_active_rule_names`, `_active_skill_names`, `_skill_form
 it there so the two cannot drift. Register
 `apply_agent_definition(agent: str, variables: dict | None = None)` next to
 `apply_persona` and document it as the full lifecycle switch versus the narrow persona
-switch.
+switch, and as the one live switch: `pane.set_role` (1.2) binds the next SessionStart
+and leaves the running session alone.
 
 Research context:
 - `apply_persona_impl` (`apply_persona.py` 196-305) and `build_session_persona_changes`
@@ -726,7 +734,10 @@ Exit codes: 0 success; 1 refused op, printed as `code: reason` on stderr from th
 `workspace_error` reply; 2 usage; 3 connection, token, or protocol failure.
 
 Scripts. Two bundled scripts (`#!/usr/bin/env bash`, `set -euo pipefail`) reproduce
-decision 14 with refs captured from plain output. `orchestration-v1.sh [project]`:
+decision 14 with refs captured from plain output. Each successful `new-tab` is followed
+by `echo "CREATED_TAB=<tab ref>" >&2`, so when a later op is refused (the script stops
+under `set -e` with the panes created so far in place, 2.1.3) stderr names the tabs to
+remove with `gclient kill <tab ref>`; there is no rollback. `orchestration-v1.sh [project]`:
 `new-tab --project "${1:-gobby}" --name control` gives `$ctl` and `$pd`; `split "$pd"
 --right` gives `$asst`, `resize "$pd" 0.50`; `new-tab --project "${1:-gobby}" --name
 monitors` gives `$mon` and `$logmon`; `split "$logmon" --down` gives `$arch`, `resize
@@ -826,7 +837,8 @@ Consumers unchanged:
   `src/gobby/install/shared/workflows/runbooks/orchestration-v1.sh`. test:
   `crates/gclient/tests/command_mode.rs::orchestration_v1_script_reproduces_decision_14_layout`.
 - 2.1.6 - The user guide documents command mode: the verb table, exit codes, pane-env
-  defaults, and runbook scripts. behavior: "Command mode" in
+  defaults, the runbook scripts, and their failure path (`CREATED_TAB=` lines on stderr,
+  cleanup with `kill`). behavior: "Command mode" in
   `docs/guides/gclient-user-guide.md`.
 - 2.1.7 - A `workspace_event` whose kind is `pane.role_set` decodes as
   `WorkspaceEventKind::PaneRoleSet` and `WorkspaceModel::apply` upserts the enclosed
@@ -838,6 +850,11 @@ Consumers unchanged:
   kickoff prompts carry the plan path. file:
   `src/gobby/install/shared/workflows/runbooks/plan-council-v1.sh`. test:
   `crates/gclient/tests/command_mode.rs::plan_council_v1_script_reproduces_decision_14_layout`.
+- 2.1.9 - Against a mock daemon that refuses the first `split` after the second
+  `new-tab`, `orchestration-v1.sh` exits nonzero, its stderr carries the daemon's
+  `code: reason` and one `CREATED_TAB=<ref>` line per tab created, and no further op is
+  sent. file: `src/gobby/install/shared/workflows/runbooks/orchestration-v1.sh`. test:
+  `crates/gclient/tests/command_mode.rs::script_stops_at_refused_op_and_names_created_tabs`.
 
 ## P3: Roles
 `kind: framing`
@@ -1378,12 +1395,16 @@ Research context:
    the assistant persona and `get_workspace` shows the new `session_ref`. Quit the CLI
    in the council's researcher pane and relaunch it by hand in the same shell; the new
    session is again the researcher.
-6. Recovery: `gobby panes set-role 0:0:<tab>:<pane>` clears and re-sets a role; in a
-   plain pane, `gobby-agents:apply_agent_definition(agent="researcher")` switches the
-   session and the next prompt shows the researcher persona.
+6. Recovery: in the log-monitor pane, `gobby panes set-role 0:0:<tab>:<pane>` clears
+   the role and re-sets it as `researcher`; `gobby-workflows:get_variable _agent_type`
+   in that session still shows `log-monitor` (set-role binds the next SessionStart
+   only). `gobby-agents:apply_agent_definition(agent="researcher")` there flips
+   `_agent_type` to `researcher` and the next prompt shows the researcher persona; a
+   `/clear` in the pane comes back as `researcher` from the pane row.
 7. Failure path: a script line whose op is refused (a pane ref that does not exist)
    prints the daemon's `code: reason` on stderr and exits 1, so `set -e` stops the
-   script with the panes created so far left in place; `wait-for-output` past its
+   script with the panes created so far left in place and the `CREATED_TAB=` lines on
+   stderr name the tabs to remove with `gclient kill`; `wait-for-output` past its
    timeout exits 1. With the gterm host stopped, `orchestration-v1.sh` is refused at its
    first `new-tab` with `terminal_failed`, exits 1, and no role comes up on another
    backend (criterion 5).
