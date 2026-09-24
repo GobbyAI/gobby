@@ -114,8 +114,7 @@ def create_communications_registry(
             if target_session is not None and _is_project_seq_ref(target_session):
                 if db is None:
                     raise ValueError(
-                        f"Cannot resolve session '{target_session}': "
-                        "project storage is unavailable"
+                        f"Cannot resolve session '{target_session}': project storage is unavailable"
                     )
                 target_session = resolve_session_reference(
                     db,
