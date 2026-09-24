@@ -40,6 +40,16 @@ logger = logging.getLogger(__name__)
 _SLOT_LOCKS: dict[str, asyncio.Lock] = {}
 
 
+def _nonempty_task_ref(value: object) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _claim_step_requires_task(agent_body: AgentDefinitionBody | None) -> bool:
+    """A claim-first step workflow cannot start until a task is assigned."""
+    workflow = None if agent_body is None else agent_body.step_workflow
+    return bool(workflow is not None and workflow.steps and workflow.steps[0].name == "claim")
+
+
 @dataclass(frozen=True, slots=True)
 class SpawnTaskContext:
     """Resolved task metadata and prompt policy for one spawn request."""
@@ -72,6 +82,21 @@ async def resolve_spawn_task_context(
     task_additional_skills: list[str] | None = None
     claimed_session_id: str | None = None
     resolved_task: Any | None = None
+    assigned_task_id = initial_variables.get("assigned_task_id") if initial_variables else None
+    if _claim_step_requires_task(agent_body) and not (
+        _nonempty_task_ref(task_id) or _nonempty_task_ref(assigned_task_id)
+    ):
+        return SpawnTaskContext(
+            prompt=prompt,
+            refusal={
+                "success": False,
+                "skipped": True,
+                "error": (
+                    "Task-bound agent requires an assigned task; refusing to spawn "
+                    "without task_id or assigned_task_id"
+                ),
+            },
+        )
 
     if task_id and task_manager:
         try:
