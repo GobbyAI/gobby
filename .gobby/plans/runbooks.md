@@ -756,8 +756,10 @@ panes come out at equal widths); four `title` lines (`plan-writer`, `enhancer`,
 composer as captured from the live council panes on 2026-09-23: `READY_claude='bypass
 permissions on'` (the status footer Claude Code prints only once its composer is up
 under `--dangerously-skip-permissions`), `READY_codex='› Ask Codex'` (the empty
-composer's placeholder), `READY_grok='always-approve'` (the composer border under
-`--always-approve`); V1 step 3 verifies them live. Launch lines follow the prompt
+composer's placeholder), `READY_grok='Ctrl+x:shortcuts'` (the hint bar under the idle
+composer). No `READY_*` value may be a substring of its seat's launch line, because
+`wait-for-output` matches text already on screen, including the launch line just
+typed; V1 step 3 verifies the patterns live. Launch lines follow the prompt
 book's provider, model and effort per role and the flag spellings of
 `~/Desktop/gobby-team-resume-2026-09-22.md`: program director and plan writer `claude
 --dangerously-skip-permissions --model 'claude-fable-5-1[1m]'`; assistant and
@@ -841,7 +843,7 @@ Consumers unchanged:
 - 2.1.5 - `orchestration-v1.sh` is valid bash, and running it against the mock daemon
   reproduces decision 14's `control` and `monitors` tabs with four titled panes and
   four launches, each kickoff `send-keys` sent only after the seat's ready-pattern wait
-  matched. file:
+  matched, and no seat's `READY_*` value a substring of its launch line. file:
   `src/gobby/install/shared/workflows/runbooks/orchestration-v1.sh`. test:
   `crates/gclient/tests/command_mode.rs::orchestration_v1_script_reproduces_decision_14_layout`.
 - 2.1.6 - The user guide documents command mode: the verb table, exit codes, pane-env
@@ -855,7 +857,8 @@ Consumers unchanged:
 - 2.1.8 - `plan-council-v1.sh <plan>` is valid bash, and running it against the mock
   daemon reproduces decision 14's council tab named after the plan, with the writer
   over three equal-width panes, four titles, and four launches whose kickoff `send-keys`
-  follow the ready-pattern wait and carry the plan path. file:
+  follow the ready-pattern wait and carry the plan path, with no seat's `READY_*` value
+  a substring of its launch line. file:
   `src/gobby/install/shared/workflows/runbooks/plan-council-v1.sh`. test:
   `crates/gclient/tests/command_mode.rs::plan_council_v1_script_reproduces_decision_14_layout`.
 - 2.1.9 - Against a mock daemon that refuses the first `split` after the second

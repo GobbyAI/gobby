@@ -108,6 +108,14 @@ Writer verification: correct; comms-agent.yaml's list (46-60, per gobby#14332) c
 Move: FOLD as proposed. The two seats' `blocked_tools` is the write-only list (`Edit`, `KillShell`, `MultiEdit`, `NotebookEdit`, `Write`, `apply_patch`, `edit_file`, `notebook_edit`, `replace`, `write_file`); `Bash`, `BashOutput`, `shell` and `run_shell_command` stay available; `runbook-no-code-edits` still blocks repository mutations including shell writes inside the repo; 3.2.1 asserts the write-only list with no shell spelling.
 Resolution: folded in the AR1 commit.
 
+### AR2 (adversary message on the AR1 hash `e4baf664...6289` at `8d90e7f6`, 2026-09-23 23:5x CDT): A1-A7 confirmed folded; one new finding
+
+#### A8 `runbook-2.1-grok-ready-pattern-matches-launch-line` (unhandled-edge, blocking)
+Adversary: `READY_grok='always-approve'` is a substring of the adversary launch line `grok -m grok-4.7 --reasoning-effort high --always-approve`; `wait-for-output` matches text already on screen (the shell wait relies on that), so the ready wait matches the typed launch line and the kickoff goes in before grok's composer exists; the mock keeps 2.1.5/2.1.8 green while V1 step 3 fails for that seat.
+Writer verification: correct; the Claude and Codex patterns are not substrings of their launch lines, the grok one was. Tonight's capture of the idle grok composer also shows its hint bar `Tab/→:accept suggestion  │  Shift+Tab:mode  │  Ctrl+x:shortcuts`.
+Move: FOLD as proposed. `READY_grok='Ctrl+x:shortcuts'`; the scripts paragraph states that no `READY_*` value may be a substring of its seat's launch line and why; 2.1.5 and 2.1.8 assert it. Shell wait, launch, ready wait, kickoff order unchanged.
+Resolution: folded in the AR2 commit.
+
 Check-in (adversary message, 2026-09-23 21:0x CDT): "Send me the folded hash of .gobby/plans/runbooks.md ... only after enhancement consensus, with the commit sha. I attack that hash and no earlier one. I edit no files. Debate each finding until you fold it or I withdraw it; I finalize to gobby#14018." Writer acknowledgment sent 21:3x CDT (non-waking): the hash goes out only after enhancement consensus, in one message with the sha256, the commit sha and the bare validate result; no hash yet.
 
 ## Program Director rulings
@@ -167,7 +175,8 @@ S2 commit `9d082c7db47a160ef6b980831e32aad604332a97`, S3 commit `e7d05fac306c75b
 S5 (this entry): plan sha256 `c8a9238f6ad8e2fcf9ebcc579b6cc8797b2ba876e59302cc194169bfdb843bad`; bare validate clean; `git diff --check` clean (21:3x CDT). This is the hash the enhancer starts on unless the PD rules otherwise.
 E2 (this entry; cr-1 and cr-2 folded): plan sha256 `d9d65815736a1cd0b384860228d34241ec36190ee96b5dba1ff7be114e03afcf`; bare validate clean; `git diff --check` clean (23:0x CDT). Enhancer consensus on this hash at 23:0x CDT; it is the hash the adversary attacks.
 AR1 (this entry; A1-A7 folded): plan sha256 `e4baf6640abfd856669c7ead1dd8053af55602f338a4fabd9c2eeff7e6876289`; bare validate clean; `git diff --check` clean (23:4x CDT). Sent to the adversary for re-attack.
-Pending: the adversary's verdict on the AR1 hash, the final commit and hash, validation output, the adversary's finalization message, the PD's review and hand-off to the assistant.
+AR2 (this entry; A8 folded): plan sha256 `ab982751bb9b3452359977b068bf155154f70a748858a14a71929570109ae56f`; bare validate clean; `git diff --check` clean (23:5x CDT). Sent to the adversary for re-attack.
+Pending: the adversary's verdict on the AR2 hash, the final commit and hash, validation output, the adversary's finalization message, the PD's review and hand-off to the assistant.
 
 ### Writer refinements while writing S2 and S3 (named to the Program Director with the hash)
 - Registration source (criterion 1 versus 3): the design of record had the persona say "gterm for a workspace pane". Criterion 1's sentence "A definition that names one fails validation" is literal, so no definition names a backend; instead 1.2's pane view gains `backend` from the terminals row the `session_ref` JOIN already reads, and the registration line repeats what `get_workspace` shows. Cost: one derived field. The adopted-terminal case then needs no caveat text.
