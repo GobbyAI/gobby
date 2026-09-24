@@ -60,16 +60,11 @@ pub enum Hit {
     Machine(String),
     /// The `▸`/`▾` cell at the right edge of a project card with worktrees.
     GroupToggle(String),
-    /// The `[+]` control of the menu band.
-    ProjectsNew,
-    /// The `[Menu]` control of the menu band.
-    ProjectsMenu,
     /// The `[working]`/`[all]` control of the projects band.
     ProjectsFilter,
     /// The `[view]` control of the sessions band, which opens the menu
     /// carrying the scope and the order.
     SessionsView,
-    SidebarToggle,
     /// The `│` column between sidebar and content.
     SidebarDivider,
     SidebarEmpty,
@@ -99,6 +94,10 @@ pub enum Hit {
     SettingsDialog,
     /// A button of the open dialog, as an index into its button row.
     DialogButton(usize),
+    /// A menu bar title, as an index into `MenuBarMenu::ALL`.
+    MenuTitle(usize),
+    /// The menu bar beside its titles.
+    MenuBarEmpty,
     ControlIndicator,
     Status,
     Toast,
@@ -125,6 +124,10 @@ pub fn hit_test(view: &ViewState, column: u16, row: u16) -> Hit {
     }
     if view.toast_hit_area.is_some_and(|toast| toast.contains(at)) {
         return Hit::Toast;
+    }
+    if view.menu_bar_rect.contains(at) {
+        return find_at(&view.menu_title_hit_areas, at)
+            .map_or(Hit::MenuBarEmpty, |(index, _)| Hit::MenuTitle(*index));
     }
     if view.tab_bar_rect.is_some_and(|bar| bar.contains(at)) {
         return tab_bar_hit(view, at);
@@ -198,12 +201,6 @@ fn sidebar_hit(view: &ViewState, at: Position) -> Hit {
     if view.sidebar_divider_x == Some(at.x) {
         return Hit::SidebarDivider;
     }
-    if view
-        .sidebar_toggle_hit_area
-        .is_some_and(|rect| rect.contains(at))
-    {
-        return Hit::SidebarToggle;
-    }
     if let Some(section) = SidebarSection::ALL.into_iter().find(|section| {
         view.sidebar_scrollbar_hit_areas[section.index()].is_some_and(|lane| lane.contains(at))
     }) {
@@ -214,8 +211,6 @@ fn sidebar_hit(view: &ViewState, at: Position) -> Hit {
         return Hit::GroupToggle(id.clone());
     }
     let controls = [
-        (view.projects_new_hit_area, Hit::ProjectsNew),
-        (view.projects_menu_hit_area, Hit::ProjectsMenu),
         (view.projects_filter_hit_area, Hit::ProjectsFilter),
         (view.sessions_view_hit_area, Hit::SessionsView),
     ];

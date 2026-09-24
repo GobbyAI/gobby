@@ -29,6 +29,7 @@ from gobby.config.validation_detection import (
 )
 from gobby.failure_categories import FailureCategory, classify_failure
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.utils import spawn
 
 if TYPE_CHECKING:
     from gobby.worktrees.git import WorktreeGitManager
@@ -689,14 +690,7 @@ def register_merge_landscape_tools(
         safe_env.update(command_env)
 
         try:
-            proc = await asyncio.create_subprocess_exec(
-                *argv,
-                cwd=wt_path,
-                env=safe_env,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                start_new_session=True,
-            )
+            proc = await spawn.create_session_exec(*argv, env=safe_env, cwd=wt_path)
             try:
                 stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=timeout)
             except TimeoutError:

@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import BinaryIO, Literal
 
 from gobby.utils.git import git_subprocess_env
-from gobby.utils.spawn import resolve_executable
+from gobby.utils.spawn import SpawnedSession, can_posix_spawn, resolve_executable
 
 logger = logging.getLogger(__name__)
 
@@ -79,115 +79,7 @@ _STREAM_CHUNK_BYTES = 64 * 1024
 _MAX_STREAM_STDERR_BYTES = 64 * 1024
 
 
-class _PosixSpawnProcess:
-    """Small process handle for group-owned ``posix_spawn`` Git commands."""
-
-    def __init__(
-        self,
-        pid: int,
-        stdin_file: BinaryIO | None,
-        stdout_file: BinaryIO,
-        stderr_file: BinaryIO,
-    ) -> None:
-        self.pid = pid
-        self.returncode: int | None = None
-        self._stdin_file = stdin_file
-        self._stdout_file = stdout_file
-        self._stderr_file = stderr_file
-
-    @classmethod
-    def spawn(
-        cls,
-        argv: tuple[str, ...],
-        *,
-        env: dict[str, str],
-        input_bytes: bytes | None,
-        stdout_file: BinaryIO | None = None,
-        stderr_file: BinaryIO | None = None,
-    ) -> _PosixSpawnProcess:
-        """Start argv; output spools to the given files, or to new temporary ones.
-
-        A failed spawn closes only the temporary files it created.
-        """
-        owned: list[BinaryIO] = []
-
-        def spool(given: BinaryIO | None) -> BinaryIO:
-            if given is None:
-                given = tempfile.TemporaryFile()
-                owned.append(given)
-            return given
-
-        reset_signals = tuple(
-            getattr(signal, name)
-            for name in ("SIGPIPE", "SIGXFZ", "SIGXFSZ")
-            if hasattr(signal, name)
-        )
-        try:
-            stdout_file = spool(stdout_file)
-            stderr_file = spool(stderr_file)
-            targets = [(stdout_file, 1), (stderr_file, 2)]
-            stdin_file: BinaryIO | None = None
-            if input_bytes is not None:
-                stdin_file = spool(None)
-                stdin_file.write(input_bytes)
-                stdin_file.seek(0)
-                targets.append((stdin_file, 0))
-            file_actions: list[
-                tuple[int, int] | tuple[int, int, int] | tuple[int, int, str, int, int]
-            ] = []
-            for source, target in targets:
-                source_fd = source.fileno()
-                file_actions.append((os.POSIX_SPAWN_DUP2, source_fd, target))
-                if source_fd != target:
-                    file_actions.append((os.POSIX_SPAWN_CLOSE, source_fd))
-            if stdin_file is None:
-                # Git never reads the daemon's own stdin.
-                file_actions.append((os.POSIX_SPAWN_OPEN, 0, os.devnull, os.O_RDONLY, 0))
-            pid = os.posix_spawn(
-                argv[0],
-                argv,
-                env,
-                file_actions=file_actions,
-                # A session of its own, as start_new_session: a credential prompt
-                # cannot stop Git with SIGTTIN, and killpg still reaches the group.
-                setsid=True,
-                setsigdef=reset_signals,
-            )
-        except Exception:
-            for file in owned:
-                file.close()
-            raise
-        return cls(pid, stdin_file, stdout_file, stderr_file)
-
-    def communicate(self, _input_bytes: bytes | None = None) -> tuple[bytes, bytes]:
-        try:
-            self.wait()
-            self._stdout_file.seek(0)
-            self._stderr_file.seek(0)
-            return self._stdout_file.read(), self._stderr_file.read()
-        finally:
-            if self._stdin_file is not None:
-                self._stdin_file.close()
-            self._stdout_file.close()
-            self._stderr_file.close()
-
-    def wait(self) -> int:
-        if self.returncode is not None:
-            return self.returncode
-        while True:
-            try:
-                _pid, status = os.waitpid(self.pid, 0)
-                break
-            except InterruptedError:
-                continue
-        self.returncode = os.waitstatus_to_exitcode(status)
-        return self.returncode
-
-    def kill(self) -> None:
-        os.kill(self.pid, signal.SIGKILL)
-
-
-type _GitProcess = subprocess.Popen[bytes] | _PosixSpawnProcess
+type _GitProcess = subprocess.Popen[bytes] | SpawnedSession
 type _GitWorker = Callable[
     [asyncio.AbstractEventLoop, asyncio.Future[GitOk | GitFailed], "_ProcessControl"], None
 ]
@@ -209,15 +101,12 @@ def _spawn_git(
     every thread (#22815), so POSIX starts ``git -C <cwd>`` with posix_spawn.
     """
     process_env = env if env is not None else git_subprocess_env() or dict(os.environ)
-    if os.name == "posix" and all(
-        hasattr(os, name)
-        for name in ("posix_spawn", "POSIX_SPAWN_OPEN", "POSIX_SPAWN_DUP2", "POSIX_SPAWN_CLOSE")
-    ):
+    if can_posix_spawn():
         if not os.path.isdir(cwd):
             # Callers read a missing directory as Git never starting, as Popen reports it.
             raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), cwd)
         executable = resolve_executable(argv[0], env=process_env)
-        return _PosixSpawnProcess.spawn(
+        return SpawnedSession.spawn(
             (executable, "-C", cwd, *argv[1:]),
             env=process_env,
             input_bytes=input_bytes,

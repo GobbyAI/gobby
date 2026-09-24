@@ -2444,17 +2444,13 @@ class TestShutdownDaemonServices:
 
         process = HangingCodexProcess()
 
-        async def fake_create_subprocess_exec(
+        async def fake_create_session_exec(
             *command: str,
-            stdin: int,
-            stdout: int,
-            stderr: int,
-            cwd: str | None,
             env: dict[str, str],
-            start_new_session: bool,
+            cwd: Path,
+            input_bytes: bytes | None = None,
         ) -> HangingCodexProcess:
             assert command[:3] == ("codex", "exec", "--ephemeral")
-            assert start_new_session is True
             return process
 
         async def reap_children(**kwargs: object) -> None:
@@ -2466,7 +2462,7 @@ class TestShutdownDaemonServices:
             assert process.returncode == -signal.SIGTERM
             events.append("reap")
 
-        monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+        monkeypatch.setattr("gobby.utils.spawn.create_session_exec", fake_create_session_exec)
         monkeypatch.setattr(text_generation_adapters, "_signal_cli_process_group", lambda *_: False)
         monkeypatch.setattr(
             runner_lifecycle_shutdown,

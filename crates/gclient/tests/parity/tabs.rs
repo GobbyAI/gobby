@@ -311,7 +311,7 @@ fn tab_bar_clicks_activate_spawn_and_scroll() {
     // Scroll arrows move `tab_scroll` by one and stop following the active
     // tab; the next tab click follows it again.
     let (ws, mut chrome, area) = tab_bar_chrome(
-        80,
+        54,
         &[
             "the first long title",
             "the second long title",
@@ -475,4 +475,46 @@ fn tab_drag_reorders_when_terminal_coalesces_motion_events() {
         MouseOutcome::Handled
     );
     assert_eq!(titles(&chrome), ["beta", "gamma", "alpha"]);
+}
+
+/// Josh's #22780 check: the ' + ' cells start at the last tab's right edge,
+/// so a tab dragged into the gap before '+' (or onto it) moves last.
+#[test]
+fn tab_drop_past_the_last_tab_moves_it_last() {
+    let (ws, mut chrome, area) = tab_bar_chrome(80, &["alpha", "beta", "gamma"]);
+    let (from, row) = tab_cell(&chrome, 0);
+    let plus = chrome.view.new_tab_hit_area.expect("new-tab button drawn");
+    let at = |kind, col| mouse(kind, col, row, KeyModifiers::NONE);
+
+    route_mouse(&ws, &mut chrome, &at(LEFT_DOWN, from));
+    route_mouse(&ws, &mut chrome, &at(LEFT_DRAG, plus.x));
+    assert_eq!(
+        route_mouse(&ws, &mut chrome, &at(LEFT_UP, plus.x)),
+        MouseOutcome::Handled
+    );
+    assert_eq!(titles(&chrome), ["beta", "gamma", "alpha"]);
+    assert_eq!(chrome.active_index(), 2);
+    assert_eq!(chrome.focused_pane(), Some(pane(&ws, 0)));
+    assert_eq!(chrome.gesture, None);
+
+    // A daemon tab asks the daemon for the last tab's position instead of
+    // reordering locally; the scripted workspace has no model, so the
+    // position is the last tab's index.
+    draw_with_hits(&ws, &mut chrome, area);
+    let plus = chrome.view.new_tab_hit_area.expect("new-tab button drawn");
+    for tab in &mut chrome.tabs_mut().tabs {
+        tab.id = format!("tab-{}", tab.title);
+    }
+    let (from, _) = tab_cell(&chrome, 0);
+    route_mouse(&ws, &mut chrome, &at(LEFT_DOWN, from));
+    route_mouse(&ws, &mut chrome, &at(LEFT_DRAG, plus.x + 1));
+    assert_eq!(
+        route_mouse(&ws, &mut chrome, &at(LEFT_UP, plus.x + 1)),
+        MouseOutcome::MoveTab {
+            tab: "tab-beta".to_string(),
+            position: 2
+        }
+    );
+    assert_eq!(titles(&chrome), ["beta", "gamma", "alpha"]);
+    assert_eq!(chrome.gesture, None);
 }

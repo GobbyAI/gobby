@@ -3,11 +3,12 @@
 import base64
 import hashlib
 import json
+import re
 import time
 from dataclasses import replace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, quote, quote_plus, unquote_plus, urlsplit
 
 import httpx2
 import pytest
@@ -403,6 +404,118 @@ async def test_token_exchange_failure_surfaces_safe_headers_and_redacts_credenti
     assert "message=slow down" in visible
     for secret in ("secret-token-value", "auth-code-value", "super-secret-value"):
         assert secret not in visible
+
+
+_ECHO_CODE = "k7Code/1+2 &=%"
+_ECHO_SECRET = "s9Secret/1+2 &=%"
+_ECHO_REFRESH = "r5Refresh/1+2 &=%"
+
+
+def _reflections(sent: str) -> list[str]:
+    """A credential as sent, decoded, and re-encoded the ways an endpoint might echo it."""
+    value = unquote_plus(sent)
+    encoded = quote(value, safe="")
+    lower_hex = re.sub(r"%[0-9A-F]{2}", lambda escape: escape.group().lower(), encoded)
+    return [sent, value, encoded, quote_plus(value, safe=""), lower_hex]
+
+
+class EchoingServer(AuthorizationServer):
+    """Fails one grant with public error fields that reflect every credential it was sent."""
+
+    def __init__(self, auth_method: str, failing_grant: str) -> None:
+        super().__init__(auth_method)
+        self.failing_grant = failing_grant
+        self.echoed: list[str] = []
+
+    async def callback(self) -> AuthorizationCodeResult:
+        return AuthorizationCodeResult(
+            code=_ECHO_CODE, state=self.authorization["state"][0], iss=self.issuer
+        )
+
+    def respond(self, request: httpx2.Request) -> httpx2.Response:
+        path = request.url.path
+        if path == "/register":
+            registered = json.loads(super().respond(request).content)
+            if registered["client_secret"]:
+                registered["client_secret"] = _ECHO_SECRET
+            return httpx2.Response(201, json=registered)
+        if path != "/custom/token":
+            return super().respond(request)
+        self.requests.append(request)
+        pairs = (pair.partition("=") for pair in request.content.decode().split("&"))
+        fields = {key: value for key, _, value in pairs}
+        if fields["grant_type"] != self.failing_grant:
+            return httpx2.Response(
+                200,
+                json={
+                    "access_token": "access",
+                    "refresh_token": _ECHO_REFRESH,
+                    "token_type": "Bearer",
+                    "expires_in": 3600,
+                },
+            )
+        sent = [
+            fields[key]
+            for key in ("code", "code_verifier", "refresh_token", "client_secret")
+            if key in fields
+        ]
+        authorization = request.headers.get("Authorization", "")
+        if authorization:
+            sent.append(base64.b64decode(authorization.split()[1]).decode().split(":", 1)[1])
+            self.echoed.append(authorization.split()[1])
+        self.echoed += [form for value in sent for form in _reflections(value)]
+        return httpx2.Response(
+            400,
+            json={
+                "error": "invalid_request",
+                "error_description": f"rejected {' '.join(self.echoed)}",
+                "message": f"header was {authorization or 'absent'}",
+            },
+        )
+
+
+def _assert_echoes_redacted(server: EchoingServer, visible: str, auth_method: str) -> None:
+    assert "error=invalid_request" in visible
+    assert "error_description=rejected [redacted]" in visible
+    for form in server.echoed:
+        assert form not in visible
+    # No fragment of any credential survives, whatever its encoding.
+    for stem in ("k7code", "s9secret", "r5refresh"):
+        assert stem not in visible.lower()
+    if auth_method == "client_secret_basic":
+        assert "message=header was Basic [redacted]" in visible
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("auth_method", ["none", "client_secret_basic", "client_secret_post"])
+async def test_token_failure_redacts_request_credentials_echoed_in_error_text(
+    secret_store: SecretStore, caplog: pytest.LogCaptureFixture, auth_method: str
+) -> None:
+    """Code-exchange credentials stay hidden when the public error fields echo them encoded."""
+    server = EchoingServer(auth_method, "authorization_code")
+    caplog.set_level("WARNING")
+    with pytest.raises(OAuthFlowError) as error:
+        await login(secret_store, server)
+    assert server.echoed
+    _assert_echoes_redacted(server, str(error.value) + caplog.text, auth_method)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("auth_method", ["none", "client_secret_basic", "client_secret_post"])
+async def test_refresh_failure_redacts_request_credentials_echoed_in_error_text(
+    secret_store: SecretStore, caplog: pytest.LogCaptureFixture, auth_method: str
+) -> None:
+    """Refresh-grant credentials stay hidden when the public error fields echo them encoded."""
+    server = EchoingServer(auth_method, "refresh_token")
+    config = await login(secret_store, server)
+    caplog.set_level("WARNING")
+    provider = PersistentOAuthProvider(config, MCPOAuthStorage(secret_store, config))
+    refreshed = await provider.refresh_persisted_token(
+        transport=httpx2.MockTransport(server.respond)
+    )
+    assert refreshed is False
+    assert any(_ECHO_REFRESH in form for form in server.echoed)
+    _assert_echoes_redacted(server, caplog.text, auth_method)
 
 
 @pytest.mark.asyncio

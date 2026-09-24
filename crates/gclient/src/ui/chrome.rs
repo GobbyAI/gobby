@@ -24,11 +24,8 @@ use crate::ui::status::{ActiveToast, Toast};
 use gobby_terminal::layout::{self, Node, PaneInfo, SplitBorder, TileLayout};
 use gobby_terminal::selection::Selection;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::path::Path;
-
-/// Collapsed sidebar width (herdr `COLLAPSED_WIDTH`).
-pub const COLLAPSED_WIDTH: u16 = 4;
 
 /// Command that opens a URL on this platform, the one a ctrl+click uses.
 pub const DEFAULT_LINK_OPENER: &str = if cfg!(target_os = "macos") {
@@ -104,11 +101,13 @@ impl WorkspaceView for Workspace {
 
 pub mod alerts;
 pub mod labels;
+pub mod sidebar_state;
 
 pub use labels::{
     attention_label, attention_pane, attention_subject, row_state, terminal_address,
     terminal_label, RowState,
 };
+pub use sidebar_state::SidebarState;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
@@ -127,96 +126,6 @@ pub enum Mode {
     ContextMenu,
     /// One of the project dialogs (`ui::dialogs::project`) is open.
     ProjectDialog,
-}
-
-#[derive(Debug, Clone)]
-pub struct SidebarState {
-    pub collapsed: bool,
-    /// herdr `SidebarCollapsedModeConfig::Hidden`: a collapsed sidebar takes
-    /// no columns instead of the rail.
-    pub hide_when_collapsed: bool,
-    pub width: u16,
-    pub min_width: u16,
-    pub max_width: u16,
-    /// Scroll position of each section, by `SidebarSection::index`.
-    pub scrolls: [usize; 3],
-    /// Selected project-section row, worktree rows included (navigate mode).
-    pub selected: usize,
-    /// Project ids in the order the user dragged them into; projects the
-    /// order does not name follow in model order. `prefs.toml` keeps it
-    /// (`ClientPrefs::project_order`), mirrored on every drop.
-    pub project_order: Vec<String>,
-    /// The one project card whose worktree rows are unfolded; every other
-    /// card is folded. Focusing a project expands its card.
-    pub expanded_project: Option<String>,
-    /// Labels the user gave project cards, by project id; a card without
-    /// one shows the daemon's name. `prefs.toml` keeps them
-    /// (`ClientPrefs::project_labels`), mirrored on every rename.
-    pub project_labels: BTreeMap<String, String>,
-    /// Machine filter of the sessions section, per window: `None` lists the
-    /// rows on the local machine, `Some(ALL_MACHINES)` the rows on every
-    /// machine, and `Some(machine_id)` those on that machine;
-    /// `all_sessions` bounds the projects the rows come from.
-    pub machine_filter: Option<String>,
-    /// The projects section lists every project instead of the working
-    /// ones (`sidebar_rows::working_projects`). Per window, never saved.
-    pub all_projects: bool,
-    /// The sessions section lists every project's rows, grouped by project,
-    /// instead of the focused project's. Per window, never saved.
-    pub all_sessions: bool,
-}
-
-impl Default for SidebarState {
-    fn default() -> Self {
-        Self {
-            collapsed: false,
-            hide_when_collapsed: false,
-            width: 26,
-            min_width: 18,
-            max_width: 36,
-            scrolls: [0; 3],
-            selected: 0,
-            project_order: Vec::new(),
-            expanded_project: None,
-            project_labels: BTreeMap::new(),
-            machine_filter: None,
-            all_projects: false,
-            all_sessions: false,
-        }
-    }
-}
-
-impl SidebarState {
-    /// The scroll position of one list section.
-    pub fn scroll(&self, section: SidebarSection) -> usize {
-        self.scrolls[section.index()]
-    }
-
-    pub fn scroll_mut(&mut self, section: SidebarSection) -> &mut usize {
-        &mut self.scrolls[section.index()]
-    }
-
-    /// Fold `project_id`'s worktree rows when it is the expanded card, else
-    /// expand it (folding whichever card was).
-    pub fn toggle_group(&mut self, project_id: &str) {
-        self.expanded_project = if self.is_expanded(project_id) {
-            None
-        } else {
-            Some(project_id.to_owned())
-        };
-    }
-
-    /// Whether `project_id`'s worktree rows are listed under its card.
-    pub fn is_expanded(&self, project_id: &str) -> bool {
-        self.expanded_project.as_deref() == Some(project_id)
-    }
-
-    /// herdr `set_manual_sidebar_width`: the pointer column becomes the
-    /// sidebar's last column, within the width bounds.
-    pub fn set_width_from_column(&mut self, area: Rect, column: u16) {
-        let width = column.saturating_sub(area.x).saturating_add(1);
-        self.width = width.clamp(self.min_width, self.max_width);
-    }
 }
 
 /// One tab: a BSP layout whose slots map to workspace panes.
@@ -277,6 +186,11 @@ impl Tab {
 /// Computed frame geometry (herdr `ViewState`).
 #[derive(Clone, Default)]
 pub struct ViewState {
+    /// Row 0 across the whole frame, reserved for the menu bar.
+    pub menu_bar_rect: Rect,
+    /// Menu bar title cells, by index into `MenuBarMenu::ALL`.
+    pub menu_title_hit_areas: Vec<(usize, Rect)>,
+    /// Zero-width unless the sidebar is pinned.
     pub sidebar_rect: Rect,
     pub tab_bar_rect: Option<Rect>,
     pub tab_hit_areas: Vec<(usize, Rect)>,
@@ -284,7 +198,7 @@ pub struct ViewState {
     pub tab_scroll_right_hit_area: Option<Rect>,
     pub new_tab_hit_area: Option<Rect>,
     pub terminal_area: Rect,
-    /// Bottom row of the content column: prefix, mode and daemon health,
+    /// Last row across the whole frame: prefix, mode and daemon health,
     /// plus whatever the focused pane's edges cannot carry.
     pub status_rect: Rect,
     pub toast_hit_area: Option<Rect>,
@@ -299,8 +213,6 @@ pub struct ViewState {
     pub worktree_hit_areas: Vec<(String, Rect)>,
     /// The `▸`/`▾` cell of each card that has worktrees, by project id.
     pub group_toggle_hit_areas: Vec<(String, Rect)>,
-    pub projects_new_hit_area: Option<Rect>,
-    pub projects_menu_hit_area: Option<Rect>,
     /// The `[working]`/`[all]` control of the projects band.
     pub projects_filter_hit_area: Option<Rect>,
     /// The `[view]` control of the sessions band.
@@ -315,7 +227,6 @@ pub struct ViewState {
     /// The three sections' rects (band and body), by
     /// `SidebarSection::index`, for the wheel over a bare sidebar cell.
     pub sidebar_section_rects: [Rect; 3],
-    pub sidebar_toggle_hit_area: Option<Rect>,
     /// Scrollbar lane beside each section, by `SidebarSection::index`.
     pub sidebar_scrollbar_hit_areas: [Option<Rect>; 3],
     /// The focused pane's metadata while it offers take-control (Read-only,
@@ -336,6 +247,7 @@ impl ViewState {
     /// frame the user saw (herdr wrote them back from `render`).
     pub fn apply_hits(&mut self, hits: ChromeHits) {
         let ChromeHits {
+            menu_bar,
             tab_bar,
             sidebar,
             control_indicator,
@@ -346,6 +258,7 @@ impl ViewState {
             dialog_buttons,
         } = hits;
         self.dialog_button_hit_areas = dialog_buttons;
+        self.menu_title_hit_areas = menu_bar.titles;
         self.tab_hit_areas = tab_bar.tabs;
         self.tab_scroll_left_hit_area = tab_bar.scroll_left;
         self.tab_scroll_right_hit_area = tab_bar.scroll_right;
@@ -353,14 +266,11 @@ impl ViewState {
         self.project_hit_areas = sidebar.projects;
         self.worktree_hit_areas = sidebar.worktrees;
         self.group_toggle_hit_areas = sidebar.group_toggles;
-        self.projects_new_hit_area = sidebar.projects_new;
-        self.projects_menu_hit_area = sidebar.projects_menu;
         self.projects_filter_hit_area = sidebar.projects_filter;
         self.sessions_view_hit_area = sidebar.sessions_view;
         self.agent_hit_areas = sidebar.agents;
         self.machine_hit_areas = sidebar.machines;
         self.sidebar_scrollbar_hit_areas = sidebar.scrollbars;
-        self.sidebar_toggle_hit_area = sidebar.toggle;
         self.control_indicator_hit_area = control_indicator;
         self.toast_hit_area = toast;
         let (dialog, rows) = settings.map_or((None, Vec::new()), |s| (Some(s.dialog), s.rows));
@@ -388,7 +298,8 @@ pub struct Chrome {
     pub dialog: Option<Dialog>,
     /// Toasts on screen, oldest first; `Chrome::notify` owns the stack.
     pub toasts: Vec<ActiveToast>,
-    /// Every alert raised, oldest first; the [Menu] alert log shows it.
+    /// Every alert raised, oldest first; the global menu's alert log shows
+    /// it.
     pub alert_log: Vec<Toast>,
     pub view: ViewState,
     pub keymap: Keymap,
@@ -471,7 +382,6 @@ impl Chrome {
     pub fn apply_prefs(&mut self, prefs: ClientPrefs) {
         self.set_theme(prefs.theme_kind());
         self.sidebar.width = prefs.sidebar_width;
-        self.sidebar.collapsed = prefs.sidebar_collapsed;
         self.sidebar.project_order = prefs.project_order.clone();
         self.sidebar.project_labels = prefs.project_labels.clone();
         self.prefs = prefs;
@@ -767,13 +677,11 @@ impl Chrome {
         }
     }
 
-    /// Sidebar width for the current frame (herdr `compute_view` clamp).
+    /// Sidebar width for the current frame (herdr `compute_view` clamp); a
+    /// sidebar that is not pinned takes no columns.
     pub fn sidebar_width(&self, area: Rect) -> u16 {
-        if self.sidebar.collapsed {
-            if self.sidebar.hide_when_collapsed {
-                return 0;
-            }
-            return COLLAPSED_WIDTH.min(area.width);
+        if !self.sidebar.pinned {
+            return 0;
         }
         let max = self.sidebar.max_width.min(area.width.saturating_sub(1));
         let min = self.sidebar.min_width.min(max);
@@ -793,17 +701,22 @@ impl Chrome {
         self.view.apply_hits(hits);
     }
 
-    /// Recompute `view` for `area` (herdr `compute_view`): sidebar column,
-    /// tab bar row, terminal area, pane rects, and split borders.
+    /// Recompute `view` for `area` (herdr `compute_view`): the menu bar row,
+    /// the status row, and between them the sidebar column beside the tab
+    /// bar row and terminal area, plus pane rects and split borders.
     pub fn compute_view<W: WorkspaceView>(&mut self, ws: &W, area: Rect) {
-        let sidebar_w = self.sidebar_width(area);
+        let bands = Layout::vertical([
+            Constraint::Length(1),
+            Constraint::Min(1),
+            Constraint::Length(1),
+        ])
+        .split(area);
+        let (menu_bar_rect, middle, status_rect) = (bands[0], bands[1], bands[2]);
+        let sidebar_w = self.sidebar_width(middle);
         let columns =
-            Layout::horizontal([Constraint::Length(sidebar_w), Constraint::Min(1)]).split(area);
+            Layout::horizontal([Constraint::Length(sidebar_w), Constraint::Min(1)]).split(middle);
         let sidebar_rect = columns[0];
-        let column =
-            Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(columns[1]);
-        let content = column[0];
-        let status_rect = column[1];
+        let content = columns[1];
         let (tab_bar_rect, terminal_area) = if self.show_tab_bar() {
             let rows = Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).split(content);
             (Some(rows[0]), rows[1])
@@ -864,6 +777,7 @@ impl Chrome {
         let title_travel =
             title_travel.max(sidebar::sessions_title_travel(ws, self, sessions_rect));
         self.view = ViewState {
+            menu_bar_rect,
             sidebar_rect,
             tab_bar_rect,
             terminal_area,

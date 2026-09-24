@@ -18,6 +18,7 @@ const HEIGHT: u16 = 40;
 /// `tests/screens.rs::split_live`: two live panes split in the first tab, a
 /// second tab behind them, one attention prompt on `term-alpha`, and the
 /// focused pane (`term-beta`) given scrollback so its scrollbar lane is drawn.
+/// The sidebar is pinned so its hits are covered too.
 fn split_live() -> (Workspace, Chrome) {
     let mut ws = Workspace::scripted();
     ws.daemon_mut().set_sidebar_rows(SidebarRows {
@@ -63,6 +64,7 @@ fn split_live() -> (Workspace, Chrome) {
     ws.apply_scroll_applied(beta, 0, 50);
 
     let mut chrome = Chrome::dark();
+    chrome.sidebar.pinned = true;
     chrome.sidebar.toggle_group("proj-alpha");
     chrome.open_pane(alpha, "alpha");
     chrome.open_pane(beta, "alpha");
@@ -108,7 +110,7 @@ fn hit_test_covers_split_live_layout() {
     assert_eq!(at(view, new_tab.x, new_tab.y), Hit::NewTab);
     assert_eq!(at(view, bar.right() - 1, bar.y), Hit::TabBarEmpty);
 
-    // Sidebar: divider column, band controls, toggle, rows, then bare cells.
+    // Sidebar: divider column, band controls, rows, then bare cells.
     let sidebar = view.sidebar_rect;
     let divider_x = view.sidebar_divider_x.expect("sidebar divider");
     assert_eq!(at(view, divider_x, sidebar.y), Hit::SidebarDivider);
@@ -126,8 +128,6 @@ fn hit_test_covers_split_live_layout() {
     assert_eq!(at(view, filter.x, filter.y), Hit::ProjectsFilter);
     let view_control = view.sessions_view_hit_area.expect("sessions view drawn");
     assert_eq!(at(view, view_control.x, view_control.y), Hit::SessionsView);
-    let toggle = view.sidebar_toggle_hit_area.expect("toggle drawn");
-    assert_eq!(at(view, toggle.x, toggle.y), Hit::SidebarToggle);
     let (id, rect) = view.machine_hit_areas.first().expect("machine row");
     assert_eq!(at(view, rect.x, rect.y), Hit::Machine(id.clone()));
     let (id, rect) = view.project_hit_areas.first().expect("project card");
@@ -138,10 +138,6 @@ fn hit_test_covers_split_live_layout() {
     let (id, rect) = view.worktree_hit_areas.first().expect("worktree row");
     assert_eq!(id, "wt-1");
     assert_eq!(at(view, rect.x, rect.y), Hit::Worktree(id.clone()));
-    let new = view.projects_new_hit_area.expect("new button");
-    assert_eq!(at(view, new.x, new.y), Hit::ProjectsNew);
-    let menu = view.projects_menu_hit_area.expect("menu button");
-    assert_eq!(at(view, menu.x, menu.y), Hit::ProjectsMenu);
     let (entry, rect) = view.agent_hit_areas.first().expect("agent row");
     assert_eq!(entry, "run:term-alpha");
     assert_eq!(at(view, rect.x, rect.y), Hit::Agent(entry.clone()));
@@ -199,6 +195,23 @@ fn hit_test_covers_split_live_layout() {
     assert_eq!(at(view, indicator.x, indicator.y), Hit::ControlIndicator);
     assert_eq!(at(view, status.x, status.y), Hit::Status);
 
+    // Row 0 is the menu bar: its titles, then the bar beside them.
+    let menu_bar = view.menu_bar_rect;
+    assert_eq!(menu_bar, Rect::new(0, 0, WIDTH, 1));
+    assert_eq!(view.menu_title_hit_areas.len(), 7);
+    for (index, rect) in &view.menu_title_hit_areas {
+        assert_eq!(at(view, rect.x, rect.y), Hit::MenuTitle(*index));
+        assert_eq!(at(view, rect.right() - 1, rect.y), Hit::MenuTitle(*index));
+    }
+    assert_eq!(at(view, WIDTH - 1, 0), Hit::MenuBarEmpty);
+    // The menu bar is tested before the tab bar: a tab bar reaching row 0
+    // still yields the title and the bare bar there.
+    let mut overlapped = view.clone();
+    overlapped.tab_bar_rect = Some(Rect::new(0, 0, WIDTH, 2));
+    let (first, rect) = view.menu_title_hit_areas[0];
+    assert_eq!(at(&overlapped, rect.x, rect.y), Hit::MenuTitle(first));
+    assert_eq!(at(&overlapped, WIDTH - 1, 0), Hit::MenuBarEmpty);
+
     // Nothing inside the frame is unowned; everything outside is.
     assert_eq!(at(view, WIDTH, 0), Hit::Empty);
     assert_eq!(at(view, 0, HEIGHT), Hit::Empty);
@@ -213,7 +226,7 @@ fn hit_test_covers_split_live_layout() {
 fn sidebar_scrollbar_lane_hits_by_section() {
     let (ws, mut chrome) = split_live();
     rendered(&ws, &mut chrome);
-    // One project card never overflows a 40-row sidebar, so no lane is drawn
+    // One project card never overflows a 38-row sidebar, so no lane is drawn
     // and the cells beside the rows stay plain sidebar.
     assert_eq!(chrome.view.sidebar_scrollbar_hit_areas, [None; 3]);
 

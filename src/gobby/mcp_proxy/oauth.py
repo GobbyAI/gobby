@@ -1,14 +1,17 @@
 """MCP SDK OAuth authorization backed by Gobby's encrypted secret store."""
 
 import asyncio
+import base64
+import binascii
 import hashlib
 import json
 import logging
+import re
 import shlex
 import time
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from typing import Any, Literal
-from urllib.parse import urlsplit
+from urllib.parse import quote, quote_plus, unquote_plus, urlsplit
 
 import httpx2
 from mcp.client import Client
@@ -43,13 +46,15 @@ from gobby.storage.secrets import SecretStore
 
 DEFAULT_OAUTH_TIMEOUT_SECONDS = 300.0
 logger = logging.getLogger(__name__)
-_SECRET_RESPONSE_KEYS = frozenset(
+_SECRET_FIELD_KEYS = frozenset(
     {
         "access_token",
         "refresh_token",
         "id_token",
         "code",
+        "code_verifier",
         "client_secret",
+        "client_assertion",
         "authorization",
         "password",
     }
@@ -58,9 +63,36 @@ _PUBLIC_ERROR_FIELDS = ("error", "error_description", "message")
 _NAMED_FAILURE_HEADERS = ("retry-after", "content-type", "server", "cf-ray")
 
 
+def _request_credentials(response: httpx2.Response) -> set[str]:
+    """Credentials the failed token request sent, which the endpoint may echo in its errors."""
+    try:
+        request = response.request
+        body = request.content
+    except (RuntimeError, httpx2.RequestNotRead):
+        return set()
+    secrets: set[str] = set()
+    # Keep each value both as sent and decoded; an endpoint may echo either.
+    for pair in body.decode("utf-8", "replace").split("&"):
+        key, _, sent = pair.partition("=")
+        if unquote_plus(key) in _SECRET_FIELD_KEYS and sent:
+            secrets.update((sent, unquote_plus(sent)))
+    scheme, _, credential = request.headers.get("authorization", "").partition(" ")
+    if credential:
+        secrets.add(credential)
+        if scheme.casefold() == "basic":
+            try:
+                decoded = base64.b64decode(credential, validate=True).decode()
+            except (binascii.Error, UnicodeDecodeError):
+                decoded = ""
+            sent = decoded.partition(":")[2]
+            if sent:
+                secrets.update((sent, unquote_plus(sent)))
+    return secrets
+
+
 def _safe_oauth_failure_summary(response: httpx2.Response) -> str:
     """Status, rate-limit headers, and Fieldy's error fields, without credentials."""
-    secrets: set[str] = set()
+    secrets = _request_credentials(response)
     public: dict[str, str] = {}
     try:
         payload = json.loads(response.content or b"")
@@ -70,14 +102,26 @@ def _safe_oauth_failure_summary(response: httpx2.Response) -> str:
         for key, value in payload.items():
             if not isinstance(key, str) or not isinstance(value, str) or not value:
                 continue
-            if key in _SECRET_RESPONSE_KEYS:
+            if key in _SECRET_FIELD_KEYS:
                 secrets.add(value)
             elif key in _PUBLIC_ERROR_FIELDS:
                 public[key] = value
 
+    # Each secret also in its re-encoded forms, matched case-insensitively because
+    # percent-escapes are case-insensitive. Longest first, so a secret that contains
+    # another is never partly revealed.
+    forms = {
+        form
+        for secret in secrets
+        for form in (secret, quote(secret, safe=""), quote_plus(secret, safe=""))
+    }
+    patterns = [
+        re.compile(re.escape(form), re.IGNORECASE) for form in sorted(forms, key=len, reverse=True)
+    ]
+
     def clean(text: str) -> str:
-        for secret in secrets:
-            text = text.replace(secret, "[redacted]")
+        for pattern in patterns:
+            text = pattern.sub("[redacted]", text)
         return text
 
     parts = [f"status={response.status_code}"]

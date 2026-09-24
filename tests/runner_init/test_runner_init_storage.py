@@ -9,12 +9,14 @@ from typing import cast
 
 import pytest
 
+import gobby.runner_init.storage as storage_init
 from gobby.config.app import DaemonConfig
 from gobby.config.bootstrap import BootstrapConfig
 from gobby.runner import GobbyRunner
 from gobby.runner_init.storage import (
     _warn_missing_terminal_dependency,
     bootstrap_overlaid_config,
+    init_storage_and_config,
     run_startup_content_sync,
 )
 from gobby.storage.hub.protocol import HubDatabase
@@ -127,7 +129,7 @@ def test_real_runtime_candidate_through_overlay_matches_daemon_startup(
     assert merged.voice.enabled is True
 
 
-def test_dev_startup_refuses_dirty_bundled_content_before_sync(
+def test_dev_startup_refuses_dirty_bundled_content_before_publishing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[str] = []
@@ -136,30 +138,54 @@ def test_dev_startup_refuses_dirty_bundled_content_before_sync(
         calls.append(f"integrity:{path}")
         return "dirty bundled content"
 
-    def unexpected_sync(*_args: object, **_kwargs: object) -> dict[str, object]:
-        pytest.fail("dirty bundled content must not be synced")
+    def unexpected_publish(_runner: GobbyRunner) -> None:
+        pytest.fail("dirty bundled content must not be published")
 
     monkeypatch.setattr("gobby.utils.dev.is_dev_mode", lambda _path: True)
     monkeypatch.setattr("gobby.paths.get_install_dir", lambda: Path("/checkout/install"))
     monkeypatch.setattr("gobby.sync.integrity.dirty_bundled_content_refusal", dirty_refusal)
-    monkeypatch.setattr("gobby.sync_registry.sync_bundled_content_to_db", unexpected_sync)
+    monkeypatch.setattr(storage_init, "open_storage_and_config", lambda *_args: None)
+    monkeypatch.setattr(storage_init, "init_startup_content", unexpected_publish)
 
     runner = cast(GobbyRunner, SimpleNamespace(database=object()))
     with pytest.raises(RuntimeError, match="dirty bundled content"):
-        run_startup_content_sync(runner)
+        init_storage_and_config(runner, None, False)
 
-    assert runner._dev_mode is True
     assert calls == ["integrity:/checkout/install"]
 
 
-def test_dev_startup_checks_clean_bundled_content_before_sync(
+def test_dev_startup_checks_clean_bundled_content_before_publishing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[str] = []
+    databases: list[object] = []
 
     def clean_refusal(path: Path, *, database: object) -> None:
         calls.append(f"integrity:{path}")
+        databases.append(database)
         return None
+
+    monkeypatch.setattr("gobby.utils.dev.is_dev_mode", lambda _path: True)
+    monkeypatch.setattr("gobby.paths.get_install_dir", lambda: Path("/checkout/install"))
+    monkeypatch.setattr("gobby.sync.integrity.dirty_bundled_content_refusal", clean_refusal)
+    monkeypatch.setattr(
+        storage_init, "open_storage_and_config", lambda *_args: calls.append("storage")
+    )
+    monkeypatch.setattr(
+        storage_init, "init_startup_content", lambda _runner: calls.append("content")
+    )
+
+    runner = cast(GobbyRunner, SimpleNamespace(database=object()))
+    init_storage_and_config(runner, None, False)
+
+    assert calls == ["storage", "integrity:/checkout/install", "content"]
+    assert databases == [runner.database]
+
+
+def test_dev_startup_syncs_bundled_content_then_migrates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
 
     def sync(*_args: object, **_kwargs: object) -> dict[str, object]:
         calls.append("sync")
@@ -170,8 +196,6 @@ def test_dev_startup_checks_clean_bundled_content_before_sync(
         return {"success": True}
 
     monkeypatch.setattr("gobby.utils.dev.is_dev_mode", lambda _path: True)
-    monkeypatch.setattr("gobby.paths.get_install_dir", lambda: Path("/checkout/install"))
-    monkeypatch.setattr("gobby.sync.integrity.dirty_bundled_content_refusal", clean_refusal)
     monkeypatch.setattr("gobby.sync_registry.sync_bundled_content_to_db", sync)
     monkeypatch.setattr("gobby.sync_registry.migrate_rule_delivery_dispositions", migrate)
 
@@ -179,4 +203,4 @@ def test_dev_startup_checks_clean_bundled_content_before_sync(
     run_startup_content_sync(runner)
 
     assert runner._dev_mode is True
-    assert calls == ["integrity:/checkout/install", "sync", "migrate"]
+    assert calls == ["sync", "migrate"]

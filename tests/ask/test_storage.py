@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -16,6 +17,7 @@ from gobby.ask.storage import AskRunStorage
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.workflows.pipeline_state import ExecutionStatus
+from tests.ask.service_support import build_ask_service
 
 pytestmark = pytest.mark.unit
 
@@ -315,3 +317,41 @@ def test_runtime_metadata_survives_executor_outputs_and_concurrent_evidence(
     execution = manager.get_execution(record.run_id)
     assert execution is not None
     assert json.loads(execution.outputs_json or "{}") == {"result": {"status": "completed"}}
+
+
+async def test_service_start_resolves_the_commit_off_the_event_loop(
+    temp_db: HubDatabase,
+    sample_project: dict[str, object],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # #22829: _run_git is synchronous; the daemon reaches it only through
+    # AskService.start, which runs AskRunStorage.start in a worker thread.
+    project_id = str(sample_project["id"])
+    harness = build_ask_service(temp_db, project_id=project_id, state_root=tmp_path / "state")
+    harness.storage.commit_resolver = None
+    loop_running: list[bool] = []
+
+    def run_git(_root: Path, *arguments: str, timeout: float) -> str:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            loop_running.append(False)
+        else:
+            loop_running.append(True)
+        return "b" * 40 if arguments[-1].endswith("^{tree}") else "a" * 40
+
+    monkeypatch.setattr("gobby.ask.storage._run_git", run_git)
+    await harness.service.start(
+        AskRequest(
+            question="Where is the source of truth?",
+            project_id=project_id,
+            investigator_profile="ask-investigator",
+            reviewer_profile="ask-reviewer",
+        ),
+        project_root=tmp_path,
+        caller_session_id="22222222-2222-4222-8222-222222222222",
+    )
+    await harness.service.stop()
+
+    assert loop_running == [False, False]
