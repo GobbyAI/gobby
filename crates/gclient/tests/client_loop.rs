@@ -4942,6 +4942,79 @@ async fn prefix_help_and_settings_open_their_modes_in_the_live_loop() {
     }
 }
 
+/// The sidebar starts hidden and prefix+b is the only way to show it, so the
+/// live loop must turn that chord into a layout with the sidebar column (the
+/// tabs and panes moved right of it) and the next prefix+b into one without.
+#[tokio::test]
+async fn prefix_b_pins_the_sidebar_into_the_layout_and_hides_it_again() {
+    for pinned_before in [false, true] {
+        let mock = MockDaemon::start("local-token").await;
+        let (mut workspace, _) =
+            live_workspace_with_scripted_direct(&mock, "terminal-sidebar", 1).await;
+        let pane = workspace
+            .pane_for_terminal("terminal-sidebar")
+            .expect("terminal pane");
+        let mut chrome = Chrome::dark();
+        chrome.sidebar.pinned = pinned_before;
+        chrome.open_pane(pane, "loop");
+        let mut terminal = Terminal::new(TestBackend::new(80, 12)).expect("test terminal");
+        let (input_tx, input_rx) = mpsc::channel(256);
+
+        let driver = async move {
+            tokio::task::yield_now().await;
+            send_chord(&input_tx, KeyCode::Char('b'), KeyModifiers::NONE).await;
+            tokio::task::yield_now().await;
+            drop(input_tx);
+        };
+
+        let mut switch = TerminalGuard::recording().0;
+        let (result, ()) = tokio::join!(
+            run_live_loop(
+                &mut workspace,
+                &mut terminal,
+                &mut chrome,
+                input_rx,
+                &mut switch
+            ),
+            driver
+        );
+        result.expect("live loop exits cleanly");
+
+        // The loop redraws on its render tick, which the closed input can
+        // beat, so draw the frame the next tick would from the loop's chrome.
+        let mut next_frame = Terminal::new(TestBackend::new(80, 12)).expect("test terminal");
+        next_frame
+            .draw(|frame| {
+                chrome.compute_view(&workspace, frame.area());
+                render_workspace(frame, &workspace, &chrome);
+            })
+            .expect("draw the next frame");
+        let sidebar = chrome.view.sidebar_rect;
+        let terminal_area = chrome.view.terminal_area;
+        let band: String = (0..sidebar.width.max(9))
+            .map(|x| next_frame.backend().buffer()[(x, 1)].symbol().to_string())
+            .collect();
+        if pinned_before {
+            assert!(!chrome.sidebar.pinned, "the second prefix+b hides it");
+            assert_eq!(sidebar.width, 0, "a hidden sidebar takes no columns");
+            assert_eq!(terminal_area.x, 0, "the panes start at the left edge");
+            assert!(!band.contains("Machines"), "row 1 is the tab bar: {band:?}");
+        } else {
+            assert!(chrome.sidebar.pinned, "prefix+b pins the sidebar");
+            assert!(sidebar.width > 0, "the layout gains the sidebar column");
+            assert!(
+                terminal_area.x >= sidebar.x + sidebar.width,
+                "the panes sit right of the sidebar: {terminal_area:?} vs {sidebar:?}"
+            );
+            assert!(
+                band.contains("Machines"),
+                "row 1 draws the first band: {band:?}"
+            );
+        }
+        mock.shutdown().await;
+    }
+}
+
 /// The bare keys the default keymap binds to `navigate_*` are ordinary
 /// characters and cursor keys inside a focused terminal. They were resolving
 /// as chords and dying in the action dispatcher, so `echo GCLIENT-OK` reached

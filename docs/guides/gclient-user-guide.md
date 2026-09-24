@@ -49,27 +49,20 @@ Logs go to `~/.gobby/logs/gclient.log`.
 ## Layout
 
 ```text
-┌ sidebar ───────────┬ tab bar: tab-0:0:0  tab-0:0:1 Z  +  ────────┐
-│ [Menu]         [+] │ ┌ ▸ zsh ──────────┐┌ claude ──────────────┐ │
-│                    │ │  pane (focused) ││   pane               │ │
-│ Machines           │ │                 ││                      │ │
-│ ▶ mbp · local      │ └─ tmux · Focused ┘└───────────── gclient ┘ │
-│ └─ ○ studio        │                                             │
-│                    │                                             │
-│ Projects [working] │                                             │
-│ ▶ gobby (0.5.0 ↑2)▾│                                             │
-│   ├─ ○ fix-y · #12 │                                             │
-│                    │                                             │
-│ Sessions    [view] │                                             │
-│ ⍾ #123: fix y      │                                             │
-│   0:0:1:0 · codex  │                                             │
-│ ○ zsh              │                                             │
-│   0:0:0:1 · tmux   │                                             │
-│                [«] │                                             │
-├────────────────────┴─────────────────────────────────────────────┤
-│ prefix ctrl+]                                                    │
-└──────────────────────────────────────────────────────────────────┘
+ 0 |
+ 1 | tab-0:0:0  tab-0:0:1 Z  +
+ 2 |┌ ▸ zsh ───────────────────────┐┌ claude ──────────────────────────┐
+ 3 |│  pane (focused)              ││  pane                            │
+ 4 |│                              ││                                  │
+ 5 |│                              ││                                  │
+ 6 |└────────────── tmux · Focused ┘└───────────────────────── gclient ┘
+ 7 | prefix ctrl+b
 ```
+
+This is the frame gclient starts with, row by row. Row 0 stays blank, the tab
+bar is row 1, every pane draws all four edges, and the status line is the last
+row. A pinned sidebar takes the left columns from row 1 down to the status
+line, and the tab bar and panes move right to make room.
 
 **Sidebar.** Hidden when gclient starts; `prefix+b` pins it beside the tabs and
 panes, and again hides it. Three sections, each under a one-row band, with a
@@ -106,7 +99,6 @@ the sidebar (each scrolls inside its cap); Sessions takes the rest.
   agent runs nested under the session that spawned them) or `priority`
   (flattened urgency order). A `✓` marks the value in force, and choosing it
   again closes the menu unchanged.
-- *Footer band*: `[«]` collapses the sidebar.
 
 State glyphs, on machine, project, and session rows alike:
 
