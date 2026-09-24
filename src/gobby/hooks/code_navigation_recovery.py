@@ -214,9 +214,9 @@ def _git_ignored(root: Path, paths: list[Path]) -> set[Path]:
 def _ignored_targets(data: dict[str, Any], root: Path | None, paths: Sequence[Path]) -> set[Path]:
     """Return the excluded paths, asking Git once per repository per event.
 
-    Every spawn forks the daemon, and the adapter, workflow-hook and rule-engine
-    passes each normalize the same payload, so Git's answers stay on it (#22815).
-    Nothing carries across events: a .gitignore edit applies to the next call.
+    More than one rule condition can ask about the same event, so Git's answers
+    stay on its payload (#22815). Nothing carries across events: a .gitignore
+    edit applies to the next call.
     """
     answers: dict[str, dict[str, bool]] = data.get(_IGNORED_TARGETS_KEY) or {}
     ignored: set[Path] = set()
@@ -302,10 +302,13 @@ def annotate_navigation(data: dict[str, Any], metadata: dict[str, Any]) -> None:
         if path is not None
         and code_navigation_may_touch_project([str(path)], cwd=cwd, project_root=root)
     }
-    ignored = _ignored_targets(data, root, sorted(in_project))
     for segment, resolved in zip(segments, segment_paths, strict=True):
-        segment["canonical_code_navigation_excluded"] = bool(resolved) and all(
-            path is not None and (path not in in_project or path in ignored) for path in resolved
+        # A segment is excluded when each in-project target is Git-ignored. Only
+        # navigation_requires_index asks Git, off the loop that normalizes (#22829).
+        segment["canonical_code_navigation_ignore_candidates"] = (
+            [str(path) for path in resolved if path in in_project]
+            if resolved and None not in resolved
+            else None
         )
         if (
             segment.get("canonical_code_navigation_action") == "read"
@@ -460,7 +463,7 @@ def _no_covering_symbol(segment: Mapping[str, Any], text: str) -> bool:
 
 
 def navigation_requires_index(
-    data: Mapping[str, Any],
+    data: dict[str, Any],
     variables: Mapping[str, Any],
     action: str | None = None,
     *,
@@ -473,6 +476,7 @@ def navigation_requires_index(
         for path in variables.get("turn_written_paths", [])
     }
     opened = _opened_scopes(variables)
+    ignored: set[Path] | None = None
     for segment in segments:
         operation = segment.get("canonical_code_navigation_action")
         if not operation or (action is not None and operation != action):
@@ -482,7 +486,6 @@ def navigation_requires_index(
         if (
             segment.get("canonical_code_index_navigation")
             or segment.get("canonical_code_navigation_repo_scope") is False
-            or segment.get("canonical_code_navigation_excluded")
             or segment.get("canonical_search_revision_scoped")
         ):
             continue
@@ -504,6 +507,19 @@ def navigation_requires_index(
             any(_opens(record, operation, path) for record in opened) for path in paths
         ):
             continue
+        candidates = segment.get("canonical_code_navigation_ignore_candidates")
+        if isinstance(candidates, list):
+            if ignored is None:
+                every_candidate = {
+                    Path(path)
+                    for other in segments
+                    for path in other.get("canonical_code_navigation_ignore_candidates") or []
+                }
+                ignored = _ignored_targets(
+                    data, current_project_root(data), sorted(every_candidate)
+                )
+            if {Path(path) for path in candidates} <= ignored:
+                continue
         return True
     return False
 
