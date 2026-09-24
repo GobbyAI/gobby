@@ -8,21 +8,40 @@ import json
 import logging
 import weakref
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any, cast
 from unittest.mock import ANY, AsyncMock, MagicMock
 
 import pytest
 
+from gobby.agents.idle_detector import ComposerRead, IdleDetector
 from gobby.agents.tmux.text_injection import (
     TmuxTargetUnavailableError,
     TmuxTextInjectionTimeout,
 )
 from gobby.events.completion_registry import CompletionEventRegistry
+from gobby.events.live_wake import TerminalActivity
 from gobby.events.wake import CONTINUE_WAKE_MESSAGE, CONTINUE_WAKE_SIGNAL, WakeDispatcher
 from tests._timing import drain_asyncio_tasks
+from tests.agents.detection_test_support import BundledDetectionRegistry
 
 WAKE_SESSION_ID = "9264a39c-68db-5eed-917c-6f7babb8e6b1"
 WAKE_RUN_ID = "ac314d27-4314-5fe3-a0ab-01645086e137"
+
+
+def _claude_idle_prompt() -> TerminalActivity:
+    """A Claude pane sitting at an empty prompt, the same shape as the live detector."""
+    snapshot = "\n".join(
+        (
+            "⏺ done",
+            "──────────── epic-22508-feedback-triage ─",
+            "❯",
+            "────────────────────",
+            "   Fable 5.1  12%   ⎇ main",
+        )
+    )
+    detector = IdleDetector(BundledDetectionRegistry(), "claude")
+    return TerminalActivity(detector.composer_read(snapshot))
 
 
 def test_live_wake_signal_is_neutral() -> None:
@@ -41,6 +60,8 @@ class FakeSession:
     status: str = "paused"  # Completion subscribers normally wait between turns.
     turn_count: int = 0
     session_type: str = "terminal"
+    source: str | None = None
+    updated_at: datetime | None = None
 
 
 @pytest.fixture
@@ -947,6 +968,105 @@ class TestWakeDispatch:
         await asyncio.wait_for(refresh_started.wait(), 0.5)
         release_refresh.set()
         await asyncio.wait_for(wake_delivered.wait(), 0.5)
+
+    async def test_idle_claude_prompt_receives_deferred_wake(
+        self,
+        session_manager: MagicMock,
+        ism_manager: MagicMock,
+    ) -> None:
+        """An active Claude row idle at its prompt is paused, then the retry delivers."""
+        session = FakeSession(
+            id=WAKE_SESSION_ID,
+            terminal_context={"tmux_pane": "%12"},
+            status="active",
+            source="claude",
+            updated_at=datetime(2026, 9, 23, 23, 14, tzinfo=UTC),
+        )
+        session_manager.get.return_value = session
+        idle = _claude_idle_prompt()
+        assert idle.composer.state == "empty"
+        assert idle.turn_in_flight_fingerprint is None
+
+        async def probe(_session: object, _terminal: object | None) -> TerminalActivity:
+            return idle
+
+        def pause(session_id: str, *, observed_updated_at: datetime) -> FakeSession:
+            assert session_id == session.id
+            assert observed_updated_at == session.updated_at
+            session.status = "paused"
+            return session
+
+        session_manager._pause_idle_prompt_active = pause
+
+        async def flush(_session_id: str) -> None:
+            return None
+
+        wake_delivered = asyncio.Event()
+
+        async def send_pane(*_args: object, **_kwargs: object) -> None:
+            wake_delivered.set()
+
+        dispatcher = WakeDispatcher(
+            session_manager=session_manager,
+            ism_manager=ism_manager,
+            lifecycle_refresh=flush,
+            activity_probe=probe,
+            tmux_pane_sender=send_pane,
+        )
+
+        result = await asyncio.wait_for(dispatcher.dispatch_live_wake(WAKE_SESSION_ID), 0.5)
+        assert result["skipped"] == "session_active"
+        await asyncio.wait_for(wake_delivered.wait(), 0.5)
+        assert session.status == "paused"
+
+    @pytest.mark.parametrize("kind", ["in_flight", "draft"])
+    async def test_claude_not_idle_at_prompt_stays_active(
+        self,
+        session_manager: MagicMock,
+        ism_manager: MagicMock,
+        kind: str,
+    ) -> None:
+        """A working turn or a typed draft is not paused by the deferred retry."""
+        session = FakeSession(
+            id=WAKE_SESSION_ID,
+            terminal_context={"tmux_pane": "%12"},
+            status="active",
+            source="claude",
+            updated_at=datetime(2026, 9, 23, 23, 14, tzinfo=UTC),
+        )
+        session_manager.get.return_value = session
+        if kind == "in_flight":
+            activity = TerminalActivity(
+                ComposerRead("empty"),
+                turn_in_flight_fingerprint="turn-1",
+            )
+        else:
+            activity = TerminalActivity(ComposerRead("draft"))
+
+        async def probe(_session: object, _terminal: object | None) -> TerminalActivity:
+            return activity
+
+        def pause(*_args: object, **_kwargs: object) -> None:
+            raise AssertionError("idle-prompt pause must not run")
+
+        session_manager._pause_idle_prompt_active = pause
+
+        async def flush(_session_id: str) -> None:
+            return None
+
+        dispatcher = WakeDispatcher(
+            session_manager=session_manager,
+            ism_manager=ism_manager,
+            lifecycle_refresh=flush,
+            activity_probe=probe,
+            tmux_pane_sender=AsyncMock(),
+        )
+
+        result = await asyncio.wait_for(dispatcher.dispatch_live_wake(WAKE_SESSION_ID), 0.5)
+        assert result["skipped"] == "session_active"
+        refresh = dispatcher._deferred_refreshes[WAKE_SESSION_ID]
+        await asyncio.wait_for(refresh, 0.5)
+        assert session.status == "active"
 
     @pytest.mark.asyncio
     async def test_interactive_session_without_tmux_pane_reports_no_tmux_pane(

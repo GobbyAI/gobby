@@ -45,6 +45,14 @@ def restart_activity_allows_recovery(activity: TerminalActivity) -> bool:
     }
 
 
+def idle_prompt_allows_wake(activity: TerminalActivity) -> bool:
+    """An empty prompt with no in-flight turn can accept a deferred wake.
+
+    A draft is the user typing, so it stays active. ``unknown`` is not a prompt.
+    """
+    return activity.turn_in_flight_fingerprint is None and activity.composer.state == "empty"
+
+
 def session_precedes_restart_horizon(
     session: object,
     restart_horizon_ms: int | None,
@@ -114,6 +122,48 @@ async def reconcile_restart_stale_session(
             observed.id,
             observed_updated_at=observed.updated_at,
             restart_horizon_ms=restart_horizon_ms,
+        ),
+    )
+
+
+async def reconcile_idle_prompt_session(
+    *,
+    session_manager: SessionManager,
+    observed: Session,
+    terminal: Any | None,
+    activity_probe: ActivityProbe,
+    run_db: RunDb,
+) -> Session | None:
+    """Pause an active Claude row whose pane is idle at an empty prompt.
+
+    Two agreeing reads, then an exact ``updated_at`` compare-and-set. Unlike
+    restart recovery, the row does not have to predate a daemon restart: a
+    finished Claude turn can leave ``sessions.status`` active while the pane
+    is already back at the prompt. A turn still in flight, a draft, or any
+    other source stays active.
+    """
+    if observed.source != "claude" or observed.status != "active":
+        return None
+    first = await _read_activity(activity_probe, observed, terminal)
+    if not idle_prompt_allows_wake(first):
+        return None
+    second = await _read_activity(activity_probe, observed, terminal)
+    if not idle_prompt_allows_wake(second):
+        return None
+    current = await run_db(session_manager.get, observed.id)
+    if (
+        current is None
+        or current.source != "claude"
+        or current.status != "active"
+        or current.updated_at != observed.updated_at
+    ):
+        return None
+    return cast(
+        "Session | None",
+        await run_db(
+            session_manager._pause_idle_prompt_active,
+            observed.id,
+            observed_updated_at=observed.updated_at,
         ),
     )
 
