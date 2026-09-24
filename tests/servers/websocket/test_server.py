@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 import time
-from types import MappingProxyType
+from types import MappingProxyType, SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -260,6 +260,48 @@ class _ScriptedSocket:
         self.sent.append(payload)
 
 
+class _AttachThenInputSocket(_ScriptedSocket):
+    """Yields attach, then one injected input, and stays open until closed."""
+
+    def __init__(self, attach_message: str) -> None:
+        super().__init__([attach_message], hold_open=True)
+        self._wake = asyncio.Event()
+        self._input_returned = False
+        self.input_observed = asyncio.Event()
+        self.both = asyncio.Event()
+
+    def inject(self, message: str) -> None:
+        self._pending.append(message)
+        self._wake.set()
+
+    def close(self) -> None:
+        super().close()
+        self._wake.set()
+
+    async def __anext__(self) -> str:
+        while True:
+            if self._pending:
+                message = self._pending.pop(0)
+                parsed = json.loads(message)
+                if isinstance(parsed, dict) and parsed.get("type") == "terminal_input":
+                    self._input_returned = True
+                return message
+            if self._input_returned:
+                self.input_observed.set()
+            if self._closed.is_set():
+                raise StopAsyncIteration
+            self._wake.clear()
+            if self._pending or self._closed.is_set():
+                continue
+            await self._wake.wait()
+
+    async def send(self, payload: str) -> None:
+        await super().send(payload)
+        types = _frame_types(self)
+        if "terminal_attach_result" in types and "terminal_write_outcome" in types:
+            self.both.set()
+
+
 def _quiet_disconnect(server: WebSocketServer) -> None:
     object.__setattr__(server, "_cleanup_tmux_client", AsyncMock())
     object.__setattr__(server, "_cleanup_attached_tts", AsyncMock())
@@ -472,6 +514,84 @@ async def test_slow_terminal_operation_leaves_the_read_loop(message_type: str) -
         types = _frame_types(socket)
         assert types.index("pong") < types.index(result_type)
     finally:
+        socket.close()
+        try:
+            await asyncio.wait_for(connection, timeout=1)
+        except (TimeoutError, asyncio.CancelledError):
+            connection.cancel()
+            try:
+                await connection
+            except asyncio.CancelledError:
+                pass
+
+
+@pytest.mark.asyncio
+async def test_terminal_input_for_the_same_attachment_waits_for_attach() -> None:
+    """Input for the attachment just granted must not run while attach is still pending."""
+    server = WebSocketServer(
+        config=WebSocketConfig(),
+        mcp_manager=MagicMock(),
+        auth_callback=AsyncMock(return_value="test-user"),
+    )
+    _quiet_disconnect(server)
+    row = SimpleNamespace(id="term-1", backend="native", rows=24, cols=80, state="live")
+    server.terminal_manager = SimpleNamespace(
+        get=lambda terminal_id: row if terminal_id == row.id else None
+    )
+    server.lease_registry = TerminalLeaseRegistry(daemon_epoch="test-epoch")
+    hub = SimpleNamespace(start_pump=lambda _attachment_id: None, attachments={})
+    object.__setattr__(server, "_proxy", lambda: hub)
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    attached: list[str] = []
+
+    async def slow_backend(_websocket: Any, _row: Any, record: Any, _encoding: str) -> None:
+        attached.append(record.attachment_id)
+        entered.set()
+        await release.wait()
+        return None
+
+    object.__setattr__(server, "_start_proxy_attach", slow_backend)
+    socket = _AttachThenInputSocket(
+        json.dumps(
+            {
+                "type": "terminal_attach",
+                "request_id": "attach-1",
+                "terminal_id": row.id,
+                "frame_delivery": "proxy",
+            }
+        )
+    )
+    connection = asyncio.create_task(server.handle_connection(socket))
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=2)
+        socket.inject(
+            json.dumps(
+                {
+                    "type": "terminal_input",
+                    "request_id": "input-1",
+                    "terminal_id": row.id,
+                    "attachment_id": attached[0],
+                    "data": "x",
+                    "client_write_seq": 1,
+                }
+            )
+        )
+        await asyncio.wait_for(socket.input_observed.wait(), timeout=2)
+        assert "terminal_write_outcome" not in _frame_types(socket)
+        release.set()
+        await asyncio.wait_for(socket.both.wait(), timeout=2)
+        frames = [json.loads(payload) for payload in socket.sent]
+        attach_result = next(
+            frame for frame in frames if frame.get("type") == "terminal_attach_result"
+        )
+        write = next(frame for frame in frames if frame.get("type") == "terminal_write_outcome")
+        assert attach_result["success"] is True
+        assert write["attachment_id"] == attach_result["attachment_id"] == attached[0]
+        types = _frame_types(socket)
+        assert types.index("terminal_attach_result") < types.index("terminal_write_outcome")
+    finally:
+        release.set()
         socket.close()
         try:
             await asyncio.wait_for(connection, timeout=1)

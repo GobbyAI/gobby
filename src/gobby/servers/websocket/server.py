@@ -56,9 +56,17 @@ logger = logging.getLogger(__name__)
 # held the connection (#22544).
 SLOW_WEBSOCKET_HANDLER_SECONDS = 1.0
 # These handlers do their slow work off the read loop. Later frames on the
-# same socket are read while they run (#22709).
+# same socket are read while they run, and same-connection follow-ups stay
+# in arrival order behind the handler already running (#22709).
 _OFF_LOOP_MESSAGE_TYPES = frozenset(
-    {"terminal_attach", "terminal_take_control", "workspace_op"}
+    {
+        "terminal_attach",
+        "terminal_detach",
+        "terminal_input",
+        "terminal_paste",
+        "terminal_take_control",
+        "workspace_op",
+    }
 )
 
 
