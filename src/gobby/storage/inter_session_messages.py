@@ -231,6 +231,10 @@ class InterSessionMessageManager:
         Returns:
             The InterSessionMessage if found, None otherwise
         """
+        try:
+            uuid.UUID(message_id)
+        except ValueError:
+            return None  # No row can carry a non-UUID id; keep it out of the uuid cast.
         row = self.db.fetchone(
             "SELECT * FROM inter_session_messages WHERE id = %s",
             (message_id,),
