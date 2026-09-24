@@ -33,6 +33,7 @@ from gobby.config.app import DaemonConfig
 from gobby.llm.image_payloads import prepare_image_inputs
 from gobby.llm.textgen_cwd import neutral_textgen_cwd
 from gobby.utils import spawn
+from gobby.utils.git import run_thread_to_completion
 
 if TYPE_CHECKING:
     from gobby.llm.base import LLMTextResult
@@ -91,6 +92,8 @@ _DROID_FACTORY_ALLOWED_PLUGIN_FILES = frozenset(
     }
 )
 _DROID_FACTORY_ALLOWED_PLUGIN_DIRS = frozenset({("plugins", "marketplaces")})
+# Unadmitted directories the seed still walks, because admitted paths sit below them.
+_DROID_FACTORY_CONTAINER_DIRS = frozenset({("cache",), ("plugins",)})
 _DROID_FACTORY_ALLOWED_FILE_KEYWORDS = frozenset(
     {"auth", "cert", "config", "credential", "hint", "host", "mcp", "setting", "token"}
 )
@@ -690,17 +693,28 @@ def _seed_droid_factory_state(base_env: Mapping[str, str], temp_home: Path) -> N
         return
 
     target_factory = temp_home / ".factory"
-    for source_path in source_factory.rglob("*"):
-        if source_path.is_symlink():
-            continue
-        relative_path = source_path.relative_to(source_factory)
-        if not _should_seed_droid_factory_path(relative_path):
-            continue
+    for directory, dir_names, file_names in source_factory.walk():
+        relative_dir = directory.relative_to(source_factory)
+        kept_dir_names = []
+        for name in dir_names:
+            relative_path = relative_dir / name
+            if _should_seed_droid_factory_path(relative_path):
+                (target_factory / relative_path).mkdir(parents=True, exist_ok=True)
+                kept_dir_names.append(name)
+            elif relative_path.parts in _DROID_FACTORY_CONTAINER_DIRS:
+                kept_dir_names.append(name)
+        # Pruning keeps the walk out of sessions, logs and every other unadmitted tree.
+        dir_names[:] = kept_dir_names
 
-        target_path = target_factory / relative_path
-        if source_path.is_dir():
-            target_path.mkdir(parents=True, exist_ok=True)
-        elif source_path.is_file():
+        # The walk lists directory symlinks with the files; neither kind is followed.
+        for name in file_names:
+            relative_path = relative_dir / name
+            source_path = directory / name
+            if not _should_seed_droid_factory_path(relative_path):
+                continue
+            if source_path.is_symlink() or not source_path.is_file():
+                continue
+            target_path = target_factory / relative_path
             target_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source_path, target_path)
 
@@ -787,7 +801,7 @@ class DroidCLITextGenerateAdapter:
             # so both share one lifetime instead of two unrelated temp dirs.
             temp_home = cwd / "home"
             temp_home.mkdir(parents=True, exist_ok=True)
-            _seed_droid_factory_state(env, temp_home)
+            await run_thread_to_completion(_seed_droid_factory_state, env, temp_home)
             isolated_env = _droid_isolated_env(env, temp_home)
             process = await spawn.create_session_exec(*command, env=isolated_env, cwd=cwd)
             try:

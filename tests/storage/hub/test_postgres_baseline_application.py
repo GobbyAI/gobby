@@ -12,7 +12,11 @@ from psycopg import sql
 from psycopg.conninfo import make_conninfo
 from psycopg.rows import dict_row
 
-from gobby.storage.schema_contract import apply_schema, expected_schema_identity
+from gobby.storage.schema_contract import (
+    SchemaContractError,
+    apply_schema,
+    expected_schema_identity,
+)
 from tests.fixtures.postgres import isolated_test_schema
 
 pytestmark = pytest.mark.integration
@@ -106,10 +110,15 @@ def test_gdaemon_adopts_gcode_standalone_tables(
     assert receipt[-1]["version"] == identity["latest_version"]
 
 
-def test_gdaemon_adopts_gwiki_standalone_tables(
+def test_gdaemon_refuses_gwiki_standalone_tables(
     postgres_database_url: str,
 ) -> None:
-    document_id = "adopted-gwiki-document"
+    """A gwiki-only database is an unrecognized lineage, refused before any write.
+
+    #21787 retired the standalone gwiki baseline adoption, so gdaemon plans no
+    schema over these tables and leaves their rows alone.
+    """
+    document_id = "standalone-gwiki-document"
     with _isolated_test_database(postgres_database_url, "gwikiadopt") as database_url:
         with psycopg.connect(
             database_url,
@@ -143,25 +152,21 @@ def test_gdaemon_adopts_gwiki_standalone_tables(
                 (document_id, "preserved body"),
             )
 
-        apply_schema(database_url)
+        with pytest.raises(SchemaContractError, match="unrecognized schema lineage"):
+            apply_schema(database_url)
 
         with psycopg.connect(
             database_url,
             autocommit=True,
             row_factory=dict_row,
         ) as connection:
-            adopted = connection.execute(
+            preserved = connection.execute(
                 "SELECT body FROM gwiki_documents WHERE id = %s",
                 (document_id,),
             ).fetchone()
-            receipt = connection.execute(
-                """
-                SELECT version FROM schema_migrations
-                ORDER BY version
-                """
-            ).fetchall()
+            receipts = connection.execute(
+                "SELECT to_regclass('schema_migrations') AS receipts"
+            ).fetchone()
 
-    identity = expected_schema_identity()
-    assert adopted == {"body": "preserved body"}
-    assert receipt[0]["version"] == identity["baseline_version"]
-    assert receipt[-1]["version"] == identity["latest_version"]
+    assert preserved == {"body": "preserved body"}
+    assert receipts == {"receipts": None}

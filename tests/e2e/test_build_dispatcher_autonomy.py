@@ -11,13 +11,11 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import AsyncMock, call
 from uuid import NAMESPACE_URL, uuid5
 
 import pytest
 
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
-from gobby.agents.prompt_detector import PromptDetector
 from gobby.agents.tmux import configure_tmux
 from gobby.build.options import BuildOptions
 from gobby.build.stage_manifest import resolve_stage_manifest_specs
@@ -31,7 +29,12 @@ from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._stage_registry_loader import StageRegistryLoader
 from gobby.storage.tasks._stage_types import StageManifestSpec
+from gobby.storage.terminals import TerminalManager
 from gobby.system_automation import SystemAutomationLoop
+from gobby.terminals.composer import composer_clear_sequence
+from gobby.terminals.leases import TerminalLeaseRegistry
+from gobby.terminals.services import TerminalServices
+from gobby.terminals.write_coordinator import WriteCoordinator
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.agent_resolver import resolve_agent
 from gobby.workflows.state_manager import SessionVariableManager
@@ -41,6 +44,7 @@ from tests.agents.detection_test_support import BundledDetectionRegistry
 from tests.agents.terminal_fixtures import make_live_terminal
 from tests.config_runtime_helpers import static_runtime_capture
 from tests.storage.tasks._stage_test_helpers import stage_row
+from tests.terminals.fakes import FakeRuntime, runtime_registry
 from tests.workflows.step_instance_fixtures import make_step_instance
 
 DETECTION_REGISTRY = BundledDetectionRegistry()
@@ -653,7 +657,9 @@ async def test_submit_for_review_autonomously_dispatches_reviewer_without_build_
 ) -> None:
     """MCP stage handoff should trigger reviewer dispatch without build resume."""
     from gobby.agents.sync import sync_bundled_agents
+    from gobby.skills.sync import sync_bundled_skills
 
+    sync_bundled_skills(temp_db)
     sync_bundled_agents(temp_db)
     task_manager = LocalTaskManager(temp_db)
     session_manager = SessionManager(temp_db)
@@ -776,7 +782,9 @@ async def test_cancelled_reviewer_wakes_dispatcher_for_replacement_without_build
 ) -> None:
     """Cancelling an active reviewer should immediately dispatch its replacement."""
     from gobby.agents.sync import sync_bundled_agents
+    from gobby.skills.sync import sync_bundled_skills
 
+    sync_bundled_skills(temp_db)
     sync_bundled_agents(temp_db)
     task_manager = LocalTaskManager(temp_db)
     session_manager = SessionManager(temp_db)
@@ -982,46 +990,46 @@ async def test_idle_planner_stage_agent_keeps_periodic_enter_and_gets_handoff_re
         ((datetime.now(UTC) - timedelta(seconds=120)).isoformat(), child.id),
     )
 
+    # Monitor writes go through the terminal runtime, so the recording runtime is
+    # injected at construction; the pane shows an empty prompt.
+    runtime = FakeRuntime(snapshot_text="❯\n")
+    terminal_manager = TerminalManager(temp_db)
+    registry = runtime_registry(runtime)
     monitor = AgentLifecycleMonitor(
         agent_run_manager=run_manager,
         db=temp_db,
         detection_registry=cast(Any, DETECTION_REGISTRY),
         session_manager=session_manager,
+        terminal_services=TerminalServices(
+            manager=terminal_manager,
+            registry=registry,
+            coordinator=WriteCoordinator(
+                terminal_manager,
+                registry,
+                lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
+            ),
+        ),
     )
-    mock_tmux = AsyncMock()
-    mock_tmux.capture_pane.return_value = "❯\n"
-    mock_tmux.send_keys.return_value = True
-    monitor._tmux = mock_tmux
-    monitor._terminal_prompt_monitor._get_tmux = lambda: mock_tmux
-    monitor._idle_check_handler._tmux = mock_tmux
-    monitor._idle_check_handler._recovery._tmux = mock_tmux
     idle_state = monitor._idle_detector.get_state(stored_run.id)
     idle_state.first_idle_at = time.monotonic() - 120
 
     assert await monitor.check_periodic_enters() == 1
-    mock_tmux.send_keys.assert_called_once_with(
-        "gobby-idle-planner",
-        PromptDetector.ENTER_KEY,
-        literal=False,
-    )
+    assert runtime.write_log == [("key", "enter")]
 
     assert await monitor.check_idle_agents() == 0
-    mock_tmux.send_keys.assert_called_once_with(
-        "gobby-idle-planner",
-        PromptDetector.ENTER_KEY,
-        literal=False,
-    )
+    assert runtime.write_log == [("key", "enter")]
 
     idle_state.first_idle_at = time.monotonic() - 360
     assert await monitor.check_idle_agents() == 1
-    sent_prompt = mock_tmux.send_keys.call_args_list[2].args[1]
-    assert mock_tmux.send_keys.call_args_list == [
-        call("gobby-idle-planner", PromptDetector.ENTER_KEY, literal=False),
-        call("gobby-idle-planner", "Escape", literal=False),
-        call("gobby-idle-planner", sent_prompt),
-        call("gobby-idle-planner", PromptDetector.ENTER_KEY, literal=False),
+    sent_prompt = runtime.write_log[-2][1]
+    assert isinstance(sent_prompt, str)
+    assert runtime.write_log == [
+        ("key", "enter"),
+        *[("key", key) for key in composer_clear_sequence("codex")],
+        ("text", sent_prompt),
+        ("key", "enter"),
     ]
-    assert all(call_args.args[1] != "Up" for call_args in mock_tmux.send_keys.call_args_list)
+    assert ("key", "up") not in runtime.write_log
     assert "Workflow: planner. Current step: plan." in sent_prompt
     assert (
         "Finish the required Gobby lifecycle MCP transition, then call end_agent_run."

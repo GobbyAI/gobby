@@ -5,6 +5,7 @@ This module tests edge cases, error paths, and validation that are not
 covered by the existing test_http_server.py tests.
 """
 
+import subprocess
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -22,6 +23,7 @@ from gobby.sessions.transcript_window import WindowResult
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
+from gobby.utils.daemon_git import daemon_git
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 from tests.servers.conftest import create_http_server
 
@@ -104,19 +106,18 @@ class TestRegisterSessionEdgeCases:
     def test_register_with_project_path_extracts_git_branch(
         self,
         client: TestClient,
+        session_storage: SessionManager,
         test_project: dict[str, Any],
         temp_dir: Path,
     ) -> None:
         """Test that git_branch is extracted from project_path when not provided."""
-        with (
-            patch(
-                "gobby.utils.machine_id.get_machine_id",
-                return_value="21000000-0000-4000-8000-000000000002",
-            ),
-            patch("gobby.utils.git.get_git_metadata") as mock_git,
+        subprocess.run(
+            ["git", "init", "-q", "-b", "feature/extracted-branch", str(temp_dir)], check=True
+        )
+        with patch(
+            "gobby.utils.machine_id.get_machine_id",
+            return_value="21000000-0000-4000-8000-000000000002",
         ):
-            mock_git.return_value = {"git_branch": "feature/extracted-branch"}
-
             response = client.post(
                 "/api/sessions/register",
                 json={
@@ -129,25 +130,22 @@ class TestRegisterSessionEdgeCases:
             )
 
         assert response.status_code == 200
-        mock_git.assert_called_once_with(str(temp_dir))
+        session = session_storage.get(response.json()["id"])
+        assert session is not None
+        assert session.git_branch == "feature/extracted-branch"
 
     def test_register_with_project_path_no_git_branch_in_metadata(
         self,
         client: TestClient,
+        session_storage: SessionManager,
         test_project: dict[str, Any],
         temp_dir: Path,
     ) -> None:
-        """Test registration when git metadata has no branch."""
-        with (
-            patch(
-                "gobby.utils.machine_id.get_machine_id",
-                return_value="21000000-0000-4000-8000-000000000002",
-            ),
-            patch("gobby.utils.git.get_git_metadata") as mock_git,
+        """Test registration when project_path is not a Git checkout."""
+        with patch(
+            "gobby.utils.machine_id.get_machine_id",
+            return_value="21000000-0000-4000-8000-000000000002",
         ):
-            # Return empty dict - no git_branch key
-            mock_git.return_value = {}
-
             response = client.post(
                 "/api/sessions/register",
                 json={
@@ -162,20 +160,24 @@ class TestRegisterSessionEdgeCases:
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "registered"
+        session = session_storage.get(data["id"])
+        assert session is not None
+        assert session.git_branch is None
 
     def test_register_with_explicit_git_branch_skips_extraction(
         self,
         client: TestClient,
+        session_storage: SessionManager,
         test_project: dict[str, Any],
         temp_dir: Path,
     ) -> None:
-        """Test that explicit git_branch skips metadata extraction."""
+        """Test that explicit git_branch skips the Git branch lookup."""
         with (
             patch(
                 "gobby.utils.machine_id.get_machine_id",
                 return_value="21000000-0000-4000-8000-000000000002",
             ),
-            patch("gobby.utils.git.get_git_metadata") as mock_git,
+            patch.object(daemon_git, "run", new=AsyncMock()) as mock_git,
         ):
             response = client.post(
                 "/api/sessions/register",
@@ -190,8 +192,10 @@ class TestRegisterSessionEdgeCases:
             )
 
         assert response.status_code == 200
-        # git extraction should not be called when git_branch is provided
-        mock_git.assert_not_called()
+        mock_git.assert_not_awaited()
+        session = session_storage.get(response.json()["id"])
+        assert session is not None
+        assert session.git_branch == "explicit/branch"
 
     def test_register_session_internal_error(
         self,

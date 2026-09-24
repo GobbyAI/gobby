@@ -137,11 +137,15 @@ def _task(
     initialize_manifest(temp_db, task.id, [spec(stage_name, 0)])
     set_stage_state(temp_db, task.id, stage_name, stage_state)
     if legacy_status == "closed":
-        temp_db.execute(
-            "UPDATE tasks SET closed_at = %s, closed_reason = %s WHERE id = %s",
-            (datetime.now(UTC).isoformat(), "test_terminal", task.id),
-        )
+        _mark_closed(temp_db, task.id)
     return get_task(temp_db, task.id)
+
+
+def _mark_closed(temp_db: HubDatabase, task_id: str) -> None:
+    temp_db.execute(
+        "UPDATE tasks SET closed_at = %s, closed_reason = %s WHERE id = %s",
+        (datetime.now(UTC).isoformat(), "test_terminal", task_id),
+    )
 
 
 def _parent_with_stage_order(
@@ -2906,7 +2910,6 @@ async def test_leaf_spawn_skips_stale_parent_integration_branch(
         parent_task_id=root.id,
         task_type="epic",
         allow_automation=False,
-        status="closed",
     )
     leaf = _task(
         temp_db,
@@ -2916,6 +2919,8 @@ async def test_leaf_spawn_skips_stale_parent_integration_branch(
         stage_state="in_progress",
         isolation="worktree",
     )
+    # A closed parent rejects new children, so the leaf exists before its epic closes.
+    _mark_closed(temp_db, parent.id)
     task_artifacts = TaskArtifactManager(temp_db)
     task_artifacts.set_artifacts_atomic(
         root.id,
