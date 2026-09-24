@@ -11,17 +11,16 @@ from datetime import datetime
 from typing import TYPE_CHECKING, cast
 from uuid import UUID, uuid4
 
+from gobby.agents.spawn_executor_codex import _spawn_codex_terminal
 from gobby.agents.spawn_executor_providers import (
     ProviderSpawnPlan,
     _prepare_managed_code_index,
     agy_support_refusal,
     prepare_agy_spawn,
     prepare_claude_spawn,
-    prepare_codex_spawn,
     prepare_droid_spawn,
     prepare_grok_spawn,
     prepare_qwen_spawn,
-    seed_heuristic_title_from_prompt,
 )
 from gobby.agents.spawn_executor_support import (
     _CODEX_GOBBY_MCP_TOOL_TIMEOUT_SEC,
@@ -29,7 +28,6 @@ from gobby.agents.spawn_executor_support import (
     _apply_extra_env,
     _record_resume_launch_details,
     _unsupported_sandbox_request_error,
-    schedule_codex_prompt_delivery,
 )
 from gobby.agents.spawn_models import SpawnRequest, SpawnResult, is_infrastructure_spawn_error
 from gobby.agents.spawn_timing import (
@@ -223,40 +221,6 @@ async def _spawn_grok_terminal(request: SpawnRequest) -> SpawnResult:
     if isinstance(plan, SpawnResult):
         return plan
     return await _runtime_spawn(request, plan)
-
-
-async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
-    plan = await prepare_codex_spawn(request)
-    if isinstance(plan, SpawnResult):
-        return plan
-    result = await _runtime_spawn(request, plan)
-    if result.success and plan.codex_prompt:
-        if plan.inject_persona and request.session_manager is not None:
-            from gobby.workflows.state_manager import SessionVariableManager
-
-            await asyncio.to_thread(
-                seed_heuristic_title_from_prompt,
-                request,
-                plan.child_session_id,
-            )
-            await asyncio.to_thread(
-                SessionVariableManager(request.session_manager._storage.db).merge_variables,
-                plan.child_session_id,
-                {"_agent_context_injected": True},
-            )
-        coordinator = request.write_coordinator
-        manager = request.terminal_manager
-        if result.terminal_id and coordinator is not None and manager is not None:
-            terminal = await asyncio.to_thread(manager.get, result.terminal_id)
-            if terminal is not None:
-                schedule_codex_prompt_delivery(
-                    coordinator,
-                    terminal,
-                    plan.codex_prompt,
-                    plan.agent_run_id,
-                    request.run_manager,
-                )
-    return result
 
 
 async def _spawn_droid_terminal(request: SpawnRequest) -> SpawnResult:
