@@ -141,6 +141,14 @@ def _message_context_suffix(message: Any, message_type: str) -> str:
         value = metadata.get(key)
         if value:
             bits.append(f"{key}={value}")
+    attachments = metadata.get("attachments")
+    if isinstance(attachments, list):
+        for attachment in attachments:
+            if not isinstance(attachment, Mapping):
+                continue
+            local_path = attachment.get("local_path")
+            if isinstance(local_path, str) and local_path:
+                bits.append(f"attachment={local_path}")
     if metadata.get("signoff_message") or metadata.get("signoff"):
         bits.append("signoff=true")
     return f" ({', '.join(bits)})"
