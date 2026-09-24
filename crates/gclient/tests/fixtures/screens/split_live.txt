@@ -1,7 +1,7 @@
 # gclient screen golden: split_live
 # 120x40, dark theme, colours normalised to theme::Palette roles
-00 |                                                                                                                        |
-00 : -/panel_bg*120
+00 | Gobby  File  Edit  View  Window  Agent  Help                                                                           |
+00 : panel_bg/accent+b*120
 01 | Machines                │ alpha     second    +                                                                        |
 01 : -/surface0*1 subtext0/surface0+b*8 -/surface0*16 overlay0/panel_bg*1 panel_bg/accent+b*9 -/panel_bg*1 overlay1/surface0*10 overlay1/panel_bg*3 -/panel_bg*71
 02 | ⍾ scripted · local      │┌ term-alpha ─────────────────────────────────┐┌ ▸ term-beta ────────────────────────────────┐|
@@ -78,5 +78,5 @@
 37 : -/panel_bg*25 overlay0/panel_bg*2 -/panel_bg*45 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*45 accent/panel_bg*1
 38 |                         │└──────────────────────────────────── gclient ┘└────────────────────────── gclient · Focused ┘|
 38 : -/panel_bg*25 overlay0/panel_bg*48 accent/panel_bg*27 accent/panel_bg+b*19 accent/panel_bg*1
-39 | prefix ctrl+b                                                                                                          |
-39 : -/surface_dim*1 subtext0/surface_dim*13 -/surface_dim*106
+39 |                                                                                                          prefix ctrl+b |
+39 : -/surface0*106 subtext0/surface0*13 -/surface0*1

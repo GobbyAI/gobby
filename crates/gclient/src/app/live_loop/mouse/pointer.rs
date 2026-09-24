@@ -7,6 +7,7 @@ use ratatui::layout::{Direction, Rect};
 use crate::app::PaneId;
 use crate::ui::chrome::Tab;
 use crate::ui::hit::{Hit, SidebarSection};
+use crate::ui::menu_bar::MenuBarMenu;
 use crate::ui::pane_layout::metrics_for;
 use crate::ui::scrollbar::{
     scrollbar_offset_from_drag_row, scrollbar_offset_from_row, scrollbar_thumb_grab_offset,
@@ -24,9 +25,11 @@ use super::{
 
 /// A button went down on `hit`. Outside a pane the right button opens the
 /// tab menu on a tab, the row menus on a project card, a worktree row and an
-/// agent row, and the global menu on empty chrome (the bare tab bar, the
-/// sidebar's empty rows, the empty state) and the projects footer's `menu`;
-/// only the left button means anything else.
+/// agent row, and the global menu on empty chrome (the bare menu bar, the
+/// bare tab bar, the sidebar's empty rows, the empty state); only the left
+/// button means anything else.
+///
+/// On the menu bar a title opens its menu under the title's cell.
 ///
 /// Inside a pane the right button is `right_down`'s. A ctrl+left press first
 /// asks `links::resolve` for a URL under the pointer and opens that instead,
@@ -124,7 +127,27 @@ pub(super) fn down<W: WorkspaceView>(
             );
             MouseOutcome::Handled
         }
-        Hit::TabBarEmpty | Hit::Empty | Hit::SidebarEmpty if button == MouseButton::Right => {
+        Hit::MenuTitle(index) if button == MouseButton::Left => {
+            let cell = chrome
+                .view
+                .menu_title_hit_areas
+                .iter()
+                .find(|(drawn, _)| *drawn == index)
+                .map(|(_, cell)| *cell);
+            let (Some(cell), Some(menu)) = (cell, MenuBarMenu::ALL.get(index)) else {
+                return MouseOutcome::Ignore;
+            };
+            open_menu(
+                ws,
+                chrome,
+                ContextMenuKind::MenuBar(*menu),
+                (cell.x, cell.bottom()),
+            );
+            MouseOutcome::Handled
+        }
+        Hit::MenuBarEmpty | Hit::TabBarEmpty | Hit::Empty | Hit::SidebarEmpty
+            if button == MouseButton::Right =>
+        {
             open_menu(
                 ws,
                 chrome,

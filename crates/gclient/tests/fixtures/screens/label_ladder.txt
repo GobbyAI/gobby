@@ -1,7 +1,7 @@
 # gclient screen golden: label_ladder
 # 120x40, dark theme, colours normalised to theme::Palette roles
-00 |                                                                                                                        |
-00 : -/panel_bg*120
+00 | Gobby  File  Edit  View  Window  Agent  Help                                                                           |
+00 : panel_bg/accent+b*120
 01 | alpha    +                                                                                                             |
 01 : panel_bg/accent+b*9 overlay1/panel_bg*3 -/panel_bg*108
 02 |┌ shell ───────────────────────────────────────────────────┐┌ nvim ──────────────────────┐┌ ▸ shell ───────────────────┐|
@@ -78,5 +78,5 @@
 37 : overlay0/panel_bg*1 -/panel_bg*58 overlay0/panel_bg*2 -/panel_bg*28 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*28 accent/panel_bg*1
 38 |└───────────────────────────────────────────────── gclient ┘└─────────────────── gclient ┘└───────── gclient · Focused ┘|
 38 : overlay0/panel_bg*90 accent/panel_bg*10 accent/panel_bg+b*19 accent/panel_bg*1
-39 | prefix ctrl+b                                                                                                          |
-39 : -/surface_dim*1 subtext0/surface_dim*13 -/surface_dim*106
+39 |                                                                                                          prefix ctrl+b |
+39 : -/surface0*106 subtext0/surface0*13 -/surface0*1

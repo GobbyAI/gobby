@@ -1,7 +1,7 @@
 # gclient screen golden: empty_workspace
 # 120x40, dark theme, colours normalised to theme::Palette roles
-00 |                                                                                                                        |
-00 : -/panel_bg*120
+00 | Gobby  File  Edit  View  Window  Agent  Help                                                                           |
+00 : panel_bg/accent+b*120
 01 |                                                                                                                        |
 01 : -/panel_bg*120
 02 |                                                                                                                        |
@@ -78,5 +78,5 @@
 37 : -/panel_bg*120
 38 |                                                                                                                        |
 38 : -/panel_bg*120
-39 | prefix ctrl+b                                                                                                          |
-39 : -/surface_dim*1 subtext0/surface_dim*13 -/surface_dim*106
+39 |                                                                                                          prefix ctrl+b |
+39 : -/surface0*106 subtext0/surface0*13 -/surface0*1

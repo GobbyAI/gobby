@@ -3,16 +3,18 @@
 
 use std::borrow::Cow;
 
-use gobby_client::app::{PaneId, Workspace};
+use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use gobby_client::app::{route_mouse, ContextMenuKind, MouseOutcome, PaneId, Workspace};
 use gobby_client::daemon::{Checkout, ProjectRow, SidebarRows, SourceStatus};
 use gobby_client::ui::chrome::{Chrome, Mode};
 use gobby_client::ui::chrome_render::{
     copy_feedback_offset_for_toast, render_workspace, render_workspace_with,
 };
 use gobby_client::ui::dialogs::Dialog;
-use gobby_client::ui::hit::SidebarSection;
+use gobby_client::ui::hit::{hit_test, Hit, SidebarSection};
 use gobby_client::ui::keybind_help::{filter_help_entries, help_lines};
 use gobby_client::ui::keymap::{HelpEntry, Keymap, HERDR_PREFIX};
+use gobby_client::ui::menu_bar::MenuBarMenu;
 use gobby_client::ui::pane_layout;
 use gobby_client::ui::scrollbar::{
     pane_scrollbar_rect, scrollbar_offset_from_drag_row, scrollbar_offset_from_row,
@@ -1198,12 +1200,14 @@ switch_project = "ctrl+1..9"
                     // chrome moved to the pane edges (#22617), and again when
                     // row 0 went to the menu bar, the status line spanned the
                     // frame and every pane drew its four edges, and again when
-                    // the sidebar edge took overlay0 (#22745):
+                    // the sidebar edge took overlay0 (#22745), and again when
+                    // row 0 drew the menu bar titles and the status hint
+                    // moved to the right edge (#22746):
                     // 4.1.3 requires a glyph change to fail here, so this
                     // digest moves only alongside a deliberate render change.
                     assert_eq!(
                         frame_digest(&terminal),
-                        "8f5bb57bbe77d128a6618603f95c5d8f3c2c9ac0baa440e13dd9a88f3d359276"
+                        "a3f915648a15991081b6db441d88470cd8e73f2de5f5d18b504fa802a7a7c922"
                     );
                 });
         }
@@ -1266,6 +1270,48 @@ fn render_with_hits(ws: &Workspace, chrome: &mut Chrome, area: Rect) -> Terminal
 /// Row `rect.y` of `rect`, trailing spaces trimmed.
 fn hit_text(terminal: &Terminal<TestBackend>, rect: Rect) -> String {
     buffer_row_text(terminal, rect, rect.y)
+}
+
+/// 3.2b.2: a press on a menu bar title hits that title and opens its menu
+/// with the popup's corner under the title's first cell.
+#[test]
+fn menu_bar_titles_hit_and_open_under_their_cell() {
+    let ws = scripted(&["one"]);
+    let mut chrome = Chrome::new(theme());
+    let pane = ws.pane_for_terminal("one").expect("terminal pane");
+    chrome.open_tab(pane, "");
+    render_with_hits(&ws, &mut chrome, Rect::new(0, 0, 80, 20));
+
+    let titles = chrome.view.menu_title_hit_areas.clone();
+    assert_eq!(titles.len(), MenuBarMenu::ALL.len());
+    for (index, rect) in &titles {
+        let menu = MenuBarMenu::ALL[*index];
+        assert_eq!(
+            hit_test(&chrome.view, rect.x + 1, rect.y),
+            Hit::MenuTitle(*index)
+        );
+        let press = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: rect.x + 1,
+            row: rect.y,
+            modifiers: KeyModifiers::NONE,
+        };
+        assert_eq!(
+            route_mouse(&ws, &mut chrome, &press),
+            MouseOutcome::Handled,
+            "{menu:?}"
+        );
+        assert_eq!(chrome.mode, Mode::ContextMenu, "{menu:?}");
+        let open = chrome.menu.take().expect("menu open");
+        assert_eq!(open.kind, ContextMenuKind::MenuBar(menu));
+        assert_eq!(open.anchor, (rect.x, rect.bottom()), "{menu:?}");
+        chrome.mode = Mode::Terminal;
+    }
+    let (_, last) = titles.last().expect("a title");
+    assert_eq!(
+        hit_test(&chrome.view, last.right(), last.y),
+        Hit::MenuBarEmpty
+    );
 }
 
 #[test]
