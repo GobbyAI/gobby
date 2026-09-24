@@ -837,6 +837,7 @@ Targets:
 - `src/gobby/storage/definitions/agents.py::AgentDefinitionManager.upsert_with_steps`
 - `src/gobby/storage/definitions/agents.py::AgentDefinitionManager._write_update`
 - `src/gobby/storage/definitions/agents.py::AgentDefinitionManager.restore`
+- `src/gobby/storage/definitions/agents.py::AgentDefinitionManager.toggle_enabled`
 - `src/gobby/storage/definitions/agents.py::_find_live`
 - `src/gobby/agents/sync.py::_is_sync_managed_bundled_agent`
 - `src/gobby/agents/sync.py::sync_bundled_agents`
@@ -878,9 +879,12 @@ append, booleans override, and `enabled: false` comes only from the definition's
 where the validator requires a `reason`, and is honored only when the resolved row is
 sync-managed (`is_sync_managed_bundled_agent`: global, `source` installed, tag `gobby`,
 the predicate `sync_bundled_agents` already uses to decide which rows it owns) and the
-caller is not itself sandboxed (the `parent_session_id` row's `sandbox_enabled` is
-false; the CLI paths parent on the system session, which is never sandboxed); from any
-other row, or for a sandboxed caller, the launch ignores the exemption and stays
+caller is not itself sandboxed (the row of the session the proxy authenticated, the
+`caller_session_id` the tool already receives beside `parent_session_id` for
+`authorize_write_grant`, has `sandbox_enabled` false; a body-supplied
+`parent_session_id`, which the proxy passes through untouched, never qualifies; a call
+with no caller session, the CLI paths, qualifies); from any other row, or for a
+sandboxed caller, the launch ignores the exemption and stays
 sandboxed, on the precedent of `authorize_write_grant`, where a managed caller may only
 narrow what it holds. No block means the spawn path's default policy.
 
@@ -890,7 +894,9 @@ through `AgentDefinitionManager`, whose sync-only entry points already exist
 `_refuse_unsynced_exempt_write(stored_body, incoming_body)`, is called by `create`,
 by both branches of `upsert_with_steps` (the existing-row branch reads the live row's
 stored body inside the same transaction, so `_find_live` returns it), by
-`_write_update` when `from_sync` is false, whatever the fields, and by `restore`,
+`_write_update` when `from_sync` is false, whatever the fields, by `toggle_enabled`
+(the HTTP enable and disable route; the exempt row is enabled by its template) and by
+`restore`,
 which reads the soft-deleted row inside its transaction before `restore_definition`:
 it raises `ValueError` when the incoming parent body carries the `sandbox.enabled`
 key, or when the stored body does. A row that carries the key is therefore immutable
@@ -942,8 +948,9 @@ process does; (3) merge the sandbox blocks into `agent_sandbox_config(daemon_con
 at the existing seam (`_sandbox_block.py`, replacing the plain
 `apply_write_grant(agent_sandbox_config(...), write_grant)` value when a block is
 present), honoring the definition's `enabled: false` only when `definition_row` passes
-`is_sync_managed_bundled_agent` and the `parent_session_id` row, read through the
-session manager the tool already holds, has `sandbox_enabled` false, and record the
+`is_sync_managed_bundled_agent` and the `caller_session_id` row (never the `parent_session_id` argument), read
+through the session manager the tool already holds, has `sandbox_enabled` false or
+there is no caller session, and record the
 reason, when any, as the launched session's initial variable `_launch_sandbox_reason`; (4) run the existing spawn with `terminal_backend` forced to
 `native`, `extra_env` set to the identity env, `parent_session_id` equal to the caller's
 session or, for a caller with none (the CLI paths), the machine system session
@@ -1190,7 +1197,7 @@ Consumers unchanged:
 - 1.5.12 - A non-sync write cannot add `sandbox.enabled` or touch a row that carries it:
   `create` and a new-row `upsert_with_steps` refuse a body carrying the key;
   `_write_update` (a rename, a description edit and a rule patch included), the
-  existing-row `upsert_with_steps` and `restore` refuse any write to a row whose stored
+  existing-row `upsert_with_steps`, `toggle_enabled` and `restore` refuse any write to a row whose stored
   body carries it; `upsert_from_sync` and `update_from_sync` accept both; a row without
   the key takes the same edits as today; `create_agent_definition` returns
   `success: false` and the HTTP update returns 400 for a `sandbox_config` carrying
@@ -1212,8 +1219,8 @@ Consumers unchanged:
 - 1.5.14 - A sandboxed caller never gets an unsandboxed pane: a launch of the
   program-director definition (sync-managed, `enabled: false` with a reason) from a
   caller whose session row has `sandbox_enabled` true launches with the default policy
-  and a reply whose `sandbox.enforced` is true, while the same launch parented on the
-  system session honors the exemption. test:
+  and a reply whose `sandbox.enforced` is true, whatever `parent_session_id` the call
+  supplies, while the same launch with no caller session honors the exemption. test:
   `tests/mcp_proxy/tools/spawn_agent/test_sandbox_block.py::test_sandboxed_caller_launch_of_exempt_definition_stays_sandboxed`.
 
 ## P2: gclient command mode
