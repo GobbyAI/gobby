@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import sys
+import threading
 import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -257,6 +258,39 @@ class TestAdminRoutes:
         execution_manager_cls.assert_called_once_with(
             db=mock_server.services.database, project_id=None
         )
+
+    @patch("gobby.servers.routes.admin._health.psutil")
+    def test_status_cpu_sample_finishes_before_other_collectors_start(
+        self, mock_psutil: MagicMock, client: TestClient, mock_server: MagicMock
+    ) -> None:
+        pipelines_started = threading.Event()
+        overlapped: list[bool] = []
+
+        def sample_cpu(interval: float) -> float:
+            # A collector running beside the sample starts inside this window.
+            overlapped.append(pipelines_started.wait(timeout=0.5))
+            return 42.0
+
+        def count_by_status() -> dict[str, int]:
+            pipelines_started.set()
+            return {}
+
+        mock_process = MagicMock()
+        mock_process.memory_info.return_value = MagicMock(rss=0, vms=0)
+        mock_process.num_threads.return_value = 1
+        mock_process.cpu_percent.side_effect = sample_cpu
+        mock_psutil.Process.return_value = mock_process
+
+        with patch(
+            "gobby.storage.pipelines.LocalPipelineExecutionManager"
+        ) as execution_manager_cls:
+            execution_manager_cls.return_value.count_by_status.side_effect = count_by_status
+            response = client.get("/api/admin/status")
+
+        assert response.status_code == 200
+        assert response.json()["process"]["cpu_percent"] == 42.0
+        assert pipelines_started.is_set()
+        assert overlapped == [False]
 
     @patch("gobby.servers.routes.admin._health.psutil")
     def test_status_endpoint_surfaces_hook_runtime_schema_mismatch(
