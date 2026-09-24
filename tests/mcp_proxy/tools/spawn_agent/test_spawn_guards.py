@@ -5,11 +5,18 @@ import threading
 import pytest
 
 from gobby.mcp_proxy.tools.spawn_agent import _spawn_guards
+from gobby.mcp_proxy.tools.spawn_agent._spawn_guards import resolve_spawn_task_context
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.tasks.agentic_close_review import TASK_CLOSE_REVIEWER_AGENT
 from gobby.utils.session_context import session_context_for_test
+from gobby.workflows.definitions import (
+    AgentDefinitionBody,
+    AgentStepWorkflowBody,
+    WorkflowStep,
+)
+from tests.fixtures.agent_definitions import make_agent_definition
 
 
 def test_validator_runs_excluded_from_active_count(
@@ -112,6 +119,62 @@ async def test_reserve_agent_slot_counts_active_agents_off_event_loop(
 
     assert count_threads
     assert count_threads[0] is not calling_thread
+
+
+def _claim_step_agent(first_step: str = "claim") -> AgentDefinitionBody:
+    return make_agent_definition(
+        name="planner",
+        prompts={"agent": "Claim the assigned task."},
+        step_workflow=AgentStepWorkflowBody(steps=[WorkflowStep(name=first_step)]),
+    )
+
+
+@pytest.mark.asyncio
+async def test_task_bound_claim_step_refuses_launch_without_a_task() -> None:
+    """A claim-first agent cannot launch with neither task_id nor assigned_task_id."""
+    context = await resolve_spawn_task_context(
+        prompt="draft the plan",
+        task_id=None,
+        task_manager=None,
+        project_id="project",
+        allow_closed_task=False,
+        agent_body=_claim_step_agent(),
+        initial_variables=None,
+    )
+
+    assert context.refusal is not None
+    assert context.refusal["success"] is False
+    assert "assigned task" in context.refusal["error"]
+
+
+@pytest.mark.asyncio
+async def test_task_bound_claim_step_accepts_assigned_task_id() -> None:
+    context = await resolve_spawn_task_context(
+        prompt="draft the plan",
+        task_id=None,
+        task_manager=None,
+        project_id="project",
+        allow_closed_task=False,
+        agent_body=_claim_step_agent(),
+        initial_variables={"assigned_task_id": "#22784"},
+    )
+
+    assert context.refusal is None
+
+
+@pytest.mark.asyncio
+async def test_agent_without_claim_step_launches_without_a_task() -> None:
+    context = await resolve_spawn_task_context(
+        prompt="look around",
+        task_id=None,
+        task_manager=None,
+        project_id="project",
+        allow_closed_task=False,
+        agent_body=_claim_step_agent("explore"),
+        initial_variables=None,
+    )
+
+    assert context.refusal is None
 
 
 def test_task_spawn_lease_releases_mutex_when_enter_raises(

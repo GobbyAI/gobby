@@ -18,7 +18,7 @@ import psycopg
 from gobby.app_context import get_app_context
 from gobby.config.app import DaemonConfig
 from gobby.config.sessions import SessionSummaryConfig
-from gobby.llm.context_windows import reconcile_model_context
+from gobby.llm.context_windows import ReconciledModelContext, reconcile_model_context
 from gobby.sessions.context_usage import (
     context_window_from_raw_message,
     grok_epoch_max_occupancy,
@@ -245,14 +245,39 @@ class TranscriptProcessingMixin:
         Aggregates token usage.
         Uses idempotent upsert so re-processing is safe.
 
+        The read, the parse, and every database call run in one worker-thread
+        hop: an expired session's transcript can be hundreds of megabytes, and
+        parsing it on the loop thread stalled hooks, HTTP, and terminal input
+        for minutes (#22811). Only the websocket broadcasts run on the loop.
+
         Args:
             session_id: Session ID
             transcript_path: Path to transcript JSONL file
         """
+        payloads = await asyncio.to_thread(
+            self._persist_session_transcript, session_id, transcript_path
+        )
+        app_ctx = get_app_context()
+        ws_server = app_ctx.websocket_server if app_ctx is not None else None
+        if ws_server is None:
+            return
+        for payload in payloads:
+            try:
+                await ws_server.broadcast_token_event(payload)
+            except Exception:
+                logger.exception(
+                    "Failed to broadcast transcript token event for session %s",
+                    session_id,
+                )
+
+    def _persist_session_transcript(
+        self, session_id: str, transcript_path: str | None
+    ) -> list[dict[str, Any]]:
+        """Blocking body of _process_session_transcript; returns broadcast payloads."""
         if not transcript_path or not os.path.exists(transcript_path):
             # The canonical summary reader can still use an archive or delivered handoff.
             logger.info("Transcript not found for session %s: %s", session_id, transcript_path)
-            return
+            return []
 
         # Read entire file
         try:
@@ -263,12 +288,12 @@ class TranscriptProcessingMixin:
             raise
 
         if not raw.strip():
-            return
+            return []
 
         # Parse all lines
         session = self.session_manager.get(session_id)
         if not session:
-            return
+            return []
 
         parser = get_parser(
             session.source,
@@ -288,7 +313,7 @@ class TranscriptProcessingMixin:
         stats_records = normalized if session_source == "agy" else messages
 
         if not stats_records:
-            return
+            return []
 
         # Persist session stats from the full transcript before any token-usage
         # early return, so sessions the live processor never tailed before expiry
@@ -322,8 +347,7 @@ class TranscriptProcessingMixin:
         # Index sidecars are a seek optimization; transcript token processing must continue.
         try:
             st = os.stat(transcript_path)
-            await asyncio.to_thread(
-                rebuild_and_persist_index,
+            rebuild_and_persist_index(
                 transcript_path,
                 session_source or "claude",
                 session_id,
@@ -339,38 +363,36 @@ class TranscriptProcessingMixin:
             )
 
         if not messages:
-            return
+            return []
 
         # Replace any synthetic migration rows with real transcript events as soon as
-        # we have a parseable transcript for this session. The deletes and the
-        # totals read are synchronous psycopg, and this coroutine runs on the
-        # event loop thread, so all three share one off-loop hop (#20885).
-        def _reset_transcript_events() -> dict[str, int]:
-            self.token_event_store.delete_session_events(session_id, origin="backfill")
-            self.token_event_store.delete_session_events(session_id, origin="transcript")
-            return self.token_event_store.get_session_totals(session_id)
+        # we have a parseable transcript for this session.
+        self.token_event_store.delete_session_events(session_id, origin="backfill")
+        self.token_event_store.delete_session_events(session_id, origin="transcript")
+        running_totals = self.token_event_store.get_session_totals(session_id)
 
         session_project_id = session.project_id if isinstance(session.project_id, str) else None
         session_source = session_source or "unknown"
         session_context_window = _coerce_context_window(session.context_window)
         session_model = session.model if isinstance(session.model, str) and session.model else None
         last_model: str | None = session_model
-        running_totals = await asyncio.to_thread(_reset_transcript_events)
-        ws_server = None
-        app_ctx = get_app_context()
-        if app_ctx is not None:
-            ws_server = app_ctx.websocket_server
         saw_usage = False
         latest_context_snapshot: ContextUsageSnapshot | None = None
+        payloads: list[dict[str, Any]] = []
 
-        # Pass 1 (on-loop, pure compute): fold every message into a
-        # message-ordered plan — either a window-metadata snapshot entry or a
-        # pending token event. Nothing in this pass touches the database.
+        # Pass 1: fold every message into a message-ordered plan — either a
+        # window-metadata snapshot entry or a pending token event. Each
+        # reconcile_model_context call builds a resolver that reads aliases and
+        # the model registry, so results are memoized per input: an 86 MB
+        # transcript made 16,628 calls over 14 distinct inputs (#22811).
         snapshot_plan: list[_PendingTokenEvent | ContextUsageSnapshot | None] = []
+        reconciled_by_input: dict[
+            tuple[str | None, str | None, int | None], ReconciledModelContext
+        ] = {}
         for msg in messages:
             message_model = msg.model if isinstance(msg.model, str) and msg.model else None
             observed_context_window = _message_context_window(msg)
-            reconciled_context = reconcile_model_context(
+            reconcile_input = (
                 last_model,
                 message_model,
                 (
@@ -378,9 +400,13 @@ class TranscriptProcessingMixin:
                     if observed_context_window is not None
                     else session_context_window
                 ),
-                provider=session_source,
-                db=self.db,
             )
+            reconciled_context = reconciled_by_input.get(reconcile_input)
+            if reconciled_context is None:
+                reconciled_context = reconcile_model_context(
+                    *reconcile_input, provider=session_source, db=self.db
+                )
+                reconciled_by_input[reconcile_input] = reconciled_context
             last_model = reconciled_context.model
             message_context_window = reconciled_context.context_window
             if message_context_window is not None:
@@ -492,22 +518,19 @@ class TranscriptProcessingMixin:
                 )
             )
 
-        # Pass 2 (off-loop): one batched hop for every insert. Per-event
-        # sequential record() calls were synchronous psycopg on the loop
-        # thread — the sampler caught them at 72% of a 10.61s stall (#20885).
-        # The returned flags preserve the per-event dedup feedback.
+        # Pass 2: one batched insert for every event (#20885). The returned
+        # flags preserve the per-event dedup feedback.
         pending_events = [entry for entry in snapshot_plan if isinstance(entry, _PendingTokenEvent)]
         inserted_flags: list[bool] = []
         if pending_events:
-            inserted_flags = await asyncio.to_thread(
-                self.token_event_store.record_batch,
-                [entry.event for entry in pending_events],
+            inserted_flags = self.token_event_store.record_batch(
+                [entry.event for entry in pending_events]
             )
 
-        # Pass 3 (on-loop): replay the sequential semantics in message order —
-        # a window entry always overwrites the latest snapshot; an event entry
-        # updates totals and the snapshot, and broadcasts, only when its row
-        # actually inserted.
+        # Pass 3: replay the sequential semantics in message order — a window
+        # entry always overwrites the latest snapshot; an event entry updates
+        # totals and the snapshot, and yields a broadcast payload carrying the
+        # totals as of that event, only when its row actually inserted.
         event_position = 0
         for entry in snapshot_plan:
             if not isinstance(entry, _PendingTokenEvent):
@@ -537,20 +560,7 @@ class TranscriptProcessingMixin:
             running_totals["cache_read_tokens"] += inserted_event.cache_read_tokens
             if entry.snapshot is not None:
                 latest_context_snapshot = entry.snapshot
-
-            if ws_server is not None:
-                try:
-                    await ws_server.broadcast_token_event(
-                        build_token_event_payload(
-                            entry.payload,
-                            session_totals=running_totals,
-                        )
-                    )
-                except Exception:
-                    logger.exception(
-                        "Failed to broadcast transcript token event for session %s",
-                        session_id,
-                    )
+            payloads.append(build_token_event_payload(entry.payload, session_totals=running_totals))
 
         if not saw_usage and (
             _session_int(getattr(session, "usage_input_tokens", 0)) > 0
@@ -564,9 +574,9 @@ class TranscriptProcessingMixin:
                 "Transcript yielded no token events for %s; preserving existing session totals",
                 session_id,
             )
-            return
+            return payloads
 
-        totals = await asyncio.to_thread(self.token_event_store.get_session_totals, session_id)
+        totals = self.token_event_store.get_session_totals(session_id)
         if saw_usage and not any(totals.values()) and any(running_totals.values()):
             totals = dict(running_totals)
         session_totals = totals
@@ -588,3 +598,4 @@ class TranscriptProcessingMixin:
         # _process_pending_transcripts (the caller), not here.  This ensures
         # they run even when the JSONL file has already been deleted and this
         # method returns early at the file-existence check.
+        return payloads

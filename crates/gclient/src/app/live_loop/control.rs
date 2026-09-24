@@ -32,13 +32,9 @@ pub(super) async fn focus_live_pane(
     if !move_live_focus(workspace, pane_id).await? {
         return Ok(());
     }
-    if !workspace.pane(pane_id).is_held() {
-        // Focus is the whole gesture. Clicking a pane is a person saying they
-        // want to type in it, so it takes the input grant over rather than
-        // asking and offering a second button when someone else holds it
-        // (#22573). The request runs beside the loop, so the click itself
-        // never waits on the daemon.
-        workspace.request_control(pane_id, true);
+    if !workspace.pane(pane_id).is_held() && !workspace.pane(pane_id).take_back {
+        // Focus may claim a free pane, but must never interrupt a peer holder.
+        workspace.request_control(pane_id, false);
     }
     Ok(())
 }

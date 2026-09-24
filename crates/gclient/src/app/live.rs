@@ -113,6 +113,12 @@ impl Workspace<LiveDaemon> {
             .get("session_id")
             .and_then(Value::as_str)
             .map(str::to_string);
+        pane.observe_lease_holder(
+            row.fields
+                .get("lease_holder")
+                .and_then(|holder| holder.get("attachment_id"))
+                .and_then(Value::as_str),
+        );
         pane_id
     }
 

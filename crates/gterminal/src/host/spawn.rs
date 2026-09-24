@@ -120,6 +120,22 @@ impl PreparedCommit {
     }
 }
 
+#[cfg(test)]
+impl PreparedChild {
+    pub(crate) fn from_test_runtime(runtime: PaneRuntime) -> Self {
+        Self {
+            runtime,
+            pid: 0,
+            pgid: 0,
+            start_time: 0.0,
+            gate_writer: None,
+            status_reader: None,
+            #[cfg(debug_assertions)]
+            wait_for_child_exit_before_status: false,
+        }
+    }
+}
+
 impl Drop for PreparedChild {
     fn drop(&mut self) {
         tracing::debug!(pid = self.pid, "dropping prepared child");

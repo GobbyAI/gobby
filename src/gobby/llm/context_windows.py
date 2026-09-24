@@ -516,12 +516,12 @@ def _model_metadata_aliases(
 ) -> list[ModelMetadataAlias]:
     from gobby.config.ai import default_model_metadata_aliases, parse_model_metadata_aliases
 
-    # The daemon's runtime is the configuration authority and this key applies live,
-    # so a daemon resolve never re-reads and re-validates the whole stored config: at
-    # about ten resolves a second that read held the GIL hooks wait on (#22708).
+    # The ready runtime is the live config authority; a DB read per call is the
+    # fallback for callers without one (#22812).
     runtime = getattr(ctx, "config_runtime", None) if ctx else None
     if runtime is not None and runtime.ready:
         return list(runtime.capture().snapshot.active.ai.model_metadata_aliases)
+
     if db is not None:
         from gobby.storage.config_repository import ConfigRepository, ConfigRepositoryError
 
@@ -535,6 +535,7 @@ def _model_metadata_aliases(
         except (ConfigRepositoryError, OSError, TypeError, ValueError, psycopg.Error):
             logger.debug("Failed to read model metadata aliases", exc_info=True)
             return default_model_metadata_aliases()
+
     return default_model_metadata_aliases()
 
 

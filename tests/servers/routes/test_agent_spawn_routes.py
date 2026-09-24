@@ -324,6 +324,7 @@ class TestSpawnAgent:
         assert conversation.title == format_provisional_session_title(
             test_project.name, conversation.seq_num, "claude"
         )
+        assert conversation.title == f"{test_project.name}#{conversation.seq_num}: Claude"
         assert conversation.title_source == "provisional"
 
     def test_spawn_web_chat_preserves_review_status(

@@ -55,6 +55,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
+from gobby.storage.sessions._title_defaults import provider_title_label
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.state_manager import SessionVariableManager
@@ -1442,7 +1443,9 @@ def test_title_lifecycle_is_provisional_task_manual_and_clear_sticky(
 ) -> None:
     session = _registered_session(session_manager)
     assert session.seq_num is not None
-    assert session.title == f"handoff-test#{session.seq_num}"
+    assert session.title == (
+        f"handoff-test#{session.seq_num}: {provider_title_label(session.source)}"
+    )
 
     update_title_for_claim(
         session_manager,

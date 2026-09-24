@@ -302,6 +302,7 @@ and only work after you bind them; every action also appears in the help popup
 | `prefix+c` | Open a new tab with a fresh shell | `new_tab` |
 | `prefix+n` / `prefix+p` | Next / previous tab | `next_tab` / `previous_tab` |
 | `prefix+1` … `prefix+9` | Switch to tab 1–9 | `switch_tab` |
+| `prefix+shift+left` / `prefix+shift+right` | Move the active tab one position left / right | `move_tab_left` / `move_tab_right` |
 | `prefix+shift+t` | Rename the active tab | `rename_tab` |
 | `prefix+shift+x` | Close the active tab | `close_tab` |
 
@@ -317,6 +318,8 @@ and only work after you bind them; every action also appears in the help popup
 | `prefix+shift+h` / `j` / `k` / `l` | Swap with the pane in that direction | `swap_pane_*` |
 | `prefix+tab` / `prefix+shift+tab` | Cycle to the next / previous pane | `cycle_pane_next` / `cycle_pane_previous` |
 | `prefix+shift+p` | Rename the focused pane | `rename_pane` |
+| `prefix+shift+1` … `prefix+shift+9` | Move the focused pane to tab 1–9 in this workspace | `move_pane_to_tab` |
+| `prefix+shift+c` | Move the focused pane to a new tab in this workspace | `move_pane_to_new_tab` |
 | `prefix+r` | Enter resize mode | `resize_mode` |
 | `prefix+[` | Enter copy mode | `copy_mode` |
 | *unset* | Open a new terminal (splits right) | `new_terminal` |
@@ -400,6 +403,11 @@ on the workspace shows it, it survives daemon restarts, and
 Neither changes the terminal's own title. A project label is yours alone; the
 client keeps it in `prefs.toml`.
 
+Moving a pane to another tab keeps its running process and scrollback, and focus
+follows it. The source layout closes the gap; if it was the last pane, the
+empty source tab disappears. Tab order and pane placement are saved in the
+workspace and survive detach and reattach.
+
 ## Attach and control
 
 Every pane you open is *attached*: it receives frames. Whether your keystrokes
@@ -444,14 +452,16 @@ Three messages belong to the direct path:
 | `terminal refused input (<code>); take control again` | The host refused a key, normally `input_not_granted` after your grant was revoked. Output keeps flowing; the pane returns to observing. |
 | `terminal input backlog; key dropped` | You typed faster than the terminal drained. That one keystroke is gone and is not retried, because a retried keystroke is the wrong keystroke. |
 
-Focusing a pane takes control of it, whether you focus it by keyboard, by click,
-or through the navigator — including when another viewer holds it, which focus
-takes over rather than asking. Focus is the whole gesture: there is no second
-button to press and nothing to confirm.
+Keyboard and navigator focus claim a free pane. A completed left click does the
+same, including when its previous holder released it. Pressing alone does not
+take control, so dragging to select text leaves the lease alone. Clicking a pane
+you already control sends no new take request. If another live agent holds the
+pane, the click focuses it and shows the read-only takeover control; use that
+indicator or `prefix+t` for a deliberate take-back.
 
 Asking the daemon who may type costs one round trip, and that round trip belongs
-to the focus change, never to a key. So the pane is usable the moment you focus
-it: keys, pastes, and forwarded mouse reports you produce before the grant lands
+to the focus change or completed click, never to a key. For a free pane, keys,
+pastes, and forwarded mouse reports you produce before the grant lands
 are held in order and written the instant it does. Nothing is dropped and nothing
 announces a mode — the pane reads `backend · Focused` throughout. Only a daemon
 that stops answering can overrun that queue, and then a warning toast says
@@ -613,16 +623,16 @@ Mouse support is on by default; turn it off with `--no-mouse` or the
 
 | Gesture | Effect |
 | --- | --- |
-| Left-click a pane | Focus it and take control |
+| Left-click a free pane | Focus it and take control on release; an agent-held pane focuses and shows the takeover indicator |
 | `alt+click` a pane | Focus it without taking control (observe) |
-| Left-drag in the focused pane | Select and copy text (see copy mode) |
+| Left-drag in a pane | Select and copy text without taking control (see copy mode) |
 | Double-click / triple-click | Select a word / a line |
 | `ctrl+click` a link | Open the URL with `open` on macOS, `xdg-open` elsewhere |
 | Wheel over a pane | Scroll its scrollback; on an alternate screen the wheel sends arrow keys instead |
 | Wheel over the tab bar | Switch tabs |
 | Wheel over the sidebar | Scroll the section under the pointer |
 | Click a tab, the new-tab button, or the scroll arrows | Switch, open, or scroll tabs |
-| Drag a tab | Reorder tabs |
+| Drag a tab onto another tab | Reorder tabs, including when the terminal delivers only press and release events |
 | Click `[Menu]` / `[+]` on the menu band | Open the global menu / add a project |
 | Click a project card / worktree row | Focus the project (expanding its card) / open the worktree |
 | Drag a project card | Reorder projects |

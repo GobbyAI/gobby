@@ -13,15 +13,13 @@ Note: SDK-reported contextWindow (2nd arg) is deprecated and ignored.
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 import psycopg
 import pytest
 
 import gobby.llm.context_windows as context_windows
-from gobby.config.ai import AIConfig, ModelMetadataAlias
-from gobby.config.app import DaemonConfig
+from gobby.config.ai import ModelMetadataAlias
 from gobby.llm.context_windows import (
     coerce_context_length,
     reconcile_model_context,
@@ -37,12 +35,10 @@ from gobby.providers.capabilities.local_context import (
 )
 from gobby.providers.capabilities.resolve import CapabilityResolver
 from gobby.storage.config_mutations import ConfigMutations, ConfigPatch
-from gobby.storage.config_repository import ConfigReadSnapshot, ConfigRepository
 from gobby.storage.context_usage_snapshot import ContextUsageSnapshot
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.model_metadata import ModelMetadataStore
 from gobby.workflows.observer_context_usage import _thresholds
-from tests.config_runtime_helpers import static_runtime_capture
 
 pytestmark = pytest.mark.unit
 
@@ -678,53 +674,21 @@ def test_db_backed_provider_metadata_alias_edits_are_live(postgres_db: HubDataba
     assert (removed.value, removed.source) == (None, "unknown")
 
 
-def test_daemon_resolve_takes_aliases_from_the_live_runtime_without_a_config_read(
-    postgres_db: HubDatabase,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # #22708: every db= resolve re-read and re-validated the whole stored config, about
-    # ten times a second in the daemon, holding the GIL that hook evaluation waits on.
-    # The key applies live, so the daemon's runtime already holds the stored value.
-    ModelMetadataStore(postgres_db).populate(
-        [
-            ModelInfo(
-                id="openai/registry-model",
-                name="Registry Model",
-                context_length=64_000,
-                max_completion_tokens=8_000,
-            )
-        ]
-    )
-    config = DaemonConfig(
-        ai=AIConfig(
-            model_metadata_aliases=[
-                ModelMetadataAlias(
-                    provider="synthetic-provider",
-                    provider_model_id="provider-model",
-                    openrouter_model_id="openai/registry-model",
-                )
-            ]
-        )
-    )
-    runtime = SimpleNamespace(ready=True, capture=static_runtime_capture(config))
-    monkeypatch.setattr(
-        "gobby.app_context.get_app_context", lambda: SimpleNamespace(config_runtime=runtime)
-    )
-    full_reads: list[bool] = []
-    read = ConfigRepository.read
-
-    def counting_read(self: ConfigRepository, *args: Any, **kwargs: Any) -> ConfigReadSnapshot:
-        full_reads.append(True)
-        return read(self, *args, **kwargs)
-
-    monkeypatch.setattr(ConfigRepository, "read", counting_read)
-
-    resolved = resolve_context_window_with_source(
-        "provider-model",
+def test_ready_runtime_aliases_skip_the_per_call_config_read() -> None:
+    alias = ModelMetadataAlias(
         provider="synthetic-provider",
-        db=postgres_db,
+        provider_model_id="provider-model",
+        openrouter_model_id="openai/registry-model",
     )
+    active = SimpleNamespace(ai=SimpleNamespace(model_metadata_aliases=[alias]))
+    runtime = SimpleNamespace(
+        ready=True,
+        capture=lambda: SimpleNamespace(snapshot=SimpleNamespace(active=active)),
+    )
+    app_context = SimpleNamespace(config_runtime=runtime)
 
-    assert resolved is not None
-    assert (resolved.value, resolved.source) == (64_000, "registry")
-    assert full_reads == []
+    with patch("gobby.storage.config_repository.ConfigRepository.read") as config_read:
+        aliases = context_windows._model_metadata_aliases(app_context, MagicMock())
+
+    assert aliases == [alias]
+    config_read.assert_not_called()

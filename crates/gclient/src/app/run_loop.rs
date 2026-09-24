@@ -184,6 +184,9 @@ fn apply_scripted_mouse_outcome(
             scripted_focus(workspace, chrome, pane, observe_only)?;
         }
         MouseOutcome::Action(action) => return Ok(apply_scripted_action(chrome, action)),
+        MouseOutcome::TakeFreeControl { pane } => workspace
+            .take_control(pane)
+            .map_err(|error| FrameError::Other(error.to_string()))?,
         MouseOutcome::Menu { kind, action } => {
             return apply_scripted_menu_action(workspace, chrome, kind, action);
         }

@@ -445,3 +445,41 @@ async def test_transcript_analysis_paths_propagate_cancellation(
 
     with pytest.raises(asyncio.CancelledError):
         await pending
+
+
+@pytest.mark.asyncio
+async def test_summary_prompt_turn_formatting_runs_off_the_event_loop_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Turn extraction, injected-context stripping and formatting cover the whole
+    summary window; on the loop they stalled hooks and HTTP (#22811)."""
+    import gobby.sessions.transcripts as transcripts_module
+    from gobby.sessions.analyzer import HandoffContext
+    from gobby.sessions.summary_context import _build_summary_prompt_context
+
+    parser_threads: list[int] = []
+
+    class RecordingParser:
+        def extract_turns_since_clear(self, turns: list[dict[str, Any]]) -> list[dict[str, Any]]:
+            parser_threads.append(threading.get_ident())
+            return []
+
+        def extract_last_messages(
+            self, turns: list[dict[str, Any]], num_pairs: int = 2
+        ) -> list[dict[str, Any]]:
+            parser_threads.append(threading.get_ident())
+            return []
+
+    monkeypatch.setattr(transcripts_module, "get_parser", lambda *_a, **_k: RecordingParser())
+
+    context = await _build_summary_prompt_context(
+        session=SimpleNamespace(id="session-id", source="claude", transcript_path=None),
+        turns=[],
+        handoff_ctx=HandoffContext(),
+        db=None,
+        session_manager=SimpleNamespace(db=None),
+    )
+
+    assert len(parser_threads) == 2
+    assert threading.get_ident() not in parser_threads
+    assert context["last_messages"] == ""

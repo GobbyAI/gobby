@@ -17,6 +17,7 @@ from gobby.workflows.enforcement.blocking import (
     is_operator_tool,
     is_provider_discovery_tool,
 )
+from gobby.workflows.engine.block_batching import operator_event_is_subagent
 from gobby.workflows.engine.skill_load_guidance import (
     skill_load_block_guidance,
     skill_load_call_lead,
@@ -422,10 +423,11 @@ class EnforcementCheckMixin:
                     reason=reason,
                 )
 
-        # Operator terminal channels bypass allow-lists for interactive sessions only;
-        # spawned agents and native subagents never drive or read terminals.
+        # Operator terminal channels bypass allow-lists for the interactive parent.
+        # The payload's agent id decides a native subagent; the session flag is
+        # only the fallback for a CLI that sends no per-event identity.
         if (
-            (variables.get("is_spawned_agent") or variables.get("is_subagent"))
+            operator_event_is_subagent(event.data, event.source, variables)
             and is_gobby_call_tool(tool_name)
             and isinstance(tool_input, dict)
             and is_operator_tool(tool_input.get("tool_name"))

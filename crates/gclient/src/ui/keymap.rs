@@ -281,6 +281,7 @@ fn parse_binding_string(raw: &str) -> Option<ParsedChord> {
     };
     let make = |combo: KeyCombo| {
         let key_label = format_key_combo(combo);
+        let combo = normalize_key_combo(combo);
         if trigger_prefix {
             (Trigger::Prefix(combo), format!("prefix+{key_label}"))
         } else {
@@ -554,6 +555,18 @@ pub fn normalize_key_combo(combo: KeyCombo) -> KeyCombo {
     } else if matches!(code, KeyCode::BackTab) {
         modifiers.remove(KeyModifiers::SHIFT);
     }
+    if modifiers.contains(KeyModifiers::SHIFT) {
+        if let KeyCode::Char(ch) = code {
+            if let Some(index) = "1234567890".find(ch) {
+                // Legacy terminal input reports the shifted glyph without
+                // a modifier; Kitty-style input may report the digit plus SHIFT.
+                code = KeyCode::Char("!@#$%^&*()".as_bytes()[index] as char);
+                modifiers.remove(KeyModifiers::SHIFT);
+            } else if is_shifted_punctuation(ch) {
+                modifiers.remove(KeyModifiers::SHIFT);
+            }
+        }
+    }
     (code, modifiers)
 }
 
@@ -663,5 +676,19 @@ mod tests {
             Keymap::from_toml("[bindings]\nzoom = \"prefix+1..9\"\n", HERDR_PREFIX),
             Err(KeymapError::InvalidChord { .. })
         ));
+    }
+
+    #[test]
+    fn shifted_digit_binding_accepts_terminal_punctuation() {
+        let keymap = Keymap::defaults(HERDR_PREFIX);
+        let key = KeyEvent::new(KeyCode::Char('!'), KeyModifiers::SHIFT);
+        assert_eq!(keymap.lookup_prefix(&key), Some(Action::MovePaneToTab(1)));
+        let legacy = KeyEvent::new(KeyCode::Char('!'), KeyModifiers::NONE);
+        assert_eq!(
+            keymap.lookup_prefix(&legacy),
+            Some(Action::MovePaneToTab(1))
+        );
+        let kitty = KeyEvent::new(KeyCode::Char('1'), KeyModifiers::SHIFT);
+        assert_eq!(keymap.lookup_prefix(&kitty), Some(Action::MovePaneToTab(1)));
     }
 }

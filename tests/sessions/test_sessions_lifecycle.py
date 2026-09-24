@@ -50,6 +50,27 @@ class EmptyTokenEventStore:
         return [False for _ in events]
 
 
+class InsertingTokenEventStore(EmptyTokenEventStore):
+    def record_batch(self, events: list[object]) -> list[bool]:
+        return [True for _ in events]
+
+
+def _usage_message(message_id: str, input_tokens: int, output_tokens: int) -> MagicMock:
+    from gobby.sessions.transcripts.base import ParsedMessage, TokenUsage
+
+    msg = MagicMock(spec=ParsedMessage)
+    msg.role = "assistant"
+    msg.content_type = "text"
+    msg.content = f"reply {message_id}"
+    msg.tool_name = None
+    msg.model = "claude-sonnet-4-6"
+    msg.raw_json = {}
+    msg.usage = TokenUsage(input_tokens=input_tokens, output_tokens=output_tokens)
+    msg.timestamp = None
+    msg.message_id = message_id
+    return msg
+
+
 def _set_llm_service(manager: SessionLifecycleManager, llm: Any) -> Any:
     """Swap the ai_services entry in the manager's captured runtime bundle.
 
@@ -381,6 +402,122 @@ class TestSessionLifecycleManager:
         for method, threads in db_threads.items():
             assert threads, f"{method} never ran"
             assert loop_thread not in threads, f"{method} ran on the event loop thread"
+
+    @pytest.mark.asyncio
+    async def test_transcript_parse_and_session_writes_run_off_the_event_loop_thread(
+        self, tmp_path: Path, manager: SessionLifecycleManager
+    ) -> None:
+        """An expired session's transcript can be hundreds of megabytes; parsing
+        it and writing its stats on the loop thread wedged hooks, HTTP and
+        terminal input for minutes after a gterm host restart (#22811)."""
+        transcript_path = tmp_path / "transcript.jsonl"
+        transcript_path.write_text('{"type": "message"}\n')
+        threads: dict[str, list[int]] = {}
+
+        def _recording(name: str, result: object = None) -> Callable[..., object]:
+            def _record(*_args: object, **_kwargs: object) -> object:
+                threads.setdefault(name, []).append(threading.get_ident())
+                return result
+
+            return _record
+
+        session = MagicMock()
+        session.source = "claude"
+        session.project_id = "proj-1"
+        session.context_window = None
+        session.model = None
+        manager.session_manager.get.side_effect = _recording("get", session)
+        manager.session_manager.update_stats.side_effect = _recording("update_stats")
+        manager.session_manager.update_usage.side_effect = _recording("update_usage")
+        manager.token_event_store = InsertingTokenEventStore()
+        loop_thread = threading.get_ident()
+
+        with patch("gobby.sessions.transcript_processing.get_parser") as parser:
+            parser.return_value.parse_lines.side_effect = _recording(
+                "parse_lines", [_usage_message("msg-1", 11, 7)]
+            )
+            await manager._process_session_transcript("s1", str(transcript_path))
+
+        for name in ("get", "parse_lines", "update_stats", "update_usage"):
+            assert threads.get(name), f"{name} never ran"
+            assert loop_thread not in threads[name], f"{name} ran on the event loop thread"
+
+    @pytest.mark.asyncio
+    async def test_transcript_broadcasts_carry_per_event_running_totals(
+        self, tmp_path: Path, manager: SessionLifecycleManager
+    ) -> None:
+        """Payloads are built off-loop and broadcast afterwards; each keeps
+        message order and the totals as of its own event, not the final totals."""
+        transcript_path = tmp_path / "transcript.jsonl"
+        transcript_path.write_text('{"type": "message"}\n')
+
+        session = MagicMock()
+        session.source = "claude"
+        session.project_id = "proj-1"
+        session.context_window = None
+        session.model = None
+        manager.session_manager.get.return_value = session
+        manager.token_event_store = InsertingTokenEventStore()
+        ws_server = SimpleNamespace(broadcast_token_event=AsyncMock())
+
+        with (
+            patch("gobby.sessions.transcript_processing.get_parser") as parser,
+            patch(
+                "gobby.sessions.transcript_processing.get_app_context",
+                return_value=SimpleNamespace(websocket_server=ws_server),
+            ),
+        ):
+            parser.return_value.parse_lines.return_value = [
+                _usage_message("msg-1", 11, 7),
+                _usage_message("msg-2", 5, 3),
+            ]
+            await manager._process_session_transcript("s1", str(transcript_path))
+
+        payloads = [c.args[0] for c in ws_server.broadcast_token_event.await_args_list]
+        assert [p["message_id"] for p in payloads] == ["msg-1", "msg-2"]
+        assert [p["session_totals"]["input_tokens"] for p in payloads] == [11, 16]
+        assert [p["session_totals"]["output_tokens"] for p in payloads] == [7, 10]
+
+    @pytest.mark.asyncio
+    async def test_transcript_context_reconciliation_runs_once_per_distinct_input(
+        self, tmp_path: Path, manager: SessionLifecycleManager
+    ) -> None:
+        """Each reconcile_model_context call builds a resolver that reads the
+        database; an 86 MB transcript made 16,628 calls over 14 distinct
+        inputs, so one pass reconciles each input once (#22811)."""
+        from gobby.llm.context_windows import reconcile_model_context
+
+        transcript_path = tmp_path / "transcript.jsonl"
+        transcript_path.write_text('{"type": "message"}\n')
+
+        session = MagicMock()
+        session.source = "claude"
+        session.project_id = "proj-1"
+        session.context_window = None
+        session.model = None
+        manager.session_manager.get.return_value = session
+        manager.token_event_store = InsertingTokenEventStore()
+        reconcile_inputs: list[tuple[object, ...]] = []
+
+        def _counting(*args: Any, **kwargs: Any) -> Any:
+            reconcile_inputs.append(args)
+            return reconcile_model_context(*args, **kwargs)
+
+        with (
+            patch("gobby.sessions.transcript_processing.get_parser") as parser,
+            patch(
+                "gobby.sessions.transcript_processing.reconcile_model_context",
+                side_effect=_counting,
+            ),
+        ):
+            parser.return_value.parse_lines.return_value = [
+                _usage_message(f"msg-{index}", 10, 5) for index in range(6)
+            ]
+            await manager._process_session_transcript("s1", str(transcript_path))
+
+        assert reconcile_inputs, "reconcile_model_context never ran"
+        assert len(reconcile_inputs) == len(set(reconcile_inputs))
+        assert len(reconcile_inputs) < 6
 
     @pytest.mark.asyncio
     async def test_transcript_token_events_are_recorded_in_batches_not_per_event(

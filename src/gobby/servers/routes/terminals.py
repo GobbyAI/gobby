@@ -82,8 +82,15 @@ def create_terminals_router(server: HTTPServer) -> APIRouter:
             limit=page_size,
         )
         commands = _foreground_commands(items)
+        registry = _lease_registry()
         serialized = [
-            _row_json(row, _attach(server, manager, row), commands.get(row.id)) for row in items
+            _row_json(
+                row,
+                _attach(server, manager, row),
+                commands.get(row.id),
+                registry.holder_info(row.id),
+            )
+            for row in items
         ]
         next_cursor = None
         item_cursors = [f"{row.created_at.isoformat()}|{row.id}" for row in items]
@@ -111,7 +118,10 @@ def create_terminals_router(server: HTTPServer) -> APIRouter:
         if row is None or row.machine_id != machine_id:
             raise HTTPException(status_code=404, detail="terminal not found")
         return _row_json(
-            row, _attach(server, manager, row), _foreground_commands([row]).get(row.id)
+            row,
+            _attach(server, manager, row),
+            _foreground_commands([row]).get(row.id),
+            _lease_registry().holder_info(row.id),
         )
 
     return router
@@ -158,8 +168,13 @@ def _foreground_commands(rows: list[Terminal]) -> dict[str, str]:
     return foreground_commands({row.id: pid for row in rows if (pid := shell_pid(row)) is not None})
 
 
-def _row_json(row: Terminal, attach: AttachLocator | None, command: str | None) -> dict[str, Any]:
-    payload = inventory_item(row)
+def _row_json(
+    row: Terminal,
+    attach: AttachLocator | None,
+    command: str | None,
+    lease_holder: dict[str, str | None] | None,
+) -> dict[str, Any]:
+    payload = inventory_item(row, lease_holder=lease_holder)
     payload["id"] = row.id
     payload["created_at"] = row.created_at.isoformat()
     payload["attach"] = None if attach is None else asdict(attach)

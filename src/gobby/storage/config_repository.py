@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import functools
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -299,17 +300,8 @@ class ConfigRepository:
         return DaemonConfig.model_validate(candidate)
 
     def _complete_values(self, overrides: dict[str, object]) -> dict[str, object]:
-        values: dict[str, object] = {}
-        for spec in self.registry.key_specs:
-            if spec.has_default:
-                # Stored overrides decode to JSON-plain values; defaults must
-                # use the same representation or rich-typed defaults (pydantic
-                # models) leak into snapshot values and break serialization.
-                adapter: TypeAdapter[object] = TypeAdapter(spec.annotation)
-                values[spec.key] = adapter.dump_python(
-                    adapter.validate_python(copy.deepcopy(spec.default)),
-                    mode="json",
-                )
+        # Each snapshot gets its own copy so callers never mutate the shared defaults.
+        values = copy.deepcopy(_json_defaults(self.registry))
         values.update(overrides)
         return values
 
@@ -357,6 +349,27 @@ class ConfigRepository:
         if not value.removeprefix("$secret:"):
             raise ConfigRepositoryError(f"Secret configuration key {key!r} has an empty reference")
         return value
+
+
+@functools.cache
+def _json_defaults(registry: ConfigRegistry) -> dict[str, object]:
+    """JSON-plain defaults of every defaulted key, built once per immutable registry.
+
+    Building a TypeAdapter per key costs tens of milliseconds of GIL-held work, so
+    doing it on every config read saturated the daemon (#22812).
+    """
+    values: dict[str, object] = {}
+    for spec in registry.key_specs:
+        if spec.has_default:
+            # Stored overrides decode to JSON-plain values; defaults must
+            # use the same representation or rich-typed defaults (pydantic
+            # models) leak into snapshot values and break serialization.
+            adapter: TypeAdapter[object] = TypeAdapter(spec.annotation)
+            values[spec.key] = adapter.dump_python(
+                adapter.validate_python(copy.deepcopy(spec.default)),
+                mode="json",
+            )
+    return values
 
 
 def _assign_path(target: dict[str, Any], path: tuple[str, ...], value: object) -> None:

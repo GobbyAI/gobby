@@ -20,12 +20,13 @@ use super::super::sidebar_model::{ProjectEntry, WorktreeEntry};
 use super::super::{PaneId, Workspace};
 use super::actions::{
     activate_live_tab, close_live_pane, open_live_rename, spawn_live_shell, spawn_live_terminal,
-    sync_live_chrome, terminate_live_terminal,
+    terminate_live_terminal,
 };
 use super::control::{focus_live_pane, release_live_control};
 use super::menu::attention_id;
 use super::modal_input::{close_modal, edit_text, ModalOutcome};
 use super::mouse::Placement;
+use super::sync_live_chrome;
 use super::workspace_actions::{place_live_terminal, send_workspace_op};
 
 /// Make `project_id` the focused project: its roster replaces the current

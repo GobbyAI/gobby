@@ -10,9 +10,10 @@ Line types:
     - response_item: Conversation content (messages, tool calls, tool results)
     - event_msg: Metadata events (task_started, turn_aborted, token_count)
     - session_meta: Session metadata
-    - turn_context: Turn context metadata
+    - turn_context: Per-turn metadata. payload.model is that turn's model.
 
-Only response_item lines produce ParsedMessage objects. Within response_item,
+response_item lines, token_count events, and turn_context lines with a model
+produce ParsedMessage objects. Within response_item,
 payload.type discriminates:
     - message: User/assistant/developer messages with content blocks
     - function_call/custom_tool_call/web_search_call: Tool invocation variants
@@ -396,6 +397,8 @@ class CodexTranscriptParser(BaseTranscriptParser):
 
         if line_type == "event_msg":
             return self._parse_event_msg(data, payload, index, timestamp)
+        if line_type == "turn_context":
+            return self._parse_turn_model(data, payload, index, timestamp)
         if line_type != "response_item":
             return None
 
@@ -418,6 +421,30 @@ class CodexTranscriptParser(BaseTranscriptParser):
             raw=payload,
             timestamp=timestamp,
             message_id=self._message_id_for(index, payload.get("id")),
+        )
+
+    def _parse_turn_model(
+        self,
+        data: dict[str, Any],
+        payload: dict[str, Any],
+        index: int,
+        timestamp: datetime,
+    ) -> ParsedMessage | None:
+        model = payload.get("model")
+        if not isinstance(model, str) or not model.strip():
+            return None
+        return ParsedMessage(
+            index=index,
+            role="assistant",
+            content="",
+            content_type="usage",
+            tool_name=None,
+            tool_input=None,
+            tool_result=None,
+            timestamp=timestamp,
+            raw_json=data,
+            model=model.strip(),
+            message_id=self._message_id_for(index, payload.get("turn_id")),
         )
 
     def _remember_nested_exec_call(self, payload: dict[str, Any]) -> None:

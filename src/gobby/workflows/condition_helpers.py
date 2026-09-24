@@ -26,6 +26,7 @@ from gobby.tasks.transcript_outcomes import (
 )
 from gobby.workflows.monolith_guard import MONOLITH_SOURCE_EXTENSIONS
 from gobby.workflows.rust_test_evidence import rust_edit_is_test_writing
+from gobby.workflows.tdd_paths import tdd_path_identity
 
 logger = logging.getLogger(__name__)
 
@@ -169,12 +170,7 @@ def tdd_gate_open(variables: Mapping[str, Any], project_path: str | None = None)
     root = Path(project_path).resolve() if project_path else None
 
     def identity(path: str) -> str:
-        candidate = Path(path)
-        if root is not None:
-            resolved = (candidate if candidate.is_absolute() else root / candidate).resolve()
-            if resolved.is_relative_to(root):
-                return resolved.relative_to(root).as_posix()
-        return _normalize_condition_path(path).rstrip("/")
+        return tdd_path_identity(path, root, _normalize_condition_path)
 
     written = {
         identity(path)

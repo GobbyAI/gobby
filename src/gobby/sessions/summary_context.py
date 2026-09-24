@@ -131,15 +131,17 @@ async def _build_summary_prompt_context(
         transcript_path=getattr(session, "transcript_path", None),
     )
 
-    last_turns = _strip_injected_context_from_value(parser.extract_turns_since_clear(turns))
-    transcript_summary = _format_transcript_fallback_summary(
-        last_turns,
-        format_turns_for_llm,
-    )
-    last_messages = _strip_injected_context_from_value(
-        parser.extract_last_messages(turns, num_pairs=2)
-    )
-    last_messages_str = format_turns_for_llm(last_messages) if last_messages else ""
+    # Pure compute over the whole summary window; off the loop so a large
+    # session's summary cannot stall hooks and HTTP (#22811).
+    def _format_turns() -> tuple[str, str]:
+        last_turns = _strip_injected_context_from_value(parser.extract_turns_since_clear(turns))
+        summary = _format_transcript_fallback_summary(last_turns, format_turns_for_llm)
+        last_messages = _strip_injected_context_from_value(
+            parser.extract_last_messages(turns, num_pairs=2)
+        )
+        return summary, format_turns_for_llm(last_messages) if last_messages else ""
+
+    transcript_summary, last_messages_str = await asyncio.to_thread(_format_turns)
 
     resolved_db = _summary_context_db(db, session_manager)
     run_db_fn = _facade_attr("_run_db")

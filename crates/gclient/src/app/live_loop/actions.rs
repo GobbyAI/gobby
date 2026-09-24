@@ -1,10 +1,9 @@
 //! Chrome actions for the live loop: keymap actions, relative focus,
-//! terminal spawn/terminate, and chrome sync from the workspace.
+//! terminal spawn/terminate, and action dispatch.
 
 use std::io::{self, Write};
 use std::process::{Command, Stdio};
 
-use crate::app::ViewerState;
 use crate::copy_mode::copy_or_request_selection;
 use crate::daemon::{Daemon, KillOutcome, LiveDaemon, SpawnOutcome, SpawnRequest};
 use crate::frame_source::FrameError;
@@ -30,116 +29,19 @@ use super::menu::{apply_local_menu_action, ContextMenuKind, MenuAction};
 use super::modal_input::{apply_rename, open_alerts_dialog, persist_prefs, ModalOutcome};
 use super::mouse::{MouseOutcome, Placement};
 use super::orphans::{agent_orphan, destroy_orphans, open_destroy_orphans_dialog};
+use super::projection::close_slot;
 use super::projects::{
     close_live_terminal, close_project, close_project_confirmed, create_worktree, focus_agent,
     focus_project, focus_terminal, mark_agent_seen, open_agent_in_new_tab, open_new_project_dialog,
     open_new_worktree_dialog, open_open_worktree_dialog, open_remove_worktree_dialog,
     open_worktree, remove_worktree, rename_project, reveal_agent, submit_new_project,
 };
+use super::sync_live_chrome;
 use super::workspace_actions::{
-    apply_daemon_menu_action, close_daemon_pane, close_daemon_tab, move_daemon_tab,
-    place_live_terminal, rename_daemon_target, resize_daemon_split, swap_live_slots,
+    apply_daemon_menu_action, close_daemon_pane, close_daemon_tab, move_active_daemon_tab,
+    move_daemon_tab, move_focused_pane_to_tab, place_live_terminal, rename_daemon_target,
+    resize_daemon_split, swap_live_slots,
 };
-
-/// Show the daemon's layout for the focused project and reap what left.
-/// The model is re-projected when it (or the project) moved since the last
-/// sync, and a pane a placement op landed in takes the focus. Then the
-/// slots whose pane left the workspace go: a local tab's as before, the
-/// tab dropped once empty; a daemon tab's only unmapped, since the daemon's
-/// layout keeps the slot, which renders empty until its terminal resolves.
-pub fn sync_live_chrome(workspace: &mut Workspace<LiveDaemon>, chrome: &mut Chrome) {
-    project_live_workspace(workspace, chrome);
-    let index = chrome.active_index();
-    let viewer = &mut chrome.viewer;
-    let set = chrome.project_tabs.set_mut();
-    for tab in &mut set.tabs {
-        let stale: Vec<_> = tab
-            .slots
-            .iter()
-            .filter_map(|(slot, pane_id)| (!workspace.panes.contains_key(pane_id)).then_some(*slot))
-            .collect();
-        for slot in stale {
-            if tab.is_local() {
-                close_slot(tab, viewer, slot);
-            } else {
-                tab.slots.remove(&slot);
-            }
-        }
-    }
-    set.tabs
-        .retain(|tab| !tab.is_local() || !tab.slots.is_empty());
-    chrome.settle_active_index(index);
-}
-
-/// Project the workspace model onto the focused project's tab bar when it
-/// moved since the last projection, copy the rows' pane labels onto the
-/// resolved panes, and focus the pane a pending placement landed in.
-fn project_live_workspace(workspace: &mut Workspace<LiveDaemon>, chrome: &mut Chrome) {
-    let Some(project) = workspace.project_id().map(str::to_owned) else {
-        return;
-    };
-    chrome.focus_project(&project);
-    let Some(model) = workspace.workspace_model() else {
-        return;
-    };
-    let stamp = (project.clone(), model.generation());
-    if chrome.viewer.applied.as_ref() == Some(&stamp) {
-        return;
-    }
-    chrome.project_workspace(workspace, &project);
-    chrome.viewer.applied = Some(stamp);
-    let mut labels = Vec::new();
-    for tab in chrome.tabs().tabs.iter().filter(|tab| !tab.is_local()) {
-        for (slot, pane) in &tab.slots {
-            let label = chrome
-                .viewer
-                .panes
-                .daemon_id(*slot)
-                .and_then(|pane_id| model.pane(pane_id))
-                .and_then(|row| row.label.clone());
-            labels.push((*pane, label));
-        }
-    }
-    for (pane, label) in labels {
-        workspace.pane_mut(pane).label = label;
-    }
-    let mut held = Vec::new();
-    for (tab_id, pane_id) in workspace.take_placed_panes() {
-        let on_bar = chrome.tabs().tabs.iter().any(|tab| tab.id == tab_id);
-        let Some(slot) = chrome.viewer.panes.slot(&pane_id).filter(|_| on_bar) else {
-            // Another project's tab: the placement waits for its bar while
-            // the daemon still has the tab.
-            if workspace
-                .workspace_model()
-                .is_some_and(|model| model.tab(&tab_id).is_some())
-            {
-                held.push((tab_id, pane_id));
-            }
-            continue;
-        };
-        chrome
-            .viewer
-            .active_tab
-            .insert(project.clone(), tab_id.clone());
-        chrome.viewer.focus.insert(tab_id, slot);
-        chrome.tab_scroll_follow_active = true;
-    }
-    workspace.hold_placed_panes(held);
-}
-
-/// Drop `slot` from `tab`. The layout keeps its last pane (it refuses to
-/// close it), so an emptied tab is left for `sync_live_chrome` to reap.
-fn close_slot(tab: &mut Tab, viewer: &mut ViewerState, slot: layout::PaneId) {
-    tab.slots.remove(&slot);
-    if tab.slots.is_empty() {
-        return;
-    }
-    if let Some(next) = tab.layout.close_focused(slot) {
-        if viewer.focus_of(tab) == slot {
-            viewer.focus.insert(tab.id.clone(), next);
-        }
-    }
-}
 
 /// Apply what `route_mouse` decided. Focus moves chrome first and then the
 /// lease (it follows focus), or only the workspace focus for an observe-only
@@ -167,6 +69,7 @@ pub(super) async fn apply_live_mouse_outcome(
         }
         MouseOutcome::Action(Action::Quit) => return Ok(true),
         MouseOutcome::Action(action) => handle_live_action(workspace, chrome, action).await?,
+        MouseOutcome::TakeFreeControl { pane } => workspace.request_control(pane, false),
         MouseOutcome::Spawn { placement } => {
             spawn_live_terminal(workspace, chrome, placement).await?;
         }
@@ -562,6 +465,14 @@ pub(super) async fn handle_live_action(
         }
         Action::PreviousTab => activate_relative_live_tab(workspace, chrome, -1).await?,
         Action::NextTab => activate_relative_live_tab(workspace, chrome, 1).await?,
+        Action::MoveTabLeft => move_active_daemon_tab(workspace, chrome, -1).await?,
+        Action::MoveTabRight => move_active_daemon_tab(workspace, chrome, 1).await?,
+        Action::MovePaneToTab(index) => {
+            if let Some(index) = usize::from(index).checked_sub(1) {
+                move_focused_pane_to_tab(workspace, chrome, Some(index)).await?;
+            }
+        }
+        Action::MovePaneToNewTab => move_focused_pane_to_tab(workspace, chrome, None).await?,
         Action::SwitchTab(index) => {
             if let Some(index) = usize::from(index).checked_sub(1) {
                 activate_live_tab(workspace, chrome, index).await?;

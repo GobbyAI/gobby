@@ -341,6 +341,8 @@ def parse_test_reference(reference: str) -> tuple[str, str] | None:
     path, symbol = reference.split("::", 1)
     path = path.strip()
     symbol = symbol.strip()
+    if len(symbol) >= 2 and symbol[0] == symbol[-1] and symbol[0] in "\"'":
+        symbol = symbol[1:-1].strip()
     return (path, symbol) if path and symbol else None
 
 
@@ -397,6 +399,7 @@ def _extract_braced_test_body(source: str, symbol: str) -> str:
         rf"(?m)^[ \t]*(?:export\s+)?(?:async\s+)?function\s+{escaped}\b",
         rf"(?m)^[ \t]*func(?:\s+\([^)]*\))?\s+{escaped}\b",
         rf"(?m)^[ \t]*(?:const|let|var)\s+{escaped}\s*=.*?=>",
+        rf"""(?m)^[ \t]*(?:it|test)(?:\.[A-Za-z]+)?\(\s*(['"]){escaped}\1""",
     )
     matches = [match for pattern in patterns for match in re.finditer(pattern, source)]
     if len(matches) != 1:

@@ -247,6 +247,7 @@ class TerminalWsMixin:
                 "frame_delivery": record.frame_delivery,
                 "direct": None if locator is None else locator.direct_block(),
                 "lease_generation": registry.generation(terminal_id),
+                "lease_holder": registry.holder_info(terminal_id),
                 "success": True,
             },
         )
@@ -347,7 +348,7 @@ class TerminalWsMixin:
         )
         serialized = []
         for row in items:
-            item = inventory_item(row)
+            item = inventory_item(row, lease_holder=self._leases().holder_info(row.id))
             pane = panes.get(row.locator_key or "")
             if pane is not None:
                 item.update(

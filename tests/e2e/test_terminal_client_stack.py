@@ -12,7 +12,7 @@ import sys
 import tempfile
 import time
 import uuid
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Literal, TypeIs, cast
@@ -612,7 +612,11 @@ async def test_terminal_client_stack_end_to_end(
     assert _is_item_pair(attention)
     native_entry, tmux_entry = attention
     _respond(client, native_entry)
-    _respond(client, tmux_entry)
+    # The first response can advance the other CLI's prompt. Read its current
+    # fingerprint immediately before answering the second entry.
+    current_tmux_entry = _roster_entry(client, tmux_session)
+    assert current_tmux_entry, tmux_entry
+    _respond(client, current_tmux_entry)
     await _assert_input_reaches(native_frames, "ANSWERED:", description="native attention answer")
     await _assert_input_reaches(tmux_frames, "ANSWERED:", description="tmux attention answer")
 
@@ -658,20 +662,9 @@ async def test_terminal_client_stack_end_to_end(
         timeout=8.0,
         description="gclient direct frames while daemon is down",
     )
-    web_disconnected = False
-    try:
-        await web_ws.send(
-            {
-                "type": "terminal_input",
-                "terminal_id": native_id,
-                "attachment_id": web_ws.attachment_id,
-                "data": "DAEMON-DOWN\r",
-                "client_write_seq": 99,
-            }
-        )
-    except Exception:
-        web_disconnected = True
-    assert web_disconnected or web_ws.of_type("terminal_attachment_finalized")
+    assert web_ws._task is not None
+    await asyncio.wait_for(web_ws._task, timeout=5.0)
+    assert web_ws._ws is not None and web_ws._ws.close_code is not None
     daemon_instance.restart()
     client.close()
     client = _http(daemon_instance)
@@ -1087,6 +1080,105 @@ def test_gclient_reaches_workspace(daemon_instance: DaemonInstance) -> None:
         assert client.poll() is None
 
 
+async def test_gclient_reorders_tabs_and_moves_a_running_pane(
+    daemon_instance: DaemonInstance,
+) -> None:
+    async def snapshot() -> dict[str, Any]:
+        session = WsSession(daemon_instance)
+        await session.connect()
+        try:
+            await session.send(
+                {
+                    "type": "workspace_snapshot",
+                    "request_id": "pane-move-snapshot",
+                    "project_id": E2E_PROJECT_ID,
+                }
+            )
+            return await session.wait_for(
+                lambda item: item.get("type") == "workspace_snapshot"
+                and item.get("request_id") == "pane-move-snapshot",
+                timeout=10.0,
+                description="project workspace snapshot",
+            )
+        finally:
+            await session.close()
+
+    async def until(predicate: Callable[[dict[str, Any]], bool]) -> dict[str, Any]:
+        deadline = time.monotonic() + 15.0
+        latest = await snapshot()
+        while not predicate(latest) and time.monotonic() < deadline:
+            await asyncio.to_thread(client.read, 0.05)
+            latest = await snapshot()
+        assert predicate(latest), latest
+        return latest
+
+    with _gclient(daemon_instance) as client:
+        await asyncio.to_thread(client.expect, "Sessions")
+        first = await until(lambda row: len(row["tabs"]) == 1)
+        original = first["panes"][0]
+        terminal_id = original["terminal_id"]
+        await asyncio.to_thread(client.chord, "c")
+        await until(lambda row: len(row["tabs"]) == 2)
+        await asyncio.to_thread(client.chord, "c")
+        three = await until(lambda row: len(row["tabs"]) == 3)
+        initial_ids = [tab["id"] for tab in three["tabs"]]
+
+        await asyncio.to_thread(client.chord, "\x1b[1;2D")
+        moved_left = await until(
+            lambda row: [tab["id"] for tab in row["tabs"]]
+            == [initial_ids[0], initial_ids[2], initial_ids[1]]
+        )
+        assert moved_left["tabs"][1]["id"] == initial_ids[2]
+
+        await asyncio.to_thread(client.chord, "\x1b[1;2C")
+        await until(lambda row: [tab["id"] for tab in row["tabs"]] == initial_ids)
+
+        header = client.screen.lines[0]
+        source = header.index("tab-0:")
+        target = header.rindex("tab-0:")
+        assert target > source
+        client.send(f"\x1b[<0;{source + 2};1M\x1b[<0;{target + 2};1m")
+        dragged = await until(
+            lambda row: [tab["id"] for tab in row["tabs"]]
+            == [initial_ids[1], initial_ids[2], initial_ids[0]]
+        )
+        assert dragged["tabs"][2]["id"] == initial_ids[0]
+
+        await asyncio.to_thread(client.chord, "@")
+        placed = await until(
+            lambda row: any(
+                pane["id"] == original["id"] and pane["tab_id"] == initial_ids[2]
+                for pane in row["panes"]
+            )
+        )
+        assert len(placed["tabs"]) == 2
+        assert (
+            next(pane for pane in placed["panes"] if pane["id"] == original["id"])["terminal_id"]
+            == terminal_id
+        )
+
+        await asyncio.to_thread(client.chord, "C")
+        new_tab = await until(
+            lambda row: any(
+                pane["id"] == original["id"]
+                and pane["tab_id"] not in {initial_ids[1], initial_ids[2]}
+                for pane in row["panes"]
+            )
+        )
+        final_tab_id = next(pane for pane in new_tab["panes"] if pane["id"] == original["id"])[
+            "tab_id"
+        ]
+        assert any(tab["id"] == final_tab_id for tab in new_tab["tabs"])
+
+    restored = await snapshot()
+    assert any(
+        pane["id"] == original["id"]
+        and pane["tab_id"] == final_tab_id
+        and pane["terminal_id"] == terminal_id
+        for pane in restored["panes"]
+    )
+
+
 class ClientWire:
     """Forward real daemon traffic, observing messages and injecting boundary faults."""
 
@@ -1189,13 +1281,19 @@ async def _adopt(daemon: DaemonInstance, terminal_id: str) -> str:
     id. Nothing else tells two rows apart: the name ladder ends at the
     foreground command, so two `/bin/sh` rows read alike, and the navigator
     matches the row title and detail, which is where the address sits. So the
-    tests address a terminal by adopting it into a tab of the node's default
-    workspace, exactly as a user does.
+    tests address a terminal by adopting it into a tab of the registered
+    project's default workspace, exactly where gclient attaches it.
     """
     session = WsSession(daemon)
     await session.connect()
     try:
-        await session.send({"type": "workspace_snapshot", "request_id": "adopt-snapshot"})
+        await session.send(
+            {
+                "type": "workspace_snapshot",
+                "request_id": "adopt-snapshot",
+                "project_id": E2E_PROJECT_ID,
+            }
+        )
         snapshot = await session.wait_for(
             lambda item: item.get("type") == "workspace_snapshot"
             and item.get("request_id") == "adopt-snapshot",
@@ -1242,7 +1340,13 @@ async def _placed_address(
         attempt = 0
         while True:
             request_id = f"placed-{attempt}-{terminal_id[:8]}"
-            await session.send({"type": "workspace_snapshot", "request_id": request_id})
+            await session.send(
+                {
+                    "type": "workspace_snapshot",
+                    "request_id": request_id,
+                    "project_id": E2E_PROJECT_ID,
+                }
+            )
             snapshot = await session.wait_for(
                 lambda item, wanted=request_id: item.get("type") == "workspace_snapshot"
                 and item.get("request_id") == wanted,
@@ -1338,7 +1442,7 @@ async def _shell(daemon: DaemonInstance, *, marker: str = "GCLIENT-SHELL-READY")
 
 async def _take_and_echo(client: GclientDriver, marker: str) -> None:
     await asyncio.to_thread(client.chord, "t")
-    await _screen(client, "held")
+    await _screen(client, "Focused")
     # Splitting the marker means terminal echo alone cannot satisfy the assertion.
     left, right = marker.rsplit("-", 1)
     client.send(f"echo {left}-'{right}'\r")
@@ -1380,7 +1484,10 @@ async def test_gclient_renders_native_row_direct_and_types(daemon_instance: Daem
             await _take_and_echo(client, "GCLIENT-INTERRUPTED-OK")
             assert "SLEEP-COMPLETED" not in client.screen.text
             inputs = [item for item in wire.sent if item.get("type") == "terminal_input"]
-            assert any("\x03" in item.get("data", "") for item in inputs)
+            # Direct delivery writes Ctrl-C on the host frame socket. The
+            # completed shell marker above proves it interrupted sleep;
+            # it must not be mirrored through the daemon WebSocket.
+            assert not any("\x03" in item.get("data", "") for item in inputs)
             assert not any(item.get("type") == "terminal_paste" for item in wire.sent)
 
 
@@ -1588,11 +1695,17 @@ async def test_gclient_spawns_and_terminates_a_terminal(daemon_instance: DaemonI
             spawned_id = row["id"]
             spawned_address = await _placed_address(daemon_instance, spawned_id)
             await _screen(client, spawned_address)
-            if spawned_address not in client.screen.lines[-1]:
-                await asyncio.to_thread(client.chord, "\t")
+            await asyncio.to_thread(client.chord, "l")
+
+            def spawned_focused(screen: Screen) -> bool:
+                # The focused badge lives on the right pane's lower border;
+                # the final row is the global prefix hint, not pane metadata.
+                border = screen.lines[-2]
+                return border.count("┘") >= 2 and border.rfind("Focused") > border.find("┘")
+
             await asyncio.to_thread(
                 client.wait_for,
-                lambda screen: spawned_address in screen.lines[-1],
+                spawned_focused,
                 description="spawned terminal selected",
             )
             await _take_and_echo(client, "GCLIENT-SPAWNED-OK")
@@ -1622,12 +1735,12 @@ async def test_gclient_follows_a_live_pty_resize(daemon_instance: DaemonInstance
         await _screen(client, "GCLIENT-BEFORE-RESIZE")
         assert client.screen.cols == 120
         assert client.screen.rows == 40
-        assert address in client.screen.lines[-1]
+        assert "Focused" in client.screen.lines[-1]
         client.resize(100, 32)
         await _screen(client, "GCLIENT-BEFORE-RESIZE")
         await asyncio.to_thread(
             client.wait_for,
-            lambda screen: address in screen.lines[31],
+            lambda screen: "Focused" in screen.lines[31],
             description="status bar moved to the resized bottom row",
         )
         assert len(client.screen.lines) == 32
