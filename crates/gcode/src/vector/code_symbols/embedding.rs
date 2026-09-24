@@ -92,15 +92,18 @@ impl EmbeddingBackend {
                 })?;
                 embed_text(client, config, &input)
             }
-            EmbeddingSource::Daemon(context) => {
-                embed_via_daemon_or_err(context, &[text.to_string()]).and_then(|embeddings| {
-                    embeddings.into_iter().next().ok_or_else(|| {
-                        VectorLifecycleError::EmbeddingResponse(
-                            "daemon embedding response was empty".to_string(),
-                        )
-                    })
+            EmbeddingSource::Daemon(context) => embed_via_daemon_or_err(
+                context,
+                &[text.to_string()],
+                daemon_embedding_is_query(true),
+            )
+            .and_then(|embeddings| {
+                embeddings.into_iter().next().ok_or_else(|| {
+                    VectorLifecycleError::EmbeddingResponse(
+                        "daemon embedding response was empty".to_string(),
+                    )
                 })
-            }
+            }),
         }
     }
 
@@ -117,27 +120,37 @@ impl EmbeddingBackend {
                 })?;
                 embed_text_batch(client, config, texts)
             }
-            EmbeddingSource::Daemon(context) => embed_via_daemon_or_err(context, texts),
+            EmbeddingSource::Daemon(context) => {
+                embed_via_daemon_or_err(context, texts, daemon_embedding_is_query(false))
+            }
         }
     }
 }
 
-#[cfg(feature = "ai")]
 const INDEXING_EMBED_QUERY_MODE: bool = false;
+
+fn daemon_embedding_is_query(for_query: bool) -> bool {
+    if for_query {
+        true
+    } else {
+        INDEXING_EMBED_QUERY_MODE
+    }
+}
 
 fn embed_via_daemon_or_err(
     context: &AiContext,
     texts: &[String],
+    is_query: bool,
 ) -> Result<Vec<Vec<f32>>, VectorLifecycleError> {
     #[cfg(feature = "ai")]
     {
-        daemon::embed_via_daemon(context, texts, INDEXING_EMBED_QUERY_MODE)
+        daemon::embed_via_daemon(context, texts, is_query)
             .map(|result| result.embeddings)
             .map_err(|error| VectorLifecycleError::EmbeddingResponse(error.to_string()))
     }
     #[cfg(not(feature = "ai"))]
     {
-        let _ = (context, texts);
+        let _ = (context, texts, is_query);
         Err(VectorLifecycleError::EmbeddingResponse(
             "gcode built without the ai feature".to_string(),
         ))
@@ -181,8 +194,12 @@ pub(super) fn audited_query_embedding(
         context.bindings.embed.api_base = Some(expected_endpoint.to_string());
         context.bindings.embed.model = Some(expected_model.to_string());
         attach_grant(&mut context, ctx);
-        let result = daemon::embed_via_daemon(&context, &[query.to_string()], true)
-            .map_err(|error| VectorLifecycleError::EmbeddingResponse(error.to_string()))?;
+        let result = daemon::embed_via_daemon(
+            &context,
+            &[query.to_string()],
+            daemon_embedding_is_query(true),
+        )
+        .map_err(|error| VectorLifecycleError::EmbeddingResponse(error.to_string()))?;
         if result.model != expected_model || result.dim != expected_dimension {
             return Err(VectorLifecycleError::EmbeddingResponse(format!(
                 "daemon embedding identity changed: expected model {expected_model:?} dimension {expected_dimension}, found model {:?} dimension {}",
@@ -525,12 +542,22 @@ mod tests {
 
     #[test]
     #[cfg(feature = "ai")]
-    fn embed_via_daemon_or_err_uses_document_mode_for_indexing() {
-        const {
-            assert!(
-                !super::INDEXING_EMBED_QUERY_MODE,
-                "indexing embeddings must use document mode"
-            );
-        }
+    fn daemon_embed_request_uses_query_mode_for_queries_and_document_mode_for_indexing() {
+        let query = gobby_core::ai::daemon::embeddings_request_body(
+            &["query".to_string()],
+            super::daemon_embedding_is_query(true),
+            None,
+            None,
+            None,
+        );
+        let indexing = gobby_core::ai::daemon::embeddings_request_body(
+            &["document".to_string()],
+            super::daemon_embedding_is_query(false),
+            None,
+            None,
+            None,
+        );
+        assert_eq!(query["is_query"].as_bool(), Some(true));
+        assert_eq!(indexing["is_query"].as_bool(), Some(false));
     }
 }

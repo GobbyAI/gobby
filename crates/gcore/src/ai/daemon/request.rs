@@ -131,7 +131,7 @@ pub(super) fn text_request_body(
     Value::Object(body)
 }
 
-pub(super) fn embeddings_request_body(
+pub fn embeddings_request_body(
     input: &[String],
     is_query: bool,
     project_id: Option<&str>,
