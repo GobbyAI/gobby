@@ -5189,7 +5189,7 @@ enum PaneClickCase {
     Free,
 }
 
-async fn check_pane_click_case(case: PaneClickCase) {
+async fn check_pane_click_case(case: PaneClickCase) -> usize {
     let mock = MockDaemon::start("local-token").await;
     mock.use_unique_attachment_ids();
     let peer_holder = matches!(case, PaneClickCase::InitiallyHeld | PaneClickCase::ExplicitTakeover)
@@ -5432,37 +5432,42 @@ async fn check_pane_click_case(case: PaneClickCase) {
             "agent pane offers take-back"
         );
     }
+    let take_requests = websocket_requests(&mock, "terminal_take_control").len();
     mock.shutdown().await;
+    take_requests
 }
 
 #[tokio::test]
 async fn left_click_on_initially_agent_held_pane_leaves_lease_unchanged() {
-    check_pane_click_case(PaneClickCase::InitiallyHeld).await;
+    assert_eq!(check_pane_click_case(PaneClickCase::InitiallyHeld).await, 0);
 }
 
 #[tokio::test]
 async fn explicit_takeover_of_initially_agent_held_pane_still_works() {
-    check_pane_click_case(PaneClickCase::ExplicitTakeover).await;
+    assert_eq!(
+        check_pane_click_case(PaneClickCase::ExplicitTakeover).await,
+        1
+    );
 }
 
 #[tokio::test]
 async fn left_drag_select_does_not_take_control() {
-    check_pane_click_case(PaneClickCase::Drag).await;
+    assert_eq!(check_pane_click_case(PaneClickCase::Drag).await, 1);
 }
 
 #[tokio::test]
 async fn left_click_on_controlled_pane_sends_no_take_control() {
-    check_pane_click_case(PaneClickCase::Controlled).await;
+    assert_eq!(check_pane_click_case(PaneClickCase::Controlled).await, 1);
 }
 
 #[tokio::test]
 async fn left_click_on_agent_held_pane_offers_takeover_without_interrupting() {
-    check_pane_click_case(PaneClickCase::AgentHeld).await;
+    assert_eq!(check_pane_click_case(PaneClickCase::AgentHeld).await, 1);
 }
 
 #[tokio::test]
 async fn left_click_on_free_pane_takes_control_immediately() {
-    check_pane_click_case(PaneClickCase::Free).await;
+    assert_eq!(check_pane_click_case(PaneClickCase::Free).await, 2);
 }
 
 /// A control wish recorded during a disconnect survives until the workspace
@@ -7117,6 +7122,401 @@ async fn daemon_restart_refetches_workspace_snapshot() {
     let tab = &chrome.tabs().tabs[0];
     assert_eq!(tab.id, tab_id);
     assert_eq!(tab.slots.len(), 2, "both panes survive the restart");
+    mock.shutdown().await;
+}
+
+async fn run_pane_move_case(
+    tabs: &[(&[&str], &str)],
+    chords: Vec<(KeyCode, KeyModifiers)>,
+) -> (
+    MockDaemon,
+    Workspace<LiveDaemon>,
+    Chrome,
+    Vec<(String, Vec<String>)>,
+) {
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    let terminals: Vec<&str> = tabs
+        .iter()
+        .flat_map(|(ids, _)| ids.iter().copied())
+        .collect();
+    for _ in 0..5 {
+        mock.enqueue("GET", "/api/terminals?", 200, roster_items(&terminals));
+    }
+    let seeded = mock.seed_workspace("project-1", tabs);
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon);
+    workspace.select_project("project-1");
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("attach workspace");
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(32);
+    let driver = async {
+        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        for (code, modifiers) in chords {
+            send_chord(&input_tx, code, modifiers).await;
+            settle_live_event().await;
+        }
+        drop(input_tx);
+    };
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits");
+    (mock, workspace, chrome, seeded)
+}
+
+#[tokio::test]
+async fn moving_pane_to_existing_tab_preserves_terminal_and_reflows_source() {
+    let (mock, workspace, chrome, seeded) = run_pane_move_case(
+        &[
+            (&["terminal-a", "terminal-b"], "terminal-a"),
+            (&["terminal-c"], "terminal-c"),
+        ],
+        vec![(KeyCode::Char('@'), KeyModifiers::NONE)],
+    )
+    .await;
+    let moves: Vec<_> = websocket_requests(&mock, "workspace_op")
+        .into_iter()
+        .filter(|op| op["op"] == "pane.move")
+        .collect();
+    assert_eq!(moves.len(), 1, "move must use the daemon op: {moves:?}");
+    assert_eq!(moves[0]["pane"], json!(seeded[0].1[0]));
+    assert_eq!(moves[0]["tab"], json!(seeded[1].0));
+    let model = workspace.workspace_model().expect("workspace model");
+    assert_eq!(
+        model.pane(&seeded[0].1[0]).expect("moved pane").tab_id,
+        seeded[1].0
+    );
+    assert_eq!(
+        model
+            .pane(&seeded[0].1[0])
+            .expect("moved pane")
+            .terminal_id
+            .as_deref(),
+        Some("terminal-a")
+    );
+    assert!(
+        chrome.tabs().tabs[0].slots.len() == 1,
+        "source tab closes the gap"
+    );
+    assert_eq!(
+        chrome.focused_pane(),
+        workspace.pane_for_terminal("terminal-a")
+    );
+    mock.shutdown().await;
+}
+
+#[tokio::test]
+async fn moving_last_pane_removes_empty_source_tab() {
+    let (mock, workspace, chrome, seeded) = run_pane_move_case(
+        &[
+            (&["terminal-a"], "terminal-a"),
+            (&["terminal-b"], "terminal-b"),
+        ],
+        vec![
+            (KeyCode::Char('2'), KeyModifiers::NONE),
+            (KeyCode::Char('1'), KeyModifiers::SHIFT),
+        ],
+    )
+    .await;
+    let model = workspace.workspace_model().expect("workspace model");
+    assert!(
+        model.tab(&seeded[1].0).is_none(),
+        "empty source tab is removed"
+    );
+    assert_eq!(
+        model.pane(&seeded[1].1[0]).expect("moved pane").tab_id,
+        seeded[0].0
+    );
+    assert_eq!(chrome.tabs().tabs.len(), 1);
+    assert_eq!(
+        chrome.focused_pane(),
+        workspace.pane_for_terminal("terminal-b")
+    );
+    mock.shutdown().await;
+}
+
+#[tokio::test]
+async fn moving_pane_to_new_tab_keeps_its_process_and_closes_placeholder() {
+    let (mock, workspace, chrome, seeded) = run_pane_move_case(
+        &[(&["terminal-a"], "terminal-a")],
+        vec![(KeyCode::Char('C'), KeyModifiers::SHIFT)],
+    )
+    .await;
+    let ops = websocket_requests(&mock, "workspace_op");
+    let mutations: Vec<_> = ops
+        .iter()
+        .filter_map(|op| op["op"].as_str())
+        .filter(|op| *op != "workspace.set_focus_hints")
+        .collect();
+    assert_eq!(mutations, ["tab.create", "pane.move", "pane.close"]);
+    assert_eq!(
+        ops.iter().find(|op| op["op"] == "pane.move").expect("move")["pane"],
+        json!(seeded[0].1[0])
+    );
+    let model = workspace.workspace_model().expect("workspace model");
+    assert!(model.tab(&seeded[0].0).is_none(), "last-pane source closes");
+    assert_eq!(
+        model
+            .pane(&seeded[0].1[0])
+            .expect("original pane")
+            .terminal_id
+            .as_deref(),
+        Some("terminal-a")
+    );
+    assert_eq!(
+        chrome.focused_pane(),
+        workspace.pane_for_terminal("terminal-a")
+    );
+    assert!(websocket_requests(&mock, "terminal_kill")
+        .iter()
+        .all(|op| op["terminal_id"] != "terminal-a"));
+    mock.shutdown().await;
+}
+
+#[tokio::test]
+async fn keyboard_tab_reorder_persists_and_stops_at_edges() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    for _ in 0..3 {
+        mock.enqueue(
+            "GET",
+            "/api/terminals?",
+            200,
+            roster_items(&["terminal-a", "terminal-b", "terminal-c"]),
+        );
+    }
+    let seeded = mock.seed_workspace(
+        "project-1",
+        &[
+            (&["terminal-a"], "terminal-a"),
+            (&["terminal-b"], "terminal-b"),
+            (&["terminal-c"], "terminal-c"),
+        ],
+    );
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon);
+    workspace.select_project("project-1");
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("attach workspace");
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(16);
+    let driver = async {
+        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        send_chord(&input_tx, KeyCode::Char('2'), KeyModifiers::NONE).await;
+        settle_live_event().await;
+        send_chord(&input_tx, KeyCode::Left, KeyModifiers::SHIFT).await;
+        settle_live_event().await;
+        send_chord(&input_tx, KeyCode::Left, KeyModifiers::SHIFT).await;
+        settle_live_event().await;
+        send_chord(&input_tx, KeyCode::Right, KeyModifiers::SHIFT).await;
+        settle_live_event().await;
+        drop(input_tx);
+    };
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits");
+    let moves: Vec<_> = websocket_requests(&mock, "workspace_op")
+        .into_iter()
+        .filter(|op| op["op"] == "tab.move")
+        .collect();
+    assert_eq!(
+        moves.len(),
+        2,
+        "edge position must not send a move: {moves:?}"
+    );
+    assert_eq!(moves[0]["tab"], json!(seeded[1].0));
+    assert_eq!(moves[0]["position"], json!(0));
+    assert_eq!(moves[1]["position"], json!(1));
+    let order: Vec<_> = workspace
+        .workspace_model()
+        .expect("workspace snapshot")
+        .tabs_for_project("project-1")
+        .iter()
+        .map(|tab| tab.id.as_str())
+        .collect();
+    assert_eq!(
+        order,
+        [
+            seeded[0].0.as_str(),
+            seeded[1].0.as_str(),
+            seeded[2].0.as_str()
+        ]
+    );
+    mock.shutdown().await;
+}
+
+#[tokio::test]
+async fn daemon_tab_drag_reorders_and_reattaches_in_that_order() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    for _ in 0..3 {
+        mock.enqueue(
+            "GET",
+            "/api/terminals?",
+            200,
+            roster_items(&["terminal-a", "terminal-b", "terminal-c"]),
+        );
+    }
+    let seeded = mock.seed_workspace(
+        "project-1",
+        &[
+            (&["terminal-a"], "terminal-a"),
+            (&["terminal-b"], "terminal-b"),
+            (&["terminal-c"], "terminal-c"),
+        ],
+    );
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon);
+    workspace.select_project("project-1");
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("attach workspace");
+    let mut probe = Chrome::dark();
+    sync_live_chrome(&mut workspace, &mut probe);
+    let area = Rect::new(0, 0, 120, 40);
+    probe.compute_view(&workspace, area);
+    let mut probe_terminal = Terminal::new(TestBackend::new(120, 40)).expect("probe terminal");
+    let mut hits = None;
+    probe_terminal
+        .draw(|frame| hits = Some(render_workspace(frame, &workspace, &probe)))
+        .expect("draw tab hits");
+    probe.view.apply_hits(hits.expect("probe frame"));
+    let tab_cell = |index| {
+        probe
+            .view
+            .tab_hit_areas
+            .iter()
+            .find(|(tab, _)| *tab == index)
+            .map(|(_, rect)| (rect.x + 1, rect.y))
+            .expect("tab hit area")
+    };
+    let (from, target) = (tab_cell(1), tab_cell(2));
+
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(16);
+    let driver = async {
+        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        send_mouse(
+            &input_tx,
+            MouseEventKind::Down(MouseButton::Left),
+            from.0,
+            from.1,
+            KeyModifiers::NONE,
+        )
+        .await;
+        send_mouse(
+            &input_tx,
+            MouseEventKind::Drag(MouseButton::Left),
+            target.0,
+            target.1,
+            KeyModifiers::NONE,
+        )
+        .await;
+        send_mouse(
+            &input_tx,
+            MouseEventKind::Up(MouseButton::Left),
+            target.0,
+            target.1,
+            KeyModifiers::NONE,
+        )
+        .await;
+        settle_live_event().await;
+        drop(input_tx);
+    };
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits");
+    let moves: Vec<_> = websocket_requests(&mock, "workspace_op")
+        .into_iter()
+        .filter(|op| op["op"] == "tab.move")
+        .collect();
+    assert_eq!(moves.len(), 1, "drag must send one tab.move: {moves:?}");
+    assert_eq!(moves[0]["tab"], json!(seeded[1].0));
+    assert_eq!(moves[0]["position"], json!(2));
+    let order: Vec<_> = workspace
+        .workspace_model()
+        .expect("workspace snapshot")
+        .tabs_for_project("project-1")
+        .iter()
+        .map(|tab| tab.id.as_str())
+        .collect();
+    assert_eq!(
+        order,
+        [
+            seeded[0].0.as_str(),
+            seeded[2].0.as_str(),
+            seeded[1].0.as_str()
+        ]
+    );
+    let visible: Vec<_> = chrome
+        .tabs()
+        .tabs
+        .iter()
+        .map(|tab| tab.id.as_str())
+        .collect();
+    assert_eq!(
+        visible, order,
+        "the live tab bar follows the persisted order"
+    );
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("reattach daemon");
+    let mut reattached = Workspace::live(daemon);
+    reattached.select_project("project-1");
+    reattached
+        .reconcile_subscribe_first()
+        .await
+        .expect("reattach workspace");
+    let restored: Vec<_> = reattached
+        .workspace_model()
+        .expect("reattached snapshot")
+        .tabs_for_project("project-1")
+        .iter()
+        .map(|tab| tab.id.as_str())
+        .collect();
+    assert_eq!(restored, order);
     mock.shutdown().await;
 }
 

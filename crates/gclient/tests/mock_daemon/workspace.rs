@@ -367,6 +367,71 @@ impl WorkspaceSim {
                 let project = tab["project_id"].as_str().map(str::to_string);
                 vec![self.event("tab.closed", project.as_deref(), vec![tab], removed)]
             }
+            "pane.move" => {
+                let (Some(pane_id), Some(tab_id)) = (field("pane"), field("tab")) else {
+                    return Vec::new();
+                };
+                let Some(source_index) = self.tab_index_of(&pane_id) else {
+                    return Vec::new();
+                };
+                let Some(target_index) = self.tabs.iter().position(|tab| tab["id"] == tab_id)
+                else {
+                    return Vec::new();
+                };
+                if source_index == target_index {
+                    return Vec::new();
+                }
+                let reference = lowest_free(
+                    self.panes
+                        .iter()
+                        .filter(|pane| pane["tab_id"] == tab_id)
+                        .map(|pane| pane["ref"].as_u64().unwrap_or(0)),
+                );
+                let Some(pane) = self.panes.iter_mut().find(|pane| pane["id"] == pane_id) else {
+                    return Vec::new();
+                };
+                pane["tab_id"] = json!(tab_id);
+                pane["ref"] = json!(reference);
+                let pane = pane.clone();
+                let source_layout = remove_leaf(&self.tabs[source_index]["layout"], &pane_id);
+                let removed_source = source_layout.is_none();
+                if let Some(layout) = source_layout {
+                    self.tabs[source_index]["layout"] = layout;
+                    if self.tabs[source_index]["focused_pane_id"] == pane_id {
+                        let first = leaves(&self.tabs[source_index]["layout"])
+                            .into_iter()
+                            .next();
+                        self.tabs[source_index]["focused_pane_id"] = json!(first);
+                    }
+                }
+                self.tabs[target_index]["layout"] = json!({
+                    "kind": "split",
+                    "axis": field("axis").unwrap_or_else(|| "horizontal".into()),
+                    "ratio": 0.5,
+                    "children": [self.tabs[target_index]["layout"].clone(), leaf(&pane_id)],
+                });
+                self.tabs[target_index]["focused_pane_id"] = json!(pane_id);
+                let project = self.tabs[target_index]["project_id"]
+                    .as_str()
+                    .map(str::to_string);
+                let mut changed = vec![self.tabs[target_index].clone()];
+                if !removed_source {
+                    changed.insert(0, self.tabs[source_index].clone());
+                }
+                let mut events =
+                    vec![self.event("pane.moved", project.as_deref(), changed, vec![pane])];
+                if removed_source {
+                    let source = self.tabs.remove(source_index);
+                    let source_project = source["project_id"].as_str().map(str::to_string);
+                    events.push(self.event(
+                        "tab.removed",
+                        source_project.as_deref(),
+                        vec![source],
+                        Vec::new(),
+                    ));
+                }
+                events
+            }
             "pane.swap" => {
                 let (Some(pane_id), Some(other)) = (field("pane"), field("other")) else {
                     return Vec::new();

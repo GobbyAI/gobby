@@ -961,12 +961,19 @@ fn websocket_reply(state: &Arc<Mutex<MockState>>, request: &Value) -> Option<Val
                 }));
             }
             let events = state.workspace.apply(request);
+            let result = if request.get("op").and_then(Value::as_str) == Some("tab.create") {
+                events
+                    .first()
+                    .map(|event| json!({"tabs": event["tabs"], "panes": event["panes"]}))
+            } else {
+                None
+            };
             state.pending_workspace_events.extend(events);
             Some(json!({
                 "type": "workspace_op",
                 "request_id": request.get("request_id"),
                 "op": request.get("op"),
-                "result": null,
+                "result": result,
             }))
         }
         _ => None,

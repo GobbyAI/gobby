@@ -44,7 +44,11 @@ pub enum Action {
     RenameTab,
     PreviousTab,
     NextTab,
+    MoveTabLeft,
+    MoveTabRight,
     SwitchTab(u8),
+    MovePaneToTab(u8),
+    MovePaneToNewTab,
     SwitchProject(u8),
     CloseTab,
     RenamePane,
@@ -198,7 +202,27 @@ pub const BINDINGS: &[BindingSpec] = &[
     spec("rename_tab", "Rename the active tab", &["prefix+shift+t"]),
     spec("previous_tab", "Select the previous tab", &["prefix+p"]),
     spec("next_tab", "Select the next tab", &["prefix+n"]),
+    spec(
+        "move_tab_left",
+        "Move the active tab left",
+        &["prefix+shift+left"],
+    ),
+    spec(
+        "move_tab_right",
+        "Move the active tab right",
+        &["prefix+shift+right"],
+    ),
     indexed("switch_tab", "Switch to tab 1-9", &["prefix+1..9"]),
+    indexed(
+        "move_pane_to_tab",
+        "Move the focused pane to tab 1-9",
+        &["prefix+shift+1..9"],
+    ),
+    spec(
+        "move_pane_to_new_tab",
+        "Move the focused pane to a new tab",
+        &["prefix+shift+c"],
+    ),
     indexed("switch_project", "Focus project 1-9", &[]),
     spec("close_tab", "Close the active tab", &["prefix+shift+x"]),
     spec(
@@ -291,6 +315,7 @@ macro_rules! action_names {
                 match self {
                     Action::FocusAttention(_) => "focus_attention",
                     Action::SwitchTab(_) => "switch_tab",
+                    Action::MovePaneToTab(_) => "move_pane_to_tab",
                     Action::SwitchProject(_) => "switch_project",
                     $(Action::$variant => $name,)*
                 }
@@ -302,6 +327,7 @@ macro_rules! action_names {
                 match name {
                     "focus_attention" => index.map(Action::FocusAttention),
                     "switch_tab" => index.map(Action::SwitchTab),
+                    "move_pane_to_tab" => index.map(Action::MovePaneToTab),
                     "switch_project" => index.map(Action::SwitchProject),
                     $($name => Some(Action::$variant),)*
                     _ => None,
@@ -327,7 +353,10 @@ action_names! {
     "previous_attention" => PreviousAttention,
     "next_attention" => NextAttention, "new_tab" => NewTab,
     "next_workspace" => NextWorkspace, "rename_tab" => RenameTab,
-    "previous_tab" => PreviousTab, "next_tab" => NextTab, "close_tab" => CloseTab,
+    "previous_tab" => PreviousTab, "next_tab" => NextTab,
+    "move_tab_left" => MoveTabLeft, "move_tab_right" => MoveTabRight,
+    "move_pane_to_new_tab" => MovePaneToNewTab,
+    "close_tab" => CloseTab,
     "rename_pane" => RenamePane, "copy_mode" => CopyMode,
     "focus_pane_left" => FocusPaneLeft, "focus_pane_down" => FocusPaneDown,
     "focus_pane_up" => FocusPaneUp, "focus_pane_right" => FocusPaneRight,

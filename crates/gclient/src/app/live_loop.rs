@@ -31,13 +31,14 @@ use super::sidebar_model::SidebarModel;
 use super::{PaneId, SidebarFetch, SidebarFetchFuture, Workspace, WorkspaceModel};
 
 mod actions;
-pub use actions::sync_live_chrome;
 mod control;
 pub(super) mod menu;
 pub(super) mod modal_input;
 pub(super) mod mouse;
 pub(super) mod orphans;
+mod projection;
 pub(super) mod projects;
+pub use projection::sync_live_chrome;
 mod suspend;
 mod workspace_actions;
 mod workspaces;

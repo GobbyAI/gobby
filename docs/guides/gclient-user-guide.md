@@ -302,6 +302,7 @@ and only work after you bind them; every action also appears in the help popup
 | `prefix+c` | Open a new tab with a fresh shell | `new_tab` |
 | `prefix+n` / `prefix+p` | Next / previous tab | `next_tab` / `previous_tab` |
 | `prefix+1` … `prefix+9` | Switch to tab 1–9 | `switch_tab` |
+| `prefix+shift+left` / `prefix+shift+right` | Move the active tab one position left / right | `move_tab_left` / `move_tab_right` |
 | `prefix+shift+t` | Rename the active tab | `rename_tab` |
 | `prefix+shift+x` | Close the active tab | `close_tab` |
 
@@ -317,6 +318,8 @@ and only work after you bind them; every action also appears in the help popup
 | `prefix+shift+h` / `j` / `k` / `l` | Swap with the pane in that direction | `swap_pane_*` |
 | `prefix+tab` / `prefix+shift+tab` | Cycle to the next / previous pane | `cycle_pane_next` / `cycle_pane_previous` |
 | `prefix+shift+p` | Rename the focused pane | `rename_pane` |
+| `prefix+shift+1` … `prefix+shift+9` | Move the focused pane to tab 1–9 in this workspace | `move_pane_to_tab` |
+| `prefix+shift+c` | Move the focused pane to a new tab in this workspace | `move_pane_to_new_tab` |
 | `prefix+r` | Enter resize mode | `resize_mode` |
 | `prefix+[` | Enter copy mode | `copy_mode` |
 | *unset* | Open a new terminal (splits right) | `new_terminal` |
@@ -399,6 +402,11 @@ on the workspace shows it, it survives daemon restarts, and
 `gobby panes rename REF [NAME]` sets or clears the same label from the CLI.
 Neither changes the terminal's own title. A project label is yours alone; the
 client keeps it in `prefs.toml`.
+
+Moving a pane to another tab keeps its running process and scrollback, and focus
+follows it. The source layout closes the gap; if it was the last pane, the
+empty source tab disappears. Tab order and pane placement are saved in the
+workspace and survive detach and reattach.
 
 ## Attach and control
 
@@ -624,7 +632,7 @@ Mouse support is on by default; turn it off with `--no-mouse` or the
 | Wheel over the tab bar | Switch tabs |
 | Wheel over the sidebar | Scroll the section under the pointer |
 | Click a tab, the new-tab button, or the scroll arrows | Switch, open, or scroll tabs |
-| Drag a tab | Reorder tabs |
+| Drag a tab onto another tab | Reorder tabs, including when the terminal delivers only press and release events |
 | Click `[Menu]` / `[+]` on the menu band | Open the global menu / add a project |
 | Click a project card / worktree row | Focus the project (expanding its card) / open the worktree |
 | Drag a project card | Reorder projects |
