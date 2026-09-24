@@ -58,8 +58,11 @@ Writer verification: the scripts capture refs into shell variables that die with
 Move: FOLD. Scripts paragraph: each successful `new-tab` is followed by `echo "CREATED_TAB=<tab ref>" >&2`, no rollback; 2.1.6 adds the failure path to the guide; new 2.1.9 with test `script_stops_at_refused_op_and_names_created_tabs` (the mock daemon refuses the first `split` after the second `new-tab`: nonzero exit, `code: reason`, one `CREATED_TAB=` line per tab, no further op); V1 step 7 names the lines.
 Resolution: folded in the E2 commit.
 
+### Enhancer consensus (enhancer message, 2026-09-23 23:0x CDT)
+Verbatim: "CONSENSUS on .gobby/plans/runbooks.md at commit f6388d0534366a8f6023bed1bdb36e8a81fbca62, sha256 d9d65815736a1cd0b384860228d34241ec36190ee96b5dba1ff7be114e03afcf. I verified both working file and committed blob against the hash, reviewed the E2 diff and council-log entries, and independently ran bare `uv run gobby plans validate .gobby/plans/runbooks.md` (clean, 3 phases). cr-1 folded ... cr-2 folded ... No further enhancement items on this hash; enhancer round converged. Please hand this exact commit/hash to adversary gobby#14423 per #22808 FLOW." Writer: hash handed to the adversary in the same minute (waking message).
+
 ## Adversary findings
-Pending; the adversary attacks the folded hash. Same format, plus `check_keys`.
+The adversary attacks the enhancement-consensus hash `d9d65815...afcf` at `f6388d05` (handed over 23:0x CDT). Same format as the enhancer items, plus `check_key`.
 Check-in (adversary message, 2026-09-23 21:0x CDT): "Send me the folded hash of .gobby/plans/runbooks.md ... only after enhancement consensus, with the commit sha. I attack that hash and no earlier one. I edit no files. Debate each finding until you fold it or I withdraw it; I finalize to gobby#14018." Writer acknowledgment sent 21:3x CDT (non-waking): the hash goes out only after enhancement consensus, in one message with the sha256, the commit sha and the bare validate result; no hash yet.
 
 ## Program Director rulings
@@ -117,8 +120,8 @@ Pre-round fold commit `d42521cc0981f36430ff1f2505fcd1704b572498`; plan sha256 `a
 S1 commit `eebfc0ad2db67f2b82168cf3517da46a5f18ed91` (decisions 13-15 recorded; bare validate clean; `git diff --check` clean, 20:3x CDT).
 S2 commit `9d082c7db47a160ef6b980831e32aad604332a97`, S3 commit `e7d05fac306c75ba23574e4711675f1362b0b5ce`, S4 commit `e413116cb9302b1169e19b97f91719bec642e7e5`; sweep hash (sent to the PD in message `26982800`, 21:1x CDT): plan sha256 `8987dd5ebb02f3cd6c5a6563b202f5488da9834df66424f1ea4ed68c3692342c`; bare validate clean (Phases 3); `git diff --check` clean. Its five positions were accepted in R2.
 S5 (this entry): plan sha256 `c8a9238f6ad8e2fcf9ebcc579b6cc8797b2ba876e59302cc194169bfdb843bad`; bare validate clean; `git diff --check` clean (21:3x CDT). This is the hash the enhancer starts on unless the PD rules otherwise.
-E2 (this entry; cr-1 and cr-2 folded): plan sha256 `d9d65815736a1cd0b384860228d34241ec36190ee96b5dba1ff7be114e03afcf`; bare validate clean; `git diff --check` clean (23:0x CDT). Sent to the enhancer for re-review.
-Pending: enhancer consensus on the E2 hash, the adversary round, the final commit and hash, validation output, the adversary's finalization message, the PD's review and hand-off to the assistant.
+E2 (this entry; cr-1 and cr-2 folded): plan sha256 `d9d65815736a1cd0b384860228d34241ec36190ee96b5dba1ff7be114e03afcf`; bare validate clean; `git diff --check` clean (23:0x CDT). Enhancer consensus on this hash at 23:0x CDT; it is the hash the adversary attacks.
+Pending: the adversary round, the final commit and hash, validation output, the adversary's finalization message, the PD's review and hand-off to the assistant.
 
 ### Writer refinements while writing S2 and S3 (named to the Program Director with the hash)
 - Registration source (criterion 1 versus 3): the design of record had the persona say "gterm for a workspace pane". Criterion 1's sentence "A definition that names one fails validation" is literal, so no definition names a backend; instead 1.2's pane view gains `backend` from the terminals row the `session_ref` JOIN already reads, and the registration line repeats what `get_workspace` shows. Cost: one derived field. The adopted-terminal case then needs no caveat text.
