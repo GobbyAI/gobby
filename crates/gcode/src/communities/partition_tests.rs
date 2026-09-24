@@ -263,6 +263,51 @@ fn singleton_cohesion_is_one() {
 }
 
 #[test]
+fn internal_edges_matches_full_edge_scan() {
+    let left = numbered("a", 4);
+    let right = numbered("b", 4);
+    let mut edges = Undirected::new();
+    clique(&mut edges, &left, 1);
+    clique(&mut edges, &right, 2);
+    link(&mut edges, "a/f01.py", "b/f02.py", 1);
+    link(&mut edges, "a/f03.py", "c/f00.py", 1);
+    // A left key sharing `a/f01.py` as a prefix ends that member's range.
+    link(&mut edges, "a/f01.pyi", "a/f02.py", 1);
+    link(&mut edges, "a/f01.py", "a/f01.py", 1);
+    let full_scan = |members: &[String]| {
+        edges
+            .keys()
+            .filter(|(from, to)| members.contains(from) && members.contains(to))
+            .count()
+    };
+    let mixed = [
+        &left[..2],
+        &right[2..],
+        paths(&["a/f01.pyi", "c/f00.py"]).as_slice(),
+    ]
+    .concat();
+
+    assert_eq!(
+        internal_edges(&left, &edges),
+        7,
+        "the clique's six pairs plus the self-loop"
+    );
+    for members in [
+        Vec::new(),
+        left.clone(),
+        right.clone(),
+        [left.clone(), right.clone()].concat(),
+        mixed,
+    ] {
+        assert_eq!(
+            internal_edges(&members, &edges),
+            full_scan(&members),
+            "members {members:?}"
+        );
+    }
+}
+
+#[test]
 fn member_signature_matches_graphify_shape() {
     // sha256 of "a.py\0b.py\0", truncated to 16 hex digits, exactly as
     // Graphify's `_member_signature` computes it.

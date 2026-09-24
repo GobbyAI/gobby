@@ -24,6 +24,29 @@ the plan: the current skip avoids the database replacement only after the full i
 graph and Leiden partition have been rebuilt. The smaller C1 graph remains within the
 budget.
 
+## 2026-09-24 correction: the Gobby cost was `internal_edges`, not Leiden
+
+A `sample` of a live one-file `gcode index` on the Gobby checkout put about 100% of the
+main thread in `internal_edges` (partition.rs). It scanned every folded import edge once
+per community, and it runs for every group in the low-cohesion pass and again for every
+final community: O(communities x edges) over 2,353 communities. Leiden, the import load
+and the database were near zero. Task #22858 finds each member's edges with a `BTreeMap`
+range over the `left <= right` keys, which gives the same count.
+
+The harness corpus is gone (the `gobby_gcode_test` database was recreated on 2026-09-23),
+so the fix was measured on the live path, with release builds and the same command:
+`gcode index --files=crates/gcode/src/lib.rs --quiet` on the main checkout, file
+unchanged, 2,353 communities, `skipped_unchanged=true`.
+
+| Binary | Wall | User |
+| --- | ---: | ---: |
+| Installed before #22858 | 17.37 s | 6.60 s |
+| #22858, run 1 | 2.47 s | 0.33 s |
+| #22858, run 2 | 0.99 s | 0.46 s |
+
+The input-digest contingency below is not needed: the rebuild is now cheap, and the
+existing output-signature skip avoids the write.
+
 ## Over-budget contingency
 
 The required digest contingency is a digest of the deduplicated `(source, module)` row

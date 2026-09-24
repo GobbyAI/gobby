@@ -301,12 +301,20 @@ fn is_low_cohesion(member_count: usize, internal_edges: usize) -> bool {
 }
 
 /// Member pairs with at least one import between them, in either direction.
+/// Keys are folded `left <= right`, so each pair is found once through a range
+/// over its left member; a scan of every key per community is quadratic.
 fn internal_edges(members: &[String], undirected: &BTreeMap<(String, String), usize>) -> usize {
     let inside = members.iter().map(String::as_str).collect::<HashSet<_>>();
-    undirected
-        .keys()
-        .filter(|(left, right)| inside.contains(left.as_str()) && inside.contains(right.as_str()))
-        .count()
+    members
+        .iter()
+        .map(|member| {
+            undirected
+                .range((member.clone(), String::new())..)
+                .take_while(|((left, _), _)| left == member)
+                .filter(|((_, right), _)| inside.contains(right.as_str()))
+                .count()
+        })
+        .sum()
 }
 
 /// `internal_edges / (n(n-1)/2)`, and `1.0` for a singleton, matching Graphify.
