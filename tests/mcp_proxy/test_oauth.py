@@ -407,6 +407,47 @@ async def test_token_exchange_failure_surfaces_safe_headers_and_redacts_credenti
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("auth_method", ["none", "client_secret_basic", "client_secret_post"])
+async def test_token_failure_redacts_request_credentials_echoed_in_error_text(
+    secret_store: SecretStore, caplog: pytest.LogCaptureFixture, auth_method: str
+) -> None:
+    """Credentials the request sent stay hidden when only the public error fields echo them."""
+
+    class Echoing(AuthorizationServer):
+        def respond(self, request: httpx2.Request) -> httpx2.Response:
+            if request.url.path == "/custom/token":
+                self.requests.append(request)
+                params = parse_qs(request.content.decode())
+                self.echoed = [params["code"][0], params["code_verifier"][0]]
+                if auth_method != "none":
+                    self.echoed.append("client-secret")
+                authorization = request.headers.get("Authorization", "")
+                return httpx2.Response(
+                    400,
+                    json={
+                        "error": "invalid_request",
+                        "error_description": f"rejected {' and '.join(self.echoed)}",
+                        "message": f"header was {authorization or 'absent'}",
+                    },
+                )
+            return super().respond(request)
+
+    server = Echoing(auth_method)
+    caplog.set_level("WARNING")
+    with pytest.raises(OAuthFlowError) as error:
+        await login(secret_store, server)
+    visible = str(error.value) + caplog.text
+    assert "error=invalid_request" in visible
+    assert "error_description=rejected [redacted] and [redacted]" in visible
+    for secret in server.echoed:
+        assert secret not in visible
+    if auth_method == "client_secret_basic":
+        encoded = base64.b64encode(b"gobby-client:client-secret").decode()
+        assert encoded not in visible
+        assert "message=header was Basic [redacted]" in visible
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("auth_method", ["none", "client_secret_basic", "client_secret_post"])
 async def test_login_reconnect_and_refresh_after_restart(
     secret_store: SecretStore, auth_method: str
 ) -> None:
