@@ -49,7 +49,9 @@ _CLI_COMPACT_INTERRUPT_KEYS: dict[str, NamedKey] = {
 # Blind path (no transcript observer): wait this long after the interrupt key.
 _DEFAULT_INTERRUPT_SETTLE_SECONDS = 0.1
 # Observed path: poll the transcript this long per interrupt attempt.
-_OBSERVED_INTERRUPT_SETTLE_SECONDS = 1.0
+# The failed Grok goal-mode attempt restarted its model loop about 9 seconds
+# after the last Ctrl+C. Keep observing before another potentially quitting press.
+_OBSERVED_INTERRUPT_SETTLE_SECONDS = 12.0
 _INTERRUPT_ATTEMPTS = 3
 _INTERRUPT_POLL_SECONDS = 0.05
 # After submitting the command, poll the pane this long for the CLI rejecting it
@@ -168,7 +170,12 @@ async def _confirm_interrupt(
     pressed = False
     for _attempt in range(_INTERRUPT_ATTEMPTS):
         if pressed and turn_settled is not None and turn_settled() is True:
-            return True, None, None
+            # Grok goal mode can start a successor about 92 ms after a completed
+            # turn. Confirm that the composer stays idle before treating it as
+            # the interrupt result or sending another Ctrl+C.
+            await asyncio.sleep(_TURN_SETTLE_POLL_SECONDS)
+            if turn_settled() is True:
+                return True, None, None
         ok, reason = await send_pane_key(
             pane, key, session_id, action="sending compaction interrupt"
         )
@@ -443,7 +450,7 @@ async def _send_terminal_compaction_command(
                 resubmission,
                 _COMPACTION_REJECTION_RETRIES,
             )
-        # A rejection proves the turn is live, so only the first submission waits.
+        # A rejection may race with a turn ending, so only the first submission waits.
         # The wait also returns once the armed turn has ended and goal mode has
         # already started the next one. That successor is still interrupted.
         if not resubmission:
@@ -454,7 +461,7 @@ async def _send_terminal_compaction_command(
                 wait_seconds=settle_wait_seconds,
                 poll_seconds=settle_poll_seconds,
             )
-        if resubmission or turn_settled is None or turn_settled() is not True:
+        if turn_settled is None or turn_settled() is not True:
             interrupted, reason, detail = await _interrupt_turn(
                 pane,
                 interrupt_key,
