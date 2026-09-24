@@ -1,7 +1,7 @@
 # gclient screen golden: help_dialog
 # 120x40, dark theme, colours normalised to theme::Palette roles
-00 |                                                                                                                        |
-00 : -/panel_bg+d*120
+00 | Gobby  File  Edit  View  Window  Agent  Help                                                                           |
+00 : panel_bg/accent+bd*120
 01 | M┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  |
 01 : -/surface0+d*1 subtext0/surface0+bd*1 accent/panel_bg*116 -/panel_bg+d*2
 02 | ⍾│keybinds                                                                                                esc close │─┐|
@@ -78,5 +78,5 @@
 37 : -/panel_bg+d*2 accent/panel_bg*1 overlay0/panel_bg*8 text/panel_bg*1 overlay0/panel_bg*10 text/panel_bg*16 overlay0/panel_bg*9 text/panel_bg*9 -/panel_bg*61 accent/panel_bg*1 -/panel_bg+d*1 accent/panel_bg+d*1
 38 |  └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘ ┘|
 38 : -/panel_bg+d*2 accent/panel_bg*116 accent/panel_bg+bd*1 accent/panel_bg+d*1
-39 | prefix ctrl+b │ keys                                                                                                   |
-39 : -/surface_dim+d*1 subtext0/surface_dim+d*13 accent/surface_dim+d*7 -/surface_dim+d*99
+39 |                                                                                                   prefix ctrl+b │ keys |
+39 : -/surface0+d*99 subtext0/surface0+d*16 accent/surface0+d*4 -/surface0+d*1

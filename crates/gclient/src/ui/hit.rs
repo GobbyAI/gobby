@@ -94,6 +94,10 @@ pub enum Hit {
     SettingsDialog,
     /// A button of the open dialog, as an index into its button row.
     DialogButton(usize),
+    /// A menu bar title, as an index into `MenuBarMenu::ALL`.
+    MenuTitle(usize),
+    /// The menu bar beside its titles.
+    MenuBarEmpty,
     ControlIndicator,
     Status,
     Toast,
@@ -120,6 +124,10 @@ pub fn hit_test(view: &ViewState, column: u16, row: u16) -> Hit {
     }
     if view.toast_hit_area.is_some_and(|toast| toast.contains(at)) {
         return Hit::Toast;
+    }
+    if view.menu_bar_rect.contains(at) {
+        return find_at(&view.menu_title_hit_areas, at)
+            .map_or(Hit::MenuBarEmpty, |(index, _)| Hit::MenuTitle(*index));
     }
     if view.tab_bar_rect.is_some_and(|bar| bar.contains(at)) {
         return tab_bar_hit(view, at);

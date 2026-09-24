@@ -188,6 +188,8 @@ impl Tab {
 pub struct ViewState {
     /// Row 0 across the whole frame, reserved for the menu bar.
     pub menu_bar_rect: Rect,
+    /// Menu bar title cells, by index into `MenuBarMenu::ALL`.
+    pub menu_title_hit_areas: Vec<(usize, Rect)>,
     /// Zero-width unless the sidebar is pinned.
     pub sidebar_rect: Rect,
     pub tab_bar_rect: Option<Rect>,
@@ -245,6 +247,7 @@ impl ViewState {
     /// frame the user saw (herdr wrote them back from `render`).
     pub fn apply_hits(&mut self, hits: ChromeHits) {
         let ChromeHits {
+            menu_bar,
             tab_bar,
             sidebar,
             control_indicator,
@@ -255,6 +258,7 @@ impl ViewState {
             dialog_buttons,
         } = hits;
         self.dialog_button_hit_areas = dialog_buttons;
+        self.menu_title_hit_areas = menu_bar.titles;
         self.tab_hit_areas = tab_bar.tabs;
         self.tab_scroll_left_hit_area = tab_bar.scroll_left;
         self.tab_scroll_right_hit_area = tab_bar.scroll_right;
