@@ -17,7 +17,9 @@ use crate::ui::{Action, Chrome, Mode, WorkspaceView};
 
 use super::super::PaneId;
 use super::menu::{activate_menu, close_menu, menu_hit, ContextMenuKind, MenuAction};
-use super::modal_input::{activate_settings_row, close_modal, ModalOutcome};
+use super::modal_input::{
+    activate_settings_row, close_modal, keybind_help_key, rename_key, ModalOutcome,
+};
 use super::projects::project_dialog_key;
 
 mod forward;
@@ -135,6 +137,10 @@ pub enum MouseOutcome {
     /// its key would have produced (Enter for the primary button, Esc for
     /// the rest).
     Modal(ModalOutcome),
+    /// A respond dialog's button was clicked: the loop routes the key it
+    /// stands for (Enter for `send`, Esc for `cancel`) through the response
+    /// input, which answers the daemon.
+    Respond(KeyCode),
     /// Not ours: later routers (copy-mode selection) may still claim it.
     Ignore,
 }
@@ -178,9 +184,10 @@ pub fn route_mouse<W: WorkspaceView>(
         Mode::Settings => return settings_mouse(ws, chrome, mouse),
         Mode::ConfirmClose => return confirm_close_mouse(chrome, mouse),
         Mode::ProjectDialog => return project_dialog_mouse(chrome, mouse),
-        Mode::Rename | Mode::Respond | Mode::KeybindHelp | Mode::Navigator => {
-            return MouseOutcome::Handled
-        }
+        Mode::Rename => return rename_mouse(chrome, mouse),
+        Mode::Respond => return respond_mouse(chrome, mouse),
+        Mode::KeybindHelp => return keybind_help_mouse(chrome, mouse),
+        Mode::Navigator => return MouseOutcome::Handled,
         Mode::ContextMenu => return menu_mouse(chrome, mouse),
         Mode::Terminal | Mode::Navigate | Mode::Prefix | Mode::Resize => {}
     }
@@ -283,6 +290,48 @@ fn project_dialog_mouse(chrome: &mut Chrome, mouse: &MouseEvent) -> MouseOutcome
         _ => return MouseOutcome::Handled,
     };
     MouseOutcome::Modal(project_dialog_key(chrome, &KeyEvent::from(code)))
+}
+
+/// The dialog button a left press landed on, by the renderer's order; `None`
+/// for any other mouse event, which stays with the dialog.
+fn clicked_dialog_button(chrome: &Chrome, mouse: &MouseEvent) -> Option<usize> {
+    if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
+        return None;
+    }
+    match hit_test(&chrome.view, mouse.column, mouse.row) {
+        Hit::DialogButton(index) => Some(index),
+        _ => None,
+    }
+}
+
+/// Rename dialogs: `save`, `clear` and `cancel` are Enter, ^c and Esc.
+fn rename_mouse(chrome: &mut Chrome, mouse: &MouseEvent) -> MouseOutcome {
+    let key = match clicked_dialog_button(chrome, mouse) {
+        Some(0) => KeyEvent::from(KeyCode::Enter),
+        Some(1) => KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
+        Some(_) => KeyEvent::from(KeyCode::Esc),
+        None => return MouseOutcome::Handled,
+    };
+    MouseOutcome::Modal(rename_key(chrome, &key))
+}
+
+/// The respond dialog: `send` and `cancel` are Enter and Esc, which the live
+/// loop routes through the response input because answering needs the daemon.
+fn respond_mouse(chrome: &Chrome, mouse: &MouseEvent) -> MouseOutcome {
+    match clicked_dialog_button(chrome, mouse) {
+        Some(0) => MouseOutcome::Respond(KeyCode::Enter),
+        Some(_) => MouseOutcome::Respond(KeyCode::Esc),
+        None => MouseOutcome::Handled,
+    }
+}
+
+/// Keybinding help: its one button is Esc, `back` out of the search while the
+/// search has focus and `close` otherwise.
+fn keybind_help_mouse(chrome: &mut Chrome, mouse: &MouseEvent) -> MouseOutcome {
+    match clicked_dialog_button(chrome, mouse) {
+        Some(_) => MouseOutcome::Modal(keybind_help_key(chrome, &KeyEvent::from(KeyCode::Esc))),
+        None => MouseOutcome::Handled,
+    }
 }
 
 /// Settings overlay: a left press on a row selects and activates it, the

@@ -1,5 +1,5 @@
 use super::live::{CloseStage, LiveInner, LiveState};
-use super::{decode_message, encode_message, message_kind, route_key, DaemonError, DaemonEvent};
+use super::{decode_message, encode_text, message_kind, route_key, DaemonError, DaemonEvent};
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use futures_util::{SinkExt, StreamExt};
@@ -29,7 +29,8 @@ pub(super) type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 #[derive(Debug)]
 pub(super) enum Outbound {
     Message {
-        value: Value,
+        /// The frame text, from [`encode_frame_text`]: the writer only writes.
+        raw: String,
         write_state: Arc<AtomicU8>,
         written: oneshot::Sender<()>,
     },
@@ -144,18 +145,7 @@ pub(super) async fn run_connection(
         tokio::select! {
             command = outbound.recv() => {
                 match command {
-                    Some(Outbound::Message { value, write_state, written }) => {
-                        let raw = match encode_message(&value)
-                            .and_then(|bytes| String::from_utf8(bytes)
-                                .map_err(|error| super::WsCodecError::Json(
-                                    serde_json::Error::io(std::io::Error::new(
-                                        std::io::ErrorKind::InvalidData,
-                                        error,
-                                    )),
-                                ))) {
-                            Ok(raw) => raw,
-                            Err(error) => break protocol_error(error),
-                        };
+                    Some(Outbound::Message { raw, write_state, written }) => {
                         if write_state
                             .compare_exchange(
                                 WRITE_QUEUED,
@@ -469,6 +459,12 @@ fn fail_waiters(state: &mut LiveState, error: DaemonError) {
         let _ = waiter.send(Err(error.clone()));
     }
     state.control_write_states.clear();
+}
+
+/// A message's frame text, encoded once by its sender before the request
+/// deadline starts: a large payload's encode must not delay `WRITE_STARTED`.
+pub(super) fn encode_frame_text(message: &Value) -> Result<String, DaemonError> {
+    encode_text(message).map_err(protocol_error)
 }
 
 fn protocol_error(error: impl std::fmt::Display) -> DaemonError {

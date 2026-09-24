@@ -19,6 +19,7 @@
         "reading-session-data",
         "creating-and-reading-handoffs",
         "hookless-registration",
+        "titles-reasoning-effort-and-reading-direction",
         "terminal-tools",
         "handoff-flow",
         "compaction-is-in-place",
@@ -31,7 +32,8 @@
       "evidence": [
         "source-audit",
         "focused-sessions",
-        "installed-rules"
+        "installed-rules",
+        "title-provenance"
       ]
     },
     {
@@ -1285,8 +1287,8 @@
     {
       "id": "title-provenance",
       "kind": "completed-task-contract",
-      "command": "get_task(#22163,brief=false); git show a833a68b25 -- src/gobby/storage/sessions/_title_defaults.py",
-      "result": "Closed valid task explicitly requires project#ref: Provider or Task suffix without parentheses; activity panels suppress provisional provider text. Correct stale test literals and contract examples, preserving sticky manual titles."
+      "command": "get_task(#22741,brief=false); git log -- src/gobby/storage/sessions/_title_fields.py (64caf96a7e, #22739); read format_provisional_session_title and format_task_session_title (src/gobby/storage/sessions/_title_defaults.py), clear_successor_title (src/gobby/sessions/title_lifecycle.py) and _canonical_session_title (src/gobby/communications/session_events.py); pytest tests/communications/test_session_events.py",
+      "result": "Titles are deterministic: provisional project#seq: Provider, task project#seq: Task #ref - title, or manual verbatim. Precedence is manual > open claimed task > provisional; title_source is provisional, task or manual (#22739 deleted the heuristic source). A /clear successor inherits only a manual title and recomputes the rest. Status notifications keep ref-prefixed provisional and task titles verbatim and prefix manual titles with the ref (#22741)."
     },
     {
       "id": "focused-sessions",

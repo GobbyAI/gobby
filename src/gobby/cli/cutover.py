@@ -9,8 +9,11 @@ from pathlib import Path
 
 import click
 
+from gobby.cli._daemon_handoffs import protect_pending_handoffs
+from gobby.cli._daemon_protected_runs import clear_protected_runs, fetch_protected_runs
 from gobby.cli.daemon import restart
 from gobby.cli.daemon_preflight import restart_start_refusal
+from gobby.cli.runtime import get_cli_runtime
 from gobby.install.bin_freshness_github import SourceUnavailableError, platform_target
 from gobby.install.bin_set_coherence import (
     IDENTITY_STAMP_NAME,
@@ -20,6 +23,7 @@ from gobby.install.bin_set_coherence import (
     probe_set_member_identity,
     promote_workspace_binary_set,
 )
+from gobby.sessions.handoff_shutdown import HandoffShutdownBlocked
 from gobby.storage.schema_identity_pin import SchemaIdentityError, validate_identity
 from gobby.utils.native_bin import native_bin_dir, native_bin_name, resolve_native_bin
 
@@ -154,6 +158,31 @@ def _verify_restart_target(bin_dir: Path) -> None:
         )
 
 
+def _report(message: str, *, error: bool = False) -> None:
+    click.echo(message, err=error)
+
+
+def _stop_admission_refusal(ctx: click.Context, *, wait: bool) -> str | None:
+    """Apply the restart's stop-time admissions before anything is promoted.
+
+    A protected cron run or an unresolved session handoff refuses the stop, so
+    checking them only at restart time would refuse after promotion and leave
+    the old daemon running against the new binary set.
+    """
+    runtime = get_cli_runtime(ctx)
+    port = runtime.read_only_operational_config().daemon_port
+    if not clear_protected_runs(
+        port, force=False, wait=wait, step=_report, fetch=fetch_protected_runs
+    ):
+        return "a restart-protected cron run is active; re-run with --wait"
+    try:
+        with protect_pending_handoffs(runtime, wait=wait, report=_report):
+            pass
+    except HandoffShutdownBlocked as exc:
+        return f"{exc}; re-run with --wait"
+    return None
+
+
 def run_cutover(
     root: Path,
     bin_dir: Path,
@@ -195,8 +224,13 @@ def run_cutover(
     is_flag=True,
     help="Build even when the schema inputs have uncommitted changes.",
 )
+@click.option(
+    "--wait",
+    is_flag=True,
+    help="Wait for protected cron runs and unresolved session handoffs before promoting.",
+)
 @click.pass_context
-def cutover(ctx: click.Context, workspace: Path, allow_dirty: bool) -> None:
+def cutover(ctx: click.Context, workspace: Path, allow_dirty: bool, wait: bool) -> None:
     """Build and activate all schema-aware native binaries as one set."""
     root = _workspace_root(workspace)
     bin_dir = native_bin_dir()
@@ -207,6 +241,7 @@ def cutover(ctx: click.Context, workspace: Path, allow_dirty: bool) -> None:
                 restart,
                 verbose=False,
                 docker_flag=False,
+                wait=True,
                 expected_identity=expected_identity,
             )
         except SystemExit as exc:
@@ -225,10 +260,9 @@ def cutover(ctx: click.Context, workspace: Path, allow_dirty: bool) -> None:
             root,
             bin_dir,
             restart_daemon=restart_daemon,
-            start_refusal=lambda candidate: restart_start_refusal(
-                ctx,
-                candidate,
-                expected_identity=expected_identity,
+            start_refusal=lambda candidate: (
+                restart_start_refusal(ctx, candidate, expected_identity=expected_identity)
+                or _stop_admission_refusal(ctx, wait=wait)
             ),
         )
     except CutoverError as exc:

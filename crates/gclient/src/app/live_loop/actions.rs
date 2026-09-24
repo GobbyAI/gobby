@@ -16,10 +16,11 @@ use crate::ui::sidebar::{attention_order, next_machine_filter};
 use crate::ui::sidebar_rows::{displayed_project_ids, project_label, project_rows, RowKind};
 use crate::ui::status::Toast;
 use crate::ui::{Action, Chrome, Mode};
+use crossterm::event::KeyEvent;
 use gobby_terminal::layout::{self, find_in_direction, NavDirection};
 use ratatui::layout::Rect;
 
-use super::super::attention::open_response_dialog;
+use super::super::attention::{open_response_dialog, route_response_input};
 use super::super::{PaneId, Workspace};
 use super::control::{
     focus_live_pane, observe_live_pane, release_live_control, send_live_report,
@@ -59,6 +60,9 @@ pub(super) async fn apply_live_mouse_outcome(
 ) -> Result<bool, FrameError> {
     match outcome {
         MouseOutcome::Handled | MouseOutcome::Ignore => {}
+        MouseOutcome::Respond(code) => {
+            route_response_input(workspace, chrome, &KeyEvent::from(code)).await?;
+        }
         MouseOutcome::Focus { pane, observe_only } => {
             chrome.focus_pane(pane);
             if observe_only {

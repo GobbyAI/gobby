@@ -87,18 +87,18 @@ by internal automation.
 
 ## Titles, Reasoning Effort, And Reading Direction
 
-New eligible sessions start with the provisional title `project#session_ref`. The
-first persisted user prompt promotes that to `project#session_ref: <summary>`, using
-up to four meaningful words and a 60-character suffix. Title precedence is manual,
-then the latest active task, then the saved heuristic, then the provisional title.
-The first heuristic is saved even while a manual or task title is visible, so it can
-reappear when that higher-priority title no longer applies. Clearing a session carries
-only a manual title to its successor; automatic titles are generated again.
+Session titles take one of three deterministic forms. A session without an open
+claimed task has the provisional title `project#seq: Provider` (`gobby#12: Claude`).
+Claiming a task sets `project#seq: Task #ref - title`. A manual title is kept
+verbatim. Title precedence is manual, then the open claimed task, then provisional,
+and the public `title_source` is `provisional`, `task`, or `manual`. A `/clear`
+successor inherits a manual title; any other title is recomputed for the successor.
+Status notifications such as Telegram use a provisional or task title as-is and
+prefix a manual one with the session ref: `gobby#12 - My manual title - Paused`.
 
 Full and brief `/api/sessions` records expose nullable `reasoning_effort`, representing
 the latest trustworthy effective effort or, when no effective value is known, the
-requested/configured effort. `heuristic_title` remains internal, while the public
-`title_source` may be `heuristic`.
+requested/configured effort.
 
 The web UI persists `ui_settings.readingDirection` as `auto`, `ltr`, or `rtl`. `auto`
 uses the browser locale and falls back to LTR. The resolved direction is applied to the

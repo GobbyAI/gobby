@@ -203,7 +203,7 @@ fn menu_key(chrome: &mut Chrome, key: &KeyEvent) -> ModalOutcome {
     ModalOutcome::Consumed
 }
 
-fn keybind_help_key(chrome: &mut Chrome, key: &KeyEvent) -> ModalOutcome {
+pub(super) fn keybind_help_key(chrome: &mut Chrome, key: &KeyEvent) -> ModalOutcome {
     let last_line = help_lines(chrome).len().saturating_sub(1);
     let help = &mut chrome.keybind_help;
     let scroll_by = |help: &mut crate::ui::keybind_help::KeybindHelpState, delta: isize| {
@@ -447,7 +447,7 @@ fn confirm_close_key(chrome: &mut Chrome, key: &KeyEvent) -> ModalOutcome {
     }
 }
 
-fn rename_key(chrome: &mut Chrome, key: &KeyEvent) -> ModalOutcome {
+pub(super) fn rename_key(chrome: &mut Chrome, key: &KeyEvent) -> ModalOutcome {
     let Some(Dialog::Rename {
         kind,
         value,
@@ -456,6 +456,11 @@ fn rename_key(chrome: &mut Chrome, key: &KeyEvent) -> ModalOutcome {
     else {
         return close_modal(chrome);
     };
+    if is_ctrl(key, 'c') {
+        value.clear();
+        *cursor = 0;
+        return ModalOutcome::Consumed;
+    }
     match key.code {
         KeyCode::Enter => {
             let committed = (kind.clone(), std::mem::take(value));

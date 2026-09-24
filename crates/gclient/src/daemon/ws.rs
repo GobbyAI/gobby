@@ -134,6 +134,11 @@ fn sort_value(value: &Value) -> Value {
 
 /// Serialize a protocol object to canonical JSON bytes (sorted keys + newline).
 pub fn encode_message(message: &Value) -> Result<Vec<u8>, WsCodecError> {
+    encode_text(message).map(String::into_bytes)
+}
+
+/// [`encode_message`] as the text of a websocket frame.
+pub fn encode_text(message: &Value) -> Result<String, WsCodecError> {
     if !message.is_object() {
         return Err(WsCodecError::NotObject);
     }
@@ -144,7 +149,7 @@ pub fn encode_message(message: &Value) -> Result<Vec<u8>, WsCodecError> {
     let sorted = sort_value(message);
     let mut dumped = serde_json::to_string(&sorted)?;
     dumped.push('\n');
-    Ok(dumped.into_bytes())
+    Ok(dumped)
 }
 
 /// Parse a canonical protocol payload.

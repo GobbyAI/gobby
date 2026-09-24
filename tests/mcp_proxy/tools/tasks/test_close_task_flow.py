@@ -41,7 +41,7 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.task_close_reviews import TaskCloseReview, TaskCloseReviewStore
 from gobby.storage.tasks import LocalTaskManager, Task, TaskHasOpenChildrenError
 from gobby.tasks.acceptance_artifacts import AcceptanceArtifactResult, AcceptanceTest
-from gobby.tasks.close_checklist import evaluate_validation_commands
+from gobby.tasks.close_checklist import CloseGateResult, evaluate_validation_commands
 from gobby.tasks.tdd_evidence import TddEvidenceResult
 from gobby.tasks.transcript_evidence_models import (
     TranscriptEdit,
@@ -403,6 +403,79 @@ async def test_close_attaches_indexed_edit_languages(
     assert judged.edits == evidence.edits
     assert evaluation.transcript_evidence["task_edit_count"] == 2
     assert evaluation.extra["validation_commands"]["last_task_edit_order"] == 3
+
+
+@pytest.mark.asyncio
+async def test_close_gate_scans_transcript_evidence_off_the_event_loop() -> None:
+    # #22708 criterion 9: the edit-language lookup (one DB read per edited path) and the
+    # validation-command gate (re-parsing every transcript run) ran on the daemon loop.
+    task = replace(_task(criteria="npm ci and focused Prettier check succeed."), category="manual")
+    ctx = _ctx(task, validator=object())
+    ctx.session_var_manager = cast(
+        SessionVariableManager,
+        SimpleNamespace(get_variables=lambda _session_id: {"task_edited_files": {task.id: []}}),
+    )
+    evidence = _successful_transcript(task, command="npx prettier --check web")
+    edit = TranscriptEdit(
+        session_id=task.claimed_by_session_id or "",
+        source="codex",
+        path="web/src/app.ts",
+        timestamp=evidence.validation_runs[0].completed_at,
+        order=2,
+        tool_name="Edit",
+    )
+    evidence = replace(evidence, edits=(edit,))
+    loop = asyncio.get_running_loop()
+    served: list[bool] = []
+
+    def serve_unrelated_request() -> None:
+        # On the loop thread the callback cannot run while this call holds the thread.
+        request = threading.Event()
+        loop.call_soon_threadsafe(request.set)
+        served.append(request.wait(timeout=2.0))
+
+    def get_file(_project_id: str, _path: str) -> None:
+        serve_unrelated_request()
+
+    def gate(**kwargs: Any) -> CloseGateResult:
+        if kwargs["evidence"].validation_runs:
+            serve_unrelated_request()
+        return evaluate_validation_commands(**kwargs)
+
+    storage = MagicMock()
+    storage.get_file.side_effect = get_file
+    review = AsyncMock(
+        return_value=ValidationResult(can_close=False, error_type="close_review_required")
+    )
+    with (
+        patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
+        patch.object(lifecycle, "resolve_task_repo_path", return_value="/repo"),
+        patch.object(close_finalization, "_claimed_session_window_start", return_value=None),
+        patch.object(lifecycle, "resolve_close_commit_shas", return_value=([], None)),
+        patch.object(lifecycle, "collect_commit_diff_text", return_value=""),
+        patch.object(
+            lifecycle, "_derive_close_transcript_evidence", AsyncMock(return_value=evidence)
+        ),
+        patch.object(lifecycle, "active_validation_backoff"),
+        patch.object(lifecycle, "evaluate_close_review", review),
+        patch(
+            "gobby.mcp_proxy.tools.tasks._close_evaluation_support.CodeIndexStorage",
+            return_value=storage,
+        ),
+        patch.object(lifecycle, "evaluate_validation_commands", gate),
+    ):
+        evaluation = await _evaluate_close(
+            ctx,
+            task_id=task.id,
+            reason="completed",
+            changes_summary="Restored dependencies.",
+            commit_sha=None,
+            project_path=None,
+            response_detail="diagnostic",
+        )
+
+    assert evaluation.extra["validation_commands"]["last_task_edit_order"] == 2
+    assert served == [True, True]
 
 
 @pytest.mark.asyncio

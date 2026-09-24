@@ -18,6 +18,7 @@ from uuid import uuid4
 import pytest
 
 from gobby.agents.constants import GOBBY_TERMINAL_ID
+from gobby.agents.tmux.text_injection import TMUX_TEXT_ENTER_DELAY_SECONDS
 from gobby.storage.terminals import AttachLocator, HostEpochMismatchError, native_locator_key
 from gobby.terminals.frame_client import decode_frame
 from gobby.terminals.host_client import (
@@ -29,6 +30,7 @@ from gobby.terminals.host_client import (
 )
 from gobby.terminals.host_protocol import HostListRow, frames_socket_path
 from gobby.terminals.input_grants import sync_host_input_grant
+from gobby.terminals.key_bytes import encode_named_key
 from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.native_runtime import (
     NativeBatchFailure,
@@ -40,6 +42,7 @@ from gobby.terminals.runtime import (
     Delivered,
     IndeterminateWrite,
     InputPayloadTooLargeError,
+    NamedKey,
     PreparedSpawn,
     SnapshotResult,
     TerminalSpawnRequest,
@@ -432,6 +435,77 @@ async def test_injection_parity_and_stage(monkeypatch: pytest.MonkeyPatch) -> No
         await runtime.write_text(terminal, "hello", submit=True)
     assert partial.value.stage == "partial"
     assert host.pty == [b"hello"]
+
+
+async def test_ctrl_c_reaches_gterm_as_key_bar_bytes() -> None:
+    """C-c is the key bar's Ctrl+C byte, not the letters C-c."""
+    runtime, host = _runtime()
+    terminal = _native_terminal(host)
+
+    delivered = await runtime.write_key(terminal, "ctrl_c")
+
+    assert isinstance(delivered, Delivered)
+    assert host.writes[0]["kind"] == "key"
+    assert base64.b64decode(host.writes[0]["data"]) == b"\x03"
+    assert host.pty == [b"\x03"]
+
+
+async def test_trailing_newline_is_text_then_a_separate_enter() -> None:
+    """A submit is two host writes: the text, then Enter. Codex drops a newline inside one write."""
+    runtime, host = _runtime()
+    terminal = _native_terminal(host)
+
+    delivered = await runtime.write_text(terminal, "resume", submit=True)
+
+    assert isinstance(delivered, Delivered)
+    assert [item["kind"] for item in host.writes] == ["text", "key"]
+    assert base64.b64decode(host.writes[0]["data"]) == b"resume"
+    assert host.writes[0]["submit"] is False
+    assert base64.b64decode(host.writes[1]["data"]) == b"enter"
+    assert host.pty == [b"resume", b"\n"]
+
+
+async def test_submit_enter_waits_out_the_tmux_paste_gap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Enter is its own write, and only after the tmux paste-settle gap.
+
+    Codex treats an Enter that arrives in the same burst as the paste as part
+    of the paste, so the draft stays in the composer.
+    """
+    runtime, host = _runtime()
+    terminal = _native_terminal(host)
+    gaps: list[tuple[float, int]] = []
+
+    async def record_sleep(seconds: float) -> None:
+        gaps.append((seconds, len(host.writes)))
+
+    monkeypatch.setattr("gobby.terminals.native_runtime.asyncio.sleep", record_sleep)
+
+    delivered = await runtime.write_text(terminal, "resume", submit=True)
+
+    assert isinstance(delivered, Delivered)
+    assert gaps == [(TMUX_TEXT_ENTER_DELAY_SECONDS, 1)]
+    assert [item["kind"] for item in host.writes] == ["text", "key"]
+
+
+def test_named_key_bytes_match_the_web_key_bar() -> None:
+    """The gterm table and the web key bar are the same bytes for the shared keys."""
+    bar = Path("web/src/components/activity/terminal/TerminalKeysBar.tsx").read_text(
+        encoding="utf-8"
+    )
+    shared: dict[NamedKey, str] = {
+        "ctrl_c": 'label: "Ctrl+C", data: "\\x03"',
+        "enter": 'label: "Enter", data: "\\r"',
+        "escape": 'label: "Esc", data: "\\x1b"',
+        "tab": 'label: "Tab", data: "\\t"',
+    }
+    for name, snippet in shared.items():
+        assert snippet in bar
+        literal = snippet.split('data: "', 1)[1].removesuffix('"')
+        assert encode_named_key(name) == literal.encode("utf-8").decode("unicode_escape").encode(
+            "latin1"
+        )
 
 
 @pytest.mark.asyncio
