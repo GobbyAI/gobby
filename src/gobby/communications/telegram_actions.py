@@ -143,6 +143,31 @@ class TelegramActionController:
     ) -> None:
         """Persist a Telegram message for its live CLI or agent recipient."""
         content = message.content or "[Telegram attachment]"
+        metadata: dict[str, Any] = {
+            "channel": channel.name,
+            "sender": message.metadata_json.get("external_user_id"),
+            "sender_username": message.metadata_json.get("external_username"),
+            "communications_message_id": message.id,
+            "telegram_chat_id": message.metadata_json.get("chat_id"),
+            "telegram_platform_message_id": message.platform_message_id,
+            "reply_to_message_id": message.metadata_json.get("reply_to_message_id"),
+            "replied_to_post": source.content if source is not None else None,
+            "callback_data": message.metadata_json.get("callback_value"),
+        }
+        if message.content_type == "attachment":
+            stored = await asyncio.to_thread(self._manager.store.list_attachments, message.id)
+            if isinstance(stored, list):
+                references = [
+                    {
+                        "filename": attachment.filename,
+                        "content_type": attachment.content_type,
+                        "local_path": attachment.local_path,
+                    }
+                    for attachment in stored
+                    if isinstance(attachment.local_path, str) and attachment.local_path
+                ]
+                if references:
+                    metadata["attachments"] = references
         result = await self._mailbox.send(
             from_session_id=system_session_id(),
             target="session",
@@ -150,17 +175,7 @@ class TelegramActionController:
             content=content,
             wake=True,
             message_type="telegram_message",
-            metadata={
-                "channel": channel.name,
-                "sender": message.metadata_json.get("external_user_id"),
-                "sender_username": message.metadata_json.get("external_username"),
-                "communications_message_id": message.id,
-                "telegram_chat_id": message.metadata_json.get("chat_id"),
-                "telegram_platform_message_id": message.platform_message_id,
-                "reply_to_message_id": message.metadata_json.get("reply_to_message_id"),
-                "replied_to_post": source.content if source is not None else None,
-                "callback_data": message.metadata_json.get("callback_value"),
-            },
+            metadata=metadata,
             preserve_content=True,
         )
         if not result.success:
