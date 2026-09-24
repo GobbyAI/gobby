@@ -1,5 +1,7 @@
 """Tests for the WebSocket server wrapper."""
 
+import asyncio
+import json
 import logging
 from types import MappingProxyType
 from typing import Any, cast
@@ -12,7 +14,11 @@ from gobby.config.bootstrap import BootstrapConfig
 from gobby.config.runtime import RuntimeActiveBundle
 from gobby.config.runtime_models import ConfigSnapshot
 from gobby.servers.websocket.models import WebSocketConfig
-from gobby.servers.websocket.server import WebSocketServer, websockets_logger
+from gobby.servers.websocket.server import (
+    SLOW_WEBSOCKET_HANDLER_SECONDS,
+    WebSocketServer,
+    websockets_logger,
+)
 from gobby.terminals.leases import TerminalLeaseRegistry
 
 pytestmark = pytest.mark.unit
@@ -221,3 +227,211 @@ async def test_slow_handler_is_logged_with_its_message_type(
     assert len(warnings) == 1
     assert warnings[0].startswith("websocket handler slow_kind took ")
     assert warnings[0].endswith("s; later messages on this connection waited")
+
+
+class _ScriptedSocket:
+    """One connection that yields scripted frames and records what the server sends."""
+
+    def __init__(self, messages: list[str], *, hold_open: bool = False) -> None:
+        self._pending = list(messages)
+        self._hold_open = hold_open
+        self._closed = asyncio.Event()
+        self.sent: list[str] = []
+        self.user_id = "user-1"
+        self.remote_address = "127.0.0.1"
+        self.latency = 0.0
+
+    def __aiter__(self) -> "_ScriptedSocket":
+        return self
+
+    def close(self) -> None:
+        self._closed.set()
+
+    async def __anext__(self) -> str:
+        if self._pending:
+            return self._pending.pop(0)
+        if not self._hold_open:
+            raise StopAsyncIteration
+        await self._closed.wait()
+        raise StopAsyncIteration
+
+    async def send(self, payload: str) -> None:
+        self.sent.append(payload)
+
+
+def _quiet_disconnect(server: WebSocketServer) -> None:
+    object.__setattr__(server, "_cleanup_tmux_client", AsyncMock())
+    object.__setattr__(server, "_cleanup_attached_tts", AsyncMock())
+
+
+@pytest.mark.asyncio
+async def test_terminal_attach_returns_the_loop_before_a_three_second_backend() -> None:
+    """A 3s attach must not hold the next frame. The loop answers it within 100ms."""
+    server = WebSocketServer(
+        config=WebSocketConfig(),
+        mcp_manager=MagicMock(),
+        auth_callback=AsyncMock(return_value="test-user"),
+    )
+    _quiet_disconnect(server)
+    ping_answered = asyncio.Event()
+
+    async def attach(_websocket: Any, _data: dict[str, Any]) -> None:
+        # test-quality: allow SLEEP_IN_TEST -- #22709 requires a backend of at least 3 seconds
+        await asyncio.sleep(3)
+
+    async def ping(_websocket: Any, _data: dict[str, Any]) -> None:
+        ping_answered.set()
+
+    server._dispatch_table = {"terminal_attach": attach, "ping": ping}
+    socket = _ScriptedSocket(
+        [
+            json.dumps({"type": "terminal_attach", "request_id": "attach-1"}),
+            json.dumps({"type": "ping", "request_id": "ping-1"}),
+        ]
+    )
+    connection = asyncio.create_task(server.handle_connection(socket))
+    try:
+        await asyncio.wait_for(ping_answered.wait(), timeout=0.1)
+        assert ping_answered.is_set()
+    finally:
+        connection.cancel()
+        try:
+            await connection
+        except asyncio.CancelledError:
+            pass
+
+
+@pytest.mark.asyncio
+async def test_off_loop_attach_does_not_warn_that_later_messages_waited(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A slow attach no longer blocks the read loop, so the wait warning stays quiet."""
+    server = WebSocketServer(
+        config=WebSocketConfig(),
+        mcp_manager=MagicMock(),
+        auth_callback=AsyncMock(return_value="test-user"),
+    )
+    _quiet_disconnect(server)
+    finished = asyncio.Event()
+    ping_answered = asyncio.Event()
+
+    async def attach(_websocket: Any, _data: dict[str, Any]) -> None:
+        # test-quality: allow SLEEP_IN_TEST -- the handler must outlast the 1s wait warning
+        await asyncio.sleep(SLOW_WEBSOCKET_HANDLER_SECONDS + 0.1)
+        finished.set()
+
+    async def ping(_websocket: Any, _data: dict[str, Any]) -> None:
+        ping_answered.set()
+
+    server._dispatch_table = {"terminal_attach": attach, "ping": ping}
+    socket = _ScriptedSocket(
+        [
+            json.dumps({"type": "terminal_attach", "request_id": "attach-1"}),
+            json.dumps({"type": "ping", "request_id": "ping-1"}),
+        ],
+        hold_open=True,
+    )
+    connection = asyncio.create_task(server.handle_connection(socket))
+    try:
+        with caplog.at_level(logging.WARNING):
+            await asyncio.wait_for(ping_answered.wait(), timeout=0.1)
+            await asyncio.wait_for(finished.wait(), timeout=2)
+        assert "later messages on this connection waited" not in caplog.text
+    finally:
+        socket.close()
+        connection.cancel()
+        try:
+            await connection
+        except asyncio.CancelledError:
+            pass
+
+
+@pytest.mark.asyncio
+async def test_later_terminal_attach_waits_for_the_one_already_running() -> None:
+    """Attach frames on one connection stay in arrival order. Ping does not wait."""
+    server = WebSocketServer(
+        config=WebSocketConfig(),
+        mcp_manager=MagicMock(),
+        auth_callback=AsyncMock(return_value="test-user"),
+    )
+    _quiet_disconnect(server)
+    release_first = asyncio.Event()
+    second_started = asyncio.Event()
+    ping_answered = asyncio.Event()
+    started: list[str] = []
+
+    async def attach(_websocket: Any, data: dict[str, Any]) -> None:
+        request_id = str(data.get("request_id"))
+        started.append(request_id)
+        if request_id == "first":
+            await release_first.wait()
+            return
+        second_started.set()
+
+    async def ping(_websocket: Any, _data: dict[str, Any]) -> None:
+        ping_answered.set()
+
+    server._dispatch_table = {"terminal_attach": attach, "ping": ping}
+    socket = _ScriptedSocket(
+        [
+            json.dumps({"type": "terminal_attach", "request_id": "first"}),
+            json.dumps({"type": "terminal_attach", "request_id": "second"}),
+            json.dumps({"type": "ping", "request_id": "ping-1"}),
+        ],
+        hold_open=True,
+    )
+    connection = asyncio.create_task(server.handle_connection(socket))
+    try:
+        await asyncio.wait_for(ping_answered.wait(), timeout=0.1)
+        assert started == ["first"]
+        release_first.set()
+        await asyncio.wait_for(second_started.wait(), timeout=0.1)
+        assert started == ["first", "second"]
+    finally:
+        release_first.set()
+        socket.close()
+        connection.cancel()
+        try:
+            await connection
+        except asyncio.CancelledError:
+            pass
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("message_type", ["terminal_take_control", "workspace_op"])
+async def test_slow_terminal_operation_leaves_the_read_loop(message_type: str) -> None:
+    """take_control and workspace_op must not hold the next frame for their whole run."""
+    server = WebSocketServer(
+        config=WebSocketConfig(),
+        mcp_manager=MagicMock(),
+        auth_callback=AsyncMock(return_value="test-user"),
+    )
+    _quiet_disconnect(server)
+    ping_answered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def slow(_websocket: Any, _data: dict[str, Any]) -> None:
+        await release.wait()
+
+    async def ping(_websocket: Any, _data: dict[str, Any]) -> None:
+        ping_answered.set()
+
+    server._dispatch_table = {message_type: slow, "ping": ping}
+    socket = _ScriptedSocket(
+        [
+            json.dumps({"type": message_type, "request_id": "slow-1"}),
+            json.dumps({"type": "ping", "request_id": "ping-1"}),
+        ]
+    )
+    connection = asyncio.create_task(server.handle_connection(socket))
+    try:
+        await asyncio.wait_for(ping_answered.wait(), timeout=0.1)
+        assert ping_answered.is_set()
+        assert not release.is_set()
+    finally:
+        release.set()
+        connection.cancel()
+        try:
+            await connection
+        except asyncio.CancelledError:
+            pass
