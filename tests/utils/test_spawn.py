@@ -79,7 +79,7 @@ _NOT_DAEMON = (
 )
 # Scanned sites that still fork, keyed path::qualname, each with its reason: the
 # daemon sites that need an option neither helper gives (spawn.create_session_exec
-# starts a session leader with no cwd or stdin and reads its output at exit), and
+# starts a session leader with input given up front and reads its output at exit), and
 # the CLI-only functions of modules the daemon imports. A key the scan no longer
 # finds fails the lint.
 _MUST_FORK = {
@@ -152,17 +152,6 @@ _MUST_FORK = {
     "ui_exposure.py::_run_json": "tailscale for the start, ui, install and uninstall commands only",
     "ui_exposure.py::_run_mutation": (
         "tailscale for the start, ui, install and uninstall commands only"
-    ),
-    "ai/_text_generation_adapters.py::_run_cli_text_generation_command": (
-        "own session with a cwd and stdin: a timeout killpg()s the CLI's children;"
-        " once per generation, off the hook path"
-    ),
-    "ai/_text_generation_adapters.py::DroidCLITextGenerateAdapter.generate": (
-        "own session with a cwd: a timeout killpg()s droid's children; once per generation"
-    ),
-    "mcp_proxy/tools/merge_landscape.py::register_merge_landscape_tools.verify_in_worktree": (
-        "own session with a cwd: a timeout killpg()s the verify command's children;"
-        " once per merge check"
     ),
     "runner_gate.py::acquire_runner_gate": (
         "own session, apart from the terminal's signals; once per start, before the daemon grows"
@@ -464,3 +453,44 @@ def test_a_session_leader_starts_without_forking(monkeypatch: pytest.MonkeyPatch
 
     assert (int(stdout), stderr, returncode) == (pid, b"late\n", 0)
     assert [kwargs["setsid"] for kwargs in spawned] == [True]
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX sessions")
+def test_a_session_leader_takes_a_directory_and_its_input_without_forking(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def forbidden(*args: Any, **kwargs: Any) -> int:
+        raise AssertionError("fork_exec forks the whole daemon")
+
+    spawned: list[tuple[str, bool]] = []
+    real_posix_spawn = os.posix_spawn
+
+    def recording_posix_spawn(path: str, argv: Any, env: Any, **kwargs: Any) -> int:
+        spawned.append((path, kwargs["setsid"]))
+        return real_posix_spawn(path, argv, env, **kwargs)
+
+    monkeypatch.setattr(subprocess, "_fork_exec", forbidden)
+    monkeypatch.setattr(os, "posix_spawn", recording_posix_spawn)
+    program = "import os,sys\nprint(os.getcwd())\nsys.stdout.write(sys.stdin.read())\n"
+
+    async def lead_from(directory: Path) -> tuple[bytes, bytes]:
+        process = await spawn.create_session_exec(
+            sys.executable, "-c", program, cwd=directory, input_bytes=b"the prompt\n"
+        )
+        return await process.communicate()
+
+    stdout, stderr = asyncio.run(lead_from(tmp_path))
+
+    assert (stdout, stderr) == (f"{tmp_path.resolve()}\nthe prompt\n".encode(), b"")
+    # The directory goes through the sh trampoline, still one posix_spawn leading a session.
+    assert spawned == [("/bin/sh", True)]
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX sessions")
+def test_a_session_leader_that_is_not_installed_fails_to_start(tmp_path: Path) -> None:
+    missing = "gobby-no-such-program"
+
+    with pytest.raises(FileNotFoundError) as raised:
+        asyncio.run(spawn.create_session_exec(missing, cwd=tmp_path))
+
+    assert raised.value.filename == missing

@@ -376,26 +376,38 @@ class AsyncSpawnedSession:
 type SessionProcess = AsyncSpawnedSession | asyncio.subprocess.Process
 
 
-async def create_session_exec(*argv: str, env: Mapping[str, str] | None = None) -> SessionProcess:
+async def create_session_exec(
+    *argv: str,
+    env: Mapping[str, str] | None = None,
+    cwd: Directory | None = None,
+    input_bytes: bytes | None = None,
+) -> SessionProcess:
     """``asyncio.create_subprocess_exec(..., start_new_session=True)`` without forking.
 
-    stdin is /dev/null, and stdout and stderr are read once the leader exits.
-    Where posix_spawn is missing (Windows), asyncio starts the process, and no
-    fork stalls the daemon there.
+    stdin is ``input_bytes``, or /dev/null without it, and stdout and stderr
+    are read once the leader exits. Where posix_spawn is missing (Windows),
+    asyncio starts the process, and no fork stalls the daemon there.
     """
     if not can_posix_spawn():
-        return await asyncio.create_subprocess_exec(
-            *argv,
-            stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=env,
-            start_new_session=True,
-        )
+        with tempfile.TemporaryFile() as stdin_file:
+            if input_bytes is not None:
+                stdin_file.write(input_bytes)
+                stdin_file.seek(0)
+            return await asyncio.create_subprocess_exec(
+                *argv,
+                stdin=stdin_file if input_bytes is not None else asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=cwd,
+                env=env,
+                start_new_session=True,
+            )
     process_env = dict(env if env is not None else os.environ)
-    executable = resolve_executable(argv[0], env=process_env)
+    command, executable, _ = _spawn_plan(argv, cwd, process_env)
+    if executable is None:
+        raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), command[0])
     return AsyncSpawnedSession(
-        SpawnedSession.spawn((executable, *argv[1:]), env=process_env, input_bytes=None)
+        SpawnedSession.spawn((executable, *command[1:]), env=process_env, input_bytes=input_bytes)
     )
 
 

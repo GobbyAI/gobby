@@ -9,8 +9,9 @@ Each tool gets a happy-path test plus at least one failure mode.
 
 from __future__ import annotations
 
-import asyncio
 import logging
+import os
+import select
 import subprocess
 import sys
 from datetime import datetime
@@ -28,6 +29,7 @@ from gobby.mcp_proxy.tools.merge_landscape import (
 )
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.worktrees import LocalWorktreeManager, Worktree
+from gobby.utils import spawn
 from gobby.worktrees.git import WorktreeGitManager
 from tests._timing import wait_forever
 from tests.fixtures.isolated_checkout import install_isolated_checkout_project
@@ -544,7 +546,7 @@ async def test_verify_in_worktree_preserves_assignment_prefix_env(
         return CompletedProcess()
 
     monkeypatch.setattr(
-        "gobby.mcp_proxy.tools.merge_landscape.asyncio.create_subprocess_exec",
+        "gobby.utils.spawn.create_session_exec",
         fake_subprocess,
     )
 
@@ -585,7 +587,7 @@ async def test_verify_in_worktree_preserves_env_wrapper_env(
         return CompletedProcess()
 
     monkeypatch.setattr(
-        "gobby.mcp_proxy.tools.merge_landscape.asyncio.create_subprocess_exec",
+        "gobby.utils.spawn.create_session_exec",
         fake_subprocess,
     )
 
@@ -641,7 +643,7 @@ async def test_verify_in_worktree_allows_recognized_validation_commands(
         return CompletedProcess()
 
     monkeypatch.setattr(
-        "gobby.mcp_proxy.tools.merge_landscape.asyncio.create_subprocess_exec",
+        "gobby.utils.spawn.create_session_exec",
         fake_subprocess,
     )
 
@@ -843,14 +845,11 @@ async def test_verify_in_worktree_timeout(tmp_path: Path, monkeypatch: pytest.Mo
         async def wait(self) -> int:
             return self.returncode or -9
 
-    subprocess_options = {}
-
-    async def slow_subprocess(*_args: str, **kwargs: Any) -> SlowProcess:
-        subprocess_options.update(kwargs)
+    async def slow_subprocess(*_args: str, **_kwargs: Any) -> SlowProcess:
         return SlowProcess()
 
     monkeypatch.setattr(
-        "gobby.mcp_proxy.tools.merge_landscape.asyncio.create_subprocess_exec",
+        "gobby.utils.spawn.create_session_exec",
         slow_subprocess,
     )
     killpg = MagicMock()
@@ -869,7 +868,6 @@ async def test_verify_in_worktree_timeout(tmp_path: Path, monkeypatch: pytest.Mo
     assert result["success"] is False
     assert result.get("timed_out") is True
     assert result["failure_category"] == "timeout"
-    assert subprocess_options["start_new_session"] is True
     killpg.assert_called_once_with(1234, 9)
 
 
@@ -893,41 +891,41 @@ if os.fork() == 0:
 else:
     time.sleep(60)
 """
-    create_subprocess_exec = asyncio.create_subprocess_exec
-    spawned_process = None
+    # The command and its forked grandchild inherit the write end, and this test
+    # closes its own copy, so the read end reaches EOF only once the whole group is dead.
+    read_end, write_end = os.pipe()
+    os.set_inheritable(write_end, True)
+    create_session_exec = spawn.create_session_exec
 
-    async def spawn_process(*_args: str, **kwargs: Any) -> asyncio.subprocess.Process:
-        nonlocal spawned_process
-        spawned_process = await create_subprocess_exec(
-            sys.executable,
-            "-c",
-            child_code,
-            str(heartbeat),
-            **kwargs,
-        )
-        return spawned_process
+    async def spawn_process(*_args: str, **kwargs: Any) -> spawn.SessionProcess:
+        try:
+            return await create_session_exec(
+                sys.executable, "-c", child_code, str(heartbeat), **kwargs
+            )
+        finally:
+            os.close(write_end)
 
-    monkeypatch.setattr(
-        "gobby.mcp_proxy.tools.merge_landscape.asyncio.create_subprocess_exec",
-        spawn_process,
-    )
+    monkeypatch.setattr("gobby.utils.spawn.create_session_exec", spawn_process)
 
     registry = _make_registry(worktree_manager=worktree_manager, git_manager=MagicMock())
-    result = await registry.call(
-        "verify_in_worktree",
-        {
-            "worktree_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
-            "command": "git status",
-            "timeout": 1,
-        },
-    )
+    try:
+        result = await registry.call(
+            "verify_in_worktree",
+            {
+                "worktree_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
+                "command": "git status",
+                "timeout": 1,
+            },
+        )
+        readable, _, _ = select.select([read_end], [], [], 1)
+        group_output = os.read(read_end, 1) if readable else None
+    finally:
+        os.close(read_end)
 
     assert result["success"] is False
     assert result.get("timed_out") is True
     assert heartbeat.read_text()
-    assert spawned_process is not None
-    assert spawned_process.stdout is not None
-    assert await asyncio.wait_for(spawned_process.stdout.read(), timeout=1) == b""
+    assert group_output == b""
 
 
 # --- inspect_merge_state ---
