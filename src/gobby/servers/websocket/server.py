@@ -38,7 +38,7 @@ from gobby.servers.websocket.terminal_ws_control import TerminalControlMixin
 from gobby.servers.websocket.terminal_ws_create import TerminalCreateMixin
 from gobby.servers.websocket.tmux import TmuxMixin
 from gobby.servers.websocket.voice import VoiceMixin
-from gobby.servers.websocket.workspace_ws import WorkspaceWsMixin
+from gobby.servers.websocket.workspace_ws import WORKSPACE_OPS, WorkspaceWsMixin
 from gobby.sessions.terminal_turn_observer import TerminalTurnObserver
 from gobby.sessions.turn_lifecycle import TurnLifecycleReducer
 from gobby.storage.attention import AttentionStateManager
@@ -70,6 +70,11 @@ _OFF_LOOP_MESSAGE_TYPES = frozenset(
         "workspace_op",
     }
 )
+# Reads and waits are cancelled with the socket. Mutations stay alive so a
+# committed close still publishes its removal and reaps the shell.
+_READ_WORKSPACE_OPS = frozenset({"workspace.list", "pane.read", "pane.wait_for_output"})
+_DURABLE_WORKSPACE_OPS = frozenset(WORKSPACE_OPS) - _READ_WORKSPACE_OPS
+_DURABLE_OFF_LOOP_STOP_SECONDS = 2.0
 
 
 def _message_leaves_the_read_loop(message: str) -> bool:
@@ -82,6 +87,18 @@ def _message_leaves_the_read_loop(message: str) -> bool:
         return False
     message_type = data.get("type")
     return isinstance(message_type, str) and message_type in _OFF_LOOP_MESSAGE_TYPES
+
+
+def _workspace_op_survives_disconnect(message: str) -> bool:
+    """True when this workspace_op must finish after the socket drops."""
+    try:
+        data = json.loads(message)
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(data, dict) or data.get("type") != "workspace_op":
+        return False
+    op = data.get("op")
+    return isinstance(op, str) and op in _DURABLE_WORKSPACE_OPS
 
 
 def _off_loop_chain_key(message: str) -> str:
@@ -580,7 +597,7 @@ class WebSocketServer(
             self._forget_off_loop_tail(key, done)
 
         task.add_done_callback(forget)
-        if key[1] == "workspace_op":
+        if _workspace_op_survives_disconnect(message):
             self._off_loop_durable.add(task)
             task.add_done_callback(self._off_loop_durable.discard)
 
@@ -628,6 +645,20 @@ class WebSocketServer(
         for task in cancel:
             task.cancel()
         for task in cancel:
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+
+    async def _finish_durable_off_loop(self) -> None:
+        """Give kept-alive mutations a bound to publish and reap, then cancel the rest."""
+        pending = [task for task in self._off_loop_durable if not task.done()]
+        if not pending:
+            return
+        _done, still_running = await asyncio.wait(pending, timeout=_DURABLE_OFF_LOOP_STOP_SECONDS)
+        for task in still_running:
+            task.cancel()
+        for task in still_running:
             try:
                 await task
             except (asyncio.CancelledError, Exception):
@@ -716,6 +747,7 @@ class WebSocketServer(
                     logger.warning("Error closing client connection: %s", e)
         finally:
             self._server = None
+            await self._finish_durable_off_loop()
             await self.lease_registry.shutdown_lifecycle_publication()
         logger.debug("WebSocket server stopped")
 

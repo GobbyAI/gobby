@@ -28,9 +28,7 @@ pytestmark = pytest.mark.unit
 
 def test_workspace_op_chain_ignores_terminal_id() -> None:
     """A workspace_op stays in the workspace queue even when it names a terminal."""
-    message = json.dumps(
-        {"type": "workspace_op", "terminal_id": "term-1", "op": "pane.resize"}
-    )
+    message = json.dumps({"type": "workspace_op", "terminal_id": "term-1", "op": "pane.resize"})
     assert _off_loop_chain_key(message) == "workspace_op"
 
 
@@ -734,6 +732,100 @@ async def test_disconnect_lets_workspace_op_finish_after_its_commit() -> None:
 
 
 @pytest.mark.asyncio
+async def test_disconnect_cancels_an_in_flight_pane_wait() -> None:
+    """pane.wait_for_output is a read. Disconnect cancels it instead of leaving the poller."""
+    server = WebSocketServer(
+        config=WebSocketConfig(),
+        mcp_manager=MagicMock(),
+        auth_callback=AsyncMock(return_value="test-user"),
+    )
+    _quiet_disconnect(server)
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def slow(_websocket: Any, _data: dict[str, Any]) -> None:
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    server._dispatch_table = {"workspace_op": slow}
+    socket = _ScriptedSocket(
+        [
+            json.dumps(
+                {
+                    "type": "workspace_op",
+                    "request_id": "wait-1",
+                    "op": "pane.wait_for_output",
+                    "timeout_seconds": 1e9,
+                }
+            )
+        ],
+        hold_open=True,
+    )
+    connection = asyncio.create_task(server.handle_connection(socket))
+    try:
+        await asyncio.wait_for(started.wait(), timeout=2)
+        socket.close()
+        await asyncio.wait_for(connection, timeout=2)
+        await asyncio.wait_for(cancelled.wait(), timeout=2)
+        assert cancelled.is_set()
+    finally:
+        socket.close()
+        connection.cancel()
+        try:
+            await connection
+        except asyncio.CancelledError:
+            pass
+
+
+@pytest.mark.asyncio
+async def test_stop_bounds_a_durable_workspace_op() -> None:
+    """stop() must not leave a kept-alive workspace_op running after shutdown."""
+    server = WebSocketServer(
+        config=WebSocketConfig(),
+        mcp_manager=MagicMock(),
+        auth_callback=AsyncMock(return_value="test-user"),
+    )
+    _quiet_disconnect(server)
+    server.lease_registry = TerminalLeaseRegistry(daemon_epoch="stop-bound")
+    object.__setattr__(server, "_cleanup_tmux", AsyncMock())
+    object.__setattr__(server, "cleanup_voice", AsyncMock())
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def slow(_websocket: Any, _data: dict[str, Any]) -> None:
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    server._dispatch_table = {"workspace_op": slow}
+    socket = _ScriptedSocket(
+        [json.dumps({"type": "workspace_op", "request_id": "op-1", "op": "tab.close"})],
+        hold_open=True,
+    )
+    connection = asyncio.create_task(server.handle_connection(socket))
+    try:
+        await asyncio.wait_for(started.wait(), timeout=2)
+        await server.stop()
+        await asyncio.wait_for(cancelled.wait(), timeout=1)
+        assert cancelled.is_set()
+        assert [task for task in server._off_loop_durable if not task.done()] == []
+    finally:
+        socket.close()
+        connection.cancel()
+        try:
+            await connection
+        except asyncio.CancelledError:
+            pass
+
+
+@pytest.mark.asyncio
 async def test_input_for_another_terminal_runs_during_attach() -> None:
     """Attaching pane B must not hold input that belongs to pane A."""
     server = WebSocketServer(
@@ -892,9 +984,7 @@ async def test_cancelled_attach_does_not_drop_the_next_frame() -> None:
 
     server._dispatch_table = {"terminal_attach": attach}
     socket = _AttachThenInputSocket(
-        json.dumps(
-            {"type": "terminal_attach", "request_id": "first", "terminal_id": "term-a"}
-        )
+        json.dumps({"type": "terminal_attach", "request_id": "first", "terminal_id": "term-a"})
     )
     connection = asyncio.create_task(server.handle_connection(socket))
     try:
@@ -902,9 +992,7 @@ async def test_cancelled_attach_does_not_drop_the_next_frame() -> None:
         assert started == ["first"]
         first_tasks = list(server._off_loop_tasks[socket])
         socket.inject(
-            json.dumps(
-                {"type": "terminal_attach", "request_id": "second", "terminal_id": "term-a"}
-            )
+            json.dumps({"type": "terminal_attach", "request_id": "second", "terminal_id": "term-a"})
         )
         await asyncio.wait_for(socket.input_observed.wait(), timeout=2)
         for task in first_tasks:
@@ -943,12 +1031,8 @@ async def test_chained_handler_failure_is_reported_and_the_queue_continues() -> 
     server._dispatch_table = {"terminal_attach": attach}
     socket = _ScriptedSocket(
         [
-            json.dumps(
-                {"type": "terminal_attach", "request_id": "boom", "terminal_id": "term-a"}
-            ),
-            json.dumps(
-                {"type": "terminal_attach", "request_id": "next", "terminal_id": "term-a"}
-            ),
+            json.dumps({"type": "terminal_attach", "request_id": "boom", "terminal_id": "term-a"}),
+            json.dumps({"type": "terminal_attach", "request_id": "next", "terminal_id": "term-a"}),
         ],
         hold_open=True,
     )

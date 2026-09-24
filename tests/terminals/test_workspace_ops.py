@@ -1416,3 +1416,35 @@ async def test_tab_rename_writes_storage_off_the_event_loop() -> None:
     assert renamed.id == "tab-1"
     assert seen
     assert seen[0] != loop_thread
+
+
+@pytest.mark.asyncio
+async def test_pane_wait_for_output_caps_a_huge_timeout(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A client timeout of 1e9 must not schedule a poll past the 300s cap."""
+    h = harness
+    workspace = await h.ops.workspace_create(OPERATOR)
+    pane = (await h.ops.tab_create(OPERATOR, workspace.id, h.project_id)).panes[0]
+    h.native.snapshot_text = "still waiting"
+    clock = {"now": 0.0}
+
+    def monotonic() -> float:
+        return clock["now"]
+
+    async def advance(seconds: float) -> None:
+        clock["now"] += seconds
+        if clock["now"] > 300:
+            raise AssertionError(f"wait reached {clock['now']} past the cap")
+
+    monkeypatch.setattr("gobby.terminals.workspace_ops.time.monotonic", monotonic)
+    monkeypatch.setattr("gobby.terminals.workspace_ops.asyncio.sleep", advance)
+    waited = await h.ops.pane_wait_for_output(
+        OPERATOR,
+        pane.id,
+        "NEEDLE-NOT-PRESENT",
+        timeout_seconds=1e9,
+        poll_interval_seconds=2.0,
+    )
+    assert waited.matched is False
+    assert waited.reason == "timeout"

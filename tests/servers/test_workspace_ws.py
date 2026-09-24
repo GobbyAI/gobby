@@ -9,6 +9,7 @@ import json
 import uuid
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -17,13 +18,17 @@ import pytest
 from gobby.servers.websocket.server import WebSocketServer
 from gobby.servers.websocket.workspace_ws import _fields
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.machines import LocalMachineManager
+from gobby.storage.machines import LocalMachineManager, Machine
 from gobby.storage.sessions import SessionManager
 from gobby.storage.terminals import TerminalManager
-from gobby.storage.workspaces import WorkspaceManager, WorkspaceNotFoundError
+from gobby.storage.workspaces import Workspace, WorkspaceManager, WorkspaceNotFoundError
 from gobby.terminals.leases import LifecyclePublicationError, TerminalLeaseRegistry
 from gobby.terminals.runtime import PreparedSpawn, TerminalSpawnRequest
-from gobby.terminals.workspace_contract import WorkspaceEvent, WorkspaceOpError
+from gobby.terminals.workspace_contract import (
+    WorkspaceEvent,
+    WorkspaceOpError,
+    WorkspaceSnapshot,
+)
 from gobby.terminals.workspace_ops import WorkspaceOps
 from gobby.terminals.write_coordinator import WriteCoordinator
 from gobby.terminals.ws_protocol import (
@@ -97,6 +102,43 @@ def _bare_server() -> WebSocketServer:
     config.ping_timeout = 10
     config.max_message_size = 1024
     return WebSocketServer(config, MagicMock(), AsyncMock(return_value="test-user"))
+
+
+def test_snapshot_reply_watermark_comes_from_lifecycle_seq() -> None:
+    """The snapshot frame's watermark is the sweep seq, not the live lease seq."""
+    server = _bare_server()
+    leases = TerminalLeaseRegistry(daemon_epoch=DAEMON_EPOCH)
+    leases._commit_lifecycle(DAEMON_EPOCH, 2)
+    server.lease_registry = leases
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    snapshot = WorkspaceSnapshot(
+        node=Machine(
+            id="machine-1",
+            hostname="local",
+            os=None,
+            label=None,
+            tailscale_name=None,
+            owner_user_id="user-1",
+            first_seen=now,
+            last_seen=now,
+            ref=3,
+        ),
+        workspace=Workspace(
+            id="ws-1",
+            machine_id="machine-1",
+            ref=1,
+            name="home",
+            focused_project_id=None,
+            focused_tab_id=None,
+            created_at=now,
+            updated_at=now,
+        ),
+        tabs=(),
+        panes=(),
+        lifecycle_seq=9,
+    )
+    reply = server._snapshot_reply({"request_id": "req-1"}, snapshot)
+    assert reply["snapshot"] == {"daemon_epoch": DAEMON_EPOCH, "seq": 9}
 
 
 @pytest.fixture
