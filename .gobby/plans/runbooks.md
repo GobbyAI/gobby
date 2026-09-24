@@ -749,8 +749,15 @@ gives `$enh`, `resize "$writer" 0.50`; `split "$enh" --right` gives `$adv`, `res
 follows its split while both children are leaves, per Constraints, so the three lower
 panes come out at equal widths); four `title` lines (`plan-writer`, `enhancer`,
 `adversary`, `researcher`). Both scripts then run, for each seat, `wait-for-output REF
---pattern "$PROMPT_PATTERN" --timeout 30` followed by `send-keys REF "<launch line>"
---enter`; `PROMPT_PATTERN` defaults to `'[%$#] *$'`. Launch lines follow the prompt
+--pattern "$PROMPT_PATTERN" --timeout 30`, `send-keys REF "<launch line>" --enter`,
+`wait-for-output REF --pattern "$READY_<cli>" --timeout 60`, then `send-keys REF
+"<kickoff prompt>" --enter`; a timeout on either wait exits 1 like a refused op.
+`PROMPT_PATTERN` defaults to `'[%$#] *$'`; the ready patterns are each CLI's idle
+composer as captured from the live council panes on 2026-09-23: `READY_claude='bypass
+permissions on'` (the status footer Claude Code prints only once its composer is up
+under `--dangerously-skip-permissions`), `READY_codex='› Ask Codex'` (the empty
+composer's placeholder), `READY_grok='always-approve'` (the composer border under
+`--always-approve`); V1 step 3 verifies them live. Launch lines follow the prompt
 book's provider, model and effort per role and the flag spellings of
 `~/Desktop/gobby-team-resume-2026-09-22.md`: program director and plan writer `claude
 --dangerously-skip-permissions --model 'claude-fable-5-1[1m]'`; assistant and
@@ -758,7 +765,7 @@ researcher `claude --dangerously-skip-permissions --model 'claude-opus-5[1m]'`; 
 monitor `codex --dangerously-bypass-approvals-and-sandbox -m gpt-5.6-luna -c
 model_reasoning_effort=medium`; archivist the same with `gpt-5.6-terra`; enhancer the
 same with `gpt-5.6-sol` and `xhigh`; adversary `grok -m grok-4.7 --reasoning-effort
-high --always-approve`. Each launch line is followed by a kickoff prompt that names the
+high --always-approve`. The kickoff prompt sent after the ready wait names the
 runbook, the seat's own pane ref and the tab ref, and, for the council, the plan path;
 the user edits the scripts freely. The `--runbook` and `--role` flags are added to both
 scripts by 1.2, which lands after this leaf.
@@ -833,7 +840,8 @@ Consumers unchanged:
   test: `crates/gclient/src/command/tests.rs::optional_role_and_runbook_are_omitted_when_absent`.
 - 2.1.5 - `orchestration-v1.sh` is valid bash, and running it against the mock daemon
   reproduces decision 14's `control` and `monitors` tabs with four titled panes and
-  four prompt-gated launches. file:
+  four launches, each kickoff `send-keys` sent only after the seat's ready-pattern wait
+  matched. file:
   `src/gobby/install/shared/workflows/runbooks/orchestration-v1.sh`. test:
   `crates/gclient/tests/command_mode.rs::orchestration_v1_script_reproduces_decision_14_layout`.
 - 2.1.6 - The user guide documents command mode: the verb table, exit codes, pane-env
@@ -846,8 +854,8 @@ Consumers unchanged:
   test: `crates/gclient/tests/workspace.rs::pane_role_set_event_decodes_and_upserts_pane`.
 - 2.1.8 - `plan-council-v1.sh <plan>` is valid bash, and running it against the mock
   daemon reproduces decision 14's council tab named after the plan, with the writer
-  over three equal-width panes, four titles, and four prompt-gated launches whose
-  kickoff prompts carry the plan path. file:
+  over three equal-width panes, four titles, and four launches whose kickoff `send-keys`
+  follow the ready-pattern wait and carry the plan path. file:
   `src/gobby/install/shared/workflows/runbooks/plan-council-v1.sh`. test:
   `crates/gclient/tests/command_mode.rs::plan_council_v1_script_reproduces_decision_14_layout`.
 - 2.1.9 - Against a mock daemon that refuses the first `split` after the second
@@ -975,12 +983,17 @@ Seven new persona definitions (`surfaces: [persona]`, `isolation: none`; provide
 and effort left `inherit` because the launch line chooses the CLI, decision 13) and
 persona edits to four existing definitions: the roster of decision 13. Every one of the
 eleven `prompts.persona` blocks opens with the same standing text, in this order: Josh's
-five standing instructions (prompt book lines 72-89, verbatim), the shared tail (91-113,
-verbatim), and the conditional sign-off rule the book omits, quoted from #22691's
+five standing instructions (prompt book lines 72-89, verbatim), the durable shared tail
+(91-113 verbatim except its two session addresses: gobby#14069 with its UUID and
+gobby#14018 are the 2026-09-22 chart, so the tail names the assistant and the Program
+Director by role and resolves each through `gobby-workspaces:get_workspace`, the pane
+whose `role` is `assistant` or `program-director` and its `session_ref`, falling back
+to a `project` send that names the missing role; the tail states this divergence
+itself), and the conditional sign-off rule the book omits, quoted from #22691's
 description item 5 (the "Reply in the terminal, not here (#22670)" line applies only
 while Josh is at the desk; while he is mobile it stays suppressed until he says he is
 back). That is criterion 8. `tests/agents/test_runbook_definitions.py` carries the three
-texts as module constants `STANDING_INSTRUCTIONS`, `SHARED_TAIL` and
+texts as module constants `STANDING_INSTRUCTIONS`, `SHARED_TAIL` (the durable text) and
 `CONDITIONAL_SIGN_OFF`, copied from the book and the epic when the definitions are
 written, because a test cannot read `~/Desktop`; the book stays the input of record
 (criterion 10), and a later book change is a definition change disclosed under standing
@@ -988,10 +1001,11 @@ instruction 4.
 
 After the standing text every persona carries three fixed lines:
 - `Diverges from the prompt book: <reason>` or `Diverges from the prompt book: none`
-  (criterion 10). The reasons are fixed per role below; nothing else may diverge.
-- Registration (criterion 3): the first message goes to the assistant and names the
-  role, the model, `GOBBY_PANE_REF`, and the terminal backend that
-  `gobby-workspaces:get_workspace` reports for that pane (the `backend` field 1.2 adds
+  (criterion 10). The reasons are fixed per role below; the tail's address divergence
+  is stated inside the tail and shared by all eleven; nothing else may diverge.
+- Registration (criterion 3): the first message goes to the assistant, resolved by role
+  as the tail says, and names the role, the model, `GOBBY_PANE_REF`, and the terminal
+  backend that `gobby-workspaces:get_workspace` reports for that pane (the `backend` field 1.2 adds
   to the pane view from the pane's terminal row); a session with no `GOBBY_PANE_ID` is
   not in a runbook pane and registers as such. The definition itself never names a
   backend (criterion 1): the daemon's pane view is the only source, so a pane that
@@ -1116,8 +1130,9 @@ format line listed here:
   only, WARNING and ERROR lines plus tracebacks grouped into signature families with
   per-window counts, families mapped to tasks by the table (unknown families searched
   with `search_tasks` first), one report, end of turn. Nominal line
-  `Systems nominal | window HH:MM-HH:MM | <N> warnings in <K> families, all mapped |
-  load <1m>/<5m>/<15m> | runs <R>` with `wake=false`; `EVENT=ALARM` with `wake=true` on
+  `Systems nominal | window HH:MM-HH:MM | <N> warnings in <K> families, all mapped` with
+  `wake=false` (no load or run figures: standing instruction 1 and memory 33cb3885, the
+  number is the news only when it breaches); `EVENT=ALARM` with `wake=true` on
   the book's thresholds (unmapped family at 3 lines; mapped family at 3x the previous
   window and at least 20 lines; any traceback, `pool acquisition failed`,
   `DatabaseExecutor is shut down`, `HostEpochChangedError` or `spawn_rollback`; 1-minute
@@ -1127,11 +1142,19 @@ format line listed here:
   files it. The family table is seeded from the book and replaced by the parent's
   `TABLE` messages; `STOP` ends with a structured handoff; anything else is ignored.
   Never: edits repository files, creates or edits tasks, runs psql, restarts or installs,
-  spawns, types into interactive shells, sleeps or polls. Divergence: none.
+  spawns, types into interactive shells, sleeps or polls. Divergence: the routine
+  nominal line drops the book's `load <1m>/<5m>/<15m> | runs <R>` fields (book line 460)
+  because standing instruction 1 forbids routine load numbers; alarms still cite the
+  breached figure.
   The two monitors-tab seats share one selector list: include `["group:runbook",
   "tag:context-handoff", "tag:memory-lifecycle", "tag:worker-safety"]` (no
-  `tag:default`), exclude `[]`; `blocked_tools` copies `comms-agent.yaml`'s write list
-  minus `Bash`; `blocked_mcp_tools: ["gobby-agents:kill_agent", "gobby-tasks:create_task",
+  `tag:default`), exclude `[]`; `blocked_tools` is the write tools only, `["Edit",
+  "KillShell", "MultiEdit", "NotebookEdit", "Write", "apply_patch", "edit_file",
+  "notebook_edit", "replace", "write_file"]` (the comms agent's list minus its shell
+  spellings `Bash`, `BashOutput`, `shell` and `run_shell_command`: both seats launch
+  Codex and need a shell for `date`, `uptime`, the log reads, the state file under
+  `$TMPDIR` and the digest under `~/Desktop`, all outside the repository, which
+  `runbook-no-code-edits` leaves alone); `blocked_mcp_tools: ["gobby-agents:kill_agent", "gobby-tasks:create_task",
   "gobby-tasks:update_task", "gobby-tasks:close_task", "gobby-tasks:claim_task"]`.
 - `elicitor` (book section 8, lines 536-576): runs before drafting; its deliverable is
   the decision-complete problem statement at `.gobby/plans/<plan>.problem.md`, left
@@ -1193,7 +1216,8 @@ Research context:
   `reject_legacy_step_keys` rejects `role`/`goal`/`personality`/`instructions`; no
   field names a terminal backend, so criterion 1 is a prose check (no key `backend` or
   `terminal_backend` anywhere in a loaded tree, no word `tmux` or `gterm` in any string
-  under `prompts`; `native` is not checked because the shared tail says "native
+  under `prompts` once backtick-quoted spans are removed, since the log-monitor family
+  table quotes a `gterm` log signature; `native` is not checked because the shared tail says "native
   subagents"). Selectors (`src/gobby/workflows/selectors.py`): `tag:`, `group:` (the
   directory name set by sync), `name:`; exclude beats include. `default.yaml` includes
   `tag:default`.
@@ -1218,7 +1242,8 @@ Research context:
 **Acceptance:**
 
 - 3.2.1 - Each of the seven new persona definitions parses, declares only `persona`,
-  and carries exactly the selector lists and tool blocks written above. file:
+  and carries exactly the selector lists and tool blocks written above (the monitors-tab
+  `blocked_tools` is the write-only list; no shell spelling appears in it). file:
   `src/gobby/install/shared/workflows/agents/program-director.yaml`. file:
   `src/gobby/install/shared/workflows/agents/assistant.yaml`. file:
   `src/gobby/install/shared/workflows/agents/lane-manager.yaml`. file:
@@ -1228,16 +1253,20 @@ Research context:
   `src/gobby/install/shared/workflows/agents/elicitor.yaml`. test:
   `tests/agents/test_runbook_definitions.py::test_runbook_personas_parse_and_select_runbook_rules`.
 - 3.2.2 - Every one of the eleven personas embeds the five standing instructions, the
-  shared tail and the conditional sign-off rule verbatim, in that order, followed by a
-  `Diverges from the prompt book:` line; the four edited definitions keep `surfaces:
-  [spawn, persona]` and select `group:runbook`. file:
+  durable shared tail and the conditional sign-off rule verbatim, in that order, followed
+  by a `Diverges from the prompt book:` line; no persona's routine nominal template
+  carries `load <` or `runs <` (the log-monitor line); the four edited definitions keep
+  `surfaces: [spawn, persona]` and select `group:runbook`. file:
   `src/gobby/install/shared/workflows/agents/planner.yaml`. file:
   `src/gobby/install/shared/workflows/agents/plan-enhancer-taskless.yaml`. file:
   `src/gobby/install/shared/workflows/agents/plan-adversary-taskless.yaml`. test:
   `tests/agents/test_runbook_definitions.py::test_every_runbook_persona_carries_the_standing_text`.
 - 3.2.3 - No definition names a backend: no key `backend` or `terminal_backend` in any
-  loaded tree and no `tmux` or `gterm` in any prompt string; every persona's
-  registration line names `GOBBY_PANE_REF` and the pane view's backend. test:
+  loaded tree and no `tmux` or `gterm` in any prompt string outside a backtick-quoted
+  log signature (the log-monitor family table quotes the book's
+  `terminals.host_manager._health_loop - gterm control probe failed` row, book line 495;
+  a quoted signature selects nothing); every persona's registration line names
+  `GOBBY_PANE_REF` and the pane view's backend. test:
   `tests/agents/test_runbook_definitions.py::test_no_runbook_definition_names_a_backend`.
 - 3.2.4 - The assistant persona requires criterion 9's four items and Josh's Telegram
   rule (a send is confirmed in at most one line, never restated) by their fixed
@@ -1247,8 +1276,9 @@ Research context:
   `update_task`, carries the verdict line format, and says a closed row is not a
   verdict. file: `src/gobby/install/shared/workflows/agents/reviewer.yaml`. test:
   `tests/agents/test_runbook_definitions.py::test_reviewer_is_verdict_only`.
-- 3.2.6 - The lane-manager persona carries the criterion 11 sentence and the file
-  contains no `terminal_backend`. file:
+- 3.2.6 - The lane-manager persona carries the criterion 11 sentence verbatim (the
+  sentence itself names the `terminal_backend` parameter it forbids) and its loaded tree
+  has no mapping key `backend` or `terminal_backend`. file:
   `src/gobby/install/shared/workflows/agents/lane-manager.yaml`. test:
   `tests/agents/test_runbook_definitions.py::test_lane_manager_never_spawns_persistent_roles`.
 - 3.2.7 - `researcher` selects the runbook group and its persona names the assistant
@@ -1377,7 +1407,8 @@ Research context:
    `bash src/gobby/install/shared/workflows/runbooks/orchestration-v1.sh`. Expect two
    new tabs, `control` (program director | assistant) and `monitors` (log monitor over
    archivist), four labeled panes in decision 14's splits, each CLI running with its
-   kickoff prompt submitted. Then
+   kickoff prompt submitted into the CLI's composer, not typed at the shell (the
+   `READY_*` waits). Then
    `bash src/gobby/install/shared/workflows/runbooks/plan-council-v1.sh .gobby/plans/runbooks.md`:
    one tab named `runbooks` with the plan writer over enhancer | adversary | researcher.
    From any session: `gobby-workspaces:get_workspace` shows each tab's `runbook` and
@@ -1462,11 +1493,21 @@ deferral:
 ## D2 Retire gobby build in favor of runbooks
 `kind: deferred`
 
+The retirement's own criteria, carried into the deferred task's validation criteria at
+expansion (no live deliverable of this plan delivers them; ruling 23 dropped the
+post-epic-reviewer that 3.2 once carried for `epic_qa`):
+- D2.1 - A planning pass, after orchestration-v1 has run at least one full night (V1
+  step 3 and the archivist's record), names what replaces `epic_qa` and the build
+  coordinator for stage dispatch under runbooks, or keeps them, as a plan of its own.
+- D2.2 - `gobby build` and stage-manifest dispatch are retired or re-scoped by that
+  plan, and the memory that build runs autonomously is retired or rewritten to match.
+
 ```yaml
 deferral:
   task_ref: "TBD-retire-gobby-build"
   reason: "Josh intends runbooks to supersede stage-manifest dispatch; the retirement needs its own planning pass (what replaces epic_qa and the build coordinator, and the memory that build runs autonomously) after orchestration-v1 has run a real night."
   owner: "josh"
   original_acceptance_items:
-    - 3.2.5
+    - D2.1
+    - D2.2
 ```
