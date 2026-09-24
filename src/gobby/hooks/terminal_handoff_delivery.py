@@ -254,6 +254,67 @@ def schedule_terminal_handoff_delivery(
     if claimed is None:
         _settle_unclaimed_delivery(db, staged)
         return False
+    return _schedule_claimed_delivery(
+        claimed,
+        session_manager=session_manager,
+        agent_run_manager=agent_run_manager,
+        event_loop=event_loop,
+        terminal_manager=terminal_manager,
+        terminal_runtime_registry=terminal_runtime_registry,
+    )
+
+
+def schedule_staged_handoff_on_stop(
+    event: HookEvent,
+    *,
+    session_manager: SessionManager,
+    agent_run_manager: LocalAgentRunManager,
+    event_loop: asyncio.AbstractEventLoop | None,
+    terminal_manager: Any | None = None,
+    terminal_runtime_registry: Any | None = None,
+) -> bool:
+    """Recover a staged delivery when the provider omitted its AFTER_TOOL hook."""
+    if event.event_type is not HookEventType.STOP or event.source not in _TERMINAL_SOURCES:
+        return False
+    session_id = event.metadata.get("_platform_session_id")
+    if not isinstance(session_id, str) or not session_id:
+        return False
+    variables = SessionVariableManager(session_manager.db).get_variables(session_id)
+    marker = variables.get(PENDING_HANDOFF_VARIABLE)
+    if not isinstance(marker, Mapping):
+        return False
+    attempt_id = marker.get("attempt_id")
+    if not isinstance(attempt_id, str) or not attempt_id:
+        _log_skipped_delivery(session_id, attempt_id, "staged marker has no attempt_id")
+        return False
+    claimed = claim_staged_handoff_delivery(
+        session_manager.db, session_id, attempt_id, recover_unarmed_gate=True
+    )
+    if claimed is None:
+        current = SessionVariableManager(session_manager.db).get_variables(session_id)
+        reason = staged_handoff_rejection(current, attempt_id) or "claim changed concurrently"
+        _log_skipped_delivery(session_id, attempt_id, reason)
+        return False
+    return _schedule_claimed_delivery(
+        claimed,
+        session_manager=session_manager,
+        agent_run_manager=agent_run_manager,
+        event_loop=event_loop,
+        terminal_manager=terminal_manager,
+        terminal_runtime_registry=terminal_runtime_registry,
+    )
+
+
+def _schedule_claimed_delivery(
+    claimed: ClaimedHandoffDelivery,
+    *,
+    session_manager: SessionManager,
+    agent_run_manager: LocalAgentRunManager,
+    event_loop: asyncio.AbstractEventLoop | None,
+    terminal_manager: Any | None,
+    terminal_runtime_registry: Any | None,
+) -> bool:
+    db = session_manager.db
     if event_loop is None or event_loop.is_closed():
         _compensate_delivery_failure(db, claimed, "daemon event loop is unavailable")
         return False
