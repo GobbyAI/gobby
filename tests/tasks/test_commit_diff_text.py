@@ -176,8 +176,8 @@ def test_a_lone_landing_merge_carries_the_branch_it_landed(repo: Path) -> None:
     assert "+    return 1" in diff
 
 
-def test_a_merge_that_lands_nothing_streams_first_parent_diffs(repo: Path) -> None:
-    """A set whose merge is a sync (not a landing) skips replay and streams per commit."""
+def test_clean_sync_merge_contributes_no_hunks(repo: Path) -> None:
+    """Syncing the target into the task branch adds nothing the merge did not author."""
     _git(repo, "checkout", "-q", "-b", "side")
     _commit(repo, "feature.py", "def feature():\n    return 1\n", "side feature")
     _git(repo, "checkout", "-q", "main")
@@ -189,6 +189,38 @@ def test_a_merge_that_lands_nothing_streams_first_parent_diffs(repo: Path) -> No
 
     diff = collect_commit_diff_text([sync, fix], cwd=repo)
 
-    assert "diff --git a/unrelated.py b/unrelated.py" in diff
+    assert "unrelated.py" not in diff
     assert diff.count("diff --git a/feature.py b/feature.py") == 1
     assert "+    return 2" in diff
+
+
+def test_conflict_sync_merge_contributes_only_its_resolution(repo: Path) -> None:
+    """A resolved sync merge contributes its remerge diff, not the incoming branch."""
+    _commit(repo, "shared.py", "BASE = True\n", "base shared")
+    _git(repo, "checkout", "-q", "-b", "side")
+    _commit(repo, "shared.py", "SIDE = True\n", "side shared")
+    _git(repo, "checkout", "-q", "main")
+    _commit(repo, "shared.py", "MAIN = True\n", "main shared")
+    _commit(repo, "unrelated.py", "UNRELATED = True\n", "main unrelated")
+    _git(repo, "checkout", "-q", "side")
+    conflict = subprocess.run(
+        ["git", *_GIT_IDENTITY, "merge", "--no-ff", "--no-gpg-sign", "-m", "sync main", "main"],
+        cwd=repo,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert conflict.returncode != 0
+    (repo / "shared.py").write_text("RESOLVED = True\n")
+    _git(repo, "add", "shared.py")
+    _git(repo, "commit", "--no-gpg-sign", "-q", "-m", "sync main")
+    sync = _git(repo, "rev-parse", "HEAD")
+    _commit(repo, "marker.py", "MARKER = True\n", "side follow")
+
+    diff = collect_commit_diff_text([sync, _git(repo, "rev-parse", "HEAD")], cwd=repo)
+
+    assert "unrelated.py" not in diff
+    assert "remerge CONFLICT" in diff
+    assert "+RESOLVED = True" in diff
+    assert "MARKER = True" in diff
