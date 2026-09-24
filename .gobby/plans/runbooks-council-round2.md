@@ -116,6 +116,14 @@ Writer verification: correct; the Claude and Codex patterns are not substrings o
 Move: FOLD as proposed. `READY_grok='Ctrl+x:shortcuts'`; the scripts paragraph states that no `READY_*` value may be a substring of its seat's launch line and why; 2.1.5 and 2.1.8 assert it. Shell wait, launch, ready wait, kickoff order unchanged.
 Resolution: folded in the AR2 commit.
 
+### AR3 (adversary message on the AR2 hash `ab982751...e56f` at `2ed0b4e3`, 2026-09-24 00:0x CDT): A1-A8 confirmed folded; one new finding
+
+#### A9 `runbook-2.1-grok-ready-regex-plus` (unhandled-edge, blocking)
+Adversary: `--pattern` is a regex, so `Ctrl+x:shortcuts` reads `l+` as a quantifier and never matches the literal hint; the grok ready wait times out and the kickoff is never sent, while 2.1.8's substring check stays green.
+Writer verification: correct; the verb list says `--pattern REGEX`.
+Move: FOLD as proposed. `READY_grok='Ctrl\+x:shortcuts'`; the scripts paragraph says every `READY_*` value is a regex with metacharacters escaped and must match no launch line; 2.1.5 and 2.1.8 assert each regex matches its captured idle-composer text and no launch line.
+Resolution: folded in the AR3 commit.
+
 Check-in (adversary message, 2026-09-23 21:0x CDT): "Send me the folded hash of .gobby/plans/runbooks.md ... only after enhancement consensus, with the commit sha. I attack that hash and no earlier one. I edit no files. Debate each finding until you fold it or I withdraw it; I finalize to gobby#14018." Writer acknowledgment sent 21:3x CDT (non-waking): the hash goes out only after enhancement consensus, in one message with the sha256, the commit sha and the bare validate result; no hash yet.
 
 ## Program Director rulings
@@ -176,7 +184,8 @@ S5 (this entry): plan sha256 `c8a9238f6ad8e2fcf9ebcc579b6cc8797b2ba876e59302cc19
 E2 (this entry; cr-1 and cr-2 folded): plan sha256 `d9d65815736a1cd0b384860228d34241ec36190ee96b5dba1ff7be114e03afcf`; bare validate clean; `git diff --check` clean (23:0x CDT). Enhancer consensus on this hash at 23:0x CDT; it is the hash the adversary attacks.
 AR1 (this entry; A1-A7 folded): plan sha256 `e4baf6640abfd856669c7ead1dd8053af55602f338a4fabd9c2eeff7e6876289`; bare validate clean; `git diff --check` clean (23:4x CDT). Sent to the adversary for re-attack.
 AR2 (this entry; A8 folded): plan sha256 `ab982751bb9b3452359977b068bf155154f70a748858a14a71929570109ae56f`; bare validate clean; `git diff --check` clean (23:5x CDT). Sent to the adversary for re-attack.
-Pending: the adversary's verdict on the AR2 hash, the final commit and hash, validation output, the adversary's finalization message, the PD's review and hand-off to the assistant.
+AR3 (this entry; A9 folded): plan sha256 `01f40581bba2492f479726f7a5caa3f2923a979135068213ca9607e513e7bbbb`; bare validate clean; `git diff --check` clean (00:1x CDT). Sent to the adversary for re-attack.
+Pending: the adversary's verdict on the AR3 hash, the final commit and hash, validation output, the adversary's finalization message, the PD's review and hand-off to the assistant.
 
 ### Writer refinements while writing S2 and S3 (named to the Program Director with the hash)
 - Registration source (criterion 1 versus 3): the design of record had the persona say "gterm for a workspace pane". Criterion 1's sentence "A definition that names one fails validation" is literal, so no definition names a backend; instead 1.2's pane view gains `backend` from the terminals row the `session_ref` JOIN already reads, and the registration line repeats what `get_workspace` shows. Cost: one derived field. The adopted-terminal case then needs no caveat text.
