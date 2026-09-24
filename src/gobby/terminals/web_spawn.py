@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from uuid import UUID
@@ -173,6 +174,8 @@ async def spawn_web_terminal(
     locator_key = prepared.locator_key or ""
     if runtime.backend == "native" and prepared.host_terminal_id is not None:
         process: dict[str, object] = {"host_terminal_id": prepared.host_terminal_id}
+        if command:
+            process["shell"] = os.path.basename(command[0])
         if prepared.process is not None:
             process.update(
                 {"pgid": prepared.process.pgid, "start_time": prepared.process.start_time}

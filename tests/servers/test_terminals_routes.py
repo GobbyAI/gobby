@@ -179,12 +179,17 @@ async def test_dimension_bounds_rejected(
     assert _manager(temp_db).list_by_project(sample_project["id"]) == []
 
 
-def _native_live(manager: TerminalManager, project_id: str, pgid: int) -> Any:
+def _native_live(
+    manager: TerminalManager, project_id: str, pgid: int, shell: str | None = None
+) -> Any:
     """A live native row carrying the shell pid the host recorded for it."""
     row = _create_pending(manager, project_id, backend="native")
+    process: dict[str, object] = {"host_terminal_id": "ht-1", "pgid": pgid, "start_time": 1.0}
+    if shell is not None:
+        process["shell"] = shell
     recorded = manager.record_process(
         row.id,
-        {"host_terminal_id": "ht-1", "pgid": pgid, "start_time": 1.0},
+        process,
         attempt_generation=row.attempt_generation,
         attempt_started_at=row.attempt_started_at,
     )
@@ -233,3 +238,23 @@ def test_a_native_row_reports_the_command_in_its_terminal_foreground(
     # than missing: the label ladder reads one field for every backend.
     assert rows[promoted.id]["command"] is None
     assert detail.json()["command"] == "nvim"
+
+
+def test_a_native_row_falls_back_to_its_spawn_shell(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    manager = _manager(temp_db)
+    native = _native_live(manager, sample_project["id"], pgid=4242, shell="zsh")
+    # The process table no longer lists the shell, so no live foreground resolves.
+    table = "1 0 /sbin/launchd\n"
+    run = MagicMock(
+        return_value=subprocess.CompletedProcess(args=["ps"], returncode=0, stdout=table, stderr="")
+    )
+
+    with patch("gobby.terminals.foreground.subprocess.run", run), _client(temp_db) as client:
+        listing = client.get("/api/terminals", params={"project_id": sample_project["id"]})
+        detail = client.get(f"/api/terminals/{native.id}")
+
+    rows = {row["id"]: row for row in listing.json()["items"]}
+    assert rows[native.id]["command"] == "zsh"
+    assert detail.json()["command"] == "zsh"
