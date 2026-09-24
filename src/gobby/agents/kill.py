@@ -20,6 +20,7 @@ from gobby.agents.capture import KillOutcome
 from gobby.storage.agents import AgentRun, LocalAgentRunManager, TerminalAction
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
+from gobby.utils import spawn
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +48,7 @@ async def _run_subprocess(*args: str, timeout: float = 5.0) -> tuple[int, str, s
     Returns:
         Tuple of (returncode, stdout, stderr).
     """
-    proc = await asyncio.create_subprocess_exec(
+    proc = await spawn.create_subprocess_exec(
         *args,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,

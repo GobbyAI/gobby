@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import re
-import subprocess  # nosec B404 # required for git clone/pull operations with validated input
 from pathlib import Path
 
 from gobby.skills._loader_models import GitHubRef, SkillLoadError
+from gobby.utils import spawn
 from gobby.utils.daemon_git import GitFailed, GitOk, GitResult, GitTimeout, daemon_git
 
 # Default cache directory for cloned GitHub repos
@@ -162,7 +162,7 @@ def clone_skill_repo(
     if is_existing:
         if ref.branch:
             checkout_cmd = ["git", "-C", str(repo_path), "checkout", ref.branch]
-            result = subprocess.run(  # nosec B603 # hardcoded git command, input validated
+            result = spawn.run(  # nosec B603 # hardcoded git command, input validated
                 checkout_cmd, capture_output=True, text=True, timeout=60
             )
             if result.returncode != 0:
@@ -171,7 +171,7 @@ def clone_skill_repo(
                     ref.clone_url,
                 )
         pull_cmd = ["git", "-C", str(repo_path), "pull", "--ff-only"]
-        result = subprocess.run(  # nosec B603 # hardcoded git command
+        result = spawn.run(  # nosec B603 # hardcoded git command
             pull_cmd, capture_output=True, text=True, timeout=120
         )
         if result.returncode != 0:
@@ -187,7 +187,7 @@ def clone_skill_repo(
         cmd.extend(["--branch", ref.branch])
     cmd.extend([ref.clone_url, str(repo_path)])
 
-    result = subprocess.run(  # nosec B603 # hardcoded git clone, input validated
+    result = spawn.run(  # nosec B603 # hardcoded git clone, input validated
         cmd, capture_output=True, text=True, timeout=120
     )
 

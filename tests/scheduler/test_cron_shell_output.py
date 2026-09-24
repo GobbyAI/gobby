@@ -26,7 +26,7 @@ async def test_execute_shell_raises_error_with_full_output() -> None:
 
     with pytest.MonkeyPatch.context() as patcher:
         patcher.setattr(
-            "gobby.scheduler.executor.asyncio.create_subprocess_exec",
+            "gobby.scheduler.executor.spawn.create_subprocess_exec",
             AsyncMock(return_value=process),
         )
         with pytest.raises(CronShellError) as exc_info:

@@ -61,7 +61,7 @@ def mock_hooks_config():
 
 
 class TestRunCommand:
-    @patch("subprocess.run")
+    @patch("gobby.utils.spawn.run")
     def test_run_command_success(self, mock_run) -> None:
         mock_run.return_value = MagicMock(
             returncode=0,
@@ -78,7 +78,7 @@ class TestRunCommand:
         assert result.stdout == "Success output"
         assert result.duration_ms >= 0
 
-    @patch("subprocess.run")
+    @patch("gobby.utils.spawn.run")
     def test_run_command_failure(self, mock_run) -> None:
         mock_run.return_value = MagicMock(
             returncode=1,
@@ -92,7 +92,7 @@ class TestRunCommand:
         assert result.exit_code == 1
         assert result.stderr == "Error output"
 
-    @patch("subprocess.run")
+    @patch("gobby.utils.spawn.run")
     def test_run_command_timeout(self, mock_run) -> None:
         mock_run.side_effect = subprocess.TimeoutExpired(cmd="long-cmd", timeout=1)
 
@@ -101,7 +101,7 @@ class TestRunCommand:
         assert result.success is False
         assert "timed out" in result.error
 
-    @patch("subprocess.run")
+    @patch("gobby.utils.spawn.run")
     def test_run_command_exception(self, mock_run) -> None:
         mock_run.side_effect = OSError("System error")
 

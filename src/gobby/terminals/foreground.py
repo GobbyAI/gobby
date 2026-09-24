@@ -19,6 +19,8 @@ import logging
 import subprocess
 from collections.abc import Mapping
 
+from gobby.utils import spawn
+
 logger = logging.getLogger(__name__)
 
 PS_TIMEOUT_SECONDS = 2.0
@@ -33,7 +35,7 @@ def _process_snapshot() -> dict[int, tuple[int, str]]:
     page.
     """
     try:
-        result = subprocess.run(
+        result = spawn.run(
             ["ps", "-A", "-o", "pid=,tpgid=,comm="],
             capture_output=True,
             text=True,

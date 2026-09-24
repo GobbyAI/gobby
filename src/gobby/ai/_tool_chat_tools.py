@@ -45,6 +45,7 @@ from gobby.ai._tool_chat_builtins import (
 )
 from gobby.ai._tool_chat_contracts import ToolLoopLimits, ToolPolicy
 from gobby.storage.managed_credentials import MANAGED_EXECUTION_BOOTSTRAP_ENV
+from gobby.utils import spawn
 
 _OPERATOR_DATABASE_ENV = ("DATABASE_URL", "GCODE_DATABASE_URL", "GOBBY_POSTGRES_DSN")
 
@@ -270,7 +271,7 @@ async def run_argv(
             if MANAGED_EXECUTION_BOOTSTRAP_ENV in env:
                 for name in _OPERATOR_DATABASE_ENV:
                     child_env.pop(name, None)
-        proc = await asyncio.create_subprocess_exec(
+        proc = await spawn.create_subprocess_exec(
             *argv,
             cwd=cwd,
             stdout=asyncio.subprocess.PIPE,

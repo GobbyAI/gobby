@@ -18,6 +18,7 @@ from gobby.hooks.effect_deadline import (
 from gobby.hooks.events import HookEvent, SessionSource
 from gobby.integrations.rtk import resolve_rtk
 from gobby.storage.definitions.rules import RuleDefinitionRow
+from gobby.utils import spawn
 from gobby.utils.dev import linked_worktree_root
 from gobby.workflows.definitions import RuleEffect
 from gobby.workflows.engine._offload import offload
@@ -306,7 +307,7 @@ class ProxyHooksMixin:
         argv = [str(probe.path), "rewrite", "--", command]
         cwd = event.cwd if event.cwd else None
         try:
-            process = await asyncio.create_subprocess_exec(
+            process = await spawn.create_subprocess_exec(
                 *argv,
                 cwd=cwd,
                 stdin=asyncio.subprocess.DEVNULL,

@@ -12,6 +12,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from gobby.utils import spawn
+
 RTK_MINIMUM_VERSION = (0, 45, 0)
 RTK_RULE_NAME = "rtk-command-rewrite"
 RTK_VERSION = "0.45.0"
@@ -111,7 +113,7 @@ def platform_paths(
 
 def _run_probe(argv: Sequence[str], *, timeout: float) -> tuple[int, bytes, bytes] | None:
     try:
-        completed = subprocess.run(  # nosec B603 - executable is an explicit candidate path
+        completed = spawn.run(  # nosec B603 - executable is an explicit candidate path
             list(argv),
             capture_output=True,
             check=False,

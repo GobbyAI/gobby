@@ -16,6 +16,7 @@ import tempfile
 from typing import Any
 
 from gobby.skills.hubs.base import DownloadResult, HubProvider, HubSkillDetails, HubSkillInfo
+from gobby.utils import spawn
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +61,7 @@ class ClawdHubProvider(HubProvider):
         Uses `--cli-version` flag per the clawhub CLI interface.
         """
         try:
-            process = await asyncio.create_subprocess_exec(
+            process = await spawn.create_subprocess_exec(
                 "clawhub",
                 "--cli-version",
                 stdout=asyncio.subprocess.PIPE,
@@ -114,7 +115,7 @@ class ClawdHubProvider(HubProvider):
             cmd_args.extend(args)
 
         try:
-            process = await asyncio.create_subprocess_exec(
+            process = await spawn.create_subprocess_exec(
                 *cmd_args,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,

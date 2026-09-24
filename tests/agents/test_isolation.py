@@ -212,7 +212,7 @@ class TestEnsureIsolationCodeIndex:
         with (
             patch("gobby.agents.code_index.resolve_native_bin", return_value="/tmp/gcode"),
             patch(
-                "gobby.agents.code_index.subprocess.Popen",
+                "gobby.agents.code_index.spawn.popen",
                 side_effect=recording_launch,
             ) as popen,
         ):
@@ -262,7 +262,7 @@ class TestEnsureIsolationCodeIndex:
         with (
             patch("gobby.agents.code_index.resolve_native_bin", return_value="/tmp/gcode"),
             patch(
-                "gobby.agents.code_index.subprocess.Popen",
+                "gobby.agents.code_index.spawn.popen",
                 side_effect=self._popen_side_effect(proc),
             ) as popen,
         ):
@@ -324,7 +324,7 @@ class TestEnsureIsolationCodeIndex:
         with (
             patch("gobby.agents.code_index.resolve_native_bin", return_value="/tmp/gcode"),
             patch(
-                "gobby.agents.code_index.subprocess.Popen",
+                "gobby.agents.code_index.spawn.popen",
                 side_effect=self._popen_side_effect(proc),
             ),
         ):
@@ -369,7 +369,7 @@ class TestEnsureIsolationCodeIndex:
         with (
             patch("gobby.agents.code_index.resolve_native_bin", return_value="/tmp/gcode"),
             patch(
-                "gobby.agents.code_index.subprocess.Popen",
+                "gobby.agents.code_index.spawn.popen",
                 side_effect=self._popen_side_effect(proc),
             ),
         ):
@@ -554,7 +554,7 @@ class TestEnsureIsolationCodeIndex:
         with (
             patch("gobby.agents.code_index.resolve_native_bin", return_value="/tmp/gcode"),
             patch(
-                "gobby.agents.code_index.subprocess.Popen",
+                "gobby.agents.code_index.spawn.popen",
                 side_effect=self._popen_side_effect(proc),
             ),
         ):
@@ -677,7 +677,7 @@ class TestEnsureIsolationCodeIndex:
         with (
             patch("gobby.agents.code_index.resolve_native_bin", return_value="/tmp/gcode"),
             patch(
-                "gobby.agents.code_index.subprocess.Popen",
+                "gobby.agents.code_index.spawn.popen",
                 side_effect=self._popen_side_effect(proc),
             ) as popen,
         ):
@@ -730,7 +730,7 @@ class TestEnsureIsolationCodeIndex:
         with (
             patch("gobby.agents.code_index.resolve_native_bin", return_value="/tmp/gcode"),
             patch(
-                "gobby.agents.code_index.subprocess.Popen",
+                "gobby.agents.code_index.spawn.popen",
                 side_effect=self._popen_side_effect(proc),
             ) as popen,
         ):
@@ -771,7 +771,7 @@ class TestEnsureIsolationCodeIndex:
         with (
             patch("gobby.agents.code_index.resolve_native_bin", return_value="/tmp/gcode"),
             patch(
-                "gobby.agents.code_index.subprocess.Popen",
+                "gobby.agents.code_index.spawn.popen",
                 side_effect=self._popen_side_effect(proc),
             ) as popen,
         ):
@@ -791,7 +791,7 @@ class TestEnsureIsolationCodeIndex:
         with (
             patch("gobby.agents.code_index.resolve_native_bin", return_value="/tmp/gcode"),
             patch(
-                "gobby.agents.code_index.subprocess.Popen",
+                "gobby.agents.code_index.spawn.popen",
                 side_effect=[proc_ok, proc_fail],
             ),
         ):
@@ -810,7 +810,7 @@ class TestEnsureIsolationCodeIndex:
         with (
             patch("gobby.agents.code_index.resolve_native_bin", return_value="/tmp/gcode"),
             patch(
-                "gobby.agents.code_index.subprocess.Popen",
+                "gobby.agents.code_index.spawn.popen",
                 side_effect=self._popen_side_effect(proc),
             ),
             pytest.raises(RuntimeError) as exc_info,
@@ -853,7 +853,7 @@ class TestEnsureIsolationCodeIndex:
     async def test_gcode_launch_oserror_uses_failure_code(self, tmp_path: Path) -> None:
         with (
             patch("gobby.agents.code_index.resolve_native_bin", return_value="/tmp/gcode"),
-            patch("gobby.agents.code_index.subprocess.Popen", side_effect=OSError("spawn failed")),
+            patch("gobby.agents.code_index.spawn.popen", side_effect=OSError("spawn failed")),
             pytest.raises(RuntimeError) as exc_info,
         ):
             await ensure_isolation_code_index(str(tmp_path))
@@ -881,7 +881,7 @@ class TestEnsureIsolationCodeIndex:
         with (
             patch("gobby.agents.code_index.resolve_native_bin", return_value="/tmp/gcode"),
             patch(
-                "gobby.agents.code_index.subprocess.Popen",
+                "gobby.agents.code_index.spawn.popen",
                 side_effect=self._popen_side_effect(proc),
             ),
         ):

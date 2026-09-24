@@ -22,6 +22,7 @@ from gobby.agents.sandbox_domains import GIT_DOMAINS, PACKAGE_REGISTRY_DOMAINS
 from gobby.agents.sandbox_run_environment import RUN_CACHE_ENV_VARS, SandboxRunPaths
 from gobby.config.tmux import socket_root
 from gobby.paths import get_gobby_home
+from gobby.utils import spawn
 
 if TYPE_CHECKING:
     from gobby.agents.sandbox import SandboxConfig, SandboxCredentialEnv
@@ -601,7 +602,7 @@ def _clone_pre_commit_store(source: Path, destination: Path) -> None:
     cloned = False
     if sys.platform == "darwin":
         try:
-            subprocess.run(  # nosec B603 # fixed system cp and local paths.
+            spawn.run(  # nosec B603 # fixed system cp and local paths.
                 ["/bin/cp", "-c", "-R", str(source), str(destination)],
                 check=True,
                 stdout=subprocess.DEVNULL,
@@ -614,7 +615,7 @@ def _clone_pre_commit_store(source: Path, destination: Path) -> None:
         shutil.copytree(source, destination, dirs_exist_ok=True)
 
     try:
-        subprocess.run(  # nosec B603 # fixed system chmod and local path.
+        spawn.run(  # nosec B603 # fixed system chmod and local path.
             ["/bin/chmod", "-R", "u+rwX", str(destination)],
             check=True,
             stdout=subprocess.DEVNULL,

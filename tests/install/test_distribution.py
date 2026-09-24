@@ -82,7 +82,7 @@ def test_homebrew_helper_detection_fails_with_brew_guidance_when_stale(tmp_path:
     with (
         patch.object(Path, "home", return_value=tmp_path),
         patch("gobby.install.distribution.shutil.which", side_effect=fake_which),
-        patch("gobby.install.distribution.subprocess.run", side_effect=fake_run),
+        patch("gobby.install.distribution.spawn.run", side_effect=fake_run),
     ):
         with pytest.raises(HomebrewDistributionError) as exc_info:
             verify_homebrew_managed_bins()
@@ -119,7 +119,7 @@ def test_homebrew_helper_detection_accepts_valid_local_helpers_before_stale_path
     with (
         patch.object(Path, "home", return_value=tmp_path),
         patch("gobby.install.distribution.shutil.which") as mock_which,
-        patch("gobby.install.distribution.subprocess.run", side_effect=fake_run),
+        patch("gobby.install.distribution.spawn.run", side_effect=fake_run),
     ):
         statuses = verify_homebrew_managed_bins()
 
@@ -147,7 +147,7 @@ def test_homebrew_helper_detection_accepts_pinned_versions(tmp_path: Path) -> No
     with (
         patch.object(Path, "home", return_value=tmp_path),
         patch("gobby.install.distribution.shutil.which", side_effect=fake_which),
-        patch("gobby.install.distribution.subprocess.run", side_effect=fake_run),
+        patch("gobby.install.distribution.spawn.run", side_effect=fake_run),
     ):
         statuses = verify_homebrew_managed_bins()
 

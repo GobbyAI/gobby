@@ -350,7 +350,7 @@ def test_prepare_sandbox_run_paths_uses_apfs_clone_on_macos(
         if command[0] == "/bin/cp":
             shutil.copytree(command[-2], command[-1])
 
-    monkeypatch.setattr("gobby.agents.sandbox_policy.subprocess.run", run)
+    monkeypatch.setattr("gobby.agents.sandbox_policy.spawn.run", run)
 
     _paths, destination = _run_cache(monkeypatch, tmp_path, workspace=workspace)
 
@@ -372,7 +372,7 @@ def test_prepare_sandbox_run_paths_falls_back_when_apfs_clone_fails(
         if command[0] == "/bin/cp":
             raise subprocess.CalledProcessError(1, command)
 
-    monkeypatch.setattr("gobby.agents.sandbox_policy.subprocess.run", run)
+    monkeypatch.setattr("gobby.agents.sandbox_policy.spawn.run", run)
 
     _paths, destination = _run_cache(monkeypatch, tmp_path, workspace=workspace)
 

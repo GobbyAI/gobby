@@ -167,7 +167,7 @@ class TestCloneSkillRepo:
         cache_dir = tmp_path / "skill-cache"
         ref = parse_github_url("anthropics/claude-code")
 
-        with patch("subprocess.run") as mock_run:
+        with patch("gobby.utils.spawn.run") as mock_run:
             mock_run.return_value = Mock(returncode=0)
             clone_skill_repo(ref, cache_dir=cache_dir)
 
@@ -180,7 +180,7 @@ class TestCloneSkillRepo:
         cache_dir = tmp_path / "skill-cache"
         ref = parse_github_url("anthropics/claude-code")
 
-        with patch("subprocess.run") as mock_run:
+        with patch("gobby.utils.spawn.run") as mock_run:
             mock_run.return_value = Mock(returncode=0)
             clone_skill_repo(ref, cache_dir=cache_dir)
 
@@ -197,7 +197,7 @@ class TestCloneSkillRepo:
         cache_dir = tmp_path / "skill-cache"
         ref = parse_github_url("anthropics/claude-code#develop")
 
-        with patch("subprocess.run") as mock_run:
+        with patch("gobby.utils.spawn.run") as mock_run:
             mock_run.return_value = Mock(returncode=0)
             clone_skill_repo(ref, cache_dir=cache_dir)
 
@@ -212,7 +212,7 @@ class TestCloneSkillRepo:
         cache_dir = tmp_path / "skill-cache"
         ref = parse_github_url("anthropics/claude-code")
 
-        with patch("subprocess.run") as mock_run:
+        with patch("gobby.utils.spawn.run") as mock_run:
             mock_run.return_value = Mock(returncode=0)
             result = clone_skill_repo(ref, cache_dir=cache_dir)
 
@@ -231,7 +231,7 @@ class TestCloneSkillRepo:
         repo_path.mkdir(parents=True)
         (repo_path / ".git").mkdir()  # Mark as git repo
 
-        with patch("subprocess.run") as mock_run:
+        with patch("gobby.utils.spawn.run") as mock_run:
             mock_run.return_value = Mock(returncode=0)
             clone_skill_repo(ref, cache_dir=cache_dir)
 
@@ -246,7 +246,7 @@ class TestCloneSkillRepo:
         cache_dir = tmp_path / "skill-cache"
         ref = parse_github_url("anthropics/claude-code")
 
-        with patch("subprocess.run") as mock_run:
+        with patch("gobby.utils.spawn.run") as mock_run:
             mock_run.return_value = Mock(returncode=1, stderr="fatal: repo not found")
             with pytest.raises(SkillLoadError, match="clone"):
                 clone_skill_repo(ref, cache_dir=cache_dir)
@@ -258,7 +258,7 @@ class TestCloneSkillRepo:
         cache_dir = tmp_path / "skill-cache"
         ref = parse_github_url("anthropics/claude-code")
 
-        with patch("subprocess.run") as mock_run:
+        with patch("gobby.utils.spawn.run") as mock_run:
             mock_run.return_value = Mock(returncode=0)
             clone_skill_repo(ref, cache_dir=cache_dir)
 
@@ -271,7 +271,7 @@ class TestCloneSkillRepo:
 
         ref = parse_github_url("https://github.com/owner/repo/tree/main/../../outside")
 
-        with patch("subprocess.run") as mock_run:
+        with patch("gobby.utils.spawn.run") as mock_run:
             with pytest.raises(SkillLoadError, match="Invalid GitHub skill path"):
                 clone_skill_repo(ref, cache_dir=tmp_path / "cache")
 
@@ -285,7 +285,7 @@ class TestCloneSkillRepo:
 
         ref = GitHubRef(owner="owner", repo="repo", path=path)
 
-        with patch("subprocess.run") as mock_run:
+        with patch("gobby.utils.spawn.run") as mock_run:
             with pytest.raises(SkillLoadError, match="Invalid GitHub skill path"):
                 clone_skill_repo(ref, cache_dir=tmp_path / "cache")
 

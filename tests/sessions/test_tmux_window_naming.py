@@ -119,7 +119,7 @@ class TestRenameTmuxWindow:
 
         session = MagicMock()
         session.terminal_context = None
-        with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec:
+        with patch("gobby.utils.spawn.create_subprocess_exec", new_callable=AsyncMock) as mock_exec:
             await _rename_tmux_window(session, "Title")
 
         assert mock_exec.await_count == 0
@@ -131,7 +131,7 @@ class TestRenameTmuxWindow:
 
         session = MagicMock()
         session.terminal_context = {"parent_pid": 123}
-        with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec:
+        with patch("gobby.utils.spawn.create_subprocess_exec", new_callable=AsyncMock) as mock_exec:
             await _rename_tmux_window(session, "Title")
 
         assert mock_exec.await_count == 0

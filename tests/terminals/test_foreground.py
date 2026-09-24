@@ -49,7 +49,7 @@ def test_command_name_strips_paths_and_the_login_shell_dash() -> None:
 
 
 def test_snapshot_parses_commands_that_contain_spaces() -> None:
-    with patch("gobby.terminals.foreground.subprocess.run", return_value=_ps(PS_TABLE)):
+    with patch("gobby.terminals.foreground.spawn.run", return_value=_ps(PS_TABLE)):
         snapshot = _process_snapshot()
 
     assert snapshot[37904] == (37904, "-zsh")
@@ -59,28 +59,28 @@ def test_snapshot_parses_commands_that_contain_spaces() -> None:
 
 def test_snapshot_skips_lines_it_cannot_parse() -> None:
     noise = "not a process row\n   \n12 notanumber sh\n77 77 bash\n"
-    with patch("gobby.terminals.foreground.subprocess.run", return_value=_ps(noise)):
+    with patch("gobby.terminals.foreground.spawn.run", return_value=_ps(noise)):
         snapshot = _process_snapshot()
 
     assert snapshot == {77: (77, "bash")}
 
 
 def test_an_idle_shell_reports_itself_and_a_running_job_reports_the_job() -> None:
-    with patch("gobby.terminals.foreground.subprocess.run", return_value=_ps(PS_TABLE)):
+    with patch("gobby.terminals.foreground.spawn.run", return_value=_ps(PS_TABLE)):
         resolved = foreground_commands({"idle": 37904, "busy": 83724})
 
     assert resolved == {"idle": "zsh", "busy": "claude"}
 
 
 def test_a_shell_with_no_controlling_terminal_has_no_command() -> None:
-    with patch("gobby.terminals.foreground.subprocess.run", return_value=_ps(PS_TABLE)):
+    with patch("gobby.terminals.foreground.spawn.run", return_value=_ps(PS_TABLE)):
         resolved = foreground_commands({"daemonized": 90001})
 
     assert resolved == {}
 
 
 def test_one_unresolvable_row_never_blanks_the_others() -> None:
-    with patch("gobby.terminals.foreground.subprocess.run", return_value=_ps(PS_TABLE)) as run:
+    with patch("gobby.terminals.foreground.spawn.run", return_value=_ps(PS_TABLE)) as run:
         resolved = foreground_commands({"gone": 54321, "absurd": 999999, "live": 37904})
 
     assert resolved == {"live": "zsh"}
@@ -91,7 +91,7 @@ def test_one_unresolvable_row_never_blanks_the_others() -> None:
 
 
 def test_no_shell_pids_means_no_subprocess_at_all() -> None:
-    with patch("gobby.terminals.foreground.subprocess.run") as run:
+    with patch("gobby.terminals.foreground.spawn.run") as run:
         assert foreground_commands({}) == {}
         assert foreground_commands({"unstarted": 0}) == {}
 
@@ -104,7 +104,7 @@ def test_no_shell_pids_means_no_subprocess_at_all() -> None:
     ids=["ps-missing", "ps-timeout"],
 )
 def test_a_failed_lookup_yields_no_commands_rather_than_raising(failure: Exception) -> None:
-    with patch("gobby.terminals.foreground.subprocess.run", side_effect=failure):
+    with patch("gobby.terminals.foreground.spawn.run", side_effect=failure):
         assert foreground_commands({"live": 37904}) == {}
 
 

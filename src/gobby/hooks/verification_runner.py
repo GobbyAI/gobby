@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from gobby.config.features import HooksConfig, HookStageConfig, ProjectVerificationConfig
+from gobby.utils import spawn
 from gobby.utils.project_context import get_hooks_config, get_verification_config
 
 logger = logging.getLogger(__name__)
@@ -87,9 +88,9 @@ def run_command(
     env.pop("VIRTUAL_ENV_PROMPT", None)
 
     try:
-        result = subprocess.run(
-            command,
-            shell=True,  # nosec B602 # user-configured verification commands require shell features
+        # User-configured verification commands need shell features.
+        result = spawn.run(
+            ["/bin/sh", "-c", command],
             capture_output=True,
             text=True,
             timeout=timeout,

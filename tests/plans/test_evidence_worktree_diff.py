@@ -94,7 +94,7 @@ def test_option_shaped_base_sha_is_rejected_before_git(tmp_path: Path) -> None:
         {"worktree_path": str(tmp_path), "base_commit_sha": "--all"},
     )
 
-    with patch("gobby.plans.evidence.subprocess.run") as run_git:
+    with patch("gobby.plans.evidence.spawn.run") as run_git:
         with pytest.raises(
             InvalidEvidenceError,
             match="Option-shaped evidence ref '--all' is not allowed",

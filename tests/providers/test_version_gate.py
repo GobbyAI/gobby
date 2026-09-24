@@ -364,7 +364,7 @@ async def test_get_cli_version_invokes_resolved_executable_not_bare_name(
         return _Proc()
 
     with patch(
-        "gobby.servers.provider_model_discovery.asyncio.create_subprocess_exec",
+        "gobby.servers.provider_model_discovery.spawn.create_subprocess_exec",
         side_effect=fake_exec,
     ):
         output = await get_cli_version("agy", which=lambda _name: str(binary))

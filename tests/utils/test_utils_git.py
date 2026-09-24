@@ -144,7 +144,7 @@ class TestRunGitCommand:
 
     def test_success_returns_stdout(self, temp_dir: Path) -> None:
         """Test successful git command returns stripped stdout."""
-        with patch("subprocess.run") as mock_run:
+        with patch("gobby.utils.spawn.run") as mock_run:
             mock_result = MagicMock()
             mock_result.returncode = 0
             mock_result.stdout = "  output with whitespace  \n"
@@ -164,7 +164,7 @@ class TestRunGitCommand:
 
     def test_failure_returns_none(self, temp_dir: Path) -> None:
         """Test failed git command returns None."""
-        with patch("subprocess.run") as mock_run:
+        with patch("gobby.utils.spawn.run") as mock_run:
             mock_result = MagicMock()
             mock_result.returncode = 128
             mock_result.stderr = "fatal: not a git repository"
@@ -176,7 +176,7 @@ class TestRunGitCommand:
 
     def test_custom_timeout(self, temp_dir: Path) -> None:
         """Test custom timeout is passed to subprocess."""
-        with patch("subprocess.run") as mock_run:
+        with patch("gobby.utils.spawn.run") as mock_run:
             mock_result = MagicMock()
             mock_result.returncode = 0
             mock_result.stdout = "output"
@@ -190,7 +190,7 @@ class TestRunGitCommand:
 
     def test_timeout_expired_returns_none(self, temp_dir: Path) -> None:
         """Test TimeoutExpired exception returns None."""
-        with patch("subprocess.run") as mock_run:
+        with patch("gobby.utils.spawn.run") as mock_run:
             mock_run.side_effect = subprocess.TimeoutExpired(cmd="git", timeout=5)
 
             result = run_git_command(["git", "status"], temp_dir, timeout=5)
@@ -199,7 +199,7 @@ class TestRunGitCommand:
 
     def test_file_not_found_returns_none(self, temp_dir: Path) -> None:
         """Test FileNotFoundError returns None when git not in PATH."""
-        with patch("subprocess.run") as mock_run:
+        with patch("gobby.utils.spawn.run") as mock_run:
             mock_run.side_effect = FileNotFoundError()
 
             result = run_git_command(["git", "status"], temp_dir)
@@ -215,7 +215,7 @@ class TestRunGitCommand:
         monkeypatch.setenv("PATH", "")
         with (
             patch("gobby.utils.git.shutil.which", return_value=None),
-            patch("subprocess.run") as mock_run,
+            patch("gobby.utils.spawn.run") as mock_run,
         ):
             mock_result = MagicMock()
             mock_result.returncode = 0
@@ -231,7 +231,7 @@ class TestRunGitCommand:
 
     def test_generic_exception_returns_none(self, temp_dir: Path) -> None:
         """Test generic Exception returns None and is logged."""
-        with patch("subprocess.run") as mock_run:
+        with patch("gobby.utils.spawn.run") as mock_run:
             mock_run.side_effect = OSError("Permission denied")
 
             result = run_git_command(["git", "status"], temp_dir)
@@ -240,7 +240,7 @@ class TestRunGitCommand:
 
     def test_path_as_string(self, temp_dir: Path) -> None:
         """Test cwd can be passed as string."""
-        with patch("subprocess.run") as mock_run:
+        with patch("gobby.utils.spawn.run") as mock_run:
             mock_result = MagicMock()
             mock_result.returncode = 0
             mock_result.stdout = "output"
@@ -668,7 +668,7 @@ class TestEdgeCases:
 
     def test_run_git_command_with_special_characters_in_output(self, temp_dir: Path) -> None:
         """Test handling output with special characters."""
-        with patch("subprocess.run") as mock_run:
+        with patch("gobby.utils.spawn.run") as mock_run:
             mock_result = MagicMock()
             mock_result.returncode = 0
             mock_result.stdout = "branch-with-unicode-\u00e9\u00e8\n"
@@ -705,7 +705,7 @@ class TestEdgeCases:
 
     def test_run_git_command_empty_output(self, temp_dir: Path) -> None:
         """Test command with empty output."""
-        with patch("subprocess.run") as mock_run:
+        with patch("gobby.utils.spawn.run") as mock_run:
             mock_result = MagicMock()
             mock_result.returncode = 0
             mock_result.stdout = ""
@@ -717,7 +717,7 @@ class TestEdgeCases:
 
     def test_run_git_command_whitespace_only_output(self, temp_dir: Path) -> None:
         """Test command with whitespace-only output."""
-        with patch("subprocess.run") as mock_run:
+        with patch("gobby.utils.spawn.run") as mock_run:
             mock_result = MagicMock()
             mock_result.returncode = 0
             mock_result.stdout = "   \n\t\n  "
@@ -761,7 +761,7 @@ class TestLogging:
     ) -> None:
         """Test debug logging on command failure."""
         with caplog.at_level(logging.DEBUG, logger="gobby.utils.git"):
-            with patch("subprocess.run") as mock_run:
+            with patch("gobby.utils.spawn.run") as mock_run:
                 mock_result = MagicMock()
                 mock_result.returncode = 1
                 mock_result.stderr = "error message"
@@ -776,7 +776,7 @@ class TestLogging:
     ) -> None:
         """Test warning logging on timeout."""
         with caplog.at_level(logging.DEBUG, logger="gobby.utils.git"):
-            with patch("subprocess.run") as mock_run:
+            with patch("gobby.utils.spawn.run") as mock_run:
                 mock_run.side_effect = subprocess.TimeoutExpired(cmd="git", timeout=5)
 
                 run_git_command(["git", "status"], temp_dir, timeout=5)
@@ -788,7 +788,7 @@ class TestLogging:
     ) -> None:
         """Test warning logging when git not found."""
         with caplog.at_level(logging.DEBUG, logger="gobby.utils.git"):
-            with patch("subprocess.run") as mock_run:
+            with patch("gobby.utils.spawn.run") as mock_run:
                 mock_run.side_effect = FileNotFoundError()
 
                 run_git_command(["git", "status"], temp_dir)
@@ -801,7 +801,7 @@ class TestLogging:
         """A vanished cwd raises the same FileNotFoundError and must not blame PATH."""
         missing = temp_dir / "gone"
         with caplog.at_level(logging.DEBUG, logger="gobby.utils.git"):
-            with patch("subprocess.run") as mock_run:
+            with patch("gobby.utils.spawn.run") as mock_run:
                 mock_run.side_effect = FileNotFoundError()
 
                 result = run_git_command(["git", "status"], missing)
@@ -815,7 +815,7 @@ class TestLogging:
     ) -> None:
         """Test error logging on generic exception."""
         with caplog.at_level(logging.DEBUG, logger="gobby.utils.git"):
-            with patch("subprocess.run") as mock_run:
+            with patch("gobby.utils.spawn.run") as mock_run:
                 mock_run.side_effect = PermissionError("Access denied")
 
                 run_git_command(["git", "status"], temp_dir)

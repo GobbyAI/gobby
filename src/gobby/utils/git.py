@@ -19,6 +19,8 @@ from typing import TypedDict
 from uuid import uuid4
 from weakref import WeakKeyDictionary
 
+from gobby.utils import spawn
+
 logger = logging.getLogger(__name__)
 
 GIT_FALLBACK_PATHS = ("/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin")
@@ -165,7 +167,7 @@ def run_git_command(command: list[str], cwd: str | Path, timeout: int = 5) -> st
     try:
         env = git_subprocess_env()
         if env is None:
-            result = subprocess.run(  # nosec B603 # internal git command
+            result = spawn.run(  # nosec B603 # internal git command
                 command,
                 cwd=cwd,
                 capture_output=True,
@@ -174,7 +176,7 @@ def run_git_command(command: list[str], cwd: str | Path, timeout: int = 5) -> st
                 check=False,  # Don't raise on non-zero exit
             )
         else:
-            result = subprocess.run(  # nosec B603 # internal git command
+            result = spawn.run(  # nosec B603 # internal git command
                 command,
                 cwd=cwd,
                 capture_output=True,

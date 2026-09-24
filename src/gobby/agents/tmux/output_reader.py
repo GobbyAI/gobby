@@ -18,6 +18,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from gobby.config.tmux import TmuxConfig
+from gobby.utils import spawn
 
 logger = logging.getLogger(__name__)
 
@@ -158,7 +159,7 @@ class TmuxOutputReader:
         cmd = [*self._base_args(), *tmux_args]
         subcommand = tmux_args[0] if tmux_args else "<unknown>"
         target = self._target_from_args(tmux_args)
-        proc = await asyncio.create_subprocess_exec(
+        proc = await spawn.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,

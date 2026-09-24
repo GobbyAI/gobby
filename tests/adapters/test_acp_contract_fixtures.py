@@ -210,7 +210,7 @@ async def _drive_fixture(
 
     with patch("gobby.adapters.acp_client.shutil.which", return_value=f"/usr/bin/{case.cli_name}"):
         with patch(
-            "asyncio.create_subprocess_exec",
+            "gobby.utils.spawn.create_subprocess_exec",
             new_callable=AsyncMock,
             return_value=process,
         ) as create_process:
@@ -343,7 +343,7 @@ async def test_grok_recorded_fixture_stream_drives_authenticated_client_flow() -
 
     with patch("gobby.adapters.acp_client.shutil.which", return_value="/usr/bin/grok"):
         with patch(
-            "asyncio.create_subprocess_exec",
+            "gobby.utils.spawn.create_subprocess_exec",
             new_callable=AsyncMock,
             return_value=process,
         ) as create_process:
@@ -390,7 +390,7 @@ async def test_grok_load_fixture_handles_terminal_client_request() -> None:
 
     with patch("gobby.adapters.acp_client.shutil.which", return_value="/usr/bin/grok"):
         with patch(
-            "asyncio.create_subprocess_exec",
+            "gobby.utils.spawn.create_subprocess_exec",
             new_callable=AsyncMock,
             return_value=process,
         ):
@@ -425,7 +425,7 @@ async def _start_qwen_lifecycle_fixture(
     process = FakeACPProcess(_fixture_lines(fixture_name))
     with patch("gobby.adapters.acp_client.shutil.which", return_value="/usr/bin/qwen"):
         with patch(
-            "asyncio.create_subprocess_exec",
+            "gobby.utils.spawn.create_subprocess_exec",
             new_callable=AsyncMock,
             return_value=process,
         ):

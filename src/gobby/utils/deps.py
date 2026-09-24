@@ -24,6 +24,7 @@ from gobby.config.bootstrap import BootstrapConfigError
 from gobby.install.bin_freshness_promotion import native_bin_predates_source
 from gobby.install.version_probe import probe_native_bin_version
 from gobby.storage.hub.managed import managed_grant_path
+from gobby.utils import spawn
 from gobby.utils.dependency_requirements import collect_dependency_report
 from gobby.utils.native_bin import local_native_bin_path, resolve_native_bin
 
@@ -36,7 +37,7 @@ logger = logging.getLogger(__name__)
 def _run_cmd(args: list[str], timeout: int = 5) -> str | None:
     """Run a command and return stdout, or None on failure."""
     try:
-        result = subprocess.run(  # nosec B603 # hardcoded commands
+        result = spawn.run(  # nosec B603 # hardcoded commands
             args,
             capture_output=True,
             text=True,
@@ -433,7 +434,7 @@ def get_lmstudio_info() -> dict[str, Any] | None:
     else:
         # Try with stderr too
         try:
-            result = subprocess.run(  # nosec B603
+            result = spawn.run(  # nosec B603
                 ["lms", "server", "status"],
                 capture_output=True,
                 text=True,

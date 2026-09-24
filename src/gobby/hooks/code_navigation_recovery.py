@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 from collections.abc import Mapping, Sequence
@@ -18,6 +19,7 @@ from gobby.hooks._path_scope import (
 )
 from gobby.hooks.code_navigation import MAX_NARROW_SOURCE_LINES
 from gobby.hooks.tool_outcomes import tool_outcome_from_data
+from gobby.utils import spawn
 
 # Gcode's fixed directory exclusions (index/indexer/util.rs). Build/dist are
 # root-only there; nested generated output is recognized through Git below.
@@ -43,6 +45,8 @@ _INDEX_EXCLUDED_DIRS = frozenset(
         ".cache",
     }
 )
+# Git's verdicts for this event's paths, keyed by repository root then path.
+_IGNORED_TARGETS_KEY = "_code_navigation_ignored_targets"
 # Failures raised before gcode consults the index: gcore GrantError::cli_code
 # (crates/gcore/src/grant/mod.rs) and checkout resolution (crates/gcode/src/cli_error.rs).
 # Every navigation in that checkout fails the same way until the environment is repaired.
@@ -146,8 +150,8 @@ def gcode_targets(parts: list[str], command: str) -> list[str]:
     return operands or (["."] if subcommand == "tree" else [])
 
 
-def _ignored_target(path: Path, root: Path | None) -> bool:
-    """Git's own exclusion matcher handles generated trees and negation rules."""
+def _ignore_decision(path: Path, root: Path | None) -> Path | bool:
+    """Decide without Git where possible; otherwise return the root Git must ask."""
     if root is None:
         return False
     if not path.is_relative_to(root):
@@ -184,16 +188,57 @@ def _ignored_target(path: Path, root: Path | None) -> bool:
         relative.is_relative_to(prefix) or prefix.is_relative_to(relative) for prefix in prefixes
     ):
         return False
+    return root
+
+
+def _git_ignored(root: Path, paths: list[Path]) -> set[Path]:
+    """Git's own exclusion matcher handles generated trees and negation rules."""
     try:
-        result = subprocess.run(
-            ["git", "-C", str(root), "check-ignore", "-q", "--", str(path)],
+        result = spawn.run(
+            ["git", "-C", str(root), "check-ignore", "--stdin", "-z"],
+            input=b"".join(os.fsencode(path) + b"\0" for path in paths),
             capture_output=True,
             timeout=2,
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired):
-        return False
-    return result.returncode == 0
+        return set()
+    if result.returncode == 128 and len(paths) > 1:
+        # One path Git cannot answer fails the whole batch; ask for each alone
+        # so it cannot change the other paths' verdicts.
+        return set().union(*(_git_ignored(root, [path]) for path in paths))
+    echoed = {Path(os.fsdecode(entry)) for entry in result.stdout.split(b"\0") if entry}
+    return {path for path in paths if path in echoed}
+
+
+def _ignored_targets(data: dict[str, Any], root: Path | None, paths: Sequence[Path]) -> set[Path]:
+    """Return the excluded paths, asking Git once per repository per event.
+
+    Every spawn forks the daemon, and the adapter, workflow-hook and rule-engine
+    passes each normalize the same payload, so Git's answers stay on it (#22815).
+    Nothing carries across events: a .gitignore edit applies to the next call.
+    """
+    answers: dict[str, dict[str, bool]] = data.get(_IGNORED_TARGETS_KEY) or {}
+    ignored: set[Path] = set()
+    pending: dict[Path, list[Path]] = {}
+    for path in paths:
+        decision = _ignore_decision(path, root)
+        if not isinstance(decision, Path):
+            if decision:
+                ignored.add(path)
+            continue
+        known = answers.get(str(decision), {})
+        if str(path) not in known:
+            pending.setdefault(decision, []).append(path)
+        elif known[str(path)]:
+            ignored.add(path)
+    for git_root, batch in pending.items():
+        answered = _git_ignored(git_root, batch)
+        answers.setdefault(str(git_root), {}).update({str(p): p in answered for p in batch})
+        ignored |= answered
+    if pending:
+        data[_IGNORED_TARGETS_KEY] = answers
+    return ignored
 
 
 def _verified_source_line_count(paths: Sequence[Path | None]) -> int | None:
@@ -226,12 +271,13 @@ def _verified_source_line_count(paths: Sequence[Path | None]) -> int | None:
     return total if total <= MAX_NARROW_SOURCE_LINES else None
 
 
-def annotate_navigation(data: Mapping[str, Any], metadata: dict[str, Any]) -> None:
+def annotate_navigation(data: dict[str, Any], metadata: dict[str, Any]) -> None:
     """Resolve each shell segment independently before rules see the aggregate."""
     segments = metadata.get("canonical_code_navigation_segments")
     if not isinstance(segments, list):
         segments = [dict(metadata)] if metadata.get("canonical_code_navigation_action") else []
     root, cwd = current_project_root(data), current_tool_cwd(data)
+    segment_paths: list[list[Path | None]] = []
     for segment in segments:
         paths = segment.get("canonical_file_paths") or []
         base = cwd
@@ -248,13 +294,18 @@ def annotate_navigation(data: Mapping[str, Any], metadata: dict[str, Any]) -> No
             cwd=cwd,
             project_root=root,
         )
+        segment_paths.append(resolved)
+    in_project = {
+        path
+        for resolved in segment_paths
+        for path in resolved
+        if path is not None
+        and code_navigation_may_touch_project([str(path)], cwd=cwd, project_root=root)
+    }
+    ignored = _ignored_targets(data, root, sorted(in_project))
+    for segment, resolved in zip(segments, segment_paths, strict=True):
         segment["canonical_code_navigation_excluded"] = bool(resolved) and all(
-            path is not None
-            and (
-                not code_navigation_may_touch_project([str(path)], cwd=cwd, project_root=root)
-                or _ignored_target(path, root)
-            )
-            for path in resolved
+            path is not None and (path not in in_project or path in ignored) for path in resolved
         )
         if (
             segment.get("canonical_code_navigation_action") == "read"

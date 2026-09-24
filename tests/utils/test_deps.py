@@ -55,14 +55,14 @@ def _insert_raw_config(db: HubDatabase, values: dict[str, object]) -> None:
 
 def test_run_cmd() -> None:
     # Success
-    with patch("subprocess.run") as mock_run:
+    with patch("gobby.utils.spawn.run") as mock_run:
         mock_run.return_value = MagicMock(returncode=0, stdout="test output\n")
         assert deps._run_cmd(["echo", "test"]) == "test output"
 
     # Exceptions
-    with patch("subprocess.run", side_effect=FileNotFoundError):
+    with patch("gobby.utils.spawn.run", side_effect=FileNotFoundError):
         assert deps._run_cmd(["invalid_command"]) is None
-    with patch("subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="x", timeout=5)):
+    with patch("gobby.utils.spawn.run", side_effect=subprocess.TimeoutExpired(cmd="x", timeout=5)):
         assert deps._run_cmd(["invalid_command"]) is None
 
 
@@ -628,7 +628,7 @@ def test_lmstudio_info() -> None:
         patch("shutil.which", return_value=True),
         patch("gobby.utils.deps._run_cmd", return_value=None),
     ):
-        with patch("subprocess.run") as mock_run:
+        with patch("gobby.utils.spawn.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="server RUNNING")
             assert deps.get_lmstudio_info() == {"running": True}
             mock_run.return_value = MagicMock(
@@ -651,7 +651,7 @@ def test_lmstudio_info_expected_exception(
         caplog.at_level(logging.DEBUG, logger="gobby.utils.deps"),
         patch("shutil.which", return_value=True),
         patch("gobby.utils.deps._run_cmd", return_value=None),
-        patch("subprocess.run", side_effect=error),
+        patch("gobby.utils.spawn.run", side_effect=error),
     ):
         assert deps.get_lmstudio_info() == {"running": False}
     assert caplog.messages == ["Failed to determine LM Studio server status"]
@@ -662,7 +662,7 @@ def test_lmstudio_info_unexpected_exception_propagates() -> None:
     with (
         patch("shutil.which", return_value=True),
         patch("gobby.utils.deps._run_cmd", return_value=None),
-        patch("subprocess.run", side_effect=RuntimeError("programming error")),
+        patch("gobby.utils.spawn.run", side_effect=RuntimeError("programming error")),
         pytest.raises(RuntimeError, match="programming error"),
     ):
         deps.get_lmstudio_info()

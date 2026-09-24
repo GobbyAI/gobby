@@ -130,7 +130,7 @@ def fake_rtk(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         return FakeProcess(code=0, stdout=f"rtk {command}".encode())
 
     monkeypatch.setattr(proxy_hooks, "resolve_rtk", resolve_fake_rtk)
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", create_fake_subprocess)
+    monkeypatch.setattr("gobby.utils.spawn.create_subprocess_exec", create_fake_subprocess)
     return executable
 
 

@@ -33,6 +33,7 @@ import yaml
 from mcp.types import CallToolResult, TextContent
 
 from gobby.mcp_proxy.services.server_resolution import fallback_project_id, resolve_server
+from gobby.utils import spawn
 
 logger = logging.getLogger(__name__)
 
@@ -645,7 +646,7 @@ def _dispatch_isolated_repair(
             str(request_path),
             str(response_path),
         )
-        subprocess.run(
+        spawn.run(
             command,
             check=True,
             stdout=subprocess.DEVNULL,

@@ -491,7 +491,7 @@ class TestProjectPathResolution:
 
         with (
             caplog.at_level("WARNING", logger="gobby.workflows.hooks"),
-            patch("gobby.workflows.git_utils.subprocess.run") as mock_run,
+            patch("gobby.workflows.git_utils.spawn.run") as mock_run,
         ):
             await handler._evaluate_rules(event)
 

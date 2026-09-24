@@ -311,7 +311,7 @@ async def test_list_names_the_foreground_command_for_both_backends(
 
     with (
         patch("gobby.servers.websocket.terminal_ws.sweep_tmux_terminals", sweep),
-        patch("gobby.terminals.foreground.subprocess.run", ps),
+        patch("gobby.terminals.foreground.spawn.run", ps),
     ):
         page = await listed(server, {"request_id": "commands"})
 

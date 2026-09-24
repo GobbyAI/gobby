@@ -12,6 +12,7 @@ from uuid import uuid4
 
 from gobby.terminals.composer import composer_clear_sequence
 from gobby.terminals.key_bytes import tmux_key_name
+from gobby.utils import spawn
 
 TMUX_TEXT_INJECTION_TIMEOUT_SECONDS = 10.0
 TMUX_TEXT_ENTER_DELAY_SECONDS = 1.0
@@ -387,7 +388,7 @@ def _split_for_tmux_buffer(
 
 
 async def _run_tmux_command(command: Sequence[str], *, timeout: float) -> None:
-    proc = await asyncio.create_subprocess_exec(
+    proc = await spawn.create_subprocess_exec(
         *command,
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.PIPE,

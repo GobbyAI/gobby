@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import logging
 import os
-import shutil
 import signal
 import subprocess  # nosec B404 - argv-only Git process boundary
 import tempfile
@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import BinaryIO, Literal
 
 from gobby.utils.git import git_subprocess_env
+from gobby.utils.spawn import resolve_executable
 
 logger = logging.getLogger(__name__)
 
@@ -101,31 +102,47 @@ class _PosixSpawnProcess:
         *,
         env: dict[str, str],
         input_bytes: bytes | None,
+        stdout_file: BinaryIO | None = None,
+        stderr_file: BinaryIO | None = None,
     ) -> _PosixSpawnProcess:
-        stdin_file = tempfile.TemporaryFile() if input_bytes is not None else None
-        stdout_file = tempfile.TemporaryFile()
-        stderr_file = tempfile.TemporaryFile()
-        files: list[BinaryIO] = [stdout_file, stderr_file]
-        if stdin_file is not None:
-            assert input_bytes is not None
-            stdin_file.write(input_bytes)
-            stdin_file.seek(0)
-            files.append(stdin_file)
-        file_actions: list[tuple[int, int] | tuple[int, int, int]] = []
-        targets: list[tuple[BinaryIO, int]] = [(stdout_file, 1), (stderr_file, 2)]
-        if stdin_file is not None:
-            targets.append((stdin_file, 0))
-        for source, target in targets:
-            source_fd = source.fileno()
-            file_actions.append((os.POSIX_SPAWN_DUP2, source_fd, target))
-            if source_fd != target:
-                file_actions.append((os.POSIX_SPAWN_CLOSE, source_fd))
+        """Start argv; output spools to the given files, or to new temporary ones.
+
+        A failed spawn closes only the temporary files it created.
+        """
+        owned: list[BinaryIO] = []
+
+        def spool(given: BinaryIO | None) -> BinaryIO:
+            if given is None:
+                given = tempfile.TemporaryFile()
+                owned.append(given)
+            return given
+
         reset_signals = tuple(
             getattr(signal, name)
             for name in ("SIGPIPE", "SIGXFZ", "SIGXFSZ")
             if hasattr(signal, name)
         )
         try:
+            stdout_file = spool(stdout_file)
+            stderr_file = spool(stderr_file)
+            targets = [(stdout_file, 1), (stderr_file, 2)]
+            stdin_file: BinaryIO | None = None
+            if input_bytes is not None:
+                stdin_file = spool(None)
+                stdin_file.write(input_bytes)
+                stdin_file.seek(0)
+                targets.append((stdin_file, 0))
+            file_actions: list[
+                tuple[int, int] | tuple[int, int, int] | tuple[int, int, str, int, int]
+            ] = []
+            for source, target in targets:
+                source_fd = source.fileno()
+                file_actions.append((os.POSIX_SPAWN_DUP2, source_fd, target))
+                if source_fd != target:
+                    file_actions.append((os.POSIX_SPAWN_CLOSE, source_fd))
+            if stdin_file is None:
+                # Git never reads the daemon's own stdin.
+                file_actions.append((os.POSIX_SPAWN_OPEN, 0, os.devnull, os.O_RDONLY, 0))
             pid = os.posix_spawn(
                 argv[0],
                 argv,
@@ -135,7 +152,7 @@ class _PosixSpawnProcess:
                 setsigdef=reset_signals,
             )
         except Exception:
-            for file in files:
+            for file in owned:
                 file.close()
             raise
         return cls(pid, stdin_file, stdout_file, stderr_file)
@@ -173,6 +190,47 @@ type _GitWorker = Callable[
     [asyncio.AbstractEventLoop, asyncio.Future[GitOk | GitFailed], "_ProcessControl"], None
 ]
 type _ProcessFactory = Callable[[bytes | None], _GitProcess]
+
+
+def _spawn_git(
+    argv: tuple[str, ...],
+    *,
+    cwd: str,
+    env: dict[str, str] | None,
+    input_bytes: bytes | None,
+    stdout_file: BinaryIO | None = None,
+    stderr_file: BinaryIO | None = None,
+) -> _GitProcess:
+    """Start Git as the leader of its own process group.
+
+    Popen needs fork for cwd and a new session, and forking the daemon stalls
+    every thread (#22815), so POSIX starts ``git -C <cwd>`` with posix_spawn.
+    """
+    process_env = env if env is not None else git_subprocess_env() or dict(os.environ)
+    if os.name == "posix" and all(
+        hasattr(os, name)
+        for name in ("posix_spawn", "POSIX_SPAWN_OPEN", "POSIX_SPAWN_DUP2", "POSIX_SPAWN_CLOSE")
+    ):
+        if not os.path.isdir(cwd):
+            # Callers read a missing directory as Git never starting, as Popen reports it.
+            raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), cwd)
+        executable = resolve_executable(argv[0], env=process_env)
+        return _PosixSpawnProcess.spawn(
+            (executable, "-C", cwd, *argv[1:]),
+            env=process_env,
+            input_bytes=input_bytes,
+            stdout_file=stdout_file,
+            stderr_file=stderr_file,
+        )
+    return subprocess.Popen(  # nosec B603 B607 - fixed executable, argv-only args
+        argv,
+        cwd=cwd,
+        stdin=subprocess.PIPE if input_bytes is not None else subprocess.DEVNULL,
+        stdout=stdout_file if stdout_file is not None else subprocess.PIPE,
+        stderr=stderr_file if stderr_file is not None else subprocess.PIPE,
+        env=process_env,
+        start_new_session=True,
+    )
 
 
 def parse_porcelain_v1_z(output: str) -> tuple[GitStatusEntry, ...]:
@@ -337,75 +395,6 @@ class DaemonGitService:
             input_text=input_text,
         )
 
-    async def run_posix_spawn(
-        self,
-        args: Sequence[str],
-        *,
-        cwd: str | Path,
-        timeout: float = 10.0,
-        env: Mapping[str, str] | None = None,
-        input_text: str | None = None,
-    ) -> GitResult:
-        """Run Git through an owned ``posix_spawn`` process group.
-
-        Git's ``-C`` option preserves repository-relative behavior without a
-        subprocess ``cwd``. Direct ``posix_spawn`` avoids forking the daemon;
-        other platforms use the existing ``Popen`` path.
-        """
-        if os.name != "posix" or not all(
-            hasattr(os, attribute)
-            for attribute in ("posix_spawn", "POSIX_SPAWN_DUP2", "POSIX_SPAWN_CLOSE")
-        ):
-            return await self.run(
-                args,
-                cwd=cwd,
-                timeout=timeout,
-                env=env,
-                input_text=input_text,
-            )
-        argv = ("git", *args)
-        if timeout <= 0:
-            return GitTimeout("timeout", argv, timeout)
-        try:
-            resolved_cwd = os.path.abspath(os.fspath(cwd))
-        except (OSError, TypeError, ValueError) as exc:
-            return GitFailed("failed", argv, None, "", str(exc))
-        effective_env = dict(env) if env is not None else git_subprocess_env()
-        spawn_env = effective_env if effective_env is not None else dict(os.environ)
-        search_env = spawn_env
-        executable = shutil.which("git", path=os.pathsep.join(os.get_exec_path(search_env)))
-        if executable is None:
-            return GitFailed("failed", argv, None, "", "git executable not found")
-        spawn_argv = (executable, "-C", resolved_cwd, *args)
-
-        def spawn(input_bytes: bytes | None) -> _GitProcess:
-            return _PosixSpawnProcess.spawn(
-                spawn_argv,
-                env=spawn_env,
-                input_bytes=input_bytes,
-            )
-
-        def worker(
-            loop: asyncio.AbstractEventLoop,
-            completion: asyncio.Future[GitOk | GitFailed],
-            control: _ProcessControl,
-        ) -> None:
-            _run_git_worker(
-                loop,
-                completion,
-                control,
-                spawn_argv,
-                spawn=spawn,
-                input_text=input_text,
-            )
-
-        return await self._execute_worker(
-            spawn_argv,
-            cwd=resolved_cwd,
-            timeout=timeout,
-            worker=worker,
-        )
-
     async def stream_bytes(
         self,
         args: Sequence[str],
@@ -516,17 +505,8 @@ class DaemonGitService:
         env: dict[str, str] | None,
         input_text: str | None,
     ) -> GitResult:
-        def spawn(_input_bytes: bytes | None) -> _GitProcess:
-            process_env = env if env is not None else git_subprocess_env()
-            return subprocess.Popen(  # nosec B603 B607 - fixed executable, argv-only args
-                argv,
-                cwd=cwd,
-                stdin=subprocess.PIPE if input_text is not None else None,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                env=process_env,
-                start_new_session=True,
-            )
+        def spawn(input_bytes: bytes | None) -> _GitProcess:
+            return _spawn_git(argv, cwd=cwd, env=env, input_bytes=input_bytes)
 
         def worker(
             loop: asyncio.AbstractEventLoop,
@@ -647,21 +627,19 @@ def _stream_git_worker(
     consume: Callable[[bytes], object] | None,
 ) -> None:
     """Spool raw process output and consume it without an in-memory copy."""
-    process: subprocess.Popen[bytes] | None = None
+    process: _GitProcess | None = None
     consumer_error: Exception | None = None
     control.begin_preparing()
     try:
         with tempfile.TemporaryFile() as stdout_file, tempfile.TemporaryFile() as stderr_file:
-            process_env = env if env is not None else git_subprocess_env()
             control.begin_spawn()
-            process = subprocess.Popen(  # nosec B603 B607 - fixed executable, argv-only args
+            process = _spawn_git(
                 argv,
                 cwd=cwd,
-                stdin=subprocess.DEVNULL,
-                stdout=stdout_file,
-                stderr=stderr_file,
-                env=process_env,
-                start_new_session=True,
+                env=env,
+                input_bytes=None,
+                stdout_file=stdout_file,
+                stderr_file=stderr_file,
             )
             control.attach(process)
             process.wait()

@@ -1314,3 +1314,48 @@ def test_revoked_grant_cannot_be_reused_across_requests(
     with pytest.raises(RevokedGrant) as captured:
         presenter.present(grant, now=_GRANT_NOW + 10)
     assert captured.value.code == "revoked"
+
+
+def test_grant_presentations_probe_each_installed_gdaemon_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # #22815: each presentation builds a GrantService, whose identity default
+    # forked `gdaemon schema version` on every request.
+    from gobby.runtime_grants import GrantRevocationStore
+    from gobby.servers.grant_auth import LiveLeaseGrantService
+    from gobby.storage import schema_contract
+    from gobby.storage.schema_contract import expected_schema_identity
+    from tests.runtime_grants.support import DEPLOYMENT_TOKEN, FENCING_EPOCH, GOLDEN_SECRET
+
+    gdaemon = tmp_path / "gdaemon"
+    gdaemon.write_bytes(b"first build")
+    probes: list[Path] = []
+
+    def probe(binary: Path, *, cwd: Path | None = None) -> dict[str, int | str]:
+        probes.append(binary)
+        return expected_schema_identity()
+
+    monkeypatch.setattr(schema_contract, "resolve_native_bin", lambda name: str(gdaemon))
+    monkeypatch.setattr(schema_contract, "probe_identity", probe)
+    grant = _signed_presentation_grant()
+    lease = SimpleNamespace(
+        fencing_epoch=FENCING_EPOCH,
+        grant_signing_secret=GOLDEN_SECRET,
+        deployment_token=DEPLOYMENT_TOKEN,
+    )
+    presenter = LiveLeaseGrantService(
+        _grant_service().runtime,
+        lease,
+        clock=lambda: _GRANT_NOW + 10,
+        revocations=GrantRevocationStore(),
+    )
+    for _ in range(3):
+        assert presenter.present(grant, now=_GRANT_NOW + 10) == grant
+    assert probes == [gdaemon]
+
+    # Promotion installs a new inode; the next presentation must see it.
+    staged = tmp_path / ".gdaemon.staged"
+    staged.write_bytes(b"second build")
+    staged.replace(gdaemon)
+    assert presenter.present(grant, now=_GRANT_NOW + 10) == grant
+    assert probes == [gdaemon, gdaemon]

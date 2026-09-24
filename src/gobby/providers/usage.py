@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Protocol
 
+from gobby.utils import spawn
+
 _AGY_USAGE_COMMAND = ("agy", "-p", "/usage", "--output-format", "json")
 _AGY_USAGE_TIMEOUT_SECONDS = 15.0
 
@@ -67,7 +69,7 @@ class TransientUsageRefreshError(RuntimeError):
 
 
 async def _run_agy_usage(command: tuple[str, ...]) -> tuple[int, str, str]:
-    process = await asyncio.create_subprocess_exec(
+    process = await spawn.create_subprocess_exec(
         *command,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
