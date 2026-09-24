@@ -36,6 +36,7 @@ def _message(
     content: str,
     content_type: str = "text",
     metadata: dict[str, object] | None = None,
+    session_id: str = SESSION_ID,
 ) -> CommsMessage:
     return CommsMessage(
         id=f"message-{content_type}-{content}",
@@ -44,7 +45,7 @@ def _message(
         content=content,
         content_type=content_type,
         platform_message_id=f"platform-{content_type}-{content}",
-        session_id=SESSION_ID,
+        session_id=session_id,
         identity_id="stored-identity",
         metadata_json={
             "chat_id": "chat-1",
@@ -157,6 +158,67 @@ async def test_live_session_inbound_uses_mailbox_without_responder_event(
     )
     assert delivery["metadata"]["callback_data"] == metadata.get("callback_value")
     manager.send_message.assert_not_awaited()
+
+
+async def test_button_tap_addressed_by_hash_ref_reaches_the_live_session() -> None:
+    """session_id #N is the ref Josh passes. The tap still reaches that live session."""
+    controller, _manager, sessions, mailbox = _controller()
+    live = SimpleNamespace(id=SESSION_ID, status="active", source="claude")
+    sessions.resolve_session_reference.return_value = SESSION_ID
+
+    def _get(session_id: str) -> SimpleNamespace | None:
+        return live if session_id == SESSION_ID else None
+
+    sessions.get.side_effect = _get
+    message = _message(
+        content="ship",
+        content_type="callback",
+        session_id="#14069",
+        metadata={
+            "callback_value": "ship",
+            "callback_session_id": "#14069",
+            "callback_project_id": PROJECT_ID,
+        },
+    )
+
+    assert await controller.handle(_channel().name, message) is True
+
+    sessions.resolve_session_reference.assert_called_once_with("#14069", PROJECT_ID)
+    mailbox.send.assert_awaited_once()
+    assert mailbox.send.await_args.kwargs["target_id"] == SESSION_ID
+    assert mailbox.send.await_args.kwargs["content"] == "ship"
+
+
+async def test_inbound_attachment_reaches_the_live_session_with_its_file() -> None:
+    """A photo or document is stored on disk. The live session gets that path."""
+    controller, manager, sessions, mailbox = _controller()
+    sessions.get.return_value = SimpleNamespace(id=SESSION_ID, status="active", source="claude")
+    manager.store.list_attachments.return_value = [
+        SimpleNamespace(
+            filename="notes.txt",
+            content_type="text/plain",
+            local_path="/files/notes.txt",
+        )
+    ]
+    message = _message(
+        content="see notes",
+        content_type="attachment",
+        metadata={"telegram_attachment": {"file_id": "file-1", "media_type": "document"}},
+    )
+
+    assert await controller.handle(_channel().name, message) is True
+
+    manager.store.list_attachments.assert_called_once_with(message.id)
+    delivery = mailbox.send.await_args.kwargs
+    assert delivery["target_id"] == SESSION_ID
+    assert delivery["content"] == "see notes"
+    assert delivery["metadata"]["attachments"] == [
+        {
+            "filename": "notes.txt",
+            "content_type": "text/plain",
+            "local_path": "/files/notes.txt",
+        }
+    ]
 
 
 async def test_comms_session_inbound_remains_for_responder() -> None:

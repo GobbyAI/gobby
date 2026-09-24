@@ -511,6 +511,13 @@ class TestInterSessionMessageManagerGetMessage:
         result = manager.get_message(str(uuid.uuid4()))
         assert result is None
 
+    def test_get_message_returns_none_for_non_uuid_id(self, temp_db: HubDatabase) -> None:
+        """A short prefix is not a message id; it must not reach Postgres as a uuid."""
+        from gobby.storage.inter_session_messages import InterSessionMessageManager
+
+        manager = InterSessionMessageManager(temp_db)
+        assert manager.get_message("36ab43b7") is None
+
 
 class TestInterSessionMessageManagerDeliveryClaims:
     """Atomic delivery claims are scoped to one recipient."""

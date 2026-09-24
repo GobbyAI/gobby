@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import itertools
+import threading
 import uuid
 from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass, field
 from functools import partial
+from types import SimpleNamespace
 from typing import Any, Literal
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from psycopg import OperationalError
@@ -58,7 +60,8 @@ from gobby.terminals.runtime import (
     TerminalRuntimeRegistry,
     TerminalSpawnRequest,
 )
-from gobby.terminals.workspace_ops import WorkspaceEvent, WorkspaceOpError, WorkspaceOps
+from gobby.terminals.workspace_contract import WorkspaceEvent, WorkspaceOpError
+from gobby.terminals.workspace_ops import WorkspaceOps
 from gobby.terminals.write_coordinator import WriteCoordinator
 from gobby.utils.session_context import session_context_for_test
 from tests.fixtures.postgres import TEST_MACHINE_ID_PREFIX, TEST_USER_ID
@@ -1136,3 +1139,312 @@ async def test_workspace_send_text_submit_retry_rejects_a_different_payload(
         ),
     )
     assert h.native.write_log == [("text", f"{text}\n"), ("key", "enter")]
+
+
+@pytest.mark.asyncio
+async def test_workspace_list_reads_storage_off_the_event_loop() -> None:
+    """A workspace list must not read node storage on the event-loop thread."""
+    loop_thread = threading.get_ident()
+    seen: list[int] = []
+    machine = SimpleNamespace(id="machine-1", ref=None, hostname="local")
+
+    def resolve_node(_node: object) -> SimpleNamespace:
+        seen.append(threading.get_ident())
+        return machine
+
+    workspaces = MagicMock()
+    workspaces.resolve_node.side_effect = resolve_node
+    workspaces.list_for_node.return_value = ()
+    ops = WorkspaceOps(
+        workspaces=workspaces,
+        terminals=MagicMock(),
+        registry=MagicMock(),
+        coordinator=MagicMock(),
+        sessions=MagicMock(),
+        publish=MagicMock(),
+    )
+    with patch("gobby.terminals.workspace_contract.require_machine_id", return_value="machine-1"):
+        listed = await ops.workspace_list("operator")
+    assert listed == ()
+    assert seen
+    assert seen[0] != loop_thread
+
+
+@pytest.mark.asyncio
+async def test_workspace_rename_writes_storage_off_the_event_loop() -> None:
+    """Renaming a workspace must not write the row on the event-loop thread."""
+    loop_thread = threading.get_ident()
+    seen: list[int] = []
+    workspace = SimpleNamespace(id="ws-1")
+    target = SimpleNamespace(tab=None, workspace=workspace)
+
+    def rename(workspace_id: str, name: str) -> SimpleNamespace:
+        seen.append(threading.get_ident())
+        return SimpleNamespace(id=workspace_id, name=name)
+
+    workspaces = MagicMock()
+    workspaces.rename.side_effect = rename
+    ops = WorkspaceOps(
+        workspaces=workspaces,
+        terminals=MagicMock(),
+        registry=MagicMock(),
+        coordinator=MagicMock(),
+        sessions=MagicMock(),
+        publish=MagicMock(),
+    )
+
+    async def enter(_reference: str, _node: str | None) -> SimpleNamespace:
+        return target
+
+    async def emit(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    object.__setattr__(ops, "_enter", enter)
+    object.__setattr__(ops, "_emit", emit)
+    await ops.workspace_rename("operator", "ws-1", "renamed")
+    assert seen
+    assert seen[0] != loop_thread
+
+
+def _storage_ops(workspaces: MagicMock) -> WorkspaceOps:
+    return WorkspaceOps(
+        workspaces=workspaces,
+        terminals=MagicMock(),
+        registry=MagicMock(),
+        coordinator=MagicMock(),
+        sessions=MagicMock(),
+        publish=MagicMock(),
+    )
+
+
+@pytest.mark.asyncio
+async def test_workspace_create_writes_storage_off_the_event_loop() -> None:
+    """Creating a workspace must not resolve or insert the row on the event-loop thread."""
+    loop_thread = threading.get_ident()
+    seen: list[int] = []
+    machine = SimpleNamespace(id="machine-1", ref=None, hostname="local")
+
+    def resolve_node(_node: object) -> SimpleNamespace:
+        seen.append(threading.get_ident())
+        return machine
+
+    def create(_machine_id: str, _name: str) -> tuple[SimpleNamespace, bool]:
+        seen.append(threading.get_ident())
+        return SimpleNamespace(id="ws-1"), False
+
+    workspaces = MagicMock()
+    workspaces.resolve_node.side_effect = resolve_node
+    workspaces.create.side_effect = create
+    ops = _storage_ops(workspaces)
+
+    async def sweep(_workspace_id: str) -> SimpleNamespace:
+        return SimpleNamespace(removed_panes=())
+
+    object.__setattr__(ops, "_sweep", sweep)
+    with patch("gobby.terminals.workspace_contract.require_machine_id", return_value="machine-1"):
+        created = await ops.workspace_create("operator", "demo")
+    assert created.id == "ws-1"
+    assert len(seen) == 2
+    assert all(thread != loop_thread for thread in seen)
+
+
+@pytest.mark.asyncio
+async def test_workspace_close_writes_storage_off_the_event_loop() -> None:
+    """Closing a workspace must not list or close its rows on the event-loop thread."""
+    loop_thread = threading.get_ident()
+    seen: list[int] = []
+    workspace = SimpleNamespace(id="ws-1")
+    target = SimpleNamespace(tab=None, workspace=workspace, node=SimpleNamespace(id="machine-1"))
+
+    def list_panes(_workspace_id: str) -> tuple[object, ...]:
+        seen.append(threading.get_ident())
+        return ()
+
+    def close(_workspace_id: str) -> SimpleNamespace:
+        seen.append(threading.get_ident())
+        return workspace
+
+    workspaces = MagicMock()
+    workspaces.list_panes.side_effect = list_panes
+    workspaces.close.side_effect = close
+    ops = _storage_ops(workspaces)
+
+    async def enter(_reference: str, _node: str | None) -> SimpleNamespace:
+        return target
+
+    async def emit(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    object.__setattr__(ops, "_enter", enter)
+    object.__setattr__(ops, "_emit", emit)
+    closed = await ops.workspace_close("operator", "ws-1")
+    assert closed.id == "ws-1"
+    assert len(seen) == 2
+    assert all(thread != loop_thread for thread in seen)
+
+
+@pytest.mark.asyncio
+async def test_workspace_snapshot_reads_rows_on_the_sweep_thread() -> None:
+    """The snapshot row read shares the sweep's worker thread and stays off the event loop."""
+    loop_thread = threading.get_ident()
+    seen: list[tuple[str, int]] = []
+    machine = SimpleNamespace(id="machine-1", ref=None, hostname="local")
+    workspace = SimpleNamespace(id="ws-1")
+
+    def resolve_reference(_reference: str, node: str | None = None) -> SimpleNamespace:
+        del node
+        seen.append(("resolve", threading.get_ident()))
+        return SimpleNamespace(tab=None, pane=None, workspace=workspace, node=machine)
+
+    def sweep_dead_panes(_workspace_id: str) -> SimpleNamespace:
+        seen.append(("sweep", threading.get_ident()))
+        return SimpleNamespace(removed_panes=(), removed_tabs=())
+
+    def list_tabs(_workspace_id: str) -> tuple[object, ...]:
+        seen.append(("tabs", threading.get_ident()))
+        return ()
+
+    def list_panes(_workspace_id: str) -> tuple[object, ...]:
+        seen.append(("panes", threading.get_ident()))
+        return ()
+
+    workspaces = MagicMock()
+    workspaces.resolve_reference.side_effect = resolve_reference
+    workspaces.sweep_dead_panes.side_effect = sweep_dead_panes
+    workspaces.list_tabs.side_effect = list_tabs
+    workspaces.list_panes.side_effect = list_panes
+    ops = _storage_ops(workspaces)
+    with patch("gobby.terminals.workspace_contract.require_machine_id", return_value="machine-1"):
+        snapshot = await ops.workspace_snapshot("operator", "ws-1")
+    assert snapshot.workspace.id == "ws-1"
+    sweep_threads = [thread for kind, thread in seen if kind == "sweep"]
+    row_threads = [thread for kind, thread in seen if kind in {"tabs", "panes"}]
+    assert sweep_threads
+    assert row_threads
+    assert sweep_threads[0] != loop_thread
+    assert all(thread == sweep_threads[0] for thread in row_threads)
+
+
+@pytest.mark.asyncio
+async def test_snapshot_watermark_excludes_a_publish_waiting_on_the_fence() -> None:
+    """A workspace publish that arrives during the sweep stays above the snapshot seq."""
+    seq = 0
+    started = asyncio.Event()
+    release = asyncio.Event()
+    foreign: list[int] = []
+
+    async def publish(event: object) -> int:
+        nonlocal seq
+        seq += 1
+        current = seq
+        kind = event["kind"] if isinstance(event, dict) else None
+        if kind == "pane.removed":
+            started.set()
+            await release.wait()
+        return current
+
+    async def intruder() -> None:
+        await started.wait()
+        emitted = await ops._emit("workspace.created", "ws-1")
+        assert emitted is not None
+        foreign.append(emitted)
+
+    pane = MagicMock()
+    pane.to_dict.return_value = {"id": "pane-1"}
+    machine = SimpleNamespace(id="machine-1", ref=None, hostname="local")
+    workspace = SimpleNamespace(id="ws-1")
+
+    def resolve_reference(_reference: str, node: str | None = None) -> SimpleNamespace:
+        del node
+        return SimpleNamespace(tab=None, pane=None, workspace=workspace, node=machine)
+
+    def sweep_dead_panes(_workspace_id: str) -> SimpleNamespace:
+        return SimpleNamespace(removed_panes=(pane,), removed_tabs=(), tabs=())
+
+    workspaces = MagicMock()
+    workspaces.resolve_reference.side_effect = resolve_reference
+    workspaces.sweep_dead_panes.side_effect = sweep_dead_panes
+    workspaces.list_tabs.return_value = ()
+    workspaces.list_panes.return_value = ()
+    ops = _storage_ops(workspaces)
+    object.__setattr__(ops, "_publish", publish)
+    intruder_task = asyncio.create_task(intruder())
+    with patch("gobby.terminals.workspace_contract.require_machine_id", return_value="machine-1"):
+        snapshot_task = asyncio.create_task(ops.workspace_snapshot("operator", "ws-1"))
+        await asyncio.wait_for(started.wait(), timeout=2)
+        yielded = asyncio.Event()
+
+        async def _yield_once() -> None:
+            yielded.set()
+
+        asyncio.create_task(_yield_once())
+        await yielded.wait()
+        assert seq == 1
+        release.set()
+        snapshot = await snapshot_task
+    await intruder_task
+    assert snapshot.lifecycle_seq is not None
+    assert foreign
+    assert snapshot.lifecycle_seq < foreign[0]
+
+
+@pytest.mark.asyncio
+async def test_tab_rename_writes_storage_off_the_event_loop() -> None:
+    """Renaming a tab must not write the row on the event-loop thread."""
+    loop_thread = threading.get_ident()
+    seen: list[int] = []
+    tab = SimpleNamespace(id="tab-1", workspace_id="ws-1")
+    target = SimpleNamespace(tab=tab, pane=None, workspace=SimpleNamespace(id="ws-1"))
+
+    def rename_tab(_tab_id: str, title: str | None) -> SimpleNamespace:
+        seen.append(threading.get_ident())
+        return SimpleNamespace(id="tab-1", workspace_id="ws-1", title=title)
+
+    workspaces = MagicMock()
+    workspaces.rename_tab.side_effect = rename_tab
+    ops = _storage_ops(workspaces)
+
+    async def enter(_reference: str, _node: str | None) -> SimpleNamespace:
+        return target
+
+    async def emit(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    object.__setattr__(ops, "_enter", enter)
+    object.__setattr__(ops, "_emit", emit)
+    renamed = await ops.tab_rename("operator", "tab-1", "renamed")
+    assert renamed.id == "tab-1"
+    assert seen
+    assert seen[0] != loop_thread
+
+
+@pytest.mark.asyncio
+async def test_pane_wait_for_output_caps_a_huge_timeout(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A client timeout of 1e9 must not schedule a poll past the 300s cap."""
+    h = harness
+    workspace = await h.ops.workspace_create(OPERATOR)
+    pane = (await h.ops.tab_create(OPERATOR, workspace.id, h.project_id)).panes[0]
+    h.native.snapshot_text = "still waiting"
+    clock = {"now": 0.0}
+
+    def monotonic() -> float:
+        return clock["now"]
+
+    async def advance(seconds: float) -> None:
+        clock["now"] += seconds
+        if clock["now"] > 300:
+            raise AssertionError(f"wait reached {clock['now']} past the cap")
+
+    monkeypatch.setattr("gobby.terminals.workspace_ops.time.monotonic", monotonic)
+    monkeypatch.setattr("gobby.terminals.workspace_ops.asyncio.sleep", advance)
+    waited = await h.ops.pane_wait_for_output(
+        OPERATOR,
+        pane.id,
+        "NEEDLE-NOT-PRESENT",
+        timeout_seconds=1e9,
+        poll_interval_seconds=2.0,
+    )
+    assert waited.matched is False
+    assert waited.reason == "timeout"

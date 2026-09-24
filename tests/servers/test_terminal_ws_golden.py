@@ -36,12 +36,8 @@ from gobby.terminals.runtime import (
     TerminalHandle,
     TerminalSpawnRequest,
 )
-from gobby.terminals.workspace_ops import (
-    WorkspaceEvent,
-    WorkspaceOpError,
-    WorkspaceOps,
-    WorkspaceSnapshot,
-)
+from gobby.terminals.workspace_contract import WorkspaceEvent, WorkspaceOpError, WorkspaceSnapshot
+from gobby.terminals.workspace_ops import WorkspaceOps
 from gobby.terminals.ws_protocol import (
     TERMINAL_WS_SAFE_INTEGER_MAX,
     decode_message,

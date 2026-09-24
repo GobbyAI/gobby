@@ -7,13 +7,25 @@ from typing import Any, Literal
 
 from gobby.communications.manager import CommunicationsManager
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.mcp_proxy.tools.memory_scope import get_current_project_id
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
+from gobby.storage.session_resolution import resolve_session_reference
 from gobby.utils.datetime import utc_now
 from gobby.utils.project_context import get_project_context
 from gobby.utils.session_context import get_current_session_id
 
 logger = logging.getLogger(__name__)
+
+
+def _is_project_seq_ref(ref: str) -> bool:
+    """True for #N, a bare sequence number, and <project>#N."""
+    if ref.startswith("#"):
+        return ref[1:].isdigit()
+    project, separator, seq = ref.partition("#")
+    if separator:
+        return bool(project) and "#" not in project and seq.isdigit()
+    return ref.isdigit()
 
 
 def create_communications_registry(
@@ -92,13 +104,29 @@ def create_communications_registry(
                 if inline_keyboard is not None:
                     metadata["inline_keyboard"] = inline_keyboard
                     metadata["callback_ttl_seconds"] = callback_ttl_seconds
+                    project_id = get_current_project_id()
+                    if project_id is not None:
+                        metadata["callback_project_id"] = project_id
                 if link_preview_options is not None:
                     metadata["link_preview_options"] = link_preview_options
+
+            target_session = session_id if session_id is not None else get_current_session_id()
+            if target_session is not None and _is_project_seq_ref(target_session):
+                if db is None:
+                    raise ValueError(
+                        f"Cannot resolve session '{target_session}': "
+                        "project storage is unavailable"
+                    )
+                target_session = resolve_session_reference(
+                    db,
+                    target_session,
+                    get_current_project_id(),
+                )
 
             msg = await communications_manager.send_message(
                 channel_name=channel,
                 content=content,
-                session_id=session_id if session_id is not None else get_current_session_id(),
+                session_id=target_session,
                 metadata=metadata,
             )
             return {"success": msg.status == "sent", "message_id": msg.id, "error": msg.error}

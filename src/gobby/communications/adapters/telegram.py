@@ -272,6 +272,7 @@ class TelegramAdapter(BaseChannelAdapter):
                 thread_id=message.platform_thread_id,
                 ttl_seconds=message.metadata_json.get("callback_ttl_seconds", 300),
                 action=message.metadata_json.get("callback_action"),
+                project_id=message.metadata_json.get("callback_project_id"),
             )
         link_preview_options = resolve_link_preview_options(
             self._link_preview_options,

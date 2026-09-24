@@ -764,6 +764,7 @@ class TerminalWsMixin:
             if frame is not None:
                 await _close_frame_quietly(frame)
             return _log_proxy_attach_failure(row.id, "frame_invalid")
+        handed_off = False
         try:
             await asyncio.wait_for(
                 self._proxy().start_proxy(
@@ -777,12 +778,16 @@ class TerminalWsMixin:
                 ),
                 PROXY_START_SECONDS,
             )
+            handed_off = True
         except TimeoutError:
-            await _close_frame_quietly(frame)
             return _log_proxy_attach_failure(row.id, "proxy_start_timeout")
+        except asyncio.CancelledError:
+            raise
         except Exception:
-            await _close_frame_quietly(frame)
             return _log_proxy_attach_failure(row.id, "proxy_start_failed", exc_info=True)
+        finally:
+            if not handed_off:
+                await asyncio.shield(_close_frame_quietly(frame))
         return None
 
     async def _wait_joined_write(self, attachment_id: str, seq: int) -> tuple[str, str | None]:
