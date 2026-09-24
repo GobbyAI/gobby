@@ -18,6 +18,7 @@ pub use bundle::{
     expected_schema_identity, parse_grant_json, payload_checksum, validate_for_construction,
     verify_payload_checksum,
 };
+#[cfg(feature = "ai")]
 pub(crate) use cache::lock_with_deadline;
 pub use cache::{
     CachedSettings, GrantFileLock, TrustedBinding, binding_path, grant_lock_path,

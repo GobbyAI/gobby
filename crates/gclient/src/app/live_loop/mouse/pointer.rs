@@ -424,12 +424,13 @@ pub(super) fn drag<W: WorkspaceView>(
 
 /// A button came up; `released` is the gesture the press started, already
 /// taken off the chrome. A moved tab dropped on another tab takes that tab's
-/// place (herdr `MoveTab`) and stays active; a moved project card dropped
-/// on another card takes its place in the sidebar's project order, which
-/// `prefs.toml` keeps; released anywhere else either stays put, and a release
-/// without movement was the click the press handled. A sidebar edge release
-/// keeps the width it reached as the preferred width; a split border or
-/// scrollbar release keeps what the drag reached.
+/// place (herdr `MoveTab`) and stays active, and one dropped on the new-tab
+/// cells after the last drawn tab takes that tab's place; a moved project
+/// card dropped on another card takes its place in the sidebar's project
+/// order, which `prefs.toml` keeps; released anywhere else either stays
+/// put, and a release without movement was the click the press handled. A
+/// sidebar edge release keeps the width it reached as the preferred width; a
+/// split border or scrollbar release keeps what the drag reached.
 pub(super) fn up<W: WorkspaceView>(
     ws: &W,
     chrome: &mut Chrome,
@@ -443,7 +444,20 @@ pub(super) fn up<W: WorkspaceView>(
             origin_col,
             moved,
         }) if moved || mouse.column.abs_diff(origin_col) >= TAB_DRAG_THRESHOLD => {
-            if let Hit::Tab(target) = hit {
+            let target = match hit {
+                Hit::Tab(target) => Some(target),
+                // The ' + ' cells start at the last drawn tab's right edge,
+                // so a drop there lands in that tab's place.
+                Hit::NewTab => chrome
+                    .view
+                    .tab_hit_areas
+                    .iter()
+                    .rev()
+                    .find(|(_, rect)| rect.width > 0)
+                    .map(|(index, _)| *index),
+                _ => None,
+            };
+            if let Some(target) = target {
                 let tabs = &chrome.tabs().tabs;
                 if target != index && index < tabs.len() && target < tabs.len() {
                     if !tabs[index].is_local() {
