@@ -19,7 +19,10 @@ from gobby.tasks import transcript_evidence, transcript_evidence_models, transcr
 from gobby.tasks.close_checklist import evaluate_validation_commands
 from gobby.tasks.transcript_evidence import clear_evidence_snapshots, derive_transcript_evidence
 from gobby.tasks.transcript_exclusions import derive_prelink_runs
-from gobby.tasks.transcript_outcomes import ValidationCommandEquivalence
+from gobby.tasks.transcript_outcomes import (
+    ValidationCommandEquivalence,
+    classify_validation_command_equivalence,
+)
 from tests.fixtures.isolated_checkout import patch_local_machine_id
 from tests.tasks.test_transcript_evidence import (
     BASE_TIME,
@@ -176,7 +179,6 @@ async def test_unrelated_request_is_served_during_large_transcript_close_preview
     ctx.session_manager.get.side_effect = {session.id: session}.get
     loop = asyncio.get_running_loop()
     served: list[bool] = []
-    classify = transcript_evidence_models.classify_validation_command_equivalence
 
     def classify_while_a_request_arrives(command: str) -> ValidationCommandEquivalence:
         # Each rebuild sends one unrelated loop callback. On the loop thread the
@@ -185,7 +187,7 @@ async def test_unrelated_request_is_served_during_large_transcript_close_preview
             request = threading.Event()
             loop.call_soon_threadsafe(request.set)
             served.append(request.wait(timeout=2.0))
-        return classify(command)
+        return classify_validation_command_equivalence(command)
 
     monkeypatch.setattr(
         transcript_evidence_models,
