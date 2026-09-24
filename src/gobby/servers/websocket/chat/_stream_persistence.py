@@ -10,7 +10,6 @@ from typing import Any
 from gobby.servers.websocket.chat.content_blocks import AssistantContentBlocks
 from gobby.servers.websocket.chat_attachments import PreparedMessageAttachments
 from gobby.servers.websocket.db import run_db
-from gobby.sessions.title_lifecycle import promote_heuristic_title
 
 logger = logging.getLogger(__name__)
 
@@ -87,29 +86,7 @@ class ChatStreamPersistence:
             user_content_blocks = [{"type": "text", "content": content}] if content.strip() else []
         if attachments and attachments.records:
             user_content_blocks.extend(attachments.content_blocks)
-        persisted = await self.persist_message(session, "user", user_text, user_content_blocks)
-        session_manager = getattr(self.owner, "session_manager", None)
-        db_session_id = getattr(session, "db_session_id", None)
-        if persisted and session_manager is not None and isinstance(db_session_id, str):
-            prompt_text = (
-                content
-                if isinstance(content, str)
-                else " ".join(
-                    str(block.get("content", ""))
-                    for block in content
-                    if block.get("type") == "text"
-                )
-            )
-            try:
-                await run_db(
-                    self.owner,
-                    promote_heuristic_title,
-                    session_manager,
-                    db_session_id,
-                    prompt_text,
-                )
-            except Exception:
-                logger.debug("Failed to promote web-chat session title", exc_info=True)
+        await self.persist_message(session, "user", user_text, user_content_blocks)
 
     async def persist_current_assistant(self, session: Any) -> None:
         """Persist and reset accumulated assistant content blocks."""

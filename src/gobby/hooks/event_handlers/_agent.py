@@ -11,7 +11,6 @@ from gobby.hooks.event_handlers._base import EventHandlersBase
 from gobby.hooks.events import ContextPart, HookEvent, HookResponse, SessionSource
 from gobby.hooks.session_types import has_prior_session_activity
 from gobby.sessions.reasoning_effort import observed_reasoning_effort
-from gobby.sessions.title_lifecycle import promote_heuristic_title
 from gobby.skills.capability_catalog import load_capability_catalog
 from gobby.skills.capability_routing import (
     capability_menu,
@@ -145,7 +144,6 @@ class AgentEventHandlerMixin(EventHandlersBase):
 
             if self._session_manager and not event.metadata.get("_native_subagent_binding"):
                 try:
-                    promote_heuristic_title(self._session_manager, session_id, prompt)
                     effort = observed_reasoning_effort(input_data)
                     if effort is not None:
                         self._session_manager.update(session_id, reasoning_effort=effort)
