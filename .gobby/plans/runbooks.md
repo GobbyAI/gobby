@@ -885,10 +885,14 @@ CLI token, which the daemon-owned policy already denies to every sandboxed run
 which seeds `session_id` None for such a call today, records a `trusted_launcher` flag
 beside it only for local-CLI-token authentication with no session header or body
 session, asked of the auth service through a predicate beside `request_principal` that
-answers true only for a `verify_bearer`-accepted `Authorization` bearer or
-`X-Gobby-Local-Token` header, because `_accepted_bearer` reports the local bearer, the
-local-token header and a `gobby_session` cookie alike as the operator principal `None`,
-so a cookie-authenticated request never gets the flag (PD N1); a call authenticated by
+answers true only for a `verify_bearer`-accepted `Authorization` bearer or, when the
+request carries no `Authorization` bearer at all, a `verify_bearer`-accepted
+`X-Gobby-Local-Token` header (the precedence `_accepted_bearer` already applies: a
+parsed bearer decides alone and the header is read only in its absence, so a managed
+run's bearer beside a local-token header is never the local token), because
+`_accepted_bearer` reports the local bearer, the local-token header and a
+`gobby_session` cookie alike as the operator principal `None`, so a cookie-authenticated
+request never gets the flag (PD N1); a call authenticated by
 any other credential the endpoint accepts (a managed
 run's grant token) never sets it and cannot arrive without a session anyway, because
 `_AGENT_CAPABILITY_MATRIX` marks `POST /api/mcp/*/tools/*` `bind_identity` and
@@ -1219,7 +1223,8 @@ Targets:
 - `tests/mcp_proxy/tools/test_mcp_proxy_tools_agent_definitions.py::*` — scope-reason: add the create, patch and step-workflow refusal tests
 - `tests/servers/routes/test_agents_routes.py::*` — scope-reason: add the create, update, import, restore and patch refusal tests
 - `tests/workflows/test_imports.py::*` — scope-reason: add the project-YAML refusal test
-- `tests/agents/test_agents_sync.py::*` — scope-reason: the new-row branch moves to `upsert_from_sync`
+- `tests/agents/test_agents_sync.py::*` — scope-reason: the new-row branch moves to `upsert_from_sync`, and the exempt row's step-workflow-only re-write completes through `set_step_workflow(from_sync=True)` (adversary A7)
+- `tests/skills/test_reference_migration.py::*` — scope-reason: the migration's conversion of the exempt row's step-workflow requirements completes through `set_step_workflow(from_sync=True)` (adversary A7)
 
 The field. `AgentDefinitionBody` gains an optional `sandbox` block in `SandboxConfig`'s
 field names, validated by `coerce_sandbox_config`'s rules, that refuses the daemon-owned
@@ -1336,7 +1341,7 @@ Research context:
   against the bundled YAML (a second mechanism for the same fact, failing closed on an
   unsynced template edit); a provenance column (a migration for a fact the sync
   already decides); guarding `delete` (it confers nothing and the sync re-inserts).
-- Planned checks: the six extended test files with the isolated hub DSN; mypy.
+- Planned checks: the seven extended test files with the isolated hub DSN; mypy.
 
 Consumers unchanged:
 - `src/gobby/mcp_proxy/tools/workflows/_import.py` — no-edit-reason: calls `sync_imported_workflows`; a refused file surfaces as that file's error, as today.
@@ -1360,7 +1365,6 @@ Consumers unchanged:
 - `tests/mcp_proxy/tools/spawn_agent/test_load_agent_body.py` — no-edit-reason: builds fixture definitions without a `sandbox.enabled` key, which the storage guard passes unchanged.
 - `tests/mcp_proxy/tools/test_agents_spawn_evaluation.py` — no-edit-reason: builds fixture definitions without a `sandbox.enabled` key, which the storage guard passes unchanged.
 - `src/gobby/skills/sync.py` — no-edit-reason: calls `migrate_instruction_requirements` with the same signature; the `from_sync=True` keyword is on the migration's own `set_step_workflow` call.
-- `tests/skills/test_reference_migration.py` — no-edit-reason: builds fixture definitions without a `sandbox.enabled` key, which the storage guard passes unchanged, and the migration's `set_step_workflow` call passes `from_sync=True` (PD B1).
 - `tests/tasks/test_tasks_expansion_1.py` — no-edit-reason: builds fixture definitions without a `sandbox.enabled` key, which the storage guard passes unchanged.
 - `tests/workflows/test_agent_definitions_v2.py` — no-edit-reason: builds fixture definitions without a `sandbox.enabled` key, which the storage guard passes unchanged.
 - `tests/workflows/test_agent_resolver.py` — no-edit-reason: builds fixture definitions without a `sandbox.enabled` key, which the storage guard passes unchanged.
@@ -1419,8 +1423,18 @@ Consumers unchanged:
   test: `tests/workflows/test_imports.py::test_project_yaml_with_sandbox_enabled_is_refused`.
 - 1.6.4 - The sync's new-row branch writes through `upsert_from_sync`, and a bundled
   template carrying `enabled: false` with a reason lands in a global row with `source`
-  installed and tag `gobby` that `is_sync_managed_bundled_agent` accepts. test:
+  installed and tag `gobby` that `is_sync_managed_bundled_agent` accepts. Both daemon
+  callers of `set_step_workflow` complete on the exempt row through `from_sync=True`
+  (adversary A7): a sync run over an existing managed exempt row whose template differs
+  only in its step workflow re-writes the child row and leaves the parent body, its
+  `sandbox` block included, unchanged; a `migrate_instruction_requirements` run over the
+  exempt row whose step-workflow variables carry a requirement the catalog converts
+  writes the converted child row and leaves the parent body unchanged. test:
   `tests/agents/test_agents_sync.py::test_new_bundled_row_is_written_through_upsert_from_sync`.
+  test:
+  `tests/agents/test_agents_sync.py::test_sync_rewrites_exempt_row_step_workflow_through_the_bypass`.
+  test:
+  `tests/skills/test_reference_migration.py::test_migration_rewrites_exempt_row_step_workflow_requirements`.
 - 1.6.5 - Delete-then-recreate confers nothing: after the exempt row is soft-deleted, a
   `create` under the same name with the key is refused, a `create` without it yields a
   row without the key, `restore` of the deleted row is refused, and a following
