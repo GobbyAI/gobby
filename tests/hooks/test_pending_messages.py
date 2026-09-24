@@ -128,3 +128,21 @@ def test_child_completion_keeps_sender_and_from_session_attribution() -> None:
     assert "Session session-child: Child completed" in result.context
     assert "from_session=session-child" in result.context
     assert "completion_id=completion-2" in result.context
+
+
+def test_render_pending_messages_shows_attachment_local_paths() -> None:
+    local_path = "/var/gobby/files/shot.png"
+    message = Message(
+        id="photo-1",
+        content="see this",
+        message_type="telegram_message",
+        metadata_json=(
+            '{"attachments":[{"filename":"shot.png","content_type":"image/png",'
+            '"local_path":"/var/gobby/files/shot.png"}]}'
+        ),
+    )
+
+    result = render_pending_messages([message], resolve_sender=_sender_label)
+
+    assert result.context is not None
+    assert local_path in result.context
