@@ -594,7 +594,6 @@ fn is_live_mutable_seed_field(table: &str, field: &str) -> bool {
                 | "digest_markdown"
                 | "git_branch"
                 | "had_edits"
-                | "heuristic_title"
                 | "last_assistant_content"
                 | "last_completion_output_tokens"
                 | "last_digest_input_hash"

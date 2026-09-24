@@ -1,4 +1,4 @@
-use super::{normalize_function_definition, normalize_function_sql};
+use super::{is_live_mutable_seed_field, normalize_function_definition, normalize_function_sql};
 
 #[test]
 fn function_normalization_preserves_quoted_data_and_identifier_boundaries() {
@@ -115,4 +115,10 @@ fn body_indentation_is_harmless_only_outside_quoted_text() {
         normalize_function_sql(&changed, "public", "gobby_agent_auth", true),
         expected
     );
+}
+
+#[test]
+fn sessions_seed_allowlist_omits_the_dropped_heuristic_title() {
+    assert!(!is_live_mutable_seed_field("sessions", "heuristic_title"));
+    assert!(is_live_mutable_seed_field("sessions", "reasoning_effort"));
 }

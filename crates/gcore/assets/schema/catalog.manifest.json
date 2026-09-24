@@ -4265,10 +4265,6 @@
       "definition": "text|text|YES||NEVER"
     },
     {
-      "name": "sessions.heuristic_title",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
       "name": "sessions.id",
       "definition": "uuid|uuid|NO||NEVER"
     },
