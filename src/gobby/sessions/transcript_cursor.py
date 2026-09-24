@@ -317,6 +317,51 @@ def build_interrupt_observer(
     return observe_interrupt
 
 
+class _GrokTurnProbe:
+    """Idle check, plus whether the turn armed at delivery has since ended.
+
+    Goal mode starts the next turn tens of milliseconds after ``turn_ended``.
+    ``delivery_turn_recorded`` stays true once that end is appended, even if a
+    ``turn_started`` follows it. ``__call__`` stays the idle check and is true
+    only when the newest turn record is ``turn_ended``.
+    """
+
+    def __init__(self, cursor: GrokEventsCursor, session_id: str | None) -> None:
+        self._cursor = cursor
+        self._session_id = session_id
+        self._delivery_turn_ended = False
+
+    def __call__(self) -> bool | None:
+        try:
+            return self._cursor.turn_settled()
+        except TranscriptObservationError as exc:
+            logger.warning(
+                "Lost %s turn-state observation for session %s: %s",
+                "grok",
+                self._session_id,
+                exc,
+            )
+            return None
+
+    def delivery_turn_recorded(self) -> bool:
+        if self._delivery_turn_ended:
+            return True
+        try:
+            for record in self._cursor.fresh_records():
+                if record.get("type") == "turn_ended":
+                    self._delivery_turn_ended = True
+                    return True
+        except TranscriptObservationError as exc:
+            logger.warning(
+                "Lost %s turn-state observation for session %s: %s",
+                "grok",
+                self._session_id,
+                exc,
+            )
+            return False
+        return False
+
+
 def build_turn_settled_observer(
     source: str | None,
     transcript_path: str | Path | None,
@@ -332,11 +377,9 @@ def build_turn_settled_observer(
     """
     if source not in TURN_SETTLED_SOURCES:
         return None
-    cursor: CodexRolloutCursor | GrokEventsCursor
-    if source == "codex":
-        cursor = CodexRolloutCursor.at_eof(transcript_path)
-    else:
-        cursor = GrokEventsCursor.beside_transcript(transcript_path)
+    if source == "grok":
+        return _GrokTurnProbe(GrokEventsCursor.beside_transcript(transcript_path), session_id)
+    cursor = CodexRolloutCursor.at_eof(transcript_path)
 
     def turn_settled() -> bool | None:
         try:
