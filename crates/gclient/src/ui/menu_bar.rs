@@ -49,16 +49,6 @@ impl MenuBarMenu {
             MenuBarMenu::Help => "Help",
         }
     }
-
-    /// The title to the right, wrapping from the last to the first.
-    pub fn next(self) -> MenuBarMenu {
-        Self::ALL[(self as usize + 1) % Self::ALL.len()]
-    }
-
-    /// The title to the left, wrapping from the first to the last.
-    pub fn previous(self) -> MenuBarMenu {
-        Self::ALL[(self as usize + Self::ALL.len() - 1) % Self::ALL.len()]
-    }
 }
 
 /// Each title's cell as drawn, by index into [`MenuBarMenu::ALL`].
@@ -197,17 +187,6 @@ mod tests {
                 (palette.panel_bg, palette.accent)
             };
             assert_eq!((cell.fg, cell.bg), expected, "x={x}");
-        }
-    }
-
-    #[test]
-    fn next_and_previous_wrap_around_the_bar() {
-        assert_eq!(MenuBarMenu::Gobby.next(), MenuBarMenu::File);
-        assert_eq!(MenuBarMenu::Help.next(), MenuBarMenu::Gobby);
-        assert_eq!(MenuBarMenu::Gobby.previous(), MenuBarMenu::Help);
-        assert_eq!(MenuBarMenu::Window.previous(), MenuBarMenu::View);
-        for menu in MenuBarMenu::ALL {
-            assert_eq!(menu.next().previous(), menu, "{menu:?}");
         }
     }
 }

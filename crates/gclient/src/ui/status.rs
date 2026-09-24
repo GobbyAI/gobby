@@ -381,7 +381,10 @@ pub fn render_status_line<W: WorkspaceView>(
         width,
         ..area
     };
-    frame.render_widget(Paragraph::new(hint).style(base), hint_area);
+    // Cells are patched, not replaced: the hint drops the modifiers of the
+    // button words it covers.
+    let hint_style = base.remove_modifier(Modifier::all());
+    frame.render_widget(Paragraph::new(hint).style(hint_style), hint_area);
     // The hint covers the button's tail on a narrow row; those cells no
     // longer show its words, so they stop being the button.
     let uncovered = Rect {
@@ -614,6 +617,12 @@ mod tests {
             .unwrap();
         assert_eq!(screen(&terminal), " gclient · Read-prefix ctrl+b ");
         assert_eq!(indicator, Some(Rect::new(0, 0, 16, 1)));
+        // The hint takes none of the covered button's bold or underline.
+        let buffer = terminal.backend().buffer();
+        let styled: Vec<u16> = (16..30)
+            .filter(|&x| !buffer[(x, 0)].modifier.is_empty())
+            .collect();
+        assert_eq!(styled, Vec::<u16>::new());
     }
 
     #[test]
