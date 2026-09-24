@@ -1,8 +1,8 @@
 //! Context menu state and item lists.
 //!
 //! A right-click on a pane, a tab, a sidebar row (project card, worktree
-//! row, agent row) or empty chrome opens a menu; the menu band's `[Menu]`
-//! opens the global one and the sessions band's `[view]` its own. This
+//! row, agent row) or empty chrome opens a menu, the global one for empty
+//! chrome; the sessions band's `[view]` opens its own. This
 //! module is pure: [`build_menu`] reads the
 //! workspace and chrome to decide which items apply, [`menu_hit`] maps a
 //! screen cell to an item, and the routers in `mouse` and `modal_input` own

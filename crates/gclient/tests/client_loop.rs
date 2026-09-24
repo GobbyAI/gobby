@@ -233,6 +233,14 @@ fn show_roster(workspace: &Workspace<LiveDaemon>, chrome: &mut Chrome) {
     }
 }
 
+/// A dark chrome with the sidebar pinned. The sidebar starts hidden, and its
+/// rows draw and take clicks only while it is on screen.
+fn pinned_chrome() -> Chrome {
+    let mut chrome = Chrome::dark();
+    chrome.sidebar.pinned = true;
+    chrome
+}
+
 /// Save a one-tab snapshot for `project` that nests `terminal_ids` as
 /// horizontal splits with the last one focused, and point the workspace at
 /// it so the loop restores that tab once the roster arrives. Keep the
@@ -6314,14 +6322,15 @@ async fn control_indicator_click_takes_back_only_a_lost_lease() {
         .expect("roster pane");
     let attachment = workspace.pane(pane).attachment_id().to_string();
 
-    // Mirror the loop's one-pane chrome to learn where the status line is
-    // drawn; the borderless pane's metadata leads it.
+    // Mirror the loop's one-pane chrome to learn where the pane's bottom edge
+    // is drawn. Its metadata ends one cell before the corner, so the last
+    // letter of Focused and of Read-only share a cell.
     let area = Rect::new(0, 0, 120, 40);
     let mut probe = Chrome::dark();
     probe.open_pane(pane, "terminal-lease");
     probe.compute_view(&workspace, area);
-    let status = probe.view.status_rect;
-    let (column, row) = (status.x + 1, status.y);
+    let edge = probe.view.pane_infos[0].rect;
+    let (column, row) = (edge.right() - 3, edge.bottom() - 1);
 
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
     let mut chrome = Chrome::dark();
@@ -8099,7 +8108,7 @@ async fn sidebar_draws_paused_and_working_glyphs_from_roster_status() {
 
     const WIDTH: u16 = 120;
     const HEIGHT: u16 = 40;
-    let mut chrome = Chrome::dark();
+    let mut chrome = pinned_chrome();
     show_roster(&workspace, &mut chrome);
     chrome.compute_view(&workspace, Rect::new(0, 0, WIDTH, HEIGHT));
     let mut terminal = Terminal::new(TestBackend::new(WIDTH, HEIGHT)).expect("test terminal");
@@ -9004,7 +9013,7 @@ async fn the_render_tick_applies_a_background_git_refresh() {
     let mut workspace = Workspace::live(daemon);
     let _home = pin_tabs(&mock, &mut workspace, "project-1", &["terminal-a"]);
     let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
-    let mut chrome = Chrome::dark();
+    let mut chrome = pinned_chrome();
     let (input_tx, input_rx) = mpsc::channel(16);
 
     let driver = async {
@@ -9266,7 +9275,7 @@ async fn assert_daemon_hosted_activation(path: ExplicitActivation) -> usize {
 
     let shown = workspace.pane_for_terminal(SHOWN).expect("shown pane");
     let area = Rect::new(0, 0, 120, 40);
-    let mut probe = Chrome::dark();
+    let mut probe = pinned_chrome();
     probe.open_pane(shown, workspace.pane(shown).display_name());
     probe.compute_view(&workspace, area);
     let mut probe_terminal = Terminal::new(TestBackend::new(120, 40)).expect("probe terminal");
@@ -9284,7 +9293,7 @@ async fn assert_daemon_hosted_activation(path: ExplicitActivation) -> usize {
         .expect("daemon-hosted row drawn");
 
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
-    let mut chrome = Chrome::dark();
+    let mut chrome = pinned_chrome();
     chrome.open_pane(shown, workspace.pane(shown).display_name());
     let (input_tx, input_rx) = mpsc::channel(32);
     let driver = async {
@@ -9423,7 +9432,7 @@ async fn assert_agent_row_click_activates_tab_showing_existing_pane() {
     let (shown, tabbed) = (pane_of(SHOWN), pane_of(TABBED));
 
     let area = Rect::new(0, 0, 120, 40);
-    let mut probe = Chrome::dark();
+    let mut probe = pinned_chrome();
     probe.open_pane(shown, SHOWN);
     probe.open_tab(tabbed, TABBED);
     probe.activate_tab(0);
@@ -9446,7 +9455,7 @@ async fn assert_agent_row_click_activates_tab_showing_existing_pane() {
     let tabbed_cell = row_cell("run:tabbed");
 
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
-    let mut chrome = Chrome::dark();
+    let mut chrome = pinned_chrome();
     chrome.open_pane(shown, SHOWN);
     chrome.open_tab(tabbed, TABBED);
     chrome.activate_tab(0);
@@ -10186,7 +10195,7 @@ async fn a_detached_worktree_row_does_not_latch_exit() {
     let mut workspace = Workspace::live(daemon);
     workspace.select_project("project-1");
     let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
-    let mut chrome = Chrome::dark();
+    let mut chrome = pinned_chrome();
     chrome.sidebar.expanded_project = Some("project-1".to_string());
     let (input_tx, input_rx) = mpsc::channel(16);
 
@@ -10747,7 +10756,7 @@ async fn row_menus_dispatch_project_and_agent_actions() {
     // folds by default, so the probe and the loop's chrome both expand it to
     // list the worktree row.
     let area = Rect::new(0, 0, 120, 40);
-    let mut probe = Chrome::dark();
+    let mut probe = pinned_chrome();
     probe.sidebar.toggle_group("project-1");
     probe.compute_view(&workspace, area);
     let mut probe_terminal = Terminal::new(TestBackend::new(120, 40)).expect("probe terminal");
@@ -10776,7 +10785,7 @@ async fn row_menus_dispatch_project_and_agent_actions() {
     };
 
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
-    let mut chrome = Chrome::dark();
+    let mut chrome = pinned_chrome();
     chrome.sidebar.toggle_group("project-1");
     let (input_tx, input_rx) = mpsc::channel(256);
     let driver = async {
@@ -11576,7 +11585,7 @@ async fn clicking_a_bare_terminal_row_focuses_that_terminal() {
     // Sidebar hit areas exist only once the rows have been drawn, so the probe
     // renders a real frame to find the row's cell.
     let area = Rect::new(0, 0, 120, 40);
-    let mut probe = Chrome::dark();
+    let mut probe = pinned_chrome();
     show_roster(&workspace, &mut probe);
     probe.compute_view(&workspace, area);
     let mut probe_terminal = Terminal::new(TestBackend::new(120, 40)).expect("probe terminal");
@@ -11599,7 +11608,7 @@ async fn clicking_a_bare_terminal_row_focuses_that_terminal() {
     );
 
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
-    let mut chrome = Chrome::dark();
+    let mut chrome = pinned_chrome();
     show_roster(&workspace, &mut chrome);
     chrome.focus_pane(first);
     let (input_tx, input_rx) = mpsc::channel(32);
@@ -11674,7 +11683,7 @@ async fn closing_a_bare_terminal_row_kills_that_row_not_the_focused_pane() {
         .expect("pane for terminal-a");
 
     let area = Rect::new(0, 0, 120, 40);
-    let mut probe = Chrome::dark();
+    let mut probe = pinned_chrome();
     show_roster(&workspace, &mut probe);
     probe.compute_view(&workspace, area);
     let mut probe_terminal = Terminal::new(TestBackend::new(120, 40)).expect("probe terminal");
@@ -11693,7 +11702,7 @@ async fn closing_a_bare_terminal_row_kills_that_row_not_the_focused_pane() {
         .expect("bare terminal row drawn");
 
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
-    let mut chrome = Chrome::dark();
+    let mut chrome = pinned_chrome();
     show_roster(&workspace, &mut chrome);
     chrome.focus_pane(first);
     let (input_tx, input_rx) = mpsc::channel(32);
@@ -11790,7 +11799,7 @@ async fn closing_an_unshown_agent_row_kills_that_row_not_the_focused_pane() {
     // A real draw is required to populate the sidebar row hit areas. Open only
     // the seeded pane so this probe preserves the unshown-pane condition.
     let area = Rect::new(0, 0, 120, 40);
-    let mut probe = Chrome::dark();
+    let mut probe = pinned_chrome();
     probe.open_pane(shown, SHOWN);
     probe.compute_view(&workspace, area);
     let mut probe_terminal = Terminal::new(TestBackend::new(120, 40)).expect("probe terminal");
@@ -11808,7 +11817,7 @@ async fn closing_an_unshown_agent_row_kills_that_row_not_the_focused_pane() {
         .expect("unshown agent row drawn");
 
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
-    let mut chrome = Chrome::dark();
+    let mut chrome = pinned_chrome();
     let (input_tx, input_rx) = mpsc::channel(32);
     let driver = async {
         wait_for_http_requests(&mock, "GET", "/api/attention/roster", 2).await;
@@ -11908,7 +11917,7 @@ async fn closing_an_external_row_releases_the_lease_instead_of_killing_it() {
     );
 
     let area = Rect::new(0, 0, 120, 40);
-    let mut probe = Chrome::dark();
+    let mut probe = pinned_chrome();
     show_roster(&workspace, &mut probe);
     probe.compute_view(&workspace, area);
     let mut probe_terminal = Terminal::new(TestBackend::new(120, 40)).expect("probe terminal");
@@ -11927,7 +11936,7 @@ async fn closing_an_external_row_releases_the_lease_instead_of_killing_it() {
         .expect("external terminal row drawn");
 
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
-    let mut chrome = Chrome::dark();
+    let mut chrome = pinned_chrome();
     show_roster(&workspace, &mut chrome);
     let (input_tx, input_rx) = mpsc::channel(32);
     let driver = async {
@@ -12061,7 +12070,7 @@ async fn opening_a_bare_terminal_row_in_a_new_tab_reveals_that_terminal() {
         .expect("pane for terminal-b");
 
     let area = Rect::new(0, 0, 120, 40);
-    let mut probe = Chrome::dark();
+    let mut probe = pinned_chrome();
     show_roster(&workspace, &mut probe);
     probe.compute_view(&workspace, area);
     let mut probe_terminal = Terminal::new(TestBackend::new(120, 40)).expect("probe terminal");
@@ -12080,7 +12089,7 @@ async fn opening_a_bare_terminal_row_in_a_new_tab_reveals_that_terminal() {
         .expect("bare terminal row drawn");
 
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
-    let mut chrome = Chrome::dark();
+    let mut chrome = pinned_chrome();
     show_roster(&workspace, &mut chrome);
     chrome.focus_pane(first);
     let (input_tx, input_rx) = mpsc::channel(32);

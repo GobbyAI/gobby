@@ -311,7 +311,7 @@ fn tab_bar_clicks_activate_spawn_and_scroll() {
     // Scroll arrows move `tab_scroll` by one and stop following the active
     // tab; the next tab click follows it again.
     let (ws, mut chrome, area) = tab_bar_chrome(
-        80,
+        54,
         &[
             "the first long title",
             "the second long title",

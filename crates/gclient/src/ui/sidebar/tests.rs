@@ -79,45 +79,41 @@ fn screen(terminal: &Terminal<TestBackend>) -> String {
 fn layout_gives_the_top_half_to_machines_and_projects_at_most() {
     let area = Rect::new(0, 0, 26, 40);
     // One machine, one card: each takes its band, its row and the blank
-    // row under it; the sessions everything from their band, under the
-    // blank row below the menu, to the footer band.
+    // row under it; the sessions everything from their band to the last row.
     let layout = sidebar_layout(area, 1, 1);
-    assert_eq!(layout.menu, Rect::new(0, 0, 25, 1));
     assert_eq!(
         layout.sections,
         [
-            Rect::new(0, 2, 25, 3),
-            Rect::new(0, 5, 25, 3),
-            Rect::new(0, 8, 25, 31),
+            Rect::new(0, 0, 25, 3),
+            Rect::new(0, 3, 25, 3),
+            Rect::new(0, 6, 25, 34),
         ]
     );
-    assert_eq!(layout.footer, Rect::new(0, 39, 25, 1));
     // The machines stop at four rows; the cards at the top half, their
     // blank row charged inside it.
     let layout = sidebar_layout(area, 9, 1);
     assert_eq!(layout.sections[0].height, 1 + MACHINES_MAX_ROWS + 1);
-    assert_eq!(layout.sections[1], Rect::new(0, 8, 25, 3));
-    assert_eq!(layout.sections[2], Rect::new(0, 11, 25, 28));
+    assert_eq!(layout.sections[1], Rect::new(0, 6, 25, 3));
+    assert_eq!(layout.sections[2], Rect::new(0, 9, 25, 31));
     let layout = sidebar_layout(area, 1, 30);
     assert_eq!(layout.sections[0].height, 3);
-    assert_eq!(layout.sections[1], Rect::new(0, 5, 25, 15));
-    assert_eq!(layout.sections[2], Rect::new(0, 20, 25, 19));
-    // Three rows: the two bands and the menu's blank row; no section fits.
-    let layout = sidebar_layout(Rect::new(0, 0, 26, 3), 1, 1);
-    assert_eq!(layout.menu, Rect::new(0, 0, 25, 1));
-    assert_eq!(layout.footer, Rect::new(0, 2, 25, 1));
-    assert_eq!(layout.sections.map(|rect| rect.height), [0; 3]);
-    // A fourth row goes to the sessions band.
-    let layout = sidebar_layout(Rect::new(0, 0, 26, 4), 1, 1);
-    assert_eq!(layout.sections[2], Rect::new(0, 2, 25, 1));
-    // One row holds the menu band alone; nothing fits a one-column area.
+    assert_eq!(layout.sections[1], Rect::new(0, 3, 25, 17));
+    assert_eq!(layout.sections[2], Rect::new(0, 20, 25, 20));
+    // Two rows hold the machines band and the sessions band; one row the
+    // sessions band alone; nothing fits a one-column area.
+    let layout = sidebar_layout(Rect::new(0, 0, 26, 2), 1, 1);
+    assert_eq!(layout.sections.map(|rect| rect.height), [1, 0, 1]);
     let layout = sidebar_layout(Rect::new(0, 0, 26, 1), 1, 1);
-    assert_eq!(layout.menu, Rect::new(0, 0, 25, 1));
-    assert_eq!(layout.footer, Rect::default());
-    assert_eq!(layout.sections, [Rect::default(); 3]);
+    assert_eq!(layout.sections.map(|rect| rect.height), [0, 0, 1]);
     assert_eq!(
         sidebar_layout(Rect::new(0, 0, 1, 40), 1, 1),
         SidebarLayout::default()
+    );
+    // `section_rects` counts the workspace's rows into the same layout.
+    let ws = scripted_workspace();
+    assert_eq!(
+        section_rects(&ws, &Chrome::dark(), area),
+        sidebar_layout(area, 1, 1).sections
     );
 }
 
@@ -134,56 +130,53 @@ fn expanded_sidebar_draws_the_bands_and_records_the_hits() {
     let text = screen(&terminal);
     let lines: Vec<&str> = text.lines().collect();
     let blank = |line: &str| line.trim_end_matches('│').trim().is_empty();
-    assert_eq!(lines[0], " [Menu]              [+] │");
-    // A blank row above every section band.
-    assert!(blank(lines[1]), "{:?}", lines[1]);
-    assert!(lines[2].starts_with(" Machines "), "{:?}", lines[2]);
+    // The machines band opens the column.
+    assert!(lines[0].starts_with(" Machines "), "{:?}", lines[0]);
     // The hub row carries its blocked agent's state and the local mark.
-    assert!(lines[3].starts_with(" ⍾ "), "{:?}", lines[3]);
-    assert!(lines[3].contains("· local"), "{:?}", lines[3]);
-    assert!(blank(lines[4]), "{:?}", lines[4]);
-    assert_eq!(lines[5], " Projects      [working] │");
+    assert!(lines[1].starts_with(" ⍾ "), "{:?}", lines[1]);
+    assert!(lines[1].contains("· local"), "{:?}", lines[1]);
+    // A blank row above the projects and sessions bands.
+    assert!(blank(lines[2]), "{:?}", lines[2]);
+    assert_eq!(lines[3], " Projects      [working] │");
     // `working` lists only alpha, folded, on one line with its counts.
-    assert_eq!(lines[6], " ⍾ alpha (main ↑2 ↓1)   ▸│");
+    assert_eq!(lines[4], " ⍾ alpha (main ↑2 ↓1)   ▸│");
     assert!(!text.contains("○ beta"), "{text}");
     assert!(!text.contains("feature"), "{text}");
-    assert!(blank(lines[7]), "{:?}", lines[7]);
+    assert!(blank(lines[5]), "{:?}", lines[5]);
     // One control, so the band fits the default width; the scope and the
     // order live in its menu.
-    assert_eq!(lines[8], " Sessions         [view] │");
-    assert_eq!(lines[9], " ⍾ term-alpha · needs you│");
-    assert!(blank(lines[10]), "{:?}", lines[10]);
-    assert_eq!(lines[11], " ○ term-beta             │");
-    assert_eq!(lines[12], "   gclient               │");
-    assert_eq!(lines[39], "                     [«] │");
+    assert_eq!(lines[6], " Sessions         [view] │");
+    assert_eq!(lines[7], " ⍾ term-alpha · needs you│");
+    assert!(blank(lines[8]), "{:?}", lines[8]);
+    assert_eq!(lines[9], " ○ term-beta             │");
+    assert_eq!(lines[10], "   gclient               │");
+    // No footer: the sessions run to the last row.
+    assert!(blank(lines[39]), "{:?}", lines[39]);
     for line in &lines {
         assert!(line.ends_with('│'), "{line:?}");
     }
 
-    assert_eq!(hits.projects_menu, Some(Rect::new(1, 0, 6, 1)));
-    assert_eq!(hits.projects_new, Some(Rect::new(21, 0, 3, 1)));
     assert_eq!(hits.machines.len(), 1, "{:?}", hits.machines);
-    assert_eq!(hits.machines[0].1, Rect::new(0, 3, 25, 1));
-    assert_eq!(hits.projects_filter, Some(Rect::new(15, 5, 9, 1)));
+    assert_eq!(hits.machines[0].1, Rect::new(0, 1, 25, 1));
+    assert_eq!(hits.projects_filter, Some(Rect::new(15, 3, 9, 1)));
     assert_eq!(
         hits.projects,
-        vec![("proj-alpha".to_string(), Rect::new(0, 6, 25, 1))]
+        vec![("proj-alpha".to_string(), Rect::new(0, 4, 25, 1))]
     );
     assert!(hits.worktrees.is_empty(), "{:?}", hits.worktrees);
     assert_eq!(
         hits.group_toggles,
-        vec![("proj-alpha".to_string(), Rect::new(24, 6, 1, 1))]
+        vec![("proj-alpha".to_string(), Rect::new(24, 4, 1, 1))]
     );
-    assert_eq!(hits.sessions_view, Some(Rect::new(18, 8, 6, 1)));
+    assert_eq!(hits.sessions_view, Some(Rect::new(18, 6, 6, 1)));
     assert_eq!(
         hits.agents,
         vec![
-            ("run:term-alpha".to_string(), Rect::new(0, 9, 25, 2)),
-            ("terminal:term-beta".to_string(), Rect::new(0, 11, 25, 2)),
+            ("run:term-alpha".to_string(), Rect::new(0, 7, 25, 2)),
+            ("terminal:term-beta".to_string(), Rect::new(0, 9, 25, 2)),
         ]
     );
     assert_eq!(hits.scrollbars, [None; 3]);
-    assert_eq!(hits.toggle, Some(Rect::new(21, 39, 3, 1)));
 }
 
 #[test]
@@ -199,89 +192,16 @@ fn wider_sidebar_shows_the_expanded_card() {
         .unwrap();
     let text = screen(&terminal);
     let lines: Vec<&str> = text.lines().collect();
-    assert_eq!(lines[7], "   └─ ○ feature · #123        │");
-    assert_eq!(lines[9], " Sessions              [view] │");
-    assert_eq!(hits.sessions_view, Some(Rect::new(23, 9, 6, 1)));
+    assert_eq!(lines[5], "   └─ ○ feature · #123        │");
+    assert_eq!(lines[7], " Sessions              [view] │");
+    assert_eq!(hits.sessions_view, Some(Rect::new(23, 7, 6, 1)));
     assert_eq!(
         hits.worktrees,
-        vec![("wt-1".to_string(), Rect::new(0, 7, 30, 1))]
+        vec![("wt-1".to_string(), Rect::new(0, 5, 30, 1))]
     );
     assert_eq!(
         hits.group_toggles,
-        vec![("proj-alpha".to_string(), Rect::new(29, 6, 1, 1))]
-    );
-}
-
-#[test]
-fn collapsed_rail_shows_indexes_and_dots() {
-    let ws = scripted_workspace();
-    let chrome = Chrome::dark();
-    let area = Rect::new(0, 0, 4, 12);
-    let mut terminal = Terminal::new(TestBackend::new(4, 12)).unwrap();
-    let mut hits = SidebarHits::default();
-    terminal
-        .draw(|frame| hits = render_collapsed_sidebar(frame, area, &ws, &chrome))
-        .unwrap();
-    let text = screen(&terminal);
-    let lines: Vec<&str> = text.lines().collect();
-    // The machine dot, then the cards and the sessions under their rules,
-    // a blank row above each rule, and the toggle on the last row.
-    assert_eq!(lines[0], "  ⍾│");
-    assert_eq!(lines[1], "   │");
-    assert_eq!(lines[2], "───│");
-    assert_eq!(lines[3], "1 ⍾│");
-    assert_eq!(lines[4], "   │");
-    assert_eq!(lines[6], "   │");
-    assert_eq!(lines[7], "───│");
-    assert_eq!(lines[8], "1 ⍾│");
-    assert_eq!(lines[9], "2 ○│");
-    assert_eq!(lines[10], "   │");
-    assert_eq!(lines[11], " » │");
-    assert_eq!(hits.machines.len(), 1);
-    assert_eq!(hits.projects.len(), 1);
-    assert!(hits.worktrees.is_empty());
-    assert_eq!(hits.agents.len(), 2);
-    assert_eq!(hits.agents[0].1, Rect::new(0, 8, 3, 1));
-    assert_eq!(hits.agents[1].1, Rect::new(0, 9, 3, 1));
-    assert_eq!(hits.toggle, Some(Rect::new(1, 11, 1, 1)));
-}
-
-#[test]
-fn rail_sections_share_the_rows_under_the_machine_dot() {
-    let (rects, dividers) = collapsed_sections(Rect::new(0, 0, 4, 12));
-    assert_eq!(dividers, [Some(2), Some(7)]);
-    assert_eq!(
-        rects,
-        [
-            Rect::new(0, 0, 3, 1),
-            Rect::new(0, 3, 3, 3),
-            Rect::new(0, 8, 3, 3),
-        ]
-    );
-    // The odd row goes to the cards.
-    let (rects, _) = collapsed_sections(Rect::new(0, 0, 4, 13));
-    assert_eq!(rects[1].height, 4);
-    assert_eq!(rects[2].height, 3);
-    // Under eight rows the cards take everything and no rule is drawn.
-    let (rects, dividers) = collapsed_sections(Rect::new(0, 0, 4, 7));
-    assert_eq!(dividers, [None; 2]);
-    assert_eq!(
-        rects[SidebarSection::Projects.index()],
-        Rect::new(0, 0, 3, 7)
-    );
-    assert_eq!(rects[SidebarSection::Sessions.index()], Rect::default());
-    // `section_rects` follows the rail while collapsed.
-    let ws = scripted_workspace();
-    let mut chrome = Chrome::dark();
-    chrome.sidebar.collapsed = true;
-    assert_eq!(
-        section_rects(&ws, &chrome, Rect::new(0, 0, 4, 12)),
-        collapsed_sections(Rect::new(0, 0, 4, 12)).0
-    );
-    chrome.sidebar.collapsed = false;
-    assert_eq!(
-        section_rects(&ws, &chrome, Rect::new(0, 0, 26, 40)),
-        sidebar_layout(Rect::new(0, 0, 26, 40), 1, 1).sections
+        vec![("proj-alpha".to_string(), Rect::new(29, 4, 1, 1))]
     );
 }
 

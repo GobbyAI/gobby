@@ -302,7 +302,7 @@ fn render_border_lines(
     frame: &mut Frame,
 ) -> bool {
     let pane_gaps = chrome.prefs.pane_gaps;
-    if !chrome.prefs.pane_borders || pane_infos.iter().all(|info| info.borders.is_empty()) {
+    if pane_infos.iter().all(|info| info.borders.is_empty()) {
         return false;
     }
 

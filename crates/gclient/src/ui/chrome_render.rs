@@ -116,7 +116,7 @@ pub fn render_workspace<W: WorkspaceView>(
     render_workspace_with(frame, ws, chrome, &mut none)
 }
 
-/// herdr `render_navigation_chrome`: the sidebar column, collapsed or expanded.
+/// herdr `render_navigation_chrome`: the sidebar column while it is pinned.
 /// Hit areas are returned by the sidebar; the run loop stores them.
 fn render_navigation_chrome<W: WorkspaceView>(
     frame: &mut Frame,
@@ -127,11 +127,7 @@ fn render_navigation_chrome<W: WorkspaceView>(
     if rect.width == 0 {
         return SidebarHits::default();
     }
-    if chrome.sidebar.collapsed {
-        sidebar::render_collapsed_sidebar(frame, rect, ws, chrome)
-    } else {
-        sidebar::render_sidebar(frame, rect, ws, chrome)
-    }
+    sidebar::render_sidebar(frame, rect, ws, chrome)
 }
 
 /// Tab bar row plus terminal area: the active tab's surface, or the empty

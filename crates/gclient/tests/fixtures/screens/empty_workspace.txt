@@ -1,82 +1,82 @@
 # gclient screen golden: empty_workspace
 # 120x40, dark theme, colours normalised to theme::Palette roles
-00 | [Menu]              [+] │                                                                                              |
-00 : -/accent*1 panel_bg/accent+b*6 -/accent*14 panel_bg/accent+b*3 -/accent*1 surface_dim/panel_bg*1 -/panel_bg*94
-01 |                         │                                                                                              |
-01 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
-02 | Machines                │                                                                                              |
-02 : -/surface0*1 subtext0/surface0+b*8 -/surface0*16 surface_dim/panel_bg*1 -/panel_bg*94
-03 | ○ scripted · local      │                                                                                              |
-03 : -/surface_dim*1 overlay0/surface_dim*1 overlay0/surface_dim+d*1 text/surface_dim+b*8 overlay0/surface_dim+d*8 -/surface_dim*6 surface_dim/panel_bg*1 -/panel_bg*94
-04 |                         │                                                                                              |
-04 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
-05 | Projects      [working] │                                                                                              |
-05 : -/surface0*1 subtext0/surface0+b*8 -/surface0*6 overlay0/surface0*9 -/surface0*1 surface_dim/panel_bg*1 -/panel_bg*94
-06 |                         │                                                                                              |
-06 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
-07 | Sessions         [view] │                                                                                              |
-07 : -/surface0*1 subtext0/surface0+b*8 -/surface0*9 overlay0/surface0*6 -/surface0*1 surface_dim/panel_bg*1 -/panel_bg*94
-08 |                         │                                                                                              |
-08 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
-09 |                         │                                                                                              |
-09 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
-10 |                         │                                                                                              |
-10 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
-11 |                         │                                                                                              |
-11 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
-12 |                         │                                                                                              |
-12 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
-13 |                         │                                                                                              |
-13 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
-14 |                         │                                                                                              |
-14 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
-15 |                         │                                                                                              |
-15 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
-16 |                         │                                                                                              |
-16 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
-17 |                         │                                                                                              |
-17 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
-18 |                         │                                                                                              |
-18 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
-19 |                         │                                         No pane open.                                        |
-19 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*41 overlay1/panel_bg+b*13 -/panel_bg*40
-20 |                         │                          select a terminal in the sidebar to attach                          |
-20 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*26 overlay0/panel_bg*42 -/panel_bg*26
-21 |                         │                                                                                              |
-21 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
-22 |                         │                                                                                              |
-22 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
-23 |                         │                                                                                              |
-23 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
-24 |                         │                                                                                              |
-24 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
-25 |                         │                                                                                              |
-25 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
-26 |                         │                                                                                              |
-26 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
-27 |                         │                                                                                              |
-27 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
-28 |                         │                                                                                              |
-28 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
-29 |                         │                                                                                              |
-29 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
-30 |                         │                                                                                              |
-30 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
-31 |                         │                                                                                              |
-31 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
-32 |                         │                                                                                              |
-32 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
-33 |                         │                                                                                              |
-33 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
-34 |                         │                                                                                              |
-34 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
-35 |                         │                                                                                              |
-35 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
-36 |                         │                                                                                              |
-36 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
-37 |                         │                                                                                              |
-37 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
-38 |                         │                                                                                              |
-38 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
-39 |                     [«] │ prefix ctrl+b                                                                                |
-39 : -/surface0*21 overlay0/surface0*3 -/surface0*1 surface_dim/panel_bg*1 -/surface_dim*1 subtext0/surface_dim*13 -/surface_dim*80
+00 |                                                                                                                        |
+00 : -/panel_bg*120
+01 |                                                                                                                        |
+01 : -/panel_bg*120
+02 |                                                                                                                        |
+02 : -/panel_bg*120
+03 |                                                                                                                        |
+03 : -/panel_bg*120
+04 |                                                                                                                        |
+04 : -/panel_bg*120
+05 |                                                                                                                        |
+05 : -/panel_bg*120
+06 |                                                                                                                        |
+06 : -/panel_bg*120
+07 |                                                                                                                        |
+07 : -/panel_bg*120
+08 |                                                                                                                        |
+08 : -/panel_bg*120
+09 |                                                                                                                        |
+09 : -/panel_bg*120
+10 |                                                                                                                        |
+10 : -/panel_bg*120
+11 |                                                                                                                        |
+11 : -/panel_bg*120
+12 |                                                                                                                        |
+12 : -/panel_bg*120
+13 |                                                                                                                        |
+13 : -/panel_bg*120
+14 |                                                                                                                        |
+14 : -/panel_bg*120
+15 |                                                                                                                        |
+15 : -/panel_bg*120
+16 |                                                                                                                        |
+16 : -/panel_bg*120
+17 |                                                                                                                        |
+17 : -/panel_bg*120
+18 |                                                                                                                        |
+18 : -/panel_bg*120
+19 |                                                      No pane open.                                                     |
+19 : -/panel_bg*54 overlay1/panel_bg+b*13 -/panel_bg*53
+20 |                                       select a terminal in the sidebar to attach                                       |
+20 : -/panel_bg*39 overlay0/panel_bg*42 -/panel_bg*39
+21 |                                                                                                                        |
+21 : -/panel_bg*120
+22 |                                                                                                                        |
+22 : -/panel_bg*120
+23 |                                                                                                                        |
+23 : -/panel_bg*120
+24 |                                                                                                                        |
+24 : -/panel_bg*120
+25 |                                                                                                                        |
+25 : -/panel_bg*120
+26 |                                                                                                                        |
+26 : -/panel_bg*120
+27 |                                                                                                                        |
+27 : -/panel_bg*120
+28 |                                                                                                                        |
+28 : -/panel_bg*120
+29 |                                                                                                                        |
+29 : -/panel_bg*120
+30 |                                                                                                                        |
+30 : -/panel_bg*120
+31 |                                                                                                                        |
+31 : -/panel_bg*120
+32 |                                                                                                                        |
+32 : -/panel_bg*120
+33 |                                                                                                                        |
+33 : -/panel_bg*120
+34 |                                                                                                                        |
+34 : -/panel_bg*120
+35 |                                                                                                                        |
+35 : -/panel_bg*120
+36 |                                                                                                                        |
+36 : -/panel_bg*120
+37 |                                                                                                                        |
+37 : -/panel_bg*120
+38 |                                                                                                                        |
+38 : -/panel_bg*120
+39 | prefix ctrl+b                                                                                                          |
+39 : -/surface_dim*1 subtext0/surface_dim*13 -/surface_dim*106

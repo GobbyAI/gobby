@@ -102,7 +102,9 @@ fn project_rows() -> SidebarRows {
 
 /// Two projects with `alpha` focused, its worktree child listed under it,
 /// and one agent waiting for attention on `term-alpha`. No pane is open in
-/// chrome, which isolates the sidebar from the tab surface.
+/// chrome, which isolates the sidebar from the tab surface. The sidebar is
+/// pinned, and `split_live` and `help_dialog` keep it pinned; the other
+/// states draw the default frame with it hidden.
 fn projects_agents() -> (Workspace, Chrome) {
     let mut ws = Workspace::scripted();
     ws.daemon_mut().set_sidebar_rows(project_rows());
@@ -121,7 +123,9 @@ fn projects_agents() -> (Workspace, Chrome) {
         ws.open_terminal(terminal_id, "native", "epoch")
             .expect("open terminal");
     }
-    (ws, Chrome::dark())
+    let mut chrome = Chrome::dark();
+    chrome.sidebar.pinned = true;
+    (ws, chrome)
 }
 
 /// Two live panes split in the first tab, with a second tab behind them.
@@ -445,17 +449,16 @@ fn glyph_rows(capture: &str) -> Vec<&str> {
     capture
         .lines()
         .filter_map(|line| line.split_once(" |"))
-        .map(|(_, glyphs)| glyphs)
+        .map(|(_, glyphs)| glyphs.strip_suffix('|').unwrap_or(glyphs))
         .collect()
 }
 
-/// 3.1.1: the sidebar stacks the menu band, the machines, the projects, the
-/// sessions, and the footer band. A project is a one-line card (state
+/// 3.1.1: the pinned sidebar stacks the machines, the projects and the
+/// sessions under the menu-bar row. A project is a one-line card (state
 /// glyph, name, branch with the ahead/behind counts, fold marker) that lists
 /// its worktrees only while expanded; the `working` filter hides a project
 /// with nothing live; the attention entry lists under the sessions band with
-/// its reason; the collapsed rail numbers the cards and the sessions. The
-/// committed capture pins the exact layout.
+/// its reason. The committed capture pins the exact layout.
 #[test]
 fn projects_agents_golden() {
     let theme = Theme::new(ThemeKind::Dark);
@@ -467,12 +470,11 @@ fn projects_agents_golden() {
             .unwrap_or_else(|| panic!("no row contains {needle:?}\n{rendered}"))
     };
 
-    assert!(
-        rows[0].starts_with(" [Menu]") && rows[0].contains("[+] "),
-        "menu band: {:?}",
-        rows[0]
-    );
+    // Row 0 is held for the menu bar; the machines band opens the sidebar
+    // under it.
+    assert!(rows[0].trim().is_empty(), "menu-bar row: {:?}", rows[0]);
     let machines = row_containing(" Machines");
+    assert_eq!(machines, 1, "the machines band tops the sidebar");
     let projects = row_containing(" Projects");
     assert!(
         rows[projects].contains("[working]"),
@@ -519,9 +521,8 @@ fn projects_agents_golden() {
         rows[entry]
     );
     assert!(
-        rows[rows.len() - 1].contains("[«] │"),
-        "footer band: {:?}",
-        rows[rows.len() - 1]
+        !rendered.contains("[«]") && !rendered.contains("[Menu]"),
+        "no footer or menu band remains\n{rendered}"
     );
 
     // Expanding the card unfolds its worktree under it and flips the marker.
@@ -538,22 +539,6 @@ fn projects_agents_golden() {
         expanded_rows[alpha + 1].starts_with("   └─ ○ feature · #123"),
         "worktree line: {:?}",
         expanded_rows[alpha + 1]
-    );
-
-    let (ws, mut chrome) = projects_agents();
-    chrome.sidebar.collapsed = true;
-    let rail = capture("projects_agents", &render(&ws, &mut chrome), &theme);
-    assert!(
-        rail.lines().any(|line| line.contains("|1 ⍾")),
-        "the rail numbers the first project\n{rail}"
-    );
-    assert!(
-        rail.lines().any(|line| line.contains("|2 ○")),
-        "the rail numbers the sessions\n{rail}"
-    );
-    assert!(
-        rail.lines().any(|line| line.contains("| » ")),
-        "the rail carries the expand toggle\n{rail}"
     );
 
     let committed = fs::read_to_string(fixture_path("projects_agents"))

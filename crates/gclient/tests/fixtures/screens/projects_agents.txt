@@ -1,35 +1,35 @@
 # gclient screen golden: projects_agents
 # 120x40, dark theme, colours normalised to theme::Palette roles
-00 | [Menu]              [+] │                                                                                              |
-00 : -/accent*1 panel_bg/accent+b*6 -/accent*14 panel_bg/accent+b*3 -/accent*1 surface_dim/panel_bg*1 -/panel_bg*94
-01 |                         │                                                                                              |
-01 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
-02 | Machines                │                                                                                              |
-02 : -/surface0*1 subtext0/surface0+b*8 -/surface0*16 surface_dim/panel_bg*1 -/panel_bg*94
-03 | ⍾ scripted · local      │                                                                                              |
-03 : -/surface_dim*1 yellow/surface_dim*1 overlay0/surface_dim+d*1 text/surface_dim+b*8 overlay0/surface_dim+d*8 -/surface_dim*6 surface_dim/panel_bg*1 -/panel_bg*94
-04 |                         │                                                                                              |
-04 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
-05 | Projects      [working] │                                                                                              |
-05 : -/surface0*1 subtext0/surface0+b*8 -/surface0*6 overlay0/surface0*9 -/surface0*1 surface_dim/panel_bg*1 -/panel_bg*94
-06 | ⍾ alpha (main ↑2 ↓1)   ▸│                                                                                              |
-06 : -/surface_dim*1 yellow/surface_dim*1 overlay0/surface_dim+d*1 text/surface_dim+b*5 overlay0/surface_dim+d*2 subtext0/surface_dim*4 green/surface_dim*3 red/surface_dim*3 overlay0/surface_dim+d*1 -/surface_dim*3 accent/surface_dim*1 surface_dim/panel_bg*1 -/panel_bg*94
-07 |                         │                                                                                              |
-07 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
-08 | Sessions         [view] │                                                                                              |
-08 : -/surface0*1 subtext0/surface0+b*8 -/surface0*9 overlay0/surface0*6 -/surface0*1 surface_dim/panel_bg*1 -/panel_bg*94
-09 | ⍾ term-alpha · needs you│                                                                                              |
-09 : -/panel_bg*1 yellow/panel_bg*1 overlay0/panel_bg+d*1 subtext0/panel_bg+b*10 overlay0/panel_bg+d*3 yellow/panel_bg+d*9 surface_dim/panel_bg*1 -/panel_bg*94
-10 |                         │                                                                                              |
-10 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
-11 | ○ term-beta             │                                                                                              |
-11 : -/panel_bg*1 overlay0/panel_bg*1 overlay0/panel_bg+d*1 subtext0/panel_bg+b*9 -/panel_bg*13 surface_dim/panel_bg*1 -/panel_bg*94
-12 |   gclient               │                                                                                              |
-12 : -/panel_bg*1 overlay0/panel_bg+d*9 -/panel_bg*15 surface_dim/panel_bg*1 -/panel_bg*94
-13 | ○ term-gamma            │                                                                                              |
-13 : -/panel_bg*1 overlay0/panel_bg*1 overlay0/panel_bg+d*1 subtext0/panel_bg+b*10 -/panel_bg*12 surface_dim/panel_bg*1 -/panel_bg*94
-14 |   gclient               │                                                                                              |
-14 : -/panel_bg*1 overlay0/panel_bg+d*9 -/panel_bg*15 surface_dim/panel_bg*1 -/panel_bg*94
+00 |                                                                                                                        |
+00 : -/panel_bg*120
+01 | Machines                │                                                                                              |
+01 : -/surface0*1 subtext0/surface0+b*8 -/surface0*16 surface_dim/panel_bg*1 -/panel_bg*94
+02 | ⍾ scripted · local      │                                                                                              |
+02 : -/surface_dim*1 yellow/surface_dim*1 overlay0/surface_dim+d*1 text/surface_dim+b*8 overlay0/surface_dim+d*8 -/surface_dim*6 surface_dim/panel_bg*1 -/panel_bg*94
+03 |                         │                                                                                              |
+03 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
+04 | Projects      [working] │                                                                                              |
+04 : -/surface0*1 subtext0/surface0+b*8 -/surface0*6 overlay0/surface0*9 -/surface0*1 surface_dim/panel_bg*1 -/panel_bg*94
+05 | ⍾ alpha (main ↑2 ↓1)   ▸│                                                                                              |
+05 : -/surface_dim*1 yellow/surface_dim*1 overlay0/surface_dim+d*1 text/surface_dim+b*5 overlay0/surface_dim+d*2 subtext0/surface_dim*4 green/surface_dim*3 red/surface_dim*3 overlay0/surface_dim+d*1 -/surface_dim*3 accent/surface_dim*1 surface_dim/panel_bg*1 -/panel_bg*94
+06 |                         │                                                                                              |
+06 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
+07 | Sessions         [view] │                                                                                              |
+07 : -/surface0*1 subtext0/surface0+b*8 -/surface0*9 overlay0/surface0*6 -/surface0*1 surface_dim/panel_bg*1 -/panel_bg*94
+08 | ⍾ term-alpha · needs you│                                                                                              |
+08 : -/panel_bg*1 yellow/panel_bg*1 overlay0/panel_bg+d*1 subtext0/panel_bg+b*10 overlay0/panel_bg+d*3 yellow/panel_bg+d*9 surface_dim/panel_bg*1 -/panel_bg*94
+09 |                         │                                                                                              |
+09 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
+10 | ○ term-beta             │                                                                                              |
+10 : -/panel_bg*1 overlay0/panel_bg*1 overlay0/panel_bg+d*1 subtext0/panel_bg+b*9 -/panel_bg*13 surface_dim/panel_bg*1 -/panel_bg*94
+11 |   gclient               │                                                                                              |
+11 : -/panel_bg*1 overlay0/panel_bg+d*9 -/panel_bg*15 surface_dim/panel_bg*1 -/panel_bg*94
+12 | ○ term-gamma            │                                                                                              |
+12 : -/panel_bg*1 overlay0/panel_bg*1 overlay0/panel_bg+d*1 subtext0/panel_bg+b*10 -/panel_bg*12 surface_dim/panel_bg*1 -/panel_bg*94
+13 |   gclient               │                                                                                              |
+13 : -/panel_bg*1 overlay0/panel_bg+d*9 -/panel_bg*15 surface_dim/panel_bg*1 -/panel_bg*94
+14 |                         │                                                                                              |
+14 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
 15 |                         │                                                                                              |
 15 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
 16 |                         │                                                                                              |
@@ -78,5 +78,5 @@
 37 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
 38 |                         │                                                                                              |
 38 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
-39 |                     [«] │ prefix ctrl+b                                                                                |
-39 : -/surface0*21 overlay0/surface0*3 -/surface0*1 surface_dim/panel_bg*1 -/surface_dim*1 subtext0/surface_dim*13 -/surface_dim*80
+39 | prefix ctrl+b                                                                                                          |
+39 : -/surface_dim*1 subtext0/surface_dim*13 -/surface_dim*106
