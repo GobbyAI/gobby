@@ -1167,3 +1167,39 @@ async def test_workspace_list_reads_storage_off_the_event_loop() -> None:
     assert listed == ()
     assert seen
     assert seen[0] != loop_thread
+
+
+@pytest.mark.asyncio
+async def test_workspace_rename_writes_storage_off_the_event_loop() -> None:
+    """Renaming a workspace must not write the row on the event-loop thread."""
+    loop_thread = threading.get_ident()
+    seen: list[int] = []
+    workspace = SimpleNamespace(id="ws-1")
+    target = SimpleNamespace(tab=None, workspace=workspace)
+
+    def rename(workspace_id: str, name: str) -> SimpleNamespace:
+        seen.append(threading.get_ident())
+        return SimpleNamespace(id=workspace_id, name=name)
+
+    workspaces = MagicMock()
+    workspaces.rename.side_effect = rename
+    ops = WorkspaceOps(
+        workspaces=workspaces,
+        terminals=MagicMock(),
+        registry=MagicMock(),
+        coordinator=MagicMock(),
+        sessions=MagicMock(),
+        publish=MagicMock(),
+    )
+
+    async def enter(_reference: str, _node: str | None) -> SimpleNamespace:
+        return target
+
+    async def emit(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    object.__setattr__(ops, "_enter", enter)
+    object.__setattr__(ops, "_emit", emit)
+    await ops.workspace_rename("operator", "ws-1", "renamed")
+    assert seen
+    assert seen[0] != loop_thread
