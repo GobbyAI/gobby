@@ -32,6 +32,7 @@ from gobby.ai.codex_endpoint import codex_model_config_override
 from gobby.config.app import DaemonConfig
 from gobby.llm.image_payloads import prepare_image_inputs
 from gobby.llm.textgen_cwd import neutral_textgen_cwd
+from gobby.utils import spawn
 
 if TYPE_CHECKING:
     from gobby.llm.base import LLMTextResult
@@ -226,25 +227,15 @@ async def _run_cli_text_generation_command(
     if owner_task is not None:
         _active_cli_text_generation_tasks.add(owner_task)
     try:
-        process = await asyncio.create_subprocess_exec(
+        process = await spawn.create_session_exec(
             *command,
-            stdin=(
-                asyncio.subprocess.PIPE if stdin_input is not None else asyncio.subprocess.DEVNULL
-            ),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=str(neutral_cwd),
             env=env,
-            start_new_session=True,
+            cwd=neutral_cwd,
+            input_bytes=stdin_input.encode("utf-8") if stdin_input is not None else None,
         )
         try:
-            communicate_coro = (
-                process.communicate(input=stdin_input.encode("utf-8"))
-                if stdin_input is not None
-                else process.communicate()
-            )
             stdout, stderr = await asyncio.wait_for(
-                communicate_coro,
+                process.communicate(),
                 timeout=timeout_seconds,
             )
         except TimeoutError as exc:
@@ -798,15 +789,7 @@ class DroidCLITextGenerateAdapter:
             temp_home.mkdir(parents=True, exist_ok=True)
             _seed_droid_factory_state(env, temp_home)
             isolated_env = _droid_isolated_env(env, temp_home)
-            process = await asyncio.create_subprocess_exec(
-                *command,
-                stdin=asyncio.subprocess.DEVNULL,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=str(cwd),
-                env=isolated_env,
-                start_new_session=True,
-            )
+            process = await spawn.create_session_exec(*command, env=isolated_env, cwd=cwd)
             try:
                 stdout, stderr = await asyncio.wait_for(
                     process.communicate(),
