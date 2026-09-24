@@ -536,6 +536,27 @@ mod tests {
         inner.terminals.remove(&identity).expect("terminal slot");
     }
 
+    #[cfg(feature = "vt-engine")]
+    async fn attach_accepting_child(
+        state: &HostState,
+        host_terminal_id: &str,
+    ) -> tokio::sync::mpsc::Receiver<bytes::Bytes> {
+        let (runtime, received) = crate::pane::PaneRuntime::test_with_channel(80, 24);
+        let child = crate::host::spawn::PreparedChild::from_test_runtime(runtime);
+        let mut inner = state.inner.lock().await;
+        let identity = inner
+            .by_host_id
+            .get(host_terminal_id)
+            .expect("terminal identity")
+            .clone();
+        inner
+            .terminals
+            .get_mut(&identity)
+            .expect("terminal slot")
+            .child = Some(child);
+        received
+    }
+
     #[tokio::test]
     async fn batch_returns_one_ordered_result_per_target() {
         let value = json!({
@@ -693,6 +714,12 @@ mod tests {
         let state = state();
         crate::host::state::insert_native_slot(&state, "removed-first", 24, 80).await;
         crate::host::state::insert_native_slot(&state, "removed-later", 24, 80).await;
+        #[cfg(feature = "vt-engine")]
+        let (_first_input, _later_input) = {
+            let first = attach_accepting_child(&state, "removed-first").await;
+            let later = attach_accepting_child(&state, "removed-later").await;
+            (first, later)
+        };
         let batch = json!({
             "targets": [
                 {
