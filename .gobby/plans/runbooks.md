@@ -1011,7 +1011,11 @@ format line listed here:
   out as a web link; (4) daemon restarts need no pre-approval and get an alert
   immediately before and immediately after each restart, the after alert stating the
   outcome; the restart itself stays the Program Director's (book section 2) and the
-  assistant sends both alerts. Never: spawn, research, claim non-docs tasks, edit code,
+  assistant sends both alerts. A fifth requirement is Josh's (2026-09-23, relayed by
+  the Program Director, verbatim: "add to your runbook instructions that I don't need
+  you to repeat what you send on Telegram here. It's already in your context."): after
+  a Telegram send, the terminal reply confirms the send in at most one line and never
+  restates the content. Never: spawn, research, claim non-docs tasks, edit code,
   merge, push, restart, run lane commands, mutate the database (psql is read-only),
   touch another session's untracked files, or publish the decision docket before Josh
   says so. Owns: creating and releasing the panes of every persistent and
@@ -1024,7 +1028,9 @@ format line listed here:
   "name:require-rust-skill"]` (both skill rules are tagged `default`, so only a name
   exclude removes them); `blocked_mcp_tools: ["gobby-agents:kill_agent"]`. Divergence:
   the assistant creates every persistent and semi-persistent pane, so it no longer
-  hands TTLs to a dispatcher (criterion 11, ruling 23).
+  hands TTLs to a dispatcher (criterion 11, ruling 23); a Telegram send is confirmed
+  in the terminal in one line and never restated (Josh, 2026-09-23; the book is
+  silent on it).
 - `lane-manager` (book section 3, lines 186-214; rulings 22 and 23): the build-stage
   router and load balancer. The Program Director orders the queue; the lane manager
   decides when under the Director's load ceilings, never reorders against it, never
@@ -1216,7 +1222,8 @@ Research context:
   loaded tree and no `tmux` or `gterm` in any prompt string; every persona's
   registration line names `GOBBY_PANE_REF` and the pane view's backend. test:
   `tests/agents/test_runbook_definitions.py::test_no_runbook_definition_names_a_backend`.
-- 3.2.4 - The assistant persona requires criterion 9's four items by their fixed
+- 3.2.4 - The assistant persona requires criterion 9's four items and Josh's Telegram
+  rule (a send is confirmed in at most one line, never restated) by their fixed
   phrases. file: `src/gobby/install/shared/workflows/agents/assistant.yaml`. test:
   `tests/agents/test_runbook_definitions.py::test_assistant_requires_the_four_comms_items`.
 - 3.2.5 - The reviewer is a persona definition that blocks `close_task` and
