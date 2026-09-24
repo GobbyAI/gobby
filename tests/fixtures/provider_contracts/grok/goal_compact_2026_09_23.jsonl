@@ -1,0 +1,9 @@
+{"attempt":"14:21","ts":"2026-09-23T19:21:14.997Z","type":"turn_ended","outcome":"completed"}
+{"attempt":"14:21","ts":"2026-09-23T19:21:15.089Z","type":"turn_started","turn_number":19}
+{"attempt":"14:21","ts":"2026-09-23T19:21:17.108Z","type":"loop_started","loop_index":0}
+{"attempt":"14:21","ts":"2026-09-23T19:21:42.725Z","type":"loop_started","loop_index":0}
+{"attempt":"14:23","ts":"2026-09-23T19:23:07.187Z","type":"turn_ended","outcome":"completed"}
+{"attempt":"14:23","ts":"2026-09-23T19:23:07.227Z","type":"turn_started","turn_number":20}
+{"attempt":"14:23","ts":"2026-09-23T19:23:09.207Z","type":"loop_started","loop_index":0}
+{"attempt":"14:23","ts":"2026-09-23T19:23:27.815Z","type":"loop_started","loop_index":0}
+{"attempt":"14:23","ts":"2026-09-23T19:23:31.641Z","type":"turn_ended","outcome":"cancelled","cancellation_category":"mid_turn_abort"}

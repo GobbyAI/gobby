@@ -3,13 +3,14 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Mapping
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import psycopg
 
 from gobby.hooks.event_handlers._base import EventHandlersBase
 from gobby.hooks.events import ContextPart, HookEvent, HookResponse, SessionSource
 from gobby.hooks.session_types import has_prior_session_activity
+from gobby.hooks.terminal_handoff_delivery import schedule_staged_handoff_on_stop
 from gobby.sessions.reasoning_effort import observed_reasoning_effort
 from gobby.skills.capability_catalog import load_capability_catalog
 from gobby.skills.capability_routing import (
@@ -20,6 +21,7 @@ from gobby.skills.capability_routing import (
 )
 from gobby.skills.formatting import skill_fetch_directive
 from gobby.storage.hook_receipts import retire_session_hook_effects
+from gobby.storage.sessions import SessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -573,6 +575,21 @@ class AgentEventHandlerMixin(EventHandlersBase):
                             "Failed to retire hook effects on STOP for session %s: %s",
                             session_id,
                             e,
+                        )
+                if self._agent_run_manager is not None:
+                    try:
+                        schedule_staged_handoff_on_stop(
+                            event,
+                            session_manager=cast(SessionManager, self._session_manager),
+                            agent_run_manager=self._agent_run_manager,
+                            event_loop=self._event_loop,
+                            terminal_manager=getattr(self, "terminal_manager", None),
+                            terminal_runtime_registry=self._terminal_runtime_registry,
+                        )
+                    except Exception:
+                        self.logger.warning(
+                            "Failed scheduling staged terminal handoff on STOP",
+                            exc_info=True,
                         )
         else:
             self.logger.debug("STOP")

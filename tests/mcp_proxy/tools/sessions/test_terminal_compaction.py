@@ -8,6 +8,7 @@ resubmit exactly once before it reports the delivery as failed.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Callable
 from pathlib import Path
@@ -22,6 +23,7 @@ from gobby.mcp_proxy.tools.sessions._terminal_compaction import (
     _INTERRUPT_ATTEMPTS,
     _INTERRUPT_UNCONFIRMED_ERROR_CODE,
     _TURN_SETTLE_POLL_SECONDS,
+    _confirm_interrupt,
     _send_terminal_compaction_command,
 )
 from gobby.sessions.transcript_cursor import (
@@ -206,6 +208,14 @@ def _grok_event(kind: str, **fields: object) -> bytes:
     return (json.dumps({"type": kind, **fields}) + "\n").encode()
 
 
+def _recorded_compact_events() -> list[dict[str, object]]:
+    fixture = (
+        Path(__file__).resolve().parents[3]
+        / "fixtures/provider_contracts/grok/goal_compact_2026_09_23.jsonl"
+    )
+    return [json.loads(line) for line in fixture.read_text(encoding="utf-8").splitlines()]
+
+
 class _CountingGrokPane(_GrokPane):
     """Counts Ctrl+C presses while still recording every key."""
 
@@ -277,6 +287,7 @@ async def test_grok_goal_mode_gap_interrupts_the_successor_without_the_settle_bu
     )
 
     assert _TURN_SETTLE_POLL_SECONDS not in sleeps
+    assert clock["now"] < 10
     assert result[0] is True
     assert pane.keys[0] == "ctrl_c"
 
@@ -295,6 +306,46 @@ async def test_grok_interrupt_stops_pressing_ctrl_c_once_the_turn_has_ended() ->
     assert pane.ctrl_c_presses == 1
     assert result[0] is True
     assert pane.typed == [f"{_COMMAND}\n"]
+
+
+@pytest.mark.asyncio
+async def test_grok_completed_turn_then_goal_successor_is_not_interrupt_confirmation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settled = False
+    cancelled = False
+    presses = 0
+
+    class _GoalPane(_CountingGrokPane):
+        async def send_key(self, key: str) -> tuple[bool, str | None]:
+            nonlocal settled, cancelled, presses
+            if key == "ctrl_c":
+                presses += 1
+                if presses == 1:
+                    settled = True  # completed; goal mode may restart
+                else:
+                    cancelled = True
+                    settled = True
+            return await super().send_key(key)
+
+    async def settle_goal_mode(_seconds: float) -> None:
+        nonlocal settled
+        if presses == 1:
+            settled = False  # successor turn_started 92 ms later
+
+    monkeypatch.setattr(asyncio, "sleep", settle_goal_mode)
+    pane = _GoalPane()
+    result = await _confirm_interrupt(
+        pane,
+        "ctrl_c",
+        "session-grok",
+        lambda: cancelled,
+        attempt_seconds=0,
+        turn_settled=lambda: settled,
+    )
+
+    assert result == (True, None, None)
+    assert presses == 2
 
 
 @pytest.mark.asyncio
@@ -348,6 +399,54 @@ async def test_grok_interrupt_confirms_when_ctrl_c_restarts_the_loop_then_cancel
         observe_interrupt=interrupt,
         turn_settled=probe,
         settle_seconds=None,
+    )
+
+    assert result[0] is True
+    assert pane.ctrl_c_presses == 2
+    assert pane.typed == [f"{_COMMAND}\n"]
+
+
+@pytest.mark.asyncio
+async def test_grok_recorded_goal_mode_compact_replay_succeeds_on_first_delivery(
+    tmp_path: Path,
+) -> None:
+    """Replay the 14:21 92 ms gap and loop restart, then the 14:23 cancellation."""
+    recorded = _recorded_compact_events()
+    assert recorded[0]["ts"] == "2026-09-23T19:21:14.997Z"
+    assert recorded[1]["ts"] == "2026-09-23T19:21:15.089Z"
+    updates = tmp_path / "updates.jsonl"
+    events = tmp_path / "events.jsonl"
+    updates.write_bytes(b"")
+    events.write_bytes(_grok_event("turn_started", turn_number=18))
+    interrupt = build_interrupt_observer("grok", updates, session_id="session-grok")
+    probe = build_turn_settled_observer("grok", updates, session_id="session-grok")
+    assert interrupt is not None
+    assert probe is not None
+    with events.open("ab") as stream:
+        for record in recorded[:3]:
+            stream.write((json.dumps(record) + "\n").encode())
+
+    class _ReplayPane(_CountingGrokPane):
+        async def send_key(self, key: str) -> tuple[bool, str | None]:
+            if key == "ctrl_c":
+                # The first press restarted loop 0 in the failed attempt. The
+                # later successful attempt showed a second press cancelling it.
+                record = recorded[3] if self.ctrl_c_presses == 0 else recorded[-1]
+                with events.open("ab") as stream:
+                    stream.write((json.dumps(record) + "\n").encode())
+            return await super().send_key(key)
+
+    pane = _ReplayPane()
+    result = await _send_terminal_compaction_command(
+        pane,
+        _COMMAND,
+        "session-grok",
+        cli_source="grok",
+        mark_continuation_pending=lambda: True,
+        clear_continuation_pending=lambda: True,
+        observe_interrupt=interrupt,
+        turn_settled=probe,
+        settle_seconds=_SETTLE,
     )
 
     assert result[0] is True
@@ -414,11 +513,25 @@ async def test_grok_live_or_unknown_turn_is_interrupted_before_compaction(
 async def test_grok_rejection_after_a_settled_submission_interrupts_before_resubmitting() -> None:
     # The rejection proves a turn is running after all: interrupt it, then resubmit once.
     pane = _GrokPane([_REJECTED_SCREEN])
+    reads = iter([True, True, False, False])
 
-    result, mark, clear = await _send(pane, lambda: True, turn_settled=lambda: True)
+    result, mark, clear = await _send(pane, lambda: True, turn_settled=lambda: next(reads, False))
 
     assert result == (True, None, True, None)
     assert pane.keys == [*_DRAIN, "enter", "ctrl_c", *_DRAIN, "enter"]
+    assert pane.typed == [f"{_COMMAND}\n", f"{_COMMAND}\n"]
+    mark.assert_called_once()
+    clear.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_grok_rejection_resubmission_checks_idle_before_first_ctrl_c() -> None:
+    pane = _GrokPane([_REJECTED_SCREEN])
+
+    result, mark, clear = await _send(pane, lambda: True, turn_settled=lambda: True)
+
+    assert "ctrl_c" not in pane.keys
+    assert result == (True, None, True, {"interrupted": False})
     assert pane.typed == [f"{_COMMAND}\n", f"{_COMMAND}\n"]
     mark.assert_called_once()
     clear.assert_not_called()

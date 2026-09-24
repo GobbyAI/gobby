@@ -168,7 +168,12 @@ async def _confirm_interrupt(
     pressed = False
     for _attempt in range(_INTERRUPT_ATTEMPTS):
         if pressed and turn_settled is not None and turn_settled() is True:
-            return True, None, None
+            # Grok goal mode can start a successor about 92 ms after a completed
+            # turn. Confirm that the composer stays idle before treating it as
+            # the interrupt result or sending another Ctrl+C.
+            await asyncio.sleep(_TURN_SETTLE_POLL_SECONDS)
+            if turn_settled() is True:
+                return True, None, None
         ok, reason = await send_pane_key(
             pane, key, session_id, action="sending compaction interrupt"
         )
@@ -443,7 +448,7 @@ async def _send_terminal_compaction_command(
                 resubmission,
                 _COMPACTION_REJECTION_RETRIES,
             )
-        # A rejection proves the turn is live, so only the first submission waits.
+        # A rejection may race with a turn ending, so only the first submission waits.
         # The wait also returns once the armed turn has ended and goal mode has
         # already started the next one. That successor is still interrupted.
         if not resubmission:
@@ -454,7 +459,7 @@ async def _send_terminal_compaction_command(
                 wait_seconds=settle_wait_seconds,
                 poll_seconds=settle_poll_seconds,
             )
-        if resubmission or turn_settled is None or turn_settled() is not True:
+        if turn_settled is None or turn_settled() is not True:
             interrupted, reason, detail = await _interrupt_turn(
                 pane,
                 interrupt_key,
