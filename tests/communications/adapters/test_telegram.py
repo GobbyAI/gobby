@@ -88,6 +88,7 @@ async def test_initialize_success(
                             "command": "subscriptions",
                             "description": "Manage event subscriptions",
                         },
+                        {"command": "agent", "description": "Choose the active agent"},
                         {"command": "help", "description": "Show available commands"},
                     ]
                 },
@@ -451,7 +452,7 @@ async def test_send_message_renders_telegram_safe_html(adapter: TelegramAdapter)
         channel_id="channel1",
         direction="outbound",
         content=("**bold** *italic* `<code>` [link](https://example.com?a=1&b=2) <raw>"),
-        metadata_json={"platform_destination": "chat999"},
+        metadata_json={"platform_destination": "chat999", "telegram_sender_label": "Lane <4>"},
         created_at=datetime.now(UTC),
     )
 
@@ -461,7 +462,7 @@ async def test_send_message_renders_telegram_safe_html(adapter: TelegramAdapter)
     assert payload == {
         "chat_id": "chat999",
         "text": (
-            "<b>bold</b> <i>italic</i> <code>&lt;code&gt;</code> "
+            "<b>Lane &lt;4&gt;:</b>\n<b>bold</b> <i>italic</i> <code>&lt;code&gt;</code> "
             '<a href="https://example.com?a=1&amp;b=2">link</a> &lt;raw&gt;'
         ),
         "parse_mode": "HTML",
@@ -598,6 +599,29 @@ async def test_edit_message_calls_edit_message_text_with_html(
 
 
 @pytest.mark.asyncio
+async def test_edit_message_labels_after_rendering_fenced_markdown(
+    adapter: TelegramAdapter,
+) -> None:
+    response = httpx.Response(
+        200,
+        request=httpx.Request("POST", "https://api.telegram.org/bottest-token/editMessageText"),
+        json={"ok": True, "result": {"message_id": 12345}},
+    )
+    mock_client = MagicMock()
+    mock_client.post = AsyncMock(return_value=response)
+    adapter._client = mock_client
+    adapter._api_base = "https://api.telegram.org/bottest-token"
+
+    await adapter.edit_message(
+        "12345", "```python\nprint(1)\n```", "chat999", sender_label="Lane <4>"
+    )
+
+    payload = mock_client.post.await_args.kwargs["json"]
+    assert payload["text"].startswith("<b>Lane &lt;4&gt;:</b>\n<pre><code")
+    assert "print(1)" in payload["text"]
+
+
+@pytest.mark.asyncio
 async def test_edit_message_treats_not_modified_as_success(
     adapter: TelegramAdapter,
 ) -> None:
@@ -638,7 +662,7 @@ async def test_send_attachment_uses_send_photo_for_images(
         channel_id="channel1",
         direction="outbound",
         content="**caption**",
-        metadata_json={"platform_destination": "chat999"},
+        metadata_json={"platform_destination": "chat999", "telegram_sender_label": "Lane <4>"},
         created_at=datetime.now(UTC),
     )
     attachment = CommsAttachment(
@@ -656,7 +680,7 @@ async def test_send_attachment_uses_send_photo_for_images(
     assert call.args[0] == "https://api.telegram.org/bottest-token/sendPhoto"
     assert call.kwargs["data"] == {
         "chat_id": "chat999",
-        "caption": "<b>caption</b>",
+        "caption": "<b>Lane &lt;4&gt;:</b>\n<b>caption</b>",
         "parse_mode": "HTML",
     }
     assert call.kwargs["files"] == {

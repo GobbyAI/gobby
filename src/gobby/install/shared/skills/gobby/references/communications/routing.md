@@ -14,8 +14,12 @@ non-comms session to one Telegram conversation: `dm:<chat_id>`,
 `group:<chat_id>`, or `topic:<chat_id>:<thread_id>`. Plain inbound messages
 there route to that session instead of the responder, and its sends default to
 that conversation. A conversation has one holder and a session holds one
-conversation; attaching elsewhere fails until you detach. The binding is
-in-process: it drops when the session stops being live or the daemon restarts.
+conversation; attaching elsewhere fails until you detach. An ordinary binding
+is in-process: it drops when the session stops being live or the daemon restarts.
+In an authorized private Telegram chat, `/agent` can select a live root agent.
+That selection persists across daemon restarts. When its agent ends, the chat
+targets a live Assistant if one is available; otherwise the bot clears the
+selection and prompts for `/agent`.
 `detach_conversation` with the same arguments releases it, holder only.
 `send_message` exposes no arbitrary metadata; HTTP send and MCP attachment
 delivery accept metadata. A session's remembered thread is restored for
