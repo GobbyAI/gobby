@@ -665,9 +665,9 @@ impl Workspace<LiveDaemon> {
                 self.observe_daemon_disconnect(generation, error);
             }
             DaemonEvent::Lagged => {
+                // Its snapshot pins the lifecycle order, so only it stays inline.
                 self.fetch_roster().await?;
-                self.fetch_attention().await?;
-                self.fetch_sidebar_rows().await?;
+                self.pending_sidebar = PendingSidebar::everything(self.checked_out_projects());
             }
             DaemonEvent::Message(message) => {
                 if message_kind(&message) == Some("terminal_resize_result") {

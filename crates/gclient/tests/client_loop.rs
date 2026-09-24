@@ -4415,6 +4415,9 @@ async fn daemon_loss_renders_read_only_until_recovery() {
         .expect("connect long-outage daemon");
     mock.fail_next_websocket();
     mock.fail_next_websocket();
+    // The first reconnect fails only once the clock is paused, so no step of
+    // the delay ladder runs on a loaded machine's wall clock.
+    let reconnect_gate = mock.pause_next_websocket();
     let mut workspace = Workspace::live(daemon);
     let _home = pin_tabs(&mock, &mut workspace, "project-1", &["terminal-outage"]);
     let observed_daemon = workspace.daemon().clone();
@@ -4457,6 +4460,7 @@ async fn daemon_loss_renders_read_only_until_recovery() {
             tokio::task::yield_now().await;
         }
         tokio::time::pause();
+        reconnect_gate.notify_waiters();
 
         // Two socket failures and four roster failures outlast the delay
         // ladder; the seventh attempt finds the daemon back.
@@ -12482,5 +12486,91 @@ async fn tab_and_split_shells_start_in_the_focused_checkout() {
         ),
         "tab, split right, and split down start in the focused checkout: {creates:?}"
     );
+    mock.shutdown().await;
+}
+
+/// A lagged event receiver used to refetch the attention roster and the
+/// sidebar inline, so a daemon slow to answer held the loop: no draw, no
+/// resize, no input, and the frames that piled up meanwhile lagged it again
+/// (the #22747 capture freeze). Only the terminal relist, whose snapshot pins
+/// the lifecycle order, stays inline; the rest runs beside the loop.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_lagged_receiver_does_not_hold_the_loop_on_a_slow_daemon() {
+    let mock = MockDaemon::start("local-token").await;
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon.clone());
+    workspace.select_project("project-1");
+    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(16);
+    let mut hold = None;
+    let driver = async {
+        // A session event's refetch is the second sessions read, and it
+        // lands only after the launch reconcile drained its receiver, so the
+        // burst below lags the loop's receiver rather than that drain. Only
+        // the project read after the lag is held.
+        wait_for_http_requests(&mock, "GET", "/api/projects", 1).await;
+        mock.send_event(json!({"type": "session_event", "project_id": "project-1"}));
+        wait_for_http_requests(&mock, "GET", "/api/sessions?", 2).await;
+        hold = Some(mock.enqueue_held("GET", "/api/projects", 200, json!([])));
+        let listed = mock
+            .requests()
+            .into_iter()
+            .filter(|request| request.target.starts_with("/api/terminals?"))
+            .count();
+        let (_, mut monitor) = daemon.subscribe();
+        let (seen_tx, seen_rx) = std::sync::mpsc::channel();
+        tokio::spawn(async move {
+            loop {
+                match monitor.recv().await {
+                    Ok(DaemonEvent::Message(value))
+                        if value.get("type").and_then(Value::as_str) == Some("lag_test_marker") =>
+                    {
+                        break;
+                    }
+                    Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
+                }
+            }
+            let _ = seen_tx.send(());
+        });
+        for seq in 0..=BROADCAST_CAPACITY {
+            mock.send_event(json!({"type": "lag_test_event", "seq": seq}));
+        }
+        mock.send_event(json!({"type": "lag_test_marker"}));
+        // Block this thread rather than yield: the loop shares it, so it
+        // cannot read while the socket reader fills its receiver past
+        // capacity, and its next read is the lag.
+        seen_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the burst reached the event channel");
+        wait_for_http_requests(&mock, "GET", "/api/terminals?", listed + 1).await;
+        drop(input_tx);
+    };
+    let mut switch = TerminalGuard::recording().0;
+    let run = async {
+        tokio::join!(
+            run_live_loop(
+                &mut workspace,
+                &mut terminal,
+                &mut chrome,
+                input_rx,
+                &mut switch
+            ),
+            driver
+        )
+    };
+    let Ok((result, ())) = timeout(Duration::from_secs(3), run).await else {
+        panic!(
+            "the lag recovery held the loop on a daemon slow to answer: {:?}",
+            mock.activity()
+        );
+    };
+    result.expect("lagged loop");
+    if let Some(hold) = hold {
+        hold.notify_one();
+    }
     mock.shutdown().await;
 }

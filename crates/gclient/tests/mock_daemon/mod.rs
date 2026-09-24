@@ -38,6 +38,9 @@ struct QueuedResponse {
     retry_after: Option<u64>,
     events_before_response: Vec<Value>,
     wait_for_events: bool,
+    /// The reply waits for this before it is written: a daemon that is slow
+    /// to answer, without a real sleep in the test.
+    hold: Option<Arc<Notify>>,
 }
 
 #[derive(Debug, Clone)]
@@ -185,7 +188,34 @@ impl MockDaemon {
                 retry_after: None,
                 events_before_response: Vec::new(),
                 wait_for_events: false,
+                hold: None,
             });
+    }
+
+    /// Queue a reply the mock writes only once the returned notify fires.
+    pub fn enqueue_held(
+        &self,
+        method: &str,
+        path_prefix: &str,
+        status: u16,
+        body: Value,
+    ) -> Arc<Notify> {
+        let hold = Arc::new(Notify::new());
+        self.state
+            .lock()
+            .expect("mock state")
+            .responses
+            .push_back(QueuedResponse {
+                method: method.to_string(),
+                path_prefix: path_prefix.to_string(),
+                status,
+                body,
+                retry_after: None,
+                events_before_response: Vec::new(),
+                wait_for_events: false,
+                hold: Some(hold.clone()),
+            });
+        hold
     }
 
     pub fn enqueue_retry_after(&self, method: &str, path_prefix: &str, status: u16, seconds: u64) {
@@ -201,6 +231,7 @@ impl MockDaemon {
                 retry_after: Some(seconds),
                 events_before_response: Vec::new(),
                 wait_for_events: false,
+                hold: None,
             });
     }
 
@@ -217,6 +248,7 @@ impl MockDaemon {
                 retry_after: None,
                 events_before_response: vec![event],
                 wait_for_events: false,
+                hold: None,
             });
     }
 
@@ -239,6 +271,7 @@ impl MockDaemon {
                 retry_after: None,
                 events_before_response: events,
                 wait_for_events: true,
+                hold: None,
             });
     }
 
@@ -621,6 +654,9 @@ async fn serve_connection(
         } else {
             tokio::task::yield_now().await;
         }
+    }
+    if let Some(hold) = response.hold {
+        hold.notified().await;
     }
     write_response(
         &mut stream,
@@ -1067,6 +1103,7 @@ fn default_response(method: &str, target: &str) -> QueuedResponse {
         retry_after: None,
         events_before_response: Vec::new(),
         wait_for_events: false,
+        hold: None,
     }
 }
 

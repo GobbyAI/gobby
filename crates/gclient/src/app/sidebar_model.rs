@@ -475,6 +475,22 @@ pub(super) struct PendingSidebar {
     pub(super) roster: bool,
 }
 
+impl PendingSidebar {
+    /// Every row set, for a lagged event receiver: the render tick's refetch
+    /// job reads them beside the loop. Reading them inline held the loop for
+    /// the slowest daemon answer, and the frames that piled up meanwhile
+    /// lagged the receiver again, so the screen never drew (#22747).
+    pub(super) fn everything(project_rows: Vec<String>) -> Self {
+        Self {
+            projects: true,
+            project_rows: project_rows.into_iter().collect(),
+            sessions: true,
+            session_rows: BTreeSet::new(),
+            roster: true,
+        }
+    }
+}
+
 /// The refetch each sidebar row set came from. A refetch runs beside the
 /// loop, so one started earlier can land after a later one for the same
 /// rows; the rows keep the newest refetch and the late one is dropped.
