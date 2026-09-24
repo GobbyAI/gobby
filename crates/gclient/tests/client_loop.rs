@@ -4942,11 +4942,11 @@ async fn prefix_help_and_settings_open_their_modes_in_the_live_loop() {
     }
 }
 
-/// The sidebar starts hidden and prefix+b is the only way to show it, so the
-/// live loop must turn that chord into a layout with the sidebar column (the
-/// tabs and panes moved right of it) and the next prefix+b into one without.
+/// The sidebar starts hidden, so the live loop must turn prefix+b into the
+/// overlay drawn over the panes (which keep their place), and prefix+b on a
+/// pinned sidebar into a layout without the column.
 #[tokio::test]
-async fn prefix_b_pins_the_sidebar_into_the_layout_and_hides_it_again() {
+async fn prefix_b_opens_the_overlay_or_unpins_the_column() {
     for pinned_before in [false, true] {
         let mock = MockDaemon::start("local-token").await;
         let (mut workspace, _) =
@@ -4995,20 +4995,20 @@ async fn prefix_b_pins_the_sidebar_into_the_layout_and_hides_it_again() {
             .map(|x| next_frame.backend().buffer()[(x, 1)].symbol().to_string())
             .collect();
         if pinned_before {
-            assert!(!chrome.sidebar.pinned, "the second prefix+b hides it");
+            assert!(!chrome.sidebar.pinned, "prefix+b unpins the column");
+            assert!(!chrome.sidebar.overlay, "unpinning opens no overlay");
             assert_eq!(sidebar.width, 0, "a hidden sidebar takes no columns");
             assert_eq!(terminal_area.x, 0, "the panes start at the left edge");
             assert!(!band.contains("Machines"), "row 1 is the tab bar: {band:?}");
         } else {
-            assert!(chrome.sidebar.pinned, "prefix+b pins the sidebar");
-            assert!(sidebar.width > 0, "the layout gains the sidebar column");
-            assert!(
-                terminal_area.x >= sidebar.x + sidebar.width,
-                "the panes sit right of the sidebar: {terminal_area:?} vs {sidebar:?}"
-            );
+            assert!(!chrome.sidebar.pinned, "the overlay leaves the pin alone");
+            assert!(chrome.sidebar.overlay, "prefix+b opens the overlay");
+            assert_eq!(chrome.mode, Mode::Navigate, "the overlay takes the keys");
+            assert_eq!(sidebar.width, 34, "the overlay covers 34 columns");
+            assert_eq!(terminal_area.x, 0, "the panes keep their place under it");
             assert!(
                 band.contains("Machines"),
-                "row 1 draws the first band: {band:?}"
+                "row 1 draws the first band over the tab bar: {band:?}"
             );
         }
         mock.shutdown().await;

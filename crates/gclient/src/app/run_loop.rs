@@ -383,7 +383,7 @@ fn render_workspace<B: Backend>(
             chrome.compute_view(workspace, frame.area());
             // Read focus and palette out before the closure exists: capturing
             // `chrome` inside it would borrow across the `apply_hits` below.
-            let focused = chrome.focused_pane();
+            let focused = chrome.cursor_pane();
             let palette = chrome.palette;
             let mut content = |frame: &mut ratatui::Frame<'_>, area, pane| {
                 crate::views::grid::render(

@@ -3,6 +3,7 @@
 
 use crate::app::MouseGesture;
 use crate::ui::chrome::{Chrome, Tab, WorkspaceView};
+use crate::ui::settings::SidebarSide;
 use crate::ui::text::display_width_u16;
 use crate::ui::widgets::panel_contrast_fg;
 use ratatui::layout::Rect;
@@ -243,7 +244,7 @@ pub fn render_tab_bar<W: WorkspaceView>(
     }
     let tabs = &chrome.tabs().tabs;
     let p = &chrome.palette;
-    let view = compute_tab_bar_view(
+    let mut view = compute_tab_bar_view(
         tabs,
         &chrome.viewer.zoomed,
         chrome.active_index(),
@@ -251,6 +252,19 @@ pub fn render_tab_bar<W: WorkspaceView>(
         chrome.tab_scroll,
         chrome.tab_scroll_follow_active,
     );
+    // A left overlay covers the bar's start, so tabs that fit move to its
+    // far side, hit areas with them; a right one leaves them at the start.
+    let fits = view.scroll_left_hit_area.width == 0;
+    if chrome.sidebar.overlay && chrome.sidebar.side == SidebarSide::Left && fits {
+        let shift = area.right().saturating_sub(view.new_tab_hit_area.right());
+        for rect in view
+            .tab_hit_areas
+            .iter_mut()
+            .chain([&mut view.new_tab_hit_area])
+        {
+            rect.x += shift;
+        }
+    }
 
     frame.render_widget(
         Paragraph::new(" ".repeat(area.width as usize)).style(Style::default().bg(p.panel_bg)),
@@ -420,6 +434,26 @@ mod tests {
         assert_eq!(hits.new_tab, Some(Rect::new(29, 0, 3, 1)));
         assert!(text.contains(" alpha") && text.contains(" second") && text.contains(" 3 "));
         assert!(text.contains(" + "));
+    }
+
+    #[test]
+    fn overlay_puts_the_tabs_on_its_far_side() {
+        // A left overlay covers the bar's left end, so the tabs and the new
+        // tab button right-align; a right one leaves them where they were.
+        let mut chrome = chrome_with_tabs(&["alpha", "second", ""]);
+        chrome.sidebar.overlay = true;
+        let (hits, text) = draw(&chrome, 80);
+        assert_eq!(hits.tabs[0], (0, Rect::new(48, 0, 9, 1)));
+        assert_eq!(hits.new_tab, Some(Rect::new(77, 0, 3, 1)));
+        assert!(
+            text.starts_with(&" ".repeat(48)) && text.ends_with(" + "),
+            "{text}"
+        );
+
+        chrome.sidebar.side = SidebarSide::Right;
+        let (hits, _) = draw(&chrome, 80);
+        assert_eq!(hits.tabs[0], (0, Rect::new(0, 0, 9, 1)));
+        assert_eq!(hits.new_tab, Some(Rect::new(29, 0, 3, 1)));
     }
 
     #[test]

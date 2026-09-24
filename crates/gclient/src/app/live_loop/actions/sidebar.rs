@@ -2,6 +2,8 @@
 //! the card fold, the section filters, the session order and switching
 //! projects by their place in the list.
 
+use std::path::Path;
+
 use crate::daemon::LiveDaemon;
 use crate::frame_source::FrameError;
 use crate::ui::sidebar::next_machine_filter;
@@ -20,8 +22,16 @@ pub(super) fn apply_sidebar_action(
     action: Action,
 ) {
     match action {
-        // Show or hide the pinned column (3.3 rebinds it to the overlay).
-        Action::ToggleSidebar => chrome.sidebar.pinned = !chrome.sidebar.pinned,
+        // Unpins a pinned column; otherwise opens the overlay, which takes
+        // the keys, or rolls it up.
+        Action::ToggleSidebar if chrome.sidebar.pinned => {
+            toggle_sidebar_pin(workspace.gobby_home(), chrome);
+        }
+        Action::ToggleSidebar if chrome.sidebar.overlay => chrome.roll_up_overlay(),
+        Action::ToggleSidebar => {
+            chrome.sidebar.overlay = true;
+            chrome.mode = Mode::Navigate;
+        }
         Action::ToggleGroup => {
             if let Some(project_id) = group_target(workspace, chrome) {
                 chrome.sidebar.toggle_group(&project_id);
@@ -57,6 +67,18 @@ pub(super) fn apply_sidebar_action(
         }
         _ => {}
     }
+}
+
+/// Pin the sidebar into the layout or unpin it, and save the choice; a
+/// pinned sidebar has no overlay to roll up. View › Pin Sidebar, the
+/// settings row and `ToggleSidebar` on a pinned sidebar all come here.
+pub(in crate::app::live_loop) fn toggle_sidebar_pin(home: Option<&Path>, chrome: &mut Chrome) {
+    chrome.sidebar.pinned = !chrome.sidebar.pinned;
+    chrome.prefs.sidebar_pinned = chrome.sidebar.pinned;
+    if chrome.sidebar.pinned {
+        chrome.roll_up_overlay();
+    }
+    persist_prefs(home, chrome);
 }
 
 /// The project whose group `ToggleGroup` folds: the one under the navigate
@@ -103,5 +125,27 @@ pub(super) async fn switch_project(
     match target.and_then(|index| ids.get(index)) {
         Some(project_id) => focus_project(workspace, chrome, project_id).await,
         None => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::prefs::load_prefs;
+
+    #[test]
+    fn pinning_saves_the_pin_and_rolls_the_overlay_up() {
+        let home = tempfile::tempdir().expect("temp gobby home");
+        let mut chrome = Chrome::dark();
+        chrome.sidebar.overlay = true;
+
+        toggle_sidebar_pin(Some(home.path()), &mut chrome);
+        assert!(chrome.sidebar.pinned);
+        assert!(!chrome.sidebar.overlay, "a pinned sidebar has no overlay");
+        assert!(load_prefs(home.path()).expect("load prefs").sidebar_pinned);
+
+        toggle_sidebar_pin(Some(home.path()), &mut chrome);
+        assert!(!chrome.sidebar.pinned);
+        assert!(!load_prefs(home.path()).expect("load prefs").sidebar_pinned);
     }
 }

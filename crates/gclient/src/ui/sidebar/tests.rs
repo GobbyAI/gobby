@@ -76,11 +76,20 @@ fn screen(terminal: &Terminal<TestBackend>) -> String {
 }
 
 #[test]
+fn a_right_sidebar_keeps_its_edge_column_first() {
+    // On the right the edge faces the panes, so the sections start one
+    // column in and run to the sidebar's last column.
+    let layout = sidebar_layout(Rect::new(54, 0, 26, 40), SidebarSide::Right, 1, 1);
+    assert_eq!(layout.sections[0], Rect::new(55, 0, 25, 3));
+    assert_eq!(layout.sections[2], Rect::new(55, 6, 25, 34));
+}
+
+#[test]
 fn layout_gives_the_top_half_to_machines_and_projects_at_most() {
     let area = Rect::new(0, 0, 26, 40);
     // One machine, one card: each takes its band, its row and the blank
     // row under it; the sessions everything from their band to the last row.
-    let layout = sidebar_layout(area, 1, 1);
+    let layout = sidebar_layout(area, SidebarSide::Left, 1, 1);
     assert_eq!(
         layout.sections,
         [
@@ -91,29 +100,29 @@ fn layout_gives_the_top_half_to_machines_and_projects_at_most() {
     );
     // The machines stop at four rows; the cards at the top half, their
     // blank row charged inside it.
-    let layout = sidebar_layout(area, 9, 1);
+    let layout = sidebar_layout(area, SidebarSide::Left, 9, 1);
     assert_eq!(layout.sections[0].height, 1 + MACHINES_MAX_ROWS + 1);
     assert_eq!(layout.sections[1], Rect::new(0, 6, 25, 3));
     assert_eq!(layout.sections[2], Rect::new(0, 9, 25, 31));
-    let layout = sidebar_layout(area, 1, 30);
+    let layout = sidebar_layout(area, SidebarSide::Left, 1, 30);
     assert_eq!(layout.sections[0].height, 3);
     assert_eq!(layout.sections[1], Rect::new(0, 3, 25, 17));
     assert_eq!(layout.sections[2], Rect::new(0, 20, 25, 20));
     // Two rows hold the machines band and the sessions band; one row the
     // sessions band alone; nothing fits a one-column area.
-    let layout = sidebar_layout(Rect::new(0, 0, 26, 2), 1, 1);
+    let layout = sidebar_layout(Rect::new(0, 0, 26, 2), SidebarSide::Left, 1, 1);
     assert_eq!(layout.sections.map(|rect| rect.height), [1, 0, 1]);
-    let layout = sidebar_layout(Rect::new(0, 0, 26, 1), 1, 1);
+    let layout = sidebar_layout(Rect::new(0, 0, 26, 1), SidebarSide::Left, 1, 1);
     assert_eq!(layout.sections.map(|rect| rect.height), [0, 0, 1]);
     assert_eq!(
-        sidebar_layout(Rect::new(0, 0, 1, 40), 1, 1),
+        sidebar_layout(Rect::new(0, 0, 1, 40), SidebarSide::Left, 1, 1),
         SidebarLayout::default()
     );
     // `section_rects` counts the workspace's rows into the same layout.
     let ws = scripted_workspace();
     assert_eq!(
         section_rects(&ws, &Chrome::dark(), area),
-        sidebar_layout(area, 1, 1).sections
+        sidebar_layout(area, SidebarSide::Left, 1, 1).sections
     );
 }
 

@@ -47,6 +47,8 @@ use super::workspace_actions::{
 
 mod sidebar;
 
+pub(super) use sidebar::toggle_sidebar_pin;
+
 /// Apply what `route_mouse` decided. Focus moves chrome first and then the
 /// lease (it follows focus), or only the workspace focus for an observe-only
 /// click; actions dispatch exactly as their chords would; a spawn goes through

@@ -12,12 +12,12 @@
 04 : accent/panel_bg*1 -/panel_bg*18 surface0/panel_bg*1 overlay0/panel_bg+d*16 surface0/panel_bg*1 -/panel_bg*82 accent/panel_bg*1
 05 |│                  │   priority     │                                                                                  │|
 05 : accent/panel_bg*1 -/panel_bg*18 surface0/panel_bg*1 text/panel_bg*16 surface0/panel_bg*1 -/panel_bg*82 accent/panel_bg*1
-06 |│                  └────────────────┘                                                                                  │|
-06 : accent/panel_bg*1 -/panel_bg*18 surface0/panel_bg*18 -/panel_bg*82 accent/panel_bg*1
-07 |│                                                                                                                      │|
-07 : accent/panel_bg*1 -/panel_bg*118 accent/panel_bg*1
-08 |│                                                                                                                      │|
-08 : accent/panel_bg*1 -/panel_bg*118 accent/panel_bg*1
+06 |│                  │ show sidebar   │                                                                                  │|
+06 : accent/panel_bg*1 -/panel_bg*18 surface0/panel_bg*1 text/panel_bg*16 surface0/panel_bg*1 -/panel_bg*82 accent/panel_bg*1
+07 |│                  │ pin sidebar    │                                                                                  │|
+07 : accent/panel_bg*1 -/panel_bg*18 surface0/panel_bg*1 text/panel_bg*16 surface0/panel_bg*1 -/panel_bg*82 accent/panel_bg*1
+08 |│                  └────────────────┘                                                                                  │|
+08 : accent/panel_bg*1 -/panel_bg*18 surface0/panel_bg*18 -/panel_bg*82 accent/panel_bg*1
 09 |│                                                                                                                      │|
 09 : accent/panel_bg*1 -/panel_bg*118 accent/panel_bg*1
 10 |│                                                                                                                      │|

@@ -1,6 +1,6 @@
 // upstream: herdr v0.8.0 src/ui.rs
-//! Frame composition (herdr `render`): menu bar, sidebar, tab bar, tab
-//! surface or empty state, notifications, then the mode overlay.
+//! Frame composition (herdr `render`): menu bar, tab bar, tab surface or
+//! empty state, sidebar, notifications, then the mode overlay.
 
 use crate::app::PaneId;
 use crate::ui::chrome::{Chrome, Mode, WorkspaceView};
@@ -15,7 +15,7 @@ use crate::ui::{
 };
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
-use ratatui::widgets::Block;
+use ratatui::widgets::{Block, Clear};
 use ratatui::Frame;
 
 /// Every rect the chrome renderers drew this frame; the run loop writes it
@@ -49,8 +49,9 @@ pub fn render_workspace_with<W: WorkspaceView>(
     );
 
     let menu_bar = menu_bar::render_menu_bar(frame, chrome.view.menu_bar_rect, chrome);
-    let sidebar = render_navigation_chrome(frame, ws, chrome);
+    // The sidebar after the content: the overlay lies over it.
     let tab_bar = render_content_column(frame, ws, chrome, content);
+    let sidebar = render_navigation_chrome(frame, ws, chrome);
     let mut hits = ChromeHits {
         menu_bar,
         tab_bar,
@@ -120,8 +121,9 @@ pub fn render_workspace<W: WorkspaceView>(
     render_workspace_with(frame, ws, chrome, &mut none)
 }
 
-/// herdr `render_navigation_chrome`: the sidebar column while it is pinned.
-/// Hit areas are returned by the sidebar; the run loop stores them.
+/// herdr `render_navigation_chrome`: the sidebar, pinned as a column or as
+/// the overlay. Hit areas are returned by the sidebar; the run loop stores
+/// them.
 fn render_navigation_chrome<W: WorkspaceView>(
     frame: &mut Frame,
     ws: &W,
@@ -131,6 +133,9 @@ fn render_navigation_chrome<W: WorkspaceView>(
     if rect.width == 0 {
         return SidebarHits::default();
     }
+    // The sidebar's panel only sets colours, so the overlay first wipes the
+    // pane glyphs under it; the pinned column holds none.
+    frame.render_widget(Clear, rect);
     sidebar::render_sidebar(frame, rect, ws, chrome)
 }
 

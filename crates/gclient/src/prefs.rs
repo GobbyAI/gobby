@@ -4,7 +4,9 @@
 //! key is optional and unknown keys are rejected by name, so a typo never
 //! silently falls back to a default.
 
-use crate::ui::settings::{AgentSort, ClientPrefs, PassthroughModifier, TitleScrolling};
+use crate::ui::settings::{
+    AgentSort, ClientPrefs, PassthroughModifier, SidebarSide, TitleScrolling,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
@@ -53,6 +55,8 @@ struct UiPrefs {
     /// Retired with the collapsed rail; kept like `pane_borders`.
     #[serde(rename = "sidebar_collapsed", skip_serializing)]
     _sidebar_collapsed: bool,
+    sidebar_side: SidebarSide,
+    sidebar_pinned: bool,
     project_order: Vec<String>,
     /// Last: TOML emits a sub-table after the plain values.
     project_labels: BTreeMap<String, String>,
@@ -79,6 +83,8 @@ impl From<&ClientPrefs> for UiPrefs {
             agent_sort: prefs.agent_sort,
             title_scrolling: prefs.title_scrolling,
             _sidebar_collapsed: false,
+            sidebar_side: prefs.sidebar_side,
+            sidebar_pinned: prefs.sidebar_pinned,
             project_order: prefs.project_order.clone(),
             project_labels: prefs.project_labels.clone(),
         }
@@ -118,6 +124,8 @@ impl From<PrefsFile> for ClientPrefs {
             right_click_passthrough_modifier: ui.right_click_passthrough_modifier,
             agent_sort: ui.agent_sort,
             title_scrolling: ui.title_scrolling,
+            sidebar_side: ui.sidebar_side,
+            sidebar_pinned: ui.sidebar_pinned,
             project_order: ui.project_order,
             project_labels: ui.project_labels,
             ..Self::default()

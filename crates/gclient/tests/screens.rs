@@ -1,6 +1,6 @@
 //! 4.2.1: committed screen goldens for the whole gclient chrome.
 //!
-//! Seven scripted workspace states render through the real `render_workspace`
+//! Eight scripted workspace states render through the real `render_workspace`
 //! into a 120x40 `TestBackend`, then serialise one line per row: the glyphs,
 //! then the run-length-encoded style of every cell with each colour normalised
 //! to its `theme::Palette` role name.
@@ -46,7 +46,7 @@ const UPDATE_ENV: &str = "GOBBY_UPDATE_SCREENS";
 type ScriptedState = fn() -> (Workspace, Chrome);
 
 /// The scripted states, in the order the plan names them.
-const STATES: [(&str, ScriptedState); 7] = [
+const STATES: [(&str, ScriptedState); 8] = [
     ("empty_workspace", empty_workspace),
     ("projects_agents", projects_agents),
     ("split_live", split_live),
@@ -54,6 +54,7 @@ const STATES: [(&str, ScriptedState); 7] = [
     ("label_ladder", label_ladder),
     ("pane_edges", pane_edges),
     ("menu_bar", menu_bar),
+    ("sidebar_overlay", sidebar_overlay),
 ];
 
 // ---------------------------------------------------------------- the states
@@ -250,6 +251,18 @@ fn pane_edges() -> (Workspace, Chrome) {
     chrome.open_pane(alpha, "alpha");
     chrome.open_pane_below(beta, "alpha");
     assert!(chrome.focus_pane(beta), "focus term-beta");
+    (ws, chrome)
+}
+
+/// The split with its sidebar opened as the overlay rather than pinned: the
+/// overlay lies over the panes' left 34 columns with an accent edge and holds
+/// the keyboard, and the tab labels move to the bar's far end. Set after
+/// `split_live` returns, since its `focus_pane` rolls an overlay up.
+fn sidebar_overlay() -> (Workspace, Chrome) {
+    let (ws, mut chrome) = split_live();
+    chrome.sidebar.pinned = false;
+    chrome.sidebar.overlay = true;
+    chrome.mode = Mode::Navigate;
     (ws, chrome)
 }
 

@@ -11,7 +11,7 @@ use gobby_client::ui::dialogs::{
     render_dialog, respond_popup_size, CloseScope, CloseTarget, Dialog, RenameKind,
 };
 use gobby_client::ui::navigator::NavigatorState;
-use gobby_client::ui::settings::SettingsRow;
+use gobby_client::ui::settings::{SettingsRow, SidebarSide};
 use gobby_client::ui::widgets::{action_button_row_rects, centered_popup_rect, ActionButtonSpec};
 use gobby_client::ui::{render_workspace, Action};
 use gobby_client::Workspace;
@@ -539,6 +539,36 @@ fn modal_keys_drive_every_mode() {
     );
     assert_eq!(chrome.prefs.sidebar_width, width + 1);
     assert_eq!(chrome.sidebar.width, width + 1);
+    // The side flips the sidebar's edge; the pin rolls an open overlay up
+    // into the column.
+    chrome.settings.selected += 1;
+    assert_eq!(
+        SettingsRow::ALL[chrome.settings.selected],
+        SettingsRow::SidebarSide
+    );
+    assert_eq!(
+        press(&ws, &mut chrome, KeyCode::Char(' ')),
+        ModalOutcome::Consumed
+    );
+    assert_eq!(chrome.prefs.sidebar_side, SidebarSide::Right);
+    assert_eq!(chrome.sidebar.side, SidebarSide::Right);
+    chrome.settings.selected += 1;
+    assert_eq!(
+        SettingsRow::ALL[chrome.settings.selected],
+        SettingsRow::SidebarPinned
+    );
+    chrome.sidebar.overlay = true;
+    assert_eq!(
+        press(&ws, &mut chrome, KeyCode::Char(' ')),
+        ModalOutcome::Consumed
+    );
+    assert!(chrome.prefs.sidebar_pinned && chrome.sidebar.pinned);
+    assert!(!chrome.sidebar.overlay);
+    // The next window reads both back from the prefs.
+    let mut restored = Chrome::new(theme());
+    restored.apply_prefs(chrome.prefs.clone());
+    assert!(restored.sidebar.pinned);
+    assert_eq!(restored.sidebar.side, SidebarSide::Right);
     assert_eq!(press(&ws, &mut chrome, KeyCode::Enter), ModalOutcome::Close);
     assert_eq!(chrome.mode, Mode::Terminal);
     assert_eq!(chrome.prefs.sidebar_width, width + 1);

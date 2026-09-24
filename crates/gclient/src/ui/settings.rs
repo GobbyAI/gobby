@@ -67,6 +67,32 @@ pub enum AgentSort {
     Priority,
 }
 
+/// The edge the sidebar keeps, pinned or as an overlay.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SidebarSide {
+    #[default]
+    Left,
+    Right,
+}
+
+impl SidebarSide {
+    /// The prefs-file spelling, which the settings row shows.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Left => "left",
+            Self::Right => "right",
+        }
+    }
+
+    pub fn toggled(self) -> Self {
+        match self {
+            Self::Left => Self::Right,
+            Self::Right => Self::Left,
+        }
+    }
+}
+
 /// How an over-long title moves through its window, on the one ticker the
 /// Sessions rows and the pane headers share: off (it truncates), or the
 /// direction it travels to reveal its tail.
@@ -135,6 +161,11 @@ pub struct ClientPrefs {
     pub confirm_close: bool,
     pub hide_tab_bar_when_single_tab: bool,
     pub sidebar_width: u16,
+    /// The edge the sidebar keeps.
+    pub sidebar_side: SidebarSide,
+    /// The sidebar keeps its column beside the panes instead of opening as
+    /// an overlay.
+    pub sidebar_pinned: bool,
     /// Held alone, this modifier makes a right-click pass through to the
     /// pane's app instead of opening the pane menu.
     pub right_click_passthrough_modifier: PassthroughModifier,
@@ -160,6 +191,8 @@ impl Default for ClientPrefs {
             confirm_close: true,
             hide_tab_bar_when_single_tab: false,
             sidebar_width: 26,
+            sidebar_side: SidebarSide::Left,
+            sidebar_pinned: false,
             right_click_passthrough_modifier: PassthroughModifier::None,
             agent_sort: AgentSort::Grouped,
             project_order: Vec::new(),
@@ -189,13 +222,15 @@ pub enum SettingsRow {
     ConfirmClose,
     HideTabBarWhenSingleTab,
     SidebarWidth,
+    SidebarSide,
+    SidebarPinned,
     RightClickPassthrough,
     AgentSort,
     TitleScrolling,
 }
 
 impl SettingsRow {
-    pub const ALL: [SettingsRow; 10] = [
+    pub const ALL: [SettingsRow; 12] = [
         SettingsRow::Theme,
         SettingsRow::MouseCapture,
         SettingsRow::PaneScrollbars,
@@ -203,6 +238,8 @@ impl SettingsRow {
         SettingsRow::ConfirmClose,
         SettingsRow::HideTabBarWhenSingleTab,
         SettingsRow::SidebarWidth,
+        SettingsRow::SidebarSide,
+        SettingsRow::SidebarPinned,
         SettingsRow::RightClickPassthrough,
         SettingsRow::AgentSort,
         SettingsRow::TitleScrolling,
@@ -225,6 +262,8 @@ fn row_label(row: SettingsRow) -> &'static str {
         SettingsRow::ConfirmClose => "confirm close",
         SettingsRow::HideTabBarWhenSingleTab => "hide tab bar with one tab",
         SettingsRow::SidebarWidth => "sidebar width",
+        SettingsRow::SidebarSide => "sidebar side",
+        SettingsRow::SidebarPinned => "sidebar pinned",
         SettingsRow::RightClickPassthrough => "right-click passthrough",
         SettingsRow::AgentSort => "agent sort",
         SettingsRow::TitleScrolling => "title scrolling",
@@ -250,6 +289,8 @@ fn row_value(row: SettingsRow, prefs: &ClientPrefs) -> String {
             on_off(prefs.hide_tab_bar_when_single_tab).to_string()
         }
         SettingsRow::SidebarWidth => prefs.sidebar_width.to_string(),
+        SettingsRow::SidebarSide => prefs.sidebar_side.label().to_string(),
+        SettingsRow::SidebarPinned => on_off(prefs.sidebar_pinned).to_string(),
         SettingsRow::RightClickPassthrough => {
             prefs.right_click_passthrough_modifier.label().to_string()
         }
@@ -413,11 +454,28 @@ mod tests {
                 "confirm close",
                 "hide tab bar with one tab",
                 "sidebar width",
+                "sidebar side",
+                "sidebar pinned",
                 "right-click passthrough",
                 "agent sort",
                 "title scrolling",
             ]
         );
+        assert_eq!(row_value(SettingsRow::SidebarSide, &prefs), "left");
+        assert_eq!(row_value(SettingsRow::SidebarPinned, &prefs), "off");
+        prefs.sidebar_side = prefs.sidebar_side.toggled();
+        prefs.sidebar_pinned = true;
+        assert_eq!(row_value(SettingsRow::SidebarSide, &prefs), "right");
+        assert_eq!(row_value(SettingsRow::SidebarPinned, &prefs), "on");
+        // Both survive prefs.toml under their own keys.
+        let home = tempfile::tempdir().expect("temp gobby home");
+        let path = crate::prefs::save_prefs(home.path(), &prefs).expect("save prefs");
+        let text = std::fs::read_to_string(path).expect("read prefs");
+        assert!(text.contains("sidebar_side = \"right\""), "{text}");
+        assert!(text.contains("sidebar_pinned = true"), "{text}");
+        let loaded = crate::prefs::load_prefs(home.path()).expect("load prefs");
+        assert_eq!(loaded.sidebar_side, SidebarSide::Right);
+        assert!(loaded.sidebar_pinned);
         assert_eq!(row_value(SettingsRow::Theme, &prefs), "dark");
         assert_eq!(row_value(SettingsRow::MouseCapture, &prefs), "on");
         assert_eq!(row_value(SettingsRow::PaneGaps, &prefs), "on");

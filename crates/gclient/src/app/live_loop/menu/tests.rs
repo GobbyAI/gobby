@@ -216,10 +216,17 @@ fn menu_bar_menus_regroup_items_per_title() {
         ]
     );
 
-    // View is the sessions band's view menu.
+    // View is the sessions band's view menu, then the sidebar's openers.
+    let view = menu(&ws, &chrome, MenuBarMenu::View);
+    let band = build_menu(&ws, &chrome, ContextMenuKind::SessionsView, (0, 1)).items;
+    assert_eq!(view.items[..band.len()], band[..]);
+    assert_eq!(labels(&view)[band.len()..], ["show sidebar", "pin sidebar"]);
     assert_eq!(
-        menu(&ws, &chrome, MenuBarMenu::View).items,
-        build_menu(&ws, &chrome, ContextMenuKind::SessionsView, (0, 1)).items
+        actions(&view)[band.len()..],
+        [
+            MenuAction::Act(Action::ToggleSidebar),
+            MenuAction::PinSidebar
+        ]
     );
 
     let window = menu(&ws, &chrome, MenuBarMenu::Window);
@@ -622,4 +629,24 @@ fn agent_row_close_activates_with_the_row_pane_not_the_focused_one() {
         ))
     );
     assert_eq!(chrome.focused_pane(), Some(held));
+}
+
+/// View › Pin Sidebar is a local chrome change both loops apply: it pins
+/// the open overlay into a saved column.
+#[test]
+fn pin_sidebar_pins_the_overlay_into_a_saved_column() {
+    let mut ws = Workspace::scripted();
+    let home = tempfile::tempdir().expect("temp gobby home");
+    ws.set_gobby_home(home.path().to_path_buf());
+    let mut chrome = Chrome::dark();
+    chrome.sidebar.overlay = true;
+
+    assert!(apply_local_menu_action(
+        &mut ws,
+        &mut chrome,
+        &MenuAction::PinSidebar
+    ));
+    assert!(chrome.sidebar.pinned && !chrome.sidebar.overlay);
+    let saved = crate::prefs::load_prefs(home.path()).expect("load prefs");
+    assert!(saved.sidebar_pinned);
 }

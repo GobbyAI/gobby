@@ -382,6 +382,8 @@ impl Chrome {
     pub fn apply_prefs(&mut self, prefs: ClientPrefs) {
         self.set_theme(prefs.theme_kind());
         self.sidebar.width = prefs.sidebar_width;
+        self.sidebar.side = prefs.sidebar_side;
+        self.sidebar.pinned = prefs.sidebar_pinned;
         self.sidebar.project_order = prefs.project_order.clone();
         self.sidebar.project_labels = prefs.project_labels.clone();
         self.prefs = prefs;
@@ -589,7 +591,21 @@ impl Chrome {
         if previous != Some(pane) {
             self.last_focused = previous;
         }
+        self.roll_up_overlay();
         true
+    }
+
+    /// The pane whose terminal cursor the frame shows: none while the
+    /// overlay is open, which would otherwise wear it.
+    pub fn cursor_pane(&self) -> Option<PaneId> {
+        self.focused_pane().filter(|_| !self.sidebar.overlay)
+    }
+
+    /// Close the overlay, handing the keys it took back to the terminal.
+    pub fn roll_up_overlay(&mut self) {
+        if std::mem::take(&mut self.sidebar.overlay) && self.mode == Mode::Navigate {
+            self.mode = Mode::Terminal;
+        }
     }
 
     /// Rebuild `project_id`'s tab set from the daemon workspace through this
@@ -712,11 +728,7 @@ impl Chrome {
         ])
         .split(area);
         let (menu_bar_rect, middle, status_rect) = (bands[0], bands[1], bands[2]);
-        let sidebar_w = self.sidebar_width(middle);
-        let columns =
-            Layout::horizontal([Constraint::Length(sidebar_w), Constraint::Min(1)]).split(middle);
-        let sidebar_rect = columns[0];
-        let content = columns[1];
+        let (sidebar_rect, content) = self.sidebar.layout(middle, self.sidebar_width(middle));
         let (tab_bar_rect, terminal_area) = if self.show_tab_bar() {
             let rows = Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).split(content);
             (Some(rows[0]), rows[1])
@@ -770,8 +782,9 @@ impl Chrome {
         if rows > 0 && self.sidebar.selected >= rows {
             self.sidebar.selected = rows - 1;
         }
-        let sidebar_divider_x =
-            (sidebar_rect.width > 0).then(|| sidebar_rect.x + sidebar_rect.width - 1);
+        // Only the pinned column drags: the overlay keeps its width.
+        let sidebar_divider_x = (self.sidebar.pinned && sidebar_rect.width > 0)
+            .then(|| self.sidebar.edge_x(sidebar_rect));
         let sidebar_section_rects = sidebar::section_rects(ws, self, sidebar_rect);
         let sessions_rect = sidebar_section_rects[SidebarSection::Sessions.index()];
         let title_travel =

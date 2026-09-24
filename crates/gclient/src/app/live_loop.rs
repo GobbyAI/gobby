@@ -440,7 +440,7 @@ pub async fn run_live_loop<B: Backend>(
                     }
                     sync_live_chrome(workspace, chrome);
                 }
-                if chrome.sidebar.pinned {
+                if chrome.sidebar.pinned || chrome.sidebar.overlay {
                     workspace.request_git_refresh_if_due();
                 }
                 workspace.request_roster_refresh_if_due();
@@ -829,7 +829,7 @@ fn render_live_workspace<B: Backend>(
             chrome.compute_view(workspace, frame.area());
             // Read focus and palette out before the closure exists: capturing
             // `chrome` inside it would borrow across the `apply_hits` below.
-            let focused = chrome.focused_pane();
+            let focused = chrome.cursor_pane();
             let palette = chrome.palette;
             let mut content = |frame: &mut ratatui::Frame<'_>, area, pane| {
                 crate::views::grid::render(

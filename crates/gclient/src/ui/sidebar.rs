@@ -16,6 +16,7 @@ use crate::theme::Palette;
 use crate::ui::chrome::{Chrome, Mode, WorkspaceView};
 use crate::ui::hit::SidebarSection;
 use crate::ui::scrollbar::{render_scrollbar, should_show_scrollbar};
+use crate::ui::settings::SidebarSide;
 use crate::ui::sidebar_rows::{
     project_rows, row_line, row_second_line, row_travel, RowKind, SidebarRow,
 };
@@ -79,8 +80,18 @@ pub struct SidebarLayout {
 /// sessions with everything left, the projects and sessions bands each
 /// under a blank row. A section short of its rows scrolls; one with no room
 /// at all is empty.
-pub fn sidebar_layout(area: Rect, machine_rows: u16, project_rows: u16) -> SidebarLayout {
-    let content = Rect::new(area.x, area.y, area.width.saturating_sub(1), area.height);
+pub fn sidebar_layout(
+    area: Rect,
+    side: SidebarSide,
+    machine_rows: u16,
+    project_rows: u16,
+) -> SidebarLayout {
+    // The edge column faces the content: last on the left, first on the right.
+    let body_x = match side {
+        SidebarSide::Left => area.x,
+        SidebarSide::Right => area.x.saturating_add(1),
+    };
+    let content = Rect::new(body_x, area.y, area.width.saturating_sub(1), area.height);
     let mut layout = SidebarLayout::default();
     if content.width == 0 || content.height == 0 {
         return layout;
@@ -112,7 +123,7 @@ pub fn section_rects<W: WorkspaceView>(ws: &W, chrome: &Chrome, area: Rect) -> [
             .map(|row| usize::from(row.height()))
             .sum(),
     );
-    sidebar_layout(area, machines, projects).sections
+    sidebar_layout(area, chrome.sidebar.side, machines, projects).sections
 }
 
 fn rows_u16(rows: usize) -> u16 {
@@ -135,10 +146,16 @@ pub fn render_sidebar<W: WorkspaceView>(
         Block::default().style(Style::default().bg(p.panel_bg)),
         area,
     );
+    // The overlay's edge stays accent while a menu opens over it.
     draw_separator_column(
         frame,
         area,
-        if is_navigating { p.accent } else { p.overlay0 },
+        chrome.sidebar.edge_x(area),
+        if is_navigating || chrome.sidebar.overlay {
+            p.accent
+        } else {
+            p.overlay0
+        },
     );
 
     let machines = machine_rows(ws, chrome);
@@ -151,6 +168,7 @@ pub fn render_sidebar<W: WorkspaceView>(
     let sessions = session_rows(ws, chrome);
     let layout = sidebar_layout(
         area,
+        chrome.sidebar.side,
         rows_u16(machines.len()),
         rows_u16(projects.iter().map(|row| usize::from(row.height())).sum()),
     );
@@ -413,8 +431,7 @@ pub fn section_gap_rows(section: SidebarSection) -> u16 {
     }
 }
 
-fn draw_separator_column(frame: &mut Frame, area: Rect, color: Color) {
-    let x = area.x + area.width.saturating_sub(1);
+fn draw_separator_column(frame: &mut Frame, area: Rect, x: u16, color: Color) {
     let buf = frame.buffer_mut();
     for y in area.y..area.y + area.height {
         buf[(x, y)].set_symbol("│");

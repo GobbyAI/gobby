@@ -3,9 +3,12 @@
 
 use std::borrow::Cow;
 
-use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use gobby_client::app::{route_mouse, ContextMenuKind, MouseOutcome, PaneId, Workspace};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use gobby_client::app::{
+    route_modal_key, route_mouse, ContextMenuKind, MouseOutcome, PaneId, Workspace,
+};
 use gobby_client::daemon::{Checkout, ProjectRow, SidebarRows, SourceStatus};
+use gobby_client::key_input::KeyInput;
 use gobby_client::ui::chrome::{Chrome, Mode};
 use gobby_client::ui::chrome_render::{
     copy_feedback_offset_for_toast, render_workspace, render_workspace_with,
@@ -20,7 +23,9 @@ use gobby_client::ui::scrollbar::{
     pane_scrollbar_rect, scrollbar_offset_from_drag_row, scrollbar_offset_from_row,
     scrollbar_thumb, scrollbar_thumb_grab_offset, should_show_scrollbar,
 };
-use gobby_client::ui::settings::{SettingsRow, SETTINGS_POPUP_HEIGHT, SETTINGS_POPUP_WIDTH};
+use gobby_client::ui::settings::{
+    SettingsRow, SidebarSide, SETTINGS_POPUP_HEIGHT, SETTINGS_POPUP_WIDTH,
+};
 use gobby_client::ui::sidebar::section_body_rect;
 use gobby_client::ui::status::{
     render_copy_feedback, render_status_line, toast_notification_rect, Toast, ToastKind,
@@ -1250,6 +1255,98 @@ fn hidden_sidebar_uses_full_width_terminal_area() {
     assert_eq!(view.terminal_area, Rect::new(0, 2, 80, 17));
 }
 
+#[test]
+fn overlay_covers_34_columns_without_moving_panes() {
+    // Unpinned, the sidebar opens as an overlay: 34 columns on its side,
+    // from the tab bar row to the row above the status line, over panes
+    // that keep the columns they have with it rolled up.
+    let ws = scripted(&["one"]);
+    let mut chrome = Chrome::new(theme());
+    let pane = ws.pane_for_terminal("one").expect("terminal pane");
+    chrome.open_tab(pane, "");
+    let area = Rect::new(0, 0, 80, 20);
+    chrome.compute_view(&ws, area);
+    let rolled_up = chrome.view.terminal_area;
+
+    chrome.sidebar.overlay = true;
+    let terminal = render_with_hits(&ws, &mut chrome, area);
+    assert_eq!(chrome.view.sidebar_rect, Rect::new(0, 1, 34, 18));
+    assert_eq!(chrome.view.terminal_area, rolled_up);
+    assert_eq!(
+        chrome.view.sidebar_divider_x, None,
+        "an overlay has no drag edge"
+    );
+    // Its inner edge is accent, the pane's corner under it is gone, and it
+    // takes the clicks on the tab bar row it covers.
+    let edge = cell(&terminal, 33, 5);
+    assert_eq!((edge.symbol(), edge.fg), ("│", chrome.palette.accent));
+    assert_eq!(cell(&terminal, 0, 18).symbol(), " ");
+    assert_eq!(hit_test(&chrome.view, 2, 1), Hit::SidebarEmpty);
+
+    chrome.sidebar.side = SidebarSide::Right;
+    let terminal = render_with_hits(&ws, &mut chrome, area);
+    assert_eq!(chrome.view.sidebar_rect, Rect::new(46, 1, 34, 18));
+    assert_eq!(chrome.view.terminal_area, rolled_up);
+    assert_eq!(cell(&terminal, 46, 5).symbol(), "│");
+
+    // Pinned, it is a column on its side and the content takes the rest.
+    chrome.sidebar.overlay = false;
+    chrome.sidebar.pinned = true;
+    chrome.compute_view(&ws, area);
+    assert_eq!(chrome.view.sidebar_rect, Rect::new(54, 1, 26, 18));
+    assert_eq!(chrome.view.tab_bar_rect, Some(Rect::new(0, 1, 54, 1)));
+    assert_eq!(chrome.view.terminal_area, Rect::new(0, 2, 54, 17));
+    assert_eq!(chrome.view.sidebar_divider_x, Some(54));
+    chrome.sidebar.side = SidebarSide::Left;
+    chrome.compute_view(&ws, area);
+    assert_eq!(chrome.view.sidebar_rect, Rect::new(0, 1, 26, 18));
+    assert_eq!(chrome.view.terminal_area, Rect::new(26, 2, 54, 17));
+    assert_eq!(chrome.view.sidebar_divider_x, Some(25));
+}
+
+#[test]
+fn overlay_rolls_up_on_escape_and_pane_focus() {
+    let ws = scripted(&["one", "two"]);
+    let one = ws.pane_for_terminal("one").expect("pane one");
+    let two = ws.pane_for_terminal("two").expect("pane two");
+    let mut chrome = Chrome::new(theme());
+    chrome.open_pane(one, "split");
+    chrome.open_pane(two, "split");
+    let esc = KeyInput {
+        key: KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+        bytes: Vec::new(),
+    };
+
+    // The overlay holds the keyboard in navigate mode, so the focused pane
+    // shows no cursor under it; Esc rolls it up.
+    chrome.sidebar.overlay = true;
+    chrome.mode = Mode::Navigate;
+    assert_eq!(chrome.cursor_pane(), None);
+    route_modal_key(&ws, &mut chrome, &esc);
+    assert!(!chrome.sidebar.overlay);
+    assert_eq!(chrome.mode, Mode::Terminal);
+    assert!(chrome.focused_pane().is_some());
+    assert_eq!(chrome.cursor_pane(), chrome.focused_pane());
+
+    // Focusing a pane rolls it up too, and hands the keyboard back.
+    chrome.sidebar.overlay = true;
+    chrome.mode = Mode::Navigate;
+    assert!(chrome.focus_pane(one));
+    assert!(!chrome.sidebar.overlay);
+    assert_eq!(chrome.mode, Mode::Terminal);
+
+    // Enter takes the row under the cursor, even with no row to take.
+    chrome.sidebar.overlay = true;
+    chrome.mode = Mode::Navigate;
+    let enter = KeyInput {
+        key: KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        bytes: Vec::new(),
+    };
+    route_modal_key(&ws, &mut chrome, &enter);
+    assert!(!chrome.sidebar.overlay);
+    assert_eq!(chrome.mode, Mode::Terminal);
+}
+
 // ------------------------------------------------------- gclient hit map
 //
 // gclient-only: herdr wrote its hit rects back from `render`; gclient carries
@@ -1457,6 +1554,8 @@ fn rendered_settings_hits_match_drawn_rows() {
         "confirm close",
         "hide tab bar with one tab",
         "sidebar width",
+        "sidebar side",
+        "sidebar pinned",
         "right-click passthrough",
         "agent sort",
         "title scrolling",

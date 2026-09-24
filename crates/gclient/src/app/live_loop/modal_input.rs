@@ -29,7 +29,7 @@ use crate::ui::status::Toast;
 use crate::ui::{Action, Chrome, Mode, WorkspaceView};
 
 use super::super::{PaneId, Workspace};
-use super::actions::live_layout_area;
+use super::actions::{live_layout_area, toggle_sidebar_pin};
 use super::menu::{activate_menu, close_menu, ContextMenuKind, MenuAction};
 use super::projects::project_dialog_key;
 
@@ -405,6 +405,12 @@ fn step_settings_row<W: WorkspaceView>(ws: &W, chrome: &mut Chrome, delta: isize
             prefs.sidebar_width = width;
             chrome.sidebar.width = width;
         }
+        SettingsRow::SidebarSide => {
+            prefs.sidebar_side = prefs.sidebar_side.toggled();
+            chrome.sidebar.side = prefs.sidebar_side;
+        }
+        // The pin writes the prefs itself.
+        SettingsRow::SidebarPinned => return toggle_sidebar_pin(ws.gobby_home(), chrome),
         SettingsRow::RightClickPassthrough => {
             let current = PASSTHROUGH_CYCLE
                 .iter()
@@ -540,6 +546,7 @@ fn navigate_key<W: WorkspaceView>(ws: &W, chrome: &mut Chrome, key: &KeyEvent) -
         KeyCode::Up => chrome.sidebar.selected = step(chrome.sidebar.selected, -1, last),
         KeyCode::Down => chrome.sidebar.selected = step(chrome.sidebar.selected, 1, last),
         KeyCode::Enter => {
+            chrome.roll_up_overlay();
             chrome.mode = Mode::Terminal;
             return match rows.into_iter().nth(chrome.sidebar.selected) {
                 Some(row) if row.kind == RowKind::Project => ModalOutcome::FocusProject(row.id),
@@ -547,7 +554,10 @@ fn navigate_key<W: WorkspaceView>(ws: &W, chrome: &mut Chrome, key: &KeyEvent) -
                 _ => ModalOutcome::Consumed,
             };
         }
-        KeyCode::Esc => return close_modal(chrome),
+        KeyCode::Esc => {
+            chrome.roll_up_overlay();
+            return close_modal(chrome);
+        }
         _ => return ModalOutcome::Passthrough,
     }
     ModalOutcome::Consumed

@@ -129,11 +129,12 @@ pub fn hit_test(view: &ViewState, column: u16, row: u16) -> Hit {
         return find_at(&view.menu_title_hit_areas, at)
             .map_or(Hit::MenuBarEmpty, |(index, _)| Hit::MenuTitle(*index));
     }
-    if view.tab_bar_rect.is_some_and(|bar| bar.contains(at)) {
-        return tab_bar_hit(view, at);
-    }
+    // Before the tab bar: the overlay lies over its row.
     if view.sidebar_rect.contains(at) {
         return sidebar_hit(view, at);
+    }
+    if view.tab_bar_rect.is_some_and(|bar| bar.contains(at)) {
+        return tab_bar_hit(view, at);
     }
     if view
         .control_indicator_hit_area

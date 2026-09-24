@@ -22,6 +22,7 @@ use crate::ui::sidebar::agent_blocked;
 use crate::ui::{Action, Chrome, Mode, WorkspaceView};
 
 use super::super::Workspace;
+use super::actions::toggle_sidebar_pin;
 
 /// What the menu was opened on.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -69,6 +70,8 @@ pub enum MenuAction {
     /// Open the respond dialog for this attention entry.
     Respond(String),
     MarkSeen(String),
+    /// Pin the sidebar into the layout, or unpin it.
+    PinSidebar,
     /// Open the alert log.
     ShowAlerts,
     /// Open the destroy-orphaned-terminals dialog.
@@ -197,6 +200,7 @@ pub fn apply_local_menu_action<D: Daemon>(
             }
         }
         MenuAction::ToggleGroup(project_id) => chrome.sidebar.toggle_group(project_id),
+        MenuAction::PinSidebar => toggle_sidebar_pin(workspace.gobby_home(), chrome),
         _ => return false,
     }
     true
@@ -440,7 +444,12 @@ fn menu_bar_items<W: WorkspaceView>(ws: &W, chrome: &Chrome, menu: MenuBarMenu) 
             act("new pane", Action::NewTerminal),
         ],
         MenuBarMenu::Edit => edit_items(ws, chrome),
-        MenuBarMenu::View => sessions_view_items(chrome),
+        MenuBarMenu::View => {
+            let mut items = sessions_view_items(chrome);
+            items.push(act("show sidebar", Action::ToggleSidebar));
+            items.push(item("pin sidebar", MenuAction::PinSidebar));
+            items
+        }
         MenuBarMenu::Window => vec![
             act("next tab", Action::NextTab),
             act("previous tab", Action::PreviousTab),

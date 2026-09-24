@@ -30,7 +30,7 @@ use gobby_client::ui::chrome_render::render_workspace;
 use gobby_client::ui::dialogs::{Dialog, RenameKind};
 use gobby_client::ui::hit::SidebarSection;
 use gobby_client::ui::scrollbar::scrollbar_thumb_grab_offset;
-use gobby_client::ui::settings::AgentSort;
+use gobby_client::ui::settings::{AgentSort, SidebarSide};
 use gobby_client::ui::sidebar::{
     next_machine_filter, project_list_metrics, render_sidebar, section_body_rect, section_metrics,
     section_rects, session_rows, sidebar_layout, SidebarHits, ALL_MACHINES,
@@ -719,7 +719,7 @@ parity_tests! {
             // gclient has no ratio: the top half of five rows (two) goes to
             // the machines band and its row, nothing is left for the
             // projects, and the sessions keep the other three.
-            let layout = sidebar_layout(Rect::new(0, 0, 20, 5), 1, 4);
+            let layout = sidebar_layout(Rect::new(0, 0, 20, 5), SidebarSide::Left, 1, 4);
 
             assert_eq!(
                 layout.sections,
