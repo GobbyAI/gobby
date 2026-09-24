@@ -303,7 +303,8 @@ Confirmed with Josh on 2026-09-21 during elicitation.
     declared next to the role in its definition's `sandbox` block, using
     `SandboxConfig`'s own field names and no new format, and a launch line may add or
     narrow them; a launch with no block gets the same default policy as `spawn_agent`;
-    exemptions are part of the same declared set, `enabled: false` with a `reason`. The
+    the exemption is declared only in a definition's block, `enabled: false` with a
+    `reason`, and no launch line can switch a sandbox off (adversary A1, R7). The
     one unsandboxed role is `program-director`, with the reason in its block: daemon
     restart, cutover, binary promotion into `~/.gobby/bin`, pushes, and read-only hub
     `psql`; a sandbox is inherited by child processes, so a daemon restarted from a
@@ -850,14 +851,15 @@ whose first pane is the seat) or `{"split": {"pane": REF, "axis": "horizontal" |
 Constraints). `sandbox` is a restriction block in `SandboxConfig`'s field names
 (`extra_read_paths`, `extra_write_paths`, `extra_deny_read_paths`,
 `extra_deny_write_paths`, `allowed_domains`, `denied_domains`, `allow_git_network`,
-`allow_package_registries`, `allow_unix_sockets`) plus `enabled: false` with a required
-`reason`; `backend`, `mode` and `allow_network` are daemon-owned and refused. The pane's
+`allow_package_registries`, `allow_unix_sockets`); `backend`, `mode`, `allow_network` and
+`enabled` are refused in the call block: the first three are daemon-owned, and only a
+definition's block may switch the sandbox off (decision 20, adversary A1). The pane's
 role is the `agent` name; a `placement` without `agent` is refused, and so is
 `terminal_backend: tmux` with placement. The definition's own `sandbox` block (new
 optional `AgentDefinitionBody.sandbox`, the same shape, validated by
 `coerce_sandbox_config`'s rules) is applied first and the call's block on top: lists
-append, booleans override, and `enabled: false` is honored only when it carries a
-`reason` (either block may carry it). No block means the spawn path's default policy.
+append, booleans override, and `enabled: false` comes only from the definition's block,
+where the validator requires a `reason`. No block means the spawn path's default policy.
 
 Order inside the tool (`_placement.py`, called from `spawn_agent_impl` by one branch
 after the definition resolves): (1) resolve the definition; it must declare the `spawn`
@@ -918,8 +920,8 @@ and completes the run today. `_bind_clear_successor` copies `sandbox_enabled` an
 sandboxed process (1.2's roster field stays true across a `/clear`).
 
 CLI. `gobby agents spawn` gains `--tab TITLE --project NAME|ID [--workspace REF]
-[--runbook NAME]` or `--split REF --right|--down`, `--sandbox JSON`, `--unsandboxed
-REASON` and `--agent`; `--session` becomes optional (the system session is the parent
+[--runbook NAME]` or `--split REF --right|--down`, `--sandbox JSON` and `--agent`;
+`--session` becomes optional (the system session is the parent
 when it is absent); with placement the command omits `timeout` and sends
 `notify_parent_on_completion: false`. It posts the same
 `POST /api/mcp/gobby-agents/tools/spawn_agent` it posts today. gclient's `launch` verb
@@ -1053,10 +1055,14 @@ Consumers unchanged:
 - 1.5.5 - A launch with no restriction block gets the same `policy_hash` as a
   `spawn_agent` launch of that provider with no block. test:
   `tests/mcp_proxy/tools/spawn_agent/test_sandbox_block.py::test_launch_without_block_matches_spawn_agent_default_policy`.
-- 1.5.6 - `enabled: false` without a `reason` is refused; with one, the session row
-  records `sandbox_enabled` false, `_launch_sandbox_reason` holds the reason, and the
-  reply's `sandbox.enforced` is false with the reason. test:
-  `tests/mcp_proxy/tools/spawn_agent/test_sandbox_block.py::test_unsandboxed_launch_requires_reason_and_records_it`.
+- 1.5.6 - A call block that carries an `enabled` key is refused, whatever its value; a
+  definition block with `enabled: false` and no `reason` fails `AgentDefinitionBody`
+  validation; a launch of a definition with `enabled: false` and a `reason` records
+  `sandbox_enabled` false on the session row, `_launch_sandbox_reason` holds the reason,
+  and the reply's `sandbox.enforced` is false with the reason. test:
+  `tests/mcp_proxy/tools/spawn_agent/test_sandbox_block.py::test_call_block_enabled_key_is_refused`.
+  test:
+  `tests/mcp_proxy/tools/spawn_agent/test_sandbox_block.py::test_unsandboxed_definition_requires_reason_and_records_it`.
 - 1.5.7 - A pane launched for a definition with `isolation: worktree` starts with `cwd`
   under the worktree path and its new tab is bound to that worktree; it never starts in
   the main checkout. test:
@@ -1145,13 +1151,13 @@ returns synchronously, or the tool reply), so the daemon gains nothing beyond 1.
   pane; `--cmd` chains one `pane.send_text {submit: true}` to the new pane. Plain
   output: the new pane ref.
 - `launch --agent ROLE (--tab TITLE --project NAME|ID [--workspace REF] [--runbook NAME]
-  | --split REF --right|--down) [--sandbox JSON] [--unsandboxed REASON] [--provider P]
+  | --split REF --right|--down) [--sandbox JSON] [--provider P]
   [--model M] [--effort E] [--isolation none|worktree] [--json] -- PROMPT` posts
   `POST /api/mcp/gobby-agents/tools/spawn_agent` with the local token and 1.5's
   contract: `agent`, `prompt`, `placement` (`{"tab": {"workspace", "project",
   "title", "runbook"}}` or `{"split": {"pane", "axis"}}` with the `LayoutAxis`
-  spelling), `sandbox` (the `--sandbox` block, with `--unsandboxed REASON` merged in as
-  `{"enabled": false, "reason": REASON}`), `provider`, `model`, `reasoning_effort`,
+  spelling), `sandbox` (the `--sandbox` block; an `enabled` key in it is a usage error,
+  because only a definition may switch the sandbox off), `provider`, `model`, `reasoning_effort`,
   `isolation`, `terminal_backend: "native"`, `notify_parent_on_completion: false`, no
   `timeout` and no `parent_session_id` (the daemon parents the seat on the system
   session); the project name resolves as for `new-tab`. Plain output: `<tab ref> <pane
@@ -1177,7 +1183,7 @@ returns synchronously, or the tool reply), so the daemon gains nothing beyond 1.
 Exit codes: 0 success; 1 refused op, printed as `code: reason` on stderr from the
 `workspace_error` reply, or a `launch` reply with `success` false, printed as its
 `error`; 2 usage (`launch` without `--agent`, without exactly one of `--tab` and
-`--split`, or with `--unsandboxed` and an `enabled` key in `--sandbox`); 3 connection,
+`--split`, or with an `enabled` key in `--sandbox`); 3 connection,
 token, HTTP, or protocol failure.
 
 Scripts. Two bundled scripts (`#!/usr/bin/env bash`, `set -euo pipefail`) reproduce
@@ -1197,9 +1203,8 @@ that its own pane ref is `GOBBY_PANE_REF` in its environment and the roster is
 `gobby-workspaces:get_workspace` (decision 6 as amended), and, for the council, the
 plan path. `orchestration-v1.sh [project]` (`P="${1:-gobby}"`, `RB=orchestration-v1`):
 `launch --agent program-director --tab control --project "$P" --runbook "$RB"
---provider claude --model 'claude-fable-5-1[1m]' --unsandboxed "daemon restart,
-cutover, binary promotion into ~/.gobby/bin, pushes, read-only hub psql; a sandbox is
-inherited by child processes" -- "$(kickoff program-director)"` gives `$ctl` and
+--provider claude --model 'claude-fable-5-1[1m]' -- "$(kickoff program-director)"`
+(unsandboxed by its definition's block, 3.2; the reply echoes the reason) gives `$ctl` and
 `$pd`; `launch --agent assistant --split "$pd" --right --provider claude --model
 'claude-opus-5[1m]' -- "$(kickoff assistant)"` gives `$asst`; `resize "$pd" 0.50`;
 `launch --agent log-monitor --tab monitors --project "$P" --runbook "$RB" --provider
@@ -1222,8 +1227,9 @@ so the three lower panes come out at equal widths). The Fable and Opus seats pas
 effort for the adversary (section 11, lines 645-681, and "The plan council", 519-535,
 carry none), so `grok-4.7` at `xhigh` is the live council seat's, and the mechanic
 takes the lookup pane's line (decision 18). No script carries a `--sandbox` block: the
-restriction blocks live in the definitions (3.2, 3.4) and only the program-director's
-`--unsandboxed` reason is on the launch line, where Josh can read it. No `title` lines:
+restriction blocks and the program-director's exemption live in the definitions (3.2,
+3.4), where Josh reads them in the spec blocks; no launch line can switch a sandbox off
+(adversary A1). No `title` lines:
 the launch labels each pane with its role (1.5).
 
 Research context:
@@ -1345,13 +1351,13 @@ emits the existing `tab.created` and `pane.added` kinds); the numbers stay retir
   `crates/gclient/tests/command_mode.rs::script_stops_at_refused_op_and_names_created_tabs`.
 - 2.1.10 - `launch` posts the tool endpoint with the local token: `--tab` fills
   `placement.tab` (workspace, project, title, runbook) and `--split` fills
-  `placement.split` (pane, axis in the `LayoutAxis` spelling); `--sandbox` and
-  `--unsandboxed` merge into one `sandbox` block; `--provider`, `--model`, `--effort`
+  `placement.split` (pane, axis in the `LayoutAxis` spelling); `--sandbox` is posted
+  as the `sandbox` block; `--provider`, `--model`, `--effort`
   and `--isolation` map to `provider`, `model`, `reasoning_effort` and `isolation`; the
   body carries `terminal_backend: "native"`, `notify_parent_on_completion: false` and
   no `timeout` or `parent_session_id`; plain output is `<tab ref> <pane ref>` from the
-  reply; `--agent` missing, neither or both placements, or `--unsandboxed` beside an
-  `enabled` key in `--sandbox` is a usage error (exit 2). symbol: `spawn_agent_tool`.
+  reply; `--agent` missing, neither or both placements, or an `enabled` key in
+  `--sandbox` is a usage error (exit 2). symbol: `spawn_agent_tool`.
   test: `crates/gclient/tests/command_mode.rs::launch_posts_spawn_with_placement_and_sandbox`.
   test: `crates/gclient/src/command/tests.rs::launch_requires_agent_and_exactly_one_placement`.
 
@@ -1651,7 +1657,7 @@ persona text delivered once; the handoff carries state only.
   only role that edits code on 0.5.0, in the main checkout (decision 20). (4) Sandbox:
   `sandbox: {enabled: false, reason: "daemon restart, cutover, binary promotion into
   ~/.gobby/bin, pushes, read-only hub psql; a sandbox is inherited by child processes"}`;
-  the launch line repeats the reason with `--unsandboxed`, and 1.5.6 records it. (5)
+  the launch line carries no sandbox flag and 1.5.6 records the reason from the block. (5)
   Rules: include `["tag:default", "group:runbook", "name:no-git-stash",
   "name:no-force-push", "name:no-recursive-rm"]`, exclude the two shared names; scoped
   to it: `program-director-delegate-once`,
