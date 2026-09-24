@@ -535,6 +535,34 @@ async def test_send_message_exposes_inline_keyboard_metadata(
     )
 
 
+@pytest.mark.asyncio
+async def test_send_message_stores_the_current_project_on_a_keyboard(
+    registry: Any,
+    mock_manager: MagicMock,
+) -> None:
+    """Josh addresses the button with #N. The tap can resolve it only with this project."""
+    mock_msg = MagicMock(id="msg-123", status="sent", error=None)
+    mock_manager.send_message.return_value = mock_msg
+    project_id = "22222222-2222-4222-8222-222222222222"
+    inline_keyboard = [[{"text": "Ship", "value": "ship"}]]
+
+    with patch(
+        "gobby.utils.project_context.get_project_context",
+        return_value={"id": project_id},
+    ):
+        result = await registry.get_tool("send_message")(
+            channel="telegram",
+            content="Ship?",
+            session_id="#14069",
+            inline_keyboard=inline_keyboard,
+        )
+
+    assert result["success"] is True
+    metadata = mock_manager.send_message.await_args.kwargs["metadata"]
+    assert metadata["callback_project_id"] == project_id
+    assert metadata["inline_keyboard"] == inline_keyboard
+
+
 def test_create_event_subscription_uses_responder_session_project(
     registry: Any,
     mock_manager: MagicMock,

@@ -7,6 +7,7 @@ from typing import Any, Literal
 
 from gobby.communications.manager import CommunicationsManager
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.mcp_proxy.tools.memory_scope import get_current_project_id
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.utils.datetime import utc_now
@@ -92,6 +93,9 @@ def create_communications_registry(
                 if inline_keyboard is not None:
                     metadata["inline_keyboard"] = inline_keyboard
                     metadata["callback_ttl_seconds"] = callback_ttl_seconds
+                    project_id = get_current_project_id()
+                    if project_id is not None:
+                        metadata["callback_project_id"] = project_id
                 if link_preview_options is not None:
                     metadata["link_preview_options"] = link_preview_options
 

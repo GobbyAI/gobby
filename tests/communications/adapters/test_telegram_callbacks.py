@@ -156,6 +156,43 @@ async def test_adapter_sends_keyboard_and_routes_callback_to_originating_session
 
 
 @pytest.mark.asyncio
+async def test_keyboard_callback_carries_the_project_that_named_the_session() -> None:
+    """A #N button is named inside one project. The tap must still carry that project."""
+    clock = [100.0]
+    adapter = TelegramAdapter()
+    adapter._callback_registry = _registry(clock)
+    adapter._client = MagicMock()
+    adapter._api_base = "https://api.telegram.org/bottest-token"
+    project_id = "22222222-2222-4222-8222-222222222222"
+    message = CommsMessage(
+        id="message-id",
+        channel_id="channel-id",
+        direction="outbound",
+        content="Ship?",
+        session_id="#14069",
+        metadata_json={
+            "platform_destination": "2222222",
+            "inline_keyboard": [[{"text": "Ship", "value": "ship"}]],
+            "callback_ttl_seconds": 30,
+            "callback_project_id": project_id,
+        },
+        created_at=datetime.now(UTC),
+    )
+    post_json = AsyncMock(return_value={"ok": True, "result": {"message_id": 99}})
+
+    with patch.object(adapter, "_post_json", post_json):
+        await adapter.send_message(message)
+
+    awaited_call = post_json.await_args
+    assert awaited_call is not None
+    callback_data = awaited_call.args[1]["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
+    callback = adapter.parse_webhook(_callback_payload(callback_data, thread_id=None), {})[0]
+
+    assert callback.session_id == "#14069"
+    assert callback.metadata_json.get("callback_project_id") == project_id
+
+
+@pytest.mark.asyncio
 async def test_failed_keyboard_send_discards_registered_callbacks() -> None:
     clock = [100.0]
     adapter = TelegramAdapter()
