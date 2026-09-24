@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import Literal
 
@@ -43,7 +44,11 @@ async def write_workspace_pane(
     """Write once, or verify a requested text submission against its composer."""
     action_key = f"workspace-pane-send:{pane_id}:{idempotency_key}"
     if kind == "text" and verify_submit:
-        session = None if terminal.session_id is None else sessions.get(terminal.session_id)
+        session = (
+            None
+            if terminal.session_id is None
+            else await asyncio.to_thread(sessions.get, terminal.session_id)
+        )
         cli_source = None if session is None else session.source
         result = await submit_coordinated_text(
             coordinator,

@@ -92,12 +92,16 @@ def _off_loop_chain_key(message: str) -> str:
         return ""
     if not isinstance(data, dict):
         return ""
+    message_type = data.get("type")
+    if message_type == "workspace_op":
+        return "workspace_op"
     for field in ("terminal_id", "attachment_id"):
         value = data.get(field)
         if isinstance(value, str) and value:
             return value
-    message_type = data.get("type")
     return message_type if isinstance(message_type, str) else ""
+
+
 # The byte an interrupt keystroke carries on the daemon-mediated input path; direct
 # input reports only the interrupt kind, so the turn observer sees the same payload.
 _INTERRUPT_PAYLOADS = {"esc": "\x1b", "ctrl_c": "\x03"}
@@ -219,6 +223,7 @@ class WebSocketServer(
         self.clients: dict[Any, dict[str, Any]] = {}
         self._off_loop_tasks: dict[Any, set[asyncio.Task[None]]] = {}
         self._off_loop_tail: dict[tuple[Any, str], asyncio.Task[None]] = {}
+        self._off_loop_durable: set[asyncio.Task[None]] = set()
 
         self.web_chat_session_registry = (
             web_chat_session_registry if web_chat_session_registry else WebChatSessionRegistry()
@@ -571,6 +576,14 @@ class WebSocketServer(
         bucket.add(task)
         task.add_done_callback(bucket.discard)
 
+        def forget(done: asyncio.Task[None]) -> None:
+            self._forget_off_loop_tail(key, done)
+
+        task.add_done_callback(forget)
+        if key[1] == "workspace_op":
+            self._off_loop_durable.add(task)
+            task.add_done_callback(self._off_loop_durable.discard)
+
     async def _run_off_loop_message(
         self,
         websocket: Any,
@@ -601,13 +614,20 @@ class WebSocketServer(
             except Exception:
                 logger.debug("Could not report off-loop handler failure", exc_info=True)
 
+    def _forget_off_loop_tail(self, key: tuple[Any, str], task: asyncio.Task[None]) -> None:
+        if self._off_loop_tail.get(key) is task:
+            self._off_loop_tail.pop(key, None)
+
     async def _cancel_off_loop(self, websocket: Any) -> None:
         for key in [key for key in self._off_loop_tail if key[0] is websocket]:
+            if key[1] == "workspace_op":
+                continue
             self._off_loop_tail.pop(key, None)
         tasks = self._off_loop_tasks.pop(websocket, set())
-        for task in list(tasks):
+        cancel = [task for task in tasks if task not in self._off_loop_durable]
+        for task in cancel:
             task.cancel()
-        for task in list(tasks):
+        for task in cancel:
             try:
                 await task
             except (asyncio.CancelledError, Exception):

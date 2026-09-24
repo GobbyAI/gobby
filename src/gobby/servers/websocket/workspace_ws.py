@@ -187,15 +187,18 @@ class WorkspaceWsMixin:
         return await self._workspace_ops().workspace_snapshot(OPERATOR_ACTOR, **arguments)
 
     def _snapshot_reply(self, data: dict[str, Any], snapshot: WorkspaceSnapshot) -> dict[str, Any]:
-        # Called before any await after the rows were read, so no lifecycle event can
-        # commit between them: events above the watermark are all news to the rows.
+        # Sweep removals record their own seq. A workspace publish that waited on
+        # the snapshot fence is above it, so it stays news to these rows.
+        watermark = self._leases().lifecycle_snapshot()
+        if snapshot.lifecycle_seq is not None:
+            watermark = {**watermark, "seq": snapshot.lifecycle_seq}
         return {
             "type": "workspace_snapshot",
             "request_id": data.get("request_id"),
             "workspace": {**_result(snapshot.workspace), "node_ref": snapshot.node.ref},
             "tabs": _result(snapshot.tabs),
             "panes": _result(snapshot.panes),
-            "snapshot": self._leases().lifecycle_snapshot(),
+            "snapshot": watermark,
         }
 
     async def _send_workspace_error(

@@ -1326,6 +1326,69 @@ async def test_workspace_snapshot_reads_rows_on_the_sweep_thread() -> None:
 
 
 @pytest.mark.asyncio
+async def test_snapshot_watermark_excludes_a_publish_waiting_on_the_fence() -> None:
+    """A workspace publish that arrives during the sweep stays above the snapshot seq."""
+    seq = 0
+    started = asyncio.Event()
+    release = asyncio.Event()
+    foreign: list[int] = []
+
+    async def publish(event: object) -> int:
+        nonlocal seq
+        seq += 1
+        current = seq
+        kind = event["kind"] if isinstance(event, dict) else None
+        if kind == "pane.removed":
+            started.set()
+            await release.wait()
+        return current
+
+    async def intruder() -> None:
+        await started.wait()
+        emitted = await ops._emit("workspace.created", "ws-1")
+        assert emitted is not None
+        foreign.append(emitted)
+
+    pane = MagicMock()
+    pane.to_dict.return_value = {"id": "pane-1"}
+    machine = SimpleNamespace(id="machine-1", ref=None, hostname="local")
+    workspace = SimpleNamespace(id="ws-1")
+
+    def resolve_reference(_reference: str, node: str | None = None) -> SimpleNamespace:
+        del node
+        return SimpleNamespace(tab=None, pane=None, workspace=workspace, node=machine)
+
+    def sweep_dead_panes(_workspace_id: str) -> SimpleNamespace:
+        return SimpleNamespace(removed_panes=(pane,), removed_tabs=(), tabs=())
+
+    workspaces = MagicMock()
+    workspaces.resolve_reference.side_effect = resolve_reference
+    workspaces.sweep_dead_panes.side_effect = sweep_dead_panes
+    workspaces.list_tabs.return_value = ()
+    workspaces.list_panes.return_value = ()
+    ops = _storage_ops(workspaces)
+    object.__setattr__(ops, "_publish", publish)
+    intruder_task = asyncio.create_task(intruder())
+    with patch("gobby.terminals.workspace_contract.require_machine_id", return_value="machine-1"):
+        snapshot_task = asyncio.create_task(ops.workspace_snapshot("operator", "ws-1"))
+        await asyncio.wait_for(started.wait(), timeout=2)
+        yielded = asyncio.Event()
+
+        async def _yield_once() -> None:
+            yielded.set()
+
+        asyncio.create_task(_yield_once())
+        await yielded.wait()
+        assert seq == 1
+        release.set()
+        snapshot = await snapshot_task
+    await intruder_task
+    assert snapshot.lifecycle_seq is not None
+    assert foreign
+    assert snapshot.lifecycle_seq < foreign[0]
+
+
+@pytest.mark.asyncio
 async def test_tab_rename_writes_storage_off_the_event_loop() -> None:
     """Renaming a tab must not write the row on the event-loop thread."""
     loop_thread = threading.get_ident()
