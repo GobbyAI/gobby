@@ -15,5 +15,6 @@ rules:
     effects:
       - type: block
         reason: |
-          Epic tree not complete. Claimed tasks: {{ claimed_tasks.values() | list | join(', ') or '(unknown)' }}.
-          Close ALL subtasks and the parent epic before stopping. Use list_tasks(parent_task_id=...) to find remaining unresolved work.
+          Epic tree not complete: a claimed task or a task in its own subtree is still open. Claimed tasks: {{ claimed_tasks.values() | list | join(', ') or '(unknown)' }}.
+          Close each claimed task and every open task in its own subtree; the claimed task's parent epic can stay open. Use gobby-tasks:list_tasks(parent_task_id=...) to find the open subtasks, and gobby-tasks:close_task to close each one.
+          To end the turn while that work waits instead: gobby-agents:wait_for_agent for a running agent or close review, gobby-agents:wait_for_coordination for a restart, landing or reply from another session, gobby-tasks:add_dependency when a claimed task is blocked by another open task, or gobby-tasks:escalate_task with the reason.

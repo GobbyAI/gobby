@@ -645,6 +645,37 @@ class TestLegitimateWaitConditions:
         assert body.when is not None
         assert evaluator.evaluate(body.when) is True
 
+    @pytest.mark.parametrize(
+        ("rule_name", "scope"),
+        [
+            ("require-task-close", "claimed tasks"),
+            ("require-epic-tree-close", "own subtree"),
+        ],
+    )
+    def test_block_reason_names_legal_exits(
+        self,
+        db: HubDatabase,
+        manager: RuleDefinitionManager,
+        rule_name: str,
+        scope: str,
+    ) -> None:
+        _sync_bundled(db)
+        row = _get_rule(manager, rule_name)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
+        assert body.effects is not None
+        reason = " ".join(effect.reason or "" for effect in body.effects)
+
+        for legal_exit in (
+            "gobby-tasks:close_task",
+            "gobby-agents:wait_for_agent",
+            "gobby-agents:wait_for_coordination",
+            "gobby-tasks:add_dependency",
+            "gobby-tasks:escalate_task",
+        ):
+            assert legal_exit in reason
+        assert scope in reason
+        assert "parent epic before stopping" not in reason
+
 
 class TestRequireStepCompletion:
     """Verify spawned-agent step completion gates only apply to active step workflows."""
