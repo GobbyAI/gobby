@@ -91,32 +91,24 @@ async def collect_commit_diff_text_async(
     current code. A set that cannot be replayed (a linked commit that does not
     apply onto the others' history) falls back to the raw per-commit stream.
 
-    Merge commits diff against their first parent throughout: a landing merge
-    that reaches every other linked commit only through its second parent is
-    the set's net patch on its own; any other merge-containing set skips the
-    replay and streams each commit's first-parent diff.
+    A landing merge, which reaches every other linked commit only through its
+    second parent, is the set's net patch on its own. A sync merge, whose other
+    linked commits live on the first-parent line, contributes only its remerge
+    diff. Any other merge-containing set skips the replay and streams each
+    commit.
     """
     if not commit_shas:
         return ""
     net = await _net_commit_patch(commit_shas, cwd=cwd)
     if net is not None:
         return net
-    result = await daemon_git.run(
-        [
-            "show",
-            "--diff-merges=first-parent",
-            "--format=",
-            "--find-renames",
-            "--find-copies",
-            "--binary",
-            *commit_shas,
-        ],
-        cwd=cwd,
-        timeout=30,
-    )
-    if not isinstance(result, GitOk):
+    ordered = await _ancestry_order(commit_shas, cwd=cwd)
+    if ordered is None:
         raise RuntimeError("git show failed while assembling the close criteria-review diff")
-    return result.stdout
+    streamed = await _stream_commit_patches(ordered, cwd=cwd)
+    if streamed is None:
+        raise RuntimeError("git show failed while assembling the close criteria-review diff")
+    return streamed
 
 
 def collect_commit_diff_text(commit_shas: list[str], *, cwd: str | Path) -> str:
@@ -179,6 +171,66 @@ async def _is_merge(sha: str, *, cwd: str | Path) -> bool:
     return await _git_bytes(["rev-parse", "--verify", "--quiet", f"{sha}^2"], cwd=cwd) is not None
 
 
+async def _is_ancestor(ancestor: str, descendant: str, *, cwd: str | Path) -> bool:
+    return (
+        await _git_bytes(["merge-base", "--is-ancestor", ancestor, descendant], cwd=cwd) is not None
+    )
+
+
+async def _is_sync_merge(sha: str, ordered: list[str], *, cwd: str | Path) -> bool:
+    """True when the other linked commits live on this merge's first-parent line.
+
+    They were already on that parent, or they were committed there after the
+    merge. A landing merge's other commits are reachable only through its
+    second parent, so this returns false and the first-parent diff stands.
+    """
+    if not await _is_merge(sha, cwd=cwd):
+        return False
+    others = [other for other in ordered if other != sha]
+    if not others:
+        return False
+    for other in others:
+        on_first_parent = await _is_ancestor(other, f"{sha}^1", cwd=cwd)
+        committed_after = await _is_ancestor(sha, other, cwd=cwd)
+        if not on_first_parent and not committed_after:
+            return False
+    return True
+
+
+async def _show_one_commit(sha: str, ordered: list[str], *, cwd: str | Path) -> str | None:
+    merges = (
+        ["--remerge-diff"]
+        if await _is_sync_merge(sha, ordered, cwd=cwd)
+        else ["--diff-merges=first-parent"]
+    )
+    raw = await _git_bytes(
+        ["show", *merges, "--format=", "--find-renames", "--find-copies", "--binary", sha],
+        cwd=cwd,
+    )
+    if raw is None:
+        return None
+    return raw.decode("utf-8", errors="replace")
+
+
+async def _stream_commit_patches(
+    shas: list[str],
+    *,
+    cwd: str | Path,
+    classify_against: list[str] | None = None,
+) -> str | None:
+    # A one-commit subset is not a lone merge. Classify against the full linked
+    # set so a sync merge still shows its remerge diff.
+    basis = shas if classify_against is None else classify_against
+    parts: list[str] = []
+    for sha in shas:
+        patch = await _show_one_commit(sha, basis, cwd=cwd)
+        if patch is None:
+            return None
+        if patch.strip():
+            parts.append(patch.strip())
+    return "\n".join(parts)
+
+
 async def _landing_merge_patch(ordered: list[str], *, cwd: str | Path) -> bytes | None:
     """First-parent patch of a merge that lands every other linked commit.
 
@@ -208,15 +260,19 @@ async def _net_commit_patch(commit_shas: list[str], *, cwd: str | Path) -> str |
     landing = await _landing_merge_patch(ordered, cwd=cwd)
     if landing is not None:
         return landing.decode("utf-8", errors="replace").strip()
-    if any([await _is_merge(sha, cwd=cwd) for sha in ordered]):
+    syncs = [sha for sha in ordered if await _is_sync_merge(sha, ordered, cwd=cwd)]
+    replayable = [sha for sha in ordered if sha not in syncs]
+    if any([await _is_merge(sha, cwd=cwd) for sha in replayable]):
         return None
-    parent = await _git_bytes(["rev-parse", "--verify", "--quiet", f"{ordered[0]}^"], cwd=cwd)
+    if not replayable:
+        return await _stream_commit_patches(ordered, cwd=cwd)
+    parent = await _git_bytes(["rev-parse", "--verify", "--quiet", f"{replayable[0]}^"], cwd=cwd)
     base = parent.decode("ascii", errors="replace").strip() if parent else _EMPTY_TREE_SHA
     with tempfile.TemporaryDirectory(prefix="gobby-close-index-") as scratch:
         env = {"GIT_INDEX_FILE": str(Path(scratch) / "index")}
         if await _git_bytes(["read-tree", base], cwd=cwd, env=env) is None:
             return None
-        for sha in ordered:
+        for sha in replayable:
             patch = await _git_bytes(
                 ["show", "--format=", "--find-renames", "--find-copies", "--binary", sha],
                 cwd=cwd,
@@ -240,7 +296,13 @@ async def _net_commit_patch(commit_shas: list[str], *, cwd: str | Path) -> str |
         )
     if net is None:
         return None
-    return net.decode("utf-8", errors="replace").strip()
+    text = net.decode("utf-8", errors="replace").strip()
+    if not syncs:
+        return text
+    authored = await _stream_commit_patches(syncs, cwd=cwd, classify_against=ordered)
+    if authored is None:
+        return None
+    return "\n".join(part for part in (text, authored.strip()) if part)
 
 
 # Doc file extensions that don't need LLM validation
