@@ -289,12 +289,15 @@ class WorkspaceOps:
             _require_local(machine)
             return tuple(self._workspaces.list_for_node(machine.id))
 
+    def _rename_workspace(self, workspace_id: str, name: str) -> Workspace:
+        with storage_errors():
+            return self._workspaces.rename(workspace_id, name)
+
     async def workspace_rename(
         self, actor: str, workspace: str, name: str, *, node: str | None = None
     ) -> Workspace:
         target = _workspace_of(await self._enter(workspace, node), workspace)
-        with storage_errors():
-            renamed = self._workspaces.rename(target.id, name)
+        renamed = await asyncio.to_thread(self._rename_workspace, target.id, name)
         await self._emit("workspace.renamed", renamed.id, workspace=renamed)
         return renamed
 
