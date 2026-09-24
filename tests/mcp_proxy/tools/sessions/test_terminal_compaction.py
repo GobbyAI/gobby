@@ -22,6 +22,7 @@ from gobby.mcp_proxy.tools.sessions._terminal_compaction import (
     _COMPOSER_OCCUPIED_ERROR_CODE,
     _INTERRUPT_ATTEMPTS,
     _INTERRUPT_UNCONFIRMED_ERROR_CODE,
+    _OBSERVED_INTERRUPT_SETTLE_SECONDS,
     _TURN_SETTLE_POLL_SECONDS,
     _confirm_interrupt,
     _send_terminal_compaction_command,
@@ -350,6 +351,7 @@ async def test_grok_completed_turn_then_goal_successor_is_not_interrupt_confirma
 
 @pytest.mark.asyncio
 async def test_grok_interrupt_confirms_when_ctrl_c_restarts_the_loop_then_cancels(
+    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     """The first Ctrl+C restarts Grok's model loop. The next one cancels the turn."""
@@ -389,6 +391,19 @@ async def test_grok_interrupt_confirms_when_ctrl_c_restarts_the_loop_then_cancel
     pane = _RestartPane()
     mark = MagicMock(return_value=True)
     clear = MagicMock(return_value=True)
+    clock = {"now": 0.0}
+
+    async def sleep(seconds: float) -> None:
+        clock["now"] += seconds
+
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.sessions._terminal_compaction.time.monotonic",
+        lambda: clock["now"],
+    )
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.sessions._terminal_compaction.asyncio.sleep",
+        sleep,
+    )
     result = await _send_terminal_compaction_command(
         pane,
         _COMMAND,
@@ -398,9 +413,11 @@ async def test_grok_interrupt_confirms_when_ctrl_c_restarts_the_loop_then_cancel
         clear_continuation_pending=clear,
         observe_interrupt=interrupt,
         turn_settled=probe,
+        interrupt_settle_seconds=_OBSERVED_INTERRUPT_SETTLE_SECONDS,
         settle_seconds=None,
     )
 
+    assert clock["now"] < 30  # No 30-second pre-interrupt settle wait.
     assert result[0] is True
     assert pane.ctrl_c_presses == 2
     assert pane.typed == [f"{_COMMAND}\n"]
@@ -408,6 +425,7 @@ async def test_grok_interrupt_confirms_when_ctrl_c_restarts_the_loop_then_cancel
 
 @pytest.mark.asyncio
 async def test_grok_recorded_goal_mode_compact_replay_succeeds_on_first_delivery(
+    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     """Replay the 14:21 92 ms gap and loop restart, then the 14:23 cancellation."""
@@ -426,14 +444,39 @@ async def test_grok_recorded_goal_mode_compact_replay_succeeds_on_first_delivery
         for record in recorded[:3]:
             stream.write((json.dumps(record) + "\n").encode())
 
+    clock = {"now": 0.0}
+    restart_at = 9.0  # About 9 seconds after the failed attempt's last Ctrl+C.
+    cancel_after_second_press = 3.826  # Recorded loop restart to cancelled turn.
+    restart_recorded = False
+    cancel_recorded = False
+    cancel_at: float | None = None
+
+    async def sleep(seconds: float) -> None:
+        nonlocal restart_recorded, cancel_recorded
+        clock["now"] += seconds
+        if clock["now"] >= restart_at and not restart_recorded:
+            with events.open("ab") as stream:
+                stream.write((json.dumps(recorded[3]) + "\n").encode())
+            restart_recorded = True
+        if cancel_at is not None and clock["now"] >= cancel_at and not cancel_recorded:
+            with events.open("ab") as stream:
+                stream.write((json.dumps(recorded[-1]) + "\n").encode())
+            cancel_recorded = True
+
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.sessions._terminal_compaction.time.monotonic",
+        lambda: clock["now"],
+    )
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.sessions._terminal_compaction.asyncio.sleep",
+        sleep,
+    )
+
     class _ReplayPane(_CountingGrokPane):
         async def send_key(self, key: str) -> tuple[bool, str | None]:
-            if key == "ctrl_c":
-                # The first press restarted loop 0 in the failed attempt. The
-                # later successful attempt showed a second press cancelling it.
-                record = recorded[3] if self.ctrl_c_presses == 0 else recorded[-1]
-                with events.open("ab") as stream:
-                    stream.write((json.dumps(record) + "\n").encode())
+            nonlocal cancel_at
+            if key == "ctrl_c" and self.ctrl_c_presses and restart_recorded:
+                cancel_at = clock["now"] + cancel_after_second_press
             return await super().send_key(key)
 
     pane = _ReplayPane()
@@ -446,9 +489,13 @@ async def test_grok_recorded_goal_mode_compact_replay_succeeds_on_first_delivery
         clear_continuation_pending=lambda: True,
         observe_interrupt=interrupt,
         turn_settled=probe,
-        settle_seconds=_SETTLE,
+        interrupt_settle_seconds=_OBSERVED_INTERRUPT_SETTLE_SECONDS,
+        settle_seconds=None,
     )
 
+    assert restart_recorded is True
+    assert cancel_recorded is True
+    assert clock["now"] < 20
     assert result[0] is True
     assert pane.ctrl_c_presses == 2
     assert pane.typed == [f"{_COMMAND}\n"]

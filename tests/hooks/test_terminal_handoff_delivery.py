@@ -878,14 +878,9 @@ def test_stop_claims_staged_unclaimed_grok_handoff_before_stale_cutoff(
                 "handoff_record_id": "handoff-1",
                 "created_at": datetime.now(UTC).isoformat(),
             },
-            HANDOFF_DISPATCH_GATE_VARIABLE: {
-                "handoff_staged": True,
-                "delivery_pending": True,
-                "attempt_id": ATTEMPT_ID,
-                "clear_session": False,
-            },
         },
     )
+    assert HANDOFF_DISPATCH_GATE_VARIABLE not in variables.get_variables(SESSION_ID)
     assert (
         hub_db.fetchone(
             "SELECT 1 FROM session_handoff_deliveries WHERE attempt_id = %s", (ATTEMPT_ID,)
@@ -917,8 +912,59 @@ def test_stop_claims_staged_unclaimed_grok_handoff_before_stale_cutoff(
     marker = variables.get_variables(SESSION_ID)[PENDING_HANDOFF_VARIABLE]
     assert response.decision == "allow"
     assert marker["dispatch_started_at"] is not None
+    assert variables.get_variables(SESSION_ID)[HANDOFF_DISPATCH_GATE_VARIABLE] == {
+        "handoff_staged": True,
+        "delivery_pending": True,
+        "attempt_id": ATTEMPT_ID,
+        "clear_session": False,
+    }
     submit.assert_called_once()
     submit.call_args.args[0].close()
+
+
+def test_stop_logs_staged_handoff_refused_by_a_conflicting_gate(
+    hub_db: HubDatabase, caplog: pytest.LogCaptureFixture
+) -> None:
+    session_manager = _compact_session_manager(hub_db, {"tmux_pane": "%12"}, source="grok")
+    variables = SessionVariableManager(hub_db)
+    variables.merge_variables(
+        SESSION_ID,
+        {
+            PENDING_HANDOFF_VARIABLE: {
+                "attempt_id": ATTEMPT_ID,
+                "clear_session": False,
+                "handoff_record_id": "handoff-1",
+            },
+            HANDOFF_DISPATCH_GATE_VARIABLE: {
+                "handoff_staged": True,
+                "delivery_pending": True,
+                "attempt_id": "b" * 32,
+                "clear_session": False,
+            },
+        },
+    )
+    event = HookEvent(
+        event_type=HookEventType.STOP,
+        session_id="provider-session",
+        source=SessionSource.GROK,
+        timestamp=datetime.now(UTC),
+        data={},
+        metadata={"_platform_session_id": SESSION_ID},
+    )
+
+    with caplog.at_level(logging.WARNING, logger=LOGGER_NAME):
+        scheduled = terminal_handoff_delivery.schedule_staged_handoff_on_stop(
+            event,
+            session_manager=session_manager,
+            agent_run_manager=MagicMock(),
+            event_loop=None,
+        )
+
+    assert scheduled is False
+    assert any("gate holds attempt" in warning for warning in _warnings(caplog))
+    assert (
+        "dispatch_started_at" not in variables.get_variables(SESSION_ID)[PENDING_HANDOFF_VARIABLE]
+    )
 
 
 def _session_start_handler(session_manager: Any, store: Any, registry: Any) -> Any:

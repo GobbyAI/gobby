@@ -284,10 +284,16 @@ def schedule_staged_handoff_on_stop(
     if not isinstance(marker, Mapping):
         return False
     attempt_id = marker.get("attempt_id")
-    if not isinstance(attempt_id, str) or staged_handoff_rejection(variables, attempt_id):
+    if not isinstance(attempt_id, str) or not attempt_id:
+        _log_skipped_delivery(session_id, attempt_id, "staged marker has no attempt_id")
         return False
-    claimed = claim_staged_handoff_delivery(session_manager.db, session_id, attempt_id)
+    claimed = claim_staged_handoff_delivery(
+        session_manager.db, session_id, attempt_id, recover_unarmed_gate=True
+    )
     if claimed is None:
+        current = SessionVariableManager(session_manager.db).get_variables(session_id)
+        reason = staged_handoff_rejection(current, attempt_id) or "claim changed concurrently"
+        _log_skipped_delivery(session_id, attempt_id, reason)
         return False
     return _schedule_claimed_delivery(
         claimed,

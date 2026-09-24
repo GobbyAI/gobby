@@ -49,7 +49,9 @@ _CLI_COMPACT_INTERRUPT_KEYS: dict[str, NamedKey] = {
 # Blind path (no transcript observer): wait this long after the interrupt key.
 _DEFAULT_INTERRUPT_SETTLE_SECONDS = 0.1
 # Observed path: poll the transcript this long per interrupt attempt.
-_OBSERVED_INTERRUPT_SETTLE_SECONDS = 1.0
+# The failed Grok goal-mode attempt restarted its model loop about 9 seconds
+# after the last Ctrl+C. Keep observing before another potentially quitting press.
+_OBSERVED_INTERRUPT_SETTLE_SECONDS = 12.0
 _INTERRUPT_ATTEMPTS = 3
 _INTERRUPT_POLL_SECONDS = 0.05
 # After submitting the command, poll the pane this long for the CLI rejecting it
