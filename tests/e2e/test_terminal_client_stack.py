@@ -12,7 +12,7 @@ import sys
 import tempfile
 import time
 import uuid
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Literal, TypeIs, cast
@@ -1080,6 +1080,105 @@ def test_gclient_reaches_workspace(daemon_instance: DaemonInstance) -> None:
         assert client.poll() is None
 
 
+async def test_gclient_reorders_tabs_and_moves_a_running_pane(
+    daemon_instance: DaemonInstance,
+) -> None:
+    async def snapshot() -> dict[str, Any]:
+        session = WsSession(daemon_instance)
+        await session.connect()
+        try:
+            await session.send(
+                {
+                    "type": "workspace_snapshot",
+                    "request_id": "pane-move-snapshot",
+                    "project_id": E2E_PROJECT_ID,
+                }
+            )
+            return await session.wait_for(
+                lambda item: item.get("type") == "workspace_snapshot"
+                and item.get("request_id") == "pane-move-snapshot",
+                timeout=10.0,
+                description="project workspace snapshot",
+            )
+        finally:
+            await session.close()
+
+    async def until(predicate: Callable[[dict[str, Any]], bool]) -> dict[str, Any]:
+        deadline = time.monotonic() + 15.0
+        latest = await snapshot()
+        while not predicate(latest) and time.monotonic() < deadline:
+            await asyncio.to_thread(client.read, 0.05)
+            latest = await snapshot()
+        assert predicate(latest), latest
+        return latest
+
+    with _gclient(daemon_instance) as client:
+        await asyncio.to_thread(client.expect, "Sessions")
+        first = await until(lambda row: len(row["tabs"]) == 1)
+        original = first["panes"][0]
+        terminal_id = original["terminal_id"]
+        await asyncio.to_thread(client.chord, "c")
+        await until(lambda row: len(row["tabs"]) == 2)
+        await asyncio.to_thread(client.chord, "c")
+        three = await until(lambda row: len(row["tabs"]) == 3)
+        initial_ids = [tab["id"] for tab in three["tabs"]]
+
+        await asyncio.to_thread(client.chord, "\x1b[1;2D")
+        moved_left = await until(
+            lambda row: [tab["id"] for tab in row["tabs"]]
+            == [initial_ids[0], initial_ids[2], initial_ids[1]]
+        )
+        assert moved_left["tabs"][1]["id"] == initial_ids[2]
+
+        await asyncio.to_thread(client.chord, "\x1b[1;2C")
+        await until(lambda row: [tab["id"] for tab in row["tabs"]] == initial_ids)
+
+        header = client.screen.lines[0]
+        source = header.index("tab-0:")
+        target = header.rindex("tab-0:")
+        assert target > source
+        client.send(f"\x1b[<0;{source + 2};1M\x1b[<0;{target + 2};1m")
+        dragged = await until(
+            lambda row: [tab["id"] for tab in row["tabs"]]
+            == [initial_ids[1], initial_ids[2], initial_ids[0]]
+        )
+        assert dragged["tabs"][2]["id"] == initial_ids[0]
+
+        await asyncio.to_thread(client.chord, "@")
+        placed = await until(
+            lambda row: any(
+                pane["id"] == original["id"] and pane["tab_id"] == initial_ids[2]
+                for pane in row["panes"]
+            )
+        )
+        assert len(placed["tabs"]) == 2
+        assert (
+            next(pane for pane in placed["panes"] if pane["id"] == original["id"])["terminal_id"]
+            == terminal_id
+        )
+
+        await asyncio.to_thread(client.chord, "C")
+        new_tab = await until(
+            lambda row: any(
+                pane["id"] == original["id"]
+                and pane["tab_id"] not in {initial_ids[1], initial_ids[2]}
+                for pane in row["panes"]
+            )
+        )
+        final_tab_id = next(pane for pane in new_tab["panes"] if pane["id"] == original["id"])[
+            "tab_id"
+        ]
+        assert any(tab["id"] == final_tab_id for tab in new_tab["tabs"])
+
+    restored = await snapshot()
+    assert any(
+        pane["id"] == original["id"]
+        and pane["tab_id"] == final_tab_id
+        and pane["terminal_id"] == terminal_id
+        for pane in restored["panes"]
+    )
+
+
 class ClientWire:
     """Forward real daemon traffic, observing messages and injecting boundary faults."""
 
@@ -1182,13 +1281,19 @@ async def _adopt(daemon: DaemonInstance, terminal_id: str) -> str:
     id. Nothing else tells two rows apart: the name ladder ends at the
     foreground command, so two `/bin/sh` rows read alike, and the navigator
     matches the row title and detail, which is where the address sits. So the
-    tests address a terminal by adopting it into a tab of the node's default
-    workspace, exactly as a user does.
+    tests address a terminal by adopting it into a tab of the registered
+    project's default workspace, exactly where gclient attaches it.
     """
     session = WsSession(daemon)
     await session.connect()
     try:
-        await session.send({"type": "workspace_snapshot", "request_id": "adopt-snapshot"})
+        await session.send(
+            {
+                "type": "workspace_snapshot",
+                "request_id": "adopt-snapshot",
+                "project_id": E2E_PROJECT_ID,
+            }
+        )
         snapshot = await session.wait_for(
             lambda item: item.get("type") == "workspace_snapshot"
             and item.get("request_id") == "adopt-snapshot",
@@ -1235,7 +1340,13 @@ async def _placed_address(
         attempt = 0
         while True:
             request_id = f"placed-{attempt}-{terminal_id[:8]}"
-            await session.send({"type": "workspace_snapshot", "request_id": request_id})
+            await session.send(
+                {
+                    "type": "workspace_snapshot",
+                    "request_id": request_id,
+                    "project_id": E2E_PROJECT_ID,
+                }
+            )
             snapshot = await session.wait_for(
                 lambda item, wanted=request_id: item.get("type") == "workspace_snapshot"
                 and item.get("request_id") == wanted,

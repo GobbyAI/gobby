@@ -374,7 +374,7 @@ fn tab_drag_reorders_or_clicks() {
     let (target, _) = tab_cell(&chrome, 2);
     let at = |kind, col| mouse(kind, col, row, KeyModifiers::NONE);
 
-    // 2.2.2: a drag short of the threshold is a click, wherever it ends.
+    // 2.2.2: a drag whose release stays short of the threshold is a click.
     route_mouse(&ws, &mut chrome, &at(LEFT_DOWN, col));
     assert_eq!(
         route_mouse(
@@ -393,7 +393,7 @@ fn tab_drag_reorders_or_clicks() {
         })
     );
     assert_eq!(
-        route_mouse(&ws, &mut chrome, &at(LEFT_UP, target)),
+        route_mouse(&ws, &mut chrome, &at(LEFT_UP, col + TAB_DRAG_THRESHOLD - 1)),
         MouseOutcome::Handled
     );
     assert_eq!(titles(&chrome), ["alpha", "beta", "gamma"]);
@@ -454,4 +454,25 @@ fn tab_drag_reorders_or_clicks() {
     );
     assert_eq!(titles(&chrome), ["alpha", "beta", "gamma"]);
     assert_eq!(chrome.gesture, None);
+}
+
+#[test]
+fn tab_drag_reorders_when_terminal_coalesces_motion_events() {
+    let (ws, mut chrome, _) = tab_bar_chrome(80, &["alpha", "beta", "gamma"]);
+    let (from, row) = tab_cell(&chrome, 0);
+    let (to, _) = tab_cell(&chrome, 2);
+    route_mouse(
+        &ws,
+        &mut chrome,
+        &mouse(LEFT_DOWN, from, row, KeyModifiers::NONE),
+    );
+    assert_eq!(
+        route_mouse(
+            &ws,
+            &mut chrome,
+            &mouse(LEFT_UP, to, row, KeyModifiers::NONE)
+        ),
+        MouseOutcome::Handled
+    );
+    assert_eq!(titles(&chrome), ["beta", "gamma", "alpha"]);
 }

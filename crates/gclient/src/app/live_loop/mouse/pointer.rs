@@ -460,8 +460,10 @@ pub(super) fn up<W: WorkspaceView>(
 ) -> MouseOutcome {
     match released {
         Some(MouseGesture::TabDrag {
-            index, moved: true, ..
-        }) => {
+            index,
+            origin_col,
+            moved,
+        }) if moved || mouse.column.abs_diff(origin_col) >= TAB_DRAG_THRESHOLD => {
             if let Hit::Tab(target) = hit {
                 let tabs = &chrome.tabs().tabs;
                 if target != index && index < tabs.len() && target < tabs.len() {

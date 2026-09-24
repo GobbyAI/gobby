@@ -304,6 +304,136 @@ pub(super) async fn move_daemon_tab(
     Ok(())
 }
 
+pub(super) async fn move_active_daemon_tab(
+    workspace: &mut Workspace<LiveDaemon>,
+    chrome: &mut Chrome,
+    direction: isize,
+) -> Result<(), FrameError> {
+    let tabs = &chrome.tabs().tabs;
+    let Some(target_index) = chrome.active_index().checked_add_signed(direction) else {
+        return Ok(());
+    };
+    let Some((source, target)) = tabs.get(chrome.active_index()).zip(tabs.get(target_index)) else {
+        return Ok(());
+    };
+    if source.is_local() || target.is_local() {
+        return Ok(());
+    }
+    let Some(position) = workspace
+        .workspace_model()
+        .and_then(|model| model.tab(&target.id))
+        .map(|tab| tab.position)
+    else {
+        return Ok(());
+    };
+    move_daemon_tab(workspace, chrome, source.id.clone(), position).await
+}
+
+pub(super) async fn move_focused_pane_to_tab(
+    workspace: &mut Workspace<LiveDaemon>,
+    chrome: &mut Chrome,
+    destination: Option<usize>,
+) -> Result<(), FrameError> {
+    let Some(source) = active_daemon_tab(chrome) else {
+        return Ok(());
+    };
+    let Some(pane) = daemon_pane_id(chrome, chrome.tab_focus(source)) else {
+        return Ok(());
+    };
+    let Some(terminal_id) = workspace
+        .workspace_model()
+        .and_then(|model| model.pane(&pane))
+        .and_then(|row| row.terminal_id.clone())
+    else {
+        return Ok(());
+    };
+    let worktree_id = source.worktree_id.clone();
+    let (target, placeholder) = if let Some(index) = destination {
+        let Some(target) = chrome.tabs().tabs.get(index).filter(|tab| !tab.is_local()) else {
+            return Ok(());
+        };
+        if target.id == source.id {
+            return Ok(());
+        }
+        (target.id.clone(), None)
+    } else {
+        let Some(model) = workspace.workspace_model() else {
+            return Ok(());
+        };
+        let Some(project_id) = workspace.project_id() else {
+            return Ok(());
+        };
+        let create = WorkspaceOp::TabCreate {
+            workspace: model.workspace.id.clone(),
+            project_id: project_id.to_owned(),
+            worktree_id,
+            title: None,
+            terminal_id: None,
+            node: None,
+        };
+        let reply = match workspace.daemon().workspace_op(create).await {
+            Ok(reply) => reply,
+            Err(DaemonError::Workspace(error)) => {
+                chrome.notify(Toast::warning(error.reason));
+                return Ok(());
+            }
+            Err(error) => return Err(error.into()),
+        };
+        let tab = reply.result["tabs"][0]["id"]
+            .as_str()
+            .ok_or_else(|| FrameError::Protocol("tab.create omitted the new tab id".into()))?
+            .to_owned();
+        let first_pane = reply.result["panes"][0]["id"]
+            .as_str()
+            .ok_or_else(|| FrameError::Protocol("tab.create omitted the new pane id".into()))?
+            .to_owned();
+        (tab, Some(first_pane))
+    };
+
+    workspace.expect_placement(&terminal_id);
+    let moved = send_workspace_op(
+        workspace,
+        chrome,
+        WorkspaceOp::PaneMove {
+            pane,
+            tab: target.clone(),
+            beside: None,
+            axis: None,
+            node: None,
+        },
+    )
+    .await;
+    if !matches!(moved, Ok(true)) {
+        workspace.forget_placement(&terminal_id);
+    }
+    if !moved? {
+        if placeholder.is_some() {
+            send_workspace_op(
+                workspace,
+                chrome,
+                WorkspaceOp::TabClose {
+                    tab: target,
+                    node: None,
+                },
+            )
+            .await?;
+        }
+        return Ok(());
+    }
+    if let Some(placeholder) = placeholder {
+        send_workspace_op(
+            workspace,
+            chrome,
+            WorkspaceOp::PaneClose {
+                pane: placeholder,
+                node: None,
+            },
+        )
+        .await?;
+    }
+    Ok(())
+}
+
 /// The focus this window shows when the active tab is the daemon's.
 fn shown_focus(workspace: &Workspace<LiveDaemon>, chrome: &Chrome) -> Option<ShownFocus> {
     let project = workspace.project_id()?.to_owned();
