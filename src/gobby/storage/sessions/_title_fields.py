@@ -10,7 +10,11 @@ from gobby.utils.datetime import utc_now
 
 from ._bootstrap import TitleChangeCallback
 from ._constants import get_logger
-from ._title_defaults import MANUAL_TITLE_SOURCE
+from ._title_defaults import (
+    MANUAL_TITLE_SOURCE,
+    PROVISIONAL_TITLE_SOURCE,
+    format_provisional_session_title,
+)
 from ._title_update import apply_title_mutation
 
 if TYPE_CHECKING:
@@ -31,14 +35,13 @@ class _TitleFieldHost(Protocol):
 
 class _TitleFieldMixin:
     def normalize_automatic_title_refs(self: _TitleFieldHost) -> int:
-        """Refresh automatic prefixes without changing suffixes or provenance."""
+        """Refresh automatic prefixes and rewrite legacy heuristic titles as provisional."""
         rows = self.db.fetchall(
             """
-            SELECT s.id, s.title, s.title_source, s.heuristic_title, s.seq_num, s.project_id,
+            SELECT s.id, s.title, s.title_source, s.source, s.seq_num, s.project_id,
                    p.name AS project_name
             FROM sessions s LEFT JOIN projects p ON p.id = s.project_id
-            WHERE (s.title_source IN ('provisional', 'heuristic', 'task')
-                   OR s.heuristic_title IS NOT NULL)
+            WHERE s.title_source IN ('provisional', 'heuristic', 'task')
               AND s.seq_num IS NOT NULL
             """
         )
@@ -46,41 +49,36 @@ class _TitleFieldMixin:
         for row in rows:
             title = row["title"] or ""
             project = str(row["project_name"] or "").strip() or str(row["project_id"])
-
-            def normalize(
-                value: str,
-                project_name: str = project,
-                session_seq_num: object = row["seq_num"],
-            ) -> str:
-                prefix = re.match(r"^(?:\([^)]*#\d+\)|[^\s:()]+#\d+)(?=:|$)", value)
-                return (
-                    f"{project_name}#{session_seq_num}" + value[prefix.end() :]
-                    if prefix is not None
-                    else value
+            source = row["title_source"]
+            if source == "heuristic":
+                target = format_provisional_session_title(
+                    project, row["seq_num"], str(row["source"] or "")
                 )
-
-            normalized = normalize(title)
-            heuristic = str(row["heuristic_title"] or "")
-            normalized_heuristic = normalize(heuristic) or None
-            if normalized == title and normalized_heuristic == (heuristic or None):
+                source = PROVISIONAL_TITLE_SOURCE
+            else:
+                prefix = re.match(r"^(?:\([^)]*#\d+\)|[^\s:()]+#\d+)(?=:|$)", title)
+                target = (
+                    f"{project}#{row['seq_num']}" + title[prefix.end() :]
+                    if prefix is not None
+                    else title
+                )
+            if target == title and source == row["title_source"]:
                 continue
             with self.db.transaction() as conn:
                 cursor = conn.execute(
                     """
                     UPDATE sessions
-                    SET title = %s, heuristic_title = %s, updated_at = %s
+                    SET title = %s, title_source = %s, updated_at = %s
                     WHERE id = %s AND title IS NOT DISTINCT FROM %s
                       AND title_source IS NOT DISTINCT FROM %s
-                      AND heuristic_title IS NOT DISTINCT FROM %s
                     """,
                     (
-                        normalized,
-                        normalized_heuristic,
+                        target,
+                        source,
                         utc_now(),
                         row["id"],
                         row["title"],
                         row["title_source"],
-                        row["heuristic_title"],
                     ),
                 )
                 applied = bool(cursor.rowcount)
