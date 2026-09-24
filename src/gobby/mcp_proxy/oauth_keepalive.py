@@ -33,7 +33,7 @@ _LOCK_HELD: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "gobby_oauth_lock_held", default=False
 )
 _TASKS: set[asyncio.Task[None]] = set()
-_keepalive_task: asyncio.Task[None] | None = None
+_keepalive_tasks: dict[int, asyncio.Task[None]] = {}
 
 
 def oauth_lock_key(name: str) -> int:
@@ -210,7 +210,6 @@ async def refresh_due_oauth_servers(manager: object) -> None:
             continue
         if getattr(row, "transport", None) not in ("http", "sse"):
             continue
-        headers = getattr(row, "headers", None)
         config = MCPServerConfig(
             name=row.name,
             id=row.id,
@@ -218,7 +217,6 @@ async def refresh_due_oauth_servers(manager: object) -> None:
             transport=row.transport,
             url=row.url,
             requires_oauth=True,
-            headers=store.resolve_dict(headers, project_id=row.project_id) if headers else None,
         )
         try:
             await refresh_server_if_due(config, store, now=now)
@@ -237,14 +235,20 @@ async def oauth_keepalive_loop(manager: object) -> None:
 
 
 def _replace_keepalive_task(manager: object, loop: asyncio.AbstractEventLoop) -> None:
-    global _keepalive_task
-    previous = _keepalive_task
+    key = id(manager)
+    current = _keepalive_tasks.get(key)
+    if current is not None and not current.done():
+        return
     task = loop.create_task(oauth_keepalive_loop(manager), name="mcp-oauth-keepalive")
-    _keepalive_task = task
+    _keepalive_tasks[key] = task
     _TASKS.add(task)
-    task.add_done_callback(_TASKS.discard)
-    if previous is not None and not previous.done():
-        previous.cancel()
+
+    def discard(done: asyncio.Task[None], owner: int = key) -> None:
+        _TASKS.discard(done)
+        if _keepalive_tasks.get(owner) is done:
+            _keepalive_tasks.pop(owner, None)
+
+    task.add_done_callback(discard)
 
 
 def schedule_oauth_keepalive(
@@ -258,14 +262,17 @@ def schedule_oauth_keepalive(
     loop.call_soon_threadsafe(_replace_keepalive_task, manager, loop)
 
 
-def cancel_oauth_keepalive(loop: asyncio.AbstractEventLoop | None = None) -> None:
-    """Stop the one daemon keep-alive. Safe to call from a pool thread."""
+def cancel_oauth_keepalive(manager: object, loop: asyncio.AbstractEventLoop | None = None) -> None:
+    """Cancel the keep-alive owned by this manager. Safe to call from a pool thread."""
 
     def stop() -> None:
-        global _keepalive_task
-        task = _keepalive_task
-        _keepalive_task = None
-        if task is not None and not task.done():
+        key = id(manager)
+        task = _keepalive_tasks.get(key)
+        if task is None:
+            return
+        if _keepalive_tasks.get(key) is task:
+            _keepalive_tasks.pop(key, None)
+        if not task.done():
             task.cancel()
 
     if loop is None:

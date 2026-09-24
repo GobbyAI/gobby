@@ -18,9 +18,11 @@ from gobby.mcp_proxy.oauth_keepalive import (
     ACCESS_REFRESH_LEAD_SECONDS,
     KEEPALIVE_TICK_SECONDS,
     backoff_active,
+    cancel_oauth_keepalive,
     oauth_lock_key,
     oauth_server_lock,
     oauth_state_shape,
+    refresh_due_oauth_servers,
     refresh_server_if_due,
     schedule_backoff,
     schedule_oauth_keepalive,
@@ -581,24 +583,112 @@ async def test_one_provider_two_flows_refresh_once_and_release_lock(
     assert acquired
 
 
-@pytest.mark.asyncio
-async def test_reschedule_leaves_one_keepalive_task() -> None:
-    """Rebuilding the manager replaces the keep-alive instead of adding another."""
-    schedule_oauth_keepalive(object())
-    schedule_oauth_keepalive(object())
-    await _flush()
-    await _flush()
-    live = [
+def _live_keepalive_tasks() -> list[asyncio.Task[None]]:
+    return [
         task
         for task in asyncio.all_tasks()
         if task.get_name() == "mcp-oauth-keepalive" and not task.done()
     ]
+
+
+async def _settle_keepalive() -> None:
+    await _flush()
+    await _flush()
+
+
+@pytest.mark.asyncio
+async def test_reschedule_leaves_one_keepalive_task() -> None:
+    """Scheduling the same manager twice leaves its one keep-alive."""
+    manager = object()
+    schedule_oauth_keepalive(manager)
+    schedule_oauth_keepalive(manager)
+    await _settle_keepalive()
+    live = _live_keepalive_tasks()
     try:
         assert len(live) == 1
     finally:
-        for task in live:
-            task.cancel()
-        await _flush()
+        cancel_oauth_keepalive(manager)
+        await _settle_keepalive()
+
+
+@pytest.mark.asyncio
+async def test_disposing_one_manager_leaves_the_other_keepalive() -> None:
+    """Disposing the old manager does not cancel the replacement keep-alive."""
+    old = object()
+    new = object()
+    schedule_oauth_keepalive(old)
+    schedule_oauth_keepalive(new)
+    await _settle_keepalive()
+    cancel_oauth_keepalive(old)
+    await _settle_keepalive()
+    try:
+        assert len(_live_keepalive_tasks()) == 1
+    finally:
+        cancel_oauth_keepalive(old)
+        cancel_oauth_keepalive(new)
+        await _settle_keepalive()
+
+
+@pytest.mark.asyncio
+async def test_failed_prepare_dispose_leaves_the_active_keepalive() -> None:
+    """Disposing a failed replacement leaves the still-active manager's keep-alive."""
+    active = object()
+    failed = object()
+    schedule_oauth_keepalive(active)
+    schedule_oauth_keepalive(failed)
+    await _settle_keepalive()
+    cancel_oauth_keepalive(failed)
+    await _settle_keepalive()
+    try:
+        assert len(_live_keepalive_tasks()) == 1
+    finally:
+        cancel_oauth_keepalive(active)
+        cancel_oauth_keepalive(failed)
+        await _settle_keepalive()
+
+
+@pytest.mark.asyncio
+async def test_keepalive_pass_does_not_resolve_headers(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The keep-alive tick does not decrypt server headers on the loop."""
+
+    class Row:
+        requires_oauth = True
+        url = "https://resource.example/mcp"
+        transport = "http"
+        name = "fieldy"
+        id = "fieldy-id"
+        project_id = GLOBAL_PROJECT_ID
+        headers = {"Authorization": "stored"}
+
+    class Database:
+        db = object()
+
+        def list_all_servers(self, include_global: bool) -> list[Row]:
+            assert include_global is True
+            return [Row()]
+
+    class Manager:
+        mcp_db_manager = Database()
+
+    class Store:
+        def __init__(self, db: object) -> None:
+            self.db = db
+
+        def resolve_dict(self, headers: object, *, project_id: str) -> dict[str, str]:
+            del headers, project_id
+            raise AssertionError("keep-alive must not resolve headers")
+
+    seen: list[object] = []
+
+    async def record(config: MCPServerConfig, store: object, *, now: float) -> bool:
+        del store, now
+        seen.append(config.headers)
+        return False
+
+    monkeypatch.setattr("gobby.mcp_proxy.oauth_keepalive.SecretStore", Store)
+    monkeypatch.setattr("gobby.mcp_proxy.oauth_keepalive.refresh_server_if_due", record)
+    await refresh_due_oauth_servers(Manager())
+    assert seen == [None]
 
 
 @pytest.mark.asyncio

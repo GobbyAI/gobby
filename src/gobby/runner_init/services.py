@@ -496,7 +496,7 @@ def _build_mcp_manager(
     schedule_oauth_keepalive(manager, loop)
 
     def _dispose_mcp_manager() -> None:
-        cancel_oauth_keepalive(loop)
+        cancel_oauth_keepalive(manager, loop)
         _dispose_async(loop, manager.disconnect_all)
 
     return PreparedService(manager, _dispose_mcp_manager)
