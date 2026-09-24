@@ -110,6 +110,7 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "mark_transcript_processed": "(self, session_id: 'str', *, "
     "expected_session: 'Session | None' = None, source_hash: 'str | None' = None) -> 'Session | None'",
     "move_to_project": "(self, session_id: 'str', project_id: 'str') -> 'Session | None'",
+    "normalize_automatic_title_refs": "(self) -> 'int'",
     "pause_inactive_active_sessions": "(self, timeout_minutes: 'int' = 30) -> 'int'",
     "persist_summary_state": "(self, session_id: 'str', *, summary_markdown: 'str', "
     "generation_mode: 'str', source_context_hash: 'str | None' = None, "
@@ -159,6 +160,7 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "unregister_title_listener": "(self, listener: 'TitleChangeCallback') -> 'None'",
     "update": "(self, session_id: 'str', *, external_id: 'str | None' = None, "
     "source: 'str | None' = None, model: 'str | None' = None, "
+    "reasoning_effort: 'str | None | UnsetType' = UNSET, "
     "chat_mode: 'str | None' = None, session_type: 'str | None' = None, "
     "transcript_path: 'str | None | UnsetType' = UNSET, status: 'str | None' = None, "
     "title: 'str | None | UnsetType' = UNSET, "
@@ -190,7 +192,8 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "workflow_name: 'str | None' = None, agent_run_id: 'str | None' = None, "
     "original_prompt: 'str | None' = None) -> 'Session | None'",
     "update_title": "(self, session_id: 'str', title: 'str', *, "
-    "title_source: 'str | None' = 'manual') -> 'Session | None'",
+    "title_source: 'str | None' = 'manual', allow_task_fallback: 'bool' = False) "
+    "-> 'Session | None'",
     "update_usage": "(self, session_id: 'str', input_tokens: 'int', "
     "output_tokens: 'int', cache_creation_tokens: 'int', cache_read_tokens: 'int', "
     "context_window: 'int | None' = None, model: 'str | None' = None) -> 'bool'",

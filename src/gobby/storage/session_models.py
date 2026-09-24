@@ -61,7 +61,6 @@ class Session:
     transcript_processing_last_error: str | None = None
     transcript_processing_last_failed_at: datetime | None = None
     title_source: str | None = None
-    heuristic_title: str | None = None
     reasoning_effort: str | None = None
     agent_depth: int = 0  # 0 = human-initiated, 1+ = agent-spawned
     spawned_by_agent_id: str | None = None  # ID of agent that spawned this session
@@ -141,7 +140,6 @@ class Session:
             project_name=cls._get_optional(row, "project_name"),
             title=row["title"],
             title_source=cls._get_optional(row, "title_source"),
-            heuristic_title=cls._get_optional(row, "heuristic_title"),
             reasoning_effort=cls._get_optional(row, "reasoning_effort"),
             status=row["status"],
             transcript_path=row["transcript_path"],

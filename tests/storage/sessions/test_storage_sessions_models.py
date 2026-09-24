@@ -1,6 +1,7 @@
 """Focused tests for session storage behavior."""
 
 from collections.abc import Iterator
+from dataclasses import fields
 from datetime import UTC, datetime
 from unittest.mock import patch
 
@@ -115,19 +116,19 @@ class TestSession:
         assert session.to_brief()["title_source"] == "manual"
 
     @pytest.mark.parametrize("reasoning_effort", [None, "xhigh"])
-    def test_full_and_brief_expose_nullable_effort_but_hide_heuristic(
+    def test_full_and_brief_expose_nullable_effort(
         self,
         reasoning_effort: str | None,
     ) -> None:
+        assert "heuristic_title" not in {field.name for field in fields(Session)}
         session = Session(
             id="sess-effort",
             external_id="ext-effort",
             machine_id=LOCAL_MACHINE_ID,
             source="codex",
             project_id="proj-1",
-            title="proj#1: Repair session titles",
-            title_source="heuristic",
-            heuristic_title="proj#1: Repair session titles",
+            title="proj#1: Task #7 - Repair session titles",
+            title_source="task",
             reasoning_effort=reasoning_effort,
             status="active",
             transcript_path=None,
@@ -141,8 +142,7 @@ class TestSession:
 
         for record in (session.to_dict(), session.to_brief()):
             assert record["reasoning_effort"] == reasoning_effort
-            assert record["title_source"] == "heuristic"
-            assert "heuristic_title" not in record
+            assert record["title_source"] == "task"
 
     @pytest.mark.parametrize("status", ["paused", "awaiting_handoff"])
     def test_to_dict_marks_live_tmux_sessions_proxy_attachable(self, status: str) -> None:
