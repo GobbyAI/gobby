@@ -11,6 +11,8 @@ import traceback
 from collections.abc import Awaitable
 from typing import Any
 
+from gobby.telemetry.instruments import observe_histogram
+
 logger = logging.getLogger("gobby.runner_lifecycle")
 
 
@@ -28,7 +30,7 @@ def start_startup_lag_probe(
     *,
     duration_seconds: float | None = None,
     interval_seconds: float = 0.25,
-    threshold_seconds: float = 0.25,
+    threshold_seconds: float = 1.0,
     rate_limit_seconds: float = 60.0,
 ) -> None:
     """Sample loop stalls for the loop lifetime from an independent thread."""
@@ -41,7 +43,11 @@ def start_startup_lag_probe(
         return not loop.is_closed() and (deadline is None or time.monotonic() < deadline)
 
     def beat() -> None:
-        state["last_beat"] = time.monotonic()
+        now = time.monotonic()
+        lag = now - state["last_beat"] - interval_seconds
+        if lag >= 0.25:
+            observe_histogram("daemon_event_loop_lag_seconds", lag)
+        state["last_beat"] = now
         state["reported"] = False
         if active():
             loop.call_later(interval_seconds, beat)

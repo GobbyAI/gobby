@@ -287,6 +287,10 @@ class TelemetryMetrics:
             "hook_phase_duration_seconds",
             "Hook execution duration in seconds by phase, source, and hook type",
         )
+        self._register_histogram(
+            "daemon_event_loop_lag_seconds",
+            "Daemon event loop stalls of at least 250 milliseconds",
+        )
         self._register_counter(
             "adapter_degradations_total",
             "Lossy adapter response translations by provider and hook",
