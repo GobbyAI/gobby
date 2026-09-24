@@ -516,6 +516,8 @@ trigger covers every claim path with no Python call site: the insert with a clai
 (`_manager.py` 348), and the stage transitions (`_stage_state_transitions.py`
 638-650). It rides this migration so V1 step 2 stays one cutover (decision 16).
 
+**Granularity:** more than six production Target files: one migration with the identity, contract and manifest artifacts the schema pipeline regenerates from it; none is closeable without the others.
+
 Research context:
 - Precedent commit `541320efc2` (migration 444) shows the carrier procedure; there is no
   single regenerate command. Order: (1) append an `EmbeddedMigration { version: 451,
@@ -669,6 +671,8 @@ snapshot row fields in `docs/contracts/gterm-protocols.md`; the pane line in
 `docs/guides/gclient-user-guide.md`; the roster fields in the gobby skill's
 `references/sessions/workspaces.md`. The golden corpus fixtures are not regenerated.
 
+**Granularity:** more than six production Target files: the new columns and every reader of the layout share one derived roster, and a reader without its column, or the column without its readers, is not verifiable.
+
 Research context:
 - Entry points: `WorkspaceOps.tab_create` (372-402), `pane_split` (460-490), `_fill`
   (823-873, returns the `set_pane_terminal` row, which already carries `role`), `_emit`
@@ -817,14 +821,14 @@ role change is a relaunch and no live switch, `pane.set_role`, `--role` flag or 
 panes set-role` exists. Acceptance items 1.4.1 to 1.4.5 are removed with it; the number
 is not reused, so D1 and the round file keep resolving.
 
-### 1.5 Runbook launch: spawn_agent placement, the role's sandbox block, pane-bound runs [category: code] (depends: 1.1, 1.2)
+### 1.5 Runbook launch: spawn_agent placement, the role's sandbox block, pane-bound runs [category: code] (depends: 1.1, 1.2, 1.6)
 `kind: deliverable`
 
 Targets:
 - `src/gobby/mcp_proxy/tools/spawn_agent/_placement.py`
 - `src/gobby/mcp_proxy/tools/spawn_agent/_sandbox_block.py`
 - `src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py::spawn_agent_impl`
-- `src/gobby/mcp_proxy/tools/spawn_agent/_factory.py::*` — scope-reason: the tool schema gains `placement` and `sandbox`, forwards them, and defaults the parent to the system session for a caller with no session
+- `src/gobby/mcp_proxy/tools/spawn_agent/_factory.py::*` — scope-reason: the tool schema gains `placement` and `sandbox`, forwards them, defaults the parent to the system session for a caller with no session, forwards the request context's verified launcher flag beside `caller_session_id`, and the provider fallback branch re-resolves the selected name with the row
 - `src/gobby/terminals/workspace_launch.py`
 - `src/gobby/terminals/workspace_ops.py::*` — scope-reason: inherits the launch mixin and `pane_close` terminates a pane-bound run
 - `src/gobby/terminals/actor_scope.py::resolve_actor_scope`
@@ -832,17 +836,9 @@ Targets:
 - `src/gobby/agents/idle_check_handler.py::IdleCheckHandler._get_active_terminal_runs`
 - `src/gobby/agents/terminal_prompt_monitor.py::*` — scope-reason: its run listing filters pane-bound runs by the shared predicate
 - `src/gobby/agents/lifecycle_monitor.py::*` — scope-reason: the stuck and completed-task checks skip pane-bound runs by the shared predicate; call lines only
-- `src/gobby/workflows/agent_models.py::AgentDefinitionBody`
-- `src/gobby/storage/definitions/agents.py::AgentDefinitionManager.create`
-- `src/gobby/storage/definitions/agents.py::AgentDefinitionManager.upsert_with_steps`
-- `src/gobby/storage/definitions/agents.py::AgentDefinitionManager._write_update`
-- `src/gobby/storage/definitions/agents.py::AgentDefinitionManager.restore`
-- `src/gobby/storage/definitions/agents.py::AgentDefinitionManager.toggle_enabled`
-- `src/gobby/storage/definitions/agents.py::_find_live`
-- `src/gobby/agents/sync.py::_is_sync_managed_bundled_agent`
-- `src/gobby/agents/sync.py::sync_bundled_agents`
-- `src/gobby/mcp_proxy/tools/workflows/_agents.py::create_agent_definition`
 - `src/gobby/hooks/event_handlers/_session_start/materialize.py::_bind_clear_successor`
+- `src/gobby/servers/routes/mcp/endpoints/request_context.py::_set_context_for_request`
+- `tests/servers/routes/mcp_endpoints/test_execution_context.py::*` — scope-reason: add the launcher credential verification tests
 - `src/gobby/cli/agents.py::spawn_agent_cmd`
 - `docs/guides/agents.md`
 - `docs/guides/sandboxing.md`
@@ -853,11 +849,6 @@ Targets:
 - `tests/terminals/test_workspace_launch.py`
 - `tests/agents/test_pane_run_lifecycle.py`
 - `tests/cli/test_cli_agents.py::*` — scope-reason: add the placement and sandbox flag tests
-- `tests/workflows/test_agent_models.py::*` — scope-reason: add the `sandbox` field tests
-- `tests/storage/definitions/test_agents_manager.py::*` — scope-reason: add the sandbox-key and exempt-row guard tests
-- `tests/mcp_proxy/tools/test_mcp_proxy_tools_agent_definitions.py::*` — scope-reason: add the create refusal test
-- `tests/servers/routes/test_agents_routes.py::*` — scope-reason: add the update refusal test
-- `tests/agents/test_agents_sync.py::*` — scope-reason: the new-row branch moves to `upsert_from_sync`
 - `tests/hooks/test_session_materialize.py::*` — scope-reason: add the sandbox-flag copy test
 
 Tool contract. `gobby-agents:spawn_agent` gains two optional parameters. `placement`
@@ -872,8 +863,8 @@ Constraints). `sandbox` is a restriction block in `SandboxConfig`'s field names
 `enabled` are refused in the call block: the first three are daemon-owned, and only a
 definition's block may switch the sandbox off (decision 20, adversary A1). The pane's
 role is the `agent` name; a `placement` without `agent` is refused, and so is
-`terminal_backend: tmux` with placement. The definition's own `sandbox` block (new
-optional `AgentDefinitionBody.sandbox`, the same shape, validated by
+`terminal_backend: tmux` with placement. The definition's own `sandbox` block (the
+optional `AgentDefinitionBody.sandbox` that 1.6 adds, the same shape, validated by
 `coerce_sandbox_config`'s rules) is applied first and the call's block on top: lists
 append, booleans override, and `enabled: false` comes only from the definition's block,
 where the validator requires a `reason`, and is honored only when the resolved row is
@@ -883,59 +874,32 @@ caller is not itself sandboxed (the row of the session the proxy authenticated, 
 `caller_session_id` the tool already receives beside `parent_session_id` for
 `authorize_write_grant`, has `sandbox_enabled` false; a body-supplied
 `parent_session_id`, which the proxy passes through untouched, never qualifies; a call
-with no caller session, the CLI paths, qualifies); from any other row, or for a
-sandboxed caller, the launch ignores the exemption and stays
-sandboxed, on the precedent of `authorize_write_grant`, where a managed caller may only
+with no caller session qualifies only when the request authenticated with the local
+CLI token, which the daemon-owned policy already denies to every sandboxed run
+(`_credential_roots` in `sandbox_policy.py` lists `~/.gobby/local_cli_token` and feeds
+`compute_sandbox_paths`' deny-read roots; `read_local_api_token` catches the resulting
+`PermissionError`), so a token-only call proves an unsandboxed process: gclient's
+`launch` verb (2.1) and `gobby agents spawn` run by the operator. `_set_context_for_request`,
+which seeds `session_id` None for such a call today, records a `trusted_launcher` flag
+beside it only for local-CLI-token authentication with no session header or body
+session; a call authenticated by any other credential the endpoint accepts (a managed
+run's grant token) never sets it, and `_factory.py` forwards the flag to
+`spawn_agent_impl` beside `caller_session_id` (enhancer E2, fail closed); no body field
+or header names a session that confers it, and a sandboxed authenticated caller is
+never honored); from any other row, for a sandboxed caller, or for a no-session call
+without the flag, the launch ignores the exemption
+and stays sandboxed, on the precedent of `authorize_write_grant`, where a managed caller may only
 narrow what it holds. No block means the spawn path's default policy.
-
-Definition write paths (PD S1). Every path that writes an agent definition row goes
-through `AgentDefinitionManager`, whose sync-only entry points already exist
-(`upsert_from_sync`, and `update_from_sync` with `from_sync=True`). One guard there,
-`_refuse_unsynced_exempt_write(stored_body, incoming_body)`, is called by `create`,
-by both branches of `upsert_with_steps` (the existing-row branch reads the live row's
-stored body inside the same transaction, so `_find_live` returns it), by
-`_write_update` when `from_sync` is false, whatever the fields, by `toggle_enabled`
-(the HTTP enable and disable route; the exempt row is enabled by its template) and by
-`restore`,
-which reads the soft-deleted row inside its transaction before `restore_definition`:
-it raises `ValueError` when the incoming parent body carries the `sandbox.enabled`
-key, or when the stored body does. A row that carries the key is therefore immutable
-outside the sync: no rename (which would carry the program-director row and its
-exemption under a new name until the next start's sweep), no description edit, no
-rule or variable patch, no restore, and no re-tag through the existing-row branch of
-`upsert_with_steps`, which overwrites `source` and `tags` from its arguments; the
-role changes only through its template and a restart, which is already how the key
-itself changes. A row without the key takes the same edits as today, except that it
-cannot gain the key. The sync entry points skip the guard (the sync never restores a
-soft-deleted row; `upsert_from_sync` inserts a new one), and `sync_bundled_agents`'s
-new-row branch moves from `upsert_with_steps` to `upsert_from_sync`, which already
-inserts when no live row exists. The paths that
-reach the guard, all unchanged except the first: `gobby-workflows:create_agent_definition`
-(`_agents.py`, which gains an `except ValueError` returning `success: false`); the HTTP
-create, update, import and restore routes (the agents router: `update_definition` maps
-`sandbox_config` onto `sandbox` and `ValueError` to 400 today, `import_definition` of
-a bundled YAML that carries the exemption is refused the same way,
-`restore_definition` maps `ValueError` to 404 today, and `create_definition` does not
-forward `sandbox_config` today); the MCP rule and variable patches and the HTTP
-`patch_*` routes (they re-save the stored body through `_write_update`, so they pass
-on every row but the exempt one); `_upsert_agent` in the workflows import module behind the
-`gobby-workflows` import tool (a project YAML carrying the key is that file's error);
-and `duplicate` (no caller in `src/`). No CLI writes a definition row: `gobby agents`
-lists, shows and spawns, and `gobby sync` is the sync path. The sync reads
-`get_bundled_agents_path()` under `get_install_dir()`, the daemon refuses to start
-from a linked worktree, and `gobby sync` verifies bundled integrity outside dev mode,
-so `sandbox.enabled` reaches a row only from `src/gobby/install/shared/workflows/agents/`
-in the main checkout: a reviewed merge, or the program-director's own edit. The marker
-is sound after the first start following the cutover (V1 step 2): the sync re-writes
-every managed row whose body differs from its template and sweeps `gobby`-tagged rows
-with no template, so a `gobby` tag set through the HTTP `tags` field buys nothing
-without the key the guard refuses.
 
 Order inside the tool (`_placement.py`, called from `spawn_agent_impl` by one branch
 after the definition resolves): (1) resolve the definition through
-`resolve_agent_with_row`, so the row's provenance travels with the body
-(`spawn_agent_impl` gains `definition_row`, default None, so the direct callers in
-`ask/` and `feedback/` never honor an exemption); it must declare the `spawn`
+`resolve_agent_with_row`, so the row's provenance travels with the body; when the
+provider fallback in `_factory.py` (its `_load_agent_body` loop, which today loads a
+body only) selects another definition, the branch re-resolves the selected name with
+`resolve_agent_with_row`, so `definition_row` is always the row of the body that
+launches (adversary A3) (`spawn_agent_impl` gains `definition_row`, default None, so
+the direct callers in `ask/` and `feedback/` and the HTTP `/api/agents/spawn` route,
+which pass a body only, never honor an exemption); it must declare the `spawn`
 surface (`prompts.agent`) and, for a runbook role, the `persona` surface too, because
 the `/clear` successor is delivered `prompts.persona` (1.3); (2) reserve the pane row
 with `role` and, for a new tab, `runbook` and `title`, through the new
@@ -949,8 +913,9 @@ at the existing seam (`_sandbox_block.py`, replacing the plain
 `apply_write_grant(agent_sandbox_config(...), write_grant)` value when a block is
 present), honoring the definition's `enabled: false` only when `definition_row` passes
 `is_sync_managed_bundled_agent` and the `caller_session_id` row (never the `parent_session_id` argument), read
-through the session manager the tool already holds, has `sandbox_enabled` false or
-there is no caller session, and record the
+through the session manager the tool already holds, has `sandbox_enabled` false, or
+there is no caller session and the request context's `trusted_launcher` flag is set,
+and record the
 reason, when any, as the launched session's initial variable `_launch_sandbox_reason`; (4) run the existing spawn with `terminal_backend` forced to
 `native`, `extra_env` set to the identity env, `parent_session_id` equal to the caller's
 session or, for a caller with none (the CLI paths), the machine system session
@@ -959,8 +924,12 @@ checkout (or the worktree path), `notify_parent_on_completion` false and no `tim
 (the definition's `timeout` stays 0, so the run row has no `timeout_seconds`); (5) bind
 the pane to the spawned terminal (`set_pane_terminal(owns_terminal=True)`), emit
 `tab.created` or `pane.added` with the row, and label the pane with the role when no
-title was given; on any failure after (2) release the reserved row and let the spawn's
-own rollback run. The reply gains `pane_ref`, `tab_ref`, `terminal_id`, `sandbox`
+title was given; on any failure between (2) and the spawn's return, release the reserved row and let
+the spawn's own rollback run; on any failure after the spawn returns (the bind, the
+event, the label), terminate the spawned run through the existing termination path
+`pane_close` uses, which reaps its sandbox (`reap_terminal_sandbox_run`), then release
+the reserved row, so a failed launch leaves no active run, terminal or pane behind
+(enhancer E1). The reply gains `pane_ref`, `tab_ref`, `terminal_id`, `sandbox`
 (`{"enforced": bool, "policy_hash": str | None, "reason": str | None}`) and
 `worktree_path`.
 
@@ -1003,6 +972,8 @@ when it is absent); with placement the command omits `timeout` and sends
 `POST /api/mcp/gobby-agents/tools/spawn_agent` it posts today. gclient's `launch` verb
 (2.1) posts the same endpoint with the same body, so the three callers share one
 implementation and one reply.
+
+**Granularity:** more than six acceptance items and production Target files, and two lifecycle owners (the launch and the pane-bound run). Kept as one leaf: a pane-bound run exists only through this launch, the pane-bound predicate is the launch's contract with the monitors, and its tests need the launch's pane binding. The definition side is split off as 1.6. Alternative for the PD: the pane-bound run lifecycle (1.5.9) as a leaf of its own that 1.5 depends on.
 
 Research context:
 - `spawn_agent_impl` (`src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py`, 964
@@ -1063,7 +1034,7 @@ Research context:
   resolver; a new policy format; adopting a spawned terminal into a pane after the
   spawn (no identity env); an HTTP route of its own for the launch (the tool endpoint
   exists).
-- Planned checks: the four new test files and the three extended ones with the isolated
+- Planned checks: the four new test files and the two extended ones with the isolated
   hub DSN; `tests/agents/test_srt_spawn.py` unchanged and passing; mypy; `wc -l` on
   `_implementation.py`, `lifecycle_monitor.py` and `workspace_ops.py` under 1,000.
 
@@ -1073,6 +1044,10 @@ Consumers unchanged:
 - `src/gobby/scheduler/executor.py` — no-edit-reason: same; it already parents on the system session.
 - `src/gobby/servers/routes/agent_spawn.py` — no-edit-reason: forwards its own request model to the same implementation; the two new keywords default to None.
 - `src/gobby/servers/routes/mcp/tools.py` — no-edit-reason: the tool endpoint forwards whatever arguments the tool schema accepts.
+- `src/gobby/servers/routes/mcp/endpoints/discovery.py` — no-edit-reason: calls `_set_context_for_request` with the same signature; the flag is a new context field it never reads.
+- `src/gobby/servers/routes/mcp/endpoints/execution.py` — no-edit-reason: calls `_set_context_for_request` with the same signature and passes the resolved session id as today; the flag travels in the request context.
+- `tests/servers/routes/mcp_endpoints/test_execution_session_end_cleanup.py` — no-edit-reason: exercises session-bearing requests, for which the flag is false and unread.
+- `tests/servers/test_mcp_execution_context.py` — no-edit-reason: asserts the existing context fields; the new flag defaults to false.
 - `src/gobby/ask/agents.py` — no-edit-reason: calls `spawn_agent_impl` with the existing keywords; `placement` and `sandbox` default to None. It reads no new body field.
 - `src/gobby/feedback/agent.py` — no-edit-reason: calls `spawn_agent_impl` with the existing keywords; `placement` and `sandbox` default to None.
 - `tests/agents/test_backend_ingress.py` — no-edit-reason: existing spawn test; the new keywords default and the placement branch is not entered, so it passes unchanged.
@@ -1087,46 +1062,7 @@ Consumers unchanged:
 - `tests/terminals/test_workspace_ops.py` — no-edit-reason: its refusal cases are headless runs, which stay refused; the admission is tested in `tests/terminals/test_workspace_launch.py`.
 - `docs/evidence/wiki-bakeoff-code-2026-09/test_ask_cohort.py` — no-edit-reason: an evidence snapshot, not a maintained consumer.
 - `src/gobby/mcp_proxy/tools/spawn_agent/_step_state.py` — no-edit-reason: reads existing `AgentDefinitionBody` fields; the new optional `sandbox` field defaults to None. 1.5.8 relies on its existing behavior.
-- `src/gobby/servers/routes/agents.py` — no-edit-reason: `update_definition` already maps `sandbox_config` onto `sandbox` and `ValueError` to 400, and `import_definition` and `create_definition` map `ValueError` the same way, so the storage guard refuses through them unchanged, and `restore_definition` maps `ValueError` to 404 today, which the restore refusal passes through as well; `create_definition` does not forward `sandbox_config` today and stays so.
 - `src/gobby/workflows/agent_resolver.py` — no-edit-reason: `resolve_agent_with_row` already returns the row beside the body.
-- `src/gobby/mcp_proxy/tools/workflows/_import.py` — no-edit-reason: calls `sync_imported_workflows`; a refused file surfaces as that file's error, as today.
-- `src/gobby/workflows/definitions.py` — no-edit-reason: reads existing `AgentDefinitionBody` fields; the new optional `sandbox` field defaults to None.
-- `src/gobby/workflows/imports.py` — no-edit-reason: `_upsert_agent` writes through `update` and `upsert_with_steps`, so the storage guard refuses a project YAML that carries `sandbox.enabled` without a change here.
-- `src/gobby/workflows/step_instances.py` — no-edit-reason: reads existing `AgentDefinitionBody` fields; the new optional `sandbox` field defaults to None.
-- `tests/agents/test_merge_orchestrator_contract.py` — no-edit-reason: builds definition bodies without a `sandbox` key; the optional field changes nothing it asserts.
-- `tests/mcp_proxy/tools/skills/test_list_skills.py` — no-edit-reason: builds definition bodies without a `sandbox` key; the optional field changes nothing it asserts.
-- `tests/workflows/test_agent_workflow_completion.py` — no-edit-reason: builds definition bodies without a `sandbox` key; the optional field changes nothing it asserts.
-- `tests/workflows/test_handler_route_lint.py` — no-edit-reason: builds definition bodies without a `sandbox` key; the optional field changes nothing it asserts.
-- `tests/workflows/test_step_instances.py` — no-edit-reason: builds definition bodies without a `sandbox` key; the optional field changes nothing it asserts.
-- `tests/workflows/test_workflows_dry_run.py` — no-edit-reason: builds definition bodies without a `sandbox` key; the optional field changes nothing it asserts.
-- `tests/agents/test_agents_dry_run.py` — no-edit-reason: builds fixture definitions without a `sandbox.enabled` key, which the storage guard passes unchanged.
-- `tests/agents/test_lifecycle_monitor.py` — no-edit-reason: builds fixture definitions without a `sandbox.enabled` key, which the storage guard passes unchanged.
-- `tests/agents/test_lifecycle_monitor_extra.py` — no-edit-reason: builds fixture definitions without a `sandbox.enabled` key, which the storage guard passes unchanged.
-- `tests/agents/test_merge_lifecycle.py` — no-edit-reason: builds fixture definitions without a `sandbox.enabled` key, which the storage guard passes unchanged.
-- `tests/hooks/test_provider_launch_guard.py` — no-edit-reason: builds fixture definitions without a `sandbox.enabled` key, which the storage guard passes unchanged.
-- `tests/hooks/test_session_coordinator.py` — no-edit-reason: builds fixture definitions without a `sandbox.enabled` key, which the storage guard passes unchanged.
-- `tests/mcp_proxy/tools/spawn_agent/test_fallback_agent.py` — no-edit-reason: builds fixture definitions without a `sandbox.enabled` key, which the storage guard passes unchanged.
-- `tests/mcp_proxy/tools/spawn_agent/test_load_agent_body.py` — no-edit-reason: builds fixture definitions without a `sandbox.enabled` key, which the storage guard passes unchanged.
-- `tests/mcp_proxy/tools/test_agents_spawn_evaluation.py` — no-edit-reason: builds fixture definitions without a `sandbox.enabled` key, which the storage guard passes unchanged.
-- `tests/skills/test_reference_migration.py` — no-edit-reason: builds fixture definitions without a `sandbox.enabled` key, which the storage guard passes unchanged.
-- `tests/tasks/test_tasks_expansion_1.py` — no-edit-reason: builds fixture definitions without a `sandbox.enabled` key, which the storage guard passes unchanged.
-- `tests/workflows/test_agent_definitions_v2.py` — no-edit-reason: builds fixture definitions without a `sandbox.enabled` key, which the storage guard passes unchanged.
-- `tests/workflows/test_agent_resolver.py` — no-edit-reason: builds fixture definitions without a `sandbox.enabled` key, which the storage guard passes unchanged.
-- `tests/workflows/test_agent_workflow_runtime_cleanup.py` — no-edit-reason: builds fixture definitions without a `sandbox.enabled` key, which the storage guard passes unchanged.
-- `tests/workflows/test_command_position_patterns.py` — no-edit-reason: builds fixture definitions without a `sandbox.enabled` key, which the storage guard passes unchanged.
-- `tests/workflows/test_rule_engine.py` — no-edit-reason: builds fixture definitions without a `sandbox.enabled` key, which the storage guard passes unchanged.
-- `tests/workflows/test_step_enforcement_audit.py` — no-edit-reason: builds fixture definitions without a `sandbox.enabled` key, which the storage guard passes unchanged.
-- `tests/workflows/test_step_error_codes.py` — no-edit-reason: builds fixture definitions without a `sandbox.enabled` key, which the storage guard passes unchanged.
-- `tests/workflows/test_step_runtime_transitions.py` — no-edit-reason: builds fixture definitions without a `sandbox.enabled` key, which the storage guard passes unchanged.
-- `tests/dispatch/test_skill_composition.py` — no-edit-reason: builds fixture definitions without a `sandbox.enabled` key, which the storage guard passes unchanged.
-- `tests/build/test_dispatcher_stage_wake.py` — no-edit-reason: runs the bundled sync for its rows; the new-row branch writes the same rows through `upsert_from_sync`.
-- `tests/build_pipeline/test_automation_readiness.py` — no-edit-reason: runs the bundled sync for its rows; the new-row branch writes the same rows through `upsert_from_sync`.
-- `tests/dispatch/test_delivery_chain.py` — no-edit-reason: runs the bundled sync for its rows; the new-row branch writes the same rows through `upsert_from_sync`.
-- `tests/dispatch/test_spawn_forwarding.py` — no-edit-reason: runs the bundled sync for its rows; the new-row branch writes the same rows through `upsert_from_sync`.
-- `tests/hooks/test_staged_effects_receipt_route.py` — no-edit-reason: runs the bundled sync for its rows; the new-row branch writes the same rows through `upsert_from_sync`.
-- `tests/storage/tasks/test_stage_registry_default_agent_fk.py` — no-edit-reason: runs the bundled sync for its rows; the new-row branch writes the same rows through `upsert_from_sync`.
-- `tests/storage/test_stage_review_findings.py` — no-edit-reason: runs the bundled sync for its rows; the new-row branch writes the same rows through `upsert_from_sync`.
-- `src/gobby/mcp_proxy/tools/workflows/__init__.py` — no-edit-reason: registers `create_agent_definition`; its signature and reply shape are unchanged.
 
 **Acceptance:**
 
@@ -1162,10 +1098,12 @@ Consumers unchanged:
   `spawn_agent` launch of that provider with no block. test:
   `tests/mcp_proxy/tools/spawn_agent/test_sandbox_block.py::test_launch_without_block_matches_spawn_agent_default_policy`.
 - 1.5.6 - A call block that carries an `enabled` key is refused, whatever its value; a
-  definition block with `enabled: false` and no `reason` fails `AgentDefinitionBody`
-  validation; a launch of a definition with `enabled: false` and a `reason` records
-  `sandbox_enabled` false on the session row, `_launch_sandbox_reason` holds the reason,
-  and the reply's `sandbox.enforced` is false with the reason. test:
+  launch of a sync-managed bundled definition (a row written through `upsert_from_sync`
+  with `source` installed and tag `gobby`) with `enabled: false` and a `reason`, by a
+  caller whose session row has `sandbox_enabled` false or with no caller session,
+  records `sandbox_enabled` false on the session row, `_launch_sandbox_reason` holds the
+  reason, and the reply's `sandbox.enforced` is false with the reason (the negative
+  cases are 1.5.12 to 1.5.14; the validation of the block is 1.6.1). test:
   `tests/mcp_proxy/tools/spawn_agent/test_sandbox_block.py::test_call_block_enabled_key_is_refused`.
   test:
   `tests/mcp_proxy/tools/spawn_agent/test_sandbox_block.py::test_unsandboxed_definition_requires_reason_and_records_it`.
@@ -1184,44 +1122,265 @@ Consumers unchanged:
   sandbox; the run row has no `timeout_seconds`. symbol: `is_pane_bound_run`. test:
   `tests/agents/test_pane_run_lifecycle.py::test_pane_bound_run_is_admitted_and_exempt_from_idle_stuck_enter_and_completion`.
   test: `tests/agents/test_pane_run_lifecycle.py::test_pane_close_terminates_run_and_reaps_sandbox`.
-- 1.5.10 - `AgentDefinitionBody.sandbox` parses the restriction shape and rejects the
-  daemon-owned fields; `_bind_clear_successor` copies the predecessor's
-  `sandbox_enabled` and `sandbox_policy_hash`. symbol: `AgentDefinitionBody`. test:
-  `tests/workflows/test_agent_models.py::test_definition_sandbox_block_parses_and_rejects_daemon_owned_fields`.
-  test: `tests/hooks/test_session_materialize.py::test_clear_successor_inherits_sandbox_flags`.
+- 1.5.10 - `_bind_clear_successor` copies the predecessor's `sandbox_enabled` and
+  `sandbox_policy_hash`. test: `tests/hooks/test_session_materialize.py::test_clear_successor_inherits_sandbox_flags`.
 - 1.5.11 - The agents, sandboxing, MCP-tools and CLI guides document placement, the
   restriction block, the unsandboxed exemption with reason and its sync-only
   provenance, worktree binding, the pane-bound lifecycle and the three callers.
   behavior: "Launching a runbook pane" in `docs/guides/agents.md`. behavior: "Runbook
   restriction blocks" in `docs/guides/sandboxing.md`.
-- 1.5.12 - A non-sync write cannot add `sandbox.enabled` or touch a row that carries it:
-  `create` and a new-row `upsert_with_steps` refuse a body carrying the key;
-  `_write_update` (a rename, a description edit and a rule patch included), the
-  existing-row `upsert_with_steps`, `toggle_enabled` and `restore` refuse any write to a row whose stored
-  body carries it; `upsert_from_sync` and `update_from_sync` accept both; a row without
-  the key takes the same edits as today; `create_agent_definition` returns
-  `success: false` and the HTTP update returns 400 for a `sandbox_config` carrying
-  `enabled`. test:
-  `tests/storage/definitions/test_agents_manager.py::test_non_sync_writes_refuse_sandbox_enabled_key`.
-  test:
-  `tests/storage/definitions/test_agents_manager.py::test_exempt_row_refuses_non_sync_update_rename_and_restore`.
-  test:
-  `tests/mcp_proxy/tools/test_mcp_proxy_tools_agent_definitions.py::test_create_refuses_sandbox_enabled`.
-  test:
-  `tests/servers/routes/test_agents_routes.py::test_update_refuses_sandbox_config_enabled`.
+- 1.5.12 - The provider fallback carries the row: a launch whose first definition
+  is the sync-managed program-director row but whose provider fails over to a fallback
+  definition that is not sync-managed and carries `sandbox: {enabled: false, reason: ...}`
+  launches with the default policy and a reply whose `sandbox.enforced` is true, and the
+  session row records `sandbox_enabled` true. test:
+  `tests/mcp_proxy/tools/spawn_agent/test_sandbox_block.py::test_fallback_into_unmanaged_definition_stays_sandboxed`.
 - 1.5.13 - A row that is not sync-managed never launches unsandboxed: a `user`-tagged
   row carrying `sandbox: {enabled: false, reason: ...}`, inserted by the test through
   `upsert_from_sync` as the stand-in for a pre-existing row, launches with the default
-  policy and a reply whose `sandbox.enforced` is true; the sync's new-row branch writes
-  through `upsert_from_sync`. test:
+  policy and a reply whose `sandbox.enforced` is true; so does a row created under the
+  name `program-director` after the sync-managed row was deleted (the recreated row
+  cannot carry the key, 1.6.5), and a launch that resolves no row (the name deleted and
+  not recreated) honors nothing. test:
   `tests/mcp_proxy/tools/spawn_agent/test_sandbox_block.py::test_unmanaged_definition_exemption_is_ignored`.
-  test: `tests/agents/test_agents_sync.py::test_new_bundled_row_is_written_through_upsert_from_sync`.
+  test:
+  `tests/mcp_proxy/tools/spawn_agent/test_sandbox_block.py::test_recreated_bundled_name_launches_sandboxed`.
 - 1.5.14 - A sandboxed caller never gets an unsandboxed pane: a launch of the
   program-director definition (sync-managed, `enabled: false` with a reason) from a
   caller whose session row has `sandbox_enabled` true launches with the default policy
   and a reply whose `sandbox.enforced` is true, whatever `parent_session_id` the call
-  supplies, while the same launch with no caller session honors the exemption. test:
+  supplies, while the same launch with no caller session behind
+  the local CLI token honors the exemption. test:
   `tests/mcp_proxy/tools/spawn_agent/test_sandbox_block.py::test_sandboxed_caller_launch_of_exempt_definition_stays_sandboxed`.
+- 1.5.15 - A failed launch leaves no seat behind: with a bind failure injected after the
+  spawn returns, the tool terminates the spawned run through the termination path
+  `pane_close` uses, reaps its sandbox, releases the reserved pane row, and the reply is
+  an error; afterwards no active run, no terminal and no pane row remain for that
+  launch. test:
+  `tests/mcp_proxy/tools/spawn_agent/test_spawn_placement.py::test_bind_failure_after_spawn_terminates_run_and_releases_pane`.
+- 1.5.16 - A no-session launch is honored only behind the local CLI token: a request to
+  the tool endpoint authenticated by that token with no session header or body session
+  seeds `session_id` None and `trusted_launcher` true, and its launch of the
+  program-director definition honors the exemption; the same request authenticated by a
+  managed run's grant token seeds `trusted_launcher` false and the launch stays
+  sandboxed; the daemon-owned policy of a sandboxed run denies reading
+  `~/.gobby/local_cli_token`. test:
+  `tests/servers/routes/mcp_endpoints/test_execution_context.py::test_trusted_launcher_is_set_only_for_local_token_without_session`.
+  test:
+  `tests/mcp_proxy/tools/spawn_agent/test_sandbox_block.py::test_no_session_launch_without_trusted_launcher_stays_sandboxed`.
+  test: `tests/agents/test_sandbox_policy.py::test_local_cli_token_is_denied_to_sandboxed_runs`.
+
+### 1.6 Definition sandbox block: `AgentDefinitionBody.sandbox`, the write guard and the sync-owned exemption [category: code]
+`kind: deliverable`
+
+Targets:
+- `src/gobby/workflows/agent_models.py::AgentDefinitionBody`
+- `src/gobby/storage/definitions/agents.py::AgentDefinitionManager.create`
+- `src/gobby/storage/definitions/agents.py::AgentDefinitionManager.upsert_with_steps`
+- `src/gobby/storage/definitions/agents.py::AgentDefinitionManager._write_update`
+- `src/gobby/storage/definitions/agents.py::AgentDefinitionManager.restore`
+- `src/gobby/storage/definitions/agents.py::AgentDefinitionManager.toggle_enabled`
+- `src/gobby/storage/definitions/agents.py::AgentDefinitionManager.move_to_project`
+- `src/gobby/storage/definitions/agents.py::AgentDefinitionManager.move_to_global`
+- `src/gobby/storage/definitions/agents.py::_find_live`
+- `src/gobby/agents/sync.py::_is_sync_managed_bundled_agent`
+- `src/gobby/agents/sync.py::sync_bundled_agents`
+- `src/gobby/mcp_proxy/tools/workflows/_agents.py::create_agent_definition`
+- `src/gobby/servers/routes/agents.py::create_definition`
+- `src/gobby/servers/routes/agents_definition_models.py`
+- `tests/workflows/test_agent_models.py::*` — scope-reason: add the `sandbox` field tests
+- `tests/storage/definitions/test_agents_manager.py::*` — scope-reason: add the sandbox-key, exempt-row and delete-then-recreate guard tests
+- `tests/mcp_proxy/tools/test_mcp_proxy_tools_agent_definitions.py::*` — scope-reason: add the create and patch refusal tests
+- `tests/servers/routes/test_agents_routes.py::*` — scope-reason: add the create, update, import, restore and patch refusal tests
+- `tests/workflows/test_imports.py::*` — scope-reason: add the project-YAML refusal test
+- `tests/agents/test_agents_sync.py::*` — scope-reason: the new-row branch moves to `upsert_from_sync`
+
+The field. `AgentDefinitionBody` gains an optional `sandbox` block in `SandboxConfig`'s
+field names, validated by `coerce_sandbox_config`'s rules, that refuses the daemon-owned
+fields (`backend`, `mode`, `allow_network`) and accepts `enabled: false` only with a
+`reason`; it is the only place `enabled: false` may be written (decision 20). 1.5's
+launch applies it under the call's block and honors the exemption only from a row this
+leaf's marker owns.
+
+Size guard (Constraints): `src/gobby/servers/routes/agents.py` (901 lines) is split: the
+definition request models (`CreateAgentDefinitionRequest`, the update request model and
+their validators) move into `src/gobby/servers/routes/agents_definition_models.py`,
+leaving imports, before `create_definition` gains its one line.
+
+Definition write paths (PD S1). Every path that writes an agent definition row goes
+through `AgentDefinitionManager`, whose sync-only entry points already exist
+(`upsert_from_sync`, and `update_from_sync` with `from_sync=True`). One guard there,
+`_refuse_unsynced_exempt_write(stored_body, incoming_body)`, is called by `create`,
+by both branches of `upsert_with_steps` (the existing-row branch reads the live row's
+stored body inside the same transaction, so `_find_live` returns it), by
+`_write_update` when `from_sync` is false, whatever the fields, by `toggle_enabled`
+(the HTTP enable and disable route; the exempt row is enabled by its template), by
+`move_to_project` and `move_to_global` (a moved exempt row would lose the global
+scope the marker requires and escape the sync's re-write and sweep; no caller in
+`src/` today) and by `restore`, which reads the soft-deleted row inside its
+transaction before `restore_definition`: it raises `ValueError` when the incoming
+parent body carries the `sandbox.enabled` key, or when the stored body does. A row that
+carries the key is therefore immutable outside the sync: no rename (which would carry
+the program-director row and its exemption under a new name until the next start's
+sweep), no description edit, no rule or variable patch, no restore, no move, and no
+re-tag through the existing-row branch of `upsert_with_steps`, which overwrites
+`source` and `tags` from its arguments; the role changes only through its template and
+a restart, which is already how the key itself changes. A row without the key takes
+the same edits as today, except that it cannot gain the key. `delete` and `hard_delete`
+stay unguarded: deleting the exempt row confers nothing, because a row recreated under
+the bundled name cannot carry the key, `restore` of the deleted row is refused, a launch
+that resolves no row honors nothing (`_load_agent_body` reads rows only; there is no
+disk fallback), and the next start re-inserts the row through `upsert_from_sync`. The
+sync entry points skip the guard (the sync never restores a soft-deleted row;
+`upsert_from_sync` inserts a new one), and `sync_bundled_agents`'s new-row branch moves
+from `upsert_with_steps` to `upsert_from_sync`, which already inserts when no live row
+exists. The paths that reach the guard, unchanged except the first two:
+`gobby-workflows:create_agent_definition` (`_agents.py`, which gains an `except
+ValueError` returning `success: false`); the HTTP `create_definition`, which today
+declares `sandbox_config` on its request model and drops it, and now passes
+`sandbox=request.sandbox_config` into `AgentDefinitionBody(...)` as `update_definition`
+maps it onto `sandbox` today, so a restriction block is stored and a block carrying
+`enabled` is refused with 400 through the route's existing `except (TypeError,
+ValueError)` (adversary A4); the HTTP update, import and restore routes
+(`update_definition` maps `ValueError` to 400 today, `import_definition` of a bundled
+YAML that carries the exemption is refused the same way, `restore_definition` maps
+`ValueError` to 404 today); the MCP rule and variable patches and the HTTP `patch_*`
+routes (they re-save the stored body through `_write_update`, so they pass on every row
+but the exempt one); `_upsert_agent` in the workflows import module behind the
+`gobby-workflows` import tool (a project YAML carrying the key is that file's error);
+and `duplicate` (no caller in `src/`). No CLI writes a definition row: `gobby agents`
+lists, shows and spawns, and `gobby sync` is the sync path. The sync reads
+`get_bundled_agents_path()` under `get_install_dir()`, the daemon refuses to start
+from a linked worktree, and `gobby sync` verifies bundled integrity outside dev mode,
+so `sandbox.enabled` reaches a row only from the bundled agents directory in the main
+checkout: a reviewed merge, or the program-director's own edit. The marker
+(`is_sync_managed_bundled_agent`, made public: global row, `source` installed, tag
+`gobby`) is sound after the first start following the cutover (V1 step 2): the sync
+re-writes every managed row whose body differs from its template and sweeps
+`gobby`-tagged rows with no template, so a `gobby` tag set through the HTTP `tags`
+field buys nothing without the key the guard refuses.
+
+**Granularity:** more than six production Target files. One guard, its call sites, the
+model field and the sync marker are one outcome: the invariant (no non-sync write
+reaches a row that carries `sandbox.enabled`) holds only with every call site in
+place, so a call site alone is not closeable. The launch that honors the row is 1.5.
+
+Research context:
+- Storage: `AgentDefinitionManager` (`src/gobby/storage/definitions/agents.py` 264-740):
+  `create` 270-316, `update` 350-355 and `update_from_sync` 357-358 into `_write_update`
+  360-400 (locks the live row first), `toggle_enabled` 402-417, `delete` 419-446
+  (soft; `sync_orphan` marks a sweep deletion), `restore` 461-465, `move_to_project`
+  513-524, `move_to_global` 526-537, `duplicate` 539-552 (into `upsert_with_steps`
+  with `source="custom"`), `upsert_with_steps` 554-626, `upsert_from_sync` 628-713;
+  `_find_live` 109-120. Neither `move_to_*` nor `duplicate` has a caller in `src/`.
+- Sync: `sync_bundled_agents` (`src/gobby/agents/sync.py` 129-299) decides ownership
+  with `_is_sync_managed_bundled_agent`, stamps `tags=["gobby"]`, re-writes managed
+  rows whose body differs from the template, refuses a shadowing unmanaged row, sweeps
+  `gobby`-tagged rows with no template, and today creates new rows through
+  `upsert_with_steps` (its one non-sync write). `get_bundled_agents_path()` is
+  `get_install_dir()/shared/workflows/agents`.
+- Routes and tools: `CreateAgentDefinitionRequest.sandbox_config` is declared
+  (`src/gobby/servers/routes/agents.py` 116) and `create_definition` (378-433) builds
+  the body field by field without it; `update_definition` (436-) maps `sandbox_config`
+  onto `body_dict["sandbox"]` (491-492) and keeps `sandbox` in `preserved_extra_fields`;
+  `restore_definition` maps `(DefinitionNotFoundError, ValueError)` to 404; the request
+  models accept `tags`, so the tag alone is forgeable. `create_agent_definition`
+  (`src/gobby/mcp_proxy/tools/workflows/_agents.py` 148) validates through
+  `AgentDefinitionBody` and writes `upsert_with_steps(source="installed",
+  tags=["user"])`. `_upsert_agent` (`src/gobby/workflows/imports.py`) writes `update`
+  or `upsert_with_steps`. `_load_agent_body` (`_factory.py` 238-260) calls
+  `resolve_agent`, a row lookup with no disk fallback.
+- Rejected: a guard that only kept the key identical (a renamed or re-prompted exempt
+  row would keep its exemption until the next sweep); a launch-time equality check
+  against the bundled YAML (a second mechanism for the same fact, failing closed on an
+  unsynced template edit); a provenance column (a migration for a fact the sync
+  already decides); guarding `delete` (it confers nothing and the sync re-inserts).
+- Planned checks: the six extended test files with the isolated hub DSN; mypy.
+
+Consumers unchanged:
+- `src/gobby/mcp_proxy/tools/workflows/_import.py` — no-edit-reason: calls `sync_imported_workflows`; a refused file surfaces as that file's error, as today.
+- `src/gobby/workflows/definitions.py` — no-edit-reason: reads existing `AgentDefinitionBody` fields; the new optional `sandbox` field defaults to None.
+- `src/gobby/workflows/imports.py` — no-edit-reason: `_upsert_agent` writes through `update` and `upsert_with_steps`, so the storage guard refuses a project YAML that carries `sandbox.enabled` without a change here.
+- `src/gobby/workflows/step_instances.py` — no-edit-reason: reads existing `AgentDefinitionBody` fields; the new optional `sandbox` field defaults to None.
+- `tests/agents/test_merge_orchestrator_contract.py` — no-edit-reason: builds definition bodies without a `sandbox` key; the optional field changes nothing it asserts.
+- `tests/mcp_proxy/tools/skills/test_list_skills.py` — no-edit-reason: builds definition bodies without a `sandbox` key; the optional field changes nothing it asserts.
+- `tests/workflows/test_agent_workflow_completion.py` — no-edit-reason: builds definition bodies without a `sandbox` key; the optional field changes nothing it asserts.
+- `tests/workflows/test_handler_route_lint.py` — no-edit-reason: builds definition bodies without a `sandbox` key; the optional field changes nothing it asserts.
+- `tests/workflows/test_step_instances.py` — no-edit-reason: builds definition bodies without a `sandbox` key; the optional field changes nothing it asserts.
+- `tests/workflows/test_workflows_dry_run.py` — no-edit-reason: builds definition bodies without a `sandbox` key; the optional field changes nothing it asserts.
+- `src/gobby/mcp_proxy/tools/workflows/__init__.py` — no-edit-reason: registers `create_agent_definition`; its signature and reply shape are unchanged.
+- `tests/agents/test_agents_dry_run.py` — no-edit-reason: builds fixture definitions without a `sandbox.enabled` key, which the storage guard passes unchanged.
+- `tests/agents/test_lifecycle_monitor.py` — no-edit-reason: builds fixture definitions without a `sandbox.enabled` key, which the storage guard passes unchanged.
+- `tests/agents/test_lifecycle_monitor_extra.py` — no-edit-reason: builds fixture definitions without a `sandbox.enabled` key, which the storage guard passes unchanged.
+- `tests/agents/test_merge_lifecycle.py` — no-edit-reason: builds fixture definitions without a `sandbox.enabled` key, which the storage guard passes unchanged.
+- `tests/hooks/test_provider_launch_guard.py` — no-edit-reason: builds fixture definitions without a `sandbox.enabled` key, which the storage guard passes unchanged.
+- `tests/hooks/test_session_coordinator.py` — no-edit-reason: builds fixture definitions without a `sandbox.enabled` key, which the storage guard passes unchanged.
+- `tests/mcp_proxy/tools/spawn_agent/test_fallback_agent.py` — no-edit-reason: builds fixture definitions without a `sandbox.enabled` key, which the storage guard passes unchanged.
+- `tests/mcp_proxy/tools/spawn_agent/test_load_agent_body.py` — no-edit-reason: builds fixture definitions without a `sandbox.enabled` key, which the storage guard passes unchanged.
+- `tests/mcp_proxy/tools/test_agents_spawn_evaluation.py` — no-edit-reason: builds fixture definitions without a `sandbox.enabled` key, which the storage guard passes unchanged.
+- `tests/skills/test_reference_migration.py` — no-edit-reason: builds fixture definitions without a `sandbox.enabled` key, which the storage guard passes unchanged.
+- `tests/tasks/test_tasks_expansion_1.py` — no-edit-reason: builds fixture definitions without a `sandbox.enabled` key, which the storage guard passes unchanged.
+- `tests/workflows/test_agent_definitions_v2.py` — no-edit-reason: builds fixture definitions without a `sandbox.enabled` key, which the storage guard passes unchanged.
+- `tests/workflows/test_agent_resolver.py` — no-edit-reason: builds fixture definitions without a `sandbox.enabled` key, which the storage guard passes unchanged.
+- `tests/workflows/test_agent_workflow_runtime_cleanup.py` — no-edit-reason: builds fixture definitions without a `sandbox.enabled` key, which the storage guard passes unchanged.
+- `tests/workflows/test_command_position_patterns.py` — no-edit-reason: builds fixture definitions without a `sandbox.enabled` key, which the storage guard passes unchanged.
+- `tests/workflows/test_rule_engine.py` — no-edit-reason: builds fixture definitions without a `sandbox.enabled` key, which the storage guard passes unchanged.
+- `tests/workflows/test_step_enforcement_audit.py` — no-edit-reason: builds fixture definitions without a `sandbox.enabled` key, which the storage guard passes unchanged.
+- `tests/workflows/test_step_error_codes.py` — no-edit-reason: builds fixture definitions without a `sandbox.enabled` key, which the storage guard passes unchanged.
+- `tests/workflows/test_step_runtime_transitions.py` — no-edit-reason: builds fixture definitions without a `sandbox.enabled` key, which the storage guard passes unchanged.
+- `tests/dispatch/test_skill_composition.py` — no-edit-reason: builds fixture definitions without a `sandbox.enabled` key, which the storage guard passes unchanged.
+- `tests/build/test_dispatcher_stage_wake.py` — no-edit-reason: runs the bundled sync for its rows; the new-row branch writes the same rows through `upsert_from_sync`.
+- `tests/build_pipeline/test_automation_readiness.py` — no-edit-reason: runs the bundled sync for its rows; the new-row branch writes the same rows through `upsert_from_sync`.
+- `tests/dispatch/test_delivery_chain.py` — no-edit-reason: runs the bundled sync for its rows; the new-row branch writes the same rows through `upsert_from_sync`.
+- `tests/dispatch/test_spawn_forwarding.py` — no-edit-reason: runs the bundled sync for its rows; the new-row branch writes the same rows through `upsert_from_sync`.
+- `tests/hooks/test_staged_effects_receipt_route.py` — no-edit-reason: runs the bundled sync for its rows; the new-row branch writes the same rows through `upsert_from_sync`.
+- `tests/storage/tasks/test_stage_registry_default_agent_fk.py` — no-edit-reason: runs the bundled sync for its rows; the new-row branch writes the same rows through `upsert_from_sync`.
+- `tests/storage/test_stage_review_findings.py` — no-edit-reason: runs the bundled sync for its rows; the new-row branch writes the same rows through `upsert_from_sync`.
+- `src/gobby/workflows/agent_resolver.py` — no-edit-reason: `resolve_agent_with_row` already returns the row beside the body; 1.5 consumes it.
+- `src/gobby/ask/agents.py` — no-edit-reason: reads existing `AgentDefinitionBody` fields; the new optional `sandbox` field defaults to None.
+- `src/gobby/mcp_proxy/tools/spawn_agent/_step_state.py` — no-edit-reason: reads existing `AgentDefinitionBody` fields; the new optional `sandbox` field defaults to None.
+- `tests/mcp_proxy/tools/spawn_agent/test_initial_variables.py` — no-edit-reason: builds definition bodies without a `sandbox` key; the optional field changes nothing it asserts.
+- `tests/workflows/test_step_snapshot_semantics.py` — no-edit-reason: builds definition bodies without a `sandbox` key and writes them through `upsert_with_steps`, which the guard passes unchanged.
+- `docs/evidence/wiki-bakeoff-code-2026-09/test_ask_cohort.py` — no-edit-reason: an evidence snapshot, not a maintained consumer.
+
+**Acceptance:**
+
+- 1.6.1 - `AgentDefinitionBody.sandbox` parses the restriction shape, rejects the
+  daemon-owned fields, and a block with `enabled: false` and no `reason` fails
+  validation. symbol: `AgentDefinitionBody`. test:
+  `tests/workflows/test_agent_models.py::test_definition_sandbox_block_parses_and_rejects_daemon_owned_fields`.
+  test: `tests/workflows/test_agent_models.py::test_unsandboxed_definition_block_requires_reason`.
+- 1.6.2 - Every non-sync manager write refuses the key and the exempt row, one case per
+  path: `create` and the new-row `upsert_with_steps` refuse a body carrying
+  `sandbox.enabled`; `_write_update` (a rename, a description edit and a rule patch
+  each), the existing-row `upsert_with_steps` (a re-tag), `toggle_enabled`,
+  `move_to_project`, `move_to_global`, `duplicate` and `restore` refuse on a row whose
+  stored body carries it; `upsert_from_sync` and `update_from_sync` accept both; a row
+  without the key takes the same edits as today. test:
+  `tests/storage/definitions/test_agents_manager.py::test_non_sync_writes_refuse_sandbox_enabled_key`.
+  test:
+  `tests/storage/definitions/test_agents_manager.py::test_exempt_row_refuses_every_non_sync_write`.
+- 1.6.3 - Every ingress surfaces the refusal, one case per path: the MCP
+  `create_agent_definition` and the MCP rule and variable patches on the exempt row
+  return `success: false`; the HTTP create (a `sandbox_config` carrying `enabled`),
+  update, import (a YAML carrying the key) and `patch_*` routes on the exempt row return
+  400 and the HTTP restore of the deleted exempt row returns 404; the HTTP create with a
+  `sandbox_config` without `enabled` stores it as the row's `sandbox` block; a project
+  YAML carrying the key is reported as that file's import error. test:
+  `tests/mcp_proxy/tools/test_mcp_proxy_tools_agent_definitions.py::test_create_and_patch_refuse_sandbox_enabled`.
+  test:
+  `tests/servers/routes/test_agents_routes.py::test_definition_routes_refuse_sandbox_enabled_writes`.
+  test: `tests/servers/routes/test_agents_routes.py::test_create_stores_restriction_block`.
+  test: `tests/workflows/test_imports.py::test_project_yaml_with_sandbox_enabled_is_refused`.
+- 1.6.4 - The sync's new-row branch writes through `upsert_from_sync`, and a bundled
+  template carrying `enabled: false` with a reason lands in a global row with `source`
+  installed and tag `gobby` that `is_sync_managed_bundled_agent` accepts. test:
+  `tests/agents/test_agents_sync.py::test_new_bundled_row_is_written_through_upsert_from_sync`.
+- 1.6.5 - Delete-then-recreate confers nothing: after the exempt row is soft-deleted, a
+  `create` under the same name with the key is refused, a `create` without it yields a
+  row without the key, `restore` of the deleted row is refused, and a following
+  `upsert_from_sync` of the template re-inserts the exempt row. test:
+  `tests/storage/definitions/test_agents_manager.py::test_delete_then_recreate_under_bundled_name_confers_nothing`.
 
 ## P2: gclient command mode
 `kind: framing`
@@ -1366,6 +1525,8 @@ restriction blocks and the program-director's exemption live in the definitions 
 (adversary A1). No `title` lines:
 the launch labels each pane with its role (1.5).
 
+**Granularity:** more than six acceptance items and production Target files: the command mode and its two bundled scripts are one outcome, because the scripts are the mode's acceptance vehicles against the mock daemon and the mode without a runbook script has no user. Alternative for the PD: the two scripts as a dependent leaf.
+
 Research context:
 - `startup::run` (`crates/gclient/src/startup.rs` 674-691) parses args, probes health,
   and starts the TUI; `resolve_probe_env` (450-468) holds the URL and token defaults to
@@ -1483,7 +1644,8 @@ emits the existing `tab.created` and `pane.added` kinds); the numbers stay retir
   further request is sent. file:
   `src/gobby/install/shared/workflows/runbooks/orchestration-v1.sh`. test:
   `crates/gclient/tests/command_mode.rs::script_stops_at_refused_op_and_names_created_tabs`.
-- 2.1.10 - `launch` posts the tool endpoint with the local token: `--tab` fills
+- 2.1.10 - `launch` posts the tool endpoint with the local token (which 1.5's
+  exemption requires of a no-session call; a sandboxed seat cannot read it): `--tab` fills
   `placement.tab` (workspace, project, title, runbook) and `--split` fills
   `placement.split` (pane, axis in the `LayoutAxis` spelling); `--sandbox` is posted
   as the `sandbox` block; `--provider`, `--model`, `--effort`
@@ -1603,6 +1765,8 @@ that would follow the upstream); the prelude is `no-force-push`'s. (5)
 commit --only -m m -- path`, `psql -c "select 1"`, `uv run gobby restart --wait`, `git
 push origin 0.5.0`, `rm file`), once with `is_spawned_agent` true and once absent
 (the scope carries the rule), and prove another role is untouched.
+
+**Granularity:** more than six production Target files: the rule templates form one group under one sync and one group test; a rule shipped alone is not the group the runbook installs.
 
 Research context:
 - Canonical metadata comes from `src/gobby/hooks/_normalization_canonical.py`
@@ -1793,7 +1957,7 @@ persona text delivered once; the handoff carries state only.
   ~/.gobby/bin, pushes, read-only hub psql; a sandbox is inherited by child processes"}`;
   the launch line carries no sandbox flag, 1.5.6 records the reason from the block, the
   block reaches the row only through the bundled sync, which alone can change the row,
-  and a sandboxed caller cannot launch it unsandboxed (1.5.12 to 1.5.14). (5)
+  and a sandboxed caller cannot launch it unsandboxed (1.6.2 to 1.6.5, 1.5.12 to 1.5.14). (5)
   Rules: include `["tag:default", "group:runbook", "name:no-git-stash",
   "name:no-force-push", "name:no-recursive-rm"]`, exclude the two shared names; scoped
   to it: `program-director-delegate-once`,
@@ -2055,6 +2219,8 @@ role, its sandbox block and continuity mode. Tests load each YAML through
 `AgentDefinitionBody` and assert surfaces, the anchored text, the exact selector lists,
 tool blocks and sandbox blocks above (through `ROLE_BLOCKS`), the standing text, the
 fixed lines, and that `resolve_rules_for_agent` includes the runbook rules.
+
+**Granularity:** more than six acceptance items and production Target files: the role templates form the chart's roster, and 1.2's roster derivation and 3.4's names resolve only with the full set; per-role leaves would each rerun the same sync test.
 
 Research context:
 - Spawn-surface reach of `group:runbook` (Program Director, 2026-09-24):
@@ -2511,6 +2677,8 @@ taskless definitions are deleted; every consumer of a retired name is repointed
   and that `resolve_rules_for_agent` includes the runbook rules; the listed existing
   tests lose their taskless rows and cases and follow the rename.
 
+**Granularity:** more than six production Target files: the council definitions, their stage registry rows and the retired names are one rename that the stage registry validates as a set.
+
 Research context:
 - Names on HEAD (2026-09-24, `f7b9ccc54c`): `planner.yaml` (257 lines; `surfaces:
   [spawn, persona]`, `provider: codex`, `gpt-5.6-sol`, `blocked_mcp_tools` 14,
@@ -2609,7 +2777,7 @@ Consumers unchanged:
 `kind: verification`
 
 1. Unit and contract suites per deliverable (Constraints lists the commands): 1.5's four
-   new test files and seven extended ones, 3.1's rule tests, 3.2's and 3.4's definition
+   new test files and the extended ones of 1.5 and 1.6, 3.1's rule tests, 3.2's and 3.4's definition
    tests; the gcore schema tests with `--features postgres` and a scratch database
    (`GOBBY_SCHEMA_TEST_DATABASE_URL`; without the feature they compile to nothing) and
    `cargo test -p gobby-core --lib grant::tests` without `--features postgres` (the
