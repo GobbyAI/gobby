@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import threading
@@ -1179,6 +1180,52 @@ class TestExecuteHookDeliveryReceipt:
         kwargs = prepare_receipt.call_args.kwargs
         assert kwargs["envelope_id"] == "env-durable-1"
         assert kwargs["session_id"]
+
+    def test_receipt_persistence_runs_off_the_event_loop(
+        self,
+        session_storage: SessionManager,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Receipt and envelope persistence block on the database and inbox files;
+        # on the HTTP loop they stall every other request (#22708).
+        monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
+        server = _delivery_receipt_server(session_storage)
+        on_event_loop: list[bool] = []
+
+        def prepare_receipt(*_args: Any, **_kwargs: Any) -> SimpleNamespace:
+            try:
+                asyncio.get_running_loop()
+                on_event_loop.append(True)
+            except RuntimeError:
+                on_event_loop.append(False)
+            return SimpleNamespace(
+                receipt_id="receipt-off-loop-1",
+                original_envelope_id="env-off-loop-1",
+                delivery_generation=1,
+            )
+
+        with (
+            TestClient(server.app) as client,
+            patch(
+                "gobby.servers.routes.mcp.hooks._run_adapter_hook",
+                new_callable=AsyncMock,
+                return_value={"decision": "allow"},
+            ),
+            patch(
+                "gobby.storage.hook_receipts.prepare_receipt",
+                side_effect=prepare_receipt,
+            ),
+        ):
+            response = client.post(
+                "/api/hooks/execute",
+                headers={ENVELOPE_ID_HEADER: "env-off-loop-1"},
+                json=_agy_pre_invocation_envelope(),
+            )
+
+        assert response.status_code == 200
+        assert response.json()["_gobby_delivery_receipt"]["receipt_id"] == "receipt-off-loop-1"
+        assert on_event_loop == [False]
 
     def test_durable_envelope_stages_pending_message_effects(
         self,

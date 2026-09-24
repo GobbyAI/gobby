@@ -63,21 +63,54 @@ def _evaluate_declared_types(
     return False, supported
 
 
+def _enum_contains(value: Any, allowed: list[Any]) -> bool:
+    """JSON Schema enum membership.
+
+    Booleans are not numbers: ``True`` does not match ``1`` and ``False`` does
+    not match ``0``. Numeric values still match, so ``1`` matches ``1.0``.
+    """
+    for item in allowed:
+        if isinstance(value, bool) or isinstance(item, bool):
+            if isinstance(value, bool) and isinstance(item, bool) and value is item:
+                return True
+            continue
+        if item == value:
+            return True
+    return False
+
+
 def _evaluate_type_schema(
     value: Any,
     schema: Any,
-) -> tuple[bool | None, list[str]]:
-    """Evaluate supported type constraints, including recursive anyOf branches."""
+) -> tuple[bool | None, list[str], tuple[Any, ...] | None]:
+    """Evaluate supported type constraints and declared enums.
+
+    The third item lists the allowed values when the value is outside a
+    declared enum, including an enum on a failed anyOf branch.
+    """
     if not isinstance(schema, dict):
-        return None, []
+        return None, [], None
 
     checks: list[bool | None] = []
     expected_types: list[str] = []
+    allowed_values: list[Any] = []
 
     if "type" in schema:
         type_match, declared_types = _evaluate_declared_types(value, schema["type"])
         checks.append(type_match)
         expected_types.extend(declared_types)
+
+    allowed = schema.get("enum")
+    if isinstance(allowed, list):
+        if _enum_contains(value, allowed):
+            checks.append(True)
+        else:
+            checks.append(False)
+            for item in allowed:
+                if item not in allowed_values:
+                    allowed_values.append(item)
+    elif "enum" in schema:
+        checks.append(None)
 
     if "anyOf" in schema:
         branches = schema["anyOf"]
@@ -86,11 +119,15 @@ def _evaluate_type_schema(
         else:
             branch_checks: list[bool | None] = []
             for branch in branches:
-                branch_match, branch_types = _evaluate_type_schema(value, branch)
+                branch_match, branch_types, branch_allowed = _evaluate_type_schema(value, branch)
                 branch_checks.append(branch_match)
                 for branch_type in branch_types:
                     if branch_type not in expected_types:
                         expected_types.append(branch_type)
+                if branch_match is False and branch_allowed:
+                    for item in branch_allowed:
+                        if item not in allowed_values:
+                            allowed_values.append(item)
 
             if any(result is True for result in branch_checks):
                 checks.append(True)
@@ -99,13 +136,14 @@ def _evaluate_type_schema(
             else:
                 checks.append(False)
 
+    reported = tuple(allowed_values) if any(result is False for result in checks) else None
     if not checks:
-        return None, expected_types
+        return None, expected_types, None
     if any(result is False for result in checks):
-        return False, expected_types
+        return False, expected_types, reported
     if all(result is True for result in checks):
-        return True, expected_types
-    return None, expected_types
+        return True, expected_types, None
+    return None, expected_types, None
 
 
 def _json_type_name(value: Any) -> str:
@@ -143,8 +181,13 @@ def check_arguments(arguments: dict[str, Any], schema: dict[str, Any]) -> list[s
                 errors.append(f"Unknown parameter '{key}'. Valid parameters: {valid_params}")
             continue
 
-        type_match, expected_types = _evaluate_type_schema(arguments[key], properties[key])
-        if type_match is False and expected_types:
+        type_match, expected_types, allowed_values = _evaluate_type_schema(
+            arguments[key], properties[key]
+        )
+        if type_match is False and allowed_values:
+            shown = ", ".join(repr(item) for item in allowed_values)
+            errors.append(f"Invalid value for parameter '{key}': expected one of {shown}")
+        elif type_match is False and expected_types:
             expected = " or ".join(expected_types)
             actual = _json_type_name(arguments[key])
             errors.append(f"Invalid type for parameter '{key}': expected {expected}, got {actual}")

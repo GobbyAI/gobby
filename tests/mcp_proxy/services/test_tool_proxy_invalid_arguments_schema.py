@@ -224,3 +224,42 @@ async def test_malformed_string_arguments_return_schema_guidance(
     assert result["validation_errors"] == [result["error"]]
     assert result["schema"] == input_schema
     mcp_manager.call_tool.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_close_task_summary_response_detail_is_refused_before_persist(
+    proxy_parts: ProxyParts,
+) -> None:
+    proxy, mcp_manager, db, session_id = proxy_parts
+    input_schema = {
+        "type": "object",
+        "properties": {
+            "task_id": {"type": "string"},
+            "response_detail": {
+                "type": "string",
+                "enum": ["concise", "diagnostic"],
+                "default": "concise",
+            },
+        },
+        "required": ["task_id"],
+    }
+    mcp_manager.get_tool_info.return_value = _manager_tool_info(input_schema)
+
+    result = await proxy.call_tool(
+        "gobby-tasks",
+        "close_task",
+        {"task_id": "#22810", "response_detail": "summary"},
+        session_id=session_id,
+        enforce_workflow=True,
+    )
+
+    assert result["success"] is False
+    assert result["error_code"] == "INVALID_ARGUMENTS"
+    assert result["validation_errors"] == [
+        "Invalid value for parameter 'response_detail': expected one of 'concise', 'diagnostic'"
+    ]
+    mcp_manager.call_tool.assert_not_awaited()
+    with db.transaction() as conn:
+        row = conn.execute("SELECT count(*) AS review_count FROM task_close_reviews").fetchone()
+    assert row is not None
+    assert row["review_count"] == 0

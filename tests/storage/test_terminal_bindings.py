@@ -14,6 +14,7 @@ from unittest.mock import patch
 import psutil
 import pytest
 
+from gobby.sessions.liveness_monitor import SessionLivenessMonitor
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
@@ -262,3 +263,38 @@ def test_rebind_releases_only_stale_non_agent_owner_rows(
     assert _bound_session_id(terminals, live.id) == session.id
     assert _bound_session_id(terminals, agent.id) == session.id
     assert _bound_session_id(terminals, external.id) == session.id
+
+
+async def test_revival_rebinds_the_native_pane_that_expiry_released(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    session_manager: SessionManager,
+) -> None:
+    terminals = TerminalManager(temp_db)
+    project_id = sample_project["id"]
+    pane = _native_row(terminals, project_id)
+    host_epoch = "revival-epoch"
+    host_terminal_id = "revival-host"
+    assert (
+        terminals.promote_to_live(
+            pane.id,
+            locator={"host_terminal_id": host_terminal_id},
+            locator_key=native_locator_key(host_epoch, host_terminal_id),
+            host_epoch=host_epoch,
+        )
+        is not None
+    )
+    session = _session(session_manager, project_id, {**_live_cli(), "gobby_terminal_id": pane.id})
+    assert terminals.bind_session(pane.id, session.id, project_id) is not None
+
+    # A daemon restarted under the surviving CLI expires it on a liveness guess,
+    # which releases the pane; the CLI sends no new SessionStart afterwards.
+    monitor = SessionLivenessMonitor(session_manager, terminal_manager=terminals)
+    assert await monitor._expire_session(session.id)
+    assert _bound_session_id(terminals, pane.id) is None
+
+    revived = session_manager.revive_expired_terminal_session(session.id)
+
+    assert revived is not None
+    assert revived.status == "active"
+    assert _bound_session_id(terminals, pane.id) == session.id

@@ -5,7 +5,9 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use gobby_client::app::sidebar_model::{agent_state, build, SidebarInputs, SidebarModel};
+use gobby_client::app::sidebar_model::{
+    agent_state, build, AgentEntry, SidebarInputs, SidebarModel,
+};
 use gobby_client::app::{Backend, Pane, PaneId};
 use gobby_client::daemon::{
     Attention, Checkout, ProjectRow, RosterEntry, RunRow, SessionRow, SidebarRows, SourceStatus,
@@ -246,6 +248,7 @@ fn build_joins_projects_worktrees_and_agents() {
     run_agent.task = Some(TaskRef {
         id: "task-uuid".to_string(),
         reference: Some("#21986".to_string()),
+        ..Default::default()
     });
     let mut bare_session = entry("session:sess-c", None);
     bare_session.session_id = Some("sess-c".to_string());
@@ -430,4 +433,130 @@ fn build_prefers_run_effort_then_falls_back_to_session_effort() {
         Some("minimal"),
         "an interactive row falls back to its session effort"
     );
+}
+
+/// #22805: a Grok pane's row is named like any provider's. The joined session
+/// title wins over the pane's foreground command, and the command ("grok")
+/// names only a row the roster has not joined to a session.
+#[test]
+fn grok_row_takes_the_session_title_over_the_pane_command() {
+    let rows = SidebarRows {
+        sessions: BTreeMap::from([(
+            PROJECT.to_string(),
+            vec![SessionRow {
+                id: "sess-grok".to_string(),
+                title: Some("Stability lane Engineer".to_string()),
+                source: Some("grok".to_string()),
+                status: "awaiting_approval".to_string(),
+                ..Default::default()
+            }],
+        )]),
+        ..Default::default()
+    };
+    let mut joined = entry("session:sess-grok", Some("terminal-grok"));
+    joined.session_id = Some("sess-grok".to_string());
+    joined.provider = Some("grok".to_string());
+    let unjoined = entry("terminal:terminal-bare", Some("terminal-bare"));
+    let mut grok_pane = pane(1, "terminal-grok", false, true);
+    grok_pane.command = Some("grok".to_string());
+    let mut bare_pane = pane(2, "terminal-bare", false, true);
+    bare_pane.command = Some("grok".to_string());
+
+    let model = model(&rows, &[joined, unjoined], &[grok_pane, bare_pane]);
+
+    assert_eq!(
+        model.agents[0].name, "Stability lane Engineer",
+        "the joined session title names the Grok row"
+    );
+    assert_eq!(model.agents[0].provider, "grok");
+    assert_eq!(
+        model.agents[1].name, "grok",
+        "a row with no session falls back to the pane command"
+    );
+}
+
+/// 3.1.3: a run row carries its agent definition name and its task's title as
+/// fields of their own, and a session with no run labels its definition with
+/// the provider label its provisional session title carries.
+#[test]
+fn build_carries_definition_name_and_task_title() {
+    let rows = SidebarRows {
+        runs: BTreeMap::from([(
+            PROJECT.to_string(),
+            vec![RunRow {
+                run_id: "run-b".to_string(),
+                agent_name: Some("backend-developer".to_string()),
+                provider: Some("codex".to_string()),
+                status: "running".to_string(),
+                ..Default::default()
+            }],
+        )]),
+        ..Default::default()
+    };
+    let run_agent: RosterEntry = serde_json::from_value(json!({
+        "entry_id": "run:run-b",
+        "run_id": "run-b",
+        "lifecycle_status": "running",
+        "task": {"id": "task-uuid", "ref": "#22744", "stage": null, "title": "Agent data model"},
+        "terminal": {"terminal_id": "terminal-b", "backend": "native"},
+        "context_percent": 42,
+        "tokens_used": 128000
+    }))
+    .expect("a roster run entry with a task title should deserialize");
+    let mut claude_code = entry("session:sess-cc", Some("terminal-cc"));
+    claude_code.session_id = Some("sess-cc".to_string());
+    claude_code.provider = Some("claude_code".to_string());
+    let mut claude = entry("session:sess-c", Some("terminal-c"));
+    claude.session_id = Some("sess-c".to_string());
+    claude.provider = Some("claude".to_string());
+
+    let model = model(&rows, &[run_agent, claude_code, claude], &[]);
+
+    let run_row = &model.agents[0];
+    assert_eq!(
+        run_row.agent_definition_name.as_deref(),
+        Some("backend-developer")
+    );
+    assert_eq!(run_row.task_title.as_deref(), Some("Agent data model"));
+    assert_eq!(run_row.task_ref.as_deref(), Some("#22744"));
+    assert_eq!(run_row.context_percent, Some(42));
+    assert_eq!(run_row.tokens_used, Some(128_000));
+    assert_eq!(run_row.definition_label(), "backend-developer");
+    let claude_code_row = &model.agents[1];
+    assert_eq!(claude_code_row.agent_definition_name, None);
+    assert_eq!(claude_code_row.task_title, None);
+    assert_eq!(
+        claude_code_row.definition_label(),
+        "Claude Code",
+        "a session with no run falls back to its provider label"
+    );
+    assert_eq!(model.agents[2].definition_label(), "Claude");
+}
+
+/// 3.1.6: the model slug is the display name, else the raw model, lowercased
+/// with each whitespace run joined by one `-` and the effort appended.
+#[test]
+fn model_slug_lowercases_hyphenates_and_appends_effort() {
+    let agent = |display: Option<&str>, model: Option<&str>, effort: Option<&str>| AgentEntry {
+        model_display_name: display.map(str::to_string),
+        model: model.map(str::to_string),
+        effort: effort.map(str::to_string),
+        ..AgentEntry::default()
+    };
+
+    assert_eq!(
+        agent(Some("Fable 5.1"), Some("claude-fable-5-1"), Some("xhigh")).model_slug(),
+        "fable-5.1-xhigh"
+    );
+    assert_eq!(
+        agent(Some("Claude  Opus\t5.5"), None, None).model_slug(),
+        "claude-opus-5.5",
+        "a whitespace run becomes one hyphen"
+    );
+    assert_eq!(
+        agent(None, Some("GPT-5-Codex"), Some("high")).model_slug(),
+        "gpt-5-codex-high",
+        "the raw model stands in for a missing display name"
+    );
+    assert_eq!(agent(None, None, None).model_slug(), "");
 }

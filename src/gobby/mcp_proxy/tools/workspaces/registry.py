@@ -59,6 +59,8 @@ async def current_actor() -> str:
 def _json(value: object) -> Any:
     if isinstance(value, list | tuple):
         return [_json(item) for item in value]
+    if isinstance(value, Workspace):
+        return to_json_safe(value.to_dict())
     if is_dataclass(value) and not isinstance(value, type):
         return to_json_safe(asdict(value))
     return to_json_safe(value)

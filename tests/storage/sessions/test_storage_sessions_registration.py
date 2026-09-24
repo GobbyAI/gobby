@@ -23,6 +23,7 @@ from gobby.storage.sessions._title_defaults import (
     MANUAL_TITLE_SOURCE,
     PROVISIONAL_TITLE_SOURCE,
     manual_title_source,
+    provider_title_label,
 )
 from gobby.storage.sessions._update_sentinel import UNSET
 from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
@@ -588,7 +589,7 @@ class TestSessionManagerRegistration:
             project_id=sample_project["id"],
         )
 
-        assert session.title == f"test-project#{session.seq_num}"
+        assert session.title == f"test-project#{session.seq_num}: {provider_title_label(source)}"
         assert session.title_source == PROVISIONAL_TITLE_SOURCE
 
     def test_register_with_explicit_title_does_not_mark_provisional(
@@ -672,7 +673,7 @@ class TestSessionManagerRegistration:
         )
 
         assert updated.id == session.id
-        assert updated.title == f"test-project#{updated.seq_num}"
+        assert updated.title == f"test-project#{updated.seq_num}: Codex"
         assert updated.title_source == PROVISIONAL_TITLE_SOURCE
 
     def test_stale_registration_backfill_preserves_concurrent_task_title(
@@ -726,7 +727,7 @@ class TestSessionManagerRegistration:
         )
 
         assert session.session_type == "web_chat"
-        assert session.title == f"test-project#{session.seq_num}"
+        assert session.title == f"test-project#{session.seq_num}: Droid"
         assert session.title_source == PROVISIONAL_TITLE_SOURCE
 
     def test_create_web_chat_with_user_title_marks_it_manual(

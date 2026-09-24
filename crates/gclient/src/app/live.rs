@@ -388,14 +388,15 @@ impl Workspace<LiveDaemon> {
             .extend(self.checked_out_projects());
     }
 
-    /// Queues a roster refetch once the last one is older than
-    /// `ROSTER_REFRESH_INTERVAL`; the render tick starts it. Events refetch
-    /// sooner; this is the backstop for a missed one.
+    /// Queues a roster, session and run refetch once the last roster fetch is
+    /// older than `ROSTER_REFRESH_INTERVAL`; the render tick starts it. Events
+    /// refetch sooner; this is the backstop for a missed event or failed fetch.
     pub fn request_roster_refresh_if_due(&mut self) {
         if self.roster_refreshed_at.elapsed() < ROSTER_REFRESH_INTERVAL {
             return;
         }
         self.pending_sidebar.roster = true;
+        self.pending_sidebar.sessions = true;
     }
 
     /// Records the control request a focus change or a queued key needs. It is
@@ -771,7 +772,7 @@ fn optional<T>(
         Err(error) => {
             // The project belongs in the line: which one went sick is what a
             // stale row is diagnosed from.
-            tracing::debug!(
+            tracing::warn!(
                 %what,
                 project = project.unwrap_or(""),
                 %error,

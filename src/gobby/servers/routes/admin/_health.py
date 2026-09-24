@@ -616,8 +616,17 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
             except Exception as exc:
                 logger.warning("Failed to collect database concurrency status: %s", exc)
 
+        # Sample CPU before the other collectors start. Sampled beside them, the 0.1 s
+        # window measured this request's own work and read near 95% on a daemon
+        # that was averaging 55-75% (#22812).
+        collection = await _collect_status_items(
+            {"process": _collect_process_metrics()},
+            budget_seconds=max(
+                0.001,
+                _STATUS_COLLECTION_BUDGET_SECONDS - (time.perf_counter() - start_time),
+            ),
+        )
         collectors: dict[str, Awaitable[Any]] = {
-            "process": _collect_process_metrics(),
             "pipelines": _collect_pipeline_stats(server),
             "agents": _collect_agent_stats(server),
         }
@@ -638,10 +647,13 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
             0.001,
             _STATUS_COLLECTION_BUDGET_SECONDS - (time.perf_counter() - start_time),
         )
-        collection = await _collect_status_items(
+        sections = await _collect_status_items(
             collectors,
             budget_seconds=remaining_collection_budget,
         )
+        collection.values.update(sections.values)
+        collection.timed_out.extend(sections.timed_out)
+        collection.failed.update(sections.failed)
         process_metrics = collection.values.get("process")
         session_stats.update(collection.values.get("sessions", {}))
         task_stats.update(collection.values.get("tasks", {}))

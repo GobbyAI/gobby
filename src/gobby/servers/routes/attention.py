@@ -5,9 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import asdict, dataclass
-from datetime import datetime
-from pathlib import Path
+from dataclasses import dataclass
 from time import perf_counter
 from typing import TYPE_CHECKING, Any, Literal, Self
 
@@ -17,15 +15,15 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from gobby.agents.attention_metadata import validate_metadata_text, validate_metadata_ttl_ms
 from gobby.agents.prompt_detector import PromptDetector
 from gobby.agents.tmux.text_injection import AttentionInjectionError
-from gobby.servers.routes.configuration_context import require_config_snapshot
-from gobby.storage.attention import (
-    AttentionRosterRow,
-    AttentionRosterSnapshot,
-    AttentionRosterTerminal,
-    AttentionState,
+from gobby.servers.routes.attention_roster import (
+    _load_roster_entries,
+    _model_display_names,
 )
+from gobby.servers.routes.attention_roster import (
+    _run_tmux_payload as _run_tmux_payload,
+)
+from gobby.storage.attention import AttentionState
 from gobby.storage.sessions import LIVE_SESSION_STATUS_ORDER
-from gobby.storage.terminals import attach_locator_for_terminal
 from gobby.terminals.runtime import (
     Delivered,
     IndeterminateWrite,
@@ -279,8 +277,15 @@ def create_attention_router(
                 require_machine_id(),
                 live_session_statuses=LIVE_SESSION_STATUS_ORDER,
             )
+            resolver = getattr(server.services, "provider_capability_resolver", None)
+            # The capability catalog reads the database, so names resolve off the loop.
+            display_names = (
+                {}
+                if resolver is None
+                else await profiled_run_db(_model_display_names, resolver, rows)
+            )
             assembly_started_at = perf_counter()
-            entries = _load_roster_entries(server, snapshot, rows)
+            entries = _load_roster_entries(server, snapshot, rows, display_names)
             assembly_seconds = perf_counter() - assembly_started_at
             payload: dict[str, object] = {
                 "epoch": snapshot.epoch,
@@ -617,170 +622,6 @@ def _log_roster_profile(
 def _entry_count(payload: Mapping[str, object]) -> int:
     entries = payload.get("entries")
     return len(entries) if isinstance(entries, list) else 0
-
-
-def _load_roster_entries(
-    server: HTTPServer,
-    snapshot: AttentionRosterSnapshot,
-    rows: Sequence[AttentionRosterRow],
-) -> list[dict[str, object]]:
-    """Join cursor-bounded attention with one bounded identity query."""
-    services = server.services
-    runs = [row for row in rows if row.kind == "run"]
-    sessions = [row for row in rows if row.kind == "session"]
-    attention = {state.entry_id: state for state in snapshot.states}
-    entries: list[dict[str, object]] = []
-    active_agent_sessions = {run.session_id for run in runs if run.session_id is not None}
-
-    for run in runs:
-        entry_id = f"run:{run.source_id}"
-        task = None
-        if run.task_id is not None and run.task_ref is not None:
-            task = {"id": run.task_id, "ref": run.task_ref, "stage": run.task_stage}
-        entries.append(
-            {
-                "entry_id": entry_id,
-                "run_id": run.source_id,
-                "session_id": run.session_id,
-                "lifecycle_status": run.lifecycle_status,
-                "attention": _serialize_attention(attention.get(entry_id)),
-                "task": task,
-                "provider": run.provider,
-                "model": run.model,
-                "model_display_name": _model_display_name(services, run.provider, run.model),
-                "terminal": _terminal_block(server, run.terminal),
-                "tmux": _run_tmux_payload(server, run),
-                "last_activity_at": _serialize_timestamp(run.updated_at),
-                **_metadata_payload(snapshot, entry_id),
-            }
-        )
-
-    for session in sessions:
-        if session.source_id in active_agent_sessions:
-            continue
-        terminal_context = session.terminal_context
-        terminal = _terminal_block(server, session.terminal)
-        pane = terminal_context.get("tmux_pane")
-        if terminal is None and (not isinstance(pane, str) or not pane):
-            continue
-        entry_id = f"session:{session.source_id}"
-        entries.append(
-            {
-                "entry_id": entry_id,
-                "run_id": None,
-                "session_id": session.session_id,
-                "lifecycle_status": session.lifecycle_status,
-                "attention": _serialize_attention(attention.get(entry_id)),
-                "task": None,
-                "provider": session.provider,
-                "model": session.model,
-                "model_display_name": _model_display_name(
-                    services, session.provider, session.model
-                ),
-                "terminal": terminal,
-                "tmux": _session_tmux_payload(terminal_context),
-                "last_activity_at": _serialize_timestamp(session.updated_at),
-                **_metadata_payload(snapshot, entry_id),
-            }
-        )
-    return sorted(entries, key=lambda item: str(item["entry_id"]))
-
-
-def _model_display_name(services: Any, provider: str | None, model: str | None) -> str | None:
-    """The model's name as its provider prints it, when the capability catalog has it."""
-    resolver = getattr(services, "provider_capability_resolver", None)
-    if resolver is None or not provider or not model:
-        return None
-    capability = resolver.find_model(provider, model)
-    return None if capability is None else capability.display_name
-
-
-def _serialize_attention(state: AttentionState | None) -> dict[str, object] | None:
-    if state is None or state.state is None:
-        return None
-    return {
-        "attention_id": state.attention_id,
-        "state": state.state,
-        "reason": state.reason,
-        "kind": state.kind,
-        "fingerprint": state.fingerprint,
-        "payload": state.payload,
-        "since": state.since,
-        "seen_at": state.seen_at,
-    }
-
-
-def _terminal_block(
-    server: HTTPServer,
-    terminal: AttentionRosterTerminal | None,
-) -> dict[str, object] | None:
-    if terminal is None:
-        return None
-    manager = getattr(server.services, "terminal_manager", None)
-    if manager is None:
-        return None
-    try:
-        attach = attach_locator_for_terminal(
-            terminal,
-            live_host_epoch=terminal.host_epoch or "",
-            socket_dir=Path.home() / ".gobby",
-        )
-    except Exception:
-        attach = None
-    return {
-        "terminal_id": terminal.id,
-        "backend": terminal.backend,
-        "state": terminal.state,
-        "attach": None if attach is None else asdict(attach),
-    }
-
-
-def _run_tmux_payload(
-    server: HTTPServer,
-    run: AttentionRosterRow,
-) -> dict[str, object] | None:
-    if run.terminal_id is None:
-        return None
-    terminal = getattr(run, "terminal", None)
-    session_name = None if terminal is None else terminal.session_name
-    tmux_config = require_config_snapshot(server).active.tmux
-    socket_path = getattr(tmux_config, "socket_path", None)
-    return {
-        "socket_path": socket_path if isinstance(socket_path, str) and socket_path else None,
-        "session_name": session_name,
-        "pane_pid": run.pid,
-        "terminal_id": run.terminal_id,
-    }
-
-
-def _session_tmux_payload(terminal_context: Mapping[str, object]) -> dict[str, object]:
-    from gobby.terminals.lookup import (
-        attach_name_from_context,
-        parent_pid_from_context,
-        socket_path_from_context,
-    )
-
-    return {
-        "socket_path": socket_path_from_context(terminal_context),
-        "session_name": attach_name_from_context(terminal_context),
-        "parent_pid": parent_pid_from_context(terminal_context),
-    }
-
-
-def _metadata_payload(
-    snapshot: AttentionRosterSnapshot,
-    entry_id: str,
-) -> dict[str, object]:
-    metadata = snapshot.metadata.get(entry_id)
-    return {"metadata": dict(metadata)} if metadata is not None else {}
-
-
-def _serialize_timestamp(value: object) -> str | None:
-    if value is None:
-        return None
-    if isinstance(value, datetime):
-        return value.isoformat()
-    return str(value)
 
 
 async def _redetect_retired_attention(

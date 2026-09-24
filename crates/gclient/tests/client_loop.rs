@@ -8639,6 +8639,58 @@ async fn roster_refresh_backstop_refetches_on_the_interval() {
     mock.shutdown().await;
 }
 
+/// A failed session or run row fetch is retried by the same backstop: no
+/// event may come to refetch it, so the rows would stay stale for good.
+#[tokio::test]
+async fn roster_backstop_also_refetches_the_session_rows() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.enqueue("GET", "/api/projects", 200, sidebar_project_row());
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    mock.wait_for_websocket().await;
+    let mut workspace = Workspace::live(daemon.clone());
+    workspace.select_project("project-1");
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("subscribe-first reconcile");
+    let row_gets = |route: &str| {
+        mock.requests()
+            .into_iter()
+            .filter(|request| request.method == "GET" && request.target.starts_with(route))
+            .count()
+    };
+    let sessions_before = row_gets("/api/sessions?");
+    let runs_before = row_gets("/api/agents/runs?");
+
+    tokio::time::pause();
+    tokio::time::advance(ROSTER_REFRESH_INTERVAL).await;
+    tokio::time::resume();
+    workspace.request_roster_refresh_if_due();
+    workspace
+        .start_sidebar_refetch()
+        .expect("the interval passed")
+        .await
+        .expect("backstop refetched");
+    assert_eq!(
+        row_gets("/api/sessions?"),
+        sessions_before + 1,
+        "the backstop refetched the session rows"
+    );
+    assert_eq!(
+        row_gets("/api/agents/runs?"),
+        runs_before + 1,
+        "the backstop refetched the run rows"
+    );
+
+    daemon
+        .close(Instant::now() + Duration::from_secs(1))
+        .await
+        .expect("close live daemon");
+    mock.shutdown().await;
+}
+
 fn sidebar_two_project_rows() -> Value {
     json!([
         {

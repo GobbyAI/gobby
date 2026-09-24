@@ -3499,6 +3499,9 @@ class TestHooksEndpoints:
         assert len(slow_warnings) == 1
         extra = slow_warnings[0].kwargs["extra"]
         assert extra["dominant_phase"] in extra["hook_phase_durations_seconds"]
+        # The mock hook manager evaluates no rules, so there is no session or sub-phase.
+        assert extra["session_id"] is None
+        assert extra["rule_evaluation_breakdown_seconds"] == {}
         assert extra["dominant_phase_seconds"] >= 0
 
     def test_execute_hook_claude_envelope_source(self, session_storage: SessionManager) -> None:

@@ -6,12 +6,13 @@ import asyncio
 import logging
 from collections.abc import Iterator
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import yaml
 
+from gobby.agents.spawn_models import SpawnRequest
 from gobby.workflows.definitions import (
     AgentDefinitionBody,
     AgentStepWorkflowBody,
@@ -21,7 +22,6 @@ from gobby.workflows.step_instances import AgentStepInstance
 from tests.fixtures.agent_definitions import make_agent_definition, make_agent_workflows
 
 if TYPE_CHECKING:
-    from gobby.agents.spawn_models import SpawnRequest
     from gobby.storage.tasks import LocalTaskManager, Task
 
 from tests.agents.prepared_spawn import prepared_spawn
@@ -837,12 +837,15 @@ class TestSpawnAgentStepVariables:
             result = await registry.call("spawn_agent", arguments)
             await _drain_spawn_background_tasks()
 
-        spawn_request = mock_execute.call_args.args[0]
         instance = AgentStepInstanceManager(db).get_for_session(child.id)
+        if task_assignment == "none":
+            assert mock_execute.call_args is None
+            return result, task_manager, task, instance, cast(SpawnRequest, None)
+        spawn_request = mock_execute.call_args.args[0]
         return result, task_manager, task, instance, spawn_request
 
     @pytest.mark.asyncio
-    async def test_taskless_developer_spawn_skips_step_workflow(
+    async def test_taskless_claim_step_spawn_is_refused(
         self,
         isolated_checkout_factory: IsolatedCheckoutFactory,
         db: Any,
@@ -855,7 +858,7 @@ class TestSpawnAgentStepVariables:
             task_manager,
             task,
             instance,
-            spawn_request,
+            _spawn_request,
         ) = await self._spawn_bundled_developer_agent(
             isolated_checkout_factory=isolated_checkout_factory,
             db=db,
@@ -865,16 +868,15 @@ class TestSpawnAgentStepVariables:
             task_assignment="none",
         )
         agent_body = _bundled_agent_body(agent_name, repo_root)
-        initial_variables = spawn_request.initial_variables
 
-        assert result["success"] is True
+        assert result["success"] is False
+        assert result["skipped"] is True
+        assert result["error"] == (
+            "Task-bound agent requires an assigned task; refusing to spawn "
+            "without task_id or assigned_task_id"
+        )
         assert task_manager.get_task(task.id).claimed_by_session_id is None
         assert instance is None
-        assert initial_variables is not None
-        assert "assigned_task_id" not in initial_variables
-        assert "_step_workflow_name" not in initial_variables
-        assert initial_variables["_agent_type"] == agent_name
-        assert spawn_request.agent_name == agent_name
         assert agent_body.workflows.rule_selectors is not None
         assert agent_body.workflows.rule_selectors.include == [
             "tag:default",

@@ -1,5 +1,6 @@
 use super::live_reader::{
-    connect_socket, run_connection, Outbound, WRITE_CANCELLED, WRITE_QUEUED, WRITE_STARTED,
+    connect_socket, encode_frame_text, run_connection, Outbound, WRITE_CANCELLED, WRITE_QUEUED,
+    WRITE_STARTED,
 };
 use super::rest::RestClient;
 use super::{
@@ -438,9 +439,7 @@ impl LiveDaemon {
     }
 
     pub(super) async fn request(&self, message: Value) -> Result<Value, DaemonError> {
-        super::encode_message(&message).map_err(|error| DaemonError::Protocol {
-            detail: error.to_string(),
-        })?;
+        let raw = encode_frame_text(&message)?;
         let request = super::message_kind(&message)
             .unwrap_or("message")
             .to_string();
@@ -466,7 +465,7 @@ impl LiveDaemon {
         timeout_at(
             deadline,
             outbound.send(Outbound::Message {
-                value: message,
+                raw,
                 write_state: Arc::clone(&guard.write_state),
                 written: written_tx,
             }),
@@ -487,9 +486,7 @@ impl LiveDaemon {
     }
 
     async fn notification(&self, message: Value) -> Result<(), DaemonError> {
-        super::encode_message(&message).map_err(|error| DaemonError::Protocol {
-            detail: error.to_string(),
-        })?;
+        let raw = encode_frame_text(&message)?;
         let request = super::message_kind(&message)
             .unwrap_or("message")
             .to_string();
@@ -519,7 +516,7 @@ impl LiveDaemon {
         timeout_at(
             deadline,
             outbound.send(Outbound::Message {
-                value: message,
+                raw,
                 write_state: Arc::new(AtomicU8::new(WRITE_QUEUED)),
                 written,
             }),

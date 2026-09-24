@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import threading
@@ -10,6 +11,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any
 
+from gobby.adapters.capabilities import hook_supports_model_context
 from gobby.hooks.adapter_execution import release_session_admission_for_external_wait
 from gobby.hooks.background_tasks import create_background_task
 from gobby.hooks.events import ContextPart, HookEvent
@@ -55,8 +57,35 @@ class _InflightMcpInjection:
     deadline: float
 
 
+@dataclass(frozen=True, slots=True)
+class _LateMcpInjection:
+    effect: Any
+    row: RuleDefinitionRow
+    completed: _CompletedMcpInjection
+
+
+def _put_session_lru[T](
+    sessions: OrderedDict[str, OrderedDict[str, T]],
+    session_id: str,
+    call_key: str,
+    value: T,
+) -> None:
+    session_entries = sessions.pop(session_id, OrderedDict())
+    session_entries[call_key] = value
+    session_entries.move_to_end(call_key)
+    if len(session_entries) > _MAX_CACHED_PER_SESSION:
+        session_entries.popitem(last=False)
+    sessions[session_id] = session_entries
+    if len(sessions) > _MAX_CACHED_SESSIONS:
+        sessions.popitem(last=False)
+
+
 class CachedMcpInjectionMixin(DeliveryFormattingMixin):
-    """Share optional MCP dispatches and cache their results by platform session."""
+    """Share optional MCP dispatches and cache their results by platform session.
+
+    A result whose inline wait timed out is delivered once on the session's next
+    hook that carries model context, unless its TTL has passed (#22708).
+    """
 
     db: Any
     _mcp_dispatcher: Any
@@ -66,11 +95,16 @@ class CachedMcpInjectionMixin(DeliveryFormattingMixin):
         str,
         OrderedDict[str, _CompletedMcpInjection],
     ]
+    # Call keys whose inline waiter gave up while the dispatch was still running.
+    _mcp_injection_abandoned: set[str]
+    _mcp_injection_late: OrderedDict[str, OrderedDict[str, _LateMcpInjection]]
 
     def _initialize_cached_mcp_injections(self) -> None:
         self._mcp_injection_lock = threading.Lock()
         self._mcp_injection_inflight = {}
         self._mcp_injection_cache = OrderedDict()
+        self._mcp_injection_abandoned = set()
+        self._mcp_injection_late = OrderedDict()
 
     @staticmethod
     def _uses_mcp_injection_cache(effect: Any) -> bool:
@@ -153,28 +187,31 @@ class CachedMcpInjectionMixin(DeliveryFormattingMixin):
             assert inflight is not None
             release_session_admission_for_external_wait()
             remaining_seconds = inflight.deadline - loop.time()
-            if remaining_seconds <= 0:
-                self._log_inline_timeout(effect, row)
-                return True
-            try:
-                completed = await asyncio.wait_for(
-                    asyncio.shield(inflight.task),
-                    timeout=remaining_seconds,
+            if remaining_seconds > 0:
+                with contextlib.suppress(TimeoutError):
+                    completed = await asyncio.wait_for(
+                        asyncio.shield(inflight.task),
+                        timeout=remaining_seconds,
+                    )
+            if completed is None:
+                if not inflight.task.done():
+                    self._log_inline_timeout(effect, row)
+                completed = self._defer_timed_out_injection(
+                    platform_session_id,
+                    call_key,
+                    inflight.task,
                 )
-            except TimeoutError:
-                self._log_inline_timeout(effect, row)
-                return True
 
         if completed is None:
             return True
 
-        if effect.success_variable and (
-            is_internal_rule(row) or not is_reserved_workflow_variable(effect.success_variable)
-        ):
-            variables[effect.success_variable] = True
-            if effect.delivery == "on_receipt":
-                staged_variable_updates[effect.success_variable] = True
+        with self._mcp_injection_lock:
+            # Delivered inline now, so a queued late copy of this call must not follow.
+            late_entries = self._mcp_injection_late.get(platform_session_id)
+            if late_entries is not None:
+                late_entries.pop(call_key, None)
 
+        self._record_injection_success(effect, row, variables, staged_variable_updates)
         await self._append_injected_mcp_result(
             server=effect.server,
             tool=effect.tool,
@@ -198,6 +235,70 @@ class CachedMcpInjectionMixin(DeliveryFormattingMixin):
             wait_seconds,
             row.name,
         )
+
+    def _defer_timed_out_injection(
+        self,
+        platform_session_id: str,
+        call_key: str,
+        task: asyncio.Task[_CompletedMcpInjection | None],
+    ) -> _CompletedMcpInjection | None:
+        """Return a result that filled after the wait ended, or queue it for late delivery."""
+        with self._mcp_injection_lock:
+            session_cache = self._mcp_injection_cache.get(platform_session_id)
+            completed = session_cache.get(call_key) if session_cache is not None else None
+            if completed is None and not task.done():
+                self._mcp_injection_abandoned.add(call_key)
+            return completed
+
+    @staticmethod
+    def _record_injection_success(
+        effect: Any,
+        row: RuleDefinitionRow,
+        variables: dict[str, Any],
+        staged_variable_updates: dict[str, Any],
+    ) -> None:
+        if effect.success_variable and (
+            is_internal_rule(row) or not is_reserved_workflow_variable(effect.success_variable)
+        ):
+            variables[effect.success_variable] = True
+            if effect.delivery == "on_receipt":
+                staged_variable_updates[effect.success_variable] = True
+
+    async def _deliver_late_mcp_injections(
+        self,
+        event: HookEvent,
+        variables: dict[str, Any],
+        context_parts: list[ContextPart],
+        staged_variable_updates: dict[str, Any],
+    ) -> None:
+        """Append timed-out results to this hook once, dropping any past the cache TTL."""
+        platform_session_id = event.metadata.get("_platform_session_id")
+        if not isinstance(platform_session_id, str) or not platform_session_id:
+            return
+        if not hook_supports_model_context(event):
+            return
+        with self._mcp_injection_lock:
+            late_entries = self._mcp_injection_late.pop(platform_session_id, None)
+        if not late_entries:
+            return
+        now = asyncio.get_running_loop().time()
+        for late in late_entries.values():
+            if now - late.completed.filled_at > _CACHE_TTL_SECONDS:
+                continue
+            self._record_injection_success(
+                late.effect,
+                late.row,
+                variables,
+                staged_variable_updates,
+            )
+            await self._append_injected_mcp_result(
+                server=late.effect.server,
+                tool=late.effect.tool,
+                raw_result=late.completed.raw_result,
+                event=event,
+                variables=variables,
+                context_parts=context_parts,
+            )
 
     async def _run_cached_mcp_injection(
         self,
@@ -232,7 +333,13 @@ class CachedMcpInjectionMixin(DeliveryFormattingMixin):
                 raw_result=raw_result,
                 filled_at=asyncio.get_running_loop().time(),
             )
-            self._cache_mcp_injection_result(platform_session_id, call_key, completed)
+            self._cache_mcp_injection_result(
+                platform_session_id,
+                call_key,
+                completed,
+                effect=effect,
+                row=row,
+            )
             return completed
         except TimeoutError:
             logger.warning(
@@ -257,22 +364,29 @@ class CachedMcpInjectionMixin(DeliveryFormattingMixin):
         finally:
             with self._mcp_injection_lock:
                 self._mcp_injection_inflight.pop(call_key, None)
+                self._mcp_injection_abandoned.discard(call_key)
 
     def _cache_mcp_injection_result(
         self,
         session_id: str,
         call_key: str,
         completed: _CompletedMcpInjection,
+        *,
+        effect: Any,
+        row: RuleDefinitionRow,
     ) -> None:
         with self._mcp_injection_lock:
-            session_cache = self._mcp_injection_cache.pop(session_id, OrderedDict())
-            session_cache[call_key] = completed
-            session_cache.move_to_end(call_key)
-            if len(session_cache) > _MAX_CACHED_PER_SESSION:
-                session_cache.popitem(last=False)
-            self._mcp_injection_cache[session_id] = session_cache
-            if len(self._mcp_injection_cache) > _MAX_CACHED_SESSIONS:
-                self._mcp_injection_cache.popitem(last=False)
+            _put_session_lru(self._mcp_injection_cache, session_id, call_key, completed)
+            # Queued under the same lock as the fill, so a waiter that gives up
+            # either sees this result in the cache or leaves it for late delivery.
+            if call_key in self._mcp_injection_abandoned:
+                self._mcp_injection_abandoned.discard(call_key)
+                _put_session_lru(
+                    self._mcp_injection_late,
+                    session_id,
+                    call_key,
+                    _LateMcpInjection(effect=effect, row=row, completed=completed),
+                )
 
     async def _append_injected_mcp_result(
         self,

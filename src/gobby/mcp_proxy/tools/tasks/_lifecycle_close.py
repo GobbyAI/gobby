@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from dataclasses import replace
@@ -589,13 +590,18 @@ async def _evaluate_close(
                 attempted_paths=tuple(attempted_paths),
                 degraded_capabilities=(message,),
             )
+        # The language lookup reads the index once per edited path, and the gate
+        # re-parses every transcript run: both stay off the daemon loop (#22708).
         transcript = replace(
             transcript,
-            edit_languages=task_edit_languages(ctx, task.project_id, transcript.edits),
+            edit_languages=await asyncio.to_thread(
+                task_edit_languages, ctx, task.project_id, transcript.edits
+            ),
         )
         evaluation.transcript_evidence = transcript.summary()
         command_gate = replace(
-            evaluate_validation_commands(
+            await asyncio.to_thread(
+                evaluate_validation_commands,
                 task_category=task.category,
                 evidence=transcript,
                 has_attributed_edits=evaluation.had_attributed_edits,

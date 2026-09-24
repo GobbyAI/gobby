@@ -80,6 +80,8 @@ pub struct AgentEntry {
     pub terminal_id: String,
     pub backend: Backend,
     pub name: String,
+    /// The run's agent definition (`backend-developer`); no rung of `name`.
+    pub agent_definition_name: Option<String>,
     /// Persisted session title before the row-label fallback ladder. Pane
     /// headers use this exact rung, then fall back to their own label/name.
     pub session_title: Option<String>,
@@ -89,6 +91,8 @@ pub struct AgentEntry {
     /// shows `model` when the daemon knew no better.
     pub model_display_name: Option<String>,
     pub task_ref: Option<String>,
+    /// The roster task's title: a run's task, or the open task a session holds.
+    pub task_title: Option<String>,
     /// The joined session's `ref`, `#12217`, when the entry is session keyed.
     pub session_ref: Option<String>,
     /// The session the entry runs as: the roster's, else a run's child
@@ -98,6 +102,8 @@ pub struct AgentEntry {
     pub parent_session_id: Option<String>,
     /// The resolved reasoning effort, shown after the model.
     pub effort: Option<String>,
+    pub context_percent: Option<u8>,
+    pub tokens_used: Option<u64>,
     /// An agent run (the roster's `run:` entries), listed under agents;
     /// every other entry is an interactive session.
     pub managed: bool,
@@ -108,6 +114,60 @@ pub struct AgentEntry {
     pub state: RowState,
     pub attention: Option<Attention>,
     pub last_activity_at: Option<String>,
+}
+
+impl AgentEntry {
+    /// The run's agent definition name, else the provider label a session's
+    /// provisional title carries.
+    pub fn definition_label(&self) -> String {
+        self.agent_definition_name
+            .clone()
+            .unwrap_or_else(|| provider_label(&self.provider).to_string())
+    }
+
+    /// `fable-5.1-xhigh`: the display name (else the raw model) lowercased,
+    /// each whitespace run one `-`, with the effort appended.
+    pub fn model_slug(&self) -> String {
+        let model = self
+            .model_display_name
+            .as_deref()
+            .or(self.model.as_deref())
+            .unwrap_or_default()
+            .to_lowercase();
+        let mut slug = model.split_whitespace().collect::<Vec<_>>().join("-");
+        if let Some(effort) = &self.effort {
+            slug.push('-');
+            slug.push_str(effort);
+        }
+        slug
+    }
+}
+
+/// The daemon's `_PROVIDER_TITLE_LABELS` (`storage/sessions/_title_defaults.py`).
+const PROVIDER_LABELS: [(&str, &str); 10] = [
+    ("agy", "AGY"),
+    ("claude", "Claude"),
+    ("claude_code", "Claude Code"),
+    ("codex", "Codex"),
+    ("droid", "Droid"),
+    ("grok", "Grok"),
+    ("pipeline", "Pipeline"),
+    ("qwen", "Qwen"),
+    ("system", "System"),
+    ("unknown", "Unknown"),
+];
+
+/// Mirrors the daemon's `provider_title_label`: a blank source is `Unknown`,
+/// an unlisted one shows as written.
+pub fn provider_label(provider: &str) -> &str {
+    let provider = provider.trim();
+    if provider.is_empty() {
+        return "Unknown";
+    }
+    PROVIDER_LABELS
+        .iter()
+        .find(|(source, _)| source.eq_ignore_ascii_case(provider))
+        .map_or(provider, |(_, label)| *label)
 }
 
 /// Everything `build` reads, borrowed from the workspace or a test.
@@ -194,12 +254,12 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
             let session_title = session
                 .and_then(|(_, session)| session.title.clone())
                 .filter(|name| !name.is_empty());
+            let agent_definition_name = run
+                .and_then(|(_, run)| run.agent_name.clone())
+                .filter(|name| !name.is_empty());
             let name = session_title
                 .clone()
-                .or_else(|| {
-                    run.and_then(|(_, run)| run.agent_name.clone())
-                        .filter(|name| !name.is_empty())
-                })
+                .or_else(|| agent_definition_name.clone())
                 .or_else(|| {
                     entry
                         .tmux_session_name
@@ -220,6 +280,7 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
                 terminal_id: terminal.terminal_id.clone(),
                 backend: terminal.backend,
                 name,
+                agent_definition_name,
                 session_title,
                 provider: provider.unwrap_or_default(),
                 model: entry
@@ -228,6 +289,7 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
                     .or_else(|| run.and_then(|(_, run)| run.model.clone())),
                 model_display_name: entry.model_display_name.clone(),
                 task_ref: entry.task.as_ref().and_then(|task| task.reference.clone()),
+                task_title: entry.task.as_ref().and_then(|task| task.title.clone()),
                 session_ref: session.and_then(|(_, session)| session.reference.clone()),
                 session_id: entry
                     .session_id
@@ -242,6 +304,8 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
                         session
                             .and_then(|(_, session)| session.reasoning_effort().map(str::to_owned))
                     }),
+                context_percent: entry.context_percent,
+                tokens_used: entry.tokens_used,
                 managed: entry.run_id.is_some() || entry.entry_id.starts_with("run:"),
                 worktree_id: run.and_then(|(_, run)| run.worktree_id.clone()),
                 lifecycle_status: entry.lifecycle_status.clone(),

@@ -19,6 +19,7 @@ import psycopg
 import pytest
 
 import gobby.llm.context_windows as context_windows
+from gobby.config.ai import ModelMetadataAlias
 from gobby.llm.context_windows import (
     coerce_context_length,
     reconcile_model_context,
@@ -671,3 +672,23 @@ def test_db_backed_provider_metadata_alias_edits_are_live(postgres_db: HubDataba
     assert (resolved.value, resolved.source) == (64_000, "registry")
     assert removed is not None
     assert (removed.value, removed.source) == (None, "unknown")
+
+
+def test_ready_runtime_aliases_skip_the_per_call_config_read() -> None:
+    alias = ModelMetadataAlias(
+        provider="synthetic-provider",
+        provider_model_id="provider-model",
+        openrouter_model_id="openai/registry-model",
+    )
+    active = SimpleNamespace(ai=SimpleNamespace(model_metadata_aliases=[alias]))
+    runtime = SimpleNamespace(
+        ready=True,
+        capture=lambda: SimpleNamespace(snapshot=SimpleNamespace(active=active)),
+    )
+    app_context = SimpleNamespace(config_runtime=runtime)
+
+    with patch("gobby.storage.config_repository.ConfigRepository.read") as config_read:
+        aliases = context_windows._model_metadata_aliases(app_context, MagicMock())
+
+    assert aliases == [alias]
+    config_read.assert_not_called()

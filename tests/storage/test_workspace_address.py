@@ -97,6 +97,13 @@ def test_projectless_scratches_share_a_machine(manager: WorkspaceManager) -> Non
     assert first.id != second.id
 
 
+def test_a_projectless_row_omits_the_association(manager: WorkspaceManager) -> None:
+    scratch, _created = manager.create(LOCAL_MACHINE_ID, "alpha")
+    payload = scratch.to_dict()
+    assert "default_project_id" not in payload
+    assert payload["focused_tab_id"] is None
+
+
 def test_worktree_stays_off_the_address(manager: WorkspaceManager, temp_db: HubDatabase) -> None:
     project_id = _project(temp_db, "Game Goblins")
     worktree_id = str(uuid.uuid4())

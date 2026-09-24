@@ -95,15 +95,15 @@ pub fn help_lines(chrome: &Chrome) -> Vec<Line<'static>> {
     lines
 }
 
-pub fn render_keybind_help(frame: &mut Frame, area: Rect, chrome: &Chrome) {
+pub fn render_keybind_help(frame: &mut Frame, area: Rect, chrome: &Chrome) -> Vec<Rect> {
     let p = &chrome.palette;
     let popup_w = area.width.saturating_sub(4).min(HELP_MAX_WIDTH);
     let popup_h = area.height.saturating_sub(2).min(HELP_MAX_HEIGHT);
     let Some(inner) = render_modal_shell(frame, area, popup_w, popup_h, p) else {
-        return;
+        return Vec::new();
     };
     if inner.height < 6 || inner.width < 20 {
-        return;
+        return Vec::new();
     }
 
     let stack = modal_stack_areas(inner, 2, 1, 0, 1);
@@ -184,6 +184,7 @@ pub fn render_keybind_help(frame: &mut Frame, area: Rect, chrome: &Chrome) {
         ])
     };
     frame.render_widget(Paragraph::new(footer), stack.footer.unwrap_or_default());
+    vec![button]
 }
 
 /// Lay `lines` out column-major over `body`, scrolled by

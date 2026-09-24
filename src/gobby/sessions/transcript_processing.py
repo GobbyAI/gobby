@@ -18,7 +18,7 @@ import psycopg
 from gobby.app_context import get_app_context
 from gobby.config.app import DaemonConfig
 from gobby.config.sessions import SessionSummaryConfig
-from gobby.llm.context_windows import reconcile_model_context
+from gobby.llm.context_windows import ReconciledModelContext, reconcile_model_context
 from gobby.sessions.context_usage import (
     context_window_from_raw_message,
     grok_epoch_max_occupancy,
@@ -380,14 +380,19 @@ class TranscriptProcessingMixin:
         latest_context_snapshot: ContextUsageSnapshot | None = None
         payloads: list[dict[str, Any]] = []
 
-        # Pass 1 (pure compute): fold every message into a
-        # message-ordered plan — either a window-metadata snapshot entry or a
-        # pending token event. Nothing in this pass touches the database.
+        # Pass 1: fold every message into a message-ordered plan — either a
+        # window-metadata snapshot entry or a pending token event. Each
+        # reconcile_model_context call builds a resolver that reads aliases and
+        # the model registry, so results are memoized per input: an 86 MB
+        # transcript made 16,628 calls over 14 distinct inputs (#22811).
         snapshot_plan: list[_PendingTokenEvent | ContextUsageSnapshot | None] = []
+        reconciled_by_input: dict[
+            tuple[str | None, str | None, int | None], ReconciledModelContext
+        ] = {}
         for msg in messages:
             message_model = msg.model if isinstance(msg.model, str) and msg.model else None
             observed_context_window = _message_context_window(msg)
-            reconciled_context = reconcile_model_context(
+            reconcile_input = (
                 last_model,
                 message_model,
                 (
@@ -395,9 +400,13 @@ class TranscriptProcessingMixin:
                     if observed_context_window is not None
                     else session_context_window
                 ),
-                provider=session_source,
-                db=self.db,
             )
+            reconciled_context = reconciled_by_input.get(reconcile_input)
+            if reconciled_context is None:
+                reconciled_context = reconcile_model_context(
+                    *reconcile_input, provider=session_source, db=self.db
+                )
+                reconciled_by_input[reconcile_input] = reconciled_context
             last_model = reconciled_context.model
             message_context_window = reconciled_context.context_window
             if message_context_window is not None:

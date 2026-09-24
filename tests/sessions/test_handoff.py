@@ -46,7 +46,6 @@ from gobby.sessions.handoff_records import (
 from gobby.sessions.title_lifecycle import (
     apply_clear_successor_title,
     clear_successor_title,
-    promote_heuristic_title,
     recompute_automatic_title,
     update_title_for_claim,
 )
@@ -55,6 +54,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
+from gobby.storage.sessions._title_defaults import provider_title_label
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.state_manager import SessionVariableManager
@@ -1442,7 +1442,9 @@ def test_title_lifecycle_is_provisional_task_manual_and_clear_sticky(
 ) -> None:
     session = _registered_session(session_manager)
     assert session.seq_num is not None
-    assert session.title == f"handoff-test#{session.seq_num}"
+    assert session.title == (
+        f"handoff-test#{session.seq_num}: {provider_title_label(session.source)}"
+    )
 
     update_title_for_claim(
         session_manager,
@@ -1499,38 +1501,6 @@ def test_clear_successor_task_title_uses_successor_session_ref(
 
     assert title == (f"handoff-test#99: Task #{task.seq_num} - Continue claimed work")
     assert title_source == "task"
-
-
-def test_clear_successor_generates_its_own_heuristic(
-    session_manager: SessionManager,
-) -> None:
-    predecessor = _registered_session(session_manager)
-    promoted_predecessor = promote_heuristic_title(
-        session_manager,
-        predecessor.id,
-        "Investigate predecessor behavior",
-    )
-    assert promoted_predecessor.heuristic_title is not None
-
-    successor_id = session_manager.register_session(
-        external_id="heuristic-successor",
-        machine_id=MACHINE_ID,
-        source="codex",
-        project_id=predecessor.project_id,
-    )
-    apply_clear_successor_title(session_manager, successor_id, promoted_predecessor)
-    successor = session_manager.get(successor_id)
-    assert successor is not None
-    assert successor.title_source == "provisional"
-    assert successor.heuristic_title is None
-
-    promoted_successor = promote_heuristic_title(
-        session_manager,
-        successor_id,
-        "Continue successor investigation",
-    )
-    assert promoted_successor.title_source == "heuristic"
-    assert promoted_successor.heuristic_title != promoted_predecessor.heuristic_title
 
 
 def test_staged_handoff_rejection_names_the_blocking_condition(

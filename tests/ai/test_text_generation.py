@@ -2870,12 +2870,13 @@ async def test_codex_cli_text_generate_adapter_runs_one_shot_exec(
     assert neutral_cwd != Path("/tmp/project")
     # Codex output file lives inside the neutral cwd so its lifetime matches the call.
     assert Path(command[command.index("--output-last-message") + 1]).parent == neutral_cwd
-    assert command[:9] == [
+    assert command[:10] == [
         "/bin/codex",
         "--ask-for-approval",
         "never",
         "exec",
         "--ephemeral",
+        "--ignore-user-config",
         "--skip-git-repo-check",
         "--ignore-rules",
         "--sandbox",
@@ -2883,10 +2884,9 @@ async def test_codex_cli_text_generate_adapter_runs_one_shot_exec(
     ]
     # Codex aborts outside a Git repo; the neutral temp cwd is not one.
     assert "--skip-git-repo-check" in command
-    assert "--ignore-user-config" not in command
     assert "--output-last-message" in command
     assert command[command.index("--model") + 1] == "gpt-5.4-mini"
-    assert command[command.index("-c") + 1] == 'model_reasoning_effort="xhigh"'
+    assert command[command.index('model_reasoning_effort="xhigh"') - 1] == "-c"
     # request.cwd must NOT leak into the command as --cd.
     assert "--cd" not in command
     # Prompt is fed over stdin (codex reads '-'), not embedded in argv (#17457).
@@ -2942,14 +2942,13 @@ async def test_codex_cli_endpoint_keeps_secret_out_of_argv(
     assert child_env == {"GOBBY_CODEX_ENDPOINT_API_KEY": secret}
     assert secret not in repr(command)
     assert "--model" not in command
-    assert "--ignore-user-config" not in command
+    assert "--ignore-user-config" in command
 
 
 def test_codex_local_vllm_ignores_user_config() -> None:
     adapter = CodexCLITextGenerateAdapter(
         command_path="/bin/codex",
         config_overrides=('model_provider="gobby_vllm_local"',),
-        ignore_user_config=True,
     )
 
     command = adapter.build_command(

@@ -12,7 +12,7 @@ from gobby.servers.websocket.terminal_input import WriteOutcome, record_turn_obs
 from gobby.storage.projects import GLOBAL_PROJECT_ID
 from gobby.storage.sessions import LIVE_SESSION_STATUS_ORDER
 from gobby.storage.terminals import AttachLocator, HostEpochMismatchError
-from gobby.terminals.foreground import foreground_commands, shell_pid
+from gobby.terminals.foreground import foreground_commands, process_shell, shell_pid
 from gobby.terminals.leases import (
     LifecyclePublicationError,
     SizingDecision,
@@ -364,9 +364,12 @@ class TerminalWsMixin:
                     }
                 )
             # tmux reports its own pane's foreground command; a native row's is
-            # probed from the shell pid the host recorded.
-            item["command"] = native_commands.get(row.id) or (
-                pane.pane_command if pane is not None else None
+            # probed from the shell pid the host recorded, else named by the shell
+            # the daemon spawned.
+            item["command"] = (
+                native_commands.get(row.id)
+                or (pane.pane_command if pane is not None else None)
+                or process_shell(row)
             )
             serialized.append(item)
         item_cursors = [f"{row.created_at.isoformat()}|{row.id}" for row in items]

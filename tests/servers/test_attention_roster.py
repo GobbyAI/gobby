@@ -98,7 +98,7 @@ def _server(
 
 def _client(server: SimpleNamespace, **kwargs: Any) -> TestClient:
     app = FastAPI()
-    app.include_router(create_attention_router(server, **kwargs))
+    app.include_router(create_attention_router(cast(HTTPServer, server), **kwargs))
     return TestClient(app)
 
 
@@ -440,6 +440,54 @@ def test_roster_spells_the_model_as_its_provider_prints_it(
     assert {entry["model_display_name"] for entry in bare.values()} == {None}
 
 
+def test_roster_resolves_each_model_name_once_off_the_event_loop(
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = AttentionStateManager(temp_db, epoch="model-names-off-loop")
+    runs = [
+        SimpleNamespace(
+            id=f"run-{index}",
+            child_session_id=f"agent-session-{index}",
+            status="running",
+            task_id=None,
+            provider="claude",
+            model="sonnet",
+            terminal_id=None,
+            pid=None,
+            updated_at=datetime(2026, 9, 23, tzinfo=UTC),
+        )
+        for index in range(3)
+    ]
+    monkeypatch.setattr(
+        manager,
+        "load_roster_rows",
+        lambda *_args, **_kwargs: [_roster_run(run) for run in runs],
+    )
+    lookups: list[tuple[str, str, bool]] = []
+
+    def find_model(provider: str, model: str) -> SimpleNamespace:
+        # The live catalog lookup opens a database transaction per call.
+        try:
+            asyncio.get_running_loop()
+            on_event_loop = True
+        except RuntimeError:
+            on_event_loop = False
+        lookups.append((provider, model, on_event_loop))
+        return SimpleNamespace(display_name="Claude Sonnet 4.5")
+
+    server = _server(temp_db, manager, capability_resolver=SimpleNamespace(find_model=find_model))
+    server.services.run_db = asyncio.to_thread
+
+    with _client(server) as client:
+        response = client.get("/api/attention/roster")
+
+    assert response.status_code == 200
+    names = {entry["model_display_name"] for entry in response.json()["entries"]}
+    assert names == {"Claude Sonnet 4.5"}
+    assert lookups == [("claude", "sonnet", False)]
+
+
 def test_roster_terminal_block(temp_db: HubDatabase) -> None:
     manager = AttentionStateManager(temp_db, epoch="terminal-block")
     server = _server(temp_db, manager)
@@ -657,6 +705,105 @@ def test_bounded_roster_query_joins_task_payload(
     assert row.task_id == task.id
     assert row.task_ref == f"#{task.seq_num}"
     assert row.task_stage is None
+
+
+def test_roster_row_decodes_the_hub_serialized_terminal_json() -> None:
+    # The hub row boundary hands JSONB columns over as serialized JSON text.
+    row = AttentionRosterRow.from_row(
+        {
+            "roster_kind": "session",
+            "source_id": "session-1",
+            "session_id": "session-1",
+            "lifecycle_status": "active",
+            "provider": "codex",
+            "terminal_context": '{"tmux_pane":"%7"}',
+            "terminal_id": "terminal-1",
+            "terminal_backend": "native",
+            "terminal_state": "live",
+            "terminal_machine_id": "machine-1",
+            "terminal_host_epoch": "epoch-1",
+            "terminal_locator": '{"host_terminal_id":"host-terminal-1"}',
+        }
+    )
+
+    assert row.terminal_context == {"tmux_pane": "%7"}
+    assert row.terminal is not None
+    assert row.terminal.locator == {"host_terminal_id": "host-terminal-1"}
+
+
+def _live_roster_entry(temp_db: HubDatabase, entry_id: str) -> dict[str, Any]:
+    with _client(_server(temp_db, AttentionStateManager(temp_db))) as client:
+        response = client.get("/api/attention/roster")
+    assert response.status_code == 200
+    entries = {entry["entry_id"]: entry for entry in response.json()["entries"]}
+    return cast(dict[str, Any], entries[entry_id])
+
+
+def test_roster_run_entries_carry_the_task_title(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    session_manager: Any,
+) -> None:
+    session = session_manager.register(
+        external_id="attention-roster-run-title",
+        machine_id=require_machine_id(),
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    task = LocalTaskManager(temp_db).create_task(
+        project_id=sample_project["id"],
+        title="Roster run task",
+        validation_criteria="The run entry carries this task title.",
+    )
+    run = LocalAgentRunManager(temp_db).create(
+        parent_session_id=session.id,
+        provider="codex",
+        model="gpt-5",
+        prompt="test",
+        task_id=task.id,
+    )
+
+    entry = _live_roster_entry(temp_db, f"run:{run.id}")
+
+    assert entry["task"] == {
+        "id": task.id,
+        "ref": f"#{task.seq_num}",
+        "stage": None,
+        "title": "Roster run task",
+    }
+
+
+def test_roster_session_entries_carry_the_open_claimed_task(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    session_manager: Any,
+) -> None:
+    session = session_manager.register(
+        external_id="attention-roster-claimed-task",
+        machine_id=require_machine_id(),
+        source="codex",
+        project_id=sample_project["id"],
+        terminal_context={"tmux_pane": "%7"},
+    )
+    tasks = LocalTaskManager(temp_db)
+    task = tasks.create_task(
+        project_id=sample_project["id"],
+        title="Claimed roster task",
+        validation_criteria="The session entry carries this task while it is open.",
+    )
+    tasks.claim_task(task.id, session.id)
+    entry_id = f"session:{session.id}"
+
+    assert _live_roster_entry(temp_db, entry_id)["task"] == {
+        "id": task.id,
+        "ref": f"#{task.seq_num}",
+        "stage": None,
+        "title": "Claimed roster task",
+    }
+
+    tasks.close_task(task.id, closed_in_session_id=session.id)
+
+    assert _live_roster_entry(temp_db, entry_id)["task"] is None
 
 
 @pytest.mark.asyncio
