@@ -11,7 +11,7 @@ from gobby.adapters.agy_contract import AGY_HOOK_ALIASES, AGY_HOOK_CONTRACTS
 from gobby.adapters.claude_contract import CLAUDE_HOOK_CONTRACTS
 from gobby.adapters.droid_contract import DROID_HOOK_CONTRACTS
 from gobby.adapters.qwen_contract import QWEN_HOOK_CONTRACTS
-from gobby.hooks.events import HookEventType, HookResponse, SessionSource
+from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 
 
 class ContextChannel(StrEnum):
@@ -569,6 +569,23 @@ def get_provider_capabilities(source: SessionSource | str) -> ProviderCapabiliti
     """Return executable capabilities for a current adapter provider."""
     normalized = normalize_source(source)
     return PROVIDER_CAPABILITIES[normalized]
+
+
+def hook_supports_model_context(event: HookEvent) -> bool:
+    """Return whether this exact native provider hook carries model context."""
+    native_hook_type = event.metadata.get("_native_hook_type")
+    if not isinstance(native_hook_type, str) or not native_hook_type:
+        return False
+    try:
+        capability = get_provider_capabilities(event.source).get_hook(native_hook_type)
+    except ValueError:
+        return False
+    if not capability or capability.event_type is not event.event_type:
+        return False
+    if event.source == SessionSource.CODEX:
+        # Codex systemMessage output is not included in the model transcript.
+        return capability.context_channel is ContextChannel.ADDITIONAL_CONTEXT
+    return capability.context_channel is not ContextChannel.NONE
 
 
 def _response_field_present(response: HookResponse, field_name: str) -> bool:

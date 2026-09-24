@@ -561,6 +561,7 @@ class TestHooksEndpoints:
                     "cwd": "/tmp/project",
                 },
                 "source": "claude",
+                "_enqueued_at": "2026-04-16T12:00:00Z",
             },
             mock_hook_manager,
         )
@@ -612,6 +613,7 @@ class TestHooksEndpoints:
                     "cwd": "/tmp/project",
                 },
                 "source": "grok",
+                "_enqueued_at": "2026-04-16T12:00:00Z",
             },
             mock_hook_manager,
         )

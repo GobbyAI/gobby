@@ -267,7 +267,9 @@ async def derive_close_transcript_evidence(
             if session_id in required:
                 raise
             logger.warning("Skipping close evidence for linked session %s: %s", session_id, exc)
-    return merge_transcript_evidence(*evidence)
+    # Merging rebuilds every run, and each rebuild re-classifies its command, so a
+    # long session's merge stays off the event loop (#22708).
+    return await asyncio.to_thread(merge_transcript_evidence, *evidence)
 
 
 _EVIDENCE_LINK_ACTIONS = frozenset({"claimed", "worked_on"})
