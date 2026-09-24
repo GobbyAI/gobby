@@ -636,15 +636,25 @@ sort_by="updated_at", sort_order="desc")`, first id or None). Extract both into 
 `src/gobby/mcp_proxy/tools/memory_session.py` as `resolve_session(session_manager,
 session_id)` and `resolve_claimed_task_id(db, session_id)`, and use them from all four
 tools. Make `get_memory` `async def`, resolve and load as today, then `asyncio.to_thread`
-the two writes: `facade.record_memory_access(memory_id)` (2.2) and
+the two writes: `facade.record_memory_access(memory_id)` (2.2), which needs no session and
+runs on every successful load (Decision 1), and, only when `session_id` resolves,
 `SessionVariableManager.upsert_bounded_list_variable(session_id, "accessed_memory_ids",
 {"memory_id": ..., "task_id": ...}, identity={"memory_id": ..., "task_id": ...},
-max_items=200)` (`src/gobby/workflows/state_manager.py`, near 340-373). Identity is the
+max_items=_ACCESSED_MEMORY_IDS_MAX)` (`src/gobby/workflows/state_manager.py`, near 340-373),
+with `_ACCESSED_MEMORY_IDS_MAX = 1000` beside the tool. Identity is the
 pair: the helper drops every stored item whose identity keys all match, so identity on
 `memory_id` alone would replace task A's record when the same memory is fetched under task
 B and Decisions 8-9 would lose A's provenance. With the pair a memory keeps one record per
 fetching task (or one untagged record; `None` compares equal, so no special case), and a
-repeat fetch under the same task refreshes that record. The write is direct, not staged: a
+repeat fetch under the same task refreshes that record. The bound exists because the helper
+requires `max_items` and the variables blob is read on every surfacing (3.3); at the cap the
+oldest record goes first. It sits far above what one epoch holds: every `get_memory` result
+carries the full memory row into context, the context-pressure handoff fires long before a
+thousand of them, and Decision 7 resets the set at compaction, so the compaction reset, not
+the cap, is what bounds Decision 9's inputs; a memory whose record is gone is still reachable
+through 3.4's search tier. Rejected: keeping every record whose task is still open (a task
+query per fetch, an unbounded list for a long-open task, and the same compaction reset).
+The write is direct, not staged: a
 tool result the agent requested has reached it by definition. The result dict gains
 `surfaced_count`; `access_count` stays. Rules cannot append to a set (`set_variable` only),
 so the tracking write stays in Python. Rejected: recording access on the search path with
@@ -655,9 +665,10 @@ Verification: `GOBBY_TEST_GDAEMON=checkout $PG tests/mcp_proxy/tools/test_memory
 **Acceptance:**
 
 - 3.2.1 - `get_memory` requires `session_id`, is awaitable, and each call increments `access_count`, sets `last_accessed_at`, and returns both counters. test: `tests/mcp_proxy/tools/test_memory_get_access.py::test_get_memory_records_access`.
-- 3.2.2 - The fetch appends `{memory_id, task_id}` to `accessed_memory_ids`, tagged with the task the session has claimed or `None`, bounded at 200 records with identity on the `(memory_id, task_id)` pair, so the same memory fetched under two tasks keeps both records. test: `tests/mcp_proxy/tools/test_memory_get_access.py::test_get_memory_records_accessed_id_with_claimed_task`. test: `tests/mcp_proxy/tools/test_memory_get_access.py::test_get_memory_untagged_without_claimed_task`. test: `tests/mcp_proxy/tools/test_memory_get_access.py::test_get_memory_keeps_a_record_per_task`.
+- 3.2.2 - The fetch appends `{memory_id, task_id}` to `accessed_memory_ids`, tagged with the task the session has claimed or `None`, bounded at `_ACCESSED_MEMORY_IDS_MAX` (1000) records with identity on the `(memory_id, task_id)` pair, so the same memory fetched under two tasks keeps both records. test: `tests/mcp_proxy/tools/test_memory_get_access.py::test_get_memory_records_accessed_id_with_claimed_task`. test: `tests/mcp_proxy/tools/test_memory_get_access.py::test_get_memory_untagged_without_claimed_task`. test: `tests/mcp_proxy/tools/test_memory_get_access.py::test_get_memory_keeps_a_record_per_task`.
 - 3.2.3 - `resolve_session` and `resolve_claimed_task_id` are the only session and claimed-task resolvers in the memory tools; the review, surface, and write tools import them. file: `src/gobby/mcp_proxy/tools/memory_session.py`. symbol: `resolve_claimed_task_id`.
-- 3.2.4 - A `get_memory` call whose session cannot be resolved still returns the memory and records nothing. test: `tests/mcp_proxy/tools/test_memory_get_access.py::test_get_memory_unresolved_session_returns_memory`.
+- 3.2.4 - A `get_memory` call whose session cannot be resolved still returns the memory and increments `access_count` (Decision 1), and writes no `accessed_memory_ids` record. test: `tests/mcp_proxy/tools/test_memory_get_access.py::test_get_memory_unresolved_session_records_access_without_tracking`.
+- 3.2.5 - At the cap a fetch evicts the oldest record only, and the cap is the tool's `_ACCESSED_MEMORY_IDS_MAX` constant. symbol: `_ACCESSED_MEMORY_IDS_MAX`. test: `tests/mcp_proxy/tools/test_memory_get_access.py::test_accessed_memory_ids_evict_oldest_at_cap`.
 
 ### 3.3 Surfaced set, injection sequence, K delivery, reset rules, and the dead dedupe chain [category: code] (depends: 3.1, 3.2)
 `kind: deliverable`
@@ -720,7 +731,8 @@ reaches the formatter (whether or not any line renders), stage the new value und
 (`src/gobby/workflows/engine/injection_tracking.py`, near 14-61): drop if any record in
 `accessed_memory_ids` carries the id (a memory holds one record per fetching task, 3.2);
 drop if it has a stamp with `seq_now - seq < K`; otherwise render
-and stage `"<id>@<seq_now>"`. K reaches the formatter through the tool payload: the
+and stage `"<id>@<seq_now>"` (with K=5 a line stamped at seq 1 is dropped at seq 2-5 and
+rendered at seq 6, the fifth further surfacing). K reaches the formatter through the tool payload: the
 workflow engine has no daemon-config access, while the memory tool registry has
 `_config()` (`mcp_proxy/tools/memory.py`, near line 137), so `register_memory_surface_tools`
 (`memory_surface.py`, near 70-144) takes the accessor, `surface_memories` reads
@@ -759,7 +771,7 @@ ingress move are the removals that make the owning files fit.
 **Acceptance:**
 
 - 3.3.1 - An id with any record in `accessed_memory_ids`, whichever task tagged it, is never rendered again in the epoch. test: `tests/workflows/test_memory_index_delivery.py::test_accessed_memory_never_reshown`.
-- 3.3.2 - A shown-but-unread id is suppressed while `seq_now - seq < K` and rendered again once K further surfacings have passed, with the stamp refreshed. test: `tests/workflows/test_memory_index_delivery.py::test_surfaced_memory_reshown_after_horizon`.
+- 3.3.2 - A shown-but-unread id is suppressed while `seq_now - seq < K` and rendered again on the K-th further surfacing (`seq_now - seq == K`), with the stamp refreshed. test: `tests/workflows/test_memory_index_delivery.py::test_surfaced_memory_reshown_after_horizon`.
 - 3.3.3 - Stamps and the sequence are staged in the receipt and committed only on acknowledgement. test: `tests/hooks/test_receipt_effects.py::test_surface_seq_and_stamps_commit_on_ack`.
 - 3.3.4 - `surface_memories` returns `reshow_after_injections` from `memory.index_reshow_after_injections` and the formatter uses it. test: `tests/mcp_proxy/tools/test_memory_surface.py::test_payload_carries_reshow_after_injections`. symbol: `DeliveryFormattingMixin._format_memory_index_result`.
 - 3.3.5 - Both lifecycle rules reset `surfaced_memory_ids`, `accessed_memory_ids`, `_memory_surface_seq`, and `injected_review_lesson_ids`, and no rule or code path names `injected_memory_ids`. test: `tests/workflows/test_memory_lifecycle_rules.py::test_reset_rule_clears_memory_tracking_variables`. test: `tests/workflows/test_context_handoff_rules.py::test_compact_rule_clears_memory_tracking_variables`.
@@ -885,10 +897,11 @@ then `uv run gobby restart --wait` from the main checkout, which proves
 2. `gobby-config:get_config_values` shows `memory.index_reshow_after_injections: 5` and
    none of the removed keys; a patch to a removed key is rejected.
 3. In a fresh session: the turn-start index lists a memory; `get_memory` on it bumps
-   `access_count` to 1 and sets `last_accessed_at`; the next five turn-start indexes do
-   not re-list it; an unfetched line from the same index re-appears once six further
-   surfacings have passed. `surfaced_count` climbs on index and `search_memories` returns
-   only.
+   `access_count` to 1 and sets `last_accessed_at`; no later index in the epoch re-lists
+   it; an unfetched line from the same index (stamped at seq s) is absent from the next
+   four turn-start indexes and re-appears on the fifth further surfacing (seq s + 5 with
+   K=5, no other surfacing moment firing in between). `surfaced_count` climbs on index
+   and `search_memories` returns only.
 4. Claim a task, fetch two memories, close the task: `review_task_memories` returns those
    two first with `source: accessed`, then search candidates.
 5. `gobby memory show <id>` prints both counters; the web memory detail panel shows
