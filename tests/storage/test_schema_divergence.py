@@ -129,7 +129,7 @@ def test_installed_identity_reads_the_binary_without_the_expected_identity_env(
         return _completed(json.dumps(_IDENTITY))
 
     monkeypatch.setattr(schema_divergence, "resolve_native_bin", lambda name: "/bin/gdaemon")
-    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr("gobby.utils.spawn.run", fake_run)
 
     identity = installed_schema_identity()
 
@@ -152,7 +152,7 @@ def test_installed_identity_degrades_to_none(
     monkeypatch: pytest.MonkeyPatch, outcome: subprocess.CompletedProcess[str]
 ) -> None:
     monkeypatch.setattr(schema_divergence, "resolve_native_bin", lambda name: "/bin/gdaemon")
-    monkeypatch.setattr(subprocess, "run", lambda *a, **k: outcome)
+    monkeypatch.setattr("gobby.utils.spawn.run", lambda *a, **k: outcome)
 
     assert installed_schema_identity() is None
 
@@ -386,7 +386,7 @@ def gated(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) -> _G
     identity = {**_IDENTITY, "latest_version": gate.installed_latest}
 
     monkeypatch.setattr(schema_divergence, "resolve_native_bin", lambda name: "/bin/gdaemon")
-    monkeypatch.setattr(subprocess, "run", lambda *a, **k: _completed(json.dumps(identity)))
+    monkeypatch.setattr("gobby.utils.spawn.run", lambda *a, **k: _completed(json.dumps(identity)))
 
     @contextmanager
     def gated_hub(_config_file: object, *, apply_migrations: bool) -> Iterator[MagicMock]:
@@ -546,7 +546,7 @@ def _restart_preflight(
             )
         return _completed(json.dumps(installed))
 
-    monkeypatch.setattr(subprocess, "run", dispatch_on_argv)
+    monkeypatch.setattr("gobby.utils.spawn.run", dispatch_on_argv)
 
     @contextmanager
     def hub(_config_file: object, *, apply_migrations: bool) -> Iterator[MagicMock]:
@@ -637,7 +637,9 @@ def test_schema_apply_refusal_is_silent_without_a_readable_hub(
 ) -> None:
     expected = schema_contract.expected_schema_identity()
     monkeypatch.setattr(schema_divergence, "resolve_native_bin", lambda name: "/bin/gdaemon")
-    monkeypatch.setattr(subprocess, "run", lambda *a, **k: _completed(json.dumps(dict(expected))))
+    monkeypatch.setattr(
+        "gobby.utils.spawn.run", lambda *a, **k: _completed(json.dumps(dict(expected)))
+    )
 
     assert schema_divergence.schema_apply_refusal(None) is None
 
@@ -653,7 +655,7 @@ def test_schema_apply_refusal_uses_explicit_cutover_identity(
         "assets_root_hash": "e" * 64,
     }
     monkeypatch.setattr(schema_divergence, "resolve_native_bin", lambda name: "/bin/gdaemon")
-    monkeypatch.setattr(subprocess, "run", lambda *a, **k: _completed(json.dumps(cutover)))
+    monkeypatch.setattr("gobby.utils.spawn.run", lambda *a, **k: _completed(json.dumps(cutover)))
 
     refusal = schema_divergence.schema_apply_refusal(
         _database_returning(int(packaged["latest_version"])),

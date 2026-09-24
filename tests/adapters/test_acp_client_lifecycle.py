@@ -151,7 +151,7 @@ async def test_start_advertises_terminal_capability_and_gates_session_load(
     async def fake_create_subprocess_exec(*_args: Any, **_kwargs: Any) -> _FakeProcess:
         return process
 
-    monkeypatch.setattr("asyncio.create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr("gobby.utils.spawn.create_subprocess_exec", fake_create_subprocess_exec)
     client = _StubACPClient(cli_path="/usr/bin/stub-acp")
 
     await client.start(session_id="old-session")
@@ -192,7 +192,7 @@ async def test_daemon_spawned_qwen_acp_disables_terminal_hooks(
         captured["env"] = kwargs["env"]
         return process
 
-    monkeypatch.setattr("asyncio.create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr("gobby.utils.spawn.create_subprocess_exec", fake_create_subprocess_exec)
     client = QwenACPClient(cli_path="/usr/bin/qwen")
 
     await client.start(auto_session=False)
@@ -220,7 +220,7 @@ async def test_start_logs_initialize_response_with_provider_context(
     async def fake_create_subprocess_exec(*_args: Any, **_kwargs: Any) -> _FakeProcess:
         return process
 
-    monkeypatch.setattr("asyncio.create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr("gobby.utils.spawn.create_subprocess_exec", fake_create_subprocess_exec)
     client = _StubACPClient(cli_path="/usr/bin/stub-acp", purpose="diagnostics")
 
     with caplog.at_level(logging.DEBUG, logger="gobby.adapters.acp_client"):
@@ -433,7 +433,7 @@ async def test_start_rejects_incompatible_protocol_version(
     async def fake_create_subprocess_exec(*_args: Any, **_kwargs: Any) -> _FakeProcess:
         return process
 
-    monkeypatch.setattr("asyncio.create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr("gobby.utils.spawn.create_subprocess_exec", fake_create_subprocess_exec)
     client = _StubACPClient(cli_path="/usr/bin/stub-acp")
 
     with pytest.raises(RuntimeError, match="protocol version mismatch"):
@@ -458,7 +458,7 @@ async def test_session_load_result_null_preserves_requested_session_id(
     async def fake_create_subprocess_exec(*_args: Any, **_kwargs: Any) -> _FakeProcess:
         return process
 
-    monkeypatch.setattr("asyncio.create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr("gobby.utils.spawn.create_subprocess_exec", fake_create_subprocess_exec)
     client = _StubACPClient(cli_path="/usr/bin/stub-acp")
 
     await client.start(session_id="requested-session")

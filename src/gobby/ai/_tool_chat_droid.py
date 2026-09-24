@@ -31,6 +31,7 @@ from gobby.ai.registry import (
     CapabilityBinding,
     CapabilityUnavailableError,
 )
+from gobby.utils import spawn
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +123,7 @@ class DroidRpcClient:
         self._notification_observer = observer
 
     async def start(self) -> None:
-        self._process = await asyncio.create_subprocess_exec(
+        self._process = await spawn.create_subprocess_exec(
             self._command_path,
             "exec",
             "--input-format",

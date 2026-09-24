@@ -660,7 +660,7 @@
       "visibility": "public"
     },
     {
-      "activation": "live",
+      "activation": "restart_required",
       "default": [
         {
           "candidate": "codex/gpt-5.6-luna",
@@ -743,7 +743,7 @@
       "visibility": "public"
     },
     {
-      "activation": "live",
+      "activation": "restart_required",
       "default": true,
       "description": "Enable LLM-generated import-community labels",
       "key": "code_index.community_label.enabled",
@@ -754,7 +754,7 @@
       "visibility": "public"
     },
     {
-      "activation": "live",
+      "activation": "restart_required",
       "default": 2,
       "description": "Maximum concurrent community label LLM calls",
       "key": "code_index.community_label.max_concurrency",
@@ -765,7 +765,7 @@
       "visibility": "public"
     },
     {
-      "activation": "live",
+      "activation": "restart_required",
       "default": 120,
       "description": "Maximum tokens for each community label generation",
       "key": "code_index.community_label.max_tokens",
@@ -776,7 +776,7 @@
       "visibility": "public"
     },
     {
-      "activation": "live",
+      "activation": "restart_required",
       "default": "feature_low",
       "description": "Provider-agnostic capability profile requested by this feature.",
       "key": "code_index.community_label.profile",
@@ -944,7 +944,7 @@
       "visibility": "public"
     },
     {
-      "activation": "live",
+      "activation": "restart_required",
       "default": [
         {
           "candidate": "codex/gpt-5.6-luna",
@@ -966,7 +966,7 @@
       "visibility": "public"
     },
     {
-      "activation": "live",
+      "activation": "restart_required",
       "default": true,
       "description": "Enable LLM-generated symbol summaries",
       "key": "code_index.symbol_summary.enabled",
@@ -977,7 +977,7 @@
       "visibility": "public"
     },
     {
-      "activation": "live",
+      "activation": "restart_required",
       "default": 2,
       "description": "Maximum concurrent symbol summary LLM calls",
       "key": "code_index.symbol_summary.max_concurrency",
@@ -988,7 +988,7 @@
       "visibility": "public"
     },
     {
-      "activation": "live",
+      "activation": "restart_required",
       "default": 100,
       "description": "Maximum tokens for each symbol summary generation",
       "key": "code_index.symbol_summary.max_tokens",
@@ -999,7 +999,7 @@
       "visibility": "public"
     },
     {
-      "activation": "live",
+      "activation": "restart_required",
       "default": "feature_low",
       "description": "Provider-agnostic capability profile requested by this feature.",
       "key": "code_index.symbol_summary.profile",

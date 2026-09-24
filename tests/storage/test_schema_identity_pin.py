@@ -62,11 +62,7 @@ def test_validate_identity_rejects_contract_violations(payload: object, message:
 
 
 def _stub_subprocess(monkeypatch: pytest.MonkeyPatch, run: object) -> None:
-    monkeypatch.setattr(
-        schema_identity_pin,
-        "subprocess",
-        SimpleNamespace(run=run, TimeoutExpired=subprocess.TimeoutExpired),
-    )
+    monkeypatch.setattr(schema_identity_pin, "spawn", SimpleNamespace(run=run))
 
 
 def test_probe_identity_runs_schema_version_and_validates(

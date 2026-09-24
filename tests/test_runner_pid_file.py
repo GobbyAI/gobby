@@ -6,6 +6,8 @@ import json
 import logging
 import os
 import stat
+import subprocess  # nosec B404 - the test's child is started through gobby.utils.spawn
+import sys
 import threading
 from contextlib import ExitStack
 from pathlib import Path
@@ -36,6 +38,7 @@ from gobby.runner_pid_file import (
     reserve_service_start,
     service_nonce_path,
 )
+from gobby.utils import spawn
 from tests.runner_helpers import create_base_patches
 
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("fast_stop_hook_grace_window")]
@@ -605,6 +608,26 @@ class TestInheritedClaim:
             assert probe_daemon_lock(pid_file).state is ProbeState.DAEMON
         finally:
             adopted.release()
+
+    def test_spawned_child_does_not_hold_the_adopted_lock(self, tmp_path: Path) -> None:
+        pid_file = tmp_path / "gobby.pid"
+        parent = claim_pid_file(pid_file)
+        assert parent is not None
+        # gobby start hands the lock over through pass_fds, which leaves it inheritable.
+        os.set_inheritable(parent.fileno(), True)
+        adopted = adopt_inherited_claim(pid_file, env=parent.inherit_environment())
+        assert adopted is not None
+        child = spawn.popen(
+            [sys.executable, "-c", "import sys; sys.stdin.read()"], stdin=subprocess.PIPE
+        )
+        try:
+            # A crash closes the lock without unlocking it; the child is still running.
+            adopted.detach()
+            successor = claim_pid_file(pid_file)
+            assert successor is not None
+            successor.release()
+        finally:
+            child.communicate(b"")
 
 
 class TestStartStopBarriers:

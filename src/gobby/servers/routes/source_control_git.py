@@ -71,7 +71,7 @@ async def _run_git(
     args: list[str], cwd: str, timeout: int = 10
 ) -> subprocess.CompletedProcess[str]:
     """Run a git command and return result (non-blocking)."""
-    result = await daemon_git.run_posix_spawn(args, cwd=cwd, timeout=timeout)
+    result = await daemon_git.run(args, cwd=cwd, timeout=timeout)
     if isinstance(result, GitTimeout):
         raise subprocess.TimeoutExpired(
             result.argv, result.timeout, output=result.stdout, stderr=result.stderr

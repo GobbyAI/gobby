@@ -7,6 +7,7 @@ import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from gobby.config.code_index import CodeIndexConfig
     from gobby.runner import GobbyRunner
     from gobby.runner_lifecycle_startup import StartupTracker
 
@@ -70,6 +71,9 @@ async def _repair_code_index_bm25(
 
 
 def _start_code_index_tasks(runner: GobbyRunner, tracker: StartupTracker | None) -> None:
+    def capture_code_index() -> CodeIndexConfig:
+        return runner.config_runtime.capture().snapshot.active.code_index
+
     config = runner.config_runtime.capture().snapshot.active
     runner._code_index_task = None
     if runner.code_indexer:
@@ -116,6 +120,7 @@ def _start_code_index_tasks(runner: GobbyRunner, tracker: StartupTracker | None)
                 symbol_summary_batch_size=config.code_index.symbol_summary.batch_size,
                 community_labeler=community_labeler,
                 community_label_batch_size=config.code_index.community_label.batch_size,
+                capture_config=capture_code_index,
             ),
             name="code-index-maintenance",
         )
@@ -136,6 +141,7 @@ def _start_code_index_tasks(runner: GobbyRunner, tracker: StartupTracker | None)
                 shutdown_flag=sync_shutdown,
                 run_db=runner.code_indexer.run_db,
                 startup_ready=lambda: runner.http_server.services.startup_ready,
+                capture_config=capture_code_index,
             ),
             name="code-index-sync-worker",
         )

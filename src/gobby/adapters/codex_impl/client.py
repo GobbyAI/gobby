@@ -146,7 +146,7 @@ class CodexAppServerClient:
         await self.stop()
 
     async def start(self) -> None:
-        await client_lifecycle.start(self, subprocess)
+        await client_lifecycle.start(self)
 
     async def stop(self) -> None:
         await client_lifecycle.stop(self)

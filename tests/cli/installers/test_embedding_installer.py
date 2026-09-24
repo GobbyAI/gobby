@@ -552,7 +552,7 @@ class TestSetupLMStudio:
         assert result["success"] is False
         assert "lms CLI not found" in result["error"]
 
-    @patch("gobby.cli.installers.embedding.subprocess.run")
+    @patch("gobby.cli.installers.embedding.spawn.run")
     @patch("gobby.cli.installers.embedding.shutil.which", return_value="/usr/bin/lms")
     def test_already_loaded_short_circuits(
         self, mock_which: MagicMock, mock_run: MagicMock
@@ -575,7 +575,7 @@ class TestSetupLMStudio:
         assert result["action"] == "already_loaded"
         assert mock_run.call_count == 2
 
-    @patch("gobby.cli.installers.embedding.subprocess.run")
+    @patch("gobby.cli.installers.embedding.spawn.run")
     @patch("gobby.cli.installers.embedding.shutil.which", return_value="/usr/bin/lms")
     def test_loads_from_disk_when_not_loaded(
         self, mock_which: MagicMock, mock_run: MagicMock
@@ -591,7 +591,7 @@ class TestSetupLMStudio:
         assert result["success"] is True
         assert result["action"] == "loaded"
 
-    @patch("gobby.cli.installers.embedding.subprocess.run")
+    @patch("gobby.cli.installers.embedding.spawn.run")
     @patch("gobby.cli.installers.embedding.shutil.which", return_value="/usr/bin/lms")
     def test_downloads_when_not_on_disk(self, mock_which: MagicMock, mock_run: MagicMock) -> None:
         # status -> running, ps -> empty, ls -> no nomic, get -> ok, load -> ok
@@ -606,7 +606,7 @@ class TestSetupLMStudio:
         assert result["success"] is True
         assert mock_run.call_count == 5
 
-    @patch("gobby.cli.installers.embedding.subprocess.run")
+    @patch("gobby.cli.installers.embedding.spawn.run")
     @patch("gobby.cli.installers.embedding.shutil.which", return_value="/usr/bin/lms")
     def test_catalog_setup_requires_exact_gguf_on_disk(
         self, mock_which: MagicMock, mock_run: MagicMock
@@ -637,7 +637,7 @@ class TestSetupLMStudio:
             "-y",
         ]
 
-    @patch("gobby.cli.installers.embedding.subprocess.run")
+    @patch("gobby.cli.installers.embedding.spawn.run")
     @patch("gobby.cli.installers.embedding.shutil.which", return_value="/usr/bin/lms")
     def test_starts_server_when_not_running(
         self, mock_which: MagicMock, mock_run: MagicMock
@@ -653,7 +653,7 @@ class TestSetupLMStudio:
         # status, start, ps
         assert mock_run.call_count == 3
 
-    @patch("gobby.cli.installers.embedding.subprocess.run")
+    @patch("gobby.cli.installers.embedding.spawn.run")
     @patch("gobby.cli.installers.embedding.shutil.which", return_value="/usr/bin/lms")
     def test_server_start_failure(self, mock_which: MagicMock, mock_run: MagicMock) -> None:
         mock_run.side_effect = [
@@ -664,7 +664,7 @@ class TestSetupLMStudio:
         assert result["success"] is False
         assert "Failed to start" in result["error"]
 
-    @patch("gobby.cli.installers.embedding.subprocess.run")
+    @patch("gobby.cli.installers.embedding.spawn.run")
     @patch("gobby.cli.installers.embedding.shutil.which", return_value="/usr/bin/lms")
     def test_get_timeout_returns_error(self, mock_which: MagicMock, mock_run: MagicMock) -> None:
         mock_run.side_effect = [
@@ -687,7 +687,7 @@ class TestSetupOllama:
         assert result["success"] is False
         assert "ollama not found" in result["error"]
 
-    @patch("gobby.cli.installers.embedding.subprocess.run")
+    @patch("gobby.cli.installers.embedding.spawn.run")
     @patch("gobby.cli.installers.embedding.shutil.which", return_value="/usr/bin/ollama")
     def test_already_pulled(self, mock_which: MagicMock, mock_run: MagicMock) -> None:
         mock_run.return_value = MagicMock(returncode=0, stdout="NAME\nnomic-embed-text  274 MB\n")
@@ -696,7 +696,7 @@ class TestSetupOllama:
         assert result["action"] == "already_pulled"
         assert mock_run.call_count == 1
 
-    @patch("gobby.cli.installers.embedding.subprocess.run")
+    @patch("gobby.cli.installers.embedding.spawn.run")
     @patch("gobby.cli.installers.embedding.shutil.which", return_value="/usr/bin/ollama")
     def test_pulls_if_missing(self, mock_which: MagicMock, mock_run: MagicMock) -> None:
         mock_run.side_effect = [
@@ -707,7 +707,7 @@ class TestSetupOllama:
         assert result["success"] is True
         assert result["action"] == "pulled"
 
-    @patch("gobby.cli.installers.embedding.subprocess.run")
+    @patch("gobby.cli.installers.embedding.spawn.run")
     @patch("gobby.cli.installers.embedding.shutil.which", return_value="/usr/bin/ollama")
     def test_pull_failure(self, mock_which: MagicMock, mock_run: MagicMock) -> None:
         mock_run.side_effect = [

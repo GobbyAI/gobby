@@ -535,6 +535,98 @@ async def test_send_message_exposes_inline_keyboard_metadata(
     )
 
 
+@pytest.mark.asyncio
+async def test_send_message_stores_the_current_project_on_a_keyboard(
+    mock_manager: MagicMock,
+    tmp_path: Path,
+) -> None:
+    """Josh addresses the button with #N. The tap can resolve it only with this project."""
+    mock_msg = MagicMock(id="msg-123", status="sent", error=None)
+    mock_manager.send_message.return_value = mock_msg
+    project_id = "22222222-2222-4222-8222-222222222222"
+    session_uuid = "33333333-3333-4333-8333-333333333333"
+    db = MagicMock()
+    db.fetchone.return_value = {"id": session_uuid}
+    registry: Any = create_communications_registry(mock_manager, db=db, workspace_root=tmp_path)
+    inline_keyboard = [[{"text": "Ship", "value": "ship"}]]
+
+    with patch(
+        "gobby.utils.project_context.get_project_context",
+        return_value={"id": project_id},
+    ):
+        result = await registry.get_tool("send_message")(
+            channel="telegram",
+            content="Ship?",
+            session_id="#14069",
+            inline_keyboard=inline_keyboard,
+        )
+
+    assert result["success"] is True
+    sent = mock_manager.send_message.await_args.kwargs
+    assert sent["session_id"] == session_uuid
+    metadata = sent["metadata"]
+    assert metadata["callback_project_id"] == project_id
+    assert metadata["inline_keyboard"] == inline_keyboard
+
+
+@pytest.mark.asyncio
+async def test_send_message_resolves_hash_n_session_to_uuid(
+    mock_manager: MagicMock,
+    tmp_path: Path,
+) -> None:
+    """A #N session_id is stored as that project's session UUID."""
+    project_id = "22222222-2222-4222-8222-222222222222"
+    session_uuid = "11111111-1111-4111-8111-111111111111"
+    db = MagicMock()
+    db.fetchone.return_value = {"id": session_uuid}
+    registry: Any = create_communications_registry(mock_manager, db=db, workspace_root=tmp_path)
+    mock_manager.send_message.return_value = MagicMock(id="msg-123", status="sent", error=None)
+
+    with patch(
+        "gobby.utils.project_context.get_project_context",
+        return_value={"id": project_id},
+    ):
+        result = await registry.get_tool("send_message")(
+            channel="telegram",
+            content="Ship?",
+            session_id="#14069",
+        )
+
+    assert result["success"] is True
+    assert mock_manager.send_message.await_args.kwargs["session_id"] == session_uuid
+    db.fetchone.assert_called_once_with(
+        "SELECT id FROM sessions WHERE project_id = %s AND seq_num = %s",
+        (project_id, 14069),
+    )
+
+
+@pytest.mark.asyncio
+async def test_send_message_refuses_unknown_hash_n_session(
+    mock_manager: MagicMock,
+    tmp_path: Path,
+) -> None:
+    """An unresolved #N fails at send time instead of storing the literal."""
+    project_id = "22222222-2222-4222-8222-222222222222"
+    db = MagicMock()
+    db.fetchone.return_value = None
+    registry: Any = create_communications_registry(mock_manager, db=db, workspace_root=tmp_path)
+    mock_manager.send_message.return_value = MagicMock(id="msg-123", status="sent", error=None)
+
+    with patch(
+        "gobby.utils.project_context.get_project_context",
+        return_value={"id": project_id},
+    ):
+        result = await registry.get_tool("send_message")(
+            channel="telegram",
+            content="Ship?",
+            session_id="#14069",
+        )
+
+    assert result["success"] is False
+    assert "14069" in result["error"]
+    mock_manager.send_message.assert_not_awaited()
+
+
 def test_create_event_subscription_uses_responder_session_project(
     registry: Any,
     mock_manager: MagicMock,

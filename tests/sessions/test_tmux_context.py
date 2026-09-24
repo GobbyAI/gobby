@@ -92,14 +92,14 @@ def test_query_tmux_identity_is_bounded_and_parses_result() -> None:
         stderr="",
     )
 
-    with patch("subprocess.run", return_value=result) as run:
+    with patch("gobby.utils.spawn.run", return_value=result) as run:
         assert query_tmux_identity("/tmp/tmux-501/default", "%6") == ("@290", "work")
 
     assert run.call_args.kwargs["timeout"] == 0.5
 
 
 def test_query_tmux_identity_fails_open_on_timeout() -> None:
-    with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("tmux", 0.5)):
+    with patch("gobby.utils.spawn.run", side_effect=subprocess.TimeoutExpired("tmux", 0.5)):
         assert query_tmux_identity("/tmp/tmux-501/default", "%6") is None
 
 
@@ -110,7 +110,7 @@ def test_query_tmux_generation_parses_pid_and_start_time() -> None:
         stdout="1658\t1784592177\t@290\twork\n",
         stderr="",
     )
-    with patch("subprocess.run", return_value=result) as run:
+    with patch("gobby.utils.spawn.run", return_value=result) as run:
         assert query_tmux_generation("/tmp/tmux-501/default", "%6") == {
             "server_pid": 1658,
             "server_start_time": 1784592177,

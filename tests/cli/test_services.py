@@ -257,7 +257,7 @@ class TestEnsureLocalEmbeddingServiceReady:
             patch("gobby.cli.services.shutil.which", return_value="/usr/bin/lms"),
             patch("gobby.cli.services.asyncio.to_thread", side_effect=_run_inline),
             patch(
-                "gobby.cli.services.subprocess.run",
+                "gobby.cli.services.spawn.run",
                 side_effect=[
                     _completed_process(["lms", "server", "status"], returncode=1, stderr="stopped"),
                     _completed_process(["lms", "server", "start"], stdout="started"),
@@ -289,7 +289,7 @@ class TestEnsureLocalEmbeddingServiceReady:
             patch("gobby.cli.services.shutil.which", return_value="/usr/bin/lms"),
             patch("gobby.cli.services.asyncio.to_thread", side_effect=_run_inline),
             patch(
-                "gobby.cli.services.subprocess.run",
+                "gobby.cli.services.spawn.run",
                 side_effect=[
                     _completed_process(["lms", "server", "status"], stdout="running"),
                     _completed_process(["lms", "ps"], stdout=""),
@@ -318,7 +318,7 @@ class TestEnsureLocalEmbeddingServiceReady:
             patch("gobby.cli.services.shutil.which", return_value="/usr/bin/lms"),
             patch("gobby.cli.services.asyncio.to_thread", side_effect=_run_inline),
             patch(
-                "gobby.cli.services.subprocess.run",
+                "gobby.cli.services.spawn.run",
                 return_value=_completed_process(
                     ["lms", "ps"],
                     stdout="text-embedding-nomic-embed-text-v1.5@f16",
@@ -339,7 +339,7 @@ class TestEnsureLocalEmbeddingServiceReady:
             patch("gobby.cli.services.shutil.which", return_value="/usr/bin/lms"),
             patch("gobby.cli.services.asyncio.to_thread", side_effect=_run_inline),
             patch(
-                "gobby.cli.services.subprocess.run",
+                "gobby.cli.services.spawn.run",
                 side_effect=[
                     _completed_process(["lms", "server", "status"], returncode=1, stderr="stopped"),
                     _completed_process(["lms", "server", "start"], returncode=1, stderr="boom"),
@@ -365,7 +365,7 @@ class TestEnsureLocalEmbeddingServiceReady:
             patch("gobby.cli.services.shutil.which", return_value="/usr/bin/lms"),
             patch("gobby.cli.services.asyncio.to_thread", side_effect=_run_inline),
             patch(
-                "gobby.cli.services.subprocess.run",
+                "gobby.cli.services.spawn.run",
                 return_value=_completed_process(
                     ["lms", "server", "status"],
                     stdout="running",
@@ -401,7 +401,7 @@ class TestEnsureLocalEmbeddingServiceReady:
 
         with (
             patch("gobby.cli.services.is_embedding_healthy", new=mock_health),
-            patch("gobby.cli.services.subprocess.run") as mock_run,
+            patch("gobby.cli.services.spawn.run") as mock_run,
         ):
             ready = await ensure_local_embedding_service_ready(
                 model="text-embedding-3-small",

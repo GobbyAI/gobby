@@ -114,7 +114,7 @@ async def _start_client(
     async def fake_create_subprocess_exec(*_args: Any, **_kwargs: Any) -> _FakeProcess:
         return process
 
-    monkeypatch.setattr("asyncio.create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr("gobby.utils.spawn.create_subprocess_exec", fake_create_subprocess_exec)
     client = _StubACPClient(cli_path="/usr/bin/stub-acp")
     await client.start(auto_session=False)
     return client, process

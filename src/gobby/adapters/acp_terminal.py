@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from gobby.agents.constants import UV_CACHE_DIR
+from gobby.utils import spawn
 
 logger = logging.getLogger(__name__)
 
@@ -137,7 +138,7 @@ class ACPTerminalManager:
             raise ValueError("terminal/create command is required")
 
         output_limit = _output_limit(params.get("outputByteLimit"))
-        proc = await asyncio.create_subprocess_exec(
+        proc = await spawn.create_subprocess_exec(
             command,
             *_args(params.get("args")),
             stdin=asyncio.subprocess.DEVNULL,

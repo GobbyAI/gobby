@@ -57,7 +57,7 @@ class TestKillTerminalSession:
         mock_proc.returncode = 0
         mock_proc.communicate = AsyncMock(return_value=(b"", b""))
 
-        with patch("asyncio.create_subprocess_exec", return_value=mock_proc) as mock_exec:
+        with patch("gobby.utils.spawn.create_subprocess_exec", return_value=mock_proc) as mock_exec:
             result = await kill_terminal_session(ctx, "test-session-id")
 
         assert result is True
@@ -83,7 +83,7 @@ class TestKillTerminalSession:
         mock_proc.returncode = 0
         mock_proc.communicate = AsyncMock(return_value=(b"", b""))
 
-        with patch("asyncio.create_subprocess_exec", return_value=mock_proc) as mock_exec:
+        with patch("gobby.utils.spawn.create_subprocess_exec", return_value=mock_proc) as mock_exec:
             result = await kill_terminal_session(ctx, "test-session-id")
 
         assert result is True
@@ -113,7 +113,7 @@ class TestKillTerminalSession:
         mock_proc.communicate = AsyncMock(return_value=(b"", b"pane not found"))
 
         with (
-            patch("asyncio.create_subprocess_exec", return_value=mock_proc) as mock_exec,
+            patch("gobby.utils.spawn.create_subprocess_exec", return_value=mock_proc) as mock_exec,
             patch("os.kill") as mock_kill,
         ):
             result = await kill_terminal_session(ctx, "test-session-id")
@@ -177,7 +177,7 @@ class TestKillTerminalSession:
         ctx = {"tmux_pane": "%10", "parent_pid": "5678"}
 
         with (
-            patch("asyncio.create_subprocess_exec", side_effect=FileNotFoundError),
+            patch("gobby.utils.spawn.create_subprocess_exec", side_effect=FileNotFoundError),
             patch("os.kill") as mock_kill,
         ):
             result = await kill_terminal_session(ctx, "test-session-id")
@@ -192,7 +192,7 @@ class TestKillTerminalSession:
 
         with (
             patch(
-                "asyncio.create_subprocess_exec",
+                "gobby.utils.spawn.create_subprocess_exec",
                 side_effect=TimeoutError,
             ),
             patch("os.kill") as mock_kill,
@@ -217,7 +217,7 @@ class TestKillTerminalSession:
         mock_proc.communicate = AsyncMock(return_value=(b"", b"can't find pane: %10"))
 
         with (
-            patch("asyncio.create_subprocess_exec", return_value=mock_proc),
+            patch("gobby.utils.spawn.create_subprocess_exec", return_value=mock_proc),
             patch("os.kill") as mock_kill,
         ):
             result = await kill_terminal_session(ctx, "test-session-id")
@@ -237,7 +237,7 @@ class TestKillTerminalSession:
         mock_proc.communicate = AsyncMock(return_value=(b"", b"error"))
 
         with (
-            patch("asyncio.create_subprocess_exec", return_value=mock_proc) as mock_exec,
+            patch("gobby.utils.spawn.create_subprocess_exec", return_value=mock_proc) as mock_exec,
             patch("os.kill") as mock_kill,
         ):
             result = await kill_terminal_session(ctx, "test-session-id")

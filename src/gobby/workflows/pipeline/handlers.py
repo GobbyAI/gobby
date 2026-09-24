@@ -9,6 +9,7 @@ from mcp.types import CallToolResult, TextContent
 
 from gobby.ask.stage_authority import pipeline_stage_authority
 from gobby.config.feature_base import FeatureDefaultConfig
+from gobby.utils import spawn
 
 if TYPE_CHECKING:
     from gobby.storage.sessions import SessionManager
@@ -143,7 +144,7 @@ async def execute_exec_step(command: str, context: dict[str, Any]) -> dict[str, 
                 "exit_code": 1,
             }
 
-        proc = await asyncio.create_subprocess_exec(
+        proc = await spawn.create_subprocess_exec(
             *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,

@@ -21,6 +21,8 @@ _SYNC_GIT_HELPERS = {
     "run_git_command",
 }
 _SUBPROCESS_CALLS = {"call", "check_call", "check_output", "Popen", "run"}
+# gobby.utils.spawn's blocking entry points (#22815).
+_SPAWN_CALLS = {"popen", "run"}
 
 
 @dataclass(frozen=True, order=True)
@@ -46,6 +48,7 @@ class _SyncGitVisitor(ast.NodeVisitor):
         self.git_module_names: set[str] = set()
         self.subprocess_module_names: set[str] = set()
         self.subprocess_call_names: dict[str, str] = {}
+        self.spawn_module_names: set[str] = set()
         self.await_depth = 0
         self.uses: set[SyncGitUse] = set()
 
@@ -73,6 +76,10 @@ class _SyncGitVisitor(ast.NodeVisitor):
             for alias in node.names:
                 if alias.name in _SUBPROCESS_CALLS:
                     self.subprocess_call_names[alias.asname or alias.name] = alias.name
+        elif node.module == "gobby.utils":
+            for alias in node.names:
+                if alias.name == "spawn":
+                    self.spawn_module_names.add(alias.asname or alias.name)
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
         self._visit_scope(node)
@@ -143,8 +150,10 @@ class _SyncGitVisitor(ast.NodeVisitor):
     def _subprocess_call(self, func: ast.expr) -> str | None:
         if isinstance(func, ast.Name):
             return self.subprocess_call_names.get(func.id)
-        if isinstance(func, ast.Attribute) and func.attr in _SUBPROCESS_CALLS:
-            if isinstance(func.value, ast.Name) and func.value.id in self.subprocess_module_names:
+        if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
+            if func.attr in _SUBPROCESS_CALLS and func.value.id in self.subprocess_module_names:
+                return func.attr
+            if func.attr in _SPAWN_CALLS and func.value.id in self.spawn_module_names:
                 return func.attr
         return None
 

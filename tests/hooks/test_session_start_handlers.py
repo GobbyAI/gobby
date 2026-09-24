@@ -77,7 +77,7 @@ def test_session_start_should_not_defer_nested_cli(monkeypatch: pytest.MonkeyPat
     )
     completed = SimpleNamespace(returncode=0, stdout="droid\n")
     monkeypatch.setattr(
-        "gobby.hooks.event_handlers._session_start.terminal_runtime.subprocess.run",
+        "gobby.hooks.event_handlers._session_start.terminal_runtime.spawn.run",
         lambda *args, **kwargs: completed,
     )
 
@@ -600,7 +600,7 @@ class TestSessionStartPreCreatedSession:
                 "gobby.hooks.event_handlers._session_start.schedule_tmux_window_rename"
             ) as mock_schedule,
             patch(
-                "gobby.hooks.event_handlers._session_start.terminal_runtime.subprocess.run",
+                "gobby.hooks.event_handlers._session_start.terminal_runtime.spawn.run",
                 return_value=SimpleNamespace(returncode=1, stdout=""),
             ),
         ):
@@ -663,7 +663,7 @@ class TestSessionStartPreCreatedSession:
                 "gobby.hooks.event_handlers._session_start.schedule_tmux_window_rename"
             ) as mock_schedule,
             patch(
-                "gobby.hooks.event_handlers._session_start.terminal_runtime.subprocess.run",
+                "gobby.hooks.event_handlers._session_start.terminal_runtime.spawn.run",
                 return_value=SimpleNamespace(returncode=1, stdout=""),
             ),
         ):
@@ -1542,7 +1542,7 @@ class TestSessionStartNewSession:
         )
 
         with patch(
-            "gobby.hooks.event_handlers._session_start.terminal_runtime.subprocess.run",
+            "gobby.hooks.event_handlers._session_start.terminal_runtime.spawn.run",
             return_value=SimpleNamespace(returncode=0, stdout="droid\n"),
         ) as mock_run:
             response = handlers.handle_session_start(event)

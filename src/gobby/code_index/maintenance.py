@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -24,6 +25,7 @@ if TYPE_CHECKING:
     from gobby.code_index.community_labeler import CommunityLabeler
     from gobby.code_index.context import CodeIndexContext
     from gobby.code_index.summarizer import SymbolSummarizer
+    from gobby.config.code_index import CodeIndexConfig
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +41,7 @@ async def code_index_maintenance_loop(
     *,
     community_labeler: CommunityLabeler | None = None,
     community_label_batch_size: int = 10,
+    capture_config: Callable[[], CodeIndexConfig] | None = None,
 ) -> None:
     """Background loop that checks for stale indexed files.
 
@@ -59,14 +62,23 @@ async def code_index_maintenance_loop(
         if shutdown_flag is not None and shutdown_flag.is_set():
             break
 
+        active_interval = interval
+        summary_batch = symbol_summary_batch_size
+        label_batch = community_label_batch_size
+        if capture_config is not None:
+            active = capture_config()
+            active_interval = active.maintenance_interval_seconds
+            summary_batch = active.symbol_summary.batch_size
+            label_batch = active.community_label.batch_size
+
         try:
             await _run_maintenance(
                 context,
                 summarizer,
-                symbol_summary_batch_size,
+                summary_batch,
                 missing_root_observations=missing_root_observations,
                 community_labeler=community_labeler,
-                community_label_batch_size=community_label_batch_size,
+                community_label_batch_size=label_batch,
             )
         except Exception as e:
             logger.exception("Code index maintenance error: %s", e)
@@ -74,12 +86,12 @@ async def code_index_maintenance_loop(
         # Wait for interval or shutdown
         if shutdown_flag is not None:
             try:
-                await asyncio.wait_for(shutdown_flag.wait(), timeout=interval)
+                await asyncio.wait_for(shutdown_flag.wait(), timeout=active_interval)
                 break  # Shutdown signaled
             except TimeoutError:
                 pass  # Normal timeout, loop again
         else:
-            await asyncio.sleep(interval)
+            await asyncio.sleep(active_interval)
 
     logger.info("Code index maintenance loop stopped")
 

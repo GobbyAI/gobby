@@ -10,6 +10,7 @@ import psycopg
 
 from gobby.sessions.handoff_identity import terminal_contexts_match
 from gobby.storage.sessions._contested_expiry import session_has_active_native_subagent
+from gobby.utils import spawn
 
 STALE_TERMINAL_SESSION_SCAN_LIMIT = 200
 TMUX_COMMAND_TIMEOUT_SECONDS = 1.0
@@ -55,7 +56,7 @@ def _tmux_pane_current_command(terminal_context: dict[str, Any] | None) -> str |
     command.extend(["display-message", "-p", "-t", pane_id, "#{pane_current_command}"])
 
     try:
-        result = subprocess.run(
+        result = spawn.run(
             command,
             capture_output=True,
             check=False,

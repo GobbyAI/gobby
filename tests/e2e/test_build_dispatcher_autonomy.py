@@ -62,8 +62,9 @@ def _local_machine_identity() -> Iterator[None]:
         yield
 
 
-@pytest.fixture(scope="module", autouse=True)
-def _configure_tmux_for_module() -> None:
+@pytest.fixture(autouse=True)
+def _configure_tmux() -> None:
+    # Per test: the root conftest resets the tmux globals around every test.
     configure_tmux(TmuxConfig())
 
 

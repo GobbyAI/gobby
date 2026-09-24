@@ -167,7 +167,7 @@ class TestTmuxTextInjection:
             return proc
 
         monkeypatch.setattr(
-            "gobby.agents.tmux.text_injection.asyncio.create_subprocess_exec",
+            "gobby.agents.tmux.text_injection.spawn.create_subprocess_exec",
             fake_exec,
         )
         monkeypatch.setattr("gobby.agents.tmux.text_injection.asyncio.sleep", sleep)
@@ -214,7 +214,7 @@ class TestTmuxTextInjection:
             return proc
 
         monkeypatch.setattr(
-            "gobby.agents.tmux.text_injection.asyncio.create_subprocess_exec",
+            "gobby.agents.tmux.text_injection.spawn.create_subprocess_exec",
             fake_exec,
         )
         monkeypatch.setattr("gobby.agents.tmux.text_injection.asyncio.sleep", sleep)
@@ -247,7 +247,7 @@ class TestTmuxTextInjection:
             return proc
 
         monkeypatch.setattr(
-            "gobby.agents.tmux.text_injection.asyncio.create_subprocess_exec",
+            "gobby.agents.tmux.text_injection.spawn.create_subprocess_exec",
             fake_exec,
         )
         monkeypatch.setattr("gobby.agents.tmux.text_injection.asyncio.sleep", sleep)
@@ -278,7 +278,7 @@ class TestTmuxTextInjection:
             return proc
 
         monkeypatch.setattr(
-            "gobby.agents.tmux.text_injection.asyncio.create_subprocess_exec",
+            "gobby.agents.tmux.text_injection.spawn.create_subprocess_exec",
             fake_exec,
         )
         monkeypatch.setattr("gobby.agents.tmux.text_injection.asyncio.sleep", sleep)
@@ -304,7 +304,7 @@ class TestTmuxTextInjection:
             return proc
 
         monkeypatch.setattr(
-            "gobby.agents.tmux.text_injection.asyncio.create_subprocess_exec",
+            "gobby.agents.tmux.text_injection.spawn.create_subprocess_exec",
             fake_exec,
         )
 
@@ -354,7 +354,7 @@ class TestTmuxTextInjection:
             return proc
 
         monkeypatch.setattr(
-            "gobby.agents.tmux.text_injection.asyncio.create_subprocess_exec",
+            "gobby.agents.tmux.text_injection.spawn.create_subprocess_exec",
             fake_exec,
         )
 
@@ -377,7 +377,7 @@ class TestTmuxTextInjection:
             return proc
 
         monkeypatch.setattr(
-            "gobby.agents.tmux.text_injection.asyncio.create_subprocess_exec",
+            "gobby.agents.tmux.text_injection.spawn.create_subprocess_exec",
             fake_exec,
         )
 
@@ -438,7 +438,7 @@ class TestTmuxTextInjection:
             return proc
 
         monkeypatch.setattr(
-            "gobby.agents.tmux.text_injection.asyncio.create_subprocess_exec",
+            "gobby.agents.tmux.text_injection.spawn.create_subprocess_exec",
             fake_exec,
         )
 
@@ -464,7 +464,7 @@ class TestTmuxTextInjection:
             return proc
 
         monkeypatch.setattr(
-            "gobby.agents.tmux.text_injection.asyncio.create_subprocess_exec",
+            "gobby.agents.tmux.text_injection.spawn.create_subprocess_exec",
             fake_exec,
         )
 
@@ -536,7 +536,7 @@ class TestTmuxTextInjection:
             return proc
 
         monkeypatch.setattr(
-            "gobby.agents.tmux.text_injection.asyncio.create_subprocess_exec",
+            "gobby.agents.tmux.text_injection.spawn.create_subprocess_exec",
             fake_exec,
         )
 
@@ -574,7 +574,7 @@ class TestTmuxTextInjection:
             return proc
 
         monkeypatch.setattr(
-            "gobby.agents.tmux.text_injection.asyncio.create_subprocess_exec",
+            "gobby.agents.tmux.text_injection.spawn.create_subprocess_exec",
             fake_exec,
         )
 
@@ -647,7 +647,7 @@ class TestTmuxSessionManager:
         assert mgr._base_args()[-2:] == ["-f", "/dev/null"]
 
         with patch(
-            "gobby.agents.tmux.session_activation.subprocess.run",
+            "gobby.agents.tmux.session_activation.spawn.run",
             return_value=subprocess.CompletedProcess([], 0, b"", b""),
         ) as mock_run:
             await getattr(mgr, method_name)(*method_args)
@@ -847,7 +847,7 @@ class TestTmuxSessionManager:
         mgr = TmuxSessionManager()
 
         with patch(
-            "gobby.agents.tmux.session_activation.subprocess.run",
+            "gobby.agents.tmux.session_activation.spawn.run",
             side_effect=subprocess.TimeoutExpired(cmd=["tmux"], timeout=0.01),
         ):
             with (
@@ -2848,7 +2848,7 @@ async def test_session_manager_injection_unchanged(
         return proc
 
     monkeypatch.setattr(
-        "gobby.agents.tmux.text_injection.asyncio.create_subprocess_exec",
+        "gobby.agents.tmux.text_injection.spawn.create_subprocess_exec",
         fake_exec,
     )
     monkeypatch.setattr("gobby.agents.tmux.text_injection.asyncio.sleep", sleep)

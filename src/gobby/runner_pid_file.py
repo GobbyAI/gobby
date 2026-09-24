@@ -509,6 +509,9 @@ def adopt_inherited_claim(
     record = read_record_from_fd(lock_fd)
     generation = next_generation(record)
     try:
+        # pass_fds left the lock inheritable, and daemon spawns keep close_fds=False:
+        # a child still running after a crash would hold the flock.
+        os.set_inheritable(lock_fd, False)
         _write_role_record(lock_fd, role="daemon", generation=generation)
         _write_pid_file(pid_file)
     except (SingletonError, OSError) as exc:

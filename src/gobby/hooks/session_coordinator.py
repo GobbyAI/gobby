@@ -40,6 +40,7 @@ from gobby.sessions.transcript_paths import MISSING_TRANSCRIPT_PATH
 from gobby.sessions.transcript_reader import TranscriptReader
 from gobby.storage.agents import TerminalAction
 from gobby.storage.sessions import LIVE_SESSION_STATUS_ORDER
+from gobby.utils import spawn
 
 if TYPE_CHECKING:
     from gobby.storage.agents import LocalAgentRunManager
@@ -497,7 +498,6 @@ class SessionCoordinator:
             return finish_followups(updated or manager.get(run_id))
 
         # Fixed tmux argv, exact session target, and shell execution disabled.
-        import subprocess  # nosec B404
 
         from gobby.agents.tmux import get_configured_tmux_command_prefix
 
@@ -525,7 +525,7 @@ class SessionCoordinator:
         def session_alive() -> bool:
             cmd = get_configured_tmux_command_prefix()
             cmd.extend(["has-session", "-t", target])
-            proc = subprocess.run(  # nosec B603
+            proc = spawn.run(  # nosec B603
                 cmd,
                 capture_output=True,
                 timeout=5,
@@ -535,7 +535,7 @@ class SessionCoordinator:
         def capture() -> str:
             cmd = get_configured_tmux_command_prefix()
             cmd.extend(["capture-pane", "-t", target, "-p", "-S", "-"])
-            proc = subprocess.run(  # nosec B603
+            proc = spawn.run(  # nosec B603
                 cmd,
                 capture_output=True,
                 timeout=5,
@@ -548,7 +548,7 @@ class SessionCoordinator:
         def kill() -> bool:
             cmd = get_configured_tmux_command_prefix()
             cmd.extend(["kill-session", "-t", target])
-            proc = subprocess.run(  # nosec B603
+            proc = spawn.run(  # nosec B603
                 cmd,
                 capture_output=True,
                 timeout=5,

@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 
     from gobby.agents.attention_metadata import AttentionMetadataStore
     from gobby.storage.executor import DatabaseExecutor
-    from gobby.terminals.workspace_ops import WorkspaceEvent
+    from gobby.terminals.workspace_contract import WorkspaceEvent
 
 logger = logging.getLogger(__name__)
 BROADCAST_SEND_TIMEOUT_SECONDS = 2.0
@@ -433,7 +433,7 @@ class BroadcastMixin:
         }
         await self.broadcast(message)
 
-    async def broadcast_workspace_event(self, event: WorkspaceEvent) -> None:
+    async def broadcast_workspace_event(self, event: WorkspaceEvent) -> dict[str, Any]:
         """Publish a workspace op's rows in one lifecycle order with the terminal events.
 
         ``workspace_id`` and ``project_id`` (the one project the event's tabs name,
@@ -446,7 +446,7 @@ class BroadcastMixin:
             "project_id": projects.pop() if len(projects) == 1 else None,
             "timestamp": datetime.now(UTC).isoformat(),
         }
-        await self.lease_registry.publish_lifecycle(message, self._publish_workspace_event)
+        return await self.lease_registry.publish_lifecycle(message, self._publish_workspace_event)
 
     async def _publish_workspace_event(self, message: dict[str, Any]) -> None:
         raw = canonical_json(message)

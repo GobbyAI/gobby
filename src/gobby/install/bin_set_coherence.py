@@ -23,6 +23,7 @@ from gobby.storage.schema_identity_pin import (
     stamp_bytes,
     validate_identity,
 )
+from gobby.utils import spawn
 from gobby.utils.native_bin import native_bin_name
 
 SET_MEMBERS = ("gcode", "gdaemon", "ghook")
@@ -51,7 +52,7 @@ def probe_set_member_identity(binary: Path, member: str) -> dict[str, int | str]
         ("schema", "version", "--json") if member == "gdaemon" else ("schema-identity", "--json")
     )
     try:
-        result = subprocess.run(  # nosec B603 - fixed arguments against a selected binary
+        result = spawn.run(
             [str(binary), *arguments],
             check=False,
             capture_output=True,
@@ -133,7 +134,7 @@ def _codesign_workspace_binary(binary: Path) -> None:
     if sys.platform != "darwin" or shutil.which("codesign") is None:
         return
     try:
-        result = subprocess.run(  # nosec B603 - fixed platform-tool arguments
+        result = spawn.run(
             ["codesign", "-f", "-s", "-", str(binary)],
             check=False,
             capture_output=True,

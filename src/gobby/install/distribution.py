@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import os
 import shutil
-import subprocess  # nosec B404 # hardcoded helper version probes
 from dataclasses import dataclass
 
 from gobby.install.bin_freshness_models import is_at_least_version
 from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS
 from gobby.install.version_probe import probe_native_bin_version
+from gobby.utils import spawn
 from gobby.utils.native_bin import is_native_bin_usable, local_native_bin_path, native_bin_name
 
 HOMEBREW_DISTRIBUTION = "homebrew"
@@ -141,7 +141,7 @@ def _which_path_only(name: str) -> str | None:
 
 
 def _probe_helper_version(path: str) -> str | None:
-    return probe_native_bin_version(path, runner=subprocess.run)
+    return probe_native_bin_version(path, runner=spawn.run)
 
 
 def _format_homebrew_helper_failures(failures: list[HomebrewHelperStatus]) -> str:

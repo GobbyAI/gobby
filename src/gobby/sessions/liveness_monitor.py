@@ -39,6 +39,7 @@ from gobby.terminal_ownership import (
     terminal_session_identity,
 )
 from gobby.terminals.lookup import manager_for_terminal_context
+from gobby.utils import spawn
 from gobby.utils.logging import ThrottledLogger
 
 if TYPE_CHECKING:
@@ -541,7 +542,7 @@ class SessionLivenessMonitor:
         tmux_format = "#{session_name}\t#{window_id}\t#{pane_id}\t#{pane_active}\t#{pane_dead}"
         for command in self._tmux_commands_for_socket(socket):
             try:
-                result = subprocess.run(
+                result = spawn.run(
                     [*command, "list-panes", "-a", "-F", tmux_format],
                     capture_output=True,
                     text=True,

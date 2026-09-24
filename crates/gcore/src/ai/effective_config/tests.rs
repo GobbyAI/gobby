@@ -442,3 +442,45 @@ fn cached_state_is_cloneable() {
     let state = EffectiveConfigState::Available(DaemonServedConfig::new(7, map));
     assert!(matches!(state.clone(), EffectiveConfigState::Available(_)));
 }
+
+fn write_fresh_effective_cache(home: &std::path::Path, revision: i64) {
+    let grants = home.join("grants");
+    fs::create_dir_all(&grants).expect("grant dir");
+    fs::write(
+        grants.join("effective-config.json"),
+        format!(r#"{{"revision":{revision},"config":{{"ai.embeddings.dim":"768"}}}}"#),
+    )
+    .expect("cache");
+}
+
+#[test]
+fn fresh_effective_cache_serves_within_ttl_without_a_revision_source() {
+    let home = temp_home();
+    write_fresh_effective_cache(home.path(), 7);
+    let config = read_fresh_effective_cache(home.path()).expect("cached config");
+    assert_eq!(config.revision(), 7);
+}
+
+#[cfg(feature = "postgres")]
+#[test]
+fn fresh_effective_cache_drops_when_postgres_revision_differs() {
+    let Ok(url) = std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL") else {
+        eprintln!("GCODE_POSTGRES_TEST_DATABASE_URL is unset; skipping revision cache test");
+        return;
+    };
+    let mut conn = crate::postgres::connect_readonly(&url).expect("test postgres");
+    let current = crate::postgres::read_config_revision(&mut conn).expect("revision");
+    let home = temp_home();
+    fs::write(
+        home.path().join("bootstrap.yaml"),
+        format!("database_url: '{url}'\n"),
+    )
+    .expect("bootstrap");
+    write_fresh_effective_cache(home.path(), current);
+    assert_eq!(
+        read_fresh_effective_cache(home.path()).map(|config| config.revision()),
+        Some(current)
+    );
+    write_fresh_effective_cache(home.path(), current.saturating_add(1));
+    assert!(read_fresh_effective_cache(home.path()).is_none());
+}

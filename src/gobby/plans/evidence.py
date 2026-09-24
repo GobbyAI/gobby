@@ -12,6 +12,7 @@ from typing import Any, Protocol, cast
 import yaml
 
 from gobby.storage.tasks import MissingIsolationBaseError
+from gobby.utils import spawn
 
 __all__ = [
     "EvidenceBundle",
@@ -118,7 +119,7 @@ def _bundle(*rows: EvidenceRow) -> EvidenceBundle:
 
 
 def _run_git(repo_root: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(  # nosec B603 B607 # args are fixed git argv plus caller refs.
+    return spawn.run(  # nosec B603 B607 # args are fixed git argv plus caller refs.
         ["git", "-C", str(repo_root), *args],
         check=False,
         capture_output=True,

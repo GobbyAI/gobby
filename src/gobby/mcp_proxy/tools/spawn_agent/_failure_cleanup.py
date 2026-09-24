@@ -6,11 +6,11 @@ import asyncio
 import logging
 import os
 import signal
-import subprocess
 from typing import Any
 
 from gobby.storage.terminals import Terminal
 from gobby.terminals.runtime import TerminalRuntime
+from gobby.utils import spawn
 
 _SPAWN_TERM_GRACE_SECONDS = 0.2
 _RUN_STARTTIMES: dict[str, str] = {}
@@ -29,7 +29,7 @@ def remember_spawn_pid(pid: int | None, *, run_id: str | None = None) -> str | N
 
 def _pid_starttime(pid: int) -> str | None:
     try:
-        completed = subprocess.run(
+        completed = spawn.run(
             ["ps", "-p", str(pid), "-o", "lstart="],
             check=False,
             capture_output=True,

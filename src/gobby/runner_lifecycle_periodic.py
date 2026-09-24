@@ -113,6 +113,9 @@ def start_periodic_tasks(
         loops["sweep_test_schemas_loop"](
             config.database_url,
             lambda: runner._shutdown_requested,
+            capture_database_url=lambda: (
+                runner.config_runtime.capture().snapshot.active.database_url
+            ),
         ),
         name="test-schema-sweep",
     )

@@ -26,6 +26,7 @@ from gobby.install.bin_set_coherence import (
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.schema_contract import SchemaContractError, expected_schema_identity
 from gobby.storage.schema_identity_pin import SchemaIdentityError, validate_identity
+from gobby.utils import spawn
 from gobby.utils.native_bin import native_bin_dir, native_bin_name, resolve_native_bin
 
 logger = logging.getLogger(__name__)
@@ -170,7 +171,7 @@ def installed_schema_identity() -> dict[str, int | str] | None:
         logger.debug("gdaemon is not installed; cannot read its embedded schema identity")
         return None
     try:
-        result = subprocess.run(
+        result = spawn.run(
             [binary, "schema", "version", "--json"],
             check=False,
             capture_output=True,

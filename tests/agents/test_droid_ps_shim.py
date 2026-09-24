@@ -43,7 +43,7 @@ def _stub_darwin(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[Path,
         Path(argv[-1]).write_bytes(b"signed")
         return subprocess.CompletedProcess(argv, 0, b"", b"")
 
-    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr("gobby.utils.spawn.run", fake_run)
     return source, calls
 
 
@@ -116,7 +116,7 @@ class TestDroidPsShimDir:
         def failing_run(argv: list[str], **_: object) -> subprocess.CompletedProcess[bytes]:
             raise subprocess.CalledProcessError(1, argv)
 
-        monkeypatch.setattr(subprocess, "run", failing_run)
+        monkeypatch.setattr("gobby.utils.spawn.run", failing_run)
         # A broken shim must never break the spawn; Droid degrades to today's behavior.
         assert droid_ps_shim_dir() is None
 

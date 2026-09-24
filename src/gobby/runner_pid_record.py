@@ -12,6 +12,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from gobby.utils import spawn
+
 RECORD_VERSION = 1
 RESERVATION_AGE_BOUND_SECONDS = 30
 TRANSITIONING_STATE = "transitioning"
@@ -36,7 +38,7 @@ def current_boot_id() -> str:
             pass
     if sys.platform == "darwin":
         try:
-            result = subprocess.run(  # nosec B603 B607
+            result = spawn.run(  # nosec B603 B607
                 ["sysctl", "-n", "kern.boottime"],
                 capture_output=True,
                 text=True,

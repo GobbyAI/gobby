@@ -38,7 +38,7 @@ from gobby.servers.websocket.terminal_ws_control import TerminalControlMixin
 from gobby.servers.websocket.terminal_ws_create import TerminalCreateMixin
 from gobby.servers.websocket.tmux import TmuxMixin
 from gobby.servers.websocket.voice import VoiceMixin
-from gobby.servers.websocket.workspace_ws import WorkspaceWsMixin
+from gobby.servers.websocket.workspace_ws import WORKSPACE_OPS, WorkspaceWsMixin
 from gobby.sessions.terminal_turn_observer import TerminalTurnObserver
 from gobby.sessions.turn_lifecycle import TurnLifecycleReducer
 from gobby.storage.attention import AttentionStateManager
@@ -50,11 +50,75 @@ from gobby.utils.json_helpers import json_dumps
 
 logger = logging.getLogger(__name__)
 
-# Messages on one connection are handled one at a time, so a handler that runs
-# this long delays every message queued behind it. The warning names the
+# The read loop awaits each handler except the types below. A handler that
+# runs this long delays every message queued behind it. The warning names the
 # message type so a client's request timeout can be traced to the handler that
 # held the connection (#22544).
 SLOW_WEBSOCKET_HANDLER_SECONDS = 1.0
+# These handlers do their slow work off the read loop. Later frames on the
+# same socket are read while they run. Frames for one terminal stay in
+# arrival order; another terminal's frames do not wait (#22709).
+_OFF_LOOP_MESSAGE_TYPES = frozenset(
+    {
+        "terminal_attach",
+        "terminal_detach",
+        "terminal_input",
+        "terminal_paste",
+        "terminal_release_control",
+        "terminal_resize",
+        "terminal_take_control",
+        "workspace_op",
+    }
+)
+# Reads and waits are cancelled with the socket. Mutations stay alive so a
+# committed close still publishes its removal and reaps the shell.
+_READ_WORKSPACE_OPS = frozenset({"workspace.list", "pane.read", "pane.wait_for_output"})
+_DURABLE_WORKSPACE_OPS = frozenset(WORKSPACE_OPS) - _READ_WORKSPACE_OPS
+_DURABLE_OFF_LOOP_STOP_SECONDS = 2.0
+
+
+def _message_leaves_the_read_loop(message: str) -> bool:
+    """True when this frame must not be awaited on the connection read loop."""
+    try:
+        data = json.loads(message)
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(data, dict):
+        return False
+    message_type = data.get("type")
+    return isinstance(message_type, str) and message_type in _OFF_LOOP_MESSAGE_TYPES
+
+
+def _workspace_op_survives_disconnect(message: str) -> bool:
+    """True when this workspace_op must finish after the socket drops."""
+    try:
+        data = json.loads(message)
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(data, dict) or data.get("type") != "workspace_op":
+        return False
+    op = data.get("op")
+    return isinstance(op, str) and op in _DURABLE_WORKSPACE_OPS
+
+
+def _off_loop_chain_key(message: str) -> str:
+    """Group off-loop frames that must stay in order on one connection."""
+    try:
+        data = json.loads(message)
+    except json.JSONDecodeError:
+        return ""
+    if not isinstance(data, dict):
+        return ""
+    message_type = data.get("type")
+    if message_type == "workspace_op":
+        return "workspace_op"
+    for field in ("terminal_id", "attachment_id"):
+        value = data.get(field)
+        if isinstance(value, str) and value:
+            return value
+    return message_type if isinstance(message_type, str) else ""
+
+
 # The byte an interrupt keystroke carries on the daemon-mediated input path; direct
 # input reports only the interrupt kind, so the turn observer sees the same payload.
 _INTERRUPT_PAYLOADS = {"esc": "\x1b", "ctrl_c": "\x03"}
@@ -174,6 +238,9 @@ class WebSocketServer(
 
         # Connected clients: {websocket: client_metadata}
         self.clients: dict[Any, dict[str, Any]] = {}
+        self._off_loop_tasks: dict[Any, set[asyncio.Task[None]]] = {}
+        self._off_loop_tail: dict[tuple[Any, str], asyncio.Task[None]] = {}
+        self._off_loop_durable: set[asyncio.Task[None]] = set()
 
         self.web_chat_session_registry = (
             web_chat_session_registry if web_chat_session_registry else WebChatSessionRegistry()
@@ -377,6 +444,9 @@ class WebSocketServer(
             # Message processing loop
             async for message in websocket:
                 try:
+                    if _message_leaves_the_read_loop(message):
+                        self._start_off_loop(websocket, message)
+                        continue
                     await self._handle_message(websocket, message)
                 except ConnectionClosed:
                     raise
@@ -396,6 +466,7 @@ class WebSocketServer(
             logger.exception("Unexpected error for client %s", client_id)
 
         finally:
+            await self._cancel_off_loop(websocket)
             # Clean up tmux bridges owned by this client
             await self._cleanup_tmux_client(websocket)
             # Always cleanup client state (but NOT chat sessions — they persist)
@@ -411,7 +482,9 @@ class WebSocketServer(
         """Run the public WebSocket connection lifecycle entry point."""
         await self._handle_connection(websocket)
 
-    async def _handle_message(self, websocket: Any, message: str) -> None:
+    async def _handle_message(
+        self, websocket: Any, message: str, *, blocks_connection: bool = True
+    ) -> None:
         """
         Route incoming message to appropriate handler.
 
@@ -498,7 +571,7 @@ class WebSocketServer(
             finally:
                 self._runtime_bundle_context.reset(token)
                 elapsed = time.monotonic() - started
-                if elapsed >= SLOW_WEBSOCKET_HANDLER_SECONDS:
+                if blocks_connection and elapsed >= SLOW_WEBSOCKET_HANDLER_SECONDS:
                     logger.warning(
                         "websocket handler %s took %.2fs; later messages on this connection waited",
                         msg_type,
@@ -507,6 +580,89 @@ class WebSocketServer(
         else:
             logger.warning("Unknown message type: %s", msg_type)
             await self._send_error(websocket, f"Unknown message type: {msg_type}")
+
+    def _start_off_loop(self, websocket: Any, message: str) -> None:
+        bucket = self._off_loop_tasks.setdefault(websocket, set())
+        key = (websocket, _off_loop_chain_key(message))
+        previous = self._off_loop_tail.get(key)
+        task = asyncio.create_task(
+            self._run_off_loop_message(websocket, message, previous),
+            name="ws-off-loop",
+        )
+        self._off_loop_tail[key] = task
+        bucket.add(task)
+        task.add_done_callback(bucket.discard)
+
+        def forget(done: asyncio.Task[None]) -> None:
+            self._forget_off_loop_tail(key, done)
+
+        task.add_done_callback(forget)
+        if _workspace_op_survives_disconnect(message):
+            self._off_loop_durable.add(task)
+            task.add_done_callback(self._off_loop_durable.discard)
+
+    async def _run_off_loop_message(
+        self,
+        websocket: Any,
+        message: str,
+        previous: asyncio.Task[None] | None,
+    ) -> None:
+        if previous is not None:
+            try:
+                await previous
+            except asyncio.CancelledError:
+                current = asyncio.current_task()
+                if current is not None and current.cancelling():
+                    raise
+            except Exception:
+                pass
+        try:
+            await self._handle_message(websocket, message, blocks_connection=False)
+        except ConnectionClosed:
+            return
+        except json.JSONDecodeError:
+            await self._send_error(websocket, "Invalid JSON format")
+        except Exception:
+            client = self.clients.get(websocket)
+            client_id = client.get("id") if isinstance(client, dict) else None
+            logger.exception("Message handling error for client %s", client_id)
+            try:
+                await self._send_error(websocket, "Internal server error")
+            except Exception:
+                logger.debug("Could not report off-loop handler failure", exc_info=True)
+
+    def _forget_off_loop_tail(self, key: tuple[Any, str], task: asyncio.Task[None]) -> None:
+        if self._off_loop_tail.get(key) is task:
+            self._off_loop_tail.pop(key, None)
+
+    async def _cancel_off_loop(self, websocket: Any) -> None:
+        for key in [key for key in self._off_loop_tail if key[0] is websocket]:
+            if key[1] == "workspace_op":
+                continue
+            self._off_loop_tail.pop(key, None)
+        tasks = self._off_loop_tasks.pop(websocket, set())
+        cancel = [task for task in tasks if task not in self._off_loop_durable]
+        for task in cancel:
+            task.cancel()
+        for task in cancel:
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+
+    async def _finish_durable_off_loop(self) -> None:
+        """Give kept-alive mutations a bound to publish and reap, then cancel the rest."""
+        pending = [task for task in self._off_loop_durable if not task.done()]
+        if not pending:
+            return
+        _done, still_running = await asyncio.wait(pending, timeout=_DURABLE_OFF_LOOP_STOP_SECONDS)
+        for task in still_running:
+            task.cancel()
+        for task in still_running:
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
 
     async def start(self) -> None:
         """
@@ -591,6 +747,7 @@ class WebSocketServer(
                     logger.warning("Error closing client connection: %s", e)
         finally:
             self._server = None
+            await self._finish_durable_off_loop()
             await self.lease_registry.shutdown_lifecycle_publication()
         logger.debug("WebSocket server stopped")
 

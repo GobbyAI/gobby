@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 
+from gobby.utils import spawn
 from gobby.voice.text_normalizer import normalize_tts_text
 from gobby.voice.tts import TTSProvider
 
@@ -59,7 +60,7 @@ async def synthesize_telegram_voice(
 async def encode_pcm_to_ogg_opus(pcm: bytes, sample_rate: int) -> bytes:
     """Encode signed 16-bit mono PCM into Telegram-compatible Ogg Opus."""
     try:
-        process = await asyncio.create_subprocess_exec(
+        process = await spawn.create_subprocess_exec(
             "ffmpeg",
             "-hide_banner",
             "-loglevel",

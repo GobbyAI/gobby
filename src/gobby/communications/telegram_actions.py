@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 from gobby.communications.models import ChannelConfig, CommsMessage, CommsRoutingRule
 from gobby.communications.native_plan_actions import decode_native_plan_option
 from gobby.communications.telegram_access import allowed_senders
+from gobby.storage.session_resolution import is_session_uuid
 from gobby.storage.sessions import LIVE_SESSION_STATUSES, system_session_id
 
 if TYPE_CHECKING:
@@ -87,10 +88,25 @@ class TelegramActionController:
             )
             return True
 
+        session_ref = message.session_id
+        session_id = session_ref
+        if session_ref and not is_session_uuid(session_ref):
+            project_id = _string_value(message.metadata_json.get("callback_project_id"))
+            try:
+                session_id = await asyncio.to_thread(
+                    self._session_manager.resolve_session_reference,
+                    session_ref,
+                    project_id,
+                )
+            except ValueError:
+                logger.info(
+                    "Telegram message %s did not resolve session reference %s",
+                    message.id,
+                    session_ref,
+                )
+                session_id = None
         session = (
-            await asyncio.to_thread(self._session_manager.get, message.session_id)
-            if message.session_id
-            else None
+            await asyncio.to_thread(self._session_manager.get, session_id) if session_id else None
         )
         if (
             session is not None
@@ -127,6 +143,31 @@ class TelegramActionController:
     ) -> None:
         """Persist a Telegram message for its live CLI or agent recipient."""
         content = message.content or "[Telegram attachment]"
+        metadata: dict[str, Any] = {
+            "channel": channel.name,
+            "sender": message.metadata_json.get("external_user_id"),
+            "sender_username": message.metadata_json.get("external_username"),
+            "communications_message_id": message.id,
+            "telegram_chat_id": message.metadata_json.get("chat_id"),
+            "telegram_platform_message_id": message.platform_message_id,
+            "reply_to_message_id": message.metadata_json.get("reply_to_message_id"),
+            "replied_to_post": source.content if source is not None else None,
+            "callback_data": message.metadata_json.get("callback_value"),
+        }
+        if message.content_type == "attachment":
+            stored = await asyncio.to_thread(self._manager.store.list_attachments, message.id)
+            if isinstance(stored, list):
+                references = [
+                    {
+                        "filename": attachment.filename,
+                        "content_type": attachment.content_type,
+                        "local_path": attachment.local_path,
+                    }
+                    for attachment in stored
+                    if isinstance(attachment.local_path, str) and attachment.local_path
+                ]
+                if references:
+                    metadata["attachments"] = references
         result = await self._mailbox.send(
             from_session_id=system_session_id(),
             target="session",
@@ -134,17 +175,7 @@ class TelegramActionController:
             content=content,
             wake=True,
             message_type="telegram_message",
-            metadata={
-                "channel": channel.name,
-                "sender": message.metadata_json.get("external_user_id"),
-                "sender_username": message.metadata_json.get("external_username"),
-                "communications_message_id": message.id,
-                "telegram_chat_id": message.metadata_json.get("chat_id"),
-                "telegram_platform_message_id": message.platform_message_id,
-                "reply_to_message_id": message.metadata_json.get("reply_to_message_id"),
-                "replied_to_post": source.content if source is not None else None,
-                "callback_data": message.metadata_json.get("callback_value"),
-            },
+            metadata=metadata,
             preserve_content=True,
         )
         if not result.success:

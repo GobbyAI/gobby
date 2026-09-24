@@ -31,6 +31,7 @@ from gobby.agents.tmux.text_injection import (
 )
 from gobby.agents.tmux.wsl_compat import needs_wsl
 from gobby.config.tmux import TmuxConfig
+from gobby.utils import spawn
 
 if TYPE_CHECKING:
     from gobby.terminals.runtime import SnapshotMode
@@ -285,7 +286,7 @@ class TmuxSessionManager:
             import subprocess
 
             try:
-                result = subprocess.run(
+                result = spawn.run(
                     ["wsl", "--exec", "which", self._config.command],
                     capture_output=True,
                     timeout=5,

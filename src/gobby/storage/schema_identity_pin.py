@@ -13,6 +13,8 @@ import subprocess
 from pathlib import Path
 from typing import cast
 
+from gobby.utils import spawn
+
 INTEGER_IDENTITY_FIELDS = ("runner_protocol", "baseline_version", "latest_version")
 STRING_IDENTITY_FIELDS = ("baseline_checksum", "latest_checksum", "assets_root_hash")
 IDENTITY_FIELDS = frozenset((*INTEGER_IDENTITY_FIELDS, *STRING_IDENTITY_FIELDS))
@@ -50,7 +52,7 @@ def validate_identity(parsed: object) -> dict[str, int | str]:
 def probe_identity(gdaemon: Path, *, cwd: Path | None = None) -> dict[str, int | str]:
     """Run ``gdaemon schema version --json`` and return its validated identity."""
     try:
-        result = subprocess.run(  # nosec B603 - operator-supplied executable, fixed arguments
+        result = spawn.run(  # nosec B603 - operator-supplied executable, fixed arguments
             [str(gdaemon), "schema", "version", "--json"],
             cwd=cwd,
             check=False,
