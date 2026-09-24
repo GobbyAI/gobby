@@ -479,6 +479,47 @@ class TestSessionLifecycleManager:
         assert [p["session_totals"]["output_tokens"] for p in payloads] == [7, 10]
 
     @pytest.mark.asyncio
+    async def test_transcript_context_reconciliation_runs_once_per_distinct_input(
+        self, tmp_path: Path, manager: SessionLifecycleManager
+    ) -> None:
+        """Each reconcile_model_context call builds a resolver that reads the
+        database; an 86 MB transcript made 16,628 calls over 14 distinct
+        inputs, so one pass reconciles each input once (#22811)."""
+        from gobby.llm.context_windows import reconcile_model_context
+
+        transcript_path = tmp_path / "transcript.jsonl"
+        transcript_path.write_text('{"type": "message"}\n')
+
+        session = MagicMock()
+        session.source = "claude"
+        session.project_id = "proj-1"
+        session.context_window = None
+        session.model = None
+        manager.session_manager.get.return_value = session
+        manager.token_event_store = InsertingTokenEventStore()
+        reconcile_inputs: list[tuple[object, ...]] = []
+
+        def _counting(*args: Any, **kwargs: Any) -> Any:
+            reconcile_inputs.append(args)
+            return reconcile_model_context(*args, **kwargs)
+
+        with (
+            patch("gobby.sessions.transcript_processing.get_parser") as parser,
+            patch(
+                "gobby.sessions.transcript_processing.reconcile_model_context",
+                side_effect=_counting,
+            ),
+        ):
+            parser.return_value.parse_lines.return_value = [
+                _usage_message(f"msg-{index}", 10, 5) for index in range(6)
+            ]
+            await manager._process_session_transcript("s1", str(transcript_path))
+
+        assert reconcile_inputs, "reconcile_model_context never ran"
+        assert len(reconcile_inputs) == len(set(reconcile_inputs))
+        assert len(reconcile_inputs) < 6
+
+    @pytest.mark.asyncio
     async def test_transcript_token_events_are_recorded_in_batches_not_per_event(
         self, tmp_path: Path, manager: SessionLifecycleManager
     ) -> None:
