@@ -194,7 +194,40 @@ fn read_fresh_effective_cache(gobby_home: &Path) -> Option<DaemonServedConfig> {
     if SystemTime::now().duration_since(modified).ok()? > EFFECTIVE_CONFIG_SHARE_TTL {
         return None;
     }
-    parse_served_body(&fs::read_to_string(path).ok()?).ok()
+    let config = parse_served_body(&fs::read_to_string(path).ok()?).ok()?;
+    if cached_revision_matches(gobby_home, config.revision()) {
+        Some(config)
+    } else {
+        None
+    }
+}
+
+/// `None` means this home has no Postgres DSN, so the mtime window is the only key.
+#[cfg(not(feature = "postgres"))]
+fn bootstrap_config_revision(_gobby_home: &Path) -> Option<anyhow::Result<i64>> {
+    None
+}
+
+#[cfg(feature = "postgres")]
+fn bootstrap_config_revision(gobby_home: &Path) -> Option<anyhow::Result<i64>> {
+    match crate::bootstrap::postgres_database_url_from_bootstrap_file(
+        &gobby_home.join("bootstrap.yaml"),
+    ) {
+        Ok(Some(url)) => Some(
+            crate::postgres::connect_readonly(&url)
+                .and_then(|mut conn| crate::postgres::read_config_revision(&mut conn)),
+        ),
+        Ok(None) => None,
+        Err(error) => Some(Err(error)),
+    }
+}
+
+fn cached_revision_matches(gobby_home: &Path, revision: i64) -> bool {
+    match bootstrap_config_revision(gobby_home) {
+        None => true,
+        Some(Ok(current)) => current == revision,
+        Some(Err(_)) => false,
+    }
 }
 
 fn share_lock_error(error: crate::grant::GrantError) -> EffectiveConfigError {

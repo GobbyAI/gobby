@@ -497,8 +497,14 @@ async def _sync_file(
                     timeout=config.sync_worker_projection_timeout_seconds,
                     breakers=(gateway_breaker, vector_breaker),
                 )
-            except GcodeDaemonConfigUnavailableError:
+            except GcodeDaemonConfigUnavailableError as e:
                 _record_breaker_outcomes(armed, failed=(gateway_breaker,))
+                await _run_db(run_db, storage.requeue_vector_sync, current.id)
+                logger.error(
+                    "Sync worker: vector sync retries exhausted for %s: %s",
+                    current.file_path,
+                    e,
+                )
                 return did_work
             except GcodeBusyError:
                 _record_breaker_outcomes(armed, inconclusive=(vector_breaker,))
@@ -593,8 +599,14 @@ async def _sync_file(
                                 timeout=config.sync_worker_projection_timeout_seconds,
                                 breakers=(gateway_breaker,),
                             )
-                        except GcodeDaemonConfigUnavailableError:
+                        except GcodeDaemonConfigUnavailableError as e:
                             _record_breaker_outcomes(armed, failed=(gateway_breaker,))
+                            await _run_db(run_db, storage.requeue_graph_sync, current.id)
+                            logger.error(
+                                "Sync worker: graph sync retries exhausted for %s: %s",
+                                current.file_path,
+                                e,
+                            )
                             return did_work
                         except GcodeBusyError:
                             _record_breaker_outcomes(armed)

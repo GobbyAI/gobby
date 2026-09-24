@@ -288,7 +288,8 @@ pub fn lock_is_stale(path: &Path, stale_after: Duration) -> bool {
         let Ok(now) = SystemTime::now().duration_since(UNIX_EPOCH) else {
             return false;
         };
-        return now.as_secs().saturating_sub(stamp) >= stale_after.as_secs();
+        let age = Duration::from_secs(now.as_secs().saturating_sub(stamp));
+        return age >= stale_after;
     }
     let Ok(modified) = fs::metadata(path).and_then(|metadata| metadata.modified()) else {
         return false;

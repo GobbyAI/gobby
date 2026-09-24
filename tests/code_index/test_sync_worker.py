@@ -15,6 +15,7 @@ import pytest
 from gobby.code_index.context import CodeIndexContext
 from gobby.code_index.gcode_gateway import (
     GcodeCommandError,
+    GcodeDaemonConfigUnavailableError,
     GcodeFalkorTransportError,
     GcodeGateway,
     GcodeIndexedFileNotFoundError,
@@ -141,6 +142,15 @@ class IndexedFileNotFoundGcodeGateway(GcodeGateway):
         raise GcodeIndexedFileNotFoundError(["gcode"], 2, stderr, file_path, PROJECT_ID)
 
 
+def _effective_config_timeout(command: list[str]) -> GcodeDaemonConfigUnavailableError:
+    return GcodeDaemonConfigUnavailableError(
+        command,
+        1,
+        "failed to resolve effective AI config: daemon effective config request failed: "
+        "daemon could not be reached (timeout)",
+    )
+
+
 class EffectiveConfigTimeoutGateway(GcodeGateway):
     async def vector_sync_file(
         self,
@@ -149,12 +159,16 @@ class EffectiveConfigTimeoutGateway(GcodeGateway):
         *,
         timeout: float | None = None,
     ) -> dict[str, Any]:
-        raise GcodeCommandError(
-            ["gcode", "vector", "sync-file"],
-            1,
-            "failed to resolve effective AI config: daemon effective config request failed: "
-            "daemon could not be reached (timeout)",
-        )
+        raise _effective_config_timeout(["gcode", "vector", "sync-file"])
+
+    async def graph_sync_file(
+        self,
+        project_root: Path,
+        file_path: str,
+        *,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        raise _effective_config_timeout(["gcode", "graph", "sync-file"])
 
 
 class CommandErrorGcodeGateway(GcodeGateway):
@@ -1560,3 +1574,31 @@ async def test_exhausted_effective_config_timeout_requeues_the_file(
 
     assert did_work is False
     storage.requeue_vector_sync.assert_called_once_with(pending.id)
+
+
+@pytest.mark.asyncio
+async def test_exhausted_effective_config_timeout_requeues_the_graph(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The same daemon miss requeues an exhausted graph sync."""
+    monkeypatch.setattr(
+        "gobby.code_index.sync_worker._GRAPH_SYNC_RETRY_BACKOFF_SECONDS",
+        (),
+    )
+    _write_source(tmp_path)
+    pending = _indexed_file(vectors_synced=True, graph_synced=False)
+    storage = MagicMock()
+    storage.get_file.return_value = pending
+
+    did_work = await _sync_file(
+        storage=storage,
+        gcode_gateway=EffectiveConfigTimeoutGateway(),
+        config=CodeIndexConfig(embedding_enabled=False, graph_enabled=True),
+        project_id=PROJECT_ID,
+        root=tmp_path,
+        file=pending,
+    )
+
+    assert did_work is False
+    storage.requeue_graph_sync.assert_called_once_with(pending.id)

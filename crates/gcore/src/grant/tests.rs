@@ -866,11 +866,7 @@ fn concurrent_acquires_share_one_slow_handshake() {
         let harness = std::sync::Arc::clone(&harness);
         let url = url.clone();
         handles.push(thread::spawn(move || {
-            let mut request = harness.request(Some(url));
-            // The harness default stale window is 200ms, which truncates to 0s
-            // in the lock's second-resolution check and lets every waiter steal it.
-            request.deadline = Some(Duration::from_secs(5));
-            request.stale_lock_after = Some(Duration::from_secs(10));
+            let request = harness.request(Some(url));
             acquire_with(&request).map(|acquired| acquired.source)
         }));
     }

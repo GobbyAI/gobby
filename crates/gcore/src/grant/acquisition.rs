@@ -298,9 +298,40 @@ fn accept_cached_or_rehandshake(
     }
 }
 
+fn coherent_interactive_cache(ctx: &AcquireCtx) -> Option<AcquiredGrant> {
+    let binding = load_binding(&ctx.home, &ctx.daemon_url)?;
+    let path = interactive_cache_path(
+        &ctx.home,
+        &binding.deployment_token,
+        &ctx.project_id,
+        ctx.code_overlay_project_id.as_deref(),
+    );
+    let CachePair::Coherent(grant, settings) = inspect_cache_pair(&path).ok()?? else {
+        return None;
+    };
+    if validate_grant(
+        &grant,
+        &ctx.project_id,
+        &ctx.machine_id,
+        Some(&binding.deployment_token),
+        ctx.code_overlay_project_id.as_deref(),
+        false,
+    )
+    .is_err()
+        || grant.is_expired(ctx.now)
+        || (grant.past_half_ttl(ctx.now) && ctx.reachable())
+    {
+        return None;
+    }
+    finish_loaded_with_settings(ctx, grant, settings, GrantSource::Cache, path, false).ok()
+}
+
 fn acquire_interactive(ctx: &AcquireCtx) -> Result<AcquiredGrant, GrantError> {
-    // One handshake at a time. Waiters that arrive while it is in flight reuse
-    // the grant it persists instead of starting another handshake.
+    // A coherent cache hit must not wait on an in-flight handshake. The lock
+    // still covers the miss path, and the locked call rechecks the cache.
+    if let Some(acquired) = coherent_interactive_cache(ctx) {
+        return Ok(acquired);
+    }
     let lock_dir = ctx.home.join("grants");
     std::fs::create_dir_all(&lock_dir).map_err(|error| {
         GrantError::Io(format!("grant directory {}: {error}", lock_dir.display()))
