@@ -189,6 +189,38 @@ async def test_button_tap_addressed_by_hash_ref_reaches_the_live_session() -> No
     assert mailbox.send.await_args.kwargs["content"] == "ship"
 
 
+async def test_inbound_attachment_reaches_the_live_session_with_its_file() -> None:
+    """A photo or document is stored on disk. The live session gets that path."""
+    controller, manager, sessions, mailbox = _controller()
+    sessions.get.return_value = SimpleNamespace(id=SESSION_ID, status="active", source="claude")
+    manager.store.list_attachments.return_value = [
+        SimpleNamespace(
+            filename="notes.txt",
+            content_type="text/plain",
+            local_path="/files/notes.txt",
+        )
+    ]
+    message = _message(
+        content="see notes",
+        content_type="attachment",
+        metadata={"telegram_attachment": {"file_id": "file-1", "media_type": "document"}},
+    )
+
+    assert await controller.handle(_channel().name, message) is True
+
+    manager.store.list_attachments.assert_called_once_with(message.id)
+    delivery = mailbox.send.await_args.kwargs
+    assert delivery["target_id"] == SESSION_ID
+    assert delivery["content"] == "see notes"
+    assert delivery["metadata"]["attachments"] == [
+        {
+            "filename": "notes.txt",
+            "content_type": "text/plain",
+            "local_path": "/files/notes.txt",
+        }
+    ]
+
+
 async def test_comms_session_inbound_remains_for_responder() -> None:
     controller, _, sessions, mailbox = _controller()
     sessions.get.return_value = SimpleNamespace(id=SESSION_ID, status="active", source="comms")
