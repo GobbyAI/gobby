@@ -78,8 +78,10 @@ _NOT_DAEMON = (
     "mcp_proxy/transports/chrome_supervisor.py",
 )
 # Scanned sites that still fork, keyed path::qualname, each with its reason: the
-# daemon sites that need fork-only options, and the CLI-only functions of modules
-# the daemon imports. A key the scan no longer finds fails the lint.
+# daemon sites that need an option neither helper gives (spawn.create_session_exec
+# starts a session leader with no cwd or stdin and reads its output at exit), and
+# the CLI-only functions of modules the daemon imports. A key the scan no longer
+# finds fails the lint.
 _MUST_FORK = {
     "cli/daemon.py::_launch_direct_runner": (
         "own session and pass_fds for the runner claim; `gobby start` only"
@@ -152,19 +154,15 @@ _MUST_FORK = {
         "tailscale for the start, ui, install and uninstall commands only"
     ),
     "ai/_text_generation_adapters.py::_run_cli_text_generation_command": (
-        "own session: a timeout killpg()s the CLI's children; once per generation, off the hook path"
+        "own session with a cwd and stdin: a timeout killpg()s the CLI's children;"
+        " once per generation, off the hook path"
     ),
     "ai/_text_generation_adapters.py::DroidCLITextGenerateAdapter.generate": (
-        "own session: a timeout killpg()s droid's children; once per generation"
-    ),
-    "code_index/gcode_gateway.py::GcodeGateway._run_command": (
-        "own session: a timeout killpg()s gcode's children; absent from the hook-path capture"
-    ),
-    "code_index/gcode_gateway.py::GcodeGateway._run_command_result": (
-        "own session: a timeout killpg()s gcode's children; absent from the hook-path capture"
+        "own session with a cwd: a timeout killpg()s droid's children; once per generation"
     ),
     "mcp_proxy/tools/merge_landscape.py::register_merge_landscape_tools.verify_in_worktree": (
-        "own session: a timeout killpg()s the verify command's children; once per merge check"
+        "own session with a cwd: a timeout killpg()s the verify command's children;"
+        " once per merge check"
     ),
     "runner_gate.py::acquire_runner_gate": (
         "own session, apart from the terminal's signals; once per start, before the daemon grows"
@@ -176,10 +174,10 @@ _MUST_FORK = {
         "own session: the restart helper outlives the daemon it stops"
     ),
     "servers/websocket/chat/backends/agy.py::AgyWebChatBackend.attach_session": (
-        "own session: detach killpg()s agy's children; once per chat attach"
+        "own session with live ACP pipes: detach killpg()s agy's children; once per chat attach"
     ),
     "servers/websocket/chat/backends/droid.py::DroidWebChatBackend.attach_session": (
-        "own session: detach killpg()s droid's children; once per chat attach"
+        "own session with live ACP pipes: detach killpg()s droid's children; once per chat attach"
     ),
     "skills/materialization.py::_run_owned_subprocess": (
         "own session and pass_fds for the ownership pipe; once per skill materialization"
@@ -192,7 +190,7 @@ _MUST_FORK = {
         "own session: the gterm host outlives daemon restarts; once per host start"
     ),
     "utils/daemon_git.py::_spawn_git": (
-        "the Popen session fallback only runs where os.posix_spawn is missing"
+        "the Popen session fallback only runs where spawn.can_posix_spawn() is false"
     ),
 }
 
@@ -438,3 +436,31 @@ def test_helper_never_takes_the_fork_path(tmp_path: Path, monkeypatch: pytest.Mo
         return stdout
 
     assert asyncio.run(exec_from(tmp_path)).decode().strip() == str(tmp_path.resolve())
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX sessions")
+def test_a_session_leader_starts_without_forking(monkeypatch: pytest.MonkeyPatch) -> None:
+    def forbidden(*args: Any, **kwargs: Any) -> int:
+        raise AssertionError("fork_exec forks the whole daemon")
+
+    spawned: list[dict[str, Any]] = []
+    real_posix_spawn = os.posix_spawn
+
+    def recording_posix_spawn(path: str, argv: Any, env: Any, **kwargs: Any) -> int:
+        spawned.append(kwargs)
+        return real_posix_spawn(path, argv, env, **kwargs)
+
+    monkeypatch.setattr(subprocess, "_fork_exec", forbidden)
+    monkeypatch.setattr(os, "posix_spawn", recording_posix_spawn)
+    program = "import os,sys\nprint(os.getsid(0))\nprint('late', file=sys.stderr)\n"
+
+    async def lead_a_session() -> tuple[int, tuple[bytes, bytes], int]:
+        process = await spawn.create_session_exec(sys.executable, "-c", program)
+        # Both awaiters share the one reap; a second waitpid would fail with ECHILD.
+        output, returncode = await asyncio.gather(process.communicate(), process.wait())
+        return process.pid, output, returncode
+
+    pid, (stdout, stderr), returncode = asyncio.run(lead_a_session())
+
+    assert (int(stdout), stderr, returncode) == (pid, b"late\n", 0)
+    assert [kwargs["setsid"] for kwargs in spawned] == [True]

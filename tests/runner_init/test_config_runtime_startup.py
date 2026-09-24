@@ -2,19 +2,25 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Iterator
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+import gobby.runner_init as runner_init
 import gobby.runner_lifecycle_processes as runner_lifecycle_processes
 from gobby.app_context import ServiceContainer, clear_app_context, get_app_context, set_app_context
 from gobby.config.app import DaemonConfig
 from gobby.config.bootstrap import BootstrapConfig
 from gobby.config.runtime import ConfigRuntime
+from gobby.paths import get_install_dir
 from gobby.runner import GobbyRunner
+from gobby.runner_init.storage import bundled_content_refusal
 from gobby.shutdown_intent import ShutdownIntent
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.sync.integrity import IntegrityResult
 
 
 class _Runtime:
@@ -71,6 +77,12 @@ def _patch_runner_phases(
         runner.bootstrap_config = BootstrapConfig()
         runner.config_runtime = cast(ConfigRuntime, runtime)
 
+    def refusal(_runner: GobbyRunner) -> None:
+        events.append("refusal")
+
+    def content(_runner: GobbyRunner) -> None:
+        events.append("content")
+
     async def services(_runner: GobbyRunner) -> None:
         events.append("services")
 
@@ -91,7 +103,9 @@ def _patch_runner_phases(
         set_app_context(container)
         runner.http_server = cast(Any, SimpleNamespace(services=container))
 
-    monkeypatch.setattr("gobby.runner_init.init_storage_and_config", storage)
+    monkeypatch.setattr("gobby.runner_init.open_storage_and_config", storage)
+    monkeypatch.setattr("gobby.runner_init.bundled_content_refusal", refusal)
+    monkeypatch.setattr("gobby.runner_init.init_startup_content", content)
     monkeypatch.setattr("gobby.runner_init.init_runtime_capacity", capacity)
     monkeypatch.setattr("gobby.runner_init.services.init_stateful_services", services)
     monkeypatch.setattr("gobby.runner_init.init_orchestration", orchestration)
@@ -115,12 +129,59 @@ async def test_startup_constructs_one_runtime(monkeypatch: pytest.MonkeyPatch) -
     assert runner.config_runtime is cast(ConfigRuntime, runtime)
     assert events == [
         "storage",
+        "refusal",
+        "content",
         "runtime.start",
         "capacity",
         "services",
         "orchestration",
         "servers",
     ]
+
+
+async def test_startup_checks_bundled_content_off_the_loop_before_publishing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # #22829: the dirty-content refusal asks Git, so daemon startup runs it off
+    # the event loop, and before init_startup_content publishes bundled content.
+    events: list[str] = []
+    _patch_runner_phases(monkeypatch, _Runtime(events), events)
+    open_storage = runner_init.open_storage_and_config
+
+    def storage_with_database(runner: GobbyRunner, path: Path | None, verbose: bool) -> None:
+        open_storage(runner, path, verbose)
+        runner.database = cast(HubDatabase, MagicMock())
+
+    checked: list[Path] = []
+
+    def verify(install_dir: Path) -> IntegrityResult:
+        checked.append(install_dir)
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            events.append("integrity off the loop")
+        else:
+            events.append("integrity on the loop")
+        return IntegrityResult(checked=True)
+
+    monkeypatch.setattr(runner_init, "open_storage_and_config", storage_with_database)
+    monkeypatch.setattr(runner_init, "bundled_content_refusal", bundled_content_refusal)
+    monkeypatch.setattr("gobby.utils.dev.is_dev_mode", lambda _path: True)
+    monkeypatch.setattr("gobby.sync.integrity.verify_bundled_integrity", verify)
+
+    await GobbyRunner.create()
+
+    assert events == [
+        "storage",
+        "integrity off the loop",
+        "content",
+        "runtime.start",
+        "capacity",
+        "services",
+        "orchestration",
+        "servers",
+    ]
+    assert checked == [get_install_dir()]
 
 
 async def test_context_shares_runner_runtime(monkeypatch: pytest.MonkeyPatch) -> None:

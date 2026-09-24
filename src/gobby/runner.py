@@ -258,7 +258,18 @@ class GobbyRunner:
         self = cls.__new__(cls)
         self._prepare_base_state()
         try:
-            self._initialize_storage(config_path, verbose)
+            from gobby.runner_init import (
+                bundled_content_refusal,
+                init_startup_content,
+                open_storage_and_config,
+            )
+
+            open_storage_and_config(self, config_path, verbose)
+            # The refusal asks Git, so it runs off the loop, ahead of every bundled
+            # publish (#22829).
+            if refusal := await asyncio.to_thread(bundled_content_refusal, self):
+                raise RuntimeError(refusal)
+            init_startup_content(self)
             startup_snapshot = await self.config_runtime.start()
             from gobby.runner_init.storage import bootstrap_overlaid_config
 
