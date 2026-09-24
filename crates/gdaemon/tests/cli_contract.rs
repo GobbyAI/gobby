@@ -55,7 +55,7 @@ fn version_json_reports_exact_schema_identity_contract() -> anyhow::Result<()> {
     assert_eq!(identity["assets_root_hash"], embedded.root_hash);
     // One literal stays as the human tripwire, deliberately: a bare version number is
     // something a reviewer can verify at a glance, which was never true of a checksum.
-    assert_eq!(identity["latest_version"], 449);
+    assert_eq!(identity["latest_version"], 450);
     assert_eq!(
         identity["assets_root_hash"].as_str().map(str::len),
         Some(64)

@@ -90,7 +90,7 @@ pub fn render_workspace_with<W: WorkspaceView>(
         }
         Mode::KeybindHelp => {
             dim_background(frame, area);
-            keybind_help::render_keybind_help(frame, area, chrome);
+            hits.dialog_buttons = keybind_help::render_keybind_help(frame, area, chrome);
         }
         Mode::Navigator => {
             dim_background(frame, area);

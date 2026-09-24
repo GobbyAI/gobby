@@ -496,6 +496,8 @@ offers either its options or a free-text field:
 - With no options, type your answer, `backspace` edits, `enter` submits.
 - `esc` cancels.
 
+The `send` and `cancel` buttons act as `enter` and `esc`.
+
 `mark seen` in the agent menu acknowledges the row's attention entry without
 opening the terminal.
 
@@ -531,11 +533,13 @@ worktree; `esc` returns to the terminal.
 
 **Keybinding help (`prefix+?`).** The live keymap with names. `j` / `k`, the
 arrows, and `PageUp` / `PageDown` scroll, `/` searches by key, description, or
-name, `enter` or `esc` closes.
+name, `enter` or `esc` closes. The `close` button closes too; while the search
+has focus it reads `back` and returns to the list, as `esc` does.
 
 **Settings (`prefix+s`).** See below.
 
-**Rename dialogs.** Type, `enter` commits, `esc` cancels.
+**Rename dialogs.** Type, `enter` commits, `ctrl+c` clears the name, `esc`
+cancels. The `save`, `clear`, and `cancel` buttons do the same.
 
 ## Settings
 
@@ -644,6 +648,7 @@ Mouse support is on by default; turn it off with `--no-mouse` or the
 | Click the control indicator | Take, release, or take back control |
 | Drag the sidebar edge or a split border | Resize |
 | Click or drag a scrollbar | Jump or scroll |
+| Click a dialog or overlay button | Act as the key its hint names (`↵`, `esc`, `^c`, ...) |
 | Right-click | Context menu for the target (see below) |
 
 When a pane's application tracks the mouse (a TUI, `vim`, `less` with mouse on),

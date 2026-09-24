@@ -198,10 +198,7 @@ pub fn render_dialog(frame: &mut Frame, area: Rect, chrome: &Chrome) -> Vec<Rect
             kind,
             value,
             cursor,
-        }) => {
-            render_rename(frame, area, chrome, kind, value, *cursor);
-            Vec::new()
-        }
+        }) => render_rename(frame, area, chrome, kind, value, *cursor),
         Some(Dialog::NewProject {
             path,
             cursor,
@@ -256,10 +253,7 @@ pub fn render_dialog(frame: &mut Frame, area: Rect, chrome: &Chrome) -> Vec<Rect
             selected,
             text,
             ..
-        }) => {
-            render_respond(frame, area, chrome, prompt, options, *selected, text);
-            Vec::new()
-        }
+        }) => render_respond(frame, area, chrome, prompt, options, *selected, text),
         None => Vec::new(),
     }
 }
@@ -371,14 +365,14 @@ pub fn render_rename(
     kind: &RenameKind,
     value: &str,
     cursor: usize,
-) {
+) -> Vec<Rect> {
     let p = &chrome.palette;
     let Some(inner) = render_modal_shell(frame, area, RENAME_POPUP_WIDTH, RENAME_POPUP_HEIGHT, p)
     else {
-        return;
+        return Vec::new();
     };
     if inner.height < 4 {
-        return;
+        return Vec::new();
     }
 
     let rows = Layout::vertical([
@@ -441,6 +435,7 @@ pub fn render_rename(
             secondary_button_style(chrome),
         );
     }
+    rects
 }
 
 /// ` value` with a block cursor at `cursor` (a char index; past the end
@@ -506,14 +501,14 @@ pub fn render_respond(
     options: &[String],
     selected: usize,
     text: &str,
-) {
+) -> Vec<Rect> {
     let p = &chrome.palette;
     let layout = respond_layout(area, prompt, options);
     let Some(inner) = render_modal_shell(frame, area, layout.width, layout.height, p) else {
-        return;
+        return Vec::new();
     };
     if inner.height < 5 {
-        return;
+        return Vec::new();
     }
 
     let rows = Layout::vertical([
@@ -596,6 +591,7 @@ pub fn render_respond(
             secondary_button_style(chrome),
         );
     }
+    rects
 }
 
 #[cfg(test)]

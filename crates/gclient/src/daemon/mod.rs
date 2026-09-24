@@ -19,8 +19,8 @@ pub use workspace::{
     WorkspaceEventKind, WorkspaceOp, WorkspaceReply, WorkspaceRow, WorkspaceSnapshot,
 };
 pub use ws::{
-    decode_message, encode_message, message_kind, route_key, RouteKey, WsCodecError, GOLDEN_NAMES,
-    TERMINAL_WS_SAFE_INTEGER_MAX,
+    decode_message, encode_message, encode_text, message_kind, route_key, RouteKey, WsCodecError,
+    GOLDEN_NAMES, TERMINAL_WS_SAFE_INTEGER_MAX,
 };
 
 use crate::app::Backend;
