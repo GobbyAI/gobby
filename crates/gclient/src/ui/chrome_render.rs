@@ -1,16 +1,17 @@
 // upstream: herdr v0.8.0 src/ui.rs
-//! Frame composition (herdr `render`): sidebar, tab bar, tab surface or
-//! empty state, notifications, then the mode overlay.
+//! Frame composition (herdr `render`): menu bar, sidebar, tab bar, tab
+//! surface or empty state, notifications, then the mode overlay.
 
 use crate::app::PaneId;
 use crate::ui::chrome::{Chrome, Mode, WorkspaceView};
+use crate::ui::menu_bar::MenuBarHits;
 use crate::ui::panes::PaneContent;
 use crate::ui::settings::SettingsHits;
 use crate::ui::sidebar::SidebarHits;
 use crate::ui::tabs::TabBarHits;
 use crate::ui::{
-    context_menu, dialogs, keybind_help, navigator, pane_chrome, panes, settings, sidebar, status,
-    tab_surface,
+    context_menu, dialogs, keybind_help, menu_bar, navigator, pane_chrome, panes, settings,
+    sidebar, status, tab_surface,
 };
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
@@ -21,6 +22,7 @@ use ratatui::Frame;
 /// back with `Chrome::apply_hits` so hit tests match the screen.
 #[derive(Debug, Clone, Default)]
 pub struct ChromeHits {
+    pub menu_bar: MenuBarHits,
     pub tab_bar: TabBarHits,
     pub sidebar: SidebarHits,
     pub control_indicator: Option<Rect>,
@@ -46,9 +48,11 @@ pub fn render_workspace_with<W: WorkspaceView>(
         area,
     );
 
+    let menu_bar = menu_bar::render_menu_bar(frame, chrome.view.menu_bar_rect, chrome);
     let sidebar = render_navigation_chrome(frame, ws, chrome);
     let tab_bar = render_content_column(frame, ws, chrome, content);
     let mut hits = ChromeHits {
+        menu_bar,
         tab_bar,
         sidebar,
         ..ChromeHits::default()

@@ -36,8 +36,7 @@ established; name the missing evidence and concrete decision.
 
 Cite each blocking finding to a stable plan section (`### N.N`) or a concrete
 substitute-scope item, child criterion, file or commit. When it cannot be mapped,
-explain the omitted requirement or scope drift. Include a Relevant memory/lesson
-column in finding triage, and recall review context before finalizing decisions.
+explain the omitted requirement or scope drift.
 
 ## Local audit and recovery
 

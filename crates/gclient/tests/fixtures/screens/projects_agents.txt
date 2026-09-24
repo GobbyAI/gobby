@@ -1,7 +1,7 @@
 # gclient screen golden: projects_agents
 # 120x40, dark theme, colours normalised to theme::Palette roles
-00 |                                                                                                                        |
-00 : -/panel_bg*120
+00 | Gobby  File  Edit  View  Window  Agent  Help                                                                           |
+00 : panel_bg/accent+b*120
 01 | Machines                │                                                                                              |
 01 : -/surface0*1 subtext0/surface0+b*8 -/surface0*16 overlay0/panel_bg*1 -/panel_bg*94
 02 | ⍾ scripted · local      │                                                                                              |
@@ -78,5 +78,5 @@
 37 : -/panel_bg*25 overlay0/panel_bg*1 -/panel_bg*94
 38 |                         │                                                                                              |
 38 : -/panel_bg*25 overlay0/panel_bg*1 -/panel_bg*94
-39 | prefix ctrl+b                                                                                                          |
-39 : -/surface_dim*1 subtext0/surface_dim*13 -/surface_dim*106
+39 |                                                                                                          prefix ctrl+b |
+39 : -/surface0*106 subtext0/surface0*13 -/surface0*1

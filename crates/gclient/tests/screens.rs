@@ -1,6 +1,6 @@
 //! 4.2.1: committed screen goldens for the whole gclient chrome.
 //!
-//! Six scripted workspace states render through the real `render_workspace`
+//! Seven scripted workspace states render through the real `render_workspace`
 //! into a 120x40 `TestBackend`, then serialise one line per row: the glyphs,
 //! then the run-length-encoded style of every cell with each colour normalised
 //! to its `theme::Palette` role name.
@@ -17,12 +17,14 @@
 //! Regenerate with:
 //!   `GOBBY_UPDATE_SCREENS=1 cargo nextest run -p gobby-client --test screens`
 
-use gobby_client::app::ControlState;
+use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use gobby_client::app::{route_mouse, ContextMenuKind, ControlState};
 use gobby_client::daemon::{
     Checkout, ProjectRow, SessionRow, SidebarRows, SourceStatus, WorktreeRow,
 };
 use gobby_client::theme::{Palette, Theme, ThemeKind};
 use gobby_client::ui::chrome::Mode;
+use gobby_client::ui::menu_bar::MenuBarMenu;
 use gobby_client::ui::{render_workspace, Chrome};
 use gobby_client::Workspace;
 use ratatui::backend::TestBackend;
@@ -44,13 +46,14 @@ const UPDATE_ENV: &str = "GOBBY_UPDATE_SCREENS";
 type ScriptedState = fn() -> (Workspace, Chrome);
 
 /// The scripted states, in the order the plan names them.
-const STATES: [(&str, ScriptedState); 6] = [
+const STATES: [(&str, ScriptedState); 7] = [
     ("empty_workspace", empty_workspace),
     ("projects_agents", projects_agents),
     ("split_live", split_live),
     ("help_dialog", help_dialog),
     ("label_ladder", label_ladder),
     ("pane_edges", pane_edges),
+    ("menu_bar", menu_bar),
 ];
 
 // ---------------------------------------------------------------- the states
@@ -255,6 +258,49 @@ fn pane_edges() -> (Workspace, Chrome) {
 fn help_dialog() -> (Workspace, Chrome) {
     let (ws, mut chrome) = split_live();
     chrome.mode = Mode::KeybindHelp;
+    (ws, chrome)
+}
+
+/// One tab with the View menu open, opened the way a click on its title
+/// opens it: the open title reads reversed and the popup hangs under it.
+fn menu_bar() -> (Workspace, Chrome) {
+    let mut ws = Workspace::scripted();
+    let pane = ws
+        .open_terminal("term-alpha", "native", "epoch")
+        .expect("open term-alpha");
+    let mut chrome = Chrome::dark();
+    chrome.open_tab(pane, "");
+    let area = Rect::new(0, 0, WIDTH, HEIGHT);
+    chrome.compute_view(&ws, area);
+    let mut terminal = Terminal::new(TestBackend::new(WIDTH, HEIGHT)).expect("test backend");
+    let mut hits = None;
+    terminal
+        .draw(|frame| hits = Some(render_workspace(frame, &ws, &chrome)))
+        .expect("draw frame");
+    chrome.view.apply_hits(hits.expect("frame drawn"));
+    let view = MenuBarMenu::ALL
+        .iter()
+        .position(|menu| *menu == MenuBarMenu::View)
+        .and_then(|index| {
+            chrome
+                .view
+                .menu_title_hit_areas
+                .iter()
+                .find(|(drawn, _)| *drawn == index)
+        })
+        .map(|(_, rect)| *rect)
+        .expect("View title drawn");
+    let press = MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: view.x + 1,
+        row: view.y,
+        modifiers: KeyModifiers::NONE,
+    };
+    route_mouse(&ws, &mut chrome, &press);
+    assert_eq!(
+        chrome.menu.as_ref().map(|menu| &menu.kind),
+        Some(&ContextMenuKind::MenuBar(MenuBarMenu::View))
+    );
     (ws, chrome)
 }
 
@@ -470,9 +516,12 @@ fn projects_agents_golden() {
             .unwrap_or_else(|| panic!("no row contains {needle:?}\n{rendered}"))
     };
 
-    // Row 0 is held for the menu bar; the machines band opens the sidebar
-    // under it.
-    assert!(rows[0].trim().is_empty(), "menu-bar row: {:?}", rows[0]);
+    // Row 0 is the menu bar; the machines band opens the sidebar under it.
+    assert_eq!(
+        rows[0].trim_end(),
+        " Gobby  File  Edit  View  Window  Agent  Help",
+        "menu-bar row"
+    );
     let machines = row_containing(" Machines");
     assert_eq!(machines, 1, "the machines band tops the sidebar");
     let projects = row_containing(" Projects");

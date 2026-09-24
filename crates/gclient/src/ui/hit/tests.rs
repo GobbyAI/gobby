@@ -195,15 +195,27 @@ fn hit_test_covers_split_live_layout() {
     assert_eq!(at(view, indicator.x, indicator.y), Hit::ControlIndicator);
     assert_eq!(at(view, status.x, status.y), Hit::Status);
 
-    // Row 0 is held for the menu bar, which has no hits yet (3.2b).
+    // Row 0 is the menu bar: its titles, then the bar beside them.
     let menu_bar = view.menu_bar_rect;
     assert_eq!(menu_bar, Rect::new(0, 0, WIDTH, 1));
-    assert_eq!(at(view, 0, 0), Hit::Empty);
+    assert_eq!(view.menu_title_hit_areas.len(), 7);
+    for (index, rect) in &view.menu_title_hit_areas {
+        assert_eq!(at(view, rect.x, rect.y), Hit::MenuTitle(*index));
+        assert_eq!(at(view, rect.right() - 1, rect.y), Hit::MenuTitle(*index));
+    }
+    assert_eq!(at(view, WIDTH - 1, 0), Hit::MenuBarEmpty);
+    // The menu bar is tested before the tab bar: a tab bar reaching row 0
+    // still yields the title and the bare bar there.
+    let mut overlapped = view.clone();
+    overlapped.tab_bar_rect = Some(Rect::new(0, 0, WIDTH, 2));
+    let (first, rect) = view.menu_title_hit_areas[0];
+    assert_eq!(at(&overlapped, rect.x, rect.y), Hit::MenuTitle(first));
+    assert_eq!(at(&overlapped, WIDTH - 1, 0), Hit::MenuBarEmpty);
 
-    // Nothing else inside the frame is unowned; everything outside is.
+    // Nothing inside the frame is unowned; everything outside is.
     assert_eq!(at(view, WIDTH, 0), Hit::Empty);
     assert_eq!(at(view, 0, HEIGHT), Hit::Empty);
-    let unowned: Vec<(u16, u16)> = (menu_bar.bottom()..HEIGHT)
+    let unowned: Vec<(u16, u16)> = (0..HEIGHT)
         .flat_map(|y| (0..WIDTH).map(move |x| (x, y)))
         .filter(|(x, y)| at(view, *x, *y) == Hit::Empty)
         .collect();

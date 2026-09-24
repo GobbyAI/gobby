@@ -30,7 +30,7 @@ STANDALONE = set(
 def test_reference_contract_5_2_1() -> None:
     root = get_bundled_skills_path()
     catalog = load_capability_catalog(root / "gobby")
-    assert len(catalog.folded_skills) == 30
+    assert len(catalog.folded_skills) == 29
     assert len(STANDALONE) == 43
     assert {path.parent.name for path in root.glob("*/SKILL.md")} == STANDALONE | {
         "gobby",
@@ -71,7 +71,7 @@ def test_reference_contract_5_2_2(temp_db: HubDatabase, tmp_path: Path, upgrade:
     requirement = defaults.create("required_skills", ["tasks", "memory", "brevity"], tags=["gobby"])
     result = sync_bundled_skills(temp_db)
     assert result["success"] is True, result["errors"]
-    assert result["orphaned"] == (30 if upgrade else 0)
+    assert result["orphaned"] == (29 if upgrade else 0)
     assert defaults.get(requirement.id).default_value == [
         "gobby:references/tasks/overview.md",
         "gobby:references/memory/overview.md",

@@ -273,7 +273,7 @@
       "name": "memory",
       "description": "Recall, capture, and maintain durable project knowledge",
       "overview": "references/memory/overview.md",
-      "when": "Working with persistent knowledge or review lessons",
+      "when": "Working with persistent knowledge",
       "topics": [
         {
           "name": "search",
@@ -298,12 +298,6 @@
           "description": "Back up, restore, and repair secondary stores",
           "path": "references/memory/maintenance.md",
           "when": "Maintaining memory data or diagnostics"
-        },
-        {
-          "name": "review-lessons",
-          "description": "Preserve verified review outcomes",
-          "path": "references/memory/review-lessons.md",
-          "when": "Triaging findings or recording review lessons"
         },
         {
           "name": "post-task",
@@ -1047,7 +1041,6 @@
     "handoff-discipline": "gobby:references/sessions/handoffs.md",
     "persona": "gobby:references/agents/personas.md",
     "memory": "gobby:references/memory/overview.md",
-    "review-learning": "gobby:references/memory/review-lessons.md",
     "code-index": "gobby:references/code-index/overview.md",
     "loading-skills": "gobby:references/skills/loading.md",
     "writing-skills": "gobby:references/skills/authoring.md",
