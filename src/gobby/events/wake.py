@@ -29,6 +29,7 @@ from gobby.events.live_wake import (
     wake_state_failure,
 )
 from gobby.events.wake_active_recovery import (
+    reconcile_idle_prompt_session,
     reconcile_restart_stale_session,
     reconcile_restart_stale_sessions,
 )
@@ -300,6 +301,29 @@ class WakeDispatcher:
 
         task.add_done_callback(forget)
 
+    async def _pause_idle_claude_prompt(self, session_id: str) -> None:
+        """Drop active when a Claude pane is idle at an empty prompt.
+
+        ``lifecycle_refresh`` only flushes the transcript. A Claude turn can
+        end on screen while the row stays active, and the retry would then
+        decline ``session_active`` again. Two idle reads plus an exact
+        compare-and-set pause the row before that retry.
+        """
+        probe = self._activity_probe
+        if probe is None:
+            return
+        observed = await self._run_db(self._session_manager.get, session_id)
+        if observed is None:
+            return
+        route = await self._terminal_route_for_session(observed)
+        await reconcile_idle_prompt_session(
+            session_manager=self._session_manager,
+            observed=observed,
+            terminal=route.managed_terminal,
+            activity_probe=probe,
+            run_db=self._run_db,
+        )
+
     async def _refresh_and_retry_wake(self, session_id: str, *, priority: str) -> None:
         assert self._lifecycle_refresh is not None
         started = time.monotonic()
@@ -314,6 +338,16 @@ class WakeDispatcher:
                 exc_info=True,
             )
             return
+        try:
+            await self._pause_idle_claude_prompt(session_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning(
+                "Idle-prompt reconcile failed before retrying wake for session %s",
+                session_id,
+                exc_info=True,
+            )
         lock = self._live_wake_locks.get(session_id)
         if lock is None:
             lock = asyncio.Lock()

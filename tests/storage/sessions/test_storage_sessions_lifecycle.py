@@ -249,6 +249,84 @@ class TestSessionManagerLifecycle:
         current = session_manager.get(session.id)
         assert current is not None and current.status == "active"
 
+    def test_idle_prompt_pause_is_claude_only_and_exact_updated_at(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict[str, str],
+    ) -> None:
+        claude = session_manager.register(
+            external_id="idle-prompt-claude",
+            machine_id=LOCAL_MACHINE_ID,
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        observed_at = datetime(2026, 9, 23, 23, 14, tzinfo=UTC)
+        with session_manager.db.transaction():
+            session_manager.db.execute(
+                """
+                UPDATE sessions
+                SET status = 'active', updated_at = %s, last_activity = %s
+                WHERE id = %s
+                """,
+                (observed_at, observed_at, claude.id),
+            )
+        observed = session_manager.get(claude.id)
+        assert observed is not None
+
+        paused = session_manager._pause_idle_prompt_active(
+            claude.id,
+            observed_updated_at=observed.updated_at,
+        )
+
+        assert paused is not None and paused.status == "paused"
+        assert paused.last_activity == observed_at
+
+        codex = session_manager.register(
+            external_id="idle-prompt-codex",
+            machine_id=LOCAL_MACHINE_ID,
+            source="codex",
+            project_id=sample_project["id"],
+        )
+        with session_manager.db.transaction():
+            session_manager.db.execute(
+                "UPDATE sessions SET status = 'active', updated_at = %s WHERE id = %s",
+                (observed_at, codex.id),
+            )
+        codex_row = session_manager.get(codex.id)
+        assert codex_row is not None
+        assert (
+            session_manager._pause_idle_prompt_active(
+                codex.id,
+                observed_updated_at=codex_row.updated_at,
+            )
+            is None
+        )
+        still_codex = session_manager.get(codex.id)
+        assert still_codex is not None and still_codex.status == "active"
+
+        with session_manager.db.transaction():
+            session_manager.db.execute(
+                "UPDATE sessions SET status = 'active', updated_at = %s WHERE id = %s",
+                (observed_at, claude.id),
+            )
+        raced = session_manager.get(claude.id)
+        assert raced is not None
+        with session_manager.db.transaction():
+            session_manager.db.execute(
+                "UPDATE sessions SET updated_at = %s WHERE id = %s",
+                (observed_at + timedelta(microseconds=1), claude.id),
+            )
+
+        assert (
+            session_manager._pause_idle_prompt_active(
+                claude.id,
+                observed_updated_at=raced.updated_at,
+            )
+            is None
+        )
+        current = session_manager.get(claude.id)
+        assert current is not None and current.status == "active"
+
     def test_status_transition_listeners_receive_committed_pause_and_expiry(
         self,
         session_manager: SessionManager,
