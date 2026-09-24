@@ -388,6 +388,95 @@ async def test_terminal_attach_returns_the_loop_before_a_three_second_backend() 
                 pass
 
 
+async def _socket_frames_while_handler_is_delayed(
+    message_type: str,
+    *,
+    delay_seconds: float,
+    result_type: str,
+) -> list[str]:
+    """Run handle_connection and return the frame types the socket actually sent."""
+    server = WebSocketServer(
+        config=WebSocketConfig(),
+        mcp_manager=MagicMock(),
+        auth_callback=AsyncMock(return_value="test-user"),
+    )
+    _quiet_disconnect(server)
+    finished = asyncio.Event()
+
+    async def slow(websocket: Any, data: dict[str, Any]) -> None:
+        # test-quality: allow SLEEP_IN_TEST -- the acceptance backend must outlast the next frame
+        await asyncio.sleep(delay_seconds)
+        await websocket.send(
+            json.dumps(
+                {
+                    "type": result_type,
+                    "request_id": data.get("request_id"),
+                    "success": True,
+                }
+            )
+        )
+        finished.set()
+
+    async def ping(websocket: Any, _data: dict[str, Any]) -> None:
+        await websocket.send(json.dumps({"type": "pong", "request_id": "ping-1"}))
+
+    server._dispatch_table = {message_type: slow, "ping": ping}
+    socket = _ScriptedSocket(
+        [
+            json.dumps({"type": message_type, "request_id": "slow-1"}),
+            json.dumps({"type": "ping", "request_id": "ping-1"}),
+        ],
+        hold_open=True,
+    )
+    connection = asyncio.create_task(server.handle_connection(socket))
+    try:
+        await asyncio.wait_for(finished.wait(), timeout=delay_seconds + 2)
+        return _frame_types(socket)
+    finally:
+        socket.close()
+        try:
+            await asyncio.wait_for(connection, timeout=1)
+        except (TimeoutError, asyncio.CancelledError):
+            connection.cancel()
+            try:
+                await connection
+            except asyncio.CancelledError:
+                pass
+
+
+@pytest.mark.asyncio
+async def test_unrelated_socket_reply_precedes_terminal_attach_response() -> None:
+    """While attach sleeps 3s, the socket records pong before terminal_attach_result."""
+    types = await _socket_frames_while_handler_is_delayed(
+        "terminal_attach",
+        delay_seconds=3,
+        result_type="terminal_attach_result",
+    )
+    assert types.index("pong") < types.index("terminal_attach_result")
+
+
+@pytest.mark.asyncio
+async def test_unrelated_socket_reply_precedes_terminal_take_control_response() -> None:
+    """A 2s take_control still lets the socket record pong first."""
+    types = await _socket_frames_while_handler_is_delayed(
+        "terminal_take_control",
+        delay_seconds=2,
+        result_type="terminal_take_control_result",
+    )
+    assert types.index("pong") < types.index("terminal_take_control_result")
+
+
+@pytest.mark.asyncio
+async def test_unrelated_socket_reply_precedes_workspace_op_response() -> None:
+    """A delayed workspace_op still lets the socket record pong first."""
+    types = await _socket_frames_while_handler_is_delayed(
+        "workspace_op",
+        delay_seconds=2,
+        result_type="workspace_op_result",
+    )
+    assert types.index("pong") < types.index("workspace_op_result")
+
+
 @pytest.mark.asyncio
 async def test_off_loop_attach_does_not_warn_that_later_messages_waited(
     caplog: pytest.LogCaptureFixture,
