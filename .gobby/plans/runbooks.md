@@ -158,13 +158,21 @@ Confirmed with Josh on 2026-09-21 during elicitation.
     (gclient command mode) as superseded by it and the gclient-lane slot passes to the
     minted task. Writer position, named to the Program Director with the hash: the
     alternative, 2.1 as `kind: deferred` with `task_ref: "#22695"`, would drop 2.1's
-    acceptance coverage.
+    acceptance coverage. Q3: no durable surface records edits to a task's
+    `description`, `validation_criteria` or `labels` (`task_lifecycle_events` holds state
+    transitions, `task_validation_history` holds run outcomes) and the close reviewer
+    receives none, so 1.1's migration adds the trigger-written
+    `task_artifacts.claim_snapshot` and 3.3 surfaces it; `task-close-reviewer.yaml`
+    leaves the Non-goals for that one step. Writer position, named with the hash: the
+    column and trigger ride migration 450 rather than a 451 of their own, so V1 step 2
+    stays one cutover.
 
 ## Non-goals
 `kind: framing`
 
 - No changes to `gobby build`, `src/gobby/dispatch/`, the stage registry,
-  `epic-reviewer.yaml`, `task-close-reviewer.yaml`, or `default.yaml`.
+  `epic-reviewer.yaml`, or `default.yaml`; `task-close-reviewer.yaml` changes only by
+  3.3's amendment step.
 - No web UI, no runbook CRUD over MCP or REST, no runbook rows in PostgreSQL.
 - No pane placement for `spawn_agent` (workspaces decision record #10 stands).
 - No change to the gclient direct-input keystroke path; the one-shot launch command
@@ -235,7 +243,7 @@ Thin Python plus one gcore migration. 1.1 is schema only; 1.2 is the workspace r
 ops; 1.3 is SessionStart activation; 1.4 is the manual tool. 1.4 is independent of the
 others and lands first because 1.3 and 3.2 share its agents-guide edits.
 
-### 1.1 Migration 450: pane role and tab runbook columns [category: code]
+### 1.1 Migration 450: pane role, tab runbook and claim snapshot columns [category: code]
 `kind: deliverable`
 
 Targets:
@@ -257,6 +265,26 @@ are new, with no 128-byte precedent to copy: 128 bytes for `role`
 granted DML on the three tables. The byte-limit test applies the embedded migrations
 to the scratch database the way `catalog_manifest_freshness` does and inserts
 over-limit rows.
+
+The same migration carries 3.3's #22713 carrier: `ALTER TABLE task_artifacts ADD COLUMN
+claim_snapshot text` (no CHECK; the value is trigger-written JSON) and the trigger pair
+`tasks_claim_snapshot_ai AFTER INSERT ON tasks FOR EACH ROW WHEN
+(NEW.claimed_by_session_id IS NOT NULL)` and `tasks_claim_snapshot_au AFTER UPDATE OF
+claimed_by_session_id ON tasks FOR EACH ROW WHEN (NEW.claimed_by_session_id IS NOT NULL
+AND NEW.claimed_by_session_id IS DISTINCT FROM OLD.claimed_by_session_id)`, both
+executing the new `snapshot_task_claim()` (`LANGUAGE plpgsql`, the shape of
+`refresh_task_state_bucket_from_task` and its `tasks_state_bucket_ai`/`_au` pair,
+baseline.sql 5338-5340): `INSERT INTO task_artifacts (task_id, claim_snapshot) VALUES
+(NEW.id, jsonb_build_object('claimed_at', now(), 'session_id', NEW.claimed_by_session_id,
+'description', NEW.description, 'validation_criteria', NEW.validation_criteria,
+'labels', NEW.labels)::text) ON CONFLICT (task_id) DO UPDATE SET claim_snapshot =
+EXCLUDED.claim_snapshot, updated_at = now()`. A row of only `task_id` and
+`claim_snapshot` satisfies `task_artifacts_check` (every isolation pair NULL). The
+trigger covers every claim path with no Python call site: the insert with a claimant
+(`src/gobby/storage/tasks/_creation.py`), `claim_task` and `claim_task_for_agent`
+(`_transitions.py` 177-251), `update_task`'s `claimed_by_session_id` parameter
+(`_manager.py` 348), and the stage transitions (`_stage_state_transitions.py`
+638-650). It rides this migration so V1 step 2 stays one cutover (decision 16).
 
 Research context:
 - Precedent commit `541320efc2` (migration 444) shows the carrier procedure; there is no
@@ -280,6 +308,12 @@ Research context:
   moved the checksum only); step (4) sets it to 450 and the stale literal goes with it.
 - Live: the migration applies at the next `uv run gobby cutover`; `cutover` refuses
   uncommitted schema inputs, so commit the migration and carriers first.
+- `task_artifacts` is keyed by `task_id` (`task_artifacts_pkey`, baseline.sql
+  4617-4618) with an `ON DELETE CASCADE` foreign key to `tasks` (5709-5710) and
+  `SELECT, INSERT, DELETE, UPDATE` granted to `gobby_daemon_runtime` (6460), so the
+  trigger's upsert needs no new grant. `tasks.labels` is `jsonb`, `description` and
+  `validation_criteria` are `text`, and there is no `claimed_at` column, so the snapshot
+  stamps `now()`.
 - Rejected: reusing `label` as the role (display text is not a definition name);
   storing the role on the terminals row (a pane outlives CLI relaunches, a terminal row
   does not necessarily).
@@ -292,12 +326,18 @@ Research context:
   accepts 1024. file: `crates/gcore/assets/schema/migrations/450_add_runbook_roles.sql`.
   test: `crates/gcore/tests/schema_contract.rs::migration_450_enforces_role_and_runbook_byte_limits`.
 - 1.1.2 - `MIGRATIONS` embeds version 450 with its checksum and the catalog manifest
-  lists both columns. symbol: `MIGRATIONS`. file: `crates/gcore/assets/schema/catalog.manifest.json`.
+  lists the three columns and the trigger function. symbol: `MIGRATIONS`. file: `crates/gcore/assets/schema/catalog.manifest.json`.
 - 1.1.3 - The schema identity contract tests pass with `latest_version` 450. test:
   `crates/gcore/tests/schema_contract.rs::embedded_assets_publish_a_complete_schema_identity`.
   test: `crates/gdaemon/tests/cli_contract.rs::version_json_reports_exact_schema_identity_contract`.
 - 1.1.4 - `schema_expected_identity.json` matches the rebuilt gdaemon's identity.
   file: `src/gobby/storage/schema_expected_identity.json`.
+- 1.1.5 - Claiming a task writes `task_artifacts.claim_snapshot` holding the claim-time
+  `description`, `validation_criteria` and `labels` with the claiming session id; a
+  claim by another session replaces it; an update that changes `description` without
+  changing the claimant leaves it untouched; an unclaimed insert writes no row. file:
+  `crates/gcore/assets/schema/migrations/450_add_runbook_roles.sql`. test:
+  `crates/gcore/tests/schema_contract.rs::migration_450_snapshots_task_fields_on_claim`.
 
 ### 1.2 Workspace rows and ops carry role, runbook, and session_ref [category: code] (depends: 1.1, 2.1)
 `kind: deliverable`
@@ -1017,8 +1057,9 @@ format line listed here:
   candidate commit before the Program Director lands it; a closed task row is not a
   verdict and it says so; checks that the commit does what the criteria demand, that
   scope is confined to the task's files with no epic spillover, that criteria,
-  description and labels were not loosened to make the close pass, and that validation
-  ran and is visible; verdict line to the assistant `EVENT=CANDIDATE_VERDICT
+  description and labels were not loosened to make the close pass (3.3's
+  `claim_snapshot`, read through `gobby-tasks-artifacts-ops:get_artifacts`, is the
+  claim-time reference), and that validation ran and is visible; verdict line to the assistant `EVENT=CANDIDATE_VERDICT
   TASK=#NNNNN TASK_TITLE= VERDICT=LAND|BOUNCE COMMIT=` followed by SCOPE, BEHAVIOR,
   VALIDATION and any LIVE_NOTE (landing alone does not change runtime behavior, for
   example a rule template that needs the registry sync); found work is surfaced to the
@@ -1193,6 +1234,110 @@ Research context:
 - 3.2.8 - The agents guide documents the seats, the council blocks and the reporting
   lines. behavior: "Runbook roles" in `docs/guides/agents.md`.
 
+### 3.3 Task amendment disclosure (#22713) [category: code] (depends: 1.1)
+`kind: deliverable`
+
+Targets:
+- `src/gobby/storage/tasks/_artifacts.py::*` — scope-reason: `TaskArtifacts` gains the trigger-owned field and `from_row` reads it
+- `src/gobby/mcp_proxy/tools/tasks/_artifacts.py::*` — scope-reason: `_artifact_payload` adds the read-only field beside its `_ARTIFACT_MUTATION_FIELDS` filter
+- `src/gobby/install/shared/workflows/rules/task-enforcement/disclose-task-amendment.yaml`
+- `src/gobby/install/shared/workflows/agents/task-close-reviewer.yaml::*` — scope-reason: the review workflow gains the amendment step and one allowed tool
+- `docs/guides/tasks.md`
+- `tests/mcp_proxy/tools/tasks/test_get_artifacts_claim_snapshot.py`
+- `tests/workflows/test_disclose_task_amendment.py`
+- `tests/agents/test_task_close_reviewer_amendment.py`
+
+Ruling B1 on #22713: a claiming session may amend its own task's `description`,
+`validation_criteria` and `labels`; the amendment requires pre-close review, disclosed
+to the close reviewer with the diff and judged against the task's intent; enforcement
+lives in the agent definitions. 1.1's trigger keeps the claim-time values in
+`task_artifacts.claim_snapshot`; this leaf surfaces them and closes the loop.
+- Storage: `TaskArtifacts` gains `claim_snapshot: str | None = None`, read by
+  `from_row`. It stays out of `_ARTIFACT_FIELDS`, so `set_artifact` and
+  `set_artifacts_atomic` refuse it through `_validate_field_names` and only the trigger
+  writes it; `get_artifacts` returns the JSON text unchanged.
+- MCP: `gobby-tasks-artifacts-ops:get_artifacts` returns `claim_snapshot` (the JSON
+  text, or None) because `_artifact_payload` (`mcp_proxy/tools/tasks/_artifacts.py`
+  47-51) adds it beside its `_ARTIFACT_MUTATION_FIELDS` filter; the mutation set is
+  unchanged, so `set_artifact` keeps refusing the field at both layers. `get_task` is
+  not touched: `_crud.py` sits at 996 lines.
+- Rule `task-enforcement/disclose-task-amendment.yaml` (tags `[task-enforcement,
+  enforcement, tasks, gobby, default]` like its siblings): `event: after_tool`,
+  `priority: 30`, `when` copied from `block-reopen-task.yaml` 10-19 for `gobby-tasks`
+  `update_task` with the `claimed_tasks` match on the UUID key, the `#N` value or the
+  bare number, and any of `description`, `validation_criteria` or `labels` present in
+  `tool_input`; one `inject_context` effect whose template is ruling B1's standing
+  order: the amendment is reviewed before close; name it and why in the close summary;
+  keep the task's intent. A path-form `task_id` is not matched (the variable holds
+  UUIDs and `#N`); the reviewer's diff below catches that case regardless.
+- Reviewer: `task-close-reviewer.yaml` leaves the Non-goals for one allowed tool,
+  `gobby-tasks-artifacts-ops:get_artifacts`, and one step in `prompts.agent` after the
+  `get_task` read: call `get_artifacts(task_id)`; when it carries `claim_snapshot`,
+  diff its `description`, `validation_criteria` and `labels` against
+  the current values (`get_task_diff` is the code diff and does not help here); a
+  non-empty diff is an amendment. The reviewer judges it against the intent the
+  snapshot captured and passes it only when the closure summary names it; an unnamed
+  or loosening amendment is a blocking finding in `submit_close_review`, so the close
+  bounces. The blocked list is unchanged; `get_artifacts` is read-only. The persistent
+  `reviewer` persona (3.2) reads the same field.
+- Docs: `docs/guides/tasks.md` gains "Amending a claimed task": what the snapshot
+  holds, when it is taken, how the disclosure order arrives, what the close reviewer
+  does with it.
+The `needs-decision` label on #22713 is the documented gate workaround (defect #22726);
+this leaf is the follow-up implementation task its criterion names, with these tests.
+
+Research context:
+- Lookup L3 (gobby#14332, message `1e77d597`, 2026-09-23): no durable surface records
+  task-field edits; `task_lifecycle_events` (baseline.sql 3742-3752) holds state
+  transitions with a text reason; `task_validation_history` (3845-3858) holds run
+  outcomes; the close reviewer's allowed tools are `get_task`, `get_task_diff`,
+  `list_tasks`, `submit_close_review` and read-only memory and rule lookups
+  (`task-close-reviewer.yaml` 238-246), and `get_task(brief=false)` returns no
+  artifacts today.
+- Rule engine: `tool_input.server_name`/`tool_name` plus the promoted nested args
+  (`src/gobby/workflows/engine/enforcement_checks.py` 930-940); `claimed_tasks` is
+  `{uuid: '#N'}` written by the `detect_task_claim` observer; effects available are
+  set_variable, inject_context, observe, mcp_call, rewrite_input, load_skill,
+  run_command and block (no warn), so the order is an `inject_context`; `after_tool`
+  precedents `reviewer-lifecycle/terminal-verdict-after-validation.yaml` 33 and
+  `error-recovery/inject-tool-error-recovery.yaml` 6; `inject_context` template
+  precedent `task-enforcement/track-task-claim.yaml` 38-42.
+- `_artifacts.py`: `_ARTIFACT_FIELDS` 13-32, `TaskArtifacts.from_row` 91-111,
+  `_validate_field_names` 114-119, `TaskArtifactManager.get_artifacts` 274-278;
+  `clear_artifacts` has no caller outside the package export, so the snapshot lives as
+  long as the task row. MCP precedent `gobby-tasks-artifacts-ops:get_artifacts`
+  (`src/gobby/mcp_proxy/tools/tasks/_artifacts.py` 298). `get_task` (`_crud.py`
+  489-525) builds the full record from `task.to_dict()` plus dependencies.
+- Rejected: a session-variable carrier (dies with the session; the reviewer never sees
+  it); a `block` on the three fields (Josh rejected option a); a `task_amendments`
+  table (the artifact row already is the per-task 1:1 carrier); Python writes in the
+  four claim paths (the trigger covers all four with no call site); extending
+  `get_task(brief=false)` (`_crud.py` is at 996 lines and `get_artifacts` already
+  serves the artifact row).
+- Planned checks: the three test files with the isolated hub DSN; `uv run mypy src/`;
+  `uv run gobby workflows` dry-run lint if available.
+
+**Acceptance:**
+
+- 3.3.1 - `TaskArtifacts` carries `claim_snapshot` read from the row and refuses it as a
+  writable field; `get_artifacts` returns it and `set_artifact` refuses it. symbol:
+  `_artifact_payload`. file: `src/gobby/storage/tasks/_artifacts.py`.
+  test: `tests/mcp_proxy/tools/tasks/test_get_artifacts_claim_snapshot.py::test_get_artifacts_carries_claim_snapshot`.
+  test: `tests/mcp_proxy/tools/tasks/test_get_artifacts_claim_snapshot.py::test_set_artifact_refuses_claim_snapshot`.
+- 3.3.2 - After a successful `update_task` that touches any of the three fields on a
+  claimed task, matched by UUID, `#N` or bare number, the disclosure order is
+  injected; other fields, other tasks and other tools stay silent. file:
+  `src/gobby/install/shared/workflows/rules/task-enforcement/disclose-task-amendment.yaml`.
+  test: `tests/workflows/test_disclose_task_amendment.py::test_amendment_on_claimed_task_injects_disclosure_order`.
+  test: `tests/workflows/test_disclose_task_amendment.py::test_other_fields_tasks_and_tools_stay_silent`.
+- 3.3.3 - The close reviewer's agent prompt names the snapshot diff step and the bounce
+  condition; its allowed list gains only `gobby-tasks-artifacts-ops:get_artifacts` and
+  its blocked list is unchanged. file:
+  `src/gobby/install/shared/workflows/agents/task-close-reviewer.yaml`. test:
+  `tests/agents/test_task_close_reviewer_amendment.py::test_close_reviewer_checks_claim_snapshot_and_allows_get_artifacts`.
+- 3.3.4 - The tasks guide documents amending a claimed task. behavior: "Amending a
+  claimed task" in `docs/guides/tasks.md`.
+
 ## V1 Verification
 `kind: verification`
 
@@ -1235,6 +1380,12 @@ Research context:
    timeout exits 1. With the gterm host stopped, `orchestration-v1.sh` is refused at its
    first `new-tab` with `terminal_failed`, exits 1, and no role comes up on another
    backend (criterion 5).
+8. Amendment disclosure (3.3): claim a scratch task and `update_task` its
+   `validation_criteria`; the next turn carries the disclosure order;
+   `gobby-tasks-artifacts-ops:get_artifacts` shows `claim_snapshot` with the claim-time
+   text; a
+   `close_task` whose summary names the amendment passes the close review, and one
+   that omits it is bounced with the amendment as the finding.
 
 **Enhancement round 1 of 1** (kind: enhancement). enhancer_run
 `fa6aa37e-ab77-43cd-a1e5-1b9af49c8803` (plan-enhancer-taskless, grok/grok-4.7/high,
