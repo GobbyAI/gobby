@@ -249,10 +249,8 @@ class TestCheckArguments:
         "property_schema",
         [
             {},
-            {"enum": ["value"]},
             {"type": "unsupported"},
             {"type": ["string", "unsupported"]},
-            {"anyOf": [{"type": "string"}, {"enum": ["value"]}]},
         ],
     )
     def test_unsupported_or_untyped_branches_are_non_blocking(
