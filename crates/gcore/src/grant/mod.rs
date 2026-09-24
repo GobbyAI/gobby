@@ -18,6 +18,7 @@ pub use bundle::{
     expected_schema_identity, parse_grant_json, payload_checksum, validate_for_construction,
     verify_payload_checksum,
 };
+pub(crate) use cache::lock_with_deadline;
 pub use cache::{
     CachedSettings, GrantFileLock, TrustedBinding, binding_path, grant_lock_path,
     interactive_cache_path, load_binding, load_grant_file, settings_cache_path, try_lock,

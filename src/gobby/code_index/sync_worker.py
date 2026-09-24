@@ -80,8 +80,11 @@ def _file_needs_graph_sync(file: IndexedFile) -> bool:
 def _is_transient_vector_error(error: Exception) -> bool:
     if isinstance(error, (GcodeEmbeddingTransportError, GcodeTimeoutError, GcodeUnavailableError)):
         return True
-    return isinstance(error, GcodeCommandError) and (
-        _EMBEDDING_CONFIG_UNAVAILABLE in error.stderr.casefold()
+    if not isinstance(error, GcodeCommandError):
+        return False
+    stderr = error.stderr.casefold()
+    return (
+        _EMBEDDING_CONFIG_UNAVAILABLE in stderr or "daemon could not be reached (timeout)" in stderr
     )
 
 

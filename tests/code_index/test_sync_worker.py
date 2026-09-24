@@ -141,6 +141,22 @@ class IndexedFileNotFoundGcodeGateway(GcodeGateway):
         raise GcodeIndexedFileNotFoundError(["gcode"], 2, stderr, file_path, PROJECT_ID)
 
 
+class EffectiveConfigTimeoutGateway(GcodeGateway):
+    async def vector_sync_file(
+        self,
+        project_root: Path,
+        file_path: str,
+        *,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        raise GcodeCommandError(
+            ["gcode", "vector", "sync-file"],
+            1,
+            "failed to resolve effective AI config: daemon effective config request failed: "
+            "daemon could not be reached (timeout)",
+        )
+
+
 class CommandErrorGcodeGateway(GcodeGateway):
     async def graph_sync_file(
         self,
@@ -1508,6 +1524,34 @@ async def test_exhausted_vector_sync_requeues_the_file(
     did_work = await _sync_file(
         storage=storage,
         gcode_gateway=gateway,
+        config=CodeIndexConfig(embedding_enabled=True, graph_enabled=False),
+        project_id=PROJECT_ID,
+        root=tmp_path,
+        file=pending,
+    )
+
+    assert did_work is False
+    storage.requeue_vector_sync.assert_called_once_with(pending.id)
+
+
+@pytest.mark.asyncio
+async def test_exhausted_effective_config_timeout_requeues_the_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An effective-config timeout is a retryable daemon miss, so exhaustion requeues."""
+    monkeypatch.setattr(
+        "gobby.code_index.sync_worker._VECTOR_SYNC_RETRY_BACKOFF_SECONDS",
+        (),
+    )
+    _write_source(tmp_path)
+    pending = _indexed_file(vectors_synced=False, graph_synced=True)
+    storage = MagicMock()
+    storage.get_file.return_value = pending
+
+    did_work = await _sync_file(
+        storage=storage,
+        gcode_gateway=EffectiveConfigTimeoutGateway(),
         config=CodeIndexConfig(embedding_enabled=True, graph_enabled=False),
         project_id=PROJECT_ID,
         root=tmp_path,

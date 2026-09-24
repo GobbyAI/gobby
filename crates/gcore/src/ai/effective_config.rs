@@ -1,9 +1,10 @@
 use std::collections::BTreeMap;
 use std::error::Error as StdError;
+use std::fs;
 use std::io;
 use std::path::Path;
 use std::sync::OnceLock;
-use std::time::Duration;
+use std::time::{Duration, Instant, SystemTime};
 
 use serde::Deserialize;
 use thiserror::Error;
@@ -16,6 +17,8 @@ use crate::config::{ConfigSource, DaemonOrPrimary, DaemonServedConfig, contains_
 pub const EFFECTIVE_CONFIG_PATH: &str = "/api/config/effective";
 
 const EFFECTIVE_CONFIG_TIMEOUT: Duration = Duration::from_secs(5);
+const EFFECTIVE_CONFIG_SHARE_TTL: Duration = Duration::from_secs(30);
+const EFFECTIVE_CONFIG_LOCK_STALE_AFTER: Duration = Duration::from_secs(10);
 const POSTGRES_DSN_KEY: &str = "databases.postgres.dsn";
 const MANAGED_EXECUTION_BOOTSTRAP_ENV: &str = "GOBBY_MANAGED_EXECUTION_BOOTSTRAP";
 
@@ -109,7 +112,7 @@ pub fn daemon_mode_layers_at(
             settings.settings,
         ));
     }
-    fetch_daemon_served_config_at(base_url, token.as_deref())
+    shared_effective_config(base_url, gobby_home)
 }
 
 pub fn fetch_daemon_served_config_at(
@@ -125,13 +128,84 @@ fn fetch_daemon_served_config_at_with_timeout(
     timeout: Duration,
 ) -> Result<DaemonServedConfig, EffectiveConfigError> {
     let (status, body) = fetch_config_body(base_url, EFFECTIVE_CONFIG_PATH, token, timeout)?;
+    parse_served_body(&body).map_err(|error| match error {
+        EffectiveConfigError::Protocol { reason, .. } => {
+            EffectiveConfigError::Protocol { status, reason }
+        }
+        other => other,
+    })
+}
+
+/// One slow effective-config fetch serves every concurrent gcode sync.
+///
+/// Each vector sync resolves this endpoint. A file lock queues the callers,
+/// and a short-lived cache lets the waiters reuse the winner's response
+/// instead of opening another daemon request.
+fn shared_effective_config(
+    base_url: &str,
+    gobby_home: &Path,
+) -> Result<DaemonServedConfig, EffectiveConfigError> {
+    if let Some(config) = read_fresh_effective_cache(gobby_home) {
+        return Ok(config);
+    }
+    let directory = gobby_home.join("grants");
+    fs::create_dir_all(&directory).map_err(|_| EffectiveConfigError::LocalConfiguration {
+        reason: "effective config cache directory could not be created",
+    })?;
+    let _lock = crate::grant::lock_with_deadline(
+        &directory.join(".effective-config.lock"),
+        EFFECTIVE_CONFIG_LOCK_STALE_AFTER,
+        Instant::now() + EFFECTIVE_CONFIG_TIMEOUT,
+    )
+    .map_err(share_lock_error)?;
+    if let Some(config) = read_fresh_effective_cache(gobby_home) {
+        return Ok(config);
+    }
+    let token = crate::local_token::read_local_cli_token_for(gobby_home).ok();
+    let (status, body) = fetch_config_body(
+        base_url,
+        EFFECTIVE_CONFIG_PATH,
+        token.as_deref(),
+        EFFECTIVE_CONFIG_TIMEOUT,
+    )?;
+    let config = parse_served_body(&body).map_err(|error| match error {
+        EffectiveConfigError::Protocol { reason, .. } => {
+            EffectiveConfigError::Protocol { status, reason }
+        }
+        other => other,
+    })?;
+    let _ = fs::write(directory.join("effective-config.json"), body);
+    Ok(config)
+}
+
+fn parse_served_body(body: &str) -> Result<DaemonServedConfig, EffectiveConfigError> {
     let envelope: EffectiveConfigEnvelope =
-        serde_json::from_str(&body).map_err(|_| EffectiveConfigError::Protocol {
-            status,
+        serde_json::from_str(body).map_err(|_| EffectiveConfigError::Protocol {
+            status: 200,
             reason: "response did not match the required config envelope",
         })?;
     validate_served_values(&envelope.config)?;
     Ok(DaemonServedConfig::new(envelope.revision, envelope.config))
+}
+
+fn read_fresh_effective_cache(gobby_home: &Path) -> Option<DaemonServedConfig> {
+    let path = gobby_home.join("grants").join("effective-config.json");
+    let modified = fs::metadata(&path).ok()?.modified().ok()?;
+    if SystemTime::now().duration_since(modified).ok()? > EFFECTIVE_CONFIG_SHARE_TTL {
+        return None;
+    }
+    parse_served_body(&fs::read_to_string(path).ok()?).ok()
+}
+
+fn share_lock_error(error: crate::grant::GrantError) -> EffectiveConfigError {
+    match error {
+        crate::grant::GrantError::Timeout => EffectiveConfigError::Transport {
+            kind: EffectiveConfigTransportKind::Timeout,
+        },
+        _ => EffectiveConfigError::Transport {
+            kind: EffectiveConfigTransportKind::Other,
+        },
+    }
 }
 
 fn fetch_config_body(
