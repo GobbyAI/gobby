@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Protocol
 
 from gobby.sessions.status_events import SessionStatusTransition
 from gobby.storage.session_models import Session
+from gobby.storage.terminals import TerminalManager
 from gobby.terminal_ownership import (
     TERMINAL_OWNER_STATUSES,
     is_interactive_terminal_claim,
@@ -96,6 +97,18 @@ class _TerminalRevivalMixin:
             updated = self.get(session_id)
             if updated is not None and updated.status == "active":
                 clear_contested_terminal_expiry(self.db, session_id)
+                # Expiry released the gterm pane, and a surviving CLI sends no
+                # SessionStart to bind it again, so revival rebinds it here.
+                context = updated.terminal_context or {}
+                native_terminal_id = context.get("gobby_terminal_id")
+                if (
+                    isinstance(native_terminal_id, str)
+                    and native_terminal_id
+                    and not context.get("tmux_pane")
+                ):
+                    TerminalManager(self.db).bind_session(
+                        native_terminal_id, session_id, updated.project_id
+                    )
                 self._notify_session_change("session_updated", session_id)
                 self._notify_status_transition(
                     SessionStatusTransition.from_session(updated, transitioned_at=now)

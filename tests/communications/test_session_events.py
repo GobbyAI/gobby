@@ -174,6 +174,19 @@ def test_automatic_title_contains_reference_once() -> None:
     )
 
 
+@pytest.mark.parametrize("title", ["gobby#42: Codex", "gobby#42: Task #7 - Fix", "gobby#42"])
+def test_canonical_title_keeps_ref_prefixed_titles_verbatim(title: str) -> None:
+    transition = replace(make_transition(agent_run_id=None, status="paused"), title=title)
+    assert format_session_status_message(transition) == f"{title} - Paused"
+
+
+def test_canonical_title_prefixes_manual_titles() -> None:
+    transition = replace(
+        make_transition(agent_run_id=None, status="paused"), title="My manual title"
+    )
+    assert format_session_status_message(transition) == "gobby#42 - My manual title - Paused"
+
+
 def test_status_notification_uses_project_uuid_when_ref_unavailable() -> None:
     transition = replace(make_transition(agent_run_id=None, status="paused"), session_ref=None)
     assert format_session_status_message(transition).startswith(f"{transition.project_id}#42 - ")

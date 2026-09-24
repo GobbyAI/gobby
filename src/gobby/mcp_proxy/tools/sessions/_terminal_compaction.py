@@ -162,14 +162,19 @@ async def _confirm_interrupt(
     observe_interrupt: Callable[[], bool | None],
     *,
     attempt_seconds: float,
+    turn_settled: Callable[[], bool | None] | None = None,
 ) -> tuple[bool, str | None, dict[str, Any] | None]:
     """Send the interrupt key until the CLI's transcript confirms the turn stopped."""
+    pressed = False
     for _attempt in range(_INTERRUPT_ATTEMPTS):
+        if pressed and turn_settled is not None and turn_settled() is True:
+            return True, None, None
         ok, reason = await send_pane_key(
             pane, key, session_id, action="sending compaction interrupt"
         )
         if not ok:
             return False, reason, None
+        pressed = True
         observed = await _wait_for_interrupt(observe_interrupt, attempt_seconds=attempt_seconds)
         if observed is None:
             return (
@@ -231,11 +236,17 @@ async def _interrupt_turn(
     observe_interrupt: Callable[[], bool | None] | None,
     *,
     settle_seconds: float,
+    turn_settled: Callable[[], bool | None] | None = None,
 ) -> tuple[bool, str | None, dict[str, Any] | None]:
     """Interrupt the running turn: transcript-confirmed, or blind with a settle."""
     if observe_interrupt is not None:
         return await _confirm_interrupt(
-            pane, key, session_id, observe_interrupt, attempt_seconds=settle_seconds
+            pane,
+            key,
+            session_id,
+            observe_interrupt,
+            attempt_seconds=settle_seconds,
+            turn_settled=turn_settled,
         )
     ok, reason = await send_pane_key(pane, key, session_id, action="sending compaction interrupt")
     if not ok:
@@ -284,6 +295,9 @@ async def _wait_for_turn_to_settle(
     deadline = time.monotonic() + wait_seconds
     while True:
         if _turn_already_settled(turn_settled, session_id, command):
+            return True
+        recorded = getattr(turn_settled, "delivery_turn_recorded", None)
+        if callable(recorded) and recorded():
             return True
         remaining = deadline - time.monotonic()
         if remaining <= 0:
@@ -429,20 +443,25 @@ async def _send_terminal_compaction_command(
                 resubmission,
                 _COMPACTION_REJECTION_RETRIES,
             )
-        # A rejection proves the turn is live, so only the first submission may skip.
-        if resubmission or not await _wait_for_turn_to_settle(
-            turn_settled,
-            session_id,
-            command,
-            wait_seconds=settle_wait_seconds,
-            poll_seconds=settle_poll_seconds,
-        ):
+        # A rejection proves the turn is live, so only the first submission waits.
+        # The wait also returns once the armed turn has ended and goal mode has
+        # already started the next one. That successor is still interrupted.
+        if not resubmission:
+            await _wait_for_turn_to_settle(
+                turn_settled,
+                session_id,
+                command,
+                wait_seconds=settle_wait_seconds,
+                poll_seconds=settle_poll_seconds,
+            )
+        if resubmission or turn_settled is None or turn_settled() is not True:
             interrupted, reason, detail = await _interrupt_turn(
                 pane,
                 interrupt_key,
                 session_id,
                 observe_interrupt,
                 settle_seconds=interrupt_seconds,
+                turn_settled=turn_settled,
             )
             if not interrupted:
                 if continuation_pending:

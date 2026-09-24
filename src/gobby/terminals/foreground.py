@@ -112,4 +112,16 @@ def shell_pid(row: object) -> int | None:
     return pgid
 
 
-__all__ = ["command_name", "foreground_commands", "shell_pid"]
+def process_shell(row: object) -> str | None:
+    """The basename of the shell a daemon spawn launched, from ``process.shell``.
+
+    The inventories fall back to it when no live foreground command resolves.
+    """
+    process = getattr(row, "process", None)
+    if not isinstance(process, Mapping):
+        return None
+    shell = process.get("shell")
+    return shell if isinstance(shell, str) and shell else None
+
+
+__all__ = ["command_name", "foreground_commands", "process_shell", "shell_pid"]

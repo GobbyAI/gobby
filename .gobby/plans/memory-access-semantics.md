@@ -111,8 +111,12 @@ Confirmed by Josh on 2026-09-20 through the elicit interview (gobby#14037):
 - Do not restart the development daemon between 2.1 and the live cutover: once
   `src/gobby/storage/schema_expected_identity.json` is bumped, the restart preflight
   refuses the still-installed binary. The cutover is one announced
-  `global` `send_message`, `cargo build --release`, `promote_workspace_binary_set` for
-  `gcode`, `gdaemon`, `ghook`, a separate `gclient` promotion, and `gobby restart`.
+  `global` `send_message`, then `uv run gobby cutover` from the main checkout (it builds
+  release, proves the start half against the workspace pin, promotes the coherent `gcode`,
+  `gdaemon`, `ghook` set through `promote_workspace_binary_set` with the identity stamp, and
+  restarts; it refuses uncommitted schema inputs unless `--allow-dirty`), plus a separate
+  `gclient` promotion. The hand sequence ending in `gobby restart` is what the restart
+  preflight refuses.
 - Dependency chain. Shared carriers (`docs/guides/memory.md`,
   `src/gobby/mcp_proxy/tools/memory.py`, `memory_surface.py`, `memory_review.py`, the
   reference files) appear in most leaves, so the chain is mostly linear: 1.1 → 1.2 →
@@ -389,19 +393,25 @@ Targets:
 - `crates/gcore/assets/schema/migrations/452_memory_surfaced_stats_retire_recall_signals.sql`
 - `crates/gcore/src/schema/assets.rs::*` — scope-reason: append the `EmbeddedMigration` entry for 452
 - `crates/gcore/assets/schema/catalog.manifest.json::*` — scope-reason: add the two memories columns and remove the nine recall tables
-- `crates/gcore/tests/schema_contract.rs::*` — scope-reason: bump the identity literals
-- `crates/gcore/src/grant/bundle.rs::*` — scope-reason: bump the `latest_version` literal of the no-postgres fallback (line 218); no grant names a recall table
-- `crates/gdaemon/tests/cli_contract.rs::*` — scope-reason: bump the identity literals
+- `crates/gcore/tests/schema_contract.rs::*` — scope-reason: bump the four identity literals (version, newest file name, latest checksum, assets root hash)
+- `crates/gcore/src/grant/bundle.rs::*` — scope-reason: bump the three no-postgres fallback literals (`GOLDEN_LATEST_CHECKSUM`, `GOLDEN_ASSETS_ROOT_HASH`, `latest_version` at line 218); no grant names a recall table
+- `crates/gdaemon/tests/cli_contract.rs::*` — scope-reason: bump the `latest_version` literal (line 58)
 - `src/gobby/storage/schema_expected_identity.json::*` — scope-reason: regenerated identity pin
+- `tests/runtime_grants/golden/brokered_datastores.json::*` — scope-reason: re-signed at identity 452 (`schema_identity`, `payload_checksum`, `signature`)
+- `tests/runtime_grants/golden/direct_datastores.json::*` — scope-reason: re-signed at identity 452
+- `tests/runtime_grants/golden/old_client_new_grant.json::*` — scope-reason: re-signed at identity 452
+- `tests/runtime_grants/golden/payload_skew_unknown_field.json::*` — scope-reason: re-signed at identity 452; its unknown field stays outside the signed payload
+- `tests/runtime_grants/golden/unavailable_datastores.json::*` — scope-reason: re-signed at identity 452
 - `tests/fixtures/test_postgres_db_reset.py::*` — scope-reason: the RESTRICT-FK fixture pair used `recall_holdout_consumed -> recall_gate_runs`; repoint at `machines.owner_user_id -> users.id`
 - `tests/storage/test_domain_tables_schema.py::*` — scope-reason: pin `memories.surfaced_count` and `memories.last_surfaced_at`
 
 **Research context:** Schema authority is Rust: Python has no DDL
-(`tests/storage/test_schema_contract.py`). Baseline is at 420; the newest committed migration is
-449 (`449_workspace_default_project.sql`), 450 is #22740's
-(`450_drop_session_heuristic_title.sql`, being built on epic-rust-gclient and landing first)
-and 451 is the runbooks plan's (#22808), so this plan takes 452 (Program Director,
-2026-09-24; the epic asked for the renumber at review). Templates: migration 436 (add columns, commit `faadba03d1`) and
+(`tests/storage/test_schema_contract.py`). Baseline is at 420; the newest committed migration on
+0.5.0 is 450 (`450_drop_session_heuristic_title.sql`, #22740, `b9303f8183`, merged in
+`8de59a666f`); 451 is the runbooks plan's (#22808, `451_add_runbook_roles.sql`, not yet in
+the tree), so this plan takes 452 (Program Director, 2026-09-24; the epic asked for the
+renumber at review). The identity literals named below read 450 on HEAD; this leaf bumps
+them to 452 from 450, or from 451 if the runbooks migration has landed first. Templates: migration 436 (add columns, commit `faadba03d1`) and
 `439_retire_linear_github_issue_bridge.sql` (multi-table drop as a plain migration). The
 single file, in order: `ALTER TABLE memories ADD COLUMN surfaced_count integer DEFAULT 0,
 ADD COLUMN last_surfaced_at timestamp with time zone;` then `UPDATE memories SET
@@ -417,45 +427,65 @@ stamps directive-marked migrations without executing them on every fresh lineage
 (`crates/gcore/src/schema/runner.rs`, `stamps_destructive_migrations`, and
 `runner_plan.rs`), which would leave the nine tables on every new install and every test
 database; a plain migration executes right after the baseline on fresh lineages and at the
-next apply on installed hubs. Carriers per the derived-carriers table: append the
-`EmbeddedMigration` in `assets.rs`; insert `memories.last_surfaced_at` after
+next apply on installed hubs. Carriers per the derived-carriers table, in this order (the
+#22740 procedure, `b9303f8183`): (1) write the migration and append its `EmbeddedMigration`
+in `assets.rs`. (2) Regenerate the manifest:
+`GOBBY_SCHEMA_TEST_DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test UPDATE_GCORE_SCHEMA_MANIFEST=1 cargo test --manifest-path crates/gcore/Cargo.toml --features postgres --test catalog_manifest_freshness`.
+The test creates a scratch database on that server, applies baseline plus migrations,
+writes `catalog.manifest.json`, and drops the database; without the DSN it skips with an
+eprintln, and without `--features postgres` it compiles no test at all, because gcore's
+default features are empty (`crates/gcore/Cargo.toml`), `pub mod schema` is gated on
+`postgres` (`lib.rs` line 46), and `schema_contract.rs` and `catalog_manifest_freshness.rs`
+are `#![cfg(feature = "postgres")]`. Expect `memories.last_surfaced_at` after
 `memories.last_dreamed_at` (line 2420 on HEAD) and `memories.surfaced_count` after
-`memories.source_type` (line 2444) in `catalog.manifest.json` with definitions
-`"timestamp with time zone|timestamptz|YES||NEVER"` and `"integer|int4|YES|0|NEVER"`,
-(the integer definition is the one `memories.access_count` carries at line 2368)
-and remove the about 140 entries for the nine tables; bump the identity literals:
-`crates/gcore/tests/schema_contract.rs` lines 21 and 24 (the version and the newest file
-name), `crates/gcore/src/grant/bundle.rs` line 218 (`latest_version: 449` in the
-`#[cfg(not(feature = "postgres"))]` fallback beside `GOLDEN_LATEST_CHECKSUM`, set by #22809
-in `8039cebc41`; its guard `grant::tests::expected_schema_identity_tracks_catalog_head` runs
-only under gcore's default features, memory 24090e86), and
-`crates/gdaemon/tests/cli_contract.rs` line 58. The grant bundle names no recall table (the
-nine appear only in `baseline.sql` and the catalog manifest), so nothing else in
-`bundle.rs` changes; regenerate
-`src/gobby/storage/schema_expected_identity.json` with
-`python scripts/generate_schema_expected_identity.py`. `verify.rs` is not a carrier
-(memories is not seed-managed). `crates/gcore/tests/catalog_manifest_freshness.rs` pins the
-manifest against baseline plus migrations. The golden grant vectors under
-`tests/runtime_grants/golden/` are fixture-pinned (`tests/runtime_grants/test_golden_vectors.py`):
-run, do not edit. The shipped refit decision JSON in the user's home directory is a file,
+`memories.source_type` (line 2444) with definitions
+`"timestamp with time zone|timestamptz|YES||NEVER"` and `"integer|int4|YES|0|NEVER"` (the
+latter is what `memories.access_count` carries at line 2368), and no `recall_*` entry
+(about 140 go). (3) `cargo build -p gobby-daemon`, then read `latest_checksum` and
+`assets_root_hash` from `target/debug/gdaemon schema version --json`; the root hash covers
+the manifest, so it is final only after step 2. (4) Set the literals.
+`crates/gcore/src/grant/bundle.rs` moves three together in the
+`#[cfg(not(feature = "postgres"))]` fallback: `GOLDEN_LATEST_CHECKSUM` and
+`GOLDEN_ASSETS_ROOT_HASH` (lines 15-18) and `latest_version` (line 218, `450` on HEAD, set by
+#22740 in `b9303f8183`; its guard `grant::tests::expected_schema_identity_tracks_catalog_head`
+runs only under gcore's default features, and memory 24090e86 records that #22618 once moved
+only the checksum). `crates/gcore/tests/schema_contract.rs` moves four: the version and the
+newest file name (lines 21 and 24) and the latest checksum and assets root hash asserted
+below them. `crates/gdaemon/tests/cli_contract.rs` moves `latest_version` (line 58). (5)
+Regenerate `src/gobby/storage/schema_expected_identity.json` with
+`python scripts/generate_schema_expected_identity.py`. (6) Re-sign the five golden grant
+vectors under `tests/runtime_grants/golden/`: they embed the signed schema identity, so
+every identity bump regenerates them (`tests/runtime_grants/test_golden_vectors.py` lines
+3-6; precedents `2b7cf60e79` for 449 and `ec61574731` for 450). For each file set
+`schema_identity` to the new identity, recompute `payload_checksum` and re-sign with
+`sign_grant(..., GOLDEN_SECRET)` (`gobby.runtime_grants`; `GOLDEN_SECRET` is
+`tests/runtime_grants/support.py` line 13); only the identity and those two fields change.
+`payload_skew_unknown_field.json` is the negative vector (`NEGATIVE_GOLDENS`): its top-level
+`future_capability_probe` stays outside the signed payload and it is re-signed the same way.
+The grant bundle names no recall table (the nine appear only in `baseline.sql` and the
+catalog manifest). `verify.rs` is not a carrier (memories is not seed-managed).
+`crates/gcore/tests/catalog_manifest_freshness.rs` pins the manifest against baseline plus
+migrations. The shipped refit decision JSON in the user's home directory is a file,
 not a table; nothing to drop. Known window: between this leaf and 3.1 the old search-path increment briefly
 accrues exposure into the zeroed `access_count`; land 2.2 and 3.1 in the same session.
 
-Verification: `cargo build -p gobby-daemon && cargo test --manifest-path crates/gcore/Cargo.toml --test schema_contract --test catalog_manifest_freshness && cargo test --manifest-path crates/gdaemon/Cargo.toml --test cli_contract`;
+Verification: `cargo build -p gobby-daemon && GOBBY_SCHEMA_TEST_DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test cargo test --manifest-path crates/gcore/Cargo.toml --features postgres --test schema_contract --test catalog_manifest_freshness && cargo test --manifest-path crates/gdaemon/Cargo.toml --test cli_contract` (gdaemon enables gcore's `postgres` feature itself);
 `cargo test -p gobby-core --lib grant::tests` without `--features postgres` (the no-postgres identity guard, memory 24090e86);
 `GOBBY_TEST_GDAEMON=checkout $PG tests/storage/test_schema_contract.py tests/storage/test_schema_divergence.py tests/storage/test_domain_tables_schema.py tests/fixtures/test_postgres_db_reset.py tests/runtime_grants/test_golden_vectors.py tests/storage/test_storage_memories.py -q`;
 `cmp <(python scripts/generate_schema_expected_identity.py --stdout) src/gobby/storage/schema_expected_identity.json` or the generator's own idempotence check.
 
-**Granularity:** nine targets, one outcome: a migration and its required carriers are one
-identity bump and cannot be split without a mixed installed set.
+**Granularity:** fourteen targets, one outcome: a migration and its required carriers,
+signed vectors included, are one identity bump and cannot be split without a mixed
+installed set.
 
 **Acceptance:**
 
 - 2.1.1 - Migration 452 adds both columns, copies the counts across, resets access, and drops the nine tables in one plain file with no destructive directive. file: `crates/gcore/assets/schema/migrations/452_memory_surfaced_stats_retire_recall_signals.sql`.
-- 2.1.2 - The catalog manifest lists `memories.surfaced_count` and `memories.last_surfaced_at` and no `recall_*` table, and the freshness test passes. file: `crates/gcore/assets/schema/catalog.manifest.json`. behavior: `cargo test --manifest-path crates/gcore/Cargo.toml --test catalog_manifest_freshness` passes.
+- 2.1.2 - The catalog manifest lists `memories.surfaced_count` and `memories.last_surfaced_at` and no `recall_*` table, and the freshness test passes. file: `crates/gcore/assets/schema/catalog.manifest.json`. behavior: `GOBBY_SCHEMA_TEST_DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test cargo test --manifest-path crates/gcore/Cargo.toml --features postgres --test catalog_manifest_freshness` passes with the database reached (no skip line).
 - 2.1.3 - Every identity carrier agrees with the checkout binary. file: `src/gobby/storage/schema_expected_identity.json`. test: `tests/storage/test_schema_contract.py::test_expected_identity_matches_gdaemon`.
 - 2.1.4 - The reset fixture's RESTRICT-FK pair is a surviving pair. test: `tests/fixtures/test_postgres_db_reset.py::test_reset_handles_restrict_fk_order`.
 - 2.1.5 - The domain-table pin covers both new columns. test: `tests/storage/test_domain_tables_schema.py::test_memories_surfaced_columns`.
+- 2.1.6 - The five golden grant vectors carry identity 452 and verify against `GOLDEN_SECRET`. test: `tests/runtime_grants/test_golden_vectors.py::test_grant_vectors_round_trip`. test: `tests/runtime_grants/test_golden_vectors.py::test_config_revision_signed`.
 
 ### 2.2 Thread surfaced_count and last_surfaced_at through storage, protocol, dream, CLI, and web [category: code] (depends: 2.1)
 `kind: deliverable`
@@ -636,10 +666,25 @@ sort_by="updated_at", sort_order="desc")`, first id or None). Extract both into 
 `src/gobby/mcp_proxy/tools/memory_session.py` as `resolve_session(session_manager,
 session_id)` and `resolve_claimed_task_id(db, session_id)`, and use them from all four
 tools. Make `get_memory` `async def`, resolve and load as today, then `asyncio.to_thread`
-the two writes: `facade.record_memory_access(memory_id)` (2.2) and
+the two writes: `facade.record_memory_access(memory_id)` (2.2), which needs no session and
+runs on every successful load (Decision 1), and, only when `session_id` resolves,
 `SessionVariableManager.upsert_bounded_list_variable(session_id, "accessed_memory_ids",
-{"memory_id": ..., "task_id": ...}, identity={"memory_id": ...}, max_items=200)`
-(`src/gobby/workflows/state_manager.py`, near 340-373). The write is direct, not staged: a
+{"memory_id": ..., "task_id": ...}, identity={"memory_id": ..., "task_id": ...},
+max_items=_ACCESSED_MEMORY_IDS_MAX)` (`src/gobby/workflows/state_manager.py`, near 340-373),
+with `_ACCESSED_MEMORY_IDS_MAX = 1000` beside the tool. Identity is the
+pair: the helper drops every stored item whose identity keys all match, so identity on
+`memory_id` alone would replace task A's record when the same memory is fetched under task
+B and Decisions 8-9 would lose A's provenance. With the pair a memory keeps one record per
+fetching task (or one untagged record; `None` compares equal, so no special case), and a
+repeat fetch under the same task refreshes that record. The bound exists because the helper
+requires `max_items` and the variables blob is read on every surfacing (3.3); at the cap the
+oldest record goes first. It sits far above what one epoch holds: every `get_memory` result
+carries the full memory row into context, the context-pressure handoff fires long before a
+thousand of them, and Decision 7 resets the set at compaction, so the compaction reset, not
+the cap, is what bounds Decision 9's inputs; a memory whose record is gone is still reachable
+through 3.4's search tier. Rejected: keeping every record whose task is still open (a task
+query per fetch, an unbounded list for a long-open task, and the same compaction reset).
+The write is direct, not staged: a
 tool result the agent requested has reached it by definition. The result dict gains
 `surfaced_count`; `access_count` stays. Rules cannot append to a set (`set_variable` only),
 so the tracking write stays in Python. Rejected: recording access on the search path with
@@ -650,9 +695,10 @@ Verification: `GOBBY_TEST_GDAEMON=checkout $PG tests/mcp_proxy/tools/test_memory
 **Acceptance:**
 
 - 3.2.1 - `get_memory` requires `session_id`, is awaitable, and each call increments `access_count`, sets `last_accessed_at`, and returns both counters. test: `tests/mcp_proxy/tools/test_memory_get_access.py::test_get_memory_records_access`.
-- 3.2.2 - The fetch appends `{memory_id, task_id}` to `accessed_memory_ids`, tagged with the task the session has claimed or `None`, bounded at 200 with identity on `memory_id`. test: `tests/mcp_proxy/tools/test_memory_get_access.py::test_get_memory_records_accessed_id_with_claimed_task`. test: `tests/mcp_proxy/tools/test_memory_get_access.py::test_get_memory_untagged_without_claimed_task`.
+- 3.2.2 - The fetch appends `{memory_id, task_id}` to `accessed_memory_ids`, tagged with the task the session has claimed or `None`, bounded at `_ACCESSED_MEMORY_IDS_MAX` (1000) records with identity on the `(memory_id, task_id)` pair, so the same memory fetched under two tasks keeps both records. test: `tests/mcp_proxy/tools/test_memory_get_access.py::test_get_memory_records_accessed_id_with_claimed_task`. test: `tests/mcp_proxy/tools/test_memory_get_access.py::test_get_memory_untagged_without_claimed_task`. test: `tests/mcp_proxy/tools/test_memory_get_access.py::test_get_memory_keeps_a_record_per_task`.
 - 3.2.3 - `resolve_session` and `resolve_claimed_task_id` are the only session and claimed-task resolvers in the memory tools; the review, surface, and write tools import them. file: `src/gobby/mcp_proxy/tools/memory_session.py`. symbol: `resolve_claimed_task_id`.
-- 3.2.4 - A `get_memory` call whose session cannot be resolved still returns the memory and records nothing. test: `tests/mcp_proxy/tools/test_memory_get_access.py::test_get_memory_unresolved_session_returns_memory`.
+- 3.2.4 - A `get_memory` call whose session cannot be resolved still returns the memory and increments `access_count` (Decision 1), and writes no `accessed_memory_ids` record. test: `tests/mcp_proxy/tools/test_memory_get_access.py::test_get_memory_unresolved_session_records_access_without_tracking`.
+- 3.2.5 - At the cap a fetch evicts the oldest record only, and the cap is the tool's `_ACCESSED_MEMORY_IDS_MAX` constant. symbol: `_ACCESSED_MEMORY_IDS_MAX`. test: `tests/mcp_proxy/tools/test_memory_get_access.py::test_accessed_memory_ids_evict_oldest_at_cap`.
 
 ### 3.3 Surfaced set, injection sequence, K delivery, reset rules, and the dead dedupe chain [category: code] (depends: 3.1, 3.2)
 `kind: deliverable`
@@ -712,9 +758,11 @@ reaches the formatter (whether or not any line renders), stage the new value und
 `_memory_surface_turn_seq`, the once-per-parent-turn guard that
 `surface-memories-on-turn-start.yaml` sets `on_receipt`, which stays. Filter in
 `InjectionTrackingMixin._filter_and_track_new_memories`
-(`src/gobby/workflows/engine/injection_tracking.py`, near 14-61): drop if the id is in
-`accessed_memory_ids`; drop if it has a stamp with `seq_now - seq < K`; otherwise render
-and stage `"<id>@<seq_now>"`. K reaches the formatter through the tool payload: the
+(`src/gobby/workflows/engine/injection_tracking.py`, near 14-61): drop if any record in
+`accessed_memory_ids` carries the id (a memory holds one record per fetching task, 3.2);
+drop if it has a stamp with `seq_now - seq < K`; otherwise render
+and stage `"<id>@<seq_now>"` (with K=5 a line stamped at seq 1 is dropped at seq 2-5 and
+rendered at seq 6, the fifth further surfacing). K reaches the formatter through the tool payload: the
 workflow engine has no daemon-config access, while the memory tool registry has
 `_config()` (`mcp_proxy/tools/memory.py`, near line 137), so `register_memory_surface_tools`
 (`memory_surface.py`, near 70-144) takes the accessor, `surface_memories` reads
@@ -722,7 +770,10 @@ workflow engine has no daemon-config access, while the memory tool registry has
 `reshow_after_injections`, and `DeliveryFormattingMixin._format_memory_index_result`
 (`delivery_formatting.py`, near 58-74) passes `result.get("reshow_after_injections", 5)`
 into the filter. Out of scope, noted: `surface_memories` returns its top 5 before the
-formatter filters, so a rendered index can be shorter than 5 (same as today). Dead path,
+formatter filters, so a rendered index can be shorter than 5 (same as today); for
+`memory.surface` the surfaced increment (3.1) therefore counts the returned top 5, debounced
+per memory by `access_debounce_seconds` (default 60 s), including hits the formatter then
+suppresses: it measures ranked delivery to the index, the mechanism Decision 2 names. Dead path,
 delete: the deferred `search_memories` dedupe chain is unreachable since no bundled rule
 dispatches `search_memories`: `HookManager._dedup_memory_results` (`hook_manager.py`,
 839-841), `WorkflowRuleEvaluator.dedup_memory_results` (`rule_evaluator.py`, near
@@ -749,8 +800,8 @@ ingress move are the removals that make the owning files fit.
 
 **Acceptance:**
 
-- 3.3.1 - An id in `accessed_memory_ids` is never rendered again in the epoch. test: `tests/workflows/test_memory_index_delivery.py::test_accessed_memory_never_reshown`.
-- 3.3.2 - A shown-but-unread id is suppressed while `seq_now - seq < K` and rendered again once K further surfacings have passed, with the stamp refreshed. test: `tests/workflows/test_memory_index_delivery.py::test_surfaced_memory_reshown_after_horizon`.
+- 3.3.1 - An id with any record in `accessed_memory_ids`, whichever task tagged it, is never rendered again in the epoch. test: `tests/workflows/test_memory_index_delivery.py::test_accessed_memory_never_reshown`.
+- 3.3.2 - A shown-but-unread id is suppressed while `seq_now - seq < K` and rendered again on the K-th further surfacing (`seq_now - seq == K`), with the stamp refreshed. test: `tests/workflows/test_memory_index_delivery.py::test_surfaced_memory_reshown_after_horizon`.
 - 3.3.3 - Stamps and the sequence are staged in the receipt and committed only on acknowledgement. test: `tests/hooks/test_receipt_effects.py::test_surface_seq_and_stamps_commit_on_ack`.
 - 3.3.4 - `surface_memories` returns `reshow_after_injections` from `memory.index_reshow_after_injections` and the formatter uses it. test: `tests/mcp_proxy/tools/test_memory_surface.py::test_payload_carries_reshow_after_injections`. symbol: `DeliveryFormattingMixin._format_memory_index_result`.
 - 3.3.5 - Both lifecycle rules reset `surfaced_memory_ids`, `accessed_memory_ids`, `_memory_surface_seq`, and `injected_review_lesson_ids`, and no rule or code path names `injected_memory_ids`. test: `tests/workflows/test_memory_lifecycle_rules.py::test_reset_rule_clears_memory_tracking_variables`. test: `tests/workflows/test_context_handoff_rules.py::test_compact_rule_clears_memory_tracking_variables`.
@@ -773,8 +824,9 @@ searches `title + summary` with `_CANDIDATE_LIMIT`, serializes candidates (near 
 records the review (`_record_review`, near 48-67), and returns the shape near 239-246.
 After the task and session resolve: read `accessed_memory_ids` from the calling session
 and, when different, from `task.closed_in_session_id`; keep records whose `task_id` equals
-the task or is `None`; load each with the facade and serialize with `"source":
-"accessed"`. Then the existing search, minus ids already listed, with `"source": "search"`.
+the task or is `None`, one candidate per memory id at its first record's position (a memory
+with a tagged and an untagged record lists once); load each with the facade and serialize
+with `"source": "accessed"`. Then the existing search, minus ids already listed, with `"source": "search"`.
 `candidate_ids` in the review record covers both tiers. There is no transitive descendant
 lister (`_lineage_discovery.py` is one level); the calling session plus the closing
 session covers the spawned-worker case without one. The `recall_request_id` minting was
@@ -787,7 +839,7 @@ Verification: `GOBBY_TEST_GDAEMON=checkout $PG tests/mcp_proxy/tools/test_memory
 **Acceptance:**
 
 - 3.4.1 - Accessed candidates tagged with the closing task or untagged come first with `source: accessed`, in fetch order. test: `tests/mcp_proxy/tools/test_memory_review.py::test_accessed_candidates_listed_first`.
-- 3.4.2 - Accessed records tagged with another task are excluded. test: `tests/mcp_proxy/tools/test_memory_review.py::test_other_task_accessed_records_excluded`.
+- 3.4.2 - Accessed records tagged with another task are excluded, and a memory fetched under two tasks is found by each task's review. test: `tests/mcp_proxy/tools/test_memory_review.py::test_other_task_accessed_records_excluded`. test: `tests/mcp_proxy/tools/test_memory_review.py::test_memory_fetched_under_two_tasks_found_by_each_review`.
 - 3.4.3 - Records from `task.closed_in_session_id` join those of the calling session when the two differ. test: `tests/mcp_proxy/tools/test_memory_review.py::test_closing_session_accessed_records_included`.
 - 3.4.4 - Search candidates already listed as accessed are not repeated, and `candidate_ids` in the review record spans both tiers. test: `tests/mcp_proxy/tools/test_memory_review.py::test_search_tier_deduped_against_accessed`.
 - 3.4.5 - The guide and the post-task reference describe the two tiers. file: `docs/guides/memory.md`. file: `src/gobby/install/shared/skills/gobby/references/memory/post-task.md`.
@@ -832,14 +884,18 @@ gates `apply_schema` on a maintenance epoch and a backup manifest (near 109-145)
 caller remains (sweep with `gcode usages` before deleting). Keep
 `src/gobby/cli/hub_maintenance.py`, `src/gobby/storage/maintenance_epoch.py`,
 `DestructiveBatch`, and hub backup and restore: the maintenance-epoch framework is the
-backup/restore tool. 426 keeps its bytes (receipts are checksummed); once the directive
+backup/restore tool. `cli/schema.py` imports from `cli/hub_backup/_integrity`, `_manifest`,
+`_stores`, and `hub_maintenance`, and nothing in those modules imports `schema.py`, so the
+deletions cannot break restore at import time; the two `tests/cli/hub_backup/` modules in the
+verification guard its behavior (`tests/cli/test_hub_maintenance.py` has no restore case).
+426 keeps its bytes (receipts are checksummed); once the directive
 means nothing, its `IF EXISTS` drops execute harmlessly on fresh lineages. Docs:
 `docs/guides/hub-install-contract.md` (near line 51) describes the directive ceremony.
 Load the `rust` skill first. Rejected: keeping the directive as a no-op comment marker
 (a marker that means nothing invites the next misuse).
 
-Verification: `cargo test --manifest-path crates/gcore/Cargo.toml schema && cargo test --manifest-path crates/gdaemon/Cargo.toml`;
-`GOBBY_TEST_GDAEMON=checkout $PG tests/cli/test_cli_schema.py tests/storage/test_schema_contract.py tests/cli/test_hub_maintenance.py -q` (adjust the last path to where the maintenance tests live).
+Verification: `GOBBY_SCHEMA_TEST_DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test cargo test --manifest-path crates/gcore/Cargo.toml --features postgres schema && cargo test --manifest-path crates/gdaemon/Cargo.toml` (the runner's PostgreSQL cases in `runner_tests.rs` skip without the DSN, and gcore compiles no schema test without the feature);
+`GOBBY_TEST_GDAEMON=checkout $PG tests/cli/test_cli_schema.py tests/storage/test_schema_contract.py tests/cli/test_hub_maintenance.py tests/cli/hub_backup/test_cli_hub_backup_cli.py tests/cli/hub_backup/test_verify.py -q`.
 
 **Granularity:** nine targets, one outcome: the directive is one authorization path across
 the runner, the daemon CLI, and the Python campaign; leaving any half makes the other
@@ -847,10 +903,10 @@ half unreachable code.
 
 **Acceptance:**
 
-- 4.1.1 - The runner executes a directive-marked migration like any other and never stamps a receipt without executing. file: `crates/gcore/src/schema/runner.rs`. behavior: `cargo test --manifest-path crates/gcore/Cargo.toml schema` passes with no `stamps_destructive_migrations` symbol.
+- 4.1.1 - The runner executes a directive-marked migration like any other and never stamps a receipt without executing. file: `crates/gcore/src/schema/runner.rs`. behavior: the gcore schema command in this leaf's verification passes with no `stamps_destructive_migrations` symbol.
 - 4.1.2 - `gdaemon schema apply` has no `--destructive` flag and requires no maintenance epoch or backup manifest. file: `crates/gdaemon/src/main.rs`. behavior: `cargo test --manifest-path crates/gdaemon/Cargo.toml` passes.
 - 4.1.3 - `gobby schema apply` has no destructive branch and no `schema-apply` campaign executor is registered. symbol: `apply_schema`. test: `tests/cli/test_cli_schema.py::test_apply_schema_plain`.
-- 4.1.4 - Hub backup, restore, and the maintenance-epoch framework are untouched. behavior: the hub-maintenance CLI module and `DestructiveBatch` are not in this leaf's diff and the maintenance test module passes unchanged.
+- 4.1.4 - Hub backup, restore, and the maintenance-epoch framework are untouched. behavior: the hub-maintenance CLI module, the `cli/hub_backup/` package, and `DestructiveBatch` are not in this leaf's diff and the three test modules pass unchanged. test: `tests/cli/hub_backup/test_cli_hub_backup_cli.py::TestRestore::test_restore_uses_explicit_target_and_verified_hub_artifact`. test: `tests/cli/hub_backup/test_verify.py::test_verify_postgres_restore_happy_path_drives_prod_image_without_ports_or_volumes`. test: `tests/cli/test_hub_maintenance.py::test_run_owns_open_backup_apply_verify_release_and_restart`.
 - 4.1.5 - The install contract no longer describes a destructive-migration ceremony. file: `docs/guides/hub-install-contract.md`.
 
 ## P5: Verification
@@ -860,21 +916,23 @@ half unreachable code.
 `kind: verification`
 
 After 1.1 through 4.1 land (Decision 15): announce with a `global` `send_message`,
-confirm no live spawned worker or close validator, `cargo build --release` for the
-workspace, `promote_workspace_binary_set` for `gcode`, `gdaemon`, `ghook`, promote
-`gclient` separately, read `sha256` from `~/.gobby/bin/` (never from `target/release/`),
-then `uv run gobby restart --wait` from the main checkout, which proves
-`gdaemon schema plan` and applies 452. Then:
+confirm no live spawned worker, close validator, or restart-protected cron run (the nightly
+dream; cutover's restart passes no `--wait`), then `uv run gobby cutover` from the main
+checkout: it builds release, proves the start half (worktree guard, installed set, schema
+identity, read-only `gdaemon schema plan`), promotes `gcode`, `gdaemon`, `ghook` as one
+stamped set, and restarts the daemon, which applies 452. Promote `gclient` separately and
+read `sha256` from `~/.gobby/bin/` (never from `target/release/`). Then:
 
-1. `~/.gobby/bin/gdaemon --version --json` reports `latest_version: 452`; the hub has
+1. `~/.gobby/bin/gdaemon schema version --json` reports `latest_version: 452`; the hub has
    `memories.surfaced_count` and no `recall_*` table.
 2. `gobby-config:get_config_values` shows `memory.index_reshow_after_injections: 5` and
    none of the removed keys; a patch to a removed key is rejected.
 3. In a fresh session: the turn-start index lists a memory; `get_memory` on it bumps
-   `access_count` to 1 and sets `last_accessed_at`; the next five turn-start indexes do
-   not re-list it; an unfetched line from the same index re-appears once six further
-   surfacings have passed. `surfaced_count` climbs on index and `search_memories` returns
-   only.
+   `access_count` to 1 and sets `last_accessed_at`; no later index in the epoch re-lists
+   it; an unfetched line from the same index (stamped at seq s) is absent from the next
+   four turn-start indexes and re-appears on the fifth further surfacing (seq s + 5 with
+   K=5, no other surfacing moment firing in between). `surfaced_count` climbs on index
+   and `search_memories` returns only.
 4. Claim a task, fetch two memories, close the task: `review_task_memories` returns those
    two first with `source: accessed`, then search candidates.
 5. `gobby memory show <id>` prints both counters; the web memory detail panel shows

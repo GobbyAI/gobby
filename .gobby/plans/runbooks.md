@@ -218,7 +218,11 @@ Confirmed with Josh on 2026-09-21 during elicitation.
   its split while both children are still leaves.
 - **Validation commands.** Python: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest <file>`,
   `uv run ruff check src/ tests/`, `uv run mypy src/`. Rust: `cargo nextest run -p gobby-client`,
-  `cargo nextest run -p gobby-core -E 'test(schema)'` with `GOBBY_SCHEMA_TEST_DATABASE_URL`,
+  `cargo nextest run -p gobby-core --features postgres -E 'test(schema)'` with
+  `GOBBY_SCHEMA_TEST_DATABASE_URL` set to the test-hub DSN named in 1.1's carrier procedure
+  (gcore's default features are empty and its schema tests are
+  `#![cfg(feature = "postgres")]`, so without the feature the command compiles no test
+  and passes vacuously),
   `cargo clippy -p gobby-client`, `cargo fmt -p gobby-client -- --check`. Never the full
   pytest suite.
 - **Terminal backend (#22691 criteria 1-7).** Every fresh workspace pane is created by
@@ -254,6 +258,11 @@ Targets:
 - `crates/gcore/tests/schema_contract.rs::*` — scope-reason: the identity literals move and the byte-limit test is added beside them
 - `crates/gdaemon/tests/cli_contract.rs::version_json_reports_exact_schema_identity_contract`
 - `src/gobby/storage/schema_expected_identity.json::*` — scope-reason: regenerated from the rebuilt gdaemon
+- `tests/runtime_grants/golden/brokered_datastores.json::*` — scope-reason: re-signed at identity 451 (`schema_identity`, `payload_checksum`, `signature`)
+- `tests/runtime_grants/golden/direct_datastores.json::*` — scope-reason: re-signed at identity 451
+- `tests/runtime_grants/golden/old_client_new_grant.json::*` — scope-reason: re-signed at identity 451
+- `tests/runtime_grants/golden/payload_skew_unknown_field.json::*` — scope-reason: re-signed at identity 451; its unknown field stays outside the signed payload
+- `tests/runtime_grants/golden/unavailable_datastores.json::*` — scope-reason: re-signed at identity 451
 
 Add migration 451: `ALTER TABLE workspace_panes ADD COLUMN role text` and
 `ALTER TABLE workspace_tabs ADD COLUMN runbook text`, each with an `octet_length`
@@ -292,23 +301,42 @@ Research context:
   filename, checksum: <sha256 of the file bytes>, sql: include_str!(...) }` entry to
   `MIGRATIONS` in `crates/gcore/src/schema/assets.rs`; (2) regenerate the catalog
   manifest with the env-gated test
-  `GOBBY_SCHEMA_TEST_DATABASE_URL=<scratch pg url> UPDATE_GCORE_SCHEMA_MANIFEST=1 cargo test -p gobby-core --test catalog_manifest_freshness catalog_manifest_is_fresh_for_embedded_assets`;
-  (3) `cargo build -p gobby-daemon` then `target/debug/gdaemon schema-identity --json`
+  `GOBBY_SCHEMA_TEST_DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test UPDATE_GCORE_SCHEMA_MANIFEST=1 cargo test -p gobby-core --features postgres --test catalog_manifest_freshness catalog_manifest_is_fresh_for_embedded_assets`
+  (the test creates a scratch database on that server, applies baseline plus migrations,
+  writes `catalog.manifest.json` and drops the database; without the DSN it skips with
+  an eprintln, and without `--features postgres` it compiles no test at all and the
+  manifest is never rewritten, because gcore's default features are empty
+  (`crates/gcore/Cargo.toml`), `pub mod schema` is gated on `postgres` (`lib.rs` line
+  46), and `schema_contract.rs` and `catalog_manifest_freshness.rs` are
+  `#![cfg(feature = "postgres")]`);
+  (3) `cargo build -p gobby-daemon` then `target/debug/gdaemon schema version --json`
+  (the `schema` subcommands are `apply`, `plan`, `sweep-test-schemas`, `verify` and
+  `version`; `schema-identity` is gcode's)
   prints `latest_checksum` and `assets_root_hash` (`root_hash()` covers baseline,
   migrations, seed, and manifest, so it is final only after step 2); (4) update
   `GOLDEN_LATEST_CHECKSUM`, `GOLDEN_ASSETS_ROOT_HASH`, and `latest_version: 451` in
   `crates/gcore/src/grant/bundle.rs`, the literals in `schema_contract.rs`, and
   `latest_version` in `cli_contract.rs`; (5)
   `uv run python scripts/generate_schema_expected_identity.py --gdaemon target/debug/gdaemon`
-  rewrites `src/gobby/storage/schema_expected_identity.json` (CI re-derives and compares).
-- Latest committed migration is `449_workspace_default_project.sql` (adds
-  `workspaces.default_project_id`); refs became zero-based in 442. Migration 450 is
-  #22740's (drop `sessions.heuristic_title`, being built on epic-rust-gclient by
-  gobby#14436 on 2026-09-24) and lands before this plan expands, so this plan takes 451
-  (Program Director, 2026-09-24). On HEAD the `#[cfg(not(feature = "postgres"))]`
-  fallback in `crates/gcore/src/grant/bundle.rs` carries `latest_version: 449` (line 218,
-  set by #22809 in `8039cebc41`) beside `GOLDEN_LATEST_CHECKSUM` for 449; step (4) moves
-  that literal to 451 with the others. Its guard test
+  rewrites `src/gobby/storage/schema_expected_identity.json` (CI re-derives and compares);
+  (6) re-sign the five golden grant vectors under `tests/runtime_grants/golden/`: they
+  embed the signed schema identity, so every identity bump regenerates them
+  (`tests/runtime_grants/test_golden_vectors.py` lines 3-6; precedents `2b7cf60e79` for
+  449 and `ec61574731` for 450, one line in each of the five files). For each file set
+  `schema_identity` to the new identity, recompute `payload_checksum` and re-sign with
+  `sign_grant(..., GOLDEN_SECRET)` (`gobby.runtime_grants`; `GOLDEN_SECRET` is
+  `tests/runtime_grants/support.py` line 13); only the identity and those two fields
+  change, and the skew vector's unknown field (`future_capability_probe`, the one
+  `NEGATIVE_GOLDENS` entry) stays outside the signed payload.
+- The newest committed migration on 0.5.0 is `450_drop_session_heuristic_title.sql`
+  (#22740, drops `sessions.heuristic_title`; `b9303f8183`, merged in `8de59a666f` on
+  2026-09-24); 449 added `workspaces.default_project_id` and refs became zero-based in
+  442. This plan takes 451 (Program Director, 2026-09-24). On HEAD the
+  `#[cfg(not(feature = "postgres"))]` fallback in `crates/gcore/src/grant/bundle.rs`
+  carries `latest_version: 450` (line 218, set by #22740 in `b9303f8183`) beside the 450
+  `GOLDEN_LATEST_CHECKSUM` and `GOLDEN_ASSETS_ROOT_HASH` (lines 15-18); step (4) moves
+  the three together from 450 to 451, and `schema_contract.rs` moves four (the version,
+  the newest file name, the latest checksum and the assets root hash). Its guard test
   `grant::tests::expected_schema_identity_tracks_catalog_head` exercises the fallback only
   under gcore's default features, so V1 step 1 runs it without `--features postgres`
   (memory 24090e86).
@@ -344,6 +372,9 @@ Research context:
   changing the claimant leaves it untouched; an unclaimed insert writes no row. file:
   `crates/gcore/assets/schema/migrations/451_add_runbook_roles.sql`. test:
   `crates/gcore/tests/schema_contract.rs::migration_451_snapshots_task_fields_on_claim`.
+- 1.1.6 - The five golden grant vectors carry identity 451 and verify against
+  `GOLDEN_SECRET`. test: `tests/runtime_grants/test_golden_vectors.py::test_grant_vectors_round_trip`.
+  test: `tests/runtime_grants/test_golden_vectors.py::test_config_revision_signed`.
 
 ### 1.2 Workspace rows and ops carry role, runbook, and session_ref [category: code] (depends: 1.1, 2.1)
 `kind: deliverable`
@@ -1432,8 +1463,12 @@ Research context:
 `kind: verification`
 
 1. Unit and contract suites per deliverable (Constraints lists the commands); the gcore
-   schema tests with a scratch database and `cargo test -p gobby-core --lib grant::tests`
-   without `--features postgres` (the no-postgres identity guard, memory 24090e86);
+   schema tests with `--features postgres` and a scratch database
+   (`GOBBY_SCHEMA_TEST_DATABASE_URL`; without the feature they compile to nothing) and
+   `cargo test -p gobby-core --lib grant::tests` without `--features postgres` (the
+   no-postgres identity guard, memory 24090e86);
+   `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/runtime_grants/test_golden_vectors.py`
+   (the five re-signed goldens verify against `GOLDEN_SECRET`, 1.1.6);
    `cargo nextest run -p gobby-client` including `source_size.rs`; ruff and mypy on
    `src/`.
 2. Cutover from the main checkout after a `global` announcement: commit 1.1, then

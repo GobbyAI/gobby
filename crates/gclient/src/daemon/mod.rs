@@ -5,6 +5,7 @@ mod live_reader;
 mod live_workspace;
 mod projects;
 mod rest;
+mod roster;
 mod workspace;
 mod ws;
 
@@ -14,16 +15,16 @@ pub use live::{
 pub use projects::{
     Checkout, ProjectRow, RunRow, SessionRow, SidebarRows, SourceStatus, WorktreeRow,
 };
+pub use roster::{Attention, RosterEntry, TaskRef, TerminalRef};
 pub use workspace::{
     LayoutAxis, LayoutNode, PaneRow, TabRow, WorkspaceError, WorkspaceErrorCode, WorkspaceEvent,
     WorkspaceEventKind, WorkspaceOp, WorkspaceReply, WorkspaceRow, WorkspaceSnapshot,
 };
 pub use ws::{
-    decode_message, encode_message, message_kind, route_key, RouteKey, WsCodecError, GOLDEN_NAMES,
-    TERMINAL_WS_SAFE_INTEGER_MAX,
+    decode_message, encode_message, encode_text, message_kind, route_key, RouteKey, WsCodecError,
+    GOLDEN_NAMES, TERMINAL_WS_SAFE_INTEGER_MAX,
 };
 
-use crate::app::Backend;
 use crate::copy_mode::{paste_payload, PASTE_MAX_BYTES};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
@@ -155,72 +156,6 @@ impl TerminalRow {
     pub fn id(&self) -> &str {
         &self.terminal_id
     }
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
-pub struct RosterEntry {
-    pub entry_id: String,
-    pub run_id: Option<String>,
-    pub session_id: Option<String>,
-    pub lifecycle_status: Option<String>,
-    /// Set only while the subject is blocked; the daemon sends `null` otherwise.
-    pub attention: Option<Attention>,
-    pub task: Option<TaskRef>,
-    pub provider: Option<String>,
-    pub model: Option<String>,
-    /// The model's name as its provider prints it (`Claude Fable 5.1`),
-    /// resolved by the daemon from its capability rows; absent when no row
-    /// matches, and the chrome then shows the raw selector.
-    #[serde(default)]
-    pub model_display_name: Option<String>,
-    pub terminal: Option<TerminalRef>,
-    #[serde(default, rename = "tmux", deserialize_with = "tmux_session_name")]
-    pub tmux_session_name: Option<String>,
-    pub last_activity_at: Option<String>,
-}
-
-/// The blocked half of a roster entry (`_serialize_attention`).
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct Attention {
-    pub attention_id: Option<String>,
-    pub kind: Option<String>,
-    pub reason: Option<String>,
-    pub fingerprint: Option<String>,
-    #[serde(alias = "prompt")]
-    pub payload: Option<Value>,
-    pub seen_at: Option<String>,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct TaskRef {
-    pub id: String,
-    #[serde(rename = "ref")]
-    pub reference: Option<String>,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct TerminalRef {
-    pub terminal_id: String,
-    pub backend: Backend,
-    /// The terminal row's lifecycle state (`live`, `orphaned`, ...); an
-    /// `orphaned` row lost its host and can only be destroyed.
-    pub state: Option<String>,
-}
-
-/// The daemon nests the tmux name as `tmux: {session_name}`; a `null` block
-/// means the terminal is not tmux.
-fn tmux_session_name<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    #[derive(Deserialize)]
-    struct Tmux {
-        session_name: Option<String>,
-    }
-    Ok(Option::<Tmux>::deserialize(deserializer)?.and_then(|tmux| tmux.session_name))
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

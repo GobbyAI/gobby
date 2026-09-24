@@ -177,9 +177,13 @@ fn apply_scripted_mouse_outcome(
         | MouseOutcome::Spawn { .. }
         | MouseOutcome::OpenLink(_)
         | MouseOutcome::Confirm(_)
-        | MouseOutcome::Modal(_)
+        | MouseOutcome::Respond(_)
         | MouseOutcome::MoveTab { .. }
         | MouseOutcome::ResizeSplit { .. } => {}
+        // A dialog button applies what its key would, as the key path does.
+        MouseOutcome::Modal(outcome) => {
+            return apply_scripted_modal_outcome(workspace, chrome, outcome);
+        }
         MouseOutcome::Focus { pane, observe_only } => {
             scripted_focus(workspace, chrome, pane, observe_only)?;
         }
