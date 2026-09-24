@@ -95,6 +95,7 @@ def _published_seq(result: object) -> int | None:
         return None
     return seq
 
+
 _T = TypeVar("_T")
 
 PANE_SHELL_COMMAND = ("zsh",)
@@ -556,6 +557,8 @@ class WorkspaceOps:
         """Poll the pane's terminal until ``pattern`` matches, it ends, or time runs out."""
         if not (math.isfinite(timeout_seconds) and math.isfinite(poll_interval_seconds)):
             raise WorkspaceOpError("invalid_op", "Wait durations must be finite numbers")
+        # The websocket op has no MCP clamp. 300s matches wait_for_pane_output.
+        timeout_seconds = min(timeout_seconds, 300.0)
         try:
             matcher = compile_safe_regex(pattern)
         except InvalidPatternError as exc:
