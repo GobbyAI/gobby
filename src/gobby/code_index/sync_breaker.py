@@ -49,6 +49,22 @@ class SyncCircuitBreaker:
         self._current_backoff = base_backoff_seconds
         self._open_until = 0.0
 
+    def apply_limits(
+        self,
+        *,
+        failure_threshold: int,
+        base_backoff_seconds: float,
+        max_backoff_seconds: float,
+    ) -> None:
+        """Apply limits from the latest config without resetting breaker state."""
+        self._failure_threshold = failure_threshold
+        self._base_backoff = base_backoff_seconds
+        self._max_backoff = max_backoff_seconds
+        self._current_backoff = min(
+            max(self._current_backoff, base_backoff_seconds),
+            max_backoff_seconds,
+        )
+
     @property
     def state(self) -> BreakerState:
         return self._state
