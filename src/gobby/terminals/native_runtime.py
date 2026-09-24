@@ -10,6 +10,7 @@ from typing import Any, Literal
 from uuid import UUID
 
 from gobby.agents.constants import GOBBY_TERMINAL_ID
+from gobby.agents.tmux.text_injection import TMUX_TEXT_ENTER_DELAY_SECONDS
 from gobby.storage.terminals import (
     AttachLocator,
     Terminal,
@@ -662,6 +663,8 @@ class NativeTerminalRuntime:
                 raise TerminalWriteError(stage="none") from exc
             except ConnectionError as exc:
                 return IndeterminateWrite(detail=str(exc))
+            if TMUX_TEXT_ENTER_DELAY_SECONDS > 0:
+                await asyncio.sleep(TMUX_TEXT_ENTER_DELAY_SECONDS)
             try:
                 await self._client.write(
                     host_terminal_id=host_id,

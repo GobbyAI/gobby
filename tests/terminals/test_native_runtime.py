@@ -18,6 +18,7 @@ from uuid import uuid4
 import pytest
 
 from gobby.agents.constants import GOBBY_TERMINAL_ID
+from gobby.agents.tmux.text_injection import TMUX_TEXT_ENTER_DELAY_SECONDS
 from gobby.storage.terminals import AttachLocator, HostEpochMismatchError, native_locator_key
 from gobby.terminals.frame_client import decode_frame
 from gobby.terminals.host_client import (
@@ -462,6 +463,30 @@ async def test_trailing_newline_is_text_then_a_separate_enter() -> None:
     assert host.writes[0]["submit"] is False
     assert base64.b64decode(host.writes[1]["data"]) == b"enter"
     assert host.pty == [b"resume", b"\n"]
+
+
+async def test_submit_enter_waits_out_the_tmux_paste_gap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Enter is its own write, and only after the tmux paste-settle gap.
+
+    Codex treats an Enter that arrives in the same burst as the paste as part
+    of the paste, so the draft stays in the composer.
+    """
+    runtime, host = _runtime()
+    terminal = _native_terminal(host)
+    gaps: list[tuple[float, int]] = []
+
+    async def record_sleep(seconds: float) -> None:
+        gaps.append((seconds, len(host.writes)))
+
+    monkeypatch.setattr("gobby.terminals.native_runtime.asyncio.sleep", record_sleep)
+
+    delivered = await runtime.write_text(terminal, "resume", submit=True)
+
+    assert isinstance(delivered, Delivered)
+    assert gaps == [(TMUX_TEXT_ENTER_DELAY_SECONDS, 1)]
+    assert [item["kind"] for item in host.writes] == ["text", "key"]
 
 
 def test_named_key_bytes_match_the_web_key_bar() -> None:
