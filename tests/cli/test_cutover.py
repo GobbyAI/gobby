@@ -3,8 +3,10 @@ from __future__ import annotations
 import importlib
 import json
 import subprocess
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -12,6 +14,7 @@ from click.testing import CliRunner, Result
 
 from gobby.cli import cli
 from gobby.install import bin_set_coherence
+from gobby.sessions.handoff_shutdown import HandoffShutdownBlocked
 
 cutover_module = importlib.import_module("gobby.cli.cutover")
 
@@ -214,6 +217,7 @@ def test_cli_preflights_candidate_against_selected_workspace_pin(
         assert start_refusal(candidate) is None
 
     monkeypatch.setattr(cutover_module, "restart_start_refusal", restart_start_refusal)
+    monkeypatch.setattr(cutover_module, "_stop_admission_refusal", lambda _ctx, *, wait: None)
     result = _invoke_cli(tmp_path, monkeypatch, run_cutover, identity=expected)
 
     assert result.exit_code == 0, result.output
@@ -230,10 +234,12 @@ def test_cli_restarts_against_selected_workspace_pin(
         *,
         verbose: bool,
         docker_flag: bool,
+        wait: bool,
         expected_identity: dict[str, int | str],
     ) -> None:
         assert verbose is False
         assert docker_flag is False
+        assert wait is True
         observed.append(expected_identity)
 
     def run_cutover(
@@ -389,3 +395,94 @@ def test_dirty_schema_inputs_fails_closed_without_git(tmp_path: Path) -> None:
 
     with pytest.raises(cutover_module.CutoverError):
         cutover_module._dirty_schema_inputs(outside)
+
+
+class _FakeRuntime:
+    def read_only_operational_config(self) -> SimpleNamespace:
+        return SimpleNamespace(daemon_port=60887)
+
+
+def _stub_cutover_pipeline(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, events: list[str]
+) -> None:
+    def promote(*_args: object, **_kwargs: object) -> None:
+        events.append("promote")
+
+    monkeypatch.setattr(
+        cutover_module, "_build_artifacts", lambda _root: _artifacts(tmp_path, _identity(420))
+    )
+    monkeypatch.setattr(cutover_module, "restart_start_refusal", lambda *_a, **_k: None)
+    monkeypatch.setattr(cutover_module, "promote_workspace_binary_set", promote)
+    monkeypatch.setattr(cutover_module, "_verify_restart_target", lambda _bin_dir: None)
+    monkeypatch.setattr(cutover_module, "get_cli_runtime", lambda _ctx: _FakeRuntime())
+
+
+@pytest.mark.parametrize("blocker", ["protected_run", "handoff"])
+def test_cutover_refuses_before_promotion_when_stop_admission_refuses(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, blocker: str
+) -> None:
+    events: list[str] = []
+    real_run_cutover = cutover_module.run_cutover
+    _stub_cutover_pipeline(monkeypatch, tmp_path, events)
+
+    def clear_protected_runs(_port: int, *, force: bool, wait: bool, **_kwargs: object) -> bool:
+        assert (force, wait) == (False, False)
+        return blocker != "protected_run"
+
+    @contextmanager
+    def protect_pending_handoffs(
+        _runtime: object, *, wait: bool, **_kwargs: object
+    ) -> Iterator[None]:
+        assert wait is False
+        raise HandoffShutdownBlocked("Unresolved set_handoff in session(s): gobby#1")
+        yield
+
+    def restart(**_kwargs: object) -> None:
+        events.append("restart")
+
+    monkeypatch.setattr(cutover_module, "clear_protected_runs", clear_protected_runs)
+    monkeypatch.setattr(cutover_module, "protect_pending_handoffs", protect_pending_handoffs)
+    monkeypatch.setattr(cutover_module, "restart", restart)
+    result = _invoke_cli(tmp_path, monkeypatch, real_run_cutover)
+
+    assert result.exit_code == 1
+    assert "refusing to promote" in result.output
+    expected = "cron run is active" if blocker == "protected_run" else "Unresolved set_handoff"
+    assert expected in result.output
+    assert "re-run with --wait" in result.output
+    assert events == []
+
+
+def test_cutover_restart_waits_after_promotion(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    events: list[str] = []
+    real_run_cutover = cutover_module.run_cutover
+    _stub_cutover_pipeline(monkeypatch, tmp_path, events)
+
+    def clear_protected_runs(_port: int, *, force: bool, wait: bool, **_kwargs: object) -> bool:
+        events.append(f"protected_runs wait={wait}")
+        return True
+
+    @contextmanager
+    def protect_pending_handoffs(
+        _runtime: object, *, wait: bool, **_kwargs: object
+    ) -> Iterator[None]:
+        events.append(f"handoffs wait={wait}")
+        yield
+
+    def restart(*, wait: bool, **_kwargs: object) -> None:
+        events.append(f"restart wait={wait}")
+
+    monkeypatch.setattr(cutover_module, "clear_protected_runs", clear_protected_runs)
+    monkeypatch.setattr(cutover_module, "protect_pending_handoffs", protect_pending_handoffs)
+    monkeypatch.setattr(cutover_module, "restart", restart)
+    result = _invoke_cli(tmp_path, monkeypatch, real_run_cutover, extra_args=("--wait",))
+
+    assert result.exit_code == 0, result.output
+    assert events == [
+        "protected_runs wait=True",
+        "handoffs wait=True",
+        "promote",
+        "restart wait=True",
+    ]
