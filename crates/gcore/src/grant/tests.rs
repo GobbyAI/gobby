@@ -1151,6 +1151,33 @@ fn renewal_is_non_blocking_past_half_ttl() {
 }
 
 #[test]
+fn past_half_ttl_grant_waits_for_the_acquire_lock() {
+    let harness = Harness::new();
+    let mut grant = fixture_grant(PrincipalKind::Interactive);
+    grant.issued_at = NOW - 100;
+    grant.expires_at = NOW + 10;
+    grant = grant.with_checksum();
+    let settings = CachedSettings {
+        config_revision: grant.config_revision,
+        settings: Default::default(),
+    };
+    write_binding_for(&harness, "http://127.0.0.1:9", &grant.deployment.token);
+    write_cache(&harness, &grant, Some(&settings));
+    let lock_path = harness.home.join("grants").join(".acquire.lock");
+    let _held = try_lock(&lock_path).expect("lock").expect("held");
+    let mut request = harness.request(Some("http://127.0.0.1:9".into()));
+    request.deadline = Some(Duration::from_millis(300));
+    request.stale_lock_after = Some(Duration::from_secs(30));
+    let started = Instant::now();
+    let result = acquire_with(&request);
+    assert!(
+        started.elapsed() >= Duration::from_millis(250),
+        "past-half grant returned without waiting on the acquire lock"
+    );
+    assert!(result.is_err());
+}
+
+#[test]
 fn proactive_renewal_refreshes_when_lock_owned() {
     let harness = Harness::new();
     let mut cached = fixture_grant(PrincipalKind::Interactive);

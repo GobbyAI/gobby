@@ -319,7 +319,7 @@ fn coherent_interactive_cache(ctx: &AcquireCtx) -> Option<AcquiredGrant> {
     )
     .is_err()
         || grant.is_expired(ctx.now)
-        || (grant.past_half_ttl(ctx.now) && ctx.reachable())
+        || grant.past_half_ttl(ctx.now)
     {
         return None;
     }
