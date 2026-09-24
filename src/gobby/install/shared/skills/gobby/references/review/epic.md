@@ -2,8 +2,8 @@
 
 Load before launching or performing an epic implementation review. Also load
 [evidence](evidence.md) before assessment and [outcomes](outcomes.md) before a
-verdict. Load standalone `proportionality` and the applicable memory review
-learning guidance; preserve the installed epic-reviewer methodology.
+verdict. Load standalone `proportionality`; preserve the installed epic-reviewer
+methodology.
 
 ## Discover and select
 

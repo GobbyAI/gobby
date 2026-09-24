@@ -145,9 +145,10 @@ def test_catalog_rejects_duplicate_folded_names(tmp_path: Path) -> None:
         load_capability_catalog(tmp_path)
 
 
-def test_bundled_catalog_maps_all_thirty_folded_skills() -> None:
+def test_bundled_catalog_maps_all_twenty_nine_folded_skills() -> None:
     catalog = load_capability_catalog()
-    assert len(catalog.folded_skills) == 30
+    assert len(catalog.folded_skills) == 29
+    assert "review-learning" not in catalog.folded_skills
     assert catalog.folded_skills["live-session"] == "gobby:references/tasks/live-work.md"
     assert "brevity" not in catalog.folded_skills
     assert "gusto" not in catalog.folded_skills

@@ -28,7 +28,6 @@ mutations.
 | [capture](capture.md) | Creating, updating, or replacing durable knowledge |
 | [scope](scope.md) | Resolving project ownership or global visibility |
 | [maintenance](maintenance.md) | Repairing indices, backing up, or restoring |
-| [review-lessons](review-lessons.md) | Triaging findings or recording verified review outcomes |
 | [post-task](post-task.md) | Reviewing memories after a worked leaf closes |
 | [dream](dream.md) | Starting or diagnosing memory hygiene runs |
 

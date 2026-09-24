@@ -1,8 +1,7 @@
 # Review outcomes
 
-Load before recording an epic verdict, interpreting a feedback submission, or
-learning from confirmed review findings. Discover current task/stage state first;
-load [evidence](evidence.md) and the applicable memory review-learning reference.
+Load before recording an epic verdict or interpreting a feedback submission.
+Discover current task/stage state first; load [evidence](evidence.md).
 
 ## Epic verdict
 
@@ -46,26 +45,6 @@ caps rather than assuming every failure immediately reruns review.
 Closed-epic review records findings without stage transitions. A delegated
 reviewer owns its verdict and terminates through its agent workflow; the launcher
 does not repeat it. Review never closes the epic itself.
-
-## Confirmed lessons
-
-Recall `gobby-review-learning:recall_review_context` before finalizing rejection
-triage. Preserve reusable findings through rejection and re-review; mint epic
-lessons only after the fix is confirmed. Consult `list_check_keys` first. Each
-lesson requires an explicit check key, principle/root cause, prevention, both
-leaf task and path anchors, confirmed fix evidence and stable fingerprint.
-
-Prove `qa-miss` (leaf QA approved while the defect remained) and `validation-miss`
-(leaf validation passed while it remained) independently. Record one occurrence
-per proven class with `source_kind=qa_rejection`, `source="epic-reviewer"`,
-`decision=confirmed`, stable `source_review="epic-qa:<epic-ref>:<re-review-id>"`,
-`pattern_id=epic-qa:<lesson_type>:<check-key>` and class-suffixed finding fingerprint.
-`record_review_lesson` derives occurrence identity from `source_review` and
-`finding_fingerprint`; set `guardrail_target=checklist` for qa-miss and
-`validation` for validation-miss. Include the cited file in finding and evidence,
-leaf task ref and confirmed fix proof; normalized lessons carry code-domain and
-path tags. Incomplete or unproven classes mint nothing. Follow
-[memory review learning](../memory/review-lessons.md) for the tool contract.
 
 ## Feedback acceptance versus task outcomes
 
