@@ -9896,6 +9896,7 @@ fn draw_pane_bodies(
         .draw(|frame| {
             chrome.compute_view(ws, frame.area());
             let focused = chrome.focused_pane();
+            let palette = chrome.palette;
             let mut content =
                 |frame: &mut ratatui::Frame<'_>, area: Rect, pane: gobby_client::app::PaneId| {
                     gobby_client::views::grid::render(
@@ -9903,6 +9904,7 @@ fn draw_pane_bodies(
                         area,
                         ws.pane(pane),
                         focused == Some(pane),
+                        &palette,
                     );
                 };
             gobby_client::ui::render_workspace_with(frame, ws, chrome, &mut content);
