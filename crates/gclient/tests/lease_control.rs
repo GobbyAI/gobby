@@ -14,7 +14,7 @@ use gobby_client::app::{
 use gobby_client::daemon::LiveDaemon;
 use gobby_client::teardown::TerminalGuard;
 use gobby_client::ui::chrome::Mode;
-use gobby_client::ui::dialogs::{Dialog, OrphanRow, WorktreeChoice};
+use gobby_client::ui::dialogs::{Dialog, OrphanRow, RenameKind, WorktreeChoice};
 use gobby_client::ui::keymap::{Keymap, HERDR_PREFIX};
 use gobby_client::ui::{render_workspace, Chrome};
 use gobby_client::Workspace;
@@ -421,6 +421,103 @@ fn project_dialog_buttons_answer_a_click() {
         "cancel closes like Esc"
     );
     assert!(chrome.dialog.is_none(), "the dialog closes on cancel");
+}
+
+fn open_rename_dialog(chrome: &mut Chrome) {
+    chrome.dialog = Some(Dialog::Rename {
+        kind: RenameKind::Tab,
+        value: "build".to_string(),
+        cursor: 5,
+    });
+    chrome.mode = Mode::Rename;
+}
+
+#[test]
+fn rename_dialog_buttons_answer_a_click() {
+    let ws = Workspace::scripted();
+    let mut chrome = Chrome::dark();
+
+    open_rename_dialog(&mut chrome);
+    let buttons = drawn_dialog_buttons(&ws, &mut chrome);
+    assert_eq!(
+        buttons.len(),
+        3,
+        "save, clear and cancel drawn: {buttons:?}"
+    );
+    assert_eq!(
+        route_mouse(&ws, &mut chrome, &click(buttons[1])),
+        MouseOutcome::Modal(ModalOutcome::Consumed),
+        "clear empties the name like ^c"
+    );
+    assert!(
+        matches!(&chrome.dialog, Some(Dialog::Rename { value, cursor: 0, .. }) if value.is_empty()),
+        "clear keeps the dialog open with an empty name: {:?}",
+        chrome.dialog
+    );
+    open_rename_dialog(&mut chrome);
+    assert_eq!(
+        route_mouse(&ws, &mut chrome, &click(buttons[0])),
+        MouseOutcome::Modal(ModalOutcome::Commit(RenameKind::Tab, "build".to_string())),
+        "save commits the name like Enter"
+    );
+    assert!(chrome.dialog.is_none(), "the dialog closes on save");
+    open_rename_dialog(&mut chrome);
+    assert_eq!(
+        route_mouse(&ws, &mut chrome, &click(buttons[2])),
+        MouseOutcome::Modal(ModalOutcome::Close),
+        "cancel closes like Esc"
+    );
+    assert!(chrome.dialog.is_none(), "the dialog closes on cancel");
+}
+
+#[test]
+fn keybind_help_button_answers_a_click() {
+    let ws = Workspace::scripted();
+    let mut chrome = Chrome::dark();
+    chrome.mode = Mode::KeybindHelp;
+    let buttons = drawn_dialog_buttons(&ws, &mut chrome);
+    assert_eq!(buttons.len(), 1, "close drawn: {buttons:?}");
+
+    chrome.keybind_help.search_focused = true;
+    assert_eq!(
+        route_mouse(&ws, &mut chrome, &click(buttons[0])),
+        MouseOutcome::Modal(ModalOutcome::Consumed),
+        "back leaves the search like Esc"
+    );
+    assert!(!chrome.keybind_help.search_focused, "the search lets go");
+    assert_eq!(chrome.mode, Mode::KeybindHelp, "the keys stay open");
+    assert_eq!(
+        route_mouse(&ws, &mut chrome, &click(buttons[0])),
+        MouseOutcome::Modal(ModalOutcome::Close),
+        "close closes like Esc"
+    );
+    assert_eq!(chrome.mode, Mode::Terminal, "the keys close");
+}
+
+#[test]
+fn respond_dialog_buttons_answer_a_click() {
+    let ws = Workspace::scripted();
+    let mut chrome = Chrome::dark();
+    chrome.dialog = Some(Dialog::Respond {
+        entry_id: "run:term-blocked".to_string(),
+        prompt: "Allow the edit?".to_string(),
+        options: vec!["yes".to_string(), "no".to_string()],
+        selected: 0,
+        text: String::new(),
+    });
+    chrome.mode = Mode::Respond;
+    let buttons = drawn_dialog_buttons(&ws, &mut chrome);
+    assert_eq!(buttons.len(), 2, "send and cancel drawn: {buttons:?}");
+    assert_eq!(
+        route_mouse(&ws, &mut chrome, &click(buttons[0])),
+        MouseOutcome::Respond(KeyCode::Enter),
+        "send answers like Enter"
+    );
+    assert_eq!(
+        route_mouse(&ws, &mut chrome, &click(buttons[1])),
+        MouseOutcome::Respond(KeyCode::Esc),
+        "cancel dismisses like Esc"
+    );
 }
 
 /// The attach deadline (5s) plus the base retry backoff (5s) plus slack.
