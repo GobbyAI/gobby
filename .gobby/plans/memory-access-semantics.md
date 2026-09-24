@@ -638,8 +638,13 @@ session_id)` and `resolve_claimed_task_id(db, session_id)`, and use them from al
 tools. Make `get_memory` `async def`, resolve and load as today, then `asyncio.to_thread`
 the two writes: `facade.record_memory_access(memory_id)` (2.2) and
 `SessionVariableManager.upsert_bounded_list_variable(session_id, "accessed_memory_ids",
-{"memory_id": ..., "task_id": ...}, identity={"memory_id": ...}, max_items=200)`
-(`src/gobby/workflows/state_manager.py`, near 340-373). The write is direct, not staged: a
+{"memory_id": ..., "task_id": ...}, identity={"memory_id": ..., "task_id": ...},
+max_items=200)` (`src/gobby/workflows/state_manager.py`, near 340-373). Identity is the
+pair: the helper drops every stored item whose identity keys all match, so identity on
+`memory_id` alone would replace task A's record when the same memory is fetched under task
+B and Decisions 8-9 would lose A's provenance. With the pair a memory keeps one record per
+fetching task (or one untagged record; `None` compares equal, so no special case), and a
+repeat fetch under the same task refreshes that record. The write is direct, not staged: a
 tool result the agent requested has reached it by definition. The result dict gains
 `surfaced_count`; `access_count` stays. Rules cannot append to a set (`set_variable` only),
 so the tracking write stays in Python. Rejected: recording access on the search path with
@@ -650,7 +655,7 @@ Verification: `GOBBY_TEST_GDAEMON=checkout $PG tests/mcp_proxy/tools/test_memory
 **Acceptance:**
 
 - 3.2.1 - `get_memory` requires `session_id`, is awaitable, and each call increments `access_count`, sets `last_accessed_at`, and returns both counters. test: `tests/mcp_proxy/tools/test_memory_get_access.py::test_get_memory_records_access`.
-- 3.2.2 - The fetch appends `{memory_id, task_id}` to `accessed_memory_ids`, tagged with the task the session has claimed or `None`, bounded at 200 with identity on `memory_id`. test: `tests/mcp_proxy/tools/test_memory_get_access.py::test_get_memory_records_accessed_id_with_claimed_task`. test: `tests/mcp_proxy/tools/test_memory_get_access.py::test_get_memory_untagged_without_claimed_task`.
+- 3.2.2 - The fetch appends `{memory_id, task_id}` to `accessed_memory_ids`, tagged with the task the session has claimed or `None`, bounded at 200 records with identity on the `(memory_id, task_id)` pair, so the same memory fetched under two tasks keeps both records. test: `tests/mcp_proxy/tools/test_memory_get_access.py::test_get_memory_records_accessed_id_with_claimed_task`. test: `tests/mcp_proxy/tools/test_memory_get_access.py::test_get_memory_untagged_without_claimed_task`. test: `tests/mcp_proxy/tools/test_memory_get_access.py::test_get_memory_keeps_a_record_per_task`.
 - 3.2.3 - `resolve_session` and `resolve_claimed_task_id` are the only session and claimed-task resolvers in the memory tools; the review, surface, and write tools import them. file: `src/gobby/mcp_proxy/tools/memory_session.py`. symbol: `resolve_claimed_task_id`.
 - 3.2.4 - A `get_memory` call whose session cannot be resolved still returns the memory and records nothing. test: `tests/mcp_proxy/tools/test_memory_get_access.py::test_get_memory_unresolved_session_returns_memory`.
 
@@ -712,8 +717,9 @@ reaches the formatter (whether or not any line renders), stage the new value und
 `_memory_surface_turn_seq`, the once-per-parent-turn guard that
 `surface-memories-on-turn-start.yaml` sets `on_receipt`, which stays. Filter in
 `InjectionTrackingMixin._filter_and_track_new_memories`
-(`src/gobby/workflows/engine/injection_tracking.py`, near 14-61): drop if the id is in
-`accessed_memory_ids`; drop if it has a stamp with `seq_now - seq < K`; otherwise render
+(`src/gobby/workflows/engine/injection_tracking.py`, near 14-61): drop if any record in
+`accessed_memory_ids` carries the id (a memory holds one record per fetching task, 3.2);
+drop if it has a stamp with `seq_now - seq < K`; otherwise render
 and stage `"<id>@<seq_now>"`. K reaches the formatter through the tool payload: the
 workflow engine has no daemon-config access, while the memory tool registry has
 `_config()` (`mcp_proxy/tools/memory.py`, near line 137), so `register_memory_surface_tools`
@@ -722,7 +728,10 @@ workflow engine has no daemon-config access, while the memory tool registry has
 `reshow_after_injections`, and `DeliveryFormattingMixin._format_memory_index_result`
 (`delivery_formatting.py`, near 58-74) passes `result.get("reshow_after_injections", 5)`
 into the filter. Out of scope, noted: `surface_memories` returns its top 5 before the
-formatter filters, so a rendered index can be shorter than 5 (same as today). Dead path,
+formatter filters, so a rendered index can be shorter than 5 (same as today); for
+`memory.surface` the surfaced increment (3.1) therefore counts the returned top 5, debounced
+per memory by `access_debounce_seconds` (default 60 s), including hits the formatter then
+suppresses: it measures ranked delivery to the index, the mechanism Decision 2 names. Dead path,
 delete: the deferred `search_memories` dedupe chain is unreachable since no bundled rule
 dispatches `search_memories`: `HookManager._dedup_memory_results` (`hook_manager.py`,
 839-841), `WorkflowRuleEvaluator.dedup_memory_results` (`rule_evaluator.py`, near
@@ -749,7 +758,7 @@ ingress move are the removals that make the owning files fit.
 
 **Acceptance:**
 
-- 3.3.1 - An id in `accessed_memory_ids` is never rendered again in the epoch. test: `tests/workflows/test_memory_index_delivery.py::test_accessed_memory_never_reshown`.
+- 3.3.1 - An id with any record in `accessed_memory_ids`, whichever task tagged it, is never rendered again in the epoch. test: `tests/workflows/test_memory_index_delivery.py::test_accessed_memory_never_reshown`.
 - 3.3.2 - A shown-but-unread id is suppressed while `seq_now - seq < K` and rendered again once K further surfacings have passed, with the stamp refreshed. test: `tests/workflows/test_memory_index_delivery.py::test_surfaced_memory_reshown_after_horizon`.
 - 3.3.3 - Stamps and the sequence are staged in the receipt and committed only on acknowledgement. test: `tests/hooks/test_receipt_effects.py::test_surface_seq_and_stamps_commit_on_ack`.
 - 3.3.4 - `surface_memories` returns `reshow_after_injections` from `memory.index_reshow_after_injections` and the formatter uses it. test: `tests/mcp_proxy/tools/test_memory_surface.py::test_payload_carries_reshow_after_injections`. symbol: `DeliveryFormattingMixin._format_memory_index_result`.
@@ -773,8 +782,9 @@ searches `title + summary` with `_CANDIDATE_LIMIT`, serializes candidates (near 
 records the review (`_record_review`, near 48-67), and returns the shape near 239-246.
 After the task and session resolve: read `accessed_memory_ids` from the calling session
 and, when different, from `task.closed_in_session_id`; keep records whose `task_id` equals
-the task or is `None`; load each with the facade and serialize with `"source":
-"accessed"`. Then the existing search, minus ids already listed, with `"source": "search"`.
+the task or is `None`, one candidate per memory id at its first record's position (a memory
+with a tagged and an untagged record lists once); load each with the facade and serialize
+with `"source": "accessed"`. Then the existing search, minus ids already listed, with `"source": "search"`.
 `candidate_ids` in the review record covers both tiers. There is no transitive descendant
 lister (`_lineage_discovery.py` is one level); the calling session plus the closing
 session covers the spawned-worker case without one. The `recall_request_id` minting was
@@ -787,7 +797,7 @@ Verification: `GOBBY_TEST_GDAEMON=checkout $PG tests/mcp_proxy/tools/test_memory
 **Acceptance:**
 
 - 3.4.1 - Accessed candidates tagged with the closing task or untagged come first with `source: accessed`, in fetch order. test: `tests/mcp_proxy/tools/test_memory_review.py::test_accessed_candidates_listed_first`.
-- 3.4.2 - Accessed records tagged with another task are excluded. test: `tests/mcp_proxy/tools/test_memory_review.py::test_other_task_accessed_records_excluded`.
+- 3.4.2 - Accessed records tagged with another task are excluded, and a memory fetched under two tasks is found by each task's review. test: `tests/mcp_proxy/tools/test_memory_review.py::test_other_task_accessed_records_excluded`. test: `tests/mcp_proxy/tools/test_memory_review.py::test_memory_fetched_under_two_tasks_found_by_each_review`.
 - 3.4.3 - Records from `task.closed_in_session_id` join those of the calling session when the two differ. test: `tests/mcp_proxy/tools/test_memory_review.py::test_closing_session_accessed_records_included`.
 - 3.4.4 - Search candidates already listed as accessed are not repeated, and `candidate_ids` in the review record spans both tiers. test: `tests/mcp_proxy/tools/test_memory_review.py::test_search_tier_deduped_against_accessed`.
 - 3.4.5 - The guide and the post-task reference describe the two tiers. file: `docs/guides/memory.md`. file: `src/gobby/install/shared/skills/gobby/references/memory/post-task.md`.
@@ -832,14 +842,18 @@ gates `apply_schema` on a maintenance epoch and a backup manifest (near 109-145)
 caller remains (sweep with `gcode usages` before deleting). Keep
 `src/gobby/cli/hub_maintenance.py`, `src/gobby/storage/maintenance_epoch.py`,
 `DestructiveBatch`, and hub backup and restore: the maintenance-epoch framework is the
-backup/restore tool. 426 keeps its bytes (receipts are checksummed); once the directive
+backup/restore tool. `cli/schema.py` imports from `cli/hub_backup/_integrity`, `_manifest`,
+`_stores`, and `hub_maintenance`, and nothing in those modules imports `schema.py`, so the
+deletions cannot break restore at import time; the two `tests/cli/hub_backup/` modules in the
+verification guard its behavior (`tests/cli/test_hub_maintenance.py` has no restore case).
+426 keeps its bytes (receipts are checksummed); once the directive
 means nothing, its `IF EXISTS` drops execute harmlessly on fresh lineages. Docs:
 `docs/guides/hub-install-contract.md` (near line 51) describes the directive ceremony.
 Load the `rust` skill first. Rejected: keeping the directive as a no-op comment marker
 (a marker that means nothing invites the next misuse).
 
 Verification: `cargo test --manifest-path crates/gcore/Cargo.toml schema && cargo test --manifest-path crates/gdaemon/Cargo.toml`;
-`GOBBY_TEST_GDAEMON=checkout $PG tests/cli/test_cli_schema.py tests/storage/test_schema_contract.py tests/cli/test_hub_maintenance.py -q` (adjust the last path to where the maintenance tests live).
+`GOBBY_TEST_GDAEMON=checkout $PG tests/cli/test_cli_schema.py tests/storage/test_schema_contract.py tests/cli/test_hub_maintenance.py tests/cli/hub_backup/test_cli_hub_backup_cli.py tests/cli/hub_backup/test_verify.py -q`.
 
 **Granularity:** nine targets, one outcome: the directive is one authorization path across
 the runner, the daemon CLI, and the Python campaign; leaving any half makes the other
@@ -850,7 +864,7 @@ half unreachable code.
 - 4.1.1 - The runner executes a directive-marked migration like any other and never stamps a receipt without executing. file: `crates/gcore/src/schema/runner.rs`. behavior: `cargo test --manifest-path crates/gcore/Cargo.toml schema` passes with no `stamps_destructive_migrations` symbol.
 - 4.1.2 - `gdaemon schema apply` has no `--destructive` flag and requires no maintenance epoch or backup manifest. file: `crates/gdaemon/src/main.rs`. behavior: `cargo test --manifest-path crates/gdaemon/Cargo.toml` passes.
 - 4.1.3 - `gobby schema apply` has no destructive branch and no `schema-apply` campaign executor is registered. symbol: `apply_schema`. test: `tests/cli/test_cli_schema.py::test_apply_schema_plain`.
-- 4.1.4 - Hub backup, restore, and the maintenance-epoch framework are untouched. behavior: the hub-maintenance CLI module and `DestructiveBatch` are not in this leaf's diff and the maintenance test module passes unchanged.
+- 4.1.4 - Hub backup, restore, and the maintenance-epoch framework are untouched. behavior: the hub-maintenance CLI module, the `cli/hub_backup/` package, and `DestructiveBatch` are not in this leaf's diff and the three test modules pass unchanged. test: `tests/cli/hub_backup/test_cli_hub_backup_cli.py::TestRestore::test_restore_uses_explicit_target_and_verified_hub_artifact`. test: `tests/cli/hub_backup/test_verify.py::test_verify_postgres_restore_happy_path_drives_prod_image_without_ports_or_volumes`. test: `tests/cli/test_hub_maintenance.py::test_run_owns_open_backup_apply_verify_release_and_restart`.
 - 4.1.5 - The install contract no longer describes a destructive-migration ceremony. file: `docs/guides/hub-install-contract.md`.
 
 ## P5: Verification
