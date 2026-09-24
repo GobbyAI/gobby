@@ -968,6 +968,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                         "dominant_phase_seconds": dominant_seconds,
                         "session_id": phase_timings.session_id,
                         "rule_evaluation_breakdown_seconds": phase_timings.breakdown(),
+                        "hub_query_latency_ms": phase_timings.query_latency_summary_ms(),
                         "hook_phase_durations_seconds": phase_durations,
                     },
                 )
