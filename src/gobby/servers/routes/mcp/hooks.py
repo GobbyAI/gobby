@@ -474,9 +474,11 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                     )
             return receipt_guarded_response(response, db=receipt_db)
 
-        def mark_processed_and_return(response: dict[str, Any]) -> Any:
+        async def mark_processed_and_return(response: dict[str, Any]) -> Any:
+            # Receipt and envelope persistence block on the database and inbox
+            # files, so they stay off the HTTP loop (#22708).
             with phase_timings.measure("persistence_broadcast"):
-                return _mark_processed_and_return(response)
+                return await asyncio.to_thread(_mark_processed_and_return, response)
 
         try:
             # Parse request
@@ -682,7 +684,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                 # Rule and adapter denials are final. Never let web-chat approval,
                 # auto-approval, or browser interaction overwrite them.
                 if _result_encodes_denial(result):
-                    return mark_processed_and_return(result)
+                    return await mark_processed_and_return(result)
 
                 # After existing hook processing, check for web chat hold-open.
                 # Terminal sessions pass straight through; only web_chat sessions
@@ -700,7 +702,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                         server=server,
                     )
                     if hold_open_result is not None:
-                        return mark_processed_and_return(hold_open_result)
+                        return await mark_processed_and_return(hold_open_result)
 
                 response_time_ms = (time.perf_counter() - start_time) * 1000
                 inc_counter("hooks_succeeded_total")
@@ -716,7 +718,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                     ),
                 )
 
-                return mark_processed_and_return(result)
+                return await mark_processed_and_return(result)
 
             except AgentRunIngressRetryableError as exc:
                 inc_counter("hooks_failed_total")
@@ -788,7 +790,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                         hook_type,
                         extra=_hook_log_extra(hook_type, request_metadata, error=str(e)),
                     )
-                return mark_processed_and_return(
+                return await mark_processed_and_return(
                     _hook_exception_response(
                         adapter,
                         hook_type,
@@ -870,7 +872,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                             **timeout_log_extra,
                         ),
                     )
-                    return mark_processed_and_return(
+                    return await mark_processed_and_return(
                         _graceful_error_response(
                             hook_type,
                             f"hook evaluation timed out after {timeout_seconds:g}s",
@@ -888,7 +890,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                         **timeout_log_extra,
                     ),
                 )
-                return mark_processed_and_return(
+                return await mark_processed_and_return(
                     _hook_timeout_response(adapter, hook_type, source, timeout_seconds)
                 )
 
@@ -905,7 +907,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                     hook_type,
                     extra=_hook_log_extra(hook_type, request_metadata),
                 )
-                return mark_processed_and_return(
+                return await mark_processed_and_return(
                     _hook_exception_response(
                         adapter,
                         hook_type,
@@ -926,7 +928,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                 extra=_hook_log_extra(hook_type, request_metadata),
             )
             if hook_type:
-                return mark_processed_and_return(
+                return await mark_processed_and_return(
                     _hook_exception_response(
                         adapter,
                         hook_type,

@@ -405,6 +405,279 @@ async def test_mcp_timeout_stays_capped_and_background_result_fills_cache(
     assert "timed out after 0.05s (rule surface-memory-timeout)" in caplog.text
 
 
+_CLAUDE_SESSIONS = (
+    "44444444-4444-4444-8444-444444444444",
+    "55555555-5555-4555-8555-555555555555",
+)
+_LATE_RECALL_BODY = "Late recall body that must reach the model."
+
+
+class _StalledRecall:
+    """surface_memories dispatcher that holds every call until released."""
+
+    def __init__(self, expected_calls: int = 1) -> None:
+        self.calls = 0
+        self.release = asyncio.Event()
+        self._expected_calls = expected_calls
+        self._finished_calls = 0
+        self._all_finished = asyncio.Event()
+
+    async def __call__(
+        self,
+        _server: str,
+        _tool: str,
+        _arguments: dict[str, Any],
+        _event: HookEvent,
+    ) -> dict[str, Any]:
+        self.calls += 1
+        try:
+            await self.release.wait()
+            return {
+                "success": True,
+                "result": {
+                    "trigger": "turn",
+                    "memories": [
+                        {
+                            "id": "latemem1-0000-4000-8000-000000000000",
+                            "type": "fact",
+                            "content": _LATE_RECALL_BODY,
+                        }
+                    ],
+                },
+            }
+        finally:
+            self._finished_calls += 1
+            if self._finished_calls >= self._expected_calls:
+                self._all_finished.set()
+
+    async def release_and_fill(self) -> None:
+        # The background task caches in the same step that returns from the
+        # dispatcher, so the fill is visible once every call has finished.
+        self.release.set()
+        await asyncio.wait_for(self._all_finished.wait(), timeout=1.0)
+
+
+def _insert_turn_start_recall_rule(manager: RuleDefinitionManager) -> None:
+    _insert_optional_mcp_rule(
+        manager,
+        name="surface-memories-late",
+        event=RuleTriggerEvent.TURN_START,
+        when="True",
+        server="gobby-memory",
+        tool="surface_memories",
+        arguments={"text": "recall please", "trigger": "turn"},
+        timeout_seconds=0.05,
+    )
+
+
+async def _evaluate_claude_hook(
+    engine: RuleEngine,
+    session_id: str,
+    event_type: HookEventType,
+    native_hook_type: str,
+    data: dict[str, Any] | None = None,
+    variables: dict[str, Any] | None = None,
+) -> Any:
+    return await engine.evaluate(
+        HookEvent(
+            event_type=event_type,
+            session_id=session_id,
+            source=SessionSource.CLAUDE,
+            timestamp=datetime.now(UTC),
+            data=data or {},
+            metadata={
+                "_platform_session_id": session_id,
+                "_native_hook_type": native_hook_type,
+            },
+        ),
+        session_id=session_id,
+        variables=variables or {"project": {"id": "isolated-hub", "path": "/tmp"}},
+    )
+
+
+async def _prompt(engine: RuleEngine, session_id: str) -> Any:
+    return await _evaluate_claude_hook(
+        engine,
+        session_id,
+        HookEventType.BEFORE_AGENT,
+        "user-prompt-submit",
+        {"prompt": "recall please"},
+    )
+
+
+async def _pre_tool(
+    engine: RuleEngine,
+    session_id: str,
+    variables: dict[str, Any] | None = None,
+) -> Any:
+    return await _evaluate_claude_hook(
+        engine,
+        session_id,
+        HookEventType.BEFORE_TOOL,
+        "pre-tool-use",
+        {"tool_name": "Read"},
+        variables,
+    )
+
+
+def _late_recall_count(response: Any) -> int:
+    return str(response.context or "").count(_LATE_RECALL_BODY)
+
+
+@pytest.mark.asyncio
+async def test_timed_out_recall_is_delivered_once_on_the_next_context_hook(
+    temp_db: HubDatabase,
+) -> None:
+    _insert_turn_start_recall_rule(RuleDefinitionManager(temp_db))
+    recall = _StalledRecall()
+    engine = RuleEngine(temp_db, mcp_dispatcher=recall)
+    session_id = _CLAUDE_SESSIONS[0]
+
+    timed_out = await _prompt(engine, session_id)
+    await recall.release_and_fill()
+    # Claude's Stop output carries no model context, so the recall waits.
+    stop = await _evaluate_claude_hook(engine, session_id, HookEventType.STOP, "stop")
+    delivered = await _pre_tool(engine, session_id)
+    following = await _pre_tool(engine, session_id)
+
+    assert recall.calls == 1
+    assert timed_out.decision == "allow"
+    assert _late_recall_count(timed_out) == 0
+    assert _late_recall_count(stop) == 0
+    assert _late_recall_count(delivered) == 1
+    assert _late_recall_count(following) == 0
+
+
+@pytest.mark.asyncio
+async def test_timed_out_recall_refired_after_fill_is_delivered_once(
+    temp_db: HubDatabase,
+) -> None:
+    _insert_turn_start_recall_rule(RuleDefinitionManager(temp_db))
+    recall = _StalledRecall()
+    engine = RuleEngine(temp_db, mcp_dispatcher=recall)
+    session_id = _CLAUDE_SESSIONS[0]
+
+    timed_out = await _prompt(engine, session_id)
+    await recall.release_and_fill()
+    # The same call key fires again: the cache hit and the late copy are one delivery.
+    refired = await _prompt(engine, session_id)
+    following = await _pre_tool(engine, session_id)
+
+    assert recall.calls == 1
+    assert _late_recall_count(timed_out) == 0
+    assert _late_recall_count(refired) == 1
+    assert _late_recall_count(following) == 0
+
+
+@pytest.mark.asyncio
+async def test_late_delivery_sets_the_rule_success_variable(
+    temp_db: HubDatabase,
+) -> None:
+    # Mirrors list-skill-hubs-once-per-session: without the success variable the
+    # rule fires again next turn and the model gets the same result twice.
+    _insert_optional_mcp_rule(
+        RuleDefinitionManager(temp_db),
+        name="surface-memories-late-once",
+        event=RuleTriggerEvent.TURN_START,
+        when="not variables.get('late_recall_shown')",
+        server="gobby-memory",
+        tool="surface_memories",
+        arguments={"text": "recall please", "trigger": "turn"},
+        timeout_seconds=0.05,
+        success_variable="late_recall_shown",
+        delivery="on_receipt",
+    )
+    recall = _StalledRecall()
+    engine = RuleEngine(temp_db, mcp_dispatcher=recall)
+    session_id = _CLAUDE_SESSIONS[0]
+    delivering_variables: dict[str, Any] = {"project": {"id": "isolated-hub", "path": "/tmp"}}
+
+    timed_out = await _prompt(engine, session_id)
+    await recall.release_and_fill()
+    delivered = await _pre_tool(engine, session_id, delivering_variables)
+
+    assert STAGED_EFFECTS_FIELD not in timed_out.metadata
+    assert _late_recall_count(delivered) == 1
+    assert delivering_variables["late_recall_shown"] is True
+    assert delivered.metadata[STAGED_EFFECTS_FIELD]["session_variables"] == {
+        "late_recall_shown": True
+    }
+
+
+@pytest.mark.asyncio
+async def test_timed_out_recall_is_dropped_after_cache_ttl(
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _insert_turn_start_recall_rule(RuleDefinitionManager(temp_db))
+    recall = _StalledRecall(expected_calls=len(_CLAUDE_SESSIONS))
+    engine = RuleEngine(temp_db, mcp_dispatcher=recall)
+    for session_id in _CLAUDE_SESSIONS:
+        await _prompt(engine, session_id)
+    await recall.release_and_fill()
+    loop = asyncio.get_running_loop()
+    clock = _FakeLoopClock(loop.time())
+    monkeypatch.setattr(loop, "time", clock)
+
+    clock.advance(119.0)
+    inside_ttl = await _pre_tool(engine, _CLAUDE_SESSIONS[0])
+    clock.advance(2.0)
+    expired = await _pre_tool(engine, _CLAUDE_SESSIONS[1])
+    following = await _pre_tool(engine, _CLAUDE_SESSIONS[1])
+
+    assert recall.calls == len(_CLAUDE_SESSIONS)
+    assert _late_recall_count(inside_ttl) == 1
+    assert _late_recall_count(expired) == 0
+    assert _late_recall_count(following) == 0
+
+
+@pytest.mark.asyncio
+async def test_rule_rows_load_once_per_rules_revision(
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def dispatcher(
+        _server: str,
+        _tool: str,
+        _arguments: dict[str, Any],
+        _event: HookEvent,
+    ) -> dict[str, Any]:
+        return {"success": True, "result": {"hubs": [{"name": "fresh-hub", "type": "test"}]}}
+
+    engine = RuleEngine(temp_db, mcp_dispatcher=dispatcher)
+    loads = 0
+    list_by_event = engine.rule_manager.list_by_event
+
+    def counted_list_by_event(*args: Any, **kwargs: Any) -> Any:
+        nonlocal loads
+        loads += 1
+        return list_by_event(*args, **kwargs)
+
+    monkeypatch.setattr(engine.rule_manager, "list_by_event", counted_list_by_event)
+    session_id = _CLAUDE_SESSIONS[0]
+
+    await _pre_tool(engine, session_id)
+    loads_after_first_hook = loads
+    await _pre_tool(engine, session_id)
+    loads_after_repeat_hook = loads
+    # A committed rule write bumps the rules revision, so the next hook reloads.
+    _insert_optional_mcp_rule(
+        RuleDefinitionManager(temp_db),
+        name="fresh-rule-after-cache",
+        event=RuleTriggerEvent.BEFORE_TOOL,
+        when="True",
+        server="gobby-skills",
+        tool="list_hubs",
+        arguments={},
+    )
+    after_write = await _pre_tool(engine, session_id)
+
+    assert loads_after_first_hook > 0
+    assert loads_after_repeat_hook == loads_after_first_hook
+    assert loads > loads_after_repeat_hook
+    assert "fresh-hub" in str(after_write.context or "")
+
+
 @pytest.mark.asyncio
 async def test_inflight_mcp_result_fans_out_to_distinct_consumers(
     temp_db: HubDatabase,
