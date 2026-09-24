@@ -23,7 +23,8 @@ script needs nothing but the pane env. Each pane row remembers its role,
 and every SessionStart in that pane activates the matching agent definition daemon-side,
 so first launch, `/clear`, and a crash relaunch all rebind without agent cooperation.
 Roles are separate agent definitions with rules that block code edits for the
-non-coding seats and give the orchestrator one delegate-first nudge per context epoch.
+non-coding seats and give the Program Director one delegate-first nudge per context
+epoch.
 
 Direction recorded, not acted on here: Josh intends runbooks to supersede `gobby build`
 stage-manifest dispatch. This plan does not touch `src/gobby/build/`, the stage
@@ -123,7 +124,10 @@ Confirmed with Josh on 2026-09-21 during elicitation.
     debate to consensus with no round cap; the adversary finalizes to the Program
     Director, who may send it back; the assistant takes it to Josh; expansion waits for
     Josh. The fourth council pane is a read-only lookup helper on the `researcher`
-    definition. Provider, model and effort stay in the launch lines (decision 4).
+    definition. Provider, model and effort stay in the launch lines (decision 4). 3.1's
+    `agent_scope` follows this roster: every role except `program-director`, whose seat
+    carries the delegate nudge; the assistant keeps its `docs/` and `.gobby/plans/`
+    markdown carve-out and the planner and elicitor get a `.gobby/plans/` one.
 14. **Layout** (supersedes 10; ruling Q2 of the same message). Two bundled scripts on
     2.1's verbs, both mirroring the live workspace of 2026-09-23: `orchestration-v1.sh`
     builds a `control` tab (program director | assistant, horizontal 0.50) and a
@@ -144,6 +148,17 @@ Confirmed with Josh on 2026-09-21 during elicitation.
     2.1's leaf and keeps its gclient-lane slot: expansion adopts it if
     `start_expansion_run` can adopt an existing leaf, otherwise 2.1 cites it as existing
     work outside expansion.
+16. **Q4 and Q5 resolved by lookup** (gobby#14332, message `1e77d597`, 2026-09-23).
+    Q4: workspace panes cannot fall back to tmux. `WorkspaceOps._pane_source` resolves
+    the native gterm host unconditionally and a missing host is refused as
+    `terminal_failed`; only `spawn_agent` resolves a backend. So no script asserts a
+    backend, and criteria 1-7 map as the Constraints entry "Terminal backend" says.
+    Q5: `apply_run` always mints children and cannot adopt an existing leaf, so 2.1 stays
+    a deliverable; when expansion mints 2.1's task the Program Director closes #22695
+    (gclient command mode) as superseded by it and the gclient-lane slot passes to the
+    minted task. Writer position, named to the Program Director with the hash: the
+    alternative, 2.1 as `kind: deferred` with `task_ref: "#22695"`, would drop 2.1's
+    acceptance coverage.
 
 ## Non-goals
 `kind: framing`
@@ -198,6 +213,20 @@ Confirmed with Josh on 2026-09-21 during elicitation.
   `cargo nextest run -p gobby-core -E 'test(schema)'` with `GOBBY_SCHEMA_TEST_DATABASE_URL`,
   `cargo clippy -p gobby-client`, `cargo fmt -p gobby-client -- --check`. Never the full
   pytest suite.
+- **Terminal backend (#22691 criteria 1-7).** Every fresh workspace pane is created by
+  `WorkspaceOps._pane_source` (`src/gobby/terminals/workspace_ops.py` 754-790), which
+  resolves the native gterm host unconditionally (771); when the host is absent, `_fill`
+  (823-873) surfaces `WorkspaceOpError("terminal_failed", ...)` and nothing falls back
+  (`docs/guides/gterminal-development-guide.md` 91-190). Only `spawn_agent` resolves a
+  backend (`resolve_terminal_backend`, `src/gobby/agents/spawn_models.py` 26-38). So:
+  criterion 1 is 3.2's test that no definition names a backend; 3 is 3.2's registration
+  line reading 1.2's `backend` pane field; 5 holds by construction, because a persistent
+  role's pane cannot come up on tmux and a refused `new-tab` or `split` prints
+  `terminal_failed: <reason>` and exits 1 (2.1.3, V1 step 7); 2, 4, 6 and 7 describe
+  `spawn_agent`'s fallback, which is #21565's (Golden Path ruling 16) and outside this
+  plan. The one tmux path into a runbook pane is `terminal_id` adoption of a
+  pre-existing terminal (`_adoptable`, 792), which the registration line reports. No
+  script asserts a backend.
 
 ## P1: Daemon seams
 `kind: framing`
@@ -285,6 +314,7 @@ Targets:
 - `docs/guides/gclient-user-guide.md`
 - `src/gobby/install/shared/skills/gobby/references/sessions/workspaces.md`
 - `src/gobby/install/shared/workflows/runbooks/orchestration-v1.sh`
+- `src/gobby/install/shared/workflows/runbooks/plan-council-v1.sh`
 - `tests/storage/test_workspaces.py::*` — scope-reason: add role, runbook, and session_ref tests
 - `tests/terminals/test_workspace_ops.py::*` — scope-reason: add role and pane.set_role tests
 - `tests/servers/test_workspace_ws.py::*` — scope-reason: extend the hand-enumerated OPS list and add the set_role round-trip
@@ -292,21 +322,24 @@ Targets:
 - `tests/cli/test_workspaces.py::*` — scope-reason: add set-role and split --role tests
 
 Storage: `WorkspaceTab` gains a trailing `runbook: str | None = None`; `WorkspacePane`
-gains trailing `role: str | None = None` and a derived `session_ref: str | None = None`
-(read from the row only when the key is present), so existing constructor sites,
+gains trailing `role: str | None = None` and two derived fields, `session_ref: str |
+None = None` and `backend: str | None = None` (read from the row only when the keys
+are present), so existing constructor sites,
 including `tests/servers/test_terminal_ws_golden.py`, are untouched. `_insert_pane` and `WorkspaceManager.create_tab`
 accept `role` (and `runbook` on the tab insert); `WorkspaceManager.add_pane` accepts
 `role`; new `WorkspaceManager.set_pane_role(pane_id, role)` mirrors `rename_pane`
-(strip, empty clears). `session_ref` is derived by one JOIN in the two read paths that
+(strip, empty clears). `session_ref` and `backend` are derived by one JOIN in the two read paths that
 feed snapshots and activation, `list_panes` and `get_pane_for_terminal`:
 `LEFT JOIN terminals tm ON tm.id = p.terminal_id AND tm.state IN ('pending','live')
 LEFT JOIN sessions s ON s.id = tm.session_id LEFT JOIN projects pr ON pr.id = s.project_id`,
 selecting `COALESCE(NULLIF(btrim(pr.name), ''), s.project_id::text) || '#' || s.seq_num::text`,
 which mirrors `Session.ref` in `src/gobby/storage/session_models.py` including its
 strip of `project_name`, so the roster ref is the one `send_message` resolves even when
-`projects.name` carries surrounding whitespace. `RETURNING *` paths leave it None, which
+`projects.name` carries surrounding whitespace. The same JOIN selects `tm.backend` as
+`backend`, so the roster shows which terminal backend each seat got (#22691 criterion
+3) without any definition naming one (criterion 1). `RETURNING *` paths leave it None, which
 is correct at insert. `to_dict()` stays `asdict` for the existing fields and drops
-`role`, `runbook`, and `session_ref` when they are None (existing nulls such as
+`role`, `runbook`, `session_ref` and `backend` when they are None (existing nulls such as
 `title`, `terminal_id`, and `label` stay, because the fixtures already contain them),
 so the golden corpus in `tests/fixtures/terminal_ws_golden/` is byte-identical and
 every event, snapshot, and MCP payload carries the new fields only when set; gclient
@@ -339,9 +372,9 @@ Surfaces: WS derives `pane.set_role` automatically (only the `OPS` list in
 `tests/servers/test_workspace_ws.py` is enumerated by hand). MCP registry: `create_tab`
 and `split_pane` forward the new params; new `set_pane_role(pane, role=None, node=None)`
 registered after `rename_workspace_item` with a description that names the roster
-contract (tabs carry `runbook`, panes carry `role` and `session_ref`). CLI:
+contract (tabs carry `runbook`, panes carry `role`, `session_ref` and `backend`). CLI:
 `gobby panes split --role`, new `gobby panes set-role REF [ROLE]` (omit ROLE to clear),
-and `_pane_line` prints `role` and `session_ref` when present; there is no `tabs create`
+and `_pane_line` prints `role`, `session_ref` and `backend` when present; there is no `tabs create`
 CLI, so `runbook` is WS/MCP-only and the docs say so. Docs: op vocabulary, snapshot row
 fields, and the `pane.role_set` event in `docs/contracts/gterm-protocols.md`; the CLI
 block in `docs/guides/cli-commands.md`; a "Tabs and panes" paragraph in
@@ -349,9 +382,11 @@ block in `docs/guides/cli-commands.md`; a "Tabs and panes" paragraph in
 `references/sessions/workspaces.md`. The golden corpus fixtures are not regenerated:
 rows without a role, runbook, or bound session serialize exactly as today, and
 gclient's row structs tolerate the new keys when set (no `deny_unknown_fields`). Bind the seats
-in the bundled runbook script: add `--runbook orchestration-v1` and `--role
-orchestrator` to its `new-tab` line and `--role <seat>` to each `split` line; 2.1's
-verbs forward those flags only when given.
+in both bundled runbook scripts: `orchestration-v1.sh` adds `--runbook orchestration-v1`
+to its two `new-tab` lines, with `--role program-director` and `--role log-monitor`, and
+`plan-council-v1.sh` adds `--runbook plan-council-v1 --role planner` to its `new-tab`
+line; every `split` line gets `--role <seat>`; 2.1's verbs forward those flags only when
+given.
 
 Research context:
 - Entry points: `WorkspaceOps.tab_create` (372-402), `pane_split` (460-490),
@@ -393,8 +428,9 @@ by the size guard, not separate outcomes.
 - 1.2.1 - `WorkspaceTab.runbook` and `WorkspacePane.role`/`session_ref` round-trip
   through `create_tab`, `add_pane`, and `set_pane_role`; `list_panes` derives
   `session_ref` as `<project>#<seq>` for a pane whose terminal is bound to a session,
-  with the project name stripped and an empty name falling through to `project_id`;
-  `to_dict()` includes a set role and runbook and omits the three keys when None; a
+  with the project name stripped and an empty name falling through to `project_id`,
+  and `backend` from the same terminal row; `to_dict()` includes a set role and
+  runbook and omits the four keys when None; a
   role survives `swap_panes` and a cross-tab `move_pane` and is gone after `remove_pane`.
   test: `tests/storage/test_workspaces.py::test_role_runbook_round_trip_and_set_pane_role_clears`.
   test: `tests/storage/test_workspaces.py::test_list_panes_derives_session_ref_from_bound_terminal`.
@@ -418,11 +454,12 @@ by the size guard, not separate outcomes.
   file: `src/gobby/terminals/workspace_pane_io.py`.
   test: `tests/servers/test_terminal_ws_golden.py::test_python_matches_terminal_ws_golden_corpus`.
 - 1.2.6 - Protocol, CLI, and user-guide docs describe `role`, `runbook`, `session_ref`,
-  `pane.set_role`, and `pane.role_set`. behavior: "Workspace messages" in
+  `backend`, `pane.set_role`, and `pane.role_set`. behavior: "Workspace messages" in
   `docs/contracts/gterm-protocols.md`.
-- 1.2.7 - The bundled runbook script binds the tab's runbook and every seat's role
+- 1.2.7 - Both bundled runbook scripts bind each tab's runbook and every seat's role
   through the `--runbook` and `--role` flags. file:
-  `src/gobby/install/shared/workflows/runbooks/orchestration-v1.sh`.
+  `src/gobby/install/shared/workflows/runbooks/orchestration-v1.sh`. file:
+  `src/gobby/install/shared/workflows/runbooks/plan-council-v1.sh`.
 
 ### 1.3 SessionStart activates the pane's role [category: code] (depends: 1.2, 1.4)
 `kind: deliverable`
@@ -571,7 +608,7 @@ shell script of these verbs, so the loader, picker, and YAML format of the first
 are gone (decision 12). Rust conventions per `crates/AGENTS.md` (load the `rust` skill;
 tests in `<module>/tests.rs`). Work order: after 1.4 and before 1.1.
 
-### 2.1 gclient command mode and the bundled orchestration-v1 script [category: code]
+### 2.1 gclient command mode and the bundled runbook scripts [category: code]
 `kind: deliverable`
 
 Targets:
@@ -586,6 +623,7 @@ Targets:
 - `crates/gclient/tests/command_mode.rs`
 - `crates/gclient/tests/mock_daemon/workspace.rs::*` — scope-reason: `WorkspaceSim::apply` answers `pane.read` and `pane.wait_for_output` for the script test
 - `src/gobby/install/shared/workflows/runbooks/orchestration-v1.sh`
+- `src/gobby/install/shared/workflows/runbooks/plan-council-v1.sh`
 - `docs/guides/gclient-user-guide.md`
 
 Entry. `startup::run` checks the first argument before `parse_args`: when it names a
@@ -647,21 +685,32 @@ which `workspace_ws.py` already returns synchronously, so the daemon gains nothi
 Exit codes: 0 success; 1 refused op, printed as `code: reason` on stderr from the
 `workspace_error` reply; 2 usage; 3 connection, token, or protocol failure.
 
-Script. `orchestration-v1.sh` (`#!/usr/bin/env bash`, `set -euo pipefail`) reproduces
-decision 10 with refs captured from plain output: `new-tab --project "${1:-gobby}"
---name orchestration` gives `$tab` and `$orch`; `split "$orch" --right` gives `$disp`,
-then `resize "$orch" 0.44`; `split "$orch" --down` gives `$asst`, `resize "$orch" 0.51`;
-`split "$disp" --down` gives `$mon`, `resize "$disp" 0.35`; `split "$disp" --right`
-gives `$res`, `resize "$disp" 0.50`; five `title` lines; then for each seat
-`wait-for-output REF --pattern "$PROMPT_PATTERN" --timeout 30` followed by
-`send-keys REF "<launch line>" --enter`. `PROMPT_PATTERN` defaults to `'[%$#] *$'`.
-The launch lines are the night runbook's commands (orchestrator `claude --model fable`,
-assistant `claude --model opus --effort high`, dispatcher
-`codex -m gpt-5.6-sol -c model_reasoning_effort=high`, researcher `claude`, monitor
-`claude --model sonnet --effort medium`), each followed by a kickoff prompt that names
-the runbook, the seat's own pane ref, and the tab ref; the user edits the script
-freely. The `--runbook` and `--role` flags are added to the script by 1.2, which lands
-after this leaf.
+Scripts. Two bundled scripts (`#!/usr/bin/env bash`, `set -euo pipefail`) reproduce
+decision 14 with refs captured from plain output. `orchestration-v1.sh [project]`:
+`new-tab --project "${1:-gobby}" --name control` gives `$ctl` and `$pd`; `split "$pd"
+--right` gives `$asst`, `resize "$pd" 0.50`; `new-tab --project "${1:-gobby}" --name
+monitors` gives `$mon` and `$logmon`; `split "$logmon" --down` gives `$arch`, `resize
+"$logmon" 0.50`; four `title` lines (`program-director`, `assistant`, `log-monitor`,
+`archivist`). `plan-council-v1.sh <plan> [project]`: `new-tab --project "${2:-gobby}"
+--name "$(basename "$1" .md)"` gives `$tab` and `$writer`; `split "$writer" --down`
+gives `$enh`, `resize "$writer" 0.50`; `split "$enh" --right` gives `$adv`, `resize
+"$enh" 0.3333`; `split "$adv" --right` gives `$res`, `resize "$adv" 0.50` (each resize
+follows its split while both children are leaves, per Constraints, so the three lower
+panes come out at equal widths); four `title` lines (`plan-writer`, `enhancer`,
+`adversary`, `researcher`). Both scripts then run, for each seat, `wait-for-output REF
+--pattern "$PROMPT_PATTERN" --timeout 30` followed by `send-keys REF "<launch line>"
+--enter`; `PROMPT_PATTERN` defaults to `'[%$#] *$'`. Launch lines follow the prompt
+book's provider, model and effort per role and the flag spellings of
+`~/Desktop/gobby-team-resume-2026-09-22.md`: program director and plan writer `claude
+--dangerously-skip-permissions --model 'claude-fable-5-1[1m]'`; assistant and
+researcher `claude --dangerously-skip-permissions --model 'claude-opus-5[1m]'`; log
+monitor `codex --dangerously-bypass-approvals-and-sandbox -m gpt-5.6-luna -c
+model_reasoning_effort=medium`; archivist the same with `gpt-5.6-terra`; enhancer the
+same with `gpt-5.6-sol` and `xhigh`; adversary `grok -m grok-4.7 --reasoning-effort
+high --always-approve`. Each launch line is followed by a kickoff prompt that names the
+runbook, the seat's own pane ref and the tab ref, and, for the council, the plan path;
+the user edits the scripts freely. The `--runbook` and `--role` flags are added to both
+scripts by 1.2, which lands after this leaf.
 
 Research context:
 - `startup::run` (`crates/gclient/src/startup.rs` 674-691) parses args, probes health,
@@ -689,8 +738,13 @@ Research context:
   and `pane.wait_for_output` (matched) where it does not yet. The script test runs
   `bash` on the real script with `env!("CARGO_BIN_EXE_gclient")` first on `PATH` and
   `--daemon-url` pointing at the mock, then compares the simulator's final tree with
-  decision 10. Pane-env defaults are tested by passing an explicit env map to
+  decision 14. Pane-env defaults are tested by passing an explicit env map to
   `dispatch`, never by mutating the process env.
+- Existing leaf #22695 (gclient command mode) is this deliverable's prior filing.
+  `apply_run` (`src/gobby/tasks/expansion/_apply.py` 91-) always mints children and
+  cannot adopt an existing leaf (gobby#14332 lookup, 2026-09-23), so 2.1 stays a
+  deliverable and #22695 is closed by the Program Director as superseded by the minted
+  task, which inherits its gclient-lane slot (decision 16).
 - Rejected: a client-side capture loop for `wait-for-output` (the daemon op exists);
   `--cwd` on `split` (`pane.split` spawns the tab's checkout shell; `--cmd 'cd DIR'`
   covers it); a REST route for one-shot ops (the WS reply already carries `result`);
@@ -698,7 +752,7 @@ Research context:
   pane variable (removed deliberately by the workspaces plan).
 - Planned checks: `cargo nextest run -p gobby-client -E 'test(command)'`,
   `cargo clippy -p gobby-client`, `cargo fmt -p gobby-client -- --check`,
-  `bash -n src/gobby/install/shared/workflows/runbooks/orchestration-v1.sh`, and the
+  `bash -n` on both scripts under `src/gobby/install/shared/workflows/runbooks/`, and the
   size gate `crates/gclient/tests/source_size.rs`.
 
 Consumers unchanged:
@@ -726,10 +780,11 @@ Consumers unchanged:
   only when given, so existing op payloads stay byte-identical. symbol: `WorkspaceOp`.
   test: `crates/gclient/tests/ws_golden.rs::corpus_replays_from_canonical_manifest`.
   test: `crates/gclient/src/command/tests.rs::optional_role_and_runbook_are_omitted_when_absent`.
-- 2.1.5 - The bundled script is valid bash, and running it against the mock daemon
-  reproduces decision 10's tree with five titled panes and five prompt-gated launches.
-  file: `src/gobby/install/shared/workflows/runbooks/orchestration-v1.sh`. test:
-  `crates/gclient/tests/command_mode.rs::orchestration_v1_script_reproduces_decision_10_layout`.
+- 2.1.5 - `orchestration-v1.sh` is valid bash, and running it against the mock daemon
+  reproduces decision 14's `control` and `monitors` tabs with four titled panes and
+  four prompt-gated launches. file:
+  `src/gobby/install/shared/workflows/runbooks/orchestration-v1.sh`. test:
+  `crates/gclient/tests/command_mode.rs::orchestration_v1_script_reproduces_decision_14_layout`.
 - 2.1.6 - The user guide documents command mode: the verb table, exit codes, pane-env
   defaults, and runbook scripts. behavior: "Command mode" in
   `docs/guides/gclient-user-guide.md`.
@@ -737,6 +792,12 @@ Consumers unchanged:
   `WorkspaceEventKind::PaneRoleSet` and `WorkspaceModel::apply` upserts the enclosed
   pane row, so an attached client survives a role change. symbol: `WorkspaceEventKind`.
   test: `crates/gclient/tests/workspace.rs::pane_role_set_event_decodes_and_upserts_pane`.
+- 2.1.8 - `plan-council-v1.sh <plan>` is valid bash, and running it against the mock
+  daemon reproduces decision 14's council tab named after the plan, with the writer
+  over three equal-width panes, four titles, and four prompt-gated launches whose
+  kickoff prompts carry the plan path. file:
+  `src/gobby/install/shared/workflows/runbooks/plan-council-v1.sh`. test:
+  `crates/gclient/tests/command_mode.rs::plan_council_v1_script_reproduces_decision_14_layout`.
 
 ## P3: Roles
 `kind: framing`
@@ -744,34 +805,42 @@ Consumers unchanged:
 YAML only. Templates sync to the DB registry on daemon start (`sync_bundled_agents`,
 rule sync); the installed rows are the live definitions.
 
-### 3.1 Rule group runbook: no-code-edits and the orchestrator delegate nudge [category: config]
+### 3.1 Rule group runbook: no-code-edits and the program-director delegate nudge [category: config]
 `kind: deliverable`
 
 Targets:
 - `src/gobby/install/shared/workflows/rules/runbook/runbook-no-code-edits.yaml`
-- `src/gobby/install/shared/workflows/rules/runbook/orchestrator-delegate-once.yaml`
+- `src/gobby/install/shared/workflows/rules/runbook/program-director-delegate-once.yaml`
 - `src/gobby/install/shared/workflows/variables/gobby-default-variables.yaml::*` — scope-reason: declare one new variable default
 - `docs/guides/workflow-rules.md`
 - `tests/workflows/test_runbook_rules.py`
 
 Group tags `[runbook, enforcement, gobby]`, deliberately without `default`, so only
-roles that select `group:runbook` carry them. `runbook-no-code-edits`: `event:
+roles that select `group:runbook` carry them. The group is a rule change under standing
+instruction 4: the Program Director's gate on this plan is that approval, and any later
+change to its text is disclosed to the Program Director before it lands.
+`runbook-no-code-edits`: `event:
 before_tool`, `priority: 10` (ahead of the language skill gates at 30 so non-coders are
-blocked, not nagged), `agent_scope: [dispatcher, monitor, researcher, assistant]`,
-`when` on `event.data.get('canonical_tool_kind') == 'write' and
-event.data.get('canonical_repo_mutation')`, with an assistant carve-out when every
-`canonical_write_file_paths` entry ends in `.md` under `docs/` or `.gobby/plans/`
-(absolute or repo-relative); one `block` effect whose reason says to route the change
-through the orchestrator via the assistant. `orchestrator-delegate-once`: `before_tool`,
-`priority: 12`, `agent_scope: [orchestrator]`, `when` not
-`variables.get('orchestrator_delegate_nudge_fired')` and a non-markdown repo mutation;
+blocked, not nagged), `agent_scope: [assistant, lane-manager, researcher, reviewer,
+archivist, log-monitor, elicitor, planner, plan-enhancer-taskless,
+plan-adversary-taskless]` (every role of decision 13 except `program-director`), `when`
+on `event.data.get('canonical_tool_kind') == 'write' and
+event.data.get('canonical_repo_mutation')`, with two carve-outs: `assistant` when every
+`canonical_write_file_paths` entry ends in `.md` under `docs/` or `.gobby/plans/`, and
+`planner` or `elicitor` when every entry ends in `.md` under `.gobby/plans/` (absolute
+or repo-relative); one `block` effect whose reason says to route the change through the
+Program Director via the assistant. `program-director-delegate-once`: `before_tool`,
+`priority: 12`, `agent_scope: [program-director]`, `when` not
+`variables.get('program_director_delegate_nudge_fired')` and some
+`canonical_write_file_paths` entry does not end in `.md` (a repo mutation with no write
+paths, such as `git merge`, is the Program Director's landing work and never nudges);
 one `block` with `delivery: on_receipt` and `acknowledge_variable:
-orchestrator_delegate_nudge_fired` (copied from
+program_director_delegate_nudge_fired` (copied from
 `memory-lifecycle/guard-plan-memory-writes.yaml`). Its sibling
-`reset-orchestrator-delegate-nudge-on-context-reset`: `session_start`, `priority: 8`,
+`reset-program-director-delegate-nudge-on-context-reset`: `session_start`, `priority: 8`,
 the standard `source in ['clear','compact'] or (source == 'resume' and
-pending_context_reset)` condition, `set_variable` false, and `agent_scope: [orchestrator]`
-like the nudge rule. The scope is safe because `_agent_type` is settled by the time the
+pending_context_reset)` condition, `set_variable` false, and `agent_scope:
+[program-director]` like the nudge rule. The scope is safe because `_agent_type` is settled by the time the
 reset evaluates: for SessionStart, `HookManager._handle_after_daemon_ready`
 (`src/gobby/hooks/hook_manager.py`, verified 2026-09-22) runs the handler first, which
 activates the definition and writes `_agent_type` and `_active_rule_names`, then
@@ -779,7 +848,7 @@ activates the definition and writes `_agent_type` and `_active_rule_names`, then
 `/clear` successor rearms on its own because `_bind_clear_successor` copies task claims
 only and the flag is absent; compact keeps the same session with the flag already true,
 so the reset rule is what rearms compact. Declare
-`orchestrator_delegate_nudge_fired: false` next to `plan_memory_write_nudge_fired`.
+`program_director_delegate_nudge_fired: false` next to `plan_memory_write_nudge_fired`.
 Tests use the engine harness under `tests/workflows/` to drive a before_tool event for
 each role with `_agent_type` set; the source-write fixtures include a shell command that
 `canonical_repo_mutation` classifies as a repo write, so the block is proven on the path
@@ -805,20 +874,24 @@ Research context:
 
 **Acceptance:**
 
-- 3.1.1 - A source write by dispatcher, monitor, researcher, or assistant is blocked,
-  through the Edit tool and through a shell command classified as a repo write, for each
-  of the four roles; an assistant write to `docs/*.md` or `.gobby/plans/*.md` is allowed
-  through the Edit tool and through a shell write of a single such path, and a write
-  whose paths mix a markdown doc with a `.py` file is blocked. file:
+- 3.1.1 - A source write by each of the ten scoped roles is blocked, through the Edit
+  tool and through a shell command classified as a repo write; an assistant write to
+  `docs/*.md` or `.gobby/plans/*.md` and a planner or elicitor write to
+  `.gobby/plans/*.md` are allowed through the Edit tool and through a shell write of a
+  single such path; a planner write to `docs/*.md` and a write whose paths mix a
+  markdown doc with a `.py` file are blocked. file:
   `src/gobby/install/shared/workflows/rules/runbook/runbook-no-code-edits.yaml`. test:
   `tests/workflows/test_runbook_rules.py::test_non_coding_roles_are_blocked_from_source_writes`.
   test: `tests/workflows/test_runbook_rules.py::test_assistant_may_write_docs_and_plans`.
-- 3.1.2 - The orchestrator's first non-markdown write in an epoch is blocked once with
-  the flag set on delivery; the second passes; a session_start with source `compact` on
-  a session that already has the flag true and the orchestrator rule set active rearms
-  it, and the scoped reset does not fire for another role. file: `src/gobby/install/shared/workflows/rules/runbook/orchestrator-delegate-once.yaml`.
-  test: `tests/workflows/test_runbook_rules.py::test_orchestrator_nudge_fires_once_per_epoch`.
-  test: `tests/workflows/test_runbook_rules.py::test_context_reset_rearms_orchestrator_nudge`.
+  test: `tests/workflows/test_runbook_rules.py::test_planner_and_elicitor_may_write_plans_only`.
+- 3.1.2 - The Program Director's first non-markdown write in an epoch is blocked once
+  with the flag set on delivery; the second passes; a shell repo mutation with no write
+  paths never fires it; a session_start with source `compact` on a session that already
+  has the flag true and the program-director rule set active rearms it, and the scoped
+  reset does not fire for another role. file:
+  `src/gobby/install/shared/workflows/rules/runbook/program-director-delegate-once.yaml`.
+  test: `tests/workflows/test_runbook_rules.py::test_program_director_nudge_fires_once_per_epoch`.
+  test: `tests/workflows/test_runbook_rules.py::test_context_reset_rearms_program_director_nudge`.
 - 3.1.3 - The flag has a bundled default and the rules guide documents the group.
   file: `src/gobby/install/shared/workflows/variables/gobby-default-variables.yaml`.
   behavior: "runbook" group in `docs/guides/workflow-rules.md`.
@@ -1132,27 +1205,36 @@ Research context:
    (`cargo build --release -p gobby-client`) and promote it via
    `uv run gobby install --no-interactive` in the same window.
 3. Live smoke: from a shell inside a gclient pane, run
-   `bash src/gobby/install/shared/workflows/runbooks/orchestration-v1.sh`. Expect one
-   new tab titled `orchestration` with five labeled panes in decision 10's split, each
-   CLI running with its kickoff prompt submitted. From any session:
-   `gobby-workspaces:get_workspace` shows the tab's `runbook` and each pane's `role` and
-   `session_ref` once the CLIs have started.
-4. Role activation: in the monitor pane, `gobby-workflows:get_variable _agent_type`
-   (or the first prompt's injected persona) shows `monitor`; an Edit on a `.py` file is
-   blocked by `runbook-no-code-edits`. In the orchestrator pane, the first `.py` edit
-   is blocked once with the delegate nudge and the retry passes; `/clear` then a fresh
+   `bash src/gobby/install/shared/workflows/runbooks/orchestration-v1.sh`. Expect two
+   new tabs, `control` (program director | assistant) and `monitors` (log monitor over
+   archivist), four labeled panes in decision 14's splits, each CLI running with its
+   kickoff prompt submitted. Then
+   `bash src/gobby/install/shared/workflows/runbooks/plan-council-v1.sh .gobby/plans/runbooks.md`:
+   one tab named `runbooks` with the plan writer over enhancer | adversary | researcher.
+   From any session: `gobby-workspaces:get_workspace` shows each tab's `runbook` and
+   each pane's `role`, `session_ref` and `backend` once the CLIs have started, and the
+   assistant has one registration message per seat naming its pane ref and backend
+   (criterion 3).
+4. Role activation: in the log-monitor pane, `gobby-workflows:get_variable _agent_type`
+   (or the first prompt's injected persona) shows `log-monitor`; an Edit on a `.py` file
+   is blocked by `runbook-no-code-edits`. In the plan-writer pane an Edit on
+   `.gobby/plans/runbooks.md` passes and one on `docs/guides/agents.md` is blocked. In
+   the program-director pane, the first `.py` edit is blocked once with the delegate
+   nudge and the retry passes; a `git merge` is never nudged; `/clear` then a fresh
    `.py` edit is nudged again.
 5. Persistence: `/clear` in the assistant pane; the successor's first prompt carries
    the assistant persona and `get_workspace` shows the new `session_ref`. Quit the CLI
-   in the researcher pane and relaunch it by hand in the same shell; the new session is
-   again the researcher.
+   in the council's researcher pane and relaunch it by hand in the same shell; the new
+   session is again the researcher.
 6. Recovery: `gobby panes set-role 0:0:<tab>:<pane>` clears and re-sets a role; in a
    plain pane, `gobby-agents:apply_agent_definition(agent="researcher")` switches the
    session and the next prompt shows the researcher persona.
 7. Failure path: a script line whose op is refused (a pane ref that does not exist)
    prints the daemon's `code: reason` on stderr and exits 1, so `set -e` stops the
    script with the panes created so far left in place; `wait-for-output` past its
-   timeout exits 1.
+   timeout exits 1. With the gterm host stopped, `orchestration-v1.sh` is refused at its
+   first `new-tab` with `terminal_failed`, exits 1, and no role comes up on another
+   backend (criterion 5).
 
 **Enhancement round 1 of 1** (kind: enhancement). enhancer_run
 `fa6aa37e-ab77-43cd-a1e5-1b9af49c8803` (plan-enhancer-taskless, grok/grok-4.7/high,

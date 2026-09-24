@@ -77,8 +77,8 @@ Writer moves on R1:
 ## Writer sweep after R1
 Staged so a validating commit exists before the 21:00 cutover; each stage is one commit.
 - S1 record: decisions 8 and 10 marked superseded in place, decisions 13-15 appended (Q1/Q6, Q2, Q3-Q5); V1 step 2 migration number; Constraints wording (sha only). Status: committed `eebfc0ad2db67f2b82168cf3517da46a5f18ed91`.
-- S2 3.2 rewrite to the decision-13 roster with the five standing instructions and the shared tail verbatim, a divergence line per definition (criterion 10), the no-backend-named test (criterion 1), and D2 `original_acceptance_items` repointed. Status: pending.
-- S3 wiring: 3.1 `agent_scope` lists and the program-director rename of the delegate nudge (keyed on a non-`.md` write path so the PD's merges pass; rule-text change under PD approval); 2.1 second script, split of 2.1.5; 1.2 target and 1.2.7; V1 steps 3-6. Status: pending.
+- S2 3.2 rewrite to the decision-13 roster with the five standing instructions and the shared tail verbatim, a divergence line per definition (criterion 10), the no-backend-named test (criterion 1), and D2 `original_acceptance_items` repointed. Status: committed `9d082c7db47a160ef6b980831e32aad604332a97` (bare validate clean; `git diff --check` clean, 21:0x CDT).
+- S3 wiring: 3.1 `agent_scope` lists and the program-director rename of the delegate nudge (keyed on a non-`.md` write path so the PD's merges pass; rule-text change under PD approval); 2.1 second script, split of 2.1.5; 1.2 target and 1.2.7; V1 steps 3-6. Status: written with the Q5 wording (decision 16, 2.1 research context) and the criteria map; committed with this entry.
 - S4 3.3 (#22713 carrier) after lookup L3; Q4 script assertion after 472b0cbd; Q5 wording after L4. Status: lookups answered (below); pending.
 
 ### Sweep design of record (writer, 20:5x CDT, checked with the advisor)
@@ -95,3 +95,12 @@ Staged so a validating commit exists before the 21:00 cutover; each stage is one
 Pre-round fold commit `d42521cc0981f36430ff1f2505fcd1704b572498`; plan sha256 `aa897d8ce9cdab9740e6aa381723fac45017564283b8900c923a438c464ed150`; bare validate clean; `git diff --check` clean (2026-09-23 20:1x CDT). The enhancer hash is the one published after the sweep, not this one.
 S1 commit `eebfc0ad2db67f2b82168cf3517da46a5f18ed91` (decisions 13-15 recorded; bare validate clean; `git diff --check` clean, 20:3x CDT).
 Pending: final commit, final hash, validation output, the adversary's finalization message, the PD's review and hand-off to the assistant.
+
+### Writer refinements while writing S2 and S3 (named to the Program Director with the hash)
+- Registration source (criterion 1 versus 3): the design of record had the persona say "gterm for a workspace pane". Criterion 1's sentence "A definition that names one fails validation" is literal, so no definition names a backend; instead 1.2's pane view gains `backend` from the terminals row the `session_ref` JOIN already reads, and the registration line repeats what `get_workspace` shows. Cost: one derived field. The adopted-terminal case then needs no caveat text.
+- Standing text: the book's five instructions (72-89) lack criterion 8's fifth item (conditional sign-off), which lives in #22691's description item 5. Every persona carries the book text verbatim plus that rule; the test constants are `STANDING_INSTRUCTIONS`, `SHARED_TAIL` and `CONDITIONAL_SIGN_OFF`.
+- Criterion 9 item 4 says the communications coordinator must "perform daemon restarts without pre-approval"; book section 1 says the assistant never restarts and section 2 gives the restart sequence to the Program Director. The assistant definition requires the alerting rule (alert before, alert after with the outcome, no pre-approval) and the restart stays the Program Director's. If the Program Director wants the assistant to perform restarts, that is one line in the assistant persona.
+- Q5 wording landed in S3 rather than S4 (decision 16 and 2.1's research context), because 2.1 was open for the second script.
+- The council tab is named after the plan's basename (decision 14 "named after the plan"); pane titles `plan-writer`, `enhancer`, `adversary`, `researcher`.
+- 3.1's nudge fires on a `canonical_write_file_paths` entry not ending in `.md` and never on a pathless repo mutation such as `git merge`, so the Program Director's landing work passes (design of record S3).
+- Launch lines: the grok CLI takes `-m <model> --reasoning-effort <effort> --always-approve` (checked with `grok --help`, 2026-09-23); the Claude and Codex lines follow the team-resume file's spellings.
