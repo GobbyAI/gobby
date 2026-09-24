@@ -30,6 +30,8 @@ class HookPhaseTimings:
 
     _durations: dict[str, float] = field(default_factory=dict)
     _lock: threading.Lock = field(default_factory=threading.Lock)
+    # The Gobby session the rules evaluated for; rule-allow-audit rows carry the same id.
+    session_id: str | None = None
 
     def add(self, phase: str, duration_seconds: float) -> None:
         with self._lock:
@@ -50,6 +52,13 @@ class HookPhaseTimings:
             measured = sum(value for phase, value in durations.items() if phase != "response")
             durations["response"] = max(durations["response"], total_seconds - measured)
         return durations
+
+    def breakdown(self) -> dict[str, float]:
+        """Sub-phases recorded inside a phase; they stay out of snapshot and dominance."""
+        with self._lock:
+            return {
+                phase: value for phase, value in self._durations.items() if phase not in HOOK_PHASES
+            }
 
 
 _current_timings: ContextVar[HookPhaseTimings | None] = ContextVar(
@@ -77,6 +86,20 @@ def measure_hook_phase(phase: str) -> Iterator[None]:
         return
     with timings.measure(phase):
         yield
+
+
+def add_hook_phase(phase: str, duration_seconds: float) -> None:
+    """Record a duration measured across awaits inside an active hook delivery."""
+    timings = _current_timings.get()
+    if timings is not None:
+        timings.add(phase, duration_seconds)
+
+
+def note_hook_session(session_id: str) -> None:
+    """Name the session whose rules this hook delivery evaluates."""
+    timings = _current_timings.get()
+    if timings is not None:
+        timings.session_id = session_id
 
 
 def observe_hook_phase_timings(

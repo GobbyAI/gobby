@@ -15,6 +15,7 @@ from gobby.hooks.effect_deadline import (
 )
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 from gobby.hooks.fifo_lock import CrossLoopFifoLock
+from gobby.hooks.phase_timing import add_hook_phase, measure_hook_phase, note_hook_session
 from gobby.hooks.receipt_effects import STAGED_EFFECTS_FIELD, record_worker_staging
 from gobby.storage.hub.operation_deadline import (
     DatabaseOperationDeadlineExceeded,
@@ -419,13 +420,17 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
 
             try:
                 if eval_lock_state:
-                    if blocking_deadline is not None:
-                        lock_wait_started = monotonic()
-                        await eval_lock_state.lock.acquire()
-                        blocking_deadline.extend(monotonic() - lock_wait_started)
-                    else:
-                        await eval_lock_state.lock.acquire()
+                    note_hook_session(session_id)
+                    lock_wait_started = monotonic()
+                    await eval_lock_state.lock.acquire()
                     eval_lock_acquired = True
+                    lock_wait = monotonic() - lock_wait_started
+                    add_hook_phase("rule_eval_lock_wait", lock_wait)
+                    if blocking_deadline is not None:
+                        blocking_deadline.extend(lock_wait)
+                # Sub-phases split a slow rule_evaluation into the work the per-rule
+                # audit cannot see (#22708 criterion 7).
+                prelude_started = monotonic()
 
                 self._sync_tool_context(event, session_id)
                 if isinstance(event.data, dict) and not event.metadata.get(
@@ -776,13 +781,15 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                     eval_context["unclaimed_found_work"] = bool(unclaimed_tasks)
                     eval_context["unclaimed_found_work_tasks"] = list(unclaimed_tasks)
 
-                response = await self.rule_engine.evaluate(
-                    event=event,
-                    session_id=session_id,
-                    variables=variables,
-                    eval_context=eval_context,
-                    blocking_deadline=blocking_deadline,
-                )
+                add_hook_phase("rule_prelude", monotonic() - prelude_started)
+                with measure_hook_phase("rule_engine"):
+                    response = await self.rule_engine.evaluate(
+                        event=event,
+                        session_id=session_id,
+                        variables=variables,
+                        eval_context=eval_context,
+                        blocking_deadline=blocking_deadline,
+                    )
 
                 staged_payload = response.metadata.get(STAGED_EFFECTS_FIELD)
                 staged_keys: set[str] = set()
@@ -829,8 +836,11 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
         event: HookEvent,
         *,
         blocking_deadline: BlockingEffectDeadline | None = None,
+        submitted_at: float | None = None,
     ) -> HookResponse:
         """Evaluate rules asynchronously for callers that already own the loop."""
+        if submitted_at is not None:
+            add_hook_phase("rule_runtime_queue", monotonic() - submitted_at)
         enabled, timeout = self._resolve_policy()
         if not enabled:
             return HookResponse(decision="allow")
@@ -878,7 +888,9 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                         "Synchronous workflow evaluation requires a runtime"
                     ) from None
                 response = self._evaluation_runtime.run(
-                    self.evaluate_async(event, blocking_deadline=blocking_deadline),
+                    self.evaluate_async(
+                        event, blocking_deadline=blocking_deadline, submitted_at=monotonic()
+                    ),
                     timeout=runtime_wait,
                 )
                 # The runtime evaluates on its own "gobby-workflow-runtime"

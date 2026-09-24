@@ -8,6 +8,7 @@ import math
 import threading
 import time
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, Literal
 from unittest.mock import MagicMock, patch
 
@@ -15,12 +16,17 @@ import pytest
 
 from gobby.hooks.adapter_execution import run_adapter_hook
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.hooks.phase_timing import HOOK_PHASES, HookPhaseTimings, hook_phase_timing_scope
 from gobby.hooks.receipt_effects import STAGED_EFFECTS_FIELD
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.projects import LocalProjectManager
+from gobby.storage.sessions import SessionManager
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime
+from gobby.workflows.hooks import WorkflowHookHandler
+from tests.fixtures.isolated_checkout import insert_isolated_machine, patch_local_machine_id
 
 pytestmark = pytest.mark.unit
 
@@ -1001,3 +1007,51 @@ async def test_isolated_hub_two_codex_one_grok_hook_p95_under_one_second(
     assert all(
         latency_ms < 1_000 for values in measured_rule_timings.values() for latency_ms in values
     )
+
+
+def test_rule_evaluation_breakdown_names_each_subphase_and_session(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # #22708 criterion 7: a slow rule_evaluation phase must say where its time went, and
+    # which session, so each slow hook joins its rule-allow-audit rows.
+    machine_id = insert_isolated_machine(temp_db)
+    patch_local_machine_id(monkeypatch, machine_id)
+    project = LocalProjectManager(temp_db).create(name="rule-breakdown", repo_path=None)
+    session_id = SessionManager(temp_db).register_session(
+        external_id="rule-breakdown",
+        machine_id=machine_id,
+        source="claude",
+        project_id=project.id,
+    )
+    assert session_id
+    event = HookEvent(
+        event_type=HookEventType.BEFORE_TOOL,
+        session_id=session_id,
+        source=SessionSource.CLAUDE,
+        timestamp=datetime.now(UTC),
+        data={"tool_name": "Read"},
+        metadata={"_platform_session_id": session_id},
+        cwd=str(tmp_path),
+    )
+    handler = WorkflowHookHandler(
+        rule_engine=RuleEngine(temp_db),
+        evaluation_runtime=WorkflowEvaluationRuntime(max_workers=2),
+    )
+    timings = HookPhaseTimings()
+    try:
+        with hook_phase_timing_scope(timings):
+            response = handler.evaluate(event)
+    finally:
+        handler.shutdown()
+
+    assert response.decision == "allow"
+    assert set(timings.breakdown()) == {
+        "rule_runtime_queue",
+        "rule_eval_lock_wait",
+        "rule_prelude",
+        "rule_engine",
+    }
+    assert set(timings.snapshot()) == set(HOOK_PHASES)
+    assert timings.session_id == session_id
