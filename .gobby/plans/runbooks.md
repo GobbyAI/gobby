@@ -17,25 +17,32 @@ a pasted prompt, wired together by a message protocol and standing rules written
 role lived only in the prompt, so a `/clear` or a CLI relaunch lost it.
 
 This plan productizes that pattern as a **runbook**: a shell script of `gclient` verbs
-that builds the tabs and split layout in the current workspace through the daemon's
-existing workspace ops, waits for each pane's shell prompt, and types the pane's launch
-command into it. gclient gains a command mode (`gclient <verb>`, decision 12) so such a
-script needs nothing but the pane env. Each pane row remembers its role,
-and every SessionStart in that pane activates the matching agent definition daemon-side,
-so first launch, `/clear`, and a crash relaunch all rebind without agent cooperation.
-Roles are separate agent definitions with rules that block code edits for the
-non-coding seats and give the Program Director one delegate-first nudge per context
-epoch.
+that launches each seat into the current workspace through the daemon's spawn path,
+placed in a new tab or split beside a named pane, with the role's sandbox policy and
+worktree binding coming from the role's definition (decision 20). The same launch is
+reachable three ways with one result: `gobby-agents:spawn_agent` with `placement`,
+`gobby agents spawn --tab|--split`, and `gclient launch` in command mode (`gclient
+<verb>`, decision 12), so a script needs nothing but the pane env. Each pane row
+remembers its role, and every SessionStart in that pane activates the matching agent
+definition daemon-side, so first launch and `/clear` rebind without agent cooperation.
+Roles are separate agent definitions specified field by field in 3.2 and 3.4 (decision
+21): tools, sandbox block, rules, skills, worktree, messaging, continuity and step
+workflow. Every seat but the program-director runs under Gobby's managed SRT sandbox;
+the program-director is the one unsandboxed role and is held in by role-scoped hook
+rules (decision 20).
 
-Direction recorded, not acted on here: Josh intends runbooks to supersede `gobby build`
-stage-manifest dispatch. This plan does not touch `src/gobby/build/`, the stage
-registry, or `epic-reviewer`; the retirement is a deferred section.
+Direction, now assumed (decision 19): Josh is retiring `gobby build` and stages. This
+plan no longer preserves compatibility with `gobby build`, the stage registry or
+`src/gobby/dispatch/`; it repoints or deletes their references the cheapest way that
+keeps the tree green (3.2, 3.4). The retirement itself stays D2, and `src/gobby/build/`
+and `epic-reviewer` are untouched.
 
 Constraint that shaped the cut: ROADMAP.md moves the daemon to Rust family crates
 (Stage 2) and makes the client carry operator verbs (S3.1). Stage 1 (#21543, #21551) is
 open and unclaimed and `gdaemon` serves no routes yet, so the runbook logic lives in
-gclient over the public WS API, and Python changes are limited to seams the client
-cannot reach (schema, workspace ops, SessionStart, one MCP tool). No web UI, no
+gclient over the public WS and HTTP API, and Python changes are limited to seams the
+client cannot reach (schema, workspace rows, SessionStart, the spawn tool's placement
+and sandbox parameters, and the run lifecycle of a pane-bound seat). No web UI, no
 DB-backed runbook registry.
 
 ## Decision Record
@@ -50,7 +57,9 @@ Confirmed with Josh on 2026-09-21 during elicitation.
    survives `move_pane`/`swap_panes` and is lost only on `close_pane`. Recovery and
    manual switching use a new `gobby-agents:apply_agent_definition` tool that applies
    the same full delta SessionStart uses (unlike `apply_persona`, which is prompt and
-   skills only).
+   skills only). The `apply_agent_definition` sentence is superseded by decision 20 on
+   2026-09-24 (round file, R6 position g): the launch is the only writer of a pane's
+   role, and a role change is a relaunch.
 2. **Runbook store.** Superseded by decision 12 on 2026-09-22: a runbook is a shell
    script of `gclient` verbs. The bundled `orchestration-v1.sh` lives in
    `src/gobby/install/shared/workflows/runbooks/` and is run by path; user scripts live
@@ -66,15 +75,24 @@ Confirmed with Josh on 2026-09-21 during elicitation.
    model, effort, sandbox flags all live there), so no Rust port of the Python command
    builder. Launch waits for the shell prompt with `wait-for-output` and types the
    command through `pane.send_text {submit: true}`, leaving a live shell under the CLI
-   to resume in.
+   to resume in. Amended by decision 20 on 2026-09-24: a seat's launch line is a
+   `gclient launch` verb (or the spawn tool with `placement`), so provider, model and
+   effort become spawn parameters, the daemon builds and sandboxes the argv, and no
+   prompt wait, typed launch line or shell under the CLI remains; `send-keys` and
+   `wait-for-output` stay for tool panes.
 5. **Python delta, thin seams only.** One gcore migration; `role`/`runbook` accepted on
    `pane.split`/`tab.create` plus a `pane.set_role` op; `role`, `runbook`, and the bound
    `session_ref` exposed on `get_workspace`, the WS snapshot, and events; SessionStart
-   role resolution; `apply_agent_definition`. Nothing else in Python.
+   role resolution; `apply_agent_definition`. Nothing else in Python. Amended by
+   decision 20 on 2026-09-24: `pane.set_role` and `apply_agent_definition` are gone, and
+   the Python delta is 1.1, 1.2, 1.3 and 1.5.
 6. **Roster.** `gobby-workspaces:get_workspace` is the roster: agents find peers by
    role and message with `send_message(target="session", target_id=<session_ref>)`.
    The kickoff prompt carries the runbook name, the agent's own pane ref, and the tab
-   refs.
+   refs. Amended by decision 20 on 2026-09-24: the launch's prompt is composed before
+   the pane exists, so the seat reads its own ref from `GOBBY_PANE_REF` (the identity
+   env 1.5 sets before the CLI starts) and the tab refs from `get_workspace`; the
+   kickoff prompt carries the runbook name and, for the council, the plan path.
 7. **Restrictions as rules.** New rule group `runbook/`: a hard before_tool block on
    source-code writes for `agent_scope: [dispatcher, monitor, researcher, assistant]`
    (the seat names of 2026-09-21: ruling 22 renames the seat `lane-manager` and decision
@@ -101,20 +119,24 @@ Confirmed with Josh on 2026-09-21 during elicitation.
     alone below. Reporting lines as they settled last night: the lane manager and
     monitor report to the assistant; the assistant and alarms reach the orchestrator.
 11. **Deferred to the Rust port.** DB-backed runbooks (Stage 2 family crate); Rust
-    activation and roster (S2.8, S2.11); `apply_agent_definition` in Rust (S2.12);
+    activation and roster (S2.8, S2.11); `apply_agent_definition` in Rust (S2.12;
+    dropped by decision 20, so the S2.12 item is the launch's placement seam instead);
     retiring `gobby build` in favor of runbooks.
 12. **Command mode replaces the loader.** The orchestrator's design, sent on Josh's
     word on 2026-09-22 ("send it to them, it's good"): `gclient <verb> [args]` with
     no TUI connects to the daemon the way the TUI does, sends one workspace op, prints
     the reply's `result`, and exits non-zero on a refused op. Every verb maps to an
-    existing op, so the daemon gains nothing. Inside a gclient pane the defaults come
+    existing op, so the daemon gains nothing (amended by decision 20 on 2026-09-24: the
+    `launch` verb posts the daemon's HTTP tool endpoint for `spawn_agent`, which gains
+    1.5's `placement` and `sandbox` parameters; every other verb still maps to an
+    existing op). Inside a gclient pane the defaults come
     from the pane env (`GOBBY_PANE_REF`, `GOBBY_WORKSPACE_ID`), so a runbook script
     needs no flags; the daemon URL comes from bootstrap through
     `gobby_core::daemon_url`, because the pane env deliberately carries no
     `GOBBY_DAEMON_URL`. The "Load runbook…" menu item, picker dialog, YAML parser,
     and replay state machine of the first draft are dropped. Auth is the local token,
     so remote targets wait for #20202 (S4.3). Work order: 1.4, then 2.1, then 1.1 to
-    1.3, then P3.
+    1.3, then P3 (amended by decision 20: 1.1, 1.2, 1.5, then 2.1, then 1.3, then P3).
 13. **Roster and council flow** (supersedes 8; Program Director rulings Q1 and Q6 of
     2026-09-23, message `62c8f875`, applying #22691 criterion 10, Golden Path rulings 15,
     21, 22 and 23, and the flow Josh wrote into #22808). Its council part (the three
@@ -205,10 +227,12 @@ Confirmed with Josh on 2026-09-21 during elicitation.
     `references/plan/repair.md`). So `plan-writer` and `plan-mechanic` are new
     persona-surface definitions (the writer's body carries `planner`'s persona and the
     book's section 9; `planner` stays untouched for the spawned drafting runs and the
-    build stage, Non-goal 1); the council enhancer and adversary are persona blocks on
-    the existing `plan-enhancer` and `plan-adversary` (already `surfaces: [spawn,
-    persona]`); and `plan-enhancer-taskless` and `plan-adversary-taskless` are retired,
-    every reference migrated (3.4 lists them). `plan-mechanic` owns the mechanical
+    build stage, Non-goal 1; amended by decision 19: `planner.yaml` is renamed to
+    `plan-writer.yaml` and rewritten); the council enhancer and adversary are persona
+    blocks on the existing `plan-enhancer` and `plan-adversary` (already `surfaces:
+    [spawn, persona]`; amended by decision 19: both are rewritten as council definitions
+    without their stage-native step workflows); and `plan-enhancer-taskless` and
+    `plan-adversary-taskless` are retired, every reference migrated (3.4 lists them). `plan-mechanic` owns the mechanical
     checks that ruling Q6 had moved into the adversary's finalization report: `uv run
     gobby plans validate`, `git diff --check`, the plan sha256 against the committed
     blob, the coverage manifest and coverage-contract checks, and re-verifying citations
@@ -222,35 +246,165 @@ Confirmed with Josh on 2026-09-21 during elicitation.
     behavior) that the writer and enhancer consume; the Program Director's constraint,
     recorded with it: the adversary may use the pack but keeps independent code
     spot-checks, so a shared wrong premise cannot pass every role. Not built in v1.
+19. **Retirement of `gobby build` assumed** (Josh, 2026-09-24 10:2x CDT via the
+    assistant, relayed by the Program Director in message `a8a51d12`; memory 6102cd1d).
+    Josh, verbatim: "assume we're retiring gobby build and stages (we won't actually
+    until we have runbooks where we need them, but I'm the only user and I haven't
+    touched gobby build in months). if we need old definitions we can grab them from git
+    history." The Program Director's reading, folded in full: compatibility with `gobby
+    build`, the stage registry and `src/gobby/dispatch/` is no longer a constraint,
+    while the retirement itself stays D2 (v1 deletes nothing of `gobby build`); the
+    council roster is exactly `plan-writer`, `plan-enhancer`, `plan-adversary` and
+    `plan-mechanic`, each shaped for the council (3.4): `planner.yaml` is renamed to
+    `plan-writer.yaml` and rewritten, the stage-native `plan-enhancer.yaml` and
+    `plan-adversary.yaml` are rewritten as council definitions, and the two `-taskless`
+    files are deleted; old bodies stay recoverable from git history, so nothing is kept
+    for reference; where `stages.yaml`, `src/gobby/dispatch/` or tests still name a
+    changed or removed definition, the reference is repointed or deleted the cheapest
+    way that keeps sync, validation and the named tests passing (each touched consumer
+    is a 3.2 or 3.4 target); preserving `gobby build`'s stage behavior is not required.
+    The same reading reaches `researcher.yaml` (3.2, round file position f): its
+    discovery-stage step workflow goes with the stage behavior. Non-goal 1 is restated
+    as as-is/to-be, and every workaround it forced (the "keep the stage-native bodies"
+    rule, the `PROMPT_BUILDERS` consumers-unchanged inventory, the planner split, the
+    taskless-mode reasoning) is redone plainly in 3.4. The Program Director's R5 note
+    about a council-mode step program apart from the task-bound build one was never
+    recorded in this plan or the round file, so there is nothing to drop.
+20. **Runbook launch through the spawn path: placement, sandbox, worktrees, the one
+    unsandboxed role, existing workflows** (Josh, 2026-09-24 10:3x to 11:0x CDT, five
+    directives relayed by the Program Director; each recorded verbatim in the round
+    file, R6). Josh, verbatim: "The runbooks need to be able to launch clis in sandboxed
+    panes, just like spawn_agent does." "sandbox restrictions need to be part of the
+    runbooks". "for now, you'll be the un-sandboxed agent. your the only one that can
+    write code in 0.5.0 (every other agent makes changes inside a worktree when the
+    runbooks are in place)." "I don't want to design the new workflows yet, I just want
+    to be able to launch panes through spawn_agent or through the cli." "and have
+    existing workflows work since 1 is true".
+    As-is: only `spawn_agent` launches a CLI under the managed SRT sandbox
+    (`prepare_sandbox_launch`, wrapped once before backend dispatch); `spawn_agent` has
+    no pane placement (a spawned terminal is not a workspace pane; workspaces decision
+    record #10); a workspace pane is a `zsh` the daemon spawns (`WorkspaceOps._fill`),
+    and the R5 runbook typed each seat's launch line into that shell, unsandboxed; a
+    session's step program is instantiated only when it is spawned (decision 17).
+    To-be, delivered by this plan (1.5, 2.1, 3.1, 3.2, 3.4): a runbook pane launches
+    through `gobby-agents:spawn_agent` or through the CLI (`gobby agents spawn`, and
+    `gclient launch` in command mode), and both give the same result: the role's
+    definition, the sandbox policy the role declares, its worktree binding, and
+    placement in the requested tab or split. The two paths share one implementation,
+    `spawn_agent_impl`, which gains `placement` and `sandbox` parameters; the CLI paths
+    post the daemon's HTTP tool endpoint for that tool. A launched seat is a spawned
+    session, so its definition's existing step workflow runs exactly as it does for
+    `spawn_agent` today, and a definition with no step workflow stays persona-only; no
+    new workflow is designed here, decision 17 stays as-is/to-be, and every role block's
+    step-workflow field reads "persona prompt in v1". Sandbox: every launch starts the
+    CLI under the managed SRT sandbox through the spawn path's own resolution (memories
+    827ab8eb, f08d0c93, fe8aa2a8, 4a00633f); a role's restrictions (read and write deny
+    roots, extra read or write roots, network and package-registry allowances) are
+    declared next to the role in its definition's `sandbox` block, using
+    `SandboxConfig`'s own field names and no new format, and a launch line may add or
+    narrow them; a launch with no block gets the same default policy as `spawn_agent`;
+    exemptions are part of the same declared set, `enabled: false` with a `reason`. The
+    one unsandboxed role is `program-director`, with the reason in its block: daemon
+    restart, cutover, binary promotion into `~/.gobby/bin`, pushes, and read-only hub
+    `psql`; a sandbox is inherited by child processes, so a daemon restarted from a
+    sandboxed pane would start inside it or fail. It is held in instead by role-scoped
+    hook rules in 3.1's runbook group (`agent_scope: [program-director]`): a claimed
+    task before commits, explicit-path commits only (no `git add -A`, no stash), no SQL
+    writes against the hub, restarts and cutovers only through the gobby CLI, push only
+    to `origin`, and no directory deletion. Worktrees: only the program-director writes
+    code on 0.5.0 in the main checkout; every other role that changes code works in its
+    own worktree, which the launch creates or reuses through the existing `isolation:
+    worktree` path; the twelve runbook roles change no code, so their worktree field is
+    "none", and lane developer panes (`/goal`) are the worktree case that 1.5's
+    acceptance proves. To-be, recorded and not designed because Josh is still shaping
+    it: typed privileged commands, roughly `gobby ops restart|cutover|promote|push`,
+    that a sandboxed caller can trigger and that run outside the sandbox; once they
+    exist the program-director can be sandboxed too; no deliverable. The Non-goals "No
+    pane placement for `spawn_agent`" and "No change to the gclient direct-input
+    keystroke path" are restated as as-is/to-be; decision 1's `apply_agent_definition`
+    sentence, decision 4's typed launch lines, decision 5's `pane.set_role` and decision
+    12's "the daemon gains nothing" are amended in place; deliverable 1.4 is a retired
+    slot and the launch is 1.5.
+21. **Per-role specification and continuity** (Josh, 2026-09-24 10:5x and 11:04 CDT,
+    relayed by the Program Director; #22660 folded on Josh's decision). Josh, verbatim:
+    "and the runbook plan needs to include all of the definitions for each role, what
+    they can do, how their sandbox works, rules they use, etc." Every role a runbook can
+    launch (3.2's eight chart roles and 3.4's four council roles) has one block with the
+    same ten fields, and nothing about a role lives only in prompt prose: (1)
+    definition: name, surfaces, isolation, and the launch line's provider, model and
+    effort; (2) persona: purpose and what it owns, with the prompt-book divergence,
+    registration and creation lines of 3.2; (3) can do: allowed and blocked MCP tools,
+    blocked native tools, and the code-edit right (only the program-director on 0.5.0;
+    a coding role in its worktree); (4) sandbox: the restriction block, or unsandboxed
+    with the reason; (5) rules: the selector lists, every scoped or named rule that
+    applies with its `agent_scope`, existing and new, and the names excluded; (6) skills
+    loaded and whether the core-skill bootstrap is on; (7) worktree binding; (8)
+    messaging: who it reports to and wakes, and what it may send Josh; (9) step
+    workflow: persona prompt in v1, step workflow to-be (decision 17); (10) continuity
+    (#22660): whether the role compacts or clears between tasks, when, and how it
+    recovers its operating instructions after `set_handoff(clear_session=true)`. The
+    continuity mechanism is the same for every role: the operating instructions (role
+    prompt, reporting lines, `EVENT=` and `VERDICT=` formats) are the definition's
+    prompt text, re-applied at the clear successor's SessionStart by 1.3 from the pane
+    row and delivered once on the successor's first turn through the `persona` surface;
+    the handoff carries state only (what was in flight), never instructions. Chosen
+    over the handoff carrying the prompt (agent-cooperative, lost on a crash relaunch,
+    and a second copy of the text under the exactly-once delivery contract of memories
+    81ab8aca and 27fe9c9f, which delivers one continuation pull and nothing else) and
+    over a runbook file the successor must read (cooperative again, and a fresh session
+    has no reason to know the file). Roles that clear between tasks: `researcher` after
+    each delivered `EVENT=REPORT`, `reviewer` after each `EVENT=CANDIDATE_VERDICT`,
+    `plan-mechanic` after each final-hash report, and the council writer, enhancer and
+    adversary between plans, never mid-round; the program-director, assistant,
+    lane-manager, log-monitor, archivist and elicitor compact and never clear between
+    tasks, because their context is their state. Josh's standing preferences fold into
+    the roles they govern: the assistant's memories 39b1c075 and a620b843, the
+    program-director's hook-rule set (decision 20). 3.2 and 3.4 each carry a validation
+    acceptance item proving every shipped definition matches its block, and 3.2 carries
+    the live clear-successor check #22660 asks for.
 
 ## Non-goals
 `kind: framing`
 
-- No changes to `gobby build`, `src/gobby/dispatch/`, the stage registry,
-  `epic-reviewer.yaml`, or `default.yaml`, except 3.4's deletion of the two retired
-  taskless names from `dispatch/prompts.py` and `dispatch/spawn_artifacts.py` (decision
-  18); `task-close-reviewer.yaml` changes only by 3.3's amendment step.
+- `gobby build`, as-is and to-be (decision 19): as-is, `gobby build`,
+  `src/gobby/dispatch/` and the stage registry still exist and this plan deletes none
+  of them; to-be, runbooks replace them (D2). Compatibility with them is not a
+  constraint: 3.2 and 3.4 repoint or delete every reference to a changed or removed
+  definition the cheapest way that keeps the tree green. `epic-reviewer.yaml` and
+  `default.yaml` are untouched; `task-close-reviewer.yaml` changes only by 3.3's
+  amendment step.
 - No web UI, no runbook CRUD over MCP or REST, no runbook rows in PostgreSQL.
-- No pane placement for `spawn_agent` (workspaces decision record #10 stands).
-- No change to the gclient direct-input keystroke path; the one-shot launch command
-  uses the daemon's write coordinator.
+- Pane placement for `spawn_agent`, as-is and to-be (decision 20): as-is,
+  `spawn_agent` places nothing (workspaces decision record #10 described that state);
+  to-be, 1.5 gives it `placement` (a new tab, or a split beside a named pane) and both
+  CLI paths use it.
+- The gclient direct-input keystroke path, as-is and to-be (decision 20): as-is, the R5
+  scripts typed launch lines through the daemon's write coordinator; to-be, a launch
+  types nothing (the daemon spawns the CLI into the pane) and `send-keys` stays a
+  tool-pane verb on the same coordinator. The keystroke path itself is unchanged.
 - No multi-node runbooks; tabs load into the current node's current workspace.
 - No YAML runbook format, picker dialog, or menu item in 1.x (decision 12).
+- No new step workflows and no looping or cyclic step programs (decision 20);
+  interactive step-workflow execution stays decision 17's sibling plan.
 
 ## Constraints
 `kind: framing`
 
 - **Size guard.** Hand-maintained production files stay under 1,000 lines and the hook
-  blocks threshold-crossing writes. Measured 2026-09-23: `src/gobby/terminals/workspace_ops.py`
-  990, `src/gobby/storage/workspaces.py` 969, `crates/gclient/src/app/live_loop/menu.rs` 970,
-  `crates/gclient/src/app/live_loop.rs` 938, `crates/gclient/src/app/mod.rs` 950,
-  `crates/gclient/src/daemon/live.rs` 987, `crates/gclient/src/daemon/mod.rs` 989.
-  `crates/gclient/src/app/live_loop/actions.rs` was 1,002 lines at `fff3192be0` and is 891
-  after the #22780 merge `3467854a4d`, where `crates/gclient/tests/source_size.rs` passes
-  (Program Director, 2026-09-23); the plan does not target that file. Deliverable 1.2 carries
-  genuine splits; 2.1 lives in new `command` modules and touches `startup.rs` (691 lines)
-  by two symbols and `daemon/workspace.rs` (391 lines) by one enum variant and two
-  optional fields. gclient enforces the ceiling in `crates/gclient/tests/source_size.rs`.
+  blocks threshold-crossing writes. Measured 2026-09-24 at `f7b9ccc54c`:
+  `src/gobby/terminals/workspace_ops.py` 973, `src/gobby/storage/workspaces.py` 973,
+  `src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py` 964,
+  `src/gobby/agents/spawn_executor.py` 962, `src/gobby/agents/lifecycle_monitor.py` 956,
+  `crates/gclient/src/daemon/live.rs` 984, `crates/gclient/src/app/live_loop/menu.rs` 970,
+  `crates/gclient/src/app/mod.rs` 950, `crates/gclient/src/app/live_loop.rs` 939,
+  `crates/gclient/src/daemon/mod.rs` 924, `crates/gclient/src/app/live_loop/actions.rs`
+  895. Deliverable 1.2 carries genuine splits of the two 973-line modules; 1.5 adds call
+  lines only to `_implementation.py` and `lifecycle_monitor.py` and puts its logic in
+  new modules (`spawn_agent/_placement.py`, `spawn_agent/_sandbox_block.py`,
+  `agents/pane_runs.py`, `terminals/workspace_launch.py`); `spawn_executor.py` is not
+  targeted; 2.1 lives in new `command` modules and touches `startup.rs` (691 lines) by
+  two symbols and `daemon/rest.rs` (317) by one helper. gclient enforces the ceiling in
+  `crates/gclient/tests/source_size.rs`.
 - **Schema authority is gcore.** A migration is live only after the five derived
   carriers are refreshed (docs/contracts/plan-coverage.md derived-carriers row) and the
   binary set is rebuilt and promoted via `uv run gobby cutover` from the main checkout,
@@ -264,7 +418,11 @@ Confirmed with Josh on 2026-09-21 during elicitation.
   runs before `_activate_default_agent`, so a terminals-row lookup at activation time
   sees the deferred bind too.
 - **Client couples through the public API only** (ROADMAP target architecture). gclient
-  reads runbook files locally and issues ordinary workspace ops; nothing else.
+  reads runbook files locally, issues ordinary workspace ops over the WS API, and, for
+  `launch`, posts the daemon's HTTP tool endpoint
+  (`POST /api/mcp/gobby-agents/tools/spawn_agent`, registered at
+  `src/gobby/servers/routes/mcp/tools.py` line 53) with the local token, the same REST
+  surface its TUI already uses for project lookups (decision 20); nothing else.
 - **Daemon `_place` semantics** (`src/gobby/storage/workspaces.py` `_place`,
   `_with_ratio`): `pane.split` replaces the `beside` leaf with `split(axis, 0.5,
   [beside, NEW])`, so the new pane is always the second child, and `pane.resize` sets
@@ -292,14 +450,18 @@ Confirmed with Josh on 2026-09-21 during elicitation.
   `spawn_agent`'s fallback, which is #21565's (Golden Path ruling 16) and outside this
   plan. The one tmux path into a runbook pane is `terminal_id` adoption of a
   pre-existing terminal (`_adoptable`, 792), which the registration line reports. No
-  script asserts a backend.
+  script asserts a backend. 1.5's launch forces the native backend whenever `placement`
+  is given (a pane needs the gterm host) and refuses `terminal_backend: tmux` with
+  placement; without placement `spawn_agent` is unchanged.
 
 ## P1: Daemon seams
 `kind: framing`
 
-Thin Python plus one gcore migration. 1.1 is schema only; 1.2 is the workspace rows and
-ops; 1.3 is SessionStart activation; 1.4 is the manual tool. 1.4 is independent of the
-others and lands first because 1.3 and 3.2 share its agents-guide edits.
+Thin Python plus one gcore migration. 1.1 is schema only; 1.2 is the workspace rows
+and the derived roster fields; 1.3 is SessionStart activation for the `/clear`
+successor; 1.4 is a retired slot (its tool was superseded by the launch, decision 20);
+1.5 is the launch itself: `spawn_agent` placement, the role's sandbox block, and the
+lifecycle of a pane-bound run. Work order: 1.1, 1.2, 1.5, then 2.1, then 1.3, then P3.
 
 ### 1.1 Migration 451: pane role, tab runbook and claim snapshot columns [category: code]
 `kind: deliverable`
@@ -430,174 +592,136 @@ Research context:
   `GOLDEN_SECRET`. test: `tests/runtime_grants/test_golden_vectors.py::test_grant_vectors_round_trip`.
   test: `tests/runtime_grants/test_golden_vectors.py::test_config_revision_signed`.
 
-### 1.2 Workspace rows and ops carry role, runbook, and session_ref [category: code] (depends: 1.1, 2.1)
+### 1.2 Workspace rows carry role, runbook and the derived roster fields [category: code] (depends: 1.1)
 `kind: deliverable`
 
 Targets:
-- `src/gobby/storage/workspaces.py::*` — scope-reason: dataclasses, inserts, the list/lookup queries, and a split of the layout helpers all change
+- `src/gobby/storage/workspaces.py::*` — scope-reason: dataclasses, the tab and pane inserts, the list/lookup queries, and a split of the layout helpers all change
 - `src/gobby/storage/workspace_layout.py`
-- `src/gobby/terminals/workspace_ops.py::*` — scope-reason: tab_create/pane_split params, new pane_set_role, role validation, and a split of the pane I/O methods
+- `src/gobby/terminals/workspace_ops.py::*` — scope-reason: a split of the pane I/O methods; no op gains a parameter
 - `src/gobby/terminals/workspace_pane_io.py`
-- `src/gobby/mcp_proxy/tools/workspaces/registry.py::*` — scope-reason: create_tab and split_pane gain params and set_pane_role is registered
-- `src/gobby/cli/workspaces.py::*` — scope-reason: split --role, new panes set-role, pane line output
+- `src/gobby/mcp_proxy/tools/workspaces/registry.py::*` — scope-reason: the `get_workspace` description names the roster contract
+- `src/gobby/cli/workspaces.py::*` — scope-reason: `_pane_line` prints the new fields
 - `docs/contracts/gterm-protocols.md`
 - `docs/guides/cli-commands.md`
 - `docs/guides/gclient-user-guide.md`
 - `src/gobby/install/shared/skills/gobby/references/sessions/workspaces.md`
-- `src/gobby/install/shared/workflows/runbooks/orchestration-v1.sh`
-- `src/gobby/install/shared/workflows/runbooks/plan-council-v1.sh`
-- `tests/storage/test_workspaces.py::*` — scope-reason: add role, runbook, and session_ref tests
-- `tests/terminals/test_workspace_ops.py::*` — scope-reason: add role and pane.set_role tests
-- `tests/servers/test_workspace_ws.py::*` — scope-reason: extend the hand-enumerated OPS list and add the set_role round-trip
-- `tests/mcp_proxy/test_workspaces_registry.py::*` — scope-reason: add set_pane_role and param-forwarding tests
-- `tests/cli/test_workspaces.py::*` — scope-reason: add set-role and split --role tests
+- `tests/storage/test_workspaces.py::*` — scope-reason: add role, runbook and derived-field tests
+- `tests/cli/test_workspaces.py::*` — scope-reason: add the pane line test
 
 Storage: `WorkspaceTab` gains a trailing `runbook: str | None = None`; `WorkspacePane`
-gains trailing `role: str | None = None` and two derived fields, `session_ref: str |
-None = None` and `backend: str | None = None` (read from the row only when the keys
-are present), so existing constructor sites,
-including `tests/servers/test_terminal_ws_golden.py`, are untouched. `_insert_pane` and `WorkspaceManager.create_tab`
-accept `role` (and `runbook` on the tab insert); `WorkspaceManager.add_pane` accepts
-`role`; new `WorkspaceManager.set_pane_role(pane_id, role)` mirrors `rename_pane`
-(strip, empty clears). `session_ref` and `backend` are derived by one JOIN in the two read paths that
+gains trailing `role: str | None = None` and three derived fields, `session_ref: str |
+None = None`, `backend: str | None = None` and `sandbox: dict | None = None` (read from
+the row only when the keys are present), so existing constructor sites, including
+`tests/servers/test_terminal_ws_golden.py`, are untouched. `_insert_pane` and
+`WorkspaceManager.create_tab` accept `role` (and `runbook` on the tab insert) and
+`WorkspaceManager.add_pane` accepts `role`; the only caller that passes them is 1.5's
+reserve step, because the launch is the only writer of a pane's role and a tab's
+runbook (decision 20). The derived fields come from one JOIN in the two read paths that
 feed snapshots and activation, `list_panes` and `get_pane_for_terminal`:
 `LEFT JOIN terminals tm ON tm.id = p.terminal_id AND tm.state IN ('pending','live')
 LEFT JOIN sessions s ON s.id = tm.session_id LEFT JOIN projects pr ON pr.id = s.project_id`,
-selecting `COALESCE(NULLIF(btrim(pr.name), ''), s.project_id::text) || '#' || s.seq_num::text`,
-which mirrors `Session.ref` in `src/gobby/storage/session_models.py` including its
-strip of `project_name`, so the roster ref is the one `send_message` resolves even when
-`projects.name` carries surrounding whitespace. The same JOIN selects `tm.backend` as
-`backend`, so the roster shows which terminal backend each seat got (#22691 criterion
-3) without any definition naming one (criterion 1). `RETURNING *` paths leave it None, which
-is correct at insert. `to_dict()` stays `asdict` for the existing fields and drops
-`role`, `runbook`, `session_ref` and `backend` when they are None (existing nulls such as
-`title`, `terminal_id`, and `label` stay, because the fixtures already contain them),
-so the golden corpus in `tests/fixtures/terminal_ws_golden/` is byte-identical and
-every event, snapshot, and MCP payload carries the new fields only when set; gclient
-ignores unknown keys on decode, so a set value still reaches the client. `move_pane`
-and `swap_panes` are not rewritten to reinsert the pane row: `swap_panes` remaps
-layout leaves and a cross-tab `move_pane` updates `tab_id` and `ref` only, so the role
-column survives both (decision 1) and is lost only with the row on `remove_pane`. Split: move the layout helpers (`LayoutLeaf`,
+selecting `COALESCE(NULLIF(btrim(pr.name), ''), s.project_id::text) || '#' || s.seq_num::text`
+as `session_ref` (mirroring `Session.ref` in `src/gobby/storage/session_models.py`,
+including its strip of `project_name`, so the roster ref is the one `send_message`
+resolves), `tm.backend` as `backend` (#22691 criterion 3, with no definition naming one,
+criterion 1), and `s.sandbox_enabled` with `s.sandbox_policy_hash` as `sandbox`
+(`{"enabled": bool, "policy_hash": str | None}`, the flags 1.5's launch records on the
+session row and 1.5 copies to a `/clear` successor), so the roster shows which seats are
+sandboxed (V1 step 5). `RETURNING *` paths leave the derived fields None, which is
+correct at insert. `to_dict()` stays `asdict` for the existing fields and drops `role`,
+`runbook`, `session_ref`, `backend` and `sandbox` when they are None (existing nulls
+such as `title`, `terminal_id`, and `label` stay, because the fixtures already contain
+them), so the golden corpus in `tests/fixtures/terminal_ws_golden/` is byte-identical
+and every event, snapshot, and MCP payload carries the new fields only when set;
+gclient ignores unknown keys on decode. `move_pane` and `swap_panes` are not rewritten
+to reinsert the pane row: `swap_panes` remaps layout leaves and a cross-tab `move_pane`
+updates `tab_id` and `ref` only, so the role column survives both (decision 1) and is
+lost only with the row on `remove_pane`. Split: move the layout helpers (`LayoutLeaf`,
 `LayoutSplit`, `validate_layout`, `layout_pane_ids`, `_place`, `_with_ratio`,
 `mint_pane_id`) out of `src/gobby/storage/workspaces.py` into the new
-`src/gobby/storage/workspace_layout.py` and update importers, so the 969-line module
+`src/gobby/storage/workspace_layout.py` and update importers, so the 973-line module
 stays under the ceiling.
 
-Ops: `WorkspaceEventKind` gains `pane.role_set`; `WorkspaceOps.tab_create` gains
-kw-only `runbook: str | None = None, role: str | None = None`; `WorkspaceOps.pane_split`
-gains `role: str | None = None`; new `WorkspaceOps.pane_set_role(actor, pane, role, *,
-node=None)` copies `pane_rename` and emits `pane.role_set`. A private
-`_require_persona_definition(role, project_id)` calls `resolve_agent` and
-`supports_surface("persona")`, raising `WorkspaceOpError("invalid_op", ...)`, and runs
-whenever a role is set: without it a typo yields a session with no activation at all
-(1.3 failure mode). Split: move the pane I/O surface (`PaneOutputWait`,
+Ops: no workspace op gains a parameter and no `pane.set_role` exists (decision 20,
+round file position g): `tab.create` and `pane.split` keep creating shell and tool
+panes without a role, and 1.5 reserves and binds role-bearing panes through the storage
+calls above. Split: move the pane I/O surface (`PaneOutputWait`,
 `IDEMPOTENCY_KEY_PATTERN`, the `WAIT_CAPTURE_*` constants, `pane_send_text`,
 `pane_send_keys`, `pane_read`, `pane_wait_for_output`, `_write`, `_pane_terminal`,
 `_runtime`) out of `src/gobby/terminals/workspace_ops.py` into a mixin base class in
 the new `src/gobby/terminals/workspace_pane_io.py`; `WORKSPACE_OPS` still discovers the
-inherited coroutines. `PaneWrite` and `write_workspace_pane` already live in
-`src/gobby/terminals/workspace_writes.py` (#22722) and stay there; `_write` keeps
-delegating to them.
+inherited coroutines, which is also what lets 1.5 add its launch mixin. `PaneWrite` and
+`write_workspace_pane` already live in `src/gobby/terminals/workspace_writes.py`
+(#22722) and stay there; `_write` keeps delegating to them.
 
-Surfaces: WS derives `pane.set_role` automatically (only the `OPS` list in
-`tests/servers/test_workspace_ws.py` is enumerated by hand). MCP registry: `create_tab`
-and `split_pane` forward the new params; new `set_pane_role(pane, role=None, node=None)`
-registered after `rename_workspace_item` with a description that names the roster
-contract (tabs carry `runbook`, panes carry `role`, `session_ref` and `backend`). CLI:
-`gobby panes split --role`, new `gobby panes set-role REF [ROLE]` (omit ROLE to clear),
-and `_pane_line` prints `role`, `session_ref` and `backend` when present; there is no `tabs create`
-CLI, so `runbook` is WS/MCP-only and the docs say so. `pane.set_role` and `set-role`
-write the binding only: the session already running in that pane keeps its active
-definition until its next SessionStart (`/clear` or a relaunch, 1.3); an immediate switch
-is `apply_agent_definition` (1.4) called from that session, and the tool description and
-the docs say both. Docs: op vocabulary, snapshot row
-fields, and the `pane.role_set` event in `docs/contracts/gterm-protocols.md`; the CLI
-block in `docs/guides/cli-commands.md`; a "Tabs and panes" paragraph in
-`docs/guides/gclient-user-guide.md`; the tool list in the gobby skill's
-`references/sessions/workspaces.md`. The golden corpus fixtures are not regenerated:
-rows without a role, runbook, or bound session serialize exactly as today, and
-gclient's row structs tolerate the new keys when set (no `deny_unknown_fields`). Bind the seats
-in both bundled runbook scripts: `orchestration-v1.sh` adds `--runbook orchestration-v1`
-to its two `new-tab` lines, with `--role program-director` and `--role log-monitor`, and
-`plan-council-v1.sh` adds `--runbook plan-council-v1 --role plan-writer` to its `new-tab`
-line; every `split` line gets `--role <seat>`; 2.1's verbs forward those flags only when
-given.
+Surfaces: the WS snapshot and events carry the new pane and tab fields with no op
+change; the MCP `get_workspace` description names the roster contract (tabs carry
+`runbook`; panes carry `role`, `session_ref`, `backend` and `sandbox`); `_pane_line`
+prints `role`, `session_ref`, `backend` and `sandbox.enabled` when present. Docs: the
+snapshot row fields in `docs/contracts/gterm-protocols.md`; the pane line in
+`docs/guides/cli-commands.md`; a "Tabs and panes" paragraph in
+`docs/guides/gclient-user-guide.md`; the roster fields in the gobby skill's
+`references/sessions/workspaces.md`. The golden corpus fixtures are not regenerated.
 
 Research context:
-- Entry points: `WorkspaceOps.tab_create` (372-402), `pane_split` (460-490),
-  `pane_rename` (541-548), `_fill` (823-873, returns the `set_pane_terminal` row, which
-  already carries `role`), `_emit` (721-738); `WorkspaceManager.create_tab` (600-638),
-  `add_pane` (722-735), `rename_pane` (817-822), `list_panes` (570-580),
-  `get_pane_for_terminal` (888-893); `TerminalManager.bind_session` writes
+- Entry points: `WorkspaceOps.tab_create` (372-402), `pane_split` (460-490), `_fill`
+  (823-873, returns the `set_pane_terminal` row, which already carries `role`), `_emit`
+  (721-738); `WorkspaceManager.create_tab` (600-638), `add_pane` (722-735), `list_panes`
+  (570-580), `get_pane_for_terminal` (888-893); `TerminalManager.bind_session` writes
   `terminals.session_id` (`src/gobby/storage/terminals.py` 663).
-  `WorkspaceOps.workspace_snapshot` (332-368, now with a `project_id` filter) reads
-  through `list_tabs`/`list_panes`, so snapshots carry the new fields without further
-  edits; `workspace_list` (281-287) returns workspace rows only. Line numbers are
-  2026-09-23 navigation hints only.
+  `WorkspaceOps.workspace_snapshot` (332-368) reads through `list_tabs`/`list_panes`,
+  so snapshots carry the new fields without further edits. Line numbers are 2026-09-23
+  navigation hints only; `workspace_ops.py` is 973 lines at `f7b9ccc54c`.
+- `sessions.sandbox_enabled` (baseline.sql 3505) and `sessions.sandbox_policy_hash`
+  (3506) are written by `_record_actual_sandbox_enforcement`
+  (`src/gobby/agents/spawn_executor_support.py` 245-262) on every spawn.
 - Only external constructor site of the dataclasses: `tests/servers/test_terminal_ws_golden.py`
   (`WorkspaceTab(` / `WorkspacePane(` around 500-582); it compares `to_dict()` to the
   fixtures, and `crates/gclient/tests/ws_golden.rs` re-encodes the same files byte for
-  byte, which is why the new keys are omitted when None rather than emitted as nulls:
-  either leaf then closes without the other.
+  byte, which is why the new keys are omitted when None rather than emitted as nulls.
 - `Session.ref` (`src/gobby/storage/session_models.py`) strips `project_name` before
   falling through to `project_id`; the SQL `btrim` mirrors that.
 - `swap_panes` (`workspaces.py` 752-764) remaps layout leaves only; `move_pane`
   (766-805) updates `tab_id` and `ref`; `remove_pane` (737-750) deletes the row.
-- Reusable: `resolve_agent` (`src/gobby/workflows/agent_resolver.py`) and
-  `AgentDefinitionBody.supports_surface`.
 - Rejected: a bind-time workspace event for `session_ref` (roster consumers read a
-  snapshot; SessionStart binding emits no workspace event today and does not need to);
-  a roster service or dedicated `gobby-runbooks` MCP server (get_workspace already is
-  the roster).
-- Planned checks: the five test files above plus
-  `DATABASE_URL=... GOBBY_TEST_PROTECT=1 uv run pytest tests/storage/test_workspaces.py tests/terminals/test_workspace_ops.py tests/servers/test_workspace_ws.py tests/mcp_proxy/test_workspaces_registry.py tests/cli/test_workspaces.py tests/servers/test_terminal_ws_golden.py`,
+  snapshot); a roster service or dedicated `gobby-runbooks` MCP server (get_workspace
+  already is the roster); `role`/`runbook` parameters on `tab.create` and `pane.split`
+  and a `pane.set_role` op (R5's design; a role written by anything but the launch would
+  bind a pane to a definition its process was never launched as, decision 20).
+- Planned checks: `DATABASE_URL=... GOBBY_TEST_PROTECT=1 uv run pytest tests/storage/test_workspaces.py tests/terminals/test_workspace_ops.py tests/servers/test_workspace_ws.py tests/cli/test_workspaces.py tests/servers/test_terminal_ws_golden.py`,
   `wc -l` on both split modules under 1,000, ruff, mypy.
 
-**Granularity:** more than six production Target files. Kept as one leaf because the
-column, the op, the derived field, and the three surfaces are one wire contract that
-cannot be verified independently; the two module splits are mechanical moves required
-by the size guard, not separate outcomes.
+Removed acceptance items (decision 20, round file position g): 1.2.2 (role and runbook
+parameters on `tab.create` and `pane.split`), 1.2.3 (`pane.set_role`), 1.2.4 (`gobby
+panes set-role`) and 1.2.7 (the scripts' `--role` and `--runbook` flags); the numbers
+stay retired.
 
 **Acceptance:**
 
-- 1.2.1 - `WorkspaceTab.runbook` and `WorkspacePane.role`/`session_ref` round-trip
-  through `create_tab`, `add_pane`, and `set_pane_role`; `list_panes` derives
+- 1.2.1 - `WorkspaceTab.runbook` and `WorkspacePane.role` round-trip through
+  `create_tab(runbook=...)` and `add_pane(role=...)`; `list_panes` derives
   `session_ref` as `<project>#<seq>` for a pane whose terminal is bound to a session,
   with the project name stripped and an empty name falling through to `project_id`,
-  and `backend` from the same terminal row; `to_dict()` includes a set role and
-  runbook and omits the four keys when None; a
-  role survives `swap_panes` and a cross-tab `move_pane` and is gone after `remove_pane`.
-  test: `tests/storage/test_workspaces.py::test_role_runbook_round_trip_and_set_pane_role_clears`.
-  test: `tests/storage/test_workspaces.py::test_list_panes_derives_session_ref_from_bound_terminal`.
-  test: `tests/storage/test_workspaces.py::test_to_dict_omits_unset_role_runbook_and_session_ref`.
+  `backend` from the same terminal row, and `sandbox` from the session's two flags;
+  `to_dict()` includes a set role and runbook and omits the five keys when None; a role
+  survives `swap_panes` and a cross-tab `move_pane` and is gone after `remove_pane`.
+  test: `tests/storage/test_workspaces.py::test_role_and_runbook_round_trip_through_inserts`.
+  test: `tests/storage/test_workspaces.py::test_list_panes_derives_session_ref_backend_and_sandbox`.
+  test: `tests/storage/test_workspaces.py::test_to_dict_omits_unset_role_runbook_and_derived_fields`.
   test: `tests/storage/test_workspaces.py::test_role_survives_swap_and_move_and_dies_with_remove`.
-- 1.2.2 - `tab.create` and `pane.split` accept `role` (and `runbook` on tab.create) and
-  `pane.set_role` emits `pane.role_set`; a role that is not a persona-capable definition
-  is refused with `invalid_op`. test:
-  `tests/terminals/test_workspace_ops.py::test_tab_create_and_pane_split_carry_role_and_runbook`.
-  test: `tests/terminals/test_workspace_ops.py::test_pane_set_role_emits_role_set_event`.
-  test: `tests/terminals/test_workspace_ops.py::test_pane_set_role_rejects_non_persona_definition`.
-- 1.2.3 - The WS op table and MCP registry expose `pane.set_role` / `set_pane_role` and
-  the new params. test: `tests/servers/test_workspace_ws.py::test_pane_set_role_op_round_trips`.
-  test: `tests/mcp_proxy/test_workspaces_registry.py::test_set_pane_role_tool_updates_pane`.
-- 1.2.4 - `gobby panes set-role` and `gobby panes split --role` call the tools. test:
-  `tests/cli/test_workspaces.py::test_panes_set_role_calls_tool`.
-  test: `tests/cli/test_workspaces.py::test_panes_split_forwards_role`.
 - 1.2.5 - Layout helpers live in `workspace_layout.py` and pane I/O in
   `workspace_pane_io.py`; both original modules stay under 1,000 lines and the golden
   corpus stays byte-identical with the fixtures unchanged. file: `src/gobby/storage/workspace_layout.py`.
   file: `src/gobby/terminals/workspace_pane_io.py`.
   test: `tests/servers/test_terminal_ws_golden.py::test_python_matches_terminal_ws_golden_corpus`.
-- 1.2.6 - Protocol, CLI, and user-guide docs describe `role`, `runbook`, `session_ref`,
-  `backend`, `pane.set_role` (a binding for the next SessionStart, never a live switch),
-  and `pane.role_set`. behavior: "Workspace messages" in
-  `docs/contracts/gterm-protocols.md`.
-- 1.2.7 - Both bundled runbook scripts bind each tab's runbook and every seat's role
-  through the `--runbook` and `--role` flags. file:
-  `src/gobby/install/shared/workflows/runbooks/orchestration-v1.sh`. file:
-  `src/gobby/install/shared/workflows/runbooks/plan-council-v1.sh`.
+- 1.2.6 - Protocol, CLI, and user-guide docs describe `role`, `runbook`,
+  `session_ref`, `backend` and `sandbox` as fields the launch writes and the roster
+  reads, and `_pane_line` prints them. behavior: "Workspace messages" in
+  `docs/contracts/gterm-protocols.md`. test:
+  `tests/cli/test_workspaces.py::test_pane_line_prints_role_session_ref_backend_and_sandbox`.
 
-### 1.3 SessionStart activates the pane's role [category: code] (depends: 1.2, 1.4)
+### 1.3 SessionStart activates the pane's role [category: code] (depends: 1.2, 1.5)
 `kind: deliverable`
 
 Targets:
@@ -642,8 +766,17 @@ Research context:
   `activate_default_agent` log and return None, merging nothing; reconcile later
   backfills `default` with no active rules.
 - Compaction keeps the role (same row, same variables); `/clear` creates a successor
-  in the same pane, whose SessionStart resolves the same pane row. No change to
-  `_bind_clear_successor` or `get_handoff` is needed.
+  in the same pane, whose SessionStart resolves the same pane row. A launched seat
+  (1.5) is a spawned session whose definition was applied at spawn; its `/clear`
+  successor is an interactive session with no run link (`_bind_clear_successor`,
+  `materialize.py` 152, copies task claims only), so this helper is what re-applies the
+  role there, and `_inject_agent_instructions_if_needed` (`src/gobby/hooks/event_handlers/_agent.py`
+  254) then delivers `prompts.persona` once on the successor's first turn (the spawned
+  predecessor received `prompts.agent`; the two keys carry one anchored text, 3.2), which
+  is decision 21's continuity mechanism. The seat's run stays alive across the clear:
+  the native session ends as `paused`, never `expired` (`_session_end.py` 62-83), so
+  the run is not completed, and its `terminal_id` still names the live terminal. 1.5
+  copies the session's sandbox flags to the successor; `get_handoff` is unchanged.
 - Rejected: the single edit inside `resolve_agent_name` (would add two queries to every
   reconcile repair); stamping the role into the handoff markdown (agent-cooperative and
   lost on crash relaunch).
@@ -661,95 +794,307 @@ Research context:
   `tests/hooks/test_session_start_handlers.py::test_pane_role_activates_definition_after_native_bind`.
 - 1.3.3 - The role also applies when the native bind lands on the retry path. test:
   `tests/hooks/test_session_materialize.py::test_pane_role_applies_on_retry_bind_path`.
-- 1.3.4 - Guides describe pane-bound roles, the `/clear` and relaunch behavior, that a
-  role set on a pane reaches its running session only at that session's next
-  SessionStart while `apply_agent_definition` switches it now, and the tmux limitation.
-  behavior: "pane-bound roles" in `docs/guides/agents.md`.
+- 1.3.4 - Guides describe pane-bound roles, the `/clear` behavior, that a pane's role
+  is written only by the launch (1.5) so a role change is a relaunch, and the tmux
+  limitation. behavior: "pane-bound roles" in `docs/guides/agents.md`.
+- 1.3.5 - The `/clear` successor of a launched seat (predecessor session carrying
+  `is_spawned_agent` and `_agent_type` equal to the pane role) activates the same role
+  with `is_spawned_agent` absent and receives the definition's persona text exactly
+  once on its first turn. test:
+  `tests/hooks/test_pane_role_activation.py::test_clear_successor_of_launched_seat_reactivates_role_and_gets_persona_once`.
 
-### 1.4 gobby-agents:apply_agent_definition [category: code]
+### 1.4 Retired slot: gobby-agents:apply_agent_definition (superseded by 1.5, decision 20)
+`kind: framing`
+
+R5's 1.4 delivered a live full-definition switch for a running session. Decision 20
+makes the launch the only writer of a pane's role (round file, R6 position g), so a
+role change is a relaunch and no live switch, `pane.set_role`, `--role` flag or `gobby
+panes set-role` exists. Acceptance items 1.4.1 to 1.4.5 are removed with it; the number
+is not reused, so D1 and the round file keep resolving.
+
+### 1.5 Runbook launch: spawn_agent placement, the role's sandbox block, pane-bound runs [category: code] (depends: 1.1, 1.2)
 `kind: deliverable`
 
 Targets:
-- `src/gobby/mcp_proxy/tools/apply_persona.py::*` — scope-reason: add the new apply_agent_definition_impl and ALWAYS_REAPPLY_KEYS beside apply_persona_impl
-- `src/gobby/hooks/event_handlers/_session_start/agents.py::activate_default_agent`
-- `src/gobby/mcp_proxy/tools/agents_spawn_tools.py::*` — scope-reason: one tool registration added beside apply_persona
+- `src/gobby/mcp_proxy/tools/spawn_agent/_placement.py`
+- `src/gobby/mcp_proxy/tools/spawn_agent/_sandbox_block.py`
+- `src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py::spawn_agent_impl`
+- `src/gobby/mcp_proxy/tools/spawn_agent/_factory.py::*` — scope-reason: the tool schema gains `placement` and `sandbox`, forwards them, and defaults the parent to the system session for a caller with no session
+- `src/gobby/terminals/workspace_launch.py`
+- `src/gobby/terminals/workspace_ops.py::*` — scope-reason: inherits the launch mixin and `pane_close` terminates a pane-bound run
+- `src/gobby/terminals/actor_scope.py::resolve_actor_scope`
+- `src/gobby/agents/pane_runs.py`
+- `src/gobby/agents/idle_check_handler.py::IdleCheckHandler._get_active_terminal_runs`
+- `src/gobby/agents/terminal_prompt_monitor.py::*` — scope-reason: its run listing filters pane-bound runs by the shared predicate
+- `src/gobby/agents/lifecycle_monitor.py::*` — scope-reason: the stuck and completed-task checks skip pane-bound runs by the shared predicate; call lines only
+- `src/gobby/workflows/agent_models.py::AgentDefinitionBody`
+- `src/gobby/hooks/event_handlers/_session_start/materialize.py::_bind_clear_successor`
+- `src/gobby/cli/agents.py::spawn_agent_cmd`
 - `docs/guides/agents.md`
+- `docs/guides/sandboxing.md`
 - `docs/guides/mcp-tools.md`
-- `src/gobby/install/shared/skills/gobby/references/agents/personas.md`
-- `tests/mcp_proxy/tools/test_apply_agent_definition.py`
+- `docs/guides/cli-commands.md`
+- `tests/mcp_proxy/tools/spawn_agent/test_spawn_placement.py`
+- `tests/mcp_proxy/tools/spawn_agent/test_sandbox_block.py`
+- `tests/terminals/test_workspace_launch.py`
+- `tests/agents/test_pane_run_lifecycle.py`
+- `tests/cli/test_cli_agents.py::*` — scope-reason: add the placement and sandbox flag tests
+- `tests/workflows/test_agent_models.py::*` — scope-reason: add the `sandbox` field tests
+- `tests/hooks/test_session_materialize.py::*` — scope-reason: add the sandbox-flag copy test
 
-New `apply_agent_definition_impl(agent, db=None, session_id=None, variables=None,
-cli_source=None)` (new symbol), structured like `apply_persona_impl`: resolve the
-caller session; refuse spawned sessions (`agent_run_id`/`agent_depth` or
-`is_spawned_agent`) because rules and blocked tools are rewritten; require the `persona`
-surface with the same error text; `build_persona_changes(agent_body, session_id, db,
-is_spawned=False)`; keep a change only if its key is in the always-reapply identity set,
-is a definition-owned `workflows.variables` key, or is absent from the session (so live
-state and task claims survive); add `_persona_name`, `_agent_identity_reinject: True`,
-`_agent_context_injected: False` after the filter, so those three replace live values
-(a session whose `_persona_name` still names the previous persona would otherwise keep
-prompting as it, because `_inject_agent_instructions_if_needed` prefers a non-empty
-`_persona_name` over `_agent_type`); run `colliding_persona_variable_error`; merge.
-Never touches `agent_step_instances` in v1 (decision 17: the sibling plan decides where
-an interactive session's step program is instantiated). Extract the seven identity keys
-from
-`activate_default_agent` into `ALWAYS_REAPPLY_KEYS` (new symbol) in `apply_persona.py`,
-exactly `_agent_type`, `_active_rule_names`, `_active_skill_names`, `_skill_format`,
-`_agent_blocked_tools`, `_agent_blocked_mcp_tools`, and `is_spawned_agent`, and import
-it there so the two cannot drift. Register
-`apply_agent_definition(agent: str, variables: dict | None = None)` next to
-`apply_persona` and document it as the full lifecycle switch versus the narrow persona
-switch, and as the one live switch: `pane.set_role` (1.2) binds the next SessionStart
-and leaves the running session alone.
+Tool contract. `gobby-agents:spawn_agent` gains two optional parameters. `placement`
+is `{"tab": {"workspace": REF | null, "project": NAME | ID, "title": str | null,
+"runbook": str | null}}` (a new tab in the node's current workspace, or the named one,
+whose first pane is the seat) or `{"split": {"pane": REF, "axis": "horizontal" |
+"vertical"}}` (a new pane beside the named one, the daemon's `_place` semantics per
+Constraints). `sandbox` is a restriction block in `SandboxConfig`'s field names
+(`extra_read_paths`, `extra_write_paths`, `extra_deny_read_paths`,
+`extra_deny_write_paths`, `allowed_domains`, `denied_domains`, `allow_git_network`,
+`allow_package_registries`, `allow_unix_sockets`) plus `enabled: false` with a required
+`reason`; `backend`, `mode` and `allow_network` are daemon-owned and refused. The pane's
+role is the `agent` name; a `placement` without `agent` is refused, and so is
+`terminal_backend: tmux` with placement. The definition's own `sandbox` block (new
+optional `AgentDefinitionBody.sandbox`, the same shape, validated by
+`coerce_sandbox_config`'s rules) is applied first and the call's block on top: lists
+append, booleans override, and `enabled: false` is honored only when it carries a
+`reason` (either block may carry it). No block means the spawn path's default policy.
+
+Order inside the tool (`_placement.py`, called from `spawn_agent_impl` by one branch
+after the definition resolves): (1) resolve the definition; it must declare the `spawn`
+surface (`prompts.agent`) and, for a runbook role, the `persona` surface too, because
+the `/clear` successor is delivered `prompts.persona` (1.3); (2) reserve the pane row
+with `role` and, for a new tab, `runbook` and `title`, through the new
+`WorkspaceOps` mixin `src/gobby/terminals/workspace_launch.py` (`reserve_launch_pane`,
+`bind_launch_pane`, `release_launch_pane`, on the `_fill` pattern: insert the pane row
+with `mark_spawn_in_flight`, no shell), so the pane's identity env
+(`_identity_env`: `GOBBY_NODE_ID`, `GOBBY_WORKSPACE_ID`, `GOBBY_TAB_ID`,
+`GOBBY_PANE_ID`, `GOBBY_PANE_REF`, `GOBBY_NODE_REF`) exists before the provider
+process does; (3) merge the sandbox blocks into `agent_sandbox_config(daemon_config)`
+at the existing seam (`_sandbox_block.py`, replacing the plain
+`apply_write_grant(agent_sandbox_config(...), write_grant)` value when a block is
+present) and record the reason, when any, as the launched session's initial variable
+`_launch_sandbox_reason`; (4) run the existing spawn with `terminal_backend` forced to
+`native`, `extra_env` set to the identity env, `parent_session_id` equal to the caller's
+session or, for a caller with none (the CLI paths), the machine system session
+(`system_session_id()`, the scheduler's precedent), `project_path` set to the tab's
+checkout (or the worktree path), `notify_parent_on_completion` false and no `timeout`
+(the definition's `timeout` stays 0, so the run row has no `timeout_seconds`); (5) bind
+the pane to the spawned terminal (`set_pane_terminal(owns_terminal=True)`), emit
+`tab.created` or `pane.added` with the row, and label the pane with the role when no
+title was given; on any failure after (2) release the reserved row and let the spawn's
+own rollback run. The reply gains `pane_ref`, `tab_ref`, `terminal_id`, `sandbox`
+(`{"enforced": bool, "policy_hash": str | None, "reason": str | None}`) and
+`worktree_path`.
+
+Size guard (Constraints): `src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py`
+(964 lines) is split: the placement branch moves into
+`src/gobby/mcp_proxy/tools/spawn_agent/_placement.py` and the sandbox-block merge
+into `src/gobby/mcp_proxy/tools/spawn_agent/_sandbox_block.py`, leaving call lines;
+`src/gobby/agents/lifecycle_monitor.py` (956) is split: the pane-bound predicate and
+the exemption checks move into `src/gobby/agents/pane_runs.py`;
+`src/gobby/terminals/workspace_ops.py` (973) is split: the launch pane ops move into
+`src/gobby/terminals/workspace_launch.py` as a mixin base.
+
+Worktree binding is the existing `isolation: worktree` path (`worktree_id`,
+`branch_name`, `base_branch` on the tool): the spawn creates or reuses the worktree,
+`SpawnRequest.cwd` is its path, and a new tab created for such a launch is bound to it
+through `tab_create`'s existing `worktree_id`. The twelve runbook roles are `isolation:
+none`; a lane developer pane is the worktree case (decision 20).
+
+Lifecycle of a pane-bound run (`src/gobby/agents/pane_runs.py`, one predicate
+`is_pane_bound_run(run)`: the run's `terminal_id` is the `terminal_id` of a
+`workspace_panes` row): `resolve_actor_scope` admits a caller whose live terminal is
+pane-bound as `session:<ref>` (today every caller with an `agent_run_id` is refused,
+`actor_scope.py` 64-90), so the assistant seat can create tabs and launch seats;
+`IdleCheckHandler._get_active_terminal_runs`, the prompt monitor's periodic Enter, and
+`LifecycleMonitor`'s `check_autonomous_stuck_agents` and `check_completed_task_agents`
+skip pane-bound runs (a persistent seat idles by design and is never reprompted, failed,
+stuck-intervened, typed into or completed for it); the stale sweep already skips runs
+with a live terminal (`_cleanup.py` 36-72). `pane_close` on a pane-bound run terminates
+the run through the existing termination path and reaps its sandbox
+(`reap_terminal_sandbox_run`); a CLI that exits by itself ends its session as `expired`
+and completes the run today. `_bind_clear_successor` copies `sandbox_enabled` and
+`sandbox_policy_hash` from the predecessor, because the successor runs in the same
+sandboxed process (1.2's roster field stays true across a `/clear`).
+
+CLI. `gobby agents spawn` gains `--tab TITLE --project NAME|ID [--workspace REF]
+[--runbook NAME]` or `--split REF --right|--down`, `--sandbox JSON`, `--unsandboxed
+REASON` and `--agent`; `--session` becomes optional (the system session is the parent
+when it is absent); with placement the command omits `timeout` and sends
+`notify_parent_on_completion: false`. It posts the same
+`POST /api/mcp/gobby-agents/tools/spawn_agent` it posts today. gclient's `launch` verb
+(2.1) posts the same endpoint with the same body, so the three callers share one
+implementation and one reply.
 
 Research context:
-- `apply_persona_impl` (`apply_persona.py` 196-305) and `build_session_persona_changes`
-  (120-139) write only `_persona_name`, `_active_skill_names`, `_skill_format`, and the
-  reinject flags; `build_persona_changes` (40-117) is the full delta and also emits
-  every enabled variable default not already in `changes` (~96-104), which is why the
-  existing-variable filter is required. `activate_default_agent` applies that filter
-  today (`agents.py` ~150-190).
-- Registration precedent: `agents_spawn_tools.py` 107-122; `_session_is_spawned`
-  (`src/gobby/hooks/session_activation.py` 693-698).
-- Precedent tests: `tests/mcp_proxy/tools/test_apply_persona.py` `TestApplyPersonaImpl`
-  (411-769, fixture `db` at 27-29) and `test_stepful_persona_preserves_lifecycle_and_enforcement_state`
-  (551-637) for the step-instance invariant.
-- Rejected: a `full=True` flag on `apply_persona` (two behaviors behind one name, and
-  the narrow tool must keep refusing nothing for spawned sessions).
+- `spawn_agent_impl` (`src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py`, 964
+  lines at `f7b9ccc54c`): the definition's `prompts.agent` is required at 147; the
+  sandbox seam is `apply_write_grant(agent_sandbox_config(daemon_config), write_grant)`
+  (~397); `parent_session_id is required` (~400) and `runner.can_spawn(parent)` (~403;
+  `agents/session.py` 118-143, depth under 5; the system session is depth 0);
+  `effective_timeout` (324-328: `None` with a definition `timeout` of 0 means no
+  timeout). Tool schema and registration: `_factory.py` (784 lines; `timeout: float |
+  None = None` at 334, `name="spawn_agent"` at 307). `_resolve_spawn_project_context`
+  (`_factory.py` 182-235): an explicit `project_path` wins, which is why the launch
+  passes the tab's checkout.
+- The CLI path is already the tool over HTTP: `gobby agents spawn` (`src/gobby/cli/agents.py`
+  176-307) posts `{daemon}/api/mcp/gobby-agents/tools/spawn_agent` with the local token
+  and today requires `--session` (180) and always sends `--timeout` (198, default 120).
+  Route: `router.post("/{server_name}/tools/{tool_name}")(mcp_proxy)` in
+  `src/gobby/servers/routes/mcp/tools.py` 53. System session: `system_session_id()`
+  (`src/gobby/storage/sessions/_constants.py` 77-80), `ensure_system_session` (126-196);
+  precedent `src/gobby/scheduler/executor.py` 304.
+- Spawn internals: `SpawnRequest` (`src/gobby/agents/spawn_models.py` 88-147: `cwd`,
+  `extra_env`, `sandbox_config`, `terminal_backend`, `timeout_seconds`, `worktree_id`);
+  `_default_backend` (`spawn_executor.py` 118-122); the native backend spawns argv on
+  the gterm host with env, cwd, rows and cols (`terminals/native_runtime.py` 380-452;
+  `spawn_web_terminal`, `terminals/web_spawn.py` 69-274: create pending row, prepare,
+  promote); `build_cli_command` (`agents/spawners/command_builder.py` 12-219) in the
+  default `agent` mode launches the provider's TUI with the prompt (`--session-id`,
+  `--model`, `--effort`, `--dangerously-skip-permissions` for claude), so a spawn-path
+  launch is the same TUI a typed launch line gave. Sandbox: `prepare_sandbox_launch`
+  (`agents/srt_runtime.py` 472-669) refuses `allow_network: true` under SRT;
+  `_sandbox_requested` and `_unsupported_sandbox_request_error`
+  (`spawn_executor_support.py` 218-243); `_record_actual_sandbox_enforcement` (245-262)
+  writes `sessions.sandbox_enabled` and `sandbox_policy_hash`; deny roots are emitted
+  literal and canonical (`sandbox_policy.py` `deny_paths` 258-268) and sandbox-runtime
+  gives `denyWrite` precedence over `allowWrite` (`sensitive_write_roots` docstring,
+  302-320), so a read-only seat's `extra_deny_write_paths: ["."]` denies every write
+  under its checkout; `compute_sandbox_paths` (`sandbox.py` 249-371) appends
+  `config.extra_*` to the daemon-owned roots.
+- Pane path: `tab_create` (`workspace_ops.py` 372-402) and `pane_split` (460-490)
+  adopt an existing terminal through `_pane_source` (754-790) and `_adoptable`
+  (792-807), and `_fill` (823-873) inserts the pane row before it spawns `zsh` with
+  `_identity_env` (228-242); adopting after the spawn would leave the CLI without
+  `GOBBY_PANE_REF`, which is why the launch reserves first. `_adoptable` requires the
+  terminal to be admitted to the actor scope.
+- Lifecycle: runs join terminals by `agent_runs.terminal_id` (`_cleanup.py` 36-72;
+  `services.terminal_for(run)` in `idle_check_handler.py` `_get_active_terminal_runs`);
+  `check_idle_agents` (109-135) reprompts and fails idle runs;
+  `check_periodic_enters` (`terminal_prompt_monitor.py`) types Enter into every active
+  spawned terminal; `check_autonomous_stuck_agents` (`lifecycle_monitor.py` 603-697),
+  `check_completed_task_agents` (792-797); `check_unhealthy_agents`
+  (`agent_health.py` 179-216) times out only runs with `timeout_seconds` set. Session
+  end (`_session_end.py` 62-110): a native terminal session ends as `paused` for every
+  reason but compact, and only `expired` completes the run. Step state at spawn:
+  `initial_step_state_for_spawn` and `persist_initial_step_instance_if_resolved`
+  (`_step_state.py` 124-185) instantiate the definition's existing step program.
+- Rejected: a `pane.launch` workspace op that types a sandboxed launcher into the
+  pane's shell (R6's first draft; two launch implementations and no step program);
+  typing the launch through `send-keys` (unsandboxed, decision 20); a second sandbox
+  resolver; a new policy format; adopting a spawned terminal into a pane after the
+  spawn (no identity env); an HTTP route of its own for the launch (the tool endpoint
+  exists).
+- Planned checks: the four new test files and the three extended ones with the isolated
+  hub DSN; `tests/agents/test_srt_spawn.py` unchanged and passing; mypy; `wc -l` on
+  `_implementation.py`, `lifecycle_monitor.py` and `workspace_ops.py` under 1,000.
+
+Consumers unchanged:
+- `src/gobby/dispatch/spawn.py` — no-edit-reason: calls `spawn_agent_impl` with the existing keywords; `placement` and `sandbox` default to None.
+- `src/gobby/workflows/pipeline_executor_steps.py` — no-edit-reason: same defaulted call; pipelines never place a pane.
+- `src/gobby/scheduler/executor.py` — no-edit-reason: same; it already parents on the system session.
+- `src/gobby/servers/routes/agent_spawn.py` — no-edit-reason: forwards its own request model to the same implementation; the two new keywords default to None.
+- `src/gobby/servers/routes/mcp/tools.py` — no-edit-reason: the tool endpoint forwards whatever arguments the tool schema accepts.
+- `src/gobby/ask/agents.py` — no-edit-reason: calls `spawn_agent_impl` with the existing keywords; `placement` and `sandbox` default to None. It reads no new body field.
+- `src/gobby/feedback/agent.py` — no-edit-reason: calls `spawn_agent_impl` with the existing keywords; `placement` and `sandbox` default to None.
+- `tests/agents/test_backend_ingress.py` — no-edit-reason: existing spawn test; the new keywords default and the placement branch is not entered, so it passes unchanged.
+- `tests/agents/test_local_context_setup.py` — no-edit-reason: existing spawn test; the new keywords default and the placement branch is not entered, so it passes unchanged.
+- `tests/mcp_proxy/tools/spawn_agent/test_factory.py` — no-edit-reason: existing spawn test; the new keywords default and the placement branch is not entered, so it passes unchanged.
+- `tests/mcp_proxy/tools/spawn_agent/test_initial_variables.py` — no-edit-reason: existing spawn test; the new keywords default and the placement branch is not entered, so it passes unchanged.
+- `tests/mcp_proxy/tools/test_agents_spawn_tools.py` — no-edit-reason: existing spawn test; the new keywords default and the placement branch is not entered, so it passes unchanged.
+- `tests/mcp_proxy/tools/test_spawn_agent_impl_provider.py` — no-edit-reason: existing spawn test; the new keywords default and the placement branch is not entered, so it passes unchanged.
+- `tests/workflows/test_step_snapshot_semantics.py` — no-edit-reason: existing spawn test; the new keywords default and the placement branch is not entered, so it passes unchanged.
+- `src/gobby/mcp_proxy/tools/sessions/_terminal_send_keys.py` — no-edit-reason: calls `resolve_actor_scope` with the same signature; the pane-bound admission lives inside the resolver.
+- `src/gobby/terminals/termination.py` — no-edit-reason: calls `resolve_actor_scope` with the same signature; the pane-bound admission lives inside the resolver.
+- `tests/terminals/test_workspace_ops.py` — no-edit-reason: its refusal cases are headless runs, which stay refused; the admission is tested in `tests/terminals/test_workspace_launch.py`.
+- `docs/evidence/wiki-bakeoff-code-2026-09/test_ask_cohort.py` — no-edit-reason: an evidence snapshot, not a maintained consumer.
+- `src/gobby/mcp_proxy/tools/spawn_agent/_step_state.py` — no-edit-reason: reads existing `AgentDefinitionBody` fields; the new optional `sandbox` field defaults to None. 1.5.8 relies on its existing behavior.
+- `src/gobby/servers/routes/agents.py` — no-edit-reason: reads existing `AgentDefinitionBody` fields; the new optional `sandbox` field defaults to None.
+- `src/gobby/workflows/definitions.py` — no-edit-reason: reads existing `AgentDefinitionBody` fields; the new optional `sandbox` field defaults to None.
+- `src/gobby/workflows/imports.py` — no-edit-reason: reads existing `AgentDefinitionBody` fields; the new optional `sandbox` field defaults to None.
+- `src/gobby/workflows/step_instances.py` — no-edit-reason: reads existing `AgentDefinitionBody` fields; the new optional `sandbox` field defaults to None.
+- `tests/agents/test_merge_orchestrator_contract.py` — no-edit-reason: builds definition bodies without a `sandbox` key; the optional field changes nothing it asserts.
+- `tests/mcp_proxy/tools/skills/test_list_skills.py` — no-edit-reason: builds definition bodies without a `sandbox` key; the optional field changes nothing it asserts.
+- `tests/workflows/test_agent_workflow_completion.py` — no-edit-reason: builds definition bodies without a `sandbox` key; the optional field changes nothing it asserts.
+- `tests/workflows/test_handler_route_lint.py` — no-edit-reason: builds definition bodies without a `sandbox` key; the optional field changes nothing it asserts.
+- `tests/workflows/test_step_instances.py` — no-edit-reason: builds definition bodies without a `sandbox` key; the optional field changes nothing it asserts.
+- `tests/workflows/test_workflows_dry_run.py` — no-edit-reason: builds definition bodies without a `sandbox` key; the optional field changes nothing it asserts.
 
 **Acceptance:**
 
-- 1.4.1 - The tool sets `_agent_type`, active rules, blocked tools, skills, and the
-  reinject flags on the caller session. symbol: `apply_agent_definition_impl`. test:
-  `tests/mcp_proxy/tools/test_apply_agent_definition.py::test_happy_path_sets_agent_type_rules_blocked_tools_and_reinject_flags`.
-- 1.4.2 - Unowned session variables and task claims survive; definition variables
-  reapply; variable defaults do not clobber live values. test:
-  `tests/mcp_proxy/tools/test_apply_agent_definition.py::test_preserves_unowned_session_variables_and_claims`.
-  test: `tests/mcp_proxy/tools/test_apply_agent_definition.py::test_definition_variables_reapply_but_defaults_do_not_clobber`.
-- 1.4.3 - Spawned sessions and definitions without the persona surface are refused; step
-  instances are not created or replaced in v1 (decision 17). test:
-  `tests/mcp_proxy/tools/test_apply_agent_definition.py::test_refuses_spawned_session`.
-  test: `tests/mcp_proxy/tools/test_apply_agent_definition.py::test_requires_persona_surface`.
-  test: `tests/mcp_proxy/tools/test_apply_agent_definition.py::test_never_touches_agent_step_instances`.
-- 1.4.4 - `_persona_name` is set so the next-turn prompt matches `_agent_type`, starting
-  from a caller whose `_persona_name` already names a different persona; and
-  `activate_default_agent` imports `ALWAYS_REAPPLY_KEYS`, which holds exactly the seven
-  identity keys. symbol: `ALWAYS_REAPPLY_KEYS`.
-  test: `tests/mcp_proxy/tools/test_apply_agent_definition.py::test_sets_persona_name_so_prompt_matches_agent_type`.
-  test: `tests/mcp_proxy/tools/test_apply_agent_definition.py::test_always_reapply_keys_are_the_seven_identity_keys`.
-- 1.4.5 - The agents guide, MCP tool list, and personas reference document the tool.
-  behavior: "apply_agent_definition" in `docs/guides/agents.md`.
+- 1.5.1 - `spawn_agent` with `placement.tab` creates a tab whose first pane carries
+  `role` equal to `agent` and the given `runbook`, and with `placement.split` a pane
+  beside the named one; the pane row exists before the provider spawns, the spawned
+  process receives the pane's identity env, and the pane is bound to the spawned
+  terminal with `tab.created` or `pane.added` emitted; the reply carries `pane_ref`,
+  `tab_ref`, `terminal_id`, `sandbox` and `worktree_path`. symbol: `spawn_agent_impl`.
+  file: `src/gobby/mcp_proxy/tools/spawn_agent/_placement.py`. test:
+  `tests/mcp_proxy/tools/spawn_agent/test_spawn_placement.py::test_tab_placement_reserves_role_pane_before_spawn_and_binds_it`.
+  test: `tests/mcp_proxy/tools/spawn_agent/test_spawn_placement.py::test_split_placement_lands_beside_named_pane_with_identity_env`.
+- 1.5.2 - The MCP path and the CLI path give the same result: for one definition and
+  one placement, `gobby agents spawn --split` and a direct `spawn_agent` call produce
+  pane rows with the same `role`, sessions with the same `sandbox_policy_hash`, the
+  same `cwd`, and the pane in the requested tab or split; the CLI omits `timeout`,
+  sends `notify_parent_on_completion: false`, and parents on the system session when
+  `--session` is absent. test:
+  `tests/mcp_proxy/tools/spawn_agent/test_spawn_placement.py::test_cli_and_mcp_paths_produce_identical_role_sandbox_cwd_and_placement`.
+  test: `tests/cli/test_cli_agents.py::test_spawn_placement_flags_post_placement_without_timeout_and_parent`.
+- 1.5.3 - A runbook-launched CLI's argv and environment carry the same SRT wrapping as
+  a `spawn_agent` launch of that provider, for every managed provider. test:
+  `tests/terminals/test_workspace_launch.py::test_runbook_launch_wraps_argv_like_spawn_agent`.
+- 1.5.4 - A restriction declared in the definition's `sandbox` block or the call's
+  `sandbox` argument reaches the launched CLI's SRT policy (`assets/settings.json`
+  carries the deny root literal and canonical), the two blocks merge as specified, and
+  `allow_network`, `backend` or `mode` in a block is refused. file:
+  `src/gobby/mcp_proxy/tools/spawn_agent/_sandbox_block.py`. test:
+  `tests/mcp_proxy/tools/spawn_agent/test_sandbox_block.py::test_declared_restriction_reaches_srt_policy`.
+  test: `tests/mcp_proxy/tools/spawn_agent/test_sandbox_block.py::test_definition_and_call_blocks_merge_lists_append_booleans_override`.
+  test: `tests/mcp_proxy/tools/spawn_agent/test_sandbox_block.py::test_daemon_owned_fields_are_refused`.
+- 1.5.5 - A launch with no restriction block gets the same `policy_hash` as a
+  `spawn_agent` launch of that provider with no block. test:
+  `tests/mcp_proxy/tools/spawn_agent/test_sandbox_block.py::test_launch_without_block_matches_spawn_agent_default_policy`.
+- 1.5.6 - `enabled: false` without a `reason` is refused; with one, the session row
+  records `sandbox_enabled` false, `_launch_sandbox_reason` holds the reason, and the
+  reply's `sandbox.enforced` is false with the reason. test:
+  `tests/mcp_proxy/tools/spawn_agent/test_sandbox_block.py::test_unsandboxed_launch_requires_reason_and_records_it`.
+- 1.5.7 - A pane launched for a definition with `isolation: worktree` starts with `cwd`
+  under the worktree path and its new tab is bound to that worktree; it never starts in
+  the main checkout. test:
+  `tests/mcp_proxy/tools/spawn_agent/test_spawn_placement.py::test_worktree_role_pane_starts_in_its_worktree`.
+- 1.5.8 - A definition that carries a step workflow, launched with placement by the MCP
+  path and by the CLI path, gets `step_workflow_complete` false and its persisted step
+  instance exactly as a plain `spawn_agent` launch gives it; a definition without one
+  gets neither. test:
+  `tests/mcp_proxy/tools/spawn_agent/test_spawn_placement.py::test_stepful_definition_gets_step_instance_by_each_path`.
+- 1.5.9 - A pane-bound run is admitted as a terminal actor and is skipped by the idle
+  check, the periodic Enter, the stuck check and the completed-task check while a
+  headless run of the same shape is not; `pane_close` terminates the run and reaps its
+  sandbox; the run row has no `timeout_seconds`. symbol: `is_pane_bound_run`. test:
+  `tests/agents/test_pane_run_lifecycle.py::test_pane_bound_run_is_admitted_and_exempt_from_idle_stuck_enter_and_completion`.
+  test: `tests/agents/test_pane_run_lifecycle.py::test_pane_close_terminates_run_and_reaps_sandbox`.
+- 1.5.10 - `AgentDefinitionBody.sandbox` parses the restriction shape and rejects the
+  daemon-owned fields; `_bind_clear_successor` copies the predecessor's
+  `sandbox_enabled` and `sandbox_policy_hash`. symbol: `AgentDefinitionBody`. test:
+  `tests/workflows/test_agent_models.py::test_definition_sandbox_block_parses_and_rejects_daemon_owned_fields`.
+  test: `tests/hooks/test_session_materialize.py::test_clear_successor_inherits_sandbox_flags`.
+- 1.5.11 - The agents, sandboxing, MCP-tools and CLI guides document placement, the
+  restriction block, the unsandboxed exemption with reason, worktree binding, the
+  pane-bound lifecycle and the three callers. behavior: "Launching a runbook pane" in
+  `docs/guides/agents.md`. behavior: "Runbook restriction blocks" in
+  `docs/guides/sandboxing.md`.
 
 ## P2: gclient command mode
 `kind: framing`
 
 One Rust leaf. `gclient <verb>` runs without the TUI, sends one workspace op over the
-same authenticated WebSocket the TUI uses, prints the reply, and exits. A runbook is a
-shell script of these verbs, so the loader, picker, and YAML format of the first draft
-are gone (decision 12). Rust conventions per `crates/AGENTS.md` (load the `rust` skill;
-tests in `<module>/tests.rs`). Work order: after 1.4 and before 1.1.
+same authenticated WebSocket the TUI uses (or, for `launch`, one HTTP tool call to the
+daemon's `spawn_agent` endpoint, decision 20), prints the reply, and exits. A runbook
+is a shell script of these verbs, so the loader, picker, and YAML format of the first
+draft are gone (decision 12). Rust conventions per `crates/AGENTS.md` (load the `rust`
+skill; tests in `<module>/tests.rs`). Work order: after 1.5 and before 1.3 (decision
+12).
 
-### 2.1 gclient command mode and the bundled runbook scripts [category: code]
+### 2.1 gclient command mode and the bundled runbook scripts [category: code] (depends: 1.5)
 `kind: deliverable`
 
 Targets:
@@ -759,10 +1104,9 @@ Targets:
 - `crates/gclient/src/lib.rs::*` — scope-reason: one `pub mod command;` line in a module list that has no indexed symbols
 - `crates/gclient/src/startup.rs::run`
 - `crates/gclient/src/startup.rs::USAGE`
-- `crates/gclient/src/daemon/workspace.rs::*` — scope-reason: optional `runbook` on `TabCreate` and `role` on `PaneSplit`, skipped when None, beside the existing op fields; one `WorkspaceEventKind::PaneRoleSet` variant
-- `crates/gclient/tests/workspace.rs::*` — scope-reason: one `pane.role_set` event fixture beside the existing `pane_added_event`
+- `crates/gclient/src/daemon/rest.rs::*` — scope-reason: one `pub(crate) async fn spawn_agent_tool(url, token, body)` beside the existing REST helpers, posting `/api/mcp/gobby-agents/tools/spawn_agent`; `daemon/mod.rs` (924 lines) is untouched because the command module calls the helper directly
 - `crates/gclient/tests/command_mode.rs`
-- `crates/gclient/tests/mock_daemon/workspace.rs::*` — scope-reason: `WorkspaceSim::apply` answers `pane.read` and `pane.wait_for_output` for the script test
+- `crates/gclient/tests/mock_daemon/workspace.rs::*` — scope-reason: `WorkspaceSim::apply` answers `pane.read` and `pane.wait_for_output` for the verb tests, and `WorkspaceSim::adopt_pane` mirrors each canned launch reply into the simulated tree for the script tests
 - `src/gobby/install/shared/workflows/runbooks/orchestration-v1.sh`
 - `src/gobby/install/shared/workflows/runbooks/plan-council-v1.sh`
 - `docs/guides/gclient-user-guide.md`
@@ -774,7 +1118,9 @@ reuses the TUI's resolution: `gobby_core::daemon_url::daemon_url()` for the URL 
 `~/.gobby/local_cli_token` through `gobby_core::local_token::read_local_cli_token` for
 the token, with `--daemon-url` and `--token-file` overrides, then `LiveDaemon::connect`
 and `Daemon::workspace_op` (both already public through the `daemon` module) for every
-verb; the socket closes on exit. The pane env carries `GOBBY_NODE_ID`, `GOBBY_NODE_REF`,
+verb but `launch`, which posts the daemon's HTTP tool endpoint through the `rest.rs`
+helper with the same URL and token (decision 20); the socket closes on exit. The pane
+env carries `GOBBY_NODE_ID`, `GOBBY_NODE_REF`,
 `GOBBY_WORKSPACE_ID`, `GOBBY_TAB_ID`, `GOBBY_PANE_ID`, `GOBBY_PANE_REF`, and
 `GOBBY_TERMINAL_ID` and, by design, no `GOBBY_DAEMON_URL` or `GOBBY_PROJECT_ID`
 (`_identity_env` in `src/gobby/terminals/workspace_ops.py`; finding F4 of the
@@ -784,29 +1130,34 @@ bootstrap. Refs use the daemon's grammar (`WorkspaceManager.resolve_reference`):
 or `w`, `n:w`, `n:w:t`, `n:w:t:p`; the client passes them through untouched and only
 counts segments to choose the tab or pane form of a verb.
 
-Event. `WorkspaceEventKind` in `daemon/workspace.rs` is a closed serde enum, and
-`daemon_event` in `daemon/live_reader.rs` (372-414) turns an unknown kind into a
-protocol error that `run_connection` (132) answers by dropping the socket. 1.2 adds
-`pane.role_set`, so this leaf adds `WorkspaceEventKind::PaneRoleSet`
-(`#[serde(rename = "pane.role_set")]`) ahead of it; no match arm changes, because
-`WorkspaceModel::apply` already upserts the enclosed pane row through its wildcard arm.
-Without the variant, V1 step 6's `gobby panes set-role` disconnects every attached
-gclient.
-
-Verbs. Each maps to one existing op; `--json` prints the reply's `result` verbatim,
-which `workspace_ws.py` already returns synchronously, so the daemon gains nothing.
+Verbs. Each maps to one existing op, except `launch`, which posts 1.5's tool; `--json`
+prints the reply's `result` verbatim (the WS reply that `workspace_ws.py` already
+returns synchronously, or the tool reply), so the daemon gains nothing beyond 1.5.
 - `list [--workspace REF]` sends `workspace_attach` (the existing attach request; the
   snapshot is the roster and the subscription dies with the socket). Plain output is
   one line per tab (`ref  title`) and per pane (`ref  label  terminal_id`).
-- `new-tab --project NAME|ID [--name TITLE] [--workspace REF] [--runbook NAME] [--role ROLE]`
-  sends `tab.create`; a project name resolves through the REST lookup the TUI uses
-  (`startup::resolve_project_at`). Plain output: `<tab ref> <first pane ref>`.
-  `--runbook` and `--role` are forwarded only when given; the daemon accepts them once
-  1.2 lands and refuses them with `invalid_op` before that.
-- `split REF --right|--down [--role ROLE] [--cmd TEXT]` sends `pane.split` with the
-  `LayoutAxis` spelling (`horizontal` for `--right`, `vertical` for `--down`); `--cmd`
-  chains one `pane.send_text {submit: true}` to the new pane. Plain output: the new
-  pane ref.
+- `new-tab --project NAME|ID [--name TITLE] [--workspace REF]` sends `tab.create` for a
+  shell or tool tab; a project name resolves through the REST lookup the TUI uses
+  (`startup::resolve_project_at`). Plain output: `<tab ref> <first pane ref>`. No role
+  or runbook flag: a role is bound only by `launch` (decision 20, position g).
+- `split REF --right|--down [--cmd TEXT]` sends `pane.split` with the `LayoutAxis`
+  spelling (`horizontal` for `--right`, `vertical` for `--down`) for a shell or tool
+  pane; `--cmd` chains one `pane.send_text {submit: true}` to the new pane. Plain
+  output: the new pane ref.
+- `launch --agent ROLE (--tab TITLE --project NAME|ID [--workspace REF] [--runbook NAME]
+  | --split REF --right|--down) [--sandbox JSON] [--unsandboxed REASON] [--provider P]
+  [--model M] [--effort E] [--isolation none|worktree] [--json] -- PROMPT` posts
+  `POST /api/mcp/gobby-agents/tools/spawn_agent` with the local token and 1.5's
+  contract: `agent`, `prompt`, `placement` (`{"tab": {"workspace", "project",
+  "title", "runbook"}}` or `{"split": {"pane", "axis"}}` with the `LayoutAxis`
+  spelling), `sandbox` (the `--sandbox` block, with `--unsandboxed REASON` merged in as
+  `{"enabled": false, "reason": REASON}`), `provider`, `model`, `reasoning_effort`,
+  `isolation`, `terminal_backend: "native"`, `notify_parent_on_completion: false`, no
+  `timeout` and no `parent_session_id` (the daemon parents the seat on the system
+  session); the project name resolves as for `new-tab`. Plain output: `<tab ref> <pane
+  ref>` from the reply; `--json` prints the tool reply. A reply whose `success` is false
+  prints its `error` on stderr and exits 1; an HTTP or token failure exits 3. The
+  daemon labels the pane with the role, so no `title` line follows a launch.
 - `resize REF RATIO` sends `pane.resize` (the ratio of the split whose direct child is
   REF, per Constraints).
 - `title REF TEXT` sends `pane.rename {label}` for a four-segment ref and
@@ -824,52 +1175,56 @@ which `workspace_ws.py` already returns synchronously, so the daemon gains nothi
 - `kill REF` sends `pane.close` (four segments) or `tab.close` (three).
 - `help` prints the verb table.
 Exit codes: 0 success; 1 refused op, printed as `code: reason` on stderr from the
-`workspace_error` reply; 2 usage; 3 connection, token, or protocol failure.
+`workspace_error` reply, or a `launch` reply with `success` false, printed as its
+`error`; 2 usage (`launch` without `--agent`, without exactly one of `--tab` and
+`--split`, or with `--unsandboxed` and an `enabled` key in `--sandbox`); 3 connection,
+token, HTTP, or protocol failure.
 
 Scripts. Two bundled scripts (`#!/usr/bin/env bash`, `set -euo pipefail`) reproduce
-decision 14 with refs captured from plain output. Each successful `new-tab` is followed
-by `echo "CREATED_TAB=<tab ref>" >&2`, so when a later op is refused (the script stops
-under `set -e` with the panes created so far in place, 2.1.3) stderr names the tabs to
-remove with `gclient kill <tab ref>`; there is no rollback. `orchestration-v1.sh [project]`:
-`new-tab --project "${1:-gobby}" --name control` gives `$ctl` and `$pd`; `split "$pd"
---right` gives `$asst`, `resize "$pd" 0.50`; `new-tab --project "${1:-gobby}" --name
-monitors` gives `$mon` and `$logmon`; `split "$logmon" --down` gives `$arch`, `resize
-"$logmon" 0.50`; four `title` lines (`program-director`, `assistant`, `log-monitor`,
-`archivist`). `plan-council-v1.sh <plan> [project]`: `new-tab --project "${2:-gobby}"
---name "$(basename "$1" .md)"` gives `$tab` and `$writer`; `split "$writer" --down`
-gives `$enh`, `resize "$writer" 0.50`; `split "$enh" --right` gives `$adv`, `resize
-"$enh" 0.3333`; `split "$adv" --right` gives `$mech`, `resize "$adv" 0.50` (each resize
-follows its split while both children are leaves, per Constraints, so the three lower
-panes come out at equal widths); four `title` lines (`plan-writer`, `plan-enhancer`,
-`plan-adversary`, `plan-mechanic`; decision 18). Both scripts then run, for each seat,
-`wait-for-output REF
---pattern "$PROMPT_PATTERN" --timeout 30`, `send-keys REF "<launch line>" --enter`,
-`wait-for-output REF --pattern "$READY_<cli>" --timeout 60`, then `send-keys REF
-"<kickoff prompt>" --enter`; a timeout on either wait exits 1 like a refused op.
-`PROMPT_PATTERN` defaults to `'[%$#] *$'`; the ready patterns are each CLI's idle
-composer as captured from the live council panes on 2026-09-23: `READY_claude='bypass
-permissions on'` (the status footer Claude Code prints only once its composer is up
-under `--dangerously-skip-permissions`), `READY_codex='› Ask Codex'` (the empty
-composer's placeholder), `READY_grok='Ctrl\+x:shortcuts'` (the hint bar under the idle
-composer; every `READY_*` value is a regex, so metacharacters are escaped). No
-`READY_*` value may match its seat's launch line, because
-`wait-for-output` matches text already on screen, including the launch line just
-typed; V1 step 3 verifies the patterns live. Launch lines follow the prompt
-book's provider, model and effort per role and the flag spellings of
-`~/Desktop/gobby-team-resume-2026-09-22.md`: program director and plan writer `claude
---dangerously-skip-permissions --model 'claude-fable-5-1[1m]'`; assistant and plan
-mechanic `claude --dangerously-skip-permissions --model 'claude-opus-5[1m]'` (the book
-has no mechanic section; the mechanic takes the lookup pane's line, decision 18); log
-monitor `codex --dangerously-bypass-approvals-and-sandbox -m gpt-5.6-luna -c
-model_reasoning_effort=medium`; archivist the same with `gpt-5.6-terra`; enhancer the
-same with `gpt-5.6-sol` and `xhigh`; adversary `grok -m grok-4.7 --reasoning-effort
-xhigh --always-approve` (the book names no provider or effort for the adversary: section
-11, lines 645-681, and "The plan council", 519-535, carry none; `xhigh` is the adversary
-definition's `reasoning_effort` in 3.2 and the live council seat's). The kickoff prompt
-sent after the ready wait names the
-runbook, the seat's own pane ref and the tab ref, and, for the council, the plan path;
-the user edits the scripts freely. The `--runbook` and `--role` flags are added to both
-scripts by 1.2, which lands after this leaf.
+decision 14 with refs captured from plain output. Each seat is one `launch` line: it
+creates the seat's tab or split, spawns the CLI under the role's sandbox block, and
+submits the kickoff prompt as the spawn prompt; nothing waits for a shell prompt,
+nothing is typed, and no ready pattern exists (decision 20). Each successful `launch
+--tab` is followed by `echo "CREATED_TAB=<tab ref>" >&2`, so when a later line fails
+(the script stops under `set -e` with the panes created so far in place, 2.1.3) stderr
+names the tabs to remove with `gclient kill <tab ref>`; there is no rollback. Provider,
+model and effort are `launch` flags per seat, following the prompt book's assignment
+and the resume file `~/Desktop/gobby-team-resume-2026-09-22.md` (decision 4 as
+amended: the daemon builds the argv through `build_cli_command`, so the flag spellings
+of the R5 launch lines are gone); the user edits the scripts freely. A `kickoff ROLE`
+shell function in each script returns the prompt: the runbook name, the seat's role,
+that its own pane ref is `GOBBY_PANE_REF` in its environment and the roster is
+`gobby-workspaces:get_workspace` (decision 6 as amended), and, for the council, the
+plan path. `orchestration-v1.sh [project]` (`P="${1:-gobby}"`, `RB=orchestration-v1`):
+`launch --agent program-director --tab control --project "$P" --runbook "$RB"
+--provider claude --model 'claude-fable-5-1[1m]' --unsandboxed "daemon restart,
+cutover, binary promotion into ~/.gobby/bin, pushes, read-only hub psql; a sandbox is
+inherited by child processes" -- "$(kickoff program-director)"` gives `$ctl` and
+`$pd`; `launch --agent assistant --split "$pd" --right --provider claude --model
+'claude-opus-5[1m]' -- "$(kickoff assistant)"` gives `$asst`; `resize "$pd" 0.50`;
+`launch --agent log-monitor --tab monitors --project "$P" --runbook "$RB" --provider
+codex --model gpt-5.6-luna --effort medium -- "$(kickoff log-monitor)"` gives `$mon`
+and `$logmon`; `launch --agent archivist --split "$logmon" --down --provider codex
+--model gpt-5.6-terra --effort medium -- "$(kickoff archivist)"` gives `$arch`;
+`resize "$logmon" 0.50`. `plan-council-v1.sh <plan> [project]` (`RB=plan-council-v1`):
+`launch --agent plan-writer --tab "$(basename "$1" .md)" --project "${2:-gobby}"
+--runbook "$RB" --provider claude --model 'claude-fable-5-1[1m]' -- "$(kickoff
+plan-writer "$1")"` gives `$tab` and `$writer`; `launch --agent plan-enhancer --split
+"$writer" --down --provider codex --model gpt-5.6-sol --effort xhigh -- "$(kickoff
+plan-enhancer "$1")"` gives `$enh`, `resize "$writer" 0.50`; `launch --agent
+plan-adversary --split "$enh" --right --provider grok --model grok-4.7 --effort xhigh
+-- "$(kickoff plan-adversary "$1")"` gives `$adv`, `resize "$enh" 0.3333`; `launch
+--agent plan-mechanic --split "$adv" --right --provider claude --model
+'claude-opus-5[1m]' -- "$(kickoff plan-mechanic "$1")"` gives `$mech`, `resize "$adv"
+0.50` (each resize follows its split while both children are leaves, per Constraints,
+so the three lower panes come out at equal widths). The Fable and Opus seats pass no
+`--effort` (the resume file's Claude lines carry none); the book names no provider or
+effort for the adversary (section 11, lines 645-681, and "The plan council", 519-535,
+carry none), so `grok-4.7` at `xhigh` is the live council seat's, and the mechanic
+takes the lookup pane's line (decision 18). No script carries a `--sandbox` block: the
+restriction blocks live in the definitions (3.2, 3.4) and only the program-director's
+`--unsandboxed` reason is on the launch line, where Josh can read it. No `title` lines:
+the launch labels each pane with its role (1.5).
 
 Research context:
 - `startup::run` (`crates/gclient/src/startup.rs` 674-691) parses args, probes health,
@@ -885,20 +1240,34 @@ Research context:
   `crates/gclient/src/app/workspace_ops.rs` 47-83. Line numbers are 2026-09-23
   navigation hints only.
 - Daemon side: `WORKSPACE_OPS` in `src/gobby/servers/websocket/workspace_ws.py`
-  derives the op table and `_arguments` rejects unknown fields, which is why
-  `--runbook` and `--role` are omitted when not given. Signatures in
+  derives the op table and `_arguments` rejects unknown fields, so the op payloads of
+  the layout verbs are unchanged from today. The launch endpoint is
+  `router.post("/{server_name}/tools/{tool_name}")(mcp_proxy)` in
+  `src/gobby/servers/routes/mcp/tools.py` 53, the route `gobby agents spawn` already
+  posts (`src/gobby/cli/agents.py` 176-307, `daemon_auth_headers`); the TUI's REST
+  client lives in `crates/gclient/src/daemon/rest.rs` (317 lines; `pub(super) async fn`
+  helpers such as `list_terminals`, `list_projects` and `create_worktree` carry the
+  URL, token and JSON handling the new helper copies). Signatures in
   `src/gobby/terminals/workspace_ops.py`: `tab_create` 372, `pane_split` 460,
   `pane_resize` 532, `pane_rename` 541, `pane_close` 550, `pane_send_text` 571,
   `pane_read` 628, `pane_wait_for_output` 640, `workspace_set_focus_hints` 310.
 - Tests: `crates/gclient/tests/mock_daemon/mod.rs` (`MockDaemon::start`, `requests()`,
-  `enqueue_workspace_refusal`) and `mock_daemon/workspace.rs` (`WorkspaceSim::apply`
-  simulates the layout ops with the daemon's `_place` semantics; `knows` accepts every
-  other op) back `command_mode.rs`. Extend `WorkspaceSim::apply` to answer `pane.read`
-  and `pane.wait_for_output` (matched) where it does not yet. The script test runs
-  `bash` on the real script with `env!("CARGO_BIN_EXE_gclient")` first on `PATH` and
-  `--daemon-url` pointing at the mock, then compares the simulator's final tree with
-  decision 14. Pane-env defaults are tested by passing an explicit env map to
-  `dispatch`, never by mutating the process env.
+  `enqueue_workspace_refusal`; it serves HTTP as well as the WS: `enqueue(method,
+  path_prefix, status, body)` answers a request, and each recorded request keeps its
+  parsed JSON `body`) and `mock_daemon/workspace.rs` (`WorkspaceSim::apply` simulates
+  the layout ops with the daemon's `_place` semantics; `knows` accepts every other op)
+  back `command_mode.rs`. The launch test enqueues `POST
+  /api/mcp/gobby-agents/tools/spawn_agent` with a canned reply carrying `tab_ref` and
+  `pane_ref` and asserts the recorded body and Authorization header. Extend
+  `WorkspaceSim::apply` to answer `pane.read` and `pane.wait_for_output` (matched)
+  where it does not yet, and add `adopt_pane(tab_ref, pane_ref, beside, axis)` so the
+  script harness mirrors each canned launch reply into the simulated tree before the
+  script's next op. The script tests run `bash` on the real script with
+  `env!("CARGO_BIN_EXE_gclient")` first on `PATH` and `--daemon-url` pointing at the
+  mock, with one canned launch reply enqueued per seat in decision 14's order, then
+  compare the recorded launch bodies and the simulator's final tree with decision 14.
+  Pane-env defaults are tested by passing an explicit env map to `dispatch`, never by
+  mutating the process env.
 - Existing leaf #22695 (gclient command mode) is this deliverable's prior filing.
   `apply_run` (`src/gobby/tasks/expansion/_apply.py` 91-) always mints children and
   cannot adopt an existing leaf (gobby#14332 lookup, 2026-09-23), so 2.1 stays a
@@ -906,9 +1275,13 @@ Research context:
   task, which inherits its gclient-lane slot (decision 16).
 - Rejected: a client-side capture loop for `wait-for-output` (the daemon op exists);
   `--cwd` on `split` (`pane.split` spawns the tab's checkout shell; `--cmd 'cd DIR'`
-  covers it); a REST route for one-shot ops (the WS reply already carries `result`);
-  a parser crate (the TUI parses by hand and the verb table is small); a `GOBBY_DAEMON_URL`
-  pane variable (removed deliberately by the workspaces plan).
+  covers it); a WS op for the launch (the daemon's tool endpoint exists over HTTP and
+  the TUI already carries the REST client, so the launch is one POST and no new op:
+  decision 20, position h); typed launch lines with `READY_*` composer patterns (R5;
+  unsandboxed and a second launch path); `title` lines after a launch (the daemon
+  labels the pane); a parser crate (the TUI parses by hand and the verb table is
+  small); a `GOBBY_DAEMON_URL` pane variable (removed deliberately by the workspaces
+  plan).
 - Planned checks: `cargo nextest run -p gobby-client -E 'test(command)'`,
   `cargo clippy -p gobby-client`, `cargo fmt -p gobby-client -- --check`,
   `bash -n` on both scripts under `src/gobby/install/shared/workflows/runbooks/`, and the
@@ -918,11 +1291,16 @@ Consumers unchanged:
 - `crates/gclient/src/main.rs` — no-edit-reason: calls `startup::run()` with the same signature; the verb check lives inside `run`.
 - `crates/gclient/src/views/mod.rs` — no-edit-reason: its `run` wrapper (36-37) calls `crate::startup::run()` with the same signature; the verb check lives inside `startup::run`.
 
+Removed acceptance items (decision 20, round file position g): 2.1.4 (`--runbook` and
+`--role` on `new-tab` and `split`) and 2.1.7 (the `pane.role_set` event; the launch
+emits the existing `tab.created` and `pane.added` kinds); the numbers stay retired.
+
 **Acceptance:**
 
-- 2.1.1 - `gclient <verb>` runs without the TUI: each verb sends exactly its op with
-  the documented fields, `--json` prints the reply `result` verbatim, and TUI argument
-  parsing is unchanged. symbol: `run`. test:
+- 2.1.1 - `gclient <verb>` runs without the TUI: each layout verb sends exactly its op
+  with the documented fields (byte-identical to today's payloads, since no role or
+  runbook field exists on them), `--json` prints the reply `result` verbatim, and TUI
+  argument parsing is unchanged. symbol: `run`. test:
   `crates/gclient/tests/command_mode.rs::each_verb_sends_its_workspace_op`.
   test: `crates/gclient/tests/command_mode.rs::json_prints_reply_result_verbatim`.
 - 2.1.2 - Inside a pane, REF and `--workspace` default from `GOBBY_PANE_REF` and
@@ -930,57 +1308,76 @@ Consumers unchanged:
   `crates/gclient/src/command.rs`. test:
   `crates/gclient/src/command/tests.rs::pane_env_supplies_default_refs`.
   test: `crates/gclient/src/command/tests.rs::missing_ref_outside_a_pane_is_usage_error`.
-- 2.1.3 - A refused op prints `code: reason` on stderr and exits 1; `wait-for-output`
-  exits 0, 1, or 2 on matched, timeout, or pane_lost; a connection or token failure
-  exits 3. test:
+- 2.1.3 - A refused op prints `code: reason` on stderr and exits 1, and so does a
+  `launch` reply whose `success` is false (its `error` printed); `wait-for-output`
+  exits 0, 1, or 2 on matched, timeout, or pane_lost; a connection, token or HTTP
+  failure exits 3. test:
   `crates/gclient/tests/command_mode.rs::refused_op_exits_one_with_code_and_reason`.
   test: `crates/gclient/tests/command_mode.rs::wait_for_output_exit_codes_follow_reason`.
-- 2.1.4 - `new-tab --runbook`, `new-tab --role`, and `split --role` forward the fields
-  only when given, so existing op payloads stay byte-identical. symbol: `WorkspaceOp`.
-  test: `crates/gclient/tests/ws_golden.rs::corpus_replays_from_canonical_manifest`.
-  test: `crates/gclient/src/command/tests.rs::optional_role_and_runbook_are_omitted_when_absent`.
 - 2.1.5 - `orchestration-v1.sh` is valid bash, and running it against the mock daemon
-  reproduces decision 14's `control` and `monitors` tabs with four titled panes and
-  four launches, each kickoff `send-keys` sent only after the seat's ready-pattern wait
-  matched, and every seat's `READY_*` regex matching its idle-composer text and no launch
-  line. file:
-  `src/gobby/install/shared/workflows/runbooks/orchestration-v1.sh`. test:
+  sends four `launch` POSTs in decision 14's order (program-director in a `control`
+  tab, assistant split right of it, log-monitor in a `monitors` tab, archivist split
+  below it), each body carrying `agent`, `placement`, the seat's provider, model and
+  effort, `terminal_backend: "native"`, `notify_parent_on_completion: false`, no
+  `timeout`, the runbook name in `placement.tab.runbook` and in the prompt, the
+  program-director's `sandbox` `{"enabled": false, "reason": ...}` and no `sandbox`
+  key on the other three; the two `resize` ops follow their splits and the simulated
+  tree matches decision 14; no `send-keys`, `wait-for-output` or `title` op is sent.
+  file: `src/gobby/install/shared/workflows/runbooks/orchestration-v1.sh`. test:
   `crates/gclient/tests/command_mode.rs::orchestration_v1_script_reproduces_decision_14_layout`.
-- 2.1.6 - The user guide documents command mode: the verb table, exit codes, pane-env
-  defaults, the runbook scripts, and their failure path (`CREATED_TAB=` lines on stderr,
-  cleanup with `kill`). behavior: "Command mode" in
+- 2.1.6 - The user guide documents command mode: the verb table with `launch` and its
+  flags, exit codes, pane-env defaults, the runbook scripts, and their failure path
+  (`CREATED_TAB=` lines on stderr, cleanup with `kill`). behavior: "Command mode" in
   `docs/guides/gclient-user-guide.md`.
-- 2.1.7 - A `workspace_event` whose kind is `pane.role_set` decodes as
-  `WorkspaceEventKind::PaneRoleSet` and `WorkspaceModel::apply` upserts the enclosed
-  pane row, so an attached client survives a role change. symbol: `WorkspaceEventKind`.
-  test: `crates/gclient/tests/workspace.rs::pane_role_set_event_decodes_and_upserts_pane`.
 - 2.1.8 - `plan-council-v1.sh <plan>` is valid bash, and running it against the mock
-  daemon reproduces decision 14's council tab named after the plan, with the writer
-  over three equal-width panes, four titles, and four launches whose kickoff `send-keys`
-  follow the ready-pattern wait and carry the plan path, with every seat's `READY_*`
-  regex matching its captured idle-composer text (`Ctrl\+x:shortcuts` matches the literal
-  hint `Ctrl+x:shortcuts`) and matching no launch line. file:
+  daemon sends four `launch` POSTs (plan-writer in a tab named after the plan,
+  plan-enhancer split below it, plan-adversary and plan-mechanic split right in turn),
+  each prompt carrying the plan path, each body carrying the seat's provider, model
+  and effort and no `sandbox` key; the three `resize` ops follow their splits so the
+  simulated tree shows the writer over three equal-width panes. file:
   `src/gobby/install/shared/workflows/runbooks/plan-council-v1.sh`. test:
   `crates/gclient/tests/command_mode.rs::plan_council_v1_script_reproduces_decision_14_layout`.
-- 2.1.9 - Against a mock daemon that refuses the first `split` after the second
-  `new-tab`, `orchestration-v1.sh` exits nonzero, its stderr carries the daemon's
-  `code: reason` and one `CREATED_TAB=<ref>` line per tab created, and no further op is
-  sent. file: `src/gobby/install/shared/workflows/runbooks/orchestration-v1.sh`. test:
+- 2.1.9 - Against a mock daemon that answers the third `launch` (the `monitors` tab)
+  with `{"success": false, "error": ...}`, `orchestration-v1.sh` exits 1, its stderr
+  carries that error and one `CREATED_TAB=<ref>` line for the `control` tab, and no
+  further request is sent. file:
+  `src/gobby/install/shared/workflows/runbooks/orchestration-v1.sh`. test:
   `crates/gclient/tests/command_mode.rs::script_stops_at_refused_op_and_names_created_tabs`.
+- 2.1.10 - `launch` posts the tool endpoint with the local token: `--tab` fills
+  `placement.tab` (workspace, project, title, runbook) and `--split` fills
+  `placement.split` (pane, axis in the `LayoutAxis` spelling); `--sandbox` and
+  `--unsandboxed` merge into one `sandbox` block; `--provider`, `--model`, `--effort`
+  and `--isolation` map to `provider`, `model`, `reasoning_effort` and `isolation`; the
+  body carries `terminal_backend: "native"`, `notify_parent_on_completion: false` and
+  no `timeout` or `parent_session_id`; plain output is `<tab ref> <pane ref>` from the
+  reply; `--agent` missing, neither or both placements, or `--unsandboxed` beside an
+  `enabled` key in `--sandbox` is a usage error (exit 2). symbol: `spawn_agent_tool`.
+  test: `crates/gclient/tests/command_mode.rs::launch_posts_spawn_with_placement_and_sandbox`.
+  test: `crates/gclient/src/command/tests.rs::launch_requires_agent_and_exactly_one_placement`.
 
 ## P3: Roles
 `kind: framing`
 
-YAML, plus 3.4's edits to two planning references, two docs and two dispatch name maps.
-Templates sync to the DB registry on daemon start (`sync_bundled_agents`, rule sync);
-the installed rows are the live definitions.
+YAML for the twelve role definitions and 3.1's rule group, plus 3.4's repointing of
+every consumer of a retired definition name (the stage registry, two dispatch maps,
+the expansion gate, the code-index list, three rules, two planning references, two docs
+and the named tests; decision 19). Templates sync to the DB registry on daemon start
+(`sync_bundled_agents`, rule sync); the installed rows are the live definitions. Every
+role has one block with decision 21's ten fields: 3.2 carries the eight chart roles and
+3.4 the four council roles; 3.1 carries the rules those blocks select. Work order: 3.1,
+3.2, 3.3, 3.4.
 
-### 3.1 Rule group runbook: no-code-edits and the program-director delegate nudge [category: config]
+### 3.1 Rule group runbook: no-code-edits, the delegate nudge and the program-director guards [category: config]
 `kind: deliverable`
 
 Targets:
 - `src/gobby/install/shared/workflows/rules/runbook/runbook-no-code-edits.yaml`
 - `src/gobby/install/shared/workflows/rules/runbook/program-director-delegate-once.yaml`
+- `src/gobby/install/shared/workflows/rules/runbook/program-director-explicit-path-commits.yaml`
+- `src/gobby/install/shared/workflows/rules/runbook/program-director-no-hub-sql-writes.yaml`
+- `src/gobby/install/shared/workflows/rules/runbook/program-director-restart-through-gobby-cli.yaml`
+- `src/gobby/install/shared/workflows/rules/runbook/program-director-push-origin-only.yaml`
+- `src/gobby/install/shared/workflows/rules/runbook/program-director-no-directory-deletion.yaml`
 - `src/gobby/install/shared/workflows/variables/gobby-default-variables.yaml::*` — scope-reason: declare one new variable default
 - `docs/guides/workflow-rules.md`
 - `tests/workflows/test_runbook_rules.py`
@@ -1024,6 +1421,49 @@ each role with `_agent_type` set; the source-write fixtures include a shell comm
 `canonical_repo_mutation` classifies as a repo write, so the block is proven on the path
 that `blocked_tools` could not see.
 
+Program-director guards (decision 20: the one unsandboxed seat is held in by rules).
+Josh's six restrictions map to four existing rules, selected by the program-director
+definition (3.2), and five new ones in this group. Existing: a claimed task before
+commits is `require-task-before-commit` (`task-enforcement/`, tag `default`, selected
+by `tag:default`); no stash is `no-git-stash`
+(`worker-safety/no-destructive-git.yaml`), no force push is `no-force-push`
+(`worker-safety/no-force-push.yaml`) and no recursive `rm` is `no-recursive-rm`
+(`worker-safety/no-destructive-shell.yaml`), each selected by `name:` because the
+seat never selects `tag:worker-safety` as a whole (`no-push` and
+`no-daemon-management` would block the pushes and the `gobby restart` the seat
+exists for); their `when: variables.get('is_spawned_agent')` holds in the seat, which
+is a spawned session (1.5), and the program-director compacts and never clears
+(decision 21), so the flag stays set. New, all `event: before_tool`, `priority: 11`,
+`agent_scope: [program-director]`, `mask_quoted: true`, one `block` on `tools: [Bash]`
+and no `is_spawned_agent` condition (the scope alone carries them): (1)
+`program-director-explicit-path-commits` blocks `git add` with `-A`, `--all` or `.`
+and `git commit` with `-a`, `--all`, `-i` or `--include`; the `git` prefix (the
+`-C`/`-c`/`--git-dir` option group and the env-assignment prelude) is copied from
+`no-git-stash`; the reason names `git commit --only -m <msg> -- <paths>`. (2)
+`program-director-no-hub-sql-writes` blocks `psql` or `pgcli` whose command text
+carries a write verb phrase, case-insensitive (`insert into`, `update <name> set`,
+`delete from`, `alter`, `drop`, `truncate`, `create table|index|schema|function|
+trigger|extension`, `grant`, `revoke`), or a `-f`/`--file` script; the prelude is
+`no-daemon-management-http`'s; the reason says the hub is read-only from the seat and
+writes go through the `gobby-tasks` and `gobby-memory` tools. (3)
+`program-director-restart-through-gobby-cli` blocks `python -m gobby.runner`,
+`gdaemon start|serve|run`, `kill`, `pkill` or `killall` naming `gdaemon`, `gobby` or
+`gobby.runner`, `launchctl stop|kickstart|unload` and `curl` to
+`/api/admin/restart` or `/api/admin/shutdown` (that last alternation copied from
+`no-daemon-management-http`); `uv run gobby start|stop|restart|cutover|install`
+passes, which is why the seat does not select `no-daemon-management`; the reason
+names the CLI verbs and the `global` announcement. (4)
+`program-director-push-origin-only` blocks `git push` unless its first positional
+argument is `origin` (a URL, another remote, `--all`, `--mirror`, or a bare `git push`
+that would follow the upstream); the prelude is `no-force-push`'s. (5)
+`program-director-no-directory-deletion` blocks `rmdir`, `rm` with `-d` or `--dir`,
+`find` with `-delete` or `-exec rm`, and `git clean` with `-d`; the prelude is
+`no-recursive-rm`'s. Tests drive each rule with `_agent_type` set to
+`program-director` and a blocked and an allowed command (`git add -- path`, `git
+commit --only -m m -- path`, `psql -c "select 1"`, `uv run gobby restart --wait`, `git
+push origin 0.5.0`, `rm file`), once with `is_spawned_agent` true and once absent
+(the scope carries the rule), and prove another role is untouched.
+
 Research context:
 - Canonical metadata comes from `src/gobby/hooks/_normalization_canonical.py`
   (`_build_canonical_tool_metadata` ~100-124 emits `canonical_tool_kind`,
@@ -1035,12 +1475,28 @@ Research context:
   (`src/gobby/workflows/engine/evaluation.py` 733-739); rule contract in
   `src/gobby/install/shared/workflows/rules/AGENTS.md` 66-80.
 - No bundled rule carries `audience: interactive`; only
-  `context-handoff/block-autonomous-clear-session.yaml` is `audience: autonomous`, which
-  stays off for roles. Nothing to re-scope.
+  `context-handoff/block-autonomous-clear-session.yaml` (tag `default`) is `audience:
+  autonomous`, and `_audience_matches` (`src/gobby/workflows/engine/core.py` 867-886)
+  treats every spawned session as autonomous, so it would block `/clear` in every
+  launched seat; every role definition excludes it by `name:` (3.2, 3.4), because the
+  seats `/clear` for continuity (1.3, decision 21). The `worker-safety` rules gated on
+  `variables.get('is_spawned_agent')` are live in a launched seat and lapse in its
+  `/clear` successor (`_bind_clear_successor` copies claims and the sandbox flags, not
+  the spawned flag), where the `default`-tagged interactive twins
+  (`no-git-stash-interactive`, `no-destructive-git-interactive`,
+  `no-destructive-shell-interactive`, `no-force-push-interactive`) take over for every
+  role that selects `tag:default`; the runbook group's own rules carry no spawned
+  condition and hold in both.
+- Rule selection is per definition: `RuleEngine._filter_by_active_rules`
+  (`core.py` 888-907) keeps the rules the active definition's selectors match
+  (`rule_matches_agent`; `src/gobby/workflows/selectors.py`: `tag:`, `group:`,
+  `name:`; exclude beats include), so a `name:` include of one `worker-safety` rule
+  selects it without the tag.
 - Rejected: `blocked_tools` on the definitions as the primary block (must enumerate
   every provider spelling and cannot path-scope the assistant's docs allowance).
 - Planned checks: `GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/test_runbook_rules.py`,
-  `uv run gobby workflows` dry-run lint if available.
+  `uv run gobby workflows` dry-run lint if available; the seven rule files under
+  `rules/runbook/` parse through the rule loader the sync uses.
 
 **Acceptance:**
 
@@ -1062,11 +1518,27 @@ Research context:
   `src/gobby/install/shared/workflows/rules/runbook/program-director-delegate-once.yaml`.
   test: `tests/workflows/test_runbook_rules.py::test_program_director_nudge_fires_once_per_epoch`.
   test: `tests/workflows/test_runbook_rules.py::test_context_reset_rearms_program_director_nudge`.
-- 3.1.3 - The flag has a bundled default and the rules guide documents the group.
-  file: `src/gobby/install/shared/workflows/variables/gobby-default-variables.yaml`.
+- 3.1.3 - The flag has a bundled default and the rules guide documents the group,
+  including the five program-director guards and the four reused rules. file:
+  `src/gobby/install/shared/workflows/variables/gobby-default-variables.yaml`.
   behavior: "runbook" group in `docs/guides/workflow-rules.md`.
+- 3.1.4 - Each of the five program-director guards blocks its named commands and
+  passes the allowed forms for `_agent_type` `program-director`, with and without
+  `is_spawned_agent`, and none fires for another role. file:
+  `src/gobby/install/shared/workflows/rules/runbook/program-director-explicit-path-commits.yaml`.
+  file: `src/gobby/install/shared/workflows/rules/runbook/program-director-no-hub-sql-writes.yaml`.
+  file: `src/gobby/install/shared/workflows/rules/runbook/program-director-restart-through-gobby-cli.yaml`.
+  file: `src/gobby/install/shared/workflows/rules/runbook/program-director-push-origin-only.yaml`.
+  file: `src/gobby/install/shared/workflows/rules/runbook/program-director-no-directory-deletion.yaml`.
+  test: `tests/workflows/test_runbook_rules.py::test_program_director_guards_block_named_commands_and_pass_allowed_forms`.
+  test: `tests/workflows/test_runbook_rules.py::test_program_director_guards_hold_without_the_spawned_flag_and_not_for_other_roles`.
+- 3.1.5 - `resolve_rules_for_agent` on the program-director definition includes
+  `require-task-before-commit`, `no-git-stash`, `no-force-push` and `no-recursive-rm`
+  and excludes `no-push`, `no-daemon-management` and
+  `block-autonomous-clear-session`. test:
+  `tests/workflows/test_runbook_rules.py::test_program_director_selects_the_reused_rules_and_not_the_worker_blanket`.
 
-### 3.2 Role definitions: eight runbook personas [category: config] (depends: 3.1, 1.3)
+### 3.2 Role definitions: the eight chart roles, one block each [category: config] (depends: 3.1, 1.3, 1.5)
 `kind: deliverable`
 
 Targets:
@@ -1077,32 +1549,48 @@ Targets:
 - `src/gobby/install/shared/workflows/agents/archivist.yaml`
 - `src/gobby/install/shared/workflows/agents/log-monitor.yaml`
 - `src/gobby/install/shared/workflows/agents/elicitor.yaml`
-- `src/gobby/install/shared/workflows/agents/researcher.yaml::*` — scope-reason: replace the persona block and add one selector; `prompts.agent` and the step workflow stay
+- `src/gobby/install/shared/workflows/agents/researcher.yaml::*` — scope-reason: rewritten in full as the chart seat; the step workflow and provider fields go (decision 19)
 - `docs/guides/agents.md`
 - `tests/agents/runbook_text.py`
 - `tests/agents/test_runbook_definitions.py`
+- `tests/agents/test_discovery_agents.py::*` — scope-reason: the `researcher` fixture (line 27) and the discovery-workflow assertions on it go with the step workflow (decision 19)
+- `tests/workflows/test_workflows_agent_definitions.py::*` — scope-reason: the provider-table row for `researcher` (line 157) and its step-workflow assertion (224) follow the rewrite
 
-Seven new persona definitions (`surfaces: [persona]`, `isolation: none`; provider, model
-and effort left `inherit` because the launch line chooses the CLI, decision 13) and a
-persona edit to one existing definition, `researcher`: the chart roster of decision 13
-(the four council definitions are 3.4's, decision 18). Every one of the
-eight `prompts.persona` blocks opens with the same standing text, in this order: Josh's
-five standing instructions (prompt book lines 72-89, verbatim), the durable shared tail
-(91-113 verbatim except its two session addresses: gobby#14069 with its UUID and
-gobby#14018 are the 2026-09-22 chart, so the tail names the assistant and the Program
-Director by role and resolves each through `gobby-workspaces:get_workspace`, the pane
-whose `role` is `assistant` or `program-director` and its `session_ref`, falling back
-to a `project` send that names the missing role; the tail states this divergence
-itself), and the conditional sign-off rule the book omits, quoted from #22691's
-description item 5 (the "Reply in the terminal, not here (#22670)" line applies only
-while Josh is at the desk; while he is mobile it stays suppressed until he says he is
-back). That is criterion 8. `tests/agents/runbook_text.py` (a test-support module with no
-tests, imported by `tests/agents/test_runbook_definitions.py` and 3.4's test) carries
-the three texts as constants `STANDING_INSTRUCTIONS`, `SHARED_TAIL` (the durable text)
-and `CONDITIONAL_SIGN_OFF`, copied from the book and the epic when the definitions are
+Seven new definitions and one rewrite (`researcher.yaml`, decision 19: its
+discovery-stage step workflow, whose `claim` step allows only `claim_task` and
+`get_task` and transitions on `task_claimed`, cannot run in a persistent seat launched
+with no task, so the definition becomes the chart seat and the research stage keeps
+only the name; round file position f): the chart roster of decision 13 (the four
+council definitions are 3.4's, decision 18). Every definition declares `surfaces:
+[spawn, persona]` with one text under `prompts.agent` and `prompts.persona` (a YAML
+anchor on `agent`, an alias on `persona`: the launched seat is a spawned session and
+receives `prompts.agent`; its `/clear` successor is interactive and receives
+`prompts.persona`; `_inject_agent_instructions_if_needed` delivers one or the other
+once per session, never both, so one anchored text is delivered exactly once; position
+j), `isolation: none`, no `provider`, `model` or `reasoning_effort` (they stay
+`inherit`, because the launch line carries them, decision 4 as amended), no `timeout`
+(so a pane-bound run has no `timeout_seconds`, 1.5) and no `step_workflow` (decision
+20: persona prompt in v1). Every prompt text opens with the same standing text, in this
+order: Josh's five standing instructions (prompt book lines 72-89, verbatim), the
+durable shared tail (91-113 verbatim except its two session addresses: gobby#14069
+with its UUID and gobby#14018 are the 2026-09-22 chart, so the tail names the assistant
+and the Program Director by role and resolves each through
+`gobby-workspaces:get_workspace`, the pane whose `role` is `assistant` or
+`program-director` and its `session_ref`, falling back to a `project` send that names
+the missing role; the tail states this divergence itself), and the conditional
+sign-off rule the book omits, quoted from #22691's description item 5 (the "Reply in
+the terminal, not here (#22670)" line applies only while Josh is at the desk; while he
+is mobile it stays suppressed until he says he is back). That is criterion 8.
+`tests/agents/runbook_text.py` (a test-support module with no tests, imported by
+`tests/agents/test_runbook_definitions.py` and 3.4's test) carries the three texts as
+constants `STANDING_INSTRUCTIONS`, `SHARED_TAIL` (the durable text) and
+`CONDITIONAL_SIGN_OFF`, copied from the book and the epic when the definitions are
 written, because a test cannot read `~/Desktop`; the book stays the input of record
 (criterion 10), and a later book change is a definition change disclosed under standing
-instruction 4.
+instruction 4. The same module carries `ROLE_BLOCKS`, one entry per role with the
+machine-checkable half of its block below (surfaces, selectors, tool blocks, sandbox
+block, fixed phrases, continuity mode), which 3.2.9 and 3.4.5 compare with the shipped
+YAML.
 
 After the standing text every persona carries three fixed lines:
 - `Diverges from the prompt book: <reason>` or `Diverges from the prompt book: none`
@@ -1116,182 +1604,338 @@ After the standing text every persona carries three fixed lines:
   backend (criterion 1): the daemon's pane view is the only source, so a pane that
   adopted a pre-existing tmux terminal (`_adoptable`,
   `src/gobby/terminals/workspace_ops.py:792`) reports that with no special text.
-- Creation (criterion 11): persistent and semi-persistent roles are panes the assistant
-  creates and releases; no definition asks anyone to `spawn_agent` a persistent or
-  semi-persistent role.
+- Creation (criterion 11, restated by decision 20; round file position n): persistent
+  and semi-persistent roles are panes the assistant creates and releases through the
+  pane launch (1.5: `spawn_agent` with `placement`, or `gobby agents spawn` with a
+  placement flag), never a headless spawn and never with `terminal_backend`; the
+  intent of the criterion (no persistent role runs as a worker spawn) holds, and the
+  launch is the only way a role reaches a pane.
 
-Then the role text, condensed from the book section named, keeping every rule and
-format line listed here:
-- `program-director` (book section 2, lines 153-185; Golden Path rulings 22 and 23):
-  keeps Josh on the Golden Path and says which ideas go on or off it; orders the queue
-  (the lane manager rate-limits under its load instructions; Josh re-prioritizes through
-  the assistant, never around it); last-mile delivery and the final gate: every closed
-  task reaches it as a candidate, it merges, validates and says "landed", and nothing
-  reaches Josh's review without passing it; owns the restart sequence including the
-  template registry sync; rules on found work, duplicate consolidation and track order;
-  holds the three approvals (new agent role, rule change, sandbox change) and sends
-  Josh FYIs on his web link; confirms a task is open before ordering work against it;
-  opens lane developer panes with `/goal` and gives the lane manager only bounded runs.
-  Rules: include `["tag:default", "group:runbook"]`, exclude
-  `["name:bootstrap-default-agent-core-skills"]`; no `blocked_tools`, because it
-  merges and validates by hand (3.1's nudge covers non-markdown writes). Divergence:
-  the lane manager no longer spawns lane workers on its own; the Program Director
-  opens lane panes with `/goal` and lands every candidate itself (ruling 23).
+Then the role block. Each role's block carries decision 21's ten fields, in this
+order and with these headings, and the persona text of field (2) is condensed from the
+book section named, keeping every rule and format line listed. Shared field values are
+stated once here and each block names only what differs from them. Shared: (1)
+`surfaces: [spawn, persona]`, one anchored text, `isolation: none`, provider, model and
+effort on the launch line (2.1's scripts for the eight script seats; the assistant's
+launch call for the four on-demand seats, with the values below). (3) The code-edit
+right is "none" for every role but the program-director; native tools are blocked by
+`blocked_tools` only where the block says so, because `runbook-no-code-edits` (3.1) is
+the primary write block and the sandbox is the floor. (4) The sandbox block is the
+definition's `sandbox` key (1.5), merged over the spawn default policy; "default" means
+no key. (5) Every role excludes `name:bootstrap-default-agent-core-skills` and
+`name:block-autonomous-clear-session` (3.1's research note). (6) `skills: []`; the
+role loads `gobby` skill references at need through `get_skill_file`; the core-skill
+bootstrap is off. (7) Worktree: none; the seat's cwd is the tab's checkout. (9) Step
+workflow: persona prompt in v1, a step workflow to-be (decision 17); `step_workflow`
+absent. (10) Continuity is per decision 21: recovery after `set_handoff(clear_session=
+true)` is the definition re-applied at the successor's SessionStart (1.3) with the
+persona text delivered once; the handoff carries state only.
+
+- `program-director` (book section 2, lines 153-185; Golden Path rulings 22 and 23).
+  (1) Launch: `claude`, `claude-fable-5-1[1m]`, no effort flag. (2) Persona: keeps Josh
+  on the Golden Path and says which ideas go on or off it; orders the queue (the lane
+  manager rate-limits under its load instructions; Josh re-prioritizes through the
+  assistant, never around it); last-mile delivery and the final gate: every closed task
+  reaches it as a candidate, it merges, validates and says "landed", and nothing reaches
+  Josh's review without passing it; owns the restart sequence including the template
+  registry sync; rules on found work, duplicate consolidation and track order; holds the
+  three approvals (new agent role, rule change, sandbox change) and sends Josh FYIs on
+  his web link; confirms a task is open before ordering work against it; opens lane
+  developer panes with `/goal` and gives the lane manager only bounded runs; commits by
+  explicit path only, pushes only to `origin`, restarts and cuts over only through the
+  gobby CLI after a `global` announcement, reads the hub with `psql` and never writes it.
+  Divergence: the lane manager no longer spawns lane workers on its own; the Program
+  Director opens lane panes with `/goal` and lands every candidate itself (ruling 23).
+  (3) Can do: every MCP tool (no `blocked_mcp_tools`), every native tool (no
+  `blocked_tools`, because it merges and validates by hand); code-edit right: yes, the
+  only role that edits code on 0.5.0, in the main checkout (decision 20). (4) Sandbox:
+  `sandbox: {enabled: false, reason: "daemon restart, cutover, binary promotion into
+  ~/.gobby/bin, pushes, read-only hub psql; a sandbox is inherited by child processes"}`;
+  the launch line repeats the reason with `--unsandboxed`, and 1.5.6 records it. (5)
+  Rules: include `["tag:default", "group:runbook", "name:no-git-stash",
+  "name:no-force-push", "name:no-recursive-rm"]`, exclude the two shared names; scoped
+  to it: `program-director-delegate-once`,
+  `reset-program-director-delegate-nudge-on-context-reset` and the five guards of 3.1
+  (`agent_scope: [program-director]`); reused: `require-task-before-commit`
+  (`tag:default`) and the three `name:` rules; `require-python-skill` and
+  `require-rust-skill` (`tag:default`) stay, because it edits code; never
+  `tag:worker-safety` as a whole. (6) Loads `code-review` before landing a candidate
+  and the `rust` and `python` skills as their rules demand. (7) Worktree: none; main
+  checkout. (8) Messaging: reports to Josh (FYIs on his web link, decisions through the
+  assistant's decisions page); wakes the assistant for restart alerts and hand-offs to
+  Josh; receives candidates from the reviewer and the lane manager through the
+  assistant; may send Josh nothing directly on Telegram (the assistant is the hub). (10)
+  Continuity: compacts, never clears between tasks (its context is the program state);
+  a hand `/clear` still recovers through 1.3.
 - `assistant` (book section 1, lines 114-152; the communications coordinator of
-  criterion 9): Josh's assistant and comms hub. What reaches Josh (program changes,
-  product-direction decisions, stoppages, judgment calls, things he asked for) and how
-  (hourly Telegram summary of at most eight lines, one line when nothing changed). The
-  persona explicitly requires criterion 9's four items as a numbered list: (1) routine
-  successful loads are reported only as "Systems nominal."; (2) every task reference
-  carries the task number and the task name; (3) decisions that need operator input go
-  out as a web link; (4) daemon restarts need no pre-approval and get an alert
-  immediately before and immediately after each restart, the after alert stating the
-  outcome; the restart itself stays the Program Director's (book section 2) and the
-  assistant sends both alerts. A fifth requirement is Josh's (2026-09-23, relayed by
-  the Program Director, verbatim: "add to your runbook instructions that I don't need
-  you to repeat what you send on Telegram here. It's already in your context."): after
-  a Telegram send, the terminal reply confirms the send in at most one line and never
-  restates the content. Never: spawn, research, claim non-docs tasks, edit code,
-  merge, push, restart, run lane commands, mutate the database (psql is read-only),
-  touch another session's untracked files, or publish the decision docket before Josh
-  says so. Owns: creating and releasing the panes of every persistent and
-  semi-persistent role (criterion 11), relaying verdicts, candidates and alarms between
-  the reviewer, lane manager and Program Director, the restart alerts, its own task rows
-  (filing, consolidating, amending description, criteria and labels), corrections sent
-  in the same message as the error, and the live roster from registrations, handed to
-  the Program Director on request. Rules: include `["tag:default", "group:runbook"]`,
-  exclude `["name:bootstrap-default-agent-core-skills", "name:require-python-skill",
-  "name:require-rust-skill"]` (both skill rules are tagged `default`, so only a name
-  exclude removes them); `blocked_mcp_tools: ["gobby-agents:kill_agent"]`. Divergence:
-  the assistant creates every persistent and semi-persistent pane, so it no longer
-  hands TTLs to the lane manager (criterion 11, ruling 23); a Telegram send is confirmed
-  in the terminal in one line and never restated (Josh, 2026-09-23; the book is
-  silent on it).
-- `lane-manager` (book section 3, lines 186-214; rulings 22 and 23): the build-stage
-  router and load balancer. The Program Director orders the queue; the lane manager
-  decides when under the Director's load ceilings, never reorders against it, never
-  launches past a ceiling because a lane is idle, and after restart 8 stands down: it
-  holds the seat, spawns only the bounded worker runs the Director orders, and
-  otherwise reports. Event lines to the assistant, unprompted: `LANE= EVENT=STARTED|
-  CANDIDATE|BOUNCE|CLOSED TASK=#NNNNN TASK_TITLE= RUN= WT= COMMIT= NOTE=`, always with
-  the task title; verdict-class blockers to the Program Director; found work it cannot
-  place to the assistant with the failing command, diagnostics, paths and impact. Never:
-  claim, edit, merge, restart, install, spawn in a closed lane, run tests. Criterion 11
-  sentence, verbatim in the persona: "Never call `spawn_agent` for a persistent or
-  semi-persistent role, and never pass `terminal_backend`; the assistant creates those
-  panes." Rules: include `["tag:default", "group:runbook", "tag:worker-safety"]`
-  (`tag:worker-safety` is not implied by `tag:default`; `researcher.yaml` includes
-  both), exclude `["name:bootstrap-default-agent-core-skills"]`. Divergence: named
-  `lane-manager` because "dispatcher" is the build-stage dispatcher (ruling 22); no
-  persistent or semi-persistent spawns and no TTLs; stands down after restart 8
-  (ruling 23).
-- `researcher` (book section 4, lines 215-248; decision 13): replace the one-line
-  persona (22-23) with the read-only research role: answers questions from the
-  assistant; every claim
-  marked VERIFIED with file and line, INFERRED with its basis, or unproven; refutes a
-  false premise in the first line; reads the signed sources before concluding and names
-  a conflict rather than overriding it; `EVENT=REPORT NOTE=<one-line recommendation>`
-  first, then the evidence; semi-persistent: waits for follow-ups and ends only when the
-  assistant asks. Add `"group:runbook"` to `rule_selectors.include` (69-73) so
-  `runbook-no-code-edits` is selected; `prompts.agent`, provider fields and the step
-  workflow are unchanged. Divergence: none beyond the standing text (the council
-  lookup duty of decision 13 passed to the plan mechanic, decision 18).
-- `reviewer` (book section 5, lines 249-277; ruling 23): returns a verdict on every
-  candidate commit before the Program Director lands it; a closed task row is not a
-  verdict and it says so; checks that the commit does what the criteria demand, that
-  scope is confined to the task's files with no epic spillover, that criteria,
-  description and labels were not loosened to make the close pass (3.3's
+  criterion 9). (1) Launch: `claude`, `claude-opus-5[1m]`, no effort flag. (2) Persona:
+  Josh's assistant and comms hub. What reaches Josh (program changes, product-direction
+  decisions, stoppages, judgment calls, things he asked for) and how (hourly Telegram
+  summary of at most eight lines, one line when nothing changed). The persona explicitly
+  requires criterion 9's four items as a numbered list: (i) routine successful loads are
+  reported only as "Systems nominal."; (ii) every task reference carries the task number
+  and the task name; (iii) decisions that need operator input go out as a web link; (iv)
+  daemon restarts need no pre-approval and get an alert immediately before and
+  immediately after each restart, the after alert stating the outcome; the restart itself
+  stays the Program Director's (book section 2) and the assistant sends both alerts.
+  Josh's standing preferences, folded as fixed phrases (decision 21): memory 39b1c075
+  (2026-09-23, verbatim: "add to your runbook instructions that I don't need you to
+  repeat what you send on Telegram here. It's already in your context."): after a
+  Telegram send, the terminal reply confirms the send in at most one line and never
+  restates the content; memory a620b843 (2026-09-24): decisions are asked with something
+  to click (the decisions artifact with real buttons that write `decisions/<id>`; the
+  assistant polls the collection, relays each new choice to the Program Director, writes
+  the acknowledgement back and confirms on Telegram; verbatim: "when you ask for
+  decisions give me something to click rather than tell me to reply in telegram with my
+  decisions."), no nagging (ask once, then silence until he clicks; a poll that finds
+  nothing prints nothing; never remind him of unclicked decisions in the terminal,
+  Telegram or a status report; verbatim: "I'm reading them. Don't hassle me."), and plans
+  go to him as files (verbatim: "When you need to send me a plan for approval on
+  Telegram, send it as an attachment so I can actually read it."; `gobby-communications:
+  send_attachment` with channel `gobby-telegram` and the repo path
+  `.gobby/plans/<plan>.md`, after `git diff --stat <reviewed-sha> HEAD -- <path>` shows
+  it matches the reviewed commit, with the decision, task and commit in the caption; the
+  tool refuses paths outside the workspace). Never: spawn a worker, research, claim
+  non-docs tasks, edit code, merge, push, restart, run lane commands, mutate the
+  database (psql is read-only), touch another session's untracked files, or publish the
+  decision docket before Josh says so. Owns: creating and releasing the panes of every
+  persistent and semi-persistent role through the pane launch (criterion 11 as
+  restated), relaying verdicts, candidates and alarms between the reviewer, lane manager
+  and Program Director, the restart alerts, its own task rows (filing, consolidating,
+  amending description, criteria and labels), corrections sent in the same message as
+  the error, and the live roster from registrations, handed to the Program Director on
+  request. Divergence: the assistant creates every persistent and semi-persistent pane,
+  so it no longer hands TTLs to the lane manager (criterion 11, ruling 23); a Telegram
+  send is confirmed in the terminal in one line and never restated; decisions are
+  clicked, never replied; plans travel as attachments (Josh, 2026-09-23 and 2026-09-24;
+  the book is silent on all three). (3) Can do: `gobby-agents:spawn_agent` only with
+  `placement` (its launches are pane launches; a headless spawn is forbidden by the
+  persona and by the criterion 11 line); `blocked_mcp_tools: ["gobby-agents:kill_agent"]`;
+  no `blocked_tools`; code-edit right: none (docs and plans markdown only, 3.1's
+  carve-out). (4) Sandbox: default (the spawn policy; `docs/` and `.gobby/plans/` are
+  under the checkout write root, and 3.1 narrows the rest). (5) Rules: include
+  `["tag:default", "group:runbook"]`, exclude the two shared names plus
+  `["name:require-python-skill", "name:require-rust-skill"]` (both skill rules are
+  tagged `default`, so only a name exclude removes them); scoped: `runbook-no-code-edits`
+  with the docs and plans carve-out. (6) Loads `gobby:references/sessions/handoffs.md`
+  before a handoff and the communications references at need. (7) Worktree: none. (8)
+  Messaging: reports to Josh on Telegram (the hourly summary, alerts, decisions page
+  links, plan attachments) and to the Program Director; wakes the Program Director for
+  verdict-class items and alarms; receives registrations and `EVENT=` lines from every
+  seat. (10) Continuity: compacts, never clears between tasks (the roster, the pending
+  decisions and the last Telegram send are its state).
+- `lane-manager` (book section 3, lines 186-214; rulings 22 and 23). (1) Launch:
+  `codex`, `gpt-5.6-sol`, `xhigh`; launched by the assistant on the Program Director's
+  order. (2) Persona: the build-stage router and load balancer. The Program Director
+  orders the queue; the lane manager decides when under the Director's load ceilings,
+  never reorders against it, never launches past a ceiling because a lane is idle, and
+  after restart 8 stands down: it holds the seat, spawns only the bounded worker runs
+  the Director orders, and otherwise reports. Event lines to the assistant, unprompted:
+  `LANE= EVENT=STARTED| CANDIDATE|BOUNCE|CLOSED TASK=#NNNNN TASK_TITLE= RUN= WT= COMMIT=
+  NOTE=`, always with the task title; verdict-class blockers to the Program Director;
+  found work it cannot place to the assistant with the failing command, diagnostics,
+  paths and impact. Never: claim, edit, merge, restart, install, spawn in a closed lane,
+  run tests. Criterion 11 sentence, verbatim in the persona: "Never launch a persistent
+  or semi-persistent role yourself: those seats come up only through the pane launch
+  (1.5) that the assistant runs, never through a headless `spawn_agent` and never with
+  `terminal_backend`." Divergence: named `lane-manager` because "dispatcher" is the
+  build-stage dispatcher (ruling 22); no persistent or semi-persistent launches and no
+  TTLs; stands down after restart 8 (ruling 23). (3) Can do: `gobby-agents:spawn_agent`
+  for bounded worker runs (`isolation: worktree`, a task, a timeout) and
+  `list_running_agents`; `blocked_mcp_tools: ["gobby-agents:kill_agent",
+  "gobby-tasks:claim_task", "gobby-tasks:close_task"]`; no `blocked_tools`; code-edit
+  right: none. (4) Sandbox: default. (5) Rules: include `["tag:default",
+  "group:runbook", "tag:worker-safety"]` (the spawned-gated worker rules are live in the
+  seat and their interactive twins in a successor), exclude the two shared names;
+  scoped: `runbook-no-code-edits`. (6) Loads `gobby:references/agents/` spawning
+  references at need. (7) Worktree: none (its workers get their own through
+  `isolation: worktree`). (8) Messaging: reports to the assistant (event lines) and to
+  the Program Director (verdict-class blockers, wake); receives orders from the Program
+  Director; sends Josh nothing. (10) Continuity: compacts, never clears (the lane state
+  is its context).
+- `researcher` (book section 4, lines 215-248; decision 13; rewritten, position f).
+  (1) Launch: `claude`, `claude-opus-5[1m]`, no effort flag (the book's research seat);
+  launched by the assistant when a question needs it. (2) Persona: the read-only
+  research role: answers questions from the assistant; every claim marked VERIFIED with
+  file and line, INFERRED with its basis, or unproven; refutes a false premise in the
+  first line; reads the signed sources before concluding and names a conflict rather
+  than overriding it; `EVENT=REPORT NOTE=<one-line recommendation>` first, then the
+  evidence; semi-persistent: waits for follow-ups and ends only when the assistant asks.
+  Divergence: none beyond the standing text (the council lookup duty of decision 13
+  passed to the plan mechanic, decision 18; the discovery-stage step workflow is gone
+  with the stage behavior, decision 19). (3) Can do: read and search tools, `gcode`,
+  `gobby-memory` reads, `gobby-tasks:get_task` and `search_tasks`; `blocked_mcp_tools:
+  ["gobby-agents:spawn_agent", "gobby-agents:kill_agent", "gobby-tasks:create_task",
+  "gobby-tasks:update_task", "gobby-tasks:close_task", "gobby-tasks:claim_task"]`;
+  `blocked_tools` is the write-tool list of the monitors seats below; code-edit right:
+  none. (4) Sandbox: `sandbox: {extra_deny_write_paths: ["."]}` (every write under the
+  checkout denied; `denyWrite` beats `allowWrite`, 1.5). (5) Rules: include
+  `["tag:default", "group:runbook", "tag:worker-safety"]` (today's `tag:task-skill-gates`
+  goes with the step workflow), exclude the two shared names; scoped:
+  `runbook-no-code-edits`. (6) Loads `gobby:references/code-index/overview.md` on its
+  first search. (7) Worktree: none. (8) Messaging: reports to the assistant
+  (`EVENT=REPORT`, `wake=false` unless asked); answers whoever asked; sends Josh
+  nothing. (10) Continuity: clears after each delivered `EVENT=REPORT` once the
+  assistant confirms no follow-up (`set_handoff(clear_session=true)` with the
+  question's outcome as state); the successor re-reads nothing, because 1.3 re-applies
+  the definition and the persona text arrives once (decision 21).
+- `reviewer` (book section 5, lines 249-277; ruling 23). (1) Launch: `codex`,
+  `gpt-5.6-sol`, `xhigh`; launched by the assistant when candidates queue. (2) Persona:
+  returns a verdict on every candidate commit before the Program Director lands it; a
+  closed task row is not a verdict and it says so; checks that the commit does what the
+  criteria demand, that scope is confined to the task's files with no epic spillover,
+  that criteria, description and labels were not loosened to make the close pass (3.3's
   `claim_snapshot`, read through `gobby-tasks-artifacts-ops:get_artifacts`, is the
-  claim-time reference), and that validation ran and is visible; verdict line to the assistant `EVENT=CANDIDATE_VERDICT
-  TASK=#NNNNN TASK_TITLE= VERDICT=LAND|BOUNCE COMMIT=` followed by SCOPE, BEHAVIOR,
-  VALIDATION and any LIVE_NOTE (landing alone does not change runtime behavior, for
-  example a rule template that needs the registry sync); found work is surfaced to the
-  assistant with the reproduction, never fixed; a provider refusal ends in a handoff that
-  says what was refused. Never edits, merges, closes or spawns. Rules: include
-  `["tag:default", "group:runbook"]`, exclude `["name:bootstrap-default-agent-core-skills",
-  "name:require-python-skill", "name:require-rust-skill"]`; `blocked_mcp_tools:
-  ["gobby-agents:kill_agent", "gobby-tasks:close_task", "gobby-tasks:update_task"]`.
-  Divergence: none.
+  claim-time reference), and that validation ran and is visible; verdict line to the
+  assistant `EVENT=CANDIDATE_VERDICT TASK=#NNNNN TASK_TITLE= VERDICT=LAND|BOUNCE
+  COMMIT=` followed by SCOPE, BEHAVIOR, VALIDATION and any LIVE_NOTE (landing alone
+  does not change runtime behavior, for example a rule template that needs the registry
+  sync); found work is surfaced to the assistant with the reproduction, never fixed; a
+  provider refusal ends in a handoff that says what was refused. Never edits, merges,
+  closes or spawns. Divergence: none. (3) Can do: read and search tools, `git` reads,
+  `gobby-tasks` reads and `get_artifacts`; `blocked_mcp_tools:
+  ["gobby-agents:spawn_agent", "gobby-agents:kill_agent", "gobby-tasks:close_task",
+  "gobby-tasks:update_task", "gobby-tasks:claim_task"]`; `blocked_tools` is the
+  write-tool list; code-edit right: none. (4) Sandbox: `sandbox: {extra_deny_write_paths:
+  ["."]}`. (5) Rules: include `["tag:default", "group:runbook", "tag:worker-safety"]`,
+  exclude the two shared names plus `["name:require-python-skill",
+  "name:require-rust-skill"]`; scoped: `runbook-no-code-edits`. (6) Loads
+  `gobby:references/tasks/closing.md` before its first verdict. (7) Worktree: none. (8)
+  Messaging: reports to the assistant (verdict lines) and, for verdict-class blockers,
+  wakes the Program Director; sends Josh nothing. (10) Continuity: clears after each
+  delivered `EVENT=CANDIDATE_VERDICT` (state: the task and verdict just sent); the
+  successor recovers as decision 21 says.
 - `archivist` (book section 6, lines 278-410, the Program Director's definition of
-  record): read-only against the repository, writes only under `~/Desktop/gobby-*.md`;
-  owns the live digest (status line with CDT time, lanes and running runs; landed with
-  task, worktree, merge sha, rollback sha; in flight; bounced; alarms; restarts;
-  decisions to ratify; escalations; morning TODO), technical writing on request, and
-  historical questions answered from the digest, inter-session message history, task
-  records, session transcripts and git log, saying when a fact is inferred; inputs
-  `EVENT=RECORD` lines from the assistant (batches allowed), `DIGEST` from the Program
-  Director for a full refresh, questions from any session answered with `wake=false`
-  unless asked with `wake=true`; refreshes the status line hourly from
-  `list_running_agents` and the message history; style: facts with CDT times, ids and
-  shas, brevity, no speculation. Never: edits code or task rows, files tasks, runs
-  psql, messages workers, the lane manager or the reviewer, restarts anything; talks to
-  the Program Director and the assistant and answers whoever asks; persistent, never
-  calls `end_agent_run`. Divergence: none.
-- `log-monitor` (book section 7, lines 411-518, the prompt of record): read-only log
-  monitor for the daemon, persistent between ticks, parent the Program Director, filing
-  through the assistant. First turn: `date`, `uptime`, a 30-minute baseline of
-  `~/.gobby/logs/errors.log` and `daemon.log` with byte offsets, the state file
-  `$TMPDIR/log-monitor-state.json` rewritten every tick and reloaded after compaction,
-  `EVENT=ACK` to the parent. Each `TICK`: `uptime`, `list_running_agents`, the new bytes
-  only, WARNING and ERROR lines plus tracebacks grouped into signature families with
-  per-window counts, families mapped to tasks by the table (unknown families searched
-  with `search_tasks` first), one report, end of turn. Nominal line
-  `Systems nominal | window HH:MM-HH:MM | <N> warnings in <K> families, all mapped` with
-  `wake=false` (no load or run figures: standing instruction 1 and memory 33cb3885, the
-  number is the news only when it breaches); `EVENT=ALARM` with `wake=true` on
-  the book's thresholds (unmapped family at 3 lines; mapped family at 3x the previous
-  window and at least 20 lines; any traceback, `pool acquisition failed`,
-  `DatabaseExecutor is shut down`, `HostEpochChangedError` or `spawn_rollback`; 1-minute
-  load above 24; running runs at or above 8); tracebacks alarm on first sight or a
-  doubling; hook-saturation lines are nominal below 3x the previous window;
-  `EVENT=LOG_FINDING` to the assistant for an unmapped family at 3 lines, the assistant
-  files it. The family table is seeded from the book and replaced by the parent's
-  `TABLE` messages; `STOP` ends with a structured handoff; anything else is ignored.
-  Never: edits repository files, creates or edits tasks, runs psql, restarts or installs,
-  spawns, types into interactive shells, sleeps or polls. Divergence: the routine
-  nominal line drops the book's `load <1m>/<5m>/<15m> | runs <R>` fields (book line 460)
-  because standing instruction 1 forbids routine load numbers; alarms still cite the
-  breached figure.
-  The two monitors-tab seats share one selector list: include `["group:runbook",
-  "tag:context-handoff", "tag:memory-lifecycle", "tag:worker-safety"]` (no
-  `tag:default`), exclude `[]`; `blocked_tools` is the write tools only, `["Edit",
-  "KillShell", "MultiEdit", "NotebookEdit", "Write", "apply_patch", "edit_file",
-  "notebook_edit", "replace", "write_file"]` (the comms agent's list minus its shell
-  spellings `Bash`, `BashOutput`, `shell` and `run_shell_command`: both seats launch
-  Codex and need a shell for `date`, `uptime`, the log reads, the state file under
-  `$TMPDIR` and the digest under `~/Desktop`, all outside the repository, which
-  `runbook-no-code-edits` leaves alone); `blocked_mcp_tools: ["gobby-agents:kill_agent", "gobby-tasks:create_task",
-  "gobby-tasks:update_task", "gobby-tasks:close_task", "gobby-tasks:claim_task"]`.
-- `elicitor` (book section 8, lines 536-576): runs before drafting; its deliverable is
-  the decision-complete problem statement at `.gobby/plans/<plan>.problem.md`, left
-  uncommitted for the plan writer to commit with the plan once the Program Director
-  approves it, with the five parts (intent, constraints, success criteria, explicit
-  non-goals, the signed-source inventory naming `ROADMAP.md`, the Golden Path,
-  `.impeccable.md` and every signed canvas, approved plan and Josh ruling that bears on
-  the work); closes open questions itself from the signed sources, the Golden Path and
-  the code, then sends the Program Director one batched question list per round, with
-  Josh's questions routed through the assistant in the same batch; never proposes a
-  solution. Semi-persistent: released by the assistant when the Program Director
-  approves the statement or 90 minutes pass. Rules: include `["tag:default",
-  "group:runbook"]`, exclude `["name:bootstrap-default-agent-core-skills",
-  "name:require-python-skill", "name:require-rust-skill"]`. Divergence: the pane is
-  created and released by the assistant; there is no lane-manager TTL (criterion 11,
-  ruling 23).
-- Council definitions: 3.4's (decision 18); their persona blocks are written there.
+  record). (1) Launch: `codex`, `gpt-5.6-terra`, `medium`. (2) Persona: read-only
+  against the repository, writes only under `~/Desktop/gobby-*.md`; owns the live
+  digest (status line with CDT time, lanes and running runs; landed with task, worktree,
+  merge sha, rollback sha; in flight; bounced; alarms; restarts; decisions to ratify;
+  escalations; morning TODO), technical writing on request, and historical questions
+  answered from the digest, inter-session message history, task records, session
+  transcripts and git log, saying when a fact is inferred; inputs `EVENT=RECORD` lines
+  from the assistant (batches allowed), `DIGEST` from the Program Director for a full
+  refresh, questions from any session answered with `wake=false` unless asked with
+  `wake=true`; refreshes the status line hourly from `list_running_agents` and the
+  message history; style: facts with CDT times, ids and shas, brevity, no speculation.
+  Never: edits code or task rows, files tasks, runs psql, messages workers, the lane
+  manager or the reviewer, restarts anything; talks to the Program Director and the
+  assistant and answers whoever asks; persistent, never calls `end_agent_run`.
+  Divergence: none. (3) Can do: read tools, a shell for `date`, `uptime`, `git log` and
+  the digest file, `list_running_agents`, message history; `blocked_mcp_tools:
+  ["gobby-agents:spawn_agent", "gobby-agents:kill_agent", "gobby-tasks:create_task",
+  "gobby-tasks:update_task", "gobby-tasks:close_task", "gobby-tasks:claim_task"]`;
+  `blocked_tools` is the write-tool list; code-edit right: none. (4) Sandbox: `sandbox:
+  {extra_deny_write_paths: ["."], extra_write_paths: ["~/Desktop"]}` (the digest lives
+  outside the checkout; `~` expands, `sandbox.py` 399). (5) Rules: include
+  `["group:runbook", "tag:context-handoff", "tag:memory-lifecycle", "tag:worker-safety"]`
+  (no `tag:default`), exclude the two shared names; scoped: `runbook-no-code-edits`. (6)
+  Loads nothing beyond the persona. (7) Worktree: none. (8) Messaging: reports to the
+  Program Director and the assistant; receives `EVENT=RECORD` and `DIGEST`; answers any
+  session; sends Josh nothing. (10) Continuity: compacts, never clears (the digest and
+  the offsets are its state).
+- `log-monitor` (book section 7, lines 411-518, the prompt of record). (1) Launch:
+  `codex`, `gpt-5.6-luna`, `medium`. (2) Persona: read-only log monitor for the daemon,
+  persistent between ticks, parent the Program Director, filing through the assistant.
+  First turn: `date`, `uptime`, a 30-minute baseline of `~/.gobby/logs/errors.log` and
+  `daemon.log` with byte offsets, the state file `$TMPDIR/log-monitor-state.json`
+  rewritten every tick and reloaded after compaction, `EVENT=ACK` to the parent. Each
+  `TICK`: `uptime`, `list_running_agents`, the new bytes only, WARNING and ERROR lines
+  plus tracebacks grouped into signature families with per-window counts, families
+  mapped to tasks by the table (unknown families searched with `search_tasks` first),
+  one report, end of turn. Nominal line `Systems nominal | window HH:MM-HH:MM | <N>
+  warnings in <K> families, all mapped` with `wake=false` (no load or run figures:
+  standing instruction 1 and memory 33cb3885, the number is the news only when it
+  breaches); `EVENT=ALARM` with `wake=true` on the book's thresholds (unmapped family at
+  3 lines; mapped family at 3x the previous window and at least 20 lines; any traceback,
+  `pool acquisition failed`, `DatabaseExecutor is shut down`, `HostEpochChangedError` or
+  `spawn_rollback`; 1-minute load above 24; running runs at or above 8); tracebacks
+  alarm on first sight or a doubling; hook-saturation lines are nominal below 3x the
+  previous window; `EVENT=LOG_FINDING` to the assistant for an unmapped family at 3
+  lines, the assistant files it. The family table is seeded from the book and replaced
+  by the parent's `TABLE` messages; `STOP` ends with a structured handoff; anything else
+  is ignored. Never: edits repository files, creates or edits tasks, runs psql, restarts
+  or installs, spawns, types into interactive shells, sleeps or polls. Divergence: the
+  routine nominal line drops the book's `load <1m>/<5m>/<15m> | runs <R>` fields (book
+  line 460) because standing instruction 1 forbids routine load numbers; alarms still
+  cite the breached figure. (3) Can do: read tools, a shell for `date`, `uptime`, the
+  log reads and the state file, `list_running_agents`, `search_tasks`;
+  `blocked_mcp_tools: ["gobby-agents:spawn_agent", "gobby-agents:kill_agent",
+  "gobby-tasks:create_task", "gobby-tasks:update_task", "gobby-tasks:close_task",
+  "gobby-tasks:claim_task"]`; `blocked_tools` is the write-tool list; code-edit right:
+  none. (4) Sandbox: `sandbox: {extra_deny_write_paths: ["."], extra_read_paths:
+  ["~/.gobby/logs"]}` (the state file lives under the per-run `TMPDIR` the sandbox
+  already grants, which a `/clear` successor keeps because it is the same process). (5)
+  Rules: as the archivist's. (6) Loads nothing beyond the persona. (7) Worktree: none.
+  (8) Messaging: reports to the Program Director (`EVENT=ACK`, the nominal line,
+  `EVENT=ALARM` with wake) and to the assistant (`EVENT=LOG_FINDING`); sends Josh
+  nothing. (10) Continuity: compacts, never clears (the offsets and family table are
+  its state, reloaded from `$TMPDIR/log-monitor-state.json` after compaction).
+  The two monitors-tab seats, the researcher and the reviewer share one `blocked_tools`
+  list, the write tools only: `["Edit", "KillShell", "MultiEdit", "NotebookEdit",
+  "Write", "apply_patch", "edit_file", "notebook_edit", "replace", "write_file"]` (the
+  comms agent's list minus its shell spellings `Bash`, `BashOutput`, `shell` and
+  `run_shell_command`: the seats need a shell for `date`, `uptime`, `git` reads, the log
+  reads, the state file under `$TMPDIR` and the digest under `~/Desktop`, all outside
+  the repository, which `runbook-no-code-edits` and the deny root leave alone).
+- `elicitor` (book section 8, lines 536-576). (1) Launch: `claude`, `claude-opus-5[1m]`,
+  no effort flag (the book names no provider for it; the research seat's line, until
+  Josh says otherwise: round file position p); launched by the assistant when the
+  Program Director opens a planning pass. (2) Persona: runs before drafting; its
+  deliverable is the decision-complete problem statement at
+  `.gobby/plans/<plan>.problem.md`, left uncommitted for the plan writer to commit with
+  the plan once the Program Director approves it, with the five parts (intent,
+  constraints, success criteria, explicit non-goals, the signed-source inventory naming
+  `ROADMAP.md`, the Golden Path, `.impeccable.md` and every signed canvas, approved plan
+  and Josh ruling that bears on the work); closes open questions itself from the signed
+  sources, the Golden Path and the code, then sends the Program Director one batched
+  question list per round, with Josh's questions routed through the assistant in the
+  same batch; never proposes a solution. Semi-persistent: released by the assistant when
+  the Program Director approves the statement or 90 minutes pass. Divergence: the pane
+  is created and released by the assistant; there is no lane-manager TTL (criterion 11,
+  ruling 23). (3) Can do: read and search tools, the Write and Edit tools for
+  `.gobby/plans/*.problem.md` only (3.1's carve-out); `blocked_mcp_tools:
+  ["gobby-agents:spawn_agent", "gobby-agents:kill_agent", "gobby-tasks:close_task"]`;
+  code-edit right: none. (4) Sandbox: default (the problem statement is under the
+  checkout write root; 3.1 narrows the rest). (5) Rules: include `["tag:default",
+  "group:runbook"]`, exclude the two shared names plus `["name:require-python-skill",
+  "name:require-rust-skill"]`; scoped: `runbook-no-code-edits` with the `.gobby/plans/`
+  carve-out. (6) Loads `docs/contracts/plan-coverage.md` and
+  `gobby:references/plan/drafting.md` before writing. (7) Worktree: none. (8)
+  Messaging: reports to the Program Director (question batches, the finished
+  statement); Josh's questions go through the assistant; sends Josh nothing directly.
+  (10) Continuity: compacts within a pass and is released after it; never clears.
+- Council definitions: 3.4's (decision 18); their blocks are written there.
 The agents guide gains a "Runbook roles" section listing the eight seats, the four
 council definitions of 3.4 (decision 18), the reporting lines (lane manager, log monitor, reviewer and archivist to the
 assistant; the assistant, alarms and verdict-class items to the Program Director; the
-council to the Program Director through the adversary) and the standing text. Tests load
-each YAML through `AgentDefinitionBody` and assert surfaces, the exact selector lists and
-tool blocks above, the standing text, the fixed lines, and that
-`resolve_rules_for_agent` includes the runbook rules.
+council to the Program Director through the adversary), the standing text and, per
+role, its sandbox block and continuity mode. Tests load each YAML through
+`AgentDefinitionBody` and assert surfaces, the anchored text, the exact selector lists,
+tool blocks and sandbox blocks above (through `ROLE_BLOCKS`), the standing text, the
+fixed lines, and that `resolve_rules_for_agent` includes the runbook rules.
 
 Research context:
 - Spawn-surface reach of `group:runbook` (Program Director, 2026-09-24):
   `_filter_by_agent_scope` (`src/gobby/workflows/engine/core.py` 838-855) keeps a scoped
-  rule when `variables["_agent_type"]` is in `agent_scope`, on any surface, so
-  `researcher`'s spawned runs are blocked from non-markdown writes exactly as its pane
-  is; that is intended. The council definitions' spawn-surface analysis is 3.4's.
+  rule when `variables["_agent_type"]` is in `agent_scope`, on any surface, so a
+  launched seat (a spawned session, 1.5) and its `/clear` successor (interactive, 1.3)
+  are both blocked from non-markdown writes; that is intended. Prompt delivery:
+  `_inject_agent_instructions_if_needed` (`src/gobby/hooks/event_handlers/_agent.py`
+  254-) delivers `prompt_for("agent")` to a spawned session and `prompt_for("persona")`
+  to an interactive one through `_persona_name`, once per context, which is why one
+  anchored text under both keys is delivered exactly once per session; the spawn tool
+  itself only requires `prompts.agent` to exist (`_implementation.py` 147).
+- `researcher.yaml` on HEAD (160 lines): `surfaces: [spawn, persona]`, `provider:
+  codex`, `gpt-5.6-sol`, `xhigh`, `rule_selectors` `tag:default`, `tag:worker-safety`,
+  `tag:task-skill-gates`, and a `step_workflow` that is the discovery one-shot (`claim`
+  with only `claim_task` and `get_task`, then `load_skill`, `draft`, `end_agent_run`).
+  Consumers of the name that stay unchanged because they look the slug up and the
+  research stage keeps the name: `src/gobby/install/shared/registry/stages.yaml` 16
+  (`default_agent: researcher`), `src/gobby/dispatch/prompts.py` 125-130 and 366,
+  `src/gobby/dispatch/_rule_actions.py` 37, `src/gobby/agents/sync.py`, the
+  `research/SKILL.md` skill; stage behavior is not preserved (decision 19). Tests that
+  load the definition and assert its step workflow are targets above; the fixture-only
+  uses of the string elsewhere in `tests/` are not consumers.
   Coverage YAML is written by the daemon's `regenerate_coverage_manifest`
   (`src/gobby/mcp_proxy/tools/plans/__init__.py` 224-255; `coverage_manifest_path` in
   `src/gobby/plans/coverage_manifest.py` 57) and by `expansion-qa` (`expansion-qa.yaml`
@@ -1315,62 +1959,95 @@ Research context:
   roster is decision 13, so the definitions need disclosure, not approval; the rule
   group is 3.1's and its change is under Program Director approval.
 - Rejected: `post-epic-reviewer` and `plan-verifier` (decision 13; the verifier's checks
-  are the plan mechanic's, decision 18); a `spawn` surface on the seven new definitions
-  (criterion 11: panes, not spawns); reusing `epic-reviewer` (build-lifecycle bound and
-  still owned by `gobby build`).
-- Deferred, not rejected: a `step_workflow` on the lane-manager and council definitions.
-  They ship as persona prompts in v1 and adopt step workflows when decision 17's sibling
-  plan lifts the `is_spawned` gate; nothing in their definitions assumes persona-only.
-- Planned checks: `GOBBY_TEST_PROTECT=1 uv run pytest tests/agents/test_runbook_definitions.py`;
+  are the plan mechanic's, decision 18); persona-only definitions (`surfaces:
+  [persona]`, R5): the launch is a spawn and requires `prompts.agent`, and the
+  successor needs `prompts.persona`, so both surfaces with one anchored text; a
+  standing text under `persona` and a shorter one under `agent` (two copies to keep in
+  step, and the seat and its successor would differ); reusing `epic-reviewer`
+  (build-lifecycle bound); keeping the researcher's discovery step workflow (a seat
+  launched with no task would sit in `claim` forever); provider, model and effort in
+  the definitions (decision 4 keeps them on the launch line, where Josh edits them);
+  the restriction block on the launch line only (a runbook that forgets it launches an
+  unrestricted seat; the definition carries it and the launch may narrow: position o).
+- Deferred, not rejected: a `step_workflow` on the twelve definitions. They ship as
+  persona prompts in v1 (decision 20: no new workflows) and adopt step workflows when
+  decision 17's sibling plan lands; nothing in their definitions assumes persona-only,
+  and 1.5.8 proves a stepful definition runs its program when launched into a pane.
+- Planned checks: `GOBBY_TEST_PROTECT=1 uv run pytest tests/agents/test_runbook_definitions.py tests/agents/test_discovery_agents.py tests/workflows/test_workflows_agent_definitions.py`;
   after daemon restart, `gobby-workflows:list_agent_definitions` shows the seven new
-  names and the edited `researcher`.
+  names and the rewritten `researcher`.
 
 **Acceptance:**
 
-- 3.2.1 - Each of the seven new persona definitions parses, declares only `persona`,
-  and carries exactly the selector lists and tool blocks written above (the monitors-tab
-  `blocked_tools` is the write-only list; no shell spelling appears in it). file:
+- 3.2.1 - Each of the eight definitions parses, declares `surfaces: [spawn, persona]`
+  with `prompts.agent` and `prompts.persona` equal, `isolation: none`, `provider`
+  `inherit`, no `timeout` and no `step_workflow`, and carries exactly the selector
+  lists, tool blocks and sandbox block of its block above (the read-only seats deny
+  `.`, the archivist adds `~/Desktop`, the log-monitor reads `~/.gobby/logs`, the
+  program-director is `enabled: false` with its reason, the assistant, lane-manager
+  and elicitor carry no `sandbox` key; the write-only `blocked_tools` list has no
+  shell spelling). file:
   `src/gobby/install/shared/workflows/agents/program-director.yaml`. file:
   `src/gobby/install/shared/workflows/agents/assistant.yaml`. file:
   `src/gobby/install/shared/workflows/agents/lane-manager.yaml`. file:
   `src/gobby/install/shared/workflows/agents/reviewer.yaml`. file:
   `src/gobby/install/shared/workflows/agents/archivist.yaml`. file:
   `src/gobby/install/shared/workflows/agents/log-monitor.yaml`. file:
-  `src/gobby/install/shared/workflows/agents/elicitor.yaml`. test:
-  `tests/agents/test_runbook_definitions.py::test_runbook_personas_parse_and_select_runbook_rules`.
-- 3.2.2 - Every one of the eight personas embeds the five standing instructions, the
-  durable shared tail and the conditional sign-off rule verbatim, in that order, followed
-  by a `Diverges from the prompt book:` line; no persona's routine nominal template
-  carries `load <` or `runs <` (the log-monitor line); the edited `researcher` keeps
-  `surfaces: [spawn, persona]` and selects `group:runbook`. file:
+  `src/gobby/install/shared/workflows/agents/elicitor.yaml`. file:
   `src/gobby/install/shared/workflows/agents/researcher.yaml`. test:
-  `tests/agents/test_runbook_definitions.py::test_every_runbook_persona_carries_the_standing_text`.
+  `tests/agents/test_runbook_definitions.py::test_runbook_definitions_parse_with_both_surfaces_and_select_runbook_rules`.
+- 3.2.2 - Every one of the eight texts embeds the five standing instructions, the
+  durable shared tail and the conditional sign-off rule verbatim, in that order,
+  followed by a `Diverges from the prompt book:` line; no routine nominal template
+  carries `load <` or `runs <` (the log-monitor line); every definition excludes
+  `block-autonomous-clear-session` and `bootstrap-default-agent-core-skills` by name.
+  file: `src/gobby/install/shared/workflows/agents/researcher.yaml`. test:
+  `tests/agents/test_runbook_definitions.py::test_every_runbook_text_carries_the_standing_text_and_the_shared_excludes`.
 - 3.2.3 - No definition names a backend: no key `backend` or `terminal_backend` in any
   loaded tree and no `tmux` or `gterm` in any prompt string outside a backtick-quoted
   log signature (the log-monitor family table quotes the book's
   `terminals.host_manager._health_loop - gterm control probe failed` row, book line 495;
-  a quoted signature selects nothing); every persona's registration line names
+  a quoted signature selects nothing); every text's registration line names
   `GOBBY_PANE_REF` and the pane view's backend. test:
   `tests/agents/test_runbook_definitions.py::test_no_runbook_definition_names_a_backend`.
-- 3.2.4 - The assistant persona requires criterion 9's four items and Josh's Telegram
-  rule (a send is confirmed in at most one line, never restated) by their fixed
-  phrases. file: `src/gobby/install/shared/workflows/agents/assistant.yaml`. test:
-  `tests/agents/test_runbook_definitions.py::test_assistant_requires_the_four_comms_items`.
-- 3.2.5 - The reviewer is a persona definition that blocks `close_task` and
-  `update_task`, carries the verdict line format, and says a closed row is not a
-  verdict. file: `src/gobby/install/shared/workflows/agents/reviewer.yaml`. test:
+- 3.2.4 - The assistant text requires criterion 9's four items and Josh's three
+  standing preferences (a Telegram send confirmed in at most one line and never
+  restated; decisions asked with something to click and never nagged; plans sent as
+  `send_attachment` files after the `git diff --stat` check) by their fixed phrases,
+  and its creation line names the pane launch. file:
+  `src/gobby/install/shared/workflows/agents/assistant.yaml`. test:
+  `tests/agents/test_runbook_definitions.py::test_assistant_requires_the_comms_items_and_joshs_preferences`.
+- 3.2.5 - The reviewer blocks `close_task`, `update_task` and `claim_task`, denies
+  writes under the checkout, carries the verdict line format, and says a closed row is
+  not a verdict. file: `src/gobby/install/shared/workflows/agents/reviewer.yaml`. test:
   `tests/agents/test_runbook_definitions.py::test_reviewer_is_verdict_only`.
-- 3.2.6 - The lane-manager persona carries the criterion 11 sentence verbatim (the
-  sentence itself names the `terminal_backend` parameter it forbids) and its loaded tree
-  has no mapping key `backend` or `terminal_backend`. file:
+- 3.2.6 - The lane-manager text carries the restated criterion 11 sentence verbatim
+  (the sentence itself names the `terminal_backend` parameter and the headless spawn it
+  forbids) and its loaded tree has no mapping key `backend` or `terminal_backend`. file:
   `src/gobby/install/shared/workflows/agents/lane-manager.yaml`. test:
-  `tests/agents/test_runbook_definitions.py::test_lane_manager_never_spawns_persistent_roles`.
-- 3.2.7 - `researcher` selects the runbook group and its persona names the assistant
-  as its reporting line. file:
-  `src/gobby/install/shared/workflows/agents/researcher.yaml`. test:
-  `tests/agents/test_runbook_definitions.py::test_researcher_selects_runbook_rules`.
-- 3.2.8 - The agents guide documents the seats, the four council definitions and the reporting
-  lines. behavior: "Runbook roles" in `docs/guides/agents.md`.
+  `tests/agents/test_runbook_definitions.py::test_lane_manager_never_launches_persistent_roles`.
+- 3.2.7 - `researcher` has no `step_workflow`, selects the runbook group and
+  `tag:worker-safety` and not `tag:task-skill-gates`, names the assistant as its
+  reporting line, and the two named tests that asserted its discovery workflow no
+  longer do. file: `src/gobby/install/shared/workflows/agents/researcher.yaml`. test:
+  `tests/agents/test_runbook_definitions.py::test_researcher_is_the_chart_seat_without_a_step_workflow`.
+- 3.2.8 - The agents guide documents the seats, the four council definitions, the
+  reporting lines, and each role's sandbox block and continuity mode. behavior:
+  "Runbook roles" in `docs/guides/agents.md`.
+- 3.2.9 - Every shipped chart definition matches its block: for each role,
+  `ROLE_BLOCKS` (surfaces, selector lists, `blocked_tools`, `blocked_mcp_tools`,
+  `sandbox`, `skills`, `isolation`, the continuity mode phrase and the fixed phrases)
+  equals what the loaded YAML carries and what `resolve_rules_for_agent` selects,
+  including each program-director guard and reused rule of 3.1. file:
+  `tests/agents/runbook_text.py`. test:
+  `tests/agents/test_runbook_definitions.py::test_each_definition_matches_its_plan_block`.
+- 3.2.10 - Live (V1 step 6; #22660): a researcher seat and a reviewer seat that each
+  ran `set_handoff(clear_session=true)` after delivering their line come back in the
+  same pane as the same role, with `get_workspace` showing the new `session_ref` and the
+  same `sandbox`, their first turn carrying the definition's text once, and their next
+  answer using the `EVENT=REPORT` and `EVENT=CANDIDATE_VERDICT` formats without being
+  told them; a source write in the successor is still blocked. behavior: V1 step 6 in
+  this plan, recorded in the archivist's digest.
 
 ### 3.3 Task amendment disclosure (#22713) [category: code] (depends: 1.1)
 `kind: deliverable`
@@ -1476,251 +2153,412 @@ Research context:
 - 3.3.4 - The tasks guide documents amending a claimed task. behavior: "Amending a
   claimed task" in `docs/guides/tasks.md`.
 
-### 3.4 Council definitions: plan-writer, plan-enhancer, plan-adversary and plan-mechanic [category: code] (depends: 3.1, 3.2, 2.1)
+### 3.4 Council definitions: plan-writer, plan-enhancer, plan-adversary, plan-mechanic, and the retired planning-stage names [category: code] (depends: 3.1, 3.2, 2.1)
 `kind: deliverable`
 
 Targets:
 - `src/gobby/install/shared/workflows/agents/plan-writer.yaml`
 - `src/gobby/install/shared/workflows/agents/plan-mechanic.yaml`
-- `src/gobby/install/shared/workflows/agents/plan-enhancer.yaml::*` — scope-reason: replace the one-line persona (26-27 today) and add one selector; `prompts.agent`, the tool blocks and the step workflow stay
-- `src/gobby/install/shared/workflows/agents/plan-adversary.yaml::*` — scope-reason: replace the one-line persona (21-22 today) and add one selector; `prompts.agent`, the tool blocks and the step workflow stay
+- `src/gobby/install/shared/workflows/agents/plan-enhancer.yaml::*` — scope-reason: rewritten in full as the council enhancer; the stage-native step workflow goes (decision 19)
+- `src/gobby/install/shared/workflows/agents/plan-adversary.yaml::*` — scope-reason: rewritten in full as the council adversary; the stage-native step workflow goes (decision 19)
+- `src/gobby/install/shared/workflows/agents/planner.yaml::*` — scope-reason: `git mv` to `plan-writer.yaml`, then rewritten (decision 19)
 - `src/gobby/install/shared/workflows/agents/plan-enhancer-taskless.yaml::*` — scope-reason: deleted (decision 18)
 - `src/gobby/install/shared/workflows/agents/plan-adversary-taskless.yaml::*` — scope-reason: deleted (decision 18)
-- `src/gobby/install/shared/workflows/rules/review-learning/inject-plan-enhancer-lessons.yaml::*` — scope-reason: `agent_scope` (line 10) drops the retired name
-- `src/gobby/install/shared/workflows/rules/review-learning/inject-plan-reviewer-lessons.yaml::*` — scope-reason: `agent_scope` (line 10) drops the retired name
-- `src/gobby/install/shared/workflows/rules/memory-lifecycle/guard-plan-memory-writes.yaml::*` — scope-reason: its agent list (lines 16 and 18) drops the two retired names
+- `src/gobby/install/shared/registry/stages.yaml::*` — scope-reason: line 37 `default_agent: planner` becomes `plan-writer` (line 38 `reviewer_agent: plan-adversary` stays)
+- `src/gobby/dispatch/_rule_actions.py::_STAGE_AGENT_SLUGS`
 - `src/gobby/dispatch/prompts.py::PROMPT_BUILDERS`
 - `src/gobby/dispatch/spawn_artifacts.py::_TASKLESS_MAIN_CONTEXT_AGENT_SLUGS`
+- `src/gobby/tasks/expansion/_plan_gate.py::PLANNING_AGENTS`
+- `src/gobby/tasks/expansion/_plan_gate.py::PLAN_REPAIR_AGENTS`
+- `src/gobby/mcp_proxy/tools/spawn_agent/_code_index.py::_PLANNING_CODE_INDEX_AGENTS`
+- `src/gobby/install/shared/workflows/rules/review-learning/inject-planner-lessons.yaml::*` — scope-reason: `agent_scope` (line 10) names `plan-writer`
+- `src/gobby/install/shared/workflows/rules/review-learning/inject-plan-enhancer-lessons.yaml::*` — scope-reason: `agent_scope` (line 10) drops the retired name
+- `src/gobby/install/shared/workflows/rules/review-learning/inject-plan-reviewer-lessons.yaml::*` — scope-reason: `agent_scope` (line 10) drops the retired name
+- `src/gobby/install/shared/workflows/rules/memory-lifecycle/guard-plan-memory-writes.yaml::*` — scope-reason: its agent list (lines 13-19) names `plan-writer` and drops the two retired names
+- `src/gobby/install/shared/workflows/rules/plan-mode/reset-plan-mode-on-session-start.yaml::*` — scope-reason: the `_agent_type != 'planner'` guard (line 11) names `plan-writer`
 - `src/gobby/install/shared/skills/gobby/references/plan/enhancement.md`
 - `src/gobby/install/shared/skills/gobby/references/plan/review.md`
 - `docs/contracts/plan-coverage.md::*` — scope-reason: the taskless-reviewer sentences name the council adversary
-- `docs/guides/plans-and-plan-mode.md::*` — scope-reason: the interactive enhancement and review paragraphs name the council
+- `docs/guides/plans-and-plan-mode.md::*` — scope-reason: the three-roles paragraph (line 34) and the interactive enhancement and review paragraphs name the council
 - `tests/agents/test_council_definitions.py`
 - `tests/agents/test_plan_adversary_taskless_definition.py::*` — scope-reason: deleted with its definition
-- `tests/agents/test_plan_enhancer_agents.py::*` — scope-reason: the taskless half is dropped
-- `tests/agents/test_plan_adversary_internal_research_definition.py::*` — scope-reason: the name tuples (16-17) drop the retired names
-- `tests/agents/test_agents_sync.py::*` — scope-reason: line 86 names the retired definition
+- `tests/agents/test_plan_enhancer_agents.py::*` — scope-reason: the stage-native path (29) reads the council body; the taskless half is dropped
+- `tests/agents/test_plan_adversary_internal_research_definition.py::*` — scope-reason: the name tuples (16-17, 37, 191) drop the retired names
+- `tests/agents/test_plan_adversary_loads_plan_review.py::*` — scope-reason: loads `plan-adversary.yaml`; adapts to the council body
+- `tests/agents/test_plan_adversary_no_edits_on_reject.py::*` — scope-reason: line 49 asserts "planner" in the text; adapts to the council body
+- `tests/agents/test_plan_adversary_self_check.py::*` — scope-reason: loads `plan-adversary.yaml`; adapts to the council body
+- `tests/agents/test_plan_adversary_manifest.py::*` — scope-reason: loads `plan-adversary.yaml`; adapts to the council body
+- `tests/agents/test_planner_loads_plan_draft.py::*` — scope-reason: asserts the step names `claim`, `load_skill`, `plan`, `terminate` (42-97); rewritten to assert `plan-writer`'s text loads `drafting.md`
+- `tests/agents/test_discovery_agents.py::*` — scope-reason: the `plan-adversary` selectors (211-212) and the `planner` prompt assertions (219-225) follow the council bodies
+- `tests/agents/test_agents_sync.py::*` — scope-reason: line 86 and 894-895 name the retired definitions
 - `tests/agents/watchdog/test_completed_turn_mcp_gate.py::*` — scope-reason: the fixture (42, 47) names `plan-adversary` instead
-- `tests/dispatch/test_dispatch_prompts.py::*` — scope-reason: the alias rows and assertions (38-40, 75-77) go
-- `tests/dispatch/test_spawn_isolation.py::*` — scope-reason: the taskless cases (70, 84, 103) go with the branch
+- `tests/dispatch/test_dispatch_prompts.py::*` — scope-reason: the names (37-41), the alias rows and assertions (51, 75-77) and the `planner` key (125) follow the rename
+- `tests/dispatch/test_spawn_isolation.py::*` — scope-reason: `planner` (23, 56) becomes `plan-writer`; the taskless cases (70, 84, 103) go with the branch
+- `tests/dispatch/test_rules.py::*` — scope-reason: the stage map rows (17, 323) name `plan-writer`
+- `tests/dispatch/test_rules_stage_native.py::*` — scope-reason: the fixtures (36, 70, 119, 122) name `plan-writer`
+- `tests/dispatch/test_planning_enhancement.py::*` — scope-reason: the fixture registries (32, 65) name `plan-writer`
+- `tests/dispatch/test_dispatcher.py::*` — scope-reason: the parametrize (2234) names `plan-writer`
+- `tests/build_pipeline/test_build_pipeline_service.py::*` — scope-reason: `agent_lookup_name == "planner"` (865) becomes `plan-writer`
+- `tests/build_pipeline/test_build_pipeline_cascade.py::*` — scope-reason: `assigned_agent="planner"` (126) becomes `plan-writer`
+- `tests/tasks/test_plan_gate.py::*` — scope-reason: the frozenset assertion (146) and the planner names (175-473) follow the rename
+- `tests/e2e/test_build_dispatcher_autonomy.py::*` — scope-reason: `complete_agent("planner")` (490, 533) and `resolve_agent("planner")` (917, 958) name `plan-writer`; the harness fakes completion, so a definition without a step workflow still resolves
+- `tests/mcp_proxy/tools/spawn_agent/test_error_handling.py::*` — scope-reason: the stage pairs (58, 1006, 1113) name `plan-writer`
+- `tests/workflows/test_retired_bundled_definitions.py::*` — scope-reason: `RETIRED_AGENTS` (50-56) gains `planner`, `plan-enhancer-taskless` and `plan-adversary-taskless`; `test_planner_enables_surviving_plan_mode_write_guard` (164-174) loads `plan-writer.yaml`
 - `tests/workflows/test_step_enforcement.py::*` — scope-reason: the fixture (631, 643) names `plan-adversary` instead
-- `tests/workflows/test_planner_grammar_prompt.py::*` — scope-reason: the retired rows (65, 67) go
-- `tests/workflows/test_review_learning_rules.py::*` — scope-reason: the expected scope lists (359, 365) shrink
-- `tests/workflows/test_workflows_agent_definitions.py::*` — scope-reason: the provider table (152, 154) drops the retired rows
-- `tests/workflows/test_memory_lifecycle_rules.py::*` — scope-reason: the agent lists (799, 801, 852) drop the retired names
+- `tests/workflows/test_planner_grammar_prompt.py::*` — scope-reason: the path (13) and the table (63-67, taskless rows 65 and 67) follow the rename and the retirement
+- `tests/workflows/test_plan_mode_rules.py::*` — scope-reason: the parametrize (258) names `plan-writer`
+- `tests/workflows/test_review_learning_rules.py::*` — scope-reason: the expected scope lists (359, 363, 365) follow the three rules
+- `tests/workflows/test_workflows_agent_definitions.py::*` — scope-reason: the provider table (141-158) drops the retired rows and asserts `inherit` for the four council rows; the `planner` agent-prompt test (604-608) goes
+- `tests/workflows/test_memory_lifecycle_rules.py::*` — scope-reason: the agent lists (797-801, 851) follow the guard rule
+- `tests/skills/test_plan_skill_grammar.py::*` — scope-reason: lines 22-23 and 93-94 read the writer's text by its new name
+- `tests/skills/test_plan_adversary_rejection.py::*` — scope-reason: line 17 names the council adversary
 - `tests/skills/test_plan_review_skill.py::*` — scope-reason: the parametrize (82) keeps `plan-adversary` only
 - `tests/skills/test_plan_skill_delegated_mode.py::*` — scope-reason: names the retired definition
-- `tests/skills/test_review_learning_skill.py::*` — scope-reason: names the retired definition
-- `tests/mcp_proxy/test_stage_review_schema.py::*` — scope-reason: names the retired definition
+- `tests/skills/test_review_learning_skill.py::*` — scope-reason: line 286 loads `plan-writer.yaml`
+- `tests/mcp_proxy/test_stage_review_schema.py::*` — scope-reason: line 11 loads `plan-adversary.yaml`; the taskless name goes
 
-Decision 18's roster: two new persona-surface definitions and persona blocks on two
-existing ones, all four carrying 3.2's standing text (criterion 8), the registration line
-(criterion 3) and the council sentence (wait between rounds rather than looking for work;
-the assistant releases the pane); the two taskless definitions are deleted and every live
-reference migrated.
-- `plan-writer` (new; `surfaces: [persona]`, `isolation: none`; provider, model and
-  effort `inherit`; book section 9, lines 577-618): built on `planner`'s persona (18-19),
-  `blocked_mcp_tools` (14) and `rule_selectors` (127) plus `"group:runbook"`; `planner`
-  itself is untouched (gobby build's planning-stage `default_agent`, `stages.yaml` line
-  37, and the spawned drafting definition). The persona: owns the plan file and its hash
-  and is the only member that edits it; claims a real planning task first; reads
-  `docs/contracts/plan-coverage.md` and `references/plan/drafting.md` before drafting;
-  drafts against the approved problem statement, or against the Decision Record when the
-  Program Director waives the elicitor, and says when a statement does not cover
-  something; `uv run gobby plans validate` passes before review opens; commits by
-  explicit path only, the plan and the problem statement together; answers every finding
-  with Fold (say what changed) or Contest (reasoning; "out of scope" only by pointing at
-  a non-goal); a signed design artifact outranks the adversary; records every position
-  and move in the council log; hands each published hash to the mechanic and reads its
-  pass lines before sending the hash on. Divergence: no round cap; the council debates
-  to consensus and the adversary finalizes to the Program Director, who may send it back
-  (decision 13, #22808).
-- `plan-enhancer` (existing, `surfaces: [spawn, persona]`; book section 10, lines
-  619-644): the one-line persona (26-27) becomes the enhancer block and `"group:runbook"`
-  joins `rule_selectors.include`; `prompts.agent`, the `Edit`/`Write` block (18-20),
-  `blocked_mcp_tools` (21-23) and the stage-native step workflow stay, so gobby build's
-  pre-adversary sub-loop is unchanged. The persona: reviews only the hash it was given
-  and stops if the file differs; numbered `cr-N` items, each stating change, benefit and
-  cost, ranked; looks for a cheaper mechanism, a missing edge state, a sequencing change
-  or an existing pattern being reinvented, never style, non-goal scope or a contradiction
-  of a signed source. Divergence: none beyond the council sentence.
-- `plan-adversary` (existing, `surfaces: [spawn, persona]`; book section 11, lines
-  645-681): the one-line persona (21-22) becomes the adversary block and
-  `"group:runbook"` joins `rule_selectors.include`; `prompts.agent`, `blocked_mcp_tools`
-  (15-18) and the stage-native step workflow stay, so the planning stage's reviewer
-  (`stages.yaml` line 38) is unchanged. The persona: attacks only the hash it was given;
-  every finding carries `check_keys`; a blocking defect is a step that cannot work, a
-  missing dependency, a vacuous criterion, a contract violation, an unhandled expensive
-  failure mode or work a lane cannot do, never a preference or an excluded scope; a
-  signed design artifact outranks it (the chrome Edit-menu case is quoted); it withdraws
-  or holds each contested finding; it may use the mechanic's evidence but keeps its own
+Decision 18's roster, shaped by decision 19: four council definitions with the same
+ten-field blocks as 3.2 and the same shared values (both surfaces with one anchored
+text; `isolation: none`; provider, model and effort on the launch line; `skills: []`;
+no worktree; no `step_workflow`; the two shared excludes; continuity per decision 21),
+each carrying 3.2's standing text (criterion 8), the registration line (criterion 3),
+the restated creation line (criterion 11) and the council sentence (wait between rounds
+rather than looking for work; the assistant releases the pane). `planner.yaml` is
+renamed to `plan-writer.yaml` (`git mv`, so history follows) and rewritten;
+`plan-enhancer.yaml` and `plan-adversary.yaml` are rewritten as council definitions
+with their stage-native step workflows removed; `plan-mechanic.yaml` is new; the two
+taskless definitions are deleted; every consumer of a retired name is repointed
+(decision 19; the old bodies stay in git history).
+- `plan-writer` (from `planner.yaml`; book section 9, lines 577-618). (1) Launch:
+  `claude`, `claude-fable-5-1[1m]`, no effort flag. (2) Persona: owns the plan file
+  and its hash and is the only member that edits it; claims a real planning task first;
+  reads `docs/contracts/plan-coverage.md` and `references/plan/drafting.md` before
+  drafting; drafts against the approved problem statement, or against the Decision
+  Record when the Program Director waives the elicitor, and says when a statement does
+  not cover something; `uv run gobby plans validate` passes before review opens;
+  commits by explicit path only, the plan and the problem statement together; answers
+  every finding with Fold (say what changed) or Contest (reasoning; "out of scope" only
+  by pointing at a non-goal); a signed design artifact outranks the adversary; records
+  every position and move in the council log (the round file beside the plan); hands
+  each published hash to the mechanic and reads its pass lines before sending the hash
+  on. Divergence: no round cap; the council debates to consensus and the adversary
+  finalizes to the Program Director, who may send it back (decision 13, #22808). (3)
+  Can do: the Write and Edit tools for plan markdown under the plans directory only
+  (3.1's carve-out),
+  `git commit --only` by path, `gobby-plans` reads and `update_plan_hash`,
+  `gobby-tasks` claim and close of its own planning task; `blocked_mcp_tools`:
+  `planner`'s existing list kept, plus `gobby-agents:spawn_agent` and
+  `gobby-agents:kill_agent`; code-edit right: none. (4) Sandbox: default (the plan and
+  the commit are under the checkout write root; 3.1 narrows the rest). (5) Rules:
+  `planner`'s existing `rule_selectors` kept, plus include `"group:runbook"` and
+  `"tag:worker-safety"` and the two shared excludes; `workflows.variables.plan_mode:
+  true` kept, so the plan-mode rules apply and
+  `reset-plan-mode-on-session-start` (repointed) spares it; scoped:
+  `runbook-no-code-edits` with the `.gobby/plans/` carve-out, `inject-planner-lessons`
+  and `guard-plan-memory-writes` (both repointed to the new name). (6) Loads
+  `docs/contracts/plan-coverage.md`, `gobby:references/plan/drafting.md` and
+  `references/plan/overview.md` before editing a plan, and the `code-review` skill
+  before each commit. (7) Worktree: none. (8) Messaging: publishes each hash to the
+  mechanic, the enhancer and the adversary by `session_ref` from `get_workspace`
+  (wake for a hash they must act on); reports to the Program Director with a no-wake
+  summary; sends Josh nothing. (10) Continuity: clears between plans, never mid-round
+  (state: the plan path, the last hash and the open findings).
+- `plan-enhancer` (rewritten; book section 10, lines 619-644). (1) Launch: `codex`,
+  `gpt-5.6-sol`, `xhigh`. (2) Persona: reviews only the hash it was given and stops if
+  the file differs; numbered `cr-N` items, each stating change, benefit and cost,
+  ranked; looks for a cheaper mechanism, a missing edge state, a sequencing change or
+  an existing pattern being reinvented, never style, non-goal scope or a contradiction
+  of a signed source. Divergence: none beyond the council sentence. (3) Can do: read
+  and search tools, `gcode`, `git show`; `blocked_tools` is 3.2's write-tool list (the
+  existing `Edit`/`Write` block widened to every spelling); `blocked_mcp_tools`: the
+  existing list kept, plus `gobby-agents:spawn_agent`, `gobby-agents:kill_agent`,
+  `gobby-plans:apply_plan_review_repairs`, `gobby-plans:record_plan_enhancement`;
+  code-edit right: none. (4) Sandbox: `sandbox: {extra_deny_write_paths: ["."]}`.
+  (5) Rules: include `["tag:default", "group:runbook", "tag:worker-safety"]`, exclude
+  the two shared names plus `["name:require-python-skill", "name:require-rust-skill"]`;
+  scoped: `runbook-no-code-edits`, `inject-plan-enhancer-lessons`,
+  `guard-plan-memory-writes`. (6) Loads `gobby:references/plan/enhancement.md` before
+  its first round. (7) Worktree: none. (8) Messaging: `cr-N` items to the writer by
+  `send_message` into the council log; sends Josh nothing. (10) Continuity: clears
+  between plans, never mid-round.
+- `plan-adversary` (rewritten; book section 11, lines 645-681). (1) Launch: `grok`,
+  `grok-4.7`, `xhigh`. (2) Persona: attacks only the hash it was given; every finding
+  carries `check_keys`; a blocking defect is a step that cannot work, a missing
+  dependency, a vacuous criterion, a contract violation, an unhandled expensive failure
+  mode or work a lane cannot do, never a preference or an excluded scope; a signed
+  design artifact outranks it (the chrome Edit-menu case is quoted); it withdraws or
+  holds each contested finding; it may use the mechanic's evidence but keeps its own
   code spot-checks (decision 18); and it finalizes to the Program Director citing the
   mechanic's pass lines for the final hash (validate, `git diff --check`, sha256,
   coverage) instead of running those checks itself. Divergence: no round cap and the
-  finalization report (decisions 13 and 18).
-- `plan-mechanic` (new; `surfaces: [persona]`, `isolation: none`; provider, model and
-  effort `inherit`; the book has no section for it, so the persona is written here): the
-  council's mechanical checker and its fourth pane. On every hash the writer publishes,
-  and on request from any member: `uv run gobby plans validate <plan>` (both modes when
-  a manifest is present), `git diff --check`, the plan's sha256 against the committed
-  blob (`git show <commit>:<path> | sha256sum`), the coverage manifest of a registered
-  plan (`gobby-plans:regenerate_coverage_manifest`, or `update_plan_hash` when the row's
+  finalization report (decisions 13 and 18). (3) Can do: read and search tools,
+  `gcode`, `git show`; `blocked_tools` is the write-tool list; `blocked_mcp_tools`: the
+  existing list kept, plus `gobby-agents:spawn_agent`, `gobby-agents:kill_agent` and
+  the stage review verbs it no longer records through (`gobby-tasks-ops:approve_review`,
+  `reject_review`); code-edit right: none. (4) Sandbox: `sandbox:
+  {extra_deny_write_paths: ["."]}`. (5) Rules: include `["tag:default",
+  "group:runbook", "tag:worker-safety"]`, exclude the two shared names plus
+  `["name:require-python-skill", "name:require-rust-skill", "tag:task-skill-gates"]`
+  (the existing exclusion stays: the council adversary claims no task); scoped:
+  `runbook-no-code-edits`, `inject-plan-reviewer-lessons`, `guard-plan-memory-writes`.
+  (6) Loads `gobby:references/plan/review.md` before its first round. (7) Worktree:
+  none. (8) Messaging: findings to the writer into the council log; the finalization
+  report to the Program Director (wake); sends Josh nothing. (10) Continuity: clears
+  between plans, never mid-round.
+- `plan-mechanic` (new; the book has no section for it, so the persona is written
+  here). (1) Launch: `claude`, `claude-opus-5[1m]`, no effort flag (the lookup pane's
+  line, decision 18). (2) Persona: the council's mechanical checker and its fourth
+  pane. On every hash the writer publishes, and on request from any member: `uv run
+  --no-sync gobby plans validate <plan>` (both modes when a manifest is present;
+  `--no-sync` because its sandbox denies writes under the checkout and a sync would
+  write `.venv`), `git diff --check`, the plan's sha256 against the committed blob
+  (`git show <commit>:<path> | sha256sum`), the coverage manifest of a registered plan
+  (`gobby-plans:regenerate_coverage_manifest`, or `update_plan_hash` when the row's
   hash is stale; memory 5538e963) with the coverage-contract checks of
   `docs/contracts/plan-coverage.md`, and re-verification of citations and literals
   (paths, symbols, line numbers, migration numbers, commit shas) against HEAD with
   `gcode`. It reports `CHECK=<name> RESULT=PASS|FAIL HASH=<sha256> NOTE=` lines to the
-  requester and, for a final hash, to the adversary and the writer. Validator residue is
-  reported, never repaired: the writer is the only editor, and
-  `gobby-plans:apply_plan_review_repairs` and `gobby-plans:apply_plan_handoff_manifest`
-  sit in `blocked_mcp_tools` beside `gobby-agents:spawn_agent` and `kill_agent`. It loads
-  `gobby:references/plan/repair.md` (the `plan-mechanic` skill name resolves to it,
-  `catalog.json` line 1041) and `references/plan/coverage.md` before its first check.
-  Rules: include `["tag:default", "group:runbook"]`, exclude
-  `["name:bootstrap-default-agent-core-skills", "name:require-python-skill",
-  "name:require-rust-skill"]`. Semi-persistent: released by the assistant with the
-  council. To-be, not built here: decision 18's shared evidence pack.
-- Retirement: `plan-enhancer-taskless.yaml` and `plan-adversary-taskless.yaml` are
-  deleted; `sync_bundled_agents`'s orphan sweep soft-deletes their registry rows at the
-  next start (`src/gobby/agents/sync.py` 5-6 and 135-136). `PROMPT_BUILDERS`
-  (`src/gobby/dispatch/prompts.py` 356 and 358) loses the two alias keys;
-  `_TASKLESS_MAIN_CONTEXT_AGENT_SLUGS` (`spawn_artifacts.py` 43-45) and its branch
-  (508-509) go, because no slug is left in the set. The three rules drop the names from
-  `agent_scope` and the memory-guard list (a rule-template change, disclosed to the
-  Program Director under standing instruction 4). `enhancement.md` line 6 and
-  `review.md` line 6 stop spawning a taskless agent: an interactive round runs in the
-  council tab (`plan-council-v1.sh <plan>`, decision 14), opens when the writer publishes
-  a hash to the enhancer or adversary pane, and returns by `send_message` into the
-  council log; `prepare_plan_review_round` and the review-evidence store stay for the
-  stage-native flow. The two docs say the same. Historical mentions in `docs/research/`,
-  `docs/plans/`, `.gobby/plans/completed/` and the `tests/adapters/test_claude_code_adapter.py`
-  comment (line 1058) stay.
+  requester and, for a final hash, to the adversary and the writer. Validator residue
+  is reported, never repaired: the writer is the only editor. Semi-persistent: released
+  by the assistant with the council. To-be, not built here: decision 18's shared
+  evidence pack. (3) Can do: read and search tools, `gcode`, `git` reads, the
+  `gobby-plans` tools named above; `blocked_tools` is the write-tool list;
+  `blocked_mcp_tools: ["gobby-plans:apply_plan_review_repairs",
+  "gobby-plans:apply_plan_handoff_manifest", "gobby-agents:spawn_agent",
+  "gobby-agents:kill_agent"]`; code-edit right: none. (4) Sandbox: `sandbox:
+  {extra_deny_write_paths: ["."]}` (the manifest is written by the daemon through the
+  tool, not by the seat). (5) Rules: include `["tag:default", "group:runbook",
+  "tag:worker-safety"]`, exclude the two shared names plus
+  `["name:require-python-skill", "name:require-rust-skill"]`; scoped:
+  `runbook-no-code-edits`. (6) Loads `gobby:references/plan/repair.md` (the
+  `plan-mechanic` skill name resolves to it, `catalog.json` line 1041) and
+  `references/plan/coverage.md` before its first check. (7) Worktree: none. (8)
+  Messaging: `CHECK=` lines to the requester; final-hash lines to the adversary and the
+  writer; sends Josh nothing. (10) Continuity: clears after each final-hash report
+  (state: the plan path and the hash just checked).
+- Retirement (decision 19). `planner.yaml` moves to `plan-writer.yaml`;
+  `plan-enhancer-taskless.yaml` and `plan-adversary-taskless.yaml` are deleted;
+  `sync_bundled_agents`'s orphan sweep soft-deletes the three registry rows at the next
+  start (`src/gobby/agents/sync.py` 5-6 and 135-136). Consumers repointed to
+  `plan-writer` the cheapest way that keeps sync, validation and the named tests
+  passing: `stages.yaml` line 37; `_STAGE_AGENT_SLUGS` (`_rule_actions.py` 40);
+  `PROMPT_BUILDERS` (`prompts.py` 360 key and the `_planner` builder's contract string
+  at 76; the alias keys 356 and 358 go); `PLANNING_AGENTS` and `PLAN_REPAIR_AGENTS`
+  (`_plan_gate.py` 30-31); `_PLANNING_CODE_INDEX_AGENTS` (`_code_index.py` 7); the
+  `inject-planner-lessons` scope, the `guard-plan-memory-writes` list and the
+  `reset-plan-mode-on-session-start` guard. `_TASKLESS_MAIN_CONTEXT_AGENT_SLUGS`
+  (`spawn_artifacts.py` 43-45) and its branch (508-509) go, because no slug is left in
+  the set; the other two review-learning rules drop the taskless names. Rule-template
+  changes are disclosed to the Program Director under standing instruction 4.
+  `enhancement.md` line 6 and `review.md` line 6 stop spawning a taskless agent: an
+  interactive round runs in the council tab (`plan-council-v1.sh <plan>`, decision 14),
+  opens when the writer publishes a hash to the enhancer or adversary pane, and returns
+  by `send_message` into the council log; `prepare_plan_review_round` and the
+  review-evidence store stay for the tool surface. The two docs say the same.
+  `RETIRED_AGENTS` in `tests/workflows/test_retired_bundled_definitions.py` gains
+  `planner`, `plan-enhancer-taskless` and `plan-adversary-taskless`, so the existing
+  parametrized tests prove the files are gone and the sync soft-deletes their rows.
+  Historical mentions in `docs/research/`, `docs/plans/`, `docs/evidence/`,
+  `.gobby/plans/completed/`, the `tests/adapters/test_claude_code_adapter.py` comment
+  (line 1058) and the `crates/gclient/tests/parity/sidebar.rs` sample name (823-830)
+  stay; the word "planner" as a role noun in prose stays wherever it is not the slug.
 - Tests: `tests/agents/test_council_definitions.py` loads the four YAMLs through
-  `AgentDefinitionBody`, imports 3.2's `runbook_text` constants, and asserts surfaces,
-  selectors, tool blocks, the standing text, the fixed lines, that no definition names
-  a backend (3.2.3's scan) and that `resolve_rules_for_agent` includes the runbook
-  rules; the listed existing tests lose their taskless rows and cases.
+  `AgentDefinitionBody`, imports 3.2's `runbook_text` constants and `ROLE_BLOCKS`, and
+  asserts surfaces, the anchored text, selectors, tool blocks, sandbox blocks, the
+  standing text, the fixed lines, that no definition names a backend (3.2.3's scan)
+  and that `resolve_rules_for_agent` includes the runbook rules; the listed existing
+  tests lose their taskless rows and cases and follow the rename.
 
 Research context:
-- Names on HEAD (2026-09-24): `plan-enhancer.yaml` (281 lines; `claim` and `terminate`
-  steps; `record_plan_enhancement`) and `plan-adversary.yaml` (464 lines; `claim` and
-  `terminate`; the stage review verbs) are gobby build's; `plan-enhancer-taskless.yaml`
-  (208) and `plan-adversary-taskless.yaml` (296) were the `/gobby plan` spawn variants
+- Names on HEAD (2026-09-24, `f7b9ccc54c`): `planner.yaml` (257 lines; `surfaces:
+  [spawn, persona]`, `provider: codex`, `gpt-5.6-sol`, `blocked_mcp_tools` 14,
+  `step_workflow` 133, `rule_selectors` ~127, `workflows.variables.plan_mode: true`),
+  `plan-enhancer.yaml` (281; `claim` and `terminate` steps; `record_plan_enhancement`;
+  `blocked_tools` `Edit`/`Write` 18-20; `blocked_mcp_tools` 21) and
+  `plan-adversary.yaml` (464; `claim` and `terminate`; the stage review verbs;
+  `blocked_mcp_tools` 15; `rule_selectors` excluding `tag:task-skill-gates`) are gobby
+  build's planning-stage definitions; `plan-enhancer-taskless.yaml` (208) and
+  `plan-adversary-taskless.yaml` (296) were the `/gobby plan` spawn variants
   (`send_message` then `end_agent_run`; `tests/agents/test_plan_enhancer_agents.py` 1-14
   states the split). `plan-writer` and `plan-mechanic` exist nowhere; `plan-verifier`
-  never was a definition.
-- Spawn-surface reach of `group:runbook` on the two existing definitions
+  never was a definition. `AgentDefinitionBody` ties no `step_workflow` to a surface,
+  so removing the step workflows changes nothing in the schema.
+- Live consumers of `planner` (all repointed above; none outside `gobby build` needs
+  the old name): `stages.yaml` 37, `_rule_actions.py` 40, `prompts.py` 71-76 and 360,
+  `_plan_gate.py` 30-31, `_code_index.py` 7, the three rules; `_rule_state.py` 48-49
+  (`_agent_dispatchable` is `_has_agent(context, slug) and slug in PROMPT_BUILDERS`)
+  and `rules.py` look the slug up and need no edit. `web/` has no hit.
+- Spawn-surface reach of `group:runbook` on the council definitions
   (`_filter_by_agent_scope`, `src/gobby/workflows/engine/core.py` 838-855, matches
-  `_agent_type` on any surface): the spawned `plan-enhancer` has `Edit` and `Write`
-  blocked (18-20); the spawned `plan-adversary` never edits the artifact
-  (`tests/agents/test_plan_adversary_no_edits_on_reject.py`) and records findings through
-  the stage review tools; so the group blocks nothing either run does. `planner` leaves
-  the scope (it is not a council definition), so the spawned drafting run is not
-  rule-scoped at all; the `.gobby/plans/` carve-out names `plan-writer`.
-- Rejected: a taskless mode on `plan-enhancer` and `plan-adversary` (a second transition
-  out of `claim` and a second completion path in `enhance` and `review`) to keep the
-  spawned interactive rounds alive under the surviving names, because it merges two step
-  workflows and changes gobby build's reviewer surface (Non-goal 1); renaming `planner`
-  to `plan-writer`, because the stage registry names it (Non-goal 1); renaming the
-  stage-native pair out of the way, for the same reason.
-- Planned checks: `GOBBY_TEST_PROTECT=1 uv run pytest tests/agents/test_council_definitions.py tests/agents/test_plan_enhancer_agents.py tests/dispatch/test_dispatch_prompts.py tests/dispatch/test_spawn_isolation.py`;
-  a repository grep for the two retired names over `src/` and `tests/` is empty; after
+  `_agent_type` on any surface): every council seat is a launched (spawned) session and
+  its `/clear` successor an interactive one; the group blocks source writes in both,
+  the deny root blocks every checkout write for the three read-only seats, and the
+  `.gobby/plans/` carve-out names `plan-writer`.
+- Rejected: keeping the stage-native bodies and adding council persona blocks beside
+  them (R5; a Non-goal 1 workaround, decision 19); a taskless mode on `plan-enhancer`
+  and `plan-adversary` (a second transition out of `claim`; same reason); leaving
+  `planner` in place and adding `plan-writer` beside it (two drafting definitions with
+  one text; R5 position b redone: nothing outside `gobby build` needs the name);
+  re-running the discovery or planning stage under the new names (decision 19:
+  preserving `gobby build`'s stage behavior is not required).
+- Planned checks: `GOBBY_TEST_PROTECT=1 uv run pytest tests/agents/test_council_definitions.py tests/workflows/test_retired_bundled_definitions.py tests/agents/test_plan_enhancer_agents.py tests/dispatch/test_dispatch_prompts.py tests/dispatch/test_spawn_isolation.py tests/tasks/test_plan_gate.py tests/dispatch/test_rules.py`
+  and the remaining listed test files one by one; a repository grep for `planner` as a
+  slug and for the two taskless names over `src/gobby/install/shared`,
+  `src/gobby/dispatch`, `src/gobby/tasks/expansion`,
+  `src/gobby/mcp_proxy/tools/spawn_agent` and the listed tests is empty; after
   restart, `gobby-workflows:list_agent_definitions` shows `plan-writer` and
-  `plan-mechanic` and neither taskless name.
+  `plan-mechanic` and neither `planner` nor a taskless name.
 
 Consumers unchanged:
-- `src/gobby/dispatch/_planning_enhancement.py` — no-edit-reason: it looks up `PROMPT_BUILDERS` by the stage-native `plan-enhancer` key, which stays.
-- `src/gobby/dispatch/_rule_actions.py` — no-edit-reason: it resolves builders by the spawned action's slug; no action names a retired slug.
-- `src/gobby/dispatch/_rule_state.py` — no-edit-reason: same lookup by live slug; the two deleted keys had no stage-native caller.
-- `src/gobby/dispatch/rules.py` — no-edit-reason: same; the mapping's remaining keys and signature are unchanged.
+- `src/gobby/dispatch/_planning_enhancement.py` — no-edit-reason: `PLAN_ENHANCER_AGENT = "plan-enhancer"` (line 26) names a surviving slug.
+- `src/gobby/dispatch/spawn.py` — no-edit-reason: its `!= "plan-adversary"` check (96) names a surviving slug.
+- `src/gobby/dispatch/_rule_state.py` — no-edit-reason: `_agent_dispatchable` looks the slug up in `PROMPT_BUILDERS`; the renamed key is found the same way.
+- `src/gobby/dispatch/rules.py` — no-edit-reason: same lookup by live slug; the mapping's signature is unchanged.
+- `src/gobby/hooks/event_handlers/_session_end.py` — no-edit-reason: line 160 is a comment naming `plan-adversary`, which survives.
+- `tests/storage/test_stage_registry_loader.py` — no-edit-reason: it asserts `reviewer_agent: plan-adversary` (52, 264), which stays true.
 
 **Acceptance:**
 
-- 3.4.1 - `plan-writer` and `plan-mechanic` parse, declare only `persona`, and carry the
-  standing text, the selector lists and the tool blocks written above; `plan-enhancer`
-  and `plan-adversary` keep `surfaces: [spawn, persona]`, their tool blocks and their
-  step workflows, and select `group:runbook`; none of the four names a backend. file:
+- 3.4.1 - The four council definitions parse, declare `surfaces: [spawn, persona]` with
+  `prompts.agent` and `prompts.persona` equal, `provider` `inherit`, no `step_workflow`
+  and no `timeout`, select `group:runbook` and `tag:worker-safety`, carry the standing
+  text, the selector lists, tool blocks and sandbox blocks written above (the three
+  read-only seats deny `.`; the writer has no `sandbox` key), and none names a
+  backend; `plan-writer.yaml` is the renamed `planner.yaml` (`git log --follow` shows
+  the move) and no `planner.yaml` exists. file:
   `src/gobby/install/shared/workflows/agents/plan-writer.yaml`. file:
   `src/gobby/install/shared/workflows/agents/plan-mechanic.yaml`. file:
   `src/gobby/install/shared/workflows/agents/plan-enhancer.yaml`. file:
   `src/gobby/install/shared/workflows/agents/plan-adversary.yaml`. test:
-  `tests/agents/test_council_definitions.py::test_council_definitions_parse_and_select_runbook_rules`.
-- 3.4.2 - The mechanic persona names its checks by their fixed phrases (`uv run gobby
-  plans validate`, `git diff --check`, `sha256`, `regenerate_coverage_manifest`, `against
-  HEAD`) and the `CHECK=` report line, says residue is reported and never repaired, and
-  its loaded tree blocks `gobby-plans:apply_plan_review_repairs`. file:
+  `tests/agents/test_council_definitions.py::test_council_definitions_parse_with_both_surfaces_and_select_runbook_rules`.
+- 3.4.2 - The mechanic text names its checks by their fixed phrases (`uv run --no-sync
+  gobby plans validate`, `git diff --check`, `sha256`, `regenerate_coverage_manifest`,
+  `against HEAD`) and the `CHECK=` report line, says residue is reported and never
+  repaired, and its loaded tree blocks `gobby-plans:apply_plan_review_repairs`. file:
   `src/gobby/install/shared/workflows/agents/plan-mechanic.yaml`. test:
   `tests/agents/test_council_definitions.py::test_mechanic_owns_the_mechanical_checks_and_never_repairs`.
-- 3.4.3 - The adversary persona's finalization sentence cites the mechanic's pass lines
+- 3.4.3 - The adversary text's finalization sentence cites the mechanic's pass lines
   and its spot-check sentence keeps independent code checks (fixed phrases). file:
   `src/gobby/install/shared/workflows/agents/plan-adversary.yaml`. test:
   `tests/agents/test_council_definitions.py::test_adversary_finalizes_on_the_mechanics_pass_lines`.
-- 3.4.4 - Neither taskless file exists; no bundled rule, skill reference, source module
-  or test under `src/` and `tests/` names `plan-enhancer-taskless` or
-  `plan-adversary-taskless`; and the two planning references describe the council round
+- 3.4.4 - Neither taskless file nor `planner.yaml` exists; `RETIRED_AGENTS` names all
+  three and the existing parametrized tests pass for them; no bundled rule, registry
+  row template, dispatch map, expansion gate, code-index list, skill reference or
+  definition-loading test under `src/gobby/install/shared`, `src/gobby/dispatch`,
+  `src/gobby/tasks/expansion`, `src/gobby/mcp_proxy/tools/spawn_agent` and the
+  listed tests names `planner`, `plan-enhancer-taskless` or `plan-adversary-taskless`
+  as a slug; `stages.yaml`, `_STAGE_AGENT_SLUGS`, `PROMPT_BUILDERS`,
+  `PLANNING_AGENTS`, `PLAN_REPAIR_AGENTS` and `_PLANNING_CODE_INDEX_AGENTS` name
+  `plan-writer`; and the two planning references describe the council round
   (`plan-council-v1.sh`) with no spawn of a taskless agent. file:
   `src/gobby/install/shared/skills/gobby/references/plan/enhancement.md`. file:
-  `src/gobby/install/shared/skills/gobby/references/plan/review.md`. test:
-  `tests/agents/test_council_definitions.py::test_taskless_definitions_are_retired_everywhere`.
+  `src/gobby/install/shared/skills/gobby/references/plan/review.md`. file:
+  `src/gobby/install/shared/registry/stages.yaml`. test:
+  `tests/agents/test_council_definitions.py::test_retired_planning_names_are_gone_everywhere`.
+  test: `tests/workflows/test_retired_bundled_definitions.py::test_retired_agent_yaml_is_absent`.
+- 3.4.5 - Every shipped council definition matches its block: for each of the four,
+  `ROLE_BLOCKS` (surfaces, selector lists, `blocked_tools`, `blocked_mcp_tools`,
+  `sandbox`, `skills`, `isolation`, the continuity mode phrase and the fixed phrases)
+  equals what the loaded YAML carries and what `resolve_rules_for_agent` selects
+  (the table is 3.2's `runbook_text` module). test:
+  `tests/agents/test_council_definitions.py::test_each_definition_matches_its_plan_block`.
 
 ## V1 Verification
 `kind: verification`
 
-1. Unit and contract suites per deliverable (Constraints lists the commands); the gcore
-   schema tests with `--features postgres` and a scratch database
+1. Unit and contract suites per deliverable (Constraints lists the commands): 1.5's four
+   new test files and three extended ones, 3.1's rule tests, 3.2's and 3.4's definition
+   tests; the gcore schema tests with `--features postgres` and a scratch database
    (`GOBBY_SCHEMA_TEST_DATABASE_URL`; without the feature they compile to nothing) and
    `cargo test -p gobby-core --lib grant::tests` without `--features postgres` (the
    no-postgres identity guard, memory 24090e86);
    `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/runtime_grants/test_golden_vectors.py`
    (the five re-signed goldens verify against `GOLDEN_SECRET`, 1.1.6);
-   `cargo nextest run -p gobby-client` including `source_size.rs`; ruff and mypy on
-   `src/`.
+   `cargo nextest run -p gobby-client` including `source_size.rs` and the `launch` and
+   script tests; ruff and mypy on `src/`; `wc -l` on the size-guard files.
 2. Cutover from the main checkout after a `global` announcement: commit 1.1, then
    `uv run gobby cutover` (proves `gdaemon schema plan`, promotes the binary set, applies
-   migration 451, restarts). Rebuild gclient
+   migration 451, restarts the daemon that serves the launch). Rebuild gclient
    (`cargo build --release -p gobby-client`) and promote it via
    `uv run gobby install --no-interactive` in the same window.
-3. Live smoke: from a shell inside a gclient pane, run
+3. Live smoke, both paths: from a shell inside a gclient pane, run
    `bash src/gobby/install/shared/workflows/runbooks/orchestration-v1.sh`. Expect two
    new tabs, `control` (program director | assistant) and `monitors` (log monitor over
-   archivist), four labeled panes in decision 14's splits, each CLI running with its
-   kickoff prompt submitted into the CLI's composer, not typed at the shell (the
-   `READY_*` waits). Then
+   archivist), four panes labeled with their roles in decision 14's splits, each CLI
+   started by the daemon with its kickoff prompt submitted into the composer and no
+   shell under it. Then
    `bash src/gobby/install/shared/workflows/runbooks/plan-council-v1.sh .gobby/plans/runbooks.md`:
    one tab named `runbooks` with the plan writer over enhancer | adversary | mechanic.
-   From any session: `gobby-workspaces:get_workspace` shows each tab's `runbook` and
-   each pane's `role`, `session_ref` and `backend` once the CLIs have started, and the
-   assistant has one registration message per seat naming its pane ref and backend
-   (criterion 3).
-4. Role activation: in the log-monitor pane, `gobby-workflows:get_variable _agent_type`
-   (or the first prompt's injected persona) shows `log-monitor`; an Edit on a `.py` file
-   is blocked by `runbook-no-code-edits`. In the plan-writer pane an Edit on
+   From any session: `gobby-workspaces:get_workspace` shows each tab's `runbook` and each
+   pane's `role`, `session_ref`, `backend` `native` and `sandbox` (`enforced` true with a
+   `policy_hash` for eleven seats; `enforced` false with the reason for the
+   program-director), and the assistant has one registration message per seat naming
+   its pane ref and backend (criterion 3). The other launch paths, once each (1.5.2
+   live): from the shell, `gobby agents spawn --agent researcher --split <assistant pane
+   ref> --right -- "<kickoff>"` lands a researcher pane beside the assistant; from the
+   assistant pane, `gobby-agents:spawn_agent` with `placement.split` beside the
+   researcher lands a reviewer pane; `get_workspace` shows both with their roles, the
+   researcher's and reviewer's `sandbox.policy_hash` equal to each other (same deny
+   root, same provider defaults) and each seat's `cwd` (from `pwd` in the pane) equal to
+   the tab's checkout.
+4. Role activation and rules: in the log-monitor pane, `gobby-workflows:get_variable
+   _agent_type` (or the first prompt's injected text) shows `log-monitor`; an Edit on a
+   `.py` file is blocked by `runbook-no-code-edits`. In the plan-writer pane an Edit on
    `.gobby/plans/runbooks.md` passes and one on `docs/guides/agents.md` is blocked. In
    the program-director pane, the first `.py` edit is blocked once with the delegate
    nudge and the retry passes; a `git merge` is never nudged; `/clear` then a fresh
-   `.py` edit is nudged again.
-5. Persistence: `/clear` in the assistant pane; the successor's first prompt carries
-   the assistant persona and `get_workspace` shows the new `session_ref`. Quit the CLI
-   in the council's mechanic pane and relaunch it by hand in the same shell; the new
-   session is again `plan-mechanic`.
-6. Recovery: in the log-monitor pane, `gobby panes set-role 0:0:<tab>:<pane>` clears
-   the role and re-sets it as `researcher`; `gobby-workflows:get_variable _agent_type`
-   in that session still shows `log-monitor` (set-role binds the next SessionStart
-   only). `gobby-agents:apply_agent_definition(agent="researcher")` there flips
-   `_agent_type` to `researcher` and the next prompt shows the researcher persona; a
-   `/clear` in the pane comes back as `researcher` from the pane row.
-7. Failure path: a script line whose op is refused (a pane ref that does not exist)
-   prints the daemon's `code: reason` on stderr and exits 1, so `set -e` stops the
-   script with the panes created so far left in place and the `CREATED_TAB=` lines on
-   stderr name the tabs to remove with `gclient kill`; `wait-for-output` past its
-   timeout exits 1. With the gterm host stopped, `orchestration-v1.sh` is refused at its
-   first `new-tab` with `terminal_failed`, exits 1, and no role comes up on another
-   backend (criterion 5).
+   `.py` edit is nudged again; the five guards block before execution, so harmless forms
+   prove them: `git add -A` (blocked), `git commit --only -m x -- README.md` (passes the
+   guard and then fails on the claimed-task rule until a task is claimed), `psql -c
+   "select 1"` (passes) and `psql -c "delete from sessions where false"` (blocked),
+   `python -m gobby.runner --help` (blocked) and `uv run gobby status` (passes), `git push
+   nowhere HEAD` (blocked) and `git push --dry-run origin HEAD` (passes), `rmdir
+   /nonexistent` (blocked) and `rm -f /tmp/nonexistent` (passes); `/clear` in that pane
+   and the same probes hold in the successor.
+5. Sandbox: `get_workspace` shows `enforced` true for every seat but the program-director
+   (1.5.6 live). In the researcher pane `touch .gobby/probe` and `touch src/probe.py`
+   are refused by the sandbox (the deny root), and its
+   `~/.gobby/runtime/managed-executions/<run-id>/assets/settings.json` carries the
+   checkout as a deny-write root literal and canonical; in the assistant pane `touch
+   ~/.gobby/bootstrap.yaml` is refused (a protected root, memory fe8aa2a8) and `touch
+   docs/probe.md` succeeds (then remove it); in the archivist pane a write to
+   `~/Desktop/gobby-probe.md` succeeds (then remove it) and one under the checkout is
+   refused; in the mechanic pane `uv run --no-sync gobby plans validate
+   .gobby/plans/runbooks.md` exits 0.
+6. Continuity (#22660; 1.3.5 and 3.2.10 live): `/clear` in the assistant pane; the
+   successor's first prompt carries the assistant text once and `get_workspace` shows
+   the new `session_ref` with the same `sandbox`. In the researcher pane, ask a question,
+   receive `EVENT=REPORT`, then the seat runs `set_handoff(clear_session=true)`; in the
+   reviewer pane, hand it a scratch candidate, receive `EVENT=CANDIDATE_VERDICT`, then
+   the same; each successor comes back in its pane as its role, answers a follow-up in
+   its format without being told it, and has a source write blocked; the archivist's
+   digest records both.
+7. Failure path: a script line whose launch is refused (a `--project` name that does not
+   exist) prints the tool's error on stderr and exits 1, so `set -e` stops the script
+   with the panes created so far left in place and the `CREATED_TAB=` lines on stderr
+   name the tabs to remove with `gclient kill`; a `launch --split` on a pane ref that does
+   not exist exits 1 the same way; `wait-for-output` past its timeout on a tool pane
+   exits 1. With the gterm host stopped, `orchestration-v1.sh` is refused at its first
+   launch with `terminal_failed`, exits 1, and no role comes up on another backend
+   (criterion 5; the launch forces `native`). A seat whose CLI was quit by hand:
+   `get_workspace` shows the pane with no `session_ref`; `gclient kill <pane ref>` reaps
+   it and the seat's launch line, run again, brings it back with the same role.
 8. Amendment disclosure (3.3): claim a scratch task and `update_task` its
    `validation_criteria`; the next turn carries the disclosure order;
    `gobby-tasks-artifacts-ops:get_artifacts` shows `claim_snapshot` with the claim-time
    text; a
    `close_task` whose summary names the amendment passes the close review, and one
    that omits it is bounced with the amendment as the finding.
+9. Existing workflows and worktrees (decision 20; 1.5.7 and 1.5.8 live): launch a
+   bundled definition that carries a step workflow and both surfaces (`architect`, or
+   `analyst` or `task-close-reviewer` with a scratch task) into a scratch tab, once with
+   `gobby agents spawn --agent architect --tab scratch --project gobby -- "<prompt>"` and
+   once with `spawn_agent` and `placement.split` from the assistant pane; in each pane
+   `gobby-workflows:get_variable step_workflow_complete` is false and the run's
+   `agent_step_instances` row exists, exactly as a headless `spawn_agent` of the same
+   definition gives; then open a lane developer pane with `/goal` (its definition's
+   `isolation: worktree`) and confirm `pwd` in the pane is under the worktree path and
+   `get_workspace` shows the pane's `worktree_path`; kill the scratch tabs.
 
 **Enhancement round 1 of 1** (kind: enhancement). enhancer_run
 `fa6aa37e-ab77-43cd-a1e5-1b9af49c8803` (plan-enhancer-taskless, grok/grok-4.7/high,
@@ -1752,26 +2590,30 @@ decision 12 had already removed.
   expansion copies.
 - rb-11 (clarity, 1.1): accept. Removes an ambiguity that would have put 1024 on `role`.
 
-## D1 Rust port of the runbook seams (depends: 1.2, 1.3, 1.4)
+## D1 Rust port of the runbook seams (depends: 1.2, 1.3, 1.5)
 `kind: deferred`
 
 ```yaml
 deferral:
   task_ref: "TBD-runbooks-rust-port"
-  reason: "The workspace ops, hook ingress, and MCP seams move to Rust family crates at S2.8 (#21565), S2.11 (#21569), and S2.12 (#21570); runbook scripts can move to a DB-backed registry then, and the command-mode verbs move behind the family crate's API."
+  reason: "The workspace ops, hook ingress, and MCP seams move to Rust family crates at S2.8 (#21565), S2.11 (#21569), and S2.12 (#21570); the launch's placement seam (1.5) moves with the spawn tool at S2.12, runbook scripts can move to a DB-backed registry then, and the command-mode verbs move behind the family crate's API."
   owner: "gobby-1.0"
   original_acceptance_items:
-    - 1.2.2
+    - 1.2.1
     - 1.3.1
-    - 1.4.1
+    - 1.5.1
 ```
 
 ## D2 Retire gobby build in favor of runbooks
 `kind: deferred`
 
-The retirement's own criteria, carried into the deferred task's validation criteria at
-expansion (no live deliverable of this plan delivers them; ruling 23 dropped the
-post-epic-reviewer that 3.2 once carried for `epic_qa`):
+Decision 19 assumes the retirement: compatibility with `gobby build` is no longer a
+constraint, 3.2 and 3.4 already reshape its planning-stage definitions and repoint its
+name maps, and v1 deletes none of `gobby build`, `src/gobby/dispatch/` or the stage
+registry. What remains is the retirement itself. Its criteria, carried into the
+deferred task's validation criteria at expansion (no live deliverable of this plan
+delivers them; ruling 23 dropped the post-epic-reviewer that 3.2 once carried for
+`epic_qa`):
 - D2.1 - A planning pass, after orchestration-v1 has run at least one full night (V1
   step 3 and the archivist's record), names what replaces `epic_qa` and the build
   coordinator for stage dispatch under runbooks, or keeps them, as a plan of its own.
@@ -1781,7 +2623,7 @@ post-epic-reviewer that 3.2 once carried for `epic_qa`):
 ```yaml
 deferral:
   task_ref: "TBD-retire-gobby-build"
-  reason: "Josh intends runbooks to supersede stage-manifest dispatch; the retirement needs its own planning pass (what replaces epic_qa and the build coordinator, and the memory that build runs autonomously) after orchestration-v1 has run a real night."
+  reason: "Josh assumes the retirement (decision 19: 'assume we're retiring gobby build and stages'); v1 deletes nothing of it, and the retirement needs its own planning pass (what replaces epic_qa and the build coordinator, the stage registry and dispatch code to remove, and the memory that build runs autonomously) after orchestration-v1 has run a real night."
   owner: "josh"
   original_acceptance_items:
     - D2.1
