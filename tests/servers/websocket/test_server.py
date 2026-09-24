@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import time
 from types import MappingProxyType
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -264,6 +265,18 @@ def _quiet_disconnect(server: WebSocketServer) -> None:
     object.__setattr__(server, "_cleanup_attached_tts", AsyncMock())
 
 
+def _frame_types(socket: _ScriptedSocket) -> list[str]:
+    found: list[str] = []
+    for payload in socket.sent:
+        parsed = json.loads(payload)
+        if not isinstance(parsed, dict):
+            continue
+        frame_type = parsed.get("type")
+        if isinstance(frame_type, str):
+            found.append(frame_type)
+    return found
+
+
 @pytest.mark.asyncio
 async def test_terminal_attach_returns_the_loop_before_a_three_second_backend() -> None:
     """A 3s attach must not hold the next frame. The loop answers it within 100ms."""
@@ -273,32 +286,53 @@ async def test_terminal_attach_returns_the_loop_before_a_three_second_backend() 
         auth_callback=AsyncMock(return_value="test-user"),
     )
     _quiet_disconnect(server)
-    ping_answered = asyncio.Event()
+    started = time.monotonic()
+    pong_at: list[float] = []
+    attach_sent = asyncio.Event()
 
-    async def attach(_websocket: Any, _data: dict[str, Any]) -> None:
+    async def attach(websocket: Any, data: dict[str, Any]) -> None:
         # test-quality: allow SLEEP_IN_TEST -- #22709 requires a backend of at least 3 seconds
         await asyncio.sleep(3)
+        await websocket.send(
+            json.dumps(
+                {
+                    "type": "terminal_attach_result",
+                    "request_id": data.get("request_id"),
+                    "success": True,
+                }
+            )
+        )
+        attach_sent.set()
 
-    async def ping(_websocket: Any, _data: dict[str, Any]) -> None:
-        ping_answered.set()
+    async def ping(websocket: Any, _data: dict[str, Any]) -> None:
+        pong_at.append(time.monotonic())
+        await websocket.send(json.dumps({"type": "pong", "request_id": "ping-1"}))
 
     server._dispatch_table = {"terminal_attach": attach, "ping": ping}
     socket = _ScriptedSocket(
         [
             json.dumps({"type": "terminal_attach", "request_id": "attach-1"}),
             json.dumps({"type": "ping", "request_id": "ping-1"}),
-        ]
+        ],
+        hold_open=True,
     )
     connection = asyncio.create_task(server.handle_connection(socket))
     try:
-        await asyncio.wait_for(ping_answered.wait(), timeout=0.1)
-        assert ping_answered.is_set()
+        await asyncio.wait_for(attach_sent.wait(), timeout=5)
+        assert pong_at
+        assert pong_at[0] - started < 0.1
+        types = _frame_types(socket)
+        assert types.index("pong") < types.index("terminal_attach_result")
     finally:
-        connection.cancel()
+        socket.close()
         try:
-            await connection
-        except asyncio.CancelledError:
-            pass
+            await asyncio.wait_for(connection, timeout=1)
+        except (TimeoutError, asyncio.CancelledError):
+            connection.cancel()
+            try:
+                await connection
+            except asyncio.CancelledError:
+                pass
 
 
 @pytest.mark.asyncio
@@ -407,31 +441,43 @@ async def test_slow_terminal_operation_leaves_the_read_loop(message_type: str) -
         auth_callback=AsyncMock(return_value="test-user"),
     )
     _quiet_disconnect(server)
-    ping_answered = asyncio.Event()
-    release = asyncio.Event()
+    started = time.monotonic()
+    pong_at: list[float] = []
+    slow_sent = asyncio.Event()
+    result_type = f"{message_type}_result"
 
-    async def slow(_websocket: Any, _data: dict[str, Any]) -> None:
-        await release.wait()
+    async def slow(websocket: Any, _data: dict[str, Any]) -> None:
+        # test-quality: allow SLEEP_IN_TEST -- take_control requires a backend of at least 2 seconds
+        await asyncio.sleep(2)
+        await websocket.send(json.dumps({"type": result_type, "request_id": "slow-1"}))
+        slow_sent.set()
 
-    async def ping(_websocket: Any, _data: dict[str, Any]) -> None:
-        ping_answered.set()
+    async def ping(websocket: Any, _data: dict[str, Any]) -> None:
+        pong_at.append(time.monotonic())
+        await websocket.send(json.dumps({"type": "pong", "request_id": "ping-1"}))
 
     server._dispatch_table = {message_type: slow, "ping": ping}
     socket = _ScriptedSocket(
         [
             json.dumps({"type": message_type, "request_id": "slow-1"}),
             json.dumps({"type": "ping", "request_id": "ping-1"}),
-        ]
+        ],
+        hold_open=True,
     )
     connection = asyncio.create_task(server.handle_connection(socket))
     try:
-        await asyncio.wait_for(ping_answered.wait(), timeout=0.1)
-        assert ping_answered.is_set()
-        assert not release.is_set()
+        await asyncio.wait_for(slow_sent.wait(), timeout=4)
+        assert pong_at
+        assert pong_at[0] - started < 0.1
+        types = _frame_types(socket)
+        assert types.index("pong") < types.index(result_type)
     finally:
-        release.set()
-        connection.cancel()
+        socket.close()
         try:
-            await connection
-        except asyncio.CancelledError:
-            pass
+            await asyncio.wait_for(connection, timeout=1)
+        except (TimeoutError, asyncio.CancelledError):
+            connection.cancel()
+            try:
+                await connection
+            except asyncio.CancelledError:
+                pass
