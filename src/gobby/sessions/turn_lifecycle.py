@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from typing import Any, Literal, Protocol, cast
@@ -13,6 +14,8 @@ from gobby.storage.attention import (
 )
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import TERMINAL_SESSION_STATUSES
+
+logger = logging.getLogger(__name__)
 
 TurnDisposition = Literal[
     "completed",
@@ -308,7 +311,7 @@ class TurnLifecycleReducer:
         def mutate(current: TurnLifecycleState, _status: str) -> tuple[TurnLifecycleState, str]:
             return self._with_evidence(current, evidence, waits=(), turn_state="open"), "active"
 
-        return self._apply(session_id, evidence, mutate)
+        return self._apply(session_id, evidence, mutate, accept_resolving_provider_key=True)
 
     def end_turn(
         self,
@@ -336,6 +339,7 @@ class TurnLifecycleReducer:
         mutate: LifecycleMutation,
         *,
         allow_new_turn: bool = False,
+        accept_resolving_provider_key: bool = False,
     ) -> TurnLifecycleTransitionResult:
         entry_id = session_attention_entry_id(session_id)
         with self._db.transaction() as transaction:
@@ -364,7 +368,19 @@ class TurnLifecycleReducer:
                     "session_terminal",
                 )
             stale_reason = None if allow_new_turn else self._stale_reason(current, evidence)
+            if (
+                stale_reason == "stale_provider_turn"
+                and accept_resolving_provider_key
+                and current.waits
+                and all(wait.state == "resolving" for wait in current.waits)
+            ):
+                stale_reason = None
             if stale_reason:
+                logger.debug(
+                    "Rejected turn lifecycle evidence for session %s: %s",
+                    session_id,
+                    stale_reason,
+                )
                 return TurnLifecycleTransitionResult(
                     False,
                     session_id,

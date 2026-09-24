@@ -63,6 +63,72 @@ Verbatim: "CONSENSUS on .gobby/plans/runbooks.md at commit f6388d0534366a8f6023b
 
 ## Adversary findings
 The adversary attacks the enhancement-consensus hash `d9d65815...afcf` at `f6388d05` (handed over 23:0x CDT). Same format as the enhancer items, plus `check_key`.
+
+### AR1 batch (adversary message `aea43e69`, 2026-09-23 23:25 CDT; correction: six findings, not five; supplement `eb080656` 23:38 CDT adds A7 and reports lookup f6ea88b7 with no finding on task_artifacts, migration 449, WorkspaceEventKind, Session.ref, the pane/tab constructors or `_with_ratio`)
+
+#### A1 `runbook-3.2.6-terminal-backend-token` (weak-testability, blocking)
+Adversary: 3.2.6 cannot pass; it requires the criterion 11 sentence (which contains `terminal_backend`) and a file with no `terminal_backend`.
+Writer verification: correct; the sentence is verbatim in the lane-manager bullet and 3.2.6 forbade the token.
+Move: FOLD. 3.2.6 asserts the sentence verbatim and forbids only a mapping key `backend` or `terminal_backend` in the loaded tree.
+Resolution: folded in the AR1 commit.
+
+#### A2 `runbook-3.2.3-gterm-in-family-table` (missing-requirement, blocking)
+Adversary: the log-monitor persona seeds the book's family table, whose row quotes `terminals.host_manager._health_loop - gterm control probe failed` (book 495); 3.2.3 forbids `gterm` in any prompt string, so "Divergence: none" and 3.2.3 cannot both hold.
+Writer verification: correct; book line 495 is the only `gterm` in the book and no prompt has `tmux`.
+Move: FOLD as proposed. 3.2.3 exempts backtick-quoted log signatures (the test strips backtick spans before scanning); the research line says the same; the row stays and the log-monitor divergence does not mention it. Criterion 1 keeps the key check and the ban on instructions that choose a backend.
+Resolution: folded in the AR1 commit.
+
+#### A3 `runbook-3.2-log-monitor-nominal-telemetry` (missing-requirement, blocking)
+Adversary: the persona carries standing instruction 1 ("Systems nominal" rather than load numbers) and then orders a nominal line with `load <1m>/<5m>/<15m> | runs <R>`, with divergence none; 3.2.2 would pass the contradiction.
+Writer verification: correct. Memory 33cb3885 (Josh, 2026-09-22, "Again"): no load averages or run counts as routine status; the number is the news only when breaching. Book line 460 diverges from its own instruction 1.
+Move: FOLD as proposed. The nominal line is `Systems nominal | window HH:MM-HH:MM | <N> warnings in <K> families, all mapped`; the divergence line names the dropped fields and book line 460; alarms still cite the breached figure; 3.2.2 fails if any persona's nominal template carries `load <` or `runs <`. Writer note for the PD: the alternative was to keep the figures as Program-Director-only telemetry that never reaches Josh (the memory's DIGEST-file carve-out); the fold follows the instruction as written, and the Program Director has `uptime` and `list_running_agents` itself.
+Resolution: folded in the AR1 commit.
+
+#### A4 `runbook-d2-cites-live-reviewer-item` (traceability, blocking)
+Adversary: D2's `original_acceptance_items` is 3.2.5, a live reviewer item 3.2 delivers, so the retirement task minted at expansion would be graded on the reviewer test, not on replacing `epic_qa`, the build coordinator and the autonomous-build memory.
+Writer verification: correct. `_parse_original_acceptance_items` (parser.py 747) requires a non-empty list of dotted ids; `_coverage_items` (coverage.py 530) makes those ids D2's own coverage rows and `_deferral_covers_item` (642) never cross-checks them against a deliverable, so D2-local ids are valid (`DOTTED_ID_PATTERN` accepts `D2.1`). The S2 repoint from the dropped post-epic-reviewer item onto 3.2.5 caused it.
+Move: FOLD. D2 lists its own criteria D2.1 (a planning pass after one full night names what replaces `epic_qa` and the build coordinator, or keeps them) and D2.2 (`gobby build` and stage-manifest dispatch retired or re-scoped, the autonomous-build memory retired or rewritten); `original_acceptance_items` is `[D2.1, D2.2]`; 3.2.5 stays only on 3.2.
+Resolution: folded in the AR1 commit.
+
+#### A5 `runbook-2.1-kickoff-before-cli-ready` (unhandled-edge, blocking)
+Adversary: the scripts wait for a shell prompt, send the launch line, then send the kickoff with nothing waiting for the CLI to accept input; V1 step 3 expects the kickoff submitted.
+Writer verification: correct; `PROMPT_PATTERN` matches a shell, and the plan had no second wait.
+Move: FOLD as proposed, with the patterns named from the live council panes (capture_output, 2026-09-23 23:3x CDT): `READY_claude='bypass permissions on'` (Claude Code's status footer under `--dangerously-skip-permissions`), `READY_codex='› Ask Codex'` (the empty composer placeholder), `READY_grok='always-approve'` (the composer border under `--always-approve`). Per seat: shell wait, launch `send-keys`, ready wait (timeout 60, exit 1 on timeout), kickoff `send-keys --enter`. 2.1.5 and 2.1.8 assert the kickoff op follows the ready wait; V1 step 3 checks the kickoff landed in the composer, not the shell.
+Resolution: folded in the AR1 commit.
+
+#### A6 `runbook-3.2-shared-tail-ephemeral-sessions` (unhandled-edge, blocking)
+Adversary: the verbatim tail addresses gobby#14069 (UUID 26de7dbf) and gobby#14018, the 2026-09-22 chart sessions; after they end, registration and verdicts go to dead sessions.
+Writer verification: correct; session numbers change on every `/clear` or relaunch, and 1.2's pane view already exposes `role` and `session_ref`.
+Move: FOLD as proposed. The durable tail names the assistant and the Program Director by role, resolved through `gobby-workspaces:get_workspace` (the pane whose `role` is `assistant` or `program-director`, its `session_ref`), with a `project` send naming the missing role as the fallback, and states inside itself that the book's numbers and UUIDs are the 2026-09-22 chart; `SHARED_TAIL` in the test is that durable text; 3.2.2 and the registration line say so; the per-role divergence lines are unchanged because the tail's divergence is shared by all eleven.
+Resolution: folded in the AR1 commit.
+
+#### A7 `runbook-3.2-monitor-shell-spellings` (unhandled-edge, blocking; supplement `eb080656`)
+Adversary: archivist and log-monitor copy `comms-agent.yaml`'s blocked_tools minus only `Bash`, which still blocks `shell` and `run_shell_command`; both seats launch Codex and need a shell for `date`, `uptime`, the log reads, `$TMPDIR/log-monitor-state.json` and the digest under `~/Desktop`; 3.2.1 locks the list into the test.
+Writer verification: correct; comms-agent.yaml's list (46-60, per gobby#14332) carries four shell spellings and the plan removed one.
+Move: FOLD as proposed. The two seats' `blocked_tools` is the write-only list (`Edit`, `KillShell`, `MultiEdit`, `NotebookEdit`, `Write`, `apply_patch`, `edit_file`, `notebook_edit`, `replace`, `write_file`); `Bash`, `BashOutput`, `shell` and `run_shell_command` stay available; `runbook-no-code-edits` still blocks repository mutations including shell writes inside the repo; 3.2.1 asserts the write-only list with no shell spelling.
+Resolution: folded in the AR1 commit.
+
+### AR2 (adversary message on the AR1 hash `e4baf664...6289` at `8d90e7f6`, 2026-09-23 23:5x CDT): A1-A7 confirmed folded; one new finding
+
+#### A8 `runbook-2.1-grok-ready-pattern-matches-launch-line` (unhandled-edge, blocking)
+Adversary: `READY_grok='always-approve'` is a substring of the adversary launch line `grok -m grok-4.7 --reasoning-effort high --always-approve`; `wait-for-output` matches text already on screen (the shell wait relies on that), so the ready wait matches the typed launch line and the kickoff goes in before grok's composer exists; the mock keeps 2.1.5/2.1.8 green while V1 step 3 fails for that seat.
+Writer verification: correct; the Claude and Codex patterns are not substrings of their launch lines, the grok one was. Tonight's capture of the idle grok composer also shows its hint bar `Tab/→:accept suggestion  │  Shift+Tab:mode  │  Ctrl+x:shortcuts`.
+Move: FOLD as proposed. `READY_grok='Ctrl+x:shortcuts'`; the scripts paragraph states that no `READY_*` value may be a substring of its seat's launch line and why; 2.1.5 and 2.1.8 assert it. Shell wait, launch, ready wait, kickoff order unchanged.
+Resolution: folded in the AR2 commit.
+
+### AR3 (adversary message on the AR2 hash `ab982751...e56f` at `2ed0b4e3`, 2026-09-23 23:5x CDT): A1-A8 confirmed folded; one new finding
+
+#### A9 `runbook-2.1-grok-ready-regex-plus` (unhandled-edge, blocking)
+Adversary: `--pattern` is a regex, so `Ctrl+x:shortcuts` reads `l+` as a quantifier and never matches the literal hint; the grok ready wait times out and the kickoff is never sent, while 2.1.8's substring check stays green.
+Writer verification: correct; the verb list says `--pattern REGEX`.
+Move: FOLD as proposed. `READY_grok='Ctrl\+x:shortcuts'`; the scripts paragraph says every `READY_*` value is a regex with metacharacters escaped and must match no launch line; 2.1.5 and 2.1.8 assert each regex matches its captured idle-composer text and no launch line.
+Resolution: folded in the AR3 commit.
+
+### Adversary finalization (adversary message on the AR3 hash `01f40581...bbbb` at `50d5cfff`, 2026-09-23 23:5x CDT, delivered on the writer's resume at 23:57 CDT): nothing remains
+Adversary (verbatim): "Adversary gobby#14423: nothing remains on sha256 01f40581bba2492f479726f7a5caa3f2923a979135068213ca9607e513e7bbbb at commit 50d5cfff959cbee14df0b03a34902221a95cc35e. Finalized to the PD gobby#14018. Validate exited 0, git diff --check clean, worktree matches the blob. A1-A9 and cr-1/cr-2 stay folded."
+Writer verification (23:57 CDT): `.gobby/plans/runbooks.md` in the worktree hashes to `01f40581...bbbb`, the blob committed at `50d5cfff`; bare `uv run gobby plans validate .gobby/plans/runbooks.md` prints the plan path and `Phases: 3` (Daemon seams, gclient command mode, Roles) and nothing else; bare `git diff --check` prints nothing. The branch head has since moved to `2f9e12d7` (another session's merge, `[gobby-#22810]`), which does not touch the plan; the final plan commit stays `50d5cfff`.
+Resolution: every enhancer item (cr-1, cr-2) and every adversary finding (A1-A9) is folded; none was withdrawn or contested. Task criterion 4 is met by the adversary's message to gobby#14018.
+
 Check-in (adversary message, 2026-09-23 21:0x CDT): "Send me the folded hash of .gobby/plans/runbooks.md ... only after enhancement consensus, with the commit sha. I attack that hash and no earlier one. I edit no files. Debate each finding until you fold it or I withdraw it; I finalize to gobby#14018." Writer acknowledgment sent 21:3x CDT (non-waking): the hash goes out only after enhancement consensus, in one message with the sha256, the commit sha and the bare validate result; no hash yet.
 
 ## Program Director rulings
@@ -121,7 +187,11 @@ S1 commit `eebfc0ad2db67f2b82168cf3517da46a5f18ed91` (decisions 13-15 recorded; 
 S2 commit `9d082c7db47a160ef6b980831e32aad604332a97`, S3 commit `e7d05fac306c75ba23574e4711675f1362b0b5ce`, S4 commit `e413116cb9302b1169e19b97f91719bec642e7e5`; sweep hash (sent to the PD in message `26982800`, 21:1x CDT): plan sha256 `8987dd5ebb02f3cd6c5a6563b202f5488da9834df66424f1ea4ed68c3692342c`; bare validate clean (Phases 3); `git diff --check` clean. Its five positions were accepted in R2.
 S5 (this entry): plan sha256 `c8a9238f6ad8e2fcf9ebcc579b6cc8797b2ba876e59302cc194169bfdb843bad`; bare validate clean; `git diff --check` clean (21:3x CDT). This is the hash the enhancer starts on unless the PD rules otherwise.
 E2 (this entry; cr-1 and cr-2 folded): plan sha256 `d9d65815736a1cd0b384860228d34241ec36190ee96b5dba1ff7be114e03afcf`; bare validate clean; `git diff --check` clean (23:0x CDT). Enhancer consensus on this hash at 23:0x CDT; it is the hash the adversary attacks.
-Pending: the adversary round, the final commit and hash, validation output, the adversary's finalization message, the PD's review and hand-off to the assistant.
+AR1 (this entry; A1-A7 folded): plan sha256 `e4baf6640abfd856669c7ead1dd8053af55602f338a4fabd9c2eeff7e6876289`; bare validate clean; `git diff --check` clean (23:4x CDT). Sent to the adversary for re-attack.
+AR2 (this entry; A8 folded): plan sha256 `ab982751bb9b3452359977b068bf155154f70a748858a14a71929570109ae56f`; bare validate clean; `git diff --check` clean (23:5x CDT). Sent to the adversary for re-attack.
+AR3 (this entry; A9 folded): plan sha256 `01f40581bba2492f479726f7a5caa3f2923a979135068213ca9607e513e7bbbb`; bare validate clean; `git diff --check` clean (23:52 CDT). Sent to the adversary for re-attack.
+Final: the adversary finalized on the AR3 hash (2026-09-23 23:5x CDT; message quoted under Adversary findings). Final plan commit `50d5cfff959cbee14df0b03a34902221a95cc35e`; plan sha256 `01f40581bba2492f479726f7a5caa3f2923a979135068213ca9607e513e7bbbb`; writer re-check on resume (23:57 CDT): bare validate clean (Phases 3), `git diff --check` clean. Task criteria 1-4 are met at this hash.
+Pending: the PD's review of the final hash and its hand-off to the assistant gobby#14069 for Josh's review (task criterion 5), recorded here when it arrives.
 
 ### Writer refinements while writing S2 and S3 (named to the Program Director with the hash)
 - Registration source (criterion 1 versus 3): the design of record had the persona say "gterm for a workspace pane". Criterion 1's sentence "A definition that names one fails validation" is literal, so no definition names a backend; instead 1.2's pane view gains `backend` from the terminals row the `session_ref` JOIN already reads, and the registration line repeats what `get_workspace` shows. Cost: one derived field. The adopted-terminal case then needs no caveat text.

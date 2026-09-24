@@ -319,6 +319,83 @@ def test_unknown_duplicate_and_mismatched_evidence_preserve_state(
     assert current.status == "awaiting_approval"
 
 
+def test_resumed_work_clears_resolving_pane_input_wait_when_turn_key_changes(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    """A Codex goal tool hook clears pane input waits left in resolving."""
+    sessions = SessionManager(temp_db)
+    session_id = _session(sessions, sample_project["id"], external_id="goal-working")
+    lifecycle = TurnLifecycleReducer(sessions)
+    started = lifecycle.begin_turn(
+        session_id,
+        TurnEvidence(source="codex", provider_turn_key="goal-turn"),
+    )
+    lifecycle.enter_wait(
+        session_id,
+        kind="input",
+        token="composer-question",
+        evidence=TurnEvidence(source="codex.pane", generation=started.generation),
+    )
+    resolved = lifecycle.resolve_wait(
+        session_id,
+        token="composer-question",
+        resolution="ambiguous",
+        evidence=TurnEvidence(source="pane.resolved", generation=started.generation),
+    )
+    assert resolved.status == "awaiting_input"
+    assert resolved.lifecycle.waits[0].state == "resolving"
+
+    resumed = lifecycle.resumed_work(
+        session_id,
+        TurnEvidence(source="codex", provider_turn_key="goal-turn-tool"),
+    )
+
+    assert resumed.applied is True
+    assert resumed.status == "active"
+    assert resumed.lifecycle.waits == ()
+    current = sessions.get(session_id)
+    assert current is not None
+    assert current.status == "active"
+
+
+def test_stale_provider_turn_rejection_is_logged(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An open question is not cleared by a different turn key, and the reject is logged."""
+    sessions = SessionManager(temp_db)
+    session_id = _session(sessions, sample_project["id"], external_id="real-question")
+    lifecycle = TurnLifecycleReducer(sessions)
+    started = lifecycle.begin_turn(
+        session_id,
+        TurnEvidence(source="codex", provider_turn_key="goal-turn"),
+    )
+    lifecycle.enter_wait(
+        session_id,
+        kind="input",
+        token="real-question",
+        evidence=TurnEvidence(source="codex.pane", generation=started.generation),
+    )
+
+    with caplog.at_level("DEBUG", logger="gobby.sessions.turn_lifecycle"):
+        resumed = lifecycle.resumed_work(
+            session_id,
+            TurnEvidence(source="codex", provider_turn_key="other-turn"),
+        )
+
+    assert resumed.applied is False
+    assert resumed.reason == "stale_provider_turn"
+    current = sessions.get(session_id)
+    assert current is not None
+    assert current.status == "awaiting_input"
+    assert any(
+        record.levelname == "DEBUG" and "stale_provider_turn" in record.message
+        for record in caplog.records
+    )
+
+
 def test_resolved_wait_cannot_be_resurrected_by_delayed_notification(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],

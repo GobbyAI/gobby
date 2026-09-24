@@ -13,7 +13,7 @@ import logging
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
-from gobby.adapters.capabilities import ContextChannel, get_provider_capabilities
+from gobby.adapters.capabilities import hook_supports_model_context
 from gobby.hooks import grok_pending_context
 from gobby.hooks.events import ContextPart, HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.pending_messages import PendingMessageRenderResult, render_pending_messages
@@ -140,7 +140,7 @@ class EventEnricher:
             if isinstance(raw_delivery_session_id, str) and raw_delivery_session_id
             else None
         )
-        supports_context = self._hook_supports_context(event)
+        supports_context = hook_supports_model_context(event)
         # Hook piggyback: inject undelivered inter-session messages.
         if (
             self._inter_session_msg_manager
@@ -215,23 +215,6 @@ class EventEnricher:
             staged = {**existing, **staged}
         response.metadata[STAGED_EFFECTS_FIELD] = staged
         record_worker_staging(staged)
-
-    @staticmethod
-    def _hook_supports_context(event: HookEvent) -> bool:
-        """Return whether this exact native provider hook carries model context."""
-        native_hook_type = event.metadata.get("_native_hook_type")
-        if not isinstance(native_hook_type, str) or not native_hook_type:
-            return False
-        try:
-            capability = get_provider_capabilities(event.source).get_hook(native_hook_type)
-        except ValueError:
-            return False
-        if not capability or capability.event_type is not event.event_type:
-            return False
-        if event.source == SessionSource.CODEX:
-            # Codex systemMessage output is not included in the model transcript.
-            return capability.context_channel is ContextChannel.ADDITIONAL_CONTEXT
-        return capability.context_channel is not ContextChannel.NONE
 
     def _resolve_sender_label(
         self, from_session: str | None, *, recipient_project_id: str | None = None

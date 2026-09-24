@@ -83,6 +83,9 @@ from gobby.workflows.step_instances import AgentStepInstanceManager
 
 logger = logging.getLogger(__name__)
 
+type _LoadedRule = tuple[RuleDefinitionRow, RuleDefinitionBody]
+type _RuleCacheKey = tuple[tuple[RuleTriggerEvent, ...], str | None]
+
 _DEFAULT_RULE_CONFIG_SNAPSHOT = ConfigSnapshot(
     revision=0,
     desired=DaemonConfig(),
@@ -162,6 +165,9 @@ class RuleEngine(
         )
         self._agent_def_cache_revision = get_definitions_revision("agents")
         self._agent_def_cache: dict[tuple[str, str | None], AgentDefinitionBody | None] = {}
+        # (events, project_id) -> (rules revision at load, rules); committed rule
+        # writes from any process bump the revision (#22708).
+        self._rule_cache: dict[_RuleCacheKey, tuple[int, list[_LoadedRule]]] = {}
         self._background_run_commands: dict[tuple[str, str], asyncio.Task[None]] = {}
         self._initialize_cached_mcp_injections()
 
@@ -492,19 +498,17 @@ class RuleEngine(
                         },
                     )
 
-                # 1. Load enabled rules for this event, sorted by priority
-                rules = await offload(
-                    self._load_rules,
-                    resolved_rule_events,
-                    project_id=_project_id_from_event(event),
-                )
+                # 1. Load enabled rules for this event, sorted by priority. A hit on
+                # the current rules revision skips the database and the thread hop.
+                rule_cache_key = (tuple(resolved_rule_events), _project_id_from_event(event))
+                rules = self._cached_rules(rule_cache_key)
+                if rules is None:
+                    rules = await offload(self._load_rules_into_cache, rule_cache_key)
 
-                # 2. Filter by agent_scope
+                # 2-3. Filter by agent_scope, then audience (pure, so inline)
                 agent_type = variables.get("_agent_type")
-                rules = await offload(self._filter_by_agent_scope, rules, agent_type)
-
-                # 3. Filter by audience
-                rules = await offload(self._filter_by_audience, rules, variables)
+                rules = self._filter_by_agent_scope(rules, agent_type)
+                rules = self._filter_by_audience(rules, variables)
 
                 # 4. Filter by active rules (selector-based)
                 rules = await offload(
@@ -633,6 +637,13 @@ class RuleEngine(
                     # Auto-manage tool_block_pending on after_tool execution results.
                     if is_after_tool:
                         self._manage_after_tool_recovery_state(event, variables)
+                    if override_decision != "block":
+                        await self._deliver_late_mcp_injections(
+                            event,
+                            evaluation.variables,
+                            evaluation.context_parts,
+                            evaluation.staged_variable_updates,
+                        )
                     # Honour hardcoded override decisions (e.g. tool_block_pending stop gate)
                     # even when no declarative rules are installed for this event.
                     resp = self._assemble_response(
@@ -734,6 +745,14 @@ class RuleEngine(
 
                 # 6. Build response — overrides take precedence over rule-evaluated decisions,
                 # but the rule loop always runs so mcp_calls are always collected.
+                # Late recall rides allow responses only; a block keeps it queued.
+                if not block_gates and override_decision != "block":
+                    await self._deliver_late_mcp_injections(
+                        event,
+                        evaluation.variables,
+                        evaluation.context_parts,
+                        evaluation.staged_variable_updates,
+                    )
                 resp = self._assemble_response(
                     evaluation,
                     override_decision=override_decision,
@@ -762,6 +781,21 @@ class RuleEngine(
                     span.record_exception(e)
                     span.set_status(Status(StatusCode.ERROR, str(e)))
                 raise
+
+    def _cached_rules(self, key: _RuleCacheKey) -> list[_LoadedRule] | None:
+        entry = self._rule_cache.get(key)
+        if entry is None or entry[0] != get_definitions_revision("rules"):
+            return None
+        return list(entry[1])
+
+    def _load_rules_into_cache(self, key: _RuleCacheKey) -> list[_LoadedRule]:
+        # Read the revision first: a write that commits during the load bumps it
+        # past this entry, so the next hook reloads.
+        revision = get_definitions_revision("rules")
+        rule_events, project_id = key
+        rules = self._load_rules(list(rule_events), project_id=project_id)
+        self._rule_cache[key] = (revision, rules)
+        return list(rules)
 
     def _load_rules(
         self,

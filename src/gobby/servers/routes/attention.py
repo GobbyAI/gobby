@@ -279,8 +279,15 @@ def create_attention_router(
                 require_machine_id(),
                 live_session_statuses=LIVE_SESSION_STATUS_ORDER,
             )
+            resolver = getattr(server.services, "provider_capability_resolver", None)
+            # The capability catalog reads the database, so names resolve off the loop.
+            display_names = (
+                {}
+                if resolver is None
+                else await profiled_run_db(_model_display_names, resolver, rows)
+            )
             assembly_started_at = perf_counter()
-            entries = _load_roster_entries(server, snapshot, rows)
+            entries = _load_roster_entries(server, snapshot, rows, display_names)
             assembly_seconds = perf_counter() - assembly_started_at
             payload: dict[str, object] = {
                 "epoch": snapshot.epoch,
@@ -623,9 +630,9 @@ def _load_roster_entries(
     server: HTTPServer,
     snapshot: AttentionRosterSnapshot,
     rows: Sequence[AttentionRosterRow],
+    display_names: Mapping[tuple[str | None, str | None], str | None],
 ) -> list[dict[str, object]]:
     """Join cursor-bounded attention with one bounded identity query."""
-    services = server.services
     runs = [row for row in rows if row.kind == "run"]
     sessions = [row for row in rows if row.kind == "session"]
     attention = {state.entry_id: state for state in snapshot.states}
@@ -647,7 +654,7 @@ def _load_roster_entries(
                 "task": task,
                 "provider": run.provider,
                 "model": run.model,
-                "model_display_name": _model_display_name(services, run.provider, run.model),
+                "model_display_name": display_names.get((run.provider, run.model)),
                 "terminal": _terminal_block(server, run.terminal),
                 "tmux": _run_tmux_payload(server, run),
                 "last_activity_at": _serialize_timestamp(run.updated_at),
@@ -674,9 +681,7 @@ def _load_roster_entries(
                 "task": None,
                 "provider": session.provider,
                 "model": session.model,
-                "model_display_name": _model_display_name(
-                    services, session.provider, session.model
-                ),
+                "model_display_name": display_names.get((session.provider, session.model)),
                 "terminal": terminal,
                 "tmux": _session_tmux_payload(terminal_context),
                 "last_activity_at": _serialize_timestamp(session.updated_at),
@@ -686,13 +691,19 @@ def _load_roster_entries(
     return sorted(entries, key=lambda item: str(item["entry_id"]))
 
 
-def _model_display_name(services: Any, provider: str | None, model: str | None) -> str | None:
-    """The model's name as its provider prints it, when the capability catalog has it."""
-    resolver = getattr(services, "provider_capability_resolver", None)
-    if resolver is None or not provider or not model:
-        return None
-    capability = resolver.find_model(provider, model)
-    return None if capability is None else capability.display_name
+def _model_display_names(
+    resolver: Any,
+    rows: Sequence[AttentionRosterRow],
+) -> dict[tuple[str | None, str | None], str | None]:
+    """Each distinct model's name as its provider prints it, when the catalog has it."""
+    names: dict[tuple[str | None, str | None], str | None] = {}
+    for row in rows:
+        key = (row.provider, row.model)
+        if not row.provider or not row.model or key in names:
+            continue
+        capability = resolver.find_model(row.provider, row.model)
+        names[key] = None if capability is None else capability.display_name
+    return names
 
 
 def _serialize_attention(state: AttentionState | None) -> dict[str, object] | None:

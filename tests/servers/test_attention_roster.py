@@ -440,6 +440,54 @@ def test_roster_spells_the_model_as_its_provider_prints_it(
     assert {entry["model_display_name"] for entry in bare.values()} == {None}
 
 
+def test_roster_resolves_each_model_name_once_off_the_event_loop(
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = AttentionStateManager(temp_db, epoch="model-names-off-loop")
+    runs = [
+        SimpleNamespace(
+            id=f"run-{index}",
+            child_session_id=f"agent-session-{index}",
+            status="running",
+            task_id=None,
+            provider="claude",
+            model="sonnet",
+            terminal_id=None,
+            pid=None,
+            updated_at=datetime(2026, 9, 23, tzinfo=UTC),
+        )
+        for index in range(3)
+    ]
+    monkeypatch.setattr(
+        manager,
+        "load_roster_rows",
+        lambda *_args, **_kwargs: [_roster_run(run) for run in runs],
+    )
+    lookups: list[tuple[str, str, bool]] = []
+
+    def find_model(provider: str, model: str) -> SimpleNamespace:
+        # The live catalog lookup opens a database transaction per call.
+        try:
+            asyncio.get_running_loop()
+            on_event_loop = True
+        except RuntimeError:
+            on_event_loop = False
+        lookups.append((provider, model, on_event_loop))
+        return SimpleNamespace(display_name="Claude Sonnet 4.5")
+
+    server = _server(temp_db, manager, capability_resolver=SimpleNamespace(find_model=find_model))
+    server.services.run_db = asyncio.to_thread
+
+    with _client(server) as client:
+        response = client.get("/api/attention/roster")
+
+    assert response.status_code == 200
+    names = {entry["model_display_name"] for entry in response.json()["entries"]}
+    assert names == {"Claude Sonnet 4.5"}
+    assert lookups == [("claude", "sonnet", False)]
+
+
 def test_roster_terminal_block(temp_db: HubDatabase) -> None:
     manager = AttentionStateManager(temp_db, epoch="terminal-block")
     server = _server(temp_db, manager)
