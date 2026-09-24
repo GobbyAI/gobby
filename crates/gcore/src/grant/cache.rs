@@ -278,16 +278,25 @@ pub fn lock_with_deadline(
 }
 
 pub fn lock_is_stale(path: &Path, stale_after: Duration) -> bool {
+    // A missing file is not stale: the holder may have just released it, and
+    // treating a not-yet-written stamp as stale lets a waiter delete the
+    // creator's lock before the stamp lands.
     let Ok(raw) = fs::read_to_string(path) else {
-        return true;
-    };
-    let Some(stamp) = raw.lines().nth(1).and_then(|line| line.parse::<u64>().ok()) else {
-        return true;
-    };
-    let Ok(modified) = SystemTime::now().duration_since(UNIX_EPOCH) else {
         return false;
     };
-    modified.as_secs().saturating_sub(stamp) >= stale_after.as_secs()
+    if let Some(stamp) = raw.lines().nth(1).and_then(|line| line.parse::<u64>().ok()) {
+        let Ok(now) = SystemTime::now().duration_since(UNIX_EPOCH) else {
+            return false;
+        };
+        return now.as_secs().saturating_sub(stamp) >= stale_after.as_secs();
+    }
+    let Ok(modified) = fs::metadata(path).and_then(|metadata| metadata.modified()) else {
+        return false;
+    };
+    let Ok(age) = SystemTime::now().duration_since(modified) else {
+        return false;
+    };
+    age >= stale_after
 }
 
 fn write_json_atomic(path: &Path, bytes: &[u8]) -> Result<(), GrantError> {

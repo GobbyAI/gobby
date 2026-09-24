@@ -280,6 +280,7 @@ async def sync_worker_loop(
     shutdown_flag: asyncio.Event,
     run_db: Callable[..., Awaitable[Any]] | None = None,
     startup_ready: Callable[[], bool] | None = None,
+    capture_config: Callable[[], CodeIndexConfig] | None = None,
 ) -> None:
     """Continuous worker that syncs pending files to gcode projections.
 
@@ -287,38 +288,54 @@ async def sync_worker_loop(
     Processes up to config.sync_worker_batch_size files per poll (default 50).
     Each file's vector and graph sync are independent — one can succeed
     while the other fails and retries on the next poll.
+    When ``capture_config`` is set, interval, batch size, concurrency, and
+    breaker limits are read from it at the start of every pass.
     """
-    interval = config.sync_worker_interval_seconds
-    batch_size = config.sync_worker_batch_size
+
+    def active_config() -> CodeIndexConfig:
+        if capture_config is None:
+            return config
+        return capture_config()
+
+    current = active_config()
     vector_breaker = SyncCircuitBreaker(
         name="Vector sync",
         probe_target="embedding endpoint",
         operation="vector sync",
-        failure_threshold=config.sync_worker_breaker_failure_threshold,
-        base_backoff_seconds=config.sync_worker_breaker_backoff_seconds,
-        max_backoff_seconds=config.sync_worker_breaker_max_backoff_seconds,
+        failure_threshold=current.sync_worker_breaker_failure_threshold,
+        base_backoff_seconds=current.sync_worker_breaker_backoff_seconds,
+        max_backoff_seconds=current.sync_worker_breaker_max_backoff_seconds,
     )
     logger.info(
         "Code index sync worker started (interval=%ss, batch=%s)",
-        interval,
-        batch_size,
+        current.sync_worker_interval_seconds,
+        current.sync_worker_batch_size,
     )
 
     while not shutdown_flag.is_set() and startup_ready is not None and not startup_ready():
         try:
-            await asyncio.wait_for(shutdown_flag.wait(), timeout=interval)
+            await asyncio.wait_for(
+                shutdown_flag.wait(),
+                timeout=active_config().sync_worker_interval_seconds,
+            )
         except TimeoutError:
             pass
 
     while not shutdown_flag.is_set():
+        current = active_config()
+        vector_breaker.apply_limits(
+            failure_threshold=current.sync_worker_breaker_failure_threshold,
+            base_backoff_seconds=current.sync_worker_breaker_backoff_seconds,
+            max_backoff_seconds=current.sync_worker_breaker_max_backoff_seconds,
+        )
         gcode_gateway = context.gcode_gateway
 
         try:
             await _sync_pass(
                 storage=storage,
                 gcode_gateway=gcode_gateway,
-                config=config,
-                batch_size=batch_size,
+                config=current,
+                batch_size=current.sync_worker_batch_size,
                 run_db=run_db,
                 vector_breaker=vector_breaker,
                 gateway_breaker=context.daemon_config_breaker,
@@ -334,7 +351,10 @@ async def sync_worker_loop(
                 logger.exception("Sync worker pass error: %s", e)
 
         try:
-            await asyncio.wait_for(shutdown_flag.wait(), timeout=interval)
+            await asyncio.wait_for(
+                shutdown_flag.wait(),
+                timeout=current.sync_worker_interval_seconds,
+            )
             break  # Shutdown signaled
         except TimeoutError:
             pass  # Normal timeout, loop again
@@ -507,6 +527,7 @@ async def _sync_file(
                 return False
             except GcodeEmbeddingTransportError as e:
                 _record_breaker_outcomes(armed, failed=(vector_breaker,))
+                await _run_db(run_db, storage.requeue_vector_sync, current.id)
                 logger.error(
                     "Sync worker: vector sync retries exhausted for %s: %s",
                     current.file_path,
@@ -514,6 +535,7 @@ async def _sync_file(
                 )
             except (GcodeTimeoutError, GcodeUnavailableError) as e:
                 _record_breaker_outcomes(armed, failed=(vector_breaker,))
+                await _run_db(run_db, storage.requeue_vector_sync, current.id)
                 logger.error(
                     "Sync worker: vector sync retries exhausted for %s: %s",
                     current.file_path,
@@ -522,6 +544,7 @@ async def _sync_file(
             except GcodeCommandError as e:
                 if _is_transient_vector_error(e):
                     _record_breaker_outcomes(armed, failed=(gateway_breaker,))
+                    await _run_db(run_db, storage.requeue_vector_sync, current.id)
                     logger.error(
                         "Sync worker: vector sync retries exhausted for %s: %s",
                         current.file_path,
@@ -606,6 +629,7 @@ async def _sync_file(
                             GcodeUnavailableError,
                         ) as e:
                             _record_breaker_outcomes(armed)
+                            await _run_db(run_db, storage.requeue_graph_sync, current.id)
                             logger.error(
                                 "Sync worker: graph sync retries exhausted for %s: %s",
                                 current.file_path,

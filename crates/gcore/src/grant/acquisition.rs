@@ -299,6 +299,21 @@ fn accept_cached_or_rehandshake(
 }
 
 fn acquire_interactive(ctx: &AcquireCtx) -> Result<AcquiredGrant, GrantError> {
+    // One handshake at a time. Waiters that arrive while it is in flight reuse
+    // the grant it persists instead of starting another handshake.
+    let lock_dir = ctx.home.join("grants");
+    std::fs::create_dir_all(&lock_dir).map_err(|error| {
+        GrantError::Io(format!("grant directory {}: {error}", lock_dir.display()))
+    })?;
+    let _lock = lock_with_deadline(
+        &lock_dir.join(".acquire.lock"),
+        ctx.stale_lock_after,
+        ctx.deadline,
+    )?;
+    acquire_interactive_unlocked(ctx)
+}
+
+fn acquire_interactive_unlocked(ctx: &AcquireCtx) -> Result<AcquiredGrant, GrantError> {
     let binding = load_binding(&ctx.home, &ctx.daemon_url);
     if let Some(binding) = binding {
         let path = interactive_cache_path(
@@ -417,9 +432,60 @@ pub fn rehandshake(request: &AcquireRequest<'_>) -> Result<AcquiredGrant, GrantE
         &ctx.project_id,
         ctx.code_overlay_project_id.as_deref(),
     );
+    let observed = load_grant_file(&destination).ok();
     let lock_path = grant_lock_path(&destination);
     let _lock = lock_with_deadline(&lock_path, ctx.stale_lock_after, ctx.deadline)?;
+    if let Some(shared) = fresh_shared_grant(&ctx, &destination)? {
+        let replaced = match observed.as_ref() {
+            None => true,
+            Some(previous) => {
+                shared.bundle.deployment.fencing_epoch > previous.deployment.fencing_epoch
+                    || shared.bundle.credential_generation() > previous.credential_generation()
+            }
+        };
+        if replaced {
+            return Ok(shared);
+        }
+    }
     handshake_interactive(&ctx, Some(&token), false)
+}
+
+fn fresh_shared_grant(
+    ctx: &AcquireCtx,
+    destination: &Path,
+) -> Result<Option<AcquiredGrant>, GrantError> {
+    let grant = match load_grant_file(destination) {
+        Ok(grant) => grant,
+        Err(error) if cache::is_missing_grant_file(&error) => return Ok(None),
+        Err(error) => {
+            return Err(annotate_source(
+                error,
+                &format!("cached grant {}", destination.display()),
+            ));
+        }
+    };
+    if grant.is_expired(ctx.now) || grant.past_half_ttl(ctx.now) {
+        return Ok(None);
+    }
+    if validate_grant(
+        &grant,
+        &ctx.project_id,
+        &ctx.machine_id,
+        Some(grant.deployment.token.as_str()),
+        ctx.code_overlay_project_id.as_deref(),
+        false,
+    )
+    .is_err()
+    {
+        return Ok(None);
+    }
+    Ok(Some(AcquiredGrant {
+        bundle: grant.clone(),
+        source: GrantSource::Cache,
+        settings: matching_settings(destination, &grant),
+        daemon_reachable: ctx.reachable(),
+        now: ctx.now,
+    }))
 }
 
 fn finish_loaded(

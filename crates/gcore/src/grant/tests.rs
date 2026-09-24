@@ -843,6 +843,66 @@ fn remote_endpoint_refused_before_auth() {
 }
 
 #[test]
+fn concurrent_acquires_share_one_slow_handshake() {
+    let harness = std::sync::Arc::new(Harness::new());
+    let mut grant = fixture_grant(PrincipalKind::Interactive);
+    grant.deployment.token = deployment_token(&harness.home);
+    grant = grant.with_checksum();
+    let scripted = spawn_scripted(vec![
+        Step::Challenge {
+            valid: true,
+            token: TOKEN.into(),
+        },
+        Step::Handshake {
+            grant: Box::new(grant.clone()),
+        },
+        Step::Config {
+            revision: grant.config_revision,
+        },
+    ]);
+    let url = scripted.url.clone();
+    let mut handles = Vec::new();
+    for _ in 0..4 {
+        let harness = std::sync::Arc::clone(&harness);
+        let url = url.clone();
+        handles.push(thread::spawn(move || {
+            let mut request = harness.request(Some(url));
+            // The harness default stale window is 200ms, which truncates to 0s
+            // in the lock's second-resolution check and lets every waiter steal it.
+            request.deadline = Some(Duration::from_secs(5));
+            request.stale_lock_after = Some(Duration::from_secs(10));
+            acquire_with(&request).map(|acquired| acquired.source)
+        }));
+    }
+    let mut sources = Vec::new();
+    let mut errors = Vec::new();
+    for handle in handles {
+        match handle.join().expect("acquire thread") {
+            Ok(source) => sources.push(source),
+            Err(error) => errors.push(error),
+        }
+    }
+    assert!(
+        errors.is_empty(),
+        "concurrent acquires failed: {errors:?}; successes: {sources:?}"
+    );
+    assert!(
+        sources.contains(&GrantSource::Handshake),
+        "one caller performs the handshake: {sources:?}"
+    );
+    assert!(
+        sources
+            .iter()
+            .filter(|source| **source == GrantSource::Cache)
+            .count()
+            >= 3,
+        "the other callers reuse that grant: {sources:?}"
+    );
+    let requests = join(scripted);
+    assert_eq!(requests.len(), 3, "one handshake, not one per caller");
+}
+
+#[test]
 fn substituted_listener_gets_no_bearer() {
     let harness = Harness::new();
     let scripted = spawn_scripted(vec![Step::Challenge {

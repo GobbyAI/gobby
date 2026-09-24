@@ -123,7 +123,11 @@ async def test_periodic_start_schedules_schema_and_progress_cleanup_loops() -> N
     async def complete_loop(*_args: Any, **_kwargs: Any) -> None:
         return None
 
-    async def capture_sweep(url: str | None, is_shutdown: Callable[[], bool]) -> None:
+    async def capture_sweep(
+        url: str | None,
+        is_shutdown: Callable[[], bool],
+        **_kwargs: Any,
+    ) -> None:
         calls.append((url, is_shutdown))
 
     async def capture_progress_cleanup(

@@ -587,7 +587,26 @@ _RESTART_PREFIXES = (
     "databases.",
     "telemetry.",
 )
-_RESTART_NESTED_PATHS = frozenset({"websocket.enabled", "ui.enabled", "ui.mode", "ui.web_dir"})
+_RESTART_NESTED_PATHS = frozenset(
+    {
+        "websocket.enabled",
+        "ui.enabled",
+        "ui.mode",
+        "ui.web_dir",
+        # Summarizer and labeler copy these at construction. Batch sizes stay
+        # LIVE because the maintenance loop re-reads them each pass.
+        "code_index.symbol_summary.enabled",
+        "code_index.symbol_summary.profile",
+        "code_index.symbol_summary.candidates",
+        "code_index.symbol_summary.max_concurrency",
+        "code_index.symbol_summary.max_tokens",
+        "code_index.community_label.enabled",
+        "code_index.community_label.profile",
+        "code_index.community_label.candidates",
+        "code_index.community_label.max_concurrency",
+        "code_index.community_label.max_tokens",
+    }
+)
 _MANAGED_EMBEDDING_PATHS = frozenset(
     runtime_embedding_key(field)
     for field in (
