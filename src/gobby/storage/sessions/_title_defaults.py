@@ -53,8 +53,7 @@ def format_provisional_session_title(
     source: str,
 ) -> str:
     """Return the deterministic title for a session without an open claim."""
-    del source
-    return f"{project_name.strip()}#{session_seq_num}"
+    return f"{project_name.strip()}#{session_seq_num}: {provider_title_label(source)}"
 
 
 def format_heuristic_session_title(
