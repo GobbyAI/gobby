@@ -164,6 +164,41 @@ test: `tests/x/test_y.py::test_valid`
     )
 
 
+def test_quoted_frontend_test_name_resolves_it_body() -> None:
+    reference = (
+        "web/src/components/settings/sections/__tests__/sections.coverage.test.ts"
+        '::"renders the empty state"'
+    )
+    assert artifacts_module.parse_test_reference(reference) == (
+        "web/src/components/settings/sections/__tests__/sections.coverage.test.ts",
+        "renders the empty state",
+    )
+    assert (
+        malformed_test_reference_findings(
+            "test: `web/src/components/settings/sections/__tests__/"
+            'sections.coverage.test.ts::"renders the empty state"`'
+        )
+        == ()
+    )
+    source = """
+describe("settings", () => {
+  it("renders the empty state", () => {
+    expect(screen.getByRole("status")).toBeTruthy()
+  })
+  it('renders the filled state', () => {
+    expect(screen.getByRole("status")).toBeFalsy()
+  })
+})
+"""
+    body = artifacts_module._extract_braced_test_body(source, "renders the empty state")
+    assert 'it("renders the empty state"' in body
+    assert "toBeTruthy()" in body
+    assert "renders the filled state" not in body
+    single = artifacts_module._extract_braced_test_body(source, "renders the filled state")
+    assert "it('renders the filled state'" in single
+    assert "toBeFalsy()" in single
+
+
 def test_deliberate_missing_file_reference_keeps_actionable_diagnostic(tmp_path: Path) -> None:
     result = evaluate_acceptance_artifacts(
         criteria="file: `docs/missing.md`.",
