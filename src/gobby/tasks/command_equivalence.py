@@ -265,6 +265,12 @@ def _path_scope(
         return None
     tokens = list(parsed.segments[0])
     start = 2 if tokens[:2] == ["uv", "run"] else 0
+    # `uv run --directory <dir>` runs from <dir>, like the `cd <dir> &&` prefix that
+    # evidence normalization already drops, so both forms scope the same paths.
+    if start and tokens[2:3] == ["--directory"]:
+        del tokens[2:4]
+    elif start and tokens[2:3] and tokens[2].startswith("--directory="):
+        del tokens[2]
     if tokens[start : start + 2] in (["python", "-m"], ["python3", "-m"]):
         start += 2
     runner = _path_scope_runner(tokens, start)
