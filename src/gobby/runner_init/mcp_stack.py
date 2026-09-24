@@ -11,7 +11,8 @@ from gobby.config.logging import RUNTIME_LOG_FILENAME, resolved_log_path
 from gobby.mcp_proxy.manager import MCPClientManager
 from gobby.mcp_proxy.metrics import ToolMetricsManager
 from gobby.mcp_proxy.metrics_events import MetricsEventStore
-from gobby.mcp_proxy.oauth import authorize_server_in_browser
+from gobby.mcp_proxy.oauth import automatic_oauth_authorization
+from gobby.mcp_proxy.oauth_keepalive import schedule_oauth_keepalive
 from gobby.mcp_proxy.templates import MCPServerTemplate, expand_template
 from gobby.storage.mcp import LocalMCPManager
 from gobby.storage.mcp_models import MCPServer
@@ -136,11 +137,12 @@ def init_mcp_stack(runner: GobbyRunner) -> None:
     runner.mcp_proxy = MCPClientManager(
         mcp_db_manager=runner.mcp_db_manager,
         metrics_manager=runner.metrics_manager,
-        oauth_authorizer=authorize_server_in_browser,
+        oauth_authorizer=automatic_oauth_authorization,
         stdio_errlog_path=str(
             resolved_log_path(runner.startup_config.logging, RUNTIME_LOG_FILENAME)
         ),
     )
+    schedule_oauth_keepalive(runner.mcp_proxy)
     schedule_scoped_embedding_backfill(
         getattr(runner, "semantic_search", None),
         runner.mcp_proxy,
