@@ -21,13 +21,20 @@ def tdd_path_identity(path: str, root: Path | None, normalize: Callable[[str], s
     return normalize(path).rstrip("/")
 
 
+class _GitLookupFailed(Exception):
+    """A transient git failure. Callers retry; the identity cache does not store it."""
+
+
 def same_repo_worktree_root(resolved: Path, project: Path) -> Path | None:
     """Return the worktree root when resolved belongs to project's git repo."""
     start = resolved if resolved.is_dir() else resolved.parent
     if not start.exists() or not project.exists():
         return None
-    worktree_top, worktree_common = _git_identity(str(start.resolve()))
-    _project_top, project_common = _git_identity(str(project.resolve()))
+    try:
+        worktree_top, worktree_common = _git_identity(str(start.resolve()))
+        _project_top, project_common = _git_identity(str(project.resolve()))
+    except _GitLookupFailed:
+        return None
     if not worktree_top or not worktree_common or worktree_common != project_common:
         return None
     return Path(worktree_top)
@@ -60,8 +67,8 @@ def _git_out(cwd: Path, *args: str) -> str | None:
             text=True,
             timeout=5,
         )
-    except (OSError, subprocess.TimeoutExpired):
-        return None
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise _GitLookupFailed from exc
     if completed.returncode != 0:
         return None
     return completed.stdout.strip() or None

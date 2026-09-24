@@ -112,3 +112,39 @@ def test_repeated_worktree_gate_checks_run_git_once_per_directory(
     assert tdd_gate_open(variables, str(main)) is True
     assert counts
     assert max(counts.values()) <= 1
+
+
+def test_git_timeout_is_not_cached(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    main, worktree = _repo_with_worktree(tmp_path)
+    _git_identity.cache_clear()
+    real_run = subprocess.run
+    timed_out = False
+
+    def _timeout_once(
+        args: list[str],
+        *,
+        check: bool = False,
+        capture_output: bool = False,
+        text: bool = False,
+        timeout: float | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        nonlocal timed_out
+        if not timed_out:
+            timed_out = True
+            raise subprocess.TimeoutExpired(args, timeout or 5)
+        return real_run(
+            args,
+            check=check,
+            capture_output=capture_output,
+            text=text,
+            timeout=timeout,
+        )
+
+    monkeypatch.setattr("gobby.workflows.tdd_paths.subprocess.run", _timeout_once)
+    variables = {
+        "claimed_task_acceptance_test_paths": [_RELATIVE_TEST],
+        "tdd_tests_written": [str(worktree / _RELATIVE_TEST)],
+    }
+
+    assert tdd_gate_open(variables, str(main)) is False
+    assert tdd_gate_open(variables, str(main)) is True
