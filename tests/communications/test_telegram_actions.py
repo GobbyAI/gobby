@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -11,6 +12,8 @@ from gobby.communications.inbound import InboundCommunications
 from gobby.communications.models import ChannelConfig, CommsMessage, CommsRoutingRule
 from gobby.communications.telegram_actions import TelegramActionController
 from gobby.sessions.mailbox import MailboxSendResult
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.asyncio
 
@@ -459,6 +462,64 @@ async def test_agent_command_lists_live_agents_and_marks_current_target() -> Non
     assert [row[0]["text"] for row in keyboard] == ["✓ Assistant", "Lane Developer"]
     assert all("#" not in row[0]["text"] for row in keyboard)
     assert menu.kwargs["metadata"]["callback_action"] == "agent_target"
+    assert menu.kwargs["session_id"] is None
+
+
+async def test_agent_menu_shortens_and_disambiguates_duplicate_titles() -> None:
+    controller, manager, sessions, _ = _controller()
+    title = "A very long Telegram agent title " * 4
+    sessions.list.return_value = [
+        SimpleNamespace(id=SESSION_ID, seq_num=12, status="active", title=title, source="codex"),
+        SimpleNamespace(
+            id="44444444-4444-4444-8444-444444444444",
+            seq_num=13,
+            status="active",
+            title=title,
+            source="codex",
+        ),
+    ]
+
+    await controller.handle(_channel().name, _message(content="/agent"))
+
+    keyboard = manager.send_message.await_args.kwargs["metadata"]["inline_keyboard"]
+    labels = [row[0]["text"] for row in keyboard]
+    assert labels[0] != labels[1]
+    assert labels[0].endswith("#12")
+    assert labels[1].endswith("#13")
+    assert all(len(label) <= 48 for label in labels)
+
+
+async def test_agent_command_lists_a_real_clear_successor(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    sessions = SessionManager(temp_db)
+    predecessor = sessions.register(
+        external_id="telegram-clear-predecessor",
+        machine_id=None,
+        source="codex",
+        project_id=sample_project["id"],
+        title="Assistant",
+    )
+    successor = sessions.register(
+        external_id="telegram-clear-successor",
+        machine_id=None,
+        source="codex",
+        project_id=sample_project["id"],
+        title="Lane 4",
+        parent_session_id=predecessor.id,
+        agent_depth=0,
+    )
+    controller, manager, _, _ = _controller()
+    controller._session_manager = sessions
+    manager.attached_session.return_value = successor.id
+
+    await controller.handle(_channel().name, _message(content="/agent"))
+
+    labels = [
+        row[0]["text"]
+        for row in manager.send_message.await_args.kwargs["metadata"]["inline_keyboard"]
+    ]
+    assert "✓ Lane 4" in labels
 
 
 async def test_agent_command_is_published_in_telegram_menu() -> None:
@@ -476,6 +537,19 @@ async def test_agent_command_reports_when_no_agents_are_running() -> None:
 
     assert manager.send_message.await_args.args[1] == "No agents are running."
     assert manager.send_message.await_args.kwargs["metadata"]["inline_keyboard"] == []
+
+
+async def test_agent_command_rejects_wildcard_only_sender_allowlist() -> None:
+    controller, manager, _, _ = _controller()
+    channel = _channel()
+    channel.config_json["allow_from"] = ["*"]
+    manager.get_channel_by_name.return_value = channel
+
+    await controller.handle(channel.name, _message(content="/agent"))
+
+    assert "authorized private chat" in manager.send_message.await_args.args[1]
+    assert "inline_keyboard" not in manager.send_message.await_args.kwargs["metadata"]
+    assert manager.send_message.await_args.kwargs["session_id"] is None
 
 
 async def test_agent_button_switches_the_chat_target() -> None:
@@ -513,6 +587,24 @@ async def test_agent_button_switches_the_chat_target() -> None:
     )
     manager.switch_conversation.assert_called_once_with(_channel().name, "dm:chat-1", target_id)
     assert "Lane Developer" in manager.send_message.await_args.args[1]
+
+
+async def test_agent_button_rejects_wildcard_only_sender_allowlist() -> None:
+    controller, manager, _, _ = _controller()
+    channel = _channel()
+    channel.config_json["allow_from"] = ["*"]
+    manager.get_channel_by_name.return_value = channel
+    callback = _message(
+        content="select",
+        content_type="callback",
+        metadata={"callback_action": "agent_target"},
+    )
+
+    assert await controller.handle(channel.name, callback)
+
+    manager.switch_conversation.assert_not_called()
+    assert "authorized private chat" in manager.send_message.await_args.args[1]
+    assert manager.send_message.await_args.kwargs["session_id"] is None
 
 
 async def test_subscriptions_menu_paginates_six_rules_with_eight_rows_maximum() -> None:

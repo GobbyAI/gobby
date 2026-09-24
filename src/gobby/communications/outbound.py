@@ -33,6 +33,12 @@ class OutboundCommunications:
         """Build effective metadata for outbound messages/attachments."""
         manager = self._manager
         effective = dict(metadata) if metadata else {}
+        if channel.channel_type == "telegram":
+            label = await asyncio.to_thread(manager.telegram_sender_label, channel, session_id)
+            if label is None:
+                effective.pop("telegram_sender_label", None)
+            else:
+                effective["telegram_sender_label"] = label
         if session_id:
             attached = await asyncio.to_thread(manager.attached_destination, channel.id, session_id)
             if attached is not None:
@@ -100,9 +106,7 @@ class OutboundCommunications:
             id=str(uuid.uuid4()),
             channel_id=channel.id,
             direction="outbound",
-            content=await asyncio.to_thread(
-                manager.identify_outbound_content, channel, session_id, content
-            ),
+            content=content,
             session_id=session_id,
             status="pending",
             platform_thread_id=platform_thread_id,
@@ -172,9 +176,7 @@ class OutboundCommunications:
             id=str(uuid.uuid4()),
             channel_id=channel.id,
             direction="outbound",
-            content=await asyncio.to_thread(
-                manager.identify_outbound_content, channel, session_id, content
-            ),
+            content=content,
             content_type="attachment",
             session_id=session_id,
             status="pending",

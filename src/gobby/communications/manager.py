@@ -7,10 +7,11 @@ import uuid
 from collections.abc import Callable
 from dataclasses import asdict, replace
 from threading import RLock
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from gobby.communications.adapters import get_adapter_class
 from gobby.communications.adapters.base import BaseChannelAdapter
+from gobby.communications.adapters.telegram import TelegramAdapter
 from gobby.communications.agent_labels import agent_label
 from gobby.communications.attachments import AttachmentManager
 from gobby.communications.group_policy import evaluate_group_message
@@ -106,6 +107,7 @@ class CommunicationsManager:
         self._session_notifications: SessionNotificationService | None = None
         self._telegram_actions: TelegramActionController | None = None
         self._conversation_attachments: dict[tuple[str, str], str] = {}
+        self._managed_telegram_targets: set[tuple[str, str]] = set()
         self._attachment_lock = RLock()
 
         self._identity_manager = IdentityManager(store, session_store, config)
@@ -138,8 +140,28 @@ class CommunicationsManager:
     async def start(self) -> None:
         """Load enabled channels from DB, initialize adapters, configure rate limiter."""
         await self._lifecycle.start()
+        self._restore_telegram_targets()
         if self._session_notifications is not None:
             await self._session_notifications.start()
+
+    def _restore_telegram_targets(self) -> None:
+        """Recover private-chat target selections from channel configuration."""
+        with self._attachment_lock:
+            for channel in self._channel_by_name.values():
+                if channel.channel_type != "telegram":
+                    continue
+                targets = channel.config_json.get("telegram_agent_targets")
+                if not isinstance(targets, dict):
+                    continue
+                for conversation_id, session_id in targets.items():
+                    if not isinstance(conversation_id, str) or not isinstance(session_id, str):
+                        continue
+                    kind, _, address = conversation_id.partition(":")
+                    if kind not in {"dm", "topic"} or not address:
+                        continue
+                    key = (channel.id, conversation_id)
+                    self._conversation_attachments[key] = session_id
+                    self._managed_telegram_targets.add(key)
 
     async def stop(self) -> None:
         """Shutdown all adapters and clear state."""
@@ -240,33 +262,34 @@ class CommunicationsManager:
             self._store.get_message_by_platform_id,
             channel_name,
             platform_message_id,
+            platform_destination=conversation_id if channel.channel_type == "telegram" else None,
         )
-        display_content = await asyncio.to_thread(
-            self.identify_outbound_content,
-            channel,
-            stored_message.session_id if stored_message is not None else None,
-            content,
-        )
-        await adapter.edit_message(platform_message_id, display_content, conversation_id)
+        if channel.channel_type == "telegram":
+            label = await asyncio.to_thread(
+                self.telegram_sender_label,
+                channel,
+                stored_message.session_id if stored_message is not None else None,
+            )
+            await cast(TelegramAdapter, adapter).edit_message(
+                platform_message_id, content, conversation_id, sender_label=label
+            )
+        else:
+            await adapter.edit_message(platform_message_id, content, conversation_id)
         if stored_message is not None:
             await asyncio.to_thread(
                 self._store.update_message_content,
                 stored_message.id,
-                display_content,
+                content,
             )
 
-    def identify_outbound_content(
-        self, channel: ChannelConfig, session_id: str | None, content: str
-    ) -> str:
-        """Name a live agent on its Telegram message or attachment caption."""
+    def telegram_sender_label(self, channel: ChannelConfig, session_id: str | None) -> str | None:
+        """Return the agent name to add after Telegram rendering."""
         if channel.channel_type != "telegram" or session_id is None:
-            return content
+            return None
         session = self._session_store.get(session_id)
         if session is None or session.source in {"comms", "web-chat", "web_chat", "system"}:
-            return content
-        label = agent_label(session)
-        prefix = f"{label}: "
-        return content if content.startswith(prefix) else f"{prefix}{content}".rstrip()
+            return None
+        return agent_label(session)
 
     async def send_attachment(
         self,
@@ -456,12 +479,41 @@ class CommunicationsManager:
         key = (channel.id, conversation_id)
         with self._attachment_lock:
             previous = self._conversation_attachments.pop(key, None)
+            was_managed = key in self._managed_telegram_targets
             try:
                 self.attach_conversation(channel_name, conversation_id, session_id)
-            except (ValueError, RuntimeError):
+                if conversation_id.startswith(("dm:", "topic:")):
+                    self._store.set_telegram_agent_target(channel.id, conversation_id, session_id)
+                    targets = channel.config_json.setdefault("telegram_agent_targets", {})
+                    targets[conversation_id] = session_id
+                    self._managed_telegram_targets.add(key)
+            except Exception:
+                self._conversation_attachments.pop(key, None)
                 if previous is not None:
                     self._conversation_attachments[key] = previous
+                if not was_managed:
+                    self._managed_telegram_targets.discard(key)
                 raise
+
+    def clear_conversation_target(
+        self, channel_name: str, conversation_id: str, expected_session_id: str
+    ) -> bool:
+        """Clear an ended chat target only if it has not been switched meanwhile."""
+        channel = self.get_channel_by_name(channel_name)
+        if channel is None:
+            return False
+        key = (channel.id, conversation_id)
+        with self._attachment_lock:
+            if self._conversation_attachments.get(key) != expected_session_id:
+                return False
+            if key in self._managed_telegram_targets:
+                self._store.set_telegram_agent_target(channel.id, conversation_id, None)
+                targets = channel.config_json.get("telegram_agent_targets")
+                if isinstance(targets, dict):
+                    targets.pop(conversation_id, None)
+                self._managed_telegram_targets.discard(key)
+            self._conversation_attachments.pop(key, None)
+            return True
 
     def detach_conversation(self, channel_name: str, conversation_id: str, session_id: str) -> None:
         channel = self.get_channel_by_name(channel_name)
@@ -489,66 +541,15 @@ class CommunicationsManager:
     ) -> None:
         """Route a committed status transition through the attached notifier."""
         if transition.status not in LIVE_SESSION_STATUSES:
-            await self._fallback_telegram_targets(transition)
+            from gobby.communications.telegram_fallback import fallback_telegram_targets
+
+            await fallback_telegram_targets(self, transition)
         if self._session_notifications is not None:
             await self._session_notifications.route_transition(transition)
             return
         from gobby.communications.session_events import route_session_status_transition
 
         await route_session_status_transition(self, transition)
-
-    async def _fallback_telegram_targets(self, transition: SessionStatusTransition) -> None:
-        with self._attachment_lock:
-            attached = [
-                (channel_id, conversation_id)
-                for (channel_id, conversation_id), holder in self._conversation_attachments.items()
-                if holder == transition.session_id
-            ]
-        if not attached:
-            return
-        sessions = await asyncio.to_thread(
-            self._session_store.list,
-            project_id=transition.project_id,
-            statuses=list(LIVE_SESSION_STATUSES),
-            exclude_subagents=True,
-            limit=1000,
-        )
-        assistant = next(
-            (
-                session
-                for session in sessions
-                if session.status in LIVE_SESSION_STATUSES
-                and session.source not in {"comms", "web-chat", "web_chat", "system"}
-                and agent_label(session).casefold() == "assistant"
-            ),
-            None,
-        )
-        for channel_id, conversation_id in attached:
-            channel = self.get_channel(channel_id)
-            if channel is None or channel.channel_type != "telegram":
-                continue
-            with self._attachment_lock:
-                if (
-                    self._conversation_attachments.get((channel_id, conversation_id))
-                    != transition.session_id
-                ):
-                    continue
-                if assistant is not None:
-                    self.switch_conversation(channel.name, conversation_id, assistant.id)
-                    continue
-                self._conversation_attachments.pop((channel_id, conversation_id), None)
-            kind, _, address = conversation_id.partition(":")
-            chat_id, _, thread_id = address.partition(":")
-            if kind not in {"dm", "topic"} or not chat_id:
-                continue
-            metadata = {"platform_destination": chat_id}
-            if kind == "topic" and thread_id:
-                metadata["thread_id"] = thread_id
-            await self.send_message(
-                channel.name,
-                "No Assistant is running. Use /agent when one is available.",
-                metadata=metadata,
-            )
 
     async def handle_session_action(
         self,

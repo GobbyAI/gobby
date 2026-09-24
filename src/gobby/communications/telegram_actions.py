@@ -9,7 +9,7 @@ from collections.abc import Awaitable
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
-from gobby.communications.agent_labels import agent_label
+from gobby.communications.agent_labels import agent_label, agent_menu_labels
 from gobby.communications.models import ChannelConfig, CommsMessage, CommsRoutingRule
 from gobby.communications.native_plan_actions import decode_native_plan_option
 from gobby.communications.telegram_access import allowed_senders
@@ -358,20 +358,21 @@ class TelegramActionController:
         *,
         page: int = 0,
     ) -> None:
-        if not await self._subscription_authorized(channel, message):
-            await self._feedback(
+        if not await self._agent_authorized(channel, message):
+            await self._agent_feedback(
                 channel, message, "Agent controls require an authorized private chat."
             )
             return
         conversation_id = _agent_conversation_key(message)
         if conversation_id is None:
-            await self._feedback(channel, message, "This chat has no stable Telegram address.")
+            await self._agent_feedback(
+                channel, message, "This chat has no stable Telegram address."
+            )
             return
 
         sessions = await asyncio.to_thread(
             self._session_manager.list,
             statuses=list(LIVE_SESSION_STATUSES),
-            exclude_subagents=True,
             limit=1000,
         )
         agents = sorted(
@@ -380,9 +381,12 @@ class TelegramActionController:
                 for session in sessions
                 if session.status in LIVE_SESSION_STATUSES
                 and session.source not in {"comms", "web-chat", "web_chat", "system"}
+                and getattr(session, "agent_depth", 0) == 0
+                and getattr(session, "agent_run_id", None) is None
             ),
             key=lambda session: (agent_label(session).casefold(), session.id),
         )
+        labels = agent_menu_labels(agents)
         current = await asyncio.to_thread(
             self._manager.attached_session, channel.id, conversation_id
         )
@@ -392,7 +396,7 @@ class TelegramActionController:
         keyboard = [
             [
                 {
-                    "text": f"{'✓ ' if agent.id == current else ''}{agent_label(agent)}",
+                    "text": f"{'✓ ' if agent.id == current else ''}{labels[agent.id]}",
                     "value": json.dumps(
                         {"op": "set", "channel_id": channel.id, "session_id": agent.id}
                     ),
@@ -413,9 +417,7 @@ class TelegramActionController:
                         }
                     )
             keyboard.append(navigation)
-        current_label = next(
-            (agent_label(agent) for agent in agents if agent.id == current), "None"
-        )
+        current_label = next((labels[agent.id] for agent in agents if agent.id == current), "None")
         menu_text = (
             f"Active agent: {current_label}\nChoose an agent:"
             if agents
@@ -424,7 +426,7 @@ class TelegramActionController:
         await self._manager.send_message(
             channel.name,
             menu_text,
-            session_id=message.session_id,
+            session_id=None,
             metadata={
                 **_reply_destination(message),
                 "callback_action": _AGENT_TARGET_ACTION,
@@ -438,8 +440,8 @@ class TelegramActionController:
         channel: ChannelConfig,
         message: CommsMessage,
     ) -> None:
-        if not await self._subscription_authorized(channel, message):
-            await self._feedback(
+        if not await self._agent_authorized(channel, message):
+            await self._agent_feedback(
                 channel, message, "Agent controls require an authorized private chat."
             )
             return
@@ -451,7 +453,7 @@ class TelegramActionController:
             or source.metadata_json.get("agent_channel_id") != channel.id
             or not _same_telegram_chat(source, message)
         ):
-            await self._feedback(channel, message, "This agent menu is invalid.")
+            await self._agent_feedback(channel, message, "This agent menu is invalid.")
             return
         raw_value = message.metadata_json.get("callback_value")
         try:
@@ -459,7 +461,7 @@ class TelegramActionController:
         except json.JSONDecodeError:
             payload = None
         if not isinstance(payload, dict) or payload.get("channel_id") != channel.id:
-            await self._feedback(channel, message, "This agent choice is invalid.")
+            await self._agent_feedback(channel, message, "This agent choice is invalid.")
             return
         if payload.get("op") == "page" and isinstance(payload.get("page"), int):
             await self._send_agent_menu(channel, message, page=payload["page"])
@@ -470,26 +472,30 @@ class TelegramActionController:
             or not isinstance(target_id, str)
             or not is_session_uuid(target_id)
         ):
-            await self._feedback(channel, message, "This agent choice is invalid.")
+            await self._agent_feedback(channel, message, "This agent choice is invalid.")
             return
         target = await asyncio.to_thread(self._session_manager.get, target_id)
         if (
             target is None
             or target.status not in LIVE_SESSION_STATUSES
             or target.source in {"comms", "web-chat", "web_chat", "system"}
+            or getattr(target, "agent_depth", 0) != 0
+            or getattr(target, "agent_run_id", None) is not None
         ):
-            await self._feedback(channel, message, "This agent is no longer running.")
+            await self._agent_feedback(channel, message, "This agent is no longer running.")
             return
         conversation_id = _agent_conversation_key(message)
         if conversation_id is None:
-            await self._feedback(channel, message, "This chat has no stable Telegram address.")
+            await self._agent_feedback(
+                channel, message, "This chat has no stable Telegram address."
+            )
             return
         try:
             await asyncio.to_thread(
                 self._manager.switch_conversation, channel.name, conversation_id, target_id
             )
         except ValueError:
-            await self._feedback(channel, message, "This agent is attached to another chat.")
+            await self._agent_feedback(channel, message, "This agent is attached to another chat.")
             return
         await self._send_agent_menu(channel, message)
 
@@ -717,6 +723,13 @@ class TelegramActionController:
         allow_from = allowed_senders(channel.config_json)
         return sender is not None and (sender in allow_from or "*" in allow_from)
 
+    async def _agent_authorized(self, channel: ChannelConfig, message: CommsMessage) -> bool:
+        """Require an explicitly allowed sender for target controls."""
+        if not await self._subscription_authorized(channel, message):
+            return False
+        sender = _string_value(message.metadata_json.get("external_user_id"))
+        return sender is not None and sender in allowed_senders(channel.config_json)
+
     async def _feedback(
         self,
         channel: ChannelConfig,
@@ -728,6 +741,13 @@ class TelegramActionController:
             content,
             session_id=message.session_id,
             metadata=_reply_destination(message),
+        )
+
+    async def _agent_feedback(
+        self, channel: ChannelConfig, message: CommsMessage, content: str
+    ) -> None:
+        await self._manager.send_message(
+            channel.name, content, session_id=None, metadata=_reply_destination(message)
         )
 
 

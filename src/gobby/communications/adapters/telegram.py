@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import hmac
+import html
 import json
 import logging
 import uuid
@@ -261,7 +262,11 @@ class TelegramAdapter(BaseChannelAdapter):
 
         chat_id = self.platform_destination(message)
 
-        chunks = markdown_to_telegram_html_chunks(message.content, self.max_message_length)
+        chunks = _labeled_chunks(
+            message.content,
+            self.max_message_length,
+            message.metadata_json.get("telegram_sender_label"),
+        )
         reply_markup = None
         raw_keyboard = message.metadata_json.get("inline_keyboard")
         if raw_keyboard is not None:
@@ -361,9 +366,10 @@ class TelegramAdapter(BaseChannelAdapter):
         platform_message_id: str,
         content: str,
         conversation_id: str,
+        sender_label: str | None = None,
     ) -> None:
         """Replace a Telegram message, maintaining overflow chunks when needed."""
-        chunks = markdown_to_telegram_html_chunks(content, self.max_message_length)
+        chunks = _labeled_chunks(content, self.max_message_length, sender_label)
         message_key = (conversation_id, platform_message_id)
         target_ids = [
             platform_message_id,
@@ -446,7 +452,9 @@ class TelegramAdapter(BaseChannelAdapter):
         data: dict[str, Any] = {"chat_id": chat_id}
         caption_chunks: list[str] = []
         if message.content and not is_voice_note:
-            caption_chunks = markdown_to_telegram_html_chunks(message.content, 1024)
+            caption_chunks = _labeled_chunks(
+                message.content, 1024, message.metadata_json.get("telegram_sender_label")
+            )
             data["caption"] = caption_chunks[0]
             data["parse_mode"] = "HTML"
         if message.platform_thread_id:
@@ -707,6 +715,16 @@ class TelegramAdapter(BaseChannelAdapter):
                 "answerCallbackQuery",
                 {"callback_query_id": callback_id, "text": text},
             )
+
+
+def _labeled_chunks(content: str, limit: int, sender_label: object) -> list[str]:
+    """Render Markdown before adding the escaped sender to every Telegram chunk."""
+    if not isinstance(sender_label, str) or not sender_label:
+        return markdown_to_telegram_html_chunks(content, limit)
+    label = sender_label[:80]
+    prefix = f"<b>{html.escape(label)}:</b>\n"
+    chunks = markdown_to_telegram_html_chunks(content, limit - len(label) - 2)
+    return [f"{prefix}{chunk}" for chunk in chunks]
 
 
 # Register the adapter
