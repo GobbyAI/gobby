@@ -823,112 +823,302 @@ Research context:
   file: `src/gobby/install/shared/workflows/variables/gobby-default-variables.yaml`.
   behavior: "runbook" group in `docs/guides/workflow-rules.md`.
 
-### 3.2 Role definitions: orchestrator, assistant, dispatcher, monitor, post-epic-reviewer, researcher [category: config] (depends: 3.1, 1.3)
+### 3.2 Role definitions: eight runbook personas and three council persona blocks [category: config] (depends: 3.1, 1.3)
 `kind: deliverable`
 
 Targets:
-- `src/gobby/install/shared/workflows/agents/orchestrator.yaml`
+- `src/gobby/install/shared/workflows/agents/program-director.yaml`
 - `src/gobby/install/shared/workflows/agents/assistant.yaml`
-- `src/gobby/install/shared/workflows/agents/dispatcher.yaml`
-- `src/gobby/install/shared/workflows/agents/monitor.yaml`
-- `src/gobby/install/shared/workflows/agents/post-epic-reviewer.yaml`
-- `src/gobby/install/shared/workflows/agents/researcher.yaml::*` — scope-reason: expand the persona prompt and add the runbook selector
+- `src/gobby/install/shared/workflows/agents/lane-manager.yaml`
+- `src/gobby/install/shared/workflows/agents/reviewer.yaml`
+- `src/gobby/install/shared/workflows/agents/archivist.yaml`
+- `src/gobby/install/shared/workflows/agents/log-monitor.yaml`
+- `src/gobby/install/shared/workflows/agents/elicitor.yaml`
+- `src/gobby/install/shared/workflows/agents/researcher.yaml::*` — scope-reason: replace the persona block and add one selector; `prompts.agent` and the step workflow stay
+- `src/gobby/install/shared/workflows/agents/planner.yaml::*` — scope-reason: replace the persona block (lines 18-19 today) and add one selector; `prompts.agent` and the step workflow stay
+- `src/gobby/install/shared/workflows/agents/plan-enhancer-taskless.yaml::*` — scope-reason: replace the persona block (26-27) and add one selector; `prompts.agent` stays
+- `src/gobby/install/shared/workflows/agents/plan-adversary-taskless.yaml::*` — scope-reason: replace the persona block (24-25) and add one selector; `prompts.agent` stays
 - `docs/guides/agents.md`
 - `tests/agents/test_runbook_definitions.py`
 
-Four new persona definitions (`surfaces: [persona]`, `isolation: none`; provider fields
-left `inherit` since the runbook command chooses the CLI) plus one spawn-only reviewer
-and two edits to `researcher`. Persona blocks condense the night runbook's org chart,
-standing rules, and paste-ready prompts:
-- `orchestrator`: final arbiter working by messages (gate verdicts, merges, restarts,
-  lane commands, escalation); roster via `get_workspace` and `send_message(target=
-  "session")`; delegation to lane workers through the dispatcher with the rare hands-on
-  exception; every chore to the assistant; `OPEN/HOLD/STOP/RESUME <lane|all>`; restart
-  protocol (zero live runs, global send before and after); escalation criteria; only
-  the assistant and alarms inbound. Rules: include `["tag:default", "group:runbook"]`,
-  exclude `["name:bootstrap-default-agent-core-skills"]`. No `blocked_tools`.
-- `assistant`: inbound hub for dispatcher and monitor reports and every orchestrator
-  chore (digest, delivery confirmation and re-wake, read-only diagnostics, found-work
-  filing at rung 3, memory searches, planning-lane spawns); docs tasks end to end
-  (claim, commit named files by explicit path, close with the sha, never push); never
-  gate, merge, restart, command lanes, edit code, or claim non-docs tasks; `EVENT=DONE`
-  / `EVENT=REPORT` upward. Rules: include `["tag:default", "group:runbook"]`, exclude
-  `["name:bootstrap-default-agent-core-skills", "name:require-python-skill",
+Seven new persona definitions (`surfaces: [persona]`, `isolation: none`; provider, model
+and effort left `inherit` because the launch line chooses the CLI, decision 13) and
+persona edits to four existing definitions: the roster of decision 13. Every one of the
+eleven `prompts.persona` blocks opens with the same standing text, in this order: Josh's
+five standing instructions (prompt book lines 72-89, verbatim), the shared tail (91-113,
+verbatim), and the conditional sign-off rule the book omits, quoted from #22691's
+description item 5 (the "Reply in the terminal, not here (#22670)" line applies only
+while Josh is at the desk; while he is mobile it stays suppressed until he says he is
+back). That is criterion 8. `tests/agents/test_runbook_definitions.py` carries the three
+texts as module constants `STANDING_INSTRUCTIONS`, `SHARED_TAIL` and
+`CONDITIONAL_SIGN_OFF`, copied from the book and the epic when the definitions are
+written, because a test cannot read `~/Desktop`; the book stays the input of record
+(criterion 10), and a later book change is a definition change disclosed under standing
+instruction 4.
+
+After the standing text every persona carries three fixed lines:
+- `Diverges from the prompt book: <reason>` or `Diverges from the prompt book: none`
+  (criterion 10). The reasons are fixed per role below; nothing else may diverge.
+- Registration (criterion 3): the first message goes to the assistant and names the
+  role, the model, `GOBBY_PANE_REF`, and the terminal backend that
+  `gobby-workspaces:get_workspace` reports for that pane (the `backend` field 1.2 adds
+  to the pane view from the pane's terminal row); a session with no `GOBBY_PANE_ID` is
+  not in a runbook pane and registers as such. The definition itself never names a
+  backend (criterion 1): the daemon's pane view is the only source, so a pane that
+  adopted a pre-existing tmux terminal (`_adoptable`,
+  `src/gobby/terminals/workspace_ops.py:792`) reports that with no special text.
+- Creation (criterion 11): persistent and semi-persistent roles are panes the assistant
+  creates and releases; no definition asks anyone to `spawn_agent` a persistent or
+  semi-persistent role.
+
+Then the role text, condensed from the book section named, keeping every rule and
+format line listed here:
+- `program-director` (book section 2, lines 153-185; Golden Path rulings 22 and 23):
+  keeps Josh on the Golden Path and says which ideas go on or off it; orders the queue
+  (the lane manager rate-limits under its load instructions; Josh re-prioritizes through
+  the assistant, never around it); last-mile delivery and the final gate: every closed
+  task reaches it as a candidate, it merges, validates and says "landed", and nothing
+  reaches Josh's review without passing it; owns the restart sequence including the
+  template registry sync; rules on found work, duplicate consolidation and track order;
+  holds the three approvals (new agent role, rule change, sandbox change) and sends
+  Josh FYIs on his web link; confirms a task is open before ordering work against it;
+  opens lane developer panes with `/goal` and gives the lane manager only bounded runs.
+  Rules: include `["tag:default", "group:runbook"]`, exclude
+  `["name:bootstrap-default-agent-core-skills"]`; no `blocked_tools`, because it
+  merges and validates by hand (3.1's nudge covers non-markdown writes). Divergence:
+  the dispatcher no longer spawns lane workers; the Program Director opens lane panes
+  with `/goal` and lands every candidate itself (ruling 23).
+- `assistant` (book section 1, lines 114-152; the communications coordinator of
+  criterion 9): Josh's assistant and comms hub. What reaches Josh (program changes,
+  product-direction decisions, stoppages, judgment calls, things he asked for) and how
+  (hourly Telegram summary of at most eight lines, one line when nothing changed). The
+  persona explicitly requires criterion 9's four items as a numbered list: (1) routine
+  successful loads are reported only as "Systems nominal."; (2) every task reference
+  carries the task number and the task name; (3) decisions that need operator input go
+  out as a web link; (4) daemon restarts need no pre-approval and get an alert
+  immediately before and immediately after each restart, the after alert stating the
+  outcome; the restart itself stays the Program Director's (book section 2) and the
+  assistant sends both alerts. Never: spawn, research, claim non-docs tasks, edit code,
+  merge, push, restart, run lane commands, mutate the database (psql is read-only),
+  touch another session's untracked files, or publish the decision docket before Josh
+  says so. Owns: creating and releasing the panes of every persistent and
+  semi-persistent role (criterion 11), relaying verdicts, candidates and alarms between
+  the reviewer, lane manager and Program Director, the restart alerts, its own task rows
+  (filing, consolidating, amending description, criteria and labels), corrections sent
+  in the same message as the error, and the live roster from registrations, handed to
+  the Program Director on request. Rules: include `["tag:default", "group:runbook"]`,
+  exclude `["name:bootstrap-default-agent-core-skills", "name:require-python-skill",
   "name:require-rust-skill"]` (both skill rules are tagged `default`, so only a name
-  exclude removes them); `blocked_mcp_tools: ["gobby-agents:kill_agent"]`.
-- `dispatcher`: per open lane `get_task` → `spawn_agent` → `wait_for_agent` on every
-  outstanding run → end turn → report `LANE= EVENT=<CANDIDATE|FAILED|HOLDING|STOPPED|IDLE>
-  TASK= RUN= WT= COMMIT= NOTE=` to the assistant; one worker per lane, three
-  outstanding runs; lanes start CLOSED; the failure playbook; never claim, edit, merge,
-  restart, install, spawn in a closed lane, or run tests. Rules: include `["tag:default",
-  "group:runbook", "tag:worker-safety"]` (`tag:worker-safety` is not implied by
-  `tag:default`; `researcher.yaml` includes both), exclude
-  `["name:bootstrap-default-agent-core-skills"]`.
-- `monitor`: read-only watcher on a timer (load, running-agent count, new errors.log
-  lines, vector-sync failure delta, cache sizes, free pages); `EVENT=ALARM` with
-  wake=true to assistant and orchestrator on thresholds; `EVENT=REPORT` every third
-  tick; scheduled timers; never mutates. Rules: include `["group:runbook",
+  exclude removes them); `blocked_mcp_tools: ["gobby-agents:kill_agent"]`. Divergence:
+  the assistant creates every persistent and semi-persistent pane, so it no longer
+  hands TTLs to a dispatcher (criterion 11, ruling 23).
+- `lane-manager` (book section 3, lines 186-214; rulings 22 and 23): the build-stage
+  router and load balancer. The Program Director orders the queue; the lane manager
+  decides when under the Director's load ceilings, never reorders against it, never
+  launches past a ceiling because a lane is idle, and after restart 8 stands down: it
+  holds the seat, spawns only the bounded worker runs the Director orders, and
+  otherwise reports. Event lines to the assistant, unprompted: `LANE= EVENT=STARTED|
+  CANDIDATE|BOUNCE|CLOSED TASK=#NNNNN TASK_TITLE= RUN= WT= COMMIT= NOTE=`, always with
+  the task title; verdict-class blockers to the Program Director; found work it cannot
+  place to the assistant with the failing command, diagnostics, paths and impact. Never:
+  claim, edit, merge, restart, install, spawn in a closed lane, run tests. Criterion 11
+  sentence, verbatim in the persona: "Never call `spawn_agent` for a persistent or
+  semi-persistent role, and never pass `terminal_backend`; the assistant creates those
+  panes." Rules: include `["tag:default", "group:runbook", "tag:worker-safety"]`
+  (`tag:worker-safety` is not implied by `tag:default`; `researcher.yaml` includes
+  both), exclude `["name:bootstrap-default-agent-core-skills"]`. Divergence: named
+  `lane-manager` because "dispatcher" is the build-stage dispatcher (ruling 22); no
+  persistent or semi-persistent spawns and no TTLs; stands down after restart 8
+  (ruling 23).
+- `researcher` (book section 4, lines 215-248; decision 13): replace the one-line
+  persona (22-23) with the read-only research role: answers questions from the
+  assistant and, as the fourth council pane, lookups from the plan writer; every claim
+  marked VERIFIED with file and line, INFERRED with its basis, or unproven; refutes a
+  false premise in the first line; reads the signed sources before concluding and names
+  a conflict rather than overriding it; `EVENT=REPORT NOTE=<one-line recommendation>`
+  first, then the evidence; semi-persistent: waits for follow-ups and ends only when the
+  assistant asks. Add `"group:runbook"` to `rule_selectors.include` (69-73) so
+  `runbook-no-code-edits` is selected; `prompts.agent`, provider fields and the step
+  workflow are unchanged. Divergence: the council lookup duty (decision 13).
+- `reviewer` (book section 5, lines 249-277; ruling 23): returns a verdict on every
+  candidate commit before the Program Director lands it; a closed task row is not a
+  verdict and it says so; checks that the commit does what the criteria demand, that
+  scope is confined to the task's files with no epic spillover, that criteria,
+  description and labels were not loosened to make the close pass, and that validation
+  ran and is visible; verdict line to the assistant `EVENT=CANDIDATE_VERDICT
+  TASK=#NNNNN TASK_TITLE= VERDICT=LAND|BOUNCE COMMIT=` followed by SCOPE, BEHAVIOR,
+  VALIDATION and any LIVE_NOTE (landing alone does not change runtime behavior, for
+  example a rule template that needs the registry sync); found work is surfaced to the
+  assistant with the reproduction, never fixed; a provider refusal ends in a handoff that
+  says what was refused. Never edits, merges, closes or spawns. Rules: include
+  `["tag:default", "group:runbook"]`, exclude `["name:bootstrap-default-agent-core-skills",
+  "name:require-python-skill", "name:require-rust-skill"]`; `blocked_mcp_tools:
+  ["gobby-agents:kill_agent", "gobby-tasks:close_task", "gobby-tasks:update_task"]`.
+  Divergence: none.
+- `archivist` (book section 6, lines 278-410, the Program Director's definition of
+  record): read-only against the repository, writes only under `~/Desktop/gobby-*.md`;
+  owns the live digest (status line with CDT time, lanes and running runs; landed with
+  task, worktree, merge sha, rollback sha; in flight; bounced; alarms; restarts;
+  decisions to ratify; escalations; morning TODO), technical writing on request, and
+  historical questions answered from the digest, inter-session message history, task
+  records, session transcripts and git log, saying when a fact is inferred; inputs
+  `EVENT=RECORD` lines from the assistant (batches allowed), `DIGEST` from the Program
+  Director for a full refresh, questions from any session answered with `wake=false`
+  unless asked with `wake=true`; refreshes the status line hourly from
+  `list_running_agents` and the message history; style: facts with CDT times, ids and
+  shas, brevity, no speculation. Never: edits code or task rows, files tasks, runs
+  psql, messages workers, the lane manager or the reviewer, restarts anything; talks to
+  the Program Director and the assistant and answers whoever asks; persistent, never
+  calls `end_agent_run`. Divergence: none.
+- `log-monitor` (book section 7, lines 411-518, the prompt of record): read-only log
+  monitor for the daemon, persistent between ticks, parent the Program Director, filing
+  through the assistant. First turn: `date`, `uptime`, a 30-minute baseline of
+  `~/.gobby/logs/errors.log` and `daemon.log` with byte offsets, the state file
+  `$TMPDIR/log-monitor-state.json` rewritten every tick and reloaded after compaction,
+  `EVENT=ACK` to the parent. Each `TICK`: `uptime`, `list_running_agents`, the new bytes
+  only, WARNING and ERROR lines plus tracebacks grouped into signature families with
+  per-window counts, families mapped to tasks by the table (unknown families searched
+  with `search_tasks` first), one report, end of turn. Nominal line
+  `Systems nominal | window HH:MM-HH:MM | <N> warnings in <K> families, all mapped |
+  load <1m>/<5m>/<15m> | runs <R>` with `wake=false`; `EVENT=ALARM` with `wake=true` on
+  the book's thresholds (unmapped family at 3 lines; mapped family at 3x the previous
+  window and at least 20 lines; any traceback, `pool acquisition failed`,
+  `DatabaseExecutor is shut down`, `HostEpochChangedError` or `spawn_rollback`; 1-minute
+  load above 24; running runs at or above 8); tracebacks alarm on first sight or a
+  doubling; hook-saturation lines are nominal below 3x the previous window;
+  `EVENT=LOG_FINDING` to the assistant for an unmapped family at 3 lines, the assistant
+  files it. The family table is seeded from the book and replaced by the parent's
+  `TABLE` messages; `STOP` ends with a structured handoff; anything else is ignored.
+  Never: edits repository files, creates or edits tasks, runs psql, restarts or installs,
+  spawns, types into interactive shells, sleeps or polls. Divergence: none.
+  The two monitors-tab seats share one selector list: include `["group:runbook",
   "tag:context-handoff", "tag:memory-lifecycle", "tag:worker-safety"]` (no
-  `tag:default`), exclude `[]`; `blocked_tools` copies
-  `comms-agent.yaml`'s write list minus `Bash`.
-- `post-epic-reviewer`: copy of `epic-reviewer.yaml` with `surfaces: [spawn]`, same
-  provider/model/effort and `blocked_mcp_tools`; `prompts.agent` reviews a sub-epic's
-  aggregate landed diff once (`get_task` the sub-epic passed as `task_id`, enumerate
-  closed children, `git log`/`git diff` over their landing commits, apply the
-  epic-reviewer checks), replies to the parent session with `EVENT=VERDICT TASK=#N
-  LAND|BOUNCE` plus numbered file:line findings, then `end_agent_run`. The step program
-  keeps `epic-reviewer`'s five steps (claim, load_skill, closed_review, review,
-  terminate) and its exit condition `current_step == terminate`, with one change: the
-  review step never offers `gobby-tasks-ops:complete_stage`, `fail_stage`, or
-  `escalate_task` (a literal copy would complete the `epic_qa` stage); the effect that
-  sets `review_complete` and transitions to terminate is the verdict `send_message` to
-  the parent session, using the same `on_mcp_success` shape the source uses for
-  `complete_stage`. terminate stays the `end_agent_run` step. Never edits, merges,
-  closes, or spawns.
-- `researcher`: expand the one-line `prompts.persona` to the read-only research role
-  reporting to the assistant, and add `group:runbook` to `rule_selectors.include` so
-  `runbook-no-code-edits` is selected. `prompts.agent` and the step workflow unchanged.
-The agents guide gains a "Runbook roles" section listing the seats and their reporting
-lines. Tests load each YAML through `AgentDefinitionBody` and assert surfaces, the exact
-include and exclude selector lists above, and that `resolve_rules_for_agent` includes
-the runbook rules.
+  `tag:default`), exclude `[]`; `blocked_tools` copies `comms-agent.yaml`'s write list
+  minus `Bash`; `blocked_mcp_tools: ["gobby-agents:kill_agent", "gobby-tasks:create_task",
+  "gobby-tasks:update_task", "gobby-tasks:close_task", "gobby-tasks:claim_task"]`.
+- `elicitor` (book section 8, lines 536-576): runs before drafting; its deliverable is
+  the decision-complete problem statement at `.gobby/plans/<plan>.problem.md`, left
+  uncommitted for the plan writer to commit with the plan once the Program Director
+  approves it, with the five parts (intent, constraints, success criteria, explicit
+  non-goals, the signed-source inventory naming `ROADMAP.md`, the Golden Path,
+  `.impeccable.md` and every signed canvas, approved plan and Josh ruling that bears on
+  the work); closes open questions itself from the signed sources, the Golden Path and
+  the code, then sends the Program Director one batched question list per round, with
+  Josh's questions routed through the assistant in the same batch; never proposes a
+  solution. Semi-persistent: released by the assistant when the Program Director
+  approves the statement or 90 minutes pass. Rules: include `["tag:default",
+  "group:runbook"]`, exclude `["name:bootstrap-default-agent-core-skills",
+  "name:require-python-skill", "name:require-rust-skill"]`. Divergence: the pane is
+  created and released by the assistant; there is no dispatcher TTL (criterion 11,
+  ruling 23).
+- Council persona blocks (book "The plan council" 519-535 and sections 9-11, lines
+  577-681). Each replaces the existing one-line `prompts.persona` and adds
+  `"group:runbook"` to `rule_selectors.include` (planner 127, enhancer 91, adversary
+  166); `surfaces` stays `[spawn, persona]` and `prompts.agent` is untouched, so the
+  spawn-side plan runs behave as before. All three carry the council sentence: wait
+  between rounds rather than looking for work; the assistant releases the pane.
+  `planner` becomes the plan writer: owns the plan file and its hash and is the only
+  member that edits it; claims a real planning task first; reads
+  `docs/contracts/plan-coverage.md` and `references/plan/drafting.md` before drafting;
+  drafts against the approved problem statement, or against the Decision Record when
+  the Program Director waives the elicitor, and says when a statement does not cover
+  something; `uv run gobby plans validate` passes before review opens; commits by
+  explicit path only, the plan and the problem statement together; answers every
+  finding with Fold (say what changed) or Contest (reasoning; "out of scope" only by
+  pointing at a non-goal); a signed design artifact outranks the adversary; records
+  every position and move in the council log. Divergence: no round cap; the council
+  debates to consensus and the adversary finalizes to the Program Director, who may send
+  it back (decision 13, #22808). `plan-enhancer-taskless` becomes the enhancer: reviews
+  only the hash it was given and stops if the file differs; numbered `cr-N` items,
+  each stating change, benefit and cost, ranked; looks for a cheaper mechanism, a
+  missing edge state, a sequencing change or an existing pattern being reinvented, never
+  style, non-goal scope or a contradiction of a signed source. Divergence: none beyond
+  the council sentence. `plan-adversary-taskless` becomes the adversary: attacks only
+  the hash it was given; every finding carries `check_keys`; a blocking defect is a step
+  that cannot work, a missing dependency, a vacuous criterion, a contract violation, an
+  unhandled expensive failure mode or work a lane cannot do, never a preference or an
+  excluded scope; a signed design artifact outranks it (the chrome Edit-menu case is
+  quoted); it withdraws or holds each contested finding; and it finalizes to the Program
+  Director with the plan-verifier checks decision 13 moved to it: `uv run gobby plans
+  validate`, `git diff --check`, the plan sha256 and the coverage-contract checks.
+  Divergence: no round cap and the finalization report (decision 13).
+The agents guide gains a "Runbook roles" section listing the eight seats, the council
+blocks, the reporting lines (lane manager, log monitor, reviewer and archivist to the
+assistant; the assistant, alarms and verdict-class items to the Program Director; the
+council to the Program Director through the adversary) and the standing text. Tests load
+each YAML through `AgentDefinitionBody` and assert surfaces, the exact selector lists and
+tool blocks above, the standing text, the fixed lines, and that
+`resolve_rules_for_agent` includes the runbook rules.
 
 Research context:
 - Schema `AgentDefinitionBody` (`src/gobby/workflows/agent_models.py` 78-219):
   `require_surface_prompt_blocks` demands one prompt block per declared surface;
-  `reject_legacy_step_keys` rejects `role`/`goal`/`personality`/`instructions`.
-  Selectors (`src/gobby/workflows/selectors.py`): `tag:`, `group:` (the directory name
-  set by sync), `name:`; exclude beats include. `default.yaml` includes `tag:default`.
-- Precedents: `comms-agent.yaml` 39-56 (blocked_tools list), `epic-reviewer.yaml`
-  (header 1-16, prompts 18-98, rule_selectors 99-104, step_workflow 105-292),
-  `researcher.yaml` (surfaces line 9, persona 22-23, rule_selectors 69-73).
+  `reject_legacy_step_keys` rejects `role`/`goal`/`personality`/`instructions`; no
+  field names a terminal backend, so criterion 1 is a prose check (no key `backend` or
+  `terminal_backend` anywhere in a loaded tree, no word `tmux` or `gterm` in any string
+  under `prompts`; `native` is not checked because the shared tail says "native
+  subagents"). Selectors (`src/gobby/workflows/selectors.py`): `tag:`, `group:` (the
+  directory name set by sync), `name:`; exclude beats include. `default.yaml` includes
+  `tag:default`.
+- Precedents: `comms-agent.yaml` 39-56 (blocked_tools list); `researcher.yaml`
+  (surfaces line 9, persona 22-23, rule_selectors 69-73); `planner.yaml` (surfaces 9,
+  persona 18-19, rule_selectors 127); `plan-enhancer-taskless.yaml` (11, 26-27, 91);
+  `plan-adversary-taskless.yaml` (10, 24-25, 166).
 - Sync: `sync_bundled_agents` (`src/gobby/agents/sync.py` 129-299) writes
   `source="installed"`, preserves the user's enabled toggle.
-- Rejected: a dispatcher `step_workflow` (inert on the persona surface, see Non-goals);
-  reusing `epic-reviewer` directly (its prompt and step program are build-lifecycle
-  bound and `gobby build` still owns it).
+- Standing-instruction 4: the eight roles are on the chart or planned in #22691 and the
+  roster is decision 13, so the definitions need disclosure, not approval; the rule
+  group is 3.1's and its change is under Program Director approval.
+- Rejected: `post-epic-reviewer` and `plan-verifier` (decision 13); a `spawn` surface on
+  the seven new definitions (criterion 11: panes, not spawns); separate council files
+  (decision 13 keeps the writer, enhancer and adversary on the existing three); a
+  dispatcher `step_workflow` (inert on the persona surface, see Non-goals); reusing
+  `epic-reviewer` (build-lifecycle bound and still owned by `gobby build`).
 - Planned checks: `GOBBY_TEST_PROTECT=1 uv run pytest tests/agents/test_runbook_definitions.py`;
-  after daemon restart, `gobby-workflows:list_agent_definitions` shows the six.
+  after daemon restart, `gobby-workflows:list_agent_definitions` shows the seven new
+  names and the four edited ones.
 
 **Acceptance:**
 
-- 3.2.1 - Each of the four new persona definitions parses, declares `persona`, and
-  carries exactly the include and exclude selector lists written above. file: `src/gobby/install/shared/workflows/agents/orchestrator.yaml`.
-  file: `src/gobby/install/shared/workflows/agents/assistant.yaml`.
-  file: `src/gobby/install/shared/workflows/agents/dispatcher.yaml`.
-  file: `src/gobby/install/shared/workflows/agents/monitor.yaml`.
-  test: `tests/agents/test_runbook_definitions.py::test_runbook_personas_parse_and_select_runbook_rules`.
-- 3.2.2 - `post-epic-reviewer` is spawn-only, carries the reviewer's tool blocks, its
-  review step allows neither `gobby-tasks-ops:complete_stage` nor `fail_stage`, and a
-  successful verdict `send_message` sets `review_complete` and transitions to terminate.
-  file:
-  `src/gobby/install/shared/workflows/agents/post-epic-reviewer.yaml`. test:
-  `tests/agents/test_runbook_definitions.py::test_post_epic_reviewer_is_spawn_only_and_reports`.
-- 3.2.3 - `researcher` selects the runbook group and its persona names the assistant as
-  its reporting line. file: `src/gobby/install/shared/workflows/agents/researcher.yaml`.
-  test: `tests/agents/test_runbook_definitions.py::test_researcher_selects_runbook_rules`.
-- 3.2.4 - The agents guide documents the seats and reporting lines. behavior: "Runbook
-  roles" in `docs/guides/agents.md`.
+- 3.2.1 - Each of the seven new persona definitions parses, declares only `persona`,
+  and carries exactly the selector lists and tool blocks written above. file:
+  `src/gobby/install/shared/workflows/agents/program-director.yaml`. file:
+  `src/gobby/install/shared/workflows/agents/assistant.yaml`. file:
+  `src/gobby/install/shared/workflows/agents/lane-manager.yaml`. file:
+  `src/gobby/install/shared/workflows/agents/reviewer.yaml`. file:
+  `src/gobby/install/shared/workflows/agents/archivist.yaml`. file:
+  `src/gobby/install/shared/workflows/agents/log-monitor.yaml`. file:
+  `src/gobby/install/shared/workflows/agents/elicitor.yaml`. test:
+  `tests/agents/test_runbook_definitions.py::test_runbook_personas_parse_and_select_runbook_rules`.
+- 3.2.2 - Every one of the eleven personas embeds the five standing instructions, the
+  shared tail and the conditional sign-off rule verbatim, in that order, followed by a
+  `Diverges from the prompt book:` line; the four edited definitions keep `surfaces:
+  [spawn, persona]` and select `group:runbook`. file:
+  `src/gobby/install/shared/workflows/agents/planner.yaml`. file:
+  `src/gobby/install/shared/workflows/agents/plan-enhancer-taskless.yaml`. file:
+  `src/gobby/install/shared/workflows/agents/plan-adversary-taskless.yaml`. test:
+  `tests/agents/test_runbook_definitions.py::test_every_runbook_persona_carries_the_standing_text`.
+- 3.2.3 - No definition names a backend: no key `backend` or `terminal_backend` in any
+  loaded tree and no `tmux` or `gterm` in any prompt string; every persona's
+  registration line names `GOBBY_PANE_REF` and the pane view's backend. test:
+  `tests/agents/test_runbook_definitions.py::test_no_runbook_definition_names_a_backend`.
+- 3.2.4 - The assistant persona requires criterion 9's four items by their fixed
+  phrases. file: `src/gobby/install/shared/workflows/agents/assistant.yaml`. test:
+  `tests/agents/test_runbook_definitions.py::test_assistant_requires_the_four_comms_items`.
+- 3.2.5 - The reviewer is a persona definition that blocks `close_task` and
+  `update_task`, carries the verdict line format, and says a closed row is not a
+  verdict. file: `src/gobby/install/shared/workflows/agents/reviewer.yaml`. test:
+  `tests/agents/test_runbook_definitions.py::test_reviewer_is_verdict_only`.
+- 3.2.6 - The lane-manager persona carries the criterion 11 sentence and the file
+  contains no `terminal_backend`. file:
+  `src/gobby/install/shared/workflows/agents/lane-manager.yaml`. test:
+  `tests/agents/test_runbook_definitions.py::test_lane_manager_never_spawns_persistent_roles`.
+- 3.2.7 - `researcher` selects the runbook group and its persona names the assistant
+  and the plan writer as its reporting lines. file:
+  `src/gobby/install/shared/workflows/agents/researcher.yaml`. test:
+  `tests/agents/test_runbook_definitions.py::test_researcher_selects_runbook_rules`.
+- 3.2.8 - The agents guide documents the seats, the council blocks and the reporting
+  lines. behavior: "Runbook roles" in `docs/guides/agents.md`.
 
 ## V1 Verification
 `kind: verification`
@@ -1017,5 +1207,5 @@ deferral:
   reason: "Josh intends runbooks to supersede stage-manifest dispatch; the retirement needs its own planning pass (what replaces epic_qa and the build coordinator, and the memory that build runs autonomously) after orchestration-v1 has run a real night."
   owner: "josh"
   original_acceptance_items:
-    - 3.2.2
+    - 3.2.5
 ```
