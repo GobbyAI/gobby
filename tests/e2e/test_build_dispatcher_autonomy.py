@@ -26,7 +26,7 @@ from gobby.mcp_proxy.tools.tasks._stage_ops import create_stage_ops_registry
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
-from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
+from gobby.storage.tasks._dispatch_mutex import DispatchMutex, TaskDispatchMutexManager
 from gobby.storage.tasks._stage_registry_loader import StageRegistryLoader
 from gobby.storage.tasks._stage_types import StageManifestSpec
 from gobby.storage.terminals import TerminalManager
@@ -92,6 +92,20 @@ class _MiniPipelineExecutor:
 
     async def execute(self, **_kwargs: object) -> object:
         return SimpleNamespace(status="completed")
+
+
+def _mutex_bound_to(
+    mutexes: TaskDispatchMutexManager,
+    task_id: str,
+    run_id: str,
+) -> DispatchMutex | None:
+    """Return the task's dispatch mutex once the dispatcher has attached ``run_id``.
+
+    A spawn creates its run row before the dispatcher attaches that run to the
+    mutex, so a wait on the run row alone can observe the mutex unattached.
+    """
+    mutex = mutexes.get_mutex(task_id)
+    return mutex if mutex is not None and mutex.run_id == run_id else None
 
 
 class MiniBuildHarness:
@@ -760,18 +774,17 @@ async def test_submit_for_review_autonomously_dispatches_reviewer_without_build_
         )
 
     assert result["ok"] is True
-    reviewer = await wait_for_async_condition(
-        lambda: run_manager.get(reviewer_run_id),
+    mutexes = TaskDispatchMutexManager(temp_db)
+    await wait_for_async_condition(
+        lambda: _mutex_bound_to(mutexes, task.id, reviewer_run_id),
         timeout=2.0,
         description="autonomous reviewer dispatch",
     )
+    reviewer = run_manager.get(reviewer_run_id)
     assert reviewer is not None
-    mutex = TaskDispatchMutexManager(temp_db).get_mutex(task.id)
     assert stage_row(temp_db, task.id, "planning")["state"] == "needs_review"
     assert reviewer.agent_name == "plan-adversary"
     assert reviewer.task_id == task.id
-    assert mutex is not None
-    assert mutex.run_id == reviewer_run_id
 
 
 @pytest.mark.asyncio
@@ -894,13 +907,13 @@ async def test_cancelled_reviewer_wakes_dispatcher_for_replacement_without_build
         terminal_reason="user_cancelled",
     )
 
-    replacement = await wait_for_async_condition(
-        lambda: run_manager.get(replacement_run_id),
+    await wait_for_async_condition(
+        lambda: _mutex_bound_to(mutex_manager, task.id, replacement_run_id),
         timeout=2.0,
         description="replacement reviewer dispatch",
     )
+    replacement = run_manager.get(replacement_run_id)
     task_after_cancel = task_manager.get_task(task.id)
-    mutex = mutex_manager.get_mutex(task.id)
 
     assert transitioned is True
     assert task_after_cancel is not None
@@ -909,8 +922,6 @@ async def test_cancelled_reviewer_wakes_dispatcher_for_replacement_without_build
     assert replacement is not None
     assert replacement.agent_name == "plan-adversary"
     assert replacement.task_id == task.id
-    assert mutex is not None
-    assert mutex.run_id == replacement_run_id
 
 
 @pytest.mark.asyncio
