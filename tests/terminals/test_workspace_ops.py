@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import itertools
+import threading
 import uuid
 from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass, field
 from functools import partial
+from types import SimpleNamespace
 from typing import Any, Literal
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from psycopg import OperationalError
@@ -1136,3 +1138,32 @@ async def test_workspace_send_text_submit_retry_rejects_a_different_payload(
         ),
     )
     assert h.native.write_log == [("text", f"{text}\n"), ("key", "enter")]
+
+
+@pytest.mark.asyncio
+async def test_workspace_list_reads_storage_off_the_event_loop() -> None:
+    """A workspace list must not read node storage on the event-loop thread."""
+    loop_thread = threading.get_ident()
+    seen: list[int] = []
+    machine = SimpleNamespace(id="machine-1", ref=None, hostname="local")
+
+    def resolve_node(_node: object) -> SimpleNamespace:
+        seen.append(threading.get_ident())
+        return machine
+
+    workspaces = MagicMock()
+    workspaces.resolve_node.side_effect = resolve_node
+    workspaces.list_for_node.return_value = ()
+    ops = WorkspaceOps(
+        workspaces=workspaces,
+        terminals=MagicMock(),
+        registry=MagicMock(),
+        coordinator=MagicMock(),
+        sessions=MagicMock(),
+        publish=MagicMock(),
+    )
+    with patch("gobby.terminals.workspace_ops.require_machine_id", return_value="machine-1"):
+        listed = await ops.workspace_list("operator")
+    assert listed == ()
+    assert seen
+    assert seen[0] != loop_thread
