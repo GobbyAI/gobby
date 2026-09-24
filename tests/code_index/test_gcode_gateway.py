@@ -86,11 +86,11 @@ def _patch_subprocess(
 ) -> list[tuple[Any, ...]]:
     calls: list[tuple[Any, ...]] = []
 
-    async def fake_create_subprocess_exec(*args: Any, **_kwargs: Any) -> FakeProcess:
+    async def fake_create_session_exec(*args: Any, **_kwargs: Any) -> FakeProcess:
         calls.append(args)
         return processes.pop(0)
 
-    monkeypatch.setattr("asyncio.create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr("gobby.utils.spawn.create_session_exec", fake_create_session_exec)
     return calls
 
 

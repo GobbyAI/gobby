@@ -200,7 +200,6 @@ def _sync_git_inventory() -> list[SyncGitUse]:
 
 
 _SYNC_GIT_FACADES = {
-    "_init_no_marker",
     "clone_skill_repo",
     "committable_task_paths",
     "get_dirty_files",
@@ -210,7 +209,6 @@ _SYNC_GIT_FACADES = {
     "get_git_status",
     "get_recent_git_commits",
     "has_committable_edits",
-    "initialize_project",
     "load_from_github",
     "resolve_evidence",
     "resolve_git_worktree_root",
@@ -294,7 +292,6 @@ _ALLOWED_SYNC_GIT_BOUNDARIES = {
     ("src/gobby/cli/tasks/commits.py", "unlink_commit"),
     ("src/gobby/plans/evidence.py", "_run_git"),
     ("src/gobby/sync/integrity.py", "verify_bundled_integrity"),
-    ("src/gobby/utils/project_init.py", "_init_no_marker"),
     # Explicit synchronous facades. Daemon callers use the adjacent async APIs.
     ("src/gobby/skills/_loader_github.py", "clone_skill_repo"),
     ("src/gobby/workflows/git_utils.py", "get_dirty_files_categorized"),
@@ -305,6 +302,20 @@ _ALLOWED_SYNC_GIT_BOUNDARIES = {
     ("src/gobby/workflows/git_utils.py", "resolve_git_worktree_root"),
     ("src/gobby/workflows/task_dirty_state.py", "committable_task_paths"),
     ("src/gobby/workflows/task_dirty_state.py", "task_dirty_paths"),
+    # Daemon boundaries that run only on worker threads, each with a test proving
+    # no event loop runs there.
+    # AskService.start runs AskRunStorage.start through asyncio.to_thread
+    # (tests/ask/test_storage.py).
+    ("src/gobby/ask/storage.py", "_run_git"),
+    # Only navigation_requires_index asks, from rule conditions on the rule-engine
+    # executor (tests/workflows/engine/test_condition_git_off_loop.py).
+    ("src/gobby/hooks/code_navigation_recovery.py", "_git_ignored"),
+    # tdd_gate_open asks from rule conditions on the rule-engine executor
+    # (tests/workflows/engine/test_condition_git_off_loop.py).
+    ("src/gobby/workflows/tdd_paths.py", "_git_out"),
+    # Reached only from the `gobby status` Click command
+    # (test_bin_freshness_git_is_reached_only_from_cli_status below).
+    ("src/gobby/install/bin_freshness_promotion.py", "last_source_commit_time"),
 }
 
 _ALLOWED_SYNC_FACADE_CALLERS = {
@@ -314,7 +325,6 @@ _ALLOWED_SYNC_FACADE_CALLERS = {
         "SkillUpdater._fetch_from_github",
         "clone_skill_repo",
     ),
-    ("src/gobby/utils/project_init.py", "_initialize_project", "_init_no_marker"),
     (
         "src/gobby/workflows/git_utils.py",
         "get_dirty_files",
@@ -329,6 +339,13 @@ _ALLOWED_SYNC_FACADE_CALLERS = {
         "src/gobby/workflows/task_dirty_state.py",
         "has_committable_edits",
         "task_dirty_paths",
+    ),
+    # Daemon startup runs the refusal through asyncio.to_thread before any bundled
+    # content is published (tests/runner_init/test_config_runtime_startup.py).
+    (
+        "src/gobby/sync/integrity.py",
+        "dirty_bundled_content_refusal",
+        "verify_bundled_integrity",
     ),
 }
 
@@ -366,3 +383,27 @@ def test_daemon_runtime_does_not_call_synchronous_git_facades() -> None:
     assert not stale, "Stale synchronous Git facade callers:\n" + "\n".join(
         f"- {path}:{scope} ({facade})" for path, scope, facade in stale
     )
+
+
+def _modules_referencing(name: str) -> set[str]:
+    modules: set[str] = set()
+    for path in _SOURCE_ROOT.rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        if any(
+            (isinstance(node, ast.Name) and node.id == name)
+            or (isinstance(node, ast.Attribute) and node.attr == name)
+            or (isinstance(node, ast.alias) and node.name == name)
+            for node in ast.walk(tree)
+        ):
+            modules.add(path.relative_to(_REPO_ROOT).as_posix())
+    return modules
+
+
+def test_bin_freshness_git_is_reached_only_from_cli_status() -> None:
+    # last_source_commit_time is approved as a CLI-only boundary: its one chain
+    # ends in the `gobby status` Click command, which runs no event loop.
+    assert _modules_referencing("last_source_commit_time") == {
+        "src/gobby/install/bin_freshness_promotion.py"
+    }
+    assert _modules_referencing("native_bin_predates_source") == {"src/gobby/utils/deps.py"}
+    assert _modules_referencing("collect_all_deps") == {"src/gobby/cli/daemon.py"}

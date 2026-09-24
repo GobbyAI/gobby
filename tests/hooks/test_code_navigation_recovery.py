@@ -433,9 +433,9 @@ def test_linked_checkout_generated_paths_remain_accessible(repo: Path) -> None:
 def test_one_event_asks_git_once_for_all_its_paths(
     repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # #22815: every spawn forks the daemon with the GIL held. The adapter, the
-    # workflow hook and the rule engine each normalize the same event, and each
-    # pass asked Git once per path.
+    # #22815: the adapter, the workflow hook and the rule engine each normalize
+    # the same event, and each pass asked Git once per path. #22829: normalizing
+    # runs on event loops, so only the rule condition asks, once per event.
     spawns: list[list[str]] = []
     run = subprocess.run
 
@@ -447,10 +447,11 @@ def test_one_event_asks_git_once_for_all_its_paths(
     monkeypatch.setattr(subprocess, "run", counting_run)
     data = event(repo, "rg VALUE custom-output src/constants.py src/short.py")
     normalize_tool_fields(data)
-    normalize_tool_fields(data)
 
-    assert len(spawns) == 1
+    assert spawns == []
     assert navigation_requires_index(data, {})
+    assert navigation_requires_index(data, {})
+    assert len(spawns) == 1
     assert not navigation_requires_index(event(repo, "rg VALUE custom-output"), {})
     assert len(spawns) == 2
 
@@ -465,9 +466,10 @@ def test_a_path_git_refuses_does_not_hide_later_answers(repo: Path) -> None:
         ],
         check=True,
     )
+    # One batch carries both segments' paths, and a-sub/file.py sorts first. The
+    # write exemption covers the second segment, so only custom-output's answer
+    # decides.
     data = event(repo, "rg VALUE custom-output && rg VALUE a-sub/file.py")
-    segments = data["canonical_code_navigation_segments"]
-    assert [segment["canonical_code_navigation_excluded"] for segment in segments] == [
-        True,
-        False,
-    ]
+    assert not navigation_requires_index(
+        data, {"turn_written_paths": [str(repo / "a-sub/file.py")]}
+    )

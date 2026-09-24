@@ -23,6 +23,7 @@ from gobby.runtime_output import (
     forward_subprocess_stderr,
     is_daemon_effective_config_transport_error,
 )
+from gobby.utils import spawn
 from gobby.utils.native_bin import resolve_native_bin
 
 MIN_GCODE_GRAPH_VERSION = MANAGED_BIN_VERSION_PINS["gcode"]
@@ -51,7 +52,7 @@ def _bounded_timeout_output(data: bytes, *, suffix: bytes = b"") -> bytes:
 
 
 async def _kill_collect_and_reap(
-    proc: asyncio.subprocess.Process,
+    proc: spawn.SessionProcess,
     communication: asyncio.Task[tuple[bytes, bytes]],
     *,
     collect_output: bool,
@@ -789,15 +790,11 @@ class GcodeGateway:
         check_version: bool = True,
         env: Mapping[str, str] | None = None,
     ) -> tuple[bytes, bytes]:
-        proc: asyncio.subprocess.Process | None = None
+        proc: spawn.SessionProcess | None = None
         communication: asyncio.Task[tuple[bytes, bytes]] | None = None
         try:
-            proc = await asyncio.create_subprocess_exec(
-                *command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=env if env is not None else self._child_env,
-                start_new_session=True,
+            proc = await spawn.create_session_exec(
+                *command, env=env if env is not None else self._child_env
             )
             communication = asyncio.create_task(proc.communicate())
             stdout, stderr = await asyncio.wait_for(
@@ -854,19 +851,15 @@ class GcodeGateway:
         timeout: float | None = None,
         env: Mapping[str, str] | None = None,
     ) -> GcodeCommandResult:
-        proc: asyncio.subprocess.Process | None = None
+        proc: spawn.SessionProcess | None = None
         communication: asyncio.Task[tuple[bytes, bytes]] | None = None
         started = datetime.now(UTC)
         started_at = started.isoformat()
         start = perf_counter()
         timeout_seconds = timeout or self._timeout_seconds
         try:
-            proc = await asyncio.create_subprocess_exec(
-                *command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=env if env is not None else self._child_env,
-                start_new_session=True,
+            proc = await spawn.create_session_exec(
+                *command, env=env if env is not None else self._child_env
             )
             communication = asyncio.create_task(proc.communicate())
             stdout, stderr = await asyncio.wait_for(

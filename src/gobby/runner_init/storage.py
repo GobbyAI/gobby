@@ -59,14 +59,27 @@ def _warn_missing_terminal_dependency(config: DaemonConfig) -> None:
         )
 
 
+def bundled_content_refusal(runner: GobbyRunner) -> str | None:
+    """Return the dev-mode refusal for dirty bundled content, or ``None``.
+
+    It asks Git, so daemon startup runs it off the event loop (#22829), and it
+    must precede every bundled publish in init_startup_content.
+    """
+    from gobby.paths import get_install_dir
+    from gobby.sync.integrity import dirty_bundled_content_refusal
+    from gobby.utils.dev import is_dev_mode
+
+    if not is_dev_mode(Path.cwd()):
+        return None
+    return dirty_bundled_content_refusal(get_install_dir(), database=runner.database)
+
+
 def run_startup_content_sync(runner: GobbyRunner) -> None:
     """Sync bundled content in dev mode, then migrate rule delivery dispositions.
 
     Non-dev startup skips the aggregator and user-template import. The narrow
     disposition migration always runs before hook service starts.
     """
-    from gobby.paths import get_install_dir
-    from gobby.sync.integrity import dirty_bundled_content_refusal
     from gobby.sync_registry import (
         migrate_rule_delivery_dispositions,
         sync_bundled_content_to_db,
@@ -76,8 +89,6 @@ def run_startup_content_sync(runner: GobbyRunner) -> None:
 
     runner._dev_mode = is_dev_mode(Path.cwd())
     if runner._dev_mode:
-        if refusal := dirty_bundled_content_refusal(get_install_dir(), database=runner.database):
-            raise RuntimeError(refusal)
         sync_result = sync_bundled_content_to_db(runner.database)
         total = sync_result["total_synced"]
         if total > 0:
@@ -129,6 +140,14 @@ def init_runtime_capacity(runner: GobbyRunner) -> None:
 
 
 def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbose: bool) -> None:
+    """Run phase 1 synchronously; GobbyRunner.create runs the refusal off the loop."""
+    open_storage_and_config(runner, config_path, verbose)
+    if refusal := bundled_content_refusal(runner):
+        raise RuntimeError(refusal)
+    init_startup_content(runner)
+
+
+def open_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbose: bool) -> None:
     """Initialize config, telemetry, database, secrets, and core managers."""
     if config_path is not None and not config_path.exists():
         raise FileNotFoundError(
@@ -273,6 +292,9 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
         add_span_storage_exporter(runner.span_storage, broadcast_callback=_broadcast_proxy)
         logger.debug("Local span storage exporter wired to OTel")
 
+
+def init_startup_content(runner: GobbyRunner) -> None:
+    """Publish bundled content, then build the prompt, skill, and hub managers."""
     run_startup_content_sync(runner)
 
     from gobby.storage.tasks._stage_registry_loader import StageRegistryLoader
