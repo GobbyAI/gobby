@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import itertools
 import json
 import logging
 import os
@@ -1158,8 +1159,10 @@ async def test_rtk_runs_after_same_session_queue_wait(
     await held.lock.acquire()
     deadline = BlockingEffectDeadline(time.monotonic() - 1.0)
     with monkeypatch.context() as queue_clock:
+        # The lock wait reads 3 s; the phase timers after it read no time passing.
         queue_clock.setattr(
-            "gobby.workflows.hooks.monotonic", MagicMock(side_effect=[100.0, 103.0])
+            "gobby.workflows.hooks.monotonic",
+            MagicMock(side_effect=itertools.chain([100.0, 103.0], itertools.repeat(103.0))),
         )
         queued = asyncio.create_task(handler._evaluate_rules(event, blocking_deadline=deadline))
         await drain_asyncio_tasks(cycles=2)

@@ -203,6 +203,7 @@ def _reset_process_global_state() -> None:
     from opentelemetry.util._once import Once
 
     from gobby.agents import terminal_delivery
+    from gobby.agents.tmux import reset_tmux_globals
     from gobby.telemetry import providers as telemetry_providers
 
     api_tracer_provider = trace._TRACER_PROVIDER
@@ -229,10 +230,14 @@ def _reset_process_global_state() -> None:
     terminal_delivery.reset_terminal_delivery_offload()
     terminal_delivery.reopen_terminal_delivery_admission()
 
+    # configure_tmux (runner init, agent tests) sets a process-global config that
+    # session_end reads to decide whether a terminal session ends paused or expired.
+    reset_tmux_globals()
+
 
 @pytest.fixture(autouse=True)
 def _restore_process_global_state() -> Generator[None]:
-    """Isolate OpenTelemetry and terminal-delivery state around every test.
+    """Isolate OpenTelemetry, terminal-delivery and tmux state around every test.
 
     OpenTelemetry provider registration uses process-global one-shot guards.
     Terminal delivery also owns process-global admission and in-flight task
