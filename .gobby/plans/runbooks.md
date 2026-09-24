@@ -79,7 +79,8 @@ Confirmed with Josh on 2026-09-21 during elicitation.
    using `acknowledge_variable` with the standard clear/compact reset. Role definitions
    cherry-pick rule groups and skills; the default core-skill bootstrap is excluded for
    non-coding seats.
-8. **Seats.** Five persistent seats: `orchestrator`, `assistant`, `dispatcher`,
+8. **Seats.** Superseded by decision 13 on 2026-09-23; the original text follows for
+   the audit trail. Five persistent seats: `orchestrator`, `assistant`, `dispatcher`,
    `monitor` (the janitor, renamed), `researcher` (existing definition). No persistent
    reviewer: per-leaf review stays with `task-close-reviewer` (unchanged), and a new
    spawn-only `post-epic-reviewer` definition, derived from `epic-reviewer`, is spawned
@@ -87,7 +88,8 @@ Confirmed with Josh on 2026-09-21 during elicitation.
    effort live in the runbook's literal commands.
 9. **Default agent untouched.** Runbook panes never activate `default`; its rules apply
    to a role only where that role's selectors include them.
-10. **Bundled `orchestration-v1`.** The live tab-0 layout with the reviewer pane
+10. **Bundled `orchestration-v1`.** Superseded by decision 14 on 2026-09-23; the original
+    text follows for the audit trail. The live tab-0 layout with the reviewer pane
     removed: outer horizontal split (ratio 0.44); left column vertical split
     orchestrator over assistant (0.51); right column vertical split (0.35) with
     dispatcher | researcher on top (0.50) and monitor alone below. Reporting lines as
@@ -108,6 +110,40 @@ Confirmed with Josh on 2026-09-21 during elicitation.
     and replay state machine of the first draft are dropped. Auth is the local token,
     so remote targets wait for #20202 (S4.3). Work order: 1.4, then 2.1, then 1.1 to
     1.3, then P3.
+13. **Roster and council flow** (supersedes 8; Program Director rulings Q1 and Q6 of
+    2026-09-23, message `62c8f875`, applying #22691 criterion 10, Golden Path rulings 15,
+    21, 22 and 23, and the flow Josh wrote into #22808). Eight persona definitions:
+    `program-director`, `assistant`, `lane-manager`, `researcher`, `reviewer`, `archivist`,
+    `log-monitor`, `elicitor`. The plan writer, enhancer and adversary are persona blocks on
+    the existing `planner`, `plan-enhancer-taskless` and `plan-adversary-taskless`. No
+    `post-epic-reviewer` (ruling 23: the Program Director reviews and lands every
+    candidate) and no `plan-verifier`: its mechanical checks (`gobby plans validate`,
+    `git diff --check`, the plan sha256, the coverage-contract checks) move into the
+    adversary's finalization report. Council flow: the writer, enhancer and adversary
+    debate to consensus with no round cap; the adversary finalizes to the Program
+    Director, who may send it back; the assistant takes it to Josh; expansion waits for
+    Josh. The fourth council pane is a read-only lookup helper on the `researcher`
+    definition. Provider, model and effort stay in the launch lines (decision 4).
+14. **Layout** (supersedes 10; ruling Q2 of the same message). Two bundled scripts on
+    2.1's verbs, both mirroring the live workspace of 2026-09-23: `orchestration-v1.sh`
+    builds a `control` tab (program director | assistant, horizontal 0.50) and a
+    `monitors` tab (log monitor over archivist, vertical 0.50); `plan-council-v1.sh <plan>`
+    builds one council tab named after the plan with four panes (writer on top, vertical
+    0.50; below it enhancer | adversary | researcher at equal widths). Lane developer
+    panes stay out of both scripts: the Program Director opens them per lane with
+    `/goal` (ruling 23).
+15. **Pending rulings Q3-Q5** (same message). #22713 folds as no block: a claiming
+    session may amend its own task's `description`, `validation_criteria` and `labels`,
+    the claim-time values must reach the close reviewer durably, and the disclosure order
+    is injected at the edit; the durable carrier is chosen from the gobby#14332 lookup
+    (an existing task history or audit surface first), and `task-close-reviewer.yaml`
+    leaves the Non-goals only if the reviewer does not already receive that surface.
+    Terminal backend (#22691 criteria 1-7, ruling 16): the 3.2 test that no definition
+    names a backend and the registration text fold now; the runbook-script gterm
+    assertion is dropped if workspace panes cannot fall back to tmux at all. #22695 stays
+    2.1's leaf and keeps its gclient-lane slot: expansion adopts it if
+    `start_expansion_run` can adopt an existing leaf, otherwise 2.1 cites it as existing
+    work outside expansion.
 
 ## Non-goals
 `kind: framing`
@@ -132,10 +168,9 @@ Confirmed with Josh on 2026-09-21 during elicitation.
   990, `src/gobby/storage/workspaces.py` 969, `crates/gclient/src/app/live_loop/menu.rs` 970,
   `crates/gclient/src/app/live_loop.rs` 938, `crates/gclient/src/app/mod.rs` 950,
   `crates/gclient/src/daemon/live.rs` 987, `crates/gclient/src/daemon/mod.rs` 989.
-  `crates/gclient/src/app/live_loop/actions.rs` is 1,002 lines on 0.5.0 HEAD (#22696), so
-  `crates/gclient/tests/source_size.rs::no_src_file_at_or_above_1000_lines` is red before
-  this plan starts; the plan does not target that file, and the fix is found work handed
-  to the assistant (gobby#14069, 2026-09-23) outside this plan. Deliverable 1.2 carries
+  `crates/gclient/src/app/live_loop/actions.rs` was 1,002 lines at `fff3192be0` and is 891
+  after the #22780 merge `3467854a4d`, where `crates/gclient/tests/source_size.rs` passes
+  (Program Director, 2026-09-23); the plan does not target that file. Deliverable 1.2 carries
   genuine splits; 2.1 lives in new `command` modules and touches `startup.rs` (691 lines)
   by two symbols and `daemon/workspace.rs` (391 lines) by one enum variant and two
   optional fields. gclient enforces the ceiling in `crates/gclient/tests/source_size.rs`.
@@ -903,7 +938,7 @@ Research context:
    `source_size.rs`; ruff and mypy on `src/`.
 2. Cutover from the main checkout after a `global` announcement: commit 1.1, then
    `uv run gobby cutover` (proves `gdaemon schema plan`, promotes the binary set, applies
-   migration 446, restarts). Rebuild gclient
+   migration 450, restarts). Rebuild gclient
    (`cargo build --release -p gobby-client`) and promote it via
    `uv run gobby install --no-interactive` in the same window.
 3. Live smoke: from a shell inside a gclient pane, run

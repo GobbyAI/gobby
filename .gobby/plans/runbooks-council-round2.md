@@ -19,16 +19,16 @@ Priority rule: a signed source outranks either reviewer: `ROADMAP.md`, `~/Deskto
 
 Every fact below was verified on 0.5.0 HEAD `218ea813` (the parent of the pre-round commit). Mechanical drift is folded by the writer as a logged pre-round commit (W-items); direction-level conflicts went to the Program Director as one batched list (Q-items) and are not folded until ruled.
 
-### W1 Migration number (1.1) — PENDING FOLD (applied in the writer pre-round commit; sha recorded under Resulting artifact)
+### W1 Migration number (1.1) — FOLDED in `d42521cc` (writer pre-round commit)
 Migrations 446 (`grant_agent_project_resolution`), 447, 448 and 449 (`workspace_default_project`) landed after the plan was written. 1.1 becomes `450_add_runbook_roles.sql`; the latest existing migration is `449_workspace_default_project.sql`; `latest_version` becomes 450 (`crates/gdaemon/tests/cli_contract.rs:58` asserts 449 today; `crates/gcore/src/schema/assets.rs:216` embeds 449). Constraint names unchanged.
 
-### W2 Size guard re-measured (Constraints) — PENDING FOLD (applied in the writer pre-round commit; sha recorded under Resulting artifact)
-`src/gobby/terminals/workspace_ops.py` 990 (was 964), `src/gobby/storage/workspaces.py` 969, `crates/gclient/src/app/live_loop/actions.rs` 1002 (was 979; over the ceiling with no `#[cfg(test)]` boundary, so `crates/gclient/tests/source_size.rs::no_src_file_at_or_above_1000_lines` (lines 41-48, `>= 1000`) is red on HEAD; introduced by #22696 "gclient lease-holder aware pane clicks", f6a010c94c; handed to the assistant gobby#14069 as found work, message `33efc9bc`; the plan does not target that file), `menu.rs` 970, `live_loop.rs` 938, `app/mod.rs` 950, `daemon/live.rs` 987, `daemon/mod.rs` 989, `startup.rs` 691, `daemon/workspace.rs` 391, `apply_persona.py` 305, `_session_start/agents.py` 241, `agents_spawn_tools.py` 122.
+### W2 Size guard re-measured (Constraints) — FOLDED in `d42521cc` (writer pre-round commit)
+`src/gobby/terminals/workspace_ops.py` 990 (was 964), `src/gobby/storage/workspaces.py` 969, `crates/gclient/src/app/live_loop/actions.rs` 1002 (was 979; over the ceiling with no `#[cfg(test)]` boundary, so `crates/gclient/tests/source_size.rs::no_src_file_at_or_above_1000_lines` (lines 41-48, `>= 1000`) is red on HEAD; last touched by #22780 `132e42c8f5`, an ancestor of HEAD, blob 36133 bytes identical to the working tree; reported as found work to gobby#14069 (`33efc9bc`) and, after the assistant read a compacted `git show` count of 891 lines, to the PD with the byte evidence (`91ee37dd`); the PD closed it: the #22780 merge `3467854a4d`, right after `fff3192be0`, takes the file to 891 lines and source_size passes on the merged tree, so no action; the plan does not target that file), `menu.rs` 970, `live_loop.rs` 938, `app/mod.rs` 950, `daemon/live.rs` 987, `daemon/mod.rs` 989, `startup.rs` 691, `daemon/workspace.rs` 391, `apply_persona.py` 305, `_session_start/agents.py` 241, `agents_spawn_tools.py` 122.
 
-### W3 1.2 pane I/O split re-derived — PENDING FOLD (applied in the writer pre-round commit; sha recorded under Resulting artifact)
+### W3 1.2 pane I/O split re-derived — FOLDED in `d42521cc` (writer pre-round commit)
 `PaneWrite` already moved to `src/gobby/terminals/workspace_writes.py` (#22722, with `WorkspacePaneWriteError` and `write_workspace_pane`; `WorkspaceOps._write` now delegates to it). The split list drops `PaneWrite` and moves `PaneOutputWait`, `IDEMPOTENCY_KEY_PATTERN`, `WAIT_CAPTURE_LINES`, `WAIT_CAPTURE_FAILURE_LIMIT`, `pane_send_text` (571-590), `pane_send_keys` (592-626), `pane_read` (628-638), `pane_wait_for_output` (640-689), `_pane_terminal` (931-943), `_runtime` (945-951), `_write` (953-990). New since the plan: `WorkspaceOps.workspace_list` (281-287) and `workspace_snapshot(project_id=)` (332-368); `Workspace.default_project_id` (migration 449) on the workspace row only. Refreshed hints: `tab_create` 372-402, `pane_split` 460-490, `pane_rename` 541-548, `_emit` 721-738, `_fill` 823-873; `WorkspaceManager.create_tab` 600-638, `list_panes` 570-580, `add_pane` 722-735, `remove_pane` 737-750, `swap_panes` 752-764, `move_pane` 766-805, `rename_pane` 817-822, `get_pane_for_terminal` 888-893. `TerminalManager.list_reconcilable_by_machine` was added (no effect on the JOIN).
 
-### W4 2.1 drift — PENDING FOLD (applied in the writer pre-round commit; sha recorded under Resulting artifact)
+### W4 2.1 drift — FOLDED in `d42521cc` (writer pre-round commit)
 `crates/gclient/src/views/mod.rs:36-37` wraps `crate::startup::run()` (the validator warning): add it to Consumers unchanged. `attach_request(node, workspace, project_id)` now takes three arguments (`daemon/workspace.rs:336-350`); `WorkspaceOp::WorkspaceList` (`workspace.list`) and `WorkspaceRow.default_project_id` exist; `startup::run` is at 674-691. `WorkspaceModel::apply` lives at `crates/gclient/src/app/workspace_ops.rs:47-83`.
 
 ### W5 rb-2 verified (Golden Path ruling 10 asks the writer to verify it) — HOLDS
@@ -36,6 +36,9 @@ Migrations 446 (`grant_agent_project_resolution`), 447, 448 and 449 (`workspace_
 
 ### W6 Role-definition content (criteria 8-9) — PENDING FOLD (folded with the P3 rewrite after the Q1 ruling, not in the pre-round commit)
 Josh's five standing instructions (memories 33cb3885, b8f8c9df, cdd18230, c3c59cb9) go verbatim into every P3 definition's persona text; the assistant definition carries the four communications-coordinator requirements explicitly. Mechanical; folded with P3 once Q1 is ruled.
+
+### W7 bundle.rs non-postgres golden — found work, no plan edit beyond the 1.1 note
+`crates/gcore/src/grant/bundle.rs` `#[cfg(not(feature = "postgres"))]` fallback: `GOLDEN_LATEST_CHECKSUM` is 449's sha256 (`41cfe81e...`) beside `latest_version: 447` (#22618 `2b7cf60e79` moved the checksum only). Reported to gobby#14069 (`5089ede8`), routed to the PD. 1.1's research context notes it so step (4) is not a surprise.
 
 ### Direction-level conflicts (batched to the PD; not folded until ruled)
 Q1 roster (decision 8 vs. #22691 criterion 10, Golden Path track 3, rulings 15/21/22/23); Q2 layout (decision 10 vs. the live tabs); Q3 #22713 fold (rulings 7, 10); Q4 terminal-backend criteria 1-7 (ruling 16; daemon side is #21565's); Q5 #22695 placement (ruling 10); Q6 which council flow the definitions encode (#22808 FLOW vs. ruling 21). Full text in the PD message recorded below.
@@ -71,5 +74,13 @@ Writer moves on R1:
 - Q4: FOLD pending lookup `472b0cbd`. The 3.2 no-backend-named test and registration text are folded now.
 - Q5: FOLD. Memory 4430ab84 (expansion-run binding) says a run resolves registrations by task UUID/sequence/path ancestry and derives child stage manifests; it does not say whether an existing leaf under the root is adopted or duplicated. Follow-up lookup sent to gobby#14332. Until answered, 2.1 cites #22695 as existing work.
 
+## Writer sweep after R1
+Staged so a validating commit exists before the 21:00 cutover; each stage is one commit.
+- S1 record: decisions 8 and 10 marked superseded in place, decisions 13-15 appended (Q1/Q6, Q2, Q3-Q5); V1 step 2 migration number; Constraints wording (sha only). Status: committed (sha below).
+- S2 3.2 rewrite to the decision-13 roster with the five standing instructions and the shared tail verbatim, a divergence line per definition (criterion 10), the no-backend-named test (criterion 1), and D2 `original_acceptance_items` repointed. Status: pending.
+- S3 wiring: 3.1 `agent_scope` lists and the program-director rename of the delegate nudge (keyed on a non-`.md` write path so the PD's merges pass; rule-text change under PD approval); 2.1 second script, split of 2.1.5; 1.2 target and 1.2.7; V1 steps 3-6. Status: pending.
+- S4 3.3 (#22713 carrier) after lookup L3; Q4 script assertion after 472b0cbd; Q5 wording after L4. Status: waiting on gobby#14332.
+
 ## Resulting artifact
+Pre-round fold commit `d42521cc0981f36430ff1f2505fcd1704b572498`; plan sha256 `aa897d8ce9cdab9740e6aa381723fac45017564283b8900c923a438c464ed150`; bare validate clean; `git diff --check` clean (2026-09-23 20:1x CDT). The enhancer hash is the one published after the sweep, not this one.
 Pending: final commit, final hash, validation output, the adversary's finalization message, the PD's review and hand-off to the assistant.
