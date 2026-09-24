@@ -57,7 +57,7 @@ def _canonical_session_title(transition: SessionStatusTransition) -> str:
         if transition.seq_num is not None
         else transition.session_id
     )
-    if title.startswith(f"({ref}):"):
+    if title == ref or title.startswith((f"{ref}:", f"({ref}):")):
         return title
     if transition.seq_num is not None:
         legacy_prefix = re.compile(rf"^#{transition.seq_num}(?:\s*[-–—:]\s*|\s+)")
