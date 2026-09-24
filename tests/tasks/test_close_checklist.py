@@ -508,6 +508,43 @@ def test_python_test_change_requires_covering_test_types_audit() -> None:
     ) in gate.message
 
 
+def test_unrelated_pytest_does_not_cover_a_changed_python_test() -> None:
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(
+            validation_runs=(
+                _scoped_audit_run(1, "tests/tasks/test_close_checklist.py"),
+                _run(2, command="uv run pytest tests/other_test.py -q"),
+            )
+        ),
+        has_attributed_edits=True,
+        changed_paths=("tests/tasks/test_close_checklist.py",),
+    )
+
+    assert gate.status == "failed"
+    assert gate.details["pytest_uncovered_paths"] == ["tests/tasks/test_close_checklist.py"]
+
+
+def test_pytest_node_id_covers_the_changed_python_test() -> None:
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(
+            validation_runs=(
+                _scoped_audit_run(1, "tests/tasks/test_close_checklist.py"),
+                _run(
+                    2,
+                    command="uv run pytest tests/tasks/test_close_checklist.py::test_name -q",
+                ),
+            )
+        ),
+        has_attributed_edits=True,
+        changed_paths=("tests/tasks/test_close_checklist.py",),
+    )
+
+    assert gate.status == "passed"
+    assert gate.details["pytest_uncovered_paths"] == []
+
+
 @pytest.mark.parametrize(
     ("target", "normalized_target"),
     [

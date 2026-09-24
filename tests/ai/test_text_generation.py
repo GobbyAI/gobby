@@ -3888,19 +3888,15 @@ async def test_run_cli_text_generation_command_cleans_up_process_when_cancelled(
 
     process = ObservableHangingProcess()
 
-    async def fake_create_subprocess_exec(
+    async def fake_create_session_exec(
         *command: str,
-        stdin: int,
-        stdout: int,
-        stderr: int,
-        cwd: str | None,
         env: dict[str, str],
-        start_new_session: bool,
+        cwd: Path,
+        input_bytes: bytes | None = None,
     ) -> FakeProcess:
-        assert start_new_session is True
         return process
 
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr("gobby.utils.spawn.create_session_exec", fake_create_session_exec)
     # pid 4242 is fake: without this patch cleanup would os.killpg a real
     # process group of that id when one happens to exist (#20688).
     monkeypatch.setattr(text_generation_adapters, "_signal_cli_process_group", lambda *_args: False)
@@ -3938,16 +3934,12 @@ async def test_run_cli_text_generation_command_signals_process_group_when_cancel
     process = ObservableHangingProcess()
     signals: list[tuple[int, object]] = []
 
-    async def fake_create_subprocess_exec(
+    async def fake_create_session_exec(
         *command: str,
-        stdin: int,
-        stdout: int,
-        stderr: int,
-        cwd: str | None,
         env: dict[str, str],
-        start_new_session: bool,
+        cwd: Path,
+        input_bytes: bytes | None = None,
     ) -> FakeProcess:
-        assert start_new_session is True
         return process
 
     def fake_signal_process_group(process_arg: FakeProcess, signal_arg: object) -> bool:
@@ -3955,7 +3947,7 @@ async def test_run_cli_text_generation_command_signals_process_group_when_cancel
         process_arg.returncode = -15
         return True
 
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr("gobby.utils.spawn.create_session_exec", fake_create_session_exec)
     monkeypatch.setattr(
         text_generation_adapters,
         "_signal_cli_process_group",
@@ -3994,20 +3986,16 @@ async def test_shutdown_cli_text_generation_calls_cancels_in_flight_codex_exec(
 
     process = ObservableHangingProcess()
 
-    async def fake_create_subprocess_exec(
+    async def fake_create_session_exec(
         *command: str,
-        stdin: int,
-        stdout: int,
-        stderr: int,
-        cwd: str | None,
         env: dict[str, str],
-        start_new_session: bool,
+        cwd: Path,
+        input_bytes: bytes | None = None,
     ) -> FakeProcess:
         assert command[:3] == ("codex", "exec", "--ephemeral")
-        assert start_new_session is True
         return process
 
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr("gobby.utils.spawn.create_session_exec", fake_create_session_exec)
     monkeypatch.setattr(text_generation_adapters, "_signal_cli_process_group", lambda *_: False)
     task = asyncio.create_task(
         text_generation_adapters._run_cli_text_generation_command(
@@ -4043,19 +4031,15 @@ async def test_text_generation_service_cleans_up_timed_out_cli_candidate_and_fal
 
     process = HangingProcess()
 
-    async def fake_create_subprocess_exec(
+    async def fake_create_session_exec(
         *_command: str,
-        stdin: int,
-        stdout: int,
-        stderr: int,
-        cwd: str | None,
         env: dict[str, str],
-        start_new_session: bool,
+        cwd: Path,
+        input_bytes: bytes | None = None,
     ) -> FakeProcess:
-        assert start_new_session is True
         return process
 
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr("gobby.utils.spawn.create_session_exec", fake_create_session_exec)
     monkeypatch.setattr(text_generation_adapters, "_signal_cli_process_group", lambda *_args: False)
     registry = _two_candidate_registry("endpoint:slow-cli", "endpoint:good")
     service = TextGenerationService(
@@ -4094,24 +4078,21 @@ async def test_qwen_cli_text_generate_adapter_disables_recording_and_tool_calls(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     commands: list[tuple[str, ...]] = []
-    cwds: list[str | None] = []
+    cwds: list[Path] = []
     envs: list[dict[str, str]] = []
 
-    async def fake_create_subprocess_exec(
+    async def fake_create_session_exec(
         *command: str,
-        stdin: int,
-        stdout: int,
-        stderr: int,
-        cwd: str | None,
         env: dict[str, str],
-        start_new_session: bool,
+        cwd: Path,
+        input_bytes: bytes | None = None,
     ) -> FakeProcess:
         commands.append(command)
         cwds.append(cwd)
         envs.append(env)
         return FakeProcess(b"qwen text\n")
 
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr("gobby.utils.spawn.create_session_exec", fake_create_session_exec)
     adapter = text_generation_adapters._QwenCLITextGenerateAdapter(
         command_path="/usr/local/bin/qwen"
     )
@@ -4146,8 +4127,8 @@ async def test_qwen_cli_text_generate_adapter_disables_recording_and_tool_calls(
     assert "--continue" not in commands[0]
     assert "--session-id" not in commands[0]
     # One-shot generation runs in a neutral temp dir, never the request's project cwd.
-    assert cwds[0] != "/tmp/project"
-    assert cwds[0] is not None and "gobby-textgen-" in cwds[0]
+    assert cwds[0] != Path("/tmp/project")
+    assert "gobby-textgen-" in str(cwds[0])
     assert envs[0]["GOBBY_HOOKS_DISABLED"] == "1"
 
 
@@ -4158,20 +4139,17 @@ async def test_qwen_cli_text_generate_adapter_uses_configured_openai_endpoint(
     commands: list[tuple[str, ...]] = []
     envs: list[dict[str, str]] = []
 
-    async def fake_create_subprocess_exec(
+    async def fake_create_session_exec(
         *command: str,
-        stdin: int,
-        stdout: int,
-        stderr: int,
-        cwd: str | None,
         env: dict[str, str],
-        start_new_session: bool,
+        cwd: Path,
+        input_bytes: bytes | None = None,
     ) -> FakeProcess:
         commands.append(command)
         envs.append(env)
         return FakeProcess(b"qwen text\n")
 
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr("gobby.utils.spawn.create_session_exec", fake_create_session_exec)
     adapter = text_generation_adapters._QwenCLITextGenerateAdapter(
         command_path="/usr/local/bin/qwen",
         openai_endpoints={
@@ -4218,25 +4196,21 @@ async def test_agy_cli_text_generate_adapter_uses_hardened_print_contract(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     commands: list[tuple[str, ...]] = []
-    cwds: list[str | None] = []
+    cwds: list[Path] = []
     envs: list[dict[str, str]] = []
 
-    async def fake_create_subprocess_exec(
+    async def fake_create_session_exec(
         *command: str,
-        stdin: int,
-        stdout: int,
-        stderr: int,
-        cwd: str | None,
         env: dict[str, str],
-        start_new_session: bool,
+        cwd: Path,
+        input_bytes: bytes | None = None,
     ) -> FakeProcess:
-        assert start_new_session is True
         commands.append(command)
         cwds.append(cwd)
         envs.append(env)
         return FakeProcess(b"agy text\n")
 
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr("gobby.utils.spawn.create_session_exec", fake_create_session_exec)
     adapter = AgyCLITextGenerateAdapter(
         command_path="/usr/local/bin/agy",
         timeout_seconds=12.5,
@@ -4267,8 +4241,8 @@ async def test_agy_cli_text_generate_adapter_uses_hardened_print_contract(
         )
     ]
     assert {"--continue", "--conversation", "--prompt-interactive"}.isdisjoint(commands[0])
-    assert cwds[0] != "/tmp/project"
-    assert cwds[0] is not None and "gobby-textgen-" in cwds[0]
+    assert cwds[0] != Path("/tmp/project")
+    assert "gobby-textgen-" in str(cwds[0])
     assert envs[0]["EXTRA"] == "1"
     assert envs[0]["GOBBY_HOOKS_DISABLED"] == "1"
 
@@ -4373,18 +4347,15 @@ async def test_agy_cli_text_generate_adapter_rejects_empty_or_failed_process_std
     returncode: int,
     error_match: str,
 ) -> None:
-    async def fake_create_subprocess_exec(
+    async def fake_create_session_exec(
         *command: str,
-        stdin: int,
-        stdout: int,
-        stderr: int,
-        cwd: str | None,
         env: dict[str, str],
-        start_new_session: bool,
+        cwd: Path,
+        input_bytes: bytes | None = None,
     ) -> FakeProcess:
         return FakeProcess(stdout_bytes, stderr_bytes, returncode=returncode)
 
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr("gobby.utils.spawn.create_session_exec", fake_create_session_exec)
     adapter = AgyCLITextGenerateAdapter(command_path="/usr/local/bin/agy")
 
     with pytest.raises(RuntimeError, match=error_match):
@@ -4395,18 +4366,15 @@ async def test_agy_cli_text_generate_adapter_rejects_empty_or_failed_process_std
 async def test_agy_cli_text_generate_adapter_returns_error_prefixed_success_stdout(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def fake_create_subprocess_exec(
+    async def fake_create_session_exec(
         *command: str,
-        stdin: int,
-        stdout: int,
-        stderr: int,
-        cwd: str | None,
         env: dict[str, str],
-        start_new_session: bool,
+        cwd: Path,
+        input_bytes: bytes | None = None,
     ) -> FakeProcess:
         return FakeProcess(b"Error: this is model output\n")
 
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr("gobby.utils.spawn.create_session_exec", fake_create_session_exec)
     adapter = AgyCLITextGenerateAdapter(command_path="/usr/local/bin/agy")
 
     result = await adapter.generate(
@@ -4456,16 +4424,13 @@ async def test_grok_cli_text_generate_adapter_uses_non_session_headless_command(
 ) -> None:
     commands: list[tuple[str, ...]] = []
     leader_socket_parent_exists: list[bool] = []
-    cwds: list[str | None] = []
+    cwds: list[Path] = []
 
-    async def fake_create_subprocess_exec(
+    async def fake_create_session_exec(
         *command: str,
-        stdin: int,
-        stdout: int,
-        stderr: int,
-        cwd: str | None,
         env: dict[str, str],
-        start_new_session: bool,
+        cwd: Path,
+        input_bytes: bytes | None = None,
     ) -> FakeProcess:
         commands.append(command)
         cwds.append(cwd)
@@ -4473,7 +4438,7 @@ async def test_grok_cli_text_generate_adapter_uses_non_session_headless_command(
         leader_socket_parent_exists.append(leader_socket.parent.exists())
         return FakeProcess(b"grok text\n")
 
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr("gobby.utils.spawn.create_session_exec", fake_create_session_exec)
     adapter = text_generation_adapters._GrokCLITextGenerateAdapter(command_path="/usr/bin/grok")
 
     response = await adapter.generate(
@@ -4513,8 +4478,8 @@ async def test_grok_cli_text_generate_adapter_uses_non_session_headless_command(
     assert {"--acp", "--session-id", "--resume", "--continue", "-r", "-c"}.isdisjoint(command)
     assert leader_socket_parent_exists == [True]
     # One-shot generation runs in a neutral temp dir, never the request's project cwd.
-    assert cwds[0] != "/tmp/project"
-    assert cwds[0] is not None and "gobby-textgen-" in cwds[0]
+    assert cwds[0] != Path("/tmp/project")
+    assert "gobby-textgen-" in str(cwds[0])
 
 
 @pytest.mark.asyncio
@@ -4526,22 +4491,18 @@ async def test_droid_cli_text_generate_adapter_executes_noninteractive_command(
     real_home.mkdir()
     monkeypatch.setenv("HOME", str(real_home))
     monkeypatch.delenv("FACTORY_API_KEY", raising=False)
-    calls: list[tuple[tuple[str, ...], str | None, dict[str, str]]] = []
+    calls: list[tuple[tuple[str, ...], Path, dict[str, str]]] = []
 
-    async def fake_create_subprocess_exec(
+    async def fake_create_session_exec(
         *command: str,
-        stdin: int,
-        stdout: int,
-        stderr: int,
-        cwd: str | None,
         env: dict[str, str],
-        start_new_session: bool,
+        cwd: Path,
+        input_bytes: bytes | None = None,
     ) -> FakeProcess:
-        assert start_new_session is True
         calls.append((command, cwd, env))
         return FakeProcess(b"done\n")
 
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr("gobby.utils.spawn.create_session_exec", fake_create_session_exec)
     adapter = DroidCLITextGenerateAdapter(command_path="/usr/local/bin/droid")
 
     response = await adapter.generate(
@@ -4568,8 +4529,8 @@ async def test_droid_cli_text_generate_adapter_executes_noninteractive_command(
         "system\n\nexplain",
     )
     # One-shot generation runs in a neutral temp dir, never the request's project cwd.
-    assert cwd != "/tmp/project"
-    assert cwd is not None and "gobby-textgen-" in cwd
+    assert cwd != Path("/tmp/project")
+    assert "gobby-textgen-" in str(cwd)
     temp_home = _assert_droid_isolated_env(env)
     assert not temp_home.exists()
 
@@ -4585,20 +4546,16 @@ async def test_droid_cli_text_generate_adapter_reports_exec_failure(
     monkeypatch.delenv("FACTORY_API_KEY", raising=False)
     temp_homes: list[Path] = []
 
-    async def fake_create_subprocess_exec(
+    async def fake_create_session_exec(
         *_command: str,
-        stdin: int,
-        stdout: int,
-        stderr: int,
-        cwd: str | None,
         env: dict[str, str],
-        start_new_session: bool,
+        cwd: Path,
+        input_bytes: bytes | None = None,
     ) -> FakeProcess:
-        assert start_new_session is True
         temp_homes.append(Path(env["HOME"]))
         return FakeProcess(b"", b"bad auth", returncode=2)
 
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr("gobby.utils.spawn.create_session_exec", fake_create_session_exec)
     adapter = DroidCLITextGenerateAdapter(command_path="/usr/local/bin/droid")
 
     with pytest.raises(RuntimeError, match="bad auth.*set FACTORY_API_KEY"):
@@ -4620,20 +4577,16 @@ async def test_droid_cli_text_generate_adapter_reports_timeout_with_command(
     process = HangingProcess()
     temp_homes: list[Path] = []
 
-    async def fake_create_subprocess_exec(
+    async def fake_create_session_exec(
         *_command: str,
-        stdin: int,
-        stdout: int,
-        stderr: int,
-        cwd: str | None,
         env: dict[str, str],
-        start_new_session: bool,
+        cwd: Path,
+        input_bytes: bytes | None = None,
     ) -> FakeProcess:
-        assert start_new_session is True
         temp_homes.append(Path(env["HOME"]))
         return process
 
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr("gobby.utils.spawn.create_session_exec", fake_create_session_exec)
     # pid 4242 is fake: without this patch cleanup would os.killpg a real
     # process group of that id when one happens to exist (#20688).
     monkeypatch.setattr(text_generation_adapters, "_signal_cli_process_group", lambda *_args: False)
@@ -4664,16 +4617,12 @@ async def test_droid_cli_text_generate_adapter_cleans_temp_home_after_setup_fail
     monkeypatch.delenv("FACTORY_API_KEY", raising=False)
     temp_homes: list[Path] = []
 
-    async def fake_create_subprocess_exec(
+    async def fake_create_session_exec(
         *_command: str,
-        stdin: int,
-        stdout: int,
-        stderr: int,
-        cwd: str | None,
         env: dict[str, str],
-        start_new_session: bool,
+        cwd: Path,
+        input_bytes: bytes | None = None,
     ) -> FakeProcess:
-        assert start_new_session is True
         temp_home = Path(env["HOME"])
         temp_homes.append(temp_home)
         (temp_home / ".factory" / "sessions").mkdir(parents=True)
@@ -4683,7 +4632,7 @@ async def test_droid_cli_text_generate_adapter_cleans_temp_home_after_setup_fail
         )
         raise OSError("exec setup failed")
 
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr("gobby.utils.spawn.create_session_exec", fake_create_session_exec)
     adapter = DroidCLITextGenerateAdapter(command_path="/usr/local/bin/droid")
 
     with pytest.raises(OSError, match="exec setup failed"):
@@ -4736,16 +4685,12 @@ async def test_droid_cli_text_generate_adapter_seeds_auth_config_without_history
     copied_files: set[str] = set()
     temp_homes: list[Path] = []
 
-    async def fake_create_subprocess_exec(
+    async def fake_create_session_exec(
         *_command: str,
-        stdin: int,
-        stdout: int,
-        stderr: int,
-        cwd: str | None,
         env: dict[str, str],
-        start_new_session: bool,
+        cwd: Path,
+        input_bytes: bytes | None = None,
     ) -> FakeProcess:
-        assert start_new_session is True
         temp_home = Path(env["HOME"])
         temp_homes.append(temp_home)
         seeded_factory = temp_home / ".factory"
@@ -4758,7 +4703,7 @@ async def test_droid_cli_text_generate_adapter_seeds_auth_config_without_history
         )
         return FakeProcess(b"done\n")
 
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr("gobby.utils.spawn.create_session_exec", fake_create_session_exec)
     adapter = DroidCLITextGenerateAdapter(command_path="/usr/local/bin/droid")
 
     response = await adapter.generate(TextGenerationRequest(prompt="hello"))
@@ -4902,26 +4847,29 @@ def test_candidate_timeout_selection_by_adapter_style() -> None:
 
 
 @pytest.mark.asyncio
-async def test_run_cli_text_generation_command_closes_stdin(
+@pytest.mark.parametrize(
+    ("stdin_input", "expected_input"),
+    [(None, None), ("the prompt ✓", "the prompt ✓".encode())],
+)
+async def test_run_cli_text_generation_command_gives_stdin_only_its_prompt(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    stdin_input: str | None,
+    expected_input: bytes | None,
 ) -> None:
     captured: dict[str, Any] = {}
 
-    async def fake_create_subprocess_exec(
+    async def fake_create_session_exec(
         *command: str,
-        stdin: int,
-        stdout: int,
-        stderr: int,
-        cwd: str | None,
         env: dict[str, str],
-        start_new_session: bool,
+        cwd: Path,
+        input_bytes: bytes | None = None,
     ) -> FakeProcess:
-        captured["stdin"] = stdin
+        captured["input_bytes"] = input_bytes
         captured["cwd"] = cwd
         return FakeProcess(b"ok\n")
 
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr("gobby.utils.spawn.create_session_exec", fake_create_session_exec)
 
     result = await text_generation_adapters._run_cli_text_generation_command(
         "Qwen",
@@ -4929,12 +4877,13 @@ async def test_run_cli_text_generation_command_closes_stdin(
         neutral_cwd=tmp_path,
         timeout_seconds=5,
         env_overrides={},
+        stdin_input=stdin_input,
     )
 
     assert result == "ok"
-    # stdin is closed so codex-style "Reading additional input from stdin" cannot hang.
-    assert captured["stdin"] == asyncio.subprocess.DEVNULL
-    assert captured["cwd"] == str(tmp_path)
+    # Without a prompt stdin is /dev/null, so codex-style "Reading additional input
+    # from stdin" cannot hang; with one, the prompt is all the CLI can read.
+    assert captured == {"input_bytes": expected_input, "cwd": tmp_path}
 
 
 @pytest.mark.asyncio
@@ -4944,18 +4893,15 @@ async def test_run_cli_text_generation_command_returns_accepted_exit_details(
     tmp_path: Path,
     returncode: int,
 ) -> None:
-    async def fake_create_subprocess_exec(
+    async def fake_create_session_exec(
         *command: str,
-        stdin: int,
-        stdout: int,
-        stderr: int,
-        cwd: str | None,
         env: dict[str, str],
-        start_new_session: bool,
+        cwd: Path,
+        input_bytes: bytes | None = None,
     ) -> FakeProcess:
         return FakeProcess(b"partial stdout\n", b"budget diagnostic\n", returncode=returncode)
 
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr("gobby.utils.spawn.create_session_exec", fake_create_session_exec)
 
     result = await text_generation_adapters._run_cli_text_generation_command(
         "Qwen",
@@ -4974,18 +4920,15 @@ async def test_run_cli_text_generation_command_rejects_unaccepted_exit(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    async def fake_create_subprocess_exec(
+    async def fake_create_session_exec(
         *command: str,
-        stdin: int,
-        stdout: int,
-        stderr: int,
-        cwd: str | None,
         env: dict[str, str],
-        start_new_session: bool,
+        cwd: Path,
+        input_bytes: bytes | None = None,
     ) -> FakeProcess:
         return FakeProcess(b"partial stdout", b"unexpected failure", returncode=54)
 
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr("gobby.utils.spawn.create_session_exec", fake_create_session_exec)
 
     with pytest.raises(RuntimeError, match="Qwen CLI failed with exit code 54: unexpected failure"):
         await text_generation_adapters._run_cli_text_generation_command(

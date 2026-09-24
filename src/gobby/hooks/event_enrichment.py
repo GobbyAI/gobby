@@ -19,6 +19,7 @@ from gobby.hooks.events import ContextPart, HookEvent, HookEventType, HookRespon
 from gobby.hooks.pending_messages import PendingMessageRenderResult, render_pending_messages
 from gobby.hooks.receipt_effects import STAGED_EFFECTS_FIELD, record_worker_staging
 from gobby.skills.capability_routing import gobby_help_prefix
+from gobby.workflows.engine.block_batching import operator_event_is_subagent
 
 # Only inject full session metadata (IDs, terminal context) on context-building
 # events, never on lifecycle events like Stop or per-tool events.
@@ -171,6 +172,17 @@ class EventEnricher:
         sender attribution for P2P messages.
         """
         if not self._inter_session_msg_manager:
+            return
+
+        # Claude names a native subagent with agent_id on that event. The
+        # session-wide is_subagent flag stays set on the parent's main thread,
+        # so an empty variable map keeps delivery on the main thread.
+        event_data = event.data if isinstance(event.data, dict) else {}
+        if event.source == SessionSource.CLAUDE and operator_event_is_subagent(
+            event_data,
+            event.source,
+            {},
+        ):
             return
 
         undelivered = self._inter_session_msg_manager.get_undelivered_messages(platform_session_id)

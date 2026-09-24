@@ -303,6 +303,30 @@ class TestMessageDeliveryOrdering:
         message_manager.mark_delivered_batch.assert_not_called()
         assert response.metadata["_gobby_staged_effects"]["pending_message_ids"] == ["msg-1"]
 
+    def test_claude_subagent_event_leaves_message_for_the_main_thread(self) -> None:
+        msg = _make_msg()
+        enricher = _make_enricher([msg])
+        message_manager = cast(MagicMock, enricher._inter_session_msg_manager)
+        subagent = _make_event(HookEventType.BEFORE_TOOL)
+        subagent.data = {"agent_id": "agent-sub-1", "agent_type": "review"}
+        subagent_response = HookResponse()
+
+        enricher.enrich(subagent, subagent_response)
+
+        assert subagent_response.context is None
+        assert "_gobby_staged_effects" not in subagent_response.metadata
+        message_manager.get_undelivered_messages.assert_not_called()
+        message_manager.mark_delivered_batch.assert_not_called()
+
+        main = _make_event(HookEventType.BEFORE_TOOL)
+        main_response = HookResponse()
+        enricher.enrich(main, main_response)
+
+        assert main_response.context is not None
+        assert "hello" in main_response.context
+        assert main_response.metadata["_gobby_staged_effects"]["pending_message_ids"] == ["msg-1"]
+        message_manager.mark_delivered_batch.assert_not_called()
+
 
 class TestUrgentPriority:
     """Verify urgent messages are tagged."""

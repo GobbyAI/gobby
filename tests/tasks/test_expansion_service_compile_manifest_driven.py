@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import textwrap
 from dataclasses import replace
 from pathlib import Path
@@ -11,11 +12,15 @@ from unittest.mock import MagicMock
 import pytest
 
 from gobby.plans.parser import PlanDocument, parse_plan
-from gobby.storage.expansion_runs import LocalExpansionRunManager
+from gobby.storage.expansion_runs import ExpansionRun, LocalExpansionRunManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.tasks import LocalTaskManager, Task
+from gobby.storage.plans import LocalPlanManager
+from gobby.storage.tasks import LocalTaskManager, Task, TaskArtifactManager
 from gobby.tasks.expansion._contract import _assigned_agent_for_entry
+from gobby.tasks.expansion_qa_coverage import run_expansion_qa_coverage
 from gobby.tasks.expansion_service import ExpansionService
+from gobby.utils.machine_id import require_machine_id
+from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 
 pytestmark = pytest.mark.unit
 
@@ -536,3 +541,130 @@ def test_deferrals_preserved(
             ],
         }
     ]
+
+
+def _registered_plan_without_manifest(
+    temp_db: HubDatabase,
+    temp_dir: Path,
+) -> tuple[ExpansionService, Task, Path, Path, str]:
+    project = install_isolated_checkout_project(
+        temp_db,
+        temp_dir,
+        name="synthesis-project",
+        machine_id=require_machine_id(),
+    ).project
+    service = ExpansionService(
+        task_manager=LocalTaskManager(temp_db),
+        llm_service=MagicMock(),
+        run_manager=LocalExpansionRunManager(temp_db),
+    )
+    parent = service.task_manager.create_task(
+        project_id=project.id,
+        title="Registered synthesis parent",
+        validation_criteria="Test task completion is observable.",
+    )
+    plan_rel = Path(".gobby/plans/registered-synthesis.md")
+    plan_path = temp_dir / plan_rel
+    plan_path.parent.mkdir(parents=True, exist_ok=True)
+    plan_path.write_text(
+        textwrap.dedent(
+            """
+            > **Plan ID:** registered-synthesis
+
+            ## A1 Registered
+            `kind: deliverable`
+
+            **Acceptance:**
+            - A1.1 - Registered work exists. file: `src/registered.py`
+            """
+        )
+        .lstrip("\n")
+        .rstrip()
+        + "\n",
+        encoding="utf-8",
+    )
+    registered = LocalPlanManager(temp_db).create_plan_record(
+        project_id=project.id,
+        plan_id="registered-synthesis",
+        plan_path=plan_rel,
+        root_task_ref=str(parent.seq_num),
+    )
+    assert registered.plan_hash is not None
+    TaskArtifactManager(temp_db).set_artifacts_atomic(
+        parent.id,
+        plan_file_path=str(plan_rel),
+        plan_file_hash=registered.plan_hash,
+    )
+    return service, parent, plan_path, plan_rel, registered.plan_hash
+
+
+def _run_for_plan(service: ExpansionService, parent: Task, plan_file: Path) -> ExpansionRun:
+    return service.run_manager.create(
+        parent_task_id=parent.id,
+        project_id=parent.project_id,
+        triggering_session_id=None,
+        input_source="plan",
+        plan_file=str(plan_file),
+    )
+
+
+def test_registered_plan_synthesis_refreshes_plan_row_hash(
+    temp_db: HubDatabase,
+    temp_dir: Path,
+) -> None:
+    service, parent, plan_path, plan_rel, pre_hash = _registered_plan_without_manifest(
+        temp_db, temp_dir
+    )
+
+    document = service._parse_contract_plan(_run_for_plan(service, parent, plan_rel), parent)
+
+    post_bytes = plan_path.read_bytes()
+    refreshed = LocalPlanManager(temp_db).get_plan(
+        "registered-synthesis",
+        project_id=parent.project_id,
+    )
+    assert document is not None
+    assert document.manifest_entries
+    assert refreshed.plan_hash == hashlib.sha256(post_bytes).hexdigest()
+    assert refreshed.plan_hash != pre_hash
+    manifest = (
+        temp_dir
+        / ".gobby"
+        / "plans"
+        / "coverage"
+        / str(parent.project_id)
+        / str(parent.seq_num)
+        / "registered-synthesis.coverage.yaml"
+    )
+    assert manifest.is_file()
+    assert refreshed.plan_hash in manifest.read_text(encoding="utf-8")
+
+
+def test_registered_plan_synthesis_coverage_has_no_hash_drift(
+    temp_db: HubDatabase,
+    temp_dir: Path,
+) -> None:
+    service, parent, plan_path, plan_rel, _pre_hash = _registered_plan_without_manifest(
+        temp_db, temp_dir
+    )
+    assert parent.project_id is not None
+    service._parse_contract_plan(_run_for_plan(service, parent, plan_rel), parent)
+    refreshed = LocalPlanManager(temp_db).get_plan(
+        "registered-synthesis",
+        project_id=parent.project_id,
+    )
+    assert refreshed.plan_hash is not None
+
+    result = run_expansion_qa_coverage(
+        task_manager=service.task_manager,
+        run=_run_for_plan(service, parent, plan_rel),
+        repo_path=temp_dir,
+        plan_path=str(plan_rel),
+        plan_id="registered-synthesis",
+        plan_hash=refreshed.plan_hash,
+        root_task_ref=str(parent.seq_num),
+        project_id=parent.project_id,
+    )
+
+    assert result["ok"] is True
+    assert result.get("error") != "plan_hash_drift"
