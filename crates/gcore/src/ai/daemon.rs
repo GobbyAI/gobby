@@ -12,7 +12,6 @@ pub use operations::{
     generate_via_daemon_with_candidates, generate_via_daemon_with_max_tokens,
     transcribe_via_daemon,
 };
-pub use request::embeddings_request_body;
 pub use types::{DaemonEmbeddingResult, DaemonTranscriptionOptions};
 
 // Shared daemon HTTP/auth primitives reused by the generation-layer
