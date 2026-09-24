@@ -562,13 +562,11 @@ class CodexCLITextGenerateAdapter:
         timeout_seconds: float = 600.0,
         env: Mapping[str, str] | None = None,
         config_overrides: tuple[str, ...] | None = None,
-        ignore_user_config: bool = False,
     ) -> None:
         self._command_path = command_path
         self._timeout_seconds = timeout_seconds
         self._env = dict(env or {})
         self._config_overrides = tuple(config_overrides or ())
-        self._ignore_user_config = ignore_user_config
 
     def _resolve_command_path(self) -> str:
         path = self._command_path or shutil.which("codex")
@@ -597,12 +595,9 @@ class CodexCLITextGenerateAdapter:
             command.extend(["-c", override])
         if request.model and self._config_overrides:
             command.extend(["-c", codex_model_config_override(request.model)])
-        # One-shot generation uses no tools; without this Codex starts every MCP
-        # server in the user's config (the Gobby proxy, node_repl) on each call.
-        command.extend(["-c", "mcp_servers={}"])
-        command.extend(["exec", "--ephemeral"])
-        if self._ignore_user_config:
-            command.append("--ignore-user-config")
+        # The user's config.toml is interactive setup (MCP servers, hooks, notify,
+        # default effort); loading it would start every MCP server on each call.
+        command.extend(["exec", "--ephemeral", "--ignore-user-config"])
         command.extend(
             [
                 # One-shot generation runs in a neutral temp dir, which is not a Git
