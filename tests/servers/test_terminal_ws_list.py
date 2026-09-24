@@ -291,7 +291,7 @@ async def test_list_names_the_foreground_command_for_both_backends(
     native = _create_pending(manager, sample_project["id"], backend="native")
     recorded = manager.record_process(
         native.id,
-        {"host_terminal_id": "ht-9", "pgid": 4242, "start_time": 1.0},
+        {"host_terminal_id": "ht-9", "pgid": 4242, "start_time": 1.0, "shell": "zsh"},
         attempt_generation=native.attempt_generation,
         attempt_started_at=native.attempt_started_at,
     )

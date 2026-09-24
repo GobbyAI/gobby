@@ -197,6 +197,9 @@ async def test_registry_executes_every_tool_by_ref_through_shared_ops(stack: _St
         await stack.server._handle_message(watcher, json.dumps(attach))
         listed = await _ok(registry, "list_workspaces", node=node)
         assert [row["name"] for row in listed["workspaces"]] == ["agents"]
+        # A projectless workspace omits the association on the wire.
+        assert "default_project_id" not in created
+        assert "default_project_id" not in listed["workspaces"][0]
 
         layout = await _ok(registry, "create_tab", workspace=home, project_id=stack.project_id)
         tab, first = layout["tabs"][0], layout["panes"][0]

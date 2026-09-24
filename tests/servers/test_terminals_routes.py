@@ -208,7 +208,7 @@ def test_a_native_row_reports_the_command_in_its_terminal_foreground(
     temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     manager = _manager(temp_db)
-    native = _native_live(manager, sample_project["id"], pgid=4242)
+    native = _native_live(manager, sample_project["id"], pgid=4242, shell="zsh")
     tmux_row = _create_pending(manager, sample_project["id"])
     promoted = manager.promote_to_live(
         tmux_row.id,
