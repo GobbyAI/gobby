@@ -37,7 +37,7 @@ class TelegramCallbackResolution:
 
 @dataclass(frozen=True)
 class _CallbackEntry:
-    session_id: str
+    session_id: str | None
     value: str
     chat_id: str
     thread_id: str | None
@@ -75,10 +75,14 @@ class TelegramCallbackRegistry:
         project_id: object = None,
     ) -> dict[str, list[list[dict[str, str]]]]:
         """Validate a keyboard and replace button values with opaque callback tokens."""
-        normalized_session_id = _required_string(session_id, "session_id")
+        normalized_action = _optional_string(action)
+        normalized_session_id = (
+            None
+            if session_id is None and normalized_action == "agent_target"
+            else _required_string(session_id, "session_id")
+        )
         normalized_chat_id = _required_string(chat_id, "chat_id")
         normalized_thread_id = _optional_string(thread_id)
-        normalized_action = _optional_string(action)
         normalized_project_id = _optional_string(project_id)
         ttl = _bounded_ttl(ttl_seconds)
         buttons = _normalized_keyboard(keyboard)
@@ -232,7 +236,8 @@ def telegram_callback_message(
         metadata["message_thread_id"] = thread_id
         metadata["is_topic_message"] = True
     if resolution.status == "ok":
-        metadata["callback_session_id"] = resolution.session_id
+        if resolution.session_id is not None:
+            metadata["callback_session_id"] = resolution.session_id
         metadata["callback_value"] = resolution.value
         if resolution.action is not None:
             metadata["callback_action"] = resolution.action
