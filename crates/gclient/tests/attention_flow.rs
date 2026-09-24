@@ -322,9 +322,11 @@ async fn agent_row_click_jumps_and_labels_the_session() {
     // Where the loop draws the two rows: both in the sessions section, the
     // blocked session on its first two-line row and the idle shell (an agent
     // run under no session) on the row after it. Wide enough that the
-    // respond dialog leaves the sidebar uncovered.
+    // respond dialog leaves the sidebar uncovered. The sidebar starts
+    // hidden, so the probe and the loop both pin it.
     let area = Rect::new(0, 0, 120, 30);
     let mut probe = Chrome::dark();
+    probe.sidebar.pinned = true;
     probe.compute_view(&workspace, area);
     let sessions = section_body_rect(
         probe.view.sidebar_section_rects[SidebarSection::Sessions.index()],
@@ -341,6 +343,7 @@ async fn agent_row_click_jumps_and_labels_the_session() {
     let mut terminal =
         Terminal::new(TestBackend::new(area.width, area.height)).expect("test terminal");
     let mut chrome = Chrome::dark();
+    chrome.sidebar.pinned = true;
     for terminal_id in workspace.roster_terminal_ids() {
         let pane = workspace
             .pane_for_terminal(&terminal_id)

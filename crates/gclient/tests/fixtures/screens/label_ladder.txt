@@ -1,82 +1,82 @@
 # gclient screen golden: label_ladder
 # 120x40, dark theme, colours normalised to theme::Palette roles
-00 | [Menu]              [+] │ alpha    +                                                                                   |
-00 : -/accent*1 panel_bg/accent+b*6 -/accent*14 panel_bg/accent+b*3 -/accent*1 surface_dim/panel_bg*1 panel_bg/accent+b*9 overlay1/panel_bg*3 -/panel_bg*82
-01 |                         │┌ shell ──────────────────────────────────────┐┌ nvim ────────────────┐┌ ▸ shell ────────────┐|
-01 : -/panel_bg*25 surface_dim/panel_bg*1 overlay0/panel_bg*71 accent/panel_bg*1 accent/panel_bg+b*9 accent/panel_bg*13
-02 | Machines                ││                                             ││                      ││                     │|
-02 : -/surface0*1 subtext0/surface0+b*8 -/surface0*16 surface_dim/panel_bg*1 overlay0/panel_bg*1 -/panel_bg*45 overlay0/panel_bg*2 -/panel_bg*22 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*21 accent/panel_bg*1
-03 | ○ scripted · local      ││                                             ││                      ││                     │|
-03 : -/surface_dim*1 overlay0/surface_dim*1 overlay0/surface_dim+d*1 text/surface_dim+b*8 overlay0/surface_dim+d*8 -/surface_dim*6 surface_dim/panel_bg*1 overlay0/panel_bg*1 -/panel_bg*45 overlay0/panel_bg*2 -/panel_bg*22 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*21 accent/panel_bg*1
-04 |                         ││                                             ││                      ││                     │|
-04 : -/panel_bg*25 surface_dim/panel_bg*1 overlay0/panel_bg*1 -/panel_bg*45 overlay0/panel_bg*2 -/panel_bg*22 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*21 accent/panel_bg*1
-05 | Projects      [working] ││                                             ││                      ││                     │|
-05 : -/surface0*1 subtext0/surface0+b*8 -/surface0*6 overlay0/surface0*9 -/surface0*1 surface_dim/panel_bg*1 overlay0/panel_bg*1 -/panel_bg*45 overlay0/panel_bg*2 -/panel_bg*22 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*21 accent/panel_bg*1
-06 | ○ alpha (main ↑2 ↓1)   ▸││                                             ││                      ││                     │|
-06 : -/surface_dim*1 overlay0/surface_dim*1 overlay0/surface_dim+d*1 text/surface_dim+b*5 overlay0/surface_dim+d*2 subtext0/surface_dim*4 green/surface_dim*3 red/surface_dim*3 overlay0/surface_dim+d*1 -/surface_dim*3 accent/surface_dim*1 surface_dim/panel_bg*1 overlay0/panel_bg*1 -/panel_bg*45 overlay0/panel_bg*2 -/panel_bg*22 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*21 accent/panel_bg*1
-07 |                         ││                                             ││                      ││                     │|
-07 : -/panel_bg*25 surface_dim/panel_bg*1 overlay0/panel_bg*1 -/panel_bg*45 overlay0/panel_bg*2 -/panel_bg*22 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*21 accent/panel_bg*1
-08 | Sessions         [view] ││                                             ││                      ││                     │|
-08 : -/surface0*1 subtext0/surface0+b*8 -/surface0*9 overlay0/surface0*6 -/surface0*1 surface_dim/panel_bg*1 overlay0/panel_bg*1 -/panel_bg*45 overlay0/panel_bg*2 -/panel_bg*22 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*21 accent/panel_bg*1
-09 | ○ shell                 ││                                             ││                      ││                     │|
-09 : -/panel_bg*1 overlay0/panel_bg*1 overlay0/panel_bg+d*1 subtext0/panel_bg+b*5 -/panel_bg*17 surface_dim/panel_bg*1 overlay0/panel_bg*1 -/panel_bg*45 overlay0/panel_bg*2 -/panel_bg*22 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*21 accent/panel_bg*1
-10 |   codex                 ││                                             ││                      ││                     │|
-10 : -/panel_bg*1 overlay0/panel_bg+d*7 -/panel_bg*17 surface_dim/panel_bg*1 overlay0/panel_bg*1 -/panel_bg*45 overlay0/panel_bg*2 -/panel_bg*22 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*21 accent/panel_bg*1
-11 | ○ nvim                  ││                                             ││                      ││                     │|
-11 : -/panel_bg*1 overlay0/panel_bg*1 overlay0/panel_bg+d*1 subtext0/panel_bg+b*4 -/panel_bg*18 surface_dim/panel_bg*1 overlay0/panel_bg*1 -/panel_bg*45 overlay0/panel_bg*2 -/panel_bg*22 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*21 accent/panel_bg*1
-12 |   gclient               ││                                             ││                      ││                     │|
-12 : -/panel_bg*1 overlay0/panel_bg+d*9 -/panel_bg*15 surface_dim/panel_bg*1 overlay0/panel_bg*1 -/panel_bg*45 overlay0/panel_bg*2 -/panel_bg*22 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*21 accent/panel_bg*1
-13 | ○ shell                 ││                                             ││                      ││                     │|
-13 : -/surface_dim*1 overlay0/surface_dim*1 overlay0/surface_dim+d*1 text/surface_dim+b*5 -/surface_dim*17 surface_dim/panel_bg*1 overlay0/panel_bg*1 -/panel_bg*45 overlay0/panel_bg*2 -/panel_bg*22 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*21 accent/panel_bg*1
-14 |   gclient               ││                                             ││                      ││                     │|
-14 : -/surface_dim*1 overlay0/surface_dim+d*9 -/surface_dim*15 surface_dim/panel_bg*1 overlay0/panel_bg*1 -/panel_bg*45 overlay0/panel_bg*2 -/panel_bg*22 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*21 accent/panel_bg*1
-15 |                         ││                                             ││                      ││                     │|
-15 : -/panel_bg*25 surface_dim/panel_bg*1 overlay0/panel_bg*1 -/panel_bg*45 overlay0/panel_bg*2 -/panel_bg*22 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*21 accent/panel_bg*1
-16 |                         ││                                             ││                      ││                     │|
-16 : -/panel_bg*25 surface_dim/panel_bg*1 overlay0/panel_bg*1 -/panel_bg*45 overlay0/panel_bg*2 -/panel_bg*22 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*21 accent/panel_bg*1
-17 |                         ││                                             ││                      ││                     │|
-17 : -/panel_bg*25 surface_dim/panel_bg*1 overlay0/panel_bg*1 -/panel_bg*45 overlay0/panel_bg*2 -/panel_bg*22 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*21 accent/panel_bg*1
-18 |                         ││                                             ││                      ││                     │|
-18 : -/panel_bg*25 surface_dim/panel_bg*1 overlay0/panel_bg*1 -/panel_bg*45 overlay0/panel_bg*2 -/panel_bg*22 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*21 accent/panel_bg*1
-19 |                         ││             waiting for frames              ││ waiting for frames   ││ waiting for frames  │|
-19 : -/panel_bg*25 surface_dim/panel_bg*1 overlay0/panel_bg*1 -/panel_bg*13 overlay0/panel_bg*18 -/panel_bg*14 overlay0/panel_bg*2 -/panel_bg*1 overlay0/panel_bg*18 -/panel_bg*3 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*1 overlay0/panel_bg*18 -/panel_bg*2 accent/panel_bg*1
-20 |                         ││                                             ││                      ││                     │|
-20 : -/panel_bg*25 surface_dim/panel_bg*1 overlay0/panel_bg*1 -/panel_bg*45 overlay0/panel_bg*2 -/panel_bg*22 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*21 accent/panel_bg*1
-21 |                         ││                                             ││                      ││                     │|
-21 : -/panel_bg*25 surface_dim/panel_bg*1 overlay0/panel_bg*1 -/panel_bg*45 overlay0/panel_bg*2 -/panel_bg*22 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*21 accent/panel_bg*1
-22 |                         ││                                             ││                      ││                     │|
-22 : -/panel_bg*25 surface_dim/panel_bg*1 overlay0/panel_bg*1 -/panel_bg*45 overlay0/panel_bg*2 -/panel_bg*22 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*21 accent/panel_bg*1
-23 |                         ││                                             ││                      ││                     │|
-23 : -/panel_bg*25 surface_dim/panel_bg*1 overlay0/panel_bg*1 -/panel_bg*45 overlay0/panel_bg*2 -/panel_bg*22 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*21 accent/panel_bg*1
-24 |                         ││                                             ││                      ││                     │|
-24 : -/panel_bg*25 surface_dim/panel_bg*1 overlay0/panel_bg*1 -/panel_bg*45 overlay0/panel_bg*2 -/panel_bg*22 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*21 accent/panel_bg*1
-25 |                         ││                                             ││                      ││                     │|
-25 : -/panel_bg*25 surface_dim/panel_bg*1 overlay0/panel_bg*1 -/panel_bg*45 overlay0/panel_bg*2 -/panel_bg*22 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*21 accent/panel_bg*1
-26 |                         ││                                             ││                      ││                     │|
-26 : -/panel_bg*25 surface_dim/panel_bg*1 overlay0/panel_bg*1 -/panel_bg*45 overlay0/panel_bg*2 -/panel_bg*22 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*21 accent/panel_bg*1
-27 |                         ││                                             ││                      ││                     │|
-27 : -/panel_bg*25 surface_dim/panel_bg*1 overlay0/panel_bg*1 -/panel_bg*45 overlay0/panel_bg*2 -/panel_bg*22 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*21 accent/panel_bg*1
-28 |                         ││                                             ││                      ││                     │|
-28 : -/panel_bg*25 surface_dim/panel_bg*1 overlay0/panel_bg*1 -/panel_bg*45 overlay0/panel_bg*2 -/panel_bg*22 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*21 accent/panel_bg*1
-29 |                         ││                                             ││                      ││                     │|
-29 : -/panel_bg*25 surface_dim/panel_bg*1 overlay0/panel_bg*1 -/panel_bg*45 overlay0/panel_bg*2 -/panel_bg*22 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*21 accent/panel_bg*1
-30 |                         ││                                             ││                      ││                     │|
-30 : -/panel_bg*25 surface_dim/panel_bg*1 overlay0/panel_bg*1 -/panel_bg*45 overlay0/panel_bg*2 -/panel_bg*22 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*21 accent/panel_bg*1
-31 |                         ││                                             ││                      ││                     │|
-31 : -/panel_bg*25 surface_dim/panel_bg*1 overlay0/panel_bg*1 -/panel_bg*45 overlay0/panel_bg*2 -/panel_bg*22 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*21 accent/panel_bg*1
-32 |                         ││                                             ││                      ││                     │|
-32 : -/panel_bg*25 surface_dim/panel_bg*1 overlay0/panel_bg*1 -/panel_bg*45 overlay0/panel_bg*2 -/panel_bg*22 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*21 accent/panel_bg*1
-33 |                         ││                                             ││                      ││                     │|
-33 : -/panel_bg*25 surface_dim/panel_bg*1 overlay0/panel_bg*1 -/panel_bg*45 overlay0/panel_bg*2 -/panel_bg*22 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*21 accent/panel_bg*1
-34 |                         ││                                             ││                      ││                     │|
-34 : -/panel_bg*25 surface_dim/panel_bg*1 overlay0/panel_bg*1 -/panel_bg*45 overlay0/panel_bg*2 -/panel_bg*22 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*21 accent/panel_bg*1
-35 |                         ││                                             ││                      ││                     │|
-35 : -/panel_bg*25 surface_dim/panel_bg*1 overlay0/panel_bg*1 -/panel_bg*45 overlay0/panel_bg*2 -/panel_bg*22 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*21 accent/panel_bg*1
-36 |                         ││                                             ││                      ││                     │|
-36 : -/panel_bg*25 surface_dim/panel_bg*1 overlay0/panel_bg*1 -/panel_bg*45 overlay0/panel_bg*2 -/panel_bg*22 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*21 accent/panel_bg*1
-37 |                         ││                                             ││                      ││                     │|
-37 : -/panel_bg*25 surface_dim/panel_bg*1 overlay0/panel_bg*1 -/panel_bg*45 overlay0/panel_bg*2 -/panel_bg*22 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*21 accent/panel_bg*1
-38 |                         │└──────────────────────────────────── gclient ┘└───────────── gclient ┘└── gclient · Focused ┘|
-38 : -/panel_bg*25 surface_dim/panel_bg*1 overlay0/panel_bg*71 accent/panel_bg*3 accent/panel_bg+b*19 accent/panel_bg*1
-39 |                     [«] │ prefix ctrl+b                                                                                |
-39 : -/surface0*21 overlay0/surface0*3 -/surface0*1 surface_dim/panel_bg*1 -/surface_dim*1 subtext0/surface_dim*13 -/surface_dim*80
+00 |                                                                                                                        |
+00 : -/panel_bg*120
+01 | alpha    +                                                                                                             |
+01 : panel_bg/accent+b*9 overlay1/panel_bg*3 -/panel_bg*108
+02 |┌ shell ───────────────────────────────────────────────────┐┌ nvim ──────────────────────┐┌ ▸ shell ───────────────────┐|
+02 : overlay0/panel_bg*90 accent/panel_bg*1 accent/panel_bg+b*9 accent/panel_bg*20
+03 |│                                                          ││                            ││                            │|
+03 : overlay0/panel_bg*1 -/panel_bg*58 overlay0/panel_bg*2 -/panel_bg*28 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*28 accent/panel_bg*1
+04 |│                                                          ││                            ││                            │|
+04 : overlay0/panel_bg*1 -/panel_bg*58 overlay0/panel_bg*2 -/panel_bg*28 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*28 accent/panel_bg*1
+05 |│                                                          ││                            ││                            │|
+05 : overlay0/panel_bg*1 -/panel_bg*58 overlay0/panel_bg*2 -/panel_bg*28 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*28 accent/panel_bg*1
+06 |│                                                          ││                            ││                            │|
+06 : overlay0/panel_bg*1 -/panel_bg*58 overlay0/panel_bg*2 -/panel_bg*28 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*28 accent/panel_bg*1
+07 |│                                                          ││                            ││                            │|
+07 : overlay0/panel_bg*1 -/panel_bg*58 overlay0/panel_bg*2 -/panel_bg*28 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*28 accent/panel_bg*1
+08 |│                                                          ││                            ││                            │|
+08 : overlay0/panel_bg*1 -/panel_bg*58 overlay0/panel_bg*2 -/panel_bg*28 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*28 accent/panel_bg*1
+09 |│                                                          ││                            ││                            │|
+09 : overlay0/panel_bg*1 -/panel_bg*58 overlay0/panel_bg*2 -/panel_bg*28 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*28 accent/panel_bg*1
+10 |│                                                          ││                            ││                            │|
+10 : overlay0/panel_bg*1 -/panel_bg*58 overlay0/panel_bg*2 -/panel_bg*28 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*28 accent/panel_bg*1
+11 |│                                                          ││                            ││                            │|
+11 : overlay0/panel_bg*1 -/panel_bg*58 overlay0/panel_bg*2 -/panel_bg*28 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*28 accent/panel_bg*1
+12 |│                                                          ││                            ││                            │|
+12 : overlay0/panel_bg*1 -/panel_bg*58 overlay0/panel_bg*2 -/panel_bg*28 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*28 accent/panel_bg*1
+13 |│                                                          ││                            ││                            │|
+13 : overlay0/panel_bg*1 -/panel_bg*58 overlay0/panel_bg*2 -/panel_bg*28 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*28 accent/panel_bg*1
+14 |│                                                          ││                            ││                            │|
+14 : overlay0/panel_bg*1 -/panel_bg*58 overlay0/panel_bg*2 -/panel_bg*28 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*28 accent/panel_bg*1
+15 |│                                                          ││                            ││                            │|
+15 : overlay0/panel_bg*1 -/panel_bg*58 overlay0/panel_bg*2 -/panel_bg*28 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*28 accent/panel_bg*1
+16 |│                                                          ││                            ││                            │|
+16 : overlay0/panel_bg*1 -/panel_bg*58 overlay0/panel_bg*2 -/panel_bg*28 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*28 accent/panel_bg*1
+17 |│                                                          ││                            ││                            │|
+17 : overlay0/panel_bg*1 -/panel_bg*58 overlay0/panel_bg*2 -/panel_bg*28 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*28 accent/panel_bg*1
+18 |│                                                          ││                            ││                            │|
+18 : overlay0/panel_bg*1 -/panel_bg*58 overlay0/panel_bg*2 -/panel_bg*28 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*28 accent/panel_bg*1
+19 |│                                                          ││                            ││                            │|
+19 : overlay0/panel_bg*1 -/panel_bg*58 overlay0/panel_bg*2 -/panel_bg*28 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*28 accent/panel_bg*1
+20 |│                   waiting for frames                     ││    waiting for frames      ││    waiting for frames      │|
+20 : overlay0/panel_bg*1 -/panel_bg*19 overlay0/panel_bg*18 -/panel_bg*21 overlay0/panel_bg*2 -/panel_bg*4 overlay0/panel_bg*18 -/panel_bg*6 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*4 overlay0/panel_bg*18 -/panel_bg*6 accent/panel_bg*1
+21 |│                                                          ││                            ││                            │|
+21 : overlay0/panel_bg*1 -/panel_bg*58 overlay0/panel_bg*2 -/panel_bg*28 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*28 accent/panel_bg*1
+22 |│                                                          ││                            ││                            │|
+22 : overlay0/panel_bg*1 -/panel_bg*58 overlay0/panel_bg*2 -/panel_bg*28 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*28 accent/panel_bg*1
+23 |│                                                          ││                            ││                            │|
+23 : overlay0/panel_bg*1 -/panel_bg*58 overlay0/panel_bg*2 -/panel_bg*28 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*28 accent/panel_bg*1
+24 |│                                                          ││                            ││                            │|
+24 : overlay0/panel_bg*1 -/panel_bg*58 overlay0/panel_bg*2 -/panel_bg*28 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*28 accent/panel_bg*1
+25 |│                                                          ││                            ││                            │|
+25 : overlay0/panel_bg*1 -/panel_bg*58 overlay0/panel_bg*2 -/panel_bg*28 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*28 accent/panel_bg*1
+26 |│                                                          ││                            ││                            │|
+26 : overlay0/panel_bg*1 -/panel_bg*58 overlay0/panel_bg*2 -/panel_bg*28 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*28 accent/panel_bg*1
+27 |│                                                          ││                            ││                            │|
+27 : overlay0/panel_bg*1 -/panel_bg*58 overlay0/panel_bg*2 -/panel_bg*28 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*28 accent/panel_bg*1
+28 |│                                                          ││                            ││                            │|
+28 : overlay0/panel_bg*1 -/panel_bg*58 overlay0/panel_bg*2 -/panel_bg*28 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*28 accent/panel_bg*1
+29 |│                                                          ││                            ││                            │|
+29 : overlay0/panel_bg*1 -/panel_bg*58 overlay0/panel_bg*2 -/panel_bg*28 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*28 accent/panel_bg*1
+30 |│                                                          ││                            ││                            │|
+30 : overlay0/panel_bg*1 -/panel_bg*58 overlay0/panel_bg*2 -/panel_bg*28 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*28 accent/panel_bg*1
+31 |│                                                          ││                            ││                            │|
+31 : overlay0/panel_bg*1 -/panel_bg*58 overlay0/panel_bg*2 -/panel_bg*28 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*28 accent/panel_bg*1
+32 |│                                                          ││                            ││                            │|
+32 : overlay0/panel_bg*1 -/panel_bg*58 overlay0/panel_bg*2 -/panel_bg*28 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*28 accent/panel_bg*1
+33 |│                                                          ││                            ││                            │|
+33 : overlay0/panel_bg*1 -/panel_bg*58 overlay0/panel_bg*2 -/panel_bg*28 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*28 accent/panel_bg*1
+34 |│                                                          ││                            ││                            │|
+34 : overlay0/panel_bg*1 -/panel_bg*58 overlay0/panel_bg*2 -/panel_bg*28 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*28 accent/panel_bg*1
+35 |│                                                          ││                            ││                            │|
+35 : overlay0/panel_bg*1 -/panel_bg*58 overlay0/panel_bg*2 -/panel_bg*28 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*28 accent/panel_bg*1
+36 |│                                                          ││                            ││                            │|
+36 : overlay0/panel_bg*1 -/panel_bg*58 overlay0/panel_bg*2 -/panel_bg*28 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*28 accent/panel_bg*1
+37 |│                                                          ││                            ││                            │|
+37 : overlay0/panel_bg*1 -/panel_bg*58 overlay0/panel_bg*2 -/panel_bg*28 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*28 accent/panel_bg*1
+38 |└───────────────────────────────────────────────── gclient ┘└─────────────────── gclient ┘└───────── gclient · Focused ┘|
+38 : overlay0/panel_bg*90 accent/panel_bg*10 accent/panel_bg+b*19 accent/panel_bg*1
+39 | prefix ctrl+b                                                                                                          |
+39 : -/surface_dim*1 subtext0/surface_dim*13 -/surface_dim*106

@@ -47,13 +47,10 @@ use super::{
 /// In the sidebar a project card focuses its project (herdr
 /// `FocusWorkspace`) and starts the drag `up` may finish as a reorder; a
 /// worktree row asks for a shell in that worktree; a card's group toggle
-/// folds its worktree rows; the footer's `new` is the new-project chord and
-/// its `menu` opens the global menu; an agent row reveals its terminal and
-/// asks for that entry's prompt; the toggle collapses or expands the
-/// sidebar; the edge and the section rule
-/// start their resize drags and apply the press at once (herdr resizes on the
-/// press too), unless the sidebar is collapsed to its rail; a scrollbar thumb
-/// starts a thumb drag and the track beside it jumps the list there.
+/// folds its worktree rows; an agent row reveals its terminal and asks for
+/// that entry's prompt; the edge starts its resize drag and applies the
+/// press at once (herdr resizes on the press too); a scrollbar thumb starts
+/// a thumb drag and the track beside it jumps the list there.
 ///
 /// A split border starts the drag that resizes the panes either side of it
 /// (herdr `SetSplitRatio`); a pane scrollbar thumb starts a thumb drag and
@@ -127,9 +124,7 @@ pub(super) fn down<W: WorkspaceView>(
             );
             MouseOutcome::Handled
         }
-        Hit::TabBarEmpty | Hit::Empty | Hit::SidebarEmpty | Hit::ProjectsMenu
-            if button == MouseButton::Right =>
-        {
+        Hit::TabBarEmpty | Hit::Empty | Hit::SidebarEmpty if button == MouseButton::Right => {
             open_menu(
                 ws,
                 chrome,
@@ -204,16 +199,6 @@ pub(super) fn down<W: WorkspaceView>(
             chrome.sidebar.toggle_group(&project_id);
             MouseOutcome::Handled
         }
-        Hit::ProjectsNew => MouseOutcome::Action(Action::NewProject),
-        Hit::ProjectsMenu => {
-            open_menu(
-                ws,
-                chrome,
-                ContextMenuKind::Global,
-                (mouse.column, mouse.row),
-            );
-            MouseOutcome::Handled
-        }
         Hit::Machine(machine) => {
             // The row's filter: this machine alone, or every machine from
             // the local row; a second click returns to local.
@@ -246,13 +231,7 @@ pub(super) fn down<W: WorkspaceView>(
             // question; `respond` stays on prefix+a and the row menu.
             MouseOutcome::FocusAgent(entry_id)
         }
-        Hit::SidebarToggle => {
-            chrome.sidebar.collapsed = !chrome.sidebar.collapsed;
-            chrome.prefs.sidebar_collapsed = chrome.sidebar.collapsed;
-            persist_prefs(ws.gobby_home(), chrome);
-            MouseOutcome::Handled
-        }
-        Hit::SidebarDivider if !chrome.sidebar.collapsed => {
+        Hit::SidebarDivider => {
             chrome.gesture = Some(MouseGesture::SidebarDrag);
             chrome
                 .sidebar
@@ -354,8 +333,8 @@ fn right_down<W: WorkspaceView>(
 
 /// The pointer moved with a button held. A tab drag that has travelled
 /// `TAB_DRAG_THRESHOLD` columns from its press becomes a move, a project
-/// drag `PROJECT_DRAG_THRESHOLD` rows; the sidebar edge and section rule follow
-/// the pointer; a scrollbar thumb, sidebar or pane, keeps the row it was
+/// drag `PROJECT_DRAG_THRESHOLD` rows; the sidebar edge follows the pointer;
+/// a scrollbar thumb, sidebar or pane, keeps the row it was
 /// grabbed by under the pointer; a split border follows the pointer along
 /// its split, the first pane taking the share of the split's area the
 /// pointer sits at, clamped to `0.1..=0.9` (herdr `SetSplitRatio`); a
@@ -445,12 +424,13 @@ pub(super) fn drag<W: WorkspaceView>(
 
 /// A button came up; `released` is the gesture the press started, already
 /// taken off the chrome. A moved tab dropped on another tab takes that tab's
-/// place (herdr `MoveTab`) and stays active; a moved project card dropped
-/// on another card takes its place in the sidebar's project order, which
-/// `prefs.toml` keeps; released anywhere else either stays put, and a release
-/// without movement was the click the press handled. A sidebar edge release
-/// keeps the width it reached as the preferred width; a split border or
-/// scrollbar release keeps what the drag reached.
+/// place (herdr `MoveTab`) and stays active, and one dropped on the new-tab
+/// cells after the last drawn tab takes that tab's place; a moved project
+/// card dropped on another card takes its place in the sidebar's project
+/// order, which `prefs.toml` keeps; released anywhere else either stays
+/// put, and a release without movement was the click the press handled. A
+/// sidebar edge release keeps the width it reached as the preferred width; a
+/// split border or scrollbar release keeps what the drag reached.
 pub(super) fn up<W: WorkspaceView>(
     ws: &W,
     chrome: &mut Chrome,
@@ -464,7 +444,20 @@ pub(super) fn up<W: WorkspaceView>(
             origin_col,
             moved,
         }) if moved || mouse.column.abs_diff(origin_col) >= TAB_DRAG_THRESHOLD => {
-            if let Hit::Tab(target) = hit {
+            let target = match hit {
+                Hit::Tab(target) => Some(target),
+                // The ' + ' cells start at the last drawn tab's right edge,
+                // so a drop there lands in that tab's place.
+                Hit::NewTab => chrome
+                    .view
+                    .tab_hit_areas
+                    .iter()
+                    .rev()
+                    .find(|(_, rect)| rect.width > 0)
+                    .map(|(index, _)| *index),
+                _ => None,
+            };
+            if let Some(target) = target {
                 let tabs = &chrome.tabs().tabs;
                 if target != index && index < tabs.len() && target < tabs.len() {
                     if !tabs[index].is_local() {

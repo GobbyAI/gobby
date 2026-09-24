@@ -38,7 +38,10 @@ struct PrefsFile {
 struct UiPrefs {
     theme: String,
     mouse_capture: bool,
-    pane_borders: bool,
+    /// Retired: every pane draws its edges. Still declared so a file that
+    /// names it loads under `deny_unknown_fields`; never read or saved.
+    #[serde(rename = "pane_borders", skip_serializing)]
+    _pane_borders: bool,
     pane_scrollbars: bool,
     pane_gaps: bool,
     confirm_close: bool,
@@ -47,7 +50,9 @@ struct UiPrefs {
     right_click_passthrough_modifier: PassthroughModifier,
     agent_sort: AgentSort,
     title_scrolling: TitleScrolling,
-    sidebar_collapsed: bool,
+    /// Retired with the collapsed rail; kept like `pane_borders`.
+    #[serde(rename = "sidebar_collapsed", skip_serializing)]
+    _sidebar_collapsed: bool,
     project_order: Vec<String>,
     /// Last: TOML emits a sub-table after the plain values.
     project_labels: BTreeMap<String, String>,
@@ -64,7 +69,7 @@ impl From<&ClientPrefs> for UiPrefs {
         Self {
             theme: prefs.theme.clone(),
             mouse_capture: prefs.mouse_capture,
-            pane_borders: prefs.pane_borders,
+            _pane_borders: false,
             pane_scrollbars: prefs.pane_scrollbars,
             pane_gaps: prefs.pane_gaps,
             confirm_close: prefs.confirm_close,
@@ -73,7 +78,7 @@ impl From<&ClientPrefs> for UiPrefs {
             right_click_passthrough_modifier: prefs.right_click_passthrough_modifier,
             agent_sort: prefs.agent_sort,
             title_scrolling: prefs.title_scrolling,
-            sidebar_collapsed: prefs.sidebar_collapsed,
+            _sidebar_collapsed: false,
             project_order: prefs.project_order.clone(),
             project_labels: prefs.project_labels.clone(),
         }
@@ -105,7 +110,6 @@ impl From<PrefsFile> for ClientPrefs {
             theme: ui.theme,
             keybinds: keymap.path,
             mouse_capture: ui.mouse_capture,
-            pane_borders: ui.pane_borders,
             pane_scrollbars: ui.pane_scrollbars,
             pane_gaps: ui.pane_gaps,
             confirm_close: ui.confirm_close,
@@ -114,7 +118,6 @@ impl From<PrefsFile> for ClientPrefs {
             right_click_passthrough_modifier: ui.right_click_passthrough_modifier,
             agent_sort: ui.agent_sort,
             title_scrolling: ui.title_scrolling,
-            sidebar_collapsed: ui.sidebar_collapsed,
             project_order: ui.project_order,
             project_labels: ui.project_labels,
             ..Self::default()
