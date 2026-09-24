@@ -542,22 +542,224 @@ mod tests {
 
     #[test]
     #[cfg(feature = "ai")]
-    fn daemon_embed_request_uses_query_mode_for_queries_and_document_mode_for_indexing() {
-        let query = gobby_core::ai::daemon::embeddings_request_body(
-            &["query".to_string()],
-            super::daemon_embedding_is_query(true),
-            None,
-            None,
-            None,
+    fn daemon_route_embed_query_and_indexing_batch_record_is_query() {
+        let route = DaemonRoute::start();
+        let backend =
+            super::EmbeddingBackend::new(EmbeddingSource::Daemon(Box::new(daemon_embed_context())))
+                .expect("daemon backend");
+
+        let query_vector = backend.embed_query("query text").expect("query embedding");
+        let query = recorded_body(&route.rx);
+        let indexed = backend
+            .embed_text_batch(&["document text".to_string()])
+            .expect("indexing embedding");
+        let indexing = recorded_body(&route.rx);
+
+        assert_eq!(query_vector, vec![0.25, 0.5]);
+        assert_eq!(indexed, vec![vec![0.25, 0.5]]);
+        assert_eq!(query["is_query"], serde_json::json!(true));
+        assert_eq!(indexing["is_query"], serde_json::json!(false));
+        assert_eq!(query["input"], serde_json::json!(["query text"]));
+        assert_eq!(indexing["input"], serde_json::json!(["document text"]));
+    }
+
+    #[cfg(feature = "ai")]
+    fn recorded_body(rx: &std::sync::mpsc::Receiver<String>) -> serde_json::Value {
+        let raw = rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("daemon embeddings request");
+        let body = raw
+            .split_once("\r\n\r\n")
+            .map(|(_, body)| body)
+            .unwrap_or("");
+        serde_json::from_str(body).expect("embeddings request JSON")
+    }
+
+    #[cfg(feature = "ai")]
+    fn daemon_embed_context() -> AiContext {
+        let binding = gobby_core::config::CapabilityBinding {
+            routing: gobby_core::config::AiRouting::Daemon,
+            transport: None,
+            api_base: None,
+            api_key: None,
+            model: Some("daemon-model".to_string()),
+            provider: Some("daemon-provider".to_string()),
+            task: None,
+            language: None,
+            target_lang: None,
+            profile: None,
+            candidates: None,
+            reasoning_effort: None,
+            verify_profile: None,
+            verify_model: None,
+            verify_api_key: None,
+        };
+        let raw = std::fs::read(
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../tests/runtime_grants/golden/direct_datastores.json"),
+        )
+        .expect("golden grant");
+        let grant: gobby_core::grant::GrantBundle =
+            serde_json::from_slice(raw.trim_ascii()).expect("parse golden grant");
+        AiContext {
+            bindings: gobby_core::ai_context::AiBindings {
+                embed: binding.clone(),
+                audio_transcribe: binding.clone(),
+                audio_translate: binding.clone(),
+                vision_extract: binding.clone(),
+                text_generate: binding,
+            },
+            tuning: gobby_core::config::AiTuning {
+                max_concurrency: 1,
+                keep_alive: None,
+            },
+            limiter: gobby_core::ai_context::AiLimiter::new(1),
+            tool_loop_limits: gobby_core::ai::generation::ToolLoopLimits::default(),
+            project_id: Some("project-interactive".to_string()),
+            grant: Some(gobby_core::ai_context::GrantAiState {
+                capabilities: grant.capabilities.clone(),
+                daemon_reachable: true,
+                bundle: grant,
+            }),
+        }
+    }
+
+    #[cfg(feature = "ai")]
+    struct DaemonRoute {
+        _lock: std::sync::MutexGuard<'static, ()>,
+        home: Option<std::ffi::OsString>,
+        daemon_url: Option<std::ffi::OsString>,
+        agent_token: Option<std::ffi::OsString>,
+        dir: std::path::PathBuf,
+        rx: std::sync::mpsc::Receiver<String>,
+    }
+
+    #[cfg(feature = "ai")]
+    static DAEMON_ROUTE_ENV: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[cfg(feature = "ai")]
+    impl DaemonRoute {
+        fn start() -> Self {
+            let _lock = DAEMON_ROUTE_ENV
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let (port, rx) = spawn_embed_server();
+            let dir = std::env::temp_dir().join(format!("gobby-embed-route-{port}"));
+            std::fs::create_dir_all(&dir).expect("temp home");
+            std::fs::write(dir.join("local_cli_token"), "embed-token\n").expect("token");
+            let url = format!("http://127.0.0.1:{port}");
+            let route = Self {
+                _lock,
+                home: std::env::var_os("GOBBY_HOME"),
+                daemon_url: std::env::var_os("GOBBY_DAEMON_URL"),
+                agent_token: std::env::var_os(gobby_core::local_token::AGENT_API_TOKEN_ENV),
+                dir,
+                rx,
+            };
+            // SAFETY: DAEMON_ROUTE_ENV is held until Drop restores these variables.
+            unsafe {
+                std::env::set_var("GOBBY_HOME", &route.dir);
+                std::env::set_var("GOBBY_DAEMON_URL", &url);
+                std::env::remove_var(gobby_core::local_token::AGENT_API_TOKEN_ENV);
+            }
+            route
+        }
+    }
+
+    #[cfg(feature = "ai")]
+    impl Drop for DaemonRoute {
+        fn drop(&mut self) {
+            restore_env("GOBBY_HOME", self.home.as_deref());
+            restore_env("GOBBY_DAEMON_URL", self.daemon_url.as_deref());
+            restore_env(
+                gobby_core::local_token::AGENT_API_TOKEN_ENV,
+                self.agent_token.as_deref(),
+            );
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    #[cfg(feature = "ai")]
+    fn restore_env(name: &str, value: Option<&std::ffi::OsStr>) {
+        // SAFETY: caller holds DAEMON_ROUTE_ENV and passes the values captured
+        // before this test overwrote the variables.
+        unsafe {
+            match value {
+                Some(value) => std::env::set_var(name, value),
+                None => std::env::remove_var(name),
+            }
+        }
+    }
+
+    #[cfg(feature = "ai")]
+    fn spawn_embed_server() -> (u16, std::sync::mpsc::Receiver<String>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind embed server");
+        let port = listener.local_addr().expect("server port").port();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            const RESPONSE: &str = r#"{"embeddings":[[0.25,0.5]],"model":"embed-model","dim":2}"#;
+            for _ in 0..2 {
+                let Ok((mut stream, _)) = listener.accept() else {
+                    break;
+                };
+                let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(5)));
+                let Ok(request) = read_recorded_request(&mut stream) else {
+                    break;
+                };
+                let _ = tx.send(request);
+                let _ = write_embed_response(&mut stream, RESPONSE);
+            }
+        });
+        (port, rx)
+    }
+
+    #[cfg(feature = "ai")]
+    fn read_recorded_request(stream: &mut std::net::TcpStream) -> std::io::Result<String> {
+        use std::io::Read;
+        let mut request = Vec::new();
+        let mut chunk = [0_u8; 1024];
+        loop {
+            let read = stream.read(&mut chunk)?;
+            if read == 0 {
+                break;
+            }
+            request.extend_from_slice(&chunk[..read]);
+            if let Some(header_end) = request.windows(4).position(|window| window == b"\r\n\r\n") {
+                let header = String::from_utf8_lossy(&request[..header_end]);
+                let Some(length) = header_content_length(&header) else {
+                    break;
+                };
+                if request.len() >= header_end + 4 + length {
+                    request.truncate(header_end + 4 + length);
+                    break;
+                }
+            }
+        }
+        String::from_utf8(request)
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
+    }
+
+    #[cfg(feature = "ai")]
+    fn header_content_length(header: &str) -> Option<usize> {
+        header.lines().find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            if name.eq_ignore_ascii_case("content-length") {
+                value.trim().parse().ok()
+            } else {
+                None
+            }
+        })
+    }
+
+    #[cfg(feature = "ai")]
+    fn write_embed_response(stream: &mut std::net::TcpStream, body: &str) -> std::io::Result<()> {
+        use std::io::Write;
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\
+             Connection: close\r\n\r\n{body}",
+            body.len()
         );
-        let indexing = gobby_core::ai::daemon::embeddings_request_body(
-            &["document".to_string()],
-            super::daemon_embedding_is_query(false),
-            None,
-            None,
-            None,
-        );
-        assert_eq!(query["is_query"].as_bool(), Some(true));
-        assert_eq!(indexing["is_query"].as_bool(), Some(false));
+        stream.write_all(response.as_bytes())?;
+        stream.flush()
     }
 }
