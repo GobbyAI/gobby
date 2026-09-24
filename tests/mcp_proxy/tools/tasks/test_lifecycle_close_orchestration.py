@@ -31,6 +31,7 @@ from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._factory import create_task_registry
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_orchestration import (
     launch_close_review,
+    promote_close_reviews,
     submit_close_review,
 )
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import CloseEvaluation
@@ -139,6 +140,133 @@ async def test_close_persists_and_launches_one_taskless_reviewer(
     assert result["criterion_indexes"] == [1, 2, 3]
     assert "criterion_count=3" in launch_args["prompt"]
     assert "criterion_indexes=[1, 2, 3]" in launch_args["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_immediate_launch_evaluates_the_admitted_review_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _Store(_review(status="queued", run_id=None))
+    registry = SimpleNamespace(
+        call=AsyncMock(return_value={"success": True, "run_id": _FIRST_REVIEW_RUN_ID})
+    )
+    ctx = _ctx(
+        registry=registry,
+        validation_config=TaskValidationConfig(candidates=["codex/gpt-5.6-terra"]),
+    )
+    _patch_store(monkeypatch, store)
+    evaluation = _evaluation()
+    calls = 0
+
+    async def evaluate(_ctx: RegistryContext, **_kwargs: Any) -> CloseEvaluation:
+        nonlocal calls
+        calls += 1
+        return evaluation
+
+    await evaluate(ctx)
+    result = await launch_close_review(
+        ctx,
+        evaluation=evaluation,
+        close_arguments=_arguments(),
+        evaluate_close=evaluate,
+    )
+
+    assert calls == 1
+    assert result["error"] == "close_review_required"
+    registry.call.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_later_promotion_revalidates_and_stales_when_the_fingerprint_changes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _Store(_review(status="queued", run_id=None))
+    ctx = _ctx(
+        registry=SimpleNamespace(call=AsyncMock()),
+        validation_config=TaskValidationConfig(candidates=["codex/gpt-5.6-terra"]),
+    )
+    _patch_store(monkeypatch, store)
+    calls = 0
+
+    async def evaluate(_ctx: RegistryContext, **_kwargs: Any) -> CloseEvaluation:
+        nonlocal calls
+        calls += 1
+        drifted = _evaluation()
+        drifted.extra["review_fingerprint"] = "changed"
+        return drifted
+
+    await promote_close_reviews(ctx, evaluate_close=evaluate, project_id="project")
+
+    assert calls == 1
+    assert store.finished_status == "stale"
+    assert store.review.result_payload is not None
+    assert store.review.result_payload["error"] == "close_review_stale"
+    assert store.review.result_payload["status"] == "stale"
+
+
+@pytest.mark.asyncio
+async def test_later_promotion_revalidates_a_review_that_waited(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _Store(_review(status="queued", run_id="queued-run"))
+    registry = SimpleNamespace(
+        call=AsyncMock(return_value={"success": True, "run_id": _FIRST_REVIEW_RUN_ID})
+    )
+    ctx = _ctx(
+        registry=registry,
+        validation_config=TaskValidationConfig(candidates=["codex/gpt-5.6-terra"]),
+    )
+    _patch_store(monkeypatch, store)
+    calls = 0
+
+    async def evaluate(_ctx: RegistryContext, **_kwargs: Any) -> CloseEvaluation:
+        nonlocal calls
+        calls += 1
+        return _evaluation()
+
+    await promote_close_reviews(ctx, evaluate_close=evaluate, project_id="project")
+
+    assert calls == 1
+    registry.call.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_same_promotion_revalidates_other_queued_reviews(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _Store(_review(status="queued", run_id=None))
+    older = replace(
+        _review(status="queued", run_id=None),
+        id="older",
+        review_fingerprint="older-close",
+        evidence_fingerprint="older-evidence",
+    )
+    store.extra_queued = [older]
+    registry = SimpleNamespace(
+        call=AsyncMock(return_value={"success": True, "run_id": _FIRST_REVIEW_RUN_ID})
+    )
+    ctx = _ctx(
+        registry=registry,
+        validation_config=TaskValidationConfig(candidates=["codex/gpt-5.6-terra"]),
+    )
+    _patch_store(monkeypatch, store)
+    seen: list[str] = []
+
+    async def evaluate(_ctx: RegistryContext, **kwargs: Any) -> CloseEvaluation:
+        seen.append(str(kwargs["task_id"]))
+        drifted = _evaluation()
+        drifted.extra["review_fingerprint"] = "changed"
+        return drifted
+
+    result = await launch_close_review(
+        ctx,
+        evaluation=_evaluation(),
+        close_arguments=_arguments(),
+        evaluate_close=evaluate,
+    )
+
+    assert seen == ["#42"]
+    assert result["error"] == "close_review_required"
 
 
 @pytest.mark.asyncio
@@ -387,7 +515,7 @@ async def test_close_task_persists_commit_before_promoted_review_launch(
     assert result["error"] == "close_review_required"
     assert result["commit_shas"] == [commit_sha]
     assert result["review_status"] == "running"
-    assert evaluation_count == 2
+    assert evaluation_count == 1
     agent_registry.call.assert_awaited_once()
 
 
@@ -1468,6 +1596,7 @@ class _Store:
         self.restored = False
         self.unjudged_attempts = unjudged_attempts
         self.queue_claimed = False
+        self.extra_queued: list[TaskCloseReview] = []
         self.reusable_rejection = reusable_rejection
         self.reuse_lookup: tuple[str, str] | None = None
 
@@ -1511,11 +1640,13 @@ class _Store:
     def claim_queued(self, *, project_id: str, max_concurrency: int) -> list[TaskCloseReview]:
         assert project_id == "project"
         assert max_concurrency > 0
+        extra = self.extra_queued
+        self.extra_queued = []
         if self.review.status != "queued" or self.queue_claimed:
-            return []
+            return extra
         self.queue_claimed = True
         self.review = replace(self.review, status="launching")
-        return [self.review]
+        return [*extra, self.review]
 
     def bind_run(self, _review_id: str, run_id: str) -> TaskCloseReview:
         self.review = replace(self.review, status="running", agent_run_id=run_id)

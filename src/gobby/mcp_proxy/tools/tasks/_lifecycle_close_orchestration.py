@@ -206,6 +206,8 @@ async def launch_close_review(
         ctx,
         evaluate_close=evaluate_close,
         project_id=str(task.project_id),
+        admitted_review_id=review.id,
+        admitted_evaluation=evaluation,
     )
     current = store.get(review.id)
     if current is None:
@@ -427,6 +429,8 @@ async def promote_close_reviews(
     *,
     evaluate_close: CloseEvaluator,
     project_id: str | None = None,
+    admitted_review_id: str | None = None,
+    admitted_evaluation: CloseEvaluation | None = None,
 ) -> list[str]:
     """Fill each project's reviewer slots from its durable FIFO queue."""
     store = TaskCloseReviewStore(ctx.task_manager.db)
@@ -449,19 +453,22 @@ async def promote_close_reviews(
                 promoted_ids.append(review.id)
                 args = review.close_arguments
                 try:
-                    evaluation = await evaluate_close(
-                        ctx,
-                        task_id=_required_string(args, "task_id"),
-                        reason=_required_string(args, "reason"),
-                        changes_summary=_optional_string(args, "changes_summary"),
-                        commit_sha=_optional_string(args, "commit_sha"),
-                        project_path=_optional_string(args, "project_path"),
-                        response_detail=_response_detail(args),
-                        override_justification=_optional_string(args, "override_justification"),
-                        scope_justification=_optional_string(args, "scope_justification"),
-                        closing_session_id=review.caller_session_id,
-                        run_close_review=True,
-                    )
+                    if review.id == admitted_review_id and admitted_evaluation is not None:
+                        evaluation = admitted_evaluation
+                    else:
+                        evaluation = await evaluate_close(
+                            ctx,
+                            task_id=_required_string(args, "task_id"),
+                            reason=_required_string(args, "reason"),
+                            changes_summary=_optional_string(args, "changes_summary"),
+                            commit_sha=_optional_string(args, "commit_sha"),
+                            project_path=_optional_string(args, "project_path"),
+                            response_detail=_response_detail(args),
+                            override_justification=_optional_string(args, "override_justification"),
+                            scope_justification=_optional_string(args, "scope_justification"),
+                            closing_session_id=review.caller_session_id,
+                            run_close_review=True,
+                        )
                 except Exception as exc:
                     logger.warning("Queued close-review revalidation failed", exc_info=True)
                     _finish_launch_error(store, review, str(exc))
