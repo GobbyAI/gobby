@@ -36,27 +36,11 @@ async def test_two_class_epic_recording(monkeypatch: pytest.MonkeyPatch) -> None
     epic_reviewer = (WORKFLOWS / "epic-reviewer.yaml").read_text(encoding="utf-8")
     qa_reviewer = (WORKFLOWS / "qa-reviewer.yaml").read_text(encoding="utf-8")
 
-    required_contract = (
-        "list_check_keys",
-        "one occurrence per proven class",
-        "principle",
-        "root cause",
-        "prevention",
-        "leaf task ref",
-        "confirmed fix evidence",
-        "epic-qa:<lesson_type>:<check-key>",
-        "source_kind=qa_rejection",
-        "code-domain",
-        "`guardrail_target=checklist` for qa-miss",
-        "`validation` for validation-miss",
-        "path tags",
-        "Incomplete or unproven classes mint nothing",
-    )
-    for phrase in required_contract:
-        assert phrase in skill
-    assert "fix confirmed on re-review" in epic_reviewer
-    assert "push-injected `qa-miss` lessons" in qa_reviewer
-    assert "mandatory first-pass checklist at review start" in qa_reviewer
+    # Agents no longer see the lesson contract; the recording service below stays.
+    for text in (skill, epic_reviewer, qa_reviewer):
+        assert "list_check_keys" not in text
+        assert "qa-miss" not in text
+        assert "record_review_lesson" not in text
 
     monkeypatch.setattr(
         "gobby.review_learning.service._current_project_id",

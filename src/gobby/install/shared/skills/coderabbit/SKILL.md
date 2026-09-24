@@ -20,12 +20,10 @@ Use this skill for `$gobby coderabbit [findings]`, pasted CodeRabbit comments,
 and files matching `./reports/coderabbit-*.md`.
 
 REQUIRED REFERENCE: `gobby:references/tasks/overview.md`.
-REQUIRED REFERENCE: `gobby:references/memory/review-lessons.md`.
 
 Before using these Gobby procedures, fetch the `gobby-skills:get_skill_file` schema
 with `get_tool_schema` in its own tool result. Then load each required reference:
 - `get_skill_file(name="gobby", path="references/tasks/overview.md")`
-- `get_skill_file(name="gobby", path="references/memory/review-lessons.md")`
 
 Follow each `page.next_cursor` with only `cursor` until null before continuing.
 
@@ -59,15 +57,13 @@ to implementation. If native Plan Mode blocks task creation, create or claim the
 The Plan Mode output MUST include a finding-by-finding table. Each supplied
 finding gets its own row with this exact shape:
 
-| # | Decision | Path/File Name | Relevant Memory/Lesson | Reason/Planned Fix |
-|---|---|---|---|---|
+| # | Decision | Path/File Name | Reason/Planned Fix |
+|---|---|---|---|
 
 - `#`: stable finding number from the report or plan triage order.
 - `Decision`: `fix` or `no-fix`.
 - `Path/File Name`: repo-relative path or report/artifact path for the finding;
   use comma-separated paths for multi-file findings.
-- `Relevant Memory/Lesson`: result from
-  `gobby-review-learning.recall_review_context`.
 - `Reason/Planned Fix`: planned fix for `fix`; reason/evidence for `no-fix`.
 
 No finding may be grouped away, summarized into another row, or silently
@@ -97,23 +93,18 @@ reason in `Reason/Planned Fix`. Do not silently drop stale comments.
 3. Ingest all supplied findings and every `./reports/coderabbit-*.md` file.
 4. For each report, identify whether it contains actionable findings or only a
    CodeRabbit CLI failure such as `Too many files`.
-5. Call `gobby-review-learning.recall_review_context` before deciding; include
-   the `Relevant memory/lesson` result in the finding table. Local memory wins
-   over generic CodeRabbit recommendations unless current code disproves it.
+5. Check project memory before deciding. Local memory wins over generic
+   CodeRabbit recommendations unless current code disproves it.
 6. Inspect current code for each finding before deciding.
-7. When `query_hints` or recalled lessons imply sibling risk, sweep with
+7. When a finding implies sibling risk, sweep with
    `gcode search` or `gcode grep` before fixing.
 8. Apply valid findings, including small nits, using normal repo patterns.
 9. Document stale or invalid findings as `no-fix` decisions.
-10. After triage/fix verification, call
-    `gobby-review-learning.record_review_lesson` for each confirmed reusable
-    `fix` finding and each concrete `no-fix-policy` pattern. Do not record
-    stale, invalid, or raw CLI-failure findings.
-11. Delete processed `./reports/coderabbit-*.md` files after their contents are
+10. Delete processed `./reports/coderabbit-*.md` files after their contents are
    fixed or documented. Leave unrelated report artifacts alone.
-12. Run focused validation for the touched areas, plus scoped lint/type checks
+11. Run focused validation for the touched areas, plus scoped lint/type checks
    when available.
-13. Commit with the task ref as `[<project_name>-#<task_number>] <type>: <summary>`
+12. Commit with the task ref as `[<project_name>-#<task_number>] <type>: <summary>`
     and close the task with `commit_sha`. Use the real project name in the task
     reference. Replace `<project_name>` and `<task_number>` with the real
     values; `project_name` is a placeholder, never a literal prefix.

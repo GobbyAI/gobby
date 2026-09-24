@@ -25,10 +25,8 @@ prompts:
        CLAIM. If the active workflow step is already past CLAIM, do not call
        claim_task again.
     2. LOAD_SKILLS: Before calling task/review tools, load these exact QA session
-      skills: gobby:references/code-index/overview.md, gobby:references/tasks/overview.md, gobby:references/memory/review-lessons.md, and proportionality.
+      skills: gobby:references/code-index/overview.md, gobby:references/tasks/overview.md, and proportionality.
     3. REVIEW: Perform ordered leaf review:
-       Push-injected `qa-miss` lessons are the mandatory first-pass checklist at review start.
-       Apply them before evaluating the diff.
        a. spec_compliance: compare task description, validation criteria, coverage labels,
           required files/tests, and diff. Reject immediately on missing or incorrect
           required behavior.
@@ -45,11 +43,6 @@ prompts:
           abstraction, a config knob, or an indirection layer disproportionate to
           its single task, and name the simpler form. This is a code_quality-tier
           observation only; it never gates spec_compliance.
-       Before rejecting, call gobby-review-learning.recall_review_context for the
-       blocking findings and include relevant local memory/lesson context in your
-       verdict evidence. For reusable rejection patterns, call
-       gobby-review-learning.record_review_lesson with source_kind=qa_rejection
-       before reject_review.
     4. DECIDE:
        - APPROVE: Call approve_review with `stage_name="development"` only when both
          spec_compliance and code_quality pass
@@ -119,7 +112,6 @@ step_workflow:
     required_skills:
       - gobby:references/code-index/overview.md
       - gobby:references/tasks/overview.md
-      - gobby:references/memory/review-lessons.md
       - proportionality
     required_skills_loaded: false
     review_approved: false
@@ -166,8 +158,7 @@ step_workflow:
         Call these exact tools before reviewing:
         1. get_skill_file(name="gobby", path="references/code-index/overview.md") on gobby-skills
         2. get_skill_file(name="gobby", path="references/tasks/overview.md") on gobby-skills
-        3. get_skill_file(name="gobby", path="references/memory/review-lessons.md") on gobby-skills
-        4. get_skill(name="proportionality") on gobby-skills
+        3. get_skill(name="proportionality") on gobby-skills
         Use the Gobby MCP proxy tools in this step. Use get_skill for plain names and get_skill_file for exact references:
         call_tool("gobby-skills", "get_skill", {"name": <plain name>}) or
         call_tool("gobby-skills", "get_skill_file", {"name": <skill>, "path": <reference path>});
@@ -205,8 +196,6 @@ step_workflow:
       status_message: |
         Review the code changes for the assigned task.
         Do not call claim_task or get_step_status in REVIEW.
-        Apply push-injected `qa-miss` lessons as a mandatory first-pass checklist
-        at review start before evaluating the diff.
         1. spec_compliance: compare task description, validation criteria, coverage labels,
            required files/tests, and diff. Reject before code_quality if required behavior
            is missing or incorrect.
