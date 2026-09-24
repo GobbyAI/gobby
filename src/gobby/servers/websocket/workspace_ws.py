@@ -20,7 +20,8 @@ from gobby.servers.websocket.terminal_ws_create import _bounded_code
 from gobby.storage.workspaces import Workspace
 from gobby.terminals.actor_scope import OPERATOR_ACTOR
 from gobby.terminals.leases import LifecyclePublicationError
-from gobby.terminals.workspace_ops import WorkspaceOpError, WorkspaceOps, WorkspaceSnapshot
+from gobby.terminals.workspace_contract import WorkspaceOpError, WorkspaceSnapshot
+from gobby.terminals.workspace_ops import WorkspaceOps
 from gobby.utils.datetime import to_json_safe
 
 if TYPE_CHECKING:

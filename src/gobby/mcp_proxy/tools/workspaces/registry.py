@@ -26,7 +26,8 @@ from gobby.storage.workspaces import (
     WorkspaceTab,
 )
 from gobby.terminals.actor_scope import OPERATOR_ACTOR, SESSION_ACTOR_PREFIX
-from gobby.terminals.workspace_ops import WorkspaceOpError, WorkspaceOps, storage_errors
+from gobby.terminals.workspace_contract import WorkspaceOpError, storage_errors
+from gobby.terminals.workspace_ops import WorkspaceOps
 from gobby.utils.datetime import to_json_safe
 from gobby.utils.session_context import get_request_principal, get_session_context
 

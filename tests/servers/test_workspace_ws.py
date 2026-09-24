@@ -23,7 +23,8 @@ from gobby.storage.terminals import TerminalManager
 from gobby.storage.workspaces import WorkspaceManager, WorkspaceNotFoundError
 from gobby.terminals.leases import LifecyclePublicationError, TerminalLeaseRegistry
 from gobby.terminals.runtime import PreparedSpawn, TerminalSpawnRequest
-from gobby.terminals.workspace_ops import WorkspaceEvent, WorkspaceOpError, WorkspaceOps
+from gobby.terminals.workspace_contract import WorkspaceEvent, WorkspaceOpError
+from gobby.terminals.workspace_ops import WorkspaceOps
 from gobby.terminals.write_coordinator import WriteCoordinator
 from gobby.terminals.ws_protocol import (
     TERMINAL_LIST_MAX_ENCODED_BYTES,
@@ -307,6 +308,8 @@ async def test_ops_round_trip_and_errors_are_typed(stack: _Stack) -> None:
     workspace = await op("workspace.create", name="ops")
     assert workspace["name"] == "ops" and workspace["machine_id"] == LOCAL_MACHINE_ID
     home = workspace["id"]
+    listed = await op("workspace.list")
+    assert any(row["id"] == home for row in listed)
     created = await op("tab.create", workspace=home, project_id=stack.project_id, title="one")
     tab, first = created["tabs"][0], created["panes"][0]
     second = (await op("pane.split", pane=first["id"], axis="horizontal"))["panes"][0]
