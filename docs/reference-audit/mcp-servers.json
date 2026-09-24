@@ -324,6 +324,20 @@
     },
     {
       "surface": "cli",
+      "command": "gobby mcp-proxy oauth-shape",
+      "reference": "src/gobby/install/shared/skills/gobby/references/mcp-servers/oauth.md",
+      "implementation": {
+        "path": "src/gobby/cli/mcp_oauth.py",
+        "symbol": "oauth_shape"
+      },
+      "verification": [
+        "source-audit",
+        "focused-mcp"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
       "command": "gobby mcp-proxy call-tool",
       "reference": "src/gobby/install/shared/skills/gobby/references/mcp-servers/discovery.md",
       "implementation": {

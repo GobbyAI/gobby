@@ -26,6 +26,10 @@ identity. Daemon connections reuse/refresh saved tokens. A connection that needs
 consent can open the local browser and retry once; consent failure requires
 operator login, not repeated tool calls or copying another instance's tokens.
 
+To check what is saved without exposing it, `gobby mcp-proxy oauth-shape INSTANCE`
+(`--global` for a machine-wide instance) prints each stored OAuth field as its
+type name or null, never its value. It reads storage directly; no daemon is needed.
+
 The supported flow uses authorization code, PKCE, and dynamic client registration.
 Stdio/WebSocket transport does not use this flow. If credentials were saved but
 the daemon update failed, fix the daemon connection and rerun login; do not claim
