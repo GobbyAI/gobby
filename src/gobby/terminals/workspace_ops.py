@@ -20,7 +20,7 @@ import math
 import re
 import secrets
 import time
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal, TypeVar
 
@@ -84,6 +84,17 @@ from gobby.terminals.write_coordinator import IdempotencyConflictError, WriteCoo
 
 logger = logging.getLogger(__name__)
 
+
+def _published_seq(result: object) -> int | None:
+    if isinstance(result, bool) or not isinstance(result, int | Mapping):
+        return None
+    if isinstance(result, int):
+        return result
+    seq = result.get("seq")
+    if isinstance(seq, bool) or not isinstance(seq, int):
+        return None
+    return seq
+
 _T = TypeVar("_T")
 
 PANE_SHELL_COMMAND = ("zsh",)
@@ -112,7 +123,7 @@ class WorkspaceOps:
         registry: TerminalRuntimeRegistry,
         coordinator: WriteCoordinator,
         sessions: SessionManager,
-        publish: Callable[[WorkspaceEvent], Awaitable[None]],
+        publish: Callable[[WorkspaceEvent], Awaitable[object]],
     ) -> None:
         self._workspaces = workspaces
         self._terminals = terminals
@@ -120,6 +131,7 @@ class WorkspaceOps:
         self._coordinator = coordinator
         self._sessions = sessions
         self._publish = publish
+        self._publish_fence = asyncio.Lock()
         self._detection_registry = DetectionManifestRegistry(workspaces.db)
 
     # -- workspaces ---------------------------------------------------------
@@ -212,9 +224,9 @@ class WorkspaceOps:
 
         A registered ``project_id`` with no explicit workspace resolves that
         project's default workspace instead of the projectless scratch. The rows
-        are read on the same thread as the sweep, with no await between them, so
-        a caller that takes the lifecycle watermark before its next await holds
-        rows and watermark from the same moment.
+        are read on the same thread as the sweep. Sweep removals are published
+        before the fence opens, and ``lifecycle_seq`` is that last removal so a
+        workspace publish waiting on the fence stays above the watermark.
         """
         if workspace is None and project_id is None:
             workspace = (await self.workspace_create(actor, node=node)).id
@@ -231,9 +243,18 @@ class WorkspaceOps:
             if created:
                 await self._emit("workspace.created", resolved.id, workspace=resolved)
             workspace = resolved.id
-        snapshot, change = await self._db(self._snapshot_storage, workspace, node)
-        await self._publish_removal(snapshot.workspace.id, change)
-        return snapshot
+        async with self._publish_fence:
+            snapshot, change = await self._db(self._snapshot_storage, workspace, node)
+            seq = await self._publish_removal(snapshot.workspace.id, change, fenced=False)
+        if seq is None:
+            return snapshot
+        return WorkspaceSnapshot(
+            node=snapshot.node,
+            workspace=snapshot.workspace,
+            tabs=snapshot.tabs,
+            panes=snapshot.panes,
+            lifecycle_seq=seq,
+        )
 
     # -- tabs ---------------------------------------------------------------
 
@@ -629,13 +650,25 @@ class WorkspaceOps:
             )
         return snapshot, change
 
-    async def _publish_removal(self, workspace_id: str, change: LayoutChange) -> None:
+    async def _publish_removal(
+        self, workspace_id: str, change: LayoutChange, *, fenced: bool = True
+    ) -> int | None:
+        seq: int | None = None
         if change.removed_panes:
-            await self._emit(
-                "pane.removed", workspace_id, tabs=change.tabs, panes=change.removed_panes
+            seq = await self._emit(
+                "pane.removed",
+                workspace_id,
+                tabs=change.tabs,
+                panes=change.removed_panes,
+                fenced=fenced,
             )
         if change.removed_tabs:
-            await self._emit("tab.removed", workspace_id, tabs=change.removed_tabs)
+            removed = await self._emit(
+                "tab.removed", workspace_id, tabs=change.removed_tabs, fenced=fenced
+            )
+            if removed is not None:
+                seq = removed
+        return seq
 
     async def _emit(
         self,
@@ -645,8 +678,22 @@ class WorkspaceOps:
         workspace: Workspace | None = None,
         tabs: Iterable[WorkspaceTab] = (),
         panes: Iterable[WorkspacePane] = (),
-    ) -> None:
-        await self._publish(
+        fenced: bool = True,
+    ) -> int | None:
+        if not fenced:
+            return await self._publish_now(kind, workspace_id, workspace, tabs, panes)
+        async with self._publish_fence:
+            return await self._publish_now(kind, workspace_id, workspace, tabs, panes)
+
+    async def _publish_now(
+        self,
+        kind: WorkspaceEventKind,
+        workspace_id: str,
+        workspace: Workspace | None,
+        tabs: Iterable[WorkspaceTab],
+        panes: Iterable[WorkspacePane],
+    ) -> int | None:
+        result = await self._publish(
             WorkspaceEvent(
                 kind=kind,
                 workspace_id=workspace_id,
@@ -655,6 +702,7 @@ class WorkspaceOps:
                 panes=[pane.to_dict() for pane in panes],
             )
         )
+        return _published_seq(result)
 
     def _scope(self, actor: str) -> ActorScope:
         try:
@@ -860,7 +908,7 @@ class WorkspaceOps:
         self, actor: str, pane: str, node: str | None
     ) -> tuple[WorkspacePane, Terminal]:
         """The pane and the in-scope terminal behind it."""
-        scope = self._scope(actor)
+        scope = await self._db(self._scope, actor)
         row = _pane_of(await self._enter(pane, node), pane)[1]
         terminal = (
             None

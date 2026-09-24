@@ -106,6 +106,7 @@ class WorkspaceSnapshot:
     workspace: Workspace
     tabs: tuple[WorkspaceTab, ...]
     panes: tuple[WorkspacePane, ...]
+    lifecycle_seq: int | None = None
 
 
 @contextmanager

@@ -18,11 +18,20 @@ from gobby.servers.websocket.models import WebSocketConfig
 from gobby.servers.websocket.server import (
     SLOW_WEBSOCKET_HANDLER_SECONDS,
     WebSocketServer,
+    _off_loop_chain_key,
     websockets_logger,
 )
 from gobby.terminals.leases import TerminalLeaseRegistry
 
 pytestmark = pytest.mark.unit
+
+
+def test_workspace_op_chain_ignores_terminal_id() -> None:
+    """A workspace_op stays in the workspace queue even when it names a terminal."""
+    message = json.dumps(
+        {"type": "workspace_op", "terminal_id": "term-1", "op": "pane.resize"}
+    )
+    assert _off_loop_chain_key(message) == "workspace_op"
 
 
 def test_default_bind_is_localhost() -> None:
@@ -478,7 +487,10 @@ async def test_later_terminal_attach_waits_for_the_one_already_running() -> None
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("message_type", ["terminal_take_control", "workspace_op"])
+@pytest.mark.parametrize(
+    "message_type",
+    ["terminal_take_control", "workspace_op", "terminal_resize"],
+)
 async def test_slow_terminal_operation_leaves_the_read_loop(message_type: str) -> None:
     """take_control and workspace_op must not hold the next frame for their whole run."""
     server = WebSocketServer(
@@ -672,6 +684,47 @@ async def test_disconnect_during_attach_closes_the_proxy_frame() -> None:
         await asyncio.wait_for(connection, timeout=2)
         assert closed.is_set()
     finally:
+        socket.close()
+        connection.cancel()
+        try:
+            await connection
+        except asyncio.CancelledError:
+            pass
+
+
+@pytest.mark.asyncio
+async def test_disconnect_lets_workspace_op_finish_after_its_commit() -> None:
+    """A dropped socket must not cancel a workspace_op that already committed."""
+    server = WebSocketServer(
+        config=WebSocketConfig(),
+        mcp_manager=MagicMock(),
+        auth_callback=AsyncMock(return_value="test-user"),
+    )
+    _quiet_disconnect(server)
+    committed = asyncio.Event()
+    release = asyncio.Event()
+    finished = asyncio.Event()
+
+    async def slow(_websocket: Any, _data: dict[str, Any]) -> None:
+        committed.set()
+        await release.wait()
+        finished.set()
+
+    server._dispatch_table = {"workspace_op": slow}
+    socket = _ScriptedSocket(
+        [json.dumps({"type": "workspace_op", "request_id": "op-1", "op": "tab.close"})],
+        hold_open=True,
+    )
+    connection = asyncio.create_task(server.handle_connection(socket))
+    try:
+        await asyncio.wait_for(committed.wait(), timeout=2)
+        socket.close()
+        await asyncio.wait_for(connection, timeout=2)
+        release.set()
+        await asyncio.wait_for(finished.wait(), timeout=2)
+        assert finished.is_set()
+    finally:
+        release.set()
         socket.close()
         connection.cancel()
         try:
