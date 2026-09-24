@@ -11,6 +11,7 @@ from gobby.storage.session_models import Session
 from gobby.tasks.transcript_evidence import (
     _coerce_datetime,
     _derive_transcript_evidence_sync,
+    _EvidenceSnapshot,
     _load_snapshot,
     _store_snapshot,
 )
@@ -38,12 +39,11 @@ async def derive_prelink_runs(
     if start is None:
         return ()
     snapshot_key = f"{session.id}:prelink"
-    evidence, snapshot = await run_in_transcript_evidence_pool(
-        _derive_transcript_evidence_sync,
+    runs, snapshot = await run_in_transcript_evidence_pool(
+        _derive_prelink_runs_sync,
+        start,
         session,
-        None,
         detection,
-        set(),
         repo_path,
         archive_dir,
         require_local_session_ownership(session),
@@ -51,8 +51,26 @@ async def derive_prelink_runs(
     )
     if snapshot is not None:
         _store_snapshot(snapshot_key, snapshot)
-    return tuple(
+    return runs
+
+
+def _derive_prelink_runs_sync(
+    start: datetime,
+    session: Session,
+    detection: ValidationDetectionConfig,
+    repo_path: str,
+    archive_dir: str | None,
+    local_machine_id: str,
+    snapshot: _EvidenceSnapshot | None,
+) -> tuple[tuple[TranscriptValidationRun, ...], _EvidenceSnapshot | None]:
+    # Each rebuilt run re-classifies its command, so stripping stays in the pool
+    # with the parse; on the daemon loop it stalled close previews (#22708).
+    evidence, snapshot = _derive_transcript_evidence_sync(
+        session, None, detection, set(), repo_path, archive_dir, local_machine_id, snapshot
+    )
+    runs = tuple(
         replace(run, output=None)
         for run in (*evidence.validation_runs, *evidence.command_runs)
         if run.started_at < start
     )
+    return runs, snapshot
