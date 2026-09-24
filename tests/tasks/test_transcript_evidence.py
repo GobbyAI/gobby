@@ -623,6 +623,105 @@ async def test_codex_consumes_nested_exec_outcome_and_apply_patch_edit(tmp_path:
     ]
 
 
+def _pty_chunk(body: str) -> str:
+    return f"Chunk ID: chunk-1\nWall time: 0.1 seconds\n{body}"
+
+
+@pytest.mark.asyncio
+async def test_write_stdin_command_reaches_close_evidence(tmp_path: Path) -> None:
+    """A PTY opened as zsh must credit the command typed with write_stdin."""
+    command = "cargo nextest run -p gobby-core --lib failed_case"
+    transcript = tmp_path / "codex.jsonl"
+    _write_jsonl(
+        transcript,
+        [
+            _codex_response_item(
+                {
+                    "type": "function_call",
+                    "call_id": "exec-zsh",
+                    "name": "exec_command",
+                    "arguments": json.dumps({"cmd": "zsh", "tty": True}),
+                },
+                BASE_TIME,
+            ),
+            _codex_response_item(
+                {
+                    "type": "function_call_output",
+                    "call_id": "exec-zsh",
+                    "output": _pty_chunk("Process running with session ID 42\n"),
+                },
+                BASE_TIME + timedelta(seconds=1),
+            ),
+            _codex_response_item(
+                {
+                    "type": "function_call",
+                    "call_id": "stdin-red",
+                    "name": "write_stdin",
+                    "arguments": json.dumps({"session_id": 42, "chars": command + "\n"}),
+                },
+                BASE_TIME + timedelta(seconds=2),
+            ),
+            _codex_response_item(
+                {
+                    "type": "function_call_output",
+                    "call_id": "stdin-red",
+                    "output": _pty_chunk(
+                        "Process exited with code 1\nOutput:\nassertion left == right failed\n"
+                    ),
+                },
+                BASE_TIME + timedelta(seconds=3),
+            ),
+            _codex_response_item(
+                {
+                    "type": "function_call",
+                    "call_id": "exec-zsh-green",
+                    "name": "exec_command",
+                    "arguments": json.dumps({"cmd": "zsh", "tty": True}),
+                },
+                BASE_TIME + timedelta(seconds=4),
+            ),
+            _codex_response_item(
+                {
+                    "type": "function_call_output",
+                    "call_id": "exec-zsh-green",
+                    "output": _pty_chunk("Process running with session ID 43\n"),
+                },
+                BASE_TIME + timedelta(seconds=5),
+            ),
+            _codex_response_item(
+                {
+                    "type": "function_call",
+                    "call_id": "stdin-green",
+                    "name": "write_stdin",
+                    "arguments": json.dumps({"session_id": 43, "chars": command + "\n"}),
+                },
+                BASE_TIME + timedelta(seconds=6),
+            ),
+            _codex_response_item(
+                {
+                    "type": "function_call_output",
+                    "call_id": "stdin-green",
+                    "output": _pty_chunk("Process exited with code 0\nOutput:\n1 passed\n"),
+                },
+                BASE_TIME + timedelta(seconds=7),
+            ),
+        ],
+    )
+
+    evidence = await derive_transcript_evidence(
+        _session("codex", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        set(),
+        str(tmp_path),
+    )
+
+    assert [(run.command, run.outcome, run.exit_code) for run in evidence.validation_runs] == [
+        (command, "failure", 1),
+        (command, "success", 0),
+    ]
+
+
 async def test_codex_tracks_apply_patch_inside_functions_exec(tmp_path: Path) -> None:
     transcript = tmp_path / "codex.jsonl"
     patch = "*** Begin Patch\n*** Update File: src/changed.py\n@@\n-old\n+new\n*** End Patch\n"
