@@ -138,11 +138,7 @@ pub fn render_sidebar<W: WorkspaceView>(
     draw_separator_column(
         frame,
         area,
-        if is_navigating {
-            p.accent
-        } else {
-            p.surface_dim
-        },
+        if is_navigating { p.accent } else { p.overlay0 },
     );
 
     let machines = machine_rows(ws, chrome);

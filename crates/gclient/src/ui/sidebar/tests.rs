@@ -213,3 +213,35 @@ fn list_scroll_clamps_to_the_last_page() {
     assert_eq!(metrics.viewport_rows, 4);
     assert!(!should_show_scrollbar(list_metrics(3, 4, 0)));
 }
+
+#[test]
+fn edge_column_draws_in_overlay0_and_in_accent_while_navigating() {
+    use crate::theme::{Theme, ThemeKind};
+    let ws = scripted_workspace();
+    let area = Rect::new(0, 0, 26, 12);
+    for kind in [ThemeKind::Dark, ThemeKind::Light] {
+        for navigating in [false, true] {
+            let mut chrome = Chrome::new(Theme::new(kind));
+            if navigating {
+                chrome.mode = Mode::Navigate;
+            }
+            let p = &chrome.palette;
+            // The board's `border-right: 1px solid overlay0`; the accent
+            // marks navigate mode.
+            let want = if navigating { p.accent } else { p.overlay0 };
+            let mut terminal = Terminal::new(TestBackend::new(26, 12)).unwrap();
+            terminal
+                .draw(|frame| {
+                    render_sidebar(frame, area, &ws, &chrome);
+                })
+                .unwrap();
+            let buffer = terminal.backend().buffer();
+            for y in 0..area.height {
+                let cell = &buffer[(25, y)];
+                assert_eq!(cell.symbol(), "│", "{kind:?} row {y}");
+                assert_eq!(cell.fg, want, "{kind:?} navigating={navigating} row {y}");
+                assert_eq!(cell.bg, p.panel_bg, "{kind:?} row {y}");
+            }
+        }
+    }
+}

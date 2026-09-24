@@ -1197,12 +1197,13 @@ switch_project = "ctrl+1..9"
                     // address and backend tokens (#22572), and again when pane
                     // chrome moved to the pane edges (#22617), and again when
                     // row 0 went to the menu bar, the status line spanned the
-                    // frame and every pane drew its four edges (#22745):
+                    // frame and every pane drew its four edges, and again when
+                    // the sidebar edge took overlay0 (#22745):
                     // 4.1.3 requires a glyph change to fail here, so this
                     // digest moves only alongside a deliberate render change.
                     assert_eq!(
                         frame_digest(&terminal),
-                        "221990848249ef010f89f395dde41a21ccd9049ae8e9bbc703d2ba0001d31d2c"
+                        "8f5bb57bbe77d128a6618603f95c5d8f3c2c9ac0baa440e13dd9a88f3d359276"
                     );
                 });
         }
