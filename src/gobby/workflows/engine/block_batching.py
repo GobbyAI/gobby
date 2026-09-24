@@ -16,7 +16,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from gobby.hooks.events import EVENT_TYPE_CLI_SUPPORT, HookEventType, SessionSource
+from gobby.hooks.events import (
+    EVENT_TYPE_CLI_SUPPORT,
+    HookEventType,
+    SessionSource,
+    parse_session_source,
+)
 
 #: Payload keys naming the concurrent agent context inside one session.
 AGENT_CONTEXT_PAYLOAD_KEYS = ("agent_id", "subagent_id")
@@ -38,6 +43,28 @@ def agent_context_key(event_data: dict[str, Any]) -> str:
         if isinstance(value, str) and value:
             return value
     return ""
+
+
+def operator_event_is_subagent(
+    event_data: dict[str, Any],
+    source: SessionSource | str | None,
+    variables: dict[str, Any],
+) -> bool:
+    """Whether this tool event must not drive an operator terminal channel.
+
+    Spawned agents are always blocked. A non-empty ``agent_context_key`` is the
+    issuing native subagent on any CLI. Claude Code omits that key on the main
+    thread, so an empty key is the parent even while ``is_subagent`` is set.
+    Codex and Grok tool events do not carry the key, and those calls keep the
+    session flag.
+    """
+    if variables.get("is_spawned_agent"):
+        return True
+    if agent_context_key(event_data):
+        return True
+    if parse_session_source(source) == SessionSource.CLAUDE:
+        return False
+    return bool(variables.get("is_subagent"))
 
 
 def block_scope(variables: dict[str, Any], context: str) -> dict[str, Any]:

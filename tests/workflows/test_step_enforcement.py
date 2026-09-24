@@ -103,11 +103,12 @@ def _make_event(
     event_type: HookEventType = HookEventType.BEFORE_TOOL,
     data: dict[str, Any] | None = None,
     metadata: dict[str, Any] | None = None,
+    source: SessionSource = SessionSource.CLAUDE,
 ) -> HookEvent:
     return HookEvent(
         event_type=event_type,
         session_id=SESSION_ID,
-        source=SessionSource.CLAUDE,
+        source=source,
         timestamp=datetime.now(UTC),
         data=data or {},
         metadata=metadata or {},
@@ -1961,13 +1962,28 @@ class TestStepTransitions:
         )
 
 
-def _operator_tool_event(tool: str) -> HookEvent:
-    return _make_event(
-        data={
-            "tool_name": "mcp__gobby__call_tool",
-            "tool_input": {"server_name": "gobby-sessions", "tool_name": tool, "arguments": {}},
-        },
-    )
+def _operator_tool_event(
+    tool: str,
+    *,
+    agent_id: str | None = None,
+    source: SessionSource = SessionSource.CLAUDE,
+) -> HookEvent:
+    """Claude Code PreToolUse shape: agent_id is set only inside a subagent."""
+    data: dict[str, Any] = {
+        "session_id": "claude-session-123",
+        "transcript_path": "/path/to/transcript.jsonl",
+        "scratchpad_dir": "/path/to/scratchpad",
+        "prompt_id": "prompt-uuid",
+        "permission_mode": "default",
+        "cwd": "/path/to/project",
+        "tool_name": "mcp__gobby__call_tool",
+        "tool_input": {"server_name": "gobby-sessions", "tool_name": tool, "arguments": {}},
+        "tool_use_id": "toolu_01WRLH44F8z3QpBzB1CfkiAM",
+    }
+    if agent_id is not None:
+        data["agent_id"] = agent_id
+        data["agent_type"] = "general-purpose"
+    return _make_event(data=data, source=source)
 
 
 def _setup_operator_tool_session(
@@ -1998,8 +2014,11 @@ async def test_operator_tools_blocked_for_spawned_agents_and_subagents(
     """Spawned agents and subagents cannot reach terminals from any step shape."""
     _setup_operator_tool_session(db, manager, instance_mgr, step)
 
+    payload_agent_id = "agent-uuid" if flag == "is_subagent" else None
     response = await engine.evaluate(
-        _operator_tool_event(tool), session_id=SESSION_ID, variables={flag: True}
+        _operator_tool_event(tool, agent_id=payload_agent_id),
+        session_id=SESSION_ID,
+        variables={flag: True},
     )
 
     assert response.decision == "block"
@@ -2029,6 +2048,105 @@ async def test_operator_tools_allowed_for_interactive_sessions(
     )
 
     assert response.decision == "allow", response.reason
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("step", [None, "terminate", "implement"])
+@pytest.mark.parametrize("tool", ["send_keys", "capture_output"])
+async def test_claude_parent_operator_tools_allowed_while_native_subagent_runs(
+    db: "HubDatabase",
+    manager: AgentDefinitionManager,
+    engine: RuleEngine,
+    instance_mgr: AgentStepInstanceManager,
+    tool: str,
+    step: str | None,
+) -> None:
+    """A Claude parent thread keeps terminal tools while a native subagent is alive."""
+    _setup_operator_tool_session(db, manager, instance_mgr, step)
+
+    response = await engine.evaluate(
+        _operator_tool_event(tool),
+        session_id=SESSION_ID,
+        variables={"is_subagent": True, "subagent_count": 1, "is_spawned_agent": False},
+    )
+
+    assert response.decision == "allow", response.reason
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("step", [None, "terminate", "implement"])
+@pytest.mark.parametrize("tool", ["send_keys", "capture_output"])
+async def test_claude_subagent_payload_blocks_operator_tools(
+    db: "HubDatabase",
+    manager: AgentDefinitionManager,
+    engine: RuleEngine,
+    instance_mgr: AgentStepInstanceManager,
+    tool: str,
+    step: str | None,
+) -> None:
+    """The same call stays blocked when the Claude payload carries the subagent id."""
+    _setup_operator_tool_session(db, manager, instance_mgr, step)
+
+    response = await engine.evaluate(
+        _operator_tool_event(tool, agent_id="agent-uuid"),
+        session_id=SESSION_ID,
+        variables={"is_subagent": True, "subagent_count": 1},
+    )
+
+    assert response.decision == "block"
+    assert response.reason is not None
+    assert "[operator-tool-enforcement]" in response.reason
+    assert f"MCP tool 'gobby-sessions:{tool}' is blocked" in response.reason
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("agent_id", [None, "agent-uuid"])
+@pytest.mark.parametrize("tool", ["send_keys", "capture_output"])
+async def test_spawned_agent_operator_tools_blocked_with_or_without_payload_identity(
+    db: "HubDatabase",
+    manager: AgentDefinitionManager,
+    engine: RuleEngine,
+    instance_mgr: AgentStepInstanceManager,
+    tool: str,
+    agent_id: str | None,
+) -> None:
+    """Spawned agents stay blocked whether or not the payload names a subagent."""
+    _setup_operator_tool_session(db, manager, instance_mgr, None)
+
+    response = await engine.evaluate(
+        _operator_tool_event(tool, agent_id=agent_id),
+        session_id=SESSION_ID,
+        variables={"is_spawned_agent": True, "is_subagent": False},
+    )
+
+    assert response.decision == "block"
+    assert response.reason is not None
+    assert "[operator-tool-enforcement]" in response.reason
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source", [SessionSource.CODEX, SessionSource.GROK])
+@pytest.mark.parametrize("tool", ["send_keys", "capture_output"])
+async def test_operator_tools_fall_back_to_session_flag_without_per_event_identity(
+    db: "HubDatabase",
+    manager: AgentDefinitionManager,
+    engine: RuleEngine,
+    instance_mgr: AgentStepInstanceManager,
+    tool: str,
+    source: SessionSource,
+) -> None:
+    """Codex and Grok tool events omit per-event identity, so the session flag still blocks."""
+    _setup_operator_tool_session(db, manager, instance_mgr, None)
+
+    response = await engine.evaluate(
+        _operator_tool_event(tool, source=source),
+        session_id=SESSION_ID,
+        variables={"is_subagent": True, "subagent_count": 1},
+    )
+
+    assert response.decision == "block"
+    assert response.reason is not None
+    assert "[operator-tool-enforcement]" in response.reason
 
 
 # Workflow with on_mcp_error handlers for testing app-level failure routing
