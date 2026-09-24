@@ -281,6 +281,9 @@ class WorkspaceOps:
     async def workspace_list(self, actor: str, *, node: str | None = None) -> tuple[Workspace, ...]:
         """Every workspace on the node, lowest ref first."""
         del actor
+        return await asyncio.to_thread(self._list_workspaces, node)
+
+    def _list_workspaces(self, node: str | None) -> tuple[Workspace, ...]:
         with storage_errors():
             machine = self._workspaces.resolve_node(node)
             _require_local(machine)
@@ -699,16 +702,19 @@ class WorkspaceOps:
 
     async def _enter(self, reference: str, node: str | None) -> WorkspaceTarget:
         """Resolve ``reference`` and sweep its workspace, re-resolving after a prune."""
-        target = self._resolve(reference, node)
+        target = await asyncio.to_thread(self._resolve, reference, node)
         if (await self._sweep(target.workspace.id)).removed_panes:
-            target = self._resolve(reference, node)
+            target = await asyncio.to_thread(self._resolve, reference, node)
         return target
 
     async def _sweep(self, workspace_id: str) -> LayoutChange:
-        with storage_errors():
-            change = self._workspaces.sweep_dead_panes(workspace_id)
+        change = await asyncio.to_thread(self._sweep_storage, workspace_id)
         await self._publish_removal(workspace_id, change)
         return change
+
+    def _sweep_storage(self, workspace_id: str) -> LayoutChange:
+        with storage_errors():
+            return self._workspaces.sweep_dead_panes(workspace_id)
 
     async def _publish_removal(self, workspace_id: str, change: LayoutChange) -> None:
         if change.removed_panes:
