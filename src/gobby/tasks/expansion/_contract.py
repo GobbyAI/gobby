@@ -307,6 +307,38 @@ def _contract_phase_index(self: Any, plan_doc: PlanDocument) -> dict[str, PlanSe
     return phase_by_section_id
 
 
+_SYNTHESIS_HASH_REFRESH_OUTCOMES = frozenset({"fresh", "replaced_malformed"})
+
+
+def _refresh_registered_plan_after_synthesis(
+    self: Any,
+    *,
+    plan_id: str | None,
+    project_id: str | None,
+    outcome: str,
+) -> None:
+    """Refresh a registered plan after manifest synthesis changes the file bytes.
+
+    Row update and coverage generation stay separate, matching
+    ``gobby-plans:update_plan_hash``: the hash transaction finishes before
+    manifest I/O, and a coverage failure leaves the updated row in place.
+    """
+    if plan_id is None or outcome not in _SYNTHESIS_HASH_REFRESH_OUTCOMES:
+        return
+    manager = LocalPlanManager(self.db)
+    record, changed = manager.update_plan_hash_record(plan_id, project_id=project_id)
+    if not changed or record.plan_kind != "implementation":
+        return
+    try:
+        manager.generate_coverage_manifest(record)
+    except (OSError, ValueError, psycopg.Error):
+        logger.warning(
+            "Registered plan hash refreshed but coverage manifest was not regenerated",
+            extra={"plan_id": plan_id, "project_id": project_id, "outcome": outcome},
+            exc_info=True,
+        )
+
+
 def _parse_contract_plan(self: Any, run: ExpansionRun, task: Task) -> PlanDocument | None:
     if not run.plan_file:
         return None
@@ -354,6 +386,12 @@ def _parse_contract_plan(self: Any, run: ExpansionRun, task: Task) -> PlanDocume
                         level="info",
                         message="Synthesized missing Plan-Coverage Contract manifest",
                         extra={"plan_file": str(plan_path), "outcome": outcome},
+                    )
+                    _refresh_registered_plan_after_synthesis(
+                        self,
+                        plan_id=registry_plan_id,
+                        project_id=task.project_id,
+                        outcome=outcome,
                     )
                     try:
                         return parse_plan(
