@@ -174,13 +174,13 @@ class AttentionRosterRow:
     terminal_context: Mapping[str, object]
     terminal_id: str | None
     terminal: AttentionRosterTerminal | None
+    task_title: str | None = None
 
     @classmethod
     def from_row(cls, row: Row) -> AttentionRosterRow:
         terminal_id = row.get("terminal_id")
         terminal = None
         if terminal_id is not None and row.get("terminal_backend") is not None:
-            raw_locator = row.get("terminal_locator")
             terminal = AttentionRosterTerminal(
                 id=str(terminal_id),
                 backend=str(row["terminal_backend"]),
@@ -196,9 +196,8 @@ class AttentionRosterRow:
                     if row.get("terminal_session_name") is not None
                     else None
                 ),
-                locator=dict(raw_locator) if isinstance(raw_locator, Mapping) else None,
+                locator=_json_object(row.get("terminal_locator")),
             )
-        raw_context = row.get("terminal_context")
         return cls(
             kind=cast(AttentionRosterKind, str(row["roster_kind"])),
             source_id=str(row["source_id"]),
@@ -211,9 +210,10 @@ class AttentionRosterRow:
             model=str(row["model"]) if row.get("model") is not None else None,
             pid=int(row["pid"]) if row.get("pid") is not None else None,
             updated_at=row.get("updated_at"),
-            terminal_context=(dict(raw_context) if isinstance(raw_context, Mapping) else {}),
+            terminal_context=_json_object(row.get("terminal_context")) or {},
             terminal_id=str(terminal_id) if terminal_id is not None else None,
             terminal=terminal,
+            task_title=str(row["task_title"]) if row.get("task_title") is not None else None,
         )
 
 
@@ -223,6 +223,13 @@ def _timestamp(value: object) -> str | None:
     if isinstance(value, datetime):
         return value.isoformat()
     return str(value)
+
+
+def _json_object(value: object) -> dict[str, Any] | None:
+    # The hub row boundary hands JSONB columns over as serialized JSON text.
+    if isinstance(value, str):
+        value = json.loads(value)
+    return dict(value) if isinstance(value, Mapping) else None
 
 
 class AttentionStateManager:
@@ -301,7 +308,8 @@ class AttentionStateManager:
                 terminal.machine_id::text AS terminal_machine_id,
                 terminal.host_epoch AS terminal_host_epoch,
                 terminal.session_name AS terminal_session_name,
-                terminal.locator AS terminal_locator
+                terminal.locator AS terminal_locator,
+                task.title AS task_title
             FROM agent_runs run
             LEFT JOIN tasks task ON task.id = run.task_id
             LEFT JOIN LATERAL (
@@ -322,8 +330,12 @@ class AttentionStateManager:
                 session.id::text AS source_id,
                 session.id::text AS session_id,
                 session.status AS lifecycle_status,
-                NULL::text AS task_id,
-                NULL::text AS task_ref,
+                claimed.id::text AS task_id,
+                CASE
+                    WHEN claimed.id IS NULL THEN NULL
+                    WHEN claimed.seq_num IS NOT NULL THEN '#' || claimed.seq_num::text
+                    ELSE LEFT(claimed.id::text, 8)
+                END AS task_ref,
                 NULL::text AS task_stage,
                 session.source AS provider,
                 session.model,
@@ -336,7 +348,8 @@ class AttentionStateManager:
                 terminal.machine_id::text AS terminal_machine_id,
                 terminal.host_epoch AS terminal_host_epoch,
                 terminal.session_name AS terminal_session_name,
-                terminal.locator AS terminal_locator
+                terminal.locator AS terminal_locator,
+                claimed.title AS task_title
             FROM sessions session
             LEFT JOIN LATERAL (
                 SELECT candidate.*
@@ -346,6 +359,14 @@ class AttentionStateManager:
                 ORDER BY candidate.updated_at DESC
                 LIMIT 1
             ) terminal ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT owned.id, owned.seq_num, owned.title
+                FROM tasks owned
+                WHERE owned.claimed_by_session_id = session.id
+                  AND owned.closed_at IS NULL
+                ORDER BY owned.updated_at DESC, owned.id
+                LIMIT 1
+            ) claimed ON TRUE
             WHERE session.status = ANY(%s)
 
             ORDER BY roster_kind, source_id
