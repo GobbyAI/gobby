@@ -10,4 +10,10 @@ rules:
     effects:
       - type: block
         reason: |
-          This session has claimed tasks: {{ claimed_tasks.values() | list | join(', ') or '(unknown)' }}. You must commit and clear any gates before closing the task(s).
+          This session has claimed tasks: {{ claimed_tasks.values() | list | join(', ') or '(unknown)' }}. Each one needs a legal exit before the turn can end:
+          - Done: commit its files, clear any gates, then call gobby-tasks:close_task with the commit_sha.
+          - Waiting on a running agent or close review: call gobby-agents:wait_for_agent, then end the turn.
+          - Waiting on a restart, landing or reply from another session: call gobby-agents:wait_for_coordination, then end the turn.
+          - Blocked by another open task: record it with gobby-tasks:add_dependency (task_id=<claimed>, depends_on=<blocker>).
+          - Stuck or needing a human decision: call gobby-tasks:escalate_task with the reason.
+          Restating status without taking one of these exits keeps this gate firing.
