@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import time
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -141,10 +142,22 @@ def _consume_inbox_delivery_receipt(
     envelope_id: str | None,
     *,
     processed_dir: Path,
-) -> None:
-    """CAS the receipt without re-executing the original hook, then drop the file."""
+) -> bool:
+    """Claim the ack, CAS the receipt without re-executing the hook, then drop it.
+
+    Per-hook sweeps and the drain list and read the same ack file concurrently.
+    The atomic rename lets exactly one of them acknowledge it; the others return
+    False. The claimed name ends in ``.tmp``, so the drain never lists it and the
+    orphaned-temp prune removes one a crashed consumer leaves behind.
+    """
 
     from gobby.storage.hook_receipts import acknowledge_receipt
+
+    claimed = path.with_name(f"{path.name}.{uuid.uuid4().hex}.claimed.tmp")
+    try:
+        path.rename(claimed)
+    except FileNotFoundError:
+        return False
 
     receipt_id = envelope.get("receipt_id")
     generation = envelope.get("delivery_generation")
@@ -199,7 +212,8 @@ def _consume_inbox_delivery_receipt(
             )
     if envelope_id:
         mark_envelope_processed(envelope_id, processed_dir=processed_dir)
-    path.unlink(missing_ok=True)
+    claimed.unlink(missing_ok=True)
+    return True
 
 
 def consume_pending_delivery_receipts(app: Any, inbox_dir: Path | None = None) -> int:
@@ -233,14 +247,14 @@ def consume_pending_delivery_receipts(app: Any, inbox_dir: Path | None = None) -
             continue
         if not isinstance(generation, int) or generation < 1:
             continue
-        _consume_inbox_delivery_receipt(
+        if _consume_inbox_delivery_receipt(
             app,
             raw,
             path,
             envelope_id_from_inbox_path(path),
             processed_dir=processed_dir,
-        )
-        consumed += 1
+        ):
+            consumed += 1
     return consumed
 
 
@@ -472,14 +486,17 @@ async def _drain_hook_inbox_once_locked(
             continue
 
         if envelope.get("kind") == "delivery-receipt":
-            _consume_inbox_delivery_receipt(
+            # The acknowledgement writes to the hub; keep it off the event loop,
+            # as the per-hook sweep does.
+            if await asyncio.to_thread(
+                _consume_inbox_delivery_receipt,
                 app,
                 envelope,
                 path,
                 envelope_id,
                 processed_dir=processed_dir,
-            )
-            replayed += 1
+            ):
+                replayed += 1
             continue
 
         if restart_horizon_ms is not None and not _is_restart_residue(
@@ -814,7 +831,7 @@ def _compute_sleep_seconds(interval_seconds: int, jitter_seconds: float) -> floa
 
 
 def _is_orphaned_temp_name(name: str) -> bool:
-    """True for the intermediate file ghook's atomic write leaves behind."""
+    """True for ghook's atomic-write intermediate or a claimed delivery-receipt ack."""
     return name.endswith(".tmp")
 
 
