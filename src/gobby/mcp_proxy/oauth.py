@@ -6,11 +6,12 @@ import binascii
 import hashlib
 import json
 import logging
+import re
 import shlex
 import time
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from typing import Any, Literal
-from urllib.parse import parse_qsl, unquote_plus, urlsplit
+from urllib.parse import quote, quote_plus, unquote_plus, urlsplit
 
 import httpx2
 from mcp.client import Client
@@ -69,11 +70,12 @@ def _request_credentials(response: httpx2.Response) -> set[str]:
         body = request.content
     except (RuntimeError, httpx2.RequestNotRead):
         return set()
-    secrets = {
-        value
-        for key, value in parse_qsl(body.decode("utf-8", "replace"))
-        if key in _SECRET_FIELD_KEYS and value
-    }
+    secrets: set[str] = set()
+    # Keep each value both as sent and decoded; an endpoint may echo either.
+    for pair in body.decode("utf-8", "replace").split("&"):
+        key, _, sent = pair.partition("=")
+        if unquote_plus(key) in _SECRET_FIELD_KEYS and sent:
+            secrets.update((sent, unquote_plus(sent)))
     scheme, _, credential = request.headers.get("authorization", "").partition(" ")
     if credential:
         secrets.add(credential)
@@ -82,9 +84,9 @@ def _request_credentials(response: httpx2.Response) -> set[str]:
                 decoded = base64.b64decode(credential, validate=True).decode()
             except (binascii.Error, UnicodeDecodeError):
                 decoded = ""
-            client_secret = unquote_plus(decoded.partition(":")[2])
-            if client_secret:
-                secrets.add(client_secret)
+            sent = decoded.partition(":")[2]
+            if sent:
+                secrets.update((sent, unquote_plus(sent)))
     return secrets
 
 
@@ -105,10 +107,21 @@ def _safe_oauth_failure_summary(response: httpx2.Response) -> str:
             elif key in _PUBLIC_ERROR_FIELDS:
                 public[key] = value
 
+    # Each secret also in its re-encoded forms, matched case-insensitively because
+    # percent-escapes are case-insensitive. Longest first, so a secret that contains
+    # another is never partly revealed.
+    forms = {
+        form
+        for secret in secrets
+        for form in (secret, quote(secret, safe=""), quote_plus(secret, safe=""))
+    }
+    patterns = [
+        re.compile(re.escape(form), re.IGNORECASE) for form in sorted(forms, key=len, reverse=True)
+    ]
+
     def clean(text: str) -> str:
-        # Longest first, so a secret that contains another is never partly revealed.
-        for secret in sorted(secrets, key=len, reverse=True):
-            text = text.replace(secret, "[redacted]")
+        for pattern in patterns:
+            text = pattern.sub("[redacted]", text)
         return text
 
     parts = [f"status={response.status_code}"]
