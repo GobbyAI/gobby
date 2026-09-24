@@ -838,7 +838,8 @@ Targets:
 - `src/gobby/agents/lifecycle_monitor.py::*` — scope-reason: the stuck and completed-task checks skip pane-bound runs by the shared predicate; call lines only
 - `src/gobby/hooks/event_handlers/_session_start/materialize.py::_bind_clear_successor`
 - `src/gobby/servers/routes/mcp/endpoints/request_context.py::_set_context_for_request`
-- `tests/servers/routes/mcp_endpoints/test_execution_context.py::*` — scope-reason: add the launcher credential verification tests
+- `tests/servers/routes/mcp_endpoints/test_execution_context.py::*` — scope-reason: add the launcher flag verification tests
+- `tests/servers/test_auth_service.py::*` — scope-reason: add the grant-token-without-session refusal on the tool route that 1.5.16 relies on
 - `src/gobby/cli/agents.py::spawn_agent_cmd`
 - `docs/guides/agents.md`
 - `docs/guides/sandboxing.md`
@@ -883,7 +884,11 @@ CLI token, which the daemon-owned policy already denies to every sandboxed run
 which seeds `session_id` None for such a call today, records a `trusted_launcher` flag
 beside it only for local-CLI-token authentication with no session header or body
 session; a call authenticated by any other credential the endpoint accepts (a managed
-run's grant token) never sets it, and `_factory.py` forwards the flag to
+run's grant token) never sets it and cannot arrive without a session anyway, because
+`_AGENT_CAPABILITY_MATRIX` marks `POST /api/mcp/*/tools/*` `bind_identity` and
+`_agent_identity_matches` refuses a grant-token request whose `X-Gobby-Session-Id` is
+absent or resolves to a session other than the token's (adversary A6); `_factory.py`
+forwards the flag to
 `spawn_agent_impl` beside `caller_session_id` (enhancer E2, fail closed); no body field
 or header names a session that confers it, and a sandboxed authenticated caller is
 never honored); from any other row, for a sandboxed caller, or for a no-session call
@@ -1034,7 +1039,7 @@ Research context:
   resolver; a new policy format; adopting a spawned terminal into a pane after the
   spawn (no identity env); an HTTP route of its own for the launch (the tool endpoint
   exists).
-- Planned checks: the four new test files and the two extended ones with the isolated
+- Planned checks: the four new test files and the three extended ones with the isolated
   hub DSN; `tests/agents/test_srt_spawn.py` unchanged and passing; mypy; `wc -l` on
   `_implementation.py`, `lifecycle_monitor.py` and `workspace_ops.py` under 1,000.
 
@@ -1161,11 +1166,16 @@ Consumers unchanged:
 - 1.5.16 - A no-session launch is honored only behind the local CLI token: a request to
   the tool endpoint authenticated by that token with no session header or body session
   seeds `session_id` None and `trusted_launcher` true, and its launch of the
-  program-director definition honors the exemption; the same request authenticated by a
-  managed run's grant token seeds `trusted_launcher` false and the launch stays
-  sandboxed; the daemon-owned policy of a sandboxed run denies reading
-  `~/.gobby/local_cli_token`. test:
+  program-director definition honors the exemption; a managed run's grant token with no
+  `X-Gobby-Session-Id` is refused by the auth service (HTTP 401, `bind_identity` on
+  `POST /api/mcp/*/tools/*`) before the endpoint runs; the same grant token with its
+  bound session header seeds `session_id` to that session and `trusted_launcher` false,
+  and its launch takes the caller check of 1.5.14; the seam called directly with no
+  caller session and the flag unset stays sandboxed; the daemon-owned policy of a
+  sandboxed run denies reading `~/.gobby/local_cli_token`. test:
   `tests/servers/routes/mcp_endpoints/test_execution_context.py::test_trusted_launcher_is_set_only_for_local_token_without_session`.
+  test:
+  `tests/servers/test_auth_service.py::test_grant_token_without_session_header_is_rejected_on_tool_route`.
   test:
   `tests/mcp_proxy/tools/spawn_agent/test_sandbox_block.py::test_no_session_launch_without_trusted_launcher_stays_sandboxed`.
   test: `tests/agents/test_sandbox_policy.py::test_local_cli_token_is_denied_to_sandboxed_runs`.
