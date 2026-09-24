@@ -40,6 +40,7 @@ LOCAL_MACHINE_ID = f"{TEST_MACHINE_ID_PREFIX}000000000001"
 DAEMON_EPOCH = "workspace-ws-epoch"
 OPS = {
     "workspace.create",
+    "workspace.list",
     "workspace.rename",
     "workspace.close",
     "workspace.set_focus_hints",
@@ -319,6 +320,9 @@ async def test_ops_round_trip_and_errors_are_typed(stack: _Stack) -> None:
     assert [row["position"] for row in moved["tabs"] if row["id"] == other_tab["id"]] == [0]
     await op("pane.move", pane=second["id"], tab=other_tab["id"], beside=other_pane["id"])
     assert (await op("workspace.rename", workspace=home, name="renamed"))["name"] == "renamed"
+    listed = {row["id"]: row for row in await op("workspace.list")}
+    assert listed[home]["name"] == "renamed"
+    assert "default_project_id" not in listed[home]
     hinted, focused = await op(
         "workspace.set_focus_hints",
         workspace=home,

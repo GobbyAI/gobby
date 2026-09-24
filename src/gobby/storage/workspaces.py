@@ -253,7 +253,11 @@ class Workspace:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        # A projectless scratch omits the association, as gclient's WorkspaceRow expects.
+        payload = asdict(self)
+        if payload["default_project_id"] is None:
+            del payload["default_project_id"]
+        return payload
 
 
 @dataclass

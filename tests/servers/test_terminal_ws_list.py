@@ -291,7 +291,7 @@ async def test_list_names_the_foreground_command_for_both_backends(
     native = _create_pending(manager, sample_project["id"], backend="native")
     recorded = manager.record_process(
         native.id,
-        {"host_terminal_id": "ht-9", "pgid": 4242, "start_time": 1.0},
+        {"host_terminal_id": "ht-9", "pgid": 4242, "start_time": 1.0, "shell": "zsh"},
         attempt_generation=native.attempt_generation,
         attempt_started_at=native.attempt_started_at,
     )
@@ -320,3 +320,41 @@ async def test_list_names_the_foreground_command_for_both_backends(
     # the shell pid the host recorded, and both land on one field.
     assert by_id[pane.id]["command"] == "vim"
     assert by_id[promoted.id]["command"] == "nvim"
+
+
+async def test_list_falls_back_to_the_spawn_shell_for_a_native_row(
+    server: WebSocketServer,
+    manager: TerminalManager,
+    sample_project: dict[str, Any],
+) -> None:
+    native = _create_pending(manager, sample_project["id"], backend="native")
+    recorded = manager.record_process(
+        native.id,
+        {"host_terminal_id": "ht-9", "pgid": 4242, "start_time": 1.0, "shell": "zsh"},
+        attempt_generation=native.attempt_generation,
+        attempt_started_at=native.attempt_started_at,
+    )
+    assert recorded is not None
+    promoted = manager.promote_to_live(
+        native.id,
+        locator={"host_terminal_id": "ht-9"},
+        locator_key="native:epoch-1:ht-9",
+        host_epoch="epoch-1",
+    )
+    assert promoted is not None
+    sweep = AsyncMock(return_value={})
+    # The process table no longer lists the shell, so no live foreground resolves.
+    ps = MagicMock(
+        return_value=subprocess.CompletedProcess(
+            args=["ps"], returncode=0, stdout="1 0 /sbin/launchd\n", stderr=""
+        )
+    )
+
+    with (
+        patch("gobby.servers.websocket.terminal_ws.sweep_tmux_terminals", sweep),
+        patch("gobby.terminals.foreground.subprocess.run", ps),
+    ):
+        page = await listed(server, {"request_id": "spawn-shell"})
+
+    by_id = {item["terminal_id"]: item for item in page["items"]}
+    assert by_id[promoted.id]["command"] == "zsh"
