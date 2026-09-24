@@ -266,9 +266,11 @@ class _AttachThenInputSocket(_ScriptedSocket):
     def __init__(self, attach_message: str) -> None:
         super().__init__([attach_message], hold_open=True)
         self._wake = asyncio.Event()
+        self._returned = 0
         self._input_returned = False
         self.input_observed = asyncio.Event()
         self.both = asyncio.Event()
+        self.write_seen = asyncio.Event()
 
     def inject(self, message: str) -> None:
         self._pending.append(message)
@@ -282,8 +284,8 @@ class _AttachThenInputSocket(_ScriptedSocket):
         while True:
             if self._pending:
                 message = self._pending.pop(0)
-                parsed = json.loads(message)
-                if isinstance(parsed, dict) and parsed.get("type") == "terminal_input":
+                self._returned += 1
+                if self._returned > 1:
                     self._input_returned = True
                 return message
             if self._input_returned:
@@ -298,6 +300,8 @@ class _AttachThenInputSocket(_ScriptedSocket):
     async def send(self, payload: str) -> None:
         await super().send(payload)
         types = _frame_types(self)
+        if "terminal_write_outcome" in types:
+            self.write_seen.set()
         if "terminal_attach_result" in types and "terminal_write_outcome" in types:
             self.both.set()
 
@@ -601,3 +605,309 @@ async def test_terminal_input_for_the_same_attachment_waits_for_attach() -> None
                 await connection
             except asyncio.CancelledError:
                 pass
+
+
+@pytest.mark.asyncio
+async def test_disconnect_during_attach_closes_the_proxy_frame() -> None:
+    """A cancel inside the proxy handshake must close the host frame it opened."""
+    server = WebSocketServer(
+        config=WebSocketConfig(),
+        mcp_manager=MagicMock(),
+        auth_callback=AsyncMock(return_value="test-user"),
+    )
+    _quiet_disconnect(server)
+    row = SimpleNamespace(id="term-1", backend="native", rows=24, cols=80, state="live")
+    server.terminal_manager = SimpleNamespace(
+        get=lambda terminal_id: row if terminal_id == row.id else None
+    )
+    server.lease_registry = TerminalLeaseRegistry(daemon_epoch="test-epoch")
+    started = asyncio.Event()
+    closed = asyncio.Event()
+
+    class _Frame:
+        def close(self) -> None:
+            closed.set()
+
+        async def read_message(self) -> None:
+            await asyncio.Event().wait()
+
+    async def resolve_locator(_row: Any) -> tuple[Any, None]:
+        return SimpleNamespace(), None
+
+    async def open_frame(_locator: Any) -> _Frame:
+        return _Frame()
+
+    async def start_proxy(_websocket: Any, **_kwargs: Any) -> None:
+        started.set()
+        await asyncio.Event().wait()
+
+    object.__setattr__(server, "_resolve_attach_locator", resolve_locator)
+    object.__setattr__(server, "open_proxy_frame", open_frame)
+    object.__setattr__(
+        server,
+        "_proxy",
+        lambda: SimpleNamespace(
+            start_proxy=start_proxy,
+            start_pump=lambda _attachment_id: None,
+            attachments={},
+        ),
+    )
+    socket = _ScriptedSocket(
+        [
+            json.dumps(
+                {
+                    "type": "terminal_attach",
+                    "request_id": "attach-1",
+                    "terminal_id": row.id,
+                    "frame_delivery": "proxy",
+                }
+            )
+        ],
+        hold_open=True,
+    )
+    connection = asyncio.create_task(server.handle_connection(socket))
+    try:
+        await asyncio.wait_for(started.wait(), timeout=2)
+        socket.close()
+        await asyncio.wait_for(connection, timeout=2)
+        assert closed.is_set()
+    finally:
+        socket.close()
+        connection.cancel()
+        try:
+            await connection
+        except asyncio.CancelledError:
+            pass
+
+
+@pytest.mark.asyncio
+async def test_input_for_another_terminal_runs_during_attach() -> None:
+    """Attaching pane B must not hold input that belongs to pane A."""
+    server = WebSocketServer(
+        config=WebSocketConfig(),
+        mcp_manager=MagicMock(),
+        auth_callback=AsyncMock(return_value="test-user"),
+    )
+    _quiet_disconnect(server)
+    row_a = SimpleNamespace(id="term-a", backend="native", rows=24, cols=80, state="live")
+    row_b = SimpleNamespace(id="term-b", backend="native", rows=24, cols=80, state="live")
+    rows = {row_a.id: row_a, row_b.id: row_b}
+    server.terminal_manager = SimpleNamespace(get=lambda terminal_id: rows.get(terminal_id))
+    server.lease_registry = TerminalLeaseRegistry(daemon_epoch="test-epoch")
+    attached = await server.lease_registry.attach(row_a.id, backend="native")
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def slow_backend(_websocket: Any, _row: Any, _record: Any, _encoding: str) -> None:
+        entered.set()
+        await release.wait()
+        return None
+
+    object.__setattr__(server, "_start_proxy_attach", slow_backend)
+    object.__setattr__(
+        server,
+        "_proxy",
+        lambda: SimpleNamespace(start_pump=lambda _attachment_id: None, attachments={}),
+    )
+    socket = _AttachThenInputSocket(
+        json.dumps(
+            {
+                "type": "terminal_attach",
+                "request_id": "attach-b",
+                "terminal_id": row_b.id,
+                "frame_delivery": "proxy",
+            }
+        )
+    )
+    connection = asyncio.create_task(server.handle_connection(socket))
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=2)
+        socket.inject(
+            json.dumps(
+                {
+                    "type": "terminal_input",
+                    "request_id": "input-a",
+                    "terminal_id": row_a.id,
+                    "attachment_id": attached.attachment_id,
+                    "data": "x",
+                    "client_write_seq": 1,
+                }
+            )
+        )
+        await asyncio.wait_for(socket.write_seen.wait(), timeout=2)
+        assert "terminal_attach_result" not in _frame_types(socket)
+    finally:
+        release.set()
+        socket.close()
+        connection.cancel()
+        try:
+            await connection
+        except asyncio.CancelledError:
+            pass
+
+
+@pytest.mark.asyncio
+async def test_release_for_the_attaching_terminal_waits() -> None:
+    """Releasing pane A must not run while pane A's attach is still in progress."""
+    server = WebSocketServer(
+        config=WebSocketConfig(),
+        mcp_manager=MagicMock(),
+        auth_callback=AsyncMock(return_value="test-user"),
+    )
+    _quiet_disconnect(server)
+    row = SimpleNamespace(id="term-a", backend="native", rows=24, cols=80, state="live")
+    server.terminal_manager = SimpleNamespace(
+        get=lambda terminal_id: row if terminal_id == row.id else None
+    )
+    server.lease_registry = TerminalLeaseRegistry(daemon_epoch="test-epoch")
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    attached: list[str] = []
+
+    async def slow_backend(_websocket: Any, _row: Any, record: Any, _encoding: str) -> None:
+        attached.append(record.attachment_id)
+        entered.set()
+        await release.wait()
+        return None
+
+    object.__setattr__(server, "_start_proxy_attach", slow_backend)
+    object.__setattr__(
+        server,
+        "_proxy",
+        lambda: SimpleNamespace(start_pump=lambda _attachment_id: None, attachments={}),
+    )
+    socket = _AttachThenInputSocket(
+        json.dumps(
+            {
+                "type": "terminal_attach",
+                "request_id": "attach-a",
+                "terminal_id": row.id,
+                "frame_delivery": "proxy",
+            }
+        )
+    )
+    connection = asyncio.create_task(server.handle_connection(socket))
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=2)
+        socket.inject(
+            json.dumps(
+                {
+                    "type": "terminal_release_control",
+                    "request_id": "release-a",
+                    "terminal_id": row.id,
+                    "attachment_id": attached[0],
+                }
+            )
+        )
+        await asyncio.wait_for(socket.input_observed.wait(), timeout=2)
+        assert "terminal_control_result" not in _frame_types(socket)
+    finally:
+        release.set()
+        socket.close()
+        connection.cancel()
+        try:
+            await connection
+        except asyncio.CancelledError:
+            pass
+
+
+@pytest.mark.asyncio
+async def test_cancelled_attach_does_not_drop_the_next_frame() -> None:
+    """Cancelling one chained frame must still run the next frame for that terminal."""
+    server = WebSocketServer(
+        config=WebSocketConfig(),
+        mcp_manager=MagicMock(),
+        auth_callback=AsyncMock(return_value="test-user"),
+    )
+    _quiet_disconnect(server)
+    started: list[str] = []
+    hold = asyncio.Event()
+    first_entered = asyncio.Event()
+    second_sent = asyncio.Event()
+
+    async def attach(websocket: Any, data: dict[str, Any]) -> None:
+        request_id = str(data.get("request_id"))
+        started.append(request_id)
+        if request_id == "first":
+            first_entered.set()
+            await hold.wait()
+        await websocket.send(
+            json.dumps({"type": "terminal_attach_result", "request_id": request_id})
+        )
+        if request_id == "second":
+            second_sent.set()
+
+    server._dispatch_table = {"terminal_attach": attach}
+    socket = _AttachThenInputSocket(
+        json.dumps(
+            {"type": "terminal_attach", "request_id": "first", "terminal_id": "term-a"}
+        )
+    )
+    connection = asyncio.create_task(server.handle_connection(socket))
+    try:
+        await asyncio.wait_for(first_entered.wait(), timeout=2)
+        assert started == ["first"]
+        first_tasks = list(server._off_loop_tasks[socket])
+        socket.inject(
+            json.dumps(
+                {"type": "terminal_attach", "request_id": "second", "terminal_id": "term-a"}
+            )
+        )
+        await asyncio.wait_for(socket.input_observed.wait(), timeout=2)
+        for task in first_tasks:
+            task.cancel()
+        await asyncio.wait_for(second_sent.wait(), timeout=2)
+        assert started == ["first", "second"]
+    finally:
+        hold.set()
+        socket.close()
+        connection.cancel()
+        try:
+            await connection
+        except asyncio.CancelledError:
+            pass
+
+
+@pytest.mark.asyncio
+async def test_chained_handler_failure_is_reported_and_the_queue_continues() -> None:
+    """A chained handler that raises reports an error and still runs the next frame."""
+    server = WebSocketServer(
+        config=WebSocketConfig(),
+        mcp_manager=MagicMock(),
+        auth_callback=AsyncMock(return_value="test-user"),
+    )
+    _quiet_disconnect(server)
+    ran: list[str] = []
+    finished = asyncio.Event()
+
+    async def attach(_websocket: Any, data: dict[str, Any]) -> None:
+        request_id = str(data.get("request_id"))
+        ran.append(request_id)
+        if request_id == "boom":
+            raise RuntimeError("attach failed")
+        finished.set()
+
+    server._dispatch_table = {"terminal_attach": attach}
+    socket = _ScriptedSocket(
+        [
+            json.dumps(
+                {"type": "terminal_attach", "request_id": "boom", "terminal_id": "term-a"}
+            ),
+            json.dumps(
+                {"type": "terminal_attach", "request_id": "next", "terminal_id": "term-a"}
+            ),
+        ],
+        hold_open=True,
+    )
+    connection = asyncio.create_task(server.handle_connection(socket))
+    try:
+        await asyncio.wait_for(finished.wait(), timeout=2)
+        assert ran == ["boom", "next"]
+        assert any("Internal server error" in payload for payload in socket.sent)
+    finally:
+        socket.close()
+        connection.cancel()
+        try:
+            await connection
+        except asyncio.CancelledError:
+            pass

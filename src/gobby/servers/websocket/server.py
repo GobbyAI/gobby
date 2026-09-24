@@ -56,14 +56,16 @@ logger = logging.getLogger(__name__)
 # held the connection (#22544).
 SLOW_WEBSOCKET_HANDLER_SECONDS = 1.0
 # These handlers do their slow work off the read loop. Later frames on the
-# same socket are read while they run, and same-connection follow-ups stay
-# in arrival order behind the handler already running (#22709).
+# same socket are read while they run. Frames for one terminal stay in
+# arrival order; another terminal's frames do not wait (#22709).
 _OFF_LOOP_MESSAGE_TYPES = frozenset(
     {
         "terminal_attach",
         "terminal_detach",
         "terminal_input",
         "terminal_paste",
+        "terminal_release_control",
+        "terminal_resize",
         "terminal_take_control",
         "workspace_op",
     }
@@ -80,6 +82,22 @@ def _message_leaves_the_read_loop(message: str) -> bool:
         return False
     message_type = data.get("type")
     return isinstance(message_type, str) and message_type in _OFF_LOOP_MESSAGE_TYPES
+
+
+def _off_loop_chain_key(message: str) -> str:
+    """Group off-loop frames that must stay in order on one connection."""
+    try:
+        data = json.loads(message)
+    except json.JSONDecodeError:
+        return ""
+    if not isinstance(data, dict):
+        return ""
+    for field in ("terminal_id", "attachment_id"):
+        value = data.get(field)
+        if isinstance(value, str) and value:
+            return value
+    message_type = data.get("type")
+    return message_type if isinstance(message_type, str) else ""
 # The byte an interrupt keystroke carries on the daemon-mediated input path; direct
 # input reports only the interrupt kind, so the turn observer sees the same payload.
 _INTERRUPT_PAYLOADS = {"esc": "\x1b", "ctrl_c": "\x03"}
@@ -200,7 +218,7 @@ class WebSocketServer(
         # Connected clients: {websocket: client_metadata}
         self.clients: dict[Any, dict[str, Any]] = {}
         self._off_loop_tasks: dict[Any, set[asyncio.Task[None]]] = {}
-        self._off_loop_tail: dict[Any, asyncio.Task[None]] = {}
+        self._off_loop_tail: dict[tuple[Any, str], asyncio.Task[None]] = {}
 
         self.web_chat_session_registry = (
             web_chat_session_registry if web_chat_session_registry else WebChatSessionRegistry()
@@ -543,12 +561,13 @@ class WebSocketServer(
 
     def _start_off_loop(self, websocket: Any, message: str) -> None:
         bucket = self._off_loop_tasks.setdefault(websocket, set())
-        previous = self._off_loop_tail.get(websocket)
+        key = (websocket, _off_loop_chain_key(message))
+        previous = self._off_loop_tail.get(key)
         task = asyncio.create_task(
             self._run_off_loop_message(websocket, message, previous),
             name="ws-off-loop",
         )
-        self._off_loop_tail[websocket] = task
+        self._off_loop_tail[key] = task
         bucket.add(task)
         task.add_done_callback(bucket.discard)
 
@@ -562,7 +581,9 @@ class WebSocketServer(
             try:
                 await previous
             except asyncio.CancelledError:
-                raise
+                current = asyncio.current_task()
+                if current is not None and current.cancelling():
+                    raise
             except Exception:
                 pass
         try:
@@ -581,7 +602,8 @@ class WebSocketServer(
                 logger.debug("Could not report off-loop handler failure", exc_info=True)
 
     async def _cancel_off_loop(self, websocket: Any) -> None:
-        self._off_loop_tail.pop(websocket, None)
+        for key in [key for key in self._off_loop_tail if key[0] is websocket]:
+            self._off_loop_tail.pop(key, None)
         tasks = self._off_loop_tasks.pop(websocket, set())
         for task in list(tasks):
             task.cancel()
