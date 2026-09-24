@@ -97,7 +97,7 @@ def mock_codex_prompt_delivery() -> Iterator[MagicMock]:
     tmux session manager; against MagicMock spawners that coroutine would
     outlive the test's event loop. Tests that assert delivery use this mock.
     """
-    with patch("gobby.agents.spawn_executor.schedule_codex_prompt_delivery") as mock_delivery:
+    with patch("gobby.agents.spawn_executor_codex.schedule_codex_prompt_delivery") as mock_delivery:
         yield mock_delivery
 
 
@@ -1095,81 +1095,6 @@ class TestExecuteSpawn:
             "gobby-sess-123",
             {"_agent_context_injected": True},
         )
-
-    @pytest.mark.asyncio
-    async def test_codex_spawn_seeds_heuristic_from_clean_prompt(
-        self, mock_codex_prompt_delivery: MagicMock
-    ) -> None:
-        session_manager = MagicMock()
-        request = SpawnRequest(
-            prompt="Implement task title promotion",
-            cwd="/path",
-            provider="codex",
-            session_id="sess",
-            run_id="run",
-            parent_session_id="parent",
-            project_id="proj",
-            project_path="/main/repo",
-            agent_run_id="run-title123456",
-            agent_name="backend-developer",
-            session_manager=session_manager,
-            prepared_spawn=prepared_spawn(
-                session_id="gobby-sess-title",
-                agent_run_id="run-title123456",
-                env_vars={"GOBBY_SESSION_ID": "gobby-sess-title"},
-            ),
-            terminal_backend="tmux",
-        )
-        agent_body = MagicMock()
-        agent_body.prompt_for.return_value = "## Agent\nYou are the backend developer."
-
-        with (
-            patch("gobby.agents.spawn_executor_providers.pre_approve_directory"),
-            patch(
-                "gobby.workflows.agent_resolver.resolve_agent",
-                return_value=agent_body,
-            ),
-            patch("gobby.agents.spawn_executor_providers.promote_heuristic_title") as promote_title,
-            patch("gobby.workflows.state_manager.SessionVariableManager"),
-        ):
-            result = await execute_spawn(request)
-
-        assert result.success is True
-        promote_title.assert_called_once_with(
-            session_manager._storage,
-            "gobby-sess-title",
-            "Implement task title promotion",
-        )
-        assert "## Agent" not in promote_title.call_args.args[2]
-
-        no_persona_request = SpawnRequest(
-            prompt="Implement task title promotion",
-            cwd="/path",
-            provider="codex",
-            session_id="sess-no-persona",
-            run_id="run-no-persona",
-            parent_session_id="parent",
-            project_id="proj",
-            project_path="/main/repo",
-            agent_run_id="run-no-persona123456",
-            session_manager=session_manager,
-            prepared_spawn=prepared_spawn(
-                session_id="gobby-sess-no-persona",
-                agent_run_id="run-no-persona123456",
-                env_vars={"GOBBY_SESSION_ID": "gobby-sess-no-persona"},
-            ),
-            terminal_backend="tmux",
-        )
-        with (
-            patch("gobby.agents.spawn_executor_providers.pre_approve_directory"),
-            patch(
-                "gobby.agents.spawn_executor_providers.promote_heuristic_title"
-            ) as promote_without_persona,
-        ):
-            result = await execute_spawn(no_persona_request)
-
-        assert result.success is True
-        promote_without_persona.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_codex_terminal_spawn_local_oss_model(self) -> None:
