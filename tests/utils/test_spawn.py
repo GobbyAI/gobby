@@ -8,6 +8,7 @@ import os
 import re
 import subprocess
 import sys
+from collections.abc import KeysView
 from pathlib import Path
 from typing import Any
 
@@ -29,20 +30,43 @@ _SPAWN_CALLS = frozenset(
         "subprocess.getstatusoutput",
         "asyncio.create_subprocess_exec",
         "asyncio.create_subprocess_shell",
+        "asyncio.subprocess.create_subprocess_exec",
+        "asyncio.subprocess.create_subprocess_shell",
+        "concurrent.futures.ProcessPoolExecutor",
+        "multiprocessing.Process",
+        "multiprocessing.Pool",
         "os.system",
         "os.popen",
         "os.fork",
         "os.forkpty",
+        *(f"os.spawn{kind}" for kind in ("l", "le", "lp", "lpe", "v", "ve", "vp", "vpe")),
         "pty.spawn",
         "pty.fork",
     }
 )
+# Event-loop methods, whatever the loop expression: loop.subprocess_exec(...).
+_LOOP_SPAWNS = frozenset({"subprocess_exec", "subprocess_shell"})
+# Modules whose names the scan resolves through import aliases.
+_SPAWN_MODULES = frozenset(
+    {
+        "subprocess",
+        "os",
+        "pty",
+        "asyncio",
+        "asyncio.subprocess",
+        "concurrent.futures",
+        "multiprocessing",
+    }
+)
 # Every call in _SPAWN_CALLS names its module or function in the source text, so
 # the scan parses only the files that could hold one.
-_MAY_SPAWN = re.compile(r"subprocess|\bsystem\b|\bpopen\b|\bfork(?:pty)?\b|\bpty\b")
+_MAY_SPAWN = re.compile(
+    r"subprocess|\bsystem\b|\bpopen\b|\bfork(?:pty)?\b|\bpty\b|\bspawn[lv]"
+    r"|ProcessPool|multiprocessing"
+)
 # CLI commands, processes of their own (the stdio MCP proxy, Chrome's supervisor)
 # and bundled templates. Daemon code also calls into some of these modules, so
-# every module a daemon module imports is scanned as well.
+# every module a daemon module imports, transitively, is scanned as well.
 _NOT_DAEMON = (
     "cli/",
     "install/shared/",
@@ -55,7 +79,7 @@ _NOT_DAEMON = (
 )
 # Scanned sites that still fork, keyed path::qualname, each with its reason: the
 # daemon sites that need fork-only options, and the CLI-only functions of modules
-# the daemon imports.
+# the daemon imports. A key the scan no longer finds fails the lint.
 _MUST_FORK = {
     "cli/daemon.py::_launch_direct_runner": (
         "own session and pass_fds for the runner claim; `gobby start` only"
@@ -82,6 +106,50 @@ _MUST_FORK = {
     ),
     "cli/installers/service.py::_get_service_status_macos": (
         "once per admin restart, to ask whether launchd owns the daemon"
+    ),
+    "cli/installers/service_linux.py::_get_service_status_linux": (
+        "once per admin restart, to ask whether systemd owns the daemon"
+    ),
+    "cli/installers/service_linux.py::_check_linger": (
+        "part of the Linux service status, once per admin restart"
+    ),
+    "cli/installers/service_linux.py::_linux_restart": (
+        "the restart helper process, after the daemon has exited"
+    ),
+    "cli/installers/service_linux.py::install_service_linux": "`gobby install` only",
+    "cli/installers/service_linux.py::uninstall_service_linux": "CLI service commands only",
+    "cli/installers/service_linux.py::enable_service_linux": "CLI service commands only",
+    "cli/installers/service_linux.py::disable_service_linux": "CLI service commands only",
+    "cli/installers/service_windows.py::_run_schtasks": (
+        "Windows only, where subprocess starts processes without fork"
+    ),
+    "cli/installers/service_common.py::_ensure_cli_on_path": "`gobby install` only",
+    "cli/install_setup.py::_run_npm_install": "`gobby install` only",
+    "cli/install_setup_gdaemon.py::_codesign": "`gobby install` only",
+    "cli/install_setup_gdaemon.py::_install_from_workspace": "`gobby install` only",
+    "cli/install_setup_gdaemon.py::_probe_identity": "`gobby install` only",
+    "cli/install_setup_gdaemon.py::_probe_version": "`gobby install` only",
+    "cli/install_setup_srt.py::_install_srt_runtime": "`gobby install` only",
+    "cli/installers/falkor.py::_install_falkordb_locked": "`gobby install` only",
+    "cli/installers/falkor.py::_wait_for_health_async": "`gobby install` only",
+    "cli/installers/tmux_config.py::_apply_to_running_server": "`gobby install` only",
+    "cli/installers/docker_guard.py::<module>": (
+        "an identity reference that recognizes the real runner; never called"
+    ),
+    "cli/_daemon_services.py::_run_compose_command": "managed services of `gobby start`/`stop` only",
+    "cli/_daemon_services.py::_run_compose_up": "managed services of `gobby start` only",
+    "cli/_daemon_services.py::_stop_managed_services_locked": "managed services of `gobby stop` only",
+    "cli/_daemon_services.py::_terminate_compose_process": (
+        "managed services of `gobby start`/`stop` only"
+    ),
+    "cli/datastores.py::_snapshot_compose_running": "`gobby datastores expose` only",
+    "cli/datastores.py::_tailscale_ipv4_addresses": "`gobby datastores expose` only",
+    "cli/utils_ui.py::spawn_ui_server": (
+        "own session: the UI dev server outlives the daemon; once per start in UI dev mode"
+    ),
+    "ui_exposure.py::_run_json": "tailscale for the start, ui, install and uninstall commands only",
+    "ui_exposure.py::_run_mutation": (
+        "tailscale for the start, ui, install and uninstall commands only"
     ),
     "ai/_text_generation_adapters.py::_run_cli_text_generation_command": (
         "own session: a timeout killpg()s the CLI's children; once per generation, off the hook path"
@@ -116,6 +184,10 @@ _MUST_FORK = {
     "skills/materialization.py::_run_owned_subprocess": (
         "own session and pass_fds for the ownership pipe; once per skill materialization"
     ),
+    "tasks/transcript_evidence_pool.py::_get_pool": (
+        "the spawn context starts its one worker and the resource tracker through"
+        " multiprocessing's fork_exec, once per pool creation"
+    ),
     "terminals/host_manager.py::TerminalHostManager._spawn_host_process": (
         "own session: the gterm host outlives daemon restarts; once per host start"
     ),
@@ -134,17 +206,12 @@ def _spawn_references(tree: ast.Module) -> list[tuple[str, str]]:
     """
     aliases: dict[str, str] = {}
     for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.module in {
-            "subprocess",
-            "os",
-            "pty",
-            "asyncio",
-        }:
+        if isinstance(node, ast.ImportFrom) and node.module in _SPAWN_MODULES:
             for name in node.names:
                 aliases[name.asname or name.name] = f"{node.module}.{name.name}"
         elif isinstance(node, ast.Import):
             for name in node.names:
-                if name.name in {"subprocess", "os", "pty", "asyncio"} and name.asname:
+                if name.name in _SPAWN_MODULES and name.asname:
                     aliases[name.asname] = name.name
     annotations = {
         id(part)
@@ -171,7 +238,11 @@ def _spawn_references(tree: ast.Module) -> list[tuple[str, str]]:
                 dotted = re.sub(r"^__import__\('(\w+)'\)", r"\1", ast.unparse(child))
                 head, _, tail = dotted.partition(".")
                 resolved = aliases.get(head, head) + (f".{tail}" if tail else "")
-                if resolved in _SPAWN_CALLS or resolved in {"subprocess", "pty"}:
+                if (
+                    resolved in _SPAWN_CALLS
+                    or resolved in {"subprocess", "pty"}
+                    or resolved.rpartition(".")[2] in _LOOP_SPAWNS
+                ):
                     found.append((".".join(scope) or "<module>", resolved))
             visit(child, scope)
 
@@ -179,27 +250,92 @@ def _spawn_references(tree: ast.Module) -> list[tuple[str, str]]:
     return found
 
 
-def _daemon_sources() -> dict[str, str]:
-    """Source of every daemon module and every module a daemon module imports."""
+# Import statements, including lazy ones inside functions and parenthesized name lists.
+_IMPORT = re.compile(
+    r"^[ \t]*(?:from[ \t]+(\.*)([\w.]*)[ \t]+import[ \t]+(\([^)]*\)|[^\n]*)|import[ \t]+([^\n]*))",
+    re.M,
+)
+
+
+def _imported_modules(relative: str, source: str, modules: KeysView[str]) -> set[str]:
+    """Modules whose code ``relative`` imports; ``from pkg import sub`` reaches pkg/sub, not pkg."""
+
+    def files(stem: str) -> set[str]:
+        return {f"{stem}.py", f"{stem}/__init__.py"} & modules
+
+    def names(listing: str) -> list[str]:
+        cleaned = re.sub(r"#[^\n]*", "", listing).strip("()")
+        return [part.split()[0] for part in cleaned.split(",") if part.strip()]
+
+    package = relative.split("/")[:-1]
+    reached: set[str] = set()
+    for dots, module, imported, plain in _IMPORT.findall(source):
+        if plain:
+            for name in names(plain):
+                if name.startswith("gobby."):
+                    reached |= files(name.removeprefix("gobby.").replace(".", "/"))
+            continue
+        parts = module.split(".") if module else []
+        if dots:
+            stem = "/".join([*package[: len(package) - len(dots) + 1], *parts])
+        elif parts[:1] == ["gobby"]:
+            stem = "/".join(parts[1:])
+        else:
+            continue
+        for name in names(imported):
+            submodule = files(f"{stem}/{name}" if stem else name)
+            reached |= submodule or (files(stem) if stem else set())
+    return reached
+
+
+def _daemon_modules() -> dict[str, ast.Module]:
+    """Parsed daemon modules that may spawn, following imports transitively into cli/ and install/.
+
+    An import closure only bounds what the daemon can call, so _MUST_FORK names
+    the CLI-only functions it reaches.
+    """
     sources = {path.relative_to(_SRC).as_posix(): path.read_text() for path in _SRC.rglob("*.py")}
-    daemon = {relative for relative in sources if not relative.startswith(_NOT_DAEMON)}
-    for relative in list(daemon):
-        for module in re.findall(r"^\s*(?:from|import)\s+gobby\.([\w.]+)", sources[relative], re.M):
-            stem = module.replace(".", "/")
-            daemon.update({f"{stem}.py", f"{stem}/__init__.py"} & sources.keys())
+    pending = [relative for relative in sources if not relative.startswith(_NOT_DAEMON)]
+    daemon = set(pending)
+    while pending:
+        relative = pending.pop()
+        reached = _imported_modules(relative, sources[relative], sources.keys()) - daemon
+        daemon |= reached
+        pending.extend(reached)
     daemon.discard("utils/spawn.py")
-    return {relative: sources[relative] for relative in sorted(daemon)}
+    return {
+        relative: ast.parse(sources[relative])
+        for relative in daemon
+        if _MAY_SPAWN.search(sources[relative])
+    }
 
 
 def test_daemon_spawns_go_through_the_helper() -> None:
     unexpected = []
-    for relative, source in _daemon_sources().items():
-        if not _MAY_SPAWN.search(source):
-            continue
-        for qualname, call in _spawn_references(ast.parse(source)):
+    scanned = set()
+    for relative, tree in sorted(_daemon_modules().items()):
+        for qualname, call in _spawn_references(tree):
+            scanned.add(f"{relative}::{qualname}")
             if f"{relative}::{qualname}" not in _MUST_FORK:
                 unexpected.append(f"{relative}::{qualname} {call}")
     assert unexpected == []
+    assert set(_MUST_FORK) - scanned == set()
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "async def f(loop, protocol):\n    await loop.subprocess_exec(protocol, 'ls')\n",
+        "from asyncio import subprocess\nasync def f():\n    await subprocess.create_subprocess_exec('ls')\n",
+        "import asyncio.subprocess\nasync def f():\n    await asyncio.subprocess.create_subprocess_shell('ls')\n",
+        "from concurrent.futures import ProcessPoolExecutor\ndef f():\n    return ProcessPoolExecutor()\n",
+        "import multiprocessing as mp\ndef f():\n    mp.Process(target=print).start()\n",
+        "import os\ndef f():\n    os.spawnv(os.P_WAIT, '/bin/ls', ['ls'])\n",
+    ],
+)
+def test_the_scan_sees_each_process_creating_form(source: str) -> None:
+    assert _MAY_SPAWN.search(source)
+    assert [qualname for qualname, _ in _spawn_references(ast.parse(source))] == ["f"]
 
 
 def test_helper_builds_posix_spawn_eligible_arguments(
@@ -268,6 +404,20 @@ def test_helper_runs_in_the_directory_it_was_given(
     result = spawn.run(["pwd", "-P"], cwd="work", env=env, capture_output=True, text=True)
 
     assert result.stdout == f"{(tmp_path / 'work').resolve()}\n"
+
+
+def test_an_absolute_directory_needs_no_daemon_cwd(tmp_path: Path) -> None:
+    gone = tmp_path / "gone"
+    gone.mkdir()
+    previous = os.getcwd()
+    os.chdir(gone)
+    try:
+        gone.rmdir()
+        result = spawn.run(["pwd", "-P"], cwd=tmp_path, capture_output=True, text=True)
+    finally:
+        os.chdir(previous)
+
+    assert result.stdout == f"{tmp_path.resolve()}\n"
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="posix_spawn eligibility is macOS-specific")

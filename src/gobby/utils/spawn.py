@@ -4,13 +4,16 @@ On macOS CPython forks the calling process, holding the GIL, unless the
 executable path names a directory, close_fds is False, cwd is None and no
 session, process-group or fd-passing option is set. Forking the daemon stalls
 every thread for about 70 ms per spawn; posix_spawn costs about 1 ms (#22815).
-PEP 446 keeps Python's own descriptors non-inheritable, so close_fds=False
-passes only descriptors something deliberately marked inheritable.
+With close_fds=False every inheritable descriptor reaches the child. Python
+creates descriptors non-inheritable (PEP 446), runner.main seals the ones the
+daemon inherited (seal_inherited_descriptors), and adopt_inherited_claim clears
+the singleton lock handed over through pass_fds.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import errno
 import os
 import shutil
@@ -33,7 +36,10 @@ _REJECTED_OPTIONS = frozenset(
     }
 )
 # Runs the command from a directory without Popen's cwd. Given an absolute
-# path, cd skips CDPATH; -P resolves symlinks as chdir(2) does.
+# path, cd skips CDPATH; -P resolves symlinks as chdir(2) does. Failures past
+# _spawn_plan's checks surface as the shell's exit status, not OSError: a
+# directory that vanished exits 1, and an exec failure exits 126 (macOS sh;
+# dash reports a missing file as 127).
 _CHDIR_EXEC = 'cd -P -- "$1" && shift && exec "$@"'
 
 type Argv = Sequence[str | os.PathLike[str]]
@@ -76,7 +82,8 @@ def _spawn_plan(
     if not os.path.isdir(directory):
         # Popen reports a missing cwd as an OSError before anything runs.
         raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), directory)
-    absolute = os.path.join(os.getcwd(), directory)
+    # Not os.path.abspath: its normpath folds "link/.." lexically, and chdir(2) does not.
+    absolute = directory if os.path.isabs(directory) else os.path.join(os.getcwd(), directory)
     chdir_argv = ["/bin/sh", "-c", _CHDIR_EXEC, "gobby-spawn", absolute, executable, *command[1:]]
     return chdir_argv, "/bin/sh", None
 
@@ -186,3 +193,21 @@ async def create_subprocess_exec(
     return await asyncio.create_subprocess_exec(
         *command, executable=executable, cwd=directory, env=env, close_fds=False, **options
     )
+
+
+def seal_inherited_descriptors() -> None:
+    """Make every descriptor above stderr non-inheritable; the daemon calls it at start.
+
+    Spawns keep close_fds=False, so a descriptor the launcher left inheritable
+    would reach every child.
+    """
+    try:
+        names = os.listdir("/dev/fd")
+    except FileNotFoundError:  # no /dev/fd (Windows)
+        return
+    for name in names:
+        fd = int(name)
+        if fd > 2:
+            # The listing's own directory descriptor is already closed.
+            with contextlib.suppress(OSError):
+                os.set_inheritable(fd, False)

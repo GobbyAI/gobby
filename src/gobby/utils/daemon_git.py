@@ -148,7 +148,9 @@ class _PosixSpawnProcess:
                 argv,
                 env,
                 file_actions=file_actions,
-                setpgroup=0,
+                # A session of its own, as start_new_session: a credential prompt
+                # cannot stop Git with SIGTTIN, and killpg still reaches the group.
+                setsid=True,
                 setsigdef=reset_signals,
             )
         except Exception:
@@ -201,7 +203,7 @@ def _spawn_git(
     stdout_file: BinaryIO | None = None,
     stderr_file: BinaryIO | None = None,
 ) -> _GitProcess:
-    """Start Git as the leader of its own process group.
+    """Start Git as the leader of its own session and process group.
 
     Popen needs fork for cwd and a new session, and forking the daemon stalls
     every thread (#22815), so POSIX starts ``git -C <cwd>`` with posix_spawn.
