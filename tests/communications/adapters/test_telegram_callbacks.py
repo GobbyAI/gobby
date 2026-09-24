@@ -156,6 +156,56 @@ async def test_adapter_sends_keyboard_and_routes_callback_to_originating_session
 
 
 @pytest.mark.asyncio
+async def test_adapter_sends_system_agent_menu_with_callback() -> None:
+    adapter = TelegramAdapter()
+    adapter._callback_registry = _registry([100.0])
+    adapter._client = MagicMock()
+    adapter._api_base = "https://api.telegram.org/bottest-token"
+    message = CommsMessage(
+        id="agent-menu",
+        channel_id="channel-id",
+        direction="outbound",
+        content="Choose an agent:",
+        session_id=None,
+        metadata_json={
+            "platform_destination": "2222222",
+            "callback_action": "agent_target",
+            "inline_keyboard": [[{"text": "Lane 4", "value": "session-4"}]],
+        },
+        created_at=datetime.now(UTC),
+    )
+    post_json = AsyncMock(return_value={"ok": True, "result": {"message_id": 99}})
+
+    with patch.object(adapter, "_post_json", post_json):
+        await adapter.send_message(message)
+
+    awaited_call = post_json.await_args
+    assert awaited_call is not None
+    sent_payload = awaited_call.args[1]
+    callback_data = sent_payload["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
+    callback = adapter.parse_webhook(_callback_payload(callback_data, thread_id=None), {})[0]
+
+    assert callback.content == "session-4"
+    assert callback.session_id is None
+    assert callback.metadata_json["callback_action"] == "agent_target"
+    assert "callback_session_id" not in callback.metadata_json
+
+
+def test_other_keyboard_actions_still_require_a_session() -> None:
+    registry = _registry([100.0])
+
+    with pytest.raises(ValueError, match="session_id"):
+        registry.register_keyboard(
+            [[{"text": "Approve", "value": "yes"}]],
+            session_id=None,
+            chat_id="2222222",
+            thread_id=None,
+            ttl_seconds=30,
+            action="session_action",
+        )
+
+
+@pytest.mark.asyncio
 async def test_keyboard_callback_carries_the_project_that_named_the_session() -> None:
     """A #N button is named inside one project. The tap must still carry that project."""
     clock = [100.0]
