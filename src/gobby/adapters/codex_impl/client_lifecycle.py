@@ -5,9 +5,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import subprocess  # nosec B404 # pipe constants for the Codex app-server
 from typing import TYPE_CHECKING, Any
 
 from gobby.adapters.codex_impl.types import CodexConnectionState
+from gobby.utils import spawn
 from gobby.utils.stream_pump import open_stream_pump_executor
 
 if TYPE_CHECKING:
@@ -16,7 +18,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-async def start(client: CodexAppServerClient, subprocess_module: Any) -> None:
+async def start(client: CodexAppServerClient) -> None:
     """
     Start the Codex app-server subprocess and initialize connection.
 
@@ -44,11 +46,11 @@ async def start(client: CodexAppServerClient, subprocess_module: Any) -> None:
             command.extend(["--disable", feature])
 
         # Start the subprocess
-        client._process = subprocess_module.Popen(  # nosec B603
+        client._process = spawn.popen(
             command,
-            stdin=subprocess_module.PIPE,
-            stdout=subprocess_module.PIPE,
-            stderr=subprocess_module.PIPE,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
             bufsize=1,  # Line buffered
             env=env,

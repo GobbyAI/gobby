@@ -630,7 +630,7 @@ class TestAgentRunCompletion:
     """Test agent run completion logic."""
 
     @patch("gobby.agents.tmux.get_configured_tmux_command_prefix", side_effect=lambda: ["tmux"])
-    @patch("subprocess.run")
+    @patch("gobby.utils.spawn.run")
     def test_complete_agent_run_captures_full_tmux_history(
         self,
         mock_run: MagicMock,
@@ -801,7 +801,7 @@ class TestAgentRunCompletion:
 
         with (
             patch("gobby.agents.tmux.get_configured_tmux_command_prefix", return_value=["tmux"]),
-            patch("subprocess.run", side_effect=_run_absent_tmux),
+            patch("gobby.utils.spawn.run", side_effect=_run_absent_tmux),
         ):
             await asyncio.to_thread(coordinator.complete_agent_run, session)
 
@@ -870,7 +870,7 @@ class TestAgentRunCompletion:
         with (
             caplog.at_level(logging.WARNING, logger="gobby.hooks.session_coordinator"),
             patch("gobby.agents.tmux.get_configured_tmux_command_prefix", return_value=["tmux"]),
-            patch("subprocess.run", side_effect=_run_absent_tmux),
+            patch("gobby.utils.spawn.run", side_effect=_run_absent_tmux),
         ):
             await asyncio.to_thread(coordinator.complete_agent_run, session)
 

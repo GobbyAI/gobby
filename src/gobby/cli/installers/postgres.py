@@ -31,6 +31,7 @@ from gobby.code_index.bm25_health import (
 )
 from gobby.config.bootstrap import BootstrapConfigError
 from gobby.paths import get_gobby_home
+from gobby.utils import spawn
 from gobby.utils.postgres_extensions import BASELINE_POSTGRES_EXTENSIONS
 
 from .compose_env import ComposeEnvironmentError, ComposeRuntime, resolve_compose_runtime
@@ -575,7 +576,7 @@ def _wait_for_pg_isready(
 
 def _pg_isready(dsn: str, *, timeout: float = 10.0, connect_timeout: int = 5) -> bool:
     try:
-        result = subprocess.run(  # nosec B603 B607 # fixed pg_isready command
+        result = spawn.run(
             ["pg_isready", "-d", dsn],
             capture_output=True,
             text=True,

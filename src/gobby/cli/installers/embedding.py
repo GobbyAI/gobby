@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.agents.local_model import LocalModelError
 from gobby.ai.embeddings import EmbeddingGenerationError, EmbeddingService
+from gobby.utils import spawn
 
 if TYPE_CHECKING:
     from gobby.storage.config_store import ConfigStore
@@ -350,13 +351,11 @@ def _setup_lmstudio(
 
     # 2. Ensure server is running
     try:
-        result = subprocess.run(
-            ["lms", "server", "status"], capture_output=True, text=True, timeout=10
-        )
+        result = spawn.run(["lms", "server", "status"], capture_output=True, text=True, timeout=10)
         combined = (result.stdout + result.stderr).lower()
         if result.returncode != 0 or "running" not in combined:
             # Try to start it
-            start_result = subprocess.run(
+            start_result = spawn.run(
                 ["lms", "server", "start"], capture_output=True, text=True, timeout=30
             )
             if start_result.returncode != 0:
@@ -369,7 +368,7 @@ def _setup_lmstudio(
 
     # 3. Check if model is already loaded
     try:
-        ps_result = subprocess.run(["lms", "ps"], capture_output=True, text=True, timeout=10)
+        ps_result = spawn.run(["lms", "ps"], capture_output=True, text=True, timeout=10)
         if ps_result.returncode == 0 and model_id.lower() in ps_result.stdout.lower():
             return {"success": True, "action": "already_loaded"}
     except (subprocess.TimeoutExpired, OSError) as e:
@@ -377,7 +376,7 @@ def _setup_lmstudio(
 
     # 4. Check if on disk
     try:
-        ls_result = subprocess.run(["lms", "ls"], capture_output=True, text=True, timeout=15)
+        ls_result = spawn.run(["lms", "ls"], capture_output=True, text=True, timeout=15)
         # Match by the requested model identifier or filename. Family-level
         # matches can skip downloading the specific catalog artifact.
         if search_keyword is not None:
@@ -399,7 +398,7 @@ def _setup_lmstudio(
                 get_cmd = ["lms", "get", gguf_repo, "--gguf", gguf_filename, "-y"]
             else:
                 get_cmd = ["lms", "get", _LMSTUDIO_MODEL_KEY, "--gguf", "-y"]
-            get_result = subprocess.run(
+            get_result = spawn.run(
                 get_cmd,
                 capture_output=True,
                 text=True,
@@ -417,7 +416,7 @@ def _setup_lmstudio(
 
     # Load the model
     try:
-        load_result = subprocess.run(
+        load_result = spawn.run(
             ["lms", "load", model_id, "-y"],
             capture_output=True,
             text=True,
@@ -458,7 +457,7 @@ def _setup_ollama(*, ollama_tag: str = _OLLAMA_MODEL_NAME) -> dict[str, Any]:
 
     # Check if model is already pulled
     try:
-        list_result = subprocess.run(["ollama", "list"], capture_output=True, text=True, timeout=10)
+        list_result = spawn.run(["ollama", "list"], capture_output=True, text=True, timeout=10)
         if list_result.returncode == 0 and ollama_tag in list_result.stdout:
             return {"success": True, "action": "already_pulled"}
     except (subprocess.TimeoutExpired, OSError) as e:
@@ -466,7 +465,7 @@ def _setup_ollama(*, ollama_tag: str = _OLLAMA_MODEL_NAME) -> dict[str, Any]:
 
     # Pull the model
     try:
-        pull_result = subprocess.run(
+        pull_result = spawn.run(
             ["ollama", "pull", ollama_tag],
             capture_output=True,
             text=True,

@@ -49,6 +49,7 @@ from gobby.skills.script_cache import (
 )
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.skills import LocalSkillManager, Skill
+from gobby.utils import spawn
 
 _SUBPROCESS_TIMEOUT_SECONDS = 180.0
 _TERMINATE_GRACE_SECONDS = 5.0
@@ -581,7 +582,7 @@ async def _node_state(floor: str | None) -> _NodeState:
 
 def _read_node_version(node: str) -> str | None:
     try:
-        result = subprocess.run(
+        result = spawn.run(
             [node, "--version"],
             capture_output=True,
             text=True,

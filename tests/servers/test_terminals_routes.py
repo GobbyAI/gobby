@@ -228,7 +228,7 @@ def test_a_native_row_reports_the_command_in_its_terminal_foreground(
         return_value=subprocess.CompletedProcess(args=["ps"], returncode=0, stdout=table, stderr="")
     )
 
-    with patch("gobby.terminals.foreground.subprocess.run", run), _client(temp_db) as client:
+    with patch("gobby.terminals.foreground.spawn.run", run), _client(temp_db) as client:
         listing = client.get("/api/terminals", params={"project_id": sample_project["id"]})
         detail = client.get(f"/api/terminals/{native.id}")
 

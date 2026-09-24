@@ -10,6 +10,7 @@ from typing import Any
 from gobby import terminal_context as terminal_context_helpers
 from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.config.tmux import TmuxConfig
+from gobby.utils import spawn
 
 merge_terminal_context = terminal_context_helpers.merge_terminal_context
 parse_terminal_context_value = terminal_context_helpers.parse_terminal_context_value
@@ -35,7 +36,7 @@ def query_tmux_identity(
     if not socket_path or not pane_id.startswith("%") or not pane_id[1:].isdigit():
         return None
     try:
-        result = subprocess.run(
+        result = spawn.run(
             [
                 command,
                 "-S",
@@ -70,7 +71,7 @@ def query_tmux_generation(
     if not socket_path or not pane_id.startswith("%") or not pane_id[1:].isdigit():
         return None
     try:
-        result = subprocess.run(
+        result = spawn.run(
             [
                 command,
                 "-S",

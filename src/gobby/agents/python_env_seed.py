@@ -10,6 +10,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from gobby.utils import spawn
 from gobby.utils.native_bin import resolve_native_bin
 
 logger = logging.getLogger(__name__)
@@ -80,7 +81,7 @@ async def preseed_isolated_python_environment(
 
     proc: asyncio.subprocess.Process | None = None
     try:
-        proc = await asyncio.create_subprocess_exec(
+        proc = await spawn.create_subprocess_exec(
             *command,
             cwd=str(workspace),
             env=seed_env,
@@ -142,7 +143,7 @@ def _resolve_default_uv_cache_dir(
     seed_env: Mapping[str, str],
 ) -> str:
     try:
-        result = subprocess.run(  # nosec B603 # fixed uv argv, no shell.
+        result = spawn.run(  # nosec B603 # fixed uv argv, no shell.
             [uv_bin, "cache", "dir"],
             cwd=str(workspace),
             env=dict(seed_env),

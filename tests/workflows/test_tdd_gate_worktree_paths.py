@@ -102,7 +102,7 @@ def test_repeated_worktree_gate_checks_run_git_once_per_directory(
             timeout=timeout,
         )
 
-    monkeypatch.setattr("gobby.workflows.tdd_paths.subprocess.run", _counting_run)
+    monkeypatch.setattr("gobby.workflows.tdd_paths.spawn.run", _counting_run)
     variables = {
         "claimed_task_acceptance_test_paths": [_RELATIVE_TEST],
         "tdd_tests_written": [str(worktree / _RELATIVE_TEST)],
@@ -140,7 +140,7 @@ def test_git_timeout_is_not_cached(tmp_path: Path, monkeypatch: pytest.MonkeyPat
             timeout=timeout,
         )
 
-    monkeypatch.setattr("gobby.workflows.tdd_paths.subprocess.run", _timeout_once)
+    monkeypatch.setattr("gobby.workflows.tdd_paths.spawn.run", _timeout_once)
     variables = {
         "claimed_task_acceptance_test_paths": [_RELATIVE_TEST],
         "tdd_tests_written": [str(worktree / _RELATIVE_TEST)],

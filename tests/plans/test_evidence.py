@@ -56,7 +56,7 @@ def test_resolve_commits_range(tmp_path: Path) -> None:
 
 
 def test_commits_option_ref_is_rejected_before_git(tmp_path: Path) -> None:
-    with patch("gobby.plans.evidence.subprocess.run") as run_git:
+    with patch("gobby.plans.evidence.spawn.run") as run_git:
         with pytest.raises(
             InvalidEvidenceError,
             match="Option-shaped evidence ref '--all' is not allowed",
@@ -67,7 +67,7 @@ def test_commits_option_ref_is_rejected_before_git(tmp_path: Path) -> None:
 
 
 def test_commits_single_revision_is_rejected_before_git(tmp_path: Path) -> None:
-    with patch("gobby.plans.evidence.subprocess.run") as run_git:
+    with patch("gobby.plans.evidence.spawn.run") as run_git:
         with pytest.raises(
             InvalidEvidenceError,
             match="commits evidence requires an explicit revision range",

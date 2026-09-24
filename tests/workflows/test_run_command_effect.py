@@ -776,7 +776,7 @@ class TestRunCommandBounds:
             await asyncio.Event().wait()
             yield
 
-        with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as spawn:
+        with patch("gobby.utils.spawn.create_subprocess_exec", new_callable=AsyncMock) as spawn:
             result = await execute_run_command(
                 [sys.executable, "-c", "print('unused')"],
                 cwd=str(tmp_path),
@@ -805,7 +805,7 @@ class TestRunCommandBounds:
             spawned.set()
             return process
 
-        with patch("asyncio.create_subprocess_exec", side_effect=tracked_spawn):
+        with patch("gobby.utils.spawn.create_subprocess_exec", side_effect=tracked_spawn):
             task = asyncio.create_task(
                 execute_run_command(
                     [sys.executable, "-c", "import time; time.sleep(30)"],

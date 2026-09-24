@@ -22,6 +22,7 @@ import httpx
 
 from gobby.cli.utils import get_gobby_home
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils import spawn
 
 logger = logging.getLogger(__name__)
 
@@ -318,7 +319,7 @@ async def _run_cli_command(
 ) -> subprocess.CompletedProcess[str]:
     """Run a CLI command off the event loop and capture text output."""
     return await asyncio.to_thread(
-        subprocess.run,
+        spawn.run,
         command,
         capture_output=True,
         text=True,
@@ -481,7 +482,7 @@ async def try_autoload_embedding_model(model: str, api_base: str | None) -> bool
         if shutil.which("ollama"):
             try:
                 result = await asyncio.to_thread(
-                    subprocess.run,
+                    spawn.run,
                     ["ollama", "pull", model],
                     capture_output=True,
                     text=True,

@@ -566,6 +566,10 @@ def main(config_path: Path | None = None, verbose: bool = False) -> None:
     os.environ.setdefault("PYTORCH_MPS_HIGH_WATERMARK_RATIO", "0.8")
     _raise_fd_limit()
 
+    from gobby.utils.spawn import seal_inherited_descriptors
+
+    seal_inherited_descriptors()
+
     # Refuse a linked-worktree source tree before any subsystem touches the
     # database: startup sync would publish this checkout's templates to every
     # session (#21031).

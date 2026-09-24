@@ -97,7 +97,7 @@ class TestSessionManagerWslIntegration:
 
     @patch("gobby.agents.tmux.wsl_compat.platform.system", return_value="Windows")
     @patch("shutil.which", return_value="/usr/bin/wsl")
-    @patch("subprocess.run")
+    @patch("gobby.utils.spawn.run")
     def test_is_available_windows_with_wsl(
         self, mock_run: object, _which: object, _sys: object
     ) -> None:

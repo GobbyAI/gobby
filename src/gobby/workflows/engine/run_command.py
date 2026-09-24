@@ -15,6 +15,7 @@ from typing import Literal, cast
 
 from gobby.hooks._normalization_tools import normalize_tool_fields
 from gobby.hooks.events import HookEvent, HookEventType
+from gobby.utils import spawn
 from gobby.workflows.definitions import validate_skill_script_path
 
 STDOUT_LIMIT_BYTES = 256 * 1024
@@ -164,10 +165,10 @@ async def execute_run_command(
     if environment:
         subprocess_environment.update(environment)
 
-    async def spawn() -> None:
+    async def launch() -> None:
         nonlocal process
         spawn_command = command_factory() if command_factory is not None else command
-        process = await asyncio.create_subprocess_exec(
+        process = await spawn.create_subprocess_exec(
             *spawn_command,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
@@ -180,10 +181,10 @@ async def execute_run_command(
         async with asyncio.timeout(timeout_seconds):
             try:
                 if spawn_guard is None:
-                    await spawn()
+                    await launch()
                 else:
                     async with spawn_guard:
-                        await spawn()
+                        await launch()
             except (OSError, ValueError):
                 return _result(
                     "spawn_error",

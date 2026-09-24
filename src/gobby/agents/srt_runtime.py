@@ -44,6 +44,7 @@ if TYPE_CHECKING:
 from gobby.agents.sandbox import ResolvedSandboxPaths, SandboxConfig
 from gobby.agents.sandbox_resolvers import SandboxResolver, preflight_provider_native_settings
 from gobby.agents.spawn_timing import finish_spawn_phase, start_spawn_phase
+from gobby.utils import spawn
 
 SRT_POLICY_SCHEMA_VERSION = 1
 
@@ -704,7 +705,7 @@ async def _preflight_srt(
 ) -> None:
     command = launch.wrap([])[:-1] + ["--preflight"]
     try:
-        process = await asyncio.create_subprocess_exec(
+        process = await spawn.create_subprocess_exec(
             *command,
             cwd=workspace_path,
             env=dict(env),

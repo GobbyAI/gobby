@@ -19,6 +19,7 @@ from gobby.cli.utils_runtime import facade
 from gobby.config.app import DaemonConfig
 from gobby.config.bootstrap import DEFAULT_WEBSOCKET_PORT
 from gobby.config.ui import UIConfig
+from gobby.utils import spawn
 from gobby.utils.dev import is_dev_mode
 from gobby.utils.env import is_test_protect_enabled
 
@@ -228,12 +229,7 @@ def spawn_ui_server(
     if not node_modules.exists():
         deps.logger.debug("Installing web UI dependencies...")
         try:
-            result = subprocess.run(  # nosec B603 B607
-                ["npm", "install"],
-                cwd=web_dir,
-                capture_output=True,
-                timeout=120,
-            )
+            result = spawn.run(["npm", "install"], cwd=web_dir, capture_output=True, timeout=120)
         except subprocess.TimeoutExpired:
             deps.logger.error("npm install timed out after 120s")
             return None

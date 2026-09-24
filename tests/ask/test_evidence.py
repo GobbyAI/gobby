@@ -753,7 +753,7 @@ async def test_evidence_cancellation_during_spawn_reaps_late_process(
         spawned.append(process)
         return process
 
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", slow_spawn)
+    monkeypatch.setattr("gobby.utils.spawn.create_subprocess_exec", slow_spawn)
     task = asyncio.create_task(
         admission.query(
             "search",

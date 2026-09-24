@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from gobby.paths import get_gobby_home
+from gobby.utils import spawn
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -76,7 +77,7 @@ def droid_ps_shim_dir() -> Path | None:
         try:
             shutil.copyfile(SYSTEM_PS, staged)
             os.chmod(staged, 0o755)  # nosec B103 # mirrors /bin/ps; user-owned home.
-            subprocess.run(  # nosec B603 # fixed argv, local codesign, no shell.
+            spawn.run(  # nosec B603 # fixed argv, local codesign, no shell.
                 [str(CODESIGN), "-f", "-s", "-", str(staged)],
                 check=True,
                 capture_output=True,

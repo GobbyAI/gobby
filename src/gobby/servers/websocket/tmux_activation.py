@@ -37,6 +37,7 @@ from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.config.tmux import TmuxConfig
 from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.ws_protocol import TERMINAL_WS_LIFECYCLE_SEND_TIMEOUT_S
+from gobby.utils import spawn
 from gobby.utils.json_helpers import json_dumps
 
 logger = logging.getLogger(__name__)
@@ -653,7 +654,7 @@ async def _list_client_ttys(manager: TmuxSessionManager, session_name: str) -> d
         "#{client_pid} #{client_tty}",
     ]
     try:
-        proc = await asyncio.create_subprocess_exec(
+        proc = await spawn.create_subprocess_exec(
             *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,

@@ -45,7 +45,7 @@ async def test_uses_host_cache_and_offline_sync(
             return_value=str(host_cache),
         ),
         patch(
-            "gobby.agents.python_env_seed.asyncio.create_subprocess_exec",
+            "gobby.agents.python_env_seed.spawn.create_subprocess_exec",
             new=AsyncMock(return_value=proc),
         ) as create_proc,
     ):
@@ -92,7 +92,7 @@ async def test_reports_offline_sync_failure(tmp_path: Path) -> None:
             return_value=str(host_cache),
         ),
         patch(
-            "gobby.agents.python_env_seed.asyncio.create_subprocess_exec",
+            "gobby.agents.python_env_seed.spawn.create_subprocess_exec",
             new=AsyncMock(return_value=proc),
         ),
     ):

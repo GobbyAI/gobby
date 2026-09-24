@@ -14,6 +14,7 @@ from typing import Any, Literal, Protocol
 import psutil
 
 from gobby.storage.sessions._constants import LIVE_SESSION_STATUS_ORDER, LIVE_SESSION_STATUSES
+from gobby.utils import spawn
 
 TerminalIdentity = tuple[str, str, str]
 TERMINAL_OWNER_STATUSES = LIVE_SESSION_STATUS_ORDER
@@ -171,7 +172,7 @@ def _recorded_create_time(session: object) -> float | None:
 def foreground_process_group(
     pid: int,
     *,
-    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = spawn.run,
 ) -> int:
     """Return the terminal foreground process group reported for *pid*."""
     result = runner(

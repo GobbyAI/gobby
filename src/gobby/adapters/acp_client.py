@@ -45,6 +45,7 @@ from gobby.adapters.acp_stream import (
 )
 from gobby.adapters.acp_terminal import ACPTerminalManager
 from gobby.adapters.subprocess_stderr import SubprocessStderrDrain
+from gobby.utils import spawn
 
 logger = logging.getLogger(__name__)
 
@@ -293,7 +294,7 @@ class ACPClient:
             cmd, env = launch.compose_subprocess(cmd, env)
             self._sandbox_launch = launch
 
-        self._process = await asyncio.create_subprocess_exec(
+        self._process = await spawn.create_subprocess_exec(
             *cmd,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,

@@ -101,7 +101,7 @@ def test_sweep_uses_database_and_ignores_checkout_identity(
         "expected_schema_identity_json",
         Mock(side_effect=AssertionError("checkout identity must not gate installed gdaemon")),
     )
-    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr("gobby.utils.spawn.run", run)
     monkeypatch.setenv("GOBBY_DATABASE_URL", "postgresql://decoy.example/decoy")
     monkeypatch.setenv("GOBBY_EXPECTED_SCHEMA_IDENTITY", '{"latest_version":435}')
 
@@ -132,7 +132,7 @@ def test_apply_pins_database_without_checkout_identity_in_child_environment(
 ) -> None:
     run = Mock(return_value=subprocess.CompletedProcess([], 0, stdout="ready\n", stderr=""))
     monkeypatch.setattr(schema_contract, "resolve_native_bin", lambda name: "/managed/gdaemon")
-    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr("gobby.utils.spawn.run", run)
     monkeypatch.setenv("GOBBY_DATABASE_URL", "postgresql://decoy.example/decoy")
     caplog.set_level(logging.INFO, logger="gobby.storage.schema_contract")
 
@@ -163,7 +163,7 @@ def test_apply_uses_connection_current_schema_by_default(
 ) -> None:
     run = Mock(return_value=subprocess.CompletedProcess([], 0, stdout="ready\n", stderr=""))
     monkeypatch.setattr(schema_contract, "resolve_native_bin", lambda name: "/managed/gdaemon")
-    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr("gobby.utils.spawn.run", run)
 
     schema_contract.apply_schema("postgresql://gobby:secret@database.example/gobby")
 
@@ -175,7 +175,7 @@ def test_verify_pins_database_without_checkout_identity_in_child_environment(
 ) -> None:
     run = Mock(return_value=subprocess.CompletedProcess([], 0, stdout="verified\n", stderr=""))
     monkeypatch.setattr(schema_contract, "resolve_native_bin", lambda name: "/managed/gdaemon")
-    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr("gobby.utils.spawn.run", run)
 
     schema_contract.verify_schema("postgresql://gobby:secret@database.example/gobby")
 
@@ -226,7 +226,7 @@ def test_apply_reports_database_identity_failure_without_leaking_database_url(
         )
     )
     monkeypatch.setattr(schema_contract, "resolve_native_bin", lambda name: "/managed/gdaemon")
-    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr("gobby.utils.spawn.run", run)
 
     with pytest.raises(
         schema_contract.SchemaContractError, match="binary-embedded schema identity"
@@ -273,7 +273,7 @@ def test_apply_reports_timeout_as_actionable_failure(monkeypatch: pytest.MonkeyP
     def timeout(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
         raise subprocess.TimeoutExpired("gdaemon", 300)
 
-    monkeypatch.setattr(subprocess, "run", timeout)
+    monkeypatch.setattr("gobby.utils.spawn.run", timeout)
 
     with pytest.raises(schema_contract.SchemaContractError, match="timed out after 300 seconds"):
         schema_contract.apply_schema("postgresql://gobby:secret@database.example/gobby")
@@ -307,7 +307,7 @@ def test_plan_uses_candidate_binary_and_pins_database_url(
     line = "schema gobby plan: database v1, code v2, baseline_pending=false, pending=1 [2]\n"
     run = Mock(return_value=subprocess.CompletedProcess([], 0, stdout=line, stderr=""))
     monkeypatch.setattr(schema_contract, "resolve_native_bin", lambda name: "/managed/gdaemon")
-    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr("gobby.utils.spawn.run", run)
     monkeypatch.setenv("GOBBY_EXPECTED_SCHEMA_IDENTITY", "{}")
 
     stdout = schema_contract.plan_schema(

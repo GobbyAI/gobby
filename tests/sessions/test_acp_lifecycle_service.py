@@ -642,7 +642,7 @@ async def test_close_does_not_handshake_when_generation_changes_at_process_creat
         session.workspace_generation += 1
         return process
 
-    monkeypatch.setattr("asyncio.create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr("gobby.utils.spawn.create_subprocess_exec", fake_create_subprocess_exec)
     backend = _FakeBackend(capabilities={"close": True})
 
     def _make_client(**kwargs: Any) -> _StubACPClient:

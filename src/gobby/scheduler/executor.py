@@ -15,6 +15,7 @@ from gobby.config.cron import CronConfig
 from gobby.storage.cron import CronJobStorage
 from gobby.storage.cron_models import CronJob, CronRun, CronRunStatus
 from gobby.telemetry.health_metrics import record_automation_event
+from gobby.utils import spawn
 
 if TYPE_CHECKING:
     from gobby.workflows.pipeline_executor import PipelineExecutor
@@ -686,7 +687,7 @@ class CronExecutor:
 
         process = None
         try:
-            process = await asyncio.create_subprocess_exec(
+            process = await spawn.create_subprocess_exec(
                 *cmd,
                 cwd=cwd,
                 stdout=asyncio.subprocess.PIPE,

@@ -19,6 +19,7 @@ from gobby.providers.capabilities.models import (
 )
 from gobby.providers.version_gate import AgySupportRecord, peek_agy_support
 from gobby.servers.provider_model_defaults import AGY_MODELS
+from gobby.utils import spawn
 
 _SOURCE_KEY = "agy_models_cli"
 _BUNDLED_SOURCE_KEY = "bundled"
@@ -67,7 +68,7 @@ class _AgyModel:
 
 
 async def _run_agy_models(command: tuple[str, ...]) -> tuple[int, str, str]:
-    process = await asyncio.create_subprocess_exec(
+    process = await spawn.create_subprocess_exec(
         *command,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,

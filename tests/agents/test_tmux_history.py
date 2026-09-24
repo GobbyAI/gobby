@@ -118,7 +118,7 @@ class TestBuildCaptureArgs:
             wait=AsyncMock(return_value=0),
         )
         with patch(
-            "asyncio.create_subprocess_exec", new=AsyncMock(return_value=proc)
+            "gobby.utils.spawn.create_subprocess_exec", new=AsyncMock(return_value=proc)
         ) as create_proc:
             await capture_history(manager, "demo", refresh_tty="/dev/ttys009")
 
@@ -142,7 +142,7 @@ class TestBuildCaptureArgs:
             kill=MagicMock(),
             wait=AsyncMock(return_value=1),
         )
-        with patch("asyncio.create_subprocess_exec", new=AsyncMock(return_value=proc)):
+        with patch("gobby.utils.spawn.create_subprocess_exec", new=AsyncMock(return_value=proc)):
             capture = await capture_history(manager, "demo", refresh_tty="/dev/x")
 
         assert capture.text == "one\r\ntwo\x1b[0m"
@@ -160,7 +160,7 @@ class TestBuildCaptureArgs:
             kill=MagicMock(),
             wait=AsyncMock(return_value=1),
         )
-        with patch("asyncio.create_subprocess_exec", new=AsyncMock(return_value=proc)):
+        with patch("gobby.utils.spawn.create_subprocess_exec", new=AsyncMock(return_value=proc)):
             with pytest.raises(HistoryCaptureError) as raised:
                 await capture_history(manager, "demo", refresh_tty="/dev/x")
 
@@ -180,7 +180,7 @@ class TestBuildCaptureArgs:
             kill=MagicMock(),
             wait=AsyncMock(return_value=0),
         )
-        with patch("asyncio.create_subprocess_exec", new=AsyncMock(return_value=proc)):
+        with patch("gobby.utils.spawn.create_subprocess_exec", new=AsyncMock(return_value=proc)):
             assert (await capture_history(manager, "demo", refresh_tty="/dev/x")).repainted is True
             # Without a tty there was no repaint to report.
             assert (await capture_history(manager, "demo")).repainted is False
@@ -300,7 +300,7 @@ class TestCaptureHistory:
         proc = FakeProcess(stdout=b"one\ntwo\n")
 
         with patch(
-            "asyncio.create_subprocess_exec", new=AsyncMock(return_value=proc)
+            "gobby.utils.spawn.create_subprocess_exec", new=AsyncMock(return_value=proc)
         ) as create_proc:
             capture = await capture_history(manager, "demo", max_lines=5, max_bytes=1024)
 
@@ -314,7 +314,7 @@ class TestCaptureHistory:
     ) -> None:
         proc = FakeProcess(stdout=b"ok\n\xff\xfe\n")
 
-        with patch("asyncio.create_subprocess_exec", new=AsyncMock(return_value=proc)):
+        with patch("gobby.utils.spawn.create_subprocess_exec", new=AsyncMock(return_value=proc)):
             capture = await capture_history(manager, "demo", max_lines=5, max_bytes=1024)
 
         assert capture.text.startswith("ok\r\n")
@@ -324,7 +324,7 @@ class TestCaptureHistory:
     async def test_nonzero_exit_raises_capture_error(self, manager: TmuxSessionManager) -> None:
         proc = FakeProcess(stderr=b"no such session", returncode=1)
 
-        with patch("asyncio.create_subprocess_exec", new=AsyncMock(return_value=proc)):
+        with patch("gobby.utils.spawn.create_subprocess_exec", new=AsyncMock(return_value=proc)):
             with pytest.raises(HistoryCaptureError, match="no such session"):
                 await capture_history(manager, "demo")
 
@@ -335,7 +335,7 @@ class TestCaptureHistory:
         # error frame the client no longer matches.
         spawn = AsyncMock(side_effect=FileNotFoundError(2, "No such file or directory"))
 
-        with patch("asyncio.create_subprocess_exec", new=spawn):
+        with patch("gobby.utils.spawn.create_subprocess_exec", new=spawn):
             with pytest.raises(HistoryCaptureError, match="could not spawn"):
                 await capture_history(manager, "demo")
 
@@ -343,7 +343,7 @@ class TestCaptureHistory:
     async def test_timeout_kills_and_reaps_the_child(self, manager: TmuxSessionManager) -> None:
         proc = FakeProcess(hang=True)
 
-        with patch("asyncio.create_subprocess_exec", new=AsyncMock(return_value=proc)):
+        with patch("gobby.utils.spawn.create_subprocess_exec", new=AsyncMock(return_value=proc)):
             with pytest.raises(HistoryCaptureError, match="timed out"):
                 await capture_history(manager, "demo", timeout=0.01)
 
@@ -356,7 +356,7 @@ class TestCaptureHistory:
     ) -> None:
         proc = FakeProcess(hang=True)
 
-        with patch("asyncio.create_subprocess_exec", new=AsyncMock(return_value=proc)):
+        with patch("gobby.utils.spawn.create_subprocess_exec", new=AsyncMock(return_value=proc)):
             task: asyncio.Task[Any] = asyncio.create_task(capture_history(manager, "demo"))
             await asyncio.wait_for(proc.entered.wait(), timeout=5)
             task.cancel()

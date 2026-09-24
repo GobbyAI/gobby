@@ -14,6 +14,7 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 from gobby.config.tmux import ATTACH_HISTORY_LINES
+from gobby.utils import spawn
 
 if TYPE_CHECKING:
     from gobby.agents.tmux.session_manager import TmuxSessionManager
@@ -177,7 +178,7 @@ async def capture_history(
     """
     args = build_capture_args(manager, session_name, max_lines=max_lines, refresh_tty=refresh_tty)
     try:
-        proc = await asyncio.create_subprocess_exec(
+        proc = await spawn.create_subprocess_exec(
             *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,

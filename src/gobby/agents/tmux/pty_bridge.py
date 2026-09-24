@@ -20,6 +20,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 
 from gobby.config.tmux import TmuxConfig
+from gobby.utils import spawn
 
 if sys.platform != "win32":  # pragma: no branch - Windows has no fcntl/termios
     import fcntl
@@ -134,7 +135,7 @@ class TmuxPTYBridge:
                 # rendered by an xterm-compatible web terminal, so force a
                 # matching terminfo regardless of the inherited environment.
                 env = {**os.environ, "TERM": "xterm-256color"}
-                proc = await asyncio.create_subprocess_exec(
+                proc = await spawn.create_subprocess_exec(
                     *cmd,
                     stdin=slave_fd,
                     stdout=slave_fd,
