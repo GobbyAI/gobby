@@ -431,3 +431,43 @@ fn build_prefers_run_effort_then_falls_back_to_session_effort() {
         "an interactive row falls back to its session effort"
     );
 }
+
+/// #22805: a Grok pane's row is named like any provider's. The joined session
+/// title wins over the pane's foreground command, and the command ("grok")
+/// names only a row the roster has not joined to a session.
+#[test]
+fn grok_row_takes_the_session_title_over_the_pane_command() {
+    let rows = SidebarRows {
+        sessions: BTreeMap::from([(
+            PROJECT.to_string(),
+            vec![SessionRow {
+                id: "sess-grok".to_string(),
+                title: Some("Stability lane Engineer".to_string()),
+                source: Some("grok".to_string()),
+                status: "awaiting_approval".to_string(),
+                ..Default::default()
+            }],
+        )]),
+        ..Default::default()
+    };
+    let mut joined = entry("session:sess-grok", Some("terminal-grok"));
+    joined.session_id = Some("sess-grok".to_string());
+    joined.provider = Some("grok".to_string());
+    let unjoined = entry("terminal:terminal-bare", Some("terminal-bare"));
+    let mut grok_pane = pane(1, "terminal-grok", false, true);
+    grok_pane.command = Some("grok".to_string());
+    let mut bare_pane = pane(2, "terminal-bare", false, true);
+    bare_pane.command = Some("grok".to_string());
+
+    let model = model(&rows, &[joined, unjoined], &[grok_pane, bare_pane]);
+
+    assert_eq!(
+        model.agents[0].name, "Stability lane Engineer",
+        "the joined session title names the Grok row"
+    );
+    assert_eq!(model.agents[0].provider, "grok");
+    assert_eq!(
+        model.agents[1].name, "grok",
+        "a row with no session falls back to the pane command"
+    );
+}
