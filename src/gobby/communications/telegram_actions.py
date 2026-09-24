@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 from gobby.communications.models import ChannelConfig, CommsMessage, CommsRoutingRule
 from gobby.communications.native_plan_actions import decode_native_plan_option
 from gobby.communications.telegram_access import allowed_senders
+from gobby.storage.session_resolution import is_session_uuid
 from gobby.storage.sessions import LIVE_SESSION_STATUSES, system_session_id
 
 if TYPE_CHECKING:
@@ -87,10 +88,25 @@ class TelegramActionController:
             )
             return True
 
+        session_ref = message.session_id
+        session_id = session_ref
+        if session_ref and not is_session_uuid(session_ref):
+            project_id = _string_value(message.metadata_json.get("callback_project_id"))
+            try:
+                session_id = await asyncio.to_thread(
+                    self._session_manager.resolve_session_reference,
+                    session_ref,
+                    project_id,
+                )
+            except ValueError:
+                logger.info(
+                    "Telegram message %s did not resolve session reference %s",
+                    message.id,
+                    session_ref,
+                )
+                session_id = None
         session = (
-            await asyncio.to_thread(self._session_manager.get, message.session_id)
-            if message.session_id
-            else None
+            await asyncio.to_thread(self._session_manager.get, session_id) if session_id else None
         )
         if (
             session is not None

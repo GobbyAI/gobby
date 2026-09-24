@@ -32,6 +32,7 @@ class TelegramCallbackResolution:
     session_id: str | None = None
     value: str | None = None
     action: str | None = None
+    project_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -42,6 +43,7 @@ class _CallbackEntry:
     thread_id: str | None
     expires_at: float
     action: str | None
+    project_id: str | None = None
 
 
 class TelegramCallbackRegistry:
@@ -70,12 +72,14 @@ class TelegramCallbackRegistry:
         thread_id: str | None,
         ttl_seconds: object,
         action: object = None,
+        project_id: object = None,
     ) -> dict[str, list[list[dict[str, str]]]]:
         """Validate a keyboard and replace button values with opaque callback tokens."""
         normalized_session_id = _required_string(session_id, "session_id")
         normalized_chat_id = _required_string(chat_id, "chat_id")
         normalized_thread_id = _optional_string(thread_id)
         normalized_action = _optional_string(action)
+        normalized_project_id = _optional_string(project_id)
         ttl = _bounded_ttl(ttl_seconds)
         buttons = _normalized_keyboard(keyboard)
         button_count = sum(len(row) for row in buttons)
@@ -99,6 +103,7 @@ class TelegramCallbackRegistry:
                     thread_id=normalized_thread_id,
                     expires_at=expires_at,
                     action=normalized_action,
+                    project_id=normalized_project_id,
                 )
                 self._evict_excess()
                 telegram_row.append({"text": text, "callback_data": callback_data})
@@ -133,6 +138,7 @@ class TelegramCallbackRegistry:
             session_id=entry.session_id,
             value=entry.value,
             action=entry.action,
+            project_id=entry.project_id,
         )
 
     def discard_keyboard(self, markup: object) -> None:
@@ -230,6 +236,8 @@ def telegram_callback_message(
         metadata["callback_value"] = resolution.value
         if resolution.action is not None:
             metadata["callback_action"] = resolution.action
+        if resolution.project_id is not None:
+            metadata["callback_project_id"] = resolution.project_id
 
     source_message_id = _platform_identifier(source_message.get("message_id"))
     if source_message_id is not None:
