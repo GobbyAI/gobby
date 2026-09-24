@@ -597,6 +597,9 @@ class CodexCLITextGenerateAdapter:
             command.extend(["-c", override])
         if request.model and self._config_overrides:
             command.extend(["-c", codex_model_config_override(request.model)])
+        # One-shot generation uses no tools; without this Codex starts every MCP
+        # server in the user's config (the Gobby proxy, node_repl) on each call.
+        command.extend(["-c", "mcp_servers={}"])
         command.extend(["exec", "--ephemeral"])
         if self._ignore_user_config:
             command.append("--ignore-user-config")

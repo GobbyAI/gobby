@@ -8,7 +8,9 @@ resubmit exactly once before it reports the delivery as failed.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -19,7 +21,12 @@ from gobby.mcp_proxy.tools.sessions._terminal_compaction import (
     _COMPOSER_OCCUPIED_ERROR_CODE,
     _INTERRUPT_ATTEMPTS,
     _INTERRUPT_UNCONFIRMED_ERROR_CODE,
+    _TURN_SETTLE_POLL_SECONDS,
     _send_terminal_compaction_command,
+)
+from gobby.sessions.transcript_cursor import (
+    build_interrupt_observer,
+    build_turn_settled_observer,
 )
 from gobby.terminals.composer import composer_clear_sequence
 from gobby.terminals.runtime import SnapshotMode
@@ -193,6 +200,159 @@ async def test_grok_settled_turn_is_compacted_without_an_interrupt() -> None:
     assert pane.typed == [f"{_COMMAND}\n"]
     mark.assert_called_once()
     clear.assert_not_called()
+
+
+def _grok_event(kind: str, **fields: object) -> bytes:
+    return (json.dumps({"type": kind, **fields}) + "\n").encode()
+
+
+class _CountingGrokPane(_GrokPane):
+    """Counts Ctrl+C presses while still recording every key."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.ctrl_c_presses = 0
+
+    async def send_key(self, key: str) -> tuple[bool, str | None]:
+        if key == "ctrl_c":
+            self.ctrl_c_presses += 1
+        return await super().send_key(key)
+
+
+@pytest.mark.asyncio
+async def test_grok_goal_mode_gap_interrupts_the_successor_without_the_settle_budget(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """turn_ended then turn_started is the settle point. The successor turn is interrupted.
+
+    Goal mode starts the next turn about 92ms after turn_ended. The settle poll is
+    0.25s, so the idle gap is gone before the next read. Waiting out the 30s budget
+    is the bug.
+    """
+    updates = tmp_path / "updates.jsonl"
+    events = tmp_path / "events.jsonl"
+    updates.write_bytes(b"")
+    events.write_bytes(_grok_event("turn_started", turn_number=18))
+    probe = build_turn_settled_observer("grok", updates, session_id="session-grok")
+    assert probe is not None
+    events.write_bytes(
+        events.read_bytes()
+        + _grok_event("turn_ended", outcome="completed")
+        + _grok_event("turn_started", turn_number=19)
+    )
+
+    clock = {"now": 0.0}
+    sleeps: list[float] = []
+
+    def monotonic() -> float:
+        return clock["now"]
+
+    async def sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        clock["now"] += seconds
+
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.sessions._terminal_compaction.time.monotonic",
+        monotonic,
+    )
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.sessions._terminal_compaction.asyncio.sleep",
+        sleep,
+    )
+
+    pane = _GrokPane()
+    mark = MagicMock(return_value=True)
+    clear = MagicMock(return_value=True)
+    result = await _send_terminal_compaction_command(
+        pane,
+        _COMMAND,
+        "session-grok",
+        cli_source="grok",
+        mark_continuation_pending=mark,
+        clear_continuation_pending=clear,
+        observe_interrupt=lambda: True,
+        turn_settled=probe,
+        settle_seconds=None,
+    )
+
+    assert _TURN_SETTLE_POLL_SECONDS not in sleeps
+    assert result[0] is True
+    assert pane.keys[0] == "ctrl_c"
+
+
+@pytest.mark.asyncio
+async def test_grok_interrupt_stops_pressing_ctrl_c_once_the_turn_has_ended() -> None:
+    """A turn that has ended, with no newer turn_started, gets no further Ctrl+C."""
+    pane = _CountingGrokPane()
+
+    result, _mark, _clear = await _send(
+        pane,
+        lambda: False,
+        turn_settled=lambda: pane.ctrl_c_presses > 0,
+    )
+
+    assert pane.ctrl_c_presses == 1
+    assert result[0] is True
+    assert pane.typed == [f"{_COMMAND}\n"]
+
+
+@pytest.mark.asyncio
+async def test_grok_interrupt_confirms_when_ctrl_c_restarts_the_loop_then_cancels(
+    tmp_path: Path,
+) -> None:
+    """The first Ctrl+C restarts Grok's model loop. The next one cancels the turn."""
+    updates = tmp_path / "updates.jsonl"
+    events = tmp_path / "events.jsonl"
+    updates.write_bytes(b"")
+    events.write_bytes(_grok_event("turn_started", turn_number=20))
+    interrupt = build_interrupt_observer("grok", updates, session_id="session-grok")
+    probe = build_turn_settled_observer("grok", updates, session_id="session-grok")
+    assert interrupt is not None
+    assert probe is not None
+    with events.open("ab") as stream:
+        stream.write(_grok_event("turn_ended", outcome="completed"))
+        stream.write(_grok_event("turn_started", turn_number=21))
+        stream.write(_grok_event("loop_started", loop_index=0))
+
+    class _RestartPane(_GrokPane):
+        def __init__(self) -> None:
+            super().__init__()
+            self.ctrl_c_presses = 0
+
+        async def send_key(self, key: str) -> tuple[bool, str | None]:
+            if key == "ctrl_c":
+                self.ctrl_c_presses += 1
+                if self.ctrl_c_presses == 1:
+                    payload = _grok_event("loop_started", loop_index=0)
+                else:
+                    payload = _grok_event(
+                        "turn_ended",
+                        outcome="cancelled",
+                        cancellation_category="mid_turn_abort",
+                    )
+                with events.open("ab") as stream:
+                    stream.write(payload)
+            return await super().send_key(key)
+
+    pane = _RestartPane()
+    mark = MagicMock(return_value=True)
+    clear = MagicMock(return_value=True)
+    result = await _send_terminal_compaction_command(
+        pane,
+        _COMMAND,
+        "session-grok",
+        cli_source="grok",
+        mark_continuation_pending=mark,
+        clear_continuation_pending=clear,
+        observe_interrupt=interrupt,
+        turn_settled=probe,
+        settle_seconds=None,
+    )
+
+    assert result[0] is True
+    assert pane.ctrl_c_presses == 2
+    assert pane.typed == [f"{_COMMAND}\n"]
 
 
 @pytest.mark.asyncio
