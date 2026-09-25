@@ -445,6 +445,10 @@ async def prepare_codex_spawn(request: SpawnRequest) -> ProviderSpawnPlan | Spaw
         ),
         *request.codex_config_overrides,
     ]
+    if request.agent_name == "task-close-reviewer":
+        # Its load_skills step permits Gobby MCP tools; hide execution wrappers.
+        config_overrides.append('plugins."unified-computer-use@openai-bundled".enabled=false')
+        config_overrides.append("mcp_servers.node_repl.enabled=false")
     if launch.enforced and launch.backend == "srt":
         config_overrides.append('sandbox_mode="danger-full-access"')
     cmd, _cmd_env = build_cli_command(
