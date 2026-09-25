@@ -13,6 +13,8 @@
 | code-reviewer.md | gobby#14527 |
 | researcher.md | gobby#14550 |
 | archivist.md | gobby#14308 |
-| monitor.md | gobby#14307 |
+| monitor.md | gobby#14573 |
+| plan-writer.md | gobby#14578 |
+| plan-adversary.md | gobby#14579 |
 
 Every role reads _common.md first.
