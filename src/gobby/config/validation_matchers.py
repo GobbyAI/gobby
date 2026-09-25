@@ -402,6 +402,33 @@ def builtin_validation_matchers() -> list[ValidationCommandMatcher]:
             ["swiftlint"],
             bounded_inputs=True,
         ),
+        _matcher(
+            "shell-tests",
+            "Shell tests",
+            ["bash"],
+            ["test"],
+            ["bats"],
+            evidence_weakening_args_any=["--filter", "-f"],
+        ),
+        # Bounded: shellcheck reads its target scripts and any sourced shell files.
+        _matcher(
+            "shell-static-checks",
+            "Shell static checks",
+            ["bash"],
+            ["lint"],
+            ["shellcheck"],
+            bounded_inputs=True,
+        ),
+        _matcher(
+            "shell-format-check",
+            "Shell format checks",
+            ["bash"],
+            ["format"],
+            ["shfmt"],
+            required_args_any=["-d", "--diff", "-l", "--list"],
+            forbidden_args_any=_MUTATING_VALIDATION_ARGS,
+            bounded_inputs=True,
+        ),
         # Unbounded: markdownlint loads JavaScript rules and configs.
         _matcher(
             "data-doc-validation",

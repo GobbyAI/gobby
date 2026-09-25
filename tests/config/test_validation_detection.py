@@ -57,6 +57,9 @@ pytestmark = pytest.mark.unit
         ("git diff HEAD~2..HEAD --check", "git-diff-check"),
         ("git diff --check origin/main...HEAD -- src tests", "git-diff-check"),
         ("actionlint .github/workflows/rust-ci.yml", "actionlint"),
+        ("shellcheck -s sh scripts/install-py-spy-sudo.sh", "shell-static-checks"),
+        ("shfmt -d scripts/install-py-spy-sudo.sh", "shell-format-check"),
+        ("bats tests/shell", "shell-tests"),
     ],
 )
 def test_builtin_validation_detection_accepts_common_commands(
@@ -160,6 +163,10 @@ def test_test_types_suppression_ratchet_requires_baseline() -> None:
         "actionlint --version",
         "actionlint -init-config",
         "actionlint --init-config",
+        "shellcheck --version",
+        "shfmt scripts/install-py-spy-sudo.sh",
+        "shfmt -w scripts/install-py-spy-sudo.sh",
+        "shfmt -d -w scripts/install-py-spy-sudo.sh",
     ],
 )
 def test_builtin_validation_detection_rejects_non_validation_commands(command: str) -> None:
