@@ -242,6 +242,8 @@ class ProjectPurgeService:
             deleted = await asyncio.to_thread(self.projects.soft_delete, project_id)
             if not deleted:
                 return PurgeOutcome.failed(project_id, "Failed to soft-delete project")
+        if await asyncio.to_thread(self._has_active_terminals, project_id):
+            return PurgeOutcome.failed(project_id, "Project still has active terminals")
 
         # Resolve runtime-bound dependencies before deleting cron jobs. A
         # resolver failure leaves the retry mechanism intact.
@@ -259,6 +261,15 @@ class ProjectPurgeService:
             await graph_cleaner.clear_project_graph_strict(project_id)
             await asyncio.to_thread(self._delete_hub_rows, project_id)
         return PurgeOutcome.purged(project_id)
+
+    def _has_active_terminals(self, project_id: str) -> bool:
+        return bool(
+            self.db.fetchall(
+                "SELECT id FROM terminals WHERE project_id = %s "
+                "AND state IN ('pending', 'live') LIMIT 1",
+                (project_id,),
+            )
+        )
 
     async def _drain_cron_runs(self, job_ids: list[str]) -> None:
         if not job_ids:
@@ -322,8 +333,23 @@ class ProjectPurgeService:
                     transaction.execute(delete_sql, ([row["row_id"] for row in rows],))
 
         with self.db.transaction() as transaction:
+            # Hold the parent row against new terminal inserts while we remove
+            # its terminal history. Live and pending terminals must settle first.
+            transaction.execute("SELECT id FROM projects WHERE id = %s FOR UPDATE", (project_id,))
+            terminal_rows = transaction.execute(
+                "SELECT state FROM terminals WHERE project_id = %s FOR UPDATE",
+                (project_id,),
+            ).fetchall()
+            if any(row["state"] in ("pending", "live") for row in terminal_rows):
+                raise ProjectPurgeError("Project still has active terminals")
             for statement, arity in _FOREIGN_REFERENCE_DETACH_STATEMENTS:
                 transaction.execute(statement, (project_id,) * arity)
+            transaction.execute(
+                "UPDATE agent_runs SET terminal_id = NULL WHERE terminal_id IN "
+                "(SELECT id FROM terminals WHERE project_id = %s)",
+                (project_id,),
+            )
+            transaction.execute("DELETE FROM terminals WHERE project_id = %s", (project_id,))
             for table in ("tasks", "plans", "sessions"):
                 transaction.execute(
                     f"DELETE FROM {table} WHERE project_id = %s",  # nosec B608
