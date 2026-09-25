@@ -29,7 +29,7 @@ def start_startup_lag_probe(
     loop: asyncio.AbstractEventLoop,
     *,
     duration_seconds: float | None = None,
-    interval_seconds: float = 0.25,
+    interval_seconds: float = 0.05,
     threshold_seconds: float = 0.25,
     rate_limit_seconds: float = 60.0,
 ) -> None:
@@ -55,7 +55,8 @@ def start_startup_lag_probe(
     def watch() -> None:
         while active():
             time.sleep(interval_seconds)
-            lag = time.monotonic() - state["last_beat"] - interval_seconds
+            # A blocked loop cannot run the next beat; measure its age directly.
+            lag = time.monotonic() - state["last_beat"]
             if lag < threshold_seconds or state["reported"]:
                 continue
             task = asyncio.current_task(loop)

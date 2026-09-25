@@ -116,6 +116,27 @@ async def test_subsecond_lag_records_histogram_and_warns_by_default(
 
 
 @pytest.mark.asyncio
+async def test_default_lag_probe_warns_during_320ms_stall_without_idle_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.WARNING, logger="gobby.runner_lifecycle")
+    start_startup_lag_probe(asyncio.get_running_loop(), duration_seconds=0.7)
+
+    async def block_loop() -> None:
+        threading.Event().wait(0.32)
+
+    await asyncio.create_task(block_loop(), name="short-default-stall")
+    await _wait_for_probe_shutdown(0.4)
+
+    warnings = [
+        record.message for record in caplog.records if "Daemon event-loop lag" in record.message
+    ]
+    assert len(warnings) == 1
+    assert "task=short-default-stall" in warnings[0]
+    assert "stack=" in warnings[0]
+
+
+@pytest.mark.asyncio
 async def test_lag_warns_when_stall_grows_past_warning_threshold(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
