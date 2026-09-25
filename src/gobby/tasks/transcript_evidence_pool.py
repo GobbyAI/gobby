@@ -9,6 +9,9 @@ import threading
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
+from time import monotonic
+
+from gobby.hooks.phase_timing import add_hook_phase, timed_to_thread
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +61,12 @@ def _handle_pool_failure(
     _warn_fallback_once(exc)
 
 
+def _timed_run[T](function: Callable[..., T], args: tuple[object, ...]) -> tuple[T, float, float]:
+    started_at = monotonic()
+    result = function(*args)
+    return result, started_at, monotonic()
+
+
 async def run_in_transcript_evidence_pool[T](
     function: Callable[..., T],
     /,
@@ -65,17 +74,21 @@ async def run_in_transcript_evidence_pool[T](
 ) -> T:
     """Run one picklable derivation outside the daemon process."""
     pool: ProcessPoolExecutor | None = None
+    submitted_at = monotonic()
     try:
         pool = _get_pool()
-        pending = asyncio.get_running_loop().run_in_executor(pool, function, *args)
+        pending = asyncio.get_running_loop().run_in_executor(pool, _timed_run, function, args)
     except (BrokenProcessPool, OSError) as exc:
         _handle_pool_failure(pool, exc)
-        return await asyncio.to_thread(function, *args)
+        return await timed_to_thread("prelude_transcript_fallback", function, *args)
     try:
-        return await pending
+        result, started_at, finished_at = await pending
+        add_hook_phase("prelude_transcript_pool_queue", started_at - submitted_at)
+        add_hook_phase("prelude_transcript_pool_work", finished_at - started_at)
+        return result
     except BrokenProcessPool as exc:
         _handle_pool_failure(pool, exc)
-        return await asyncio.to_thread(function, *args)
+        return await timed_to_thread("prelude_transcript_fallback", function, *args)
 
 
 POOL_EXIT_TIMEOUT_SECONDS = 2.0

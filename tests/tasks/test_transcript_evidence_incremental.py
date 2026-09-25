@@ -13,7 +13,7 @@ import pytest
 
 from gobby.config.validation_detection import default_validation_detection_config
 from gobby.sessions.transcripts.base import RawLine
-from gobby.tasks import transcript_evidence
+from gobby.tasks import transcript_evidence, transcript_evidence_cache
 from gobby.tasks.transcript_evidence import (
     clear_evidence_snapshots,
     derive_transcript_evidence,
@@ -148,6 +148,65 @@ async def test_second_derivation_parses_only_appended_lines(
     ]
     assert second.validation_runs[: len(first.validation_runs)] == first.validation_runs
     assert second.edits == first.edits
+
+
+async def test_restart_resumes_from_durable_checkpoint(
+    tmp_path: Path, parse_counts: list[int]
+) -> None:
+    transcript = tmp_path / "restart.jsonl"
+    initial = _claude_tool_pair(
+        command="uv run pytest tests/tasks/test_a.py",
+        call_id="run-1",
+        start=BASE_TIME,
+        result={"exit_code": 1, "stdout": "failed"},
+        is_error=True,
+    )
+    _write_jsonl(transcript, initial)
+    session = _session("claude", transcript)
+    first = await _derive(session, BASE_TIME, set(), tmp_path)
+    assert first.validation_runs[0].outcome == "failure"
+
+    # A daemon restart loses only the in-memory LRU, not the private checkpoint.
+    with transcript_evidence._snapshot_lock:
+        transcript_evidence._evidence_snapshots.clear()
+    appended = _claude_tool_pair(
+        command="uv run pytest tests/tasks/test_a.py",
+        call_id="run-2",
+        start=BASE_TIME + timedelta(seconds=30),
+        result={"exit_code": 0, "stdout": "passed"},
+    )
+    _append_jsonl(transcript, appended)
+    second = await _derive(session, BASE_TIME, set(), tmp_path)
+
+    assert parse_counts == [len(initial), len(appended)]
+    assert [run.outcome for run in second.validation_runs] == ["failure", "success"]
+
+
+async def test_invalid_durable_checkpoint_reparses_safely(
+    tmp_path: Path, parse_counts: list[int]
+) -> None:
+    transcript = tmp_path / "invalid-checkpoint.jsonl"
+    records = _claude_tool_pair(
+        command="uv run pytest tests/tasks/test_a.py",
+        call_id="run-1",
+        start=BASE_TIME,
+        result={"exit_code": 0, "stdout": "passed"},
+    )
+    _write_jsonl(transcript, records)
+    session = _session("claude", transcript)
+    await _derive(session, BASE_TIME, set(), tmp_path)
+    checkpoint = transcript_evidence_cache._snapshot_path(session.id)
+    assert checkpoint.stat().st_mode & 0o777 == 0o600
+    checkpoint.write_bytes(b"invalid JSON")
+    with transcript_evidence._snapshot_lock:
+        transcript_evidence._evidence_snapshots.clear()
+
+    evidence = await _derive(session, BASE_TIME, set(), tmp_path)
+
+    assert parse_counts == [len(records), len(records)]
+    assert [run.command for run in evidence.validation_runs] == [
+        "uv run pytest tests/tasks/test_a.py"
+    ]
 
 
 async def test_pooled_derivation_keeps_snapshot_resume(
@@ -348,10 +407,10 @@ async def test_incremental_derivation_matches_a_full_window_parse(
     assert [edit.path for edit in incremental.edits] == ["src/changed.py", "src/other.py"]
 
 
-async def test_codex_execution_chain_straddling_the_watermark_matches_full_parse(
+async def test_codex_execution_chain_survives_restart_and_matches_full_parse(
     tmp_path: Path, parse_counts: list[int]
 ) -> None:
-    """The Codex parser's own cross-line state survives the watermark."""
+    """Codex cross-line execution state survives a daemon process restart."""
     transcript = tmp_path / "codex.jsonl"
     patch = "*** Begin Patch\n*** Update File: src/changed.py\n@@\n-old\n+new\n*** End Patch\n"
     prefix = [
@@ -410,6 +469,8 @@ async def test_codex_execution_chain_straddling_the_watermark_matches_full_parse
     session = _session("codex", transcript)
 
     await _derive(session, BASE_TIME, {"src/changed.py"}, tmp_path)
+    with transcript_evidence._snapshot_lock:
+        transcript_evidence._evidence_snapshots.clear()
     _append_jsonl(transcript, suffix)
     incremental = await _derive(session, BASE_TIME, {"src/changed.py"}, tmp_path)
     assert parse_counts == [len(prefix), len(suffix)]
