@@ -711,10 +711,15 @@ class TelegramAdapter(BaseChannelAdapter):
                 text = "This action has expired."
             else:
                 text = "This action is no longer available."
-            await self._post_json(
-                "answerCallbackQuery",
-                {"callback_query_id": callback_id, "text": text},
-            )
+            try:
+                await self._post_json(
+                    "answerCallbackQuery",
+                    {"callback_query_id": callback_id, "text": text},
+                )
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code != 400:
+                    raise
+                logger.info("Telegram rejected a callback answer; advancing the handled update")
 
 
 def _labeled_chunks(content: str, limit: int, sender_label: object) -> list[str]:

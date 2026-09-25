@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 from gobby.communications.adapters.telegram import TelegramAdapter
@@ -303,6 +304,37 @@ async def test_adapter_rejects_expired_callback_without_agent_content() -> None:
         "answerCallbackQuery",
         {"callback_query_id": "callback-1", "text": "This action has expired."},
     )
+
+
+@pytest.mark.asyncio
+async def test_rejected_callback_answer_does_not_block_poll_offset() -> None:
+    adapter = TelegramAdapter()
+    adapter._pending_update_ids = [10002]
+    callback = adapter.parse_webhook(_callback_payload("unknown-token"), {})[0]
+    request = httpx.Request("POST", "https://api.telegram.org/bottest-token/answerCallbackQuery")
+    response = httpx.Response(400, request=request)
+    rejected = httpx.HTTPStatusError("callback query expired", request=request, response=response)
+
+    with patch.object(adapter, "_post_json", AsyncMock(side_effect=rejected)):
+        await adapter.acknowledge_messages([callback])
+
+    assert adapter._offset == 10003
+
+
+@pytest.mark.asyncio
+async def test_callback_answer_server_failure_still_retries_update() -> None:
+    adapter = TelegramAdapter()
+    adapter._pending_update_ids = [10002]
+    callback = adapter.parse_webhook(_callback_payload("unknown-token"), {})[0]
+    request = httpx.Request("POST", "https://api.telegram.org/bottest-token/answerCallbackQuery")
+    response = httpx.Response(503, request=request)
+    failure = httpx.HTTPStatusError("server unavailable", request=request, response=response)
+
+    with patch.object(adapter, "_post_json", AsyncMock(side_effect=failure)):
+        with pytest.raises(httpx.HTTPStatusError):
+            await adapter.acknowledge_messages([callback])
+
+    assert adapter._offset == 0
 
 
 @pytest.mark.asyncio
