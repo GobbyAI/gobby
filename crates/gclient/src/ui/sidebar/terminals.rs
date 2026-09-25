@@ -4,14 +4,14 @@
 use super::agents::{machine_admits, TERMINAL_ROW};
 use super::{render_band, render_section_rows, BandStyle, SidebarHits};
 use crate::app::sidebar_model::pane_state;
-use crate::ui::chrome::{terminal_address, Chrome, WorkspaceView};
+use crate::ui::chrome::{Chrome, WorkspaceView};
 use crate::ui::hit::SidebarSection;
 use crate::ui::sidebar_rows::{RowKind, SidebarRow};
 use ratatui::layout::Rect;
 use ratatui::Frame;
 
 /// The focused project's panes no roster entry names, when the machine
-/// filter admits this machine: the foreground job over its address and backend.
+/// filter admits this machine: the foreground job over its backend.
 pub fn terminal_rows<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Vec<SidebarRow> {
     let model = ws.sidebar();
     if !machine_admits(ws, chrome, &model.local_machine) {
@@ -29,19 +29,12 @@ pub fn terminal_rows<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Vec<SidebarRo
         .filter_map(|terminal_id| {
             let pane_id = ws.pane_for_terminal(&terminal_id)?;
             let pane = ws.pane(pane_id);
-            let tokens = [
-                terminal_address(ws, &terminal_id),
-                Some(pane.backend.label().to_string()),
-            ]
-            .into_iter()
-            .flatten()
-            .collect();
             Some(SidebarRow {
                 id: format!("{TERMINAL_ROW}{terminal_id}"),
                 label: pane.display_name().to_string(),
-                kind: RowKind::Agent,
+                kind: RowKind::Terminal,
                 state: pane_state(pane),
-                tokens,
+                detail: pane.backend.label().to_string(),
                 active: focused == Some(pane_id),
                 ..SidebarRow::default()
             })

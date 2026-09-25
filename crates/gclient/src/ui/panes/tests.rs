@@ -242,8 +242,8 @@ fn wide_header_titles_fill_the_edge_exactly_while_scrolling() {
 
 #[test]
 fn header_titles_share_the_sidebar_period() {
-    // The agent row repeats this label in the narrower sidebar, so its
-    // overrun is longer than the header's and sets the shared period.
+    // The agent task title scrolls in the narrower sidebar, so its overrun
+    // is longer than the header's and sets the shared period.
     let label = "a-long-pane-title-that-overruns-the-sidebar-and-the-header-both";
     let (mut ws, mut chrome) = scripted();
     chrome.sidebar.pinned = true;
@@ -253,6 +253,7 @@ fn header_titles_share_the_sidebar_period() {
         "entries": [{
             "entry_id": "run:term-alpha",
             "name": label,
+            "task": {"ref": "#1", "title": label},
             "terminal": {"terminal_id": "term-alpha", "backend": "native"},
             "kind": "blocked"
         }]

@@ -16,10 +16,10 @@
 06 : -/panel_bg*25 overlay0/panel_bg*2 -/panel_bg*45 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*45 accent/panel_bg*1
 07 | Agents           [view] ││                                             ││                                             │|
 07 : -/surface0*1 subtext0/surface0+b*6 -/surface0*11 overlay0/surface0*6 -/surface0*1 overlay0/panel_bg*2 -/panel_bg*45 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*45 accent/panel_bg*1
-08 | ⍾ term-alpha · needs you││                                             ││                                             │|
-08 : -/panel_bg*1 yellow/panel_bg*1 overlay0/panel_bg+d*1 subtext0/panel_bg+b*10 overlay0/panel_bg+d*3 yellow/panel_bg+d*9 overlay0/panel_bg*2 -/panel_bg*45 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*45 accent/panel_bg*1
-09 |                         ││                                             ││                                             │|
-09 : -/panel_bg*25 overlay0/panel_bg*2 -/panel_bg*45 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*45 accent/panel_bg*1
+08 | ⍾ Unknown               ││                                             ││                                             │|
+08 : -/panel_bg*1 yellow/panel_bg*1 -/panel_bg*1 subtext0/panel_bg*7 -/panel_bg*15 overlay0/panel_bg*2 -/panel_bg*45 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*45 accent/panel_bg*1
+09 |   No assigned task      ││                                             ││                                             │|
+09 : -/panel_bg*3 overlay0/panel_bg+d*16 -/panel_bg*6 overlay0/panel_bg*2 -/panel_bg*45 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*45 accent/panel_bg*1
 10 |                         ││                                             ││                                             │|
 10 : -/panel_bg*25 overlay0/panel_bg*2 -/panel_bg*45 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*45 accent/panel_bg*1
 11 |                         ││                                             ││                                             │|
@@ -51,11 +51,11 @@
 24 | ○ term-beta             ││                                             ││                                             │|
 24 : -/surface_dim*1 overlay0/surface_dim*1 overlay0/surface_dim+d*1 text/surface_dim+b*9 -/surface_dim*13 overlay0/panel_bg*2 -/panel_bg*45 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*45 accent/panel_bg*1
 25 |   gclient               ││                                             ││                                             │|
-25 : -/surface_dim*1 overlay0/surface_dim+d*9 -/surface_dim*15 overlay0/panel_bg*2 -/panel_bg*45 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*45 accent/panel_bg*1
+25 : -/surface_dim*3 overlay0/surface_dim*7 -/surface_dim*15 overlay0/panel_bg*2 -/panel_bg*45 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*45 accent/panel_bg*1
 26 | ○ term-gamma            ││                                             ││                                             │|
-26 : -/panel_bg*1 overlay0/panel_bg*1 overlay0/panel_bg+d*1 subtext0/panel_bg+b*10 -/panel_bg*12 overlay0/panel_bg*2 -/panel_bg*45 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*45 accent/panel_bg*1
+26 : -/panel_bg*1 overlay0/panel_bg*1 overlay0/panel_bg+d*1 subtext0/panel_bg*10 -/panel_bg*12 overlay0/panel_bg*2 -/panel_bg*45 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*45 accent/panel_bg*1
 27 |   gclient               ││                                             ││                                             │|
-27 : -/panel_bg*1 overlay0/panel_bg+d*9 -/panel_bg*15 overlay0/panel_bg*2 -/panel_bg*45 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*45 accent/panel_bg*1
+27 : -/panel_bg*3 overlay0/panel_bg*7 -/panel_bg*15 overlay0/panel_bg*2 -/panel_bg*45 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*45 accent/panel_bg*1
 28 |                         ││                                             ││                                             │|
 28 : -/panel_bg*25 overlay0/panel_bg*2 -/panel_bg*45 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*45 accent/panel_bg*1
 29 |                         ││                                             ││                                             │|

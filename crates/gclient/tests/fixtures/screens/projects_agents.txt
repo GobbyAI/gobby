@@ -16,10 +16,10 @@
 06 : -/panel_bg*25 overlay0/panel_bg*1 -/panel_bg*94
 07 | Agents           [view] │                                                                                              |
 07 : -/surface0*1 subtext0/surface0+b*6 -/surface0*11 overlay0/surface0*6 -/surface0*1 overlay0/panel_bg*1 -/panel_bg*94
-08 | ⍾ term-alpha · needs you│                                                                                              |
-08 : -/panel_bg*1 yellow/panel_bg*1 overlay0/panel_bg+d*1 subtext0/panel_bg+b*10 overlay0/panel_bg+d*3 yellow/panel_bg+d*9 overlay0/panel_bg*1 -/panel_bg*94
-09 |                         │                                                                                              |
-09 : -/panel_bg*25 overlay0/panel_bg*1 -/panel_bg*94
+08 | ⍾ Unknown               │                                                                                              |
+08 : -/panel_bg*1 yellow/panel_bg*1 -/panel_bg*1 subtext0/panel_bg*7 -/panel_bg*15 overlay0/panel_bg*1 -/panel_bg*94
+09 |   No assigned task      │                                                                                              |
+09 : -/panel_bg*3 overlay0/panel_bg+d*16 -/panel_bg*6 overlay0/panel_bg*1 -/panel_bg*94
 10 |                         │                                                                                              |
 10 : -/panel_bg*25 overlay0/panel_bg*1 -/panel_bg*94
 11 |                         │                                                                                              |
@@ -49,13 +49,13 @@
 23 | Terminals               │                                                                                              |
 23 : -/surface0*1 subtext0/surface0+b*9 -/surface0*15 overlay0/panel_bg*1 -/panel_bg*94
 24 | ○ term-beta             │                                                                                              |
-24 : -/panel_bg*1 overlay0/panel_bg*1 overlay0/panel_bg+d*1 subtext0/panel_bg+b*9 -/panel_bg*13 overlay0/panel_bg*1 -/panel_bg*94
+24 : -/panel_bg*1 overlay0/panel_bg*1 overlay0/panel_bg+d*1 subtext0/panel_bg*9 -/panel_bg*13 overlay0/panel_bg*1 -/panel_bg*94
 25 |   gclient               │                                                                                              |
-25 : -/panel_bg*1 overlay0/panel_bg+d*9 -/panel_bg*15 overlay0/panel_bg*1 -/panel_bg*94
+25 : -/panel_bg*3 overlay0/panel_bg*7 -/panel_bg*15 overlay0/panel_bg*1 -/panel_bg*94
 26 | ○ term-gamma            │                                                                                              |
-26 : -/panel_bg*1 overlay0/panel_bg*1 overlay0/panel_bg+d*1 subtext0/panel_bg+b*10 -/panel_bg*12 overlay0/panel_bg*1 -/panel_bg*94
+26 : -/panel_bg*1 overlay0/panel_bg*1 overlay0/panel_bg+d*1 subtext0/panel_bg*10 -/panel_bg*12 overlay0/panel_bg*1 -/panel_bg*94
 27 |   gclient               │                                                                                              |
-27 : -/panel_bg*1 overlay0/panel_bg+d*9 -/panel_bg*15 overlay0/panel_bg*1 -/panel_bg*94
+27 : -/panel_bg*3 overlay0/panel_bg*7 -/panel_bg*15 overlay0/panel_bg*1 -/panel_bg*94
 28 |                         │                                                                                              |
 28 : -/panel_bg*25 overlay0/panel_bg*1 -/panel_bg*94
 29 |                         │                                                                                              |

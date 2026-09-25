@@ -51,11 +51,11 @@
 24 | ○│ unset              Select the next terminal (next_term   prefix+shift+k     Swap with the pane above (swap_pane ▐│ │|
 24 : -/surface_dim+d*1 overlay0/surface_dim+d*1 accent/panel_bg*1 subtext0/panel_bg+b*20 text/panel_bg*24 overlay1/panel_bg*11 -/panel_bg*2 subtext0/panel_bg+b*20 text/panel_bg*24 overlay1/panel_bg*11 -/panel_bg*1 overlay1/panel_bg*1 accent/panel_bg*1 -/panel_bg+d*1 accent/panel_bg+d*1
 25 |  │ unset              Focus the previous project (previou   prefix+shift+l     Swap with the pane to the right (sw ▐│ │|
-25 : -/surface_dim+d*1 overlay0/surface_dim+d*1 accent/panel_bg*1 subtext0/panel_bg+b*20 text/panel_bg*26 overlay1/panel_bg*9 -/panel_bg*2 subtext0/panel_bg+b*20 text/panel_bg*31 overlay1/panel_bg*4 -/panel_bg*1 overlay1/panel_bg*1 accent/panel_bg*1 -/panel_bg+d*1 accent/panel_bg+d*1
+25 : -/surface_dim+d*2 accent/panel_bg*1 subtext0/panel_bg+b*20 text/panel_bg*26 overlay1/panel_bg*9 -/panel_bg*2 subtext0/panel_bg+b*20 text/panel_bg*31 overlay1/panel_bg*4 -/panel_bg*1 overlay1/panel_bg*1 accent/panel_bg*1 -/panel_bg+d*1 accent/panel_bg+d*1
 26 | ○│ unset              Focus the next project (next_projec   prefix+tab         Cycle to the next pane (cycle_pane_ ▐│ │|
 26 : -/panel_bg+d*1 overlay0/panel_bg+d*1 accent/panel_bg*1 subtext0/panel_bg+b*20 text/panel_bg*22 overlay1/panel_bg*13 -/panel_bg*2 subtext0/panel_bg+b*20 text/panel_bg*22 overlay1/panel_bg*13 -/panel_bg*1 overlay1/panel_bg*1 accent/panel_bg*1 -/panel_bg+d*1 accent/panel_bg+d*1
 27 |  │ unset              Collapse or expand the project's wo   prefix+shift+tab   Cycle to the previous pane (cycle_p ▐│ │|
-27 : -/panel_bg+d*1 overlay0/panel_bg+d*1 accent/panel_bg*1 subtext0/panel_bg+b*20 text/panel_bg*35 -/panel_bg*2 subtext0/panel_bg+b*20 text/panel_bg*26 overlay1/panel_bg*9 -/panel_bg*1 overlay1/panel_bg*1 accent/panel_bg*1 -/panel_bg+d*1 accent/panel_bg+d*1
+27 : -/panel_bg+d*2 accent/panel_bg*1 subtext0/panel_bg+b*20 text/panel_bg*35 -/panel_bg*2 subtext0/panel_bg+b*20 text/panel_bg*26 overlay1/panel_bg*9 -/panel_bg*1 overlay1/panel_bg*1 accent/panel_bg*1 -/panel_bg+d*1 accent/panel_bg+d*1
 28 |  │ unset              Cycle the agents section's machine    unset              Focus the last focused pane (last_p ▐│ │|
 28 : -/panel_bg+d*2 accent/panel_bg*1 subtext0/panel_bg+b*20 text/panel_bg*35 -/panel_bg*2 subtext0/panel_bg+b*20 text/panel_bg*27 overlay1/panel_bg*8 -/panel_bg*1 overlay1/panel_bg*1 accent/panel_bg*1 -/panel_bg+d*1 accent/panel_bg+d*1
 29 |  │ unset              Toggle grouped/priority session ord   prefix+v           Split side by side (split_vertical) ▐│ │|

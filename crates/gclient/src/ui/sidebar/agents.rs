@@ -1,5 +1,5 @@
 // upstream: herdr v0.8.0 src/client/shell/agent_sidebar.rs
-//! The agents section: one two-line row per roster entry the machine
+//! The agents section: one three-line row per roster entry the machine
 //! filter and the scope admit — interactive sessions with the agent runs
 //! they spawned nested under them, parentless runs at the top level, in tab
 //! order or by urgency (`agent_sort`). The band carries the `[view]` control, which
@@ -15,12 +15,12 @@ use std::cmp::Reverse;
 
 use super::{render_band, render_section_rows, BandStyle, SidebarHits};
 use crate::app::project_tabs::TabSet;
-use crate::app::short_terminal_id;
 use crate::app::sidebar_model::{agent_row_state, urgency, AgentEntry, SidebarModel};
-use crate::ui::chrome::{terminal_address, Chrome, RowState, WorkspaceView};
+use crate::ui::chrome::{Chrome, RowState, WorkspaceView};
 use crate::ui::hit::SidebarSection;
 use crate::ui::settings::AgentSort;
 use crate::ui::sidebar_rows::{displayed_project_ids, project_label, RowKind, SidebarRow};
+use crate::ui::text::truncate_end;
 use ratatui::layout::Rect;
 use ratatui::Frame;
 
@@ -200,9 +200,8 @@ struct Candidate {
     parent_session_id: Option<String>,
 }
 
-/// The rows: every admitted roster entry as a two-line row of its label and state
-/// over its provider, model (with the reasoning effort), task ref or tab,
-/// and remote machine tokens. Under `grouped` a run nests under the listed session that
+/// The rows: every admitted roster entry as a three-line definition, task
+/// and model slug. Under `grouped` a run nests under the listed session that
 /// spawned it; under `priority` the list is flat. Under the `all` scope
 /// the rows sit under a heading per project, in the projects' order,
 /// projects with nothing live omitted.
@@ -305,40 +304,19 @@ fn push_children(
 fn agent_candidate<W: WorkspaceView>(ws: &W, chrome: &Chrome, visible: Visible<'_>) -> Candidate {
     let Visible { agent, state, .. } = visible;
     let focused = chrome.focused_pane();
-    let local_machine = ws.sidebar().local_machine.as_str();
     let pane = ws.pane_for_terminal(&agent.terminal_id);
-    let machine = (!agent.machine_id.is_empty() && agent.machine_id != local_machine)
-        .then(|| short_terminal_id(&agent.machine_id).to_string());
-    // The address leads: it is what tells two rows with one title apart.
-    // Then the provider, the model as its provider prints it, and the effort.
-    let model = agent
-        .model_display_name
-        .clone()
-        .or_else(|| agent.model.clone())
-        .map(|model| match agent.effort.as_deref() {
-            Some(effort) => format!("{model} {effort}"),
-            None => model,
-        });
-    let tokens = [
-        terminal_address(ws, &agent.terminal_id),
-        Some(agent.provider.clone()),
-        model,
-        machine,
-    ]
-    .into_iter()
-    .flatten()
-    .filter(|token| !token.is_empty())
-    .collect();
-    let title_prefix = agent
+    let reference = agent
         .session_ref
         .as_deref()
         .map_or_else(String::new, |reference| {
-            let project = chrome.sidebar.all_sessions.then(|| {
-                project_label(ws, chrome, &agent.project_id)
-                    .unwrap_or_else(|| agent.project_id.clone())
-            });
+            let project = (chrome.sidebar.all_sessions
+                && chrome.prefs.agent_sort == AgentSort::Priority)
+                .then(|| {
+                    project_label(ws, chrome, &agent.project_id)
+                        .unwrap_or_else(|| agent.project_id.clone())
+                });
             format!(
-                "{}{reference}: ",
+                "{}{reference}",
                 project.as_deref().unwrap_or_default(),
                 reference = short_session_ref(reference)
             )
@@ -346,11 +324,15 @@ fn agent_candidate<W: WorkspaceView>(ws: &W, chrome: &Chrome, visible: Visible<'
     Candidate {
         row: SidebarRow {
             id: agent.entry_id.clone(),
-            title_prefix,
+            definition: agent.definition_label(),
+            reference,
+            provider: (!agent.managed && !agent.provider.is_empty())
+                .then(|| agent.provider.clone()),
+            task: agent.task_ref.clone().zip(agent.task_title.clone()),
+            model_slug: truncate_end(&agent.model_slug(), 17),
             label: agent_title(agent),
             kind: RowKind::Agent,
             state,
-            tokens,
             active: focused.is_some() && pane == focused,
             ..SidebarRow::default()
         },

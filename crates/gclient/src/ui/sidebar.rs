@@ -19,7 +19,8 @@ use crate::ui::scrollbar::{render_scrollbar, should_show_scrollbar};
 use crate::ui::settings::SidebarSide;
 use crate::ui::settings::TitleScrolling;
 use crate::ui::sidebar_rows::{
-    project_rows, row_line_with_scrolling, row_second_line, row_travel, RowKind, SidebarRow,
+    project_rows, row_line_with_scrolling, row_second_line_with_travel, row_third_line, row_travel,
+    RowKind, SidebarRow,
 };
 use crate::ui::text::{display_width, display_width_u16, truncate_end};
 use gobby_terminal::layout::ScrollMetrics;
@@ -365,8 +366,17 @@ pub(super) fn render_section_rows(
             );
             if height > 1 {
                 frame.render_widget(
-                    Paragraph::new(row_second_line(row, body.width, chrome)).style(row_style),
+                    Paragraph::new(row_second_line_with_travel(
+                        row, body.width, chrome, max_travel,
+                    ))
+                    .style(row_style),
                     Rect::new(body.x, y + 1, body.width, 1),
+                );
+            }
+            if height > 2 {
+                frame.render_widget(
+                    Paragraph::new(row_third_line(row, body.width, chrome)).style(row_style),
+                    Rect::new(body.x, y + 2, body.width, 1),
                 );
             }
             let rect = Rect::new(body.x, y, body.width, height);
@@ -381,7 +391,7 @@ pub(super) fn render_section_rows(
                     }
                 }
                 RowKind::Worktree => hits.worktrees.push((row.id.clone(), rect)),
-                RowKind::Agent => hits.agents.push((row.id.clone(), rect)),
+                RowKind::Agent | RowKind::Terminal => hits.agents.push((row.id.clone(), rect)),
                 RowKind::Machine => hits.machines.push((row.id.clone(), rect)),
                 RowKind::Group => {}
             }

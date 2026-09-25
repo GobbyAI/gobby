@@ -1209,12 +1209,14 @@ switch_project = "ctrl+1..9"
                     // the sidebar edge took overlay0 (#22745), and again when
                     // row 0 drew the menu bar titles and the status hint
                     // moved to the right edge (#22746), and again when the
-                    // sidebar split Agents and bare Terminals (#22748):
+                    // sidebar split Agents and bare Terminals (#22748), and
+                    // agent and terminal rows gained their final line content
+                    // and heights (#22749):
                     // 4.1.3 requires a glyph change to fail here, so this
                     // digest moves only alongside a deliberate render change.
                     assert_eq!(
                         frame_digest(&terminal),
-                        "cda7b8f21dfd7567b1e656f1247495cd546cb54bc988ccf93a6dc659339ec379"
+                        "46d6dde3625085b1663889a3fe934a7e6c08ea6c7d3d05d52154b0c45e43c23d"
                     );
                 });
         }
@@ -1491,8 +1493,8 @@ fn rendered_hits_match_drawn_cells() {
     let ws = with_projects(ws);
     let mut chrome = chrome_for(&ws, "term-alpha");
     chrome.sidebar.all_projects = true;
-    // Wide enough for the active row's whole title beside its needs-you
-    // word once the terminals scrollbar lane takes a column.
+    // Wide enough for the active row's definition once the terminals
+    // scrollbar lane takes a column.
     chrome.sidebar.width = 28;
     for n in 2..=12 {
         add_tab(&mut chrome, &format!("tab-{n:02}"));
@@ -1553,10 +1555,7 @@ fn rendered_hits_match_drawn_cells() {
     let (entry, rect) = view.agent_hit_areas.first().expect("agent row");
     assert_eq!(entry, "run:term-alpha");
     let text = hit_text(&terminal, *rect);
-    assert!(
-        text.contains("term-alpha"),
-        "agent row at {rect:?}: {text:?}"
-    );
+    assert!(text.contains("Unknown"), "agent row at {rect:?}: {text:?}");
     // The cards and the bare terminal rows overflow their sections;
     // the one agent and machine row do not.
     assert_eq!(

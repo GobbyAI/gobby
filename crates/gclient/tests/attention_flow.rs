@@ -319,9 +319,9 @@ async fn agent_row_click_jumps_and_labels_the_session() {
         .await
         .expect("install initial attachments");
 
-    // Where the loop draws the two rows: both in the sessions section, the
-    // blocked session on its first two-line row and the idle shell (an agent
-    // run under no session) on the row after it. Wide enough that the
+    // Where the loop draws the two rows: both in the agents section, the
+    // blocked session on its first three-line row and the idle run on the
+    // row after it. Wide enough that the
     // respond dialog leaves the sidebar uncovered. The sidebar starts
     // hidden, so the probe and the loop both pin it.
     let area = Rect::new(0, 0, 120, 30);
@@ -431,10 +431,12 @@ async fn agent_row_click_jumps_and_labels_the_session() {
         .iter()
         .map(|cell| cell.symbol())
         .collect();
-    assert!(screen.contains("#12217: 15"), "rendered UI: {screen:?}");
-    // The shell is named by its command; its tmux address is a token.
-    assert!(screen.contains("○ zsh"), "rendered UI: {screen:?}");
-    assert!(screen.contains("%16"), "rendered UI: {screen:?}");
+    assert!(
+        screen.contains("Claude (#12217)"),
+        "rendered UI: {screen:?}"
+    );
+    assert!(screen.contains("○ Unknown"), "rendered UI: {screen:?}");
+    assert!(!screen.contains("%16"), "rendered UI: {screen:?}");
     assert!(!screen.contains("sess-1"), "rendered UI: {screen:?}");
     mock.shutdown().await;
 }

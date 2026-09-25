@@ -176,8 +176,9 @@ fn expanded_sidebar_draws_the_bands_and_records_the_hits() {
     // One control, so the band fits the default width; the scope and the
     // order live in its menu.
     assert_eq!(lines[6], " Agents           [view] │");
-    assert_eq!(lines[7], " ⍾ term-alpha · needs you│");
-    assert!(blank(lines[8]), "{:?}", lines[8]);
+    assert_eq!(lines[7], " ⍾ Unknown               │");
+    assert_eq!(lines[8], "   No assigned task      │");
+    assert!(blank(lines[9]), "{:?}", lines[9]);
     assert!(blank(lines[22]), "{:?}", lines[22]);
     assert_eq!(lines[23], " Terminals               │");
     assert_eq!(lines[24], " ○ term-beta             │");
@@ -204,7 +205,7 @@ fn expanded_sidebar_draws_the_bands_and_records_the_hits() {
     assert_eq!(
         hits.agents,
         vec![
-            ("run:term-alpha".to_string(), Rect::new(0, 7, 25, 2)),
+            ("run:term-alpha".to_string(), Rect::new(0, 7, 25, 3)),
             ("terminal:term-beta".to_string(), Rect::new(0, 24, 25, 2)),
         ]
     );

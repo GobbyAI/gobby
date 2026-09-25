@@ -1,6 +1,6 @@
 //! 4.2.1: committed screen goldens for the whole gclient chrome.
 //!
-//! Eight scripted workspace states render through the real `render_workspace`
+//! Nine scripted workspace states render through the real `render_workspace`
 //! into a 120x40 `TestBackend`, then serialise one line per row: the glyphs,
 //! then the run-length-encoded style of every cell with each colour normalised
 //! to its `theme::Palette` role name.
@@ -20,7 +20,7 @@
 use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use gobby_client::app::{route_mouse, ContextMenuKind, ControlState};
 use gobby_client::daemon::{
-    Checkout, ProjectRow, SessionRow, SidebarRows, SourceStatus, WorktreeRow,
+    Checkout, ProjectRow, RunRow, SessionRow, SidebarRows, SourceStatus, WorktreeRow,
 };
 use gobby_client::theme::{Palette, Theme, ThemeKind};
 use gobby_client::ui::chrome::Mode;
@@ -46,8 +46,9 @@ const UPDATE_ENV: &str = "GOBBY_UPDATE_SCREENS";
 type ScriptedState = fn() -> (Workspace, Chrome);
 
 /// The scripted states, in the order the plan names them.
-const STATES: [(&str, ScriptedState); 8] = [
+const STATES: [(&str, ScriptedState); 9] = [
     ("empty_workspace", empty_workspace),
+    ("agent_rows", agent_rows),
     ("projects_agents", projects_agents),
     ("split_live", split_live),
     ("help_dialog", help_dialog),
@@ -129,6 +130,59 @@ fn projects_agents() -> (Workspace, Chrome) {
     }
     let mut chrome = Chrome::dark();
     chrome.sidebar.pinned = true;
+    (ws, chrome)
+}
+
+fn agent_rows() -> (Workspace, Chrome) {
+    let mut ws = Workspace::scripted();
+    let mut rows = project_rows();
+    rows.runs.insert(
+        "proj-alpha".into(),
+        vec![RunRow {
+            run_id: "run-long".into(),
+            agent_name: Some("backend-developer-workflow-run".into()),
+            provider: Some("codex".into()),
+            model: Some("gpt-5".into()),
+            terminal_id: Some("term-agent".into()),
+            ..RunRow::default()
+        }],
+    );
+    rows.sessions.insert(
+        "proj-alpha".into(),
+        vec![SessionRow {
+            id: "sess-long".into(),
+            reference: Some("#123".into()),
+            title: Some("Agent row preview".into()),
+            ..SessionRow::default()
+        }],
+    );
+    ws.daemon_mut().set_sidebar_rows(rows);
+    ws.daemon_mut().set_roster(json!({
+        "epoch": "e1",
+        "seq": 1,
+        "entries": [{
+            "entry_id": "run:term-agent",
+            "run_id": "run-long",
+            "session_id": "sess-long",
+            "provider": "codex",
+            "model": "gpt-5",
+            "task": {"ref": "#123", "title": "Implement the full chrome layout with a long scrolling task title"},
+            "terminal": {"terminal_id": "term-agent", "backend": "native"}
+        }]
+    }));
+    ws.select_project("proj-alpha");
+    ws.reconcile_subscribe_first().expect("install roster");
+    ws.open_terminal("term-agent", "native", "epoch")
+        .expect("open agent terminal");
+    ws.open_terminal("term-bare", "native", "epoch")
+        .expect("open bare terminal");
+    let bare = ws.pane_for_terminal("term-bare").expect("bare pane");
+    let pane = ws.pane_mut(bare);
+    pane.label = None;
+    pane.command = Some("nvim".into());
+    let mut chrome = Chrome::dark();
+    chrome.sidebar.pinned = true;
+    chrome.sidebar.width = 34;
     (ws, chrome)
 }
 
@@ -512,12 +566,35 @@ fn glyph_rows(capture: &str) -> Vec<&str> {
         .collect()
 }
 
+#[test]
+fn agent_rows_golden() {
+    let theme = Theme::new(ThemeKind::Dark);
+    let rendered = deterministic_capture("agent_rows", agent_rows, &theme);
+    let rows = glyph_rows(&rendered);
+    assert!(rows[8].contains("backend-developer-work… (#123)"));
+    assert!(rows[9].contains("Task #123 - Implement the full"));
+    assert!(rows[10].contains("gpt-5"));
+    assert!(
+        rows[24].contains("○ nvim"),
+        "foreground app: {:?}",
+        rows[24]
+    );
+    assert!(rows[25].contains("gclient"), "backend: {:?}", rows[25]);
+    assert!(!rendered.contains("term-bare"), "pane ID is not row copy");
+    let slug_style = rendered
+        .lines()
+        .find(|line| line.starts_with("10 :"))
+        .expect("model slug style");
+    assert!(slug_style.contains("overlay0/panel_bg*5"));
+    assert!(!slug_style.contains("overlay0/panel_bg+d"));
+}
+
 /// 3.1.1: the pinned sidebar stacks the machines, the projects and the
-/// sessions under the menu-bar row. A project is a one-line card (state
+/// agents under the menu-bar row. A project is a one-line card (state
 /// glyph, name, branch with the ahead/behind counts, fold marker) that lists
 /// its worktrees only while expanded; the `working` filter hides a project
-/// with nothing live; the attention entry lists under the sessions band with
-/// its reason. The committed capture pins the exact layout.
+/// with nothing live; the attention entry lists under the agents band.
+/// The committed capture pins the exact layout.
 #[test]
 fn projects_agents_golden() {
     let theme = Theme::new(ThemeKind::Dark);
@@ -571,17 +648,18 @@ fn projects_agents_golden() {
         "agents band: {:?}",
         rows[sessions]
     );
-    let entry = row_containing("term-alpha");
+    let entry = row_containing("Unknown");
     assert_eq!(
         entry,
         sessions + 1,
         "the attention entry lists under agents"
     );
     assert!(
-        rows[entry].contains("⍾ term-alpha · needs you"),
-        "a needs-you row carries its reason: {:?}",
+        rows[entry].contains("⍾ Unknown"),
+        "an attention row carries its state glyph: {:?}",
         rows[entry]
     );
+    assert!(rows[entry + 1].contains("No assigned task"));
     assert!(
         !rendered.contains("[«]") && !rendered.contains("[Menu]"),
         "no footer or menu band remains\n{rendered}"
