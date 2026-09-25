@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import threading
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -32,6 +33,7 @@ from gobby.mcp_proxy.tools.sessions._terminal_handoff_delivery import (
     _fresh_compact_error,
     _wait_for_compact_boundary,
 )
+from gobby.sessions import compact_continuation
 from gobby.sessions.compact_continuation import (
     _HANDOFF_COMPACT_CONTINUATION_TASKS,
     HANDOFF_COMPACT_CONTINUE_VARIABLE,
@@ -1131,6 +1133,71 @@ def test_late_compact_failure_cannot_rollback_boundary_receipt(hub_db: HubDataba
 
 
 @pytest.mark.asyncio
+async def test_selected_compact_boundary_receipts_before_timeout_compensation(
+    hub_db: HubDatabase,
+) -> None:
+    _compact_session_manager(hub_db, _NATIVE_WORKER_CONTEXT)
+    claimed = _claimed_compact_attempt(hub_db)
+    compact_continuation.register_compact_boundary_waiter(
+        SESSION_ID, ATTEMPT_ID, claimed.handoff_record_id, _NATIVE_WORKER_CONTEXT
+    )
+    compact_continuation.arm_compact_boundary_waiter(SESSION_ID, ATTEMPT_ID)
+    receipt_selected = threading.Event()
+    release_receipt = threading.Event()
+
+    def delayed_receipt(*args: Any, **kwargs: Any) -> bool:
+        receipt_selected.set()
+        assert release_receipt.wait(timeout=10)
+        return record_handoff_delivery(*args, **kwargs)
+
+    with patch.object(compact_continuation, "record_handoff_delivery", side_effect=delayed_receipt):
+        notify = asyncio.create_task(
+            asyncio.to_thread(
+                compact_continuation.notify_compact_boundary,
+                hub_db,
+                SESSION_ID,
+                _NATIVE_WORKER_CONTEXT,
+            )
+        )
+        unregister: asyncio.Task[None] | None = None
+        try:
+            assert await asyncio.to_thread(receipt_selected.wait, 5)
+            unregister = asyncio.create_task(
+                asyncio.to_thread(
+                    compact_continuation.unregister_compact_boundary_waiter,
+                    SESSION_ID,
+                    ATTEMPT_ID,
+                )
+            )
+            try:
+                await asyncio.wait_for(asyncio.shield(unregister), timeout=0.05)
+            except TimeoutError:
+                pass
+            else:
+                terminal_handoff_delivery._compensate_delivery_failure(
+                    hub_db, claimed, "timeout before receipt", error_code="compact_failed"
+                )
+        finally:
+            release_receipt.set()
+            await notify
+            if unregister is not None:
+                await unregister
+
+    terminal_handoff_delivery._compensate_delivery_failure(
+        hub_db, claimed, "late timeout", error_code="compact_failed"
+    )
+    variables = SessionVariableManager(hub_db).get_variables(SESSION_ID)
+    assert variables[PENDING_HANDOFF_VARIABLE]["attempt_id"] == ATTEMPT_ID
+    assert variables[HANDOFF_DISPATCH_GATE_VARIABLE]["delivery_pending"] is True
+    assert (
+        hub_db.fetchone(
+            "SELECT 1 FROM session_handoff_deliveries WHERE attempt_id = %s", (ATTEMPT_ID,)
+        )
+        is not None
+    )
+
+
+@pytest.mark.asyncio
 async def test_compact_confirmation_wait_has_a_deadline() -> None:
     waiter = CompactBoundaryWaiter(
         ATTEMPT_ID,
@@ -1157,7 +1224,18 @@ async def test_compact_provider_failure_resubmits_same_attempt(hub_db: HubDataba
     output = ""
     pane = SimpleNamespace(backend="native", snapshot=AsyncMock(side_effect=lambda *_a: output))
     submissions: list[str] = []
+    stale_boundary_receipted: list[bool] = []
     handler = EventHandlers(session_manager=session_manager, agent_run_manager=MagicMock())
+
+    def clear_failed_submission(*args: Any, **kwargs: Any) -> bool:
+        compact_continuation.notify_compact_boundary(hub_db, SESSION_ID, _NATIVE_WORKER_CONTEXT)
+        stale_boundary_receipted.append(
+            hub_db.fetchone(
+                "SELECT 1 FROM session_handoff_deliveries WHERE attempt_id = %s", (ATTEMPT_ID,)
+            )
+            is not None
+        )
+        return compact_continuation.clear_handoff_compact_continuation_pending(*args, **kwargs)
 
     async def send_command(*_args: Any, **kwargs: Any) -> tuple[bool, str | None, bool, None]:
         nonlocal output
@@ -1187,6 +1265,10 @@ async def test_compact_provider_failure_resubmits_same_attempt(hub_db: HubDataba
         patch(f"{_COMPACT_DELIVERY}._interrupt_observer", return_value=(None, None)),
         patch(f"{_COMPACT_DELIVERY}._turn_settled_observer", return_value=None),
         patch(f"{_COMPACT_DELIVERY}._send_terminal_compaction_command", side_effect=send_command),
+        patch(
+            f"{_COMPACT_DELIVERY}.clear_handoff_compact_continuation_pending",
+            side_effect=clear_failed_submission,
+        ),
         patch(f"{_COMPACT_DELIVERY}.composer_reader", return_value=None),
         patch(f"{_COMPACT_DELIVERY}._COMPACT_BOUNDARY_CONFIRM_SECONDS", 0.05),
         patch(f"{_COMPACT_DELIVERY}._COMPACT_BOUNDARY_POLL_SECONDS", 0.01),
@@ -1205,6 +1287,7 @@ async def test_compact_provider_failure_resubmits_same_attempt(hub_db: HubDataba
         )
 
     assert submissions == ["claude", "claude"]
+    assert stale_boundary_receipted == [False]
     handoffs = hub_db.fetchone(
         "SELECT count(*) AS n FROM session_handoffs WHERE session_id = %s", (SESSION_ID,)
     )

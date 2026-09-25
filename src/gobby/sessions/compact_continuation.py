@@ -87,6 +87,14 @@ def arm_compact_boundary_waiter(session_id: str, attempt_id: str) -> None:
             waiter.submitted = True
 
 
+def disarm_compact_boundary_waiter(session_id: str, attempt_id: str) -> None:
+    """Stop accepting boundaries while a failed submission awaits its retry."""
+    with _COMPACT_BOUNDARY_WAITERS_LOCK:
+        waiter = _COMPACT_BOUNDARY_WAITERS.get(session_id)
+        if waiter is not None and waiter.attempt_id == attempt_id:
+            waiter.submitted = False
+
+
 def unregister_compact_boundary_waiter(session_id: str, attempt_id: str) -> None:
     with _COMPACT_BOUNDARY_WAITERS_LOCK:
         waiter = _COMPACT_BOUNDARY_WAITERS.get(session_id)
@@ -106,25 +114,28 @@ def notify_compact_boundary(db: HubDatabase, session_id: str, terminal_context: 
                 or terminal_process_contexts_match(waiter.terminal_context, terminal_context)
             )
         ]
-    if len(matches) == 1:
-        waiter = matches[0]
-        try:
-            record_handoff_delivery(
-                db,
-                handoff_id=waiter.handoff_record_id,
-                attempt_id=waiter.attempt_id,
-                boundary_kind="compact",
-                continuation_session_id=session_id,
-            )
-        except Exception:
-            logger.warning(
-                "Failed recording compact boundary for session %s attempt %s",
-                session_id,
-                waiter.attempt_id,
-                exc_info=True,
-            )
-            return
-        waiter.loop.call_soon_threadsafe(waiter.event.set)
+        if len(matches) == 1:
+            waiter = matches[0]
+            try:
+                # Selection and receipt must be atomic with unregister. Otherwise
+                # timeout compensation can remove the staged handoff before this
+                # insert, even though the provider boundary already happened.
+                record_handoff_delivery(
+                    db,
+                    handoff_id=waiter.handoff_record_id,
+                    attempt_id=waiter.attempt_id,
+                    boundary_kind="compact",
+                    continuation_session_id=session_id,
+                )
+            except Exception:
+                logger.warning(
+                    "Failed recording compact boundary for session %s attempt %s",
+                    session_id,
+                    waiter.attempt_id,
+                    exc_info=True,
+                )
+                return
+            waiter.loop.call_soon_threadsafe(waiter.event.set)
 
 
 _CODEX_COMPACT_READY_STATUS_LINE = "• Context compacted"

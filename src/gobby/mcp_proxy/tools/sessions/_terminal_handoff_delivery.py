@@ -24,6 +24,7 @@ from gobby.sessions.compact_continuation import (
     CompactBoundaryWaiter,
     arm_compact_boundary_waiter,
     clear_handoff_compact_continuation_pending,
+    disarm_compact_boundary_waiter,
     mark_handoff_compact_continuation_pending,
     register_compact_boundary_waiter,
     schedule_codex_handoff_compact_continuation_readiness,
@@ -189,6 +190,7 @@ async def deliver_staged_compact_handoff(
     )
     continuation_pending = False
     detail: dict[str, Any] | None = None
+    failure_result: dict[str, Any] | None = None
     try:
         for submission in range(_COMPACT_PROVIDER_RETRIES + 1):
             if submission and (
@@ -235,11 +237,13 @@ async def deliver_staged_compact_handoff(
             if not ok:
                 if _compact_receipt_exists(db, handoff_record_id, attempt_id):
                     break
-                result: dict[str, Any] = {"compacted": False, "reason": reason}
+                failure_result = {"compacted": False, "reason": reason}
                 if detail is not None:
-                    result.update(detail)
-                return result
+                    failure_result.update(detail)
+                break
             failure = await _wait_for_compact_boundary(waiter, pane, before_command, cursor)
+            if failure is not None:
+                disarm_compact_boundary_waiter(session_id, attempt_id)
             if (
                 failure is None
                 or waiter.event.is_set()
@@ -248,7 +252,12 @@ async def deliver_staged_compact_handoff(
                 break
             clear_handoff_compact_continuation_pending(db, session_id, attempt_id=attempt_id)
             if submission == _COMPACT_PROVIDER_RETRIES:
-                return {"compacted": False, "reason": failure, "error_code": "compact_failed"}
+                failure_result = {
+                    "compacted": False,
+                    "reason": failure,
+                    "error_code": "compact_failed",
+                }
+                break
             logger.warning(
                 "Compact handoff for session %s attempt %s failed after submission %d: %s",
                 session_id,
@@ -261,12 +270,15 @@ async def deliver_staged_compact_handoff(
         logger.warning(
             "Failed delivering compact handoff for session %s", session_id, exc_info=True
         )
-        return {"compacted": False, "reason": str(exc), "error_code": "dispatch_failed"}
+        failure_result = {"compacted": False, "reason": str(exc), "error_code": "dispatch_failed"}
     finally:
         unregister_compact_boundary_waiter(session_id, attempt_id)
 
     if not _compact_receipt_exists(db, handoff_record_id, attempt_id):
-        return {"compacted": False, "reason": "compact boundary receipt is missing"}
+        return failure_result or {
+            "compacted": False,
+            "reason": "compact boundary receipt is missing",
+        }
     clear_queued_context(session_manager, session_id)
     return {
         "compacted": True,
