@@ -1,3 +1,3 @@
 # Lane 4 developer (stability backlog): gobby#14506
 
-Own the backlog lane, epic #22880. Josh directed: finish #22855 (communications event subscription removal and the Telegram /agent picker), which merged into 0.5.0 at 924a44d6 with rollout pending. Next is #22797 (Telegram alerts carry log content), and then stop until the PD re-queues you. Claim, implement, validate, commit, then submit to the PD.
+Own the backlog lane, epic #22880. HOLD until the Program Director (PD) sends GO. The next priority is #22871 (agents/runs sidebar deadline) unless the PD changes the queue. For assigned work, claim, implement, validate, commit, then submit to the PD.
