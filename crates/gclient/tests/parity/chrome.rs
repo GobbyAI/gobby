@@ -5,7 +5,8 @@ use std::borrow::Cow;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use gobby_client::app::{
-    route_modal_key, route_mouse, ContextMenuKind, MouseOutcome, PaneId, Workspace,
+    route_modal_key, route_mouse, ContextMenuKind, ContextMenuState, MouseOutcome, PaneId,
+    Workspace,
 };
 use gobby_client::daemon::{Checkout, ProjectRow, SidebarRows, SourceStatus};
 use gobby_client::key_input::KeyInput;
@@ -1269,6 +1270,7 @@ fn overlay_covers_34_columns_without_moving_panes() {
     let rolled_up = chrome.view.terminal_area;
 
     chrome.sidebar.overlay = true;
+    chrome.mode = Mode::Navigate;
     let terminal = render_with_hits(&ws, &mut chrome, area);
     assert_eq!(chrome.view.sidebar_rect, Rect::new(0, 1, 34, 18));
     assert_eq!(chrome.view.terminal_area, rolled_up);
@@ -1345,6 +1347,54 @@ fn overlay_rolls_up_on_escape_and_pane_focus() {
     route_modal_key(&ws, &mut chrome, &enter);
     assert!(!chrome.sidebar.overlay);
     assert_eq!(chrome.mode, Mode::Terminal);
+}
+
+#[test]
+fn overlay_rolls_up_once_the_terminal_takes_the_keys() {
+    // A menu or the settings raised over the overlay take the keys in their
+    // turn. Dismissed, they hand them to the terminal, and the next frame
+    // rolls the overlay up: left drawn, it took the terminal's clicks and
+    // hid its cursor.
+    let ws = scripted(&["one"]);
+    let pane = ws.pane_for_terminal("one").expect("pane one");
+    let mut chrome = Chrome::new(theme());
+    chrome.open_tab(pane, "");
+    let area = Rect::new(0, 0, 80, 20);
+    let esc = KeyInput {
+        key: KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+        bytes: Vec::new(),
+    };
+
+    for raised in [Mode::ContextMenu, Mode::Settings] {
+        chrome.sidebar.overlay = true;
+        chrome.mode = raised;
+        chrome.menu = (raised == Mode::ContextMenu).then(|| ContextMenuState {
+            kind: ContextMenuKind::Global,
+            anchor: (40, 5),
+            items: Vec::new(),
+            selected: 0,
+            item_rects: Vec::new(),
+        });
+        chrome.compute_view(&ws, area);
+        let terminal_area = chrome.view.terminal_area;
+        assert_eq!(chrome.view.sidebar_rect.width, 34, "{raised:?} over it");
+        assert_eq!(chrome.cursor_pane(), None, "{raised:?} over it");
+
+        route_modal_key(&ws, &mut chrome, &esc);
+        assert_eq!(chrome.mode, Mode::Terminal, "{raised:?} dismissed");
+        chrome.compute_view(&ws, area);
+        assert!(!chrome.sidebar.overlay, "{raised:?} dismissed");
+        assert_eq!(chrome.view.sidebar_rect.width, 0, "{raised:?} dismissed");
+        assert_eq!(
+            chrome.view.terminal_area, terminal_area,
+            "{raised:?} dismissed"
+        );
+        assert!(
+            matches!(hit_test(&chrome.view, 2, 5), Hit::Pane { .. }),
+            "{raised:?} dismissed: the pane takes the click"
+        );
+        assert_eq!(chrome.cursor_pane(), Some(pane), "{raised:?} dismissed");
+    }
 }
 
 // ------------------------------------------------------- gclient hit map

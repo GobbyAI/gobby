@@ -413,12 +413,9 @@ pub async fn run_live_loop<B: Backend>(
                 chrome.ticker = chrome.ticker.wrapping_add(1);
                 chrome.expire_toasts(std::time::Instant::now());
                 workspace.submit_expired_detaches(&mut supervisor, Instant::now());
-                if workspace.attach_retry_due(Instant::now()) {
-                    if let Err(error) = workspace.attach_ready_panes().await {
-                        chrome.notify(Toast::error(error.to_string()));
-                    }
-                    sync_live_chrome(workspace, chrome);
-                }
+                // A due attach runs beside the loop; the recoveries branch
+                // above applies it (#22747).
+                recoveries.extend(workspace.start_due_attaches(Instant::now()));
                 if chrome.sidebar.pinned || chrome.sidebar.overlay {
                     workspace.request_git_refresh_if_due();
                 }

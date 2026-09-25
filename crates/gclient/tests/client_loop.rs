@@ -4064,6 +4064,10 @@ async fn detach_reply_errors_retry_panes_without_reconnecting() {
         tokio::time::advance(Duration::from_secs(5)).await;
         tokio::time::resume();
         wait_for_websocket_requests(&mock, "terminal_attach", 6).await;
+        // A request on the wire precedes applying its recovery step. Wait
+        // until geometry for every replacement reaches the daemon before
+        // closing input and asking shutdown to detach the live panes.
+        wait_for_websocket_requests(&mock, "terminal_resize", 6).await;
         drop(input_tx);
         attachments
     };
@@ -4946,6 +4950,64 @@ async fn prefix_help_and_settings_open_their_modes_in_the_live_loop() {
         assert_eq!(chrome.mode, expected, "prefix {key} must open {expected:?}");
         mock.shutdown().await;
     }
+}
+
+/// A key the overlay does not take goes to the terminal, and the overlay
+/// rolls up with it. Left open, it stayed drawn over a terminal that owned
+/// the keys, took that terminal's clicks and hid its cursor.
+#[tokio::test]
+async fn a_key_the_overlay_passes_on_rolls_it_up() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.seed_workspace("project-1", &[(&["terminal-sidebar"], "terminal-sidebar")]);
+    let (mut workspace, _) =
+        live_workspace_with_scripted_direct(&mock, "terminal-sidebar", 2).await;
+    let pane = workspace
+        .pane_for_terminal("terminal-sidebar")
+        .expect("terminal pane");
+    let mut chrome = Chrome::dark();
+    chrome.open_pane(pane, "loop");
+    let mut terminal = Terminal::new(TestBackend::new(80, 12)).expect("test terminal");
+    let (input_tx, input_rx) = mpsc::channel(256);
+
+    let driver = async move {
+        tokio::task::yield_now().await;
+        send_chord(&input_tx, KeyCode::Char('b'), KeyModifiers::NONE).await;
+        send_key(&input_tx, KeyCode::Char('x'), KeyModifiers::NONE).await;
+        tokio::task::yield_now().await;
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+
+    // The frame the loop's next render tick would draw.
+    let mut next_frame = Terminal::new(TestBackend::new(80, 12)).expect("test terminal");
+    next_frame
+        .draw(|frame| {
+            chrome.compute_view(&workspace, frame.area());
+            render_workspace(frame, &workspace, &chrome);
+        })
+        .expect("draw the next frame");
+    assert_eq!(chrome.mode, Mode::Terminal, "the key went to the terminal");
+    assert!(!chrome.sidebar.overlay, "the overlay rolled up with it");
+    assert_eq!(chrome.view.sidebar_rect.width, 0);
+    assert_eq!(chrome.focused_pane(), Some(pane), "the pane kept focus");
+    assert_eq!(chrome.cursor_pane(), Some(pane), "the cursor is back");
+    let band: String = (0..34)
+        .map(|x| next_frame.backend().buffer()[(x, 1)].symbol().to_string())
+        .collect();
+    assert!(!band.contains("Machines"), "row 1 is the tab bar: {band:?}");
+    mock.shutdown().await;
 }
 
 /// The sidebar starts hidden, so the live loop must turn prefix+b into the
@@ -12728,6 +12790,85 @@ async fn a_lagged_proxy_pane_recovers_beside_the_loop() {
     assert!(
         ticked.is_ok(),
         "the proxy recovery held the loop: {:?}",
+        mock.activity()
+    );
+    mock.shutdown().await;
+}
+
+/// An attach retry that comes due runs beside the loop too. Awaited on the
+/// render tick, a daemon holding the answer froze the loop for the whole
+/// request deadline on every retry, so the capture stall came back after
+/// the first recovery.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_due_attach_retry_does_not_hold_the_loop() {
+    const TERMINAL_ID: &str = "terminal-retried";
+    let mock = MockDaemon::start("local-token").await;
+    mock.refuse_next_proxy_attach("host_not_ready", "host not ready");
+    // Every list keeps the pane; the default empty one would close it.
+    for _ in 0..6 {
+        mock.enqueue(
+            "GET",
+            "/api/terminals?",
+            200,
+            json!({
+                "items": [{"terminal_id": TERMINAL_ID, "backend": "native", "state": "live"}],
+                "next_cursor": null,
+                "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
+            }),
+        );
+    }
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon.clone());
+    let _home = pin_tabs(&mock, &mut workspace, "project-1", &[TERMINAL_ID]);
+    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    chrome.sidebar.pinned = true;
+    let (input_tx, input_rx) = mpsc::channel(16);
+    let driver = async {
+        // A transient startup refusal schedules a due attach on the render
+        // tick. Wait for the refusal to settle before holding the retry.
+        wait_for_websocket_requests(&mock, "terminal_attach", 1).await;
+        wait_until(|| daemon.pending_counts().0 == 0).await;
+        mock.suppress_ws("terminal_attach");
+        wait_for_websocket_requests(&mock, "terminal_attach", 2).await;
+        // With the retry waiting on its answer, the loop still takes an event
+        // and refetches on the render tick; a fifth of the request deadline
+        // is ample for a loop that is not held.
+        let sessions = request_count(&mock, "GET", "/api/sessions?");
+        let delivered = watch_for_event(
+            &daemon,
+            |event| matches!(event, DaemonEvent::Message(value) if value["type"] == "session_event"),
+        );
+        mock.send_event_and_wait(json!({"type": "session_event", "project_id": "project-1"}))
+            .await;
+        delivered
+            .recv_timeout(Duration::from_secs(1))
+            .expect("the session event reached the daemon receiver");
+        let ticked = timeout(
+            Duration::from_secs(1),
+            wait_for_http_requests(&mock, "GET", "/api/sessions?", sessions + 1),
+        )
+        .await;
+        drop(input_tx);
+        ticked
+    };
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ticked) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("retried loop");
+    assert!(
+        ticked.is_ok(),
+        "the attach retry held the loop: {:?}",
         mock.activity()
     );
     mock.shutdown().await;

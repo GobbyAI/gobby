@@ -721,6 +721,14 @@ impl Chrome {
     /// the status row, and between them the sidebar column beside the tab
     /// bar row and terminal area, plus pane rects and split borders.
     pub fn compute_view<W: WorkspaceView>(&mut self, ws: &W, area: Rect) {
+        // The overlay lives while the keys are away from the terminal: with
+        // the sidebar in navigate mode, or with a chord, menu or dialog raised
+        // over it. Every way back to the terminal (a key passed on, a menu or
+        // the settings dismissed) ends here, so no frame draws it over a
+        // terminal that owns the keys, takes its clicks or hides its cursor.
+        if self.mode == Mode::Terminal {
+            self.sidebar.overlay = false;
+        }
         let bands = Layout::vertical([
             Constraint::Length(1),
             Constraint::Min(1),

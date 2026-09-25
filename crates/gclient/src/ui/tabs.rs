@@ -228,6 +228,19 @@ fn compute_tab_bar_view(
     }
 }
 
+/// The columns of `area` the overlay drawn at `overlay` leaves uncovered on
+/// its far side; all of `area` when the overlay drew nothing.
+fn beside_overlay(area: Rect, overlay: Rect, side: SidebarSide) -> Rect {
+    if overlay.is_empty() {
+        return area;
+    }
+    let (left, right) = match side {
+        SidebarSide::Left => (overlay.right().clamp(area.x, area.right()), area.right()),
+        SidebarSide::Right => (area.x, overlay.x.clamp(area.x, area.right())),
+    };
+    Rect::new(left, area.y, right - left, area.height)
+}
+
 fn nonempty(rect: Rect) -> Option<Rect> {
     (rect.width > 0).then_some(rect)
 }
@@ -244,11 +257,18 @@ pub fn render_tab_bar<W: WorkspaceView>(
     }
     let tabs = &chrome.tabs().tabs;
     let p = &chrome.palette;
+    // An overlay covers one end of the bar, so the tabs fit, and scroll when
+    // they do not, in the columns beside it.
+    let beside = if chrome.sidebar.overlay {
+        beside_overlay(area, chrome.view.sidebar_rect, chrome.sidebar.side)
+    } else {
+        area
+    };
     let mut view = compute_tab_bar_view(
         tabs,
         &chrome.viewer.zoomed,
         chrome.active_index(),
-        area,
+        beside,
         chrome.tab_scroll,
         chrome.tab_scroll_follow_active,
     );
@@ -353,10 +373,10 @@ pub fn render_tab_bar<W: WorkspaceView>(
         let x = if view.scroll_left_hit_area.width > 0 {
             view.scroll_left_hit_area.x + view.scroll_left_hit_area.width
         } else {
-            area.x
+            beside.x
         };
-        if x < area.x + area.width {
-            frame.buffer_mut()[(x, area.y)]
+        if x < beside.x + beside.width {
+            frame.buffer_mut()[(x, beside.y)]
                 .set_symbol("…")
                 .set_style(Style::default().fg(p.overlay0));
         }
@@ -365,10 +385,10 @@ pub fn render_tab_bar<W: WorkspaceView>(
         let x = if view.scroll_right_hit_area.width > 0 {
             view.scroll_right_hit_area.x.saturating_sub(1)
         } else {
-            area.x + area.width.saturating_sub(1)
+            beside.x + beside.width.saturating_sub(1)
         };
-        if x >= area.x && x < area.x + area.width {
-            frame.buffer_mut()[(x, area.y)]
+        if x >= beside.x && x < beside.x + beside.width {
+            frame.buffer_mut()[(x, beside.y)]
                 .set_symbol("…")
                 .set_style(Style::default().fg(p.overlay0));
         }
@@ -442,6 +462,7 @@ mod tests {
         // tab button right-align; a right one leaves them where they were.
         let mut chrome = chrome_with_tabs(&["alpha", "second", ""]);
         chrome.sidebar.overlay = true;
+        chrome.view.sidebar_rect = Rect::new(0, 0, 34, 1);
         let (hits, text) = draw(&chrome, 80);
         assert_eq!(hits.tabs[0], (0, Rect::new(48, 0, 9, 1)));
         assert_eq!(hits.new_tab, Some(Rect::new(77, 0, 3, 1)));
@@ -451,9 +472,54 @@ mod tests {
         );
 
         chrome.sidebar.side = SidebarSide::Right;
+        chrome.view.sidebar_rect = Rect::new(46, 0, 34, 1);
         let (hits, _) = draw(&chrome, 80);
         assert_eq!(hits.tabs[0], (0, Rect::new(0, 0, 9, 1)));
         assert_eq!(hits.new_tab, Some(Rect::new(29, 0, 3, 1)));
+    }
+
+    #[test]
+    fn overlay_fits_the_tabs_to_the_columns_it_leaves() {
+        // Tabs that fit the whole bar but not the columns beside the overlay
+        // scroll inside those columns; none lies under the overlay.
+        let mut chrome = chrome_with_tabs(&["one", "two", "three", "four", "five", "six"]);
+        chrome.activate_tab(5);
+        let (hits, _) = draw(&chrome, 80);
+        assert!(hits.scroll_left.is_none(), "the whole bar fits them");
+
+        chrome.sidebar.overlay = true;
+        for (side, overlay, beside) in [
+            (SidebarSide::Left, Rect::new(0, 0, 34, 1), 34..80),
+            (SidebarSide::Right, Rect::new(46, 0, 34, 1), 0..46),
+        ] {
+            chrome.sidebar.side = side;
+            chrome.view.sidebar_rect = overlay;
+            let (hits, text) = draw(&chrome, 80);
+            assert!(
+                hits.scroll_left.is_some() && hits.scroll_right.is_some(),
+                "{side:?}: {text}"
+            );
+            let drawn = hits
+                .tabs
+                .iter()
+                .map(|(_, rect)| *rect)
+                .chain(
+                    [hits.scroll_left, hits.scroll_right, hits.new_tab]
+                        .into_iter()
+                        .flatten(),
+                )
+                .filter(|rect| rect.width > 0);
+            for rect in drawn {
+                assert!(
+                    beside.contains(&rect.x) && rect.right() <= beside.end,
+                    "{side:?}: {rect:?} lies under the overlay"
+                );
+            }
+            assert!(
+                hits.tabs.iter().any(|(idx, _)| *idx == 5),
+                "{side:?}: the active tab shows"
+            );
+        }
     }
 
     #[test]
