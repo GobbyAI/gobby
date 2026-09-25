@@ -1,10 +1,14 @@
 """Evaluation helpers for the rule engine."""
 
+import asyncio
 import logging
+import threading
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
+from concurrent.futures import Future
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from functools import partial
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from gobby.hooks.events import (
     CONTEXT_SEPARATOR,
@@ -25,7 +29,7 @@ from gobby.storage.definitions.rules import RuleDefinitionRow
 from gobby.telemetry.rule_allow_audit import RuleResult, record_rule_evaluation
 from gobby.workflows.block_audit import combined_rule_condition, log_enforcement_block
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect
-from gobby.workflows.engine._offload import offload
+from gobby.workflows.engine._offload import inline_offload_scope, offload, offload_rule_loop
 from gobby.workflows.engine.block_batching import agent_context_key, block_scope
 from gobby.workflows.engine.blocked_tool_recovery import (
     CONSECUTIVE_TOOL_BLOCK_RULE,
@@ -53,6 +57,7 @@ if TYPE_CHECKING:
     from gobby.storage.workflow_audit import WorkflowAuditManager
 
 logger = logging.getLogger(__name__)
+T = TypeVar("T")
 
 
 @dataclass
@@ -70,6 +75,9 @@ class EvaluationContext:
     mcp_calls: list[dict[str, Any]] = field(default_factory=list)
     proxy_hooks: list[ProxyHookInvocation] = field(default_factory=list)
     staged_variable_updates: dict[str, Any] = field(default_factory=dict)
+    rule_context: dict[str, Any] | None = None
+    rule_allowed_funcs: dict[str, Callable[..., Any]] | None = None
+    rule_project_snapshot: Any = None
 
     @property
     def block_state(self) -> dict[str, Any]:
@@ -86,6 +94,39 @@ class BlockGate:
     condition: Any | None = None
     acknowledge_variable: str | None = None
     delivery: str = "eager"
+
+
+class _RuleLoopBridge:
+    """Run async effects on the daemon loop while a rule pass owns a worker."""
+
+    def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
+        self.loop = loop
+        self.cancelled = threading.Event()
+        self._lock = threading.Lock()
+        self._pending: set[Future[Any]] = set()
+
+    def cancel(self) -> None:
+        self.cancelled.set()
+        with self._lock:
+            pending = tuple(self._pending)
+        for future in pending:
+            future.cancel()
+
+    async def call(self, make_coro: Callable[[], Awaitable[T]]) -> T:
+        async def on_daemon_loop() -> T:
+            with inline_offload_scope(False):
+                return await make_coro()
+
+        with self._lock:
+            if self.cancelled.is_set():
+                raise asyncio.CancelledError
+            future = asyncio.run_coroutine_threadsafe(on_daemon_loop(), self.loop)
+            self._pending.add(future)
+        try:
+            return await asyncio.wrap_future(future)
+        finally:
+            with self._lock:
+                self._pending.discard(future)
 
 
 def _repeat_block_reason(rule_name: str, reason: str) -> str:
@@ -175,6 +216,12 @@ class EvaluationMixin:
             event: HookEvent,
             variables: dict[str, Any],
             extra_context: dict[str, Any] | None = None,
+        ) -> dict[str, Any]: ...
+
+        def _rule_tool_input(self, event: HookEvent) -> dict[str, Any]: ...
+
+        def _resolve_project_info(
+            self, event: HookEvent, project_from_vars: Any = None
         ) -> dict[str, Any]: ...
 
         def _build_allowed_funcs(self, ctx: dict[str, Any]) -> dict[str, Callable[..., Any]]: ...
@@ -404,6 +451,55 @@ class EvaluationMixin:
         aggregate_blocks: bool,
         block_effects_only: bool = False,
     ) -> list[BlockGate]:
+        tool_name = evaluation.event.data.get("tool_name", "")
+        applicable_rules = [
+            (row, body) for row, body in rules if not body.tools or tool_name in body.tools
+        ]
+        if not applicable_rules:
+            return []
+        bridge = _RuleLoopBridge(asyncio.get_running_loop())
+        try:
+            return await offload_rule_loop(
+                self._run_rule_loop_worker,
+                applicable_rules,
+                evaluation,
+                bridge,
+                aggregate_blocks=aggregate_blocks,
+                block_effects_only=block_effects_only,
+            )
+        except asyncio.CancelledError:
+            bridge.cancel()
+            raise
+
+    def _run_rule_loop_worker(
+        self,
+        rules: list[tuple[RuleDefinitionRow, RuleDefinitionBody]],
+        evaluation: EvaluationContext,
+        bridge: _RuleLoopBridge,
+        *,
+        aggregate_blocks: bool,
+        block_effects_only: bool,
+    ) -> list[BlockGate]:
+        with inline_offload_scope():
+            return asyncio.run(
+                self._run_rule_loop_pass(
+                    rules,
+                    evaluation,
+                    bridge,
+                    aggregate_blocks=aggregate_blocks,
+                    block_effects_only=block_effects_only,
+                )
+            )
+
+    async def _run_rule_loop_pass(
+        self,
+        rules: list[tuple[RuleDefinitionRow, RuleDefinitionBody]],
+        evaluation: EvaluationContext,
+        bridge: _RuleLoopBridge,
+        *,
+        aggregate_blocks: bool,
+        block_effects_only: bool,
+    ) -> list[BlockGate]:
         block_gates: list[BlockGate] = []
         metric_records: list[MetricsEventRecord] = []
         turn_end_suppression: tuple[str, str] | None = None
@@ -417,14 +513,9 @@ class EvaluationMixin:
                 turn_end_suppression = ("interrupt-initiated-turn", "interrupt-initiated turn")
         suppress_turn_end_blocks = turn_end_suppression is not None
 
-        for row, body in rules:
-            # Pre-filter: skip rule if tools field doesn't match current tool
-            if body.tools:
-                tool_name = evaluation.event.data.get("tool_name", "")
-                if tool_name not in body.tools:
-                    continue
-
-            # Build fresh eval context with current variables
+        ctx = evaluation.rule_context
+        allowed_funcs = evaluation.rule_allowed_funcs
+        if ctx is None or allowed_funcs is None:
             with measure_hook_phase("rule_context_build"):
                 ctx = await offload(
                     self._build_eval_context,
@@ -432,10 +523,43 @@ class EvaluationMixin:
                     evaluation.variables,
                     evaluation.eval_context,
                 )
-
-            # Build allowed_funcs once per iteration - shared by condition and templates
             with measure_hook_phase("rule_allowed_funcs_build"):
                 allowed_funcs = await offload(self._build_allowed_funcs, ctx)
+            evaluation.rule_context = ctx
+            evaluation.rule_allowed_funcs = allowed_funcs
+            project_value = evaluation.variables.get("project")
+            project_snapshot = (
+                dict(project_value) if isinstance(project_value, dict) else project_value
+            )
+        else:
+            # A proxy rewrite changes the same event's input before block-only replay.
+            ctx["tool_input"] = await offload(self._rule_tool_input, evaluation.event)
+            project_snapshot = evaluation.rule_project_snapshot
+        protected_keys = {"variables", "event", "tool_input", "source", "project"}
+        protected_keys.update(evaluation.eval_context or {})
+        flattened_keys = set(ctx) - protected_keys
+
+        for row, body in rules:
+            if bridge.cancelled.is_set():
+                raise asyncio.CancelledError
+            # Match the prior per-rule snapshot without rebuilding helpers or project state.
+            current_keys = set(evaluation.variables) - protected_keys
+            for key in flattened_keys - current_keys:
+                ctx.pop(key, None)
+            for key in current_keys:
+                ctx[key] = evaluation.variables[key]
+            flattened_keys = current_keys
+            current_project = evaluation.variables.get("project")
+            if current_project != project_snapshot:
+                if isinstance(current_project, dict) and current_project.get("path"):
+                    ctx["project"] = current_project
+                else:
+                    ctx["project"] = await offload(
+                        self._resolve_project_info, evaluation.event, current_project
+                    )
+                project_snapshot = (
+                    dict(current_project) if isinstance(current_project, dict) else current_project
+                )
 
             # Check rule-level `when` condition
             if body.when:
@@ -563,7 +687,7 @@ class EvaluationMixin:
                     continue
 
                 # Apply non-block effects immediately
-                inline_block_reason = await self._apply_effect(
+                effect_args = (
                     effect,
                     row,
                     evaluation.variables,
@@ -573,6 +697,12 @@ class EvaluationMixin:
                     evaluation.mcp_calls,
                     evaluation.staged_variable_updates,
                 )
+                if effect.type in {"mcp_call", "run_command"}:
+                    inline_block_reason = await bridge.call(
+                        partial(self._apply_effect, *effect_args)
+                    )
+                else:
+                    inline_block_reason = await self._apply_effect(*effect_args)
                 if inline_block_reason:
                     rule_blocked = True
                     block_gates.append(
@@ -647,13 +777,17 @@ class EvaluationMixin:
             except Exception as e:
                 logger.debug("Metrics recording failed: %s", e, exc_info=True)
 
+        evaluation.rule_project_snapshot = project_snapshot
+
         if turn_end_suppression is not None and block_gates:
             audit_rule_name, cause = turn_end_suppression
-            return await self._suppress_turn_end_blocks(
-                evaluation,
-                block_gates,
-                audit_rule_name=audit_rule_name,
-                cause=cause,
+            return await bridge.call(
+                lambda: self._suppress_turn_end_blocks(
+                    evaluation,
+                    block_gates,
+                    audit_rule_name=audit_rule_name,
+                    cause=cause,
+                )
             )
         return block_gates
 

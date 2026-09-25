@@ -15,6 +15,7 @@ from jinja2.exceptions import SecurityError
 from gobby.config.app import DaemonConfig
 from gobby.config.runtime_models import ConfigSnapshot
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.hooks.phase_timing import HookPhaseTimings, hook_phase_timing_scope
 from gobby.mcp_proxy.metrics_events import MetricsEventStore
 from gobby.skills.formatting import skill_fetch_batch_directive, skill_fetch_directive
 from gobby.storage.definitions.agents import AgentDefinitionManager
@@ -190,6 +191,207 @@ async def test_task_tree_condition_runs_outside_event_loop_thread(
     assert response.decision == "block"
     assert len(task_access_threads) == 2
     assert all(thread_id != loop_thread_id for thread_id in task_access_threads)
+
+
+@pytest.mark.asyncio
+async def test_rule_engine_reports_untimed_setup_and_database_reads(
+    db: HubDatabase,
+    manager: RuleDefinitionManager,
+) -> None:
+    _insert_rule(
+        manager,
+        "timed-condition",
+        RuleDefinitionBody(
+            event=RuleTriggerEvent.AFTER_TOOL,
+            when="flag == True",
+            effects=[RuleEffect(type="set_variable", variable="observed", value=True)],
+        ),
+    )
+    timings = HookPhaseTimings()
+    variables: dict[str, Any] = {
+        "project": {"id": "project-id", "path": "/tmp/project"},
+        "flag": True,
+    }
+
+    with hook_phase_timing_scope(timings):
+        await RuleEngine(db).evaluate(_make_event(HookEventType.AFTER_TOOL), SESSION_ID, variables)
+
+    assert variables["observed"] is True
+    breakdown = timings.breakdown()
+    for phase in (
+        "rule_engine_db_reads",
+        "rule_context_build",
+        "rule_allowed_funcs_build",
+        "rule_condition_eval",
+    ):
+        assert breakdown[phase] > 0
+
+
+@pytest.mark.asyncio
+async def test_rule_context_is_built_once_and_sees_earlier_variable_effects(
+    db: HubDatabase,
+    manager: RuleDefinitionManager,
+) -> None:
+    _insert_rule(
+        manager,
+        "set-marker-first",
+        RuleDefinitionBody(
+            event=RuleTriggerEvent.AFTER_TOOL,
+            effects=[RuleEffect(type="set_variable", variable="marker", value="{{ 1 }}")],
+        ),
+        priority=10,
+    )
+    _insert_rule(
+        manager,
+        "read-marker-second",
+        RuleDefinitionBody(
+            event=RuleTriggerEvent.AFTER_TOOL,
+            when="marker == 1",
+            effects=[RuleEffect(type="set_variable", variable="observed", value=True)],
+        ),
+        priority=20,
+    )
+    engine = RuleEngine(db)
+    variables: dict[str, Any] = {"project": {"id": "project-id", "path": "/tmp/project"}}
+
+    with (
+        patch.object(
+            engine, "_build_eval_context", wraps=engine._build_eval_context
+        ) as context_build,
+        patch.object(
+            engine, "_build_allowed_funcs", wraps=engine._build_allowed_funcs
+        ) as funcs_build,
+    ):
+        await engine.evaluate(_make_event(HookEventType.AFTER_TOOL), SESSION_ID, variables)
+
+    assert variables["observed"] is True
+    assert context_build.call_count == 1
+    assert funcs_build.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_thirty_rule_conditions_use_constant_executor_hops(
+    db: HubDatabase,
+    manager: RuleDefinitionManager,
+) -> None:
+    async def count_hops() -> int:
+        loop = asyncio.get_running_loop()
+        with patch.object(loop, "run_in_executor", wraps=loop.run_in_executor) as hop:
+            await RuleEngine(db).evaluate(
+                _make_event(HookEventType.AFTER_TOOL),
+                SESSION_ID,
+                {"project": {"id": "project-id", "path": "/tmp/project"}},
+            )
+        return hop.call_count
+
+    for index in range(30):
+        _insert_rule(
+            manager,
+            f"false-condition-{index}",
+            RuleDefinitionBody(
+                event=RuleTriggerEvent.AFTER_TOOL,
+                when="False",
+                effects=[RuleEffect(type="set_variable", variable="unused", value=index)],
+            ),
+        )
+        if index == 0:
+            one_rule_hops = await count_hops()
+
+    thirty_rule_hops = await count_hops()
+    assert thirty_rule_hops <= one_rule_hops + 2
+
+
+@pytest.mark.asyncio
+async def test_cancelled_rule_pass_does_not_apply_later_effects(
+    db: HubDatabase,
+    manager: RuleDefinitionManager,
+) -> None:
+    for priority, name in enumerate(("stalled-condition", "later-effect"), start=1):
+        _insert_rule(
+            manager,
+            name,
+            RuleDefinitionBody(
+                event=RuleTriggerEvent.AFTER_TOOL,
+                when="True",
+                effects=[RuleEffect(type="set_variable", variable=name, value=True)],
+            ),
+            priority=priority,
+        )
+    entered = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+    engine = RuleEngine(db)
+    original_condition = engine._evaluate_condition
+    original_worker = engine._run_rule_loop_worker
+    variables: dict[str, Any] = {"project": {"id": "project-id", "path": "/tmp/project"}}
+
+    def stalled_condition(*args: Any, **kwargs: Any) -> bool:
+        if not entered.is_set():
+            entered.set()
+            release.wait(2)
+        return original_condition(*args, **kwargs)
+
+    def tracked_worker(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return original_worker(*args, **kwargs)
+        finally:
+            finished.set()
+
+    with (
+        patch.object(engine, "_evaluate_condition", side_effect=stalled_condition),
+        patch.object(engine, "_run_rule_loop_worker", side_effect=tracked_worker),
+    ):
+        task = asyncio.create_task(
+            engine.evaluate(_make_event(HookEventType.AFTER_TOOL), SESSION_ID, variables)
+        )
+        try:
+            assert await asyncio.to_thread(entered.wait, 2)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        finally:
+            release.set()
+        assert await asyncio.to_thread(finished.wait, 2)
+
+    assert "later-effect" not in variables
+
+
+@pytest.mark.asyncio
+async def test_inline_mcp_effect_runs_on_daemon_loop(
+    db: HubDatabase,
+    manager: RuleDefinitionManager,
+) -> None:
+    _insert_rule(
+        manager,
+        "inline-dispatch",
+        RuleDefinitionBody(
+            event=RuleTriggerEvent.AFTER_TOOL,
+            effects=[
+                RuleEffect(
+                    type="mcp_call",
+                    server="gobby-test",
+                    tool="dispatch",
+                    inject_result=True,
+                )
+            ],
+        ),
+    )
+    loop = asyncio.get_running_loop()
+    dispatch_loops: list[asyncio.AbstractEventLoop] = []
+
+    async def dispatcher(
+        _server: str, _tool: str, _args: dict[str, Any], _event: HookEvent
+    ) -> dict[str, Any]:
+        dispatch_loops.append(asyncio.get_running_loop())
+        return {"success": True, "result": {}}
+
+    await RuleEngine(db, mcp_dispatcher=dispatcher).evaluate(
+        _make_event(HookEventType.AFTER_TOOL),
+        SESSION_ID,
+        {"project": {"id": "project-id", "path": "/tmp/project"}},
+    )
+
+    assert dispatch_loops == [loop]
 
 
 async def _assert_evaluation(

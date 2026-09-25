@@ -11,8 +11,9 @@ from __future__ import annotations
 import contextvars
 import functools
 from asyncio import get_running_loop
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from typing import ParamSpec, TypeVar
 
 P = ParamSpec("P")
@@ -24,6 +25,28 @@ _ENGINE_EXECUTOR = ThreadPoolExecutor(
     max_workers=16,
     thread_name_prefix=ENGINE_EXECUTOR_THREAD_PREFIX,
 )
+_RULE_LOOP_EXECUTOR = ThreadPoolExecutor(max_workers=16, thread_name_prefix="rule-loop")
+_INLINE_OFFLOAD: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "rule_engine_inline_offload", default=False
+)
+
+
+@contextmanager
+def inline_offload_scope(enabled: bool = True) -> Iterator[None]:
+    """Keep synchronous rule work on its rule-loop worker."""
+    token = _INLINE_OFFLOAD.set(enabled)
+    try:
+        yield
+    finally:
+        _INLINE_OFFLOAD.reset(token)
+
+
+async def offload_rule_loop(func: Callable[P, R], /, *args: P.args, **kwargs: P.kwargs) -> R:
+    """Run a complete rule pass on an executor separate from effect offloads."""
+    loop = get_running_loop()
+    ctx = contextvars.copy_context()
+    call = functools.partial(ctx.run, func, *args, **kwargs)
+    return await loop.run_in_executor(_RULE_LOOP_EXECUTOR, call)
 
 
 async def offload(func: Callable[P, R], /, *args: P.args, **kwargs: P.kwargs) -> R:
@@ -32,6 +55,8 @@ async def offload(func: Callable[P, R], /, *args: P.args, **kwargs: P.kwargs) ->
     Drop-in for ``asyncio.to_thread``: contextvars propagate to the worker
     thread and keyword arguments are supported.
     """
+    if _INLINE_OFFLOAD.get():
+        return func(*args, **kwargs)
     loop = get_running_loop()
     ctx = contextvars.copy_context()
     call = functools.partial(ctx.run, func, *args, **kwargs)
