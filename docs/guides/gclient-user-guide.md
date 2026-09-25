@@ -51,15 +51,13 @@ Logs go to `~/.gobby/logs/gclient.log`.
 `gclient <verb>` performs one workspace action and exits without opening the TUI. Use
 `gclient help` for the current syntax. Commands use the daemon URL and local CLI
 token from the normal Gobby configuration; `--daemon-url` and `--token-file` override
-them. `--json` prints the daemon reply result as JSON (the complete tool reply for
-`launch`).
+them. `--json` prints the daemon reply result as JSON.
 
 | Verb | Action |
 | --- | --- |
 | `list [--workspace REF]` | List tabs and panes in a workspace. |
 | `new-tab --project NAME\|ID [--name TITLE] [--workspace REF]` | Create a tab and its first pane. |
 | `split [REF] --right\|--down [--cmd TEXT]` | Split a pane; optional text is submitted in the new pane. |
-| `launch --agent ROLE (--tab TITLE --project NAME\|ID [--workspace REF] [--runbook NAME] \| --split REF --right\|--down) [--sandbox JSON] [--provider P] [--model M] [--effort E] [--isolation none\|worktree] -- PROMPT` | Spawn an agent in a new tab or split pane under its role's sandbox. A launch cannot disable the sandbox. |
 | `resize [REF] RATIO` | Set the parent split ratio (between zero and one). |
 | `title [REF] TEXT` | Rename a tab or pane. |
 | `select [REF]` | Set the focus hint for the next client window. |
@@ -82,7 +80,7 @@ numeric `w`, `n:w`, `n:w:t`, or `n:w:t:p` ref.
 Exit status is `0` for success, `1` for a refused workspace operation or a timed-out
 wait, `2` for usage errors or a wait whose pane disappeared, and `3` for connection,
 token, HTTP, or protocol failures. A refused workspace operation prints
-`code: reason` on stderr. `launch` reports a refused spawn's error on stderr.
+`code: reason` on stderr.
 
 ## Layout
 

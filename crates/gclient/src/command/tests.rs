@@ -64,30 +64,3 @@ fn uuid_tab_ref_can_be_typed_without_changing_it() {
         Action::Op { op: crate::daemon::WorkspaceOp::TabClose { tab: ref passed, .. }, .. }
         if passed == tab));
 }
-
-#[test]
-fn launch_requires_agent_and_exactly_one_placement() {
-    let env = CommandEnv::default();
-    for args in [
-        vec!["launch", "--split", "0:1:2:3", "--right", "--", "go"],
-        vec!["launch", "--agent", "worker", "--", "go"],
-        vec![
-            "launch", "--agent", "worker", "--split", "0:1:2:3", "--tab", "x", "--right", "--",
-            "go",
-        ],
-        vec![
-            "launch",
-            "--agent",
-            "worker",
-            "--split",
-            "0:1:2:3",
-            "--right",
-            "--sandbox",
-            r#"{"enabled":false}"#,
-            "--",
-            "go",
-        ],
-    ] {
-        assert_eq!(action(&args, &env).expect_err("invalid launch").code, 2);
-    }
-}

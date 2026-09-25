@@ -54,7 +54,6 @@ struct Parsed {
     positions: Vec<String>,
     values: BTreeMap<String, String>,
     switches: BTreeSet<String>,
-    prompt: Option<String>,
 }
 
 impl Parsed {
@@ -75,11 +74,7 @@ impl Parsed {
     }
 
     fn finish(&self) -> Result<(), CommandError> {
-        if self.values.is_empty()
-            && self.switches.is_empty()
-            && self.positions.is_empty()
-            && self.prompt.is_none()
-        {
+        if self.values.is_empty() && self.switches.is_empty() && self.positions.is_empty() {
             return Ok(());
         }
         Err(CommandError::usage(format!(
@@ -94,15 +89,6 @@ const VALUE_FLAGS: &[&str] = &[
     "--project",
     "--name",
     "--cmd",
-    "--agent",
-    "--tab",
-    "--split",
-    "--runbook",
-    "--sandbox",
-    "--provider",
-    "--model",
-    "--effort",
-    "--isolation",
     "--daemon-url",
     "--token-file",
     "--lines",
@@ -124,7 +110,6 @@ fn parse(args: Vec<String>) -> Result<Parsed, CommandError> {
         "list"
             | "new-tab"
             | "split"
-            | "launch"
             | "resize"
             | "title"
             | "select"
@@ -141,19 +126,10 @@ fn parse(args: Vec<String>) -> Result<Parsed, CommandError> {
         positions: Vec::new(),
         values: BTreeMap::new(),
         switches: BTreeSet::new(),
-        prompt: None,
     };
     while let Some(arg) = args.next() {
         if arg == "--" {
-            if parsed.verb == "launch" {
-                let prompt = args.collect::<Vec<_>>().join(" ");
-                if prompt.is_empty() {
-                    return Err(CommandError::usage("missing prompt after --"));
-                }
-                parsed.prompt = Some(prompt);
-            } else {
-                parsed.positions.extend(args);
-            }
+            parsed.positions.extend(args);
             break;
         }
         let (flag, inline) = arg

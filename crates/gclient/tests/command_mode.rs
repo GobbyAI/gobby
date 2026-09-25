@@ -147,110 +147,12 @@ async fn project_name_resolves_before_new_tab() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn launch_posts_spawn_with_placement_and_sandbox() {
-    let daemon = MockDaemon::start("command-token").await;
-    daemon.enqueue(
-        "POST",
-        "/api/mcp/gobby-agents/tools/spawn_agent",
-        200,
-        json!({"success": true, "status": "starting", "tab_ref": "0:1:2", "pane_ref": "0:1:2:1"}),
-    );
-    let output = invoke(
-        &daemon,
-        &[
-            "launch",
-            "--agent",
-            "worker",
-            "--tab",
-            "work",
-            "--workspace",
-            "default",
-            "--project",
-            PROJECT,
-            "--sandbox",
-            r#"{"network_access":false}"#,
-            "--provider",
-            "codex",
-            "--model",
-            "gpt-6-sol",
-            "--effort",
-            "high",
-            "--json",
-            "--",
-            "Do work",
-        ],
-    )
-    .await;
-    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
-    let reply: Value = serde_json::from_str(&stdout(&output)).expect("tool reply");
-    assert_eq!(reply["pane_ref"], "0:1:2:1");
-    let request = daemon
-        .requests()
-        .into_iter()
-        .find(|r| r.target.contains("spawn_agent"))
-        .expect("spawn request");
-    assert_eq!(
-        request.authorization.as_deref(),
-        Some("Bearer command-token")
-    );
-    let body = request.body.expect("spawn body");
-    assert_eq!(body["agent"], "worker");
-    assert_eq!(body["prompt"], "Do work");
-    assert_eq!(body["placement"]["tab"]["project"], PROJECT);
-    assert_eq!(body["placement"]["tab"]["title"], "work");
-    assert_eq!(body["sandbox"]["network_access"], false);
-    assert_eq!(body["reasoning_effort"], "high");
-    assert_eq!(body["terminal_backend"], "native");
-    assert_eq!(body["notify_parent_on_completion"], false);
-}
-
-#[tokio::test(flavor = "multi_thread")]
 async fn refused_op_exits_one_with_code_and_reason() {
     let daemon = MockDaemon::start("command-token").await;
     daemon.enqueue_workspace_refusal("forbidden", "pane is protected");
     let output = invoke(&daemon, &["send-keys", "0:1:2:3", "hello"]).await;
     assert_eq!(output.status.code(), Some(1));
     assert!(stderr(&output).contains("forbidden: pane is protected"));
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn refused_launch_exits_one_with_error() {
-    let daemon = MockDaemon::start("command-token").await;
-    daemon.enqueue(
-        "POST",
-        "/api/mcp/gobby-agents/tools/spawn_agent",
-        200,
-        json!({"success": false, "error": "role unavailable"}),
-    );
-    let output = invoke(
-        &daemon,
-        &[
-            "launch", "--agent", "worker", "--split", "0:1:2:3", "--right", "--", "go",
-        ],
-    )
-    .await;
-    assert_eq!(output.status.code(), Some(1));
-    assert!(stderr(&output).contains("role unavailable"));
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn malformed_launch_reply_exits_three() {
-    let daemon = MockDaemon::start("command-token").await;
-    daemon.enqueue(
-        "POST",
-        "/api/mcp/gobby-agents/tools/spawn_agent",
-        200,
-        json!({"success": true, "status": "starting", "pane_ref": "0:1:2:1"}),
-    );
-    let output = invoke(
-        &daemon,
-        &[
-            "launch", "--agent", "worker", "--split", "0:1:2:3", "--right", "--", "go",
-        ],
-    )
-    .await;
-    assert_eq!(output.status.code(), Some(3));
-    assert!(stderr(&output).contains("tab_ref"));
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -1,16 +1,12 @@
 use super::{CommandEnv, CommandError, Parsed};
-use crate::daemon::{
-    project_rows, spawn_agent_tool, Daemon, DaemonError, LayoutAxis, LiveDaemon, WorkspaceOp,
-};
-use serde_json::{json, Map, Value};
+use crate::daemon::{project_rows, Daemon, DaemonError, LayoutAxis, LiveDaemon, WorkspaceOp};
+use serde_json::Value;
 use tokio::time::{Duration, Instant};
 
 pub(super) const HELP: &str = "gclient <verb> [options]\n\
   list [--workspace REF]              List tabs and panes\n\
   new-tab --project NAME|ID           Create a tab\n\
   split [REF] --right|--down           Split a pane\n\
-  launch --agent ROLE --tab TITLE --project NAME|ID -- PROMPT\n\
-  launch --agent ROLE --split REF --right|--down -- PROMPT\n\
   resize [REF] RATIO                   Resize a split\n\
   title [REF] TEXT                     Rename a tab or pane\n\
   select [REF]                         Set focus hints\n\
@@ -44,17 +40,6 @@ pub(super) enum Action {
         pane: String,
         axis: LayoutAxis,
         cmd: Option<String>,
-    },
-    Launch {
-        placement: Value,
-        agent: String,
-        prompt: String,
-        sandbox: Option<Value>,
-        provider: Option<String>,
-        model: Option<String>,
-        effort: Option<String>,
-        isolation: Option<String>,
-        project: Option<String>,
     },
     Op {
         op: WorkspaceOp,
@@ -161,65 +146,6 @@ impl Action {
                 axis: axis(&mut args)?,
                 cmd: args.take("--cmd"),
             },
-            "launch" => {
-                let agent = required(args.take("--agent"), "--agent")?;
-                let tab = args.take("--tab");
-                let split = args.take("--split");
-                let (placement, project) = match (tab, split) {
-                    (Some(title), None) => {
-                        let project = required(args.take("--project"), "--project")?;
-                        let workspace = workspace(&mut args, env)?;
-                        let runbook = args.take("--runbook");
-                        (
-                            json!({"tab": {"workspace": workspace, "project": project,
-                            "title": title, "runbook": runbook}}),
-                            Some(project),
-                        )
-                    }
-                    (None, Some(pane)) => {
-                        let axis = axis(&mut args)?;
-                        (json!({"split": {"pane": pane, "axis": axis}}), None)
-                    }
-                    _ => {
-                        return Err(CommandError::usage(
-                            "launch requires exactly one of --tab or --split",
-                        ))
-                    }
-                };
-                let sandbox = args
-                    .take("--sandbox")
-                    .map(|raw| {
-                        let value: Value = serde_json::from_str(&raw)
-                            .map_err(|_| CommandError::usage("--sandbox requires a JSON object"))?;
-                        let object = value.as_object().ok_or_else(|| {
-                            CommandError::usage("--sandbox requires a JSON object")
-                        })?;
-                        if object.contains_key("enabled") {
-                            return Err(CommandError::usage("--sandbox cannot set enabled"));
-                        }
-                        Ok(value)
-                    })
-                    .transpose()?;
-                let isolation = args.take("--isolation");
-                if isolation
-                    .as_deref()
-                    .is_some_and(|s| s != "none" && s != "worktree")
-                {
-                    return Err(CommandError::usage("--isolation requires none or worktree"));
-                }
-                let prompt = required(args.prompt.take(), "PROMPT after --")?;
-                Self::Launch {
-                    placement,
-                    agent,
-                    prompt,
-                    sandbox,
-                    provider: args.take("--provider"),
-                    model: args.take("--model"),
-                    effort: args.take("--effort"),
-                    isolation,
-                    project,
-                }
-            }
             "resize" => {
                 let pane = pane_ref_before_value(&mut args, env)?;
                 let ratio = positive_f64(&required(args.position(), "RATIO")?, "RATIO")?;
@@ -383,67 +309,6 @@ impl Action {
     }
 
     pub(super) async fn run(self, url: &str, token: &str) -> Result<CommandOutput, CommandError> {
-        if let Self::Launch {
-            placement,
-            agent,
-            prompt,
-            sandbox,
-            provider,
-            model,
-            effort,
-            isolation,
-            project,
-        } = self
-        {
-            let mut placement = placement;
-            if let Some(project) = project {
-                placement["tab"]["project"] = json!(resolve_project(url, token, &project).await?);
-            }
-            let mut body = Map::new();
-            body.insert("agent".into(), json!(agent));
-            body.insert("prompt".into(), json!(prompt));
-            body.insert("placement".into(), placement);
-            body.insert("terminal_backend".into(), json!("native"));
-            body.insert("notify_parent_on_completion".into(), json!(false));
-            for (name, value) in [
-                ("sandbox", sandbox),
-                ("provider", provider.map(Value::String)),
-                ("model", model.map(Value::String)),
-                ("reasoning_effort", effort.map(Value::String)),
-                ("isolation", isolation.map(Value::String)),
-            ] {
-                if let Some(value) = value {
-                    body.insert(name.into(), value);
-                }
-            }
-            let reply = spawn_agent_tool(url, token, Value::Object(body))
-                .await
-                .map_err(daemon_error)?;
-            if reply.get("success").and_then(Value::as_bool) != Some(true) {
-                return Err(CommandError {
-                    code: 1,
-                    message: reply
-                        .get("error")
-                        .and_then(Value::as_str)
-                        .unwrap_or("launch refused")
-                        .to_owned(),
-                });
-            }
-            let tab = reply
-                .get("tab_ref")
-                .and_then(Value::as_str)
-                .ok_or_else(|| CommandError::connection("launch reply has no tab_ref"))?;
-            let pane = reply
-                .get("pane_ref")
-                .and_then(Value::as_str)
-                .ok_or_else(|| CommandError::connection("launch reply has no pane_ref"))?;
-            let plain = format!("{tab} {pane}");
-            return Ok(CommandOutput {
-                result: reply,
-                plain,
-                status: 0,
-            });
-        }
         let daemon = LiveDaemon::connect(url, token.to_owned())
             .await
             .map_err(daemon_error)?;
@@ -551,7 +416,6 @@ impl Action {
                 };
                 output(reply.result, kind)
             }
-            Self::Launch { .. } => unreachable!(),
         };
         let _ = daemon.close(Instant::now() + Duration::from_secs(2)).await;
         output
