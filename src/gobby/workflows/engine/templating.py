@@ -164,7 +164,6 @@ class TemplatingMixin:
     def _build_allowed_funcs(self, ctx: dict[str, Any]) -> dict[str, Callable[..., Any]]:
         """Build the shared helper-function dict for condition evaluation and template rendering."""
         variables = ctx.get("variables", {})
-        project_path = (ctx.get("project") or {}).get("path")
         event = ctx.get("event")
         event_data = event.data if isinstance(event, HookEvent) else None
         funcs = build_condition_helpers(
@@ -180,7 +179,7 @@ class TemplatingMixin:
         funcs["is_plan_file"] = is_plan_file
         funcs["is_current_plan_artifact"] = (
             lambda file_path, artifact_path: is_current_plan_artifact(
-                file_path, artifact_path, project_path=project_path
+                file_path, artifact_path, project_path=(ctx.get("project") or {}).get("path")
             )
         )
         funcs["get_touched_file_paths"] = get_touched_file_paths
@@ -191,7 +190,7 @@ class TemplatingMixin:
                     provider,
                     artifact_path,
                     require_current_artifact,
-                    project_path=project_path,
+                    project_path=(ctx.get("project") or {}).get("path"),
                     event_data=event_data,
                 )
             )
