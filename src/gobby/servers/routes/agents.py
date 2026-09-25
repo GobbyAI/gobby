@@ -203,7 +203,7 @@ async def _batch_load_session_info(
                     f"""
                 SELECT id, usage_input_tokens, usage_output_tokens,
                        usage_cache_creation_tokens, usage_cache_read_tokens,
-                       summary_markdown, git_branch
+                       git_branch
                 FROM sessions
                 WHERE id IN ({placeholders})
                 """,  # nosec B608
@@ -219,7 +219,6 @@ async def _batch_load_session_info(
                 "usage_output_tokens": row["usage_output_tokens"],
                 "usage_cache_creation_tokens": row["usage_cache_creation_tokens"],
                 "usage_cache_read_tokens": row["usage_cache_read_tokens"],
-                "summary_markdown": row["summary_markdown"],
                 "git_branch": row["git_branch"],
             }
         return result
