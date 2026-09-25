@@ -544,6 +544,7 @@ async def deliver_staged_clear_session(
             clear_continuation_pending=lambda: True,
             observe_interrupt=observe_interrupt,
             composer_read=composer_reader(db, cli_source),
+            foreground_command=getattr(pane, "foreground_command", None),
         )
     except Exception as exc:
         logger.warning("Failed sending /clear for session %s", resolved_session_id, exc_info=True)

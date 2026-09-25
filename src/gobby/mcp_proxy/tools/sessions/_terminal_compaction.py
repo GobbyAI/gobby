@@ -19,6 +19,7 @@ from gobby.terminals.pane_io import (
     ComposerReader,
     PaneIO,
     SendResult,
+    SubmitResult,
     clear_composer,
     log_pane_failure,
     send_pane_key,
@@ -214,12 +215,33 @@ async def _submit_command(
     cli_source: str | None,
     composer_read: ComposerReader | None,
     verify_seconds: float,
+    foreground_command: Callable[[], Awaitable[str | None]] | None,
 ) -> tuple[bool, str | None, dict[str, Any] | None]:
     """Submit ``command`` through the shared verified-submit ladder.
 
     Both halves of one handoff -- this command and the pull prompt that follows the
     compaction -- run the same ladder, so they cannot drift apart.
     """
+
+    async def verify_codex_draft() -> SubmitResult | None:
+        assert composer_read is not None
+        assert foreground_command is not None
+        read = composer_read(await pane.snapshot(COMPOSER_PROBE_LINES, mode="ansi"))
+        observed = await foreground_command()
+        if observed != "codex":
+            return SubmitResult(
+                False,
+                f"codex is not foreground (found {observed or 'unknown'})",
+                _CLI_NOT_FOREGROUND_ERROR_CODE,
+            )
+        if read.state != "draft" or read.line != command:
+            return SubmitResult(
+                False,
+                f"{command} was not verified in the codex composer",
+                _COMMAND_NOT_SUBMITTED_ERROR_CODE,
+            )
+        return None
+
     result = await submit_text(
         pane,
         command,
@@ -228,6 +250,7 @@ async def _submit_command(
         cli_source=cli_source,
         composer_read=composer_read,
         verify_seconds=verify_seconds,
+        before_enter=verify_codex_draft if cli_source == "codex" else None,
     )
     if result.ok or result.error_code is None:
         return result.ok, result.reason, None
@@ -412,6 +435,8 @@ async def _send_terminal_compaction_command(
     continuation_pending = False
 
     async def require_cli_foreground() -> tuple[bool, str | None]:
+        if cli_source == "codex" and foreground_command is None:
+            return False, "codex foreground cannot be verified"
         if foreground_command is None or cli_source is None:
             return True, None
         observed = await foreground_command()
@@ -429,6 +454,13 @@ async def _send_terminal_compaction_command(
                 "error_code": _CLI_NOT_FOREGROUND_ERROR_CODE,
                 "continuation_pending": False,
             },
+        )
+    if cli_source == "codex" and composer_read is None:
+        return (
+            False,
+            "codex composer cannot be verified",
+            False,
+            {"error_code": _COMMAND_NOT_SUBMITTED_ERROR_CODE, "continuation_pending": False},
         )
     if composer_read is not None:
         read = composer_read(await pane.snapshot(COMPOSER_PROBE_LINES, mode="ansi"))
@@ -555,6 +587,7 @@ async def _send_terminal_compaction_command(
             cli_source=cli_source,
             composer_read=composer_read,
             verify_seconds=verify_seconds,
+            foreground_command=foreground_command,
         )
         if ok:
             submit_detail = None

@@ -27,6 +27,7 @@ pytestmark = pytest.mark.unit
 
 _SETTLE = 0.02
 _CLAUDE_READ = IdleDetector(BundledDetectionRegistry(), "claude").composer_read
+_CODEX_READ = IdleDetector(BundledDetectionRegistry(), "codex").composer_read
 _DELIVERY = "gobby.mcp_proxy.tools.sessions._terminal_handoff_delivery"
 _COMPACTION = "gobby.mcp_proxy.tools.sessions._terminal_compaction"
 _RULE = "─" * 40
@@ -46,17 +47,26 @@ class _ComposerPane:
     def __init__(self) -> None:
         self.keys: list[str] = []
         self.typed: list[str] = []
+        self.draft = ""
 
     async def send_key(self, key: str) -> tuple[bool, str | None]:
         self.keys.append(key)
+        if key == "enter":
+            self.draft = ""
         return True, None
 
     async def type_text(self, text: str) -> tuple[bool, str | None]:
         self.typed.append(text)
+        if not text.endswith("\n"):
+            self.draft = text
         return True, None
 
     async def snapshot(self, lines: int = 12, *, mode: SnapshotMode = "text") -> str | None:
-        return "output\n> "
+        return "\n".join(["output", _RULE, f"> {self.draft}", _RULE, "status"])
+
+
+async def _codex_foreground() -> str:
+    return "codex"
 
 
 class _ConfirmModalPane(_ComposerPane):
@@ -123,7 +133,8 @@ async def _send(
         clear_continuation_pending=clear,
         observe_interrupt=observe,
         settle_seconds=_SETTLE,
-        composer_read=composer_read,
+        composer_read=_CODEX_READ if cli_source == "codex" else composer_read,
+        foreground_command=_codex_foreground if cli_source == "codex" else None,
     )
     return result, mark, clear
 
@@ -149,7 +160,7 @@ async def test_codex_uses_ctrl_c_and_the_line_drain() -> None:
 
     assert result == (True, None, True, None)
     assert pane.keys == ["ctrl_c", *composer_clear_sequence("codex"), "enter"]
-    assert pane.typed == ["/clear\n"]
+    assert pane.typed == ["/clear"]
 
 
 async def test_idle_codex_goal_successor_never_gets_a_second_unconfirmed_ctrl_c() -> None:
@@ -169,6 +180,8 @@ async def test_idle_codex_goal_successor_never_gets_a_second_unconfirmed_ctrl_c(
         observe_interrupt=lambda: False,
         turn_settled=turn_settled,
         settle_seconds=_SETTLE,
+        composer_read=_CODEX_READ,
+        foreground_command=_codex_foreground,
     )
 
     assert result[0] is False
@@ -178,6 +191,75 @@ async def test_idle_codex_goal_successor_never_gets_a_second_unconfirmed_ctrl_c(
     }
     assert pane.keys == ["ctrl_c"]
     assert pane.typed == []
+
+
+@pytest.mark.asyncio
+async def test_codex_exits_between_foreground_check_and_write_without_shell_enter() -> None:
+    class ExitingPane(_ComposerPane):
+        foreground = "codex"
+
+        async def foreground_command(self) -> str:
+            return self.foreground
+
+        async def type_text(self, text: str) -> tuple[bool, str | None]:
+            self.foreground = "zsh"
+            return await super().type_text(text)
+
+    pane = ExitingPane()
+    clear = MagicMock(return_value=True)
+    result = await _send_terminal_compaction_command(
+        pane,
+        "/compact",
+        "session-1",
+        cli_source="codex",
+        mark_continuation_pending=lambda: True,
+        clear_continuation_pending=clear,
+        observe_interrupt=lambda: False,
+        turn_settled=lambda: True,
+        composer_read=_CODEX_READ,
+        foreground_command=pane.foreground_command,
+        settle_seconds=_SETTLE,
+    )
+
+    assert result == (
+        False,
+        "codex is not foreground (found zsh)",
+        False,
+        {"error_code": "cli_not_foreground", "continuation_pending": False},
+    )
+    assert pane.typed == ["/compact"]
+    assert "enter" not in pane.keys
+    clear.assert_called_once_with()
+
+
+@pytest.mark.asyncio
+async def test_codex_draft_must_be_visible_before_enter() -> None:
+    class MissingDraftPane(_ComposerPane):
+        async def snapshot(self, lines: int = 12, *, mode: SnapshotMode = "text") -> str:
+            return "\n".join(["output", _RULE, "> ", _RULE, "status"])
+
+    pane = MissingDraftPane()
+    result = await _send_terminal_compaction_command(
+        pane,
+        "/compact",
+        "session-1",
+        cli_source="codex",
+        mark_continuation_pending=lambda: True,
+        clear_continuation_pending=lambda: True,
+        observe_interrupt=lambda: False,
+        turn_settled=lambda: True,
+        composer_read=_CODEX_READ,
+        foreground_command=_codex_foreground,
+        settle_seconds=_SETTLE,
+    )
+
+    assert result[0] is False
+    assert result[3] == {
+        "error_code": "command_not_submitted",
+        "continuation_pending": False,
+    }
+    assert pane.typed == ["/compact"]
+    assert "enter" not in pane.keys
 
 
 async def test_compaction_refuses_a_tmux_pane_that_returned_to_zsh() -> None:

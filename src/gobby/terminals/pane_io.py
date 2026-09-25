@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 from uuid import UUID
@@ -483,11 +483,14 @@ async def submit_text(
     cli_source: str | None,
     composer_read: ComposerReader | None,
     verify_seconds: float = SUBMIT_VERIFY_SECONDS,
+    before_enter: Callable[[], Awaitable[SubmitResult | None]] | None = None,
 ) -> SubmitResult:
     """Submit ``text`` into the drained composer, and prove it left or report it.
 
-    The text and its newline go in as one write, and a bare Enter follows as its own
-    stdin read after ``SUBMIT_ENTER_GAP_SECONDS``. Both are needed. A short text such
+    Normally the text and its newline go in as one write, and a bare Enter follows
+    as its own stdin read after ``SUBMIT_ENTER_GAP_SECONDS``. With ``before_enter``,
+    the text is staged without a newline and the callback must verify the draft
+    before Enter. Both writes are needed for the normal path. A short text such
     as ``/compact`` is submitted by the newline in the write, and the Enter is then a
     no-op on the empty composer. A long text -- every pull prompt -- is not: Claude
     Code folds the newline into any read of 64 bytes or more and inserts the run
@@ -506,11 +509,17 @@ async def submit_text(
     and key were both delivered, so the text is reported submitted with a warning.
     Without a ``composer_read`` the delivered write and key are all there is.
     """
-    ok, reason = await pane.type_text(f"{text}\n")
+    # A guarded command is staged without a newline. Its caller verifies the
+    # draft in the intended CLI before Enter can execute it.
+    ok, reason = await pane.type_text(text if before_enter is not None else f"{text}\n")
     if not ok:
         log_pane_failure(pane, session_id, f"typing {label}", reason)
         return SubmitResult(False, reason)
     await asyncio.sleep(SUBMIT_ENTER_GAP_SECONDS)
+    if before_enter is not None:
+        failure = await before_enter()
+        if failure is not None:
+            return failure
 
     enter_count = 0
     verify_window = max(verify_seconds, 0.0)
