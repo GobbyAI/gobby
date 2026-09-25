@@ -556,9 +556,16 @@ async fn an_oversized_tmux_frame_renders_from_its_origin() {
     terminal
         .draw(|frame| {
             let focused = chrome.focused_pane();
+            let palette = chrome.palette;
             let mut content = |frame: &mut ratatui::Frame<'_>, body: Rect, id| {
                 painted = Some(body);
-                gobby_client::views::grid::render(frame, body, ws.pane(id), focused == Some(id));
+                gobby_client::views::grid::render(
+                    frame,
+                    body,
+                    ws.pane(id),
+                    focused == Some(id),
+                    &palette,
+                );
             };
             render_workspace_with(frame, &ws, &chrome, &mut content);
         })
