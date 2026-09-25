@@ -384,6 +384,7 @@ async def _send_terminal_compaction_command(
     interrupt_settle_seconds: float = _DEFAULT_INTERRUPT_SETTLE_SECONDS,
     rejection_settle_seconds: float = _COMPACTION_REJECTION_SETTLE_SECONDS,
     composer_read: ComposerReader | None = None,
+    on_command_submitting: Callable[[], None] | None = None,
 ) -> tuple[bool, str | None, bool, dict[str, Any] | None]:
     """Interrupt a live turn, drain the composer, submit the command, watch for a rejection.
 
@@ -508,6 +509,8 @@ async def _send_terminal_compaction_command(
                 {"error_code": _COMPOSER_NOT_CLEAN_ERROR_CODE, "continuation_pending": False},
             )
 
+        if on_command_submitting is not None:
+            on_command_submitting()
         ok, reason, submit_detail = await _submit_command(
             pane,
             command,

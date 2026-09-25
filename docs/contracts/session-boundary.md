@@ -204,8 +204,13 @@ self-addressed message and the hook piggyback delivers it on the next turn. The 
 SessionStart handling — including Grok PostCompact, which evaluates the
 `session_start(compact)` rules — resets context-epoch tracking and consumes only the
 provider compact-identity marker; it leaves the `set_handoff` marker for retrieval.
-Successful dispatch records a compact delivery receipt. If that receipt write is
-interrupted, `get_handoff()` retries it idempotently while consuming the marker.
+PostCompact or SessionStart source=compact records the compact delivery receipt.
+Submitting the command leaves delivery pending. The same bounded delivery operation
+checks for a fresh provider error or a missing boundary, then resubmits the command
+for the staged attempt with backoff. Exhaustion compensates the undelivered attempt
+and exposes retry guidance. A receipt prevents late failure compensation from
+rolling back a confirmed boundary; `get_handoff()` can still retry the receipt
+idempotently while consuming the marker.
 A compact successor binds to a row of its exact terminal process that is
 `awaiting_handoff`, or expired with a compact marker while still that process's newest
 session. A newer session row in the process supersedes an older expired marker.

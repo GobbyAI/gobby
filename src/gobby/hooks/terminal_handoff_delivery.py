@@ -14,6 +14,7 @@ from gobby.agents.terminal_delivery import (
     TerminalDeliveryAdmissionClosedError,
     shielded_terminal_delivery,
 )
+from gobby.app_context import get_app_context
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.tool_outcomes import tool_outcome_from_data
 from gobby.mcp_proxy.tools.sessions._terminal_clear import deliver_staged_clear_session
@@ -32,6 +33,7 @@ from gobby.sessions.handoff import (
     staged_handoff_rejection,
 )
 from gobby.storage.agents import LocalAgentRunManager
+from gobby.storage.attention import AttentionStateManager, session_attention_entry_id
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.workflows.state_manager import SessionVariableManager
@@ -64,6 +66,7 @@ _COMPOSER_OCCUPIED_GUIDANCE = (
 # that cannot take the command twice will not take it a ninth time (#22364).
 _MAX_CONSECUTIVE_DELIVERY_FAILURES = 2
 _ABANDONED_ERROR_CODE = "handoff_delivery_abandoned"
+_COMPACT_FAILED_ATTENTION_REASON = "handoff_delivery_failed"
 _ABANDON_GUIDANCE = (
     "Terminal handoff delivery failed twice in a row; delivery is abandoned for this "
     "session. Do not call set_handoff again. Continue the task with the remaining "
@@ -394,6 +397,7 @@ async def _settle_delivery(
         return
 
     if _delivery_succeeded(result, clear_session=claimed.clear_session):
+        _clear_compact_failure_attention(db, claimed.session_id)
         if result.get("attempt_pending") is True:
             SessionVariableManager(db).merge_variables(
                 claimed.session_id,
@@ -437,6 +441,16 @@ def _consecutive_delivery_failures(db: HubDatabase, session_id: str) -> int:
     return count if isinstance(count, int) and not isinstance(count, bool) else 0
 
 
+def _attention_manager(db: HubDatabase) -> AttentionStateManager:
+    container = get_app_context()
+    configured = getattr(container, "attention_manager", None)
+    return (
+        configured
+        if isinstance(configured, AttentionStateManager) and configured.db is db
+        else AttentionStateManager(db)
+    )
+
+
 def _compensate_delivery_failure(
     db: HubDatabase,
     claimed: ClaimedHandoffDelivery | StagedTerminalHandoff,
@@ -478,15 +492,35 @@ def _compensate_delivery_failure(
             failure_result=failure,
         )
     if not restored:
-        SessionVariableManager(db).merge_variables(
+        # A boundary receipt or a newer attempt won the race. Never replace its gate.
+        logger.info(
+            "Ignored stale terminal handoff failure for session %s attempt %s",
             claimed.session_id,
-            {HANDOFF_DISPATCH_GATE_VARIABLE: failure},
+            claimed.attempt_id,
         )
+        return
     updates: dict[str, Any] = {HANDOFF_DELIVERY_FAILURES_VARIABLE: failures}
     if abandoned:
         # Lifts require-handoff-at-context-limit; the epoch reset clears it again.
         updates[HANDOFF_UNAVAILABLE_VARIABLE] = True
     SessionVariableManager(db).merge_variables(claimed.session_id, updates)
+    if error_code == "compact_failed":
+        try:
+            _attention_manager(db).transition(
+                session_attention_entry_id(claimed.session_id),
+                state="blocked",
+                session_id=claimed.session_id,
+                reason=_COMPACT_FAILED_ATTENTION_REASON,
+                kind="actionable",
+                fingerprint=f"compact-handoff:{claimed.attempt_id}",
+                payload={"attempt_id": claimed.attempt_id, "message": reason},
+            )
+        except Exception:
+            logger.warning(
+                "Failed raising compact delivery attention for session %s",
+                claimed.session_id,
+                exc_info=True,
+            )
     if abandoned:
         logger.warning(
             "Terminal handoff delivery abandoned for session %s after %d consecutive "
@@ -503,6 +537,27 @@ def _compensate_delivery_failure(
         claimed.attempt_id,
         reason,
     )
+
+
+def _clear_compact_failure_attention(db: HubDatabase, session_id: str) -> None:
+    try:
+        manager = _attention_manager(db)
+        entry_id = session_attention_entry_id(session_id)
+        current = manager.get(entry_id)
+        if current is None or current.reason != _COMPACT_FAILED_ATTENTION_REASON:
+            return
+        manager.transition(
+            entry_id,
+            state=None,
+            expected_attention_id=current.attention_id,
+            expected_fingerprint=current.fingerprint,
+        )
+    except Exception:
+        logger.warning(
+            "Failed clearing compact delivery attention for session %s",
+            session_id,
+            exc_info=True,
+        )
 
 
 def _log_delivery_completion(

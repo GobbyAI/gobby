@@ -7,6 +7,7 @@ import json
 import logging
 import threading
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import partial
 from typing import TYPE_CHECKING, Any
@@ -21,6 +22,7 @@ from gobby.sessions.compact_markers import (
 )
 from gobby.sessions.handoff import build_handoff_continue_prompt
 from gobby.sessions.handoff_identity import terminal_process_contexts_match
+from gobby.sessions.handoff_records import record_handoff_delivery
 from gobby.sessions.tmux_context import parse_terminal_context_value
 from gobby.storage.hub.protocol import SessionVariableMutation
 from gobby.storage.inter_session_messages import InterSessionMessageManager
@@ -48,6 +50,93 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 _HANDOFF_COMPACT_CONTINUATION_TASKS: set[asyncio.Task[Any]] = set()
+_COMPACT_BOUNDARY_WAITERS: dict[str, CompactBoundaryWaiter] = {}
+_COMPACT_BOUNDARY_WAITERS_LOCK = threading.Lock()
+
+
+@dataclass
+class CompactBoundaryWaiter:
+    """One delivery operation awaiting the provider's compact hook boundary."""
+
+    attempt_id: str
+    handoff_record_id: str
+    terminal_context: Any
+    event: asyncio.Event
+    loop: asyncio.AbstractEventLoop
+    submitted: bool = False
+
+
+def register_compact_boundary_waiter(
+    session_id: str, attempt_id: str, handoff_record_id: str, terminal_context: Any
+) -> CompactBoundaryWaiter:
+    waiter = CompactBoundaryWaiter(
+        attempt_id, handoff_record_id, terminal_context, asyncio.Event(), asyncio.get_running_loop()
+    )
+    with _COMPACT_BOUNDARY_WAITERS_LOCK:
+        if session_id in _COMPACT_BOUNDARY_WAITERS:
+            raise RuntimeError(f"compact boundary wait already active for session {session_id}")
+        _COMPACT_BOUNDARY_WAITERS[session_id] = waiter
+    return waiter
+
+
+def arm_compact_boundary_waiter(session_id: str, attempt_id: str) -> None:
+    """Accept boundary evidence only once this attempt is submitting its command."""
+    with _COMPACT_BOUNDARY_WAITERS_LOCK:
+        waiter = _COMPACT_BOUNDARY_WAITERS.get(session_id)
+        if waiter is not None and waiter.attempt_id == attempt_id:
+            waiter.submitted = True
+
+
+def disarm_compact_boundary_waiter(session_id: str, attempt_id: str) -> None:
+    """Stop accepting boundaries while a failed submission awaits its retry."""
+    with _COMPACT_BOUNDARY_WAITERS_LOCK:
+        waiter = _COMPACT_BOUNDARY_WAITERS.get(session_id)
+        if waiter is not None and waiter.attempt_id == attempt_id:
+            waiter.submitted = False
+
+
+def unregister_compact_boundary_waiter(session_id: str, attempt_id: str) -> None:
+    with _COMPACT_BOUNDARY_WAITERS_LOCK:
+        waiter = _COMPACT_BOUNDARY_WAITERS.get(session_id)
+        if waiter is not None and waiter.attempt_id == attempt_id:
+            del _COMPACT_BOUNDARY_WAITERS[session_id]
+
+
+def notify_compact_boundary(db: HubDatabase, session_id: str, terminal_context: Any) -> None:
+    """Receipt and wake the unique submitted handoff on this terminal process."""
+    with _COMPACT_BOUNDARY_WAITERS_LOCK:
+        matches = [
+            waiter
+            for pending_id, waiter in _COMPACT_BOUNDARY_WAITERS.items()
+            if waiter.submitted
+            and (
+                pending_id == session_id
+                or terminal_process_contexts_match(waiter.terminal_context, terminal_context)
+            )
+        ]
+        if len(matches) == 1:
+            waiter = matches[0]
+            try:
+                # Selection and receipt must be atomic with unregister. Otherwise
+                # timeout compensation can remove the staged handoff before this
+                # insert, even though the provider boundary already happened.
+                record_handoff_delivery(
+                    db,
+                    handoff_id=waiter.handoff_record_id,
+                    attempt_id=waiter.attempt_id,
+                    boundary_kind="compact",
+                    continuation_session_id=session_id,
+                )
+            except Exception:
+                logger.warning(
+                    "Failed recording compact boundary for session %s attempt %s",
+                    session_id,
+                    waiter.attempt_id,
+                    exc_info=True,
+                )
+                return
+            waiter.loop.call_soon_threadsafe(waiter.event.set)
+
 
 _CODEX_COMPACT_READY_STATUS_LINE = "• Context compacted"
 _CODEX_COMPACT_READY_POLL_SECONDS = 0.25
@@ -325,6 +414,9 @@ def consume_and_schedule_handoff_compact_continuation(
     """
     if not pending_session_id:
         return False
+    notify_compact_boundary(
+        db, pending_session_id, getattr(target_session, "terminal_context", None)
+    )
     pending = _take_handoff_compact_continuation_pending(db, pending_session_id)
     source_session_id = pending_session_id
     if pending is None:
