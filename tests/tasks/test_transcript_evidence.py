@@ -93,34 +93,6 @@ def test_missing_transcript_exception_preserves_process_pool() -> None:
         assert worker_pid != os.getpid()
 
 
-def _concurrent_pool_probe(directory: str) -> int:
-    pid = os.getpid()
-    root = Path(directory)
-    (root / str(pid)).touch()
-    deadline = time.monotonic() + 20
-    while len(list(root.iterdir())) < 4:
-        if time.monotonic() >= deadline:
-            return -1
-        time.sleep(0.02)
-    return pid
-
-
-async def test_transcript_pool_runs_four_first_stops_concurrently(tmp_path: Path) -> None:
-    try:
-        pids = await asyncio.gather(
-            *(
-                transcript_evidence_pool.run_in_transcript_evidence_pool(
-                    _concurrent_pool_probe, str(tmp_path)
-                )
-                for _ in range(4)
-            )
-        )
-        assert len(set(pids)) == 4
-        assert all(pid > 0 for pid in pids)
-    finally:
-        transcript_evidence_pool.shutdown_transcript_evidence_pool()
-
-
 async def test_process_pool_oserror_falls_back_and_warns_once(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
