@@ -164,6 +164,56 @@ def test_update_daemon_metrics(metrics_collector: TelemetryMetrics) -> None:
         assert all_metrics["gauges"]["daemon_uptime_seconds"]["value"] >= 0
 
 
+def test_concurrent_daemon_cpu_samples_do_not_overlap(metrics_collector: TelemetryMetrics) -> None:
+    first_sample_started = threading.Event()
+    second_call_started = threading.Event()
+    release_first_sample = threading.Event()
+    overlapping_sample = threading.Event()
+    sample_lock = threading.Lock()
+    active_samples = 0
+
+    def sample_cpu_percent(*, interval: float | None = None) -> float:
+        nonlocal active_samples
+        assert interval is None
+        with sample_lock:
+            active_samples += 1
+            if active_samples > 1:
+                overlapping_sample.set()
+        first_sample_started.set()
+        try:
+            if not release_first_sample.wait(timeout=5):
+                raise TimeoutError("first CPU sample was not released")
+            return 5.5
+        finally:
+            with sample_lock:
+                active_samples -= 1
+
+    def second_call() -> None:
+        second_call_started.set()
+        metrics_collector.update_daemon_metrics()
+
+    with patch("psutil.Process") as mock_process:
+        mock_p = mock_process.return_value
+        mock_p.memory_info.return_value.rss = 1024
+        mock_p.cpu_percent.side_effect = sample_cpu_percent
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            first = executor.submit(metrics_collector.update_daemon_metrics)
+            try:
+                assert first_sample_started.wait(timeout=5)
+                second = executor.submit(second_call)
+                assert second_call_started.wait(timeout=5)
+                assert not overlapping_sample.wait(timeout=0.2)
+            finally:
+                release_first_sample.set()
+
+            first.result(timeout=5)
+            second.result(timeout=5)
+
+        assert mock_p.cpu_percent.call_count == 2
+        assert not overlapping_sample.is_set()
+
+
 def test_observable_gauge_callback(
     metrics_collector: TelemetryMetrics,
     meter_provider: tuple[MeterProvider, InMemoryMetricReader],
