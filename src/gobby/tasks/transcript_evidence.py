@@ -205,12 +205,17 @@ class _EvidenceSnapshot:
 _SNAPSHOT_ADAPTER = TypeAdapter(_EvidenceSnapshot)
 
 
+def _snapshot_offsets_valid(snapshot: _EvidenceSnapshot) -> bool:
+    return 0 <= snapshot.tail_len <= min(snapshot.watermark, _TAIL_CHECK_BYTES)
+
+
 def _load_durable_snapshot(session_id: str) -> _EvidenceSnapshot | None:
     payload = read_snapshot(session_id)
     if payload is None:
         return None
     try:
-        return _SNAPSHOT_ADAPTER.validate_json(payload)
+        snapshot = _SNAPSHOT_ADAPTER.validate_json(payload)
+        return snapshot if _snapshot_offsets_valid(snapshot) else None
     except (TypeError, ValueError):
         logger.debug("Ignoring invalid transcript evidence checkpoint", exc_info=True)
         return None
@@ -324,6 +329,8 @@ def _read_transcript_suffix(path: str, snapshot: _EvidenceSnapshot) -> _Transcri
     concurrent rename-over cannot pass the check with one file and serve the
     suffix of another.
     """
+    if not _snapshot_offsets_valid(snapshot):
+        return None
     try:
         with open(path, "rb") as f:
             f.seek(0, os.SEEK_END)
@@ -499,6 +506,8 @@ def _derive_transcript_evidence_sync(
         resume is None
         or updated.fingerprint != resume.fingerprint
         or updated.watermark != resume.watermark
+        or updated.tail_len != resume.tail_len
+        or updated.tail_sha256 != resume.tail_sha256
     ):
         _store_durable_snapshot(session.id, updated)
     return merge_transcript_evidence(*(result[0] for result in results)), results[0][1]

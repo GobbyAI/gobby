@@ -182,8 +182,11 @@ async def test_restart_resumes_from_durable_checkpoint(
     assert [run.outcome for run in second.validation_runs] == ["failure", "success"]
 
 
+@pytest.mark.parametrize(
+    "corruption", ["invalid-json", "negative-watermark", "tail-overrun", "tail-digest"]
+)
 async def test_invalid_durable_checkpoint_reparses_safely(
-    tmp_path: Path, parse_counts: list[int]
+    tmp_path: Path, parse_counts: list[int], corruption: str
 ) -> None:
     transcript = tmp_path / "invalid-checkpoint.jsonl"
     records = _claude_tool_pair(
@@ -197,7 +200,17 @@ async def test_invalid_durable_checkpoint_reparses_safely(
     await _derive(session, BASE_TIME, set(), tmp_path)
     checkpoint = transcript_evidence_cache._snapshot_path(session.id)
     assert checkpoint.stat().st_mode & 0o777 == 0o600
-    checkpoint.write_bytes(b"invalid JSON")
+    if corruption == "invalid-json":
+        checkpoint.write_bytes(b"invalid JSON")
+    else:
+        payload = json.loads(checkpoint.read_text())
+        if corruption == "negative-watermark":
+            payload.update(watermark=-1, tail_len=0)
+        elif corruption == "tail-overrun":
+            payload.update(watermark=1, tail_len=2)
+        else:
+            payload["tail_sha256"] = "0" * 64
+        checkpoint.write_text(json.dumps(payload))
     with transcript_evidence._snapshot_lock:
         transcript_evidence._evidence_snapshots.clear()
 
@@ -207,6 +220,28 @@ async def test_invalid_durable_checkpoint_reparses_safely(
     assert [run.command for run in evidence.validation_runs] == [
         "uv run pytest tests/tasks/test_a.py"
     ]
+    with transcript_evidence._snapshot_lock:
+        transcript_evidence._evidence_snapshots.clear()
+    await _derive(session, BASE_TIME, set(), tmp_path)
+    assert parse_counts == [len(records), len(records), 0]
+
+
+def test_durable_checkpoint_limits_file_and_total_bytes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(transcript_evidence_cache, "_MAX_SNAPSHOT_BYTES", 16)
+    monkeypatch.setattr(transcript_evidence_cache, "_MAX_CACHE_BYTES", 20)
+    transcript_evidence_cache.write_snapshot("first", b"a" * 16)
+    transcript_evidence_cache.write_snapshot("second", b"b" * 16)
+    assert (
+        sum(path.stat().st_size for path in transcript_evidence_cache._cache_dir().glob("*.json"))
+        <= 20
+    )
+
+    transcript_evidence_cache.write_snapshot("oversize", b"c" * 17)
+    assert not transcript_evidence_cache._snapshot_path("oversize").exists()
+    transcript_evidence_cache._snapshot_path("external").write_bytes(b"d" * 17)
+    assert transcript_evidence_cache.read_snapshot("external") is None
 
 
 async def test_pooled_derivation_keeps_snapshot_resume(
