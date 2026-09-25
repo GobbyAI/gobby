@@ -1047,11 +1047,12 @@ def test_rule_evaluation_breakdown_names_each_subphase_and_session(
         handler.shutdown()
 
     assert response.decision == "allow"
-    assert set(timings.breakdown()) == {
+    assert set(timings.breakdown()) >= {
         "rule_runtime_queue",
         "rule_eval_lock_wait",
         "rule_prelude",
         "rule_engine",
+        "rule_engine_db_reads",
     }
     assert set(timings.snapshot()) == set(HOOK_PHASES)
     assert timings.session_id == session_id

@@ -4,6 +4,7 @@ import asyncio
 import base64
 import logging
 import signal
+import threading
 from collections.abc import AsyncIterator
 from functools import partial
 from pathlib import Path
@@ -4713,6 +4714,88 @@ async def test_droid_cli_text_generate_adapter_seeds_auth_config_without_history
     assert copied_files.isdisjoint(excluded_files)
     assert temp_homes
     assert all(not temp_home.exists() for temp_home in temp_homes)
+
+
+def test_droid_factory_seed_never_descends_into_unadmitted_directories(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The seed prunes trees that hold no admitted path instead of listing them.
+
+    A real Factory home carries hundreds of megabytes of sessions and logs, and
+    walking them blocked the event loop for about a second on every Droid call.
+    """
+    real_home = tmp_path / "real-home"
+    source_factory = real_home / ".factory"
+    admitted_files = {
+        "cache/certs/factory-cli-certs.pem",
+        "certs/system-certs-cache.json",
+        "droids/worker.md",
+        "plugins/installed_plugins.json",
+        "plugins/marketplaces/factory-plugins/index.json",
+        "settings.json",
+    }
+    pruned_dirs = {"cache/search", "logs", "plugins/cache", "sessions", "snapshots"}
+    for relative_file in admitted_files | {f"{name}/deep/entry.json" for name in pruned_dirs}:
+        file_path = source_factory / relative_file
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text(relative_file, encoding="utf-8")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "linked.md").write_text("outside", encoding="utf-8")
+    (source_factory / "droids" / "linked").symlink_to(outside, target_is_directory=True)
+
+    evaluated: list[Path] = []
+    admit = text_generation_adapters._should_seed_droid_factory_path
+
+    def recording_admit(relative_path: Path) -> bool:
+        evaluated.append(relative_path)
+        return admit(relative_path)
+
+    monkeypatch.setattr(
+        text_generation_adapters, "_should_seed_droid_factory_path", recording_admit
+    )
+    temp_home = tmp_path / "temp-home"
+
+    text_generation_adapters._seed_droid_factory_state({"HOME": str(real_home)}, temp_home)
+
+    seeded_factory = temp_home / ".factory"
+    copied_files = {
+        str(path.relative_to(seeded_factory))
+        for path in seeded_factory.rglob("*")
+        if path.is_file()
+    }
+    assert copied_files == admitted_files
+    # Each pruned directory is judged once by the admission predicate, never listed.
+    assert {str(path) for path in evaluated} >= pruned_dirs
+    assert [
+        str(path)
+        for path in evaluated
+        if any(path.parent.is_relative_to(name) for name in pruned_dirs)
+    ] == []
+
+
+@pytest.mark.asyncio
+async def test_droid_cli_text_generate_adapter_seeds_off_the_event_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seed_threads: list[int] = []
+
+    def recording_seed(*_args: object) -> None:
+        seed_threads.append(threading.get_ident())
+
+    async def fake_create_session_exec(*_command: str, **_kwargs: object) -> FakeProcess:
+        return FakeProcess(b"done\n")
+
+    monkeypatch.setattr(text_generation_adapters, "_seed_droid_factory_state", recording_seed)
+    monkeypatch.setattr("gobby.utils.spawn.create_session_exec", fake_create_session_exec)
+    adapter = DroidCLITextGenerateAdapter(command_path="/usr/local/bin/droid")
+
+    response = await adapter.generate(TextGenerationRequest(prompt="hello"))
+
+    assert response == "done"
+    assert len(seed_threads) == 1
+    assert seed_threads[0] != threading.get_ident()
 
 
 def test_is_feature_generation_infrastructure_error_classification() -> None:

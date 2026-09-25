@@ -41,7 +41,7 @@ prompts:
     taskless: task lifecycle calls would orphan workflow state the coordinator owns.
     Lifecycle events (`turn_start`, `turn_end`, `before_agent`, `after_agent`,
     `stop`) are observation points, never task-mutation hooks.
-    Recall `reviewer-miss` lessons before findings. Return section ids only; the
+    Return section ids only; the
     evidence service owns hashes.
 
     Three-lane coverage protocol, against the immutable evidence snapshot:
@@ -272,8 +272,6 @@ step_workflow:
         - "gobby-plans:derive_plan_review_manifest"
         - "gobby-plans:validate_plan_review_coverage"
         - "gobby-plans:expire_plan_review_evidence"
-        - "gobby-review-learning:recall_review_lessons_by_class"
-        - "gobby-review-learning:list_check_keys"
         - "gobby-skills:get_skill"
         - "gobby-skills:get_skill_file"
       on_mcp_success:

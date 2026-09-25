@@ -119,7 +119,6 @@ def test_loads_required_skills_before_review() -> None:
     assert agent["step_workflow"]["variables"]["required_skills"] == [
         "gobby:references/code-index/overview.md",
         "gobby:references/review/epic.md",
-        "gobby:references/memory/review-lessons.md",
         "tech-writer",
         "gobby:references/tasks/overview.md",
         "proportionality",

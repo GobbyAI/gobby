@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -37,6 +38,15 @@ from gobby.config.app import DaemonConfig
 pytestmark = pytest.mark.unit
 
 DynamicHandler = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
+
+
+@pytest.fixture(autouse=True)
+def _isolated_home(
+    tmp_path_factory: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Adapters seed CLI state from HOME, so never read the developer's real one."""
+    monkeypatch.setenv("HOME", str(tmp_path_factory.mktemp("home")))
 
 
 @dataclass
@@ -495,7 +505,10 @@ async def test_codex_client_routes_dynamic_tool_request_response() -> None:
             },
         )
 
-    handler.assert_awaited_once_with({"tool": "lookup", "arguments": {"query": "auth"}})
+    # The RPC layer tags every request with its JSON-RPC id for approval correlation.
+    handler.assert_awaited_once_with(
+        {"tool": "lookup", "arguments": {"query": "auth"}, "_gobby_request_id": 7}
+    )
     assert responses == [
         {
             "jsonrpc": "2.0",
@@ -744,6 +757,32 @@ async def test_droid_loop_deadline_covers_stalled_requests(tmp_path: Path) -> No
 
     assert result.stop_reason == "timeout"
     assert client.stopped is True
+
+
+@pytest.mark.asyncio
+async def test_droid_seeds_factory_state_off_the_event_loop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seed_threads: list[int] = []
+
+    def recording_seed(*_args: object) -> None:
+        seed_threads.append(threading.get_ident())
+
+    monkeypatch.setattr("gobby.ai._tool_chat_droid._seed_droid_factory_state", recording_seed)
+    adapter = DroidSpawnToolChatAdapter(
+        command_path="droid",
+        client_factory=FakeDroidFactory(FakeDroidClient(["done"])),
+    )
+
+    result = await adapter.chat(
+        _request(tmp_path, [], limits=ToolLoopLimits(max_turns=1)),
+        _binding("droid", AIAdapterStyle.CLI),
+    )
+
+    assert result.text == "done"
+    assert len(seed_threads) == 1
+    assert seed_threads[0] != threading.get_ident()
 
 
 @pytest.mark.asyncio

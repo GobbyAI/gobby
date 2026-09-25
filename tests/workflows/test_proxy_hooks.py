@@ -10,7 +10,7 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
@@ -482,12 +482,23 @@ async def test_final_transformed_input_is_reblocked(
     )
 
     variables: dict[str, Any] = {}
-    response = await RuleEngine(db).evaluate(_event(), SESSION_ID, variables)
+    engine = RuleEngine(db)
+    with (
+        patch.object(
+            engine, "_build_eval_context", wraps=engine._build_eval_context
+        ) as context_build,
+        patch.object(
+            engine, "_build_allowed_funcs", wraps=engine._build_allowed_funcs
+        ) as funcs_build,
+    ):
+        response = await engine.evaluate(_event(), SESSION_ID, variables)
 
     assert response.decision == "block"
     assert "block-final" in (response.reason or "")
     assert response.modified_input is None
     assert "_rewrite_input" not in variables
+    assert context_build.call_count == 1
+    assert funcs_build.call_count == 1
 
 
 @pytest.mark.parametrize(

@@ -119,18 +119,17 @@ class AdapterLifecycleOperations:
                         },
                     )
                     return
-                stored = await asyncio.to_thread(manager._store.get_channel, channel.id)
-                if stored is None:
+                merged = await asyncio.to_thread(
+                    manager._store.merge_channel_config, channel.id, values
+                )
+                if merged is None:
                     logger.warning(
                         "Ignoring adapter configuration update for missing channel",
                         extra={"channel_id": channel.id, "channel_name": channel.name},
                     )
                     return
-                stored.config_json.update(values)
-                stored.updated_at = datetime.now(UTC)
-                updated = await asyncio.to_thread(manager._store.update_channel, stored)
-                channel.config_json = dict(updated.config_json)
-                channel.updated_at = updated.updated_at
+                channel.config_json = merged
+                channel.updated_at = datetime.now(UTC)
 
         adapter.set_config_update_callback(update_config)
 

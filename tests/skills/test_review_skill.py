@@ -27,7 +27,6 @@ def test_epic_review_references_pin_routing_and_verdict_mapping() -> None:
         "`cited_subtasks`",
         "Needs discussion → `gobby-tasks:escalate_task` with a `needs_human:` reason",
         "Do not substitute `approve_review`/`reject_review` for an in-progress epic QA verdict",
-        "`record_review_lesson` derives occurrence identity from `source_review` and "
-        "`finding_fingerprint`",
     ):
         assert term in outcomes
+    assert "record_review_lesson" not in outcomes

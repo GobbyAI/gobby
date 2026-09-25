@@ -147,6 +147,25 @@ def extract_functions_write_stdin_session_id(arguments: Any) -> str | None:
 
 def extract_direct_write_stdin_session_id(arguments: Any) -> str | None:
     """Extract a session ID from a native direct write_stdin argument object."""
+    decoded = _decode_write_stdin_arguments(arguments)
+    if decoded is None:
+        return None
+    return _normalize_session_id(decoded.get("session_id"))
+
+
+def extract_direct_write_stdin_command(arguments: Any) -> str | None:
+    """Return the command a direct write_stdin typed, ignoring empty polls."""
+    decoded = _decode_write_stdin_arguments(arguments)
+    if decoded is None:
+        return None
+    chars = decoded.get("chars")
+    if not isinstance(chars, str):
+        return None
+    command = chars.strip()
+    return command or None
+
+
+def _decode_write_stdin_arguments(arguments: Any) -> dict[str, Any] | None:
     decoded = arguments
     if isinstance(arguments, str):
         try:
@@ -155,7 +174,7 @@ def extract_direct_write_stdin_session_id(arguments: Any) -> str | None:
             return None
     if not isinstance(decoded, dict):
         return None
-    return _normalize_session_id(decoded.get("session_id"))
+    return decoded
 
 
 def _iter_output_text(value: Any) -> list[str]:
@@ -442,6 +461,9 @@ class ExecutionChainCorrelator:
             session_id = extract_direct_write_stdin_session_id(arguments)
             if session_id is not None and session_id not in self._ambiguous_sessions:
                 execution = self._sessions.get(session_id)
+                typed = extract_direct_write_stdin_command(arguments)
+                if execution is not None and typed:
+                    execution = replace(execution, literal_command=typed)
         elif name in WAIT_NAMES:
             decoded = arguments
             if isinstance(arguments, str):

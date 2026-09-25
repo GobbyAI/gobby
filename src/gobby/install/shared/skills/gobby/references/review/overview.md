@@ -13,9 +13,9 @@ before calling it and finish every reference page before acting.
 | Outcomes | Record verdicts and inspect accepted feedback actions | `$gobby review references outcomes` |
 
 Discover feedback evidence through `gobby-feedback`, task records through
-`gobby-tasks`, and stage decisions through `gobby-tasks-ops`. Review learning
-belongs to [memory](../memory/overview.md), general code-review methodology to
-the standalone `code-review` skill, and plan review to [plan](../plan/overview.md).
+`gobby-tasks`, and stage decisions through `gobby-tasks-ops`. General code-review
+methodology belongs to the standalone `code-review` skill, and plan review to
+[plan](../plan/overview.md).
 
 `$gobby review <epic-ref>` selects an epic review, independent of `gobby build`.
 Resolve the epic and interactive/delegated mode before dispatch. Capability help

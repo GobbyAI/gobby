@@ -87,6 +87,7 @@ class EffectsMixin(RunCommandEffectsMixin, CachedMcpInjectionMixin):
                 effect,
                 variables,
                 ctx,
+                allowed_funcs,
                 allow_reserved=is_internal_rule(row),
             )
             if wrote and effect.delivery == "on_receipt" and effect.variable is not None:
@@ -420,6 +421,7 @@ class EffectsMixin(RunCommandEffectsMixin, CachedMcpInjectionMixin):
         effect: Any,
         variables: dict[str, Any],
         eval_context: dict[str, Any],
+        allowed_funcs: dict[str, Callable[..., Any]] | None = None,
         *,
         allow_reserved: bool = False,
     ) -> bool:
@@ -434,8 +436,8 @@ class EffectsMixin(RunCommandEffectsMixin, CachedMcpInjectionMixin):
         # Render Jinja2 templates first, before expression evaluation
         if isinstance(value, str) and "{{" in value:
             ctx = eval_context
-            allowed_funcs = self._build_allowed_funcs(ctx)
-            rendered = self._render_template(value, ctx, allowed_funcs)
+            funcs = allowed_funcs if allowed_funcs is not None else self._build_allowed_funcs(ctx)
+            rendered = self._render_template(value, ctx, funcs)
             variables[effect.variable] = self._coerce_rendered_value(rendered)
             return True
 
@@ -444,7 +446,11 @@ class EffectsMixin(RunCommandEffectsMixin, CachedMcpInjectionMixin):
             try:
                 evaluator = SafeExpressionEvaluator(
                     context=eval_context,
-                    allowed_funcs=self._build_allowed_funcs(eval_context),
+                    allowed_funcs=(
+                        allowed_funcs
+                        if allowed_funcs is not None
+                        else self._build_allowed_funcs(eval_context)
+                    ),
                 )
                 value = evaluator.evaluate_value(value)
             except (DatabaseOperationDeadlineExceeded, QueryCanceled):

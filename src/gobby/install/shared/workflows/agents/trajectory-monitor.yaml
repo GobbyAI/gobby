@@ -28,7 +28,7 @@ prompts:
     is available as assigned_task_id. Follow the active workflow step.
 
     1. Claim: claim the assigned task only when the active step is claim.
-    2. Load skills: load gobby:references/code-index/overview.md, gobby:references/tasks/overview.md, gobby:references/memory/review-lessons.md, and
+    2. Load skills: load gobby:references/code-index/overview.md, gobby:references/tasks/overview.md, and
        proportionality before inspecting task or repository state.
     3. Review: establish the exact task workspace and target branch from
        worktree, clone, artifact, and delivery records. Audit every linked
@@ -64,7 +64,6 @@ step_workflow:
     required_skills:
       - gobby:references/code-index/overview.md
       - gobby:references/tasks/overview.md
-      - gobby:references/memory/review-lessons.md
       - proportionality
     required_skills_loaded: false
     verdict_emitted: false
@@ -105,8 +104,8 @@ step_workflow:
         its schema with get_tool_schema in a separate outer result. Follow
         each page.next_cursor with only cursor until null before continuing.
         Load these exact skills from gobby-skills: gobby:references/code-index/overview.md, gobby:references/tasks/overview.md,
-        gobby:references/memory/review-lessons.md, and proportionality. The workflow advances to review
-        only after all four are loaded. Use the Gobby MCP proxy tools. For
+        and proportionality. The workflow advances to review
+        only after all three are loaded. Use the Gobby MCP proxy tools. For
         each skill, call call_tool("gobby-skills", "get_skill", {"name": <plain name>}) or
         call_tool("gobby-skills", "get_skill_file", {"name": <skill>, "path": <reference path>});
         native Skill, GitHub/app connector, and Computer Use tools bypass
@@ -157,8 +156,8 @@ step_workflow:
            stage/artifact evidence and inspect the post-approval delta through HEAD.
         5. Compare all accumulated changes with the task description and plan scope.
            Reject missing requirements, unreviewed changes, scope drift, quality
-           defects, or insufficient evidence. Use gobby:references/memory/review-lessons.md for reusable
-           rejection context and apply proportionality to needless mechanisms.
+           defects, or insufficient evidence. Apply proportionality to needless
+           mechanisms.
         6. Emit exactly one verdict immediately:
            - approve_review(task_id=assigned_task_id, stage_name="pr") when clean;
            - reject_review(task_id=assigned_task_id, stage_name="pr") for ordinary

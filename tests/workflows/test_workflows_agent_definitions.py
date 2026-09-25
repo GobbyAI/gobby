@@ -149,7 +149,7 @@ def test_build_smoke_agent_runtime_mappings() -> None:
         "doc-reviewer": ("codex", "gpt-5.6-sol", "medium"),
         "epic-reviewer": ("codex", "gpt-5.6-sol", "xhigh"),
         "plan-adversary": ("codex", "gpt-5.6-sol", "xhigh"),
-        "plan-adversary-taskless": ("codex", "gpt-5.6-sol", "xhigh"),
+        "plan-adversary-taskless": ("grok", "grok-4.7", "xhigh"),
         "plan-enhancer": ("codex", "gpt-5.6-sol", "xhigh"),
         "plan-enhancer-taskless": ("codex", "gpt-5.6-sol", "xhigh"),
         "planner": ("codex", "gpt-5.6-sol", "medium"),

@@ -98,8 +98,7 @@ prompts:
     `reject_review(stage_name="planning", rejection_notes=...)` only.
 
     Plan review evidence contract:
-    Follow `gobby:references/plan/review.md`'s recalled-lesson pass and full attestation schema. Recall
-    `reviewer-miss` lessons before findings. Every finding carries stable
+    Follow `gobby:references/plan/review.md`'s full attestation schema. Every finding carries stable
     `finding_id`, manifest-backed `section_id`, `check_key`, `prevention`, at least
     one of `principle` or `root_cause`, and each field required by its claimed
     lesson class. Severity is `blocking` or `nit`, and `fix` states the concrete
@@ -407,8 +406,6 @@ step_workflow:
         - "gobby-plans:derive_plan_review_manifest"
         - "gobby-plans:validate_plan_review_coverage"
         - "gobby-plans:expire_plan_review_evidence"
-        - "gobby-review-learning:recall_review_lessons_by_class"
-        - "gobby-review-learning:list_check_keys"
       on_mcp_success:
         - server: gobby-tasks-ops
           tool: approve_review

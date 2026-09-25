@@ -719,4 +719,4 @@ def test_reference_contract_5_2_3() -> None:
                     path,
                     action["path"],
                 )
-    assert migrated == 22
+    assert migrated == 21

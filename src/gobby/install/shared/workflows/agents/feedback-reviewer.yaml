@@ -153,7 +153,6 @@ step_workflow:
         - "gobby-results:search_tool_result"
         - "gobby-skills:get_skill"
         - "gobby-skills:get_skill_file"
-        - "gobby-review-learning:recall_review_context"
         - "gobby-memory:search_memories"
         - "gobby-memory:get_memory"
         - "gobby-agents:end_agent_run"

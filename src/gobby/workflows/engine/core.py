@@ -24,6 +24,7 @@ from gobby.config.values import ConfigRuntimeReader
 from gobby.hooks.effect_deadline import BlockingEffectDeadline
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
+from gobby.hooks.phase_timing import measure_hook_phase
 from gobby.skills.materialization import (
     SkillScriptMaterializer,
     get_skill_script_materializer,
@@ -290,11 +291,12 @@ class RuleEngine(
 
                 project_from_vars = variables.get("project")
                 if not (isinstance(project_from_vars, dict) and project_from_vars.get("path")):
-                    variables["project"] = await offload(
-                        self._resolve_project_info,
-                        event,
-                        project_from_vars,
-                    )
+                    with measure_hook_phase("rule_engine_db_reads"):
+                        variables["project"] = await offload(
+                            self._resolve_project_info,
+                            event,
+                            project_from_vars,
+                        )
 
                 is_before_tool = raw_event_value == HookEventType.BEFORE_TOOL.value
                 is_after_tool = raw_event_value == HookEventType.AFTER_TOOL.value
@@ -333,9 +335,10 @@ class RuleEngine(
                 durable_task_wait = False
                 if is_turn_end:
                     try:
-                        active_coordination_wait = await offload(
-                            CoordinationWaitManager(self.db).has_active_wait, session_id
-                        )
+                        with measure_hook_phase("rule_engine_db_reads"):
+                            active_coordination_wait = await offload(
+                                CoordinationWaitManager(self.db).has_active_wait, session_id
+                            )
                     except Exception as exc:
                         logger.warning(
                             "Failed to determine active coordination wait for session %s: %s",
@@ -343,10 +346,11 @@ class RuleEngine(
                             exc,
                         )
                     try:
-                        active_agent_wait = await offload(
-                            CompletionSubscriberManager(self.db).has_active_agent_wait,
-                            session_id,
-                        )
+                        with measure_hook_phase("rule_engine_db_reads"):
+                            active_agent_wait = await offload(
+                                CompletionSubscriberManager(self.db).has_active_agent_wait,
+                                session_id,
+                            )
                     except PipelineSubscriberStorageError as exc:
                         logger.warning(
                             "Failed to determine active agent wait for session %s: %s",
@@ -359,15 +363,16 @@ class RuleEngine(
                     )
                     if variables.get("task_claimed") and claimed_task_ids:
                         try:
-                            durable_task_wait = await offload(
-                                all_tasks_have_durable_stop_wait,
-                                self._task_manager,
-                                claimed_task_ids,
-                                partial(
-                                    TaskCloseReviewStore(self.db).has_retry_wait,
-                                    caller_session_id=session_id,
-                                ),
-                            )
+                            with measure_hook_phase("rule_engine_db_reads"):
+                                durable_task_wait = await offload(
+                                    all_tasks_have_durable_stop_wait,
+                                    self._task_manager,
+                                    claimed_task_ids,
+                                    partial(
+                                        TaskCloseReviewStore(self.db).has_retry_wait,
+                                        caller_session_id=session_id,
+                                    ),
+                                )
                         except Exception as exc:
                             logger.warning(
                                 "Failed to determine durable task wait for session %s: %s",
@@ -503,7 +508,8 @@ class RuleEngine(
                 rule_cache_key = (tuple(resolved_rule_events), _project_id_from_event(event))
                 rules = self._cached_rules(rule_cache_key)
                 if rules is None:
-                    rules = await offload(self._load_rules_into_cache, rule_cache_key)
+                    with measure_hook_phase("rule_engine_db_reads"):
+                        rules = await offload(self._load_rules_into_cache, rule_cache_key)
 
                 # 2-3. Filter by agent_scope, then audience (pure, so inline)
                 agent_type = variables.get("_agent_type")
@@ -511,12 +517,13 @@ class RuleEngine(
                 rules = self._filter_by_audience(rules, variables)
 
                 # 4. Filter by active rules (selector-based)
-                rules = await offload(
-                    self._filter_by_active_rules,
-                    rules,
-                    variables,
-                    project_id=_project_id_from_event(event),
-                )
+                with measure_hook_phase("rule_engine_db_reads"):
+                    rules = await offload(
+                        self._filter_by_active_rules,
+                        rules,
+                        variables,
+                        project_id=_project_id_from_event(event),
+                    )
 
                 if span.is_recording():
                     span.set_attribute("rule_count", len(rules))

@@ -592,8 +592,10 @@ def claim_staged_handoff_delivery(
     db: HubDatabase,
     session_id: str,
     attempt_id: str,
+    *,
+    recover_unarmed_gate: bool = False,
 ) -> ClaimedHandoffDelivery | None:
-    """Claim a staged terminal handoff after its successful tool result was persisted."""
+    """Claim a staged handoff, optionally recovering a missing AFTER_TOOL gate on Stop."""
     with db.transaction() as conn:
         variable_row = conn.execute(
             "SELECT variables FROM session_variables WHERE session_id = %s FOR UPDATE",
@@ -602,6 +604,15 @@ def claim_staged_handoff_delivery(
         if variable_row is None:
             return None
         variables = _load_variables(variable_row["variables"])
+        if recover_unarmed_gate and variables.get(HANDOFF_DISPATCH_GATE_VARIABLE) is None:
+            marker = variables.get(PENDING_HANDOFF_VARIABLE)
+            if isinstance(marker, Mapping) and marker.get("attempt_id") == attempt_id:
+                variables[HANDOFF_DISPATCH_GATE_VARIABLE] = {
+                    "handoff_staged": True,
+                    "delivery_pending": True,
+                    "attempt_id": attempt_id,
+                    "clear_session": marker.get("clear_session"),
+                }
         if staged_handoff_rejection(variables, attempt_id) is not None:
             return None
         marker = variables[PENDING_HANDOFF_VARIABLE]

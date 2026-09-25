@@ -60,6 +60,7 @@ from gobby.storage.hub.protocol import (
 )
 from gobby.storage.hub.transaction_deadline import TransactionDeadline
 from gobby.telemetry.instruments import observe_histogram
+from gobby.telemetry.query_timing import record_query
 from gobby.utils.datetime import to_aware_utc, to_json_safe
 
 logger = logging.getLogger(__name__)
@@ -335,13 +336,17 @@ class _PostgresTransaction:
         sql: str,
         params: Sequence[Any] | Mapping[str, Any] = (),
     ) -> Cursor:
-        self._deadline.prepare()
-        # Extended protocol rejects a batch before executing any statement.
-        # A pipeline forces it even with prepare_threshold=None and no params;
-        # exiting synchronizes the result/error before this operation returns.
-        with self._conn.pipeline() if self._deadline.active else nullcontext():
-            result = self._conn.execute(sql, params) if params else self._conn.execute(sql)
-        return PostgresCursor(result)
+        started_at = time.perf_counter()
+        try:
+            self._deadline.prepare()
+            # Extended protocol rejects a batch before executing any statement.
+            # A pipeline forces it even with prepare_threshold=None and no params;
+            # exiting synchronizes the result/error before this operation returns.
+            with self._conn.pipeline() if self._deadline.active else nullcontext():
+                result = self._conn.execute(sql, params) if params else self._conn.execute(sql)
+            return PostgresCursor(result)
+        finally:
+            record_query(time.perf_counter() - started_at)
 
     def executemany(self, sql: str, rows: Iterable[Sequence[Any]]) -> Cursor:
         if self._deadline.active:

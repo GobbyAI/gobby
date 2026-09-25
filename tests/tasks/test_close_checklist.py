@@ -22,7 +22,7 @@ from gobby.tasks.close_checklist import (
     CloseGateResult,
     evaluate_validation_commands,
 )
-from gobby.tasks.command_equivalence import scope_difference
+from gobby.tasks.command_equivalence import pytest_targets, scope_difference
 from gobby.tasks.transcript_evidence import merge_transcript_evidence
 from gobby.tasks.transcript_evidence_models import (
     TranscriptEdit,
@@ -40,6 +40,8 @@ EvidenceOutcome = Literal["success", "failure", "unknown"]
     [
         ("uv run pytest tests/a.py -q", "CI=1 rtk uv run pytest 'tests/a.py' -q > /tmp/out 2>&1"),
         ("uv run pytest tests/a.py -q", "cd '/repo path' && uv run pytest tests/a.py -q >> out"),
+        ("uv run pytest tests/a.py -q", "uv run --directory '/repo path' pytest tests/a.py -q"),
+        ("uv run pytest tests/a.py -q", "uv run --directory=/repo pytest tests/a.py -q"),
         ("uv run pytest tests/a.py -q", "uv run pytest tests/a.py tests/b.py -q"),
         ("uv run pytest tests/a.py::test_one -q", "uv run pytest tests/ -q"),
         ("uv run ruff check src/a.py", "uv run ruff check src/ tests/"),
@@ -121,6 +123,7 @@ def test_equivalent_criterion_execution_is_credited(required: str, executed: str
         "uv run pytest tests/ -q -m slow",
         "uv run pytest tests/ -q -p no:cacheprovider",
         "uv run pytest -q",
+        "uv run --with pytest-randomly pytest tests/ -q",
     ],
 )
 def test_narrowed_or_obscured_criterion_execution_cannot_pass(executed: str) -> None:
@@ -542,6 +545,47 @@ def test_pytest_node_id_covers_the_changed_python_test() -> None:
     )
 
     assert gate.status == "passed"
+    assert gate.details["pytest_uncovered_paths"] == []
+
+
+def _changed_test_gate(pytest_command: str) -> CloseGateResult:
+    return evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(
+            validation_runs=(
+                _scoped_audit_run(1, "tests/tasks/test_close_checklist.py"),
+                _run(2, command=pytest_command),
+            )
+        ),
+        has_attributed_edits=True,
+        changed_paths=("tests/tasks/test_close_checklist.py",),
+    )
+
+
+def test_cd_prefixed_pytest_covers_the_changed_python_test() -> None:
+    command = (
+        "cd /repo && GOBBY_TEST_PROTECT=1 uv run pytest tests/tasks/test_close_checklist.py -q"
+    )
+    core_command = _run(2, command=command).core_command
+    gate = _changed_test_gate(command)
+
+    assert core_command is not None
+    assert pytest_targets(core_command) == ("tests/tasks/test_close_checklist.py",)
+    assert gate.status == "passed", gate.message
+    assert gate.details["pytest_uncovered_paths"] == []
+
+
+@pytest.mark.parametrize("directory", ["--directory /repo", "--directory=/repo"])
+def test_uv_run_directory_pytest_covers_the_changed_python_test(directory: str) -> None:
+    command = (
+        f"GOBBY_TEST_PROTECT=1 uv run {directory} pytest tests/tasks/test_close_checklist.py -q"
+    )
+    core_command = _run(2, command=command).core_command
+    gate = _changed_test_gate(command)
+
+    assert core_command is not None
+    assert pytest_targets(core_command) == ("tests/tasks/test_close_checklist.py",)
+    assert gate.status == "passed", gate.message
     assert gate.details["pytest_uncovered_paths"] == []
 
 

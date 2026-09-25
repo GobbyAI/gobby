@@ -89,7 +89,6 @@ def test_reviewer_requires_every_independent_review_skill() -> None:
     assert workflow["variables"]["required_skills"] == [
         "gobby:references/code-index/overview.md",
         "gobby:references/tasks/overview.md",
-        "gobby:references/memory/review-lessons.md",
         "proportionality",
         "code-review",
     ]

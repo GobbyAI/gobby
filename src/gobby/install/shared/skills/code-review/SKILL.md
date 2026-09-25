@@ -19,12 +19,10 @@ deterministic work: which files are reviewable and which checklist applies to ea
 of them. You do the reviewing. OCR calls no LLM in this mode, so nothing is
 configured on its side.
 
-REQUIRED REFERENCE: `gobby:references/memory/review-lessons.md`.
 REQUIRED REFERENCE: `gobby:references/code-index/overview.md`.
 
 Before using these Gobby procedures, fetch the `gobby-skills:get_skill_file` schema
 with `get_tool_schema` in its own tool result. Then load each required reference:
-- `get_skill_file(name="gobby", path="references/memory/review-lessons.md")`
 - `get_skill_file(name="gobby", path="references/code-index/overview.md")`
 
 Follow each `page.next_cursor` with only `cursor` until null before continuing.
@@ -112,7 +110,7 @@ twice when a staged deletion is followed by an untracked recreation. For each
 entry:
 
 1. Get its diff.
-2. Apply its rule group plus any recalled review-learning lessons.
+2. Apply its rule group.
 3. Review the changed lines with enough surrounding context to judge them. Use
    `gcode symbol-at path:line` and `gcode callers` when a change touches a
    contract other code depends on.
@@ -141,27 +139,15 @@ Every finding carries `path`, `start_line`, `end_line` (new-file numbering),
 Open with one summary line: `total_files`, `reviewed_files`, `skipped_files`
 (each with its reason), and `coverage_rate`. Then a table grouped by severity:
 
-| Location | Severity | Category | Finding | Relevant memory/lesson |
-|----------|----------|----------|---------|------------------------|
-| `path:start_line` | high | bug | ... | ... |
+| Location | Severity | Category | Finding |
+|----------|----------|----------|---------|
+| `path:start_line` | high | bug | ... |
 
 Preserve paths and line numbers exactly as observed. Do not auto-fix unless the
 user asked for review and fix; then apply critical and high fixes directly,
 describe medium fixes that need a decision, and skip low items unless trivial.
 If `ocr` or `git` fails mid-review, report the failure. Never generate substitute
 findings to fill the gap.
-
-## Review-Learning Hooks
-
-- Before finalizing material findings, call
-  `gobby-review-learning.recall_review_context` with the findings and any
-  proposed fix text. Its result fills the memory column. If local memory
-  contradicts a generic recommendation, local memory wins unless current code
-  disproves it. Pass `language` (and `repo` when known); matching lessons rank
-  first in the result.
-- After a material reusable finding is confirmed by a verified fix or a concrete
-  no-fix decision, call `gobby-review-learning.record_review_lesson` with
-  `source_kind=agent_review`. Do not record raw leads.
 
 ## Execution Mode
 

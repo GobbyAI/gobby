@@ -32,6 +32,7 @@ from gobby.ai.registry import (
     CapabilityUnavailableError,
 )
 from gobby.utils import spawn
+from gobby.utils.git import run_thread_to_completion
 
 logger = logging.getLogger(__name__)
 
@@ -394,7 +395,7 @@ class DroidSpawnToolChatAdapter:
             temp_home = work / "home"
             temp_home.mkdir(parents=True, exist_ok=True)
             base_env = os.environ.copy()
-            _seed_droid_factory_state(base_env, temp_home)
+            await run_thread_to_completion(_seed_droid_factory_state, base_env, temp_home)
             isolated_env = _droid_isolated_env(base_env, temp_home)
             isolated_env.update(request.managed_subprocess_env)
             isolated_env["PATH"] = merge_spawn_path(isolated_env.get("PATH"))

@@ -488,7 +488,7 @@
     },
     {
       "surface": "mcp",
-      "reference": "src/gobby/install/shared/skills/gobby/references/memory/review-lessons.md",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/maintenance.md",
       "implementation": {
         "path": "src/gobby/mcp_proxy/tools/review_learning.py",
         "symbol": "create_review_learning_registry.recall_review_lessons_for_files"
@@ -497,13 +497,13 @@
         "source-audit",
         "core-memory"
       ],
-      "audience": "agent",
+      "audience": "operator-only",
       "server": "gobby-review-learning",
       "tool": "recall_review_lessons_for_files"
     },
     {
       "surface": "mcp",
-      "reference": "src/gobby/install/shared/skills/gobby/references/memory/review-lessons.md",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/maintenance.md",
       "implementation": {
         "path": "src/gobby/mcp_proxy/tools/review_learning.py",
         "symbol": "create_review_learning_registry.recall_review_lessons_by_class"
@@ -512,13 +512,13 @@
         "source-audit",
         "core-memory"
       ],
-      "audience": "agent",
+      "audience": "operator-only",
       "server": "gobby-review-learning",
       "tool": "recall_review_lessons_by_class"
     },
     {
       "surface": "mcp",
-      "reference": "src/gobby/install/shared/skills/gobby/references/memory/review-lessons.md",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/maintenance.md",
       "implementation": {
         "path": "src/gobby/mcp_proxy/tools/review_learning.py",
         "symbol": "create_review_learning_registry.list_check_keys"
@@ -527,13 +527,13 @@
         "source-audit",
         "core-memory"
       ],
-      "audience": "agent",
+      "audience": "operator-only",
       "server": "gobby-review-learning",
       "tool": "list_check_keys"
     },
     {
       "surface": "mcp",
-      "reference": "src/gobby/install/shared/skills/gobby/references/memory/review-lessons.md",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/maintenance.md",
       "implementation": {
         "path": "src/gobby/mcp_proxy/tools/review_learning.py",
         "symbol": "create_review_learning_registry.retire_review_lesson"
@@ -542,13 +542,13 @@
         "source-audit",
         "core-memory"
       ],
-      "audience": "agent",
+      "audience": "operator-only",
       "server": "gobby-review-learning",
       "tool": "retire_review_lesson"
     },
     {
       "surface": "mcp",
-      "reference": "src/gobby/install/shared/skills/gobby/references/memory/review-lessons.md",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/maintenance.md",
       "implementation": {
         "path": "src/gobby/mcp_proxy/tools/review_learning.py",
         "symbol": "create_review_learning_registry.record_review_lesson"
@@ -557,13 +557,13 @@
         "source-audit",
         "core-memory"
       ],
-      "audience": "agent",
+      "audience": "operator-only",
       "server": "gobby-review-learning",
       "tool": "record_review_lesson"
     },
     {
       "surface": "mcp",
-      "reference": "src/gobby/install/shared/skills/gobby/references/memory/review-lessons.md",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/maintenance.md",
       "implementation": {
         "path": "src/gobby/mcp_proxy/tools/review_learning.py",
         "symbol": "create_review_learning_registry.recall_review_context"
@@ -572,7 +572,7 @@
         "source-audit",
         "core-memory"
       ],
-      "audience": "agent",
+      "audience": "operator-only",
       "server": "gobby-review-learning",
       "tool": "recall_review_context"
     },

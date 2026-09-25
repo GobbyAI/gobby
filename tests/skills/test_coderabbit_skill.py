@@ -70,8 +70,8 @@ def test_coderabbit_skill_requires_exact_findings_table_contract() -> None:
     body = _body()
     normalized_body = " ".join(body.split())
 
-    assert "| # | Decision | Path/File Name | Relevant Memory/Lesson | Reason/Planned Fix |" in body
-    assert "|---|---|---|---|---|" in body
+    assert "| # | Decision | Path/File Name | Reason/Planned Fix |\n|---|---|---|---|\n" in body
+    assert "Relevant Memory/Lesson" not in body
     assert "`Path/File Name`: repo-relative path or report/artifact path" in body
     assert "use comma-separated paths for multi-file findings" in body
     assert "`Reason/Planned Fix`: planned fix for `fix`; reason/evidence for `no-fix`" in body
@@ -106,25 +106,21 @@ def test_coderabbit_skill_requires_validation_commit_and_task_close() -> None:
     body = _body()
 
     assert "REQUIRED REFERENCE: `gobby:references/tasks/overview.md`" in body
-    assert "REQUIRED REFERENCE: `gobby:references/memory/review-lessons.md`" in body
     assert "Run focused validation" in body
     assert "Commit with the task ref" in body
     assert "close the task with `commit_sha`" in body
 
 
-def test_coderabbit_skill_requires_review_learning_hooks() -> None:
-    """Verify CodeRabbit triage recalls and records reusable review lessons."""
+def test_coderabbit_skill_hides_review_learning() -> None:
+    """Verify CodeRabbit triage checks memory and sweeps siblings without review lessons."""
     body = _body()
 
-    assert "gobby-review-learning.recall_review_context" in body
-    assert "Relevant memory/lesson" in body
+    assert "review-lessons" not in body
+    assert "gobby-review-learning" not in body
+    assert "record_review_lesson" not in body
     assert "Local memory wins" in body
     assert "gcode search" in body
     assert "gcode grep" in body
-    assert "gobby-review-learning.record_review_lesson" in body
-    assert "confirmed reusable" in body
-    assert "no-fix-policy" in body
-    assert "Do not record\n    stale, invalid, or raw CLI-failure findings" in body
 
 
 def test_reference_contract_4_3_1() -> None:
@@ -162,7 +158,6 @@ def test_reference_contract_4_3_1() -> None:
     assert reference_count >= 8
     # Methodology stays reusable; only the host-specific procedures moved.
     assert "Plan Mode Gate" in _body()
-    assert "gobby-review-learning.recall_review_context" in _body()
     review = (SKILLS_ROOT / "code-review/SKILL.md").read_text(encoding="utf-8")
     assert "ocr delegate preview" in review and "Review Each File" in review
     proportionality = parse_skill_file(SKILLS_ROOT / "proportionality/SKILL.md")

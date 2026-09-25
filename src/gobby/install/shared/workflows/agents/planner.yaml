@@ -44,14 +44,6 @@ prompts:
     dependency notation, and verification checklist. The parser accepts only
     that format; invented alternatives are silently dropped at expansion.
 
-    Revision lesson contract:
-    Follow the plan-domain contract in `gobby:references/memory/review-lessons.md`. Before every revision,
-    call `recall_review_lessons_by_class` with `lesson_domain=plan` and
-    `lesson_types=["fixer-induced-defect"]`; use each recalled `check_key` as an
-    extra whole-plan check while applying the current findings. Final-approval
-    lesson recording belongs to the reviser/coordinator, using the durable
-    changelog evidence bundles documented by `gobby:references/memory/review-lessons.md`.
-
     PLAN-COVERAGE CONTRACT TYPED GRAMMAR:
     New epic plans follow the typed grammar documented in gobby:references/plan/drafting.md.
     Include the canonical heading regex:

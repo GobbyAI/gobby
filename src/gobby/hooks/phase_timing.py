@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import Final
 
 from gobby.telemetry.instruments import observe_histogram
+from gobby.telemetry.query_timing import observe_queries
 
 HOOK_PHASES: Final = (
     "admission_wait",
@@ -29,6 +30,7 @@ class HookPhaseTimings:
     """Thread-safe phase durations shared by one hook delivery."""
 
     _durations: dict[str, float] = field(default_factory=dict)
+    _query_latencies: list[float] = field(default_factory=list)
     _lock: threading.Lock = field(default_factory=threading.Lock)
     # The Gobby session the rules evaluated for; rule-allow-audit rows carry the same id.
     session_id: str | None = None
@@ -60,6 +62,21 @@ class HookPhaseTimings:
                 phase: value for phase, value in self._durations.items() if phase not in HOOK_PHASES
             }
 
+    def add_query_latency(self, duration_seconds: float) -> None:
+        with self._lock:
+            self._query_latencies.append(max(0.0, duration_seconds))
+
+    def query_latency_summary_ms(self) -> dict[str, float | int]:
+        with self._lock:
+            values = sorted(self._query_latencies)
+        if not values:
+            return {"count": 0, "p50": 0.0, "p95": 0.0}
+        return {
+            "count": len(values),
+            "p50": values[(len(values) - 1) // 2] * 1000,
+            "p95": values[(95 * len(values) + 99) // 100 - 1] * 1000,
+        }
+
 
 _current_timings: ContextVar[HookPhaseTimings | None] = ContextVar(
     "hook_phase_timings",
@@ -72,7 +89,8 @@ def hook_phase_timing_scope(timings: HookPhaseTimings) -> Iterator[None]:
     """Expose one delivery's collector across hook and workflow calls."""
     token = _current_timings.set(timings)
     try:
-        yield
+        with observe_queries(timings.add_query_latency):
+            yield
     finally:
         _current_timings.reset(token)
 

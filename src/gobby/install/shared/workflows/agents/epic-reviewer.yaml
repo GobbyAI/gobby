@@ -30,9 +30,9 @@ prompts:
 
     Methodology:
     After resolving the task state, load the `gobby:references/code-index/overview.md`,
-    `gobby:references/review/epic.md`, `gobby:references/memory/review-lessons.md`, `tech-writer`, `gobby:references/tasks/overview.md`, and `proportionality`
+    `gobby:references/review/epic.md`, `tech-writer`, `gobby:references/tasks/overview.md`, and `proportionality`
     skills. Call get_skill_file(name="gobby", path="references/code-index/overview.md"), get_skill_file(name="gobby", path="references/review/epic.md"),
-    get_skill_file(name="gobby", path="references/memory/review-lessons.md"), get_skill(name="tech-writer"),
+    get_skill(name="tech-writer"),
     get_skill_file(name="gobby", path="references/tasks/overview.md"), and
     get_skill(name="proportionality") on gobby-skills, then continue.
     Follow the gobby:references/review/epic.md skill: ordered spec_compliance, code_quality, testing, and proportionality checks; the
@@ -40,10 +40,6 @@ prompts:
     attribution through `### N.N` plan sections when present, or through child
     task references for docs/build epics that use a Discovery Brief plus
     descendant task set as the review scope.
-    Preserve reusable findings using the gobby:references/review/epic.md finding/confirmation schema.
-    At the confirm point (fix confirmed on re-review), record every fully proven
-    `qa-miss` and `validation-miss` class independently. Incomplete entries mint
-    nothing.
 
     Closed-epic review:
     If the assigned epic is already closed, run a post-hoc review: the epic
@@ -55,7 +51,7 @@ prompts:
 
     Workflow:
     - Read the assigned epic first; claim it only when it remains open.
-    - Load gobby:references/code-index/overview.md, gobby:references/review/epic.md, gobby:references/memory/review-lessons.md, tech-writer, tasks, and
+    - Load gobby:references/code-index/overview.md, gobby:references/review/epic.md, tech-writer, tasks, and
       proportionality skills before reviewing.
     - Read the full epic subtree by calling list_tasks(parent_task_id=...) for
       the assigned epic and any child epics until all descendant leaves are known.
@@ -109,7 +105,6 @@ step_workflow:
     required_skills:
       - gobby:references/code-index/overview.md
       - gobby:references/review/epic.md
-      - gobby:references/memory/review-lessons.md
       - tech-writer
       - gobby:references/tasks/overview.md
       - proportionality
@@ -165,10 +160,9 @@ step_workflow:
         Load skills now before reviewing:
         1. get_skill_file(name="gobby", path="references/code-index/overview.md") on gobby-skills
         2. get_skill_file(name="gobby", path="references/review/epic.md") on gobby-skills
-        3. get_skill_file(name="gobby", path="references/memory/review-lessons.md") on gobby-skills
-        4. get_skill(name="tech-writer") on gobby-skills
-        5. get_skill_file(name="gobby", path="references/tasks/overview.md") on gobby-skills
-        6. get_skill(name="proportionality") on gobby-skills
+        3. get_skill(name="tech-writer") on gobby-skills
+        4. get_skill_file(name="gobby", path="references/tasks/overview.md") on gobby-skills
+        5. get_skill(name="proportionality") on gobby-skills
         Use the Gobby MCP proxy tools in this step. Use get_skill for plain names and get_skill_file for exact references:
         call_tool("gobby-skills", "get_skill", {"name": <plain name>}) or
         call_tool("gobby-skills", "get_skill_file", {"name": <skill>, "path": <reference path>});
@@ -240,8 +234,6 @@ step_workflow:
         commands, and supported-language test-quality audit output are present
         before approval. Missing baseline is not a skip reason; outside Gobby,
         unsupported-language warnings require focused repo-native validation.
-        When a fix is confirmed on re-review, follow the gobby:references/review/epic.md lesson
-        schema and record each fully proven class before emitting the verdict.
         Record the gobby:references/review/epic.md verdict with complete_stage(stage_name="epic_qa",
         validation_override_reason="epic_qa approved by epic-reviewer"),
         fail_stage(stage_name="epic_qa"), or escalate_task.

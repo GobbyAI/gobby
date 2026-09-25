@@ -25,6 +25,9 @@ def _checkout_session_manager() -> MagicMock:
         id="test-session",
         machine_id=_CHECKOUT_MACHINE,
         project_id="11111111-1111-4111-8111-111111110001",
+        parent_session_id=None,
+        agent_run_id=None,
+        agent_depth=0,
     )
     manager.resolve_session_reference.side_effect = lambda ref, _project_id=None: ref
     return manager
@@ -129,6 +132,8 @@ async def test_close_task_does_not_mutate_worktree_status(
             },
         )
 
+    gates = result.pop("gates")
+    assert gates and all(gate["status"] != "failed" for gate in gates)
     assert result == {
         "success": True,
         "preview": False,

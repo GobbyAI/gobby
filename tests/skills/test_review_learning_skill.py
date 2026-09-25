@@ -38,16 +38,11 @@ def _local_machine_identity() -> Iterator[None]:
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SKILL_DIR = REPO_ROOT / "src/gobby/install/shared/skills/gobby/references/memory"
 SKILLS_ROOT = REPO_ROOT / "src/gobby/install/shared/skills"
 WORKFLOWS = REPO_ROOT / "src/gobby/install/shared/workflows/agents"
 PLAN_SKILL = SKILLS_ROOT / "gobby/references/plan/approval.md"
 PLAN_DRAFT_SKILL = SKILLS_ROOT / "gobby/references/plan/drafting.md"
 PLAN_REVIEW_SKILL = SKILLS_ROOT / "gobby/references/plan/review.md"
-
-
-def _body() -> str:
-    return " ".join((SKILL_DIR / "review-lessons.md").read_text(encoding="utf-8").split())
 
 
 def _skill_body(path: Path) -> str:
@@ -144,7 +139,7 @@ def _review_setup(
                 "Target: `src/a.py`",
                 "",
                 "**Acceptance:**",
-                "- 1.1.1 — A works. test: `tests/test_a.py`",
+                "- 1.1.1 — A works. test: `tests/test_a.py::test_a`",
                 "",
                 "### 1.2 B",
                 "`kind: deliverable`",
@@ -152,7 +147,7 @@ def _review_setup(
                 "Target: `src/b.py`",
                 "",
                 "**Acceptance:**",
-                "- 1.2.1 — B works. test: `tests/test_b.py`",
+                "- 1.2.1 — B works. test: `tests/test_b.py::test_b`",
                 "",
                 "## Task Mapping",
                 "`kind: framing`",
@@ -212,43 +207,13 @@ def _approval(
     }
 
 
-def test_review_learning_skill_parses_and_is_discoverable() -> None:
+def test_review_learning_is_hidden_from_skill_discovery() -> None:
     catalog = load_capability_catalog()
-    assert catalog.folded_skills["review-learning"] == "gobby:references/memory/review-lessons.md"
+    assert "review-learning" not in catalog.folded_skills
     names = {skill.name for skill in SkillLoader().load_directory(SKILLS_ROOT)}
     assert "gobby" in names
     assert "review-learning" not in names
-    assert _body()
-
-
-def test_review_learning_skill_documents_tool_contract() -> None:
-    body = _body()
-    for term in (
-        "gobby-review-learning",
-        "recall_review_context",
-        "record_review_lesson",
-        "Relevant memory/lesson",
-        "pattern_id",
-        "principle/prevention",
-        "root cause",
-        "query_hints",
-        "stable exact terms",
-        "nonempty title/message",
-        "`stale` and `invalid` record nothing",
-    ):
-        assert term in body
-
-
-def test_review_learning_skill_documents_memory_only_delivery() -> None:
-    body = _body()
-    for term in (
-        "require a verified fix reference in evidence",
-        "A raw failure is insufficient",
-        "Review learning never creates tasks automatically",
-        "`guardrail_target` is metadata and creates no task, rule, or repository change",
-        "apply the repository found-work ladder",
-    ):
-        assert term in body
+    assert not (SKILLS_ROOT / "gobby/references/memory/review-lessons.md").exists()
 
 
 def test_plan_skill_documents_parallel_review_contract() -> None:
@@ -264,40 +229,40 @@ def test_plan_skill_documents_parallel_review_contract() -> None:
         assert phrase in body
 
 
-def test_review_producer_hooks_reference_review_learning() -> None:
-    code_reviewer = (SKILLS_ROOT / "code-review/SKILL.md").read_text()
-    epic = (SKILLS_ROOT / "gobby/references/review/epic.md").read_text()
-    outcomes = (SKILLS_ROOT / "gobby/references/review/outcomes.md").read_text()
-    qa_reviewer = (WORKFLOWS / "qa-reviewer.yaml").read_text()
-    assert "gobby:references/memory/review-lessons.md" in code_reviewer
-    assert "recall_review_context" in code_reviewer
-    assert "source_kind=agent_review" in code_reviewer
-    assert "applicable memory review" in epic
-    assert "qa_rejection" in outcomes
-    assert "gobby:references/memory/review-lessons.md" in qa_reviewer
-    assert "record_review_lesson" in qa_reviewer
+def test_review_producers_do_not_reference_review_learning() -> None:
+    producers = {
+        "code-review": SKILLS_ROOT / "code-review/SKILL.md",
+        "coderabbit": SKILLS_ROOT / "coderabbit/SKILL.md",
+        "epic": SKILLS_ROOT / "gobby/references/review/epic.md",
+        "outcomes": SKILLS_ROOT / "gobby/references/review/outcomes.md",
+        "evidence": SKILLS_ROOT / "gobby/references/review/evidence.md",
+        "qa-reviewer": WORKFLOWS / "qa-reviewer.yaml",
+        "epic-reviewer": WORKFLOWS / "epic-reviewer.yaml",
+        "trajectory-monitor": WORKFLOWS / "trajectory-monitor.yaml",
+        "feedback-reviewer": WORKFLOWS / "feedback-reviewer.yaml",
+        "task-close-reviewer": WORKFLOWS / "task-close-reviewer.yaml",
+        "planner": WORKFLOWS / "planner.yaml",
+    }
+    for name, path in producers.items():
+        text = path.read_text()
+        for term in (
+            "review-lessons",
+            "gobby-review-learning",
+            "record_review_lesson",
+            "recall_review_context",
+            "qa-miss",
+        ):
+            assert term not in text, (name, term)
 
 
 @pytest.mark.asyncio
 async def test_plan_loop_recording_contract(monkeypatch: pytest.MonkeyPatch) -> None:
-    review_learning = _body()
-    plan = _skill_body(PLAN_SKILL)
     plan_review = _skill_body(PLAN_REVIEW_SKILL)
     planner = (WORKFLOWS / "planner.yaml").read_text(encoding="utf-8")
 
-    assert "`reviewer-miss`" in review_learning
-    assert "`fixer-induced-defect`" in review_learning
-    assert "list_check_keys" in review_learning
-    assert "plan-review:<lesson_type>:<adversary-category>:<check_key>" in review_learning
-    assert "plan-review:<adversary-category>" in review_learning
-    assert "participating_section_ids" in review_learning
-    assert "causal_section_ids" in review_learning
-    assert "The reviser records" in review_learning
-    assert "recall plan reviewer-miss lessons" in plan_review
-    assert "apply each recalled check" in plan_review
-    assert "fixer-induced-defect" in planner
-    assert "before every revision" in planner.lower()
-    assert "each independently proven class remains recordable" in plan
+    assert "recall plan reviewer-miss lessons" not in plan_review
+    assert "apply each recalled check" not in plan_review
+    assert "fixer-induced-defect" not in planner
 
     monkeypatch.setattr(
         "gobby.review_learning.service._current_project_id",

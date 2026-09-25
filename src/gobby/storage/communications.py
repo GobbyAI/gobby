@@ -115,6 +115,58 @@ class LocalCommunicationsStore:
             )
         return channel
 
+    def set_telegram_agent_target(
+        self, channel_id: str, conversation_id: str, session_id: str | None
+    ) -> None:
+        """Atomically update one private-chat target in the channel's durable config."""
+        with self.db.transaction() as conn:
+            if session_id is None:
+                conn.execute(
+                    """
+                    UPDATE comms_channels
+                    SET config_json = jsonb_set(
+                        config_json, '{telegram_agent_targets}',
+                        COALESCE(config_json->'telegram_agent_targets', '{}'::jsonb) - %s,
+                        true
+                    ), updated_at = now()
+                    WHERE id = %s
+                    """,
+                    (conversation_id, channel_id),
+                )
+            else:
+                conn.execute(
+                    """
+                    UPDATE comms_channels
+                    SET config_json = jsonb_set(
+                        config_json, '{telegram_agent_targets}',
+                        COALESCE(config_json->'telegram_agent_targets', '{}'::jsonb)
+                            || jsonb_build_object(%s::text, %s::text),
+                        true
+                    ), updated_at = now()
+                    WHERE id = %s
+                    """,
+                    (conversation_id, session_id, channel_id),
+                )
+
+    def merge_channel_config(
+        self, channel_id: str, values: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        """Merge adapter settings without overwriting concurrent target selections."""
+        with self.db.transaction() as conn:
+            row = conn.execute(
+                """
+                UPDATE comms_channels
+                SET config_json = config_json || %s::jsonb, updated_at = now()
+                WHERE id = %s
+                RETURNING config_json
+                """,
+                (json.dumps(values), channel_id),
+            ).fetchone()
+        if row is None:
+            return None
+        config = row["config_json"]
+        return json.loads(config) if isinstance(config, str) else dict(config)
+
     def delete_channel(self, channel_id: str) -> None:
         """Delete a channel and all related records in a single transaction.
 

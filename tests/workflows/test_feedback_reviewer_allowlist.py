@@ -16,7 +16,6 @@ AGENT_PATH = (
 )
 
 RECALL_TOOLS = (
-    "gobby-review-learning:recall_review_context",
     "gobby-memory:search_memories",
     "gobby-memory:get_memory",
 )
@@ -47,11 +46,13 @@ def test_review_step_allows_read_only_recall_tools(tool: str) -> None:
     """Regression for #22509.
 
     `allowed_mcp_tools` is a closed list, so omitting these left the reviewer
-    unable to recall prior review context or check memory before
-    characterizing runtime behavior — the context its triage reference
-    (references/memory/review-lessons.md) requires it to consult.
+    unable to check memory before characterizing runtime behavior.
     """
     assert tool in _review_allowlist()
+
+
+def test_review_step_hides_review_learning_tools() -> None:
+    assert not any(tool.startswith("gobby-review-learning:") for tool in _review_allowlist())
 
 
 def test_search_memories_is_paired_with_get_memory() -> None:

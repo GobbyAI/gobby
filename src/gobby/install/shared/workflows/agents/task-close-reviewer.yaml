@@ -160,7 +160,6 @@ step_workflow:
     required_skills:
       - gobby:references/code-index/overview.md
       - gobby:references/tasks/overview.md
-      - gobby:references/memory/review-lessons.md
       - proportionality
       - code-review
     required_skills_loaded: false

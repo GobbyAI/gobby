@@ -110,13 +110,9 @@ class TemplatingMixin:
                 project_info["path"] = cwd
         return project_info
 
-    def _build_eval_context(
-        self,
-        event: HookEvent,
-        variables: dict[str, Any],
-        extra_context: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        """Build evaluation context for condition checking."""
+    @staticmethod
+    def _rule_tool_input(event: HookEvent) -> dict[str, Any]:
+        """Return the tool input seen by rule conditions, including proxy arguments."""
         raw_tool_input = event.data.get("tool_input") or event.data.get("arguments") or {}
         if not isinstance(raw_tool_input, dict):
             raw_tool_input = {}
@@ -137,10 +133,20 @@ class TemplatingMixin:
             else:
                 raw_tool_input = wrapper_input
 
+        return raw_tool_input
+
+    def _build_eval_context(
+        self,
+        event: HookEvent,
+        variables: dict[str, Any],
+        extra_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Build evaluation context for condition checking."""
+
         ctx: dict[str, Any] = {
             "variables": variables,
             "event": event,
-            "tool_input": raw_tool_input,
+            "tool_input": self._rule_tool_input(event),
             "source": event.source.value if event.source else None,
         }
 
@@ -164,7 +170,6 @@ class TemplatingMixin:
     def _build_allowed_funcs(self, ctx: dict[str, Any]) -> dict[str, Callable[..., Any]]:
         """Build the shared helper-function dict for condition evaluation and template rendering."""
         variables = ctx.get("variables", {})
-        project_path = (ctx.get("project") or {}).get("path")
         event = ctx.get("event")
         event_data = event.data if isinstance(event, HookEvent) else None
         funcs = build_condition_helpers(
@@ -180,7 +185,7 @@ class TemplatingMixin:
         funcs["is_plan_file"] = is_plan_file
         funcs["is_current_plan_artifact"] = (
             lambda file_path, artifact_path: is_current_plan_artifact(
-                file_path, artifact_path, project_path=project_path
+                file_path, artifact_path, project_path=(ctx.get("project") or {}).get("path")
             )
         )
         funcs["get_touched_file_paths"] = get_touched_file_paths
@@ -191,7 +196,7 @@ class TemplatingMixin:
                     provider,
                     artifact_path,
                     require_current_artifact,
-                    project_path=project_path,
+                    project_path=(ctx.get("project") or {}).get("path"),
                     event_data=event_data,
                 )
             )
