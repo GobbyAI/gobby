@@ -332,6 +332,12 @@
           "when": "Reading source bodies or recovering stale IDs"
         },
         {
+          "name": "evidence",
+          "description": "Cite hash-verified source, callers, and commits with gcode evidence",
+          "path": "references/code-index/evidence.md",
+          "when": "Citing code in findings, reviews, or reports, or checking a code claim first"
+        },
+        {
           "name": "ask",
           "description": "Run durable source-bound questions and verify evidence",
           "path": "references/code-index/ask.md",

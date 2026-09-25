@@ -26,6 +26,7 @@ reports no containing symbol for a range no symbol covers.
 | --- | --- |
 | [search](search.md) | Choosing search lanes or interpreting ranked matches |
 | [retrieval](retrieval.md) | Reading source by file location or stored symbol ID |
+| [evidence](evidence.md) | Citing source lines, callers, or commits in findings and reviews |
 | [ask](ask.md) | Running durable questions or handling immutable evidence |
 | [navigation](navigation.md) | Exploring structure, paths, identities, or pages |
 | [impact](impact.md) | Finding callers, dependencies, and change impact |
