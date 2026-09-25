@@ -68,16 +68,31 @@ def test_agent_run_listing_projects_off_event_loop(
 def test_agent_run_list_is_bounded_and_detail_keeps_large_fields(
     client: TestClient,
     running_agent_run: tuple[LocalAgentRunManager, AgentRun],
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
 ) -> None:
     manager, run = running_agent_run
     manager.merge_resume_metadata(
         run.id,
         {
-            "summary_markdown": "m" * 200_000,
+            "continuation_note": "m" * 200_000,
             "sandbox": {"backend": "srt", "enforced": True},
         },
     )
     manager.complete(run.id, result="r" * 200_000)
+    child = session_manager.register(
+        external_id="bounded-list-child",
+        machine_id=LOCAL_MACHINE_ID,
+        source="claude",
+        project_id=sample_project["id"],
+    )
+    session_manager.update_summary(child.id, summary_markdown="s" * 200_000)
+    enriched_run = manager.create(
+        parent_session_id=run.parent_session_id,
+        child_session_id=child.id,
+        provider="claude",
+        prompt="Child with a large session summary",
+    )
 
     response = client.get("/api/agents/runs?limit=50", headers={"Accept-Encoding": "gzip"})
     assert response.status_code == 200
@@ -87,12 +102,17 @@ def test_agent_run_list_is_bounded_and_detail_keeps_large_fields(
     assert listed["sandbox"]["violation_count"] == 0
     for field in ("prompt", "result", "summary_markdown", "resume_metadata_json"):
         assert field not in listed
+    enriched = next(row for row in response.json()["runs"] if row["run_id"] == enriched_run.id)
+    assert "summary_markdown" not in enriched
 
     detail = client.get(f"/api/agents/runs/{run.id}")
     assert detail.status_code == 200
     full = detail.json()["run"]
     assert full["result"] == "r" * 200_000
-    assert full["resume_metadata_json"]["summary_markdown"] == "m" * 200_000
+    assert full["resume_metadata_json"]["continuation_note"] == "m" * 200_000
+    enriched_detail = client.get(f"/api/agents/runs/{enriched_run.id}")
+    assert enriched_detail.status_code == 200
+    assert "summary_markdown" not in enriched_detail.json()["run"]
 
 
 @pytest.fixture(autouse=True)

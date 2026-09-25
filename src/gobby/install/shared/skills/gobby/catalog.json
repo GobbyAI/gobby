@@ -852,12 +852,6 @@
           "description": "Select destinations and responder projects",
           "path": "references/communications/routing.md",
           "when": "Diagnosing routing or changing project bindings"
-        },
-        {
-          "name": "subscriptions",
-          "description": "Manage scoped automatic event delivery",
-          "path": "references/communications/subscriptions.md",
-          "when": "Creating, changing, or diagnosing event subscriptions"
         }
       ]
     },

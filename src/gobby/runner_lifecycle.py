@@ -199,8 +199,10 @@ async def run_daemon(
             wake_replay_coordinator.bind_owner_loop(main_loop)
 
         from gobby.runner_service_readiness import require_managed_services_ready
+        from gobby.tasks.transcript_evidence_pool import prewarm_transcript_evidence_pool
 
         await require_managed_services_ready(runner)
+        await prewarm_transcript_evidence_pool()
 
         from gobby.events.coordination_waits import CoordinationWaitService
         from gobby.storage.coordination_waits import CoordinationWaitManager

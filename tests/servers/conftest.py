@@ -22,10 +22,12 @@ from gobby.hooks.factory import HookManagerFactory
 from gobby.servers.auth_service import AuthService
 from gobby.servers.grant_auth import AuthDecision
 from gobby.servers.http import HTTPServer
+from gobby.sessions.handoff_shutdown import cancel_handoff_shutdown
 from gobby.storage.auth import AuthStore, hash_token
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
+from gobby.utils.machine_id import require_machine_id
 
 # Sentinel to distinguish "not provided" from "explicitly None"
 _NOT_PROVIDED = object()
@@ -115,8 +117,10 @@ def authenticated_http_requests(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture
-def isolated_http_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
+def isolated_http_runtime(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Keep generic HTTP lifespan tests independent from operator bootstrap state."""
+    machine_id = require_machine_id()
+    cancel_handoff_shutdown(machine_id)
     original_resolve = HookManagerFactory._resolve_config
 
     def resolve_config(config: Any | None, runtime: ConfigRuntime | None) -> Any:
@@ -125,6 +129,8 @@ def isolated_http_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
         return original_resolve(config, runtime)
 
     monkeypatch.setattr(HookManagerFactory, "_resolve_config", staticmethod(resolve_config))
+    yield
+    cancel_handoff_shutdown(machine_id)
 
 
 def create_http_server(

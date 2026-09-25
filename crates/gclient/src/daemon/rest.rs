@@ -9,6 +9,13 @@ use serde_json::Value;
 use std::time::Duration;
 use tokio::time::{timeout_at, Instant};
 
+pub(crate) async fn project_rows(url: &str, token: &str) -> Result<Vec<ProjectRow>, DaemonError> {
+    let base_url = Url::parse(url).map_err(protocol)?;
+    RestClient::new(base_url, token.to_owned())?
+        .projects()
+        .await
+}
+
 #[derive(Debug, Clone)]
 pub(super) struct RestClient {
     client: Client,

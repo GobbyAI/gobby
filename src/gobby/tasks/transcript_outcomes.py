@@ -7,6 +7,7 @@ import os
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Any, Literal
 
 from gobby.config.shell_lexing import ParsedShellCommand
@@ -70,6 +71,7 @@ class ValidationCommandEquivalence:
     wrapper_reason: str | None
 
 
+@lru_cache(maxsize=512)
 def classify_validation_command_equivalence(command: str) -> ValidationCommandEquivalence:
     """Strip approved prefixes and reject wrappers that can obscure exit status."""
     core_command = _strip_exit_preserving_prefixes(command)

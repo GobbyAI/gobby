@@ -253,7 +253,7 @@ capability guides and agent reference library.
 | `gobby-voice` | Voice vocabulary |
 | `gobby-skills` | Installed instructions and hubs |
 | `gobby-cron` | Scheduled operations |
-| `gobby-communications` | External channels, identities, and subscriptions |
+| `gobby-communications` | External channels and identities |
 
 Guarded tools can be hidden from ordinary discovery. A registry's existence is
 not permission to use its internal stage operations.

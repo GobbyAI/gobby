@@ -13,7 +13,6 @@ from gobby.communications.models import (
     CommsAttachment,
     CommsIdentity,
     CommsMessage,
-    CommsRoutingRule,
 )
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.datetime import to_aware_utc, utc_now
@@ -170,8 +169,7 @@ class LocalCommunicationsStore:
     def delete_channel(self, channel_id: str) -> None:
         """Delete a channel and all related records in a single transaction.
 
-        Cascades to: comms_attachments, comms_messages, comms_identities,
-        comms_routing_rules.
+        Cascades to: comms_attachments, comms_messages, comms_identities.
         """
         with self.db.transaction() as conn:
             # Delete attachments for channel's messages via subquery
@@ -184,7 +182,6 @@ class LocalCommunicationsStore:
             # Delete child records
             conn.execute("DELETE FROM comms_messages WHERE channel_id = %s", (channel_id,))
             conn.execute("DELETE FROM comms_identities WHERE channel_id = %s", (channel_id,))
-            conn.execute("DELETE FROM comms_routing_rules WHERE channel_id = %s", (channel_id,))
 
             # Delete the channel
             conn.execute("DELETE FROM comms_channels WHERE id = %s", (channel_id,))
@@ -528,114 +525,6 @@ SELECT
             )
 
     # --- Routing Rules ---
-
-    def create_routing_rule(self, rule: CommsRoutingRule) -> CommsRoutingRule:
-        """Save a new routing rule to the database."""
-        if not rule.id:
-            rule.id = str(uuid.uuid4())
-
-        with self.db.transaction() as conn:
-            row = conn.execute(
-                """
-                INSERT INTO comms_routing_rules (
-                    id, name, channel_id, event_pattern, project_id, session_id,
-                    priority, enabled, config_json
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                RETURNING created_at, updated_at
-                """,
-                (
-                    rule.id,
-                    rule.name,
-                    rule.channel_id,
-                    rule.event_pattern,
-                    rule.project_id,
-                    rule.session_id,
-                    rule.priority,
-                    bool(rule.enabled),
-                    json.dumps(rule.config_json),
-                ),
-            ).fetchone()
-        if row is None:
-            raise RuntimeError("Failed to create communications routing rule")
-        rule.created_at = row["created_at"]
-        rule.updated_at = row["updated_at"]
-        return rule
-
-    def get_routing_rule(self, rule_id: str) -> CommsRoutingRule | None:
-        """Get a routing rule by ID."""
-        row = self.db.fetchone("SELECT * FROM comms_routing_rules WHERE id = %s", (rule_id,))
-        return CommsRoutingRule.from_row(dict(row)) if row else None
-
-    def list_routing_rules(
-        self,
-        channel_id: str | None = None,
-        project_id: str | None = None,
-        global_scope: bool | None = None,
-        enabled: bool | None = None,
-        event_pattern: str | None = None,
-    ) -> list[CommsRoutingRule]:
-        """List routing rules using exact administrative filters."""
-        sql = "SELECT * FROM comms_routing_rules WHERE 1=1"
-        params: list[Any] = []
-
-        if channel_id is not None:
-            sql += " AND channel_id = %s"
-            params.append(channel_id)
-        if global_scope is True:
-            sql += " AND project_id IS NULL"
-        elif project_id is not None:
-            sql += " AND project_id = %s"
-            params.append(project_id)
-        elif global_scope is False:
-            sql += " AND project_id IS NOT NULL"
-        if enabled is not None:
-            sql += " AND enabled = %s"
-            params.append(enabled)
-        if event_pattern is not None:
-            sql += " AND event_pattern = %s"
-            params.append(event_pattern)
-
-        sql += " ORDER BY priority DESC, created_at ASC, id ASC"
-
-        rows = self.db.fetchall(sql, tuple(params))
-        return [CommsRoutingRule.from_row(dict(row)) for row in rows]
-
-    def update_routing_rule(self, rule: CommsRoutingRule) -> CommsRoutingRule:
-        """Update an existing routing rule."""
-        with self.db.transaction() as conn:
-            conn.execute(
-                """
-                UPDATE comms_routing_rules SET
-                    name = %s,
-                    channel_id = %s,
-                    event_pattern = %s,
-                    project_id = %s,
-                    session_id = %s,
-                    priority = %s,
-                    enabled = %s,
-                    config_json = %s,
-                    updated_at = %s
-                WHERE id = %s
-                """,
-                (
-                    rule.name,
-                    rule.channel_id,
-                    rule.event_pattern,
-                    rule.project_id,
-                    rule.session_id,
-                    rule.priority,
-                    bool(rule.enabled),
-                    json.dumps(rule.config_json),
-                    rule.updated_at,
-                    rule.id,
-                ),
-            )
-        return rule
-
-    def delete_routing_rule(self, rule_id: str) -> None:
-        """Delete a routing rule by ID."""
-        with self.db.transaction() as conn:
-            conn.execute("DELETE FROM comms_routing_rules WHERE id = %s", (rule_id,))
 
     # --- Attachments ---
 

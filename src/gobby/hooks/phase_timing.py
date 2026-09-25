@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Final
+from typing import Any, Final
 
 from gobby.telemetry.instruments import observe_histogram
 from gobby.telemetry.query_timing import observe_queries
@@ -111,6 +112,29 @@ def add_hook_phase(phase: str, duration_seconds: float) -> None:
     timings = _current_timings.get()
     if timings is not None:
         timings.add(phase, duration_seconds)
+
+
+async def timed_to_thread[T](
+    phase: str, function: Callable[..., T], /, *args: Any, **kwargs: Any
+) -> T:
+    """Separate default-executor queue delay from the blocking call's work."""
+    queued_at = time.perf_counter()
+
+    def invoke() -> T:
+        started_at = time.perf_counter()
+        add_hook_phase(f"{phase}_queue", started_at - queued_at)
+        try:
+            return function(*args, **kwargs)
+        finally:
+            add_hook_phase(f"{phase}_work", time.perf_counter() - started_at)
+
+    with measure_hook_phase(phase):
+        return await asyncio.to_thread(invoke)
+
+
+async def timed_await[T](phase: str, awaitable: Awaitable[T]) -> T:
+    with measure_hook_phase(phase):
+        return await awaitable
 
 
 def note_hook_session(session_id: str) -> None:

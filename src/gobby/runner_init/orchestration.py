@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
-import json
 import logging
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
@@ -411,30 +409,6 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
 
         loop.call_soon_threadsafe(publish)
 
-    def publish_attention_notification(payload: dict[str, object]) -> None:
-        loop = runner.main_loop
-        communications = runner.communications_manager
-        if loop is None or not loop.is_running() or loop.is_closed() or communications is None:
-            return
-        session_id = payload.get("session_id")
-        future = asyncio.run_coroutine_threadsafe(
-            communications.send_event(
-                "attention.blocked",
-                json.dumps(payload, sort_keys=True),
-                project_id=runner.project_id,
-                session_id=str(session_id) if session_id is not None else None,
-            ),
-            loop,
-        )
-
-        def log_failure(completed: Any) -> None:
-            try:
-                completed.result()
-            except Exception:
-                logger.warning("Failed to publish attention notification", exc_info=True)
-
-        future.add_done_callback(log_failure)
-
     def publish_attention_metadata(payload: dict[str, object]) -> None:
         loop = runner.main_loop
         if loop is None or not loop.is_running() or loop.is_closed():
@@ -451,7 +425,6 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
     runner.attention_manager = AttentionStateManager(
         runner.database,
         event_publisher=publish_attention_event,
-        notification_publisher=publish_attention_notification,
     )
     runner.attention_metadata_store = AttentionMetadataStore(
         runner.attention_manager.ordering,

@@ -6463,15 +6463,17 @@ async fn control_indicator_click_takes_back_only_a_lost_lease() {
         .expect("roster pane");
     let attachment = workspace.pane(pane).attachment_id().to_string();
 
-    // Mirror the loop's one-pane chrome to learn where the pane's bottom edge
-    // is drawn. Its metadata ends one cell before the corner, so the last
-    // letter of Focused and of Read-only share a cell.
+    // Mirror the loop's one-pane chrome to click the footer's left metadata.
+    // Focused and Read-only share its first cell.
     let area = Rect::new(0, 0, 120, 40);
     let mut probe = Chrome::dark();
     probe.open_pane(pane, "terminal-lease");
     probe.compute_view(&workspace, area);
-    let edge = probe.view.pane_infos[0].rect;
-    let (column, row) = (edge.right() - 3, edge.bottom() - 1);
+    let footer = gobby_client::ui::pane_chrome::pane_footer(&workspace, workspace.pane(pane), true);
+    let (indicator, _) =
+        gobby_client::ui::pane_chrome::footer_rects(&probe.view.pane_infos[0], &footer)
+            .expect("one-pane footer");
+    let (column, row) = (indicator.x + 1, indicator.y);
 
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
     let mut chrome = Chrome::dark();

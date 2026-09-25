@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import logging
@@ -24,6 +23,7 @@ from gobby.config.validation_detection import (
 from gobby.config.validation_matchers import ValidationCommandMatcher
 from gobby.hooks.events import HookEvent
 from gobby.hooks.normalization import is_shell_tool
+from gobby.hooks.phase_timing import timed_await, timed_to_thread
 from gobby.storage.sessions._constants import LIVE_SESSION_STATUS_ORDER
 from gobby.tasks.command_equivalence import target_covers
 from gobby.tasks.transcript_evidence import derive_transcript_evidence
@@ -334,9 +334,14 @@ class FoundWorkStopAnalyzer:
         variables: dict[str, Any],
         project_path: str | None,
     ) -> FoundWorkStopFacts:
-        message = await _assistant_message(event, self._session_manager, session_id)
+        message = await timed_await(
+            "prelude_found_work_message",
+            _assistant_message(event, self._session_manager, session_id),
+        )
         user_prompt = str(variables.get("_current_user_prompt") or "")
-        close_at = await asyncio.to_thread(self._latest_task_close, session_id)
+        close_at = await timed_to_thread(
+            "prelude_found_work_latest_close", self._latest_task_close, session_id
+        )
         cache_key = _analysis_cache_key(message, user_prompt, variables, close_at=close_at)
         if variables.get("_found_work_analysis_cache_key") == cache_key:
             cached_failures = variables.get("_found_work_terminal_validation_failures")
@@ -350,7 +355,8 @@ class FoundWorkStopAnalyzer:
                 ),
             )
 
-        labeled_deferral = await asyncio.to_thread(
+        labeled_deferral = await timed_to_thread(
+            "prelude_found_work_labeled_deferral",
             self._has_labeled_deferral_task,
             session_id,
         )
@@ -366,17 +372,23 @@ class FoundWorkStopAnalyzer:
             if not _deterministic_exemption(message, user_prompt):
                 # An LLM "no" clears the candidate; a "yes" or an unavailable
                 # confirmation both alert (the stop gate alerts once per session).
-                confirmed = await self._confirm_shirk(message, user_prompt)
+                confirmed = await timed_await(
+                    "prelude_found_work_confirm_shirk",
+                    self._confirm_shirk(message, user_prompt),
+                )
                 shirk = confirmed is not False
                 shirk_confirmed = confirmed is True
 
         failures: tuple[str, ...] = ()
         if not task_disposition:
-            failures = await self._terminal_failures(
-                session_id=session_id,
-                variables=variables,
-                project_path=project_path,
-                project_id=event.project_id,
+            failures = await timed_await(
+                "prelude_found_work_terminal_failures",
+                self._terminal_failures(
+                    session_id=session_id,
+                    variables=variables,
+                    project_path=project_path,
+                    project_id=event.project_id,
+                ),
             )
         variables["_found_work_analysis_cache_key"] = cache_key
         variables["_found_work_shirk"] = shirk
@@ -566,21 +578,29 @@ class FoundWorkStopAnalyzer:
         if self._session_manager is None or not project_path:
             return ()
         try:
-            session = await asyncio.to_thread(self._session_manager.get, session_id)
+            session = await timed_to_thread(
+                "prelude_evidence_session", self._session_manager.get, session_id
+            )
             if session is None:
                 return ()
-            config = await asyncio.to_thread(
+            config = await timed_to_thread(
+                "prelude_evidence_config",
                 resolve_stop_validation_config,
                 daemon_config=self._config_resolver(),
                 project_path=project_path,
             )
-            window_start = await asyncio.to_thread(self._latest_task_close, session_id)
-            evidence = await derive_transcript_evidence(
-                session,
-                window_start if window_start is not None else session.created_at,
-                config,
-                set(),
-                project_path,
+            window_start = await timed_to_thread(
+                "prelude_evidence_latest_close", self._latest_task_close, session_id
+            )
+            evidence = await timed_await(
+                "prelude_evidence_transcript",
+                derive_transcript_evidence(
+                    session,
+                    window_start if window_start is not None else session.created_at,
+                    config,
+                    set(),
+                    project_path,
+                ),
             )
         except TranscriptEvidenceUnavailable:
             logger.debug("Found-work validation evidence unavailable for session %s", session_id)
@@ -592,10 +612,13 @@ class FoundWorkStopAnalyzer:
         owner_handoff = variables.get("_found_work_owner_handoff_turn") is True
         foreign_paths: set[str] = set()
         if owner_handoff and self._db is not None:
-            foreign_paths = await self._foreign_owned_dirty_paths(
-                session_id=session_id,
-                project_id=project_id or getattr(session, "project_id", None),
-                project_path=project_path,
+            foreign_paths = await timed_await(
+                "prelude_evidence_foreign_paths",
+                self._foreign_owned_dirty_paths(
+                    session_id=session_id,
+                    project_id=project_id or getattr(session, "project_id", None),
+                    project_path=project_path,
+                ),
             )
         unresolved = unresolved_validation_failures(
             evidence.validation_runs,
@@ -706,7 +729,9 @@ async def _assistant_message(
             return text
     if session_manager is not None:
         try:
-            session = await asyncio.to_thread(session_manager.get, session_id)
+            session = await timed_to_thread(
+                "prelude_found_work_message_session", session_manager.get, session_id
+            )
         except Exception:
             session = None
         if session is not None:

@@ -12,7 +12,6 @@ from gobby.communications.models import (
     ChannelConfig,
     CommsIdentity,
     CommsMessage,
-    CommsRoutingRule,
 )
 
 pytestmark = pytest.mark.unit
@@ -118,52 +117,6 @@ def test_comms_identity_from_row() -> None:
     assert ident.metadata_json == {"team_id": "T456"}
 
 
-def test_comms_routing_rule_from_row() -> None:
-    row = {
-        "id": "rule-1",
-        "name": "Slack to Session",
-        "channel_id": "slack-1",
-        "event_pattern": "message.*",
-        "project_id": "proj-1",
-        "session_id": "sess-789",
-        "priority": 10,
-        "enabled": 1,
-        "config_json": json.dumps({"auto_reply": True}),
-        "created_at": "2026-03-21T00:00:00Z",
-        "updated_at": "2026-03-21T00:00:00Z",
-    }
-    rule = CommsRoutingRule.from_row(row)
-    assert rule.id == "rule-1"
-    assert rule.name == "Slack to Session"
-    assert rule.channel_id == "slack-1"
-    assert rule.event_pattern == "message.*"
-    assert rule.project_id == "proj-1"
-    assert rule.session_id == "sess-789"
-    assert rule.priority == 10
-    assert rule.enabled is True
-    assert rule.config_json == {"auto_reply": True}
-
-
-def test_routing_rule_from_row_defaults() -> None:
-    """Missing optional CommsRoutingRule columns use model defaults."""
-    row = {
-        "id": "rule-min",
-        "name": "Minimal Rule",
-        "event_pattern": "*",
-        "project_id": "proj-1",
-        "created_at": "2026-03-21T00:00:00Z",
-        "updated_at": "2026-03-21T00:00:00Z",
-    }
-    rule = CommsRoutingRule.from_row(row)
-    assert rule.id == "rule-min"
-    assert rule.name == "Minimal Rule"
-    assert rule.channel_id is None
-    assert rule.event_pattern == "*"
-    assert rule.priority == 0
-    assert rule.enabled is True
-    assert rule.config_json == {}
-
-
 def test_comms_message_from_row_defaults() -> None:
     """Missing optional CommsMessage columns use model defaults."""
     msg_row = {
@@ -189,6 +142,3 @@ def test_from_row_rejects_missing_required_fields() -> None:
 
     with pytest.raises(KeyError):
         CommsIdentity.from_row({"id": "ident-1", "channel_id": "chan-1"})
-
-    with pytest.raises(KeyError):
-        CommsRoutingRule.from_row({"id": "rule-1", "name": "Rule"})

@@ -8,8 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from gobby.communications.inbound import InboundCommunications
-from gobby.communications.models import ChannelConfig, CommsMessage, CommsRoutingRule
+from gobby.communications.models import ChannelConfig, CommsMessage
 from gobby.communications.telegram_actions import TelegramActionController
 from gobby.sessions.mailbox import MailboxSendResult
 from gobby.storage.hub.protocol import HubDatabase
@@ -60,12 +59,7 @@ def _message(
     )
 
 
-def _source_message(
-    *,
-    actionable: bool = True,
-    chat_id: str = "chat-1",
-    native_plan_fingerprint: str | None = None,
-) -> CommsMessage:
+def _source_message() -> CommsMessage:
     return CommsMessage(
         id="source-message",
         channel_id=_channel().id,
@@ -74,25 +68,13 @@ def _source_message(
         platform_message_id="900",
         session_id=SESSION_ID,
         metadata_json={
-            "platform_destination": chat_id,
-            "lifecycle_actionable": actionable,
-            "actionable_session_id": SESSION_ID,
-            "lifecycle_project_id": PROJECT_ID,
-            **(
-                {"native_plan_fingerprint": native_plan_fingerprint}
-                if native_plan_fingerprint is not None
-                else {}
-            ),
+            "platform_destination": "chat-1",
         },
         created_at=NOW,
     )
 
 
-def _controller(
-    *,
-    wake_results: list[dict[str, object]] | None = None,
-    native_plan_actions: MagicMock | None = None,
-) -> tuple[TelegramActionController, MagicMock, MagicMock, MagicMock]:
+def _controller() -> tuple[TelegramActionController, MagicMock, MagicMock, MagicMock]:
     channel = _channel()
     manager = MagicMock()
     manager.get_channel_by_name.return_value = channel
@@ -106,13 +88,12 @@ def _controller(
         project_id=PROJECT_ID,
     )
     mailbox = MagicMock()
-    mailbox.send = AsyncMock(return_value=MailboxSendResult(wake_results=wake_results or []))
+    mailbox.send = AsyncMock(return_value=MailboxSendResult(wake_results=[]))
     return (
         TelegramActionController(
             manager,
             session_manager,
             mailbox,
-            native_plan_actions,
         ),
         manager,
         session_manager,
@@ -242,209 +223,6 @@ async def test_mailbox_failure_cannot_start_responder_turn() -> None:
     assert "send your message again" in manager.send_message.await_args.args[1]
 
 
-async def test_continue_callback_delivers_exact_answer_and_reports_live_wake() -> None:
-    controller, manager, _, mailbox = _controller(
-        wake_results=[{"session_id": SESSION_ID, "delivered": True}]
-    )
-    callback = _message(
-        content="Continue",
-        content_type="callback",
-        metadata={
-            "callback_action": "session_action",
-            "callback_source_message_id": "900",
-            "callback_session_id": SESSION_ID,
-            "callback_value": "Continue",
-        },
-    )
-
-    consumed = await controller.handle(_channel().name, callback)
-
-    assert consumed is True
-    mailbox.send.assert_awaited_once()
-    send = mailbox.send.await_args.kwargs
-    assert send["target_id"] == SESSION_ID
-    assert send["content"] == "Continue"
-    assert send["wake"] is True
-    assert send["preserve_content"] is True
-    assert send["metadata"]["action_kind"] == "button"
-    manager.send_message.assert_awaited_once()
-    assert manager.send_message.await_args.args[1] == "Sent."
-
-
-async def test_native_plan_callback_dispatches_exact_option_without_mailbox() -> None:
-    native_plan_actions = MagicMock()
-    native_plan_actions.dispatch = AsyncMock(return_value="sent")
-    controller, manager, _, mailbox = _controller(native_plan_actions=native_plan_actions)
-    manager.store.get_message_by_platform_id.return_value = _source_message(
-        native_plan_fingerprint="pane-fingerprint"
-    )
-    callback = _message(
-        content="Yes, clear context and implement",
-        content_type="callback",
-        metadata={
-            "callback_action": "session_action",
-            "callback_source_message_id": "900",
-            "callback_session_id": SESSION_ID,
-            "callback_value": "native-plan:2",
-        },
-    )
-
-    consumed = await controller.handle(_channel().name, callback)
-
-    assert consumed is True
-    native_plan_actions.dispatch.assert_awaited_once_with(
-        SESSION_ID,
-        option=2,
-        expected_fingerprint="pane-fingerprint",
-    )
-    mailbox.send.assert_not_awaited()
-    assert manager.send_message.await_args.args[1] == "Sent."
-
-
-async def test_native_plan_callback_rejects_changed_prompt() -> None:
-    native_plan_actions = MagicMock()
-    native_plan_actions.dispatch = AsyncMock(return_value="stale")
-    controller, manager, _, mailbox = _controller(native_plan_actions=native_plan_actions)
-    manager.store.get_message_by_platform_id.return_value = _source_message(
-        native_plan_fingerprint="pane-fingerprint"
-    )
-    callback = _message(
-        content="Yes, implement this plan",
-        content_type="callback",
-        metadata={
-            "callback_action": "session_action",
-            "callback_source_message_id": "900",
-            "callback_session_id": SESSION_ID,
-            "callback_value": "native-plan:1",
-        },
-    )
-
-    await controller.handle(_channel().name, callback)
-
-    mailbox.send.assert_not_awaited()
-    assert manager.send_message.await_args.args[1] == "This plan prompt has changed."
-
-
-async def test_native_reply_to_any_persisted_chunk_preserves_text_and_reports_queue() -> None:
-    controller, manager, _, mailbox = _controller()
-    manager.store.get_message_by_platform_id.return_value = _source_message()
-    reply = _message(
-        content="  custom answer\n",
-        metadata={"reply_to_message_id": "902"},
-    )
-
-    consumed = await controller.handle(_channel().name, reply)
-
-    assert consumed is True
-    assert mailbox.send.await_args.kwargs["content"] == "  custom answer\n"
-    assert mailbox.send.await_args.kwargs["metadata"]["action_kind"] == "reply"
-    assert manager.store.get_message_by_platform_id.call_args.args == (
-        _channel().name,
-        "902",
-    )
-    assert manager.send_message.await_args.args[1] == "Queued for delivery."
-
-
-@pytest.mark.parametrize(
-    ("status", "source_chat"),
-    [
-        ("active", "chat-1"),
-        ("paused", "unrelated-chat"),
-    ],
-)
-async def test_session_action_rejects_stale_or_unrelated_target(
-    status: str,
-    source_chat: str,
-) -> None:
-    controller, manager, session_manager, mailbox = _controller()
-    session_manager.get.return_value.status = status
-    manager.store.get_message_by_platform_id.return_value = _source_message(chat_id=source_chat)
-    callback = _message(
-        content="Fast",
-        content_type="callback",
-        metadata={
-            "callback_action": "session_action",
-            "callback_source_message_id": "900",
-            "callback_session_id": SESSION_ID,
-            "callback_value": "Fast",
-        },
-    )
-
-    consumed = await controller.handle(_channel().name, callback)
-
-    assert consumed is True
-    mailbox.send.assert_not_awaited()
-    assert "invalid" in manager.send_message.await_args.args[1].lower() or (
-        "no longer paused" in manager.send_message.await_args.args[1].lower()
-    )
-
-
-async def test_consumed_action_is_suppressed_before_generic_responder_callback() -> None:
-    channel = _channel()
-    manager = MagicMock()
-    manager._channel_by_name = {channel.name: channel}
-    manager._adapters = {}
-    manager.admit_inbound_message = AsyncMock(return_value=True)
-    manager._store.get_message_by_platform_id.return_value = None
-    manager._store.create_message.side_effect = lambda message: message
-    manager.handle_session_action = AsyncMock(return_value=True)
-    manager.event_callback = AsyncMock()
-    manager.get_voice_transcriber.return_value = None
-    manager.get_vision_extract_service.return_value = None
-    inbound = InboundCommunications(manager)
-    message = _message(
-        content="Continue",
-        content_type="callback",
-        metadata={"callback_status": "ok"},
-    )
-    message.platform_message_id = None
-    message.identity_id = None
-
-    handled = await inbound.handle_messages(channel.name, [message])
-
-    assert handled == [message]
-    assert message.channel_id == channel.id
-    assert message.metadata_json["platform_channel_id"] == channel.id
-    assert message.content == "Continue"
-    manager.handle_session_action.assert_awaited_once_with(channel.name, message)
-    manager.event_callback.assert_not_awaited()
-
-
-async def test_action_remains_consumed_when_error_feedback_delivery_fails() -> None:
-    controller, manager, _, _ = _controller()
-    manager.store.get_message_by_platform_id.return_value = None
-    manager.send_message.side_effect = RuntimeError("Telegram unavailable")
-    callback = _message(
-        content="Continue",
-        content_type="callback",
-        metadata={
-            "callback_action": "session_action",
-            "callback_source_message_id": "missing",
-            "callback_session_id": SESSION_ID,
-            "callback_value": "Continue",
-        },
-    )
-
-    consumed = await controller.handle(_channel().name, callback)
-
-    assert consumed is True
-    assert manager.send_message.await_count == 2
-
-
-async def test_subscriptions_command_requires_allowlisted_private_chat() -> None:
-    controller, manager, _, _ = _controller()
-    command = _message(
-        content="/subscriptions",
-        metadata={"conversation_type": "group"},
-    )
-
-    consumed = await controller.handle(_channel().name, command)
-
-    assert consumed is True
-    assert "authorized private chat" in manager.send_message.await_args.args[1]
-    manager.list_event_subscriptions.assert_not_called()
-
-
 async def test_agent_command_lists_live_agents_and_marks_current_target() -> None:
     controller, manager, sessions, _ = _controller()
     other_id = "44444444-4444-4444-8444-444444444444"
@@ -459,10 +237,36 @@ async def test_agent_command_lists_live_agents_and_marks_current_target() -> Non
     assert consumed is True
     menu = manager.send_message.await_args
     keyboard = menu.kwargs["metadata"]["inline_keyboard"]
-    assert [row[0]["text"] for row in keyboard] == ["✓ Assistant", "Lane Developer"]
-    assert all("#" not in row[0]["text"] for row in keyboard)
+    assert [button["text"] for row in keyboard for button in row] == [
+        "✓ Assistant",
+        "Lane Developer",
+    ]
+    assert all("#" not in button["text"] for row in keyboard for button in row)
     assert menu.kwargs["metadata"]["callback_action"] == "agent_target"
     assert menu.kwargs["session_id"] is None
+
+
+async def test_agent_menu_fits_ten_agents_without_next_button() -> None:
+    controller, manager, sessions, _ = _controller()
+    agents = [
+        SimpleNamespace(
+            id=f"00000000-0000-4000-8000-{index:012d}",
+            status="active",
+            title=f"Agent {index}",
+            source="codex",
+        )
+        for index in range(10)
+    ]
+    sessions.list.return_value = agents
+    manager.attached_session.return_value = agents[0].id
+
+    await controller.handle(_channel().name, _message(content="/agent list"))
+
+    keyboard = manager.send_message.await_args.kwargs["metadata"]["inline_keyboard"]
+    assert len(keyboard) == 5
+    assert all(len(row) == 2 for row in keyboard)
+    assert keyboard[0][0]["text"] == "✓ Agent 0"
+    assert all(button["text"] not in {"Next", "Previous"} for row in keyboard for button in row)
 
 
 async def test_agent_menu_shortens_and_disambiguates_duplicate_titles() -> None:
@@ -482,7 +286,7 @@ async def test_agent_menu_shortens_and_disambiguates_duplicate_titles() -> None:
     await controller.handle(_channel().name, _message(content="/agent"))
 
     keyboard = manager.send_message.await_args.kwargs["metadata"]["inline_keyboard"]
-    labels = [row[0]["text"] for row in keyboard]
+    labels = [button["text"] for row in keyboard for button in row]
     assert labels[0] != labels[1]
     assert labels[0].endswith("#12")
     assert labels[1].endswith("#13")
@@ -516,8 +320,9 @@ async def test_agent_command_lists_a_real_clear_successor(
     await controller.handle(_channel().name, _message(content="/agent"))
 
     labels = [
-        row[0]["text"]
+        button["text"]
         for row in manager.send_message.await_args.kwargs["metadata"]["inline_keyboard"]
+        for button in row
     ]
     assert "✓ Lane 4" in labels
 
@@ -525,7 +330,9 @@ async def test_agent_command_lists_a_real_clear_successor(
 async def test_agent_command_is_published_in_telegram_menu() -> None:
     from gobby.communications.commands import telegram_bot_commands
 
-    assert "agent" in {item["command"] for item in telegram_bot_commands()}
+    commands = {item["command"] for item in telegram_bot_commands()}
+    assert "agent" in commands
+    assert "subscriptions" not in commands
 
 
 async def test_agent_command_reports_when_no_agents_are_running() -> None:
@@ -554,6 +361,7 @@ async def test_agent_command_rejects_wildcard_only_sender_allowlist() -> None:
 
 async def test_agent_button_switches_the_chat_target() -> None:
     controller, manager, sessions, _ = _controller()
+    manager.edit_message = AsyncMock()
     target_id = "44444444-4444-4444-8444-444444444444"
     sessions.get.side_effect = lambda session_id: SimpleNamespace(
         id=session_id, status="active", source="codex", title="Lane Developer"
@@ -562,7 +370,7 @@ async def test_agent_button_switches_the_chat_target() -> None:
         SimpleNamespace(id=target_id, status="active", source="codex", title="Lane Developer")
     ]
     manager.attached_session.return_value = target_id
-    source = _source_message(actionable=False)
+    source = _source_message()
     source.metadata_json.update(
         {"callback_action": "agent_target", "agent_channel_id": _channel().id}
     )
@@ -589,6 +397,60 @@ async def test_agent_button_switches_the_chat_target() -> None:
         session_id=None,
         metadata={"platform_destination": "chat-1"},
     )
+    manager.edit_message.assert_awaited_once_with(
+        _channel().name,
+        "900",
+        "Active agent: Lane Developer\nChoose an agent:",
+        "chat-1",
+        inline_keyboard=[
+            [
+                {
+                    "text": "✓ Lane Developer",
+                    "value": json.dumps(
+                        {
+                            "op": "set",
+                            "channel_id": _channel().id,
+                            "session_id": target_id,
+                            "page": 0,
+                        }
+                    ),
+                }
+            ]
+        ],
+    )
+
+
+async def test_agent_switch_sends_fresh_menu_when_edit_fails() -> None:
+    controller, manager, sessions, _ = _controller()
+    manager.edit_message = AsyncMock(side_effect=RuntimeError("edit failed"))
+    target_id = "44444444-4444-4444-8444-444444444444"
+    target = SimpleNamespace(id=target_id, status="active", source="codex", title="Lane Developer")
+    sessions.get.return_value = target
+    sessions.list.return_value = [target]
+    manager.attached_session.return_value = target_id
+    source = _source_message()
+    source.metadata_json.update(
+        {"callback_action": "agent_target", "agent_channel_id": _channel().id}
+    )
+    manager.store.get_message_by_platform_id.return_value = source
+    callback = _message(
+        content="select",
+        content_type="callback",
+        metadata={
+            "callback_action": "agent_target",
+            "callback_source_message_id": "900",
+            "callback_value": json.dumps(
+                {"op": "set", "channel_id": _channel().id, "session_id": target_id}
+            ),
+        },
+    )
+
+    await controller.handle(_channel().name, callback)
+
+    assert manager.send_message.await_count == 2
+    assert "inline_keyboard" in manager.send_message.await_args_list[0].kwargs["metadata"]
+    assert "Active agent: Lane Developer" in manager.send_message.await_args_list[1].args[1]
+    assert "new menu" in manager.send_message.await_args_list[1].args[1]
 
 
 async def test_agent_button_rejects_wildcard_only_sender_allowlist() -> None:
@@ -607,116 +469,3 @@ async def test_agent_button_rejects_wildcard_only_sender_allowlist() -> None:
     manager.switch_conversation.assert_not_called()
     assert "authorized private chat" in manager.send_message.await_args.args[1]
     assert manager.send_message.await_args.kwargs["session_id"] is None
-
-
-async def test_subscriptions_menu_paginates_six_rules_with_eight_rows_maximum() -> None:
-    controller, manager, _, _ = _controller()
-    manager.list_event_subscriptions.return_value = [
-        CommsRoutingRule(
-            id=f"rule-{index}",
-            name=f"Rule {index}",
-            channel_id=_channel().id,
-            event_pattern=f"session.event.{index}",
-            enabled=index % 2 == 0,
-        )
-        for index in range(7)
-    ]
-
-    consumed = await controller.handle(
-        _channel().name,
-        _message(content="/subscriptions"),
-    )
-
-    assert consumed is True
-    call = manager.send_message.await_args
-    assert call.args[1].startswith("Subscriptions (1/2)")
-    keyboard = call.kwargs["metadata"]["inline_keyboard"]
-    assert len(keyboard) == 8
-    assert [button["text"] for button in keyboard[-1]] == ["Next"]
-    assert call.kwargs["metadata"]["callback_action"] == "subscription_control"
-
-
-async def test_subscription_callback_sets_explicit_state_and_sends_fresh_snapshot() -> None:
-    controller, manager, _, _ = _controller()
-    channel = _channel()
-    subscription = CommsRoutingRule(
-        id="rule-1",
-        name="Paused sessions",
-        channel_id=channel.id,
-        event_pattern="session.agent.paused",
-        enabled=False,
-    )
-    manager.get_event_subscription.return_value = subscription
-    manager.list_event_subscriptions.return_value = [subscription]
-    menu_source = _source_message()
-    menu_source.metadata_json.update(
-        {
-            "callback_action": "subscription_control",
-            "subscription_channel_id": channel.id,
-        }
-    )
-    manager.store.get_message_by_platform_id.return_value = menu_source
-    payload = json.dumps(
-        {
-            "op": "set",
-            "channel_id": channel.id,
-            "page": 0,
-            "subscription_id": subscription.id,
-            "enabled": True,
-        },
-        separators=(",", ":"),
-        sort_keys=True,
-    )
-    callback = _message(
-        content=payload,
-        content_type="callback",
-        metadata={
-            "callback_action": "subscription_control",
-            "callback_source_message_id": "900",
-            "callback_value": payload,
-        },
-    )
-
-    consumed = await controller.handle(channel.name, callback)
-
-    assert consumed is True
-    manager.update_event_subscription.assert_called_once_with(
-        subscription.id,
-        enabled=True,
-    )
-    assert manager.send_message.await_args.args[1].startswith("Subscriptions (1/1)")
-
-
-async def test_subscription_callback_rejects_menu_from_another_channel() -> None:
-    controller, manager, _, _ = _controller()
-    menu_source = _source_message()
-    menu_source.metadata_json.update(
-        {
-            "callback_action": "subscription_control",
-            "subscription_channel_id": "other-channel",
-        }
-    )
-    manager.store.get_message_by_platform_id.return_value = menu_source
-    payload = json.dumps(
-        {
-            "op": "all",
-            "channel_id": _channel().id,
-            "page": 0,
-            "enabled": True,
-        }
-    )
-    callback = _message(
-        content=payload,
-        content_type="callback",
-        metadata={
-            "callback_action": "subscription_control",
-            "callback_source_message_id": "900",
-            "callback_value": payload,
-        },
-    )
-
-    consumed = await controller.handle(_channel().name, callback)
-
-    assert consumed is True
-    manager.update_event_subscription.assert_not_called()
-    assert manager.send_message.await_args.args[1] == "This subscription menu is invalid."

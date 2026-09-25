@@ -91,11 +91,6 @@ The router is mounted at `/api/comms` when communications are enabled.
 | `DELETE` | `/api/comms/channels/{channel_id}` | Remove a channel by UUID. |
 | `GET` | `/api/comms/channels/{channel_id}/status` | Get active, polling, capability, and initialization state. |
 | `GET` | `/api/comms/messages` | List stored messages with filters. |
-| `POST` | `/api/comms/subscriptions` | Create an event subscription. |
-| `GET` | `/api/comms/subscriptions` | List event subscriptions. |
-| `GET` | `/api/comms/subscriptions/{id}` | Get an event subscription. |
-| `PATCH` | `/api/comms/subscriptions/{id}` | Partially update an event subscription. |
-| `DELETE` | `/api/comms/subscriptions/{id}` | Delete an event subscription. |
 
 `POST /api/comms/send` accepts `channel_name`, `content`, optional
 `session_id`, and optional `metadata`. It returns the stored message on
@@ -147,11 +142,6 @@ When the manager is available, the proxy registers `gobby-communications`:
 | `link_identity` | `channel`, `external_user_id`, `session_id` |
 | `list_identities` | Optional `session_id`, optional `channel` |
 | `unlink_identity` | `identity_id` |
-| `create_event_subscription` | `name`, `channel`, `event_pattern`; optional project/global/session scope, priority, enabled |
-| `list_event_subscriptions` | Optional channel, project/global scope, enabled, event pattern filters |
-| `get_event_subscription` | `subscription_id` |
-| `update_event_subscription` | `subscription_id` and changed fields |
-| `delete_event_subscription` | `subscription_id` |
 
 `send_message` does not expose arbitrary metadata. Supply a channel
 `default_destination`, pass a linked `session_id`, or use the HTTP endpoint
@@ -327,7 +317,6 @@ different groups stay isolated. Turns for one conversation are serialized;
 different conversations can run concurrently.
 
 Supported commands are `/new`, `/reset`, `/stop`, `/status`, and `/help`.
-Telegram also supports `/subscriptions` for the channel's event subscriptions.
 Telegram shows a typing indicator during a turn and edits the first response
 message as text streams. Other adapters receive the finalized response unless
 they implement message editing.
@@ -376,138 +365,6 @@ config `poll_interval` when set, otherwise
 
 Discord Gateway reception is enabled by default. Set `enable_gateway: false`
 when using only interaction webhooks.
-
-## Event subscriptions
-
-Public interfaces call these records **event subscriptions**. Internal storage
-keeps the `CommsRoutingRule` and `comms_routing_rules` names.
-
-Create a subscription for the project resolved from the CLI's current working
-directory:
-
-```bash
-gobby comms subscriptions create gobby-telegram-agent-paused \
-  --channel gobby-telegram \
-  --event session.agent.paused
-```
-
-`--project <name-or-uuid>` overrides cwd inference. Global scope is always
-explicit:
-
-```bash
-gobby comms subscriptions create global-agent-pauses \
-  --channel operations \
-  --event 'session.agent.*' \
-  --global
-```
-
-The remaining CLI operations are:
-
-```bash
-gobby comms subscriptions list --project gobby
-gobby comms subscriptions get <subscription-id>
-gobby comms subscriptions update <subscription-id> --priority 10 --disabled
-gobby comms subscriptions delete <subscription-id>
-```
-
-HTTP creation requires exactly one of `project_id` or `global_scope=true`:
-
-```bash
-curl -X POST http://127.0.0.1:60887/api/comms/subscriptions \
-  -H "Authorization: Bearer $GOBBY_TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "name": "gobby-telegram-agent-expired",
-    "channel": "gobby-telegram",
-    "event_pattern": "session.agent.expired",
-    "project_id": "<project-uuid>",
-    "priority": 0,
-    "enabled": true
-  }'
-```
-
-MCP creation infers project scope from the calling session:
-
-```python
-call_tool("gobby-communications", "create_event_subscription", {
-    "name": "gobby-telegram-agent-paused",
-    "channel": "gobby-telegram",
-    "event_pattern": "session.agent.paused",
-})
-
-call_tool("gobby-communications", "list_event_subscriptions", {
-    "project": "gobby",
-    "enabled": True,
-})
-call_tool("gobby-communications", "get_event_subscription", {
-    "subscription_id": "<subscription-id>",
-})
-call_tool("gobby-communications", "update_event_subscription", {
-    "subscription_id": "<subscription-id>",
-    "priority": 10,
-})
-call_tool("gobby-communications", "delete_event_subscription", {
-    "subscription_id": "<subscription-id>",
-})
-```
-
-A Telegram responder session inherits the responder project configured on its
-channel. That binding controls MCP caller inference and responder work. Outbound
-event delivery is controlled separately by each subscription's project,
-global, and optional session scope.
-
-Scope rules:
-
-- Project subscriptions match events from one project.
-- Session scope further restricts a project subscription to one session in
-  that project.
-- Global subscriptions use `project_id=None` internally and cannot carry a
-  session ID.
-- CLI creation fails when cwd has no project unless `--project` or `--global`
-  is supplied. MCP creation fails without a calling-session project unless
-  `global_scope=true` is supplied.
-
-Event patterns use glob matching. A pattern without wildcard characters is an
-exact match; patterns such as `session.agent.*` match multiple event names.
-Every matching channel receives the event once. Higher priority values route
-first; ties use creation time, then subscription ID.
-Disabled subscriptions remain visible to administrative lists and do not
-deliver. Deterministic source event IDs suppress replayed delivery once per
-channel.
-
-Session lifecycle events are:
-
-- `session.agent.paused`
-- `session.agent.expired`
-- `session.interactive.paused`
-- `session.interactive.expired`
-
-These four subscriptions can remain attached to a Telegram channel
-simultaneously. Telegram `/subscriptions` lists enabled and disabled records for
-that channel and updates them through the same validated subscription manager
-used by the CLI, HTTP API, and MCP tools. Mutation is limited to an allowlisted
-private chat. Menus show six records per page and include explicit-state
-controls plus **Enable all** and **Disable all**.
-
-Telegram pause deliveries include the complete last visible assistant message
-and support structured option buttons, exact live native-plan choices for
-Claude, Codex, Droid, Grok, Qwen, and AGY, a **Continue** button for other pauses,
-and an explicit native-reply prompt on every persisted message chunk. Native
-plan callbacks revalidate the pane and use the provider keystroke registry.
-Replies and Continue actions enter the existing inter-session mailbox with a
-live wake attempt; unavailable wake channels leave a durable queued answer.
-Session, project, channel, chat, access-policy, and paused-state checks run
-before forwarding.
-
-Compaction-only pauses defer notification for the existing 600-second
-continuation window. At the deadline the daemon re-reads status and transcript,
-sends a normal pause for real post-compaction output, sends a compaction-failure
-notification for a still-paused session with no real activity, and suppresses
-resumed or superseded sessions. Pending deadline evaluations recover after a
-daemon restart.
-
-Subscription timestamps are stored in UTC and presented to users as local ISO
-timestamps.
 
 ## Inbound identity and session behavior
 

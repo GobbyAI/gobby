@@ -14,7 +14,6 @@
         "outbound-destination-resolution",
         "automatic-responder",
         "webhooks-and-polling",
-        "event-subscriptions",
         "inbound-identity-and-session-behavior",
         "troubleshooting"
       ],
@@ -232,91 +231,6 @@
     {
       "surface": "mcp",
       "server": "gobby-communications",
-      "tool": "create_event_subscription",
-      "audience": "agent",
-      "reference": "src/gobby/install/shared/skills/gobby/references/communications/subscriptions.md",
-      "implementation": {
-        "path": "src/gobby/mcp_proxy/tools/communications.py",
-        "symbol": "create_communications_registry.create_event_subscription"
-      },
-      "verification": [
-        "inventory",
-        "schemas",
-        "source-workflows",
-        "focused-current"
-      ]
-    },
-    {
-      "surface": "mcp",
-      "server": "gobby-communications",
-      "tool": "list_event_subscriptions",
-      "audience": "agent",
-      "reference": "src/gobby/install/shared/skills/gobby/references/communications/subscriptions.md",
-      "implementation": {
-        "path": "src/gobby/mcp_proxy/tools/communications.py",
-        "symbol": "create_communications_registry.list_event_subscriptions"
-      },
-      "verification": [
-        "inventory",
-        "schemas",
-        "source-workflows",
-        "focused-current"
-      ]
-    },
-    {
-      "surface": "mcp",
-      "server": "gobby-communications",
-      "tool": "get_event_subscription",
-      "audience": "agent",
-      "reference": "src/gobby/install/shared/skills/gobby/references/communications/subscriptions.md",
-      "implementation": {
-        "path": "src/gobby/mcp_proxy/tools/communications.py",
-        "symbol": "create_communications_registry.get_event_subscription"
-      },
-      "verification": [
-        "inventory",
-        "schemas",
-        "source-workflows",
-        "focused-current"
-      ]
-    },
-    {
-      "surface": "mcp",
-      "server": "gobby-communications",
-      "tool": "update_event_subscription",
-      "audience": "agent",
-      "reference": "src/gobby/install/shared/skills/gobby/references/communications/subscriptions.md",
-      "implementation": {
-        "path": "src/gobby/mcp_proxy/tools/communications.py",
-        "symbol": "create_communications_registry.update_event_subscription"
-      },
-      "verification": [
-        "inventory",
-        "schemas",
-        "source-workflows",
-        "focused-current"
-      ]
-    },
-    {
-      "surface": "mcp",
-      "server": "gobby-communications",
-      "tool": "delete_event_subscription",
-      "audience": "agent",
-      "reference": "src/gobby/install/shared/skills/gobby/references/communications/subscriptions.md",
-      "implementation": {
-        "path": "src/gobby/mcp_proxy/tools/communications.py",
-        "symbol": "create_communications_registry.delete_event_subscription"
-      },
-      "verification": [
-        "inventory",
-        "schemas",
-        "source-workflows",
-        "focused-current"
-      ]
-    },
-    {
-      "surface": "mcp",
-      "server": "gobby-communications",
       "tool": "send_proactive_message",
       "audience": "agent",
       "reference": "src/gobby/install/shared/skills/gobby/references/communications/messages.md",
@@ -454,86 +368,6 @@
       "implementation": {
         "path": "src/gobby/cli/communications.py",
         "symbol": "channels_remove_cmd"
-      },
-      "verification": [
-        "inventory",
-        "source-workflows",
-        "focused-current",
-        "cli-help-complete"
-      ]
-    },
-    {
-      "surface": "cli",
-      "command": "gobby comms subscriptions create",
-      "audience": "operator",
-      "reference": "src/gobby/install/shared/skills/gobby/references/communications/subscriptions.md",
-      "implementation": {
-        "path": "src/gobby/cli/communications.py",
-        "symbol": "subscriptions_create_cmd"
-      },
-      "verification": [
-        "inventory",
-        "source-workflows",
-        "focused-current",
-        "cli-help-complete"
-      ]
-    },
-    {
-      "surface": "cli",
-      "command": "gobby comms subscriptions list",
-      "audience": "operator",
-      "reference": "src/gobby/install/shared/skills/gobby/references/communications/subscriptions.md",
-      "implementation": {
-        "path": "src/gobby/cli/communications.py",
-        "symbol": "subscriptions_list_cmd"
-      },
-      "verification": [
-        "inventory",
-        "source-workflows",
-        "focused-current",
-        "cli-help-complete"
-      ]
-    },
-    {
-      "surface": "cli",
-      "command": "gobby comms subscriptions get",
-      "audience": "operator",
-      "reference": "src/gobby/install/shared/skills/gobby/references/communications/subscriptions.md",
-      "implementation": {
-        "path": "src/gobby/cli/communications.py",
-        "symbol": "subscriptions_get_cmd"
-      },
-      "verification": [
-        "inventory",
-        "source-workflows",
-        "focused-current",
-        "cli-help-complete"
-      ]
-    },
-    {
-      "surface": "cli",
-      "command": "gobby comms subscriptions update",
-      "audience": "operator",
-      "reference": "src/gobby/install/shared/skills/gobby/references/communications/subscriptions.md",
-      "implementation": {
-        "path": "src/gobby/cli/communications.py",
-        "symbol": "subscriptions_update_cmd"
-      },
-      "verification": [
-        "inventory",
-        "source-workflows",
-        "focused-current",
-        "cli-help-complete"
-      ]
-    },
-    {
-      "surface": "cli",
-      "command": "gobby comms subscriptions delete",
-      "audience": "operator",
-      "reference": "src/gobby/install/shared/skills/gobby/references/communications/subscriptions.md",
-      "implementation": {
-        "path": "src/gobby/cli/communications.py",
-        "symbol": "subscriptions_delete_cmd"
       },
       "verification": [
         "inventory",
@@ -685,86 +519,6 @@
         "source-workflows",
         "focused-current"
       ]
-    },
-    {
-      "surface": "http",
-      "method": "POST",
-      "route": "/api/comms/subscriptions",
-      "audience": "operator",
-      "reference": "src/gobby/install/shared/skills/gobby/references/communications/subscriptions.md",
-      "implementation": {
-        "path": "src/gobby/servers/routes/communications.py",
-        "symbol": "create_communications_router.create_event_subscription"
-      },
-      "verification": [
-        "inventory",
-        "source-workflows",
-        "focused-current"
-      ]
-    },
-    {
-      "surface": "http",
-      "method": "GET",
-      "route": "/api/comms/subscriptions",
-      "audience": "operator",
-      "reference": "src/gobby/install/shared/skills/gobby/references/communications/subscriptions.md",
-      "implementation": {
-        "path": "src/gobby/servers/routes/communications.py",
-        "symbol": "create_communications_router.list_event_subscriptions"
-      },
-      "verification": [
-        "inventory",
-        "source-workflows",
-        "focused-current"
-      ]
-    },
-    {
-      "surface": "http",
-      "method": "GET",
-      "route": "/api/comms/subscriptions/{subscription_id}",
-      "audience": "operator",
-      "reference": "src/gobby/install/shared/skills/gobby/references/communications/subscriptions.md",
-      "implementation": {
-        "path": "src/gobby/servers/routes/communications.py",
-        "symbol": "create_communications_router.get_event_subscription"
-      },
-      "verification": [
-        "inventory",
-        "source-workflows",
-        "focused-current"
-      ]
-    },
-    {
-      "surface": "http",
-      "method": "PATCH",
-      "route": "/api/comms/subscriptions/{subscription_id}",
-      "audience": "operator",
-      "reference": "src/gobby/install/shared/skills/gobby/references/communications/subscriptions.md",
-      "implementation": {
-        "path": "src/gobby/servers/routes/communications.py",
-        "symbol": "create_communications_router.update_event_subscription"
-      },
-      "verification": [
-        "inventory",
-        "source-workflows",
-        "focused-current"
-      ]
-    },
-    {
-      "surface": "http",
-      "method": "DELETE",
-      "route": "/api/comms/subscriptions/{subscription_id}",
-      "audience": "operator",
-      "reference": "src/gobby/install/shared/skills/gobby/references/communications/subscriptions.md",
-      "implementation": {
-        "path": "src/gobby/servers/routes/communications.py",
-        "symbol": "create_communications_router.delete_event_subscription"
-      },
-      "verification": [
-        "inventory",
-        "source-workflows",
-        "focused-current"
-      ]
     }
   ],
   "evidence": [
@@ -831,7 +585,7 @@
     {
       "id": "group-and-commands",
       "command": "gcode symbol-at src/gobby/communications/group_policy.py:27; src/gobby/communications/adapters/telegram_inbound.py:20; commands.py and telegram_actions.py command inspection",
-      "result": "Wildcard groups authorize otherwise unnamed chats; exact fields override wildcard fields. Mention gate recognizes username or reply-to-bot. Shared menu includes subscriptions, handled by Telegram actions."
+      "result": "Wildcard groups authorize otherwise unnamed chats; exact fields override wildcard fields. Mention gate recognizes username or reply-to-bot."
     },
     {
       "id": "telegram-platform",
@@ -845,8 +599,8 @@
     },
     {
       "id": "source-workflows",
-      "command": "gcode symbol-at communications/{manager,inbound,polling,chat_backend}.py and adapters/telegram.py; CLI create/update and all HTTP route handlers",
-      "result": "Verified subscription scope validation/cache invalidation, admission before persistence, identity/topic routing, polling acknowledgement and backoff, responder binding, Telegram initialization and caption continuation. HTTP routes and CLI examples align with current handlers."
+      "command": "gcode symbol-at communications/{manager,inbound,polling,chat_backend}.py and adapters/telegram.py; CLI and HTTP route handlers",
+      "result": "Verified admission before persistence, identity/topic routing, polling acknowledgement and backoff, responder binding, Telegram initialization and caption continuation. HTTP routes and CLI examples align with current handlers."
     },
     {
       "id": "native-plan-registry",
@@ -882,9 +636,9 @@
       ]
     },
     {
-      "finding": "CLI inventory omitted subscriptions and HTTP inventory omitted POST /api/comms/send.",
-      "implementation": "src/gobby/cli/communications.py; src/gobby/servers/routes/communications.py",
-      "resolution": "Add missing entries; create/update/list subscription CLI help verified.",
+      "finding": "HTTP inventory omitted POST /api/comms/send.",
+      "implementation": "src/gobby/servers/routes/communications.py",
+      "resolution": "Add the missing send endpoint.",
       "evidence": [
         "inventory",
         "routing-focused"
@@ -913,14 +667,6 @@
       "resolution": "Document local machine UUID and separate topic external IDs, retaining comms source and sender identity attribution.",
       "evidence": [
         "identity-scope"
-      ]
-    },
-    {
-      "finding": "Communications guide command list omitted Telegram subscriptions.",
-      "implementation": "src/gobby/communications/commands.py; src/gobby/communications/telegram_actions.py",
-      "resolution": "Add Telegram-specific subscriptions command.",
-      "evidence": [
-        "group-and-commands"
       ]
     },
     {
@@ -991,6 +737,6 @@
     }
   ],
   "coverage_notes": [
-    "All 42 communications operations mapped. Communications and Telegram guide sections audited against implementation, registered schemas, installed persona and focused isolated tests. CLI guide audit limited to communications inventory. Official Telegram guidance checked for privacy, transport and rate limits. No live external messages or channel/subscription mutations. Final post-metadata validation is recorded in the task close transcript."
+    "All 27 communications operations mapped. Communications and Telegram guide sections audited against implementation, registered schemas, installed persona and focused isolated tests. CLI guide audit limited to communications inventory. Official Telegram guidance checked for privacy, transport and rate limits. No live external messages or channel mutations. Final post-metadata validation is recorded in the task close transcript."
   ]
 }

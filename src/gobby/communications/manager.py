@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import uuid
 from collections.abc import Callable
 from dataclasses import asdict, replace
 from threading import RLock
@@ -23,13 +22,11 @@ from gobby.communications.models import (
     CommsAttachment,
     CommsIdentity,
     CommsMessage,
-    CommsRoutingRule,
 )
 from gobby.communications.outbound import OutboundCommunications
 from gobby.communications.polling import PollingManager
 from gobby.communications.rate_limiter import TokenBucketRateLimiter
 from gobby.communications.responder import CommunicationsResponder
-from gobby.communications.router import MessageRouter
 from gobby.communications.telegram_access import (
     allowed_senders,
     is_deliberate_start,
@@ -39,24 +36,12 @@ from gobby.communications.telegram_access import (
 from gobby.communications.threads import ThreadManager
 from gobby.communications.voice import VoiceTranscriber, VoiceTranscriberGetter
 from gobby.storage.sessions import LIVE_SESSION_STATUSES
-from gobby.utils.datetime import datetime_to_local_iso, utc_now
-
-
-class EventSubscriptionNotFoundError(LookupError):
-    """Raised when an event subscription does not exist."""
-
-
-class _Unset:
-    pass
-
-
-_UNSET = _Unset()
+from gobby.utils.datetime import utc_now
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from gobby.ai.vision import VisionExtractService
-    from gobby.communications.session_notifications import SessionNotificationService
     from gobby.communications.telegram_actions import TelegramActionController
     from gobby.config.communications import CommunicationsConfig
     from gobby.sessions.status_events import SessionStatusTransition
@@ -99,12 +84,12 @@ class CommunicationsManager:
         self._adapters: dict[str, BaseChannelAdapter] = {}
         self._channel_by_name: dict[str, ChannelConfig] = {}
         self._channel_init_errors: dict[str, str] = {}
+        self._startup_complete = asyncio.Event()
         self._telegram_binding_locks: dict[str, asyncio.Lock] = {}
         self._websocket_broadcast: Any | None = None
         self._voice_transcriber_getter: VoiceTranscriberGetter | None = None
         self._voice_transcription_timeout_seconds = 120.0
         self._vision_extract_service: VisionExtractService | None = None
-        self._session_notifications: SessionNotificationService | None = None
         self._telegram_actions: TelegramActionController | None = None
         self._conversation_attachments: dict[tuple[str, str], str] = {}
         self._managed_telegram_targets: set[tuple[str, str]] = set()
@@ -115,7 +100,6 @@ class CommunicationsManager:
 
         self.attachment_manager = AttachmentManager()
         self._rate_limiter = TokenBucketRateLimiter.from_defaults(config.channel_defaults)
-        self._router = MessageRouter(store)
         self._polling_manager = PollingManager(self)
 
         self._lifecycle = AdapterLifecycleOperations(self)
@@ -139,10 +123,11 @@ class CommunicationsManager:
 
     async def start(self) -> None:
         """Load enabled channels from DB, initialize adapters, configure rate limiter."""
-        await self._lifecycle.start()
-        self._restore_telegram_targets()
-        if self._session_notifications is not None:
-            await self._session_notifications.start()
+        try:
+            await self._lifecycle.start()
+            self._restore_telegram_targets()
+        finally:
+            self._startup_complete.set()
 
     def _restore_telegram_targets(self) -> None:
         """Recover private-chat target selections from channel configuration."""
@@ -165,8 +150,6 @@ class CommunicationsManager:
 
     async def stop(self) -> None:
         """Shutdown all adapters and clear state."""
-        if self._session_notifications is not None:
-            await self._session_notifications.stop()
         await self.responder.stop()
         await self._lifecycle.stop()
         if self._vision_extract_service is not None:
@@ -194,7 +177,18 @@ class CommunicationsManager:
         metadata: dict[str, Any] | None = None,
     ) -> CommsMessage:
         """Send a message to a named channel."""
+        await self._wait_for_channel_startup(channel_name)
         return await self._outbound.send_message(channel_name, content, session_id, metadata)
+
+    async def _wait_for_channel_startup(self, channel_name: str) -> None:
+        """Wait for an enabled channel when a send races adapter initialization."""
+        if channel_name not in self._adapters and not self._startup_complete.is_set():
+            channel = await asyncio.to_thread(self._store.get_channel_by_name, channel_name)
+            if channel is not None and channel.enabled:
+                try:
+                    await asyncio.wait_for(self._startup_complete.wait(), timeout=120.0)
+                except TimeoutError as exc:
+                    raise TimeoutError(f"Channel {channel_name!r} did not initialize") from exc
 
     def supports_message_edit(self, channel_name: str) -> bool:
         """Return whether the active adapter implements message editing."""
@@ -247,6 +241,8 @@ class CommunicationsManager:
         platform_message_id: str,
         content: str,
         conversation_id: str,
+        *,
+        inline_keyboard: list[list[dict[str, str]]] | None = None,
     ) -> None:
         """Replace an existing platform message through an active adapter."""
         adapter = self._adapters.get(channel_name)
@@ -265,14 +261,27 @@ class CommunicationsManager:
             platform_destination=conversation_id if channel.channel_type == "telegram" else None,
         )
         if channel.channel_type == "telegram":
+            if inline_keyboard is not None and stored_message is None:
+                raise ValueError("Cannot replace a Telegram keyboard without its stored message")
             label = await asyncio.to_thread(
                 self.telegram_sender_label,
                 channel,
                 stored_message.session_id if stored_message is not None else None,
             )
-            await cast(TelegramAdapter, adapter).edit_message(
-                platform_message_id, content, conversation_id, sender_label=label
-            )
+            telegram = cast(TelegramAdapter, adapter)
+            if inline_keyboard is None:
+                await telegram.edit_message(
+                    platform_message_id, content, conversation_id, sender_label=label
+                )
+            else:
+                await telegram.edit_message(
+                    platform_message_id,
+                    content,
+                    conversation_id,
+                    sender_label=label,
+                    inline_keyboard=inline_keyboard,
+                    callback_source=stored_message,
+                )
         else:
             await adapter.edit_message(platform_message_id, content, conversation_id)
         if stored_message is not None:
@@ -302,6 +311,7 @@ class CommunicationsManager:
         metadata: dict[str, Any] | None = None,
     ) -> tuple[CommsMessage, CommsAttachment]:
         """Send a file attachment to a named channel."""
+        await self._wait_for_channel_startup(channel_name)
         return await self._outbound.send_attachment(
             channel_name,
             file_path,
@@ -310,26 +320,6 @@ class CommunicationsManager:
             content,
             session_id,
             metadata,
-        )
-
-    async def send_event(
-        self,
-        event_type: str,
-        content: str,
-        project_id: str | None = None,
-        session_id: str | None = None,
-        *,
-        event_id: str | None = None,
-        metadata: dict[str, Any] | None = None,
-    ) -> list[CommsMessage]:
-        """Route event to matching channels and send to each."""
-        return await self._outbound.send_event(
-            event_type,
-            content,
-            project_id,
-            session_id,
-            event_id=event_id,
-            metadata=metadata,
         )
 
     def _bridge_identity(self, identity_id: str, session_id: str) -> None:
@@ -408,18 +398,11 @@ class CommunicationsManager:
         """Wire the daemon's configured vision extraction service."""
         self._vision_extract_service = service
 
-    def set_session_notification_service(
-        self,
-        service: SessionNotificationService,
-    ) -> None:
-        """Attach transcript-aware session lifecycle notifications."""
-        self._session_notifications = service
-
     def set_telegram_action_controller(
         self,
         controller: TelegramActionController,
     ) -> None:
-        """Attach Telegram lifecycle and subscription actions."""
+        """Attach Telegram command and callback actions."""
         self._telegram_actions = controller
 
     def attached_session(self, channel_id: str, conversation_id: str) -> str | None:
@@ -544,12 +527,6 @@ class CommunicationsManager:
             from gobby.communications.telegram_fallback import fallback_telegram_targets
 
             await fallback_telegram_targets(self, transition)
-        if self._session_notifications is not None:
-            await self._session_notifications.route_transition(transition)
-            return
-        from gobby.communications.session_events import route_session_status_transition
-
-        await route_session_status_transition(self, transition)
 
     async def handle_session_action(
         self,
@@ -682,227 +659,3 @@ class CommunicationsManager:
     def update_identity_session(self, identity_id: str, session_id: str | None) -> None:
         """Link or unlink an identity to a session."""
         self._store.update_identity_session(identity_id, session_id)
-
-    def _resolve_subscription_channel(self, channel: str) -> ChannelConfig:
-        channel_ref = channel.strip()
-        if not channel_ref:
-            raise ValueError("Channel is required")
-        resolved = None
-        try:
-            uuid.UUID(channel_ref)
-        except ValueError:
-            pass
-        else:
-            resolved = self._store.get_channel(channel_ref)
-        if resolved is None:
-            resolved = self._store.get_channel_by_name(channel_ref)
-        if resolved is None:
-            raise ValueError(f"Channel '{channel_ref}' not found")
-        return resolved
-
-    def _validate_subscription_scope(
-        self,
-        *,
-        project_id: str | None,
-        global_scope: bool,
-        session_id: str | None,
-    ) -> str | None:
-        if global_scope:
-            if project_id is not None:
-                raise ValueError("Choose either project scope or global scope")
-            if session_id is not None:
-                raise ValueError("Global subscriptions cannot be session-scoped")
-            return None
-
-        if project_id is None or not project_id.strip():
-            raise ValueError("Project scope or explicit global scope is required")
-        if session_id is not None:
-            session = self._session_store.get(session_id)
-            if session is None:
-                raise ValueError(f"Session '{session_id}' not found")
-            if session.project_id != project_id:
-                raise ValueError("Session does not belong to the selected project")
-        return project_id
-
-    def get_session_project_id(self, session_id: str) -> str | None:
-        """Return the project for a session visible to communications."""
-        session = self._session_store.get(session_id)
-        return session.project_id if session is not None else None
-
-    def create_event_subscription(
-        self,
-        *,
-        name: str,
-        channel: str,
-        event_pattern: str,
-        project_id: str | None,
-        global_scope: bool,
-        session_id: str | None = None,
-        priority: int = 0,
-        enabled: bool = True,
-    ) -> CommsRoutingRule:
-        """Create a validated event subscription."""
-        normalized_name = name.strip()
-        normalized_pattern = event_pattern.strip()
-        if not normalized_name:
-            raise ValueError("Subscription name is required")
-        if not normalized_pattern:
-            raise ValueError("Event pattern is required")
-
-        resolved_channel = self._resolve_subscription_channel(channel)
-        resolved_project_id = self._validate_subscription_scope(
-            project_id=project_id,
-            global_scope=global_scope,
-            session_id=session_id,
-        )
-        now = utc_now()
-        rule = CommsRoutingRule(
-            id=str(uuid.uuid4()),
-            name=normalized_name,
-            channel_id=resolved_channel.id,
-            event_pattern=normalized_pattern,
-            project_id=resolved_project_id,
-            session_id=session_id,
-            priority=priority,
-            enabled=enabled,
-            config_json={},
-            created_at=now,
-            updated_at=now,
-        )
-        result = self._store.create_routing_rule(rule)
-        self._router.invalidate_cache()
-        return result
-
-    def get_event_subscription(self, subscription_id: str) -> CommsRoutingRule:
-        """Get an event subscription by ID."""
-        rule = self._store.get_routing_rule(subscription_id)
-        if rule is None:
-            raise EventSubscriptionNotFoundError(
-                f"Event subscription '{subscription_id}' not found"
-            )
-        return rule
-
-    def list_event_subscriptions(
-        self,
-        *,
-        channel: str | None = None,
-        project_id: str | None = None,
-        global_scope: bool | None = None,
-        enabled: bool | None = None,
-        event_pattern: str | None = None,
-    ) -> list[CommsRoutingRule]:
-        """List event subscriptions, including disabled entries by default."""
-        if global_scope is True and project_id is not None:
-            raise ValueError("Choose either project scope or global scope")
-        channel_id = None
-        if channel is not None:
-            channel_id = self._resolve_subscription_channel(channel).id
-        return self._store.list_routing_rules(
-            channel_id=channel_id,
-            project_id=project_id,
-            global_scope=global_scope,
-            enabled=enabled,
-            event_pattern=event_pattern,
-        )
-
-    def update_event_subscription(
-        self,
-        subscription_id: str,
-        *,
-        name: str | None = None,
-        channel: str | None = None,
-        event_pattern: str | None = None,
-        project_id: str | None = None,
-        global_scope: bool | None = None,
-        session_id: str | None | _Unset = _UNSET,
-        priority: int | None = None,
-        enabled: bool | None = None,
-    ) -> CommsRoutingRule:
-        """Partially update an event subscription."""
-        current = self.get_event_subscription(subscription_id)
-        if name is not None:
-            normalized_name = name.strip()
-            if not normalized_name:
-                raise ValueError("Subscription name is required")
-            current.name = normalized_name
-        if event_pattern is not None:
-            normalized_pattern = event_pattern.strip()
-            if not normalized_pattern:
-                raise ValueError("Event pattern is required")
-            current.event_pattern = normalized_pattern
-        if channel is not None:
-            current.channel_id = self._resolve_subscription_channel(channel).id
-
-        next_session_id = current.session_id if isinstance(session_id, _Unset) else session_id
-        next_project_id = current.project_id
-        if global_scope is True:
-            if project_id is not None:
-                raise ValueError("Choose either project scope or global scope")
-            next_project_id = None
-        elif project_id is not None:
-            next_project_id = project_id
-        elif global_scope is False:
-            raise ValueError("Project ID is required for project scope")
-        current.project_id = self._validate_subscription_scope(
-            project_id=next_project_id,
-            global_scope=next_project_id is None,
-            session_id=next_session_id,
-        )
-        current.session_id = next_session_id
-        if priority is not None:
-            current.priority = priority
-        if enabled is not None:
-            current.enabled = enabled
-        current.updated_at = utc_now()
-        current.config_json = dict(current.config_json)
-        result = self._store.update_routing_rule(current)
-        self._router.invalidate_cache()
-        return result
-
-    def delete_event_subscription(self, subscription_id: str) -> None:
-        """Delete an event subscription by ID."""
-        self.get_event_subscription(subscription_id)
-        self._store.delete_routing_rule(subscription_id)
-        self._router.invalidate_cache()
-
-    def event_subscription_to_dict(self, rule: CommsRoutingRule) -> dict[str, Any]:
-        """Serialize the public event-subscription contract."""
-        if rule.channel_id is None:
-            raise ValueError("Event subscription has no channel")
-        channel = self._store.get_channel(rule.channel_id)
-        if channel is None:
-            raise ValueError(f"Channel '{rule.channel_id}' not found")
-
-        return {
-            "id": rule.id,
-            "name": rule.name,
-            "channel_id": channel.id,
-            "channel_name": channel.name,
-            "scope": {
-                "kind": "global" if rule.project_id is None else "project",
-                "project_id": rule.project_id,
-            },
-            "event_pattern": rule.event_pattern,
-            "session_id": rule.session_id,
-            "priority": rule.priority,
-            "enabled": rule.enabled,
-            "created_at": datetime_to_local_iso(rule.created_at),
-            "updated_at": datetime_to_local_iso(rule.updated_at),
-        }
-
-    def create_routing_rule(self, rule: CommsRoutingRule) -> CommsRoutingRule:
-        """Create a routing rule and invalidate the router cache."""
-        result = self._store.create_routing_rule(rule)
-        self._router.invalidate_cache()
-        return result
-
-    def update_routing_rule(self, rule: CommsRoutingRule) -> CommsRoutingRule:
-        """Update a routing rule and invalidate the router cache."""
-        result = self._store.update_routing_rule(rule)
-        self._router.invalidate_cache()
-        return result
-
-    def delete_routing_rule(self, rule_id: str) -> None:
-        """Delete a routing rule and invalidate the router cache."""
-        self._store.delete_routing_rule(rule_id)
-        self._router.invalidate_cache()

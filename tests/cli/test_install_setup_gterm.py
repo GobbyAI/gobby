@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
@@ -191,8 +192,38 @@ class TestGclientInstaller:
         assert "--features" not in command
         assert "vt-engine" not in command
         assert command[:5] == ["cargo", "build", "--release", "-p", "gobby-client"]
-        assert mock_run.call_args.kwargs["timeout"] == 180
+        assert mock_run.call_args.kwargs["timeout"] == 1800
         assert (dest / "gclient").read_bytes() == b"gclient-bin"
+
+    def test_workspace_build_timeout_preserves_installed_binary(self, tmp_path: Path) -> None:
+        workspace = tmp_path / "workspace"
+        (workspace / "crates" / "gclient").mkdir(parents=True)
+        (workspace / "src" / "gobby" / "cli").mkdir(parents=True)
+        (workspace / "Cargo.toml").touch()
+        (workspace / "crates" / "gclient" / "Cargo.toml").touch()
+        dest = tmp_path / "bin"
+        dest.mkdir()
+        installed = dest / "gclient"
+        installed.write_bytes(b"previous-gclient")
+
+        with (
+            patch("gobby.cli.install_setup.shutil.which", side_effect=_which_cargo_only),
+            patch(
+                "gobby.cli.install_setup.subprocess.run",
+                side_effect=subprocess.TimeoutExpired(cmd=["cargo", "build"], timeout=1800),
+            ) as mock_run,
+            patch(
+                "gobby.cli.install_setup_gclient.__file__",
+                str(workspace / "src" / "gobby" / "cli" / "install_setup_gclient.py"),
+            ),
+            patch("gobby.cli.install_setup_gclient.stage_and_promote_binary_file") as mock_promote,
+        ):
+            result = _install_gclient_from_submodule(dest)
+
+        assert result is None
+        assert mock_run.call_args.kwargs["timeout"] == 1800
+        mock_promote.assert_not_called()
+        assert installed.read_bytes() == b"previous-gclient"
 
     def test_workspace_build_keeps_installed_binary_when_hash_matches(self, tmp_path: Path) -> None:
         workspace = tmp_path / "workspace"

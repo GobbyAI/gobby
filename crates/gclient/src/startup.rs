@@ -15,7 +15,7 @@ const HEALTH_PATH: &str = "/api/health";
 const HEALTH_TIMEOUT: Duration = Duration::from_secs(2);
 const USAGE: &str = "Usage: gclient [--project PROJECT] [--node NODE] [--workspace WORKSPACE] \
      [--daemon-url URL] [--token-file PATH] [--frame-delivery auto|direct|proxy] \
-     [--no-mouse] [--version]";
+     [--no-mouse] [--version]\nCommand mode: gclient help";
 const FRAME_DELIVERY_USAGE: &str = "--frame-delivery requires auto, direct, or proxy";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -672,6 +672,15 @@ fn arm_session<B: ModeBackend>(
 }
 
 pub fn run() -> anyhow::Result<()> {
+    if std::env::args()
+        .nth(1)
+        .is_some_and(|arg| crate::command::is_verb(&arg))
+    {
+        std::process::exit(crate::command::dispatch(
+            std::env::args().skip(1).collect(),
+            crate::command::CommandEnv::from_process(),
+        ));
+    }
     let args = parse_args(std::env::args())?;
     if args.version {
         println!("gclient {}", env!("CARGO_PKG_VERSION"));

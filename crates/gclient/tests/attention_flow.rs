@@ -436,7 +436,19 @@ async fn agent_row_click_jumps_and_labels_the_session() {
         "rendered UI: {screen:?}"
     );
     assert!(screen.contains("○ Unknown"), "rendered UI: {screen:?}");
-    assert!(!screen.contains("%16"), "rendered UI: {screen:?}");
-    assert!(!screen.contains("sess-1"), "rendered UI: {screen:?}");
+    let sidebar: String = terminal
+        .backend()
+        .buffer()
+        .content
+        .chunks(area.width as usize)
+        .flat_map(|row| {
+            row.iter()
+                .skip(sessions.x as usize)
+                .take(sessions.width as usize)
+                .map(|cell| cell.symbol())
+        })
+        .collect();
+    assert!(!sidebar.contains("%16"), "sidebar: {sidebar:?}");
+    assert!(!sidebar.contains("sess-1"), "sidebar: {sidebar:?}");
     mock.shutdown().await;
 }

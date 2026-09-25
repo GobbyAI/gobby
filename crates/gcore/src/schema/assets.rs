@@ -224,6 +224,12 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
         checksum: "449ae04f4d41057f071eaaae16df9365d6b94f03b725e92202b239369f730cf6",
         sql: include_str!("../../assets/schema/migrations/450_drop_session_heuristic_title.sql"),
     },
+    EmbeddedMigration {
+        version: 451,
+        filename: "451_drop_comms_routing_rules.sql",
+        checksum: "96644fa5866262c425fa3a8f43cf74110b4d94a8ebe8511112e5bf48a416b941",
+        sql: include_str!("../../assets/schema/migrations/451_drop_comms_routing_rules.sql"),
+    },
 ];
 // Numbered migrations after canonical baseline@420 land here.
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");

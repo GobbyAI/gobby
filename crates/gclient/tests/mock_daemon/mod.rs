@@ -75,6 +75,8 @@ struct MockState {
     kill_refusals: VecDeque<String>,
     /// `(code, reason)` the next `workspace_op` replies refuse with, in order.
     workspace_refusals: VecDeque<(String, String)>,
+    workspace_results: VecDeque<Value>,
+    workspace_requests: Vec<Value>,
     detach_replies: VecDeque<(bool, Option<String>)>,
     proxy_attach_refusals: VecDeque<(String, String)>,
     /// The `direct` locator every `frame_delivery: "direct"` attach answers
@@ -128,6 +130,8 @@ impl MockDaemon {
             write_outcomes: VecDeque::new(),
             kill_refusals: VecDeque::new(),
             workspace_refusals: VecDeque::new(),
+            workspace_results: VecDeque::new(),
+            workspace_requests: Vec::new(),
             detach_replies: VecDeque::new(),
             proxy_attach_refusals: VecDeque::new(),
             direct_attach_locator: None,
@@ -405,6 +409,22 @@ impl MockDaemon {
             .expect("mock state")
             .workspace_refusals
             .push_back((code.to_string(), reason.to_string()));
+    }
+
+    pub fn enqueue_workspace_result(&self, result: Value) {
+        self.state
+            .lock()
+            .expect("mock state")
+            .workspace_results
+            .push_back(result);
+    }
+
+    pub fn workspace_requests(&self) -> Vec<Value> {
+        self.state
+            .lock()
+            .expect("mock state")
+            .workspace_requests
+            .clone()
     }
 
     pub fn enqueue_detach_reply(&self, success: bool, reason: Option<&str>) {
@@ -968,6 +988,7 @@ fn websocket_reply(state: &Arc<Mutex<MockState>>, request: &Value) -> Option<Val
         }
         "workspace_op" => {
             let mut state = state.lock().expect("mock state");
+            state.workspace_requests.push(request.clone());
             if request.get("op").and_then(Value::as_str) == Some("workspace.list") {
                 return Some(json!({
                     "type": "workspace_op",
@@ -997,13 +1018,18 @@ fn websocket_reply(state: &Arc<Mutex<MockState>>, request: &Value) -> Option<Val
                 }));
             }
             let events = state.workspace.apply(request);
-            let result = if request.get("op").and_then(Value::as_str) == Some("tab.create") {
-                events
-                    .first()
-                    .map(|event| json!({"tabs": event["tabs"], "panes": event["panes"]}))
-            } else {
-                None
-            };
+            let result = state.workspace_results.pop_front().or_else(|| {
+                match request.get("op").and_then(Value::as_str) {
+                    Some("tab.create" | "pane.split") => events
+                        .first()
+                        .map(|event| json!({"tabs": event["tabs"], "panes": event["panes"]})),
+                    Some("pane.read") => Some(json!({"text": "mock pane output"})),
+                    Some("pane.wait_for_output") => {
+                        Some(json!({"matched": true, "reason": "matched"}))
+                    }
+                    _ => None,
+                }
+            });
             state.pending_workspace_events.extend(events);
             Some(json!({
                 "type": "workspace_op",

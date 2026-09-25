@@ -1489,50 +1489,6 @@
       "definition": "text|text|NO|'sent'::text|NEVER"
     },
     {
-      "name": "comms_routing_rules.channel_id",
-      "definition": "uuid|uuid|YES||NEVER"
-    },
-    {
-      "name": "comms_routing_rules.config_json",
-      "definition": "jsonb|jsonb|NO|'{}'::jsonb|NEVER"
-    },
-    {
-      "name": "comms_routing_rules.created_at",
-      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
-    },
-    {
-      "name": "comms_routing_rules.enabled",
-      "definition": "boolean|bool|YES|true|NEVER"
-    },
-    {
-      "name": "comms_routing_rules.event_pattern",
-      "definition": "text|text|NO|'*'::text|NEVER"
-    },
-    {
-      "name": "comms_routing_rules.id",
-      "definition": "uuid|uuid|NO||NEVER"
-    },
-    {
-      "name": "comms_routing_rules.name",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "comms_routing_rules.priority",
-      "definition": "integer|int4|YES|0|NEVER"
-    },
-    {
-      "name": "comms_routing_rules.project_id",
-      "definition": "uuid|uuid|YES||NEVER"
-    },
-    {
-      "name": "comms_routing_rules.session_id",
-      "definition": "uuid|uuid|YES||NEVER"
-    },
-    {
-      "name": "comms_routing_rules.updated_at",
-      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
-    },
-    {
       "name": "completion_subscribers.completion_id",
       "definition": "uuid|uuid|NO||NEVER"
     },
@@ -6727,22 +6683,6 @@
       "definition": "FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE SET NULL DEFERRABLE"
     },
     {
-      "name": "comms_routing_rules.comms_routing_rules_channel_id_fkey",
-      "definition": "FOREIGN KEY (channel_id) REFERENCES comms_channels(id) ON DELETE CASCADE DEFERRABLE"
-    },
-    {
-      "name": "comms_routing_rules.comms_routing_rules_pkey",
-      "definition": "PRIMARY KEY (id)"
-    },
-    {
-      "name": "comms_routing_rules.comms_routing_rules_project_id_fkey",
-      "definition": "FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE"
-    },
-    {
-      "name": "comms_routing_rules.comms_routing_rules_session_id_fkey",
-      "definition": "FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE SET NULL DEFERRABLE"
-    },
-    {
       "name": "completion_subscribers.completion_subscribers_pkey",
       "definition": "PRIMARY KEY (completion_id, session_id)"
     },
@@ -8627,10 +8567,6 @@
       "definition": "CREATE UNIQUE INDEX comms_messages_pkey ON $schema.comms_messages USING btree (id)"
     },
     {
-      "name": "comms_routing_rules_pkey",
-      "definition": "CREATE UNIQUE INDEX comms_routing_rules_pkey ON $schema.comms_routing_rules USING btree (id)"
-    },
-    {
       "name": "completion_subscribers_pkey",
       "definition": "CREATE UNIQUE INDEX completion_subscribers_pkey ON $schema.completion_subscribers USING btree (completion_id, session_id)"
     },
@@ -9013,14 +8949,6 @@
     {
       "name": "idx_comms_messages_session",
       "definition": "CREATE INDEX idx_comms_messages_session ON $schema.comms_messages USING btree (session_id)"
-    },
-    {
-      "name": "idx_comms_routing_rules_channel",
-      "definition": "CREATE INDEX idx_comms_routing_rules_channel ON $schema.comms_routing_rules USING btree (channel_id)"
-    },
-    {
-      "name": "idx_comms_routing_rules_enabled",
-      "definition": "CREATE INDEX idx_comms_routing_rules_enabled ON $schema.comms_routing_rules USING btree (enabled)"
     },
     {
       "name": "idx_completion_subscribers_completion",

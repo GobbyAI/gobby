@@ -5,6 +5,7 @@ mod live_reader;
 mod live_workspace;
 mod projects;
 mod rest;
+pub(crate) use rest::project_rows;
 mod roster;
 mod workspace;
 mod ws;

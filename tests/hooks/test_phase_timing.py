@@ -10,6 +10,8 @@ from gobby.hooks.phase_timing import (
     hook_phase_timing_scope,
     measure_hook_phase,
     observe_hook_phase_timings,
+    timed_await,
+    timed_to_thread,
 )
 from gobby.storage.hub.protocol import HubDatabase
 
@@ -26,6 +28,24 @@ def test_phase_scope_accumulates_nested_hook_work() -> None:
             pass
 
     assert timings.snapshot()["handler_body"] > 0
+
+
+@pytest.mark.asyncio
+async def test_prelude_timing_separates_executor_queue_and_work() -> None:
+    timings = HookPhaseTimings()
+
+    async def immediate() -> int:
+        return 7
+
+    with hook_phase_timing_scope(timings):
+        assert await timed_to_thread("prelude_probe", lambda: 42) == 42
+        assert await timed_await("prelude_async", immediate()) == 7
+
+    breakdown = timings.breakdown()
+    assert breakdown["prelude_probe_queue"] >= 0
+    assert breakdown["prelude_probe_work"] >= 0
+    assert breakdown["prelude_probe"] >= breakdown["prelude_probe_queue"]
+    assert breakdown["prelude_async"] >= 0
 
 
 def test_hook_scope_reports_hub_query_percentiles(temp_db: HubDatabase) -> None:

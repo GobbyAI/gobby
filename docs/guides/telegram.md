@@ -412,7 +412,7 @@ The registered responder commands are:
 | `/reset` | Reset the current conversation session. |
 | `/stop` | Cancel the active turn for this conversation. |
 | `/status` | Report active or idle state plus the resolved provider and model. |
-| `/subscriptions` | Manage event subscriptions attached to this Telegram channel. |
+| `/agent` | Choose the active agent for this conversation. |
 | `/help` | Show the command summary. |
 
 Telegram initialization synchronizes these commands into the bot menu.
@@ -432,57 +432,6 @@ Set the project through the `gobby-communications` MCP server:
 ```
 
 Project selection applies to future turns and survives daemon restarts.
-
-## Actionable session notifications
-
-Subscriptions for session pause and expiry events produce concise lifecycle
-messages such as `gobby#42 - Index docs - Paused` and
-`gobby#42 - Index docs - Expired`. References include the project; when a
-resolved reference is unavailable, the project UUID prefixes the sequence
-number. Provisional titles contain only the provider
-label, so the session reference appears once. The message
-includes the complete last visible assistant response while omitting provider
-details, session UUIDs, compaction summaries, continuation prompts, and injected
-handoff context. Long responses use normal Telegram HTML conversion and
-4,096-character chunking.
-
-Paused notifications are actionable:
-
-- A single structured question gets one button per declared option.
-- Multiple structured questions keep their complete prompts and options in the
-  message for a native Telegram reply.
-- A live native plan menu gets its exact provider choices. Claude, Codex,
-  Droid, Grok, Qwen, and AGY choices are revalidated against the current pane
-  before provider-specific keystrokes are sent. AGY opens the artifact review
-  with `ctrl+r`, then sends `y` to approve or `n` to request changes.
-- Other pauses get a **Continue** button.
-- A native reply to any chunk of a paused notification forwards the reply text
-  verbatim. Every paused message explicitly tells the user that replies are
-  accepted.
-
-Buttons and replies are checked against the current Telegram access policy,
-originating channel and chat, persisted notification metadata, and live paused
-session state. For Continue and native replies, **Sent.** means the mailbox
-message reached a live wake channel; **Queued for delivery.** means the answer
-is durably stored for the session and will be available when it can resume.
-For a native plan button, **Sent.** means the revalidated provider keystroke was
-delivered to the live pane.
-
-A pause caused only by compaction machinery is held for up to 600 seconds. Gobby
-re-reads the session and transcript at the deadline: real agent output produces
-the normal paused message, a still-paused session with no real activity produces
-`<project>#<session-number> - <title> - Compaction failed`, and a resumed or superseded
-session produces no notification. Pending evaluations recover after daemon
-restart.
-
-`/subscriptions` works only in an allowlisted private chat. It shows enabled and
-disabled subscriptions attached to the current Telegram channel, six per page.
-Each row changes to an explicit desired state; **Enable all** and **Disable all**
-apply that state to every subscription on the channel. Every mutation returns a
-fresh menu snapshot. Callbacks are scoped to their originating channel and chat.
-Starting a new Telegram conversation with `/new` does not change channel
-subscriptions. A subscription explicitly scoped to the previous session simply
-does not match events from the new session.
 
 ## MCP sends
 
@@ -536,7 +485,7 @@ endpoint, and other files use the document endpoint.
 
 | Capability | Current behavior |
 |------------|------------------|
-| Commands and menu | `/new`, `/reset`, `/stop`, `/status`, `/subscriptions`, and `/help`; menu synchronized at adapter initialization. |
+| Commands and menu | `/new`, `/reset`, `/stop`, `/status`, `/agent`, and `/help`; menu synchronized at adapter initialization. |
 | Typing | Sends `sendChatAction` while a responder turn is active. Very fast replies may finish before the indicator is visually noticeable. |
 | Streaming | Sends an initial response and edits it as text arrives; final content is persisted. |
 | Formatting and chunking | Converts Markdown to Telegram HTML and safely splits output into 4,096-character messages. |
@@ -547,10 +496,7 @@ endpoint, and other files use the document endpoint.
 | Reactions | Normalizes Telegram reaction updates and can add one standard emoji reaction or clear the bot's reaction. |
 | Topics | Preserves `message_thread_id` for forum topics and private topics, with per-topic sessions and replies. |
 | Inline keyboards | Sends callback buttons, resolves opaque single-use values, acknowledges callback queries, and routes selections to the originating session. |
-| Session lifecycle actions | Pause notifications accept option/Continue buttons and native replies; live wakes report sent and durable mailbox fallback reports queued. |
-| Subscription controls | Authorized private chats can list, page, enable, and disable the current channel's event subscriptions with `/subscriptions`. |
 | Link previews | Channel `link_preview_options` provides defaults; a `send_message` override controls one message and remains consistent during streaming edits. |
-| Scheduled delivery | Cron and routing-rule delivery can target a Telegram channel's `default_destination`; delivery is idempotent across job retries. |
 | Passive context | Stores authorized non-waking group messages and prepends bounded recent context to the next waking turn. |
 | Polling continuity | Persists acknowledged `poll_offset` values after processed batches. |
 | Deduplication | Platform message IDs prevent repeated inbound processing. |
