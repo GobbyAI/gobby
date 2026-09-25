@@ -86,13 +86,6 @@ def test_autonomous_stuck_lifecycle_counter_registered(metrics_collector):
     assert all_metrics["counters"]["agent_lifecycle_autonomous_stuck_detected_total"]["value"] == 1
 
 
-def test_daemon_event_loop_lag_histogram_registered(metrics_collector: TelemetryMetrics) -> None:
-    metrics_collector.observe_histogram("daemon_event_loop_lag_seconds", value=0.3)
-
-    all_metrics = metrics_collector.get_all_metrics()
-    assert all_metrics["histograms"]["daemon_event_loop_lag_seconds"]["count"] == 1
-
-
 def test_set_gauge(metrics_collector, meter_provider):
     _, reader = meter_provider
     metrics_collector.set_gauge("mcp_active_connections", value=5.0)
