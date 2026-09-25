@@ -61,6 +61,13 @@ ORPHANED_TEMP_RETENTION_SECONDS: Final = 60 * 60.0
 # stays short. The inbox holds tens of entries in steady state.
 ORPHANED_TEMP_PRUNE_MAX_ENTRIES: Final = 100_000
 
+# A consumer claims a delivery-receipt ack by renaming it to
+# ``<ack>.<owner>.claimed.tmp``. Only the daemon consumes acks, and the owner
+# token is fresh per process, so a claim under another token belongs to a dead
+# daemon and is handed back to the inbox instead of being lost.
+_RECEIPT_CLAIM_SUFFIX: Final = ".claimed.tmp"
+_RECEIPT_CLAIM_OWNER = uuid.uuid4().hex
+
 
 def get_hook_inbox_dir() -> Path:
     """Return the daemon hook inbox directory."""
@@ -147,13 +154,14 @@ def _consume_inbox_delivery_receipt(
 
     Per-hook sweeps and the drain list and read the same ack file concurrently.
     The atomic rename lets exactly one of them acknowledge it; the others return
-    False. The claimed name ends in ``.tmp``, so the drain never lists it and the
-    orphaned-temp prune removes one a crashed consumer leaves behind.
+    False. The claimed name ends in ``.tmp``, so no sweep lists it, and it carries
+    this process's owner token, so the next daemon restores a claim that a crash
+    stranded before the CAS (``_restore_orphaned_receipt_claims``).
     """
 
     from gobby.storage.hook_receipts import acknowledge_receipt
 
-    claimed = path.with_name(f"{path.name}.{uuid.uuid4().hex}.claimed.tmp")
+    claimed = path.with_name(f"{path.name}.{_RECEIPT_CLAIM_OWNER}{_RECEIPT_CLAIM_SUFFIX}")
     try:
         path.rename(claimed)
     except FileNotFoundError:
@@ -216,6 +224,30 @@ def _consume_inbox_delivery_receipt(
     return True
 
 
+def _restore_orphaned_receipt_claims(inbox_dir: Path) -> int:
+    """Hand acks that an earlier daemon claimed but never acknowledged back to the inbox.
+
+    Blocking. A restored ack is consumed by the next sweep; if its receipt moved
+    on meanwhile, the CAS records the usual stale no-op.
+    """
+    restored = 0
+    for claimed in inbox_dir.glob(f"*{_RECEIPT_CLAIM_SUFFIX}"):
+        ack_name, _, owner = claimed.name.removesuffix(_RECEIPT_CLAIM_SUFFIX).rpartition(".")
+        if not ack_name or owner == _RECEIPT_CLAIM_OWNER:
+            continue
+        try:
+            claimed.rename(claimed.with_name(ack_name))
+        except FileNotFoundError:
+            continue  # A concurrent sweep restored it first.
+        except OSError as exc:
+            logger.warning("Could not restore delivery-receipt claim %s: %s", claimed.name, exc)
+            continue
+        restored += 1
+    if restored:
+        logger.info("Restored %d delivery-receipt ack(s) an earlier daemon left claimed", restored)
+    return restored
+
+
 def consume_pending_delivery_receipts(app: Any, inbox_dir: Path | None = None) -> int:
     """Consume well-formed delivery-receipt acks waiting in the inbox.
 
@@ -232,6 +264,7 @@ def consume_pending_delivery_receipts(app: Any, inbox_dir: Path | None = None) -
     pending_dir = inbox_dir or get_hook_inbox_dir()
     if not pending_dir.exists():
         return 0
+    _restore_orphaned_receipt_claims(pending_dir)
     consumed = 0
     processed_dir = get_processed_envelope_dir(pending_dir)
     for path in _iter_inbox_files(pending_dir):
@@ -454,7 +487,8 @@ async def _drain_hook_inbox_once_locked(
     if not pending_dir.exists():
         return 0
 
-    pending_files = _iter_inbox_files(pending_dir)
+    await asyncio.to_thread(_restore_orphaned_receipt_claims, pending_dir)
+    pending_files = await asyncio.to_thread(_iter_inbox_files, pending_dir)
     if not pending_files:
         return 0
     if read_local_api_token() is None:
@@ -481,7 +515,9 @@ async def _drain_hook_inbox_once_locked(
     processed_dir = get_processed_envelope_dir(pending_dir)
     for path in pending_files:
         envelope_id = envelope_id_from_inbox_path(path)
-        envelope = _load_envelope(path)
+        # Reading, parsing and any quarantine move are disk work; keep them off
+        # the event loop.
+        envelope = await asyncio.to_thread(_load_envelope, path)
         if envelope is None:
             continue
 
@@ -831,8 +867,12 @@ def _compute_sleep_seconds(interval_seconds: int, jitter_seconds: float) -> floa
 
 
 def _is_orphaned_temp_name(name: str) -> bool:
-    """True for ghook's atomic-write intermediate or a claimed delivery-receipt ack."""
-    return name.endswith(".tmp")
+    """True for ghook's atomic-write intermediate, never for a delivery-receipt claim.
+
+    A claim holds an ack nobody has acknowledged yet; deleting it would lose the
+    delivery, so a stranded claim is restored instead.
+    """
+    return name.endswith(".tmp") and not name.endswith(_RECEIPT_CLAIM_SUFFIX)
 
 
 def prune_orphaned_inbox_temp_files(
