@@ -631,6 +631,40 @@ class TestAssistantResponseMatchesAny:
         )
         assert ev.evaluate_value("assistant_response_matches_any(patterns, regex=true)") is None
 
+    @pytest.mark.parametrize(
+        "response",
+        [
+            "The rule flags `not a hack, but a fix` phrasing.",
+            "Example:\n```\nThis is not a hack, but a fix.\n```\nDone.",
+            'The skill bans "not X, but Y" contrasts.',
+            "The skill bans “not X, but Y” contrasts.",
+        ],
+    )
+    def test_contrastive_patterns_skip_code_and_quoted_spans(self, response: str) -> None:
+        ev = self._eval({"response": response}, list(ASSISTANT_RESPONSE_CONTRASTIVE_PATTERNS))
+        assert ev.evaluate_value("assistant_response_matches_any(patterns, regex=true)") is None
+
+    def test_contrastive_patterns_flag_emphasis_quotes_in_prose(self) -> None:
+        ev = self._eval(
+            {"response": 'This is not "fast", but slow.'},
+            list(ASSISTANT_RESPONSE_CONTRASTIVE_PATTERNS),
+        )
+        assert ev.evaluate_value("assistant_response_matches_any(patterns, regex=true)") == (
+            'not "fast", but slow'
+        )
+
+    @pytest.mark.parametrize(
+        "response",
+        [
+            "The banned list includes `In summary` closings.",
+            'The banned list includes "In summary" closings.',
+            "Banned:\n```text\nIn summary\n```",
+        ],
+    )
+    def test_literal_patterns_skip_code_and_quoted_spans(self, response: str) -> None:
+        ev = self._eval({"response": response})
+        assert ev.evaluate_value("assistant_response_matches_any(['In summary'])") is None
+
 
 # --- Plugin conditions tests ---
 

@@ -40,7 +40,11 @@ def start_startup_lag_probe(
     last_report_by_site: dict[str, float] = {}
 
     def active() -> bool:
-        return not loop.is_closed() and (deadline is None or time.monotonic() < deadline)
+        return (
+            loop.is_running()
+            and not loop.is_closed()
+            and (deadline is None or time.monotonic() < deadline)
+        )
 
     def beat() -> None:
         now = time.monotonic()
@@ -55,9 +59,14 @@ def start_startup_lag_probe(
     def watch() -> None:
         while active():
             time.sleep(interval_seconds)
+            if not active():
+                break
             # A blocked loop cannot run the next beat; measure its age directly.
             lag = time.monotonic() - state["last_beat"]
             if lag < threshold_seconds or state["reported"]:
+                continue
+            if not logger.isEnabledFor(logging.DEBUG):
+                state["reported"] = True
                 continue
             task = asyncio.current_task(loop)
             frame = sys._current_frames().get(loop_thread_id)
@@ -74,7 +83,7 @@ def start_startup_lag_probe(
                 stack = " > ".join(
                     f"{entry.filename}:{entry.lineno}:{entry.name}" for entry in stack_entries
                 )
-                logger.warning(
+                logger.debug(
                     "Daemon event-loop lag %.3fs | task=%s | stack=%s",
                     lag,
                     task.get_name() if task is not None else "callback-or-idle",

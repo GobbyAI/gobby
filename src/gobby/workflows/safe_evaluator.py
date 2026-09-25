@@ -38,6 +38,11 @@ ASSISTANT_RESPONSE_CONTRASTIVE_PATTERNS = (
     r"\b(?!not\b)[A-Z0-9][^.!?\n,;:]{1,120}?,\s*\bnot\b\s+[^.!?\n]{1,120}",
 )
 _ASSISTANT_RESPONSE_REGEX_ALLOWLIST = frozenset(ASSISTANT_RESPONSE_CONTRASTIVE_PATTERNS)
+# Fenced blocks, inline code, and double-quoted spans cite text instead of
+# asserting it; masking keeps offsets so matches still slice the original.
+_ASSISTANT_RESPONSE_CITED_SPAN = re.compile(
+    r"```.*?(?:```|\Z)|`[^`\n]+`|\"[^\"\n]*\"|“[^”\n]*”", re.DOTALL
+)
 _ASSISTANT_RESPONSE_TEXT_KEYS = (
     "response",
     "assistant_response",
@@ -493,6 +498,13 @@ def _assistant_response_text(context: dict[str, Any]) -> str:
     return text
 
 
+def _mask_cited_spans(text: str) -> str:
+    """Blank cited spans with same-length filler so offsets map to ``text``."""
+    return _ASSISTANT_RESPONSE_CITED_SPAN.sub(
+        lambda match: re.sub(r"[^\n]", "x", match.group(0)), text
+    )
+
+
 def _event_field(event: Any, field: str, default: Any) -> Any:
     if event is None:
         return default
@@ -809,9 +821,10 @@ def build_condition_helpers(
         if not text:
             return None
         haystack = text[:ASSISTANT_RESPONSE_SCAN_LIMIT]
+        masked = _mask_cited_spans(haystack)
 
         if not regex:
-            lowered = haystack.lower()
+            lowered = masked.lower()
             for pattern in patterns:
                 if not isinstance(pattern, str) or pattern == "":
                     continue
@@ -824,12 +837,12 @@ def build_condition_helpers(
             if not isinstance(pattern, str) or pattern not in _ASSISTANT_RESPONSE_REGEX_ALLOWLIST:
                 continue
             try:
-                match = re.search(pattern, haystack, re.IGNORECASE)
+                match = re.search(pattern, masked, re.IGNORECASE)
             except re.error:
                 logger.warning("Invalid bundled assistant response regex skipped: %s", pattern)
                 continue
             if match:
-                return match.group(0)
+                return haystack[match.start() : match.end()]
         return None
 
     funcs["mcp_called"] = _mcp_called

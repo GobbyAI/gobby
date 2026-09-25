@@ -78,6 +78,7 @@ class EvaluationContext:
     rule_context: dict[str, Any] | None = None
     rule_allowed_funcs: dict[str, Callable[..., Any]] | None = None
     rule_project_snapshot: Any = None
+    pending_rule_evaluations: list[tuple[str, RuleResult, float]] = field(default_factory=list)
 
     @property
     def block_state(self) -> dict[str, Any]:
@@ -422,15 +423,7 @@ class EvaluationMixin:
             f"(session {evaluation.session_id}): {', '.join(rule_names)}"
         )
         logger.info(message)
-        event_type = evaluation.event.event_type
-        event_name = event_type.value if isinstance(event_type, HookEventType) else str(event_type)
-        record_rule_evaluation(
-            rule_name=audit_rule_name,
-            result="allow",
-            event=event_name,
-            session_id=evaluation.session_id,
-            latency_ms=0.0,
-        )
+        evaluation.pending_rule_evaluations.append((audit_rule_name, "allow", 0.0))
         await log_enforcement_block(
             self.workflow_audit,
             session_id=evaluation.session_id,
@@ -459,7 +452,7 @@ class EvaluationMixin:
             return []
         bridge = _RuleLoopBridge(asyncio.get_running_loop())
         try:
-            return await offload_rule_loop(
+            block_gates = await offload_rule_loop(
                 self._run_rule_loop_worker,
                 applicable_rules,
                 evaluation,
@@ -470,6 +463,20 @@ class EvaluationMixin:
         except asyncio.CancelledError:
             bridge.cancel()
             raise
+        # The audit writer's asyncio.Queue belongs to this loop. The rule pass
+        # runs in a worker loop, so publish its records here as one batch.
+        event_type = evaluation.event.event_type
+        event_name = event_type.value if isinstance(event_type, HookEventType) else str(event_type)
+        for rule_name, result, latency_ms in evaluation.pending_rule_evaluations:
+            record_rule_evaluation(
+                rule_name=rule_name,
+                result=result,
+                event=event_name,
+                session_id=evaluation.session_id,
+                latency_ms=latency_ms,
+            )
+        evaluation.pending_rule_evaluations.clear()
+        return block_gates
 
     def _run_rule_loop_worker(
         self,
@@ -633,13 +640,7 @@ class EvaluationMixin:
 
                 if lookahead_blocked:
                     rule_latency = (time.perf_counter() - rule_start) * 1000
-                    record_rule_evaluation(
-                        rule_name=row.name,
-                        result="block",
-                        event=evaluation.event.event_type.value,
-                        session_id=evaluation.session_id,
-                        latency_ms=rule_latency,
-                    )
+                    evaluation.pending_rule_evaluations.append((row.name, "block", rule_latency))
                     if self._event_store:
                         metric_records.append(
                             MetricsEventRecord(
@@ -746,13 +747,7 @@ class EvaluationMixin:
 
             rule_latency = (time.perf_counter() - rule_start) * 1000
             rule_result: RuleResult = "block" if rule_blocked else "allow"
-            record_rule_evaluation(
-                rule_name=row.name,
-                result=rule_result,
-                event=evaluation.event.event_type.value,
-                session_id=evaluation.session_id,
-                latency_ms=rule_latency,
-            )
+            evaluation.pending_rule_evaluations.append((row.name, rule_result, rule_latency))
             if self._event_store and rule_blocked:
                 metric_records.append(
                     MetricsEventRecord(

@@ -623,7 +623,7 @@ class TestBrevityRules:
         variables = yaml.safe_load(vars_path.read_text())["variables"]
 
         assert variables["brevity_disabled"]["value"] is False
-        assert variables["brevity_level"]["value"] == "normal"
+        assert variables["brevity_level"]["value"] == "max"
         assert variables["restraint_disabled"]["value"] is False
         assert variables["restraint_level"]["value"] == "max"
         assert variables["brevity_last_violation"]["value"] == ""

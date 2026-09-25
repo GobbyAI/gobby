@@ -123,7 +123,7 @@ variables:
     value: false
     description: "True after the user opts out of brevity reinforcement for the session"
   brevity_level:
-    value: "normal"
+    value: "max"
     description: "Active brevity level (lite/normal/max); set by gobby-skills:get_skill on each leveled load"
   restraint_disabled:
     value: false

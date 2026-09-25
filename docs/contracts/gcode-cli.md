@@ -26,8 +26,8 @@ and resume wait on daemon completion events; a disconnected wait reports the
 durable run ID and never cancels it. Complete, partial, and unknown answer
 outcomes exit zero, while failed and cancelled runs are typed exit-2 failures.
 
-Version 9 adds `evidence --request-json`, a JSON-only, exact-commit read surface
-for deterministic source citations, commit metadata, indexed search, and graph
+Version 9 adds `evidence --request-json`, a JSON-only read surface over indexed
+working-tree source for deterministic source citations, commit metadata, indexed search, and graph
 facts. It returns the evidence schema v1 response unchanged from the Rust
 evidence library and exposes every library failure as a typed exit-2 error.
 
@@ -198,17 +198,19 @@ Operations and selector semantics are:
   orient a reader; Ask does not accept them as citations.
 
 The response echoes the canonical request (with continuation removed), its
-fingerprint, the verified snapshot binding, contract identity, whole evidence
-items, completeness state, applied bounds, exclusions, warnings, and an
-optional continuation. Source citations include exact blob/content/excerpt
+fingerprint, the snapshot binding (HEAD commit and tree recorded as
+provenance), contract identity, whole evidence items, completeness state, applied bounds, exclusions, warnings, and an
+optional continuation. Source citations include content and excerpt
 hashes plus line and byte bounds. Their byte-exact `excerpt` is repeated as
 `numbered_excerpt`, with each line prefixed by its one-based number as `N| `,
 so a reader can cite a line without counting newlines. Commit metadata is derived from the bound Git
 commit. Graph evidence carries a hash-verified source citation, owner content
 hash, endpoints, direction/relation, and `extracted`, `inferred`, or
 `unresolved` provenance. Indexed facts only locate evidence: source bytes are
-read from the bound Git blob and symbol ranges/hashes are reverified before
-return.
+read from the working tree under the project root and must match the indexed
+content hash before return, so indexed uncommitted edits are citable and a
+mismatch fails as `stale_range` or `fact_mismatch`. The binding records HEAD as
+provenance; it does not pin source bytes to that commit.
 
 Pagination sorts and deduplicates semantic items, then admits the largest whole
 prefix whose sum of serialized item bytes fits `max_bytes`. It never slices an
