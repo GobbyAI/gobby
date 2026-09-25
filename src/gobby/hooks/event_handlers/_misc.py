@@ -20,7 +20,10 @@ from gobby.mcp_proxy.tools.worktrees._helpers import (
     install_provider_hooks,
     resolve_project_context,
 )
-from gobby.sessions.compact_continuation import consume_and_schedule_handoff_compact_continuation
+from gobby.sessions.compact_continuation import (
+    consume_and_schedule_handoff_compact_continuation,
+    notify_compact_boundary,
+)
 from gobby.sessions.context_usage import normalize_context_usage_source
 from gobby.sessions.token_usage import typed_json_token_usage
 from gobby.storage.context_usage_snapshot import ContextUsageSnapshot
@@ -226,6 +229,15 @@ class MiscEventHandlerMixin(EventHandlersBase):
                 exc_info=True,
             )
             return HookResponse(decision="allow")
+
+        try:
+            notify_compact_boundary(self._session_manager.db, session_id, session.terminal_context)
+        except Exception:
+            self.logger.warning(
+                "POST_COMPACT: failed notifying compact boundary for session %s",
+                session_id,
+                exc_info=True,
+            )
 
         try:
             snapshot = ContextUsageSnapshot.window_only(

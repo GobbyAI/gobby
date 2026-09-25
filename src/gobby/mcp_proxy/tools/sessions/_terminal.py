@@ -200,6 +200,7 @@ async def _send_terminal_compaction_command(
     turn_settled: Callable[[], bool | None] | None = None,
     settle_seconds: float | None = None,
     composer_read: Callable[[str | None], Any] | None = None,
+    on_command_submitting: Callable[[], None] | None = None,
 ) -> tuple[bool, str | None, bool, dict[str, Any] | None]:
     """Persist continuation state, confirm interruption, drain the composer, then compact."""
     return await _send_terminal_compaction_command_impl(
@@ -221,6 +222,7 @@ async def _send_terminal_compaction_command(
         ),
         rejection_settle_seconds=_COMPACTION_REJECTION_SETTLE_SECONDS,
         composer_read=composer_read,
+        on_command_submitting=on_command_submitting,
     )
 
 

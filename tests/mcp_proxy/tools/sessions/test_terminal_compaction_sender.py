@@ -268,7 +268,7 @@ async def test_unsubmitted_command_records_no_handoff_delivery(
         patch(f"{_DELIVERY}.mark_handoff_compact_continuation_pending", return_value=True),
         patch(f"{_DELIVERY}.clear_handoff_compact_continuation_pending", return_value=True),
         patch(f"{_DELIVERY}.clear_queued_context"),
-        patch(f"{_DELIVERY}.record_handoff_delivery", record),
+        patch("gobby.sessions.compact_continuation.record_handoff_delivery", record),
     ):
         result = await deliver_staged_compact_handoff(
             "session-1",
