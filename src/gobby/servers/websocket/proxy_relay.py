@@ -61,8 +61,11 @@ class SocketRelay:
         self,
         payload: dict[str, Any],
         completion: asyncio.Future[None] | None = None,
+        *,
+        raw_bytes: bytes | None = None,
     ) -> _Queued:
-        raw_bytes = canonical_json(payload)
+        if raw_bytes is None:
+            raw_bytes = canonical_json(payload)
         return _Queued(
             payload=payload,
             raw=raw_bytes.decode("utf-8"),
@@ -70,10 +73,10 @@ class SocketRelay:
             completion=completion,
         )
 
-    def enqueue_frame(self, payload: dict[str, Any]) -> str | None:
+    def enqueue_frame(self, payload: dict[str, Any], raw_bytes: bytes) -> str | None:
         if self.closed:
             return "relay_overflow"
-        item = self._pack(payload)
+        item = self._pack(payload, raw_bytes=raw_bytes)
         if (
             len(self.frame_q) >= TERMINAL_WS_FRAME_QUEUE_ENTRIES
             or self.frame_bytes + item.size > TERMINAL_WS_FRAME_QUEUE_BYTES
@@ -306,8 +309,8 @@ class ProxyHub:
             logger.debug("proxy emit refused", exc_info=True)
             return None
         relay = self.relay_for(websocket)
-        for message in messages:
-            overflow = relay.enqueue_frame(message)
+        for message, raw_bytes in messages:
+            overflow = relay.enqueue_frame(message, raw_bytes)
             if overflow is not None:
                 await relay.shutdown(overflow)
                 return overflow

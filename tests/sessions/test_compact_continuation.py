@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import threading
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -946,17 +947,49 @@ class TestPullPromptFallback:
         assert sum(1 for _p, key, literal in tmux.sent_keys if key == "Enter" and not literal) == 1
 
     @pytest.mark.asyncio
-    async def test_a_prompt_that_never_leaves_is_drained_then_reported(self) -> None:
+    async def test_a_prompt_that_never_leaves_is_drained_then_reported(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
         tmux = _StickyComposerTmux()
         failures: list[int] = []
 
-        assert await _send_pull_prompt(tmux, on_send_failure=lambda: failures.append(0)) is False
+        with caplog.at_level(logging.ERROR, logger="gobby.sessions.compact_continuation"):
+            assert (
+                await _send_pull_prompt(tmux, on_send_failure=lambda: failures.append(0)) is False
+            )
         assert failures == [0]
+        records = [
+            record
+            for record in caplog.records
+            if getattr(record, "event", None) == "handoff_continuation_not_submitted"
+        ]
+        assert len(records) == 1
+        assert records[0].levelno == logging.ERROR
         # The held draft gets one bare-Enter retry, without a retype.
         assert tmux.typed == [f"{_PULL_PROMPT}\n"]
         assert tmux.enters == 2
         # The draft is ours, so it is drained before the durable fallback delivers it.
         assert tmux.sent_keys[-len(_CLAUDE_DRAIN) :] == _CLAUDE_DRAIN
+
+    @pytest.mark.asyncio
+    async def test_unsubmitted_prompt_that_cannot_be_cleared_logs_error(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        tmux = _StickyComposerTmux()
+        with (
+            patch(
+                "gobby.sessions.compact_continuation.clear_composer",
+                side_effect=[(True, None), (False, "drain failed")],
+            ),
+            caplog.at_level(logging.ERROR, logger="gobby.sessions.compact_continuation"),
+        ):
+            assert await _send_pull_prompt(tmux) is False
+
+        assert any(
+            record.levelno == logging.ERROR
+            and "Composer still holds the unsubmitted continuation prompt" in record.getMessage()
+            for record in caplog.records
+        )
 
     @pytest.mark.asyncio
     async def test_an_unsubmitted_prompt_queues_itself_exactly_once(

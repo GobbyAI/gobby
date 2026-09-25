@@ -213,21 +213,22 @@ def emit_proxied_event(
     event: Mapping[str, Any],
     *,
     message_seq: int,
-) -> list[dict[str, Any]]:
-    """Send unfragmented when canonical JSON is under 2 MiB, else fragment."""
+) -> list[tuple[dict[str, Any], bytes]]:
+    """Return each wire payload with its canonical bytes, fragmenting above 2 MiB."""
     payload = dict(event)
     raw = canonical_json(payload)
     if len(raw) > TERMINAL_WS_FRAGMENT_MAX_REASSEMBLY_BYTES:
         raise ValueError("fragment_too_large")
     if len(raw) < TERMINAL_WS_FRAGMENT_MAX_WRAPPED_BYTES:
-        return [payload]
-    return fragment_event(
+        return [(payload, raw)]
+    fragments = fragment_event(
         event=str(payload["type"]),
         terminal_id=str(payload["terminal_id"]),
         attachment_id=str(payload["attachment_id"]),
         message_seq=message_seq,
         complete_json=raw,
     )
+    return [(fragment, canonical_json(fragment)) for fragment in fragments]
 
 
 def parse_list_cursor(raw: object) -> tuple[datetime | None, str | None]:
