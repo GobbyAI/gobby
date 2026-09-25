@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from gobby.storage.sessions import SessionManager
 
 _PAGE_SIZE = 6
+_AGENT_PAGE_SIZE = 14
 _SESSION_ACTION = "session_action"
 _SUBSCRIPTION_ACTION = "subscription_control"
 _AGENT_TARGET_ACTION = "agent_target"
@@ -357,6 +358,7 @@ class TelegramActionController:
         message: CommsMessage,
         *,
         page: int = 0,
+        replace_source: CommsMessage | None = None,
     ) -> None:
         if not await self._agent_authorized(channel, message):
             await self._agent_feedback(
@@ -390,20 +392,24 @@ class TelegramActionController:
         current = await asyncio.to_thread(
             self._manager.attached_session, channel.id, conversation_id
         )
-        page_count = max(1, (len(agents) + _PAGE_SIZE - 1) // _PAGE_SIZE)
+        page_count = max(1, (len(agents) + _AGENT_PAGE_SIZE - 1) // _AGENT_PAGE_SIZE)
         bounded_page = min(max(page, 0), page_count - 1)
-        visible = agents[bounded_page * _PAGE_SIZE : (bounded_page + 1) * _PAGE_SIZE]
-        keyboard = [
-            [
-                {
-                    "text": f"{'✓ ' if agent.id == current else ''}{labels[agent.id]}",
-                    "value": json.dumps(
-                        {"op": "set", "channel_id": channel.id, "session_id": agent.id}
-                    ),
-                }
-            ]
+        visible = agents[bounded_page * _AGENT_PAGE_SIZE : (bounded_page + 1) * _AGENT_PAGE_SIZE]
+        buttons = [
+            {
+                "text": f"{'✓ ' if agent.id == current else ''}{labels[agent.id]}",
+                "value": json.dumps(
+                    {
+                        "op": "set",
+                        "channel_id": channel.id,
+                        "session_id": agent.id,
+                        "page": bounded_page,
+                    }
+                ),
+            }
             for agent in visible
         ]
+        keyboard = [buttons[index : index + 2] for index in range(0, len(buttons), 2)]
         if page_count > 1:
             navigation = []
             for label, next_page in (("Previous", bounded_page - 1), ("Next", bounded_page + 1)):
@@ -423,17 +429,26 @@ class TelegramActionController:
             if agents
             else "No agents are running."
         )
-        await self._manager.send_message(
-            channel.name,
-            menu_text,
-            session_id=None,
-            metadata={
-                **_reply_destination(message),
-                "callback_action": _AGENT_TARGET_ACTION,
-                "agent_channel_id": channel.id,
-                "inline_keyboard": keyboard,
-            },
-        )
+        if replace_source is not None and replace_source.platform_message_id is not None:
+            await self._manager.edit_message(
+                channel.name,
+                replace_source.platform_message_id,
+                menu_text,
+                str(message.metadata_json["chat_id"]),
+                inline_keyboard=keyboard,
+            )
+        else:
+            await self._manager.send_message(
+                channel.name,
+                menu_text,
+                session_id=None,
+                metadata={
+                    **_reply_destination(message),
+                    "callback_action": _AGENT_TARGET_ACTION,
+                    "agent_channel_id": channel.id,
+                    "inline_keyboard": keyboard,
+                },
+            )
 
     async def _handle_agent_target_callback(
         self,
@@ -464,7 +479,9 @@ class TelegramActionController:
             await self._agent_feedback(channel, message, "This agent choice is invalid.")
             return
         if payload.get("op") == "page" and isinstance(payload.get("page"), int):
-            await self._send_agent_menu(channel, message, page=payload["page"])
+            await self._send_agent_menu(
+                channel, message, page=payload["page"], replace_source=source
+            )
             return
         target_id = payload.get("session_id")
         if (
@@ -497,6 +514,15 @@ class TelegramActionController:
         except ValueError:
             await self._agent_feedback(channel, message, "This agent is attached to another chat.")
             return
+        try:
+            await self._send_agent_menu(
+                channel,
+                message,
+                page=_page_value(payload.get("page")),
+                replace_source=source,
+            )
+        except Exception:
+            logger.exception("Failed to refresh Telegram agent menu after target switch")
         await self._agent_feedback(channel, message, f"Active agent: {agent_label(target)}")
 
     async def _handle_subscription_callback(

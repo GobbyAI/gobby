@@ -599,6 +599,49 @@ async def test_edit_message_calls_edit_message_text_with_html(
 
 
 @pytest.mark.asyncio
+async def test_edit_agent_menu_replaces_keyboard_with_live_callbacks(
+    adapter: TelegramAdapter,
+) -> None:
+    response = httpx.Response(
+        200,
+        request=httpx.Request("POST", "https://api.telegram.org/bottest-token/editMessageText"),
+        json={"ok": True, "result": {"message_id": 12345}},
+    )
+    mock_client = MagicMock()
+    mock_client.post = AsyncMock(return_value=response)
+    adapter._client = mock_client
+    adapter._api_base = "https://api.telegram.org/bottest-token"
+    source = CommsMessage(
+        id="menu-source",
+        channel_id="telegram-channel",
+        direction="outbound",
+        content="Active agent: Assistant\nChoose an agent:",
+        platform_message_id="12345",
+        metadata_json={"platform_destination": "chat999", "callback_action": "agent_target"},
+        created_at=datetime.now(UTC),
+    )
+    keyboard = [[{"text": "✓ Lane Developer", "value": "select-lane"}]]
+
+    await adapter.edit_message(
+        "12345",
+        "Active agent: Lane Developer\nChoose an agent:",
+        "chat999",
+        inline_keyboard=keyboard,
+        callback_source=source,
+    )
+
+    payload = mock_client.post.await_args.kwargs["json"]
+    button = payload["reply_markup"]["inline_keyboard"][0][0]
+    assert button["text"] == "✓ Lane Developer"
+    assert (
+        adapter._callback_registry.resolve(
+            button["callback_data"], chat_id="chat999", thread_id=None
+        ).value
+        == "select-lane"
+    )
+
+
+@pytest.mark.asyncio
 async def test_edit_message_labels_after_rendering_fenced_markdown(
     adapter: TelegramAdapter,
 ) -> None:

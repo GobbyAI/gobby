@@ -247,6 +247,8 @@ class CommunicationsManager:
         platform_message_id: str,
         content: str,
         conversation_id: str,
+        *,
+        inline_keyboard: list[list[dict[str, str]]] | None = None,
     ) -> None:
         """Replace an existing platform message through an active adapter."""
         adapter = self._adapters.get(channel_name)
@@ -265,14 +267,27 @@ class CommunicationsManager:
             platform_destination=conversation_id if channel.channel_type == "telegram" else None,
         )
         if channel.channel_type == "telegram":
+            if inline_keyboard is not None and stored_message is None:
+                raise ValueError("Cannot replace a Telegram keyboard without its stored message")
             label = await asyncio.to_thread(
                 self.telegram_sender_label,
                 channel,
                 stored_message.session_id if stored_message is not None else None,
             )
-            await cast(TelegramAdapter, adapter).edit_message(
-                platform_message_id, content, conversation_id, sender_label=label
-            )
+            telegram = cast(TelegramAdapter, adapter)
+            if inline_keyboard is None:
+                await telegram.edit_message(
+                    platform_message_id, content, conversation_id, sender_label=label
+                )
+            else:
+                await telegram.edit_message(
+                    platform_message_id,
+                    content,
+                    conversation_id,
+                    sender_label=label,
+                    inline_keyboard=inline_keyboard,
+                    callback_source=stored_message,
+                )
         else:
             await adapter.edit_message(platform_message_id, content, conversation_id)
         if stored_message is not None:

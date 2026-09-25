@@ -459,10 +459,36 @@ async def test_agent_command_lists_live_agents_and_marks_current_target() -> Non
     assert consumed is True
     menu = manager.send_message.await_args
     keyboard = menu.kwargs["metadata"]["inline_keyboard"]
-    assert [row[0]["text"] for row in keyboard] == ["✓ Assistant", "Lane Developer"]
-    assert all("#" not in row[0]["text"] for row in keyboard)
+    assert [button["text"] for row in keyboard for button in row] == [
+        "✓ Assistant",
+        "Lane Developer",
+    ]
+    assert all("#" not in button["text"] for row in keyboard for button in row)
     assert menu.kwargs["metadata"]["callback_action"] == "agent_target"
     assert menu.kwargs["session_id"] is None
+
+
+async def test_agent_menu_fits_ten_agents_without_next_button() -> None:
+    controller, manager, sessions, _ = _controller()
+    agents = [
+        SimpleNamespace(
+            id=f"00000000-0000-4000-8000-{index:012d}",
+            status="active",
+            title=f"Agent {index}",
+            source="codex",
+        )
+        for index in range(10)
+    ]
+    sessions.list.return_value = agents
+    manager.attached_session.return_value = agents[0].id
+
+    await controller.handle(_channel().name, _message(content="/agent list"))
+
+    keyboard = manager.send_message.await_args.kwargs["metadata"]["inline_keyboard"]
+    assert len(keyboard) == 5
+    assert all(len(row) == 2 for row in keyboard)
+    assert keyboard[0][0]["text"] == "✓ Agent 0"
+    assert all(button["text"] not in {"Next", "Previous"} for row in keyboard for button in row)
 
 
 async def test_agent_menu_shortens_and_disambiguates_duplicate_titles() -> None:
@@ -482,7 +508,7 @@ async def test_agent_menu_shortens_and_disambiguates_duplicate_titles() -> None:
     await controller.handle(_channel().name, _message(content="/agent"))
 
     keyboard = manager.send_message.await_args.kwargs["metadata"]["inline_keyboard"]
-    labels = [row[0]["text"] for row in keyboard]
+    labels = [button["text"] for row in keyboard for button in row]
     assert labels[0] != labels[1]
     assert labels[0].endswith("#12")
     assert labels[1].endswith("#13")
@@ -516,8 +542,9 @@ async def test_agent_command_lists_a_real_clear_successor(
     await controller.handle(_channel().name, _message(content="/agent"))
 
     labels = [
-        row[0]["text"]
+        button["text"]
         for row in manager.send_message.await_args.kwargs["metadata"]["inline_keyboard"]
+        for button in row
     ]
     assert "✓ Lane 4" in labels
 
@@ -554,6 +581,7 @@ async def test_agent_command_rejects_wildcard_only_sender_allowlist() -> None:
 
 async def test_agent_button_switches_the_chat_target() -> None:
     controller, manager, sessions, _ = _controller()
+    manager.edit_message = AsyncMock()
     target_id = "44444444-4444-4444-8444-444444444444"
     sessions.get.side_effect = lambda session_id: SimpleNamespace(
         id=session_id, status="active", source="codex", title="Lane Developer"
@@ -588,6 +616,27 @@ async def test_agent_button_switches_the_chat_target() -> None:
         "Active agent: Lane Developer",
         session_id=None,
         metadata={"platform_destination": "chat-1"},
+    )
+    manager.edit_message.assert_awaited_once_with(
+        _channel().name,
+        "900",
+        "Active agent: Lane Developer\nChoose an agent:",
+        "chat-1",
+        inline_keyboard=[
+            [
+                {
+                    "text": "✓ Lane Developer",
+                    "value": json.dumps(
+                        {
+                            "op": "set",
+                            "channel_id": _channel().id,
+                            "session_id": target_id,
+                            "page": 0,
+                        }
+                    ),
+                }
+            ]
+        ],
     )
 
 

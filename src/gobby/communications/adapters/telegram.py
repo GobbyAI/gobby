@@ -367,6 +367,9 @@ class TelegramAdapter(BaseChannelAdapter):
         content: str,
         conversation_id: str,
         sender_label: str | None = None,
+        *,
+        inline_keyboard: list[list[dict[str, str]]] | None = None,
+        callback_source: CommsMessage | None = None,
     ) -> None:
         """Replace a Telegram message, maintaining overflow chunks when needed."""
         chunks = _labeled_chunks(content, self.max_message_length, sender_label)
@@ -379,47 +382,71 @@ class TelegramAdapter(BaseChannelAdapter):
             message_key,
             self._link_preview_options,
         )
+        reply_markup = None
+        if inline_keyboard is not None:
+            if callback_source is None:
+                raise ValueError("Telegram keyboard edit requires its callback source")
+            reply_markup = self._callback_registry.register_keyboard(
+                inline_keyboard,
+                session_id=callback_source.session_id,
+                chat_id=conversation_id,
+                thread_id=callback_source.platform_thread_id,
+                ttl_seconds=callback_source.metadata_json.get("callback_ttl_seconds", 300),
+                action=callback_source.metadata_json.get("callback_action"),
+                project_id=callback_source.metadata_json.get("callback_project_id"),
+            )
 
-        for index, chunk in enumerate(chunks):
-            if index < len(target_ids):
-                payload: dict[str, Any] = {
+        keyboard_attached = False
+        try:
+            for index, chunk in enumerate(chunks):
+                if index < len(target_ids):
+                    payload: dict[str, Any] = {
+                        "chat_id": conversation_id,
+                        "message_id": target_ids[index],
+                        "text": chunk,
+                        "parse_mode": "HTML",
+                    }
+                    if link_preview_options is not None:
+                        payload["link_preview_options"] = link_preview_options
+                    if reply_markup is not None and index == len(chunks) - 1:
+                        payload["reply_markup"] = reply_markup
+                    result = await self._post_json("editMessageText", payload)
+                    if not result.get("ok"):
+                        description = str(result.get("description", "unknown Telegram API error"))
+                        if "message is not modified" not in description.casefold():
+                            raise RuntimeError(f"Telegram editMessageText failed: {description}")
+                    if reply_markup is not None and index == len(chunks) - 1:
+                        keyboard_attached = True
+                    continue
+
+                payload = {
                     "chat_id": conversation_id,
-                    "message_id": target_ids[index],
                     "text": chunk,
                     "parse_mode": "HTML",
                 }
                 if link_preview_options is not None:
                     payload["link_preview_options"] = link_preview_options
-                result = await self._post_json("editMessageText", payload)
+                if reply_markup is not None and index == len(chunks) - 1:
+                    payload["reply_markup"] = reply_markup
+                result = await self._post_json("sendMessage", payload)
                 if not result.get("ok"):
-                    description = str(result.get("description", "unknown Telegram API error"))
-                    if "message is not modified" not in description.casefold():
-                        raise RuntimeError(f"Telegram editMessageText failed: {description}")
-                continue
+                    raise RuntimeError("Telegram sendMessage did not return a message")
+                if reply_markup is not None and index == len(chunks) - 1:
+                    keyboard_attached = True
+                target_ids.append(str(result["result"]["message_id"]))
 
-            payload = {
-                "chat_id": conversation_id,
-                "text": chunk,
-                "parse_mode": "HTML",
-            }
-            if link_preview_options is not None:
-                payload["link_preview_options"] = link_preview_options
-            result = await self._post_json(
-                "sendMessage",
-                payload,
-            )
-            if not result.get("ok"):
-                raise RuntimeError("Telegram sendMessage did not return a message")
-            target_ids.append(str(result["result"]["message_id"]))
-
-        for stale_message_id in target_ids[len(chunks) :]:
-            await self._post_json(
-                "deleteMessage",
-                {
-                    "chat_id": conversation_id,
-                    "message_id": stale_message_id,
-                },
-            )
+            for stale_message_id in target_ids[len(chunks) :]:
+                await self._post_json(
+                    "deleteMessage",
+                    {
+                        "chat_id": conversation_id,
+                        "message_id": stale_message_id,
+                    },
+                )
+        except BaseException:
+            if reply_markup is not None and not keyboard_attached:
+                self._callback_registry.discard_keyboard(reply_markup)
+            raise
 
         overflow_ids = target_ids[1 : len(chunks)]
         if overflow_ids:
