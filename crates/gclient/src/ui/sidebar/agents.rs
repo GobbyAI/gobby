@@ -1,9 +1,8 @@
 // upstream: herdr v0.8.0 src/client/shell/agent_sidebar.rs
-//! The sessions section: one two-line row per roster entry the machine
+//! The agents section: one two-line row per roster entry the machine
 //! filter and the scope admit — interactive sessions with the agent runs
-//! they spawned nested under them, parentless runs at the top level — and
-//! one per bare terminal (a pane no roster entry names), in tab order or by
-//! urgency (`agent_sort`). The band carries the `[view]` control, which
+//! they spawned nested under them, parentless runs at the top level, in tab
+//! order or by urgency (`agent_sort`). The band carries the `[view]` control, which
 //! opens the menu holding both axes.
 //!
 //! herdr lists every workspace's agents and marks the view with a label in
@@ -17,7 +16,7 @@ use std::cmp::Reverse;
 use super::{render_band, render_section_rows, BandStyle, SidebarHits};
 use crate::app::project_tabs::TabSet;
 use crate::app::short_terminal_id;
-use crate::app::sidebar_model::{agent_row_state, pane_state, urgency, AgentEntry, SidebarModel};
+use crate::app::sidebar_model::{agent_row_state, urgency, AgentEntry, SidebarModel};
 use crate::ui::chrome::{terminal_address, Chrome, RowState, WorkspaceView};
 use crate::ui::hit::SidebarSection;
 use crate::ui::settings::AgentSort;
@@ -208,15 +207,12 @@ struct Candidate {
 /// spawned it; under `priority` the list is flat. Under the `all` scope
 /// the rows sit under a heading per project, in the projects' order,
 /// projects with nothing live omitted.
-pub fn session_rows<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Vec<SidebarRow> {
+pub fn agent_rows<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Vec<SidebarRow> {
     let mut candidates: Vec<Candidate> = visible_agents(ws, chrome)
         .into_iter()
         .map(|visible| agent_candidate(ws, chrome, visible))
         .collect();
-    candidates.extend(bare_terminals(ws, chrome));
     if chrome.prefs.agent_sort == AgentSort::Priority {
-        // Bare terminals carry no activity stamp and sort after the
-        // entries of their urgency.
         candidates.sort_by_key(|candidate| Reverse(urgency(candidate.row.state)));
     }
     if !chrome.sidebar.all_sessions {
@@ -365,55 +361,6 @@ fn agent_candidate<W: WorkspaceView>(ws: &W, chrome: &Chrome, visible: Visible<'
     }
 }
 
-/// The focused project's panes no roster entry names, when the machine
-/// filter admits this machine: the pane's name over its title and address
-/// where they add something, and its backend.
-fn bare_terminals<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Vec<Candidate> {
-    let model = ws.sidebar();
-    if !machine_admits(ws, chrome, &model.local_machine) {
-        return Vec::new();
-    }
-    let focused = chrome.focused_pane();
-    let project = ws.focused_project().unwrap_or_default().to_string();
-    ws.roster_terminal_ids()
-        .into_iter()
-        .filter(|terminal_id| {
-            !model
-                .agents
-                .iter()
-                .any(|agent| agent.terminal_id == *terminal_id)
-        })
-        .filter_map(|terminal_id| {
-            let pane_id = ws.pane_for_terminal(&terminal_id)?;
-            let pane = ws.pane(pane_id);
-            let name = pane.display_name().to_string();
-            // The foreground job names the row; the address and the backend
-            // that owns it sit under it. The daemon's `title` is neither.
-            let tokens = [
-                terminal_address(ws, &terminal_id),
-                Some(pane.backend.label().to_string()),
-            ]
-            .into_iter()
-            .flatten()
-            .collect();
-            Some(Candidate {
-                row: SidebarRow {
-                    id: format!("{TERMINAL_ROW}{terminal_id}"),
-                    label: name,
-                    kind: RowKind::Agent,
-                    state: pane_state(pane),
-                    tokens,
-                    active: focused == Some(pane_id),
-                    ..SidebarRow::default()
-                },
-                project_id: project.clone(),
-                session_id: None,
-                parent_session_id: None,
-            })
-        })
-        .collect()
-}
-
 /// Entry ids in attention-walk order: the blocked ones first, then the
 /// rest, each in the list's row order.
 pub fn attention_order<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Vec<String> {
@@ -432,14 +379,14 @@ pub fn attention_order<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Vec<String>
 
 /// Draw the section into `area` (the content rect, without the separator
 /// column) and record its hits.
-pub(super) fn render_sessions(
+pub(super) fn render_agents(
     frame: &mut Frame,
     area: Rect,
     rows: &[SidebarRow],
     chrome: &Chrome,
     hits: &mut SidebarHits,
 ) {
-    let section = SidebarSection::Sessions;
+    let section = SidebarSection::Agents;
     let (_, controls) = render_band(
         frame,
         area,
@@ -447,7 +394,7 @@ pub(super) fn render_sessions(
         &[VIEW_LABEL],
         BandStyle::section(&chrome.palette),
     );
-    hits.sessions_view = controls.first().copied();
+    hits.agents_view = controls.first().copied();
     render_section_rows(frame, area, section, rows, chrome, hits);
 }
 

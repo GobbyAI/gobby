@@ -94,7 +94,7 @@ impl SidebarSide {
 }
 
 /// How an over-long title moves through its window, on the one ticker the
-/// Sessions rows and the pane headers share: off (it truncates), or the
+/// Agents rows and the pane headers share: off (it truncates), or the
 /// direction it travels to reveal its tail.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

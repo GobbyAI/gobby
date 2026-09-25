@@ -218,7 +218,7 @@ fn menu_bar_menus_regroup_items_per_title() {
 
     // View is the sessions band's view menu, then the sidebar's openers.
     let view = menu(&ws, &chrome, MenuBarMenu::View);
-    let band = build_menu(&ws, &chrome, ContextMenuKind::SessionsView, (0, 1)).items;
+    let band = build_menu(&ws, &chrome, ContextMenuKind::AgentsView, (0, 1)).items;
     assert_eq!(view.items[..band.len()], band[..]);
     assert_eq!(labels(&view)[band.len()..], ["show sidebar", "pin sidebar"]);
     assert_eq!(
@@ -261,11 +261,11 @@ fn menu_bar_menus_regroup_items_per_title() {
 }
 
 #[test]
-fn sessions_view_menu_marks_the_view_in_force() {
+fn agents_view_menu_marks_the_view_in_force() {
     let ws = Workspace::scripted();
     let mut chrome = Chrome::dark();
     let items = |chrome: &Chrome| -> Vec<(&'static str, bool)> {
-        build_menu(&ws, chrome, ContextMenuKind::SessionsView, (0, 0))
+        build_menu(&ws, chrome, ContextMenuKind::AgentsView, (0, 0))
             .items
             .into_iter()
             .map(|item| (item.label, item.enabled))
@@ -298,7 +298,7 @@ fn sessions_view_menu_marks_the_view_in_force() {
     );
 
     // The enabled choice of each pair carries the toggle its chord runs.
-    let menu = build_menu(&ws, &chrome, ContextMenuKind::SessionsView, (0, 0));
+    let menu = build_menu(&ws, &chrome, ContextMenuKind::AgentsView, (0, 0));
     assert_eq!(
         menu.items[0].action,
         MenuAction::Act(Action::ToggleSessionsScope)

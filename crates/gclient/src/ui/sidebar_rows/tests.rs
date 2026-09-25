@@ -1,7 +1,7 @@
 use super::*;
 use crate::app::Workspace;
 use crate::daemon::{Checkout, ProjectRow, SessionRow, SidebarRows, SourceStatus, WorktreeRow};
-use crate::ui::sidebar::session_rows;
+use crate::ui::sidebar::agent_rows;
 use serde_json::json;
 
 fn scripted_workspace() -> Workspace {
@@ -108,21 +108,23 @@ fn project_rows_list_working_projects_and_expand_one_card() {
 }
 
 #[test]
-fn session_rows_point_at_their_terminal() {
+fn agent_and_terminal_rows_are_separate() {
     let ws = scripted_workspace();
     let chrome = Chrome::dark();
-    let rows = session_rows(&ws, &chrome);
+    let rows = agent_rows(&ws, &chrome);
     let ids: Vec<&str> = rows.iter().map(|row| row.id.as_str()).collect();
-    // The roster entry, then the bare terminal no entry names.
-    assert_eq!(ids, ["run:term-alpha", "terminal:term-beta"]);
+    assert_eq!(ids, ["run:term-alpha"]);
     assert_eq!(rows[0].label, "term-alpha");
     assert_eq!(rows[0].kind, RowKind::Agent);
     assert_eq!(rows[0].state, RowState::Attention);
     assert_eq!(rows[0].height(), 2);
     assert!(rows[0].tokens.is_empty(), "{:?}", rows[0].tokens);
-    assert_eq!(rows[1].label, "term-beta");
-    assert_eq!(rows[1].tokens, ["gclient"]);
-    assert!(!rows[1].nested);
+    let terminals = crate::ui::sidebar::terminal_rows(&ws, &chrome);
+    assert_eq!(terminals.len(), 1);
+    assert_eq!(terminals[0].id, "terminal:term-beta");
+    assert_eq!(terminals[0].label, "term-beta");
+    assert_eq!(terminals[0].tokens, ["gclient"]);
+    assert!(!terminals[0].nested);
 }
 
 #[test]
@@ -182,7 +184,7 @@ fn session_rows_render_session_effort_without_a_stray_separator() {
     ws.open_terminal("term-effort", "native", "epoch").unwrap();
     ws.open_terminal("term-bare", "native", "epoch").unwrap();
 
-    let rows = session_rows(&ws, &Chrome::dark());
+    let rows = agent_rows(&ws, &Chrome::dark());
 
     assert_eq!(rows[0].tokens, ["codex", "gpt-5 high"]);
     assert_eq!(rows[1].tokens, ["codex", "gpt-5"]);
@@ -191,7 +193,7 @@ fn session_rows_render_session_effort_without_a_stray_separator() {
 
     let mut all = Chrome::dark();
     all.sidebar.all_sessions = true;
-    let rows = session_rows(&ws, &all);
+    let rows = agent_rows(&ws, &all);
     let effort = rows
         .iter()
         .find(|row| row.id == "session:sess-effort")

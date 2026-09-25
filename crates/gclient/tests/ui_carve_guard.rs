@@ -204,11 +204,11 @@ fn carve_matches_upstream_map_and_renders_data() {
         .unwrap();
     let side = screen(&terminal);
     // The sidebar stacks its bands and lists the attention entry under the
-    // sessions band with its reason.
+    // agents band with its reason.
     for needle in [
         " Machines",
         " Projects",
-        " Sessions",
+        " Agents",
         "term-alpha",
         "needs you",
     ] {

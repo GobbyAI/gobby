@@ -15,7 +15,7 @@ mod mock_daemon;
 
 use gobby_client::daemon::{Daemon, LiveDaemon};
 use gobby_client::ui::chrome::{attention_label, Chrome, RowState};
-use gobby_client::ui::sidebar::{session_rows, TERMINAL_ROW};
+use gobby_client::ui::sidebar::{agent_rows, terminal_rows, TERMINAL_ROW};
 use gobby_client::ui::sidebar_rows::SidebarRow;
 use gobby_client::Workspace;
 use mock_daemon::MockDaemon;
@@ -113,7 +113,8 @@ async fn sidebar(rows: Vec<Value>, attention: Vec<Value>) -> (Vec<SidebarRow>, V
         .expect("roster reconcile");
 
     let chrome = Chrome::dark();
-    let drawn = session_rows(&workspace, &chrome);
+    let mut drawn = agent_rows(&workspace, &chrome);
+    drawn.extend(terminal_rows(&workspace, &chrome));
     let labels = attention
         .iter()
         .map(|entry| attention_label(&workspace, entry["entry_id"].as_str().expect("entry id")))

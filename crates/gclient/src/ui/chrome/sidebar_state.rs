@@ -25,7 +25,7 @@ pub struct SidebarState {
     pub min_width: u16,
     pub max_width: u16,
     /// Scroll position of each section, by `SidebarSection::index`.
-    pub scrolls: [usize; 3],
+    pub scrolls: [usize; 4],
     /// Selected project-section row, worktree rows included (navigate mode).
     pub selected: usize,
     /// Project ids in the order the user dragged them into; projects the
@@ -61,7 +61,7 @@ impl Default for SidebarState {
             width: 26,
             min_width: 18,
             max_width: 36,
-            scrolls: [0; 3],
+            scrolls: [0; 4],
             selected: 0,
             project_order: Vec::new(),
             expanded_project: None,

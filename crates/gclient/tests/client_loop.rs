@@ -43,7 +43,7 @@ use gobby_client::ui::scrollbar::{
     scrollbar_offset_from_drag_row, scrollbar_offset_from_row, scrollbar_thumb_grab_offset,
 };
 use gobby_client::ui::settings::{ClientPrefs, PassthroughModifier};
-use gobby_client::ui::sidebar::{session_rows, TERMINAL_ROW};
+use gobby_client::ui::sidebar::{terminal_rows, TERMINAL_ROW};
 use gobby_client::ui::status::{Toast, ToastKind};
 use gobby_client::ui::{render_workspace, Chrome, WorkspaceView};
 use gobby_client::Workspace;
@@ -497,7 +497,7 @@ async fn an_orphaned_terminal_leaves_the_sidebar() {
 
     let chrome = Chrome::dark();
     assert!(
-        session_rows(&workspace, &chrome)
+        terminal_rows(&workspace, &chrome)
             .iter()
             .any(|row| row.id == format!("{TERMINAL_ROW}{TERMINAL_ID}")),
         "the native terminal starts as a bare sidebar row"
@@ -524,7 +524,7 @@ async fn an_orphaned_terminal_leaves_the_sidebar() {
         workspace.pane_for_terminal(TERMINAL_ID).is_none(),
         "the orphaned terminal pane is removed"
     );
-    let rows = session_rows(&workspace, &chrome);
+    let rows = terminal_rows(&workspace, &chrome);
     assert!(
         rows.iter().all(|row| {
             row.id != format!("{TERMINAL_ROW}{TERMINAL_ID}") && row.label != TERMINAL_ID

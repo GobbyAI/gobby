@@ -1,24 +1,25 @@
 // upstream: herdr v0.8.0 src/ui/sidebar.rs
-//! Sidebar: the machines, the project cards and the sessions, each under a
+//! Sidebar: machines, project cards, agents and bare terminals, each under a
 //! one-row band.
 //!
 //! herdr geometry kept where it still applies: a `│` separator column on
 //! the right. The section rules herdr let the user drag are gone: the
 //! machines take up to `MACHINES_MAX_ROWS`, the projects what their cards
-//! need within the top half, and the sessions everything left
-//! (`sidebar_layout`).
+//! need within the top half, and agents and terminals share the rest.
 
+pub mod agents;
 pub mod machines;
 pub mod projects;
-pub mod sessions;
+pub mod terminals;
 
 use crate::theme::Palette;
 use crate::ui::chrome::{Chrome, Mode, WorkspaceView};
 use crate::ui::hit::SidebarSection;
 use crate::ui::scrollbar::{render_scrollbar, should_show_scrollbar};
 use crate::ui::settings::SidebarSide;
+use crate::ui::settings::TitleScrolling;
 use crate::ui::sidebar_rows::{
-    project_rows, row_line, row_second_line, row_travel, RowKind, SidebarRow,
+    project_rows, row_line_with_scrolling, row_second_line, row_travel, RowKind, SidebarRow,
 };
 use crate::ui::text::{display_width, display_width_u16, truncate_end};
 use gobby_terminal::layout::ScrollMetrics;
@@ -28,18 +29,19 @@ use ratatui::text::Span;
 use ratatui::widgets::{Block, Paragraph};
 use ratatui::Frame;
 
-pub use machines::{local_hostname, machine_rows};
-pub use projects::{project_list_metrics, projects_filter_label};
-pub use sessions::{
-    agent_blocked, agent_label, attention_order, machine_admits, next_machine_filter, session_rows,
+pub use agents::{
+    agent_blocked, agent_label, agent_rows, attention_order, machine_admits, next_machine_filter,
     ALL_MACHINES, TERMINAL_ROW, VIEW_LABEL,
 };
+pub use machines::{local_hostname, machine_rows};
+pub use projects::{project_list_metrics, projects_filter_label};
+pub use terminals::terminal_rows;
 
 /// Rows the machines section lists before it scrolls.
 pub const MACHINES_MAX_ROWS: u16 = 4;
 /// Every section band is one row.
 pub const BAND_ROWS: u16 = 1;
-/// The blank row above the projects and sessions bands (D6). It belongs to
+/// The blank row above the projects and agents bands (D6). It belongs to
 /// the rows above it, so the top-half cap on the machines and the cards is
 /// unchanged.
 pub const GAP_ROWS: u16 = 1;
@@ -57,13 +59,13 @@ pub struct SidebarHits {
     pub group_toggles: Vec<(String, Rect)>,
     /// The projects band's `[working]`/`[all]`.
     pub projects_filter: Option<Rect>,
-    /// The sessions band's `[view]`.
-    pub sessions_view: Option<Rect>,
+    /// The agents band's `[view]`.
+    pub agents_view: Option<Rect>,
     /// Session, agent run and bare terminal rows, by entry id (both lines).
     pub agents: Vec<(String, Rect)>,
     /// Scrollbar lane beside each section that overflowed, by
     /// `SidebarSection::index`.
-    pub scrollbars: [Option<Rect>; 3],
+    pub scrollbars: [Option<Rect>; 4],
 }
 
 /// Where the sidebar's sections go, without the separator column.
@@ -71,7 +73,7 @@ pub struct SidebarHits {
 pub struct SidebarLayout {
     /// The sections' rects, band, body and blank row, by
     /// `SidebarSection::index`.
-    pub sections: [Rect; 3],
+    pub sections: [Rect; 4],
 }
 
 /// The layout of `area`, from its first row to its last: the machines band
@@ -85,6 +87,7 @@ pub fn sidebar_layout(
     side: SidebarSide,
     machine_rows: u16,
     project_rows: u16,
+    terminal_rows: u16,
 ) -> SidebarLayout {
     // The edge column faces the content: last on the left, first on the right.
     let body_x = match side {
@@ -104,9 +107,20 @@ pub fn sidebar_layout(
     let projects = (BAND_ROWS + GAP_ROWS)
         .saturating_add(project_rows)
         .min(top - machines);
-    let sessions = rows - machines - projects;
+    let remaining = rows - machines - projects;
+    let terminals = if remaining < 2 {
+        0
+    } else if terminal_rows == 0 {
+        BAND_ROWS
+    } else {
+        remaining / 2
+    };
+    let agents = remaining - terminals;
     let mut y = content.y;
-    for (index, height) in [machines, projects, sessions].into_iter().enumerate() {
+    for (index, height) in [machines, projects, agents, terminals]
+        .into_iter()
+        .enumerate()
+    {
         layout.sections[index] = Rect::new(content.x, y, content.width, height);
         y += height;
     }
@@ -115,7 +129,7 @@ pub fn sidebar_layout(
 
 /// The section rects the sidebar draws into `area` for the workspace as it
 /// stands, for `ViewState::sidebar_section_rects`.
-pub fn section_rects<W: WorkspaceView>(ws: &W, chrome: &Chrome, area: Rect) -> [Rect; 3] {
+pub fn section_rects<W: WorkspaceView>(ws: &W, chrome: &Chrome, area: Rect) -> [Rect; 4] {
     let machines = rows_u16(machine_rows(ws, chrome).len());
     let projects = rows_u16(
         project_rows(ws, chrome)
@@ -123,7 +137,8 @@ pub fn section_rects<W: WorkspaceView>(ws: &W, chrome: &Chrome, area: Rect) -> [
             .map(|row| usize::from(row.height()))
             .sum(),
     );
-    sidebar_layout(area, chrome.sidebar.side, machines, projects).sections
+    let terminals = rows_u16(terminal_rows(ws, chrome).len());
+    sidebar_layout(area, chrome.sidebar.side, machines, projects, terminals).sections
 }
 
 fn rows_u16(rows: usize) -> u16 {
@@ -165,16 +180,19 @@ pub fn render_sidebar<W: WorkspaceView>(
             row.selected = false;
         }
     }
-    let sessions = session_rows(ws, chrome);
+    let agents = agent_rows(ws, chrome);
+    let terminals = terminal_rows(ws, chrome);
     let layout = sidebar_layout(
         area,
         chrome.sidebar.side,
         rows_u16(machines.len()),
         rows_u16(projects.iter().map(|row| usize::from(row.height())).sum()),
+        rows_u16(terminals.len()),
     );
     machines::render_machines(frame, layout.sections[0], &machines, chrome, &mut hits);
     projects::render_projects(frame, layout.sections[1], &projects, chrome, &mut hits);
-    sessions::render_sessions(frame, layout.sections[2], &sessions, chrome, &mut hits);
+    agents::render_agents(frame, layout.sections[2], &agents, chrome, &mut hits);
+    terminals::render_terminals(frame, layout.sections[3], &terminals, chrome, &mut hits);
     hits
 }
 
@@ -201,7 +219,8 @@ pub fn section_rows<W: WorkspaceView>(
     match section {
         SidebarSection::Machines => machine_rows(ws, chrome),
         SidebarSection::Projects => project_rows(ws, chrome),
-        SidebarSection::Sessions => session_rows(ws, chrome),
+        SidebarSection::Agents => agent_rows(ws, chrome),
+        SidebarSection::Terminals => terminal_rows(ws, chrome),
     }
 }
 
@@ -328,8 +347,20 @@ pub(super) fn render_section_rows(
             } else {
                 Style::default()
             };
+            let title_scrolling = if section == SidebarSection::Terminals {
+                TitleScrolling::Off
+            } else {
+                chrome.prefs.title_scrolling
+            };
             frame.render_widget(
-                Paragraph::new(row_line(row, body.width, chrome, max_travel)).style(row_style),
+                Paragraph::new(row_line_with_scrolling(
+                    row,
+                    body.width,
+                    chrome,
+                    max_travel,
+                    title_scrolling,
+                ))
+                .style(row_style),
                 Rect::new(body.x, y, body.width, 1),
             );
             if height > 1 {
@@ -386,11 +417,11 @@ fn list_travel(rows: &[SidebarRow], body: Rect) -> usize {
         .unwrap_or(0)
 }
 
-/// The longest overrun of a Sessions title drawn in the section `area`, the
+/// The longest overrun of an Agents title drawn in the section `area`, the
 /// only rows that scroll, for `ViewState::title_travel`.
-pub fn sessions_title_travel<W: WorkspaceView>(ws: &W, chrome: &Chrome, area: Rect) -> usize {
-    let rows = session_rows(ws, chrome);
-    let (_, body) = section_list(area, SidebarSection::Sessions, &rows, chrome);
+pub fn agents_title_travel<W: WorkspaceView>(ws: &W, chrome: &Chrome, area: Rect) -> usize {
+    let rows = agent_rows(ws, chrome);
+    let (_, body) = section_list(area, SidebarSection::Agents, &rows, chrome);
     list_travel(&rows, body)
 }
 
@@ -423,11 +454,11 @@ pub fn section_body_rect(area: Rect, section: SidebarSection, has_scrollbar: boo
 }
 
 /// The blank row a section keeps under its rows, above the next band. The
-/// sessions end at the sidebar's last row and keep none.
+/// terminals end at the sidebar's last row and keep none.
 pub fn section_gap_rows(section: SidebarSection) -> u16 {
     match section {
-        SidebarSection::Machines | SidebarSection::Projects => GAP_ROWS,
-        SidebarSection::Sessions => 0,
+        SidebarSection::Machines | SidebarSection::Projects | SidebarSection::Agents => GAP_ROWS,
+        SidebarSection::Terminals => 0,
     }
 }
 

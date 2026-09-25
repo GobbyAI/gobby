@@ -15,15 +15,18 @@ pub enum SidebarSection {
     Machines,
     Projects,
     /// Every roster entry: interactive sessions with their agent runs
-    /// nested under them, plus the bare terminals.
-    Sessions,
+    /// nested under them.
+    Agents,
+    /// The bare terminals: panes no roster entry names.
+    Terminals,
 }
 
 impl SidebarSection {
-    pub const ALL: [SidebarSection; 3] = [
+    pub const ALL: [SidebarSection; 4] = [
         SidebarSection::Machines,
         SidebarSection::Projects,
-        SidebarSection::Sessions,
+        SidebarSection::Agents,
+        SidebarSection::Terminals,
     ];
 
     /// Position from the top: the index into the per-section arrays.
@@ -36,7 +39,8 @@ impl SidebarSection {
         match self {
             SidebarSection::Machines => "Machines",
             SidebarSection::Projects => "Projects",
-            SidebarSection::Sessions => "Sessions",
+            SidebarSection::Agents => "Agents",
+            SidebarSection::Terminals => "Terminals",
         }
     }
 }
@@ -62,9 +66,9 @@ pub enum Hit {
     GroupToggle(String),
     /// The `[working]`/`[all]` control of the projects band.
     ProjectsFilter,
-    /// The `[view]` control of the sessions band, which opens the menu
+    /// The `[view]` control of the agents band, which opens the menu
     /// carrying the scope and the order.
-    SessionsView,
+    AgentsView,
     /// The `│` column between sidebar and content.
     SidebarDivider,
     SidebarEmpty,
@@ -213,7 +217,7 @@ fn sidebar_hit(view: &ViewState, at: Position) -> Hit {
     }
     let controls = [
         (view.projects_filter_hit_area, Hit::ProjectsFilter),
-        (view.sessions_view_hit_area, Hit::SessionsView),
+        (view.agents_view_hit_area, Hit::AgentsView),
     ];
     if let Some((_, hit)) = controls
         .into_iter()

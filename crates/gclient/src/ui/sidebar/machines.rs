@@ -8,7 +8,7 @@
 
 use std::sync::OnceLock;
 
-use super::sessions::agent_state;
+use super::agents::agent_state;
 use super::{render_band, render_section_rows, BandStyle, SidebarHits, ALL_MACHINES};
 use crate::app::short_terminal_id;
 use crate::app::sidebar_model::urgency;

@@ -14,20 +14,20 @@
 05 : -/surface_dim+d*1 yellow/surface_dim+d*1 accent/panel_bg*1 subtext0/panel_bg+b*20 text/panel_bg*17 overlay1/panel_bg*9 -/panel_bg*11 subtext0/panel_bg+b*20 text/panel_bg*28 overlay1/panel_bg*7 -/panel_bg*1 overlay1/panel_bg*1 accent/panel_bg*1 -/panel_bg+d*1 accent/panel_bg+d*1
 06 |  │ prefix+?           Open keybinding help (help)           prefix+shift+t     Rename the active tab (rename_tab)  ▐│ │|
 06 : -/panel_bg+d*2 accent/panel_bg*1 subtext0/panel_bg+b*20 text/panel_bg*20 overlay1/panel_bg*7 -/panel_bg*10 subtext0/panel_bg+b*20 text/panel_bg*21 overlay1/panel_bg*13 -/panel_bg*2 overlay1/panel_bg*1 accent/panel_bg*1 -/panel_bg+d*1 accent/panel_bg+d*1
-07 | S│ prefix+s           Open settings (settings)              prefix+p           Select the previous tab (previous_t ▐│ │|
+07 | A│ prefix+s           Open settings (settings)              prefix+p           Select the previous tab (previous_t ▐│ │|
 07 : -/surface0+d*1 subtext0/surface0+bd*1 accent/panel_bg*1 subtext0/panel_bg+b*20 text/panel_bg*13 overlay1/panel_bg*11 -/panel_bg*13 subtext0/panel_bg+b*20 text/panel_bg*23 overlay1/panel_bg*12 -/panel_bg*1 overlay1/panel_bg*1 accent/panel_bg*1 -/panel_bg+d*1 accent/panel_bg+d*1
 08 | ⍾│ unset              Open a new terminal (new_terminal)    prefix+n           Select the next tab (next_tab)      ▐│ │|
 08 : -/panel_bg+d*1 yellow/panel_bg+d*1 accent/panel_bg*1 subtext0/panel_bg+b*20 text/panel_bg*19 overlay1/panel_bg*15 -/panel_bg*3 subtext0/panel_bg+b*20 text/panel_bg*19 overlay1/panel_bg*11 -/panel_bg*6 overlay1/panel_bg*1 accent/panel_bg*1 -/panel_bg+d*1 accent/panel_bg+d*1
 09 |  │ prefix+shift+n     Add a project (new_project)           prefix+shift+left  Move the active tab left (move_tab_ ▐│ │|
 09 : -/panel_bg+d*2 accent/panel_bg*1 subtext0/panel_bg+b*20 text/panel_bg*13 overlay1/panel_bg*14 -/panel_bg*10 subtext0/panel_bg+b*20 text/panel_bg*24 overlay1/panel_bg*11 -/panel_bg*1 overlay1/panel_bg*1 accent/panel_bg*1 -/panel_bg+d*1 accent/panel_bg+d*1
-10 | ○│ prefix+shift+w     Rename the selected terminal (renam   prefix+shift+right Move the active tab right (move_tab ▐│ │|
-10 : -/surface_dim+d*1 overlay0/surface_dim+d*1 accent/panel_bg*1 subtext0/panel_bg+b*20 text/panel_bg*28 overlay1/panel_bg*7 -/panel_bg*2 subtext0/panel_bg+b*20 text/panel_bg*25 overlay1/panel_bg*10 -/panel_bg*1 overlay1/panel_bg*1 accent/panel_bg*1 -/panel_bg+d*1 accent/panel_bg+d*1
+10 |  │ prefix+shift+w     Rename the selected terminal (renam   prefix+shift+right Move the active tab right (move_tab ▐│ │|
+10 : -/panel_bg+d*2 accent/panel_bg*1 subtext0/panel_bg+b*20 text/panel_bg*28 overlay1/panel_bg*7 -/panel_bg*2 subtext0/panel_bg+b*20 text/panel_bg*25 overlay1/panel_bg*10 -/panel_bg*1 overlay1/panel_bg*1 accent/panel_bg*1 -/panel_bg+d*1 accent/panel_bg+d*1
 11 |  │ prefix+shift+d     Close the selected terminal (close_   prefix+1..9        Switch to tab 1-9 (switch_tab)      ▐│ │|
-11 : -/surface_dim+d*1 overlay0/surface_dim+d*1 accent/panel_bg*1 subtext0/panel_bg+b*20 text/panel_bg*27 overlay1/panel_bg*8 -/panel_bg*2 subtext0/panel_bg+b*20 text/panel_bg*17 overlay1/panel_bg*13 -/panel_bg*6 overlay1/panel_bg*1 accent/panel_bg*1 -/panel_bg+d*1 accent/panel_bg+d*1
-12 | ○│ prefix+w           Open the terminal picker (terminal_   prefix+shift+1..9  Move the focused pane to tab 1-9 (m ▐│ │|
-12 : -/panel_bg+d*1 overlay0/panel_bg+d*1 accent/panel_bg*1 subtext0/panel_bg+b*20 text/panel_bg*24 overlay1/panel_bg*11 -/panel_bg*2 subtext0/panel_bg+b*20 text/panel_bg*32 overlay1/panel_bg*3 -/panel_bg*1 overlay1/panel_bg*1 accent/panel_bg*1 -/panel_bg+d*1 accent/panel_bg+d*1
+11 : -/panel_bg+d*2 accent/panel_bg*1 subtext0/panel_bg+b*20 text/panel_bg*27 overlay1/panel_bg*8 -/panel_bg*2 subtext0/panel_bg+b*20 text/panel_bg*17 overlay1/panel_bg*13 -/panel_bg*6 overlay1/panel_bg*1 accent/panel_bg*1 -/panel_bg+d*1 accent/panel_bg+d*1
+12 |  │ prefix+w           Open the terminal picker (terminal_   prefix+shift+1..9  Move the focused pane to tab 1-9 (m ▐│ │|
+12 : -/panel_bg+d*2 accent/panel_bg*1 subtext0/panel_bg+b*20 text/panel_bg*24 overlay1/panel_bg*11 -/panel_bg*2 subtext0/panel_bg+b*20 text/panel_bg*32 overlay1/panel_bg*3 -/panel_bg*1 overlay1/panel_bg*1 accent/panel_bg*1 -/panel_bg+d*1 accent/panel_bg+d*1
 13 |  │ prefix+g           Open the navigator (goto)             prefix+shift+c     Move the focused pane to a new tab  ▐│ │|
-13 : -/panel_bg+d*1 overlay0/panel_bg+d*1 accent/panel_bg*1 subtext0/panel_bg+b*20 text/panel_bg*18 overlay1/panel_bg*7 -/panel_bg*12 subtext0/panel_bg+b*20 text/panel_bg*34 overlay1/panel_bg*1 -/panel_bg*1 overlay1/panel_bg*1 accent/panel_bg*1 -/panel_bg+d*1 accent/panel_bg+d*1
+13 : -/panel_bg+d*2 accent/panel_bg*1 subtext0/panel_bg+b*20 text/panel_bg*18 overlay1/panel_bg*7 -/panel_bg*12 subtext0/panel_bg+b*20 text/panel_bg*34 overlay1/panel_bg*1 -/panel_bg*1 overlay1/panel_bg*1 accent/panel_bg*1 -/panel_bg+d*1 accent/panel_bg+d*1
 14 |  │ up                 Select the previous sidebar row (na   unset              Focus project 1-9 (switch_project)  ▐│ │|
 14 : -/panel_bg+d*2 accent/panel_bg*1 subtext0/panel_bg+b*20 text/panel_bg*31 overlay1/panel_bg*4 -/panel_bg*2 subtext0/panel_bg+b*20 text/panel_bg*17 overlay1/panel_bg*17 -/panel_bg*2 overlay1/panel_bg*1 accent/panel_bg*1 -/panel_bg+d*1 accent/panel_bg+d*1
 15 |  │ down               Select the next sidebar row (naviga   prefix+shift+x     Close the active tab (close_tab)    ▐│ │|
@@ -46,16 +46,16 @@
 21 : -/panel_bg+d*2 accent/panel_bg*1 subtext0/panel_bg+b*20 text/panel_bg*25 overlay1/panel_bg*10 -/panel_bg*2 subtext0/panel_bg+b*20 text/panel_bg*27 overlay1/panel_bg*8 -/panel_bg*1 overlay1/panel_bg*1 accent/panel_bg*1 -/panel_bg+d*1 accent/panel_bg+d*1
 22 |  │ prefix+o           Focus the notification target (open   prefix+shift+h     Swap with the pane to the left (swa ▐│ │|
 22 : -/panel_bg+d*2 accent/panel_bg*1 subtext0/panel_bg+b*20 text/panel_bg*29 overlay1/panel_bg*6 -/panel_bg*2 subtext0/panel_bg+b*20 text/panel_bg*30 overlay1/panel_bg*5 -/panel_bg*1 overlay1/panel_bg*1 accent/panel_bg*1 -/panel_bg+d*1 accent/panel_bg+d*1
-23 |  │ unset              Select the previous terminal (previ   prefix+shift+j     Swap with the pane below (swap_pane ▐│ │|
-23 : -/panel_bg+d*2 accent/panel_bg*1 subtext0/panel_bg+b*20 text/panel_bg*28 overlay1/panel_bg*7 -/panel_bg*2 subtext0/panel_bg+b*20 text/panel_bg*24 overlay1/panel_bg*11 -/panel_bg*1 overlay1/panel_bg*1 accent/panel_bg*1 -/panel_bg+d*1 accent/panel_bg+d*1
-24 |  │ unset              Select the next terminal (next_term   prefix+shift+k     Swap with the pane above (swap_pane ▐│ │|
-24 : -/panel_bg+d*2 accent/panel_bg*1 subtext0/panel_bg+b*20 text/panel_bg*24 overlay1/panel_bg*11 -/panel_bg*2 subtext0/panel_bg+b*20 text/panel_bg*24 overlay1/panel_bg*11 -/panel_bg*1 overlay1/panel_bg*1 accent/panel_bg*1 -/panel_bg+d*1 accent/panel_bg+d*1
+23 | T│ unset              Select the previous terminal (previ   prefix+shift+j     Swap with the pane below (swap_pane ▐│ │|
+23 : -/surface0+d*1 subtext0/surface0+bd*1 accent/panel_bg*1 subtext0/panel_bg+b*20 text/panel_bg*28 overlay1/panel_bg*7 -/panel_bg*2 subtext0/panel_bg+b*20 text/panel_bg*24 overlay1/panel_bg*11 -/panel_bg*1 overlay1/panel_bg*1 accent/panel_bg*1 -/panel_bg+d*1 accent/panel_bg+d*1
+24 | ○│ unset              Select the next terminal (next_term   prefix+shift+k     Swap with the pane above (swap_pane ▐│ │|
+24 : -/surface_dim+d*1 overlay0/surface_dim+d*1 accent/panel_bg*1 subtext0/panel_bg+b*20 text/panel_bg*24 overlay1/panel_bg*11 -/panel_bg*2 subtext0/panel_bg+b*20 text/panel_bg*24 overlay1/panel_bg*11 -/panel_bg*1 overlay1/panel_bg*1 accent/panel_bg*1 -/panel_bg+d*1 accent/panel_bg+d*1
 25 |  │ unset              Focus the previous project (previou   prefix+shift+l     Swap with the pane to the right (sw ▐│ │|
-25 : -/panel_bg+d*2 accent/panel_bg*1 subtext0/panel_bg+b*20 text/panel_bg*26 overlay1/panel_bg*9 -/panel_bg*2 subtext0/panel_bg+b*20 text/panel_bg*31 overlay1/panel_bg*4 -/panel_bg*1 overlay1/panel_bg*1 accent/panel_bg*1 -/panel_bg+d*1 accent/panel_bg+d*1
-26 |  │ unset              Focus the next project (next_projec   prefix+tab         Cycle to the next pane (cycle_pane_ ▐│ │|
-26 : -/panel_bg+d*2 accent/panel_bg*1 subtext0/panel_bg+b*20 text/panel_bg*22 overlay1/panel_bg*13 -/panel_bg*2 subtext0/panel_bg+b*20 text/panel_bg*22 overlay1/panel_bg*13 -/panel_bg*1 overlay1/panel_bg*1 accent/panel_bg*1 -/panel_bg+d*1 accent/panel_bg+d*1
+25 : -/surface_dim+d*1 overlay0/surface_dim+d*1 accent/panel_bg*1 subtext0/panel_bg+b*20 text/panel_bg*26 overlay1/panel_bg*9 -/panel_bg*2 subtext0/panel_bg+b*20 text/panel_bg*31 overlay1/panel_bg*4 -/panel_bg*1 overlay1/panel_bg*1 accent/panel_bg*1 -/panel_bg+d*1 accent/panel_bg+d*1
+26 | ○│ unset              Focus the next project (next_projec   prefix+tab         Cycle to the next pane (cycle_pane_ ▐│ │|
+26 : -/panel_bg+d*1 overlay0/panel_bg+d*1 accent/panel_bg*1 subtext0/panel_bg+b*20 text/panel_bg*22 overlay1/panel_bg*13 -/panel_bg*2 subtext0/panel_bg+b*20 text/panel_bg*22 overlay1/panel_bg*13 -/panel_bg*1 overlay1/panel_bg*1 accent/panel_bg*1 -/panel_bg+d*1 accent/panel_bg+d*1
 27 |  │ unset              Collapse or expand the project's wo   prefix+shift+tab   Cycle to the previous pane (cycle_p ▐│ │|
-27 : -/panel_bg+d*2 accent/panel_bg*1 subtext0/panel_bg+b*20 text/panel_bg*35 -/panel_bg*2 subtext0/panel_bg+b*20 text/panel_bg*26 overlay1/panel_bg*9 -/panel_bg*1 overlay1/panel_bg*1 accent/panel_bg*1 -/panel_bg+d*1 accent/panel_bg+d*1
+27 : -/panel_bg+d*1 overlay0/panel_bg+d*1 accent/panel_bg*1 subtext0/panel_bg+b*20 text/panel_bg*35 -/panel_bg*2 subtext0/panel_bg+b*20 text/panel_bg*26 overlay1/panel_bg*9 -/panel_bg*1 overlay1/panel_bg*1 accent/panel_bg*1 -/panel_bg+d*1 accent/panel_bg+d*1
 28 |  │ unset              Cycle the agents section's machine    unset              Focus the last focused pane (last_p ▐│ │|
 28 : -/panel_bg+d*2 accent/panel_bg*1 subtext0/panel_bg+b*20 text/panel_bg*35 -/panel_bg*2 subtext0/panel_bg+b*20 text/panel_bg*27 overlay1/panel_bg*8 -/panel_bg*1 overlay1/panel_bg*1 accent/panel_bg*1 -/panel_bg+d*1 accent/panel_bg+d*1
 29 |  │ unset              Toggle grouped/priority session ord   prefix+v           Split side by side (split_vertical) ▐│ │|

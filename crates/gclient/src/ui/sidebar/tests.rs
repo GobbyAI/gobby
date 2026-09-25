@@ -79,50 +79,71 @@ fn screen(terminal: &Terminal<TestBackend>) -> String {
 fn a_right_sidebar_keeps_its_edge_column_first() {
     // On the right the edge faces the panes, so the sections start one
     // column in and run to the sidebar's last column.
-    let layout = sidebar_layout(Rect::new(54, 0, 26, 40), SidebarSide::Right, 1, 1);
+    let layout = sidebar_layout(Rect::new(54, 0, 26, 40), SidebarSide::Right, 1, 1, 0);
     assert_eq!(layout.sections[0], Rect::new(55, 0, 25, 3));
-    assert_eq!(layout.sections[2], Rect::new(55, 6, 25, 34));
+    assert_eq!(layout.sections[3], Rect::new(55, 39, 25, 1));
 }
 
 #[test]
 fn layout_gives_the_top_half_to_machines_and_projects_at_most() {
     let area = Rect::new(0, 0, 26, 40);
     // One machine, one card: each takes its band, its row and the blank
-    // row under it; the sessions everything from their band to the last row.
-    let layout = sidebar_layout(area, SidebarSide::Left, 1, 1);
+    // row under it. With no bare terminal the terminals keep only their band,
+    // on the last row, and the agents take everything between.
+    let layout = sidebar_layout(area, SidebarSide::Left, 1, 1, 0);
     assert_eq!(
         layout.sections,
         [
             Rect::new(0, 0, 25, 3),
             Rect::new(0, 3, 25, 3),
-            Rect::new(0, 6, 25, 34),
+            Rect::new(0, 6, 25, 33),
+            Rect::new(0, 39, 25, 1),
         ]
     );
+    // A bare terminal splits the rest in half.
+    let layout = sidebar_layout(area, SidebarSide::Left, 1, 1, 2);
+    assert_eq!(layout.sections[2], Rect::new(0, 6, 25, 17));
+    assert_eq!(layout.sections[3], Rect::new(0, 23, 25, 17));
     // The machines stop at four rows; the cards at the top half, their
-    // blank row charged inside it.
-    let layout = sidebar_layout(area, SidebarSide::Left, 9, 1);
+    // blank row charged inside it. An odd row left over goes to the agents.
+    let layout = sidebar_layout(area, SidebarSide::Left, 9, 1, 2);
     assert_eq!(layout.sections[0].height, 1 + MACHINES_MAX_ROWS + 1);
     assert_eq!(layout.sections[1], Rect::new(0, 6, 25, 3));
-    assert_eq!(layout.sections[2], Rect::new(0, 9, 25, 31));
-    let layout = sidebar_layout(area, SidebarSide::Left, 1, 30);
+    assert_eq!(layout.sections[2], Rect::new(0, 9, 25, 16));
+    assert_eq!(layout.sections[3], Rect::new(0, 25, 25, 15));
+    let layout = sidebar_layout(area, SidebarSide::Left, 1, 30, 0);
     assert_eq!(layout.sections[0].height, 3);
     assert_eq!(layout.sections[1], Rect::new(0, 3, 25, 17));
-    assert_eq!(layout.sections[2], Rect::new(0, 20, 25, 20));
-    // Two rows hold the machines band and the sessions band; one row the
-    // sessions band alone; nothing fits a one-column area.
-    let layout = sidebar_layout(Rect::new(0, 0, 26, 2), SidebarSide::Left, 1, 1);
-    assert_eq!(layout.sections.map(|rect| rect.height), [1, 0, 1]);
-    let layout = sidebar_layout(Rect::new(0, 0, 26, 1), SidebarSide::Left, 1, 1);
-    assert_eq!(layout.sections.map(|rect| rect.height), [0, 0, 1]);
+    assert_eq!(layout.sections[2], Rect::new(0, 20, 25, 19));
+    assert_eq!(layout.sections[3], Rect::new(0, 39, 25, 1));
+    // Two rows hold the machines band and the agents band, terminals or
+    // not; one row the agents band alone; three rows the terminals band as
+    // well. Nothing fits a one-column area.
+    let heights = |rows: u16, terminal_rows: u16| {
+        sidebar_layout(
+            Rect::new(0, 0, 26, rows),
+            SidebarSide::Left,
+            1,
+            1,
+            terminal_rows,
+        )
+        .sections
+        .map(|rect| rect.height)
+    };
+    assert_eq!(heights(2, 0), [1, 0, 1, 0]);
+    assert_eq!(heights(2, 2), [1, 0, 1, 0]);
+    assert_eq!(heights(1, 0), [0, 0, 1, 0]);
+    assert_eq!(heights(3, 0), [1, 0, 1, 1]);
     assert_eq!(
-        sidebar_layout(Rect::new(0, 0, 1, 40), SidebarSide::Left, 1, 1),
+        sidebar_layout(Rect::new(0, 0, 1, 40), SidebarSide::Left, 1, 1, 0),
         SidebarLayout::default()
     );
-    // `section_rects` counts the workspace's rows into the same layout.
+    // `section_rects` counts the workspace's rows into the same layout: one
+    // machine, one card and one two-line bare terminal.
     let ws = scripted_workspace();
     assert_eq!(
         section_rects(&ws, &Chrome::dark(), area),
-        sidebar_layout(area, SidebarSide::Left, 1, 1).sections
+        sidebar_layout(area, SidebarSide::Left, 1, 1, 2).sections
     );
 }
 
@@ -144,7 +165,7 @@ fn expanded_sidebar_draws_the_bands_and_records_the_hits() {
     // The hub row carries its blocked agent's state and the local mark.
     assert!(lines[1].starts_with(" ⍾ "), "{:?}", lines[1]);
     assert!(lines[1].contains("· local"), "{:?}", lines[1]);
-    // A blank row above the projects and sessions bands.
+    // A blank row above the projects and agents bands.
     assert!(blank(lines[2]), "{:?}", lines[2]);
     assert_eq!(lines[3], " Projects      [working] │");
     // `working` lists only alpha, folded, on one line with its counts.
@@ -154,12 +175,14 @@ fn expanded_sidebar_draws_the_bands_and_records_the_hits() {
     assert!(blank(lines[5]), "{:?}", lines[5]);
     // One control, so the band fits the default width; the scope and the
     // order live in its menu.
-    assert_eq!(lines[6], " Sessions         [view] │");
+    assert_eq!(lines[6], " Agents           [view] │");
     assert_eq!(lines[7], " ⍾ term-alpha · needs you│");
     assert!(blank(lines[8]), "{:?}", lines[8]);
-    assert_eq!(lines[9], " ○ term-beta             │");
-    assert_eq!(lines[10], "   gclient               │");
-    // No footer: the sessions run to the last row.
+    assert!(blank(lines[22]), "{:?}", lines[22]);
+    assert_eq!(lines[23], " Terminals               │");
+    assert_eq!(lines[24], " ○ term-beta             │");
+    assert_eq!(lines[25], "   gclient               │");
+    // No footer: the terminals run to the last row.
     assert!(blank(lines[39]), "{:?}", lines[39]);
     for line in &lines {
         assert!(line.ends_with('│'), "{line:?}");
@@ -177,15 +200,38 @@ fn expanded_sidebar_draws_the_bands_and_records_the_hits() {
         hits.group_toggles,
         vec![("proj-alpha".to_string(), Rect::new(24, 4, 1, 1))]
     );
-    assert_eq!(hits.sessions_view, Some(Rect::new(18, 6, 6, 1)));
+    assert_eq!(hits.agents_view, Some(Rect::new(18, 6, 6, 1)));
     assert_eq!(
         hits.agents,
         vec![
             ("run:term-alpha".to_string(), Rect::new(0, 7, 25, 2)),
-            ("terminal:term-beta".to_string(), Rect::new(0, 9, 25, 2)),
+            ("terminal:term-beta".to_string(), Rect::new(0, 24, 25, 2)),
         ]
     );
-    assert_eq!(hits.scrollbars, [None; 3]);
+    assert_eq!(hits.scrollbars, [None; 4]);
+}
+
+#[test]
+fn bare_terminal_titles_stay_still_while_agents_ticker() {
+    let mut ws = scripted_workspace();
+    let pane = ws
+        .pane_for_terminal("term-beta")
+        .expect("bare terminal pane");
+    ws.pane_mut(pane).label = Some("a-bare-terminal-title-longer-than-the-sidebar".to_owned());
+    let mut chrome = Chrome::dark();
+    let draw_row = |chrome: &Chrome| {
+        let mut terminal = Terminal::new(TestBackend::new(26, 40)).unwrap();
+        terminal
+            .draw(|frame| {
+                render_sidebar(frame, Rect::new(0, 0, 26, 40), &ws, chrome);
+            })
+            .unwrap();
+        screen(&terminal).lines().nth(24).unwrap().to_owned()
+    };
+    let first = draw_row(&chrome);
+    chrome.ticker =
+        (crate::ui::sidebar_rows::TICKER_PAUSE + 2) * crate::ui::sidebar_rows::TICKER_STEP;
+    assert_eq!(draw_row(&chrome), first);
 }
 
 #[test]
@@ -202,8 +248,8 @@ fn wider_sidebar_shows_the_expanded_card() {
     let text = screen(&terminal);
     let lines: Vec<&str> = text.lines().collect();
     assert_eq!(lines[5], "   └─ ○ feature · #123        │");
-    assert_eq!(lines[7], " Sessions              [view] │");
-    assert_eq!(hits.sessions_view, Some(Rect::new(23, 7, 6, 1)));
+    assert_eq!(lines[7], " Agents                [view] │");
+    assert_eq!(hits.agents_view, Some(Rect::new(23, 7, 6, 1)));
     assert_eq!(
         hits.worktrees,
         vec![("wt-1".to_string(), Rect::new(0, 5, 30, 1))]

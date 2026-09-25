@@ -126,8 +126,8 @@ fn hit_test_covers_split_live_layout() {
         .projects_filter_hit_area
         .expect("projects filter drawn");
     assert_eq!(at(view, filter.x, filter.y), Hit::ProjectsFilter);
-    let view_control = view.sessions_view_hit_area.expect("sessions view drawn");
-    assert_eq!(at(view, view_control.x, view_control.y), Hit::SessionsView);
+    let view_control = view.agents_view_hit_area.expect("agents view drawn");
+    assert_eq!(at(view, view_control.x, view_control.y), Hit::AgentsView);
     let (id, rect) = view.machine_hit_areas.first().expect("machine row");
     assert_eq!(at(view, rect.x, rect.y), Hit::Machine(id.clone()));
     let (id, rect) = view.project_hit_areas.first().expect("project card");
@@ -228,16 +228,24 @@ fn sidebar_scrollbar_lane_hits_by_section() {
     rendered(&ws, &mut chrome);
     // One project card never overflows a 38-row sidebar, so no lane is drawn
     // and the cells beside the rows stay plain sidebar.
-    assert_eq!(chrome.view.sidebar_scrollbar_hit_areas, [None; 3]);
+    assert_eq!(chrome.view.sidebar_scrollbar_hit_areas, [None; 4]);
 
-    // A lane the renderer reports maps to its section, row by row.
-    let lane = Rect::new(24, 7, 1, 3);
-    chrome.view.sidebar_scrollbar_hit_areas[SidebarSection::Projects.index()] = Some(lane);
-    let hit = Hit::SidebarScrollbar {
-        section: SidebarSection::Projects,
-        row: lane.y + 2,
-    };
-    assert_eq!(hit_test(&chrome.view, lane.x, lane.y + 2), hit);
+    // A lane the renderer reports maps to its section, row by row, in each
+    // of the four sections.
+    let lanes = [
+        (SidebarSection::Machines, Rect::new(24, 2, 1, 2)),
+        (SidebarSection::Projects, Rect::new(24, 7, 1, 3)),
+        (SidebarSection::Agents, Rect::new(24, 14, 1, 3)),
+        (SidebarSection::Terminals, Rect::new(24, 30, 1, 3)),
+    ];
+    for (section, lane) in lanes {
+        chrome.view.sidebar_scrollbar_hit_areas[section.index()] = Some(lane);
+    }
+    for (section, lane) in lanes {
+        let row = lane.y + lane.height - 1;
+        let hit = Hit::SidebarScrollbar { section, row };
+        assert_eq!(hit_test(&chrome.view, lane.x, row), hit, "{section:?}");
+    }
 }
 
 #[test]

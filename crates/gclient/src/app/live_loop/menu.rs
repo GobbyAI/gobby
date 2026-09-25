@@ -32,8 +32,8 @@ pub enum ContextMenuKind {
     Project(String),
     Worktree(String),
     Agent(String),
-    /// The sessions band's `[view]` control.
-    SessionsView,
+    /// The agents band's `[view]` control.
+    AgentsView,
     Global,
     /// A menu bar title.
     MenuBar(MenuBarMenu),
@@ -115,7 +115,7 @@ pub fn build_menu<W: WorkspaceView>(
         ContextMenuKind::Project(project_id) => project_items(ws, chrome, project_id),
         ContextMenuKind::Worktree(worktree_id) => worktree_items(chrome, worktree_id),
         ContextMenuKind::Agent(entry_id) => agent_items(ws, entry_id),
-        ContextMenuKind::SessionsView => sessions_view_items(chrome),
+        ContextMenuKind::AgentsView => agents_view_items(chrome),
         ContextMenuKind::MenuBar(menu) => menu_bar_items(ws, chrome, *menu),
     };
     let item_rects = item_rects(menu_rect(anchor, &items), items.len());
@@ -385,10 +385,10 @@ pub fn attention_id<W: WorkspaceView>(ws: &W, entry_id: &str) -> Option<String> 
         .clone()
 }
 
-/// The sessions band's `[view]` menu: the scope, then the order, one pair
+/// The agents band's `[view]` menu: the scope, then the order, one pair
 /// each. The rows below the band show the view they are in, so the menu
 /// marks which value is in force rather than naming the next one.
-fn sessions_view_items(chrome: &Chrome) -> Vec<MenuItem> {
+fn agents_view_items(chrome: &Chrome) -> Vec<MenuItem> {
     let all = chrome.sidebar.all_sessions;
     let priority = chrome.prefs.agent_sort == AgentSort::Priority;
     let scope = MenuAction::Act(Action::ToggleSessionsScope);
@@ -445,7 +445,7 @@ fn menu_bar_items<W: WorkspaceView>(ws: &W, chrome: &Chrome, menu: MenuBarMenu) 
         ],
         MenuBarMenu::Edit => edit_items(ws, chrome),
         MenuBarMenu::View => {
-            let mut items = sessions_view_items(chrome);
+            let mut items = agents_view_items(chrome);
             items.push(act("show sidebar", Action::ToggleSidebar));
             items.push(item("pin sidebar", MenuAction::PinSidebar));
             items

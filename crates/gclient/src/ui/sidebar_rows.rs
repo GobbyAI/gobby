@@ -267,6 +267,16 @@ pub fn row_line<'a>(
     chrome: &Chrome,
     max_travel: usize,
 ) -> Line<'a> {
+    row_line_with_scrolling(row, width, chrome, max_travel, chrome.prefs.title_scrolling)
+}
+
+pub(crate) fn row_line_with_scrolling<'a>(
+    row: &'a SidebarRow,
+    width: u16,
+    chrome: &Chrome,
+    max_travel: usize,
+    title_scrolling: TitleScrolling,
+) -> Line<'a> {
     let p = &chrome.palette;
     let (glyph, glyph_color) = state_dot(row.state, p);
     let glyph = (glyph, Style::default().fg(glyph_color));
@@ -353,7 +363,7 @@ pub fn row_line<'a>(
                 label_budget,
                 chrome.ticker,
                 max_travel,
-                chrome.prefs.title_scrolling,
+                title_scrolling,
             );
             spans.extend(agent_spans(
                 glyph,

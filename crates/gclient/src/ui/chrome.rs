@@ -205,7 +205,7 @@ pub struct ViewState {
     pub pane_infos: Vec<PaneInfo>,
     pub split_borders: Vec<SplitBorder>,
     /// The longest overrun of any scrolling title in the frame, pane header
-    /// or Sessions row: the one ticker period they all share (D7).
+    /// or Agents row: the one ticker period they all share (D7).
     pub title_travel: usize,
     /// Project cards drawn in the sidebar, by project id.
     pub project_hit_areas: Vec<(String, Rect)>,
@@ -215,8 +215,8 @@ pub struct ViewState {
     pub group_toggle_hit_areas: Vec<(String, Rect)>,
     /// The `[working]`/`[all]` control of the projects band.
     pub projects_filter_hit_area: Option<Rect>,
-    /// The `[view]` control of the sessions band.
-    pub sessions_view_hit_area: Option<Rect>,
+    /// The `[view]` control of the agents band.
+    pub agents_view_hit_area: Option<Rect>,
     /// Session, agent run and bare terminal rows drawn in the sidebar, by
     /// entry id.
     pub agent_hit_areas: Vec<(String, Rect)>,
@@ -224,11 +224,11 @@ pub struct ViewState {
     pub machine_hit_areas: Vec<(String, Rect)>,
     /// The `│` column between the sidebar and the content column.
     pub sidebar_divider_x: Option<u16>,
-    /// The three sections' rects (band and body), by
+    /// The four sections' rects (band and body), by
     /// `SidebarSection::index`, for the wheel over a bare sidebar cell.
-    pub sidebar_section_rects: [Rect; 3],
+    pub sidebar_section_rects: [Rect; 4],
     /// Scrollbar lane beside each section, by `SidebarSection::index`.
-    pub sidebar_scrollbar_hit_areas: [Option<Rect>; 3],
+    pub sidebar_scrollbar_hit_areas: [Option<Rect>; 4],
     /// The focused pane's metadata while it offers take-control (Read-only,
     /// Uncertain): on its edge, or leading the status line when the edge
     /// has no room for it.
@@ -267,7 +267,7 @@ impl ViewState {
         self.worktree_hit_areas = sidebar.worktrees;
         self.group_toggle_hit_areas = sidebar.group_toggles;
         self.projects_filter_hit_area = sidebar.projects_filter;
-        self.sessions_view_hit_area = sidebar.sessions_view;
+        self.agents_view_hit_area = sidebar.agents_view;
         self.agent_hit_areas = sidebar.agents;
         self.machine_hit_areas = sidebar.machines;
         self.sidebar_scrollbar_hit_areas = sidebar.scrollbars;
@@ -794,9 +794,8 @@ impl Chrome {
         let sidebar_divider_x = (self.sidebar.pinned && sidebar_rect.width > 0)
             .then(|| self.sidebar.edge_x(sidebar_rect));
         let sidebar_section_rects = sidebar::section_rects(ws, self, sidebar_rect);
-        let sessions_rect = sidebar_section_rects[SidebarSection::Sessions.index()];
-        let title_travel =
-            title_travel.max(sidebar::sessions_title_travel(ws, self, sessions_rect));
+        let agents_rect = sidebar_section_rects[SidebarSection::Agents.index()];
+        let title_travel = title_travel.max(sidebar::agents_title_travel(ws, self, agents_rect));
         self.view = ViewState {
             menu_bar_rect,
             sidebar_rect,

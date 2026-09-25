@@ -242,19 +242,32 @@ fn wide_header_titles_fill_the_edge_exactly_while_scrolling() {
 
 #[test]
 fn header_titles_share_the_sidebar_period() {
-    // The bare-terminal row repeats this label in the narrower sidebar, so
-    // its overrun is longer than the header's and sets the shared period.
+    // The agent row repeats this label in the narrower sidebar, so its
+    // overrun is longer than the header's and sets the shared period.
     let label = "a-long-pane-title-that-overruns-the-sidebar-and-the-header-both";
     let (mut ws, mut chrome) = scripted();
     chrome.sidebar.pinned = true;
-    let beta = ws.pane_for_terminal("term-beta").unwrap();
-    ws.pane_mut(beta).label = Some(label.to_owned());
+    ws.daemon_mut().set_roster(json!({
+        "epoch": "e2",
+        "seq": 2,
+        "entries": [{
+            "entry_id": "run:term-alpha",
+            "name": label,
+            "terminal": {"terminal_id": "term-alpha", "backend": "native"},
+            "kind": "blocked"
+        }]
+    }));
+    ws.reconcile_subscribe_first().unwrap();
+    chrome.sidebar.machine_filter = Some(sidebar::ALL_MACHINES.to_owned());
+    let alpha = ws.pane_for_terminal("term-alpha").unwrap();
+    ws.pane_mut(alpha).label = Some(label.to_owned());
+    ws.reconcile_subscribe_first().unwrap();
     let area = Rect::new(0, 0, 100, 20);
     chrome.compute_view(&ws, area);
-    let info = info_of(&ws, &chrome, "term-beta");
-    let own = pane_chrome::title_travel(&ws, ws.pane(beta), &info);
-    let sessions = chrome.view.sidebar_section_rects[SidebarSection::Sessions.index()];
-    let side = sidebar::sessions_title_travel(&ws, &chrome, sessions);
+    let info = info_of(&ws, &chrome, "term-alpha");
+    let own = pane_chrome::title_travel(&ws, ws.pane(alpha), &info);
+    let agents = chrome.view.sidebar_section_rects[SidebarSection::Agents.index()];
+    let side = sidebar::agents_title_travel(&ws, &chrome, agents);
     assert!(own > 0 && side > own, "header {own}, sidebar {side}");
     assert_eq!(chrome.view.title_travel, side);
 

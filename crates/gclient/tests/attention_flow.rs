@@ -329,8 +329,8 @@ async fn agent_row_click_jumps_and_labels_the_session() {
     probe.sidebar.pinned = true;
     probe.compute_view(&workspace, area);
     let sessions = section_body_rect(
-        probe.view.sidebar_section_rects[SidebarSection::Sessions.index()],
-        SidebarSection::Sessions,
+        probe.view.sidebar_section_rects[SidebarSection::Agents.index()],
+        SidebarSection::Agents,
         false,
     );
     let row_height = SidebarRow {

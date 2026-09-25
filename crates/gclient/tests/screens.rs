@@ -211,7 +211,7 @@ fn label_ladder() -> (Workspace, Chrome) {
 /// name. Its lease is lost, so its metadata reads `Read-only` in the warning
 /// tone. It shares its bottom line with the pane below, so that metadata sits
 /// top-right beside the title. The focused lower pane runs under tmux and
-/// keeps `tmux · Focused` bottom-right. The Sessions row puts the same title
+/// keeps `tmux · Focused` bottom-right. The Agents row puts the same title
 /// behind its stationary `#1742:` prefix.
 fn pane_edges() -> (Workspace, Chrome) {
     let mut ws = Workspace::scripted();
@@ -560,22 +560,22 @@ fn projects_agents_golden() {
         !rendered.contains("○ beta"),
         "the working filter hides a project with nothing live\n{rendered}"
     );
-    let sessions = row_containing(" Sessions");
+    let sessions = row_containing(" Agents");
     assert_eq!(
         sessions,
         alpha + 2,
-        "a blank row separates the cards from the sessions band"
+        "a blank row separates the cards from the agents band"
     );
     assert!(
         rows[sessions].contains("[view]"),
-        "sessions band: {:?}",
+        "agents band: {:?}",
         rows[sessions]
     );
     let entry = row_containing("term-alpha");
     assert_eq!(
         entry,
         sessions + 1,
-        "the attention entry lists under sessions"
+        "the attention entry lists under agents"
     );
     assert!(
         rows[entry].contains("⍾ term-alpha · needs you"),

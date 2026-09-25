@@ -672,10 +672,10 @@ parity_tests! {
                 "{line1}"
             );
             assert!(!line1.contains("1 one"));
-            // The card is one line: its blank row, then the sessions band.
+            // The card is one line: its blank row, then the agents band.
             assert_eq!(line2.trim(), "", "{line2}");
             let line3 = buffer_row_text(&terminal, card, card.y + 2);
-            assert!(line3.starts_with(" Sessions"), "{line3}");
+            assert!(line3.starts_with(" Agents"), "{line3}");
         }
 
         fn tab_bar_dims_auto_named_tabs_and_emphasizes_custom_tabs() {
@@ -1208,12 +1208,13 @@ switch_project = "ctrl+1..9"
                     // frame and every pane drew its four edges, and again when
                     // the sidebar edge took overlay0 (#22745), and again when
                     // row 0 drew the menu bar titles and the status hint
-                    // moved to the right edge (#22746):
+                    // moved to the right edge (#22746), and again when the
+                    // sidebar split Agents and bare Terminals (#22748):
                     // 4.1.3 requires a glyph change to fail here, so this
                     // digest moves only alongside a deliberate render change.
                     assert_eq!(
                         frame_digest(&terminal),
-                        "a3f915648a15991081b6db441d88470cd8e73f2de5f5d18b504fa802a7a7c922"
+                        "cda7b8f21dfd7567b1e656f1247495cd546cb54bc988ccf93a6dc659339ec379"
                     );
                 });
         }
@@ -1491,7 +1492,7 @@ fn rendered_hits_match_drawn_cells() {
     let mut chrome = chrome_for(&ws, "term-alpha");
     chrome.sidebar.all_projects = true;
     // Wide enough for the active row's whole title beside its needs-you
-    // word once the sessions scrollbar lane takes a column.
+    // word once the terminals scrollbar lane takes a column.
     chrome.sidebar.width = 28;
     for n in 2..=12 {
         add_tab(&mut chrome, &format!("tab-{n:02}"));
@@ -1556,13 +1557,13 @@ fn rendered_hits_match_drawn_cells() {
         text.contains("term-alpha"),
         "agent row at {rect:?}: {text:?}"
     );
-    // The cards and the twenty two-line sessions rows overflow their
-    // sections; the one machine row does not.
+    // The cards and the bare terminal rows overflow their sections;
+    // the one agent and machine row do not.
     assert_eq!(
         view.sidebar_scrollbar_hit_areas[SidebarSection::Machines.index()],
         None
     );
-    for section in [SidebarSection::Projects, SidebarSection::Sessions] {
+    for section in [SidebarSection::Projects, SidebarSection::Terminals] {
         let lane = view.sidebar_scrollbar_hit_areas[section.index()]
             .unwrap_or_else(|| panic!("{section:?} scrollbar"));
         for y in lane.y..lane.bottom() {

@@ -240,11 +240,11 @@ pub(super) fn down<W: WorkspaceView>(
         Hit::ProjectsFilter => MouseOutcome::Action(Action::ToggleProjectsFilter),
         // The band has room for one control, so both session axes live in
         // its menu.
-        Hit::SessionsView => {
+        Hit::AgentsView => {
             open_menu(
                 ws,
                 chrome,
-                ContextMenuKind::SessionsView,
+                ContextMenuKind::AgentsView,
                 (mouse.column, mouse.row),
             );
             MouseOutcome::Handled

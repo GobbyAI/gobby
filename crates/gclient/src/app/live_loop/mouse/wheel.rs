@@ -3,7 +3,7 @@
 use crossterm::event::{KeyModifiers, MouseEvent, MouseEventKind};
 
 use crate::ui::hit::{sidebar_section_at, Hit, SidebarSection};
-use crate::ui::sidebar::section_metrics;
+use crate::ui::sidebar::{section_metrics, TERMINAL_ROW};
 use crate::ui::{Chrome, WorkspaceView};
 
 use super::{focus_active_tab, forward, on_roster, MouseOutcome, MOUSE_SCROLL_LINES};
@@ -75,7 +75,7 @@ pub(super) fn wheel<W: WorkspaceView>(
         | Hit::GroupToggle(_)
         | Hit::ProjectsFilter
         | Hit::Agent(_)
-        | Hit::SessionsView
+        | Hit::AgentsView
         | Hit::SidebarScrollbar { .. }
         | Hit::SidebarEmpty
         | Hit::SidebarDivider => {
@@ -84,7 +84,8 @@ pub(super) fn wheel<W: WorkspaceView>(
                 Hit::Project(_) | Hit::Worktree(_) | Hit::GroupToggle(_) | Hit::ProjectsFilter => {
                     SidebarSection::Projects
                 }
-                Hit::Agent(_) | Hit::SessionsView => SidebarSection::Sessions,
+                Hit::Agent(id) if id.starts_with(TERMINAL_ROW) => SidebarSection::Terminals,
+                Hit::Agent(_) | Hit::AgentsView => SidebarSection::Agents,
                 Hit::SidebarScrollbar { section, .. } => section,
                 _ => sidebar_section_at(&chrome.view, row),
             };
