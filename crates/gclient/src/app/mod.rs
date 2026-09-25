@@ -239,6 +239,10 @@ impl Workspace {
         &mut self.daemon
     }
 
+    pub fn daemon_ready(&self) -> bool {
+        self.daemon_ready
+    }
+
     pub fn project_id(&self) -> Option<&str> {
         self.project_id.as_deref()
     }

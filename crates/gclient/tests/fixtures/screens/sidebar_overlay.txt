@@ -78,5 +78,5 @@
 37 : -/panel_bg*33 accent/panel_bg*1 -/panel_bg+d*24 -/panel_bg*1 yellow/panel_bg*1 accent/panel_bg*1 -/panel_bg*58 accent/panel_bg*1
 38 |                                 │──────────────── gclient ┘└ term-beta · Focused ──────────────────────────── gclient ┘|
 38 : -/panel_bg*33 accent/panel_bg*1 yellow/panel_bg*16 overlay0/panel_bg*9 yellow/panel_bg*1 accent/panel_bg*1 accent/panel_bg+b*21 accent/panel_bg*28 accent/panel_bg+b*9 accent/panel_bg*1
-39 |                                                                                               prefix ctrl+b │ navigate |
-39 : -/surface0*95 subtext0/surface0*16 accent/surface0*8 -/surface0*1
+39 | —                                                                                     — │ — │ prefix ctrl+b │ navigate |
+39 : -/surface0*1 subtext0/surface0*1 -/surface0*85 subtext0/surface0*24 accent/surface0*8 -/surface0*1

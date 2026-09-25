@@ -1,6 +1,6 @@
 //! 4.2.1: committed screen goldens for the whole gclient chrome.
 //!
-//! Nine scripted workspace states render through the real `render_workspace`
+//! Scripted workspace states render through the real `render_workspace`
 //! into a 120x40 `TestBackend`, then serialise one line per row: the glyphs,
 //! then the run-length-encoded style of every cell with each colour normalised
 //! to its `theme::Palette` role name.
@@ -46,7 +46,7 @@ const UPDATE_ENV: &str = "GOBBY_UPDATE_SCREENS";
 type ScriptedState = fn() -> (Workspace, Chrome);
 
 /// The scripted states, in the order the plan names them.
-const STATES: [(&str, ScriptedState); 10] = [
+const STATES: [(&str, ScriptedState); 11] = [
     ("empty_workspace", empty_workspace),
     ("agent_rows", agent_rows),
     ("projects_agents", projects_agents),
@@ -57,6 +57,7 @@ const STATES: [(&str, ScriptedState); 10] = [
     ("pane_edges", pane_edges),
     ("menu_bar", menu_bar),
     ("sidebar_overlay", sidebar_overlay),
+    ("status_segments", status_segments),
 ];
 
 // ---------------------------------------------------------------- the states
@@ -272,6 +273,52 @@ fn unnamed_pane() -> (Workspace, Chrome) {
     pane.command = Some("zsh".to_owned());
     let mut chrome = Chrome::dark();
     chrome.open_pane(pane_id, "alpha");
+    (ws, chrome)
+}
+
+fn status_segments() -> (Workspace, Chrome) {
+    let mut ws = Workspace::scripted();
+    let mut rows = SidebarRows::default();
+    rows.runs.insert(
+        "alpha".to_string(),
+        vec![RunRow {
+            run_id: "run-alpha".to_string(),
+            effective_reasoning_effort: Some("xhigh".to_string()),
+            ..RunRow::default()
+        }],
+    );
+    ws.daemon_mut().set_sidebar_rows(rows);
+    ws.daemon_mut().set_roster(json!({
+        "epoch": "e1",
+        "seq": 1,
+        "entries": [
+            {
+                "entry_id": "run:term-alpha",
+                "run_id": "run-alpha",
+                "terminal": {"terminal_id": "term-alpha", "backend": "native"},
+                "provider": "codex",
+                "model_display_name": "Fable 5.1",
+                "context_percent": 63,
+                "tokens_used": 12345
+            },
+            {
+                "entry_id": "run:term-beta",
+                "terminal": {"terminal_id": "term-beta", "backend": "native"},
+                "attention": {"attention_id": "att-1", "kind": "actionable"}
+            }
+        ]
+    }));
+    ws.reconcile_subscribe_first().expect("install roster");
+    let alpha = ws
+        .open_terminal("term-alpha", "native", "epoch")
+        .expect("open focused agent");
+    let beta = ws
+        .open_terminal("term-beta", "native", "epoch")
+        .expect("open attention agent");
+    let mut chrome = Chrome::dark();
+    chrome.open_tab(alpha, "alpha");
+    chrome.open_tab(beta, "beta");
+    chrome.activate_tab(0);
     (ws, chrome)
 }
 
@@ -607,6 +654,18 @@ fn agent_rows_golden() {
         .expect("model slug style");
     assert!(slug_style.contains("overlay0/panel_bg*5"));
     assert!(!slug_style.contains("overlay0/panel_bg+d"));
+}
+
+#[test]
+fn status_segments_golden() {
+    let theme = Theme::new(ThemeKind::Dark);
+    let rendered = deterministic_capture("status_segments", status_segments, &theme);
+    let rows = glyph_rows(&rendered);
+    let status = rows[usize::from(HEIGHT - 1)];
+    assert!(status.contains("1 need you"), "{status:?}");
+    assert!(status.contains("fable-5.1-xhigh"), "{status:?}");
+    assert!(status.contains("63% │ 12,345"), "{status:?}");
+    assert!(status.contains("prefix ctrl+b"), "{status:?}");
 }
 
 /// 3.1.1: the pinned sidebar stacks the machines, the projects and the

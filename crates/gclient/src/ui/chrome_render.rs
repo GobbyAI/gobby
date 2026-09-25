@@ -26,6 +26,7 @@ pub struct ChromeHits {
     pub tab_bar: TabBarHits,
     pub sidebar: SidebarHits,
     pub control_indicator: Option<Rect>,
+    pub status_count: Option<Rect>,
     pub toast: Option<Rect>,
     pub settings: Option<SettingsHits>,
     /// Rows of the context menu as drawn, in item order, whenever the menu
@@ -60,13 +61,15 @@ pub fn render_workspace_with<W: WorkspaceView>(
     };
 
     let status_rect = chrome.view.status_rect;
-    let status_indicator = if status_rect.is_empty() {
-        None
+    let status_hits = if status_rect.is_empty() {
+        status::StatusHits::default()
     } else {
         status::render_status_line(frame, status_rect, ws, chrome)
     };
-    hits.control_indicator =
-        status_indicator.or_else(|| pane_chrome::control_indicator_hit_area(ws, chrome));
+    hits.control_indicator = status_hits
+        .control_indicator
+        .or_else(|| pane_chrome::control_indicator_hit_area(ws, chrome));
+    hits.status_count = status_hits.count;
 
     // Ambient notifications sit above panes, but below interactive overlays.
     hits.toast = render_notifications(frame, chrome);

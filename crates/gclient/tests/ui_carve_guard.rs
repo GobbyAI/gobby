@@ -278,7 +278,7 @@ fn render_workspace_composes_imported_chrome() {
             "term-beta",
             "No assigned task",
             "second",
-            "gclient · Focused",
+            "Unknown · Focused",
             "close",
         ] {
             assert!(

@@ -78,5 +78,5 @@
 37 : accent/panel_bg*1 -/panel_bg*118 accent/panel_bg*1
 38 |└ term-alpha · Focused ─────────────────────────────────────────────────────────────────────────────────────── gclient ┘|
 38 : accent/panel_bg*1 accent/panel_bg+b*22 accent/panel_bg*87 accent/panel_bg+b*9 accent/panel_bg*1
-39 |                                                                                                   prefix ctrl+b │ menu |
-39 : -/surface0*99 subtext0/surface0*16 accent/surface0*4 -/surface0*1
+39 | —                                                                                         — │ — │ prefix ctrl+b │ menu |
+39 : -/surface0*1 subtext0/surface0*1 -/surface0*89 subtext0/surface0*24 accent/surface0*4 -/surface0*1

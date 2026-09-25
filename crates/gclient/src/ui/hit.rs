@@ -103,6 +103,7 @@ pub enum Hit {
     /// The menu bar beside its titles.
     MenuBarEmpty,
     ControlIndicator,
+    StatusCount,
     Status,
     Toast,
     Empty,
@@ -169,6 +170,12 @@ pub fn hit_test(view: &ViewState, column: u16, row: u16) -> Hit {
     }
     if let Some(info) = view.pane_infos.iter().find(|info| info.rect.contains(at)) {
         return Hit::PaneBorder(info.id);
+    }
+    if view
+        .status_count_hit_area
+        .is_some_and(|count| count.contains(at))
+    {
+        return Hit::StatusCount;
     }
     if view.status_rect.contains(at) {
         return Hit::Status;

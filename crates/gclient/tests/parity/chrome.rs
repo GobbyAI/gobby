@@ -1214,12 +1214,14 @@ switch_project = "ctrl+1..9"
                     // moved to the right edge (#22746), and again when the
                     // sidebar split Agents and bare Terminals (#22748), agent
                     // and terminal rows gained their final content (#22749),
-                    // and tabs gained project labels and neutral styling (#22750):
+                    // and tabs gained project labels and neutral styling (#22750),
+                    // then the configurable segments and attention count
+                    // populated the status row (#22752):
                     // 4.1.3 requires a glyph change to fail here, so this
                     // digest moves only alongside a deliberate render change.
                     assert_eq!(
                         frame_digest(&terminal),
-                        "b79e66ed945d172b0d2cc0bdc1639beb63fb1310f75a1b23f27102bfb4f4c02c"
+                        "383ef43f6a295af208538b57189f72048e75caf605d55296bfc09b4d264b737b"
                     );
                 });
         }
@@ -1468,6 +1470,40 @@ fn menu_bar_titles_hit_and_open_under_their_cell() {
 }
 
 #[test]
+fn status_count_click_opens_the_sidebar_overlay() {
+    let mut ws = scripted(&["alpha", "beta"]);
+    ws.daemon_mut().set_roster(json!({
+        "epoch": "e1",
+        "seq": 1,
+        "entries": [{
+            "entry_id": "run:beta",
+            "terminal": {"terminal_id": "beta", "backend": "native"},
+            "attention": {"attention_id": "att-beta", "kind": "actionable"}
+        }]
+    }));
+    ws.reconcile_subscribe_first()
+        .expect("install attention roster");
+    let alpha = ws.pane_for_terminal("alpha").expect("alpha pane");
+    let beta = ws.pane_for_terminal("beta").expect("beta pane");
+    let mut chrome = Chrome::new(theme());
+    chrome.open_tab(alpha, "alpha");
+    chrome.open_tab(beta, "beta");
+    chrome.activate_tab(0);
+    render_with_hits(&ws, &mut chrome, Rect::new(0, 0, 100, 20));
+
+    let status = chrome.view.status_rect;
+    let press = MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: status.x + 2,
+        row: status.y,
+        modifiers: KeyModifiers::NONE,
+    };
+    assert_eq!(route_mouse(&ws, &mut chrome, &press), MouseOutcome::Handled);
+    assert!(chrome.sidebar.overlay);
+    assert_eq!(chrome.mode, Mode::Navigate);
+}
+
+#[test]
 fn rendered_hits_match_drawn_cells() {
     // Twenty project cards overflow a 24-row screen's projects section, and
     // twelve tabs overflow a 72-column bar, so every scroll affordance is
@@ -1592,10 +1628,13 @@ fn rendered_hits_match_drawn_cells() {
     let pane = view.pane_infos.first().expect("pane info").rect;
     assert_eq!(indicator.y, pane.bottom() - 1);
     assert_ne!(indicator.y, view.status_rect.y);
-    assert_eq!(hit_text(&terminal, indicator), " gclient · Read-only");
+    assert_eq!(
+        hit_text(&terminal, indicator),
+        " Unknown (term-alpha) · Read-only"
+    );
     assert_eq!(
         usize::from(indicator.width),
-        display_width(" gclient · Read-only ")
+        display_width(" Unknown (term-alpha) · Read-only ")
     );
 }
 

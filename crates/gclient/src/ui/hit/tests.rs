@@ -194,6 +194,9 @@ fn hit_test_covers_split_live_layout() {
     assert_ne!(indicator.y, status.y);
     assert_eq!(at(view, indicator.x, indicator.y), Hit::ControlIndicator);
     assert_eq!(at(view, status.x, status.y), Hit::Status);
+    let mut count_view = view.clone();
+    count_view.status_count_hit_area = Some(Rect::new(status.x + 2, status.y, 6, 1));
+    assert_eq!(at(&count_view, status.x + 2, status.y), Hit::StatusCount);
 
     // Row 0 is the menu bar: its titles, then the bar beside them.
     let menu_bar = view.menu_bar_rect;

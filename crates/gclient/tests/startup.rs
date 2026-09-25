@@ -685,6 +685,37 @@ fn prefs_round_trip_and_reject_unknown_keys() {
     assert!(message.contains("keymapp"), "{message}");
 }
 
+#[test]
+fn status_segment_lists_round_trip_in_prefs() {
+    let home = tempfile::tempdir().expect("temp home");
+    let path = prefs_path(home.path());
+    fs::create_dir_all(path.parent().expect("prefs directory")).expect("create prefs directory");
+    fs::write(
+        &path,
+        "[status]\nleft = [\"model\", \"focus\"]\nright = [\"tokens\", \"context\"]\n",
+    )
+    .expect("write status prefs");
+
+    let prefs = load_prefs(home.path()).expect("load status prefs");
+    assert_eq!(prefs.status_left, ["model", "focus"]);
+    assert_eq!(prefs.status_right, ["tokens", "context"]);
+    save_prefs(home.path(), &prefs).expect("save status prefs");
+    let saved = fs::read_to_string(&path).expect("read saved prefs");
+    assert!(
+        saved.contains("[status]\nleft = [\"model\", \"focus\"]"),
+        "{saved}"
+    );
+    assert!(
+        saved.contains("right = [\"tokens\", \"context\"]"),
+        "{saved}"
+    );
+    fs::write(&path, "[status]\nleft = []\nunknown = 1\n").expect("write status typo");
+    assert!(load_prefs(home.path())
+        .expect_err("unknown status key must fail")
+        .to_string()
+        .contains("unknown"));
+}
+
 struct CountingBackend {
     enters: Arc<AtomicUsize>,
 }

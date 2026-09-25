@@ -1,6 +1,6 @@
 //! Client-local preference persistence: `~/.gobby/client/prefs.toml`.
 //!
-//! The file groups [`ClientPrefs`] into `[ui]` and `[keymap]` tables. Every
+//! The file groups [`ClientPrefs`] into `[ui]`, `[keymap]`, and `[status]` tables. Every
 //! key is optional and unknown keys are rejected by name, so a typo never
 //! silently falls back to a default.
 
@@ -33,6 +33,24 @@ pub enum PrefsError {
 struct PrefsFile {
     ui: UiPrefs,
     keymap: KeymapPrefs,
+    status: StatusPrefs,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct StatusPrefs {
+    left: Vec<String>,
+    right: Vec<String>,
+}
+
+impl Default for StatusPrefs {
+    fn default() -> Self {
+        let prefs = ClientPrefs::default();
+        Self {
+            left: prefs.status_left,
+            right: prefs.status_right,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -105,13 +123,17 @@ impl From<&ClientPrefs> for PrefsFile {
             keymap: KeymapPrefs {
                 path: prefs.keybinds.clone(),
             },
+            status: StatusPrefs {
+                left: prefs.status_left.clone(),
+                right: prefs.status_right.clone(),
+            },
         }
     }
 }
 
 impl From<PrefsFile> for ClientPrefs {
     fn from(file: PrefsFile) -> Self {
-        let PrefsFile { ui, keymap } = file;
+        let PrefsFile { ui, keymap, status } = file;
         Self {
             theme: ui.theme,
             keybinds: keymap.path,
@@ -128,6 +150,8 @@ impl From<PrefsFile> for ClientPrefs {
             sidebar_pinned: ui.sidebar_pinned,
             project_order: ui.project_order,
             project_labels: ui.project_labels,
+            status_left: status.left,
+            status_right: status.right,
             ..Self::default()
         }
     }

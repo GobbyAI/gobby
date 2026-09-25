@@ -177,6 +177,8 @@ pub struct ClientPrefs {
     pub project_labels: BTreeMap<String, String>,
     /// Direction used by the shared pane/sidebar title ticker.
     pub title_scrolling: TitleScrolling,
+    pub status_left: Vec<String>,
+    pub status_right: Vec<String>,
 }
 
 impl Default for ClientPrefs {
@@ -198,6 +200,8 @@ impl Default for ClientPrefs {
             project_order: Vec::new(),
             project_labels: BTreeMap::new(),
             title_scrolling: TitleScrolling::Left,
+            status_left: vec!["focus".to_string(), "model".to_string()],
+            status_right: vec!["context".to_string(), "tokens".to_string()],
         }
     }
 }

@@ -78,5 +78,5 @@
 37 : -/panel_bg*25 overlay0/panel_bg*1 yellow/panel_bg*1 -/panel_bg*45 yellow/panel_bg*1 accent/panel_bg*1 -/panel_bg*45 accent/panel_bg*1
 38 |                         │└ Unknown (alpha) ─────────────────── gclient ┘└ term-beta · Focused ─────────────── gclient ┘|
 38 : -/panel_bg*25 overlay0/panel_bg*1 yellow/panel_bg*1 overlay0/panel_bg*17 yellow/panel_bg*19 overlay0/panel_bg*9 yellow/panel_bg*1 accent/panel_bg*1 accent/panel_bg+b*21 accent/panel_bg*15 accent/panel_bg+b*9 accent/panel_bg*1
-39 |                                                                                                          prefix ctrl+b |
-39 : -/surface0*106 subtext0/surface0*13 -/surface0*1
+39 | —                                                                                                — │ — │ prefix ctrl+b |
+39 : -/surface0*1 subtext0/surface0*1 -/surface0*96 subtext0/surface0*21 -/surface0*1

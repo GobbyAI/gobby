@@ -78,5 +78,5 @@
 37 : -/panel_bg*33 overlay0/panel_bg*1 -/panel_bg*86
 38 |                                 │                                                                                      |
 38 : -/panel_bg*33 overlay0/panel_bg*1 -/panel_bg*86
-39 |                                                                                                          prefix ctrl+b |
-39 : -/surface0*106 subtext0/surface0*13 -/surface0*1
+39 | 1 need you                                                                                               prefix ctrl+b |
+39 : -/surface0*1 accent/surface0*10 -/surface0*95 subtext0/surface0*13 -/surface0*1

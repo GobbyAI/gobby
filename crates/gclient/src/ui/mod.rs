@@ -22,6 +22,7 @@ pub mod sidebar;
 pub mod sidebar_rows;
 pub mod sidebar_tokens;
 pub mod status;
+pub mod status_segments;
 pub mod tab_surface;
 pub mod tabs;
 pub mod text;

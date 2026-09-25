@@ -86,8 +86,7 @@ impl WorkspaceView for Workspace {
     }
 
     fn daemon_ready(&self) -> bool {
-        // The scripted daemon is always reachable.
-        true
+        self.daemon_ready()
     }
 
     fn gobby_home(&self) -> Option<&Path> {
@@ -233,6 +232,7 @@ pub struct ViewState {
     /// Uncertain): on its edge, or leading the status line when the edge
     /// has no room for it.
     pub control_indicator_hit_area: Option<Rect>,
+    pub status_count_hit_area: Option<Rect>,
     /// Settings popup including its border, while the overlay is drawn.
     pub settings_dialog_area: Option<Rect>,
     /// Settings rows drawn, as indexes into `SettingsRow::ALL`.
@@ -251,6 +251,7 @@ impl ViewState {
             tab_bar,
             sidebar,
             control_indicator,
+            status_count,
             toast,
             settings,
             // The open menu owns its rows; `Chrome::apply_hits` places them.
@@ -272,6 +273,7 @@ impl ViewState {
         self.machine_hit_areas = sidebar.machines;
         self.sidebar_scrollbar_hit_areas = sidebar.scrollbars;
         self.control_indicator_hit_area = control_indicator;
+        self.status_count_hit_area = status_count;
         self.toast_hit_area = toast;
         let (dialog, rows) = settings.map_or((None, Vec::new()), |s| (Some(s.dialog), s.rows));
         self.settings_dialog_area = dialog;

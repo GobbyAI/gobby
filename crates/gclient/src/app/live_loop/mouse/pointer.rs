@@ -312,6 +312,11 @@ pub(super) fn down<W: WorkspaceView>(
                 Action::TakeControl
             })
         }
+        Hit::StatusCount => {
+            chrome.sidebar.overlay = true;
+            chrome.mode = crate::ui::Mode::Navigate;
+            MouseOutcome::Handled
+        }
         // A toast is a control: a left click does what its key does, which is
         // open the row the alert named and clear the stack either way. The
         // other buttons keep whatever they meant over the pane underneath.
