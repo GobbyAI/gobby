@@ -27,6 +27,7 @@ from .install_setup_gterm import ManagedBinaryReleaseMissing
 
 _CRATE_PACKAGE = "gobby-client"
 _CRATE_DIR = "gclient"
+_WORKSPACE_BUILD_TIMEOUT_SECONDS = 1800
 
 
 def get_latest_gclient_version(module: Any) -> str | None:
@@ -131,7 +132,7 @@ def install_gclient_from_submodule(module: Any, bin_dir: Path) -> str | None:
 
     try:
         module.click.echo(
-            "  Building gclient from local workspace (this may take 30-60 seconds)..."
+            "  Building gclient from local workspace (this may take several minutes)..."
         )
         result = module.subprocess.run(
             [
@@ -145,7 +146,7 @@ def install_gclient_from_submodule(module: Any, bin_dir: Path) -> str | None:
             ],
             capture_output=True,
             text=True,
-            timeout=180,
+            timeout=_WORKSPACE_BUILD_TIMEOUT_SECONDS,
         )
         if result.returncode != 0:
             return None
