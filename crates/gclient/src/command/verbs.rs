@@ -429,14 +429,11 @@ impl Action {
                         .to_owned(),
                 });
             }
-            let result = reply
-                .get("result")
-                .ok_or_else(|| CommandError::connection("launch reply has no result"))?;
-            let tab = result
+            let tab = reply
                 .get("tab_ref")
                 .and_then(Value::as_str)
                 .ok_or_else(|| CommandError::connection("launch reply has no tab_ref"))?;
-            let pane = result
+            let pane = reply
                 .get("pane_ref")
                 .and_then(Value::as_str)
                 .ok_or_else(|| CommandError::connection("launch reply has no pane_ref"))?;

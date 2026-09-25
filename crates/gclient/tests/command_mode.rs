@@ -153,7 +153,7 @@ async fn launch_posts_spawn_with_placement_and_sandbox() {
         "POST",
         "/api/mcp/gobby-agents/tools/spawn_agent",
         200,
-        json!({"success": true, "result": {"tab_ref": "0:1:2", "pane_ref": "0:1:2:1"}}),
+        json!({"success": true, "status": "starting", "tab_ref": "0:1:2", "pane_ref": "0:1:2:1"}),
     );
     let output = invoke(
         &daemon,
@@ -183,7 +183,7 @@ async fn launch_posts_spawn_with_placement_and_sandbox() {
     .await;
     assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
     let reply: Value = serde_json::from_str(&stdout(&output)).expect("tool reply");
-    assert_eq!(reply["result"]["pane_ref"], "0:1:2:1");
+    assert_eq!(reply["pane_ref"], "0:1:2:1");
     let request = daemon
         .requests()
         .into_iter()
@@ -240,7 +240,7 @@ async fn malformed_launch_reply_exits_three() {
         "POST",
         "/api/mcp/gobby-agents/tools/spawn_agent",
         200,
-        json!({"success": true, "result": {"pane_ref": "0:1:2:1"}}),
+        json!({"success": true, "status": "starting", "pane_ref": "0:1:2:1"}),
     );
     let output = invoke(
         &daemon,
