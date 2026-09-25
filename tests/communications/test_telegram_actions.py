@@ -582,11 +582,13 @@ async def test_agent_button_switches_the_chat_target() -> None:
     consumed = await controller.handle(_channel().name, callback)
 
     assert consumed is True
-    assert (
-        manager.send_message.await_args.args[1] == "Active agent: Lane Developer\nChoose an agent:"
-    )
     manager.switch_conversation.assert_called_once_with(_channel().name, "dm:chat-1", target_id)
-    assert "Lane Developer" in manager.send_message.await_args.args[1]
+    manager.send_message.assert_awaited_once_with(
+        _channel().name,
+        "Active agent: Lane Developer",
+        session_id=None,
+        metadata={"platform_destination": "chat-1"},
+    )
 
 
 async def test_agent_button_rejects_wildcard_only_sender_allowlist() -> None:

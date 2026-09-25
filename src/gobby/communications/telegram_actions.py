@@ -497,7 +497,7 @@ class TelegramActionController:
         except ValueError:
             await self._agent_feedback(channel, message, "This agent is attached to another chat.")
             return
-        await self._send_agent_menu(channel, message)
+        await self._agent_feedback(channel, message, f"Active agent: {agent_label(target)}")
 
     async def _handle_subscription_callback(
         self,
