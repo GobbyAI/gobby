@@ -136,6 +136,36 @@ async def test_default_lag_probe_warns_during_320ms_stall_without_idle_warning(
     assert "stack=" in warnings[0]
 
 
+def test_lag_probe_does_not_warn_after_loop_stops_before_close(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.WARNING, logger="gobby.runner_lifecycle")
+    loop = asyncio.new_event_loop()
+    clock = [0.0]
+
+    def advance(seconds: float) -> None:
+        clock[0] += seconds
+
+    try:
+        with (
+            patch("gobby.runner_lifecycle_startup.threading.Thread") as probe_thread,
+            patch("gobby.runner_lifecycle_startup.time.monotonic", side_effect=lambda: clock[0]),
+            patch("gobby.runner_lifecycle_startup.time.sleep", side_effect=advance),
+        ):
+            start_startup_lag_probe(
+                loop,
+                duration_seconds=0.4,
+                interval_seconds=0.05,
+                threshold_seconds=0.25,
+            )
+            watch = probe_thread.call_args.kwargs["target"]
+            watch()
+    finally:
+        loop.close()
+
+    assert not any("Daemon event-loop lag" in record.message for record in caplog.records)
+
+
 @pytest.mark.asyncio
 async def test_lag_warns_when_stall_grows_past_warning_threshold(
     caplog: pytest.LogCaptureFixture,
