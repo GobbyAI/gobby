@@ -123,6 +123,7 @@ class ReviewCheckpointService:
         *,
         status: str,
         detail: Mapping[str, object],
+        caller_session_id: str | None = None,
     ) -> PlanReviewEvidence:
         if status not in {"minted", "failed", "none"}:
             raise ReviewEvidenceError(
@@ -145,6 +146,9 @@ class ReviewCheckpointService:
             plan_path=evidence.plan_path,
         )
         with self.db.transaction_immediate(mutation) as transaction:
+            current = self.store.require(evidence_id, transaction=transaction, for_update=True)
+            if current.is_static_bound and caller_session_id != current.session_id:
+                raise ReviewEvidenceError("unauthorized_seat", "reviewer seat required")
             return self.store.checkpoint_mint(
                 transaction=transaction,
                 evidence_id=evidence_id,
@@ -205,7 +209,7 @@ class ReviewCheckpointService:
                     "checkpoint_reconciliation_error",
                     f"checkpoint result conflicts for evidence {evidence_id}",
                 )
-            if evidence.finalized_at is None:
+            if evidence.finalized_at is None and not evidence.is_static_bound:
                 self.finalize_evidence(
                     transaction=transaction,
                     evidence=evidence,

@@ -210,6 +210,7 @@ class PlanReviewEvidenceStore:
               AND finalized_at IS NULL
               AND expired_at IS NULL
               AND dispatch_run_id IS NULL
+              AND static_writer_session_id IS NULL
             RETURNING *
             """,
             (run_id, evidence_id),
@@ -228,6 +229,43 @@ class PlanReviewEvidenceStore:
             "evidence_already_bound",
             f"evidence {evidence_id} is already bound to another run",
         )
+
+    def bind_static_seats(
+        self,
+        *,
+        transaction: Transaction,
+        evidence_id: str,
+        writer_session_id: str,
+        coordinator_session_id: str,
+    ) -> PlanReviewEvidence:
+        row = transaction.execute(
+            """
+            UPDATE plan_review_evidence
+            SET static_writer_session_id = %s,
+                static_coordinator_session_id = %s,
+                lease_expires_at = NULL
+            WHERE evidence_id = %s
+              AND finalized_at IS NULL
+              AND expired_at IS NULL
+              AND dispatch_run_id IS NULL
+              AND static_writer_session_id IS NULL
+              AND static_coordinator_session_id IS NULL
+            RETURNING *
+            """,
+            (writer_session_id, coordinator_session_id, evidence_id),
+        ).fetchone()
+        if row is not None:
+            return PlanReviewEvidence.from_row(row)
+        current = self.require(evidence_id, transaction=transaction, for_update=True)
+        if (
+            current.is_live
+            and current.static_writer_session_id == writer_session_id
+            and current.static_coordinator_session_id == coordinator_session_id
+        ):
+            return current
+        if not current.is_live:
+            raise ReviewEvidenceError("evidence_replay", "evidence row is no longer live")
+        raise ReviewEvidenceError("evidence_already_bound", "evidence has another binding")
 
     def expire(
         self,

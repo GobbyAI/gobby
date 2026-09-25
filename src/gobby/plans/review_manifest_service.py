@@ -51,6 +51,7 @@ class AttemptAuthorizer(Protocol):
         task_id: str | None = None,
         stage: str | None = None,
         run_id: str | None = None,
+        caller_session_id: str | None = None,
         allow_rejection_replay: bool = False,
         allow_approval_replay: bool = False,
     ) -> PlanReviewEvidence: ...
@@ -191,6 +192,7 @@ class ReviewManifestService:
         *,
         plan_path: str | Path,
         run_id: str | None,
+        caller_session_id: str | None,
         resolve_round_result: RoundResultResolver,
         authorize_attempt: AttemptAuthorizer,
         verify_reviewed_bytes: ReviewedBytesVerifier,
@@ -214,6 +216,7 @@ class ReviewManifestService:
             task_id=evidence.task_id,
             stage=evidence.stage,
             run_id=run_id,
+            caller_session_id=caller_session_id,
         )
         routing = payload.get("routing_decisions")
         if not isinstance(routing, Mapping):

@@ -171,6 +171,54 @@ def register_review_evidence_tools(
         func=bind_evidence_run,
     )
 
+    def bind_static_review_seats(
+        evidence_id: str,
+        writer_session_id: str,
+        coordinator_session_id: str,
+    ) -> dict[str, object]:
+        try:
+            evidence = service.bind_static_review_seats(
+                evidence_id,
+                writer_session_id=writer_session_id,
+                coordinator_session_id=coordinator_session_id,
+                caller_session_id=get_current_session_id(),
+            )
+        except (ReviewEvidenceError, OSError, psycopg.Error) as exc:
+            return _error_payload(exc, "bind_static_review_seats_failed")
+        return {
+            "ok": True,
+            "evidence_id": evidence.evidence_id,
+            "reviewer_session_id": evidence.session_id,
+            "writer_session_id": evidence.static_writer_session_id,
+            "coordinator_session_id": evidence.static_coordinator_session_id,
+        }
+
+    registry.register(
+        name="bind_static_review_seats",
+        description=(
+            "Evidence owner binds an unspawned interactive round to exact Writer and "
+            "coordinator session UUIDs. Binding is immutable and mutually exclusive with an agent "
+            "run; an elapsed preparation lease may be renewed only while this is the current "
+            "unchanged attempt."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "evidence_id": {"type": "string"},
+                "writer_session_id": {
+                    "type": "string",
+                    "description": "Persisted Writer session UUID, not a human-readable session ref.",
+                },
+                "coordinator_session_id": {
+                    "type": "string",
+                    "description": "Persisted coordinator session UUID, not a session ref.",
+                },
+            },
+            "required": ["evidence_id", "writer_session_id", "coordinator_session_id"],
+        },
+        func=bind_static_review_seats,
+    )
+
     def expire_plan_review_evidence(
         evidence_id: str,
         spawn_failed: bool = False,
@@ -370,8 +418,8 @@ def register_review_evidence_tools(
     def apply_plan_review_manifest(
         evidence_id: str,
         plan_path: str,
-        run_id: str,
         round_result: Mapping[str, object],
+        run_id: str | None = None,
     ) -> dict[str, object]:
         try:
             result = service.apply_plan_review_manifest(
@@ -379,6 +427,7 @@ def register_review_evidence_tools(
                 round_result,
                 plan_path=plan_path,
                 run_id=run_id,
+                caller_session_id=get_current_session_id(),
             )
         except (ReviewEvidenceError, OSError) as exc:
             return _error_payload(exc, "apply_plan_review_manifest_failed")
@@ -386,7 +435,10 @@ def register_review_evidence_tools(
 
     registry.register(
         name="apply_plan_review_manifest",
-        description="Compare and atomically apply an approved, server-validated M1 manifest.",
+        description=(
+            "Coordinator applies an approved, server-validated M1 manifest before the Writer "
+            "appends its checkpoint and the reviewer finalizes the round."
+        ),
         input_schema={
             "type": "object",
             "properties": {
@@ -395,7 +447,7 @@ def register_review_evidence_tools(
                 "run_id": {"type": "string"},
                 "round_result": {"type": "object"},
             },
-            "required": ["evidence_id", "plan_path", "run_id", "round_result"],
+            "required": ["evidence_id", "plan_path", "round_result"],
         },
         func=apply_plan_review_manifest,
     )
@@ -435,7 +487,9 @@ def register_review_evidence_tools(
         round_result: Mapping[str, object] | None = None,
     ) -> dict[str, object]:
         try:
-            result = service.append_plan_changelog_round(evidence_id, prose, round_result)
+            result = service.append_plan_changelog_round(
+                evidence_id, prose, round_result, caller_session_id=get_current_session_id()
+            )
         except (ReviewEvidenceError, OSError) as exc:
             return _error_payload(exc, "append_plan_changelog_round_failed")
         return {"ok": True, **result}
@@ -462,7 +516,9 @@ def register_review_evidence_tools(
         round_result: Mapping[str, object],
     ) -> dict[str, object]:
         try:
-            evidence = service.finalize_plan_review_evidence(evidence_id, round_result)
+            evidence = service.finalize_plan_review_evidence(
+                evidence_id, round_result, caller_session_id=get_current_session_id()
+            )
         except (ReviewEvidenceError, OSError, psycopg.Error) as exc:
             return _error_payload(exc, "finalize_plan_review_evidence_failed")
         return {
@@ -491,7 +547,9 @@ def register_review_evidence_tools(
         accepted_finding_ids: list[str],
     ) -> dict[str, object]:
         try:
-            return service.apply_plan_review_repairs(evidence_id, accepted_finding_ids)
+            return service.apply_plan_review_repairs(
+                evidence_id, accepted_finding_ids, caller_session_id=get_current_session_id()
+            )
         except (ReviewEvidenceError, OSError, psycopg.Error) as exc:
             return _error_payload(exc, "apply_plan_review_repairs_failed")
 
@@ -525,6 +583,7 @@ def register_review_evidence_tools(
                 evidence_id,
                 status=status,
                 detail=detail,
+                caller_session_id=get_current_session_id(),
             )
         except ReviewEvidenceError as exc:
             return exc.to_dict()

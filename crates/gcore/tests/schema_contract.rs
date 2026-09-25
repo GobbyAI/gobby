@@ -18,21 +18,49 @@ fn embedded_assets_publish_a_complete_schema_identity() {
     assert_eq!(identity.runner_protocol_version, RUNNER_PROTOCOL_VERSION);
     assert_eq!(identity.baseline.version, BASELINE_VERSION);
     assert_eq!(identity.baseline.checksum, BASELINE_CHECKSUM);
-    assert_eq!(identity.latest_asset.version, 451);
+    assert_eq!(identity.latest_asset.version, 452);
     assert_eq!(
         identity.latest_asset.filename,
-        "451_drop_comms_routing_rules.sql"
+        "452_static_plan_review_seats.sql"
     );
     assert_eq!(
         identity.latest_asset.checksum,
-        "96644fa5866262c425fa3a8f43cf74110b4d94a8ebe8511112e5bf48a416b941"
+        "f21cc03c96fc7fb82ba45d8864610d3074b83884c3f3098fcb3420a1263ec95c"
     );
     assert_eq!(
         identity.root_hash,
-        "303882767b3bc6722ffa5670f1fa10fa47643c371c6ec8479134ada7567aec2c"
+        "13bbec189390231b5b9765b8075f85fac2fa5084df4b60a0b24274bc39279ff3"
     );
 
     let _public_runner_type = std::any::type_name::<SchemaRunner<'static>>();
+}
+
+#[test]
+fn catalog_pins_static_plan_review_seat_columns_and_constraints() {
+    let catalog: serde_json::Value =
+        serde_json::from_str(CATALOG_MANIFEST_JSON).expect("catalog manifest must be valid JSON");
+    for column in [
+        "plan_review_evidence.static_writer_session_id",
+        "plan_review_evidence.static_coordinator_session_id",
+    ] {
+        assert!(
+            catalog["columns"]
+                .as_array()
+                .expect("catalog columns")
+                .iter()
+                .any(|entry| entry["name"] == column),
+            "catalog columns missing {column}"
+        );
+    }
+    assert!(
+        catalog["constraints"]
+            .as_array()
+            .expect("catalog constraints")
+            .iter()
+            .any(
+                |entry| entry["name"] == "plan_review_evidence.plan_review_evidence_static_binding"
+            )
+    );
 }
 
 #[test]
