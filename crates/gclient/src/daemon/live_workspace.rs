@@ -5,6 +5,7 @@ use super::workspace::{attach_request, op_request};
 use super::{DaemonError, WorkspaceOp, WorkspaceReply, WorkspaceSnapshot};
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
+use std::time::Duration;
 use uuid::Uuid;
 
 impl LiveDaemon {
@@ -37,6 +38,17 @@ impl LiveDaemon {
         let mut request = op_request(&op)?;
         request["request_id"] = json!(Uuid::new_v4().to_string());
         decode(self.request(request).await?)
+    }
+
+    /// A one-shot wait may legitimately outlast the normal workspace request limit.
+    pub async fn workspace_op_with_deadline(
+        &self,
+        op: WorkspaceOp,
+        deadline: Duration,
+    ) -> Result<WorkspaceReply, DaemonError> {
+        let mut request = op_request(&op)?;
+        request["request_id"] = json!(Uuid::new_v4().to_string());
+        decode(self.request_with_deadline(request, Some(deadline)).await?)
     }
 }
 

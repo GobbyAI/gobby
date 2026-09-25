@@ -9,11 +9,30 @@ use serde_json::Value;
 use std::time::Duration;
 use tokio::time::{timeout_at, Instant};
 
+pub(crate) async fn project_rows(url: &str, token: &str) -> Result<Vec<ProjectRow>, DaemonError> {
+    let base_url = Url::parse(url).map_err(protocol)?;
+    RestClient::new(base_url, token.to_owned())?
+        .projects()
+        .await
+}
+
+pub(crate) async fn spawn_agent_tool(
+    url: &str,
+    token: &str,
+    body: Value,
+) -> Result<Value, DaemonError> {
+    let base_url = Url::parse(url).map_err(protocol)?;
+    let client = RestClient::new_with_timeout(base_url, token.to_owned(), Duration::from_secs(30))?;
+    let endpoint = client.url(&["api", "mcp", "gobby-agents", "tools", "spawn_agent"])?;
+    client.json(Method::POST, endpoint, Some(body)).await
+}
+
 #[derive(Debug, Clone)]
 pub(super) struct RestClient {
     client: Client,
     base_url: Url,
     token: String,
+    request_timeout: Duration,
 }
 
 impl RestClient {
@@ -22,9 +41,17 @@ impl RestClient {
     /// resolver cannot start; `Client::default` would hit the same failure
     /// and panic, so it is reported to the connect instead.
     pub(super) fn new(base_url: Url, token: String) -> Result<Self, DaemonError> {
+        Self::new_with_timeout(base_url, token, REQUEST_DEADLINE)
+    }
+
+    fn new_with_timeout(
+        base_url: Url,
+        token: String,
+        request_timeout: Duration,
+    ) -> Result<Self, DaemonError> {
         let client = Client::builder()
             .connect_timeout(REQUEST_DEADLINE)
-            .timeout(REQUEST_DEADLINE)
+            .timeout(request_timeout)
             .build()
             .map_err(|error| DaemonError::Protocol {
                 detail: format!("HTTP client could not start: {error}"),
@@ -33,6 +60,7 @@ impl RestClient {
             client,
             base_url,
             token,
+            request_timeout,
         })
     }
 
@@ -215,7 +243,7 @@ impl RestClient {
         url: Url,
         body: Option<Value>,
     ) -> Result<T, DaemonError> {
-        let deadline = Instant::now() + REQUEST_DEADLINE;
+        let deadline = Instant::now() + self.request_timeout;
         let label = format!("{method} {}", url.path());
         let response = self.send(deadline, method, url, body).await?;
         // The client's total timeout can end the body read first; it is the

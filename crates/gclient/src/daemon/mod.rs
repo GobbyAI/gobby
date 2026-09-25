@@ -5,6 +5,7 @@ mod live_reader;
 mod live_workspace;
 mod projects;
 mod rest;
+pub(crate) use rest::{project_rows, spawn_agent_tool};
 mod roster;
 mod workspace;
 mod ws;

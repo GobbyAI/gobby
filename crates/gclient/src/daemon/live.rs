@@ -439,6 +439,14 @@ impl LiveDaemon {
     }
 
     pub(super) async fn request(&self, message: Value) -> Result<Value, DaemonError> {
+        self.request_with_deadline(message, None).await
+    }
+
+    pub(super) async fn request_with_deadline(
+        &self,
+        message: Value,
+        override_deadline: Option<Duration>,
+    ) -> Result<Value, DaemonError> {
         let raw = encode_frame_text(&message)?;
         let request = super::message_kind(&message)
             .unwrap_or("message")
@@ -446,11 +454,11 @@ impl LiveDaemon {
         let key = route_key(&message).ok_or_else(|| DaemonError::Protocol {
             detail: "request has no correlation key".into(),
         })?;
-        let duration = if matches!(key, RouteKey::Control(_)) {
+        let duration = override_deadline.unwrap_or(if matches!(key, RouteKey::Control(_)) {
             CONTROL_REQUEST_DEADLINE
         } else {
             REQUEST_DEADLINE
-        };
+        });
         let deadline = Instant::now() + duration;
         let (reply_tx, reply_rx) = oneshot::channel();
         let write_state = Arc::new(AtomicU8::new(WRITE_QUEUED));

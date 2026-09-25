@@ -1,6 +1,7 @@
 //! Gobby terminal workspace client (`gclient`).
 
 pub mod app;
+pub mod command;
 pub mod copy_mode;
 pub mod daemon;
 pub mod frame_source;
