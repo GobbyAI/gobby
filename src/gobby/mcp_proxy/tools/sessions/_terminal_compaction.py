@@ -21,9 +21,11 @@ from gobby.terminals.pane_io import (
     SendResult,
     SubmitResult,
     clear_composer,
+    clear_staged_text,
     log_pane_failure,
     send_pane_key,
     submit_text,
+    verify_staged_text,
 )
 from gobby.terminals.runtime import NamedKey
 
@@ -226,21 +228,14 @@ async def _submit_command(
     async def verify_codex_draft() -> SubmitResult | None:
         assert composer_read is not None
         assert foreground_command is not None
-        read = composer_read(await pane.snapshot(COMPOSER_PROBE_LINES, mode="ansi"))
-        observed = await foreground_command()
-        if observed != "codex":
-            return SubmitResult(
-                False,
-                f"codex is not foreground (found {observed or 'unknown'})",
-                _CLI_NOT_FOREGROUND_ERROR_CODE,
-            )
-        if read.state != "draft" or read.line != command:
-            return SubmitResult(
-                False,
-                f"{command} was not verified in the codex composer",
-                _COMMAND_NOT_SUBMITTED_ERROR_CODE,
-            )
-        return None
+        return await verify_staged_text(
+            pane,
+            command,
+            "codex",
+            composer_read,
+            foreground_command,
+            window_seconds=verify_seconds,
+        )
 
     result = await submit_text(
         pane,
@@ -252,6 +247,19 @@ async def _submit_command(
         verify_seconds=verify_seconds,
         before_enter=verify_codex_draft if cli_source == "codex" else None,
     )
+    if cli_source == "codex" and not result.ok:
+        assert composer_read is not None
+        assert foreground_command is not None
+        cleared, clear_reason = await clear_staged_text(
+            pane, command, "codex", composer_read, foreground_command
+        )
+        if not cleared:
+            logger.warning(
+                "Could not clear staged %s for session %s: %s",
+                command,
+                session_id,
+                clear_reason,
+            )
     if result.ok or result.error_code is None:
         return result.ok, result.reason, None
     return (

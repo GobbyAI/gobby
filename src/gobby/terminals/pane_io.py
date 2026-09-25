@@ -17,7 +17,12 @@ from uuid import UUID
 from weakref import WeakKeyDictionary
 
 from gobby.agents.detection.provider import DetectionRegistry
-from gobby.agents.idle_detector import COMPOSER_PROBE_LINES, ComposerRead, IdleDetector
+from gobby.agents.idle_detector import (
+    COMPOSER_PROBE_LINES,
+    ComposerRead,
+    IdleDetector,
+    composer_text,
+)
 from gobby.terminals.composer import composer_clear_sequence
 from gobby.terminals.foreground import command_name, foreground_commands, shell_pid
 from gobby.terminals.key_bytes import tmux_key_name
@@ -41,6 +46,7 @@ if TYPE_CHECKING:
 __all__ = [
     "COMPOSER_MATCH_CHARS",
     "COMPOSER_NOT_CLEAN_ERROR_CODE",
+    "CLI_NOT_FOREGROUND_ERROR_CODE",
     "DEFAULT_SNAPSHOT_LINES",
     "SUBMIT_ENTER_GAP_SECONDS",
     "SUBMIT_HELD_RETRY_SECONDS",
@@ -55,6 +61,7 @@ __all__ = [
     "SubmitResult",
     "TmuxPaneIO",
     "clear_composer",
+    "clear_staged_text",
     "composer_reader",
     "composer_verdict",
     "context_runtime_pane",
@@ -63,6 +70,7 @@ __all__ = [
     "send_pane_key",
     "submit_coordinated_text",
     "submit_text",
+    "verify_staged_text",
 ]
 
 logger = logging.getLogger(__name__)
@@ -96,6 +104,7 @@ _SUBMIT_VERIFY_POLL_SECONDS = 0.1
 SUBMIT_ENTER_GAP_SECONDS = 1.5
 COMPOSER_NOT_CLEAN_ERROR_CODE = "composer_not_clean"
 TEXT_NOT_SUBMITTED_ERROR_CODE = "command_not_submitted"
+CLI_NOT_FOREGROUND_ERROR_CODE = "cli_not_foreground"
 
 
 class PaneIO(Protocol):
@@ -440,6 +449,94 @@ class SubmitResult:
     ok: bool
     reason: str | None = None
     error_code: str | None = None
+
+
+def _matches_staged_draft(read: ComposerRead, text: str) -> bool:
+    if read.state != "draft" or read.line is None:
+        return False
+    return (
+        read.line == text
+        if len(text) <= COMPOSER_MATCH_CHARS
+        else read.line.startswith(text[:COMPOSER_MATCH_CHARS])
+    )
+
+
+def _owns_staged_draft(read: ComposerRead, text: str) -> bool:
+    """Include a partially painted write when deciding whether to drain it."""
+    return (
+        read.state == "draft"
+        and read.line is not None
+        and bool(read.line)
+        and (text.startswith(read.line) or _matches_staged_draft(read, text))
+    )
+
+
+async def verify_staged_text(
+    pane: PaneIO,
+    text: str,
+    cli_source: str,
+    composer_read: ComposerReader,
+    foreground_command: Callable[[], Awaitable[str | None]],
+    *,
+    window_seconds: float,
+) -> SubmitResult | None:
+    """Wait for a staged draft in the intended CLI before allowing Enter."""
+    elapsed = 0.0
+    window = max(window_seconds, 0.0)
+    while True:
+        observed = await foreground_command()
+        if observed != cli_source:
+            return SubmitResult(
+                False,
+                f"{cli_source} is not foreground (found {observed or 'unknown'})",
+                CLI_NOT_FOREGROUND_ERROR_CODE,
+            )
+        read = composer_read(await pane.snapshot(COMPOSER_PROBE_LINES, mode="ansi"))
+        observed = await foreground_command()
+        if observed != cli_source:
+            return SubmitResult(
+                False,
+                f"{cli_source} is not foreground (found {observed or 'unknown'})",
+                CLI_NOT_FOREGROUND_ERROR_CODE,
+            )
+        if _matches_staged_draft(read, text):
+            return None
+        if read.state == "draft" and read.line is not None and not _owns_staged_draft(read, text):
+            return SubmitResult(
+                False,
+                f"{text[:COMPOSER_MATCH_CHARS]} was replaced in the {cli_source} composer",
+                TEXT_NOT_SUBMITTED_ERROR_CODE,
+            )
+        if elapsed >= window:
+            return SubmitResult(
+                False,
+                f"{text[:COMPOSER_MATCH_CHARS]} was not verified in the {cli_source} composer",
+                TEXT_NOT_SUBMITTED_ERROR_CODE,
+            )
+        delay = min(_SUBMIT_VERIFY_POLL_SECONDS, window - elapsed)
+        await asyncio.sleep(delay)
+        elapsed += delay
+
+
+async def clear_staged_text(
+    pane: PaneIO,
+    text: str,
+    cli_source: str,
+    composer_read: ComposerReader,
+    foreground_command: Callable[[], Awaitable[str | None]],
+) -> SendResult:
+    """Drain our unsubmitted text without erasing a visible different draft."""
+    snapshot = await pane.snapshot(COMPOSER_PROBE_LINES, mode="ansi")
+    observed = await foreground_command()
+    if observed == cli_source:
+        read = composer_read(snapshot)
+        if read.state == "draft" and read.line is not None and not _owns_staged_draft(read, text):
+            return False, "composer holds a different draft"
+    elif not isinstance(snapshot, str) or text[:COMPOSER_MATCH_CHARS] not in composer_text(
+        snapshot
+    ):
+        return False, "staged text is not visible after the CLI exited"
+    return await clear_composer(pane, cli_source)
 
 
 async def composer_verdict(

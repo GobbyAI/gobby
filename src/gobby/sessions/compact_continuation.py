@@ -29,8 +29,11 @@ from gobby.terminals.lookup import manager_for_terminal_context
 from gobby.terminals.pane_io import (
     SUBMIT_VERIFY_SECONDS,
     ComposerReader,
+    SubmitResult,
     clear_composer,
+    clear_staged_text,
     submit_text,
+    verify_staged_text,
 )
 
 if TYPE_CHECKING:
@@ -463,6 +466,31 @@ async def _type_handoff_compact_continuation(
     if delay_seconds > 0:
         await asyncio.sleep(delay_seconds)
     try:
+        foreground_command = getattr(pane, "foreground_command", None)
+        if cli_source == "codex" and (
+            composer_read is None
+            or not callable(foreground_command)
+            or await foreground_command() != "codex"
+        ):
+            logger.warning(
+                "Codex exited or its composer cannot be read before the set_handoff "
+                "continuation for session %s",
+                session_id,
+            )
+            return False
+
+        async def verify_codex_draft() -> SubmitResult | None:
+            assert composer_read is not None
+            assert callable(foreground_command)
+            return await verify_staged_text(
+                pane,
+                prompt,
+                "codex",
+                composer_read,
+                foreground_command,
+                window_seconds=verify_seconds,
+            )
+
         # An operator draft in the composer would be submitted with the pull
         # prompt, so empty the box first (blind: the prompt reads fine regardless).
         ok, reason = await clear_composer(pane, cli_source)
@@ -481,6 +509,7 @@ async def _type_handoff_compact_continuation(
             cli_source=cli_source,
             composer_read=composer_read,
             verify_seconds=verify_seconds,
+            before_enter=verify_codex_draft if cli_source == "codex" else None,
         )
         if result.ok:
             return True
@@ -494,7 +523,14 @@ async def _type_handoff_compact_continuation(
                 "error_code": result.error_code,
             },
         )
-        cleared, clear_reason = await clear_composer(pane, cli_source)
+        if cli_source == "codex":
+            assert composer_read is not None
+            assert callable(foreground_command)
+            cleared, clear_reason = await clear_staged_text(
+                pane, prompt, "codex", composer_read, foreground_command
+            )
+        else:
+            cleared, clear_reason = await clear_composer(pane, cli_source)
         if not cleared:
             logger.warning(
                 "Composer still holds the unsubmitted continuation prompt for session %s: %s",

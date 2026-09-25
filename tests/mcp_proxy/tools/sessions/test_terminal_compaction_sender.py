@@ -51,7 +51,7 @@ class _ComposerPane:
 
     async def send_key(self, key: str) -> tuple[bool, str | None]:
         self.keys.append(key)
-        if key == "enter":
+        if key in {"enter", "ctrl_u", "ctrl_k"}:
             self.draft = ""
         return True, None
 
@@ -229,14 +229,21 @@ async def test_codex_exits_between_foreground_check_and_write_without_shell_ente
     )
     assert pane.typed == ["/compact"]
     assert "enter" not in pane.keys
+    assert pane.draft == ""
     clear.assert_called_once_with()
 
 
 @pytest.mark.asyncio
-async def test_codex_draft_must_be_visible_before_enter() -> None:
+@pytest.mark.parametrize("draft_frame", ["", "/comp"])
+async def test_codex_draft_must_be_visible_before_enter(draft_frame: str) -> None:
     class MissingDraftPane(_ComposerPane):
+        render_draft = False
+
         async def snapshot(self, lines: int = 12, *, mode: SnapshotMode = "text") -> str:
-            return "\n".join(["output", _RULE, "> ", _RULE, "status"])
+            if not self.render_draft:
+                shown = draft_frame if self.draft else ""
+                return "\n".join(["output", _RULE, f"> {shown}", _RULE, "status"])
+            return (await super().snapshot(lines, mode=mode)) or ""
 
     pane = MissingDraftPane()
     result = await _send_terminal_compaction_command(
@@ -260,6 +267,24 @@ async def test_codex_draft_must_be_visible_before_enter() -> None:
     }
     assert pane.typed == ["/compact"]
     assert "enter" not in pane.keys
+    assert pane.draft == ""
+
+    pane.render_draft = True
+    retry = await _send_terminal_compaction_command(
+        pane,
+        "/compact",
+        "session-1",
+        cli_source="codex",
+        mark_continuation_pending=lambda: True,
+        clear_continuation_pending=lambda: True,
+        observe_interrupt=lambda: False,
+        turn_settled=lambda: True,
+        composer_read=_CODEX_READ,
+        foreground_command=_codex_foreground,
+        settle_seconds=_SETTLE,
+    )
+    assert retry == (True, None, True, {"interrupted": False})
+    assert pane.typed == ["/compact", "/compact"]
 
 
 async def test_compaction_refuses_a_tmux_pane_that_returned_to_zsh() -> None:
