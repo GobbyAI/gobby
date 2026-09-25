@@ -123,6 +123,13 @@ def test_loaded_brevity_skill_guides_meaning_preserving_compression() -> None:
         assert shorthand not in result
 
 
+def test_brevity_skill_loads_at_max_without_a_requested_level() -> None:
+    loaded_skill = SkillLoader().load_skill(SKILL_PATH.parent, validate=True)
+
+    assert loaded_skill.metadata is not None
+    assert loaded_skill.metadata["gobby"]["default_level"] == "max"
+
+
 def test_brevity_skill_is_english_only_and_within_existing_footprint() -> None:
     content = SKILL_PATH.read_text(encoding="utf-8")
 
@@ -146,10 +153,11 @@ def test_brevity_skill_keeps_interface_and_adds_clarity_contract() -> None:
     ):
         assert f"  - {trigger}" in content
     assert "levels: [lite, normal, max]" in content
-    assert "default_level: normal" in content
+    assert "default_level: max" in content
     assert "### Lite" in content
-    assert "### Normal (default)" in content
-    assert "### Max" in content
+    assert "### Normal\n" in content
+    assert "### Max (default)" in content
+    assert "loads the default (`max`)" in content
     assert 'get_skill(name="brevity", level="max")' in content
     assert 'When the user says "stop brevity"' in content
 

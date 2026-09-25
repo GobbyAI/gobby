@@ -14,7 +14,7 @@ metadata:
   gobby:
     audience: all
     levels: [lite, normal, max]
-    default_level: normal
+    default_level: max
 ---
 
 # Brevity
@@ -60,14 +60,14 @@ For yes/no questions, answer first and add one sentence of reasoning.
 ## Levels
 
 Select a level at load time: `get_skill(name="brevity", level="max")`. Omitting
-`level` loads the default (`normal`). The active level persists in session
+`level` loads the default (`max`). The active level persists in session
 state until changed or the session ends.
 
 ### Lite
 
 Hard rules only. Keep complete sentences, articles, normal punctuation.
 
-### Normal (default)
+### Normal
 
 Hard rules plus:
 
@@ -76,7 +76,7 @@ Hard rules plus:
 - Remove empty hedging while preserving real uncertainty.
 - Prefer "to" over "in order to" and "because" over "due to the fact that".
 
-### Max
+### Max (default)
 
 Normal plus:
 
