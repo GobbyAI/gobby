@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import threading
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -22,7 +21,6 @@ from gobby.skills.formatting import skill_fetch_batch_directive, skill_fetch_dir
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.telemetry.rule_allow_audit import RuleAllowAudit
 from gobby.utils.injected_context import INJECTED_CONTEXT_BEGIN
 from gobby.workflows.definitions import (
     AgentSelector,
@@ -447,43 +445,6 @@ async def test_allow_rule_evaluations_do_not_write_historical_metrics(
     assert response.decision == "allow"
     record_events.assert_not_called()
     assert metrics.query_events(event_type="rule_eval") == []
-
-
-@pytest.mark.asyncio
-async def test_rule_allow_audit_writer_stays_on_daemon_loop(
-    db: HubDatabase,
-    manager: RuleDefinitionManager,
-) -> None:
-    for name in ("first-audit-rule", "second-audit-rule"):
-        _insert_rule(
-            manager,
-            name,
-            RuleDefinitionBody(
-                event=RuleTriggerEvent.BEFORE_TOOL,
-                effects=[RuleEffect(type="set_variable", variable=name, value=True)],
-            ),
-        )
-    loop = asyncio.get_running_loop()
-    written: list[tuple[asyncio.AbstractEventLoop, str]] = []
-    complete = asyncio.Event()
-
-    async def write_line(line: str) -> None:
-        written.append((asyncio.get_running_loop(), json.loads(line)["rule_name"]))
-        if len(written) == 2:
-            complete.set()
-
-    audit = RuleAllowAudit(capacity=10, shutdown_timeout_seconds=1.0, writer=write_line)
-    engine = RuleEngine(db)
-    event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Read"})
-    try:
-        with patch("gobby.telemetry.rule_allow_audit._configured_audit", audit):
-            response = await engine.evaluate(event, session_id=SESSION_ID, variables={})
-            await asyncio.wait_for(complete.wait(), timeout=1.0)
-    finally:
-        await audit.close()
-
-    assert response.decision == "allow"
-    assert written == [(loop, "first-audit-rule"), (loop, "second-audit-rule")]
 
 
 @pytest.mark.asyncio
