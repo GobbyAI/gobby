@@ -200,10 +200,9 @@ struct Candidate {
     parent_session_id: Option<String>,
 }
 
-/// The rows: every admitted entry as a two-line row of its label and state
+/// The rows: every admitted roster entry as a two-line row of its label and state
 /// over its provider, model (with the reasoning effort), task ref or tab,
-/// and remote machine tokens, then the bare terminals of the focused
-/// project. Under `grouped` a run nests under the listed session that
+/// and remote machine tokens. Under `grouped` a run nests under the listed session that
 /// spawned it; under `priority` the list is flat. Under the `all` scope
 /// the rows sit under a heading per project, in the projects' order,
 /// projects with nothing live omitted.
