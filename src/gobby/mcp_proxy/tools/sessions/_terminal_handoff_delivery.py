@@ -90,6 +90,7 @@ async def deliver_staged_compact_handoff(
             "error_code": _INTERRUPT_OBSERVATION_UNAVAILABLE_ERROR_CODE,
         }
     turn_settled = _turn_settled_observer(source, session)
+    foreground_command = getattr(pane, "foreground_command", None)
 
     schedule_readiness: Callable[[str | None], bool] | None = None
     if source == "codex":
@@ -127,6 +128,7 @@ async def deliver_staged_compact_handoff(
             observe_interrupt=observe_interrupt,
             turn_settled=turn_settled,
             composer_read=composer_reader(db, source),
+            foreground_command=foreground_command if callable(foreground_command) else None,
         )
     except Exception as exc:
         logger.warning(

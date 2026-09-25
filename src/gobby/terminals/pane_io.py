@@ -10,15 +10,20 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 from uuid import UUID
 from weakref import WeakKeyDictionary
 
 from gobby.agents.detection.provider import DetectionRegistry
-from gobby.agents.idle_detector import COMPOSER_PROBE_LINES, ComposerRead, IdleDetector
+from gobby.agents.idle_detector import (
+    COMPOSER_PROBE_LINES,
+    ComposerRead,
+    IdleDetector,
+)
 from gobby.terminals.composer import composer_clear_sequence
+from gobby.terminals.foreground import command_name, foreground_commands, shell_pid
 from gobby.terminals.key_bytes import tmux_key_name
 from gobby.terminals.runtime import (
     Delivered,
@@ -40,6 +45,7 @@ if TYPE_CHECKING:
 __all__ = [
     "COMPOSER_MATCH_CHARS",
     "COMPOSER_NOT_CLEAN_ERROR_CODE",
+    "CLI_NOT_FOREGROUND_ERROR_CODE",
     "DEFAULT_SNAPSHOT_LINES",
     "SUBMIT_ENTER_GAP_SECONDS",
     "SUBMIT_HELD_RETRY_SECONDS",
@@ -54,6 +60,7 @@ __all__ = [
     "SubmitResult",
     "TmuxPaneIO",
     "clear_composer",
+    "clear_staged_text",
     "composer_reader",
     "composer_verdict",
     "context_runtime_pane",
@@ -62,6 +69,7 @@ __all__ = [
     "send_pane_key",
     "submit_coordinated_text",
     "submit_text",
+    "verify_staged_text",
 ]
 
 logger = logging.getLogger(__name__)
@@ -95,6 +103,7 @@ _SUBMIT_VERIFY_POLL_SECONDS = 0.1
 SUBMIT_ENTER_GAP_SECONDS = 1.5
 COMPOSER_NOT_CLEAN_ERROR_CODE = "composer_not_clean"
 TEXT_NOT_SUBMITTED_ERROR_CODE = "command_not_submitted"
+CLI_NOT_FOREGROUND_ERROR_CODE = "cli_not_foreground"
 
 
 class PaneIO(Protocol):
@@ -186,6 +195,21 @@ class RuntimePaneIO:
     @property
     def target(self) -> str:
         return str(getattr(self._terminal, "id", ""))
+
+    async def foreground_command(self) -> str | None:
+        lookup = getattr(self._runtime, "foreground_command", None)
+        if callable(lookup):
+            try:
+                name = await lookup(self._terminal)
+            except (OSError, RuntimeError, TimeoutError):
+                logger.debug("Failed to inspect %s foreground command", self.backend, exc_info=True)
+                return None
+            return command_name(name) if isinstance(name, str) and name else None
+        pid = shell_pid(self._terminal)
+        if pid is None:
+            return None
+        commands = await asyncio.to_thread(foreground_commands, {self.target: pid})
+        return commands.get(self.target)
 
     async def send_key(self, key: NamedKey) -> SendResult:
         try:
@@ -315,6 +339,26 @@ class TmuxPaneIO:
     def target(self) -> str:
         return self._target
 
+    async def foreground_command(self) -> str | None:
+        try:
+            panes = await self._tmux.list_panes()
+        except (OSError, RuntimeError, TimeoutError):
+            logger.debug("Failed to inspect tmux foreground command", exc_info=True)
+            return None
+        if panes is None:
+            return None
+        target_session = self._target.split(":", 1)[0]
+        matches = [
+            pane
+            for pane in panes
+            if pane.pane_id == self._target
+            or (not self._target.startswith("%") and pane.session_name == target_session)
+        ]
+        if len(matches) != 1 or matches[0].pane_dead:
+            return None
+        name = matches[0].pane_command
+        return command_name(name) if isinstance(name, str) and name else None
+
     async def send_key(self, key: NamedKey) -> SendResult:
         name = tmux_key_name(key)
         if name is None:
@@ -406,6 +450,91 @@ class SubmitResult:
     error_code: str | None = None
 
 
+def _matches_staged_draft(read: ComposerRead, text: str) -> bool:
+    if read.state != "draft" or read.line is None:
+        return False
+    return (
+        read.line == text
+        if len(text) <= COMPOSER_MATCH_CHARS
+        else read.line.startswith(text[:COMPOSER_MATCH_CHARS])
+    )
+
+
+def _owns_staged_draft(read: ComposerRead, text: str) -> bool:
+    """Include a partially painted write when deciding whether to drain it."""
+    return (
+        read.state == "draft"
+        and read.line is not None
+        and bool(read.line)
+        and (text.startswith(read.line) or _matches_staged_draft(read, text))
+    )
+
+
+async def verify_staged_text(
+    pane: PaneIO,
+    text: str,
+    cli_source: str,
+    composer_read: ComposerReader,
+    foreground_command: Callable[[], Awaitable[str | None]],
+    *,
+    window_seconds: float,
+) -> SubmitResult | None:
+    """Wait for a staged draft in the intended CLI before allowing Enter."""
+    elapsed = 0.0
+    window = max(window_seconds, 0.0)
+    while True:
+        observed = await foreground_command()
+        if observed != cli_source:
+            return SubmitResult(
+                False,
+                f"{cli_source} is not foreground (found {observed or 'unknown'})",
+                CLI_NOT_FOREGROUND_ERROR_CODE,
+            )
+        read = composer_read(await pane.snapshot(COMPOSER_PROBE_LINES, mode="ansi"))
+        observed = await foreground_command()
+        if observed != cli_source:
+            return SubmitResult(
+                False,
+                f"{cli_source} is not foreground (found {observed or 'unknown'})",
+                CLI_NOT_FOREGROUND_ERROR_CODE,
+            )
+        if _matches_staged_draft(read, text):
+            return None
+        if read.state == "draft" and read.line is not None and not _owns_staged_draft(read, text):
+            return SubmitResult(
+                False,
+                f"{text[:COMPOSER_MATCH_CHARS]} was replaced in the {cli_source} composer",
+                TEXT_NOT_SUBMITTED_ERROR_CODE,
+            )
+        if elapsed >= window:
+            return SubmitResult(
+                False,
+                f"{text[:COMPOSER_MATCH_CHARS]} was not verified in the {cli_source} composer",
+                TEXT_NOT_SUBMITTED_ERROR_CODE,
+            )
+        delay = min(_SUBMIT_VERIFY_POLL_SECONDS, window - elapsed)
+        await asyncio.sleep(delay)
+        elapsed += delay
+
+
+async def clear_staged_text(
+    pane: PaneIO,
+    text: str,
+    cli_source: str,
+    composer_read: ComposerReader,
+    foreground_command: Callable[[], Awaitable[str | None]],
+) -> SendResult:
+    """Drain our unsubmitted text without erasing a visible different draft."""
+    snapshot = await pane.snapshot(COMPOSER_PROBE_LINES, mode="ansi")
+    observed = await foreground_command()
+    if observed != cli_source:
+        return False, "CLI is no longer foreground; shell draft ownership is unknown"
+    read = composer_read(snapshot)
+    if read.state == "draft" and read.line is not None and not _owns_staged_draft(read, text):
+        return False, "composer holds a different draft"
+    return await clear_composer(pane, cli_source)
+
+
 async def composer_verdict(
     pane: PaneIO,
     text: str,
@@ -447,11 +576,14 @@ async def submit_text(
     cli_source: str | None,
     composer_read: ComposerReader | None,
     verify_seconds: float = SUBMIT_VERIFY_SECONDS,
+    before_enter: Callable[[], Awaitable[SubmitResult | None]] | None = None,
 ) -> SubmitResult:
     """Submit ``text`` into the drained composer, and prove it left or report it.
 
-    The text and its newline go in as one write, and a bare Enter follows as its own
-    stdin read after ``SUBMIT_ENTER_GAP_SECONDS``. Both are needed. A short text such
+    Normally the text and its newline go in as one write, and a bare Enter follows
+    as its own stdin read after ``SUBMIT_ENTER_GAP_SECONDS``. With ``before_enter``,
+    the text is staged without a newline and the callback must verify the draft
+    before Enter. Both writes are needed for the normal path. A short text such
     as ``/compact`` is submitted by the newline in the write, and the Enter is then a
     no-op on the empty composer. A long text -- every pull prompt -- is not: Claude
     Code folds the newline into any read of 64 bytes or more and inserts the run
@@ -470,11 +602,17 @@ async def submit_text(
     and key were both delivered, so the text is reported submitted with a warning.
     Without a ``composer_read`` the delivered write and key are all there is.
     """
-    ok, reason = await pane.type_text(f"{text}\n")
+    # A guarded command is staged without a newline. Its caller verifies the
+    # draft in the intended CLI before Enter can execute it.
+    ok, reason = await pane.type_text(text if before_enter is not None else f"{text}\n")
     if not ok:
         log_pane_failure(pane, session_id, f"typing {label}", reason)
         return SubmitResult(False, reason)
     await asyncio.sleep(SUBMIT_ENTER_GAP_SECONDS)
+    if before_enter is not None:
+        failure = await before_enter()
+        if failure is not None:
+            return failure
 
     enter_count = 0
     verify_window = max(verify_seconds, 0.0)

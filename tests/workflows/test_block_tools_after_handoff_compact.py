@@ -12,7 +12,14 @@ import pytest
 from gobby.adapters.grok import GrokAdapter
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
+from gobby.sessions.compact_continuation import (
+    HANDOFF_COMPACT_CONTINUE_VARIABLE,
+    _continue_after_codex_compaction_ready,
+    mark_handoff_compact_continuation_pending,
+)
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.terminals.pane_io import TmuxPaneIO
+from gobby.terminals.runtime import SnapshotMode
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import SessionVariableManager
@@ -426,6 +433,53 @@ async def test_background_delivery_failure_blocks_until_set_handoff_retry(
 
     assert blocked.decision == "block"
     assert "Retry gobby-sessions:set_handoff" in (blocked.reason or "")
+    assert retry.decision == "allow"
+
+
+async def test_codex_readiness_timeout_releases_pending_gate_for_retry(
+    handler: WorkflowHookHandler,
+    temp_db: HubDatabase,
+) -> None:
+    attempt_id = "timed-out-attempt"
+    assert mark_handoff_compact_continuation_pending(temp_db, SESSION_ID, attempt_id=attempt_id)
+    variables = SessionVariableManager(temp_db)
+    variables.merge_variables(
+        SESSION_ID,
+        {
+            "context_compact_handoff_result": {
+                "handoff_staged": True,
+                "delivery_pending": True,
+                "attempt_id": attempt_id,
+                "clear_session": False,
+            }
+        },
+    )
+
+    class UnreadyTmux:
+        async def snapshot_lines(
+            self, _target: str, *, lines: int, mode: SnapshotMode = "text"
+        ) -> str:
+            return "Compacting conversation"
+
+    await _continue_after_codex_compaction_ready(
+        temp_db,
+        pane=TmuxPaneIO(UnreadyTmux(), "%12"),
+        pending_session_id=SESSION_ID,
+        before_command="Earlier output",
+        poll_seconds=0,
+        attempt_id=attempt_id,
+        fresh_seconds=0,
+    )
+
+    stored = variables.get_variables(SESSION_ID)
+    assert HANDOFF_COMPACT_CONTINUE_VARIABLE not in stored
+    assert stored["context_compact_handoff_result"]["delivery_pending"] is False
+    assert stored["context_compact_handoff_result"]["delivery_failed"] is True
+    blocked = await handler._evaluate_rules(_arbitrary_tool_event())
+    retry = await handler._evaluate_rules(_set_handoff_event({"success": False}))
+    assert blocked.decision == "block"
+    assert "Retry gobby-sessions:set_handoff" in (blocked.reason or "")
+    assert BLOCK_REASON not in (blocked.reason or "")
     assert retry.decision == "allow"
 
 

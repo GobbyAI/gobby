@@ -79,6 +79,7 @@ def session_db(hub_db: HubDatabase) -> HubDatabase:
 _CODEX_DRAIN = [("%12", key, False) for key in ("C-u", "C-k", "BSpace", "DC")] * 8
 #: An empty Codex composer, rule-delimited, so the submit ladder can read one back.
 _EMPTY_CODEX_COMPOSER = "\n".join(("output", "─" * 20, "›", "─" * 20, "  codex  12%"))
+_CODEX_READ = IdleDetector(BundledDetectionRegistry(), "codex").composer_read
 _ENTER = ("%12", "Enter", False)
 
 
@@ -86,6 +87,10 @@ _ENTER = ("%12", "Enter", False)
 def _no_enter_gap(monkeypatch: pytest.MonkeyPatch) -> None:
     """The gap before the Enter is live-CLI timing, not something these tests wait on."""
     monkeypatch.setattr("gobby.terminals.pane_io.SUBMIT_ENTER_GAP_SECONDS", 0.0)
+    monkeypatch.setattr(
+        "gobby.sessions.compact_continuation._composer_reader",
+        lambda _db, source: _CODEX_READ if source == "codex" else None,
+    )
 
 
 def _append_bytes(path: Path, content: bytes) -> None:
@@ -146,8 +151,24 @@ class _FakeTmux:
         self.sent_keys: list[tuple[str, str, bool]] = []
         self.composer_modes: list[SnapshotMode] = []
 
+    async def list_panes(self) -> list[SimpleNamespace]:
+        return [
+            SimpleNamespace(
+                pane_id="%12",
+                session_name="codex-seat",
+                pane_dead=False,
+                pane_command="codex",
+            )
+        ]
+
     async def send_keys(self, pane_id: str, text: str, *, literal: bool = False) -> bool:
         self.sent_keys.append((pane_id, text, literal))
+        if literal and not text.endswith("\n"):
+            self.composer_text = "\n".join(
+                ("output", "─" * 20, f"› {text}", "─" * 20, "  codex  12%")
+            )
+        elif text == "Enter":
+            self.composer_text = _EMPTY_CODEX_COMPOSER
         return True
 
     async def dispatch_keys(self, pane_id: str, text: str, *, literal: bool = False) -> bool:
@@ -324,10 +345,7 @@ async def test_codex_waits_for_fresh_compaction_marker_before_continuing(
             attempt_id="current-attempt",
         )
 
-    # The fake pane never draws a composer this manifest can classify, so the read
-    # is unreadable and the second Enter follows it -- a no-op once the first Enter
-    # submitted, and the recovery when a paste review gate swallowed it.
-    assert tmux.sent_keys == [*_CODEX_DRAIN, ("%12", f"{prompt}\n", True), _ENTER]
+    assert tmux.sent_keys == [*_CODEX_DRAIN, ("%12", prompt, True), _ENTER]
     variables = SessionVariableManager(session_db).get_variables(SESSION_ID)
     assert HANDOFF_COMPACT_CONTINUE_VARIABLE not in variables
 
@@ -465,6 +483,79 @@ async def test_codex_send_failure_queues_the_pull_prompt_for_the_next_turn(
 
 
 @pytest.mark.asyncio
+async def test_codex_exit_before_pull_prompt_uses_durable_fallback(
+    session_db: HubDatabase,
+) -> None:
+    prompt = "Call `get_handoff()` after compaction."
+    mark_handoff_compact_continuation_pending(session_db, SESSION_ID, prompt=prompt)
+
+    class ExitedTmux(_FakeTmux):
+        async def capture_pane(self, pane_id: str, *, lines: int) -> str:
+            return "• Context compacted"
+
+        async def list_panes(self) -> list[SimpleNamespace]:
+            panes = await super().list_panes()
+            panes[0].pane_command = "zsh"
+            return panes
+
+    tmux = ExitedTmux()
+    await _continue_after_codex_compaction_ready(
+        session_db,
+        pane=TmuxPaneIO(tmux, "%12"),
+        pending_session_id=SESSION_ID,
+        before_command="Compacting conversation",
+        poll_seconds=0,
+    )
+
+    assert tmux.sent_keys == []
+    queued = InterSessionMessageManager(session_db).get_undelivered_messages(SESSION_ID)
+    assert [(m.content, m.message_type) for m in queued] == [(prompt, "handoff_continuation")]
+
+
+@pytest.mark.asyncio
+async def test_codex_exit_during_pull_prompt_write_never_sends_shell_enter(
+    session_db: HubDatabase,
+) -> None:
+    prompt = "Call `get_handoff()` after compaction."
+    mark_handoff_compact_continuation_pending(session_db, SESSION_ID, prompt=prompt)
+
+    class ExitingTmux(_FakeTmux):
+        pane_command = "codex"
+
+        async def capture_pane(self, pane_id: str, *, lines: int) -> str:
+            return "• Context compacted"
+
+        async def list_panes(self) -> list[SimpleNamespace]:
+            panes = await super().list_panes()
+            panes[0].pane_command = self.pane_command
+            return panes
+
+        async def send_keys(self, pane_id: str, text: str, *, literal: bool = False) -> bool:
+            sent = await super().send_keys(pane_id, text, literal=literal)
+            if literal and text == prompt:
+                self.pane_command = "zsh"
+                self.composer_text = f"josh % {prompt}"
+            elif text == "C-u":
+                self.composer_text = "josh % "
+            return sent
+
+    tmux = ExitingTmux()
+    await _continue_after_codex_compaction_ready(
+        session_db,
+        pane=TmuxPaneIO(tmux, "%12"),
+        pending_session_id=SESSION_ID,
+        before_command="Compacting conversation",
+        poll_seconds=0,
+    )
+
+    assert ("%12", prompt, True) in tmux.sent_keys
+    assert _ENTER not in tmux.sent_keys
+    assert tmux.composer_text == f"josh % {prompt}"
+    queued = InterSessionMessageManager(session_db).get_undelivered_messages(SESSION_ID)
+    assert [(m.content, m.message_type) for m in queued] == [(prompt, "handoff_continuation")]
+
+
+@pytest.mark.asyncio
 async def test_codex_detects_fresh_marker_when_old_marker_scrolls_out(
     session_db: HubDatabase,
 ) -> None:
@@ -492,7 +583,7 @@ async def test_codex_detects_fresh_marker_when_old_marker_scrolls_out(
             poll_seconds=0,
         )
 
-    assert tmux.sent_keys == [*_CODEX_DRAIN, ("%12", f"{prompt}\n", True), _ENTER]
+    assert tmux.sent_keys == [*_CODEX_DRAIN, ("%12", prompt, True), _ENTER]
 
 
 @pytest.mark.asyncio
@@ -531,7 +622,7 @@ async def test_codex_ignores_compaction_marker_text_in_prose(
             poll_seconds=0,
         )
 
-    assert tmux.sent_keys == [*_CODEX_DRAIN, ("%12", f"{prompt}\n", True), _ENTER]
+    assert tmux.sent_keys == [*_CODEX_DRAIN, ("%12", prompt, True), _ENTER]
 
 
 def test_codex_readiness_rejects_missing_baseline(session_db: HubDatabase) -> None:
