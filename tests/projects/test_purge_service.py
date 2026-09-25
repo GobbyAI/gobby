@@ -18,6 +18,7 @@ from gobby.projects.purge import (
     PROJECT_PURGE_HANDLER_NAME,
     PROJECT_PURGE_INTERVAL_SECONDS,
     PROJECT_PURGE_JOB_NAME,
+    ProjectPurgeError,
     ProjectPurgeService,
     ProjectPurgeVectorStoreUnavailable,
     PurgeBatchResult,
@@ -29,7 +30,7 @@ from gobby.runtime_grants.launch import ManagedLaunch
 from gobby.storage.cron import CronJobStorage
 from gobby.storage.cron_models import CronJob
 from gobby.storage.projects import PERSONAL_PROJECT_ID, LocalProjectManager
-from gobby.storage.terminals import TerminalManager
+from gobby.storage.terminals import TerminalManager, native_locator_key
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -651,3 +652,64 @@ async def test_daily_purge_keeps_project_with_pending_terminal(temp_db: HubDatab
     assert events == []
     assert projects.get(project.id) is not None
     assert terminals.get(terminal_id) is not None
+
+
+async def test_daily_purge_retries_orphaned_terminal_after_settlement(temp_db: HubDatabase) -> None:
+    projects = LocalProjectManager(temp_db)
+    project = projects.create("purge-orphaned-terminal")
+    machine = temp_db.fetchone("SELECT id FROM machines ORDER BY id LIMIT 1")
+    assert machine is not None
+    terminal_id = str(uuid4())
+    host_terminal_id = str(uuid4())
+    host_epoch = str(uuid4())
+    terminals = TerminalManager(temp_db)
+    terminals.create_pending(
+        terminal_id,
+        project.id,
+        "native",
+        "gobby",
+        terminal_id,
+        machine_id=str(machine["id"]),
+    )
+    assert terminals.promote_to_live(
+        terminal_id,
+        locator={"host_terminal_id": host_terminal_id},
+        locator_key=native_locator_key(host_epoch, host_terminal_id),
+        host_epoch=host_epoch,
+    )
+    assert terminals.mark_orphaned(terminal_id)
+    projects.soft_delete(project.id)
+    temp_db.execute(
+        "UPDATE projects SET deleted_at = %s WHERE id = %s",
+        (datetime.now(UTC) - timedelta(days=2), project.id),
+    )
+    events: list[str] = []
+    service = ProjectPurgeService(
+        db=temp_db,
+        projects=projects,
+        cron=FakeCron(events),
+        fence=FakeFence(events),
+        code_gateway=FakeCodeGateway(events),
+        vector_cleaner=lambda: FakeVectorCleaner(events),
+        graph_cleaner=lambda: FakeGraphCleaner(events),
+    )
+    handler = create_project_purge_handler(service)
+
+    job = cast(CronJob, SimpleNamespace())
+    first = cast(PurgeBatchResult, await handler(job))
+
+    assert first["failed_count"] == 1
+    assert first["purged_count"] == 0
+    assert events == []
+    with pytest.raises(ProjectPurgeError, match="active terminals"):
+        service._delete_hub_rows(project.id)
+    assert projects.get(project.id) is not None
+    assert terminals.get(terminal_id) is not None
+
+    assert terminals.mark_exited(terminal_id)
+    second = cast(PurgeBatchResult, await handler(job))
+
+    assert second["failed_count"] == 0
+    assert second["purged_count"] == 1
+    assert projects.get(project.id) is None
+    assert terminals.get(terminal_id) is None

@@ -265,8 +265,7 @@ class ProjectPurgeService:
     def _has_active_terminals(self, project_id: str) -> bool:
         return bool(
             self.db.fetchall(
-                "SELECT id FROM terminals WHERE project_id = %s "
-                "AND state IN ('pending', 'live') LIMIT 1",
+                "SELECT id FROM terminals WHERE project_id = %s AND state <> 'exited' LIMIT 1",
                 (project_id,),
             )
         )
@@ -334,13 +333,13 @@ class ProjectPurgeService:
 
         with self.db.transaction() as transaction:
             # Hold the parent row against new terminal inserts while we remove
-            # its terminal history. Live and pending terminals must settle first.
+            # its terminal history. Every terminal must settle before deletion.
             transaction.execute("SELECT id FROM projects WHERE id = %s FOR UPDATE", (project_id,))
             terminal_rows = transaction.execute(
                 "SELECT state FROM terminals WHERE project_id = %s FOR UPDATE",
                 (project_id,),
             ).fetchall()
-            if any(row["state"] in ("pending", "live") for row in terminal_rows):
+            if any(row["state"] != "exited" for row in terminal_rows):
                 raise ProjectPurgeError("Project still has active terminals")
             for statement, arity in _FOREIGN_REFERENCE_DETACH_STATEMENTS:
                 transaction.execute(statement, (project_id,) * arity)
