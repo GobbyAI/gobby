@@ -103,7 +103,7 @@ and there is no handoff-delivery defect to route to Lane 3.
 | Claimed task | `claim_task`; session variable `claimed_tasks` | Yes. Session state and the DB claim both persist. |
 | Stop-hook hold | `require-task-close` (enabled): the turn cannot end with a claimed task open unless there is a legal exit (close, `wait_for_agent`, `wait_for_coordination`, `add_dependency`, `escalate_task`) | Yes. It is evaluated on every Stop. |
 | Handoff continuity | `set_handoff` / `get_handoff`; the Stop fallback since #22803 (memory 2e392c09) | Yes. Delivery is recorded in `session_handoff_deliveries`. |
-| Idle detection | Lane Manager `wait_for_coordination(statuses=[paused, awaiting_input, awaiting_approval, awaiting_handoff, interrupted])` (lane-manager.md). A DB trigger resolves it on `sessions.status` changes. | Yes. The waits are durable rows. |
+| Idle detection | Lane Manager `wait_for_coordination(statuses=[paused, awaiting_input, awaiting_approval, awaiting_handoff, interrupted])` (lane-manager.md). A DB trigger resolves it on `sessions.status` changes. | Partly. The wait row is durable (VERIFIED: `coordination_waits`, resolved by the DB trigger). The wake notification is not reliable across a restart: OBSERVED by the Assistant, Lane 3's pre-restart `wait_for_coordination(reply=true)` did not notify after the restart, and the lane sat idle until a manual prompt at 15:52 CT. Tracked in #22860. |
 | Next-task routing | PD orders the queue; Lane Manager wakes the seat with `wake=true` | Yes. Messages are durable. |
 
 What `/goal` adds for a one-task developer lane: an auto-continue loop toward an
@@ -184,9 +184,12 @@ top of a stall that retiring `/goal` already fixes.
 **Retire `/goal` from lanes.** Lanes run on the claimed leaf, the stop gate, and
 Lane Manager status waits. `require-epic-tree-close` stays disabled.
 
-Implementation, owned by the PD with a small change:
-- Stop sending `/goal` at lane kickoff. No role file references it today, so it
-  comes from the kickoff instructions or a manual start.
+Implementation: #22927, owned by Lane 3 #14531 (see Decision above). The PD
+reviews and lands it. Scope:
+- Remove any `/goal` start or resume from the developer lane kickoff instructions
+  and from shared role guidance, at their actual active source. No file under
+  `.gobby/roles/` references `/goal` today (VERIFIED by grep), so it comes from
+  the kickoff instructions or a manual start.
 - Clear any active goals on current lanes with `/goal clear` (see below).
 
 ### Supported exit for a lane that already has a goal (VERIFIED, codex-cli 0.156.1)
