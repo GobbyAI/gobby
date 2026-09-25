@@ -51,6 +51,7 @@ cat >"$tmpdir/py-spy-record" <<'EOF'
 # Root-owned: accepts only a numeric PID and duration; output goes to a fresh
 # mktemp dir under root-owned /var/tmp/py-spy so no caller-chosen path is written.
 set -eu
+[ $# -le 2 ] || { echo "usage: py-spy-record PID [SECONDS]" >&2; exit 2; }
 pid="${1:?usage: py-spy-record PID [SECONDS]}"
 secs="${2:-30}"
 case "$pid" in '' | *[!0-9]*) echo "bad pid" >&2; exit 2 ;; esac

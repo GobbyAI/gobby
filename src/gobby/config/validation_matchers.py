@@ -417,6 +417,8 @@ def builtin_validation_matchers() -> list[ValidationCommandMatcher]:
             ["bash"],
             ["lint"],
             ["shellcheck"],
+            # These print information and exit 0 without checking any script.
+            forbidden_args_any=["--list-optional", "-V", "--version", "--help"],
             bounded_inputs=True,
         ),
         _matcher(
