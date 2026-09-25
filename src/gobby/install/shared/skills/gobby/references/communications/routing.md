@@ -31,10 +31,8 @@ preserves other channel configuration and affects future responder turns.
 The result may have `project_path: null` when a local checkout cannot be
 resolved; successful project binding alone does not establish execution access.
 
-Responder project selection and event-subscription scope are separate.
-Changing one does not retarget the other. Load `subscriptions.md` before
-changing event delivery. Unknown project/channel or unavailable project
-storage requires fixing discovery or service health, not inventing a path.
+Unknown project/channel or unavailable project storage requires fixing
+discovery or service health, not inventing a path.
 
 See [destination resolution](../../../../../../../../docs/guides/comm-integrations.md#outbound-destination-resolution)
 and [responder projects](../../../../../../../../docs/guides/telegram.md#responder-projects-and-models).

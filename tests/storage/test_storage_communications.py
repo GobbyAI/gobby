@@ -11,7 +11,6 @@ from gobby.communications.models import (
     CommsAttachment,
     CommsIdentity,
     CommsMessage,
-    CommsRoutingRule,
 )
 from gobby.storage.communications import LocalCommunicationsStore
 
@@ -78,29 +77,6 @@ def test_delete_channel_cascades_identities(store: LocalCommunicationsStore) -> 
     store.delete_channel(ch.id)
 
     assert len(store.list_identities(channel_id=ch.id)) == 0
-
-
-def test_delete_channel_cascades_routing_rules(store: LocalCommunicationsStore) -> None:
-    """Deleting a channel removes its routing rules."""
-    ch = _make_channel(store)
-    store.create_routing_rule(
-        CommsRoutingRule(
-            id="",
-            name="rule-1",
-            channel_id=ch.id,
-            event_pattern="task.*",
-            priority=1,
-            enabled=True,
-            config_json={},
-            created_at="2025-01-01T00:00:00Z",
-            updated_at="2025-01-01T00:00:00Z",
-        )
-    )
-    assert len(store.list_routing_rules(channel_id=ch.id)) >= 1
-
-    store.delete_channel(ch.id)
-
-    assert len(store.list_routing_rules(channel_id=ch.id)) == 0
 
 
 def test_delete_channel_cascades_attachments(store: LocalCommunicationsStore) -> None:

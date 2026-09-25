@@ -39,7 +39,6 @@ def _channel(
 def _store(channels: list[ChannelConfig] | None = None) -> MagicMock:
     store = MagicMock()
     store.list_channels.return_value = channels or []
-    store.get_routing_rules.return_value = []
     store.create_message.return_value = None
     store.get_identity_by_external.return_value = None
     return store
