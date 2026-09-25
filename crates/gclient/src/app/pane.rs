@@ -141,7 +141,7 @@ pub struct Pane {
     pub session_id: Option<String>,
     /// The command in this terminal's foreground, as the daemon observed it:
     /// `zsh` at an idle prompt, `nvim` or `cargo` while a job holds it. Rung 2
-    /// of the label ladder, and the last rung with any information in it.
+    /// of the label ladder, before the short terminal ID fallback.
     pub command: Option<String>,
     /// The daemon's terminal lifecycle state, when its inventory supplied one.
     pub terminal_state: Option<String>,
@@ -290,14 +290,13 @@ impl Pane {
         pane
     }
 
-    /// What every chrome surface calls a bare terminal, by the D1 ladder: the
-    /// name the user gave the pane, then the command in its foreground, then
-    /// the literal `shell`. A terminal running a Gobby session is named by
-    /// that session's title on the sidebar instead, so the provider is no
-    /// rung here.
+    /// What every chrome surface calls a bare terminal: the name the user gave
+    /// the pane, then the command in its foreground, then a short terminal ID.
+    /// A terminal running a Gobby session is named by that session's title on
+    /// the sidebar instead, so the provider is no rung here.
     ///
-    /// The last rung is a literal so no rung can ever be an id. The daemon's
-    /// own `title` is no rung and the client does not keep it: it comes from
+    /// The ID fallback distinguishes unnamed terminals. The daemon's own
+    /// `title` is no rung and the client does not keep it: it comes from
     /// `window_name or pane_title or session_name`, which yields `zsh` for one
     /// pane and `75`, `[tmux]` or a whole session banner for the next.
     pub fn display_name(&self) -> &str {

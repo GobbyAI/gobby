@@ -1,10 +1,8 @@
-//! The chrome names a terminal, it does not print its primary key.
+//! The chrome names a terminal and uses a short ID when no name is available.
 //!
-//! These tests pin the D1 label ladder against a real daemon payload: the name
-//! the user gave the pane, then the provider of the session bound to it, then
-//! the command in its foreground, then the literal `shell`. The last rung is a
-//! literal, which is what makes the guarantee at the bottom of this file
-//! possible — no rung can be an id, at any width.
+//! These tests pin the label ladder against a real daemon payload: the name
+//! the user gave the pane, then the command in its foreground, then a short
+//! terminal ID. The provider belongs on the agent row, not the terminal row.
 //!
 //! `title` is deliberately not a rung, and the rows here carry misleading ones
 //! to prove it: the daemon fills `title` from `window_name or pane_title or
@@ -72,8 +70,7 @@ fn entry(terminal_id: &str, backend: &str) -> Value {
     })
 }
 
-/// The same entry with the provider the daemon resolved for its session, which
-/// is rung 2 of the ladder.
+/// The same entry with the provider the daemon resolved for its session.
 fn entry_with_provider(terminal_id: &str, backend: &str, provider: &str) -> Value {
     let mut entry = entry(terminal_id, backend);
     entry["provider"] = json!(provider);
@@ -128,7 +125,7 @@ async fn sidebar(rows: Vec<Value>, attention: Vec<Value>) -> (Vec<SidebarRow>, V
     (drawn, labels)
 }
 
-/// Rung 3, and the rung the daemon had to grow a new mechanism to serve: with
+/// Rung 2, and the rung the daemon had to grow a new mechanism to serve: with
 /// no name of its own and no session bound to it, a terminal is called after
 /// whatever is running in it. The titles here are what tmux actually reports
 /// for such panes, and none of them reaches the row.
@@ -211,12 +208,10 @@ async fn two_terminals_running_the_same_command_keep_distinct_row_ids() {
     assert!(roster.iter().all(|row| row.reference.is_empty()));
 }
 
-/// The guarantee the ladder exists for. Every rung above the last can be
-/// missing at once, and the row still never shows a terminal id — not whole,
-/// and not truncated to the leading segment that used to be the fallback and
-/// rendered four identical rows for four different terminals.
+/// When both name and command are absent, the short ID distinguishes terminal
+/// rows and attention labels without displaying a raw terminal UUID.
 #[tokio::test]
-async fn no_terminal_id_reaches_the_sidebar_at_any_width() {
+async fn unnamed_terminals_use_distinct_short_ids_without_exposing_uuids() {
     let (roster, named) = sidebar(
         vec![
             tmux_row(AGENT, Value::Null, "%3", Value::Null),
@@ -225,6 +220,10 @@ async fn no_terminal_id_reaches_the_sidebar_at_any_width() {
         vec![entry(AGENT, "tmux"), entry(SHELL, "native")],
     )
     .await;
+
+    let labels: Vec<&str> = roster.iter().map(|row| row.label.as_str()).collect();
+    assert_eq!(labels, [&AGENT[..8], &SHELL[..8]]);
+    assert_eq!(named, labels);
 
     let rendered: Vec<&str> = roster
         .iter()
@@ -240,13 +239,10 @@ async fn no_terminal_id_reaches_the_sidebar_at_any_width() {
         .chain(named.iter().map(String::as_str))
         .collect();
     for id in [AGENT, SHELL, ABSENT] {
-        for width in [id.len(), 8, 4] {
-            let prefix = &id[..width];
-            assert!(
-                rendered.iter().all(|text| !text.contains(prefix)),
-                "`{prefix}` reached the chrome: {rendered:?}"
-            );
-        }
+        assert!(
+            rendered.iter().all(|text| !text.contains(id)),
+            "`{id}` reached the chrome: {rendered:?}"
+        );
     }
 }
 
