@@ -640,6 +640,39 @@ async def test_agent_button_switches_the_chat_target() -> None:
     )
 
 
+async def test_agent_switch_sends_fresh_menu_when_edit_fails() -> None:
+    controller, manager, sessions, _ = _controller()
+    manager.edit_message = AsyncMock(side_effect=RuntimeError("edit failed"))
+    target_id = "44444444-4444-4444-8444-444444444444"
+    target = SimpleNamespace(id=target_id, status="active", source="codex", title="Lane Developer")
+    sessions.get.return_value = target
+    sessions.list.return_value = [target]
+    manager.attached_session.return_value = target_id
+    source = _source_message(actionable=False)
+    source.metadata_json.update(
+        {"callback_action": "agent_target", "agent_channel_id": _channel().id}
+    )
+    manager.store.get_message_by_platform_id.return_value = source
+    callback = _message(
+        content="select",
+        content_type="callback",
+        metadata={
+            "callback_action": "agent_target",
+            "callback_source_message_id": "900",
+            "callback_value": json.dumps(
+                {"op": "set", "channel_id": _channel().id, "session_id": target_id}
+            ),
+        },
+    )
+
+    await controller.handle(_channel().name, callback)
+
+    assert manager.send_message.await_count == 2
+    assert "inline_keyboard" in manager.send_message.await_args_list[0].kwargs["metadata"]
+    assert "Active agent: Lane Developer" in manager.send_message.await_args_list[1].args[1]
+    assert "new menu" in manager.send_message.await_args_list[1].args[1]
+
+
 async def test_agent_button_rejects_wildcard_only_sender_allowlist() -> None:
     controller, manager, _, _ = _controller()
     channel = _channel()

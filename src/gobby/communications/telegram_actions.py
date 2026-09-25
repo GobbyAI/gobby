@@ -523,6 +523,26 @@ class TelegramActionController:
             )
         except Exception:
             logger.exception("Failed to refresh Telegram agent menu after target switch")
+            try:
+                await self._send_agent_menu(
+                    channel,
+                    message,
+                    page=_page_value(payload.get("page")),
+                )
+            except Exception:
+                logger.exception("Failed to send replacement Telegram agent menu")
+                await self._agent_feedback(
+                    channel,
+                    message,
+                    f"Active agent: {agent_label(target)}. Menu could not refresh; run /agent.",
+                )
+                return
+            await self._agent_feedback(
+                channel,
+                message,
+                f"Active agent: {agent_label(target)}. A new menu was sent because the old one could not refresh.",
+            )
+            return
         await self._agent_feedback(channel, message, f"Active agent: {agent_label(target)}")
 
     async def _handle_subscription_callback(

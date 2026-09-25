@@ -642,6 +642,58 @@ async def test_edit_agent_menu_replaces_keyboard_with_live_callbacks(
 
 
 @pytest.mark.asyncio
+async def test_edit_agent_menu_invalidates_previous_keyboard_tokens(
+    adapter: TelegramAdapter,
+) -> None:
+    response = httpx.Response(
+        200,
+        request=httpx.Request("POST", "https://api.telegram.org/bottest-token/sendMessage"),
+        json={"ok": True, "result": {"message_id": 12345}},
+    )
+    mock_client = MagicMock()
+    mock_client.post = AsyncMock(return_value=response)
+    adapter._client = mock_client
+    adapter._api_base = "https://api.telegram.org/bottest-token"
+    source = CommsMessage(
+        id="menu-source",
+        channel_id="telegram-channel",
+        direction="outbound",
+        content="Choose an agent:",
+        session_id=None,
+        metadata_json={
+            "platform_destination": "chat999",
+            "callback_action": "agent_target",
+            "inline_keyboard": [[{"text": "Agent A", "value": "select-a"}]],
+        },
+        created_at=datetime.now(UTC),
+    )
+    await adapter.send_message(source)
+    old_token = mock_client.post.await_args.kwargs["json"]["reply_markup"]["inline_keyboard"][0][0][
+        "callback_data"
+    ]
+
+    await adapter.edit_message(
+        "12345",
+        "Choose an agent:",
+        "chat999",
+        inline_keyboard=[[{"text": "✓ Agent B", "value": "select-b"}]],
+        callback_source=source,
+    )
+    new_token = mock_client.post.await_args.kwargs["json"]["reply_markup"]["inline_keyboard"][0][0][
+        "callback_data"
+    ]
+
+    assert (
+        adapter._callback_registry.resolve(old_token, chat_id="chat999", thread_id=None).status
+        == "invalid"
+    )
+    assert (
+        adapter._callback_registry.resolve(new_token, chat_id="chat999", thread_id=None).value
+        == "select-b"
+    )
+
+
+@pytest.mark.asyncio
 async def test_edit_message_labels_after_rendering_fenced_markdown(
     adapter: TelegramAdapter,
 ) -> None:
