@@ -39,6 +39,7 @@ from gobby.storage.hub.protocol import (
     PlanReviewEvidenceMutation,
 )
 from gobby.storage.projects import LocalProjectManager
+from gobby.storage.sessions import LIVE_SESSION_STATUSES
 from gobby.workflows.state_manager import SessionVariableManager
 
 EVIDENCE_LEASE_SECONDS = 7_200
@@ -454,12 +455,17 @@ class PlanReviewEvidenceService:
             if len(seats) != 3:
                 raise ReviewEvidenceError("invalid_seats", "review seats must be distinct sessions")
             rows = transaction.execute(
-                "SELECT id, project_id FROM sessions WHERE id IN (%s, %s, %s)",
+                "SELECT id, project_id, status FROM sessions "
+                "WHERE id IN (%s, %s, %s) ORDER BY id FOR UPDATE",
                 (caller_session_id, writer_session_id, coordinator_session_id),
             ).fetchall()
-            if len(rows) != 3 or any(str(row["project_id"]) != locked.project_id for row in rows):
+            if len(rows) != 3 or any(
+                str(row["project_id"]) != locked.project_id
+                or row["status"] not in LIVE_SESSION_STATUSES
+                for row in rows
+            ):
                 raise ReviewEvidenceError(
-                    "invalid_seats", "review seats must belong to the project"
+                    "invalid_seats", "review seats must be live sessions in the project"
                 )
             if self._evidence_path(locked).read_bytes() != locked.snapshot:
                 raise ReviewEvidenceError(
@@ -477,6 +483,7 @@ class PlanReviewEvidenceService:
         evidence_id: str,
         *,
         spawn_failed: bool = False,
+        caller_session_id: str | None = None,
     ) -> PlanReviewEvidence:
         evidence = self.get_evidence(evidence_id)
         mutation = PlanReviewEvidenceMutation(
@@ -485,20 +492,61 @@ class PlanReviewEvidenceService:
         )
         with self.db.transaction_immediate(mutation) as transaction:
             locked = self.store.require(evidence_id, transaction=transaction, for_update=True)
-            if locked.round_result is not None and locked.manifest_state != "revoked":
-                raise ReviewEvidenceError(
-                    "durable_result_present",
-                    "evidence with a durable round result must be reconciled",
-                )
-            explicit_prebind_failure = (
-                spawn_failed and locked.dispatch_run_id is None and not locked.is_static_bound
-            )
-            if not explicit_prebind_failure and not self._attempt_is_dead(locked):
-                raise ReviewEvidenceError(
-                    "attempt_still_live",
-                    "evidence attempt is still live",
-                    retryable=True,
-                )
+            if locked.is_static_bound:
+                try:
+                    caller_session_id = str(uuid.UUID(caller_session_id or ""))
+                except (TypeError, ValueError) as exc:
+                    raise ReviewEvidenceError(
+                        "unauthorized_seat", "live project session required"
+                    ) from exc
+                seats = {
+                    locked.session_id,
+                    locked.static_writer_session_id,
+                    locked.static_coordinator_session_id,
+                }
+                rows = transaction.execute(
+                    "SELECT id, project_id, status FROM sessions "
+                    "WHERE id IN (%s, %s, %s, %s) ORDER BY id FOR UPDATE",
+                    (*seats, caller_session_id),
+                ).fetchall()
+                sessions = {str(row["id"]): row for row in rows}
+                caller = sessions.get(caller_session_id) if caller_session_id is not None else None
+                if (
+                    caller is None
+                    or str(caller["project_id"]) != locked.project_id
+                    or caller["status"] not in LIVE_SESSION_STATUSES
+                ):
+                    raise ReviewEvidenceError("unauthorized_seat", "live project session required")
+                abandoned = {
+                    seat
+                    for seat in seats
+                    if seat is not None
+                    and (
+                        seat not in sessions
+                        or sessions[seat]["status"] not in LIVE_SESSION_STATUSES
+                    )
+                }
+                if not abandoned:
+                    raise ReviewEvidenceError(
+                        "attempt_still_live", "all static review seats are live", retryable=True
+                    )
+                if caller_session_id not in seats and abandoned != seats:
+                    raise ReviewEvidenceError("unauthorized_seat", "bound seat required")
+                # The successor round snapshots the current plan bytes; retain this
+                # abandoned row and its checkpoint or manifest intent for audit.
+            else:
+                if locked.round_result is not None and locked.manifest_state != "revoked":
+                    raise ReviewEvidenceError(
+                        "durable_result_present",
+                        "evidence with a durable round result must be reconciled",
+                    )
+                explicit_prebind_failure = spawn_failed and locked.dispatch_run_id is None
+                if not explicit_prebind_failure and not self._attempt_is_dead(locked):
+                    raise ReviewEvidenceError(
+                        "attempt_still_live",
+                        "evidence attempt is still live",
+                        retryable=True,
+                    )
             return self.store.expire(
                 transaction=transaction,
                 evidence_id=evidence_id,

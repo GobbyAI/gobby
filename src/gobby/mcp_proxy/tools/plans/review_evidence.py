@@ -227,6 +227,7 @@ def register_review_evidence_tools(
             evidence = service.expire_plan_review_evidence(
                 evidence_id,
                 spawn_failed=spawn_failed,
+                caller_session_id=get_current_session_id(),
             )
         except (ReviewEvidenceError, OSError, psycopg.Error) as exc:
             return _error_payload(exc, "expire_plan_review_evidence_failed")
@@ -238,7 +239,11 @@ def register_review_evidence_tools(
 
     registry.register(
         name="expire_plan_review_evidence",
-        description="Expire evidence after spawn/bind failure or a provably dead attempt.",
+        description=(
+            "Expire evidence after spawn/bind failure or a provably dead attempt. For a static "
+            "round with an ended seat, a live bound seat may retire it; if all seats ended, "
+            "a live project session may retire it. Start a fresh review round afterward."
+        ),
         input_schema={
             "type": "object",
             "properties": {

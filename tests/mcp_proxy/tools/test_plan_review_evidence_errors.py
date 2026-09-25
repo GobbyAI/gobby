@@ -50,6 +50,11 @@ def test_static_review_mutations_forward_ambient_caller() -> None:
                 "append_plan_changelog_round",
             ),
             (
+                "expire_plan_review_evidence",
+                {"evidence_id": "evidence-1"},
+                "expire_plan_review_evidence",
+            ),
+            (
                 "finalize_plan_review_evidence",
                 {"evidence_id": "evidence-1", "round_result": {}},
                 "finalize_plan_review_evidence",

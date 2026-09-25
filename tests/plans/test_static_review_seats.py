@@ -105,7 +105,9 @@ def test_static_bind_adopts_only_current_unchanged_evidence(
     assert bound.lease_expires_at is None
     _bind(service, evidence_id, reviewer_id, writer_id, coordinator_id)
     with pytest.raises(ReviewEvidenceError) as still_live:
-        service.expire_plan_review_evidence(evidence_id, spawn_failed=True)
+        service.expire_plan_review_evidence(
+            evidence_id, spawn_failed=True, caller_session_id=reviewer_id
+        )
     assert still_live.value.code == "attempt_still_live"
     with pytest.raises(ReviewEvidenceError) as changed:
         _bind(service, evidence_id, reviewer_id, coordinator_id, writer_id)
@@ -118,6 +120,148 @@ def test_static_bind_adopts_only_current_unchanged_evidence(
         service.bind_evidence_run(evidence_id, run.id)
     assert competing.value.code == "evidence_already_bound"
     assert service.get_evidence(evidence_id).expired_at is None
+
+
+def test_static_bind_rejects_ended_seat(
+    review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
+) -> None:
+    service, project_id, reviewer_id, plan_path = review_setup
+    writer_id, coordinator_id = _seats(service.db, project_id, reviewer_id)
+    evidence_id = _prepare(service, project_id, reviewer_id, plan_path)
+    SessionManager(service.db).update_status(writer_id, "expired")
+
+    with pytest.raises(ReviewEvidenceError) as ended:
+        _bind(service, evidence_id, reviewer_id, writer_id, coordinator_id)
+    assert ended.value.code == "invalid_seats"
+    assert service.get_evidence(evidence_id).static_writer_session_id is None
+
+
+def test_static_abandoned_seat_recovery_protects_live_seats(
+    review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
+) -> None:
+    service, project_id, reviewer_id, plan_path = review_setup
+    writer_id, coordinator_id = _seats(service.db, project_id, reviewer_id)
+    outsider_id, _ = _seats(service.db, project_id, reviewer_id)
+    evidence_id = _prepare(service, project_id, reviewer_id, plan_path)
+    _bind(service, evidence_id, reviewer_id, writer_id, coordinator_id)
+
+    with pytest.raises(ReviewEvidenceError) as live:
+        service.expire_plan_review_evidence(evidence_id, caller_session_id=reviewer_id)
+    assert live.value.code == "attempt_still_live"
+
+    SessionManager(service.db).update_status(writer_id, "expired")
+    with pytest.raises(ReviewEvidenceError) as outsider:
+        service.expire_plan_review_evidence(evidence_id, caller_session_id=outsider_id)
+    assert outsider.value.code == "unauthorized_seat"
+    with pytest.raises(ReviewEvidenceError) as invalid_caller:
+        service.expire_plan_review_evidence(evidence_id, caller_session_id="not-a-session")
+    assert invalid_caller.value.code == "unauthorized_seat"
+    with pytest.raises(ReviewEvidenceError) as ended_caller:
+        service.expire_plan_review_evidence(evidence_id, caller_session_id=writer_id)
+    assert ended_caller.value.code == "unauthorized_seat"
+
+    expired = service.expire_plan_review_evidence(evidence_id, caller_session_id=reviewer_id)
+    assert expired.expired_at is not None
+    successor = service.prepare_plan_review_round(
+        project_id=project_id,
+        plan_path=plan_path,
+        round_number=2,
+        session_id=reviewer_id,
+    )
+    assert successor.evidence_id != evidence_id
+
+
+def test_static_abandoned_reviewer_after_checkpoint_allows_successor_round(
+    review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
+) -> None:
+    service, project_id, reviewer_id, plan_path = review_setup
+    writer_id, coordinator_id = _seats(service.db, project_id, reviewer_id)
+    evidence_id = _prepare(service, project_id, reviewer_id, plan_path)
+    _bind(service, evidence_id, reviewer_id, writer_id, coordinator_id)
+    result = needs_review_result(evidence_id)
+    service.append_plan_changelog_round(
+        evidence_id, "**Round 1**", result, caller_session_id=writer_id
+    )
+    SessionManager(service.db).update_status(reviewer_id, "expired")
+
+    expired = service.expire_plan_review_evidence(evidence_id, caller_session_id=coordinator_id)
+    assert expired.expired_at is not None
+    assert expired.round_result is None
+    successor = service.prepare_plan_review_round(
+        project_id=project_id,
+        plan_path=plan_path,
+        round_number=2,
+        session_id=coordinator_id,
+    )
+    assert successor.evidence_id != evidence_id
+
+
+def test_static_pending_manifest_can_be_retired_after_coordinator_ends(
+    review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
+) -> None:
+    service, project_id, reviewer_id, plan_path = review_setup
+    writer_id, coordinator_id = _seats(service.db, project_id, reviewer_id)
+    evidence_id = _prepare(service, project_id, reviewer_id, plan_path)
+    _bind(service, evidence_id, reviewer_id, writer_id, coordinator_id)
+    # Model a committed intent left by an interrupted manifest apply.
+    with service.db.transaction() as transaction:
+        service.store.begin_manifest_apply(
+            transaction=transaction,
+            evidence_id=evidence_id,
+            digest="a" * 64,
+            payload={"verdict": "approved"},
+        )
+    SessionManager(service.db).update_status(coordinator_id, "expired")
+
+    expired = service.expire_plan_review_evidence(evidence_id, caller_session_id=reviewer_id)
+    assert expired.manifest_state == "pending"
+    assert expired.expired_at is not None
+    successor = service.prepare_plan_review_round(
+        project_id=project_id,
+        plan_path=plan_path,
+        round_number=2,
+        session_id=reviewer_id,
+    )
+    assert successor.evidence_id != evidence_id
+
+
+def test_all_ended_static_seats_allow_live_project_successor(
+    review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
+    isolated_checkout_factory: IsolatedCheckoutFactory,
+    tmp_path: Path,
+) -> None:
+    service, project_id, reviewer_id, plan_path = review_setup
+    writer_id, coordinator_id = _seats(service.db, project_id, reviewer_id)
+    successor_id, _ = _seats(service.db, project_id, reviewer_id)
+    evidence_id = _prepare(service, project_id, reviewer_id, plan_path)
+    _bind(service, evidence_id, reviewer_id, writer_id, coordinator_id)
+    sessions = SessionManager(service.db)
+    for seat in (reviewer_id, writer_id, coordinator_id):
+        sessions.update_status(seat, "expired")
+
+    foreign_project = isolated_checkout_factory(
+        service.db, "foreign-recovery-seat", root=tmp_path / "foreign"
+    ).project
+    reviewer = sessions.get(reviewer_id)
+    assert reviewer is not None
+    foreign = sessions.register(
+        external_id="foreign-recovery-caller",
+        machine_id=reviewer.machine_id,
+        source="codex",
+        project_id=foreign_project.id,
+    )
+    with pytest.raises(ReviewEvidenceError) as foreign_caller:
+        service.expire_plan_review_evidence(evidence_id, caller_session_id=foreign.id)
+    assert foreign_caller.value.code == "unauthorized_seat"
+
+    service.expire_plan_review_evidence(evidence_id, caller_session_id=successor_id)
+    successor = service.prepare_plan_review_round(
+        project_id=project_id,
+        plan_path=plan_path,
+        round_number=2,
+        session_id=successor_id,
+    )
+    assert successor.evidence_id != evidence_id
 
 
 def test_static_bind_rejects_expired_and_superseded_attempts(
