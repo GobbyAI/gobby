@@ -1,6 +1,6 @@
 // upstream: none (Gobby-only, D3 of plan issues-i-see-with-typed-bumblebee)
 //! Transient alerts: the toast stack over the pane area and the alert log
-//! on the global menu. Persistent conditions are not alerts; `daemon unreachable`
+//! behind [Menu]. Persistent conditions are not alerts; `daemon unreachable`
 //! keeps its status-bar segment.
 
 use std::time::Instant;

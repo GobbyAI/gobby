@@ -1,4 +1,5 @@
 src/ui.rs::bottom_tab_bar_still_hides_when_single_tab
+src/ui.rs::collapsed_sidebar_keeps_active_workspace_highlight_in_terminal_mode
 src/ui.rs::compute_view_clamps_sidebar_width_to_configured_max
 src/ui.rs::compute_view_clamps_sidebar_width_to_configured_min
 src/ui.rs::compute_view_reserves_terminal_column_when_pane_scrollbar_is_visible
@@ -6,6 +7,7 @@ src/ui.rs::copy_feedback_offset_only_increases_when_toast_rect_overlaps
 src/ui.rs::dragging_from_current_thumb_row_preserves_offset
 src/ui.rs::expanded_sidebar_workspace_rows_show_state_before_name_without_numbers
 src/ui.rs::focused_pane_cursor_wins_during_terminal_render
+src/ui.rs::hidden_collapsed_sidebar_uses_full_width_terminal_area
 src/ui.rs::hide_tab_bar_when_single_tab_resizes_background_tabs_per_workspace
 src/ui.rs::hide_tab_bar_when_single_tab_toggles_geometry_with_tab_count
 src/ui.rs::keybind_help_compacts_multiple_indexed_ranges
@@ -36,8 +38,10 @@ src/ui/navigator.rs::next_workspace_does_not_extend_previous_subtree
 src/ui/navigator.rs::spine_stops_after_last_ancestor_sibling
 src/ui/navigator.rs::workspace_rows_use_expand_caret
 src/ui/panes.rs::automatic_selection_background_uses_host_background
+src/ui/panes.rs::borderless_pane_gaps_add_one_empty_cell_between_panes
 src/ui/panes.rs::default_horizontal_split_uses_one_shared_divider_column
 src/ui/panes.rs::default_vertical_split_uses_one_shared_divider_row
+src/ui/panes.rs::disabled_pane_borders_make_inner_rect_equal_visual_rect
 src/ui/panes.rs::gapped_pane_focus_does_not_color_neighbor_border
 src/ui/panes.rs::global_pane_border_renderer_composes_junctions_and_focus_style
 src/ui/panes.rs::pane_border_renderer_places_adjacent_cjk_by_display_width
@@ -54,11 +58,15 @@ src/ui/sidebar.rs::all_workspaces_agent_panel_entries_prefer_agent_names_for_age
 src/ui/sidebar.rs::all_workspaces_agent_panel_entries_use_live_root_runtime_cwd_for_workspace_label
 src/ui/sidebar.rs::collapsed_group_hides_inactive_children_but_keeps_active_visible
 src/ui/sidebar.rs::collapsed_group_keeps_selected_child_visible_in_navigate_mode
+src/ui/sidebar.rs::collapsed_sidebar_keeps_status_visible_for_two_digit_positions
+src/ui/sidebar.rs::collapsed_sidebar_numbers_grouped_agents_by_list_position
+src/ui/sidebar.rs::collapsed_sidebar_numbers_priority_agents_by_list_position
 src/ui/sidebar.rs::compact_space_group_scroll_clamps_when_all_entries_fit
 src/ui/sidebar.rs::default_agent_row_gap_packs_rendering_and_scroll_geometry
 src/ui/sidebar.rs::default_agent_rows_remove_redundant_state_text
 src/ui/sidebar.rs::default_space_workspace_style_tracks_active_state
 src/ui/sidebar.rs::expanded_sidebar_sections_handle_tiny_heights
+src/ui/sidebar.rs::expanded_sidebar_toggle_sits_inside_sidebar_content
 src/ui/sidebar.rs::grouped_child_label_keeps_custom_workspace_name
 src/ui/sidebar.rs::grouped_child_label_uses_short_branch_for_auto_named_workspace
 src/ui/sidebar.rs::occurrence_false_removes_default_workspace_bold_and_agent_dim
@@ -67,6 +75,7 @@ src/ui/sidebar.rs::oversized_agent_override_is_clipped_to_the_panel_body
 src/ui/sidebar.rs::oversized_space_layout_is_clipped_to_the_section_body
 src/ui/sidebar.rs::parent_workspace_row_stays_clickable_when_grouped
 src/ui/sidebar.rs::priority_agent_panel_sort_uses_attention_then_space_order
+src/ui/sidebar.rs::render_sidebar_toggle_draws_expanded_collapse_icon
 src/ui/sidebar.rs::sidebar_section_divider_is_hidden_for_tiny_heights
 src/ui/sidebar.rs::space_occurrence_style_applies_without_styling_separator
 src/ui/sidebar.rs::stripped_terminal_title_renders_with_unicode_width_truncation

@@ -1,6 +1,6 @@
 // upstream: none (Gobby-only; shares the modal shell with dialogs/orphans.rs)
-//! The alert log: every toast the session raised, newest first, opened
-//! from the global menu.
+//! The alert log: every toast the session raised, newest first, behind the
+//! [Menu] button.
 
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};

@@ -206,11 +206,13 @@ fn carve_matches_upstream_map_and_renders_data() {
     // The sidebar stacks its bands and lists the attention entry under the
     // sessions band with its reason.
     for needle in [
+        " [Menu]",
         " Machines",
         " Projects",
         " Sessions",
         "term-alpha",
         "needs you",
+        "[«]",
     ] {
         assert!(side.contains(needle), "sidebar lacks {needle:?}:\n{side}");
     }
@@ -252,8 +254,6 @@ fn render_workspace_composes_imported_chrome() {
     let ws = scripted_workspace();
     for kind in [ThemeKind::Dark, ThemeKind::Light] {
         let mut chrome = chrome_for(&ws, kind);
-        // Pinned, so the frame composes the sidebar too.
-        chrome.sidebar.pinned = true;
         chrome.mode = Mode::ConfirmClose;
         chrome.dialog = Some(Dialog::ConfirmClose {
             target: CloseTarget::Pane,

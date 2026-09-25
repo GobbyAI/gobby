@@ -122,11 +122,11 @@ parity_tests! {
     }
 }
 
-/// 2.5.2 (gclient-only, outside the keep-set): a focused pane whose edge is
-/// too narrow for its metadata keeps it at the head of the status line, and
-/// only an exception there is a button. Focus is a condition; Read-only and
-/// Uncertain take control back on a press, the pointer resting on them
-/// underlines their words, and the words, not the hue, tell the states apart.
+/// 2.5.2 (gclient-only, outside the keep-set): a focused pane with no border
+/// keeps its metadata at the head of the status line, and only an exception
+/// there is a button. Focus is a condition; Read-only and Uncertain take
+/// control back on a press, the pointer resting on them underlines their
+/// words, and the words, not the hue, tell the states apart.
 #[test]
 fn control_indicator_is_a_button() {
     let palette = palette();
@@ -142,7 +142,6 @@ fn control_indicator_is_a_button() {
     let pane = ws.pane_for_terminal("term-alpha").expect("term-alpha pane");
     let mut chrome = Chrome::dark();
     chrome.open_pane(pane, "alpha");
-    chrome.compute_view(&ws, Rect::new(0, 0, 18, 10));
 
     let mut indicator = None;
     let focused = render(80, 1, |frame| {

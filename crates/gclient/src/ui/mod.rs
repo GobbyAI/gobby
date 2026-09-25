@@ -11,7 +11,6 @@ pub mod dialogs;
 pub mod hit;
 pub mod keybind_help;
 pub mod keymap;
-pub mod menu_bar;
 pub mod navigator;
 pub mod pane_chrome;
 pub mod pane_layout;

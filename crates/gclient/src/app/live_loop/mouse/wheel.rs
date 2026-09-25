@@ -20,7 +20,8 @@ use super::{focus_active_tab, forward, on_roster, MouseOutcome, MOUSE_SCROLL_LIN
 /// pane the way a click would. Over the sidebar it scrolls the list under
 /// the pointer by `MOUSE_SCROLL_LINES` rows (herdr `scroll_workspace_list`):
 /// a row or scrollbar names its list, anything else goes by the section
-/// rules above the pointer. A list that fits stays put.
+/// rules above the pointer. A list that fits stays put, and the collapsed
+/// rail has nothing to scroll.
 ///
 /// Over a pane that was not reported to, its border or its scrollbar, the
 /// notch goes by the pane's modes (herdr `forward_pane_wheel`): an
@@ -73,17 +74,26 @@ pub(super) fn wheel<W: WorkspaceView>(
         | Hit::Project(_)
         | Hit::Worktree(_)
         | Hit::GroupToggle(_)
+        | Hit::ProjectsNew
+        | Hit::ProjectsMenu
         | Hit::ProjectsFilter
         | Hit::Agent(_)
         | Hit::SessionsView
         | Hit::SidebarScrollbar { .. }
         | Hit::SidebarEmpty
+        | Hit::SidebarToggle
         | Hit::SidebarDivider => {
+            if chrome.sidebar.collapsed {
+                return MouseOutcome::Handled;
+            }
             let section = match hit {
                 Hit::Machine(_) => SidebarSection::Machines,
-                Hit::Project(_) | Hit::Worktree(_) | Hit::GroupToggle(_) | Hit::ProjectsFilter => {
-                    SidebarSection::Projects
-                }
+                Hit::Project(_)
+                | Hit::Worktree(_)
+                | Hit::GroupToggle(_)
+                | Hit::ProjectsNew
+                | Hit::ProjectsMenu
+                | Hit::ProjectsFilter => SidebarSection::Projects,
                 Hit::Agent(_) | Hit::SessionsView => SidebarSection::Sessions,
                 Hit::SidebarScrollbar { section, .. } => section,
                 _ => sidebar_section_at(&chrome.view, row),

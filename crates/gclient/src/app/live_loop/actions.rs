@@ -1,6 +1,5 @@
 //! Chrome actions for the live loop: keymap actions, relative focus,
-//! terminal spawn/terminate, and action dispatch; the sidebar's own
-//! actions live in `sidebar`.
+//! terminal spawn/terminate, and action dispatch.
 
 use std::io::{self, Write};
 use std::process::{Command, Stdio};
@@ -13,8 +12,8 @@ use crate::startup::load_keymap;
 use crate::ui::chrome::{attention_pane, Tab};
 use crate::ui::dialogs::{CloseScope, CloseTarget, Dialog, RenameKind};
 use crate::ui::navigator::NavigatorState;
-use crate::ui::sidebar::attention_order;
-use crate::ui::sidebar_rows::project_label;
+use crate::ui::sidebar::{attention_order, next_machine_filter};
+use crate::ui::sidebar_rows::{displayed_project_ids, project_label, project_rows, RowKind};
 use crate::ui::status::Toast;
 use crate::ui::{Action, Chrome, Mode};
 use crossterm::event::KeyEvent;
@@ -28,7 +27,7 @@ use super::control::{
     set_live_scroll_offset, take_live_control,
 };
 use super::menu::{apply_local_menu_action, ContextMenuKind, MenuAction};
-use super::modal_input::{apply_rename, open_alerts_dialog, ModalOutcome};
+use super::modal_input::{apply_rename, open_alerts_dialog, persist_prefs, ModalOutcome};
 use super::mouse::{MouseOutcome, Placement};
 use super::orphans::{agent_orphan, destroy_orphans, open_destroy_orphans_dialog};
 use super::projection::close_slot;
@@ -44,8 +43,6 @@ use super::workspace_actions::{
     move_daemon_tab, move_focused_pane_to_tab, place_live_terminal, rename_daemon_target,
     resize_daemon_split, swap_live_slots,
 };
-
-mod sidebar;
 
 /// Apply what `route_mouse` decided. Focus moves chrome first and then the
 /// lease (it follows focus), or only the workspace focus for an observe-only
@@ -384,18 +381,43 @@ pub(super) async fn handle_live_action(
         Action::NextTerminal | Action::CyclePaneNext => {
             focus_relative_live_pane(workspace, chrome, 1).await?;
         }
-        Action::SwitchProject(_) | Action::PreviousProject | Action::NextProject => {
-            sidebar::switch_project(workspace, chrome, action).await?;
+        Action::SwitchProject(index) => {
+            let project_id = usize::from(index).checked_sub(1).and_then(|index| {
+                displayed_project_ids(workspace, chrome)
+                    .into_iter()
+                    .nth(index)
+            });
+            if let Some(project_id) = project_id {
+                focus_project(workspace, chrome, &project_id).await?;
+            }
         }
-        Action::ToggleSidebar
-        | Action::ToggleGroup
-        | Action::NavigateUp
-        | Action::NavigateDown
-        | Action::CycleMachineFilter
-        | Action::ToggleAgentSort
-        | Action::ToggleProjectsFilter
-        | Action::ToggleSessionsScope => sidebar::apply_sidebar_action(workspace, chrome, action),
+        Action::PreviousProject | Action::NextProject => {
+            let ids = displayed_project_ids(workspace, chrome);
+            if !ids.is_empty() {
+                let current = workspace
+                    .project_id()
+                    .and_then(|id| ids.iter().position(|candidate| candidate == id))
+                    .unwrap_or(0);
+                let delta: isize = if action == Action::PreviousProject {
+                    -1
+                } else {
+                    1
+                };
+                let next = (current as isize + delta).rem_euclid(ids.len() as isize) as usize;
+                focus_project(workspace, chrome, &ids[next]).await?;
+            }
+        }
+        Action::ToggleGroup => {
+            if let Some(project_id) = group_target(workspace, chrome) {
+                chrome.sidebar.toggle_group(&project_id);
+            }
+        }
         Action::Zoom => chrome.toggle_zoom(),
+        Action::ToggleSidebar => {
+            chrome.sidebar.collapsed = !chrome.sidebar.collapsed;
+            chrome.prefs.sidebar_collapsed = chrome.sidebar.collapsed;
+            persist_prefs(workspace.gobby_home(), chrome);
+        }
         Action::RenameTab => {
             if let Some(title) = chrome.active_tab().map(|tab| tab.title.clone()) {
                 open_live_rename(chrome, RenameKind::Tab, title);
@@ -460,6 +482,18 @@ pub(super) async fn handle_live_action(
                 activate_live_tab(workspace, chrome, index).await?;
             }
         }
+        Action::NavigateUp | Action::NavigateDown => {
+            let rows_len = project_rows(workspace, chrome).len();
+            if rows_len > 0 {
+                let selected = chrome.sidebar.selected.min(rows_len - 1);
+                chrome.sidebar.selected = if action == Action::NavigateUp {
+                    selected.saturating_sub(1)
+                } else {
+                    (selected + 1).min(rows_len - 1)
+                };
+            }
+            chrome.mode = Mode::Navigate;
+        }
         Action::PreviousAttention | Action::NextAttention | Action::FocusAttention(_) => {
             if let Some(entry_id) = pick_attention_entry(workspace, chrome, action) {
                 jump_live_attention(workspace, chrome, &entry_id).await?;
@@ -473,6 +507,22 @@ pub(super) async fn handle_live_action(
             }
         }
         Action::ReloadConfig => reload_live_prefs(workspace, chrome),
+        Action::CycleMachineFilter => {
+            chrome.sidebar.machine_filter = next_machine_filter(
+                workspace.sidebar(),
+                chrome.sidebar.machine_filter.as_deref(),
+            );
+        }
+        Action::ToggleAgentSort => {
+            chrome.prefs.agent_sort = chrome.prefs.agent_sort.toggled();
+            persist_prefs(workspace.gobby_home(), chrome);
+        }
+        Action::ToggleProjectsFilter => {
+            chrome.sidebar.all_projects = !chrome.sidebar.all_projects;
+        }
+        Action::ToggleSessionsScope => {
+            chrome.sidebar.all_sessions = !chrome.sidebar.all_sessions;
+        }
         // The router answers `Quit` before dispatch; `CustomCommand` is held
         // in the keymap table for the plugin-menu decision (#20201) and never
         // bound.
@@ -756,6 +806,22 @@ pub(super) async fn focus_relative_live_pane(
     let next = (current as isize + delta).rem_euclid(pane_ids.len() as isize) as usize;
     chrome.focus_pane(pane_ids[next]);
     focus_live_pane(workspace, pane_ids[next]).await
+}
+
+/// The project whose group `ToggleGroup` folds: the one under the navigate
+/// cursor (a worktree row counts for its card), else the focused project.
+fn group_target(workspace: &Workspace<LiveDaemon>, chrome: &Chrome) -> Option<String> {
+    let rows = project_rows(workspace, chrome);
+    let under_cursor = (chrome.mode == Mode::Navigate)
+        .then(|| {
+            rows[..rows.len().min(chrome.sidebar.selected + 1)]
+                .iter()
+                .rev()
+                .find(|row| row.kind == RowKind::Project)
+                .map(|row| row.id.clone())
+        })
+        .flatten();
+    under_cursor.or_else(|| workspace.project_id().map(str::to_owned))
 }
 
 /// Spawn a terminal and show it where `placement` says: in a fresh tab, beside
