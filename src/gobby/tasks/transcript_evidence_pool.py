@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 import logging
 import multiprocessing
+import os
+import tempfile
 import threading
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
-from time import monotonic
+from pathlib import Path
+from time import monotonic, sleep
 
 from gobby.hooks.phase_timing import add_hook_phase, timed_to_thread
 
@@ -18,6 +22,19 @@ logger = logging.getLogger(__name__)
 _pool: ProcessPoolExecutor | None = None
 _pool_lock = threading.Lock()
 _fallback_warning_logged = False
+_POOL_WORKERS = 4
+_POOL_PREWARM_TIMEOUT_SECONDS = 60.0
+
+
+def _prewarm_probe(marker_directory: str) -> None:
+    importlib.import_module("gobby.tasks.transcript_evidence")
+    markers = Path(marker_directory)
+    (markers / str(os.getpid())).touch()
+    deadline = monotonic() + _POOL_PREWARM_TIMEOUT_SECONDS
+    while len(list(markers.iterdir())) < _POOL_WORKERS:
+        if monotonic() >= deadline:
+            raise TimeoutError("Transcript evidence workers did not prewarm together")
+        sleep(0.02)
 
 
 def _get_pool() -> ProcessPoolExecutor:
@@ -25,10 +42,29 @@ def _get_pool() -> ProcessPoolExecutor:
     with _pool_lock:
         if _pool is None:
             _pool = ProcessPoolExecutor(
-                max_workers=1,
+                max_workers=_POOL_WORKERS,
                 mp_context=multiprocessing.get_context("spawn"),
             )
         return _pool
+
+
+async def prewarm_transcript_evidence_pool() -> None:
+    """Finish all worker imports before the daemon admits Stop hooks."""
+    with tempfile.TemporaryDirectory(prefix="gobby-transcript-pool-") as marker_directory:
+        try:
+            pool = _get_pool()
+            loop = asyncio.get_running_loop()
+            probes = [
+                loop.run_in_executor(pool, _prewarm_probe, marker_directory)
+                for _ in range(_POOL_WORKERS)
+            ]
+            await asyncio.wait_for(
+                asyncio.gather(*probes), timeout=_POOL_PREWARM_TIMEOUT_SECONDS + 5
+            )
+        except BaseException:
+            shutdown_transcript_evidence_pool()
+            raise
+    logger.info("Transcript evidence pool prewarmed with %d workers", _POOL_WORKERS)
 
 
 def _discard_pool(pool: ProcessPoolExecutor) -> None:
@@ -151,4 +187,8 @@ def shutdown_transcript_evidence_pool(*, timeout: float = POOL_EXIT_TIMEOUT_SECO
         )
 
 
-__all__ = ["run_in_transcript_evidence_pool", "shutdown_transcript_evidence_pool"]
+__all__ = [
+    "prewarm_transcript_evidence_pool",
+    "run_in_transcript_evidence_pool",
+    "shutdown_transcript_evidence_pool",
+]
