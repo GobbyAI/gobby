@@ -65,6 +65,9 @@ def start_startup_lag_probe(
             lag = time.monotonic() - state["last_beat"]
             if lag < threshold_seconds or state["reported"]:
                 continue
+            if not logger.isEnabledFor(logging.DEBUG):
+                state["reported"] = True
+                continue
             task = asyncio.current_task(loop)
             frame = sys._current_frames().get(loop_thread_id)
             stack_entries = traceback.extract_stack(frame, limit=12) if frame is not None else []
@@ -80,7 +83,7 @@ def start_startup_lag_probe(
                 stack = " > ".join(
                     f"{entry.filename}:{entry.lineno}:{entry.name}" for entry in stack_entries
                 )
-                logger.warning(
+                logger.debug(
                     "Daemon event-loop lag %.3fs | task=%s | stack=%s",
                     lag,
                     task.get_name() if task is not None else "callback-or-idle",
