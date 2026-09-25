@@ -986,6 +986,9 @@ async def test_native_worker_receives_the_continuation_after_set_handoff_compact
 ) -> None:
     session_manager = _compact_session_manager(hub_db, _NATIVE_WORKER_CONTEXT)
     runtime = FakeRuntime(backend="native")
+    monkeypatch.setattr(
+        runtime, "foreground_command", AsyncMock(return_value="claude"), raising=False
+    )
     store = MemoryTerminalStore(
         replace(make_memory_terminal(backend="native"), session_id=SESSION_ID)
     )

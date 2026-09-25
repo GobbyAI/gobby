@@ -152,6 +152,68 @@ async def test_codex_uses_ctrl_c_and_the_line_drain() -> None:
     assert pane.typed == ["/clear\n"]
 
 
+async def test_idle_codex_goal_successor_never_gets_a_second_unconfirmed_ctrl_c() -> None:
+    pane = _ComposerPane()
+    settled_checks = iter([True, False])
+
+    def turn_settled() -> bool:
+        return next(settled_checks, False)
+
+    result = await _send_terminal_compaction_command(
+        pane,
+        "/compact",
+        "session-1",
+        cli_source="codex",
+        mark_continuation_pending=lambda: True,
+        clear_continuation_pending=lambda: True,
+        observe_interrupt=lambda: False,
+        turn_settled=turn_settled,
+        settle_seconds=_SETTLE,
+    )
+
+    assert result[0] is False
+    assert result[3] == {
+        "error_code": "interrupt_unconfirmed",
+        "continuation_pending": False,
+    }
+    assert pane.keys == ["ctrl_c"]
+    assert pane.typed == []
+
+
+async def test_compaction_refuses_a_tmux_pane_that_returned_to_zsh() -> None:
+    class ExitedTmux:
+        async def list_panes(self) -> list[SimpleNamespace]:
+            return [
+                SimpleNamespace(
+                    pane_id="%12",
+                    session_name="codex-seat",
+                    pane_dead=False,
+                    pane_command="zsh",
+                )
+            ]
+
+    pane = TmuxPaneIO(ExitedTmux(), "%12")
+    result = await _send_terminal_compaction_command(
+        pane,
+        "/compact",
+        "session-1",
+        cli_source="codex",
+        mark_continuation_pending=lambda: True,
+        clear_continuation_pending=lambda: True,
+        observe_interrupt=lambda: False,
+        turn_settled=lambda: True,
+        foreground_command=pane.foreground_command,
+        settle_seconds=_SETTLE,
+    )
+
+    assert result == (
+        False,
+        "codex is not foreground (found zsh)",
+        False,
+        {"error_code": "cli_not_foreground", "continuation_pending": False},
+    )
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("command", "enters"), [("/compress", 1), ("/clear", 0)])
 async def test_droid_presses_enter_on_the_compress_confirm_modal_only(

@@ -19,6 +19,7 @@ from weakref import WeakKeyDictionary
 from gobby.agents.detection.provider import DetectionRegistry
 from gobby.agents.idle_detector import COMPOSER_PROBE_LINES, ComposerRead, IdleDetector
 from gobby.terminals.composer import composer_clear_sequence
+from gobby.terminals.foreground import command_name, foreground_commands, shell_pid
 from gobby.terminals.key_bytes import tmux_key_name
 from gobby.terminals.runtime import (
     Delivered,
@@ -187,6 +188,21 @@ class RuntimePaneIO:
     def target(self) -> str:
         return str(getattr(self._terminal, "id", ""))
 
+    async def foreground_command(self) -> str | None:
+        lookup = getattr(self._runtime, "foreground_command", None)
+        if callable(lookup):
+            try:
+                name = await lookup(self._terminal)
+            except (OSError, RuntimeError, TimeoutError):
+                logger.debug("Failed to inspect %s foreground command", self.backend, exc_info=True)
+                return None
+            return command_name(name) if isinstance(name, str) and name else None
+        pid = shell_pid(self._terminal)
+        if pid is None:
+            return None
+        commands = await asyncio.to_thread(foreground_commands, {self.target: pid})
+        return commands.get(self.target)
+
     async def send_key(self, key: NamedKey) -> SendResult:
         try:
             outcome = await self._runtime.write_key(self._terminal, key)
@@ -314,6 +330,26 @@ class TmuxPaneIO:
     @property
     def target(self) -> str:
         return self._target
+
+    async def foreground_command(self) -> str | None:
+        try:
+            panes = await self._tmux.list_panes()
+        except (OSError, RuntimeError, TimeoutError):
+            logger.debug("Failed to inspect tmux foreground command", exc_info=True)
+            return None
+        if panes is None:
+            return None
+        target_session = self._target.split(":", 1)[0]
+        matches = [
+            pane
+            for pane in panes
+            if pane.pane_id == self._target
+            or (not self._target.startswith("%") and pane.session_name == target_session)
+        ]
+        if len(matches) != 1 or matches[0].pane_dead:
+            return None
+        name = matches[0].pane_command
+        return command_name(name) if isinstance(name, str) and name else None
 
     async def send_key(self, key: NamedKey) -> SendResult:
         name = tmux_key_name(key)

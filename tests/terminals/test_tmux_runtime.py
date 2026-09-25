@@ -62,6 +62,19 @@ def _sessions() -> _StubSessions:
 
 
 @pytest.mark.asyncio
+async def test_tmux_runtime_reads_foreground_command(monkeypatch: pytest.MonkeyPatch) -> None:
+    sessions = _sessions()
+    lookup = AsyncMock(return_value=TmuxSessionInfo(name="codex-seat", pane_command="zsh"))
+    monkeypatch.setattr(sessions, "get_session", lookup)
+    runtime = TmuxTerminalRuntime(sessions)
+
+    assert (
+        await runtime.foreground_command(make_memory_terminal(session_name="codex-seat")) == "zsh"
+    )
+    lookup.assert_awaited_once_with("codex-seat")
+
+
+@pytest.mark.asyncio
 async def test_attach_locator_uses_live_host_identity(tmp_path: Path) -> None:
     host = SimpleNamespace(host_epoch="epoch-1", socket_dir=tmp_path)
     runtime = TmuxTerminalRuntime(_sessions(), host_control=host)
