@@ -46,13 +46,14 @@ const UPDATE_ENV: &str = "GOBBY_UPDATE_SCREENS";
 type ScriptedState = fn() -> (Workspace, Chrome);
 
 /// The scripted states, in the order the plan names them.
-const STATES: [(&str, ScriptedState); 9] = [
+const STATES: [(&str, ScriptedState); 10] = [
     ("empty_workspace", empty_workspace),
     ("agent_rows", agent_rows),
     ("projects_agents", projects_agents),
     ("split_live", split_live),
     ("help_dialog", help_dialog),
     ("label_ladder", label_ladder),
+    ("unnamed_pane", unnamed_pane),
     ("pane_edges", pane_edges),
     ("menu_bar", menu_bar),
     ("sidebar_overlay", sidebar_overlay),
@@ -258,6 +259,22 @@ fn label_ladder() -> (Workspace, Chrome) {
     (ws, chrome)
 }
 
+fn unnamed_pane() -> (Workspace, Chrome) {
+    let mut ws = Workspace::scripted();
+    ws.daemon_mut()
+        .set_roster(json!({"epoch": "e1", "seq": 1, "entries": []}));
+    ws.reconcile_subscribe_first().expect("install roster");
+    let pane_id = ws
+        .open_terminal("unnamed-terminal", "native", "epoch")
+        .expect("open terminal");
+    let pane = ws.pane_mut(pane_id);
+    pane.label = None;
+    pane.command = Some("zsh".to_owned());
+    let mut chrome = Chrome::dark();
+    chrome.open_pane(pane_id, "alpha");
+    (ws, chrome)
+}
+
 /// The pane edges with pane gaps off, where they share lines: two panes
 /// stacked in one tab.
 ///
@@ -287,6 +304,7 @@ fn pane_edges() -> (Workspace, Chrome) {
         "entries": [{
             "entry_id": "session:sess-alpha",
             "session_id": "sess-alpha",
+            "provider": "codex",
             "terminal": {"terminal_id": "term-alpha", "backend": "native"}
         }]
     }));
@@ -298,6 +316,8 @@ fn pane_edges() -> (Workspace, Chrome) {
         .expect("open term-beta");
     let alpha = ws.pane_for_terminal("term-alpha").expect("term-alpha pane");
     let beta = ws.pane_for_terminal("term-beta").expect("term-beta pane");
+    ws.pane_mut(alpha).label = None;
+    ws.pane_mut(beta).label = None;
     ws.pane_mut(alpha).control = ControlState::LeaseLost;
 
     let mut chrome = Chrome::dark();

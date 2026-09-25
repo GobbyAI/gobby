@@ -8,7 +8,7 @@ use crate::app::{ControlState, Pane};
 use crate::theme::Palette;
 use crate::ui::chrome::{Chrome, Mode, RowState, WorkspaceView};
 use crate::ui::hit::Hit;
-use crate::ui::pane_chrome::{metadata_rect, pane_metadata};
+use crate::ui::pane_chrome::{footer_rects, pane_footer};
 use crate::ui::text::display_width_u16;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -340,16 +340,16 @@ pub fn render_status_line<W: WorkspaceView>(
     let mut spans = vec![Span::styled(" ", base)];
     let mut indicator = None;
     if let Some(pane) = focused_overflow(ws, chrome) {
-        let meta = pane_metadata(pane, true);
-        let mut style = base.fg(meta.tone.color(p)).add_modifier(Modifier::BOLD);
-        if meta.actionable {
-            let width = display_width_u16(&meta.text).saturating_add(1);
+        let footer = pane_footer(ws, pane, true);
+        let mut style = base.fg(footer.tone.color(p)).add_modifier(Modifier::BOLD);
+        if footer.actionable {
+            let width = display_width_u16(&footer.left).saturating_add(1);
             indicator = Some(Rect::new(area.x, area.y, width.min(area.width), 1));
             if matches!(chrome.hover, Some(Hit::ControlIndicator)) {
                 style = style.add_modifier(Modifier::UNDERLINED);
             }
         }
-        spans.push(Span::styled(meta.text, style));
+        spans.push(Span::styled(footer.left, style));
     }
     // A condition, not an event: it stays until the daemon is back.
     if !ws.daemon_ready() {
@@ -400,7 +400,7 @@ pub fn render_status_line<W: WorkspaceView>(
 fn focused_overflow<'a, W: WorkspaceView>(ws: &'a W, chrome: &Chrome) -> Option<&'a Pane> {
     let pane = ws.pane(chrome.focused_pane()?);
     let info = chrome.view.pane_infos.iter().find(|info| info.is_focused)?;
-    metadata_rect(info, &pane_metadata(pane, true))
+    footer_rects(info, &pane_footer(ws, pane, true))
         .is_none()
         .then_some(pane)
 }
@@ -552,7 +552,7 @@ mod tests {
     }
 
     #[test]
-    fn metadata_too_wide_for_its_pane_edge_lands_here_without_the_title() {
+    fn focused_pane_footer_overflows_to_the_status_row() {
         let mut ws = Workspace::scripted();
         ws.daemon_mut().set_roster(json!({
             "epoch": "e1",
@@ -571,12 +571,15 @@ mod tests {
         let info = info.unwrap();
         // Bordered, but narrower than its padded metadata.
         assert!(!info.borders.is_empty());
-        let meta = pane_metadata(ws.pane(focused), true);
-        assert_eq!(metadata_rect(info, &meta), None, "{:?}", info.rect);
+        let footer = pane_footer(&ws, ws.pane(focused), true);
+        assert_eq!(footer_rects(info, &footer), None, "{:?}", info.rect);
 
         // The title keeps the pane's top edge; only the metadata moves.
         let (text, indicator) = draw_status(&ws, &chrome);
-        assert_eq!(text, format!(" gclient · Focused{:>62}", "prefix ctrl+b "));
+        assert_eq!(
+            text,
+            format!(" term-beta · Focused{:>60}", "prefix ctrl+b ")
+        );
         assert_eq!(indicator, None);
 
         // An exception with no room on the edge is still a button, here.
@@ -584,9 +587,9 @@ mod tests {
         let (text, indicator) = draw_status(&ws, &chrome);
         assert_eq!(
             text,
-            format!(" gclient · Read-only{:>60}", "prefix ctrl+b ")
+            format!(" term-beta · Read-only{:>58}", "prefix ctrl+b ")
         );
-        let width = display_width_u16("gclient · Read-only") + 1;
+        let width = display_width_u16("term-beta · Read-only") + 1;
         assert_eq!(indicator, Some(Rect::new(0, 0, width, 1)));
         assert_eq!(
             crate::ui::pane_chrome::control_indicator_hit_area(&ws, &chrome),
@@ -615,7 +618,7 @@ mod tests {
         terminal
             .draw(|frame| indicator = render_status_line(frame, frame.area(), &ws, &chrome))
             .unwrap();
-        assert_eq!(screen(&terminal), " gclient · Read-prefix ctrl+b ");
+        assert_eq!(screen(&terminal), " term-beta · Reaprefix ctrl+b ");
         assert_eq!(indicator, Some(Rect::new(0, 0, 16, 1)));
         // The hint takes none of the covered button's bold or underline.
         let buffer = terminal.backend().buffer();

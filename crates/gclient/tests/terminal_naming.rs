@@ -174,22 +174,20 @@ async fn a_managed_run_is_named_by_its_command_without_a_provider_token() {
     assert_eq!(named, ["node"]);
 }
 
-/// Rung 4. No name, no session, and a daemon that could not read a foreground
-/// command — a tmux row over REST, whose pane pid is never persisted. The row
-/// still has to render, and what it renders is a word, not an id.
+/// The daemon supplies the spawned shell when no foreground job is active.
 #[tokio::test]
-async fn a_terminal_with_no_name_session_or_command_reads_as_the_shell_it_is() {
+async fn a_terminal_with_no_name_or_session_reads_its_daemon_command() {
     let (roster, named) = sidebar(
         vec![
-            tmux_row(AGENT, Value::Null, "%3", Value::Null),
-            native_row(SHELL, Value::Null),
+            tmux_row(AGENT, Value::Null, "%3", json!("zsh")),
+            native_row(SHELL, json!("zsh")),
         ],
         vec![entry(AGENT, "tmux"), entry(SHELL, "native")],
     )
     .await;
 
     let labels: Vec<&str> = roster.iter().map(|row| row.label.as_str()).collect();
-    assert_eq!(labels, ["shell", "shell"]);
+    assert_eq!(labels, ["zsh", "zsh"]);
     assert!(roster[0].reference.is_empty());
     assert!(roster[1].reference.is_empty());
     assert_eq!(named, labels);
@@ -290,7 +288,7 @@ async fn an_attention_row_keyed_by_session_names_the_terminal_that_hosts_it() {
 /// roster terminal no entry names still lists, as a bare terminal under its
 /// own name.
 #[tokio::test]
-async fn an_attention_row_for_an_unknown_terminal_reads_as_a_shell() {
+async fn an_attention_row_for_an_unknown_terminal_reads_as_its_short_id() {
     let (rows, named) = sidebar(
         vec![tmux_row(AGENT, json!("75"), "%533", json!("nvim"))],
         vec![json!({"entry_id": format!("blocked:{ABSENT}"), "kind": "blocked"})],
@@ -305,5 +303,5 @@ async fn an_attention_row_for_an_unknown_terminal_reads_as_a_shell() {
     );
     assert_eq!(rows[0].label, "nvim");
     assert_eq!(rows[0].detail, "gclient");
-    assert_eq!(named, ["shell"]);
+    assert_eq!(named, [&ABSENT[..8]]);
 }

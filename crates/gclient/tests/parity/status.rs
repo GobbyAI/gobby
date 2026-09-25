@@ -150,8 +150,8 @@ fn control_indicator_is_a_button() {
     });
     assert_eq!(indicator, None, "focus is not a button");
     assert_eq!(
-        rect_rows(&focused, Rect::new(0, 0, 18, 1)),
-        vec![" gclient · Focused".to_string()]
+        rect_rows(&focused, Rect::new(0, 0, 21, 1)),
+        vec![" term-alpha · Focused".to_string()]
     );
 
     ws.pane_mut(pane).control = ControlState::LeaseLost;
@@ -160,7 +160,7 @@ fn control_indicator_is_a_button() {
         indicator = render_status_line(frame, frame.area(), &ws, &chrome);
     });
     let indicator = indicator.expect("an exception draws the indicator");
-    let button = vec![" gclient · Read-only".to_string()];
+    let button = vec![" term-alpha · Read-only".to_string()];
     let words = || indicator.x + 1..indicator.right();
     let underlined = |terminal: &Terminal<TestBackend>| -> Vec<bool> {
         words()
@@ -202,7 +202,7 @@ fn control_indicator_is_a_button() {
         render_status_line(frame, frame.area(), &ws, &chrome);
     });
     assert!(
-        rect_rows(&uncertain, Rect::new(0, 0, 20, 1))[0].starts_with(" gclient · Uncertain"),
+        rect_rows(&uncertain, Rect::new(0, 0, 23, 1))[0].starts_with(" term-alpha · Uncertain"),
         "Uncertain reads apart from Read-only"
     );
 

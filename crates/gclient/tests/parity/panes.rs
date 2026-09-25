@@ -14,6 +14,7 @@ use gobby_terminal::selection::Selection;
 use ratatui::layout::{Direction, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::Borders;
+use serde_json::json;
 use std::future::Future;
 
 use super::fixtures::{cell, render};
@@ -271,7 +272,7 @@ parity_tests! {
             assert_eq!(cell(&terminal, 2, 1).style().fg, Some(palette().accent));
         }
 
-        fn gapped_pane_focus_does_not_color_neighbor_border() {
+fn gapped_pane_focus_does_not_color_neighbor_border() {
             let mut chrome = chrome();
             chrome.prefs.pane_gaps = true;
             let pane_infos = vec![
@@ -463,6 +464,50 @@ parity_tests! {
         }
 
     }
+}
+
+#[test]
+fn frame_colour_follows_focus_attention_and_exit() {
+    let mut ws = Workspace::scripted();
+    let focused = ws.open_terminal("focused", "native", "epoch").unwrap();
+    let attention = ws.open_terminal("attention", "native", "epoch").unwrap();
+    let exited = ws.open_terminal("exited", "native", "epoch").unwrap();
+    ws.pane_mut(exited).terminal_state = Some("exited".to_owned());
+    ws.daemon_mut().set_roster(json!({
+        "epoch": "e1", "seq": 1,
+        "entries": [{
+            "entry_id": "run:attention",
+            "terminal": {"terminal_id": "attention", "backend": "native"},
+            "attention": {"attention_id": "att-1", "kind": "actionable"}
+        }]
+    }));
+    ws.reconcile_subscribe_first().unwrap();
+
+    let mut chrome = chrome();
+    chrome.open_pane(focused, "alpha");
+    chrome.open_pane(attention, "alpha");
+    chrome.open_pane(exited, "alpha");
+    assert!(chrome.focus_pane(focused));
+    chrome.compute_view(&ws, Rect::new(0, 0, 90, 18));
+    let terminal = render(90, 18, |frame| {
+        panes::render_panes(frame, &ws, &chrome, &mut |_, _, _| {});
+    });
+    let corner = |pane| {
+        let tab = chrome.active_tab().unwrap();
+        let slot = tab.slots.iter().find(|(_, id)| **id == pane).unwrap().0;
+        let info = chrome
+            .view
+            .pane_infos
+            .iter()
+            .find(|info| info.id == *slot)
+            .unwrap();
+        cell(&terminal, info.rect.x, info.rect.y)
+    };
+    assert_eq!(corner(focused).style().fg, Some(palette().accent));
+    assert_eq!(corner(attention).symbol(), "⍾");
+    assert_eq!(corner(attention).style().fg, Some(palette().yellow));
+    assert_eq!(corner(exited).symbol(), "◌");
+    assert_eq!(corner(exited).style().fg, Some(palette().red));
 }
 
 // gclient-only mouse coverage for the pane surface: herdr drives its split

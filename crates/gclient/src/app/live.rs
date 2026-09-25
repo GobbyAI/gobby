@@ -111,6 +111,11 @@ impl Workspace<LiveDaemon> {
         pane.external = row_is_external(row);
         pane.address = row_address(row);
         pane.command = row_command(row);
+        pane.terminal_state = row
+            .fields
+            .get("state")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
         pane.session_id = row
             .fields
             .get("session_id")

@@ -1,49 +1,49 @@
-# gclient screen golden: pane_edges
+# gclient screen golden: unnamed_pane
 # 120x40, dark theme, colours normalised to theme::Palette roles
 00 | Gobby  File  Edit  View  Window  Agent  Help                                                                           |
 00 : panel_bg/accent+b*120
-01 | alpha:alpha    +                                                                                                       |
-01 : text/panel_bg+b*15 overlay1/surface0*3 -/surface0*102
-02 |┌ Ship the Unicode 修 复  to pane headers ───────────────────────────────────── Codex (alpha#1742) · Read-only ─ gclient ┐|
-02 : overlay0/panel_bg*20 -/-*1 overlay0/panel_bg*1 -/-*1 overlay0/panel_bg*54 yellow/panel_bg*32 overlay0/panel_bg*1 yellow/panel_bg*9 overlay0/panel_bg*1
+01 | alpha       +                                                                                                          |
+01 : text/panel_bg+b*12 overlay1/surface0*3 -/surface0*105
+02 |┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐|
+02 : accent/panel_bg*120
 03 |│                                                                                                                      │|
-03 : overlay0/panel_bg*1 -/panel_bg*118 overlay0/panel_bg*1
+03 : accent/panel_bg*1 -/panel_bg*118 accent/panel_bg*1
 04 |│                                                                                                                      │|
-04 : overlay0/panel_bg*1 -/panel_bg*118 overlay0/panel_bg*1
+04 : accent/panel_bg*1 -/panel_bg*118 accent/panel_bg*1
 05 |│                                                                                                                      │|
-05 : overlay0/panel_bg*1 -/panel_bg*118 overlay0/panel_bg*1
+05 : accent/panel_bg*1 -/panel_bg*118 accent/panel_bg*1
 06 |│                                                                                                                      │|
-06 : overlay0/panel_bg*1 -/panel_bg*118 overlay0/panel_bg*1
+06 : accent/panel_bg*1 -/panel_bg*118 accent/panel_bg*1
 07 |│                                                                                                                      │|
-07 : overlay0/panel_bg*1 -/panel_bg*118 overlay0/panel_bg*1
+07 : accent/panel_bg*1 -/panel_bg*118 accent/panel_bg*1
 08 |│                                                                                                                      │|
-08 : overlay0/panel_bg*1 -/panel_bg*118 overlay0/panel_bg*1
+08 : accent/panel_bg*1 -/panel_bg*118 accent/panel_bg*1
 09 |│                                                                                                                      │|
-09 : overlay0/panel_bg*1 -/panel_bg*118 overlay0/panel_bg*1
+09 : accent/panel_bg*1 -/panel_bg*118 accent/panel_bg*1
 10 |│                                                                                                                      │|
-10 : overlay0/panel_bg*1 -/panel_bg*118 overlay0/panel_bg*1
-11 |│                                                 waiting for frames                                                   │|
-11 : overlay0/panel_bg*1 -/panel_bg*49 overlay0/panel_bg*18 -/panel_bg*51 overlay0/panel_bg*1
+10 : accent/panel_bg*1 -/panel_bg*118 accent/panel_bg*1
+11 |│                                                                                                                      │|
+11 : accent/panel_bg*1 -/panel_bg*118 accent/panel_bg*1
 12 |│                                                                                                                      │|
-12 : overlay0/panel_bg*1 -/panel_bg*118 overlay0/panel_bg*1
+12 : accent/panel_bg*1 -/panel_bg*118 accent/panel_bg*1
 13 |│                                                                                                                      │|
-13 : overlay0/panel_bg*1 -/panel_bg*118 overlay0/panel_bg*1
+13 : accent/panel_bg*1 -/panel_bg*118 accent/panel_bg*1
 14 |│                                                                                                                      │|
-14 : overlay0/panel_bg*1 -/panel_bg*118 overlay0/panel_bg*1
+14 : accent/panel_bg*1 -/panel_bg*118 accent/panel_bg*1
 15 |│                                                                                                                      │|
-15 : overlay0/panel_bg*1 -/panel_bg*118 overlay0/panel_bg*1
+15 : accent/panel_bg*1 -/panel_bg*118 accent/panel_bg*1
 16 |│                                                                                                                      │|
-16 : overlay0/panel_bg*1 -/panel_bg*118 overlay0/panel_bg*1
+16 : accent/panel_bg*1 -/panel_bg*118 accent/panel_bg*1
 17 |│                                                                                                                      │|
-17 : overlay0/panel_bg*1 -/panel_bg*118 overlay0/panel_bg*1
+17 : accent/panel_bg*1 -/panel_bg*118 accent/panel_bg*1
 18 |│                                                                                                                      │|
-18 : overlay0/panel_bg*1 -/panel_bg*118 overlay0/panel_bg*1
+18 : accent/panel_bg*1 -/panel_bg*118 accent/panel_bg*1
 19 |│                                                                                                                      │|
-19 : overlay0/panel_bg*1 -/panel_bg*118 overlay0/panel_bg*1
-20 |│                                                                                                                      │|
-20 : overlay0/panel_bg*1 -/panel_bg*118 overlay0/panel_bg*1
-21 |├──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤|
-21 : accent/panel_bg*120
+19 : accent/panel_bg*1 -/panel_bg*118 accent/panel_bg*1
+20 |│                                                 waiting for frames                                                   │|
+20 : accent/panel_bg*1 -/panel_bg*49 overlay0/panel_bg*18 -/panel_bg*51 accent/panel_bg*1
+21 |│                                                                                                                      │|
+21 : accent/panel_bg*1 -/panel_bg*118 accent/panel_bg*1
 22 |│                                                                                                                      │|
 22 : accent/panel_bg*1 -/panel_bg*118 accent/panel_bg*1
 23 |│                                                                                                                      │|
@@ -58,8 +58,8 @@
 27 : accent/panel_bg*1 -/panel_bg*118 accent/panel_bg*1
 28 |│                                                                                                                      │|
 28 : accent/panel_bg*1 -/panel_bg*118 accent/panel_bg*1
-29 |│                                                 waiting for frames                                                   │|
-29 : accent/panel_bg*1 -/panel_bg*49 overlay0/panel_bg*18 -/panel_bg*51 accent/panel_bg*1
+29 |│                                                                                                                      │|
+29 : accent/panel_bg*1 -/panel_bg*118 accent/panel_bg*1
 30 |│                                                                                                                      │|
 30 : accent/panel_bg*1 -/panel_bg*118 accent/panel_bg*1
 31 |│                                                                                                                      │|
@@ -76,7 +76,7 @@
 36 : accent/panel_bg*1 -/panel_bg*118 accent/panel_bg*1
 37 |│                                                                                                                      │|
 37 : accent/panel_bg*1 -/panel_bg*118 accent/panel_bg*1
-38 |└ term-bet · Focused ──────────────────────────────────────────────────────────────────────────────────────────── tmux ┘|
-38 : accent/panel_bg*1 accent/panel_bg+b*20 accent/panel_bg*92 accent/panel_bg+b*6 accent/panel_bg*1
+38 |└ zsh · Focused ────────────────────────────────────────────────────────────────────────────────────────────── gclient ┘|
+38 : accent/panel_bg*1 accent/panel_bg+b*15 accent/panel_bg*94 accent/panel_bg+b*9 accent/panel_bg*1
 39 |                                                                                                          prefix ctrl+b |
 39 : -/surface0*106 subtext0/surface0*13 -/surface0*1
