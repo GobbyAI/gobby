@@ -13,6 +13,7 @@ import operator
 import re
 import tokenize
 from collections.abc import Callable, Iterator, Mapping
+from functools import lru_cache
 from typing import Any
 
 from psycopg.errors import QueryCanceled
@@ -130,6 +131,7 @@ class SafeExpressionEvaluator(ast.NodeVisitor):
         self.allowed_funcs = allowed_funcs
 
     @staticmethod
+    @lru_cache(maxsize=256)
     def _normalize_expr(expr: str) -> str:
         """Collapse whitespace outside strings so YAML folding artefacts parse.
 
@@ -167,10 +169,16 @@ class SafeExpressionEvaluator(ast.NodeVisitor):
         pieces.append(re.sub(r"\s+", " ", expr[cursor:]))
         return "".join(pieces).strip()
 
+    @staticmethod
+    @lru_cache(maxsize=256)
+    def _parse_normalized_expr(expr: str) -> ast.Expression:
+        """Reuse context-independent syntax trees across evaluator instances."""
+        return ast.parse(expr, mode="eval")
+
     def evaluate(self, expr: str) -> bool:
         """Evaluate expression and return boolean result."""
         try:
-            tree = ast.parse(self._normalize_expr(expr), mode="eval")
+            tree = self._parse_normalized_expr(self._normalize_expr(expr))
             return bool(self.visit(tree.body))
         except (DatabaseOperationDeadlineExceeded, QueryCanceled):
             raise
@@ -180,7 +188,7 @@ class SafeExpressionEvaluator(ast.NodeVisitor):
     def evaluate_value(self, expr: str) -> Any:
         """Evaluate expression and return the raw value (not coerced to bool)."""
         try:
-            tree = ast.parse(self._normalize_expr(expr), mode="eval")
+            tree = self._parse_normalized_expr(self._normalize_expr(expr))
             return self.visit(tree.body)
         except (DatabaseOperationDeadlineExceeded, QueryCanceled):
             raise
