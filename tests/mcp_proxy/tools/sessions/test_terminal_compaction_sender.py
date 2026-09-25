@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -224,13 +225,15 @@ async def test_command_the_recovery_enter_cannot_submit_fails_without_retyping(
 @pytest.mark.asyncio
 async def test_command_that_never_leaves_the_composer_fails_typed(
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     monkeypatch.setattr("gobby.terminals.pane_io.SUBMIT_HELD_RETRY_SECONDS", 0.04)
     pane = _UnsubmittedPane()
 
-    result, _mark, clear = await _send(
-        pane, lambda: True, command="/compact", composer_read=_CLAUDE_READ
-    )
+    with caplog.at_level(logging.ERROR, logger=_COMPACTION):
+        result, _mark, clear = await _send(
+            pane, lambda: True, command="/compact", composer_read=_CLAUDE_READ
+        )
 
     compacted, reason, continuation_pending, detail = result
     assert compacted is False
@@ -240,6 +243,13 @@ async def test_command_that_never_leaves_the_composer_fails_typed(
         "continuation_pending": False,
     }
     assert reason is not None and "/compact" in reason
+    records = [
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "handoff_continuation_not_submitted"
+    ]
+    assert len(records) == 1
+    assert records[0].levelno == logging.ERROR
     assert pane.typed == ["/compact\n"]
     assert pane.keys == [
         "escape",

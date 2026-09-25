@@ -576,7 +576,7 @@ async def _type_handoff_compact_continuation(
         )
         if result.ok:
             return True
-        logger.warning(
+        logger.error(
             "Failed to submit the set_handoff compact continuation prompt for session %s: %s",
             session_id,
             result.reason,
@@ -588,7 +588,7 @@ async def _type_handoff_compact_continuation(
         )
         cleared, clear_reason = await clear_composer(pane, cli_source)
         if not cleared:
-            logger.warning(
+            logger.error(
                 "Composer still holds the unsubmitted continuation prompt for session %s: %s",
                 session_id,
                 clear_reason,

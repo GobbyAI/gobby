@@ -227,6 +227,18 @@ async def _submit_command(
         composer_read=composer_read,
         verify_seconds=verify_seconds,
     )
+    if result.error_code == _COMMAND_NOT_SUBMITTED_ERROR_CODE:
+        logger.error(
+            "Session %s did not submit the set_handoff compact command %s: %s",
+            session_id,
+            command,
+            result.reason,
+            extra={
+                "event": "handoff_continuation_not_submitted",
+                "session_id": session_id,
+                "error_code": result.error_code,
+            },
+        )
     if result.ok or result.error_code is None:
         return result.ok, result.reason, None
     return (
