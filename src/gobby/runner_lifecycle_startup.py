@@ -30,7 +30,7 @@ def start_startup_lag_probe(
     *,
     duration_seconds: float | None = None,
     interval_seconds: float = 0.25,
-    threshold_seconds: float = 1.0,
+    threshold_seconds: float = 0.25,
     rate_limit_seconds: float = 60.0,
 ) -> None:
     """Sample loop stalls for the loop lifetime from an independent thread."""
@@ -64,8 +64,7 @@ def start_startup_lag_probe(
             task_frames = task.get_stack(limit=1) if task is not None else []
             site_frame = task_frames[-1] if task_frames else frame
             site_key = (
-                f"{site_frame.f_code.co_filename}:{site_frame.f_lineno}:"
-                f"{site_frame.f_code.co_name}"
+                f"{site_frame.f_code.co_filename}:{site_frame.f_lineno}:{site_frame.f_code.co_name}"
                 if site_frame is not None
                 else "unavailable"
             )
