@@ -3,6 +3,19 @@
 Researcher gobby#14550, 2026-09-25. Evidence only; no production or role edits.
 Claims are marked VERIFIED (checked against the DB, code or messages) or INFERRED.
 
+## Decision (Josh, 2026-09-25)
+
+**Retire `/goal` from developer lanes. Lane epics stay off.** Josh confirmed it
+with the button and in text, through the Assistant #14069; the PD #14543 relayed
+it.
+
+- Implementation: #22927 "Retire lane /goal and make Lane Manager recover stalled
+  lanes". Owner: Lane 3 #14531, in an isolated worktree after #22912. The PD
+  reviews and lands it.
+- One-time clearing of existing goals: the Assistant, using `/goal clear` at each
+  affected lane's idle prompt; the Lane Manager #14556 lists which seats need it.
+- `require-epic-tree-close` stays disabled.
+
 ## Recommendation
 
 **Retire `/goal` from developer lanes. Keep lanes on the controls Gobby already
@@ -64,6 +77,24 @@ goal-related Gobby code is the unrelated `goal_file` variable in
 
 The goal pauses on exactly the events Gobby is built to survive: restarts,
 compactions, coordination HOLDs and the GO that ends them.
+
+### Separate check: the PD's `get_handoff` returned found=false at 15:32 CT (not a defect)
+
+The PD's continuation at 15:32 CT (20:32 UTC) called `get_handoff` and got
+`found=false`. VERIFIED from `session_handoffs` and `session_handoff_deliveries`
+for session 1abdbd31: every handoff the PD staged today was delivered.
+
+| Staged (UTC) | Delivered (UTC) | Boundary |
+| --- | --- | --- |
+| 13:50:25 | 13:50:48 | compact |
+| 14:27:57 | 14:28:15 | compact |
+| 19:49:49 | 19:51:41 | compact |
+
+No row was staged after 19:49 UTC, so nothing was pending at 20:32, and
+`found=false` was the correct answer. INFERRED: the 15:32 continuation was a
+native compaction with no `set_handoff` beforehand, which matches the PD's
+summary still listing `set_handoff` as unfinished. This is separate from `/goal`,
+and there is no handoff-delivery defect to route to Lane 3.
 
 ## What already keeps a lane on task (VERIFIED)
 
