@@ -9,12 +9,12 @@ Claims are marked VERIFIED (checked against the DB, code or messages) or INFERRE
 has. Leave `require-epic-tree-close` disabled for now.**
 
 `/goal` adds nothing that the claimed-task stop gate does not already do durably.
-It is also the direct cause of both Lane 1 stalls today. The lane-epic rule is
+It is also the direct cause of all three Lane 1 stalls today. The lane-epic rule is
 workable, but it changes who picks a lane's next task, which conflicts with the
 PD-ordered queue. Treat it as a separate decision only if routing between leaves
 turns out to be slow.
 
-## The two Lane 1 incidents (VERIFIED, inter_session_messages)
+## The three Lane 1 incidents (1-2 VERIFIED in inter_session_messages; 3 reported by the PD)
 
 Lane 1 is gobby#14544 (Codex) on epic #22773 (gclient chrome).
 
@@ -27,6 +27,22 @@ Lane 1 is gobby#14544 (Codex) on epic #22773 (gclient chrome).
 2. **About 15:00 CT, after a compaction.** The session sat in `awaiting_handoff`
    with the goal paused. The handoff went unconsumed until `/goal resume` was sent
    by hand.
+3. **About 15:30 CT, under a validation HOLD.** The pane showed
+   `Goal stalled (/goal resume)`: the goal evaluator read the PD's HOLD as a
+   blocked goal. The Assistant #14069 resumed it at the Lane Manager's request.
+   (Reported by the PD #14543.)
+
+So `/goal` breaks on all three events a lane routinely meets: restart,
+compaction, and a coordination HOLD.
+
+### Separate issue: the Lane Manager's round missed incident 3 (not a `/goal` defect)
+
+In incident 3, the Lane Manager's status wait matched, but the Lane Manager
+treated the match as report-only while the HOLD was in force. Escalation waited
+until Josh prompted. Per the PD, the Lane Manager now classifies every match
+immediately. This was a miss in the Lane Manager's rounds; it is fixed in its
+procedure and is independent of the `/goal` decision. Retiring `/goal` removes
+the stall; the Lane Manager fix makes any future stall visible quickly.
 
 Root cause (INFERRED from the above and the code): a paused Codex goal is
 invisible to Gobby. Nothing maps the paused goal to a session status; the only
@@ -36,8 +52,8 @@ goal-related Gobby code is the unrelated `goal_file` variable in
 - the Lane Manager's status waits (`paused`, `awaiting_*`, `interrupted`) never
   fire, so the lane stalls silently.
 
-The goal pauses on exactly the events Gobby is built to survive: restarts and
-compactions.
+The goal pauses on exactly the events Gobby is built to survive: restarts,
+compactions and coordination HOLDs.
 
 ## What already keeps a lane on task (VERIFIED)
 
