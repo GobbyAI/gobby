@@ -1,13 +1,14 @@
 import logging
-from unittest.mock import MagicMock
+from dataclasses import replace
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from gobby.agents.sandbox import SandboxConfig
 from gobby.agents.spawn import PreparedSpawn
-from gobby.agents.spawn_executor_providers import _prepare_provider_sandbox
+from gobby.agents.spawn_executor_providers import _prepare_provider_sandbox, prepare_codex_spawn
 from gobby.agents.spawn_models import SpawnRequest, SpawnResult
-from gobby.agents.srt_runtime import SrtRuntimeError
+from gobby.agents.srt_runtime import SandboxLaunch, SrtRuntimeError
 from tests.agents.prepared_spawn import prepared_spawn
 
 
@@ -32,6 +33,46 @@ def _sandbox_request() -> tuple[SpawnRequest, PreparedSpawn, MagicMock]:
         terminal_backend="tmux",
     )
     return request, spawn_context, run_manager
+
+
+@pytest.mark.parametrize(
+    ("agent_name", "plugin_disabled"),
+    [("task-close-reviewer", True), ("backend-developer", False)],
+)
+@pytest.mark.asyncio
+async def test_codex_close_reviewer_launch_hides_execution_wrappers(
+    monkeypatch: pytest.MonkeyPatch, agent_name: str, plugin_disabled: bool
+) -> None:
+    request, _, _ = _sandbox_request()
+    request = replace(
+        request,
+        agent_name=agent_name,
+        project_path="/main/repo",
+        session_manager=MagicMock(),
+    )
+    monkeypatch.setattr(
+        "gobby.agents.spawn_executor_providers._prepare_managed_code_index",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        "gobby.agents.spawn_executor_providers._prepare_provider_sandbox",
+        AsyncMock(return_value=SandboxLaunch(backend="provider-native", enforced=False)),
+    )
+    monkeypatch.setattr(
+        "gobby.agents.spawn_executor_providers._record_resume_launch_details", MagicMock()
+    )
+    monkeypatch.setattr("gobby.agents.spawn_executor_providers.pre_approve_directory", MagicMock())
+    build_command = MagicMock(return_value=(["codex"], {}))
+    monkeypatch.setattr("gobby.agents.spawn_executor_providers.build_cli_command", build_command)
+
+    await prepare_codex_spawn(request)
+
+    overrides = build_command.call_args.kwargs["config_overrides"]
+    assert "mcp_servers.gobby.required=true" in overrides
+    assert (
+        'plugins."unified-computer-use@openai-bundled".enabled=false' in overrides
+    ) is plugin_disabled
+    assert ("mcp_servers.node_repl.enabled=false" in overrides) is plugin_disabled
 
 
 @pytest.mark.parametrize(

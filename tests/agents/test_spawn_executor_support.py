@@ -38,3 +38,14 @@ def test_resume_retains_required_gobby_server() -> None:
 
     assert config["mcp_servers"]["gobby"]["required"] is True
     assert "--no-sync" in config["mcp_servers"]["gobby"]["args"]
+
+
+def test_codex_close_reviewer_resume_keeps_execution_wrappers_disabled() -> None:
+    from gobby.agents.resume_metadata import filter_resume_config_overrides
+
+    overrides = [
+        'plugins."unified-computer-use@openai-bundled".enabled=false',
+        "mcp_servers.node_repl.enabled=false",
+    ]
+
+    assert filter_resume_config_overrides(overrides) == overrides
