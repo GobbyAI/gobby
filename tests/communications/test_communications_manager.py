@@ -533,6 +533,56 @@ async def test_send_message_unknown_channel_raises() -> None:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+@pytest.mark.parametrize("attachment", [False, True])
+async def test_outbound_send_waits_for_enabled_channel_initialization(
+    tmp_path: Path, attachment: bool
+) -> None:
+    channel = make_channel()
+    store = make_store([channel])
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
+    initialized = asyncio.Event()
+    release = asyncio.Event()
+    adapter = MagicMock()
+    adapter.send_message = AsyncMock(return_value="platform-1")
+    adapter.send_attachment = AsyncMock(return_value="platform-2")
+
+    async def start_adapter() -> None:
+        initialized.set()
+        await release.wait()
+        manager._channel_by_name[channel.name] = channel
+        manager._adapters[channel.name] = adapter
+
+    file_path = tmp_path / "report.txt"
+    file_path.write_text("report", encoding="utf-8")
+
+    async def send() -> CommsMessage:
+        if attachment:
+            message, _ = await manager.send_attachment(channel.name, file_path)
+            return message
+        return await manager.send_message(channel.name, "Hello!")
+
+    with (
+        patch.object(manager._lifecycle, "start", side_effect=start_adapter),
+        patch.object(manager._outbound, "enrich_metadata", return_value={}),
+    ):
+        startup = asyncio.create_task(manager.start())
+        await initialized.wait()
+        outbound = asyncio.create_task(send())
+        await asyncio.sleep(0)
+        assert not outbound.done()
+
+        release.set()
+        await startup
+        message = await outbound
+    assert message.status == "sent"
+    if attachment:
+        adapter.send_attachment.assert_awaited_once()
+    else:
+        adapter.send_message.assert_awaited_once()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_send_message_adapter_failure_marks_failed() -> None:
     """send_message() marks message failed if adapter raises."""
     channel = make_channel()

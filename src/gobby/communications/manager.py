@@ -99,6 +99,7 @@ class CommunicationsManager:
         self._adapters: dict[str, BaseChannelAdapter] = {}
         self._channel_by_name: dict[str, ChannelConfig] = {}
         self._channel_init_errors: dict[str, str] = {}
+        self._startup_complete = asyncio.Event()
         self._telegram_binding_locks: dict[str, asyncio.Lock] = {}
         self._websocket_broadcast: Any | None = None
         self._voice_transcriber_getter: VoiceTranscriberGetter | None = None
@@ -139,10 +140,13 @@ class CommunicationsManager:
 
     async def start(self) -> None:
         """Load enabled channels from DB, initialize adapters, configure rate limiter."""
-        await self._lifecycle.start()
-        self._restore_telegram_targets()
-        if self._session_notifications is not None:
-            await self._session_notifications.start()
+        try:
+            await self._lifecycle.start()
+            self._restore_telegram_targets()
+            if self._session_notifications is not None:
+                await self._session_notifications.start()
+        finally:
+            self._startup_complete.set()
 
     def _restore_telegram_targets(self) -> None:
         """Recover private-chat target selections from channel configuration."""
@@ -194,7 +198,18 @@ class CommunicationsManager:
         metadata: dict[str, Any] | None = None,
     ) -> CommsMessage:
         """Send a message to a named channel."""
+        await self._wait_for_channel_startup(channel_name)
         return await self._outbound.send_message(channel_name, content, session_id, metadata)
+
+    async def _wait_for_channel_startup(self, channel_name: str) -> None:
+        """Wait for an enabled channel when a send races adapter initialization."""
+        if channel_name not in self._adapters and not self._startup_complete.is_set():
+            channel = await asyncio.to_thread(self._store.get_channel_by_name, channel_name)
+            if channel is not None and channel.enabled:
+                try:
+                    await asyncio.wait_for(self._startup_complete.wait(), timeout=120.0)
+                except TimeoutError as exc:
+                    raise TimeoutError(f"Channel {channel_name!r} did not initialize") from exc
 
     def supports_message_edit(self, channel_name: str) -> bool:
         """Return whether the active adapter implements message editing."""
@@ -317,6 +332,7 @@ class CommunicationsManager:
         metadata: dict[str, Any] | None = None,
     ) -> tuple[CommsMessage, CommsAttachment]:
         """Send a file attachment to a named channel."""
+        await self._wait_for_channel_startup(channel_name)
         return await self._outbound.send_attachment(
             channel_name,
             file_path,
