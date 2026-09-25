@@ -110,13 +110,9 @@ class TemplatingMixin:
                 project_info["path"] = cwd
         return project_info
 
-    def _build_eval_context(
-        self,
-        event: HookEvent,
-        variables: dict[str, Any],
-        extra_context: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        """Build evaluation context for condition checking."""
+    @staticmethod
+    def _rule_tool_input(event: HookEvent) -> dict[str, Any]:
+        """Return the tool input seen by rule conditions, including proxy arguments."""
         raw_tool_input = event.data.get("tool_input") or event.data.get("arguments") or {}
         if not isinstance(raw_tool_input, dict):
             raw_tool_input = {}
@@ -137,10 +133,20 @@ class TemplatingMixin:
             else:
                 raw_tool_input = wrapper_input
 
+        return raw_tool_input
+
+    def _build_eval_context(
+        self,
+        event: HookEvent,
+        variables: dict[str, Any],
+        extra_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Build evaluation context for condition checking."""
+
         ctx: dict[str, Any] = {
             "variables": variables,
             "event": event,
-            "tool_input": raw_tool_input,
+            "tool_input": self._rule_tool_input(event),
             "source": event.source.value if event.source else None,
         }
 

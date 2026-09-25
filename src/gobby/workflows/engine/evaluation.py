@@ -75,6 +75,9 @@ class EvaluationContext:
     mcp_calls: list[dict[str, Any]] = field(default_factory=list)
     proxy_hooks: list[ProxyHookInvocation] = field(default_factory=list)
     staged_variable_updates: dict[str, Any] = field(default_factory=dict)
+    rule_context: dict[str, Any] | None = None
+    rule_allowed_funcs: dict[str, Callable[..., Any]] | None = None
+    rule_project_snapshot: Any = None
 
     @property
     def block_state(self) -> dict[str, Any]:
@@ -214,6 +217,8 @@ class EvaluationMixin:
             variables: dict[str, Any],
             extra_context: dict[str, Any] | None = None,
         ) -> dict[str, Any]: ...
+
+        def _rule_tool_input(self, event: HookEvent) -> dict[str, Any]: ...
 
         def _resolve_project_info(
             self, event: HookEvent, project_from_vars: Any = None
@@ -508,20 +513,31 @@ class EvaluationMixin:
                 turn_end_suppression = ("interrupt-initiated-turn", "interrupt-initiated turn")
         suppress_turn_end_blocks = turn_end_suppression is not None
 
-        with measure_hook_phase("rule_context_build"):
-            ctx = await offload(
-                self._build_eval_context,
-                evaluation.event,
-                evaluation.variables,
-                evaluation.eval_context,
+        ctx = evaluation.rule_context
+        allowed_funcs = evaluation.rule_allowed_funcs
+        if ctx is None or allowed_funcs is None:
+            with measure_hook_phase("rule_context_build"):
+                ctx = await offload(
+                    self._build_eval_context,
+                    evaluation.event,
+                    evaluation.variables,
+                    evaluation.eval_context,
+                )
+            with measure_hook_phase("rule_allowed_funcs_build"):
+                allowed_funcs = await offload(self._build_allowed_funcs, ctx)
+            evaluation.rule_context = ctx
+            evaluation.rule_allowed_funcs = allowed_funcs
+            project_value = evaluation.variables.get("project")
+            project_snapshot = (
+                dict(project_value) if isinstance(project_value, dict) else project_value
             )
-        with measure_hook_phase("rule_allowed_funcs_build"):
-            allowed_funcs = await offload(self._build_allowed_funcs, ctx)
+        else:
+            # A proxy rewrite changes the same event's input before block-only replay.
+            ctx["tool_input"] = await offload(self._rule_tool_input, evaluation.event)
+            project_snapshot = evaluation.rule_project_snapshot
         protected_keys = {"variables", "event", "tool_input", "source", "project"}
         protected_keys.update(evaluation.eval_context or {})
-        flattened_keys = set(evaluation.variables) - protected_keys
-        project_value = evaluation.variables.get("project")
-        project_snapshot = dict(project_value) if isinstance(project_value, dict) else project_value
+        flattened_keys = set(ctx) - protected_keys
 
         for row, body in rules:
             if bridge.cancelled.is_set():
@@ -760,6 +776,8 @@ class EvaluationMixin:
                 await offload(self._event_store.record_events, metric_records)
             except Exception as e:
                 logger.debug("Metrics recording failed: %s", e, exc_info=True)
+
+        evaluation.rule_project_snapshot = project_snapshot
 
         if turn_end_suppression is not None and block_gates:
             audit_rule_name, cause = turn_end_suppression

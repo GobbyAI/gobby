@@ -93,6 +93,7 @@ TRUE_RESTRICTION_RULES = frozenset(
         "block-docker-policy-edits",
         "block-spawned-agent-create-task",
         "block-tools-after-handoff-compact",
+        "block-unresolved-scope-shell-write",
         "block-web-chat-send-keys",
         "no-agent-spawn-for-merge",
         "no-brew-install",
