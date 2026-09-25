@@ -24,6 +24,7 @@ use crate::ui::status::Toast;
 use crate::ui::{Action, Chrome, Mode, WorkspaceView};
 
 use super::attention::route_response_input;
+use super::live::relist::{Relist, RelistFuture};
 use super::run_loop::{
     shutdown, ReconnectAttempt, ReconnectFuture, ReconnectSupervisor, RENDER_TICK,
 };
@@ -226,6 +227,7 @@ pub async fn run_live_loop<B: Backend>(
     let mut prefix_armed = false;
     let mut reconnect_job = None;
     let mut sidebar_job: Option<SidebarFetchFuture> = None;
+    let mut relist_job: Option<RelistFuture> = None;
     // Control replies come back on a channel rather than a single in-flight
     // slot: a grant still out for one pane must never hold up the grant the
     // pane someone just clicked is waiting for (#22573).
@@ -256,6 +258,9 @@ pub async fn run_live_loop<B: Backend>(
         // need; it is started here so neither ever waits on the daemon
         // (#22573).
         workspace.start_control_request(&control_tx);
+        if relist_job.is_none() {
+            relist_job = workspace.start_relist();
+        }
         tokio::select! {
             biased;
             reason = recv_exit_signal(&mut exit_signals) => {
@@ -403,10 +408,20 @@ pub async fn run_live_loop<B: Backend>(
                 };
                 settle_sidebar_banner(chrome, &mut sidebar_error_shown, error.as_ref());
             }
+            result = await_relist_job(&mut relist_job), if relist_job.is_some() => {
+                relist_job = None;
+                match result {
+                    Ok(relist) => workspace.apply_relist(relist),
+                    Err(error) => begin_reconnect(workspace, &mut supervisor, &daemon, error),
+                }
+                sync_live_chrome(workspace, chrome);
+            }
             result = await_reconnect_job(&mut reconnect_job), if reconnect_job.is_some() => {
                 reconnect_job = None;
-                // A refetch begun on the old connection has nothing to add.
+                // A refetch or relist begun on the old connection has nothing
+                // to add.
                 sidebar_job = None;
+                relist_job = None;
                 let outcome = supervisor.complete_attempt(result);
                 handle_reconnect_outcome(
                     workspace,
@@ -485,6 +500,7 @@ pub async fn run_live_loop<B: Backend>(
 
     drop(reconnect_job.take());
     drop(sidebar_job.take());
+    drop(relist_job.take());
     // A reply still in flight has nowhere to land: the exit latch is set, a
     // latched exit issues no further requests, and `shutdown` releases the
     // lease this client asked for either way. Waiting for it here would hang on
@@ -618,6 +634,13 @@ async fn await_reconnect_job(job: &mut Option<ReconnectFuture>) -> Result<Genera
 async fn await_sidebar_job(
     job: &mut Option<SidebarFetchFuture>,
 ) -> Result<SidebarFetch, DaemonError> {
+    match job {
+        Some(job) => job.as_mut().await,
+        None => std::future::pending().await,
+    }
+}
+
+async fn await_relist_job(job: &mut Option<RelistFuture>) -> Result<Relist, DaemonError> {
     match job {
         Some(job) => job.as_mut().await,
         None => std::future::pending().await,

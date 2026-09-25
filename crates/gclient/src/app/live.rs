@@ -6,6 +6,8 @@ use std::future::Future;
 use std::pin::Pin;
 use tokio::sync::mpsc::UnboundedSender;
 
+pub(super) mod relist;
+
 impl Workspace<LiveDaemon> {
     pub fn live(daemon: LiveDaemon) -> Self {
         Self {
@@ -32,6 +34,7 @@ impl Workspace<LiveDaemon> {
             launch_dir: None,
             frame_delivery: FrameDelivery::Auto,
             lifecycle: None,
+            relist: relist::RelistState::default(),
             daemon_ready: false,
             daemon_error: None,
             event_rx: None,
@@ -167,61 +170,6 @@ impl Workspace<LiveDaemon> {
         // Roster order is pane order: the window's order first, new rows
         // after it in daemon order (`ensure_live_pane` appends them).
         self.roster_ids = self.tab_order();
-    }
-
-    pub async fn fetch_roster(&mut self) -> Result<(), DaemonError> {
-        let project = self.project_id.clone().unwrap_or_default();
-        for attempt in 0..2 {
-            let mut cursor: Option<String> = None;
-            let mut cursors = HashSet::new();
-            let mut rows = Vec::new();
-            let mut known = HashSet::new();
-            let mut pin = None;
-            let result = loop {
-                let page = match self
-                    .daemon
-                    .list_terminals(&project, cursor.as_deref())
-                    .await
-                {
-                    Ok(page) => page,
-                    Err(error) => break Err(error),
-                };
-                if cursor.is_none() {
-                    let Some(snapshot) = page.snapshot else {
-                        break Err(DaemonError::Protocol {
-                            detail: "first terminal page omitted snapshot".into(),
-                        });
-                    };
-                    pin = Some(snapshot);
-                }
-                for row in page.items {
-                    if !row.id().is_empty() && known.insert(row.id().to_string()) {
-                        rows.push(row);
-                    }
-                }
-                match page.next_cursor.filter(|next| !next.is_empty()) {
-                    Some(next) if cursors.insert(next.clone()) => cursor = Some(next),
-                    Some(_) => {
-                        break Err(DaemonError::Protocol {
-                            detail: "terminal cursor repeated".into(),
-                        });
-                    }
-                    None => break Ok(()),
-                }
-            };
-            match result {
-                Ok(()) => {
-                    self.install_live_rows(rows);
-                    self.lifecycle = pin;
-                    return Ok(());
-                }
-                Err(error) if attempt == 0 && is_cursor_error(&error) => continue,
-                Err(error) => return Err(error),
-            }
-        }
-        Err(DaemonError::Protocol {
-            detail: "terminal pagination did not converge".into(),
-        })
     }
 
     /// Replace the roster wholesale: an entry the daemon no longer returns is
@@ -665,8 +613,9 @@ impl Workspace<LiveDaemon> {
                 self.observe_daemon_disconnect(generation, error);
             }
             DaemonEvent::Lagged => {
-                // Its snapshot pins the lifecycle order, so only it stays inline.
-                self.fetch_roster().await?;
+                // The repairs run beside the loop: inline, a slow answer held
+                // it while frames lagged the receiver again (#22747).
+                self.request_relist();
                 self.pending_sidebar = PendingSidebar::everything(self.checked_out_projects());
             }
             DaemonEvent::Message(message) => {

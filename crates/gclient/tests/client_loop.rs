@@ -135,15 +135,17 @@ async fn wait_for_websocket_requests(mock: &MockDaemon, kind: &str, expected: us
     });
 }
 
+fn request_count(mock: &MockDaemon, method: &str, path: &str) -> usize {
+    mock.requests()
+        .into_iter()
+        .filter(|request| request.method == method && request.target.starts_with(path))
+        .count()
+}
+
 async fn wait_for_http_requests(mock: &MockDaemon, method: &str, path: &str, expected: usize) {
     timeout(WAIT_BUDGET, async {
         loop {
-            let count = mock
-                .requests()
-                .into_iter()
-                .filter(|request| request.method == method && request.target.starts_with(path))
-                .count();
-            if count >= expected {
+            if request_count(mock, method, path) >= expected {
                 break;
             }
             tokio::task::yield_now().await;
@@ -12489,11 +12491,64 @@ async fn tab_and_split_shells_start_in_the_focused_checkout() {
     mock.shutdown().await;
 }
 
-/// A lagged event receiver used to refetch the attention roster and the
-/// sidebar inline, so a daemon slow to answer held the loop: no draw, no
-/// resize, no input, and the frames that piled up meanwhile lagged it again
-/// (the #22747 capture freeze). Only the terminal relist, whose snapshot pins
-/// the lifecycle order, stays inline; the rest runs beside the loop.
+/// A session event's refetch is the second sessions read, and it lands only
+/// after the launch reconcile drained its receiver, so a burst after it lags
+/// the loop's receiver rather than that drain.
+async fn settle_before_lag(mock: &MockDaemon) {
+    wait_for_http_requests(mock, "GET", "/api/projects", 1).await;
+    mock.send_event(json!({"type": "session_event", "project_id": "project-1"}));
+    wait_for_http_requests(mock, "GET", "/api/sessions?", 2).await;
+}
+
+/// Reports on the returned channel once an event matching `wanted` reaches
+/// the daemon's event channel, and so every receiver on it.
+fn watch_for_event(
+    daemon: &LiveDaemon,
+    wanted: fn(&DaemonEvent) -> bool,
+) -> std::sync::mpsc::Receiver<()> {
+    let (_, mut monitor) = daemon.subscribe();
+    let (seen_tx, seen_rx) = std::sync::mpsc::channel();
+    tokio::spawn(async move {
+        loop {
+            match monitor.recv().await {
+                Ok(event) if wanted(&event) => break,
+                Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
+            }
+        }
+        let _ = seen_tx.send(());
+    });
+    seen_rx
+}
+
+/// Sends one event more than the channel holds. Blocking this thread rather
+/// than yielding keeps the loop, which shares it, from reading while the
+/// socket reader fills its receiver past capacity, so its next read is the lag.
+fn lag_the_loop_receiver(mock: &MockDaemon, daemon: &LiveDaemon) {
+    let seen = watch_for_event(daemon, |event| {
+        matches!(event, DaemonEvent::Message(value)
+            if value.get("type").and_then(Value::as_str) == Some("lag_test_marker"))
+    });
+    for seq in 0..=BROADCAST_CAPACITY {
+        mock.send_event(json!({"type": "lag_test_event", "seq": seq}));
+    }
+    mock.send_event(json!({"type": "lag_test_marker"}));
+    seen.recv_timeout(Duration::from_secs(5))
+        .expect("the burst reached the event channel");
+}
+
+fn empty_relist() -> Value {
+    json!({
+        "items": [],
+        "next_cursor": null,
+        "snapshot": {"daemon_epoch": "epoch-1", "seq": 0},
+    })
+}
+
+/// A lagged event receiver used to repair the terminal relist, the attention
+/// roster and the sidebar inline, so a daemon slow to answer held the loop: no
+/// draw, no resize, no input, and the frames that piled up meanwhile lagged it
+/// again (the #22747 capture freeze). Every repair now runs beside the loop.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_lagged_receiver_does_not_hold_the_loop_on_a_slow_daemon() {
     let mock = MockDaemon::start("local-token").await;
@@ -12505,48 +12560,16 @@ async fn a_lagged_receiver_does_not_hold_the_loop_on_a_slow_daemon() {
     let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
     let mut chrome = Chrome::dark();
     let (input_tx, input_rx) = mpsc::channel(16);
-    let mut hold = None;
+    let mut holds = Vec::new();
     let driver = async {
-        // A session event's refetch is the second sessions read, and it
-        // lands only after the launch reconcile drained its receiver, so the
-        // burst below lags the loop's receiver rather than that drain. Only
-        // the project read after the lag is held.
-        wait_for_http_requests(&mock, "GET", "/api/projects", 1).await;
-        mock.send_event(json!({"type": "session_event", "project_id": "project-1"}));
-        wait_for_http_requests(&mock, "GET", "/api/sessions?", 2).await;
-        hold = Some(mock.enqueue_held("GET", "/api/projects", 200, json!([])));
-        let listed = mock
-            .requests()
-            .into_iter()
-            .filter(|request| request.target.starts_with("/api/terminals?"))
-            .count();
-        let (_, mut monitor) = daemon.subscribe();
-        let (seen_tx, seen_rx) = std::sync::mpsc::channel();
-        tokio::spawn(async move {
-            loop {
-                match monitor.recv().await {
-                    Ok(DaemonEvent::Message(value))
-                        if value.get("type").and_then(Value::as_str) == Some("lag_test_marker") =>
-                    {
-                        break;
-                    }
-                    Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
-                }
-            }
-            let _ = seen_tx.send(());
-        });
-        for seq in 0..=BROADCAST_CAPACITY {
-            mock.send_event(json!({"type": "lag_test_event", "seq": seq}));
-        }
-        mock.send_event(json!({"type": "lag_test_marker"}));
-        // Block this thread rather than yield: the loop shares it, so it
-        // cannot read while the socket reader fills its receiver past
-        // capacity, and its next read is the lag.
-        seen_rx
-            .recv_timeout(Duration::from_secs(5))
-            .expect("the burst reached the event channel");
+        settle_before_lag(&mock).await;
+        let listed = request_count(&mock, "GET", "/api/terminals?");
+        let projects = request_count(&mock, "GET", "/api/projects");
+        holds.push(mock.enqueue_held("GET", "/api/terminals?", 200, empty_relist()));
+        holds.push(mock.enqueue_held("GET", "/api/projects", 200, json!([])));
+        lag_the_loop_receiver(&mock, &daemon);
         wait_for_http_requests(&mock, "GET", "/api/terminals?", listed + 1).await;
+        wait_for_http_requests(&mock, "GET", "/api/projects", projects + 1).await;
         drop(input_tx);
     };
     let mut switch = TerminalGuard::recording().0;
@@ -12569,8 +12592,68 @@ async fn a_lagged_receiver_does_not_hold_the_loop_on_a_slow_daemon() {
         );
     };
     result.expect("lagged loop");
-    if let Some(hold) = hold {
+    for hold in holds {
         hold.notify_one();
     }
+    mock.shutdown().await;
+}
+
+/// A relist that answers after the loop applied a newer lifecycle event would
+/// undo that event, so the loop drops it and relists again.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_relist_older_than_an_applied_event_is_asked_again() {
+    let mock = MockDaemon::start("local-token").await;
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon.clone());
+    workspace.select_project("project-1");
+    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(16);
+    let driver = async {
+        settle_before_lag(&mock).await;
+        let listed = request_count(&mock, "GET", "/api/terminals?");
+        let hold = mock.enqueue_held("GET", "/api/terminals?", 200, empty_relist());
+        lag_the_loop_receiver(&mock, &daemon);
+        wait_for_http_requests(&mock, "GET", "/api/terminals?", listed + 1).await;
+        let queued = watch_for_event(&daemon, |event| {
+            matches!(event, DaemonEvent::Terminal { seq: 1, .. })
+        });
+        mock.send_event(json!({
+            "type": "terminal_event",
+            "event": "exited",
+            "terminal_id": "terminal-gone",
+            "daemon_epoch": "epoch-1",
+            "seq": 1,
+        }));
+        // Queued ahead of the relist's answer, the event applies first.
+        queued
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the lifecycle event reached the event channel");
+        hold.notify_one();
+        wait_for_http_requests(&mock, "GET", "/api/terminals?", listed + 2).await;
+        drop(input_tx);
+    };
+    let mut switch = TerminalGuard::recording().0;
+    let run = async {
+        tokio::join!(
+            run_live_loop(
+                &mut workspace,
+                &mut terminal,
+                &mut chrome,
+                input_rx,
+                &mut switch
+            ),
+            driver
+        )
+    };
+    let Ok((result, ())) = timeout(Duration::from_secs(3), run).await else {
+        panic!(
+            "a relist older than an applied event was kept: {:?}",
+            mock.activity()
+        );
+    };
+    result.expect("relisted loop");
     mock.shutdown().await;
 }
