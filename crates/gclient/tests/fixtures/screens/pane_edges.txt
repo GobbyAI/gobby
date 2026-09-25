@@ -2,8 +2,8 @@
 # 120x40, dark theme, colours normalised to theme::Palette roles
 00 | Gobby  File  Edit  View  Window  Agent  Help                                                                           |
 00 : panel_bg/accent+b*120
-01 | alpha    +                                                                                                             |
-01 : panel_bg/accent+b*9 overlay1/panel_bg*3 -/panel_bg*108
+01 | alpha:alpha    +                                                                                                       |
+01 : text/panel_bg+b*15 overlay1/surface0*3 -/surface0*102
 02 |┌ Ship the Unicode 修 复  to pane headers ────────────────────────────────────────────────────────── gclient · Read-only ┐|
 02 : overlay0/panel_bg*20 -/-*1 overlay0/panel_bg*1 -/-*1 overlay0/panel_bg*75 yellow/panel_bg*21 overlay0/panel_bg*1
 03 |│                                                                                                                      │|

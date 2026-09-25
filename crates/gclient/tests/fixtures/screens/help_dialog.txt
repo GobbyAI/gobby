@@ -3,7 +3,7 @@
 00 | Gobby  File  Edit  View  Window  Agent  Help                                                                           |
 00 : panel_bg/accent+bd*120
 01 | M┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  |
-01 : -/surface0+d*1 subtext0/surface0+bd*1 accent/panel_bg*116 -/panel_bg+d*2
+01 : -/surface0+d*1 subtext0/surface0+bd*1 accent/panel_bg*116 -/surface0+d*2
 02 | ⍾│keybinds                                                                                                esc close │─┐|
 02 : -/surface_dim+d*1 yellow/surface_dim+d*1 accent/panel_bg*1 text/panel_bg+b*8 -/panel_bg*95 panel_bg/accent+b*11 accent/panel_bg*1 accent/panel_bg+d*2
 03 |  │ press / to filter by command or shortcut                                                                         │ │|

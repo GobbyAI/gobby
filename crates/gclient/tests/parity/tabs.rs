@@ -4,6 +4,7 @@ use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use gobby_client::app::{
     route_mouse, MouseGesture, MouseOutcome, PaneId, Placement, Workspace, TAB_DRAG_THRESHOLD,
 };
+use gobby_client::daemon::{ProjectRow, SidebarRows};
 use gobby_client::ui::chrome::Tab;
 use gobby_client::ui::chrome_render::render_workspace;
 use gobby_client::ui::tabs::{render_tab_bar, tab_display_name, tab_width, TabBarHits};
@@ -13,6 +14,7 @@ use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
 use ratatui::style::Modifier;
 use ratatui::Terminal;
+use serde_json::json;
 
 use super::fixtures::{cell, draw, rect_rows, render, terminal};
 use super::token_map::{palette, theme};
@@ -48,7 +50,18 @@ fn set_custom_name(chrome: &mut Chrome, idx: usize, name: &str) {
 
 /// Draws the tab bar into `rect` and returns the terminal plus hit areas.
 fn draw_tab_bar(chrome: &Chrome, rect: Rect) -> (Terminal<TestBackend>, TabBarHits) {
-    let ws = Workspace::scripted();
+    let mut ws = Workspace::scripted();
+    ws.select_project("project-gobby");
+    ws.daemon_mut().set_sidebar_rows(SidebarRows {
+        projects: vec![ProjectRow {
+            id: "project-gobby".into(),
+            name: "gobby".into(),
+            display_name: "gobby".into(),
+            ..ProjectRow::default()
+        }],
+        ..SidebarRows::default()
+    });
+    ws.reconcile_subscribe_first().expect("project sidebar");
     let mut term = terminal(rect.x + rect.width, rect.y + rect.height);
     let mut hits = TabBarHits::default();
     draw(&mut term, |frame| {
@@ -71,16 +84,17 @@ parity_tests! {
     "src/ui/tabs.rs" => {
         fn tab_bar_marks_zoomed_tabs_without_renaming_them() {
             let mut chrome = chrome_with_one_tab();
+            chrome.tabs_mut().tabs[0].id = "0:0:1".into();
             zoom_tab(&mut chrome, 0);
             let custom_tab = add_tab(&mut chrome, Some("test"));
             zoom_tab(&mut chrome, custom_tab);
 
-            let tab_bar_rect = Rect::new(0, 0, 30, 1);
+            let tab_bar_rect = Rect::new(0, 0, 50, 1);
             let (term, _) = draw_tab_bar(&chrome, tab_bar_rect);
 
             let row = buffer_row_text(&term, tab_bar_rect, 0);
-            assert!(row.contains(" 1 Z"), "tab row: {row:?}");
-            assert!(row.contains(" test Z"), "tab row: {row:?}");
+            assert!(row.contains(" gobby:0:0:1 Z"), "tab row: {row:?}");
+            assert!(row.contains(" gobby:test Z"), "tab row: {row:?}");
             assert_eq!(tab_display_name(&chrome.tabs().tabs, 0).as_deref(), Some("1"));
             assert_eq!(
                 tab_display_name(&chrome.tabs().tabs, custom_tab).as_deref(),
@@ -97,9 +111,9 @@ parity_tests! {
             let (_, tab_rect) = hits.tabs[0];
             let style = cell(&term, tab_rect.x + 1, tab_rect.y).style();
 
-            assert_eq!(style.bg, Some(palette().accent));
+            assert_eq!(style.bg, Some(palette().panel_bg));
             assert!(!style.add_modifier.contains(Modifier::DIM));
-            assert!(!style.add_modifier.contains(Modifier::BOLD));
+            assert!(style.add_modifier.contains(Modifier::BOLD));
         }
 
         fn zoom_marker_counts_toward_tab_width() {
@@ -107,17 +121,20 @@ parity_tests! {
             set_custom_name(&mut chrome, 0, "abcdefgh");
             zoom_tab(&mut chrome, 0);
 
-            assert_eq!(tab_width(&chrome.tabs().tabs, 0, &chrome.viewer.zoomed), 14);
+            let (_, hits) = draw_tab_bar(&chrome, Rect::new(0, 0, 50, 1));
+            let expected = tab_width(&["gobby:abcdefgh Z".into()], 0);
+            assert_eq!(expected, display_width_u16("gobby:abcdefgh Z") + 4);
+            assert_eq!(hits.tabs[0].1.width, expected);
         }
 
         fn tab_width_uses_display_width_for_cjk_labels() {
             let mut chrome = chrome_with_one_tab();
             set_custom_name(&mut chrome, 0, "提交 herdr 的反馈");
 
-            assert_eq!(
-                tab_width(&chrome.tabs().tabs, 0, &chrome.viewer.zoomed),
-                display_width_u16("提交 herdr 的反馈") + 4
-            );
+            let (_, hits) = draw_tab_bar(&chrome, Rect::new(0, 0, 50, 1));
+            let expected = tab_width(&["gobby:提交 herdr 的反馈".into()], 0);
+            assert_eq!(expected, display_width_u16("gobby:提交 herdr 的反馈") + 4);
+            assert_eq!(hits.tabs[0].1.width, expected);
         }
 
         fn tab_bar_renders_trailing_cjk_character() {
@@ -131,6 +148,57 @@ parity_tests! {
             assert!(row.contains('馈'), "tab row: {row:?}");
         }
     }
+}
+
+#[test]
+fn hidden_tab_with_attention_carries_the_mark() {
+    let mut ws = Workspace::scripted();
+    let first = ws
+        .open_terminal("term-first", "native", "epoch")
+        .expect("first terminal");
+    let second = ws
+        .open_terminal("term-second", "native", "epoch")
+        .expect("second terminal");
+    let mut chrome = Chrome::new(theme());
+    chrome.open_tab(first, "");
+    chrome.open_tab(second, "");
+    chrome.tabs_mut().tabs[0].id = "0:0:1".into();
+    chrome.tabs_mut().tabs[1].id = "0:0:2".into();
+    chrome.activate_tab(0);
+
+    ws.daemon_mut().set_roster(json!({
+        "epoch": "attention-1",
+        "seq": 1,
+        "entries": [{
+            "entry_id": "run:second",
+            "terminal": {"terminal_id": "term-second", "backend": "native"},
+            "attention": {"attention_id": "att-second", "kind": "actionable"},
+        }],
+    }));
+    ws.reconcile_subscribe_first().expect("attention roster");
+
+    let area = Rect::new(0, 0, 80, 1);
+    let mut term = terminal(area.width, area.height);
+    let mut hits = TabBarHits::default();
+    draw(&mut term, |frame| {
+        hits = render_tab_bar(frame, area, &ws, &chrome);
+    });
+    let row = buffer_row_text(&term, area, 0);
+    assert!(row.contains("⍾ 0:0:2"), "tab row: {row:?}");
+    assert!(!row.contains("⍾ 0:0:1"), "tab row: {row:?}");
+    let second_rect = hits.tabs[1].1;
+    assert_eq!(cell(&term, second_rect.x + 1, second_rect.y).symbol(), "⍾");
+    assert_eq!(
+        cell(&term, second_rect.x + 1, second_rect.y).style().fg,
+        Some(palette().yellow)
+    );
+
+    chrome.activate_tab(1);
+    let mut term = terminal(area.width, area.height);
+    draw(&mut term, |frame| {
+        render_tab_bar(frame, area, &ws, &chrome);
+    });
+    assert!(!buffer_row_text(&term, area, 0).contains('⍾'));
 }
 
 // Plan 2.2 tab bar mouse: gclient tests driving `route_mouse` over the drawn

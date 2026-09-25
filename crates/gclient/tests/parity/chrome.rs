@@ -28,6 +28,7 @@ use gobby_client::ui::settings::{
     SettingsRow, SidebarSide, SETTINGS_POPUP_HEIGHT, SETTINGS_POPUP_WIDTH,
 };
 use gobby_client::ui::sidebar::section_body_rect;
+use gobby_client::ui::sidebar_rows::project_label;
 use gobby_client::ui::status::{
     render_copy_feedback, render_status_line, toast_notification_rect, Toast, ToastKind,
 };
@@ -694,9 +695,11 @@ parity_tests! {
             let auto_style = cell(&terminal, auto_rect.x + 1, auto_rect.y).style();
             let custom_style = cell(&terminal, custom_rect.x + 1, custom_rect.y).style();
 
-            assert_eq!(auto_style.fg, Some(palette().overlay0));
-            assert!(auto_style.add_modifier.contains(Modifier::DIM));
-            assert_eq!(custom_style.fg, Some(palette().panel_bg));
+            assert_eq!(auto_style.fg, Some(palette().overlay1));
+            assert_eq!(auto_style.bg, Some(palette().surface0));
+            assert!(!auto_style.add_modifier.contains(Modifier::DIM));
+            assert_eq!(custom_style.fg, Some(palette().text));
+            assert_eq!(custom_style.bg, Some(palette().panel_bg));
             assert!(custom_style.add_modifier.contains(Modifier::BOLD));
         }
 
@@ -715,8 +718,8 @@ parity_tests! {
             let custom_rect = tabs.tab_hit_areas[1];
             let custom_style = cell(&terminal, custom_rect.x + 1, custom_rect.y).style();
 
-            assert_eq!(custom_style.bg, Some(palette().accent));
-            assert_eq!(custom_style.fg, Some(palette().surface_dim));
+            assert_eq!(custom_style.bg, Some(palette().surface_dim));
+            assert_eq!(custom_style.fg, Some(palette().text));
             assert!(custom_style.add_modifier.contains(Modifier::BOLD));
         }
 
@@ -1115,7 +1118,7 @@ switch_project = "ctrl+1..9"
                     let rendered = screen(&terminal);
                     assert!(rendered.contains("LEFT"), "surface: {rendered:?}");
                     assert!(rendered.contains("RIGHT"), "surface: {rendered:?}");
-                    assert!(!rendered.contains("shell-workspace"));
+                    assert!(!rect_rows(&terminal, area).join("\n").contains("shell-workspace"));
                 });
         }
 
@@ -1209,14 +1212,14 @@ switch_project = "ctrl+1..9"
                     // the sidebar edge took overlay0 (#22745), and again when
                     // row 0 drew the menu bar titles and the status hint
                     // moved to the right edge (#22746), and again when the
-                    // sidebar split Agents and bare Terminals (#22748), and
-                    // agent and terminal rows gained their final line content
-                    // and heights (#22749):
+                    // sidebar split Agents and bare Terminals (#22748), agent
+                    // and terminal rows gained their final content (#22749),
+                    // and tabs gained project labels and neutral styling (#22750):
                     // 4.1.3 requires a glyph change to fail here, so this
                     // digest moves only alongside a deliberate render change.
                     assert_eq!(
                         frame_digest(&terminal),
-                        "46d6dde3625085b1663889a3fe934a7e6c08ea6c7d3d05d52154b0c45e43c23d"
+                        "b79e66ed945d172b0d2cc0bdc1639beb63fb1310f75a1b23f27102bfb4f4c02c"
                     );
                 });
         }
@@ -1510,7 +1513,19 @@ fn rendered_hits_match_drawn_cells() {
     for (index, rect) in &view.tab_hit_areas {
         let name = tab_display_name(&chrome.tabs().tabs, *index).expect("tab name");
         let text = hit_text(&terminal, *rect);
-        assert!(text.contains(&name), "tab {index} at {rect:?}: {text:?}");
+        let project_id = ws.project_id().expect("project selected");
+        let project = project_label(&ws, &chrome, project_id).expect("project label");
+        let expected = format!("{project}:{name}");
+        let visible = text
+            .trim()
+            .trim_start_matches('…')
+            .trim_start_matches("⍾ ")
+            .trim_end_matches('…')
+            .trim();
+        assert!(
+            expected.starts_with(visible),
+            "tab {index} at {rect:?}: {text:?}, expected prefix of {expected:?}"
+        );
     }
     let arrows = [
         (view.tab_scroll_left_hit_area, "<"),
@@ -1677,4 +1692,24 @@ fn open_pane_below_stacks_the_new_slot_under_the_focused_one() {
     empty.open_pane_below(beta, "beta");
     assert_eq!(empty.tabs().tabs.len(), 1);
     assert_eq!(empty.focused_pane(), Some(beta));
+}
+
+// The upstream parity case keeps its pinned identity above; this names the
+// new tab treatment directly for the Chrome refresh acceptance check.
+#[test]
+fn tab_bar_cuts_the_active_tab_out_in_panel_bg() {
+    let ws = scripted(&["test"]);
+    let mut chrome = chrome_for(&ws, "test");
+    add_tab(&mut chrome, "logs");
+    chrome.mode = Mode::Terminal;
+
+    let area = Rect::new(0, 0, 80, 20);
+    chrome.compute_view(&ws, area);
+    let terminal = render_full(&ws, &chrome, area);
+    let active = tab_view(&ws, &chrome, area).tab_hit_areas[1];
+    let style = cell(&terminal, active.x + 1, active.y).style();
+
+    assert_eq!(style.fg, Some(palette().text));
+    assert_eq!(style.bg, Some(palette().panel_bg));
+    assert!(style.add_modifier.contains(Modifier::BOLD));
 }

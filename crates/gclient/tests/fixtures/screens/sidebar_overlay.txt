@@ -2,8 +2,8 @@
 # 120x40, dark theme, colours normalised to theme::Palette roles
 00 | Gobby  File  Edit  View  Window  Agent  Help                                                                           |
 00 : panel_bg/accent+b*120
-01 | Machines                        │                                                                alpha     second    + |
-01 : -/surface0*1 subtext0/surface0+b*8 -/surface0*24 accent/panel_bg*1 -/panel_bg*63 panel_bg/accent+b*9 -/panel_bg*1 overlay1/surface0*10 overlay1/panel_bg*3
+01 | Machines                        │                                                  alpha:alpha     ⍾ alpha:second    + |
+01 : -/surface0*1 subtext0/surface0+b*8 -/surface0*24 accent/panel_bg*1 -/surface0*49 text/panel_bg+b*15 -/surface0*1 overlay1/surface0*1 yellow/surface0*1 overlay1/surface0*19
 02 | ⍾ scripted · local              │─────────────────────────┐┌ ▸ term-beta ─────────────────────────────────────────────┐|
 02 : -/surface_dim*1 yellow/surface_dim*1 overlay0/surface_dim+d*1 text/surface_dim+b*8 overlay0/surface_dim+d*8 -/surface_dim*14 accent/panel_bg*1 overlay0/panel_bg*26 accent/panel_bg*1 accent/panel_bg+b*13 accent/panel_bg*46
 03 |                                 │                         ││                                                          │|

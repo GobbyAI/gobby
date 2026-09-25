@@ -1,18 +1,21 @@
 // upstream: herdr v0.8.0 src/ui/tabs.rs
 //! Tab bar with scroll arrows, hit areas, and the new-tab button.
 
+use crate::app::viewer_state::LOCAL_TAB_PREFIX;
 use crate::app::MouseGesture;
 use crate::ui::chrome::{Chrome, Tab, WorkspaceView};
 use crate::ui::settings::SidebarSide;
+use crate::ui::sidebar_rows::project_label;
 use crate::ui::text::display_width_u16;
 use crate::ui::widgets::panel_contrast_fg;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
+use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
-use std::collections::BTreeSet;
+use std::collections::HashSet;
 
-const MIN_TAB_WIDTH: u16 = 8;
+const MIN_TAB_WIDTH: u16 = 12;
 const NEW_TAB_WIDTH: u16 = 3;
 const TAB_SCROLL_BUTTON_WIDTH: u16 = 3;
 
@@ -38,8 +41,11 @@ fn tab_is_auto_named(tab: &Tab) -> bool {
 }
 
 /// herdr `tab_width`: the chrome label plus padding, never under `MIN_TAB_WIDTH`.
-pub fn tab_width(tabs: &[Tab], tab_idx: usize, zoomed: &BTreeSet<String>) -> u16 {
-    display_width_u16(&tab_chrome_label(tabs, tab_idx, zoomed))
+pub fn tab_width(labels: &[String], tab_idx: usize) -> u16 {
+    labels
+        .get(tab_idx)
+        .map(|label| display_width_u16(label))
+        .unwrap_or(0)
         .saturating_add(4)
         .max(MIN_TAB_WIDTH)
 }
@@ -56,25 +62,39 @@ pub fn tab_display_name(tabs: &[Tab], tab_idx: usize) -> Option<String> {
     })
 }
 
-fn tab_chrome_label(tabs: &[Tab], tab_idx: usize, zoomed: &BTreeSet<String>) -> String {
-    let name = tab_display_name(tabs, tab_idx).unwrap_or_else(|| (tab_idx + 1).to_string());
-    if tabs
-        .get(tab_idx)
-        .is_some_and(|tab| zoomed.contains(&tab.id))
-    {
-        format!("{name} Z")
+fn tab_chrome_label<W: WorkspaceView>(
+    ws: &W,
+    chrome: &Chrome,
+    tabs: &[Tab],
+    tab_idx: usize,
+) -> String {
+    let Some(tab) = tabs.get(tab_idx) else {
+        return String::new();
+    };
+    let name = if tab_is_auto_named(tab) {
+        if tab.id.starts_with(LOCAL_TAB_PREFIX) {
+            (tab_idx + 1).to_string()
+        } else {
+            tab.id.clone()
+        }
     } else {
-        name
+        tab.title.trim().to_string()
+    };
+    let project = ws
+        .focused_project()
+        .map(|id| project_label(ws, chrome, id).unwrap_or_else(|| id.to_string()));
+    let mut label = match project {
+        Some(project) => format!("{project}:{name}"),
+        None => name,
+    };
+    if chrome.viewer.zoomed.contains(&tab.id) {
+        label.push_str(" Z");
     }
+    label
 }
 
-fn layout_tab_hit_areas(
-    tabs: &[Tab],
-    zoomed: &BTreeSet<String>,
-    area: Rect,
-    scroll: usize,
-) -> Vec<Rect> {
-    let mut rects = vec![Rect::default(); tabs.len()];
+fn layout_tab_hit_areas(labels: &[String], area: Rect, scroll: usize) -> Vec<Rect> {
+    let mut rects = vec![Rect::default(); labels.len()];
     if area.width == 0 || area.height == 0 {
         return rects;
     }
@@ -85,7 +105,7 @@ fn layout_tab_hit_areas(
         if x >= right {
             break;
         }
-        let desired = tab_width(tabs, idx, zoomed);
+        let desired = tab_width(labels, idx);
         let remaining = right.saturating_sub(x);
         let width = desired.min(remaining).max(1);
         *rect = Rect::new(x, area.y, width, 1);
@@ -94,18 +114,13 @@ fn layout_tab_hit_areas(
     rects
 }
 
-fn centered_tab_scroll(
-    tabs: &[Tab],
-    zoomed: &BTreeSet<String>,
-    active_tab: usize,
-    area: Rect,
-) -> usize {
+fn centered_tab_scroll(labels: &[String], active_tab: usize, area: Rect) -> usize {
     let mut best_scroll = active_tab;
     let mut best_distance = u16::MAX;
     let viewport_center = area.x.saturating_mul(2).saturating_add(area.width);
 
     for scroll in 0..=active_tab {
-        let rects = layout_tab_hit_areas(tabs, zoomed, area, scroll);
+        let rects = layout_tab_hit_areas(labels, area, scroll);
         let Some(active_rect) = rects.get(active_tab).copied() else {
             continue;
         };
@@ -136,10 +151,10 @@ fn trailing_tab_controls_x(tab_hit_areas: &[Rect], fallback_x: u16) -> u16 {
         .unwrap_or(fallback_x)
 }
 
-fn max_tab_scroll(tabs: &[Tab], zoomed: &BTreeSet<String>, area: Rect) -> usize {
-    (0..tabs.len())
+fn max_tab_scroll(labels: &[String], area: Rect) -> usize {
+    (0..labels.len())
         .find(|&scroll| {
-            layout_tab_hit_areas(tabs, zoomed, area, scroll)
+            layout_tab_hit_areas(labels, area, scroll)
                 .last()
                 .is_some_and(|rect| rect.width > 0)
         })
@@ -147,8 +162,7 @@ fn max_tab_scroll(tabs: &[Tab], zoomed: &BTreeSet<String>, area: Rect) -> usize 
 }
 
 fn compute_tab_bar_view(
-    tabs: &[Tab],
-    zoomed: &BTreeSet<String>,
+    labels: &[String],
     active_tab: usize,
     area: Rect,
     current_scroll: usize,
@@ -165,7 +179,7 @@ fn compute_tab_bar_view(
         area.width.saturating_sub(NEW_TAB_WIDTH),
         area.height,
     );
-    let all_tabs = layout_tab_hit_areas(tabs, zoomed, all_tabs_area, 0);
+    let all_tabs = layout_tab_hit_areas(labels, all_tabs_area, 0);
     let overflow = all_tabs.iter().any(|rect| rect.width == 0);
     if !overflow {
         let new_tab_x = trailing_tab_controls_x(&all_tabs, area.x);
@@ -195,13 +209,13 @@ fn compute_tab_bar_view(
         area.height,
     );
 
-    let max_scroll = max_tab_scroll(tabs, zoomed, tab_area);
+    let max_scroll = max_tab_scroll(labels, tab_area);
     let scroll = if follow_active {
-        centered_tab_scroll(tabs, zoomed, active_tab, tab_area).min(max_scroll)
+        centered_tab_scroll(labels, active_tab, tab_area).min(max_scroll)
     } else {
         current_scroll.min(max_scroll)
     };
-    let tab_hit_areas = layout_tab_hit_areas(tabs, zoomed, tab_area, scroll);
+    let tab_hit_areas = layout_tab_hit_areas(labels, tab_area, scroll);
     let trailing_x = trailing_tab_controls_x(&tab_hit_areas, tab_area_x).min(tab_area_right);
     let right_hit_area = Rect::new(
         trailing_x,
@@ -249,13 +263,35 @@ fn nonempty(rect: Rect) -> Option<Rect> {
 pub fn render_tab_bar<W: WorkspaceView>(
     frame: &mut Frame,
     area: Rect,
-    _ws: &W,
+    ws: &W,
     chrome: &Chrome,
 ) -> TabBarHits {
     if area.width == 0 || area.height == 0 {
         return TabBarHits::default();
     }
     let tabs = &chrome.tabs().tabs;
+    let attention_entries: HashSet<String> = ws.attention_entry_ids().into_iter().collect();
+    let attention_panes: Vec<_> = ws
+        .sidebar()
+        .agents
+        .iter()
+        .filter(|agent| attention_entries.contains(&agent.entry_id))
+        .filter_map(|agent| ws.pane_for_terminal(&agent.terminal_id))
+        .collect();
+    let labels: Vec<String> = (0..tabs.len())
+        .map(|idx| {
+            let label = tab_chrome_label(ws, chrome, tabs, idx);
+            if idx != chrome.active_index()
+                && attention_panes
+                    .iter()
+                    .any(|pane| tabs[idx].slot_for(*pane).is_some())
+            {
+                format!("⍾ {label}")
+            } else {
+                label
+            }
+        })
+        .collect();
     let p = &chrome.palette;
     // An overlay covers one end of the bar, so the tabs fit, and scroll when
     // they do not, in the columns beside it.
@@ -265,8 +301,7 @@ pub fn render_tab_bar<W: WorkspaceView>(
         area
     };
     let mut view = compute_tab_bar_view(
-        tabs,
-        &chrome.viewer.zoomed,
+        &labels,
         chrome.active_index(),
         beside,
         chrome.tab_scroll,
@@ -287,7 +322,7 @@ pub fn render_tab_bar<W: WorkspaceView>(
     }
 
     frame.render_widget(
-        Paragraph::new(" ".repeat(area.width as usize)).style(Style::default().bg(p.panel_bg)),
+        Paragraph::new(" ".repeat(area.width as usize)).style(Style::default().bg(p.surface0)),
         area,
     );
 
@@ -326,7 +361,7 @@ pub fn render_tab_bar<W: WorkspaceView>(
         }) => Some(index),
         _ => None,
     };
-    for (idx, tab) in tabs.iter().enumerate() {
+    for (idx, name) in labels.iter().enumerate() {
         let Some(rect) = view.tab_hit_areas.get(idx).copied() else {
             break;
         };
@@ -335,17 +370,10 @@ pub fn render_tab_bar<W: WorkspaceView>(
         }
         let active = idx == chrome.active_index();
         let style = if active {
-            let base = Style::default().fg(panel_contrast_fg(p)).bg(p.accent);
-            if tab_is_auto_named(tab) {
-                base
-            } else {
-                base.add_modifier(Modifier::BOLD)
-            }
-        } else if tab_is_auto_named(tab) {
             Style::default()
-                .fg(p.overlay0)
-                .bg(p.surface0)
-                .add_modifier(Modifier::DIM)
+                .fg(p.text)
+                .bg(panel_contrast_fg(p))
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(p.overlay1).bg(p.surface0)
         };
@@ -357,14 +385,22 @@ pub fn render_tab_bar<W: WorkspaceView>(
             style
         };
         let width = rect.width as usize;
-        let name = tab_chrome_label(tabs, idx, &chrome.viewer.zoomed);
         let text = format!(" {:width$}", name, width = width.saturating_sub(1));
-        frame.render_widget(Paragraph::new(text).style(style), rect);
+        let line = if let Some(rest) = text.strip_prefix(" ⍾") {
+            Line::from(vec![
+                Span::raw(" "),
+                Span::styled("⍾", Style::default().fg(p.yellow)),
+                Span::raw(rest.to_string()),
+            ])
+        } else {
+            Line::raw(text)
+        };
+        frame.render_widget(Paragraph::new(line).style(style), rect);
     }
 
     if view.new_tab_hit_area.width > 0 {
         frame.render_widget(
-            Paragraph::new(" + ").style(Style::default().fg(p.overlay1)),
+            Paragraph::new(" + ").style(Style::default().fg(p.overlay1).bg(p.surface0)),
             view.new_tab_hit_area,
         );
     }
@@ -445,13 +481,14 @@ mod tests {
 
     #[test]
     fn fitting_tabs_expose_every_tab_and_the_new_tab_button() {
+        assert!(MIN_TAB_WIDTH > display_width_u16("gobby:0:0:1"));
         let chrome = chrome_with_tabs(&["alpha", "second", ""]);
         let (hits, text) = draw(&chrome, 80);
         assert_eq!(hits.tabs.len(), 3);
-        assert_eq!(hits.tabs[0], (0, Rect::new(0, 0, 9, 1)));
-        assert_eq!(hits.tabs[1].1.x, 10);
+        assert_eq!(hits.tabs[0], (0, Rect::new(0, 0, 12, 1)));
+        assert_eq!(hits.tabs[1].1.x, 13);
         assert!(hits.scroll_left.is_none() && hits.scroll_right.is_none());
-        assert_eq!(hits.new_tab, Some(Rect::new(29, 0, 3, 1)));
+        assert_eq!(hits.new_tab, Some(Rect::new(38, 0, 3, 1)));
         assert!(text.contains(" alpha") && text.contains(" second") && text.contains(" 3 "));
         assert!(text.contains(" + "));
     }
@@ -464,18 +501,18 @@ mod tests {
         chrome.sidebar.overlay = true;
         chrome.view.sidebar_rect = Rect::new(0, 0, 34, 1);
         let (hits, text) = draw(&chrome, 80);
-        assert_eq!(hits.tabs[0], (0, Rect::new(48, 0, 9, 1)));
+        assert_eq!(hits.tabs[0], (0, Rect::new(39, 0, 12, 1)));
         assert_eq!(hits.new_tab, Some(Rect::new(77, 0, 3, 1)));
         assert!(
-            text.starts_with(&" ".repeat(48)) && text.ends_with(" + "),
+            text.starts_with(&" ".repeat(39)) && text.ends_with(" + "),
             "{text}"
         );
 
         chrome.sidebar.side = SidebarSide::Right;
         chrome.view.sidebar_rect = Rect::new(46, 0, 34, 1);
         let (hits, _) = draw(&chrome, 80);
-        assert_eq!(hits.tabs[0], (0, Rect::new(0, 0, 9, 1)));
-        assert_eq!(hits.new_tab, Some(Rect::new(29, 0, 3, 1)));
+        assert_eq!(hits.tabs[0], (0, Rect::new(0, 0, 12, 1)));
+        assert_eq!(hits.new_tab, Some(Rect::new(38, 0, 3, 1)));
     }
 
     #[test]
