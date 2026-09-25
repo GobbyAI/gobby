@@ -4075,11 +4075,13 @@ class TestShutdownLoop:
             [stack.enter_context(p) for p in patches]
             runner = self._minimal_runner(mock_config)
             runtime_started = asyncio.Event()
+            prewarm = AsyncMock()
 
             server = MagicMock()
             server.started = False
 
             async def serve() -> None:
+                prewarm.assert_awaited_once_with()
                 assert runner.http_server.services.web_chat_runtime_manager.start.await_count == 0
                 server.started = True
                 await runtime_started.wait()
@@ -4099,6 +4101,12 @@ class TestShutdownLoop:
 
             stack.enter_context(patch("uvicorn.Config"))
             stack.enter_context(patch("uvicorn.Server", return_value=server))
+            stack.enter_context(
+                patch(
+                    "gobby.tasks.transcript_evidence_pool.prewarm_transcript_evidence_pool",
+                    new=prewarm,
+                )
+            )
             stack.enter_context(patch("gobby.runner_maintenance.setup_signal_handlers"))
             stack.enter_context(patch("gobby.runner_lifecycle._init_subsystems", new=AsyncMock()))
             stack.enter_context(patch("gobby.runner_lifecycle._start_periodic_tasks"))
@@ -4115,6 +4123,7 @@ class TestShutdownLoop:
             )
 
             runtime_manager.start.assert_awaited_once_with(background=True)
+            prewarm.assert_awaited_once_with()
 
     @pytest.mark.asyncio
     async def test_run_waits_for_shutdown_signal(self, mock_config):

@@ -273,6 +273,10 @@ def create_base_patches(
             new=AsyncMock(),
         ),
         patch(
+            "gobby.tasks.transcript_evidence_pool.prewarm_transcript_evidence_pool",
+            new=AsyncMock(),
+        ),
+        patch(
             "gobby.runner_init.orchestration.AgentLifecycleMonitor", return_value=mock_agent_monitor
         ),
     ]
