@@ -9,12 +9,12 @@ Claims are marked VERIFIED (checked against the DB, code or messages) or INFERRE
 has. Leave `require-epic-tree-close` disabled for now.**
 
 `/goal` adds nothing that the claimed-task stop gate does not already do durably.
-It is also the direct cause of all three Lane 1 stalls today. The lane-epic rule is
+It is also the direct cause of all four Lane 1 stalls today. The lane-epic rule is
 workable, but it changes who picks a lane's next task, which conflicts with the
 PD-ordered queue. Treat it as a separate decision only if routing between leaves
 turns out to be slow.
 
-## The three Lane 1 incidents (1-2 VERIFIED in inter_session_messages; 3 reported by the PD)
+## The four Lane 1 incidents (1-2 VERIFIED in inter_session_messages; 3-4 reported by the PD)
 
 Lane 1 is gobby#14544 (Codex) on epic #22773 (gclient chrome).
 
@@ -32,8 +32,18 @@ Lane 1 is gobby#14544 (Codex) on epic #22773 (gclient chrome).
    blocked goal. The Assistant #14069 resumed it at the Lane Manager's request.
    (Reported by the PD #14543.)
 
-So `/goal` breaks on all three events a lane routinely meets: restart,
-compaction, and a coordination HOLD.
+4. **Right after the PD's validation GO.** Lane 1 stalled again. The Lane Manager
+   and the Assistant resumed it, and the focused test then began. (Reported by
+   the PD #14543.)
+
+So `/goal` breaks on the events a lane routinely meets: restart, compaction, a
+coordination HOLD, and the GO that ends one.
+
+Why the HOLD and GO stalls happen (VERIFIED from strings in the codex-cli 0.156.1
+binary): the model has an `update_goal` tool that "can only mark the existing goal
+complete, blocked, or paused". When the model judges a HOLD or wait to be a
+blocker, the pane shows `Goal stalled (/goal resume)`, and only a user
+`/goal resume` restarts it.
 
 ### Separate issue: the Lane Manager's round missed incident 3 (not a `/goal` defect)
 
@@ -53,7 +63,7 @@ goal-related Gobby code is the unrelated `goal_file` variable in
   fire, so the lane stalls silently.
 
 The goal pauses on exactly the events Gobby is built to survive: restarts,
-compactions and coordination HOLDs.
+compactions, coordination HOLDs and the GO that ends them.
 
 ## What already keeps a lane on task (VERIFIED)
 
@@ -146,5 +156,23 @@ Lane Manager status waits. `require-epic-tree-close` stays disabled.
 Implementation, owned by the PD with a small change:
 - Stop sending `/goal` at lane kickoff. No role file references it today, so it
   comes from the kickoff instructions or a manual start.
-- Clear any active goals on current lanes.
+- Clear any active goals on current lanes with `/goal clear` (see below).
+
+### Supported exit for a lane that already has a goal (VERIFIED, codex-cli 0.156.1)
+
+- Command: `/goal clear`. The binary's usage line is
+  `Usage: /goal [<objective>|clear|edit|pause|resume]`; on success Codex prints
+  `Goal cleared`. There is no `/goal stop`.
+- `/goal pause` is not an exit. It leaves the goal in `Goal paused (/goal resume)`,
+  which is the same stalled state as incidents 1-2.
+- Scope: `/goal clear` removes only Codex's own thread goal, which Codex keeps in
+  its state DB. The Gobby claim (for example #22755), `claimed_tasks` and the
+  staged or consumed handoffs live in Gobby's DB and are untouched. After the
+  clear, `require-task-close` and the Lane Manager's status waits keep the lane
+  on task.
+- Procedure: type it in the lane's Codex composer while the lane is idle at the
+  prompt. INFERRED: typed mid-turn, it may be queued as input. This is a
+  keystroke into another session, so under `_common.md` it is done by Josh or by
+  the Assistant on Josh's instruction. Confirm the pane shows `Goal cleared` and
+  that `get_session` still lists the claimed task. Do not set a new `/goal`.
 - Add one line to `_common.md` or the lane role template: lanes do not use `/goal`.
