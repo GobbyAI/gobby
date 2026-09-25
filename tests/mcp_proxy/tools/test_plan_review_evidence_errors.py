@@ -27,6 +27,63 @@ def _registry(service: MagicMock) -> InternalToolRegistry:
     return registry
 
 
+def test_static_review_mutations_forward_ambient_caller() -> None:
+    service = MagicMock()
+    with patch(
+        "gobby.mcp_proxy.tools.plans.review_evidence.get_current_session_id",
+        return_value="review-seat-caller",
+    ):
+        registry = _registry(service)
+        calls: tuple[tuple[str, dict[str, object], str], ...] = (
+            (
+                "bind_static_review_seats",
+                {
+                    "evidence_id": "evidence-1",
+                    "writer_session_id": "writer-1",
+                    "coordinator_session_id": "coordinator-1",
+                },
+                "bind_static_review_seats",
+            ),
+            (
+                "append_plan_changelog_round",
+                {"evidence_id": "evidence-1", "prose": "Round", "round_result": {}},
+                "append_plan_changelog_round",
+            ),
+            (
+                "expire_plan_review_evidence",
+                {"evidence_id": "evidence-1"},
+                "expire_plan_review_evidence",
+            ),
+            (
+                "finalize_plan_review_evidence",
+                {"evidence_id": "evidence-1", "round_result": {}},
+                "finalize_plan_review_evidence",
+            ),
+            (
+                "apply_plan_review_manifest",
+                {"evidence_id": "evidence-1", "plan_path": "plan.md", "round_result": {}},
+                "apply_plan_review_manifest",
+            ),
+            (
+                "apply_plan_review_repairs",
+                {"evidence_id": "evidence-1", "accepted_finding_ids": []},
+                "apply_plan_review_repairs",
+            ),
+            (
+                "checkpoint_plan_review_lesson_mint",
+                {"evidence_id": "evidence-1", "status": "none", "detail": {}},
+                "checkpoint_plan_review_lesson_mint",
+            ),
+        )
+        for tool_name, arguments, service_method in calls:
+            tool = registry.get_tool(tool_name)
+            assert tool is not None
+            tool(**arguments)
+            assert getattr(service, service_method).call_args.kwargs["caller_session_id"] == (
+                "review-seat-caller"
+            )
+
+
 @pytest.mark.parametrize(
     ("error", "expected"),
     [
@@ -173,4 +230,6 @@ def test_apply_plan_review_repairs_error_envelope() -> None:
         ],
         "retryable": False,
     }
-    service.apply_plan_review_repairs.assert_called_once_with("evidence-1", ["F1"])
+    service.apply_plan_review_repairs.assert_called_once_with(
+        "evidence-1", ["F1"], caller_session_id=None
+    )

@@ -106,6 +106,8 @@ class PlanReviewEvidence:
     manifest_result: dict[str, object] | None
     manifest_applied_at: datetime | None
     created_at: datetime
+    static_writer_session_id: str | None = None
+    static_coordinator_session_id: str | None = None
 
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> PlanReviewEvidence:
@@ -156,11 +158,17 @@ class PlanReviewEvidence:
             manifest_result=_optional_json_object(row["manifest_result"]),
             manifest_applied_at=cast(datetime | None, row["manifest_applied_at"]),
             created_at=cast(datetime, row["created_at"]),
+            static_writer_session_id=_optional_string(row["static_writer_session_id"]),
+            static_coordinator_session_id=_optional_string(row["static_coordinator_session_id"]),
         )
 
     @property
     def is_interactive(self) -> bool:
         return self.session_id is not None
+
+    @property
+    def is_static_bound(self) -> bool:
+        return self.static_writer_session_id is not None
 
     @property
     def is_live(self) -> bool:

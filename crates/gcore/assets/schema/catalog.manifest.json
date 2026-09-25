@@ -3045,6 +3045,14 @@
       "definition": "text|text|YES||NEVER"
     },
     {
+      "name": "plan_review_evidence.static_coordinator_session_id",
+      "definition": "uuid|uuid|YES||NEVER"
+    },
+    {
+      "name": "plan_review_evidence.static_writer_session_id",
+      "definition": "uuid|uuid|YES||NEVER"
+    },
+    {
       "name": "plan_review_evidence.task_id",
       "definition": "uuid|uuid|YES||NEVER"
     },
@@ -7116,7 +7124,7 @@
     },
     {
       "name": "plan_review_evidence.plan_review_evidence_bound_lease_cleared",
-      "definition": "CHECK (dispatch_run_id IS NULL OR lease_expires_at IS NULL)"
+      "definition": "CHECK (dispatch_run_id IS NULL AND static_writer_session_id IS NULL OR lease_expires_at IS NULL)"
     },
     {
       "name": "plan_review_evidence.plan_review_evidence_dispatch_run_id_fkey",
@@ -7153,6 +7161,10 @@
     {
       "name": "plan_review_evidence.plan_review_evidence_session_id_fkey",
       "definition": "FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE DEFERRABLE"
+    },
+    {
+      "name": "plan_review_evidence.plan_review_evidence_static_binding",
+      "definition": "CHECK (static_writer_session_id IS NULL AND static_coordinator_session_id IS NULL OR static_writer_session_id IS NOT NULL AND static_coordinator_session_id IS NOT NULL AND session_id IS NOT NULL AND dispatch_run_id IS NULL)"
     },
     {
       "name": "plan_review_evidence.plan_review_evidence_task_id_fkey",
