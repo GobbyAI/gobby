@@ -56,13 +56,43 @@ def test_agent_run_listing_projects_off_event_loop(
         assert_off_loop()
         return {"run_id": "run-1"}
 
-    monkeypatch.setattr(LocalAgentRunManager, "list_by_status", list_runs)
+    monkeypatch.setattr(LocalAgentRunManager, "list_by_status_summary", list_runs)
     monkeypatch.setattr(LocalAgentRunManager, "list_active_global", list_runs)
 
     response = client.get(route)
 
     assert response.status_code == 200
     assert response.json()["count"] == 1
+
+
+def test_agent_run_list_is_bounded_and_detail_keeps_large_fields(
+    client: TestClient,
+    running_agent_run: tuple[LocalAgentRunManager, AgentRun],
+) -> None:
+    manager, run = running_agent_run
+    manager.merge_resume_metadata(
+        run.id,
+        {
+            "summary_markdown": "m" * 200_000,
+            "sandbox": {"backend": "srt", "enforced": True},
+        },
+    )
+    manager.complete(run.id, result="r" * 200_000)
+
+    response = client.get("/api/agents/runs?limit=50", headers={"Accept-Encoding": "gzip"})
+    assert response.status_code == 200
+    assert "content-encoding" not in response.headers
+    assert len(response.content) < 10_000
+    listed = next(row for row in response.json()["runs"] if row["run_id"] == run.id)
+    assert listed["sandbox"]["violation_count"] == 0
+    for field in ("prompt", "result", "summary_markdown", "resume_metadata_json"):
+        assert field not in listed
+
+    detail = client.get(f"/api/agents/runs/{run.id}")
+    assert detail.status_code == 200
+    full = detail.json()["run"]
+    assert full["result"] == "r" * 200_000
+    assert full["resume_metadata_json"]["summary_markdown"] == "m" * 200_000
 
 
 @pytest.fixture(autouse=True)

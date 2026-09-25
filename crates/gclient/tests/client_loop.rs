@@ -8819,7 +8819,7 @@ async fn a_named_session_event_refetches_only_its_project() {
             .count()
     };
     let sessions_of = |project: &str| format!("/api/sessions?project_id={project}");
-    let runs_of = |project: &str| format!("/api/agents/runs?project_id={project}");
+    let runs_of = |project: &str| format!("/api/agents/runs?project_id={project}&limit=50");
     assert_eq!(
         (gets(&sessions_of("project-1")), gets(&runs_of("project-1"))),
         (1, 1),

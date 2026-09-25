@@ -8,7 +8,7 @@ from typing import Protocol
 from gobby.storage.hub.protocol import HubDatabase
 
 from ._constants import ACTIVE_AGENT_RUN_STATUS_SQL
-from ._models import AgentRun
+from ._models import AgentRun, AgentRunListRow
 
 
 class _AgentRunSelectorHost(Protocol):
@@ -21,6 +21,7 @@ class _AgentRunSelectorHost(Protocol):
         *,
         limit: bool = False,
         offset: bool = False,
+        list_projection: bool = False,
     ) -> str: ...
 
 
@@ -32,12 +33,20 @@ class _AgentRunSelectorMixin:
         *,
         limit: bool = False,
         offset: bool = False,
+        list_projection: bool = False,
     ) -> str:
         """Build an agent-run SELECT that overlays live session stats.
 
         ``where_clause`` and ``order_by`` must be trusted static SQL fragments
         assembled by this module's query helpers. User values belong in params.
         """
+        detail_columns = """ar.prompt,
+                ar.result,
+                ar.error,
+                ar.sdk_session_id,
+                ar.continuation_prompt,
+                ar.resume_metadata_json,"""
+        list_columns = "ar.resume_metadata_json -> 'sandbox' AS sandbox_metadata,"
         sql = f"""
             SELECT
                 ar.id,
@@ -63,9 +72,7 @@ class _AgentRunSelectorMixin:
                 (COALESCE(coordination.parent_wait, FALSE)
                     OR COALESCE(agent_subscription.parent_wait, FALSE)) AS parent_wait,
                 COALESCE(agent_subscription.active, FALSE) AS agent_wait,
-                ar.prompt,
-                ar.result,
-                ar.error,
+                {list_columns if list_projection else detail_columns}
                 CASE
                     WHEN ar.status IN ({ACTIVE_AGENT_RUN_STATUS_SQL}) THEN COALESCE(
                         child_s.tool_call_count,
@@ -92,8 +99,6 @@ class _AgentRunSelectorMixin:
                 ar.completed_at,
                 ar.created_at,
                 ar.updated_at,
-                ar.sdk_session_id,
-                ar.continuation_prompt,
                 ar.task_id,
                 ar.pid,
                 ar.terminal_id,
@@ -101,7 +106,6 @@ class _AgentRunSelectorMixin:
                 ar.clone_id,
                 ar.timeout_seconds,
                 ar.terminal_reason,
-                ar.resume_metadata_json,
                 ar.capture_id,
                 ar.capture_revision,
                 ar.pending_terminal_action,
@@ -179,3 +183,22 @@ class _AgentRunSelectorMixin:
             query_params,
         )
         return [AgentRun.from_row(row) for row in rows]
+
+    def _fetch_list_rows_with_live_stats(
+        self: _AgentRunSelectorHost,
+        where_clause: str,
+        params: Sequence[object],
+        *,
+        limit: int,
+    ) -> list[AgentRunListRow]:
+        """Fetch bounded list rows without loading detail blobs or full resume metadata."""
+        rows = self.db.fetchall(
+            self._select_runs_with_live_stats_sql(
+                where_clause,
+                "ORDER BY ar.created_at DESC",
+                limit=True,
+                list_projection=True,
+            ),
+            (*params, limit),
+        )
+        return [AgentRunListRow.from_row(row) for row in rows]

@@ -328,9 +328,15 @@ def record_sandbox_retention(
     if not retention:
         return
     from gobby.storage.agents import LocalAgentRunManager
+    from gobby.storage.agents._sandbox_records import sandbox_record
 
     try:
-        LocalAgentRunManager(db).merge_sandbox_metadata(run_id, retention)
+        patch: dict[str, str | int | bool] = dict(retention)
+        sandbox = sandbox_record({"sandbox": dict(retention)}, include_events=False)
+        if RETAINED_VIOLATION_PATH_KEY in retention and sandbox is not None:
+            patch["violation_count"] = sandbox["violation_count"]
+            patch["violation_count_truncated"] = bool(sandbox.get("violation_count_truncated"))
+        LocalAgentRunManager(db).merge_sandbox_metadata(run_id, patch)
     except Exception:
         logger.warning(
             "Failed to record retained sandbox diagnostics for run %s",

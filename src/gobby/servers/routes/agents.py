@@ -734,7 +734,9 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
 
             def load_runs() -> tuple[list[dict[str, Any]], list[str]]:
                 manager = LocalAgentRunManager(server.services.database)
-                records = manager.list_by_status(status=status, limit=limit, project_id=project_id)
+                records = manager.list_by_status_summary(
+                    status=status, limit=limit, project_id=project_id
+                )
                 projections = [run.to_list_dict() for run in records]
                 session_ids = [run.child_session_id for run in records if run.child_session_id]
                 return projections, session_ids

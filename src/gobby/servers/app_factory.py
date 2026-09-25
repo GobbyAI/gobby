@@ -34,7 +34,6 @@ from gobby.servers._app_ui import (
     _requested_websocket_subprotocols,
 )
 from gobby.servers.exception_handlers import register_exception_handlers
-from gobby.servers.middleware.gzip import EventLoopGZipMiddleware
 from gobby.utils.version import get_version
 
 if TYPE_CHECKING:
@@ -111,11 +110,6 @@ def create_app(server: "HTTPServer") -> FastAPI:
     origin_regex_parts = [fnmatch.translate(o) for o in cors_origins if "*" in o]
     exact_origins = [o for o in cors_origins if "*" not in o]
     origin_regex = "|".join(origin_regex_parts) if origin_regex_parts else None
-
-    # Innermost middleware: large JSON payloads (graph exports compress
-    # ~10x) are gzipped right after the route; SSE responses are excluded by
-    # starlette via DEFAULT_EXCLUDED_CONTENT_TYPES.
-    app.add_middleware(EventLoopGZipMiddleware, minimum_size=1024)
 
     from gobby.telemetry.middleware import TelemetryMiddleware
 

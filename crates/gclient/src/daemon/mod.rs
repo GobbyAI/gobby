@@ -780,9 +780,10 @@ impl Daemon for ScriptedDaemon {
     }
 
     async fn agent_runs(&self, project: &str) -> Result<Vec<RunRow>, DaemonError> {
-        self.scripted_rows(format!("/api/agents/runs?project_id={project}"), |rows| {
-            rows.runs.get(project).cloned().unwrap_or_default()
-        })
+        self.scripted_rows(
+            format!("/api/agents/runs?project_id={project}&limit=50"),
+            |rows| rows.runs.get(project).cloned().unwrap_or_default(),
+        )
     }
 
     async fn respond(

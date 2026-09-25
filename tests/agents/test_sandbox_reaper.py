@@ -507,18 +507,22 @@ async def test_short_tmp_registration_rejects_escapes(
 
 def test_record_sandbox_retention_patches_the_run_sandbox_record(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
-    calls: list[tuple[str, dict[str, str]]] = []
+    calls: list[tuple[str, dict[str, str | int | bool]]] = []
 
     class _Manager:
         def __init__(self, db: object) -> None:
             self.db = db
 
-        def merge_sandbox_metadata(self, run_id: str, updates: dict[str, str]) -> None:
+        def merge_sandbox_metadata(self, run_id: str, updates: dict[str, str | int | bool]) -> None:
             calls.append((run_id, updates))
 
     monkeypatch.setattr("gobby.storage.agents.LocalAgentRunManager", _Manager)
-    retained = Path("/gobby-home/logs/sandbox-violations/run.jsonl")
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
+    retained = tmp_path / "logs" / "sandbox-violations" / "run.jsonl"
+    retained.parent.mkdir(parents=True)
+    retained.write_text('{"event":1}\n{"event":2}\n', encoding="utf-8")
     result = SandboxReapResult(retained_violation_log=retained)
 
     sandbox_reaper.record_sandbox_retention(cast(Any, object()), "run", result.retention_metadata())
@@ -526,7 +530,16 @@ def test_record_sandbox_retention_patches_the_run_sandbox_record(
         cast(Any, object()), "clean-run", SandboxReapResult().retention_metadata()
     )
 
-    assert calls == [("run", {"retained_violation_path": str(retained)})]
+    assert calls == [
+        (
+            "run",
+            {
+                "retained_violation_path": str(retained),
+                "violation_count": 2,
+                "violation_count_truncated": False,
+            },
+        )
+    ]
 
 
 def test_record_sandbox_retention_survives_a_storage_failure(
