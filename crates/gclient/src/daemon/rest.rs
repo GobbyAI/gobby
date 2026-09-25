@@ -135,7 +135,7 @@ impl RestClient {
         {
             let mut query = url.query_pairs_mut();
             query.append_pair("project_id", project);
-            query.append_pair("limit", "200");
+            query.append_pair("limit", "50");
         }
         let envelope: Runs = self.json(Method::GET, url, None).await?;
         Ok(envelope.runs)

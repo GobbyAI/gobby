@@ -20,6 +20,7 @@ from gobby.utils.machine_id import get_machine_id
 from ._constants import TERMINAL_AGENT_RUN_STATUSES, AgentRunTerminalReason, logger
 from ._helpers import _positive_rowcount
 from ._models import AgentRun
+from ._sandbox_records import sandbox_record
 
 
 class TerminalTransitionNestedError(RuntimeError):
@@ -67,6 +68,27 @@ def _execute_terminal_transition(
         updated_run = host.get(run_id)
         if updated_run is None:
             return None
+        sandbox = sandbox_record(updated_run.resume_metadata_json, include_events=False)
+        if sandbox is not None:
+            count_patch = {
+                "violation_count": sandbox["violation_count"],
+                "violation_count_truncated": bool(sandbox.get("violation_count_truncated")),
+            }
+            txn.execute(
+                """
+                UPDATE agent_runs
+                SET resume_metadata_json = jsonb_set(
+                    COALESCE(resume_metadata_json, '{}'::jsonb),
+                    '{sandbox}',
+                    COALESCE(resume_metadata_json -> 'sandbox', '{}'::jsonb) || %s::jsonb,
+                    true
+                )
+                WHERE id = %s
+                """,
+                (dump_resume_metadata(count_patch), run_id),
+            )
+            if updated_run.resume_metadata_json is not None:
+                updated_run.resume_metadata_json["sandbox"].update(count_patch)
         host._transition_sessions_for_terminal_run(updated_run)
 
     credential_manager = host.credential_manager

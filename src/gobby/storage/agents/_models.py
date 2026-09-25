@@ -11,7 +11,7 @@ from gobby.agents.resume_metadata import normalize_resume_metadata
 from gobby.utils.datetime import datetime_to_iso, normalize_datetime_model
 from gobby.utils.machine_id import require_machine_id
 
-from ._constants import AgentRunStatus, AgentRunTerminalReason
+from ._constants import ACTIVE_AGENT_RUN_STATUSES, AgentRunStatus, AgentRunTerminalReason
 from ._liveness import liveness_from_row
 
 
@@ -261,3 +261,66 @@ class AgentRun:
             "resume_metadata_json": self.resume_metadata_json,
             "sandbox": sandbox_record(self.resume_metadata_json, include_events=False),
         }
+
+
+@dataclass(frozen=True)
+class AgentRunListRow:
+    """A bounded API row constructed without loading detail columns."""
+
+    child_session_id: str | None
+    projection: dict[str, Any]
+
+    @classmethod
+    def from_row(cls, row: Mapping[str, Any]) -> AgentRunListRow:
+        from ._sandbox_records import sandbox_list_record
+
+        child_session_id = row["child_session_id"]
+        liveness = liveness_from_row(row)
+        projection = {
+            **liveness,
+            "last_progress_at": datetime_to_iso(liveness["last_progress_at"]),
+            "run_id": row["id"],
+            "id": row["id"],
+            "session_id": child_session_id,
+            "parent_session_id": row["parent_session_id"],
+            "machine_id": row["machine_id"],
+            "child_session_id": child_session_id,
+            "claimed_session_id": row["claimed_session_id"],
+            "workflow_name": row["workflow_name"],
+            "agent_name": row["agent_name"],
+            "provider": row["provider"],
+            "model": row["model"],
+            "is_local": row["is_local"],
+            "requested_reasoning_effort": row["requested_reasoning_effort"],
+            "effective_reasoning_effort": row["effective_reasoning_effort"],
+            "reasoning_required": row["reasoning_required"],
+            "reasoning_status": row["reasoning_status"],
+            "reasoning_message": row["reasoning_message"],
+            "status": row["status"],
+            "tool_calls_count": row["tool_calls_count"],
+            "turns_used": row["turns_used"],
+            "started_at": row["started_at"],
+            "completed_at": row["completed_at"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "task_id": row["task_id"],
+            "pid": row["pid"],
+            "terminal_id": row["terminal_id"],
+            "worktree_id": row["worktree_id"],
+            "clone_id": row["clone_id"],
+            "timeout_seconds": row["timeout_seconds"],
+            "terminal_reason": row["terminal_reason"],
+            "capture_id": row["capture_id"],
+            "capture_revision": row["capture_revision"],
+            "pending_terminal_action": row["pending_terminal_action"],
+            "pending_terminal_reason": row["pending_terminal_reason"],
+            "termination_requested_at": row["termination_requested_at"],
+            "sandbox": sandbox_list_record(
+                row["sandbox_metadata"],
+                active=row["status"] in ACTIVE_AGENT_RUN_STATUSES,
+            ),
+        }
+        return cls(child_session_id=child_session_id, projection=projection)
+
+    def to_list_dict(self) -> dict[str, Any]:
+        return self.projection

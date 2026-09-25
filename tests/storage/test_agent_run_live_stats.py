@@ -1,7 +1,9 @@
 """Regression tests for live agent-run activity counters."""
 
+import json
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
@@ -124,6 +126,41 @@ def test_active_read_methods_use_child_session_stats(
         assert read_run is not None, method
         assert read_run.tool_calls_count == 130, method
         assert read_run.turns_used == 78, method
+
+
+def test_summary_query_skips_detail_metadata_and_freezes_terminal_count(
+    agent_manager: LocalAgentRunManager,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
+    parent_id = _register_session(session_manager, sample_project, "parent-summary")
+    run = agent_manager.create(
+        parent_session_id=parent_id,
+        provider="codex",
+        prompt="p" * 200_000,
+        resume_metadata_json={"summary_markdown": "m" * 200_000},
+    )
+    log = tmp_path / "run" / "sandbox" / run.id / "violations.jsonl"
+    log.parent.mkdir(parents=True)
+    log.write_text('{"event":1}\n{"event":2}\n', encoding="utf-8")
+    agent_manager.merge_sandbox_metadata(run.id, {"backend": "srt", "violation_path": str(log)})
+    agent_manager.complete(run.id, result="r" * 200_000)
+    log.unlink()
+
+    with patch(
+        "gobby.storage.agents._models.normalize_resume_metadata",
+        side_effect=AssertionError("summary rows must not parse full resume metadata"),
+    ):
+        rows = agent_manager.list_by_status_summary("success", project_id=sample_project["id"])
+    listed = next(row.to_list_dict() for row in rows if row.projection["run_id"] == run.id)
+    assert listed["sandbox"]["violation_count"] == 2
+    assert "prompt" not in listed
+    assert "result" not in listed
+    assert "resume_metadata_json" not in listed
+    assert len(json.dumps(listed, default=str)) < 10_000
 
 
 def test_task_id_filters_apply_to_agent_run_list_queries(

@@ -14,7 +14,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sql_dialect import json_text_expr, newer_than_now_expr, older_than_now_expr
 
 from ._constants import TERMINAL_AGENT_RUN_STATUSES, AgentRunStatus
-from ._models import AgentRun
+from ._models import AgentRun, AgentRunListRow
 
 
 class _AgentRunQueryHost(Protocol):
@@ -35,6 +35,14 @@ class _AgentRunQueryHost(Protocol):
         limit: int | None = None,
         offset: int = 0,
     ) -> list[AgentRun]: ...
+
+    def _fetch_list_rows_with_live_stats(
+        self,
+        where_clause: str,
+        params: Sequence[object],
+        *,
+        limit: int,
+    ) -> list[AgentRunListRow]: ...
 
     def _list_active_runs(
         self,
@@ -364,6 +372,24 @@ class _AgentRunQueryMixin:
             limit=limit,
             offset=offset,
         )
+
+    def list_by_status_summary(
+        self: _AgentRunQueryHost,
+        status: str | None = None,
+        limit: int = 50,
+        project_id: str | None = None,
+    ) -> list[AgentRunListRow]:
+        """Return bounded polling rows without loading detail fields."""
+        conditions: list[str] = []
+        params: list[object] = []
+        if status:
+            conditions.append("ar.status = %s")
+            params.append(status)
+        if project_id:
+            conditions.append("parent_s.project_id = %s")
+            params.append(project_id)
+        where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        return self._fetch_list_rows_with_live_stats(where_clause, params, limit=limit)
 
     def list_running(self: _AgentRunQueryHost, limit: int = 100) -> list[AgentRun]:
         """List all currently running agent runs."""

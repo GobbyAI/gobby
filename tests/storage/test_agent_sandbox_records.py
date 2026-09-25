@@ -5,11 +5,17 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from gobby.storage.agents import AgentRun
-from gobby.storage.agents._sandbox_records import _MAX_COUNTED_VIOLATIONS, sandbox_record
+from gobby.storage.agents._sandbox_records import (
+    _MAX_COUNTED_VIOLATIONS,
+    _cached_violation_count,
+    sandbox_list_record,
+    sandbox_record,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -116,6 +122,40 @@ def test_sandbox_brief_caps_violation_count_scan(
     assert record is not None
     assert record["violation_count"] == _MAX_COUNTED_VIOLATIONS
     assert record["violation_count_truncated"] is True
+
+
+def test_live_list_count_reuses_unchanged_log(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    gobby_home = tmp_path / "gobby-home"
+    log = gobby_home / "run" / "sandbox" / "run-live" / "violations.jsonl"
+    log.parent.mkdir(parents=True)
+    log.write_text('{"event":1}\n', encoding="utf-8")
+    monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+    _cached_violation_count.cache_clear()
+    original_open = Path.open
+    opens = 0
+
+    def count_open(path: Path, *args: Any, **kwargs: Any) -> Any:
+        nonlocal opens
+        if path == log:
+            opens += 1
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", count_open)
+    raw = {"backend": "srt", "violation_path": str(log), "violation_count": 99}
+    first = sandbox_list_record(raw, active=True)
+    second = sandbox_list_record(raw, active=True)
+    assert first is not None and second is not None
+    assert first["violation_count"] == second["violation_count"] == 1
+    assert opens == 1
+    with original_open(log, "a", encoding="utf-8") as handle:
+        handle.write('{"event":2}\n')
+    updated = sandbox_list_record(raw, active=True)
+    assert updated is not None
+    assert updated["violation_count"] == 2
+    assert opens == 2
 
 
 def test_sandbox_record_counts_retained_log_after_the_run_root_is_reaped(
