@@ -12657,3 +12657,164 @@ async fn a_relist_older_than_an_applied_event_is_asked_again() {
     result.expect("relisted loop");
     mock.shutdown().await;
 }
+
+/// A lagged proxy pane re-attaches beside the loop. Recovered inline, one
+/// pane's detach held the loop for up to the detach deadline, the other panes'
+/// receivers lagged meanwhile, and their recoveries held it in turn: no tick,
+/// no resize (the #22747 capture freeze).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_lagged_proxy_pane_recovers_beside_the_loop() {
+    const TERMINAL_ID: &str = "terminal-lagged";
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    // The launch reconcile and the lag's relist list it again.
+    for _ in 0..3 {
+        mock.enqueue(
+            "GET",
+            "/api/terminals?",
+            200,
+            json!({
+                "items": [{"terminal_id": TERMINAL_ID, "backend": "native", "state": "live"}],
+                "next_cursor": null,
+                "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
+            }),
+        );
+    }
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon.clone());
+    workspace.select_project("project-1");
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("lagged pane");
+    // Unanswered, the detach waits out its whole deadline.
+    mock.suppress_ws("terminal_detach");
+    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(16);
+    let driver = async {
+        // The launch attaches the pane through the proxy.
+        wait_for_websocket_requests(&mock, "terminal_attach", 1).await;
+        settle_before_lag(&mock).await;
+        lag_the_loop_receiver(&mock, &daemon);
+        wait_for_websocket_requests(&mock, "terminal_detach", 1).await;
+        // With the recovery waiting on its detach, the loop still takes an
+        // event and refetches on the render tick; half the detach deadline is
+        // ample for a loop that is not held.
+        let sessions = request_count(&mock, "GET", "/api/sessions?");
+        mock.send_event(json!({"type": "session_event", "project_id": "project-1"}));
+        let ticked = timeout(
+            Duration::from_secs(1),
+            wait_for_http_requests(&mock, "GET", "/api/sessions?", sessions + 1),
+        )
+        .await;
+        drop(input_tx);
+        ticked
+    };
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ticked) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("recovered loop");
+    assert!(
+        ticked.is_ok(),
+        "the proxy recovery held the loop: {:?}",
+        mock.activity()
+    );
+    mock.shutdown().await;
+}
+
+/// Answered, the recovery beside the loop retires the lagged attachment and
+/// re-attaches the pane through the proxy.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_lagged_proxy_pane_reattaches_beside_the_loop() {
+    const TERMINAL_ID: &str = "terminal-reattached";
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    // Every list keeps the pane; the default empty one would close it.
+    for _ in 0..6 {
+        mock.enqueue(
+            "GET",
+            "/api/terminals?",
+            200,
+            json!({
+                "items": [{"terminal_id": TERMINAL_ID, "backend": "native", "state": "live"}],
+                "next_cursor": null,
+                "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
+            }),
+        );
+    }
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon.clone());
+    workspace.select_project("project-1");
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("lagged pane");
+    let pane_id = workspace.pane_for_terminal(TERMINAL_ID).expect("pane");
+    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(16);
+    let driver = async {
+        wait_for_websocket_requests(&mock, "terminal_attach", 1).await;
+        settle_before_lag(&mock).await;
+        lag_the_loop_receiver(&mock, &daemon);
+        wait_for_websocket_requests(&mock, "terminal_detach", 1).await;
+        wait_for_websocket_requests(&mock, "terminal_attach", 2).await;
+        // The new source sets its viewport before its step comes back, and
+        // the loop applies that step ahead of the tick that refetches.
+        let retired = websocket_requests(&mock, "terminal_detach")[0]["attachment_id"].clone();
+        timeout(WAIT_BUDGET, async {
+            while !websocket_requests(&mock, "terminal_set_viewport")
+                .iter()
+                .any(|body| body["attachment_id"] != retired)
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the new attachment set its viewport");
+        let sessions = request_count(&mock, "GET", "/api/sessions?");
+        mock.send_event(json!({"type": "session_event", "project_id": "project-1"}));
+        wait_for_http_requests(&mock, "GET", "/api/sessions?", sessions + 1).await;
+        drop(input_tx);
+        retired
+    };
+    let mut switch = TerminalGuard::recording().0;
+    let (result, retired) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("reattached loop");
+    let pane = workspace.pane(pane_id);
+    assert!(
+        matches!(
+            pane.attach_state(),
+            AttachState::Attached {
+                transport: Transport::Proxy,
+                ..
+            }
+        ),
+        "{:?}",
+        pane.attach_state()
+    );
+    assert_ne!(json!(pane.attachment_id()), retired);
+    mock.shutdown().await;
+}

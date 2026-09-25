@@ -104,6 +104,9 @@ impl Pane {
         };
         self.live = false;
         self.control = ControlState::Observe;
+        // A grant still out was asked for this attachment: moot once it goes,
+        // and never to be applied to the one that replaces it (#22747).
+        self.control_request = None;
         self.take_back = false;
         self.clear_pending_input();
         let _ = self.take_frame_source();

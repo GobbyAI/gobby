@@ -25,6 +25,7 @@ use crate::ui::{Action, Chrome, Mode, WorkspaceView};
 
 use super::attention::route_response_input;
 use super::live::relist::{Relist, RelistFuture};
+use super::live_attach::RecoveryFuture;
 use super::run_loop::{
     shutdown, ReconnectAttempt, ReconnectFuture, ReconnectSupervisor, RENDER_TICK,
 };
@@ -228,6 +229,7 @@ pub async fn run_live_loop<B: Backend>(
     let mut reconnect_job = None;
     let mut sidebar_job: Option<SidebarFetchFuture> = None;
     let mut relist_job: Option<RelistFuture> = None;
+    let mut recoveries: FuturesUnordered<RecoveryFuture> = FuturesUnordered::new();
     // Control replies come back on a channel rather than a single in-flight
     // slot: a grant still out for one pane must never hold up the grant the
     // pane someone just clicked is waiting for (#22573).
@@ -335,61 +337,12 @@ pub async fn run_live_loop<B: Backend>(
                     output.flush()?;
                 }
                 if let Some((pane_id, Err(error))) = frame {
-                    let mut deferred_input = Vec::new();
-                    let mut probe_prefix = prefix_armed;
-                    let recovery_outcome = {
-                        let recovery = workspace.recover_live_frame_error(pane_id, &error);
-                        tokio::pin!(recovery);
-                        loop {
-                            tokio::select! {
-                                biased;
-                                event = input.recv() => {
-                                    let Some(event) = event else {
-                                        break FrameRecovery::Exit("terminal input closed");
-                                    };
-                                    let exits = input_requests_exit(
-                                        chrome,
-                                        &event,
-                                        &mut probe_prefix,
-                                    );
-                                    deferred_input.push(event);
-                                    if exits {
-                                        break FrameRecovery::Exit("quit");
-                                    }
-                                }
-                                result = &mut recovery => {
-                                    break FrameRecovery::Complete(result);
-                                }
-                            }
-                        }
-                    };
-                    match recovery_outcome {
-                        FrameRecovery::Exit(reason) => {
-                            prefix_armed = false;
-                            workspace.latch_exit(reason);
-                        }
-                        FrameRecovery::Complete(result) => {
-                            if let Err(recovery_error) = result {
-                                chrome.notify(Toast::error(recovery_error.to_string()));
-                            }
-                            for event in deferred_input {
-                                match route_live_input(
-                                    workspace,
-                                    chrome,
-                                    &event,
-                                    &mut prefix_armed,
-                                ).await {
-                                    Ok(true) => {
-                                        workspace.latch_exit("quit");
-                                        break;
-                                    }
-                                    Ok(false) => {}
-                                    Err(error) => {
-                                        chrome.notify(Toast::error(error.to_string()));
-                                    }
-                                }
-                            }
-                        }
+                    // The recovery's waits run beside the loop; its branch
+                    // below applies each step (#22747).
+                    match workspace.begin_frame_recovery(pane_id, &error) {
+                        Ok(Some(recovery)) => recoveries.push(recovery),
+                        Ok(None) => {}
+                        Err(error) => chrome.notify(Toast::error(error.to_string())),
                     }
                 }
                 if let Err(error) = render_live_workspace(terminal, workspace, chrome) {
@@ -416,12 +369,23 @@ pub async fn run_live_loop<B: Backend>(
                 }
                 sync_live_chrome(workspace, chrome);
             }
+            // `next` on an empty set is ready with nothing, not pending.
+            Some(recovery) = recoveries.next(), if !recoveries.is_empty() => {
+                match workspace.apply_frame_recovery(recovery) {
+                    Ok(Some(next)) => recoveries.push(next),
+                    Ok(None) => {}
+                    Err(error) => chrome.notify(Toast::error(error.to_string())),
+                }
+                sync_live_chrome(workspace, chrome);
+            }
             result = await_reconnect_job(&mut reconnect_job), if reconnect_job.is_some() => {
                 reconnect_job = None;
-                // A refetch or relist begun on the old connection has nothing
-                // to add.
+                // A refetch, relist or frame recovery begun on the old
+                // connection has nothing to add; the reconcile re-attaches.
                 sidebar_job = None;
                 relist_job = None;
+                recoveries.clear();
+                workspace.abandon_frame_recoveries();
                 let outcome = supervisor.complete_attempt(result);
                 handle_reconnect_outcome(
                     workspace,
@@ -501,6 +465,7 @@ pub async fn run_live_loop<B: Backend>(
     drop(reconnect_job.take());
     drop(sidebar_job.take());
     drop(relist_job.take());
+    recoveries.clear();
     // A reply still in flight has nowhere to land: the exit latch is set, a
     // latched exit issues no further requests, and `shutdown` releases the
     // lease this client asked for either way. Waiting for it here would hang on
@@ -519,31 +484,6 @@ pub async fn run_live_loop<B: Backend>(
     match (loop_error, shutdown_result) {
         (Some(error), _) => Err(error),
         (None, result) => result,
-    }
-}
-
-enum FrameRecovery {
-    Complete(Result<(), FrameError>),
-    Exit(&'static str),
-}
-
-fn input_requests_exit(chrome: &Chrome, event: &RawInputEvent, prefix_armed: &mut bool) -> bool {
-    if chrome.mode == Mode::Respond {
-        return false;
-    }
-    let Some(input) = key_input(event, KeyboardProtocol::Legacy) else {
-        return false;
-    };
-    match resolve_chord(&chrome.keymap, chrome.mode, &input.key, *prefix_armed) {
-        Resolution::Prefix => {
-            *prefix_armed = true;
-            false
-        }
-        Resolution::Action(Action::Quit) => true,
-        Resolution::Action(_) | Resolution::Unbound => {
-            *prefix_armed = false;
-            false
-        }
     }
 }
 
