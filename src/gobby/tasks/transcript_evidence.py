@@ -16,6 +16,9 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from pydantic import TypeAdapter
+from pydantic_core import PydanticSerializationError
+
 from gobby.config.validation_detection import (
     ValidationCommandMatch,
     ValidationDetectionConfig,
@@ -39,6 +42,7 @@ from gobby.sessions.transcripts.base import (
     raw_lines_from_texts,
 )
 from gobby.storage.session_models import Session
+from gobby.tasks.transcript_evidence_cache import clear_snapshots, read_snapshot, write_snapshot
 from gobby.tasks.transcript_evidence_models import (
     TranscriptEdit,
     TranscriptEvidence,
@@ -198,6 +202,32 @@ class _EvidenceSnapshot:
     latest_record_at: datetime | None = None
 
 
+_SNAPSHOT_ADAPTER = TypeAdapter(_EvidenceSnapshot)
+
+
+def _snapshot_offsets_valid(snapshot: _EvidenceSnapshot) -> bool:
+    return 0 <= snapshot.tail_len <= min(snapshot.watermark, _TAIL_CHECK_BYTES)
+
+
+def _load_durable_snapshot(session_id: str) -> _EvidenceSnapshot | None:
+    payload = read_snapshot(session_id)
+    if payload is None:
+        return None
+    try:
+        snapshot = _SNAPSHOT_ADAPTER.validate_json(payload)
+        return snapshot if _snapshot_offsets_valid(snapshot) else None
+    except (TypeError, ValueError):
+        logger.debug("Ignoring invalid transcript evidence checkpoint", exc_info=True)
+        return None
+
+
+def _store_durable_snapshot(session_id: str, snapshot: _EvidenceSnapshot) -> None:
+    try:
+        write_snapshot(session_id, _SNAPSHOT_ADAPTER.dump_json(snapshot))
+    except (PydanticSerializationError, TypeError, ValueError):
+        logger.debug("Could not serialize transcript evidence checkpoint", exc_info=True)
+
+
 @dataclass(frozen=True)
 class _TranscriptRead:
     """Decoded transcript lines plus the watermark bookkeeping behind them."""
@@ -219,6 +249,7 @@ def clear_evidence_snapshots() -> None:
     """Drop every cached per-session derivation (test isolation)."""
     with _snapshot_lock:
         _evidence_snapshots.clear()
+    clear_snapshots()
 
 
 def _load_snapshot(session_id: str) -> _EvidenceSnapshot | None:
@@ -298,6 +329,8 @@ def _read_transcript_suffix(path: str, snapshot: _EvidenceSnapshot) -> _Transcri
     concurrent rename-over cannot pass the check with one file and serve the
     suffix of another.
     """
+    if not _snapshot_offsets_valid(snapshot):
+        return None
     try:
         with open(path, "rb") as f:
             f.seek(0, os.SEEK_END)
@@ -445,6 +478,8 @@ def _derive_transcript_evidence_sync(
     local_machine_id: str,
     resume: _EvidenceSnapshot | None,
 ) -> tuple[TranscriptEvidence, _EvidenceSnapshot | None]:
+    if resume is None:
+        resume = _load_durable_snapshot(session.id)
     paths, attempted_paths = _resolve_transcript_paths(session, archive_dir, local_machine_id)
     if not paths:
         raise TranscriptEvidenceUnavailable(
@@ -466,6 +501,15 @@ def _derive_transcript_evidence_sync(
         )
         for index, path in enumerate(paths)
     )
+    updated = results[0][1]
+    if updated is not None and (
+        resume is None
+        or updated.fingerprint != resume.fingerprint
+        or updated.watermark != resume.watermark
+        or updated.tail_len != resume.tail_len
+        or updated.tail_sha256 != resume.tail_sha256
+    ):
+        _store_durable_snapshot(session.id, updated)
     return merge_transcript_evidence(*(result[0] for result in results)), results[0][1]
 
 

@@ -8,6 +8,7 @@ import re
 import shlex
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
 
@@ -372,12 +373,18 @@ def _wrapper_rule(
 def _iter_matchers(config: ValidationDetectionConfig) -> Iterable[ValidationCommandMatcher]:
     disabled_ids = set(config.disabled_builtin_matcher_ids)
     if config.builtin_matchers_enabled:
-        for matcher in builtin_validation_matchers():
+        for matcher in _builtin_matchers():
             if matcher.enabled and matcher.id not in disabled_ids:
                 yield matcher
     for matcher in config.custom_matchers:
         if matcher.enabled:
             yield matcher
+
+
+@lru_cache(maxsize=1)
+def _builtin_matchers() -> tuple[ValidationCommandMatcher, ...]:
+    """Construct fixed built-ins once; detection only reads their fields."""
+    return tuple(builtin_validation_matchers())
 
 
 def _iter_wrapper_rules(config: ValidationDetectionConfig) -> list[ValidationCommandWrapper]:
@@ -682,7 +689,9 @@ def _starts_with_command_prefix(tokens: list[str], prefix: list[str]) -> bool:
 
 
 def _matches_command_token(token: str, expected: str) -> bool:
-    return token == expected or ("/" not in expected and Path(token).name == expected)
+    return token == expected or (
+        "/" not in expected and token.rstrip("/").rsplit("/", 1)[-1] == expected
+    )
 
 
 def _wrapper_id_suffix(wrapper: str) -> str:
