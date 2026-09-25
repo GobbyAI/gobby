@@ -73,28 +73,6 @@ class TmuxTerminalRuntime:
         """Live sessions on this runtime's socket (restart reconciliation)."""
         return await self._sessions.list_sessions()
 
-    async def foreground_command(self, terminal: Terminal) -> str | None:
-        """Read the live command before injecting a CLI-only handoff."""
-        sessions = self._sessions_for(terminal)
-        locator = terminal.locator or {}
-        pane_id = locator.get("pane_id")
-        if isinstance(pane_id, str) and pane_id:
-            panes = await sessions.list_panes()
-            if panes is None:
-                return None
-            for pane in panes:
-                if pane.pane_id != pane_id or pane.pane_dead:
-                    continue
-                if any(
-                    locator.get(field) is not None and locator[field] != getattr(pane, field)
-                    for field in ("socket_path", "server_pid", "server_start_time")
-                ):
-                    return None
-                return pane.pane_command
-            return None
-        info = await sessions.get_session(self._tmux_name(terminal))
-        return info.pane_command if info is not None and not info.pane_dead else None
-
     def _sessions_for(self, terminal: Terminal) -> TmuxSessionManager:
         locator = terminal.locator or {}
         socket_path = locator.get("socket_path")

@@ -4,9 +4,7 @@ the verified-submit ladder every daemon-driven injection presses Enter through."
 from __future__ import annotations
 
 import logging
-from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import patch
 
 import pytest
 
@@ -88,19 +86,6 @@ class _FakeTmux:
         if self.capture is None:
             raise RuntimeError("pane gone")
         return self.capture
-
-
-@pytest.mark.asyncio
-async def test_native_pane_reads_foreground_process_before_cli_delivery() -> None:
-    terminal = SimpleNamespace(id="term-1", backend="native", process={"pgid": 123})
-    pane = RuntimePaneIO(cast(TerminalRuntime, _FakeRuntime()), terminal)
-
-    with patch(
-        "gobby.terminals.pane_io.foreground_commands", return_value={"term-1": "zsh"}
-    ) as lookup:
-        assert await pane.foreground_command() == "zsh"
-
-    lookup.assert_called_once_with({"term-1": 123})
 
 
 @pytest.mark.asyncio

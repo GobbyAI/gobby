@@ -27,7 +27,6 @@ pytestmark = pytest.mark.unit
 
 _SETTLE = 0.02
 _CLAUDE_READ = IdleDetector(BundledDetectionRegistry(), "claude").composer_read
-_CODEX_READ = IdleDetector(BundledDetectionRegistry(), "codex").composer_read
 _DELIVERY = "gobby.mcp_proxy.tools.sessions._terminal_handoff_delivery"
 _COMPACTION = "gobby.mcp_proxy.tools.sessions._terminal_compaction"
 _RULE = "─" * 40
@@ -47,26 +46,17 @@ class _ComposerPane:
     def __init__(self) -> None:
         self.keys: list[str] = []
         self.typed: list[str] = []
-        self.draft = ""
 
     async def send_key(self, key: str) -> tuple[bool, str | None]:
         self.keys.append(key)
-        if key in {"enter", "ctrl_u", "ctrl_k"}:
-            self.draft = ""
         return True, None
 
     async def type_text(self, text: str) -> tuple[bool, str | None]:
         self.typed.append(text)
-        if not text.endswith("\n"):
-            self.draft = text
         return True, None
 
     async def snapshot(self, lines: int = 12, *, mode: SnapshotMode = "text") -> str | None:
-        return "\n".join(["output", _RULE, f"> {self.draft}", _RULE, "status"])
-
-
-async def _codex_foreground() -> str:
-    return "codex"
+        return "output\n> "
 
 
 class _ConfirmModalPane(_ComposerPane):
@@ -133,8 +123,7 @@ async def _send(
         clear_continuation_pending=clear,
         observe_interrupt=observe,
         settle_seconds=_SETTLE,
-        composer_read=_CODEX_READ if cli_source == "codex" else composer_read,
-        foreground_command=_codex_foreground if cli_source == "codex" else None,
+        composer_read=composer_read,
     )
     return result, mark, clear
 
@@ -160,247 +149,7 @@ async def test_codex_uses_ctrl_c_and_the_line_drain() -> None:
 
     assert result == (True, None, True, None)
     assert pane.keys == ["ctrl_c", *composer_clear_sequence("codex"), "enter"]
-    assert pane.typed == ["/clear"]
-
-
-async def test_idle_codex_goal_successor_never_gets_a_second_unconfirmed_ctrl_c() -> None:
-    pane = _ComposerPane()
-    settled_checks = iter([True, False])
-
-    def turn_settled() -> bool:
-        return next(settled_checks, False)
-
-    result = await _send_terminal_compaction_command(
-        pane,
-        "/compact",
-        "session-1",
-        cli_source="codex",
-        mark_continuation_pending=lambda: True,
-        clear_continuation_pending=lambda: True,
-        observe_interrupt=lambda: False,
-        turn_settled=turn_settled,
-        settle_seconds=_SETTLE,
-        composer_read=_CODEX_READ,
-        foreground_command=_codex_foreground,
-    )
-
-    assert result[0] is False
-    assert result[3] == {
-        "error_code": "interrupt_unconfirmed",
-        "continuation_pending": False,
-    }
-    assert pane.keys == ["ctrl_c"]
-    assert pane.typed == []
-
-
-@pytest.mark.asyncio
-async def test_codex_exits_between_foreground_check_and_write_without_shell_enter() -> None:
-    class ExitingPane(_ComposerPane):
-        foreground = "codex"
-        keys_at_write = 0
-
-        async def foreground_command(self) -> str:
-            return self.foreground
-
-        async def type_text(self, text: str) -> tuple[bool, str | None]:
-            self.keys_at_write = len(self.keys)
-            self.foreground = "zsh"
-            return await super().type_text(text)
-
-        async def snapshot(self, lines: int = 12, *, mode: SnapshotMode = "text") -> str:
-            if self.foreground == "zsh":
-                return f"josh % {self.draft}"
-            return (await super().snapshot(lines, mode=mode)) or ""
-
-    pane = ExitingPane()
-    clear = MagicMock(return_value=True)
-    result = await _send_terminal_compaction_command(
-        pane,
-        "/compact",
-        "session-1",
-        cli_source="codex",
-        mark_continuation_pending=lambda: True,
-        clear_continuation_pending=clear,
-        observe_interrupt=lambda: False,
-        turn_settled=lambda: True,
-        composer_read=_CODEX_READ,
-        foreground_command=pane.foreground_command,
-        settle_seconds=_SETTLE,
-    )
-
-    assert result == (
-        False,
-        "codex is not foreground (found zsh)",
-        False,
-        {"error_code": "cli_not_foreground", "continuation_pending": False},
-    )
-    assert pane.typed == ["/compact"]
-    assert pane.keys[pane.keys_at_write :] == []
-    assert pane.draft == "/compact"
-    clear.assert_called_once_with()
-
-
-@pytest.mark.parametrize("shell_draft", ["my unsent draft", "echo /compact"])
-@pytest.mark.asyncio
-async def test_codex_exit_cleanup_preserves_an_unrelated_shell_draft(shell_draft: str) -> None:
-    class ExitingPane(_ComposerPane):
-        foreground = "codex"
-        keys_at_write = 0
-
-        async def foreground_command(self) -> str:
-            return self.foreground
-
-        async def type_text(self, text: str) -> tuple[bool, str | None]:
-            self.keys_at_write = len(self.keys)
-            self.foreground = "zsh"
-            return await super().type_text(text)
-
-        async def snapshot(self, lines: int = 12, *, mode: SnapshotMode = "text") -> str:
-            if self.foreground == "zsh":
-                return f"prior output mentions /compact\njosh % {shell_draft}"
-            return (await super().snapshot(lines, mode=mode)) or ""
-
-    pane = ExitingPane()
-    result = await _send_terminal_compaction_command(
-        pane,
-        "/compact",
-        "session-1",
-        cli_source="codex",
-        mark_continuation_pending=lambda: True,
-        clear_continuation_pending=lambda: True,
-        observe_interrupt=lambda: False,
-        turn_settled=lambda: True,
-        composer_read=_CODEX_READ,
-        foreground_command=pane.foreground_command,
-        settle_seconds=_SETTLE,
-    )
-
-    assert result[3] == {"error_code": "cli_not_foreground", "continuation_pending": False}
-    assert pane.keys[pane.keys_at_write :] == []
-    assert pane.typed == ["/compact"]
-
-
-@pytest.mark.asyncio
-async def test_codex_exit_before_composer_clear_sends_no_keys() -> None:
-    class ExitingPane(_ComposerPane):
-        foreground = "codex"
-        snapshots = 0
-
-        async def foreground_command(self) -> str:
-            return self.foreground
-
-        async def snapshot(self, lines: int = 12, *, mode: SnapshotMode = "text") -> str:
-            self.snapshots += 1
-            if self.snapshots == 2:
-                self.foreground = "zsh"
-            return (await super().snapshot(lines, mode=mode)) or ""
-
-    pane = ExitingPane()
-    result = await _send_terminal_compaction_command(
-        pane,
-        "/compact",
-        "session-1",
-        cli_source="codex",
-        mark_continuation_pending=lambda: True,
-        clear_continuation_pending=lambda: True,
-        observe_interrupt=lambda: False,
-        turn_settled=lambda: True,
-        composer_read=_CODEX_READ,
-        foreground_command=pane.foreground_command,
-        settle_seconds=_SETTLE,
-    )
-
-    assert result[3] == {"error_code": "cli_not_foreground", "continuation_pending": False}
-    assert pane.keys == []
-    assert pane.typed == []
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("draft_frame", ["", "/comp"])
-async def test_codex_draft_must_be_visible_before_enter(draft_frame: str) -> None:
-    class MissingDraftPane(_ComposerPane):
-        render_draft = False
-
-        async def snapshot(self, lines: int = 12, *, mode: SnapshotMode = "text") -> str:
-            if not self.render_draft:
-                shown = draft_frame if self.draft else ""
-                return "\n".join(["output", _RULE, f"> {shown}", _RULE, "status"])
-            return (await super().snapshot(lines, mode=mode)) or ""
-
-    pane = MissingDraftPane()
-    result = await _send_terminal_compaction_command(
-        pane,
-        "/compact",
-        "session-1",
-        cli_source="codex",
-        mark_continuation_pending=lambda: True,
-        clear_continuation_pending=lambda: True,
-        observe_interrupt=lambda: False,
-        turn_settled=lambda: True,
-        composer_read=_CODEX_READ,
-        foreground_command=_codex_foreground,
-        settle_seconds=_SETTLE,
-    )
-
-    assert result[0] is False
-    assert result[3] == {
-        "error_code": "command_not_submitted",
-        "continuation_pending": False,
-    }
-    assert pane.typed == ["/compact"]
-    assert "enter" not in pane.keys
-    assert pane.draft == ""
-
-    pane.render_draft = True
-    retry = await _send_terminal_compaction_command(
-        pane,
-        "/compact",
-        "session-1",
-        cli_source="codex",
-        mark_continuation_pending=lambda: True,
-        clear_continuation_pending=lambda: True,
-        observe_interrupt=lambda: False,
-        turn_settled=lambda: True,
-        composer_read=_CODEX_READ,
-        foreground_command=_codex_foreground,
-        settle_seconds=_SETTLE,
-    )
-    assert retry == (True, None, True, {"interrupted": False})
-    assert pane.typed == ["/compact", "/compact"]
-
-
-async def test_compaction_refuses_a_tmux_pane_that_returned_to_zsh() -> None:
-    class ExitedTmux:
-        async def list_panes(self) -> list[SimpleNamespace]:
-            return [
-                SimpleNamespace(
-                    pane_id="%12",
-                    session_name="codex-seat",
-                    pane_dead=False,
-                    pane_command="zsh",
-                )
-            ]
-
-    pane = TmuxPaneIO(ExitedTmux(), "%12")
-    result = await _send_terminal_compaction_command(
-        pane,
-        "/compact",
-        "session-1",
-        cli_source="codex",
-        mark_continuation_pending=lambda: True,
-        clear_continuation_pending=lambda: True,
-        observe_interrupt=lambda: False,
-        turn_settled=lambda: True,
-        foreground_command=pane.foreground_command,
-        settle_seconds=_SETTLE,
-    )
-
-    assert result == (
-        False,
-        "codex is not foreground (found zsh)",
-        False,
-        {"error_code": "cli_not_foreground", "continuation_pending": False},
-    )
+    assert pane.typed == ["/clear\n"]
 
 
 @pytest.mark.asyncio

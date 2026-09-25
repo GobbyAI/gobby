@@ -19,7 +19,7 @@ from gobby.sessions.compact_markers import (
     HANDOFF_COMPACT_CONTINUE_SEND_DELAY_SECONDS,
     HANDOFF_COMPACT_CONTINUE_VARIABLE,
 )
-from gobby.sessions.handoff import HANDOFF_DISPATCH_GATE_VARIABLE, build_handoff_continue_prompt
+from gobby.sessions.handoff import build_handoff_continue_prompt
 from gobby.sessions.handoff_identity import terminal_process_contexts_match
 from gobby.sessions.tmux_context import parse_terminal_context_value
 from gobby.storage.hub.protocol import SessionVariableMutation
@@ -29,11 +29,8 @@ from gobby.terminals.lookup import manager_for_terminal_context
 from gobby.terminals.pane_io import (
     SUBMIT_VERIFY_SECONDS,
     ComposerReader,
-    SubmitResult,
     clear_composer,
-    clear_staged_text,
     submit_text,
-    verify_staged_text,
 )
 
 if TYPE_CHECKING:
@@ -466,31 +463,6 @@ async def _type_handoff_compact_continuation(
     if delay_seconds > 0:
         await asyncio.sleep(delay_seconds)
     try:
-        foreground_command = getattr(pane, "foreground_command", None)
-        if cli_source == "codex" and (
-            composer_read is None
-            or not callable(foreground_command)
-            or await foreground_command() != "codex"
-        ):
-            logger.warning(
-                "Codex exited or its composer cannot be read before the set_handoff "
-                "continuation for session %s",
-                session_id,
-            )
-            return False
-
-        async def verify_codex_draft() -> SubmitResult | None:
-            assert composer_read is not None
-            assert callable(foreground_command)
-            return await verify_staged_text(
-                pane,
-                prompt,
-                "codex",
-                composer_read,
-                foreground_command,
-                window_seconds=verify_seconds,
-            )
-
         # An operator draft in the composer would be submitted with the pull
         # prompt, so empty the box first (blind: the prompt reads fine regardless).
         ok, reason = await clear_composer(pane, cli_source)
@@ -509,7 +481,6 @@ async def _type_handoff_compact_continuation(
             cli_source=cli_source,
             composer_read=composer_read,
             verify_seconds=verify_seconds,
-            before_enter=verify_codex_draft if cli_source == "codex" else None,
         )
         if result.ok:
             return True
@@ -523,14 +494,7 @@ async def _type_handoff_compact_continuation(
                 "error_code": result.error_code,
             },
         )
-        if cli_source == "codex":
-            assert composer_read is not None
-            assert callable(foreground_command)
-            cleared, clear_reason = await clear_staged_text(
-                pane, prompt, "codex", composer_read, foreground_command
-            )
-        else:
-            cleared, clear_reason = await clear_composer(pane, cli_source)
+        cleared, clear_reason = await clear_composer(pane, cli_source)
         if not cleared:
             logger.warning(
                 "Composer still holds the unsubmitted continuation prompt for session %s: %s",
@@ -594,17 +558,11 @@ async def _continue_after_codex_compaction_ready(
                 pending_session_id,
                 exc_info=True,
             )
-            await asyncio.to_thread(
-                _fail_codex_compact_readiness, db, pending_session_id, attempt_id
-            )
             return
         if not isinstance(output, str):
             logger.debug(
                 "Stopped Codex compact readiness watcher after pane disappeared for session %s",
                 pending_session_id,
-            )
-            await asyncio.to_thread(
-                _fail_codex_compact_readiness, db, pending_session_id, attempt_id
             )
             return
 
@@ -647,47 +605,6 @@ async def _continue_after_codex_compaction_ready(
         "Timed out waiting for Codex compact readiness for session %s",
         pending_session_id,
     )
-    await asyncio.to_thread(_fail_codex_compact_readiness, db, pending_session_id, attempt_id)
-
-
-def _fail_codex_compact_readiness(db: HubDatabase, session_id: str, attempt_id: str | None) -> bool:
-    """Release only the timed-out attempt's gate; a newer attempt owns its own state."""
-    if attempt_id is None:
-        return False
-    now = datetime.now(UTC).isoformat()
-    with db.transaction_immediate(SessionVariableMutation(session_id=session_id)) as conn:
-        row = conn.execute(
-            "SELECT variables FROM session_variables WHERE session_id = %s", (session_id,)
-        ).fetchone()
-        if row is None:
-            return False
-        variables = _load_variables(_row_variables(row))
-        marker = variables.get(HANDOFF_COMPACT_CONTINUE_VARIABLE)
-        gate = variables.get(HANDOFF_DISPATCH_GATE_VARIABLE)
-        if (
-            not isinstance(marker, dict)
-            or marker.get("attempt_id") != attempt_id
-            or not isinstance(gate, dict)
-            or gate.get("attempt_id") != attempt_id
-            or gate.get("delivery_pending") is not True
-        ):
-            return False
-        variables.pop(HANDOFF_COMPACT_CONTINUE_VARIABLE)
-        variables[HANDOFF_DISPATCH_GATE_VARIABLE] = {
-            "compacted": False,
-            "delivery_pending": False,
-            "delivery_failed": True,
-            "attempt_id": attempt_id,
-            "clear_session": False,
-            "reason": "Codex compact readiness timed out before continuation delivery",
-            "error_code": "compact_readiness_timeout",
-            "retry_guidance": "Retry gobby-sessions:set_handoff after compact readiness failed.",
-        }
-        conn.execute(
-            "UPDATE session_variables SET variables = %s, updated_at = %s WHERE session_id = %s",
-            (json.dumps(variables), now, session_id),
-        )
-    return True
 
 
 def _count_codex_compact_ready_status_lines(output: str) -> int:
