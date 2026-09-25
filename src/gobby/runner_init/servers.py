@@ -295,9 +295,7 @@ def init_servers(runner: GobbyRunner) -> None:
     http_server_ref = weakref.ref(runner.http_server)
     runner.http_server.set_runner_getter(weakref.ref(runner))
 
-    if runner.communications_manager and runner.http_server.transcript_reader:
-        from gobby.communications.native_plan_actions import NativePlanActionService
-        from gobby.communications.session_notifications import SessionNotificationService
+    if runner.communications_manager:
         from gobby.communications.telegram_actions import TelegramActionController
         from gobby.sessions.mailbox import MailboxService
         from gobby.storage.inter_session_messages import InterSessionMessageManager
@@ -308,27 +306,11 @@ def init_servers(runner: GobbyRunner) -> None:
             session_manager=runner.session_manager,
             wake_dispatcher=runner.wake_dispatcher,
         )
-        native_plan_actions = NativePlanActionService(
-            runner.session_manager,
-            runner.detection_registry,
-            terminal_manager=getattr(runner, "terminal_manager", None),
-            terminal_runtime_registry=getattr(runner, "terminal_runtime_registry", None),
-            write_coordinator=getattr(runner, "write_coordinator", None),
-        )
-        runner.communications_manager.set_session_notification_service(
-            SessionNotificationService(
-                runner.communications_manager,
-                runner.session_manager,
-                runner.http_server.transcript_reader,
-                native_plan_actions=native_plan_actions,
-            )
-        )
         runner.communications_manager.set_telegram_action_controller(
             TelegramActionController(
                 runner.communications_manager,
                 runner.session_manager,
                 mailbox,
-                native_plan_actions,
             )
         )
 
@@ -426,13 +408,12 @@ def init_servers(runner: GobbyRunner) -> None:
 
     register_config_event_publisher(runner)
 
-    if runner.cron_scheduler and (runner.websocket_server or runner.communications_manager):
+    if runner.cron_scheduler and runner.websocket_server:
         from gobby.runner_broadcasting import setup_cron_event_broadcasting
 
         setup_cron_event_broadcasting(
             runner.websocket_server,
             runner.cron_scheduler,
-            runner.communications_manager,
         )
 
     if runner.communications_manager:

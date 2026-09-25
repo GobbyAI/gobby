@@ -84,10 +84,6 @@ async def test_initialize_success(
                             "command": "status",
                             "description": "Show responder provider and model",
                         },
-                        {
-                            "command": "subscriptions",
-                            "description": "Manage event subscriptions",
-                        },
                         {"command": "agent", "description": "Choose the active agent"},
                         {"command": "help", "description": "Show available commands"},
                     ]

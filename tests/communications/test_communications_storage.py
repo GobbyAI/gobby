@@ -10,7 +10,6 @@ from gobby.communications.models import (
     ChannelConfig,
     CommsIdentity,
     CommsMessage,
-    CommsRoutingRule,
 )
 from gobby.config.communications import CommunicationsConfig
 from gobby.storage.communications import LocalCommunicationsStore
@@ -330,94 +329,3 @@ def test_create_message_deduplicates_channel_platform_message_id(
     assert duplicate.id == first.id
     assert len(messages) == 1
     assert messages[0].content == "first"
-
-
-def test_routing_rule_crud(comms_store: LocalCommunicationsStore) -> None:
-    """Test full CRUD lifecycle and exact administrative filters for routing rules."""
-    project_id = "00000000-0000-0000-0000-000000000000"
-    channel_id = "cccccccc-1111-4ccc-8ccc-cccccccc0005"
-    comms_store.create_channel(
-        ChannelConfig(
-            id=channel_id,
-            channel_type="test",
-            name="Rule",
-            enabled=True,
-            config_json={},
-            created_at=_TS,
-            updated_at=_TS,
-        )
-    )
-
-    rule = CommsRoutingRule(
-        id="dddddddd-1111-4ddd-8ddd-dddddddd0001",
-        name="Test Rule",
-        channel_id=channel_id,
-        event_pattern="task.*",
-        project_id=project_id,
-        priority=10,
-        enabled=True,
-        config_json={},
-        created_at=_TS,
-        updated_at=_TS,
-    )
-    saved = comms_store.create_routing_rule(rule)
-    assert saved.id == rule.id
-    assert saved.project_id == project_id
-
-    comms_store.create_routing_rule(
-        CommsRoutingRule(
-            id="dddddddd-1111-4ddd-8ddd-dddddddd0002",
-            name="Disabled Rule",
-            channel_id=channel_id,
-            event_pattern="session.agent.paused",
-            project_id=project_id,
-            priority=20,
-            enabled=False,
-            config_json={},
-            created_at=datetime(2024, 1, 1, 0, 0, 1, tzinfo=UTC),
-            updated_at=datetime(2024, 1, 1, 0, 0, 1, tzinfo=UTC),
-        )
-    )
-    comms_store.create_routing_rule(
-        CommsRoutingRule(
-            id="dddddddd-1111-4ddd-8ddd-dddddddd0003",
-            name="Global Rule",
-            channel_id=channel_id,
-            event_pattern="*",
-            project_id=None,
-            priority=0,
-            enabled=True,
-            config_json={},
-            created_at=datetime(2024, 1, 1, 0, 0, 2, tzinfo=UTC),
-            updated_at=datetime(2024, 1, 1, 0, 0, 2, tzinfo=UTC),
-        )
-    )
-
-    fetched = comms_store.get_routing_rule(saved.id)
-    assert fetched is not None
-    assert fetched.name == "Test Rule"
-    assert fetched.priority == 10
-
-    assert len(comms_store.list_routing_rules()) == 3
-    assert len(comms_store.list_routing_rules(channel_id=channel_id)) == 3
-    assert len(comms_store.list_routing_rules(project_id=project_id)) == 2
-    assert len(comms_store.list_routing_rules(global_scope=True)) == 1
-    assert len(comms_store.list_routing_rules(global_scope=False)) == 2
-    assert len(comms_store.list_routing_rules(enabled=True)) == 2
-    assert len(comms_store.list_routing_rules(enabled=False)) == 1
-    assert len(comms_store.list_routing_rules(event_pattern="task.*")) == 1
-    assert (
-        len(comms_store.list_routing_rules(channel_id="00000000-0000-0000-0000-0000000000ff")) == 0
-    )
-
-    saved.priority = 20
-    saved.enabled = False
-    comms_store.update_routing_rule(saved)
-
-    updated = comms_store.get_routing_rule(saved.id)
-    assert updated is not None
-    assert updated.priority == 20
-    assert not updated.enabled
-
-    comms_store.delete_routing_rule(saved.id)
-    assert comms_store.get_routing_rule(saved.id) is None

@@ -74,7 +74,7 @@ class TestAttachments:
         manager._store.create_attachment.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_send_attachment_file_not_found(self, manager, tmp_path):
+    async def test_send_attachment_file_not_found(self, manager, mock_adapter, tmp_path):
         with pytest.raises(ValueError, match="Attachment file not found"):
             await manager.send_attachment("test_channel", tmp_path / "missing.txt")
 

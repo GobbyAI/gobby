@@ -853,7 +853,7 @@ class TestGobbyRunnerInitialization:
             assert runner.lifecycle_manager is not None
 
     def test_init_with_task_validator(self) -> None:
-        """Test TaskValidator initialization when LLM service and validation enabled."""
+        """Task validation uses its own configuration when enabled."""
         mock_config = DaemonConfig(
             daemon_port=60887,
             gobby_tasks=GobbyTasksConfig(
@@ -890,11 +890,7 @@ class TestGobbyRunnerInitialization:
             assert runner.task_validator == mock_task_validator
             assert runner.llm_service == mock_llm_service
             assert runner.text_generation_service == mock_text_generation
-            validator_kwargs = task_validator_factory.call_args.kwargs
-            assert validator_kwargs["llm_service"] is mock_llm_service
-            assert validator_kwargs["config"] is mock_config.gobby_tasks.validation
-            assert validator_kwargs["db"] is runner.database
-            assert "tool_chat_service" not in validator_kwargs
+            task_validator_factory.assert_called_once_with(mock_config.gobby_tasks.validation)
 
     def test_init_task_validator_exception(self) -> None:
         """Test TaskValidator initialization exception is handled."""
@@ -946,6 +942,7 @@ class TestGobbyRunnerInitialization:
         mock_config.message_tracking = None
         mock_config.memory_backup = MagicMock()
         mock_config.memory_backup.enabled = False
+        mock_config.gobby_tasks.validation.enabled = True
 
         patches = create_base_patches(mock_config=mock_config)
         patches.append(
@@ -987,9 +984,9 @@ class TestGobbyRunnerInitialization:
 
             runner = GobbyRunner()
             assert runner.llm_service is None
-            assert runner.task_validator is None
-            assert {"llm_service", "task_validator"} <= runner.degraded_services
-            assert "Skipping TaskValidator initialization" in caplog.text
+            assert runner.task_validator is not None
+            assert "llm_service" in runner.degraded_services
+            assert "task_validator" not in runner.degraded_services
             llm_error = next(
                 record
                 for record in caplog.records

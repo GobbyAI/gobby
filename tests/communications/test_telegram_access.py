@@ -65,7 +65,6 @@ def _manager(
     store.update_channel.side_effect = lambda updated: updated
     store.get_message_by_platform_id.return_value = None
     store.create_message.side_effect = lambda message: message
-    store.get_routing_rules.return_value = []
 
     manager = CommunicationsManager(
         CommunicationsConfig(

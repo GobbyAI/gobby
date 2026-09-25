@@ -10,7 +10,7 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -27,7 +27,6 @@ from gobby.communications.models import (
     CommsAttachment,
     CommsIdentity,
     CommsMessage,
-    CommsRoutingRule,
 )
 from gobby.communications.rate_limiter import RateLimitWaitExceeded
 from gobby.communications.telegram_actions import TelegramActionController
@@ -38,7 +37,6 @@ from gobby.storage.communications import LocalCommunicationsStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.secrets import SecretStore
 from gobby.storage.sessions import SessionManager
-from gobby.utils.datetime import datetime_to_local_iso
 
 _FIXED_TS = datetime(2024, 1, 1, tzinfo=UTC)
 
@@ -87,7 +85,6 @@ def make_store(channels: list[ChannelConfig] | None = None) -> MagicMock:
         return updated
 
     store.update_channel.side_effect = update_channel
-    store.get_routing_rules.return_value = []
     store.create_message.side_effect = lambda message: message
 
     def create_message_with_attachments(
@@ -804,110 +801,6 @@ async def test_send_message_logs_event_callback_failures_at_warning(
         await manager.send_message("test-channel", "Hello!")
 
     assert "Event callback error on send_message" in caplog.text
-
-
-@pytest.mark.unit
-@pytest.mark.asyncio
-async def test_send_event_routes_to_channels() -> None:
-    """send_event() uses router to find channels and sends to each."""
-    channel = make_channel(channel_id="chan-1")
-    store = make_store([channel])
-    manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
-
-    mock_adapter = make_adapter()
-    mock_adapter_cls = MagicMock(return_value=mock_adapter)
-
-    with patch("gobby.communications.manager.get_adapter_class", return_value=mock_adapter_cls):
-        await manager.start()
-
-    # Mock router to return our channel id
-    with patch.object(manager._router, "match_channels", AsyncMock(return_value=["chan-1"])):
-        msgs = await manager.send_event("task.created", "A task was created!")
-
-    assert len(msgs) == 1
-    assert msgs[0].content == "A task was created!"
-
-
-@pytest.mark.integration
-@pytest.mark.asyncio
-async def test_send_event_id_is_durable_across_manager_restart(temp_db: HubDatabase) -> None:
-    """A recovered event returns its persisted message without sending twice."""
-    channel = make_channel(
-        channel_type="telegram",
-        channel_id="10000000-0000-0000-0000-000000000001",
-        config_json={"default_destination": "chat-123"},
-    )
-    project_id = "project-1"
-    now = datetime.now(UTC)
-    store = LocalCommunicationsStore(temp_db)
-    store.create_channel(channel)
-    store.create_routing_rule(
-        CommsRoutingRule(
-            id="20000000-0000-0000-0000-000000000001",
-            name="Cron home notifications",
-            channel_id=channel.id,
-            event_pattern="cron.run.*",
-            created_at=now,
-            updated_at=now,
-        )
-    )
-
-    first_adapter = make_adapter(channel_type="telegram")
-    first_manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
-    with patch(
-        "gobby.communications.manager.get_adapter_class",
-        return_value=MagicMock(return_value=first_adapter),
-    ):
-        await first_manager.start()
-
-    first = await first_manager.send_event(
-        "cron.run.completed",
-        'Scheduled job "Nightly backup" completed.',
-        project_id=project_id,
-        event_id="cron-run-1",
-    )
-
-    second_adapter = make_adapter(channel_type="telegram")
-    recovered_manager = CommunicationsManager(
-        make_config(), store, make_secret_store(), MagicMock()
-    )
-    with patch(
-        "gobby.communications.manager.get_adapter_class",
-        return_value=MagicMock(return_value=second_adapter),
-    ):
-        await recovered_manager.start()
-
-    recovered = await recovered_manager.send_event(
-        "cron.run.completed",
-        'Scheduled job "Nightly backup" completed.',
-        project_id=project_id,
-        event_id="cron-run-1",
-    )
-
-    first_adapter.send_message.assert_awaited_once()
-    second_adapter.send_message.assert_not_awaited()
-    assert len(first) == len(recovered) == 1
-    assert recovered[0].id == first[0].id
-
-    persisted = store.get_message(first[0].id)
-    assert persisted is not None
-    assert persisted.status == "sent"
-    assert persisted.platform_message_id == "platform-msg-id-1"
-    assert persisted.metadata_json == {
-        "platform_destination": "chat-123",
-        "source_event_id": "cron-run-1",
-    }
-
-
-@pytest.mark.unit
-async def test_send_event_skips_inactive_channels() -> None:
-    """send_event() skips channel IDs that don't have active adapters."""
-    store = make_store()
-    manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
-
-    with patch.object(manager._router, "match_channels", AsyncMock(return_value=["chan-inactive"])):
-        msgs = await manager.send_event("task.created", "Hello!")
-    assert msgs == []
 
 
 @pytest.mark.unit
@@ -2289,153 +2182,6 @@ def test_thread_map_move_to_end_on_track() -> None:
     assert manager._get_thread_id("ch", "s3") == "t3"
 
 
-@pytest.mark.unit
-def test_event_subscription_crud_validates_scope_and_invalidates_cache() -> None:
-    """Manager CRUD owns subscription identity, validation, and cache invalidation."""
-    channel = make_channel(name="Telegram", channel_id="cccccccc-1111-4ccc-8ccc-cccccccc0001")
-    store = make_store([channel])
-    rules: dict[str, CommsRoutingRule] = {}
-    store.get_channel.side_effect = lambda channel_id: (
-        channel if channel_id == channel.id else None
-    )
-    store.create_routing_rule.side_effect = lambda rule: rules.setdefault(rule.id, rule)
-    store.get_routing_rule.side_effect = rules.get
-    store.list_routing_rules.side_effect = lambda **_filters: list(rules.values())
-    store.update_routing_rule.side_effect = lambda rule: rules.setdefault(rule.id, rule)
-    store.delete_routing_rule.side_effect = rules.pop
-    session_store = MagicMock()
-    session_store.get.return_value = MagicMock(project_id="project-1")
-    manager = CommunicationsManager(make_config(), store, make_secret_store(), session_store)
-    manager._router._rules_cache = []
-
-    created = manager.create_event_subscription(
-        name=" Agent pauses ",
-        channel="Telegram",
-        event_pattern=" session.agent.paused ",
-        project_id="project-1",
-        global_scope=False,
-        session_id="session-1",
-        priority=10,
-    )
-
-    assert str(uuid.UUID(created.id)) == created.id
-    assert created.name == "Agent pauses"
-    assert created.event_pattern == "session.agent.paused"
-    assert created.channel_id == channel.id
-    assert created.project_id == "project-1"
-    assert created.session_id == "session-1"
-    assert created.config_json == {}
-    assert created.created_at == created.updated_at
-    assert all(args.args != ("Telegram",) for args in store.get_channel.call_args_list)
-    assert manager._router._rules_cache is None
-
-    manager._router._rules_cache = [created]
-    assert manager.get_event_subscription(created.id) is created
-    assert manager.list_event_subscriptions(
-        channel=channel.id,
-        project_id="project-1",
-        enabled=False,
-        event_pattern="session.agent.paused",
-    ) == [created]
-    store.list_routing_rules.assert_called_once_with(
-        channel_id=channel.id,
-        project_id="project-1",
-        global_scope=None,
-        enabled=False,
-        event_pattern="session.agent.paused",
-    )
-
-    updated = manager.update_event_subscription(
-        created.id,
-        name="Expired agents",
-        event_pattern="session.agent.expired",
-        session_id=None,
-        priority=20,
-        enabled=False,
-    )
-    assert updated.name == "Expired agents"
-    assert updated.event_pattern == "session.agent.expired"
-    assert updated.session_id is None
-    assert updated.priority == 20
-    assert updated.enabled is False
-    assert manager._router._rules_cache is None
-
-    public = manager.event_subscription_to_dict(updated)
-    assert public["channel_id"] == channel.id
-    assert public["channel_name"] == "Telegram"
-    assert public["scope"] == {"kind": "project", "project_id": "project-1"}
-    assert public["created_at"] == datetime_to_local_iso(updated.created_at)
-    assert public["updated_at"] == datetime_to_local_iso(updated.updated_at)
-    assert "config_json" not in public
-
-    manager._router._rules_cache = [updated]
-    manager.delete_event_subscription(created.id)
-    assert rules == {}
-    assert manager._router._rules_cache is None
-
-
-@pytest.mark.parametrize(
-    ("overrides", "message"),
-    [
-        ({"name": " "}, "Subscription name is required"),
-        ({"event_pattern": " "}, "Event pattern is required"),
-        ({"channel": "missing"}, "Channel 'missing' not found"),
-        (
-            {"project_id": None, "global_scope": False},
-            "Project scope or explicit global scope is required",
-        ),
-        (
-            {"project_id": "project-1", "global_scope": True},
-            "Choose either project scope or global scope",
-        ),
-        (
-            {"project_id": None, "global_scope": True, "session_id": "session-1"},
-            "Global subscriptions cannot be session-scoped",
-        ),
-    ],
-)
-@pytest.mark.unit
-def test_event_subscription_create_rejects_invalid_contract(
-    overrides: dict[str, object],
-    message: str,
-) -> None:
-    channel = make_channel(name="Telegram", channel_id="cccccccc-1111-4ccc-8ccc-cccccccc0001")
-    store = make_store([channel])
-    store.get_channel.return_value = None
-    manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
-    kwargs: dict[str, object] = {
-        "name": "Agent pauses",
-        "channel": "Telegram",
-        "event_pattern": "session.agent.paused",
-        "project_id": "project-1",
-        "global_scope": False,
-    }
-    kwargs.update(overrides)
-
-    with pytest.raises(ValueError, match=message):
-        cast(Any, manager.create_event_subscription)(**kwargs)
-
-
-@pytest.mark.unit
-def test_event_subscription_session_must_belong_to_selected_project() -> None:
-    channel = make_channel(name="Telegram", channel_id="cccccccc-1111-4ccc-8ccc-cccccccc0001")
-    store = make_store([channel])
-    store.get_channel.return_value = None
-    session_store = MagicMock()
-    session_store.get.return_value = MagicMock(project_id="project-2")
-    manager = CommunicationsManager(make_config(), store, make_secret_store(), session_store)
-
-    with pytest.raises(ValueError, match="Session does not belong"):
-        manager.create_event_subscription(
-            name="Agent pauses",
-            channel="Telegram",
-            event_pattern="session.agent.paused",
-            project_id="project-1",
-            global_scope=False,
-            session_id="session-1",
-        )
-
-
 def _telegram_group_message(*, sender_id: str, mentioned: bool) -> CommsMessage:
     return CommsMessage(
         id=f"group-{sender_id}-{mentioned}",
@@ -2844,7 +2590,6 @@ async def test_ended_target_falls_back_to_real_assistant_clear_successor(
     store.create_channel(channel)
     manager = CommunicationsManager(make_config(), store, make_secret_store(), sessions)
     manager._channel_by_name[channel.name] = channel
-    manager._session_notifications = MagicMock(route_transition=AsyncMock())
     manager.switch_conversation(channel.name, "dm:99", target.id)
     assert sessions.update_session_status(target.id, "expired")
 
@@ -2912,7 +2657,6 @@ async def test_ended_target_falls_back_to_live_assistant() -> None:
     store.get_channel.return_value = channel
     manager = CommunicationsManager(make_config(), store, make_secret_store(), sessions)
     manager._channel_by_name[channel.name] = channel
-    manager._session_notifications = MagicMock(route_transition=AsyncMock())
     manager.switch_conversation(channel.name, "dm:99", target.id)
     target.status = "expired"
 
@@ -2948,7 +2692,6 @@ async def test_ended_target_with_no_assistant_replies_without_switching() -> Non
     manager._channel_by_name[channel.name] = channel
     adapter = make_adapter(channel_type="telegram")
     manager._adapters[channel.name] = adapter
-    manager._session_notifications = MagicMock(route_transition=AsyncMock())
     manager.switch_conversation(channel.name, "dm:99", target.id)
     target.status = "expired"
 
@@ -2967,91 +2710,6 @@ async def test_ended_target_with_no_assistant_replies_without_switching() -> Non
 
     assert manager.attached_session(channel.id, "dm:99") is None
     assert "No Assistant is running" in adapter.send_message.await_args.args[0].content
-
-
-async def test_busy_assistant_does_not_suppress_session_end_notice() -> None:
-    from gobby.sessions.status_events import SessionStatusTransition
-
-    channel = make_channel(channel_type="telegram")
-    store = make_store([channel])
-    store.get_channel.return_value = channel
-    target = MagicMock(id="11111111-1111-4111-8111-111111111111", status="active")
-    assistant = MagicMock(
-        id="22222222-2222-4222-8222-222222222222",
-        status="active",
-        source="claude",
-        title="Assistant",
-        agent_depth=0,
-        agent_run_id=None,
-    )
-    sessions = MagicMock()
-    sessions.get.side_effect = lambda session_id: (
-        target if session_id == target.id else assistant if session_id == assistant.id else None
-    )
-    sessions.list.return_value = [assistant]
-    manager = CommunicationsManager(make_config(), store, make_secret_store(), sessions)
-    manager._channel_by_name[channel.name] = channel
-    manager._session_notifications = MagicMock(route_transition=AsyncMock())
-    manager.attach_conversation(channel.name, "dm:88", assistant.id)
-    manager.switch_conversation(channel.name, "dm:99", target.id)
-    target.status = "expired"
-
-    await manager.handle_session_status_transition(
-        SessionStatusTransition(
-            session_id=target.id,
-            project_id="project-1",
-            agent_run_id=None,
-            status="expired",
-            transitioned_at=_FIXED_TS,
-            seq_num=1,
-            title="Lane 4",
-            source="codex",
-        )
-    )
-
-    manager._session_notifications.route_transition.assert_awaited_once()
-    assert manager.attached_session(channel.id, "dm:88") == assistant.id
-    assert manager.attached_session(channel.id, "dm:99") is None
-
-
-async def test_failed_no_assistant_reply_does_not_suppress_session_end_notice() -> None:
-    from gobby.sessions.status_events import SessionStatusTransition
-
-    channel = make_channel(channel_type="telegram")
-    store = make_store([channel])
-    store.get_channel.return_value = channel
-    target = MagicMock(id="11111111-1111-4111-8111-111111111111", status="active")
-    sessions = MagicMock()
-    sessions.get.side_effect = lambda session_id: target if session_id == target.id else None
-    sessions.list.return_value = []
-    manager = CommunicationsManager(make_config(), store, make_secret_store(), sessions)
-    manager._channel_by_name[channel.name] = channel
-    manager._session_notifications = MagicMock(route_transition=AsyncMock())
-    manager.switch_conversation(channel.name, "dm:99", target.id)
-    target.status = "expired"
-
-    with patch.object(
-        manager,
-        "send_message",
-        new_callable=AsyncMock,
-        side_effect=RuntimeError("Telegram offline"),
-    ):
-        await manager.handle_session_status_transition(
-            SessionStatusTransition(
-                session_id=target.id,
-                project_id="project-1",
-                agent_run_id=None,
-                status="expired",
-                transitioned_at=_FIXED_TS,
-                seq_num=1,
-                title="Lane 4",
-                source="codex",
-            )
-        )
-
-    manager._session_notifications.route_transition.assert_awaited_once()
-    assert manager.attached_session(channel.id, "dm:99") is None
-    assert "dm:99" not in channel.config_json.get("telegram_agent_targets", {})
 
 
 async def test_group_attachment_does_not_fall_back_to_assistant() -> None:
@@ -3076,7 +2734,6 @@ async def test_group_attachment_does_not_fall_back_to_assistant() -> None:
     sessions.list.return_value = [assistant]
     manager = CommunicationsManager(make_config(), store, make_secret_store(), sessions)
     manager._channel_by_name[channel.name] = channel
-    manager._session_notifications = MagicMock(route_transition=AsyncMock())
     manager.attach_conversation(channel.name, "group:99", target.id)
     target.status = "expired"
 

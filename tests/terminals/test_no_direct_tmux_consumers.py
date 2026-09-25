@@ -49,8 +49,6 @@ _OWNED_CONSUMER_PATHS = _MONITOR_PATHS + (
     ROOT / "src/gobby/servers/websocket/handlers/session_observe_proxy.py",
     ROOT / "src/gobby/sessions/compact_continuation.py",
     ROOT / "src/gobby/runner_init/orchestration.py",
-    ROOT / "src/gobby/communications/native_plan_actions.py",
-    ROOT / "src/gobby/communications/session_notifications.py",
     ROOT / "src/gobby/communications/telegram_actions.py",
     ROOT / "src/gobby/runner_init/servers.py",
     ROOT / "src/gobby/agents/spawn_executor_support.py",
