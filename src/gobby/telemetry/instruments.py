@@ -30,6 +30,7 @@ class TelemetryMetrics:
         """Initialize telemetry metrics."""
         self._meter = meter
         self._lock = threading.Lock()
+        self._daemon_cpu_lock = threading.Lock()
         self._start_time = time.time()
         # psutil.Process.cpu_percent(interval=None) returns 0.0 until the same
         # Process has a previous sample. Keep one process per pid.
@@ -400,24 +401,26 @@ class TelemetryMetrics:
 
     def update_daemon_metrics(self, pid: int | None = None) -> None:
         """Update daemon health metrics (uptime, memory, CPU)."""
-        try:
-            process = self._daemon_cpu_process_for(pid)
+        # A shared psutil.Process keeps the previous CPU sample as mutable state.
+        with self._daemon_cpu_lock:
+            try:
+                process = self._daemon_cpu_process_for(pid)
 
-            # Update uptime
-            self.set_gauge("daemon_uptime_seconds", self.get_uptime())
+                # Update uptime
+                self.set_gauge("daemon_uptime_seconds", self.get_uptime())
 
-            # Update memory usage
-            mem_info = process.memory_info()
-            self.set_gauge("daemon_memory_usage_bytes", float(mem_info.rss))
+                # Update memory usage
+                mem_info = process.memory_info()
+                self.set_gauge("daemon_memory_usage_bytes", float(mem_info.rss))
 
-            # Update CPU usage
-            cpu_percent = process.cpu_percent(interval=None)
-            self.set_gauge("daemon_cpu_percent", cpu_percent)
+                # Update CPU usage
+                cpu_percent = process.cpu_percent(interval=None)
+                self.set_gauge("daemon_cpu_percent", cpu_percent)
 
-        except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
-            self._daemon_cpu_process = None
-            self._daemon_cpu_pid = None
-            logger.warning("Failed to update daemon metrics: %s", e)
+            except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
+                self._daemon_cpu_process = None
+                self._daemon_cpu_pid = None
+                logger.warning("Failed to update daemon metrics: %s", e)
 
     def _daemon_cpu_process_for(self, pid: int | None) -> psutil.Process:
         """Return the Process whose previous cpu_percent sample this collector owns."""

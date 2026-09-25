@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 from opentelemetry.exporter.prometheus import PrometheusMetricReader
 from opentelemetry.sdk.metrics import MeterProvider
 
@@ -806,6 +807,47 @@ class TestAdminRoutes:
         assert response.status_code == 200
         assert 'logging_records_total{severity="WARNING",surface="daemon"} 1.0' in response.text
         assert 'automation_events_total{component="cron",outcome="fired"} 1.0' in response.text
+
+    @pytest.mark.asyncio
+    async def test_metrics_rendering_keeps_event_loop_responsive(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import gobby.servers.routes.admin._health as health_routes
+
+        loop = asyncio.get_running_loop()
+        started = asyncio.Event()
+        release = threading.Event()
+        worker_thread_ids: list[int] = []
+
+        def update_metrics() -> None:
+            worker_thread_ids.append(threading.get_ident())
+
+        def render_metrics() -> bytes:
+            loop.call_soon_threadsafe(started.set)
+            if not release.wait(timeout=2):
+                raise TimeoutError("metrics render remained blocked")
+            return b"metric_name 1.0\n"
+
+        monkeypatch.setattr(health_routes, "update_daemon_metrics", update_metrics)
+        monkeypatch.setattr(health_routes, "generate_latest", render_metrics)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=client.app), base_url="http://testserver"
+        ) as async_client:
+            request = asyncio.create_task(async_client.get("/api/admin/metrics"))
+            try:
+                await asyncio.wait_for(started.wait(), 2)
+                await asyncio.sleep(0)
+                assert not release.is_set()
+            finally:
+                release.set()
+            response = await request
+
+        assert len(worker_thread_ids) == 1
+        assert worker_thread_ids[0] != threading.get_ident()
+        assert response.status_code == 200
+        assert response.text == "metric_name 1.0\n"
+        assert "text/plain" in response.headers["content-type"]
 
     @patch("gobby.servers.routes.admin._config.get_version")
     def test_config_endpoint(self, mock_get_version: MagicMock, client: TestClient) -> None:

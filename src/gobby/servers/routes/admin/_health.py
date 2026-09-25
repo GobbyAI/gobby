@@ -763,14 +763,15 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
         - Daemon health metrics
         """
         try:
-            # Update daemon health metrics
-            update_daemon_metrics()
+            active_tasks = float(len(server._background_tasks))
 
-            # Update background task gauge
-            set_gauge("background_tasks_active", float(len(server._background_tasks)))
+            def render_metrics() -> bytes:
+                update_daemon_metrics()
+                set_gauge("background_tasks_active", active_tasks)
+                return generate_latest()
 
-            # Export in Prometheus format using prometheus_client integration
-            return PlainTextResponse(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
+            content = await asyncio.to_thread(render_metrics)
+            return PlainTextResponse(content=content, media_type=CONTENT_TYPE_LATEST)
 
         except Exception as e:
             logger.exception("Failed to export metrics: %s", e)
