@@ -11,6 +11,8 @@ import traceback
 from collections.abc import Awaitable
 from typing import Any
 
+from gobby.telemetry.instruments import observe_histogram
+
 logger = logging.getLogger("gobby.runner_lifecycle")
 
 
@@ -26,43 +28,59 @@ async def timed_startup_phase[T](name: str, operation: Awaitable[T]) -> T:
 def start_startup_lag_probe(
     loop: asyncio.AbstractEventLoop,
     *,
-    duration_seconds: float = 25 * 60,
+    duration_seconds: float | None = None,
     interval_seconds: float = 0.25,
     threshold_seconds: float = 1.0,
+    rate_limit_seconds: float = 60.0,
 ) -> None:
-    """Sample loop stalls during restart recovery from an independent thread."""
-    deadline = time.monotonic() + duration_seconds
+    """Sample loop stalls for the loop lifetime from an independent thread."""
+    deadline = time.monotonic() + duration_seconds if duration_seconds is not None else None
     loop_thread_id = threading.get_ident()
     state = {"last_beat": time.monotonic(), "reported": False}
+    last_report_by_site: dict[str, float] = {}
+
+    def active() -> bool:
+        return not loop.is_closed() and (deadline is None or time.monotonic() < deadline)
 
     def beat() -> None:
-        state["last_beat"] = time.monotonic()
+        now = time.monotonic()
+        lag = now - state["last_beat"] - interval_seconds
+        if lag >= 0.25:
+            observe_histogram("daemon_event_loop_lag_seconds", lag)
+        state["last_beat"] = now
         state["reported"] = False
-        if time.monotonic() < deadline:
+        if active():
             loop.call_later(interval_seconds, beat)
 
     def watch() -> None:
-        while time.monotonic() < deadline and not loop.is_closed():
+        while active():
             time.sleep(interval_seconds)
             lag = time.monotonic() - state["last_beat"] - interval_seconds
             if lag < threshold_seconds or state["reported"]:
                 continue
             task = asyncio.current_task(loop)
             frame = sys._current_frames().get(loop_thread_id)
-            stack = (
-                " > ".join(
-                    f"{entry.filename}:{entry.lineno}:{entry.name}"
-                    for entry in traceback.extract_stack(frame, limit=12)
-                )
-                if frame is not None
+            stack_entries = traceback.extract_stack(frame, limit=12) if frame is not None else []
+            task_frames = task.get_stack(limit=1) if task is not None else []
+            site_frame = task_frames[-1] if task_frames else frame
+            site_key = (
+                f"{site_frame.f_code.co_filename}:{site_frame.f_lineno}:"
+                f"{site_frame.f_code.co_name}"
+                if site_frame is not None
                 else "unavailable"
             )
-            logger.warning(
-                "Startup event-loop lag %.3fs | task=%s | stack=%s",
-                lag,
-                task.get_name() if task is not None else "callback-or-idle",
-                stack,
-            )
+            now = time.monotonic()
+            if now - last_report_by_site.get(site_key, float("-inf")) >= rate_limit_seconds:
+                stack = " > ".join(
+                    f"{entry.filename}:{entry.lineno}:{entry.name}" for entry in stack_entries
+                )
+                logger.warning(
+                    "Daemon event-loop lag %.3fs | task=%s | stack=%s",
+                    lag,
+                    task.get_name() if task is not None else "callback-or-idle",
+                    stack or "unavailable",
+                )
+                last_report_by_site[site_key] = now
             state["reported"] = True
 
     loop.call_later(interval_seconds, beat)

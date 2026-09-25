@@ -13,6 +13,7 @@ from gobby.hooks.events import (
     HookEventType,
     HookResponse,
 )
+from gobby.hooks.phase_timing import measure_hook_phase
 from gobby.hooks.receipt_effects import (
     STAGED_EFFECTS_FIELD,
     merge_staged_payloads,
@@ -424,26 +425,30 @@ class EvaluationMixin:
                     continue
 
             # Build fresh eval context with current variables
-            ctx = await offload(
-                self._build_eval_context,
-                evaluation.event,
-                evaluation.variables,
-                evaluation.eval_context,
-            )
+            with measure_hook_phase("rule_context_build"):
+                ctx = await offload(
+                    self._build_eval_context,
+                    evaluation.event,
+                    evaluation.variables,
+                    evaluation.eval_context,
+                )
 
             # Build allowed_funcs once per iteration - shared by condition and templates
-            allowed_funcs = await offload(self._build_allowed_funcs, ctx)
+            with measure_hook_phase("rule_allowed_funcs_build"):
+                allowed_funcs = await offload(self._build_allowed_funcs, ctx)
 
             # Check rule-level `when` condition
             if body.when:
                 fail_closed = any(effect.type == "block" for effect in body.resolved_effects)
-                if not await offload(
-                    self._evaluate_condition,
-                    body.when,
-                    ctx,
-                    allowed_funcs=allowed_funcs,
-                    fail_closed=fail_closed,
-                ):
+                with measure_hook_phase("rule_condition_eval"):
+                    condition_matches = await offload(
+                        self._evaluate_condition,
+                        body.when,
+                        ctx,
+                        allowed_funcs=allowed_funcs,
+                        fail_closed=fail_closed,
+                    )
+                if not condition_matches:
                     continue
 
             if block_effects_only or (block_gates and not suppress_turn_end_blocks):
@@ -472,13 +477,14 @@ class EvaluationMixin:
                     ):
                         continue
                     if effect.when:
-                        condition_matches = await offload(
-                            self._evaluate_condition,
-                            effect.when,
-                            ctx,
-                            effect.type,
-                            allowed_funcs,
-                        )
+                        with measure_hook_phase("rule_condition_eval"):
+                            condition_matches = await offload(
+                                self._evaluate_condition,
+                                effect.when,
+                                ctx,
+                                effect.type,
+                                allowed_funcs,
+                            )
                         if not condition_matches:
                             continue
                     reason = await offload(
@@ -536,13 +542,15 @@ class EvaluationMixin:
 
                 # Check per-effect `when` condition
                 if effect.when:
-                    if not await offload(
-                        self._evaluate_condition,
-                        effect.when,
-                        ctx,
-                        effect.type,
-                        allowed_funcs,
-                    ):
+                    with measure_hook_phase("rule_condition_eval"):
+                        condition_matches = await offload(
+                            self._evaluate_condition,
+                            effect.when,
+                            ctx,
+                            effect.type,
+                            allowed_funcs,
+                        )
+                    if not condition_matches:
                         continue
 
                 if effect.type == "block":

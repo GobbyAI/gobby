@@ -11,6 +11,7 @@ from gobby.hooks.phase_timing import (
     measure_hook_phase,
     observe_hook_phase_timings,
 )
+from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.unit
 
@@ -25,6 +26,18 @@ def test_phase_scope_accumulates_nested_hook_work() -> None:
             pass
 
     assert timings.snapshot()["handler_body"] > 0
+
+
+def test_hook_scope_reports_hub_query_percentiles(temp_db: HubDatabase) -> None:
+    timings = HookPhaseTimings()
+
+    with hook_phase_timing_scope(timings):
+        assert temp_db.fetchone("SELECT 1 AS value") is not None
+        assert temp_db.fetchone("SELECT 2 AS value") is not None
+
+    summary = timings.query_latency_summary_ms()
+    assert summary["count"] >= 2
+    assert 0 < summary["p50"] <= summary["p95"]
 
 
 def test_observe_exports_all_phases_and_finds_dominant_phase() -> None:

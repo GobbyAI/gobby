@@ -86,6 +86,13 @@ def test_autonomous_stuck_lifecycle_counter_registered(metrics_collector):
     assert all_metrics["counters"]["agent_lifecycle_autonomous_stuck_detected_total"]["value"] == 1
 
 
+def test_daemon_event_loop_lag_histogram_registered(metrics_collector: TelemetryMetrics) -> None:
+    metrics_collector.observe_histogram("daemon_event_loop_lag_seconds", value=0.3)
+
+    all_metrics = metrics_collector.get_all_metrics()
+    assert all_metrics["histograms"]["daemon_event_loop_lag_seconds"]["count"] == 1
+
+
 def test_set_gauge(metrics_collector, meter_provider):
     _, reader = meter_provider
     metrics_collector.set_gauge("mcp_active_connections", value=5.0)
@@ -149,7 +156,7 @@ def test_consecutive_daemon_cpu_samples_measure_work(metrics_collector):
     assert measured > 0
 
 
-def test_update_daemon_metrics(metrics_collector):
+def test_update_daemon_metrics(metrics_collector: TelemetryMetrics) -> None:
     with patch("psutil.Process") as mock_process:
         mock_p = MagicMock()
         mock_p.memory_info.return_value.rss = 1024 * 1024 * 50  # 50MB
