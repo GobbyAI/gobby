@@ -4,7 +4,9 @@ import asyncio
 import json
 import logging
 import os
+import threading
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -1226,6 +1228,146 @@ def test_sweep_missing_inbox_dir_is_a_noop(tmp_path: Path) -> None:
 
     app = FastAPI()
     assert consume_pending_delivery_receipts(app, inbox_dir=tmp_path / "absent") == 0
+
+
+def test_concurrent_sweeps_and_drain_acknowledge_one_ack_once(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    from gobby.hooks.inbox import consume_pending_delivery_receipts
+
+    inbox_dir = tmp_path / "hooks" / "inbox"
+    inbox_dir.mkdir(parents=True)
+    ack = inbox_dir / "n-0000000000001-ack1.json"
+    ack.write_text(json.dumps(_delivery_receipt_envelope()), encoding="utf-8")
+    app = FastAPI()
+    app.state.database = object()
+    app.state.hook_manager = MagicMock()
+    # Two per-hook sweeps and the drain all read the ack before any of them
+    # consumes it, as concurrent hook requests do in the daemon.
+    readers = threading.Barrier(3, timeout=5)
+    read_text = Path.read_text
+
+    def read_then_wait(path: Path, *args: Any, **kwargs: Any) -> str:
+        text = read_text(path, *args, **kwargs)
+        if path == ack:
+            readers.wait()
+        return text
+
+    def drain() -> int:
+        return asyncio.run(drain_hook_inbox_once(app, inbox_dir=inbox_dir))
+
+    with (
+        patch.object(Path, "read_text", read_then_wait),
+        patch("gobby.hooks.inbox.read_local_api_token", return_value="test-token"),
+        # The real CAS commits the first acknowledgement and no-ops the rest.
+        patch(
+            "gobby.storage.hook_receipts.acknowledge_receipt",
+            side_effect=[MagicMock(), None, None],
+        ) as acknowledge,
+        patch("gobby.hooks.inbox.apply_acknowledged_receipt"),
+        patch("gobby.hooks.inbox._mark_carrying_envelopes_processed"),
+        caplog.at_level(logging.INFO, logger="gobby.hooks.inbox"),
+        ThreadPoolExecutor(max_workers=3) as pool,
+    ):
+        sweeps = [pool.submit(consume_pending_delivery_receipts, app, inbox_dir) for _ in range(2)]
+        drained = pool.submit(drain)
+        consumed = [sweep.result() for sweep in sweeps] + [drained.result()]
+
+    assert acknowledge.call_count == 1
+    assert sum(consumed) == 1
+    assert "stale or unknown" not in caplog.text
+    assert [path.name for path in inbox_dir.iterdir() if path.is_file()] == []
+
+
+async def test_drain_reads_and_acknowledges_receipts_off_the_event_loop(tmp_path: Path) -> None:
+    inbox_dir = tmp_path / "hooks" / "inbox"
+    inbox_dir.mkdir(parents=True)
+    ack = inbox_dir / "n-0000000000001-ack1.json"
+    ack.write_text(json.dumps(_delivery_receipt_envelope()), encoding="utf-8")
+    app = FastAPI()
+    app.state.database = object()
+    app.state.hook_manager = MagicMock()
+    loop_thread = threading.get_ident()
+    read_on: list[int] = []
+    acknowledged_on: list[int] = []
+
+    def load(path: Path) -> dict[str, Any] | None:
+        read_on.append(threading.get_ident())
+        return _load_envelope(path)
+
+    def acknowledge(*_args: Any, **_kwargs: Any) -> None:
+        acknowledged_on.append(threading.get_ident())
+
+    with (
+        patch("gobby.hooks.inbox.read_local_api_token", return_value="test-token"),
+        patch("gobby.hooks.inbox._load_envelope", side_effect=load),
+        patch("gobby.storage.hook_receipts.acknowledge_receipt", side_effect=acknowledge),
+    ):
+        assert await drain_hook_inbox_once(app, inbox_dir=inbox_dir) == 1
+
+    assert len(read_on) == 1
+    assert read_on[0] != loop_thread
+    assert len(acknowledged_on) == 1
+    assert acknowledged_on[0] != loop_thread
+    assert not ack.exists()
+
+
+class _DaemonCrash(BaseException):
+    """Stands in for the process dying between the claim rename and the hub CAS."""
+
+
+@pytest.mark.parametrize("next_consumer", ["sweep", "drain"])
+def test_claim_stranded_by_a_crash_is_acknowledged_by_the_next_daemon(
+    tmp_path: Path, next_consumer: str
+) -> None:
+    from gobby.hooks.inbox import (
+        consume_pending_delivery_receipts,
+        prune_orphaned_inbox_temp_files,
+    )
+
+    inbox_dir = tmp_path / "hooks" / "inbox"
+    inbox_dir.mkdir(parents=True)
+    ack = inbox_dir / "n-0000000000001-ack1.json"
+    ack.write_text(json.dumps(_delivery_receipt_envelope()), encoding="utf-8")
+    app = FastAPI()
+    app.state.database = object()
+    app.state.hook_manager = MagicMock()
+
+    with (
+        patch("gobby.storage.hook_receipts.acknowledge_receipt", side_effect=_DaemonCrash),
+        pytest.raises(_DaemonCrash),
+    ):
+        consume_pending_delivery_receipts(app, inbox_dir)
+
+    [stranded] = [path for path in inbox_dir.iterdir() if path.is_file()]
+    assert stranded.name.startswith(ack.name)
+    assert stranded.name.endswith(".claimed.tmp")
+    # The daemon stays down past the orphaned-temp retention; the prune must not
+    # delete an ack nobody acknowledged.
+    stale = datetime.now(UTC).timestamp() - 2 * 60 * 60
+    os.utime(stranded, (stale, stale))
+    prune_orphaned_inbox_temp_files(inbox_dir)
+    assert stranded.exists()
+
+    with (
+        patch("gobby.hooks.inbox._RECEIPT_CLAIM_OWNER", "next-daemon"),
+        patch("gobby.hooks.inbox.read_local_api_token", return_value="test-token"),
+        patch("gobby.storage.hook_receipts.acknowledge_receipt") as acknowledge,
+        patch("gobby.hooks.inbox.apply_acknowledged_receipt"),
+        patch("gobby.hooks.inbox._mark_carrying_envelopes_processed"),
+    ):
+        if next_consumer == "sweep":
+            consumed = consume_pending_delivery_receipts(app, inbox_dir)
+        else:
+            consumed = asyncio.run(drain_hook_inbox_once(app, inbox_dir=inbox_dir))
+
+    assert consumed == 1
+    acknowledge.assert_called_once_with(
+        app.state.database,
+        receipt_id="11111111-1111-1111-1111-111111111111",
+        delivery_generation=1,
+    )
+    assert [path.name for path in inbox_dir.iterdir() if path.is_file()] == []
 
 
 def test_consume_delivery_receipt_applies_pending_message_marks(tmp_path: Path) -> None:
