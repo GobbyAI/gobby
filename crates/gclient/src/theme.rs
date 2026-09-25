@@ -90,6 +90,7 @@ pub struct Neutrals {
     pub surface_dim: Token,
     pub surface0: Token,
     pub surface1: Token,
+    pub dim: Token,
     pub overlay0: Token,
     pub overlay1: Token,
     pub subtext0: Token,
@@ -106,12 +107,13 @@ impl Neutrals {
         ]
     }
 
-    pub fn all(&self) -> [&Token; 8] {
+    pub fn all(&self) -> [&Token; 9] {
         [
             &self.panel_bg,
             &self.surface_dim,
             &self.surface0,
             &self.surface1,
+            &self.dim,
             &self.overlay0,
             &self.overlay1,
             &self.subtext0,
@@ -163,6 +165,7 @@ impl Theme {
                     surface_dim: Token::neutral("surface_dim", 0.20),
                     surface0: Token::neutral("surface0", 0.26),
                     surface1: Token::neutral("surface1", 0.32),
+                    dim: Token::neutral("dim", 0.36),
                     overlay0: Token::neutral("overlay0", 0.55),
                     overlay1: Token::neutral("overlay1", 0.62),
                     subtext0: Token::neutral("subtext0", 0.76),
@@ -188,6 +191,7 @@ impl Theme {
                     surface_dim: Token::neutral("surface_dim", 0.955),
                     surface0: Token::neutral("surface0", 0.925),
                     surface1: Token::neutral("surface1", 0.885),
+                    dim: Token::neutral("dim", 0.81),
                     overlay0: Token::neutral("overlay0", 0.62),
                     overlay1: Token::neutral("overlay1", 0.52),
                     subtext0: Token::neutral("subtext0", 0.40),
@@ -277,14 +281,21 @@ pub struct Palette {
     pub blue: Color,
     pub teal: Color,
     pub peach: Color,
+    pub ink: Color,
+    pub glint: Color,
+    pub dim: Color,
 }
 
 impl Palette {
     /// Every herdr palette name paired with the token it resolves to.
     /// `mauve` is a neutral (no purple in the contract); `red` is the
     /// magenta-pink destructive token; `teal` and `blue` are both info.
-    pub fn entries(theme: &Theme) -> [(&'static str, Token); 16] {
+    pub fn entries(theme: &Theme) -> [(&'static str, Token); 19] {
         let n = &theme.neutrals;
+        let (ink, glint) = match theme.kind {
+            ThemeKind::Dark => (n.panel_bg, n.text),
+            ThemeKind::Light => (n.text, n.panel_bg),
+        };
         [
             ("accent", theme.accent),
             ("panel_bg", n.panel_bg),
@@ -302,11 +313,18 @@ impl Palette {
             ("blue", theme.info),
             ("teal", theme.info),
             ("peach", theme.warning),
+            ("ink", ink),
+            ("glint", glint),
+            ("dim", n.dim),
         ]
     }
 
     pub fn from_theme(theme: &Theme) -> Self {
         let n = &theme.neutrals;
+        let (ink, glint) = match theme.kind {
+            ThemeKind::Dark => (n.panel_bg, n.text),
+            ThemeKind::Light => (n.text, n.panel_bg),
+        };
         Self {
             accent: theme.accent.color(),
             panel_bg: n.panel_bg.color(),
@@ -324,6 +342,9 @@ impl Palette {
             blue: theme.info.color(),
             teal: theme.info.color(),
             peach: theme.warning.color(),
+            ink: ink.color(),
+            glint: glint.color(),
+            dim: n.dim.color(),
         }
     }
 }

@@ -53,11 +53,14 @@ const NEUTRAL_NAMES: &[&str] = &[
     "surface0",
     "surface1",
     "surface_dim",
+    "dim",
     "overlay0",
     "overlay1",
     "text",
     "subtext0",
     "mauve",
+    "ink",
+    "glint",
 ];
 
 #[test]
@@ -83,7 +86,7 @@ fn tokens_match_design_contract_and_survive_monochrome() {
 
         // Every herdr palette name resolves to a contract token.
         let entries = Palette::entries(theme);
-        assert_eq!(entries.len(), 16);
+        assert_eq!(entries.len(), 19);
         for (name, token) in entries {
             assert!(
                 [BRAND_HUE, INFO_HUE, WARNING_HUE, DESTRUCTIVE_HUE].contains(&token.hue),
@@ -276,6 +279,7 @@ fn palette_entries_bind_the_same_tokens_the_render_paints_with() {
     for kind in [ThemeKind::Dark, ThemeKind::Light] {
         let theme = Theme::new(kind);
         let palette = theme.palette();
+        assert_eq!(Palette::entries(&theme).len(), 19);
         for (name, token) in Palette::entries(&theme) {
             let painted = match name {
                 "accent" => palette.accent,
@@ -294,11 +298,45 @@ fn palette_entries_bind_the_same_tokens_the_render_paints_with() {
                 "blue" => palette.blue,
                 "teal" => palette.teal,
                 "peach" => palette.peach,
-                // A seventeenth role has to be bound here too, or a capture
+                "ink" => palette.ink,
+                "glint" => palette.glint,
+                "dim" => palette.dim,
+                // Every new role has to be bound here, or a capture
                 // would silently fall back to naming it by raw colour value.
                 other => panic!("{kind:?} palette role {other} has no field in this map"),
             };
             assert_eq!(painted, token.color(), "{kind:?} {name}");
         }
+    }
+}
+
+#[test]
+fn dim_sits_between_surface1_and_overlay0_and_ink_glint_swap_by_kind() {
+    for kind in [ThemeKind::Dark, ThemeKind::Light] {
+        let theme = Theme::new(kind);
+        let n = &theme.neutrals;
+        let between = match kind {
+            ThemeKind::Dark => {
+                n.surface1.lightness < n.dim.lightness && n.dim.lightness < n.overlay0.lightness
+            }
+            ThemeKind::Light => {
+                n.surface1.lightness > n.dim.lightness && n.dim.lightness > n.overlay0.lightness
+            }
+        };
+        assert!(between, "{kind:?} dim leaves the neutral ramp: {:?}", n.dim);
+        assert_eq!(n.all().len(), 9);
+        assert_eq!(n.dim.hue, BRAND_HUE);
+        let palette = theme.palette();
+        match kind {
+            ThemeKind::Dark => {
+                assert_eq!(palette.ink, palette.panel_bg);
+                assert_eq!(palette.glint, palette.text);
+            }
+            ThemeKind::Light => {
+                assert_eq!(palette.ink, palette.text);
+                assert_eq!(palette.glint, palette.panel_bg);
+            }
+        }
+        assert_eq!(palette.dim, n.dim.color());
     }
 }
