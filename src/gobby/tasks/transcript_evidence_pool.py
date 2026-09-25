@@ -25,7 +25,7 @@ def _get_pool() -> ProcessPoolExecutor:
     with _pool_lock:
         if _pool is None:
             _pool = ProcessPoolExecutor(
-                max_workers=1,
+                max_workers=4,
                 mp_context=multiprocessing.get_context("spawn"),
             )
         return _pool
