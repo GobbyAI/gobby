@@ -313,6 +313,27 @@ true. With either off the endpoint still returns 200 with only
 `prometheus_client` process defaults, so a scrape target reads UP while every
 Gobby series is absent. Gobby neither starts nor supervises the containers.
 
+## Profile The Daemon Out Of Process
+
+Diagnose event-loop stalls and GIL saturation from outside the daemon; do not
+add probes or sampling loops to the daemon runner. On macOS, py-spy needs root.
+`scripts/install-py-spy-sudo.sh` sets up passwordless access that is limited to
+two operations:
+
+```bash
+sudo sh scripts/install-py-spy-sudo.sh            # uses ~/.local/bin/py-spy
+sudo -n /usr/local/sbin/py-spy dump --pid <daemon-pid>
+sudo -n /usr/local/sbin/py-spy-record <daemon-pid> 60   # prints the SVG path
+```
+
+The script installs a root-owned copy of py-spy, a `dump`-only sudoers rule,
+and a `py-spy-record` wrapper. The wrapper accepts only a PID and 1-300
+seconds, and writes GIL-sampled flame graphs under `/var/tmp/py-spy/`. Bare
+`py-spy record` stays unprivileged, because as root `record -- <cmd>` would run
+any command and `-o` would write any path. `/usr/bin/sample <pid> 30` needs no
+root and captures native frames, including fork and GIL waits, that py-spy's
+Python stacks omit. Recordings accumulate until removed with `sudo rm -r`.
+
 ## CLI
 
 Use the CLI for operator-level checks:
