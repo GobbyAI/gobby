@@ -57,7 +57,9 @@ async def test_lag_probe_stays_active_and_rate_limits_repeated_stack_sites(
 ) -> None:
     caplog.set_level(logging.WARNING, logger="gobby.runner_lifecycle")
     assert inspect.signature(start_startup_lag_probe).parameters["duration_seconds"].default is None
-    assert inspect.signature(start_startup_lag_probe).parameters["threshold_seconds"].default == 1.0
+    assert (
+        inspect.signature(start_startup_lag_probe).parameters["threshold_seconds"].default == 0.25
+    )
     start_startup_lag_probe(
         asyncio.get_running_loop(),
         duration_seconds=1.0,
@@ -86,7 +88,7 @@ async def test_lag_probe_stays_active_and_rate_limits_repeated_stack_sites(
 
 
 @pytest.mark.asyncio
-async def test_subsecond_lag_records_histogram_without_warning(
+async def test_subsecond_lag_records_histogram_and_warns_by_default(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     caplog.set_level(logging.WARNING, logger="gobby.runner_lifecycle")
@@ -95,7 +97,6 @@ async def test_subsecond_lag_records_histogram_without_warning(
             asyncio.get_running_loop(),
             duration_seconds=0.6,
             interval_seconds=0.01,
-            threshold_seconds=5.0,
         )
 
         async def block_loop() -> None:
@@ -111,7 +112,28 @@ async def test_subsecond_lag_records_histogram_without_warning(
         args.args[0] == "daemon_event_loop_lag_seconds" and args.args[1] >= 0.25
         for args in histogram.call_args_list
     )
-    assert not any("task=subsecond-loop-stall" in record.message for record in caplog.records)
+    assert any("task=subsecond-loop-stall" in record.message for record in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_default_lag_probe_warns_during_320ms_stall_without_idle_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.WARNING, logger="gobby.runner_lifecycle")
+    start_startup_lag_probe(asyncio.get_running_loop(), duration_seconds=0.7)
+
+    async def block_loop() -> None:
+        threading.Event().wait(0.32)
+
+    await asyncio.create_task(block_loop(), name="short-default-stall")
+    await _wait_for_probe_shutdown(0.4)
+
+    warnings = [
+        record.message for record in caplog.records if "Daemon event-loop lag" in record.message
+    ]
+    assert len(warnings) == 1
+    assert "task=short-default-stall" in warnings[0]
+    assert "stack=" in warnings[0]
 
 
 @pytest.mark.asyncio
