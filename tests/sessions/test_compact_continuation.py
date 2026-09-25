@@ -550,7 +550,7 @@ async def test_codex_exit_during_pull_prompt_write_never_sends_shell_enter(
 
     assert ("%12", prompt, True) in tmux.sent_keys
     assert _ENTER not in tmux.sent_keys
-    assert tmux.composer_text == "josh % "
+    assert tmux.composer_text == f"josh % {prompt}"
     queued = InterSessionMessageManager(session_db).get_undelivered_messages(SESSION_ID)
     assert [(m.content, m.message_type) for m in queued] == [(prompt, "handoff_continuation")]
 

@@ -21,7 +21,6 @@ from gobby.agents.idle_detector import (
     COMPOSER_PROBE_LINES,
     ComposerRead,
     IdleDetector,
-    composer_text,
 )
 from gobby.terminals.composer import composer_clear_sequence
 from gobby.terminals.foreground import command_name, foreground_commands, shell_pid
@@ -528,14 +527,11 @@ async def clear_staged_text(
     """Drain our unsubmitted text without erasing a visible different draft."""
     snapshot = await pane.snapshot(COMPOSER_PROBE_LINES, mode="ansi")
     observed = await foreground_command()
-    if observed == cli_source:
-        read = composer_read(snapshot)
-        if read.state == "draft" and read.line is not None and not _owns_staged_draft(read, text):
-            return False, "composer holds a different draft"
-    else:
-        lines = composer_text(snapshot).splitlines() if isinstance(snapshot, str) else []
-        if not lines or not lines[-1].rstrip().endswith(text):
-            return False, "staged text is not the current shell draft"
+    if observed != cli_source:
+        return False, "CLI is no longer foreground; shell draft ownership is unknown"
+    read = composer_read(snapshot)
+    if read.state == "draft" and read.line is not None and not _owns_staged_draft(read, text):
+        return False, "composer holds a different draft"
     return await clear_composer(pane, cli_source)
 
 

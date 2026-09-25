@@ -197,11 +197,13 @@ async def test_idle_codex_goal_successor_never_gets_a_second_unconfirmed_ctrl_c(
 async def test_codex_exits_between_foreground_check_and_write_without_shell_enter() -> None:
     class ExitingPane(_ComposerPane):
         foreground = "codex"
+        keys_at_write = 0
 
         async def foreground_command(self) -> str:
             return self.foreground
 
         async def type_text(self, text: str) -> tuple[bool, str | None]:
+            self.keys_at_write = len(self.keys)
             self.foreground = "zsh"
             return await super().type_text(text)
 
@@ -233,13 +235,14 @@ async def test_codex_exits_between_foreground_check_and_write_without_shell_ente
         {"error_code": "cli_not_foreground", "continuation_pending": False},
     )
     assert pane.typed == ["/compact"]
-    assert "enter" not in pane.keys
-    assert pane.draft == ""
+    assert pane.keys[pane.keys_at_write :] == []
+    assert pane.draft == "/compact"
     clear.assert_called_once_with()
 
 
+@pytest.mark.parametrize("shell_draft", ["my unsent draft", "echo /compact"])
 @pytest.mark.asyncio
-async def test_codex_exit_cleanup_preserves_an_unrelated_shell_draft() -> None:
+async def test_codex_exit_cleanup_preserves_an_unrelated_shell_draft(shell_draft: str) -> None:
     class ExitingPane(_ComposerPane):
         foreground = "codex"
         keys_at_write = 0
@@ -254,7 +257,7 @@ async def test_codex_exit_cleanup_preserves_an_unrelated_shell_draft() -> None:
 
         async def snapshot(self, lines: int = 12, *, mode: SnapshotMode = "text") -> str:
             if self.foreground == "zsh":
-                return "prior output mentions /compact\njosh % my unsent draft"
+                return f"prior output mentions /compact\njosh % {shell_draft}"
             return (await super().snapshot(lines, mode=mode)) or ""
 
     pane = ExitingPane()
