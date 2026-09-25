@@ -532,10 +532,10 @@ async def clear_staged_text(
         read = composer_read(snapshot)
         if read.state == "draft" and read.line is not None and not _owns_staged_draft(read, text):
             return False, "composer holds a different draft"
-    elif not isinstance(snapshot, str) or text[:COMPOSER_MATCH_CHARS] not in composer_text(
-        snapshot
-    ):
-        return False, "staged text is not visible after the CLI exited"
+    else:
+        lines = composer_text(snapshot).splitlines() if isinstance(snapshot, str) else []
+        if not lines or not lines[-1].rstrip().endswith(text):
+            return False, "staged text is not the current shell draft"
     return await clear_composer(pane, cli_source)
 
 

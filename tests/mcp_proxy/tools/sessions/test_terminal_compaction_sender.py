@@ -205,6 +205,11 @@ async def test_codex_exits_between_foreground_check_and_write_without_shell_ente
             self.foreground = "zsh"
             return await super().type_text(text)
 
+        async def snapshot(self, lines: int = 12, *, mode: SnapshotMode = "text") -> str:
+            if self.foreground == "zsh":
+                return f"josh % {self.draft}"
+            return (await super().snapshot(lines, mode=mode)) or ""
+
     pane = ExitingPane()
     clear = MagicMock(return_value=True)
     result = await _send_terminal_compaction_command(
@@ -231,6 +236,80 @@ async def test_codex_exits_between_foreground_check_and_write_without_shell_ente
     assert "enter" not in pane.keys
     assert pane.draft == ""
     clear.assert_called_once_with()
+
+
+@pytest.mark.asyncio
+async def test_codex_exit_cleanup_preserves_an_unrelated_shell_draft() -> None:
+    class ExitingPane(_ComposerPane):
+        foreground = "codex"
+        keys_at_write = 0
+
+        async def foreground_command(self) -> str:
+            return self.foreground
+
+        async def type_text(self, text: str) -> tuple[bool, str | None]:
+            self.keys_at_write = len(self.keys)
+            self.foreground = "zsh"
+            return await super().type_text(text)
+
+        async def snapshot(self, lines: int = 12, *, mode: SnapshotMode = "text") -> str:
+            if self.foreground == "zsh":
+                return "prior output mentions /compact\njosh % my unsent draft"
+            return (await super().snapshot(lines, mode=mode)) or ""
+
+    pane = ExitingPane()
+    result = await _send_terminal_compaction_command(
+        pane,
+        "/compact",
+        "session-1",
+        cli_source="codex",
+        mark_continuation_pending=lambda: True,
+        clear_continuation_pending=lambda: True,
+        observe_interrupt=lambda: False,
+        turn_settled=lambda: True,
+        composer_read=_CODEX_READ,
+        foreground_command=pane.foreground_command,
+        settle_seconds=_SETTLE,
+    )
+
+    assert result[3] == {"error_code": "cli_not_foreground", "continuation_pending": False}
+    assert pane.keys[pane.keys_at_write :] == []
+    assert pane.typed == ["/compact"]
+
+
+@pytest.mark.asyncio
+async def test_codex_exit_before_composer_clear_sends_no_keys() -> None:
+    class ExitingPane(_ComposerPane):
+        foreground = "codex"
+        snapshots = 0
+
+        async def foreground_command(self) -> str:
+            return self.foreground
+
+        async def snapshot(self, lines: int = 12, *, mode: SnapshotMode = "text") -> str:
+            self.snapshots += 1
+            if self.snapshots == 2:
+                self.foreground = "zsh"
+            return (await super().snapshot(lines, mode=mode)) or ""
+
+    pane = ExitingPane()
+    result = await _send_terminal_compaction_command(
+        pane,
+        "/compact",
+        "session-1",
+        cli_source="codex",
+        mark_continuation_pending=lambda: True,
+        clear_continuation_pending=lambda: True,
+        observe_interrupt=lambda: False,
+        turn_settled=lambda: True,
+        composer_read=_CODEX_READ,
+        foreground_command=pane.foreground_command,
+        settle_seconds=_SETTLE,
+    )
+
+    assert result[3] == {"error_code": "cli_not_foreground", "continuation_pending": False}
+    assert pane.keys == []
+    assert pane.typed == []
 
 
 @pytest.mark.asyncio

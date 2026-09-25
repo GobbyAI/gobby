@@ -67,11 +67,55 @@ async def test_tmux_runtime_reads_foreground_command(monkeypatch: pytest.MonkeyP
     lookup = AsyncMock(return_value=TmuxSessionInfo(name="codex-seat", pane_command="zsh"))
     monkeypatch.setattr(sessions, "get_session", lookup)
     runtime = TmuxTerminalRuntime(sessions)
+    terminal = replace(make_memory_terminal(session_name="codex-seat"), locator={})
 
-    assert (
-        await runtime.foreground_command(make_memory_terminal(session_name="codex-seat")) == "zsh"
-    )
+    assert await runtime.foreground_command(terminal) == "zsh"
     lookup.assert_awaited_once_with("codex-seat")
+
+
+@pytest.mark.asyncio
+async def test_tmux_runtime_reads_the_target_pane_in_a_multipane_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sessions = _sessions()
+    terminal = make_memory_terminal(session_name="codex-seat")
+    socket_path = (terminal.locator or {})["socket_path"]
+    lookup = AsyncMock(return_value=TmuxSessionInfo(name="codex-seat", pane_command="zsh"))
+    panes = AsyncMock(
+        return_value=[
+            SimpleNamespace(
+                pane_id="%1",
+                pane_dead=False,
+                pane_command="zsh",
+                socket_path=socket_path,
+                server_pid=1658,
+                server_start_time=1784592177,
+            ),
+            SimpleNamespace(
+                pane_id="%2",
+                pane_dead=False,
+                pane_command="codex",
+                socket_path=socket_path,
+                server_pid=1658,
+                server_start_time=1784592177,
+            ),
+        ]
+    )
+    monkeypatch.setattr(sessions, "get_session", lookup)
+    monkeypatch.setattr(sessions, "list_panes", panes)
+    runtime = TmuxTerminalRuntime(sessions)
+    monkeypatch.setattr(runtime, "_sessions_for", lambda _terminal: sessions)
+    terminal = replace(
+        terminal,
+        ownership="external",
+        locator={**(terminal.locator or {}), "pane_id": "%2"},
+    )
+
+    assert await runtime.foreground_command(terminal) == "codex"
+    stale = replace(terminal, locator={**(terminal.locator or {}), "server_pid": 9999})
+    assert await runtime.foreground_command(stale) is None
+    assert lookup.await_count == 0
+    assert panes.await_count == 2
 
 
 @pytest.mark.asyncio

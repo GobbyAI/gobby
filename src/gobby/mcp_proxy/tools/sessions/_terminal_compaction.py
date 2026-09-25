@@ -562,6 +562,20 @@ async def _send_terminal_compaction_command(
                 None,
             )
 
+        foreground_ok, foreground_reason = await require_cli_foreground()
+        if not foreground_ok:
+            if continuation_pending:
+                clear_continuation_pending()
+            return (
+                False,
+                foreground_reason,
+                False,
+                {
+                    "error_code": _CLI_NOT_FOREGROUND_ERROR_CODE,
+                    "continuation_pending": False,
+                },
+            )
+
         cleared, clear_reason = await clear_composer(pane, cli_source)
         if not cleared:
             if continuation_pending:
