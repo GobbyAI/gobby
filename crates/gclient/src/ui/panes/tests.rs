@@ -246,7 +246,6 @@ fn header_titles_share_the_sidebar_period() {
     // its overrun is longer than the header's and sets the shared period.
     let label = "a-long-pane-title-that-overruns-the-sidebar-and-the-header-both";
     let (mut ws, mut chrome) = scripted();
-    chrome.sidebar.pinned = true;
     let beta = ws.pane_for_terminal("term-beta").unwrap();
     ws.pane_mut(beta).label = Some(label.to_owned());
     let area = Rect::new(0, 0, 100, 20);

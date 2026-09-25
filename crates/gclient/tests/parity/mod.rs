@@ -67,8 +67,8 @@ mod tabs;
 /// herdr commit the keep-set was extracted from (fork point, see UPSTREAM.md).
 const UPSTREAM_COMMIT: &str = "346411fa21afd297f5ed3b3fa56f9e3fbf7654b7";
 const INVENTORY: &str = include_str!("upstream_tests.txt");
-const INVENTORY_LINES: usize = 98;
-const INVENTORY_SHA256: &str = "1f240fd9a9cc7e855ec76ced40b0b33ece3c57637eb8df8355bbe82b5830e0d8";
+const INVENTORY_LINES: usize = 107;
+const INVENTORY_SHA256: &str = "3d45e028bfd2b75c5597c77d04fe74770105f64f6bdd81f83c1f206b853c8f84";
 const UPSTREAM_MD: &str = include_str!("../../UPSTREAM.md");
 const PARITY_TABLE_START: &str = "<!-- parity-table:start -->";
 const PARITY_TABLE_END: &str = "<!-- parity-table:end -->";

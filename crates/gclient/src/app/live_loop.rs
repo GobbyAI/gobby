@@ -440,7 +440,7 @@ pub async fn run_live_loop<B: Backend>(
                     }
                     sync_live_chrome(workspace, chrome);
                 }
-                if chrome.sidebar.pinned {
+                if !chrome.sidebar.collapsed {
                     workspace.request_git_refresh_if_due();
                 }
                 workspace.request_roster_refresh_if_due();

@@ -11,7 +11,6 @@ use gobby_client::ui::dialogs::{
     render_dialog, respond_popup_size, CloseScope, CloseTarget, Dialog, RenameKind,
 };
 use gobby_client::ui::navigator::NavigatorState;
-use gobby_client::ui::settings::SettingsRow;
 use gobby_client::ui::widgets::{action_button_row_rects, centered_popup_rect, ActionButtonSpec};
 use gobby_client::ui::{render_workspace, Action};
 use gobby_client::Workspace;
@@ -528,10 +527,7 @@ fn modal_keys_drive_every_mode() {
     );
     assert!(!chrome.prefs.mouse_capture);
     assert_eq!(chrome.pending_mouse_capture, Some(false));
-    chrome.settings.selected = SettingsRow::ALL
-        .iter()
-        .position(|row| *row == SettingsRow::SidebarWidth)
-        .expect("sidebar width row");
+    chrome.settings.selected = 7;
     let width = chrome.prefs.sidebar_width;
     assert_eq!(
         press(&ws, &mut chrome, KeyCode::Right),
@@ -571,22 +567,14 @@ fn settings_rows_respond_to_clicks() {
             .expect("settings row drawn")
     };
 
-    let scrollbars_index = SettingsRow::ALL
-        .iter()
-        .position(|row| *row == SettingsRow::PaneScrollbars)
-        .expect("pane scrollbars row");
-    let scrollbars = row(scrollbars_index);
-    let scrollbars_before = chrome.prefs.pane_scrollbars;
+    let borders = row(2);
+    let borders_before = chrome.prefs.pane_borders;
     assert_eq!(
-        route_mouse(
-            &ws,
-            &mut chrome,
-            &left_click(scrollbars.x + 2, scrollbars.y)
-        ),
+        route_mouse(&ws, &mut chrome, &left_click(borders.x + 2, borders.y)),
         MouseOutcome::Handled
     );
-    assert_eq!(chrome.settings.selected, scrollbars_index);
-    assert_eq!(chrome.prefs.pane_scrollbars, !scrollbars_before);
+    assert_eq!(chrome.settings.selected, 2);
+    assert_eq!(chrome.prefs.pane_borders, !borders_before);
 
     let theme_row = row(0);
     route_mouse(&ws, &mut chrome, &left_click(theme_row.x + 2, theme_row.y));

@@ -100,33 +100,60 @@ fn pane_below<'a>(info: &PaneInfo, panes: &'a [PaneInfo]) -> Option<&'a PaneInfo
     })
 }
 
-/// Apply the border rule to raw BSP rects (herdr `apply_pane_chrome`): every
-/// pane, a lone one included, draws all four edges; with gaps off a right or
-/// below neighbour takes the shared edge, so each divider is drawn once.
-pub fn apply_pane_chrome(panes: Vec<PaneInfo>, pane_gaps: bool) -> Vec<PaneInfo> {
+fn shrink_for_one_cell_gap(size: u16) -> u16 {
+    if size > 1 {
+        size - 1
+    } else {
+        size
+    }
+}
+
+/// Apply gap and border rules to raw BSP rects (herdr `apply_pane_chrome`).
+pub fn apply_pane_chrome(
+    panes: Vec<PaneInfo>,
+    pane_borders: bool,
+    pane_gaps: bool,
+) -> Vec<PaneInfo> {
+    let multi_pane = panes.len() > 1;
     panes
         .iter()
         .cloned()
         .map(|mut info| {
-            let mut borders = Borders::ALL;
-            if !pane_gaps {
-                if pane_to_right(&info, &panes).is_some() {
-                    borders.remove(Borders::RIGHT);
+            let right_neighbor = multi_pane.then(|| pane_to_right(&info, &panes)).flatten();
+            let below_neighbor = multi_pane.then(|| pane_below(&info, &panes)).flatten();
+
+            if multi_pane && pane_gaps && !pane_borders {
+                if right_neighbor.is_some() {
+                    info.rect.width = shrink_for_one_cell_gap(info.rect.width);
                 }
-                if pane_below(&info, &panes).is_some() {
-                    borders.remove(Borders::BOTTOM);
+                if below_neighbor.is_some() {
+                    info.rect.height = shrink_for_one_cell_gap(info.rect.height);
                 }
             }
-            info.borders = borders;
+
+            info.borders = if !multi_pane || !pane_borders {
+                Borders::NONE
+            } else {
+                let mut borders = Borders::ALL;
+                if !pane_gaps {
+                    if right_neighbor.is_some() {
+                        borders.remove(Borders::RIGHT);
+                    }
+                    if below_neighbor.is_some() {
+                        borders.remove(Borders::BOTTOM);
+                    }
+                }
+                borders
+            };
             info
         })
         .collect()
 }
 
 /// Pane rects and split borders for `tab` inside `area`, honouring
-/// `prefs.pane_gaps` / `pane_scrollbars` and the tab's zoom (herdr
-/// `panes::compute_pane_infos`). `scrollbar_rect` stays `None`: the renderer
-/// resolves it per pane from live scroll metrics.
+/// `prefs.pane_gaps` / `pane_borders` / `pane_scrollbars` and the tab's zoom
+/// (herdr `panes::compute_pane_infos`). `scrollbar_rect` stays `None`: the
+/// renderer resolves it per pane from live scroll metrics.
 pub fn pane_geometry(
     tab: &Tab,
     focus: PaneId,
@@ -134,8 +161,14 @@ pub fn pane_geometry(
     area: Rect,
     prefs: &ClientPrefs,
 ) -> (Vec<PaneInfo>, Vec<SplitBorder>) {
+    let multi_pane = tab.layout.pane_count() > 1;
+
     if zoomed {
-        let borders = Borders::ALL;
+        let borders = if multi_pane && prefs.pane_borders {
+            Borders::ALL
+        } else {
+            Borders::NONE
+        };
         let pane_inner = pane_inner_rect(area, borders);
         let info = PaneInfo {
             id: focus,
@@ -148,7 +181,11 @@ pub fn pane_geometry(
         return (vec![info], Vec::new());
     }
 
-    let mut pane_infos = apply_pane_chrome(tab.layout.panes(area, focus), prefs.pane_gaps);
+    let mut pane_infos = apply_pane_chrome(
+        tab.layout.panes(area, focus),
+        prefs.pane_borders,
+        prefs.pane_gaps,
+    );
     for info in &mut pane_infos {
         let pane_inner = pane_inner_rect(info.rect, info.borders);
         info.inner_rect = stable_terminal_inner_rect(pane_inner, prefs.pane_scrollbars);
@@ -200,6 +237,19 @@ mod tests {
         let (infos, _) = pane_geometry(&tab, focus, false, Rect::new(0, 0, 80, 24), &prefs);
         assert!(!infos[0].borders.contains(Borders::RIGHT));
         assert_eq!(infos[1].borders, Borders::ALL);
+    }
+
+    #[test]
+    fn borderless_gaps_shrink_the_left_pane_by_one_cell() {
+        let (tab, focus) = two_pane_tab();
+        let prefs = ClientPrefs {
+            pane_borders: false,
+            ..ClientPrefs::default()
+        };
+        let (infos, _) = pane_geometry(&tab, focus, false, Rect::new(0, 0, 80, 24), &prefs);
+        assert_eq!(infos[0].rect.width, 39);
+        assert_eq!(infos[1].rect.width, 40);
+        assert!(infos.iter().all(|info| info.borders.is_empty()));
     }
 
     #[test]

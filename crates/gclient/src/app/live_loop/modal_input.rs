@@ -117,8 +117,7 @@ pub(super) fn close_modal(chrome: &mut Chrome) -> ModalOutcome {
     ModalOutcome::Close
 }
 
-/// Open the alert log from the global menu; `project_dialog_key` routes its
-/// keys.
+/// Open the alert log from [Menu]; `project_dialog_key` routes its keys.
 pub(super) fn open_alerts_dialog(chrome: &mut Chrome) {
     chrome.dialog = Some(Dialog::Alerts { scroll: 0 });
     chrome.mode = Mode::ProjectDialog;
@@ -390,6 +389,7 @@ fn step_settings_row<W: WorkspaceView>(ws: &W, chrome: &mut Chrome, delta: isize
             prefs.mouse_capture = !prefs.mouse_capture;
             chrome.pending_mouse_capture = Some(prefs.mouse_capture);
         }
+        SettingsRow::PaneBorders => prefs.pane_borders = !prefs.pane_borders,
         SettingsRow::PaneScrollbars => prefs.pane_scrollbars = !prefs.pane_scrollbars,
         SettingsRow::PaneGaps => prefs.pane_gaps = !prefs.pane_gaps,
         SettingsRow::ConfirmClose => prefs.confirm_close = !prefs.confirm_close,

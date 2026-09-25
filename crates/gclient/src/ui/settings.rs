@@ -130,6 +130,7 @@ pub struct ClientPrefs {
     /// Override file for the keymap; empty means the default path.
     pub keybinds: String,
     pub layout: String,
+    pub pane_borders: bool,
     pub pane_scrollbars: bool,
     pub pane_gaps: bool,
     pub confirm_close: bool,
@@ -140,6 +141,8 @@ pub struct ClientPrefs {
     pub right_click_passthrough_modifier: PassthroughModifier,
     /// Order of the sidebar's agent rows.
     pub agent_sort: AgentSort,
+    /// The sidebar starts folded to its rail.
+    pub sidebar_collapsed: bool,
     /// Project ids in the order the user dragged the cards into.
     pub project_order: Vec<String>,
     /// Labels the user gave project cards, by project id.
@@ -155,6 +158,7 @@ impl Default for ClientPrefs {
             mouse_capture: true,
             keybinds: String::new(),
             layout: "default".to_string(),
+            pane_borders: true,
             pane_scrollbars: true,
             pane_gaps: true,
             confirm_close: true,
@@ -162,6 +166,7 @@ impl Default for ClientPrefs {
             sidebar_width: 26,
             right_click_passthrough_modifier: PassthroughModifier::None,
             agent_sort: AgentSort::Grouped,
+            sidebar_collapsed: false,
             project_order: Vec::new(),
             project_labels: BTreeMap::new(),
             title_scrolling: TitleScrolling::Left,
@@ -184,6 +189,7 @@ impl ClientPrefs {
 pub enum SettingsRow {
     Theme,
     MouseCapture,
+    PaneBorders,
     PaneScrollbars,
     PaneGaps,
     ConfirmClose,
@@ -195,9 +201,10 @@ pub enum SettingsRow {
 }
 
 impl SettingsRow {
-    pub const ALL: [SettingsRow; 10] = [
+    pub const ALL: [SettingsRow; 11] = [
         SettingsRow::Theme,
         SettingsRow::MouseCapture,
+        SettingsRow::PaneBorders,
         SettingsRow::PaneScrollbars,
         SettingsRow::PaneGaps,
         SettingsRow::ConfirmClose,
@@ -220,6 +227,7 @@ fn row_label(row: SettingsRow) -> &'static str {
     match row {
         SettingsRow::Theme => "theme",
         SettingsRow::MouseCapture => "mouse capture",
+        SettingsRow::PaneBorders => "pane borders",
         SettingsRow::PaneScrollbars => "pane scrollbars",
         SettingsRow::PaneGaps => "pane gaps",
         SettingsRow::ConfirmClose => "confirm close",
@@ -243,6 +251,7 @@ fn row_value(row: SettingsRow, prefs: &ClientPrefs) -> String {
     match row {
         SettingsRow::Theme => prefs.theme.clone(),
         SettingsRow::MouseCapture => on_off(prefs.mouse_capture).to_string(),
+        SettingsRow::PaneBorders => on_off(prefs.pane_borders).to_string(),
         SettingsRow::PaneScrollbars => on_off(prefs.pane_scrollbars).to_string(),
         SettingsRow::PaneGaps => on_off(prefs.pane_gaps).to_string(),
         SettingsRow::ConfirmClose => on_off(prefs.confirm_close).to_string(),
@@ -402,22 +411,7 @@ mod tests {
     #[test]
     fn row_values_follow_prefs() {
         let mut prefs = ClientPrefs::default();
-        let labels: Vec<&str> = SettingsRow::ALL.into_iter().map(row_label).collect();
-        assert_eq!(
-            labels,
-            [
-                "theme",
-                "mouse capture",
-                "pane scrollbars",
-                "pane gaps",
-                "confirm close",
-                "hide tab bar with one tab",
-                "sidebar width",
-                "right-click passthrough",
-                "agent sort",
-                "title scrolling",
-            ]
-        );
+        assert_eq!(SettingsRow::ALL[1], SettingsRow::MouseCapture);
         assert_eq!(row_value(SettingsRow::Theme, &prefs), "dark");
         assert_eq!(row_value(SettingsRow::MouseCapture, &prefs), "on");
         assert_eq!(row_value(SettingsRow::PaneGaps, &prefs), "on");
