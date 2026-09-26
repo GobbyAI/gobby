@@ -372,7 +372,8 @@ class AttentionStateManager:
                           END
                       )
                   )
-                ORDER BY (candidate.session_id = session.id) DESC, candidate.updated_at DESC
+                ORDER BY (candidate.session_id = session.id) DESC NULLS LAST,
+                         candidate.updated_at DESC
                 LIMIT 1
             ) terminal ON TRUE
             LEFT JOIN LATERAL (

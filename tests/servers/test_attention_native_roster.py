@@ -169,3 +169,33 @@ def test_context_named_unbound_native_terminal_is_on_the_roster(
     )
     assert terminals.bind_session(terminal_id, other_session.id, project_id) is not None
     assert f"session:{session.id}" not in _roster_entries(temp_db, session_manager, terminals)
+
+
+def test_bound_terminal_wins_over_context_named_unbound_terminal(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    session_manager: SessionManager,
+) -> None:
+    project_id = sample_project["id"]
+    terminals = TerminalManager(temp_db)
+    bound_id = str(uuid.uuid4())
+    fallback_id = str(uuid.uuid4())
+    for terminal_id in (bound_id, fallback_id):
+        terminals.create_pending(
+            terminal_id=terminal_id,
+            project_id=project_id,
+            backend="native",
+            ownership="gobby",
+            spawn_key=terminal_id,
+        )
+    session = session_manager.register(
+        external_id=f"bound-vs-fallback-{uuid.uuid4()}",
+        machine_id=require_machine_id(),
+        source="codex",
+        project_id=project_id,
+        terminal_context={"gobby_terminal_id": fallback_id},
+    )
+    assert terminals.bind_session(bound_id, session.id, project_id) is not None
+
+    entry = _roster_entries(temp_db, session_manager, terminals)[f"session:{session.id}"]
+    assert entry["terminal"]["terminal_id"] == bound_id
