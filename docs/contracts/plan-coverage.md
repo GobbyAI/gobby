@@ -394,6 +394,18 @@ the user skips adversarial review, the coordinator uses
 `derive_plan_handoff_manifest` and `apply_plan_handoff_manifest`, followed by
 expansion-mode validation. It does not synthesize adversary evidence.
 
+The plan council (the standing Plan Writer, Program Director, and Plan
+Adversary seats) runs the interactive flow Josh set on 2026-09-26 with no
+numbered review rounds: the Writer drafts and spawns one enhancer pass, the
+Program Director reviews the design and puts product decisions to Josh, Josh
+approves, the Adversary reviews and converses with the Writer by
+`send_message` to consensus, and the Adversary then derives and applies M1
+through `derive_plan_handoff_manifest` and `apply_plan_handoff_manifest`,
+followed by expansion-mode validation. Approval still precedes the manifest
+write; the council changes the actor, not the gate. The evidence-round
+protocol in this contract remains the path for spawned taskless reviewers and
+`gobby build` stage reviews.
+
 Before review evidence is minted, the service runs the shared deterministic
 validator against the exact captured snapshot bytes. Manifest-bearing plans use
 blocking consumer coverage, matching CLI/MCP validation and the final expansion
