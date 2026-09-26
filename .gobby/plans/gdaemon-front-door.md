@@ -30,7 +30,10 @@ decision-complete; every deliverable below carries its settled design.
   one coordinated restart with reinstalled `~/.gobby/bin/` binaries (install by new
   inode); 4.3 is a flag day for every client on the machine. Leaf 4.2 pre-writes the
   local `api_key` into bootstrap so the 4.3 restart finds it. Stale worktrees and
-  binaries get 401 until rebased or reinstalled.
+  binaries get 401 until rebased or reinstalled. Each of those restarts runs through
+  `gobby restart` or `gobby cutover` (without `--allow-dirty`), which prove the start
+  half first with `restart_start_refusal` (#22403) and refuse with the running daemon
+  untouched.
 - **TLS default.** `front_door.tls.mode` is `off` when `bind_host` is loopback and
   refused otherwise; explicit `self-signed` is permitted on loopback for tests and
   opt-in. Story A never sees TLS. Self-signed TLS is tested end to end (user
@@ -45,7 +48,7 @@ decision-complete; every deliverable below carries its settled design.
   device-code flow later; neither changes the format.
 - **Node model (decision 17).** The node is thin: no datastore, no key table, no
   lease. Crates always dial loopback `daemon_url`; a node's gdaemon relays to
-  `hub_url` over one warm pinned-TLS connection. S2.11 closes as relay. The hub
+  `hub_daemon_url` over one warm pinned-TLS connection. S2.11 closes as relay. The hub
   reaches a node only over the node-opened channel; there is no daemon-endpoint
   column.
 - **Expansion mapping.** The root is #21543. Phases P1, P2, P4, P5, P3 correspond to
@@ -56,11 +59,14 @@ decision-complete; every deliverable below carries its settled design.
   `duplicate` at apply. ROADMAP.md S1.4 row, #21555 text (`sk-` prefix, migration 421,
   runtime-handshake bootstrap, endpoint columns) and #21578's mode wording are
   reconciled at materialization to match this plan.
-- **Migration numbering.** Latest is `430_add_run_evidence_and_reports.sql`; this
-  plan's migration is `431`. Never a baseline edit.
+- **Migration numbering.** At the 2026-09-26 refresh the latest is
+  `453_plan_review_source_path.sql`, so this plan's migration is `454`. If another
+  migration takes 454 before 4.2 lands, the leaf takes the next free number and names
+  it in its close summary. Never a baseline edit.
 - **Consumer sweeps.** Exact-symbol Targets were resolved with `gcode outline` and
   `gcode grep -w <symbol> src tests crates -l` on branch `0.5.0` at commit
-  `569960eab3` (2026-09-10), and every consumer the code index reports for an exact
+  `569960eab3` (2026-09-10) and re-swept for 1.1, 1.3, 4.3, and 5.2 at
+  `09b0f41781` (2026-09-26), and every consumer the code index reports for an exact
   Target is in some deliverable's Targets (validation reports zero consumer-coverage
   warnings). Conventions used: a symbol the plan changes is an exact Target; a file
   that only consumes a changed symbol is a `::*` entry whose scope-reason names the
@@ -68,10 +74,10 @@ decision-complete; every deliverable below carries its settled design.
   that changes) or says `verification only` when the file needs no edit and is
   re-run; a module the plan rewrites end to end (`src/gobby/config/bootstrap.py`,
   `src/gobby/utils/local_token.py`, `crates/gcore/src/local_token.rs`) is one `::*`
-  entry. The index lists 42 importers of `BootstrapConfig`; all construct it with
+  entry. The index lists 52 importers of `BootstrapConfig`; all construct it with
   keyword arguments or read existing fields, and every field this plan adds has a
   default (`front_door.enabled: true`, `hub: false`, `tls.mode: off`, `api_key`,
-  `api_key_id`, `hub_url`, `hub_cert` absent), so none of them changes. Targets the
+  `api_key_id`, `hub_cert` absent; the hub origin reuses the existing `hub_daemon_url`), so none of them changes. Targets the
   draft listed but the plan only consumes were removed (`DaemonEndpoint`,
   `read_daemon_endpoint_at`, `BootstrapConfig.to_config_dict`,
   `WebSocketServer.start`, `select_test_gdaemon`, `LocalMachineManager.upsert_seen`,
@@ -94,7 +100,7 @@ Targets:
 - `crates/gcore/src/bootstrap.rs::parse_hub_database_bootstrap`
 - `src/gobby/config/bootstrap.py::*` — scope-reason: the dataclass, `bootstrap_from_mapping`, and the new `backend_ports` helper change together; new fields default so the 42 constructor sites in the consumer sweep need no edit
 - `crates/gcore/assets/config/runtime_config_contract.json::*` — scope-reason: regenerated derived carrier of `src/gobby/config/`
-- `docs/guides/bootstrap.md`
+- `docs/guides/configuration.md`
 - `tests/config/test_bootstrap.py::*` — scope-reason: bootstrap parser tests gain the new block's cases
 
 Add a `front_door` block to the bootstrap file, parsed identically by
@@ -121,7 +127,8 @@ computing `daemon_port + 100` and `websocket_port + 100`, exported from
 `to_config_dict` and `DaemonConfig` are unchanged, and the runner and `gobby status`
 read `bootstrap_config.front_door` directly, the way `init_servers` already reads
 `bind_host` and `websocket_port` from the bootstrap object. Document the block and
-the offset convention in `docs/guides/bootstrap.md`.
+the offset convention in the `### Bootstrap` section of `docs/guides/configuration.md`,
+the page `HUB_BACKEND_MIGRATION_DOCS` already links.
 `crates/gcore/assets/config/runtime_config_contract.json` is a derived carrier of
 `src/gobby/config/` and must be regenerated in this leaf.
 
@@ -130,7 +137,7 @@ the offset convention in `docs/guides/bootstrap.md`.
 - 1.1.1 - Both parsers accept the `front_door` block, default `enabled` to true, and reject an unknown route value. symbol: `parse_hub_database_bootstrap`. file: `src/gobby/config/bootstrap.py`.
 - 1.1.2 - `backend_ports` returns the `+100` pair in both languages. test: `tests/config/test_bootstrap.py::test_backend_ports_offset`.
 - 1.1.3 - The runtime config contract carrier is regenerated and validation passes. file: `crates/gcore/assets/config/runtime_config_contract.json`.
-- 1.1.4 - The block and the offset convention are documented. behavior: "front_door block" in `docs/guides/bootstrap.md`.
+- 1.1.4 - The block and the offset convention are documented. behavior: "front_door block" in `docs/guides/configuration.md`.
 
 ### 1.2 `gdaemon serve`: HTTP proxy, WS splice, routing table, typed 503 [category: code] (depends: 1.1)
 `kind: deliverable`
@@ -198,7 +205,9 @@ Targets:
 - `src/gobby/cli/daemon.py::start`
 - `src/gobby/cli/daemon.py::_launch_direct_runner`
 - `src/gobby/cli/daemon.py::_is_daemon_healthy`
+- `src/gobby/cli/daemon.py::restart`
 - `src/gobby/cli/daemon_start.py`
+- `src/gobby/cli/__init__.py::*` — scope-reason: registers `start` from `.daemon`; the import moves to `.daemon_start`
 - `src/gobby/runner.py::run_gobby`
 - `src/gobby/runner.py::main`
 - `src/gobby/runner.py::_healthy_daemon_running`
@@ -206,9 +215,9 @@ Targets:
 - `src/gobby/runner_init/__init__.py::*` — scope-reason: re-exports `init_servers`; verification only
 - `src/gobby/runner_lifecycle.py::*` — scope-reason: consumer of `_healthy_daemon_running`; the bind-race check passes the backend port it failed to bind
 - `src/gobby/cli/_install_daemon.py::*` — scope-reason: imports of `start` and `_is_daemon_healthy` move to `gobby.cli.daemon_start`
-- `src/gobby/cli/cutover.py::*` — scope-reason: import of `start` moves to `gobby.cli.daemon_start`
-- `src/gobby/cli/hub_backup/cli.py::*` — scope-reason: import of `start` moves to `gobby.cli.daemon_start`
-- `src/gobby/cli/pack.py::*` — scope-reason: import of `start` moves to `gobby.cli.daemon_start`
+- `src/gobby/cli/cutover.py::*` — scope-reason: consumer of `restart`, which stays in `daemon.py` in this leaf; verification only
+- `src/gobby/cli/hub_backup/cli.py::*` — scope-reason: consumer of `_services_start` and `_services_stop`, which stay in `daemon.py`; verification only
+- `src/gobby/cli/pack.py::*` — scope-reason: consumer of `_services_start` and `_services_stop`, which stay in `daemon.py`; verification only
 - `src/gobby/cli/hub_backup/rehearsal.py::*` — scope-reason: `_SHARED_PORTS` module constant gains the backend port pair
 - `src/gobby/cli/daemon_health.py::health`
 - `crates/ghook/src/planned_shutdown.rs::daemon_is_reachable`
@@ -230,6 +239,7 @@ Targets:
 - `tests/e2e/test_mcp_proxy_e2e.py::*` — scope-reason: consumer of `daemon_instance`; verification only
 - `tests/e2e/test_parallel_clones.py::*` — scope-reason: consumer of `daemon_instance`; verification only
 - `tests/e2e/test_plan_coverage_responsiveness.py::*` — scope-reason: consumer of `daemon_instance`; verification only
+- `tests/e2e/test_restart_responsiveness.py::*` — scope-reason: consumer of `DaemonInstance` and `daemon_instance`; verification only
 - `tests/e2e/test_review_learning_e2e.py::*` — scope-reason: consumer of `daemon_instance`; verification only
 - `tests/e2e/test_runtime_boundary.py::*` — scope-reason: consumer of `daemon_instance`; verification only
 - `tests/e2e/test_sequential_review_loop.py::*` — scope-reason: consumer of `daemon_instance`; verification only
@@ -242,22 +252,34 @@ Targets:
 - `tests/e2e/test_worktree_merge_live.py::*` — scope-reason: consumer of `daemon_instance`; verification only
 - `tests/e2e/test_worktrees_e2e.py::*` — scope-reason: consumer of `daemon_instance`; verification only
 - `tests/terminals/test_runtime_contract.py::*` — scope-reason: consumer of `DaemonInstance` and `prepare_daemon_env`; verification only
+- `tests/mcp_proxy/test_annotate_mcp.py::*` — scope-reason: consumer of `DaemonInstance`, `daemon_instance`, and `daemon_token`; verification only
 - `tests/test_runner_lifecycle.py::*` — scope-reason: port binding assertions move to the backend pair
 - `tests/test_runner_shutdown.py::*` — scope-reason: consumer of `runner.main`; the pre-start health probe it patches now targets the public port
 - `tests/providers/test_version_gate.py::*` — scope-reason: patches `run_gobby`; verification only
 - `tests/config/test_restart_config_consumers.py::*` — scope-reason: consumer of `init_servers`; verification only
 - `tests/runner_init/test_config_runtime_startup.py::*` — scope-reason: consumer of `init_servers`; verification only
-- `tests/cli/test_cli_falkor.py::*` — scope-reason: patch paths for `start` move to `gobby.cli.daemon_start`
-- `tests/cli/test_daemon_coverage.py::*` — scope-reason: patch paths for `start` move to `gobby.cli.daemon_start`; `health` assertions keep the public port
-- `tests/cli/test_daemon_falkordb.py::*` — scope-reason: patch paths for `start` move to `gobby.cli.daemon_start`
+- `tests/cli/test_cli_falkor.py::*` — scope-reason: imports `start` locally; the import moves to `gobby.cli.daemon_start`
+- `tests/cli/test_daemon_coverage.py::*` — scope-reason: imports `_services_start`, `stop`, and `status`, which stay; patches that drive `start` retarget to `gobby.cli.daemon_start`; `health` assertions keep the public port
+- `tests/cli/test_daemon_falkordb.py::*` — scope-reason: imports `_services_start`, which stays in `daemon.py`; verification only
+- `tests/cli/test_cli_daemon.py::*` — scope-reason: imports `_is_daemon_healthy` and patches start-path helpers at `gobby.cli.daemon`; both follow the move to `gobby.cli.daemon_start`
+- `tests/cli/test_cli.py::*` — scope-reason: patches start-path helpers at `gobby.cli.daemon`; patches that drive `start` retarget to `gobby.cli.daemon_start`
+- `tests/cli/test_daemon_handoffs.py::*` — scope-reason: same start-path patch retarget; `_do_stop` stays in `daemon.py` in this leaf
+- `tests/cli/test_daemon_remote_mode.py::*` — scope-reason: same start-path patch retarget
+- `tests/cli/test_daemon_set_coherence.py::*` — scope-reason: same start-path patch retarget
+- `tests/storage/test_schema_divergence.py::*` — scope-reason: same start-path patch retarget
+- `tests/servers/routes/test_admin.py::*` — scope-reason: patches `gobby.cli.daemon` helpers the restart helpers use; verification only
+- `tests/test_runner_pid_file.py::*` — scope-reason: imports `start`, which moves to `gobby.cli.daemon_start`; `_healthy_daemon_running` keeps its signature
+- `tests/test_runner_env_scrub.py::*` — scope-reason: consumer of `_healthy_daemon_running`; verification only
 
 `gobby start` keeps the pid claim and lease in the Python runner (S1.1 decision 1:
 lifecycle moves in 5.2). When `front_door.enabled` is true it spawns `gdaemon serve`
-first (from `~/.gobby/bin/gdaemon`, refusing when the installed schema identity does
-not match as `_schema_restart_refusal` already checks), then the runner with the claim
+first (from `~/.gobby/bin/gdaemon`, after the admissions `start` already runs: `worktree_daemon_refusal` and
+`binary_set_apply_refusal`, which refuses a mixed or mismatched installed set; #22403
+replaced the old `_schema_restart_refusal` with `restart_start_refusal`, which
+`restart` and `cutover` keep calling unchanged), then the runner with the claim
 fd, and waits for native health on the public port. When false it behaves exactly as
 today. Move `start` and `_launch_direct_runner` into the new
-`src/gobby/cli/daemon_start.py`; `src/gobby/cli/daemon.py` is at 997 lines and this
+`src/gobby/cli/daemon_start.py`; `src/gobby/cli/daemon.py` is at 991 lines and this
 leaf must split it below the ceiling (the `daemon_start.py` bare-path Target is the
 new file).
 
@@ -268,9 +290,15 @@ when the front door is enabled and the public ports on `bind_host` otherwise;
 host)` keeps its signature: `main`'s pre-start probe passes the public port (gdaemon
 answers) and `run_daemon`'s bind-race check passes the port it failed to bind.
 `_SHARED_PORTS` gains the pair. `gobby status`/`health` keep reading the public
-port. Importers of `start` and `_is_daemon_healthy` (`_install_daemon.py`,
-`cutover.py`, `src/gobby/cli/hub_backup/cli.py`, `pack.py`, and the three CLI test
-files) follow the move to `daemon_start.py`.
+port. Importers of `start` and `_is_daemon_healthy` follow the move to `daemon_start.py`:
+`src/gobby/cli/__init__.py` (command registration), `restart` in `daemon.py` (its
+`ctx.invoke(start)`), `_install_daemon.py`, `tests/cli/test_cli_daemon.py`,
+`tests/cli/test_cli_falkor.py`, and `tests/test_runner_pid_file.py`. Tests that patch
+start-path helpers at `gobby.cli.daemon` (`test_cli.py`, `test_daemon_coverage.py`,
+`test_daemon_handoffs.py`, `test_daemon_remote_mode.py`, `test_daemon_set_coherence.py`,
+`test_schema_divergence.py`) retarget the patches that drive `start`. `cutover.py`,
+`hub_backup/cli.py`, and `pack.py` import only `restart`, `_services_start`, or
+`_services_stop`, which stay, so they are verification only.
 
 ghook change (S1.1 decision 4): `daemon_is_reachable` treats the typed 503
 `unavailable` body as unreachable so planned-shutdown suppression triggers on it;
@@ -312,7 +340,7 @@ Targets:
 - `src/gobby/install/shared/config/bootstrap.yaml.j2`
 - `crates/gdaemon/src/front_door/health.rs`
 - `crates/gcore/assets/config/runtime_config_contract.json::*` — scope-reason: regenerated derived carrier of `src/gobby/config/`
-- `docs/guides/bootstrap.md`
+- `docs/guides/configuration.md`
 - `tests/config/test_bootstrap.py::*` — scope-reason: bootstrap parser tests gain the new block's cases
 - `tests/config/test_files_home.py::*` — scope-reason: consumer of `update_bootstrap_yaml` and `ensure_daemon_config`; written files gain the `hub` line
 - `tests/cli/test_install_setup.py::*` — scope-reason: consumer of `ensure_daemon_config`; written files gain the `hub` line
@@ -501,7 +529,7 @@ Targets:
 - `crates/gcore/assets/config/runtime_config_contract.json::*` — scope-reason: regenerated derived carrier of `src/gobby/config/`
 - `tests/e2e/conftest.py::daemon_instance`
 - `tests/e2e/conftest.py::DaemonInstance`
-- `docs/guides/bootstrap.md`
+- `docs/guides/configuration.md`
 
 Bootstrap gains:
 
@@ -547,7 +575,7 @@ typed-503, and WS-splice tests.
 `kind: deliverable`
 
 Targets:
-- `crates/gcore/assets/schema/migrations/431_add_api_keys.sql`
+- `crates/gcore/assets/schema/migrations/454_add_api_keys.sql`
 - `crates/gcore/assets/schema/catalog.manifest.json::*` — scope-reason: regenerated derived schema carrier
 - `crates/gcore/src/grant/bundle.rs::*` — scope-reason: derived schema carrier regenerated
 - `crates/gcore/tests/schema_contract.rs::*` — scope-reason: derived schema carrier regenerated
@@ -584,7 +612,7 @@ Targets:
 - `tests/e2e/test_auth_login.py`
 - `docs/guides/cli-commands.md`
 
-Migration `431_add_api_keys.sql`:
+Migration `454_add_api_keys.sql`:
 
 ```sql
 CREATE TABLE api_keys (
@@ -639,11 +667,14 @@ Routes (`src/gobby/servers/routes/api_keys.py`, mounted in `_app_routes.py`):
 Until 4.3, "authenticated" means today's `AuthService`; 4.3 swaps the principal
 source without changing the routes.
 
-Bootstrap gains `api_key`, `api_key_id`, `hub_url`, and `hub_cert` (both parsers,
-`update_bootstrap_yaml` writer, config contract carrier regenerated):
+Bootstrap gains `api_key`, `api_key_id`, and `hub_cert` (both parsers,
+`update_bootstrap_yaml` writer, config contract carrier regenerated). The hub origin
+is the existing `hub_daemon_url` field: `_parse_mode_owner_fields` requires it with
+`datastore_mode: remote` and rejects it on a local bootstrap, and Rust reads it
+through `FilesHomeView`, so no new URL key is added:
 
 ```yaml
-hub_url: https://hub.tailnet:60887
+hub_daemon_url: https://hub.tailnet:60887   # existing field; remote bootstraps only
 hub_cert: ~/.gobby/tls/hub.pem
 api_key: gobby_...
 api_key_id: 4f1c...
@@ -656,7 +687,8 @@ CLI (`src/gobby/cli/auth_login.py`, registered under the existing `auth` group;
   prints its fingerprint, and asks for confirmation unless `--fingerprint` matches (a
   mismatch refuses); writes the PEM to `hub_cert`; posts the bootstrap request over
   the now-pinned connection with this machine's id, hostname, and os; writes
-  `api_key`, `api_key_id`, `hub_url` to bootstrap. `--insecure` permits `http://` to a
+  `api_key`, `api_key_id`, and `hub_daemon_url` to bootstrap, refusing on a
+  `datastore_mode: local` bootstrap, which cannot carry `hub_daemon_url`. `--insecure` permits `http://` to a
   non-loopback host.
 - `gobby auth key --show | --rotate`, `gobby auth key list`, `gobby auth key revoke
   ID`. Rotate: mint via `POST /api/auth/keys`, write bootstrap atomically, verify with
@@ -671,7 +703,7 @@ install gets its key on first start after this leaf.
 
 **Acceptance:**
 
-- 4.2.1 - Migration 431 creates `api_keys` and the two `machines` columns, and every derived carrier is regenerated. file: `crates/gcore/assets/schema/migrations/431_add_api_keys.sql`.
+- 4.2.1 - Migration 454 creates `api_keys` and the two `machines` columns, and every derived carrier is regenerated. file: `crates/gcore/assets/schema/migrations/454_add_api_keys.sql`.
 - 4.2.2 - `generate`/`parse`/`hash` agree across Python and Rust on shared vectors, and `parse` rejects a bad checksum. test: `tests/utils/test_api_key_format.py::test_cross_language_vectors`.
 - 4.2.3 - Bootstrap route verifies the password, binds the machine, and returns the plaintext once; a foreign-owned machine gets 403. test: `tests/servers/routes/test_api_keys.py::test_bootstrap_mints_bound_key`.
 - 4.2.4 - `gobby auth login` pins by fingerprint, refuses a mismatch, and writes bootstrap. test: `tests/e2e/test_auth_login.py::test_login_pins_self_signed_hub`.
@@ -716,8 +748,14 @@ Targets:
 - `src/gobby/agents/tmux/spawner.py::*` — scope-reason: same for the tmux env builder call
 - `src/gobby/agents/code_index.py::*` — scope-reason: the preflight passes the lease signing secret to `materialize_managed_launch`
 - `src/gobby/ai/_managed_tool_chat_lease.py::*` — scope-reason: passes the lease signing secret to `materialize_managed_launch`
-- `src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py::*` — scope-reason: `code_index_api_token` becomes the lease signing secret
-- `src/gobby/hooks/inbox.py::*` — scope-reason: consumer of `read_local_api_token`; the missing-credential warning names `gobby auth login` instead of the token file
+- `src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py::*` — scope-reason: `code_index_api_token` becomes the lease signing secret, and the selection block moves out (split below)
+- `src/gobby/mcp_proxy/tools/spawn_agent/_selection.py`
+- `src/gobby/hooks/inbox.py::*` — scope-reason: consumer of `read_local_api_token`; the missing-credential warning names `gobby auth login` instead of the token file, and the drain loop and retention passes move out (split below)
+- `src/gobby/hooks/inbox_maintenance.py`
+- `src/gobby/runner_maintenance/messaging.py::*` — scope-reason: import of `drain_hook_inbox_loop` moves to `gobby.hooks.inbox_maintenance`
+- `tests/hooks/test_inbox.py::*` — scope-reason: imports of `_compute_sleep_seconds` and `prune_orphaned_inbox_temp_files` and the `_JITTER_RANDOM` patch move to `gobby.hooks.inbox_maintenance`; `read_local_api_token` patches keep their path
+- `tests/hooks/test_inbox_temp_reaper.py::*` — scope-reason: imports and the `get_hook_inbox_dir` and `prune_orphaned_inbox_temp_files` patches move to `gobby.hooks.inbox_maintenance`
+- `tests/hooks/test_envelope_marker_retention.py::*` — scope-reason: the `prune_hook_inbox` import and the `get_hook_inbox_dir` and `prune_processed_envelope_markers` patches move to `gobby.hooks.inbox_maintenance`
 - `src/gobby/storage/auth.py::*` — scope-reason: remove the local-token hash accessors
 - `src/gobby/config/registry.py::*` — scope-reason: drop the `auth.api_token_hash` registration
 - `crates/gcore/assets/config/runtime_config_contract.json::*` — scope-reason: regenerated derived carrier of `src/gobby/config/`
@@ -745,6 +783,9 @@ Targets:
 - `tests/servers/routes/test_runtime_handshake.py::*` — scope-reason: challenge and handshake against forwarded identity
 - `tests/servers/routes/test_runtime_config.py::*` — scope-reason: consumers of `AuthService.local_token`, `issue_for_operator`, and `verify_agent_api_token`; use the signing secret
 - `tests/servers/test_mcp_programmatic_boundary.py::*` — scope-reason: consumer of `AuthService.local_token`; uses the signing secret
+- `tests/ask/http_mcp_support.py::*` — scope-reason: builds `AuthService` with a token file and issues agent tokens; use the signing secret, no token file
+- `tests/mcp_proxy/test_workspaces_registry.py::*` — scope-reason: builds `AuthService` with a token file and patches `authenticate`; same
+- `tests/servers/routes/test_ask.py::*` — scope-reason: its authenticated harness builds `AuthService` with a token file and issues agent and tool tokens; same
 - `tests/servers/test_grant_auth.py::*` — scope-reason: `bearer_matches_grant` cases compare against the forwarded machine header
 - `tests/servers/routes/test_configuration_routes.py::*` — scope-reason: drop verify_bearer usage
 - `tests/storage/test_storage_auth.py::*` — scope-reason: drop token-file tests
@@ -767,6 +808,39 @@ Targets:
 - `docs/guides/admin-operations.md`
 
 Single cutover; the token file, its hash, and the alias are gone after this commit.
+
+**Granularity:** one leaf and one commit. The token file, its hash, and the alias leave
+together, and any consumer left on the old credential would 401 between commits. The
+two size splits below ride in the same commit because the credential edits land in
+those files and each split is a pure move.
+
+**Split `src/gobby/hooks/inbox.py`** (983 lines) before its credential edit: move the
+periodic drain loop and its retention passes (`drain_hook_inbox_loop`,
+`_compute_sleep_seconds`, `_JITTER_RANDOM`, `prune_hook_inbox`,
+`_prune_hook_inbox_blocking`, `prune_orphaned_inbox_temp_files`,
+`_is_orphaned_temp_name`, `ORPHANED_TEMP_RETENTION_SECONDS`,
+`ORPHANED_TEMP_PRUNE_MAX_ENTRIES`) into the new `src/gobby/hooks/inbox_maintenance.py`.
+The new module imports `get_hook_inbox_dir` and `drain_hook_inbox_once` from
+`inbox.py`, and nothing in `inbox.py` imports it back, so there is no cycle.
+`runner_maintenance/messaging.py` imports the loop from the new module, and the three
+hook test files import from it and patch `get_hook_inbox_dir`,
+`prune_processed_envelope_markers`, `prune_orphaned_inbox_temp_files`, and
+`_JITTER_RANDOM` there. `inbox.py` ends near 845 lines.
+
+**Split `src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py`** (964 lines, almost
+all of it `spawn_agent_impl`) before its credential edit: move the selection block,
+from the `isolation` default through the managed-runtime `validate_selection` check
+that ends just before `get_machine_id`, into the new
+`src/gobby/mcp_proxy/tools/spawn_agent/_selection.py` as `resolve_spawn_selection`. It
+returns a frozen `SpawnSelection` carrying every value the rest of `spawn_agent_impl`
+reads (isolation, provider, model, API base and token, requested reasoning effort,
+the resolved reasoning) or the error response `spawn_agent_impl` returns today. No
+test patches a name the moved block uses: tests patch `get_project_context`,
+`get_isolation_handler`, `get_machine_id`, `execute_spawn`, `prepare_terminal_spawn`,
+`finalize_executed_spawn`, `provider_mcp_config_error`, and
+`repair_isolation_environment`, which all stay. No patch path moves, and the spawn
+tests under `tests/mcp_proxy/tools/spawn_agent/` re-run as verification. The file
+ends near 855 lines.
 
 **gdaemon validation** (`front_door/auth.rs`, hub and standalone only): the bearer
 is dispatched on its kind, and the dispatch is the one seam a later token kind adds
@@ -860,6 +934,8 @@ cookie), `admin-operations.md` (rotation procedure).
 - 4.3.5 - A node user's interactive grant validates at the hub. symbol: `bearer_matches_grant`.
 - 4.3.6 - No reference to `local_cli_token`, `X-Gobby-Local-Token`, or `auth.api_token_hash` remains under `src/`, `crates/`, or `docs/` (literal sweep recorded in the leaf). behavior: "API key" in `docs/contracts/secrets.md`.
 - 4.3.7 - The e2e suites pass with a provisioned key and the auth corpus cases are re-recorded at `schema_version` 2. file: `tests/contracts/http/manifest.json`.
+- 4.3.8 - `src/gobby/hooks/inbox.py` is below 1,000 lines after the loop and retention move, and the moved loop still drains and prunes on its own cadence. file: `src/gobby/hooks/inbox_maintenance.py`.
+- 4.3.9 - `src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py` is below 1,000 lines after the selection move. file: `src/gobby/mcp_proxy/tools/spawn_agent/_selection.py`.
 
 ### 4.4 Node channel, relay backend, and `/api/machines` [category: code] (depends: 4.1, 4.3, 2.3)
 `kind: deliverable`
@@ -875,15 +951,15 @@ Targets:
 - `crates/gdaemon/tests/nodes.rs`
 - `tests/e2e/test_hub_node_pair.py`
 - `tests/e2e/conftest.py::daemon_instance`
-- `docs/guides/bootstrap.md`
+- `docs/guides/configuration.md`
 
-**Relay backend.** In `node` mode the front door's backend target is `hub_url` over
+**Relay backend.** In `node` mode the front door's backend target is `hub_daemon_url` over
 the pinned client (`hub_cert`), one pooled hyper + rustls connection reused across
 requests, instead of loopback Python. Requests are forwarded byte-for-byte, bearer
 included; the node validates nothing and holds no table. A hub that refuses
-connections yields the 1.2 typed 503 with `"target": "<hub_url>"`. Both node
-listeners relay: the HTTP listener to `hub_url`, and the WS listener (`:60888` and
-`/ws` on `:60887`) to `wss://<hub_url host:port>/ws`, because the hub's `/ws` on its
+connections yields the 1.2 typed 503 with `"target": "<hub_daemon_url>"`. Both node
+listeners relay: the HTTP listener to `hub_daemon_url`, and the WS listener (`:60888` and
+`/ws` on `:60887`) to `wss://<hub_daemon_url host:port>/ws`, because the hub's `/ws` on its
 HTTP port serves the same `WebSocketServer` as its `:60888` listener
 (`src/gobby/servers/_app_ui.py`), so no second hub port is configured. The 1.2 WS
 splice runs unchanged inside the pinned TLS stream.
@@ -909,7 +985,7 @@ key row and closes the channel with code 4401 when `revoked_at` is set, and writ
 
 **Pair test.** `tests/e2e/test_hub_node_pair.py` starts a hub `daemon_instance`
 with `tls="self-signed"` and a second gdaemon in `node` mode (bootstrap
-`datastore_mode: remote`, `hub: false`, `hub_url`, `hub_cert`, `api_key` from a
+`datastore_mode: remote`, `hub: false`, `hub_daemon_url`, `hub_cert`, `api_key` from a
 `gobby auth login` run against the hub), asserts the node appears `connected` in
 `/api/machines`, that a request through the node's loopback front door reaches the
 hub and returns the hub's identity, that one WS upgrade through the node's loopback
@@ -919,12 +995,12 @@ runs no maintenance loop (2.3), and that revoking the key closes the channel wit
 
 **Acceptance:**
 
-- 4.4.1 - A node relays to `hub_url` over the pinned connection and reports the typed 503 when the hub is down. test: `crates/gdaemon/tests/nodes.rs::node_relays_over_pinned_tls`.
+- 4.4.1 - A node relays to `hub_daemon_url` over the pinned connection and reports the typed 503 when the hub is down. test: `crates/gdaemon/tests/nodes.rs::node_relays_over_pinned_tls`.
 - 4.4.2 - The channel registers the machine, heartbeats, and is replaced by a newer connection; when the old channel's cleanup runs after the new ack, the new channel stays registered and `connected` in `/api/machines`. test: `crates/gdaemon/tests/nodes.rs::channel_registers_and_replaces`.
 - 4.4.3 - Revocation closes the channel within one heartbeat interval. test: `crates/gdaemon/tests/nodes.rs::revoked_key_closes_channel_on_heartbeat`.
 - 4.4.4 - `/api/machines` lists rows with connection state. file: `crates/gdaemon/src/nodes/machines_api.rs`.
 - 4.4.5 - The hub-node pair test passes over self-signed TLS end to end, including one WS upgrade relayed through the node. test: `tests/e2e/test_hub_node_pair.py::test_node_enrolls_and_relays`.
-- 4.4.6 - A node relays a WS upgrade to `wss://<hub_url>/ws` over the pinned connection and the golden frames and close codes pass byte-equal. test: `crates/gdaemon/tests/nodes.rs::node_relays_ws_over_pinned_tls`.
+- 4.4.6 - A node relays a WS upgrade to `wss://<hub_daemon_url host:port>/ws` over the pinned connection and the golden frames and close codes pass byte-equal. test: `crates/gdaemon/tests/nodes.rs::node_relays_ws_over_pinned_tls`.
 
 ## P5: Singleton lease and backend lifecycle in Rust (S1.3, #21554) (depends: P4)
 `kind: framing`
@@ -954,6 +1030,9 @@ Targets:
 - `tests/test_daemon_lease.py::*` — scope-reason: the lease becomes a read-only view
 - `tests/test_runner_lease_lifecycle.py::*` — scope-reason: same
 - `tests/servers/test_auth_service.py::*` — scope-reason: lease_not_held path removed
+- `tests/ask/native_probe_harness.py::*` — scope-reason: the contained probe constructs `ActiveDaemonLease` and calls `try_acquire`; it binds the read-only view instead
+- `tests/ask/test_native_probe_cleanup.py::*` — scope-reason: consumer of `current_lease`; asserts the probe binds and clears the view
+- `tests/ask/test_native_probe_harness.py::*` — scope-reason: same
 
 `crates/gdaemon/src/lease/` ports the FW.1 contract (#21548): a `hub` or
 `standalone` gdaemon takes the advisory lock keyed on `current_database()` on a
@@ -1008,9 +1087,14 @@ Targets:
 - `src/gobby/cli/daemon.py::status`
 - `src/gobby/cli/daemon.py::_get_running_daemon_pid`
 - `src/gobby/cli/daemon_lifecycle.py`
-- `src/gobby/cli/cutover.py::*` — scope-reason: import of `restart` moves to `gobby.cli.daemon_lifecycle`
-- `src/gobby/cli/hub_backup/cli.py::*` — scope-reason: imports of `stop` and `restart` move to `gobby.cli.daemon_lifecycle`
-- `src/gobby/cli/pack.py::*` — scope-reason: import of `restart` moves to `gobby.cli.daemon_lifecycle`
+- `src/gobby/cli/__init__.py::*` — scope-reason: registers `stop`, `restart`, and `status` from `.daemon`; the import moves to `.daemon_lifecycle`
+- `src/gobby/cli/daemon_preflight.py::*` — scope-reason: consumer: `restart_start_refusal` runs before both restart forms and its call site moves with `restart`; verification only
+- `src/gobby/cli/daemon_singleton.py::*` — scope-reason: consumer: `stop_singleton_gate` admits the stop before the pid-record fallback; verification only
+- `src/gobby/cli/_daemon_protected_runs.py::*` — scope-reason: consumer: `clear_protected_runs` moves with `_do_stop`; verification only
+- `src/gobby/cli/_daemon_handoffs.py::*` — scope-reason: consumer: `protect_pending_handoffs` moves with `_do_stop`; verification only
+- `src/gobby/cli/cutover.py::*` — scope-reason: import of `restart` moves to `gobby.cli.daemon_lifecycle`, and the post-promotion restart uses `--full` with `expected_identity`
+- `src/gobby/cli/hub_backup/cli.py::*` — scope-reason: consumer of `_services_start` and `_services_stop`, which stay in `daemon.py`; verification only
+- `src/gobby/cli/pack.py::*` — scope-reason: consumer of `_services_start` and `_services_stop`, which stay in `daemon.py`; verification only
 - `src/gobby/servers/routes/admin/_lifecycle.py::register_lifecycle_routes`
 - `src/gobby/servers/routes/admin/_lifecycle.py::_wait_for_process_exit`
 - `src/gobby/servers/routes/admin/_lifecycle.py::_append_restart_helper_log`
@@ -1039,8 +1123,15 @@ Targets:
 - `tests/cli/installers/test_cli_installers_service.py::*` — scope-reason: rendered units launch gdaemon
 - `tests/servers/routes/test_admin.py::*` — scope-reason: restart and shutdown cases assert the intent marker and no helper spawn
 - `tests/test_runner_pid_file.py::*` — scope-reason: adoption tests removed, golden fixtures exported
+- `tests/cli/test_daemon_set_coherence.py::*` — scope-reason: patches `gobby.cli.daemon._do_stop`; the patch path moves to `gobby.cli.daemon_lifecycle`
+- `tests/storage/test_schema_divergence.py::*` — scope-reason: same `_do_stop` patch move
+- `tests/cli/test_cutover.py::*` — scope-reason: patches `gobby.cli.cutover.restart`; asserts the post-promotion restart uses `--full`
 - `docs/guides/admin-operations.md`
 - `docs/guides/cli-commands.md`
+
+**Granularity:** one leaf. The pid claim, supervision, CLI, and service templates move
+ownership of the daemon lifecycle together; any subset leaves two owners of the pid
+lock or a launcher that nothing supervises.
 
 **Pid claim** (`lifecycle/pid_file.rs`): gdaemon claims `~/.gobby/gobby.pid.lock`
 with the same flock, writes the same JSON role record, and honors
@@ -1065,7 +1156,14 @@ own, the supervisor reads the shutdown-intent marker the runner already writes
 with a golden test against a Python-written marker): intent `restart` respawns the
 backend immediately (lease held, epoch unchanged, grants valid); intent `stop` exits
 gdaemon after releasing the lease and the pid claim; no active marker is a crash and
-respawns with backoff (1 s doubling to 30 s).
+respawns with backoff (1 s doubling to 30 s). A backend exit caused by a start refusal
+is not a crash: `runner.main` exits with one dedicated refusal status for its worktree
+refusal, the dirty-bundled-content refusal, and a schema refusal, and the supervisor
+does not respawn on it, keeps the backend state `down`, and logs the refusal. The
+backend is spawned without the pid-lock descriptor (opened `O_CLOEXEC`), so the lock
+never outlives gdaemon in the child. `gobby start` keeps its admissions (worktree
+guard, `binary_set_apply_refusal`) before spawning `gdaemon serve`; a service-manager
+launch starts `gdaemon serve` directly and relies on the runner's refusals above.
 
 **Admin routes stay in Python.** `POST /api/admin/shutdown` and
 `POST /api/admin/restart` in `src/gobby/servers/routes/admin/_lifecycle.py` keep
@@ -1083,15 +1181,23 @@ typed 503, and `gobby stop` falls back to the pid record.
 
 **CLI** (move `_do_stop`, `stop`, `restart`, `status`, `_get_running_daemon_pid`
 into the new `src/gobby/cli/daemon_lifecycle.py`; `daemon.py` must stay below the
-ceiling and this split is the exemption; `cutover.py`,
-`src/gobby/cli/hub_backup/cli.py`, `pack.py`, and the four CLI test files follow the
-import move): `gobby start` spawns
+ceiling and this split is the exemption; `src/gobby/cli/__init__.py`, `cutover.py`, and the
+CLI test files that import or patch the moved names follow the import move;
+`hub_backup/cli.py` and `pack.py` import only `_services_start` and `_services_stop`,
+which stay): `gobby start` spawns
 `gdaemon serve` and waits for public health; `gobby stop` calls
 `POST /api/admin/shutdown`, waits for the pid claim to clear, and falls back to
-SIGTERM on the pid record; `gobby restart` calls `POST /api/admin/restart` by
+SIGTERM on the pid record only after the admissions `_do_stop` runs today
+(`stop_singleton_gate`, `clear_protected_runs`, `protect_pending_handoffs`) admit the
+stop; `gobby restart` calls `POST /api/admin/restart` by
 default (the runner exits with intent `restart` and the supervisor respawns it) and
-`--full` does stop then start; the restart-protected cron guard and
-`--wait`/`--force` apply to both forms; `gobby status` probes the lock as today. The
+`--full` does stop then start; the restart-protected cron guard, the handoff guard, and
+`--wait`/`--force` run client-side before either form, and `restart_start_refusal`
+(`src/gobby/cli/daemon_preflight.py`, #22403: worktree guard, installed set, schema
+identity, read-only `gdaemon schema plan`) runs before either form and refuses with
+the running daemon untouched; `gobby cutover` always restarts with `--full`, because a
+backend-only restart would leave the old gdaemon in front of the new binaries, and
+keeps passing `expected_identity`; `gobby status` probes the lock as today. The
 launchd plist, systemd unit, and Windows launcher templates launch `gdaemon serve`
 directly with the service env; `_resolve_install_context` renders the gdaemon path
 and `service.py`/`service_linux.py` consume it. The runner's `main` no longer probes
@@ -1107,6 +1213,9 @@ for a healthy daemon or adopts a claim.
 - 5.2.6 - `src/gobby/cli/daemon.py` stays below 1,000 lines after the lifecycle split. file: `src/gobby/cli/daemon_lifecycle.py`.
 - 5.2.7 - `POST /api/admin/restart` keeps its admission checks, writes intent `restart`, spawns no helper, and the deleted helper functions are gone. test: `tests/servers/routes/test_admin.py::test_restart_writes_intent_without_helper`.
 - 5.2.8 - The supervisor parses a Python-written shutdown-intent marker and respawns on `restart`, exits on `stop`, and backs off on a crash. test: `crates/gdaemon/tests/lifecycle.rs::shutdown_intent_marker_drives_respawn`.
+- 5.2.9 - `gobby restart` (both forms) and `gobby cutover` refuse before any stop when `restart_start_refusal` fails, leaving the running daemon untouched, and cutover restarts with `--full`. test: `tests/cli/test_cli_daemon.py::test_restart_backend_only_runs_start_preflight`.
+- 5.2.10 - The supervisor does not respawn after a start-refusal exit, and the spawned backend holds no pid-lock descriptor. test: `crates/gdaemon/tests/lifecycle.rs::start_refusal_is_not_respawned`.
+- 5.2.11 - `gobby stop` reaches the pid-record SIGTERM fallback only after the singleton, protected-run, and handoff admissions pass. test: `tests/cli/test_daemon_handoffs.py::test_stop_fallback_runs_after_admissions`.
 
 ### 5.3 Retire the Python lease modules [category: refactor] (depends: 5.2)
 `kind: deliverable`
@@ -1131,6 +1240,7 @@ Targets:
 - `tests/servers/test_lease_fence.py::*` — operation: delete — scope-reason: retire the entire file
 - `tests/test_runner_lease_lifecycle.py::*` — scope-reason: standby and loss paths removed
 - `tests/fixtures/test_postgres_safety.py::*` — scope-reason: lease reference updated
+- `tests/ask/native_probe_harness.py::*` — scope-reason: imports `monitor_active_lease` and `drain_effect_fence` from the deleted modules; the contained runner drops both and follows the `_bind_runtime_grants` change
 - `tests/e2e/conftest.py::daemon_instance`
 - `docs/guides/admin-operations.md`
 
@@ -1259,6 +1369,24 @@ built and installed binaries:
   S2.10/S2.12; 4.3 dispatches bearers on kind (`gobby_` API key, `v1.` managed
   token, anything else 401 and reserved for OAuth access tokens) so the second
   token kind is a `front_door/auth.rs` change only.
+- 2026-09-26: Current-code refresh under #22951 from Researcher drift evidence at
+  `09b0f41781`; the Decision Record and P1 order 1.1, 1.2, 1.3 are unchanged. 4.3 names
+  two pure-move splits for files past the 850-line heuristic (the `hooks/inbox.py`
+  loop and retention passes to `hooks/inbox_maintenance.py`; the
+  `spawn_agent/_implementation.py` selection block to `spawn_agent/_selection.py`) with
+  4.3.8, 4.3.9, and a Granularity record. 1.3 replaces the deleted
+  `_schema_restart_refusal` with the admissions `start` runs today, corrects the
+  `daemon.py` size and importer list, and adds the missed consumers. 5.2 keeps
+  #22403's refuse-before-stop guarantee for both restart forms and cutover (`--full`),
+  keeps `_do_stop`'s admissions ahead of the SIGTERM fallback, treats a start-refusal
+  exit as no-respawn, and adds 5.2.9 through 5.2.11 and the missed consumers. 4.2
+  reuses the existing `hub_daemon_url` instead of adding `hub_url` (4.4 and Constraints
+  follow), and its migration moves from the occupied 431 to 454. Bootstrap docs
+  target `docs/guides/configuration.md` because `docs/guides/bootstrap.md` does not
+  exist. The `BootstrapConfig` importer count is 52.
+  Consumer sweep additions: the contained Ask probe harness and its two tests
+  (5.1, 5.3), the three token-file `AuthService` test harnesses (4.3), and two
+  `daemon_instance` consumers (1.3).
 
 **Round 1** `kind: enhancement`
 
