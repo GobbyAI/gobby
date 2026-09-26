@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Mapping
 from dataclasses import asdict
@@ -71,7 +72,7 @@ def create_embeddings_router(server: HTTPServer) -> APIRouter:
     @router.get("/status")
     async def embedding_status() -> dict[str, object]:
         """Return daemon embed capability status."""
-        return _embedding_status_payload(server.config)
+        return await asyncio.to_thread(_embedding_status_payload, server.config)
 
     @router.post("")
     async def generate_embedding_batch(
@@ -82,9 +83,9 @@ def create_embeddings_router(server: HTTPServer) -> APIRouter:
         if config is None:
             raise HTTPException(status_code=503, detail="Daemon config not found")
 
-        status = build_daemon_ai_capability_registry(config).status(AICapability.EMBED)
-        if not status.available:
-            return JSONResponse(status_code=400, content=_embedding_unavailable_detail(status))
+        unavailable = await asyncio.to_thread(_embedding_unavailable_for_config, config)
+        if unavailable is not None:
+            return JSONResponse(status_code=400, content=unavailable)
 
         try:
             service = EmbeddingService.from_config(config.embeddings)
@@ -168,6 +169,11 @@ def _embedding_switch_coordinator(server: HTTPServer) -> Any:
     if coordinator is None:
         raise HTTPException(status_code=503, detail="Embedding switch service is unavailable")
     return coordinator
+
+
+def _embedding_unavailable_for_config(config: DaemonConfig) -> dict[str, object] | None:
+    status = build_daemon_ai_capability_registry(config).status(AICapability.EMBED)
+    return None if status.available else _embedding_unavailable_detail(status)
 
 
 def _embedding_status_payload(config: DaemonConfig | None) -> dict[str, object]:
