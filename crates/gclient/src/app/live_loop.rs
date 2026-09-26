@@ -224,6 +224,7 @@ pub async fn run_live_loop<B: Backend>(
     let mut shell_spawn_job: Option<startup::ShellSpawnFuture> = None;
     let mut shell_spawn_project: Option<String> = None;
     let mut first_shell_pending: Option<String> = None;
+    let mut first_frame_pending = false;
     let mut sidebar_job: Option<SidebarFetchFuture> = None;
     let mut relist_job: Option<RelistFuture> = None;
     let mut recoveries: FuturesUnordered<RecoveryFuture> = FuturesUnordered::new();
@@ -360,6 +361,7 @@ pub async fn run_live_loop<B: Backend>(
                         } else {
                             startup::mark_done(chrome, StartupStage::Roster);
                             startup::mark_running(chrome, StartupStage::FirstFrame);
+                            first_frame_pending = true;
                             sync_live_chrome(workspace, chrome);
                             first_shell_pending = first_shell_request(workspace, chrome)
                                 .and_then(|request| request.project_id);
@@ -372,10 +374,6 @@ pub async fn run_live_loop<B: Backend>(
                             if let Err(error) = render_live_workspace(terminal, workspace, chrome) {
                                 workspace.latch_exit(error.to_string());
                                 loop_error = Some(error);
-                            } else {
-                                startup::mark_done(chrome, StartupStage::FirstFrame);
-                                workspace.queue_initial_sidebar_fetch();
-                                launch_pending = false;
                             }
                         }
                     }
@@ -591,6 +589,25 @@ pub async fn run_live_loop<B: Backend>(
                     workspace.latch_exit(error.to_string());
                     loop_error = Some(error);
                 }
+            }
+        }
+        if first_frame_pending
+            && workspace.exit_reason().is_none()
+            && workspace.daemon_ready()
+            && startup_job.is_none()
+            && reconnect_stage.is_none()
+            && chrome
+                .focused_pane()
+                .is_none_or(|pane_id| workspace.pane(pane_id).frames_rendered() > 0)
+        {
+            startup::mark_done(chrome, StartupStage::FirstFrame);
+            if let Err(error) = render_live_workspace(terminal, workspace, chrome) {
+                workspace.latch_exit(error.to_string());
+                loop_error = Some(error);
+            } else {
+                workspace.queue_initial_sidebar_fetch();
+                launch_pending = false;
+                first_frame_pending = false;
             }
         }
         // Again after the event, not only before it: the event just handled is

@@ -27,7 +27,7 @@ use gobby_client::daemon::{
     BROADCAST_CAPACITY, CONTROL_REQUEST_DEADLINE,
 };
 use gobby_client::frame_source::{
-    AttachLocator, FrameError, PaneFrameSource, ScriptedFrameSource, Transport,
+    AttachLocator, FrameDelivery, FrameError, PaneFrameSource, ScriptedFrameSource, Transport,
     UnixSocketFrameSource,
 };
 use gobby_client::key_input::KeyInput;
@@ -9180,11 +9180,39 @@ async fn the_render_tick_applies_a_background_git_refresh() {
         .expect("connect live daemon");
     let mut workspace = Workspace::live(daemon);
     let _home = pin_tabs(&mock, &mut workspace, "project-1", &["terminal-a"]);
+    workspace.set_frame_delivery(FrameDelivery::Proxy);
     let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
     let mut chrome = pinned_chrome();
     let (input_tx, input_rx) = mpsc::channel(16);
 
     let driver = async {
+        let attachment_id = timeout(Duration::from_secs(5), async {
+            loop {
+                if let Some(attachment_id) = websocket_requests(&mock, "terminal_set_viewport")
+                    .into_iter()
+                    .find(|request| request.get("terminal_id") == Some(&json!("terminal-a")))
+                    .and_then(|request| {
+                        request
+                            .get("attachment_id")
+                            .and_then(Value::as_str)
+                            .map(str::to_string)
+                    })
+                {
+                    break attachment_id;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("focused pane attachment");
+        mock.send_event_and_wait(json!({
+            "type": "terminal_frame",
+            "terminal_id": "terminal-a",
+            "attachment_id": attachment_id,
+            "encoding": "bincode-b64",
+            "payload": encoded_frame("ready"),
+        }))
+        .await;
         wait_for_http_requests(&mock, "GET", status_path, 1).await;
         wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
         tokio::time::pause();
@@ -13020,7 +13048,7 @@ async fn a_due_attach_retry_does_not_hold_the_loop() {
     let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
     let mut chrome = Chrome::dark();
     chrome.sidebar.pinned = true;
-    let (input_tx, input_rx) = mpsc::channel(16);
+    let (input_tx, input_rx) = mpsc::channel(1);
     let driver = async {
         // A transient startup refusal schedules a due attach on the render
         // tick. Wait for the refusal to settle before holding the retry.
@@ -13028,23 +13056,21 @@ async fn a_due_attach_retry_does_not_hold_the_loop() {
         wait_until(|| daemon.pending_counts().0 == 0).await;
         mock.suppress_ws("terminal_attach");
         wait_for_websocket_requests(&mock, "terminal_attach", 2).await;
-        // With the retry waiting on its answer, the loop still takes an event
-        // and refetches on the render tick; a fifth of the request deadline
-        // is ample for a loop that is not held.
-        let sessions = request_count(&mock, "GET", "/api/sessions?");
-        let delivered = watch_for_event(
-            &daemon,
-            |event| matches!(event, DaemonEvent::Message(value) if value["type"] == "session_event"),
-        );
-        mock.send_event_and_wait(json!({"type": "session_event", "project_id": "project-1"}))
-            .await;
-        delivered
-            .recv_timeout(Duration::from_secs(1))
-            .expect("the session event reached the daemon receiver");
-        let ticked = timeout(
-            Duration::from_secs(1),
-            wait_for_http_requests(&mock, "GET", "/api/sessions?", sessions + 1),
-        )
+        // A full input channel forces the loop to receive while the retry
+        // waits. Sidebar requests deliberately wait for the pane's first frame.
+        let ticked = timeout(Duration::from_secs(1), async {
+            for _ in 0..3 {
+                input_tx
+                    .send(RawInputEvent::Mouse(MouseEvent {
+                        kind: MouseEventKind::Moved,
+                        column: 2,
+                        row: 0,
+                        modifiers: KeyModifiers::NONE,
+                    }))
+                    .await
+                    .expect("mouse input accepted");
+            }
+        })
         .await;
         drop(input_tx);
         ticked

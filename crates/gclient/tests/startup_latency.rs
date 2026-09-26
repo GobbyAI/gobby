@@ -5,9 +5,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use base64::Engine as _;
 use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use gobby_client::app::run_live_loop;
-use gobby_client::app::startup_stages::StartupStages;
+use gobby_client::app::startup_stages::{StageState, StartupStage, StartupStages};
 use gobby_client::daemon::LiveDaemon;
 use gobby_client::frame_source::FrameDelivery;
 use gobby_client::teardown::TerminalGuard;
@@ -421,15 +422,103 @@ async fn stage_timings_are_logged_once_per_launch() {
 }
 
 #[tokio::test]
+async fn first_frame_stage_waits_for_the_focused_pane() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.seed_workspace("project-1", &[(&["terminal-a"], "terminal-a")]);
+    mock.enqueue(
+        "GET",
+        "/api/terminals/terminal-a",
+        200,
+        serde_json::json!({"terminal_id": "terminal-a", "backend": "native", "state": "live"}),
+    );
+    let daemon = LiveDaemon::connect_or_wait(mock.url(), "local-token")
+        .await
+        .expect("connect to mock daemon");
+    let mut workspace = Workspace::live(daemon);
+    workspace.select_project("project-1");
+    workspace.set_frame_delivery(FrameDelivery::Proxy);
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    chrome.connection.stages = Some(StartupStages::begin(Instant::now()));
+    let (input_tx, input_rx) = mpsc::channel(1);
+    let mut switch = TerminalGuard::recording().0;
+
+    let drive = async {
+        timeout(Duration::from_secs(5), async {
+            loop {
+                if mock.requests().iter().any(|request| {
+                    request.method == "WS"
+                        && request.body.as_ref().and_then(|body| body.get("type"))
+                            == Some(&serde_json::json!("terminal_attach"))
+                }) {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("focused pane attach request");
+        let sidebar_started = timeout(Duration::from_millis(300), async {
+            loop {
+                if mock.requests().iter().any(|request| {
+                    request.method == "GET" && request.target.starts_with("/api/projects")
+                }) {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+        assert!(
+            sidebar_started.is_err(),
+            "sidebar fetch must wait for the focused pane's first frame"
+        );
+        drop(input_tx);
+    };
+    timeout(Duration::from_secs(10), async {
+        let (result, ()) = tokio::join!(
+            run_live_loop(
+                &mut workspace,
+                &mut terminal,
+                &mut chrome,
+                input_rx,
+                &mut switch,
+            ),
+            drive,
+        );
+        result.expect("input close ends the window");
+    })
+    .await
+    .expect("first-frame wait stays responsive");
+    assert!(matches!(
+        chrome
+            .connection
+            .stages
+            .as_ref()
+            .expect("startup stages")
+            .state(StartupStage::FirstFrame),
+        StageState::Running { .. }
+    ));
+    mock.shutdown().await;
+}
+
+#[tokio::test]
 async fn the_sidebar_fan_out_runs_after_the_first_frame() {
     let mock = MockDaemon::start("local-token").await;
     mock.seed_workspace("project-1", &[(&["terminal-a"], "terminal-a")]);
+    mock.enqueue(
+        "GET",
+        "/api/terminals/terminal-a",
+        200,
+        serde_json::json!({"terminal_id": "terminal-a", "backend": "native", "state": "live"}),
+    );
     let hold = mock.enqueue_held("GET", "/api/projects", 200, serde_json::json!([]));
     let daemon = LiveDaemon::connect_or_wait(mock.url(), "local-token")
         .await
         .expect("connect to mock daemon");
     let mut workspace = Workspace::live(daemon);
     workspace.select_project("project-1");
+    workspace.set_frame_delivery(FrameDelivery::Proxy);
     let (backend, draws) = DrawCounter::new(120, 40);
     let mut terminal = Terminal::new(backend).expect("test terminal");
     let mut chrome = Chrome::dark();
@@ -437,6 +526,32 @@ async fn the_sidebar_fan_out_runs_after_the_first_frame() {
     let mut switch = TerminalGuard::recording().0;
 
     let drive = async {
+        let attachment_id = timeout(Duration::from_secs(5), async {
+            loop {
+                if let Some(attachment_id) = mock.requests().iter().find_map(|request| {
+                    let body = request.body.as_ref()?;
+                    (request.method == "WS"
+                        && body.get("type") == Some(&serde_json::json!("terminal_set_viewport"))
+                        && body.get("terminal_id") == Some(&serde_json::json!("terminal-a")))
+                    .then(|| body.get("attachment_id")?.as_str().map(str::to_string))
+                    .flatten()
+                }) {
+                    break attachment_id;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("focused pane attachment");
+        let frame = include_bytes!("../../gterminal/tests/fixtures/wire_golden/frame.bin");
+        mock.send_event_and_wait(serde_json::json!({
+            "type": "terminal_frame",
+            "terminal_id": "terminal-a",
+            "attachment_id": attachment_id,
+            "encoding": "bincode-b64",
+            "payload": base64::engine::general_purpose::STANDARD.encode(&frame[4..]),
+        }))
+        .await;
         timeout(Duration::from_secs(5), async {
             loop {
                 if mock.requests().iter().any(|request| {
