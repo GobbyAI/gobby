@@ -340,6 +340,15 @@ class TerminalManager(TerminalSettlementMixin):
         row = self.db.fetchone("SELECT * FROM terminals WHERE id = %s", (str(UUID(terminal_id)),))
         return None if row is None else Terminal.from_row(row)
 
+    def get_many(self, terminal_ids: Sequence[str]) -> dict[str, Terminal]:
+        """Load terminal rows in one hub query, keyed by durable id."""
+        if not terminal_ids:
+            return {}
+        ids = [str(UUID(terminal_id)) for terminal_id in dict.fromkeys(terminal_ids)]
+        rows = self.db.fetchall("SELECT * FROM terminals WHERE id = ANY(%s)", (ids,))
+        terminals = (Terminal.from_row(row) for row in rows)
+        return {terminal.id: terminal for terminal in terminals}
+
     def get_by_identity(self, terminal_id: str, spawn_key: str) -> Terminal | None:
         """Load a row only when both durable identity fields match."""
         row = self.get(terminal_id)

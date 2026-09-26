@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import threading
 from typing import Any, Literal, cast
 
 import pytest
@@ -88,6 +89,75 @@ async def _grant(
     )
     assert result.granted
     return result.lease_generation
+
+
+@pytest.mark.asyncio
+async def test_require_reads_terminal_on_worker_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    coordinator, _runtime, store = _coordinator()
+    terminal_id = next(iter(store.rows))
+    loop_thread = threading.get_ident()
+    original_get = store.get
+    reads: list[str] = []
+
+    def get_on_worker(requested_id: str) -> Terminal | None:
+        assert threading.get_ident() != loop_thread
+        reads.append(requested_id)
+        return original_get(requested_id)
+
+    monkeypatch.setattr(store, "get", get_on_worker)
+    outcome = await coordinator.write(
+        WriteRequest(
+            terminal_id=terminal_id,
+            action_key="worker-read",
+            origin="daemon",
+            kind="text",
+            payload="hello",
+        )
+    )
+    assert isinstance(outcome, Delivered)
+    assert reads == [terminal_id]
+
+
+@pytest.mark.asyncio
+async def test_cancel_during_offloop_latch_waits_and_clears_before_unlock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    coordinator, runtime, store = _coordinator()
+    terminal_id = next(iter(store.rows))
+    persisted = threading.Event()
+    release = threading.Event()
+    original_persist = store.persist_unresolved_write
+
+    def hold_persist(*args: Any, **kwargs: Any) -> Terminal:
+        row = original_persist(*args, **kwargs)
+        persisted.set()
+        assert release.wait(timeout=5)
+        return row
+
+    monkeypatch.setattr(store, "persist_unresolved_write", hold_persist)
+    task = asyncio.create_task(
+        coordinator.write(
+            WriteRequest(
+                terminal_id=terminal_id,
+                action_key="cancel-before-dispatch",
+                origin="automatic",
+                kind="text",
+                payload="hello",
+            )
+        )
+    )
+    assert await asyncio.to_thread(persisted.wait, 5)
+    task.cancel()
+    await _let_tasks_run()
+    assert coordinator.lock_held(terminal_id)
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert not coordinator.lock_held(terminal_id)
+    assert _unresolved(store, terminal_id) == {}
+    assert runtime.write_log == []
 
 
 @pytest.mark.asyncio

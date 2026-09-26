@@ -79,7 +79,8 @@ class TerminalEffectBridge:
         async def marked_write() -> WriteOutcome:
             outcome = await self._coordinator.write(request, on_dispatch=marker.set)
             if waiter_returned.is_set() and request.origin == "automatic":
-                self._coordinator.retain_unresolved(
+                await asyncio.to_thread(
+                    self._coordinator.retain_unresolved,
                     request.terminal_id,
                     request.action_key,
                     request.origin,
@@ -113,4 +114,4 @@ class TerminalEffectBridge:
         for item in pending:
             if item.task not in unfinished:
                 continue
-            self._coordinator.quarantine(item.terminal_id, item.action_key)
+            await asyncio.to_thread(self._coordinator.quarantine, item.terminal_id, item.action_key)

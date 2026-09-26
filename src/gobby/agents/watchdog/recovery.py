@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -388,7 +389,9 @@ class WatchdogRecoveryCoordinator:
                 return False
         # The emptied composer settles an earlier reprompt whose Enter never
         # resolved; left latched, it would suppress every later reprompt.
-        coordinator.observe_resolved(terminal.id, f"idle-reprompt:{run.id}")
+        await asyncio.to_thread(
+            coordinator.observe_resolved, terminal.id, f"idle-reprompt:{run.id}"
+        )
         sent = await self._deliver(
             coordinator,
             terminal.id,

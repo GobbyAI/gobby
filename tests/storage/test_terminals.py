@@ -107,6 +107,20 @@ def _create_pending(
     )
 
 
+def test_get_many_fetches_any_number_of_terminals_in_one_query(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    manager = _manager(temp_db)
+    rows = [_create_pending(manager, sample_project["id"]) for _ in range(3)]
+    with patch.object(temp_db, "fetchall", wraps=temp_db.fetchall) as fetchall:
+        found = manager.get_many([row.id for row in rows] + [rows[0].id])
+    assert set(found) == {row.id for row in rows}
+    assert fetchall.call_count == 1
+    assert "id = ANY(%s)" in fetchall.call_args.args[0]
+    assert len(fetchall.call_args.args[1][0]) == 3
+
+
 def test_failed_spawn_leaves_reapable_pending_row(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],

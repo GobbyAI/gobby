@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
@@ -259,10 +260,10 @@ async def _drain_composer_before_wake(
         ],
         latch=False,
     )
-    _settle_earlier_wake(coordinator, terminal, f"wake:{terminal.id}")
+    await _settle_earlier_wake(coordinator, terminal, f"wake:{terminal.id}")
 
 
-def _settle_earlier_wake(coordinator: Any, terminal: Any, action_key: str) -> None:
+async def _settle_earlier_wake(coordinator: Any, terminal: Any, action_key: str) -> None:
     """Release the latch of an earlier wake once the composer is known empty.
 
     Called only after the drain was Delivered, so whatever the earlier attempt
@@ -282,7 +283,7 @@ def _settle_earlier_wake(coordinator: Any, terminal: Any, action_key: str) -> No
         terminal.id,
         latched.get("at", "quarantine"),
     )
-    coordinator.observe_resolved(terminal.id, action_key)
+    await asyncio.to_thread(coordinator.observe_resolved, terminal.id, action_key)
 
 
 async def _send_tmux_pane_wake(

@@ -204,10 +204,14 @@ class TmuxPaneMonitor:
 
         terminal_manager = TerminalManager(self._session_manager.db)
         tmux_agents: list[tuple[Any, str]] = []
+        terminal_rows = await asyncio.to_thread(
+            terminal_manager.get_many,
+            [run.terminal_id for run in all_runs if run.terminal_id],
+        )
         for run in all_runs:
             if not run.terminal_id:
                 continue
-            row = terminal_manager.get(run.terminal_id)
+            row = terminal_rows.get(run.terminal_id)
             if row is None or row.backend != "tmux" or not row.session_name:
                 continue
             tmux_agents.append((run, row.session_name))
@@ -330,7 +334,10 @@ class TmuxPaneMonitor:
                 if self._session_manager is None:
                     await self._clear_attention_if_current(session_attention_entry_id(session.id))
                     continue
-                row = TerminalManager(self._session_manager.db).get_live_for_session(session.id)
+                row = await asyncio.to_thread(
+                    TerminalManager(self._session_manager.db).get_live_for_session,
+                    session.id,
+                )
                 if row is None:
                     await self._clear_attention_if_current(session_attention_entry_id(session.id))
                     continue
