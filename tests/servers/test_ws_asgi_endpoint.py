@@ -120,6 +120,35 @@ async def test_adapter_send_normalizes_starlette_disconnect(
 
 
 @pytest.mark.asyncio
+async def test_adapter_send_normalizes_starlette_closed_socket_runtime_error() -> None:
+    websocket = MagicMock(spec=WebSocket)
+    websocket.client = ("127.0.0.1", 1234)
+    error = RuntimeError('Cannot call "send" once a close message has been sent.')
+    websocket.send_text = AsyncMock(side_effect=error)
+    adapter = ASGIWebSocketAdapter(websocket, user_id="test-user")
+
+    with pytest.raises(ConnectionClosedError) as exc_info:
+        await adapter.send("terminal_attach_result")
+
+    assert exc_info.value.__cause__ is error
+    assert adapter.disconnected is True
+    assert adapter.close_code == 1006
+
+
+@pytest.mark.asyncio
+async def test_adapter_send_keeps_unrelated_runtime_error() -> None:
+    websocket = MagicMock(spec=WebSocket)
+    websocket.client = ("127.0.0.1", 1234)
+    websocket.send_text = AsyncMock(side_effect=RuntimeError("unrelated send failure"))
+    adapter = ASGIWebSocketAdapter(websocket, user_id="test-user")
+
+    with pytest.raises(RuntimeError, match="unrelated send failure"):
+        await adapter.send("terminal_attach_result")
+
+    assert adapter.disconnected is False
+
+
+@pytest.mark.asyncio
 async def test_adapter_close_suppresses_starlette_disconnect() -> None:
     websocket = MagicMock(spec=WebSocket)
     websocket.client = ("127.0.0.1", 1234)

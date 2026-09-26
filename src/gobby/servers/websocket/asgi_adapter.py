@@ -39,6 +39,13 @@ class ASGIWebSocketAdapter(AsyncIterator[str | bytes]):
             self.close_code = exc.code
             self.close_reason = exc.reason
             raise ConnectionClosedError(None, None) from exc
+        except RuntimeError as exc:
+            if str(exc) != 'Cannot call "send" once a close message has been sent.':
+                raise
+            self.disconnected = True
+            self.close_code = 1006
+            self.close_reason = "Transport disconnected before send"
+            raise ConnectionClosedError(None, None) from exc
 
     async def close(self, code: int = 1000, reason: str = "") -> None:
         if self.closed or self.disconnected:
