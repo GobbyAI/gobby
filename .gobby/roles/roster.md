@@ -3,7 +3,7 @@
 | Role file | Session |
 | --- | --- |
 | assistant.md | gobby#14069 |
-| program-director.md | gobby#14543 |
+| program-director.md | gobby#14610 |
 | lane-1-gclient.md | gobby#14544 |
 | lane-2-stability.md | gobby#14505 |
 | lane-3-hooks.md | gobby#14531 |
