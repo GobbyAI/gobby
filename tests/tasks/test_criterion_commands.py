@@ -252,6 +252,19 @@ def test_real_python_and_git_commands_remain_mandatory() -> None:
     ]
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git grep gobby",
+        "git grep -- gobby",
+        "git grep gobby restart",
+        "uv run --project gobby python -V",
+    ],
+)
+def test_gobby_operand_does_not_hide_criterion(command: str) -> None:
+    assert authored_criterion_commands(f"Run `{command}`.") == [command]
+
+
 def test_live_criteria_never_register_command_spans() -> None:
     criteria = (
         "- Focused tests pass.\n"

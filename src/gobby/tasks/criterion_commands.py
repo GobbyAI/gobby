@@ -9,7 +9,10 @@ from collections.abc import Iterable, Mapping
 from dataclasses import replace
 
 from gobby.config.shell_lexing import parse_shell_command, safe_split
-from gobby.config.validation_detection import classify_validation_segments
+from gobby.config.validation_detection import (
+    classify_validation_segments,
+    normalize_validation_evidence_command,
+)
 from gobby.tasks.command_equivalence import (
     canonical_command,
     command_covers,
@@ -70,6 +73,10 @@ _GOBBY_CLI_SUBCOMMANDS = frozenset(
 )
 _DAEMON_LIFECYCLE_SUBCOMMANDS = frozenset({"start", "stop", "restart", "cutover"})
 _GOBBY_OPTIONS_WITH_VALUES = frozenset({"--config"})
+_UV_RUN_OPTIONS_WITH_VALUES = frozenset(
+    {"--directory", "--env-file", "--project", "--python", "--with", "--with-editable"}
+)
+_UV_RUN_FLAGS = frozenset({"--frozen", "--locked", "--no-sync", "--offline", "-q", "--quiet"})
 DAEMON_LIFECYCLE_COMMAND_REASON = (
     "daemon lifecycle commands (start/stop/restart/cutover) mutate the live daemon, "
     "so they never register as mandatory criterion commands; the coordinator runs them"
@@ -216,22 +223,44 @@ def criterion_command_records(
     return records
 
 
+def _gobby_command_arguments(command: str) -> list[tuple[str, ...]]:
+    """Find gobby only where it is the executable in a supported shell segment."""
+    arguments: list[tuple[str, ...]] = []
+    core = normalize_validation_evidence_command(command)
+    for segment in parse_shell_command(core).segments:
+        index = 0
+        if len(segment) >= 2 and posixpath.basename(segment[0]) == "uv" and segment[1] == "run":
+            index = 2
+            while index < len(segment) and segment[index].startswith("-"):
+                option = segment[index]
+                if option == "--":
+                    index += 1
+                    break
+                name, separator, _ = option.partition("=")
+                if name in _UV_RUN_OPTIONS_WITH_VALUES:
+                    index += 1 if separator else 2
+                elif name in _UV_RUN_FLAGS:
+                    index += 1
+                else:
+                    break
+        if index < len(segment) and posixpath.basename(segment[index]) == "gobby":
+            arguments.append(segment[index + 1 :])
+    return arguments
+
+
 def _daemon_lifecycle_command(command: str) -> bool:
     """Whether a command span starts, stops, restarts, or cuts over the daemon.
 
     Launchers, environment assignments, and ``cd`` prefixes may precede the
-    ``gobby`` token, so every token of every segment is a candidate.
+    executable; operands of other commands do not count.
     """
-    for segment in parse_shell_command(command).segments:
-        for index, token in enumerate(segment):
-            if posixpath.basename(token).casefold() != "gobby":
-                continue
-            arguments = segment[index + 1 :]
-            while arguments and arguments[0].startswith("-"):
-                consumed = 2 if arguments[0] in _GOBBY_OPTIONS_WITH_VALUES else 1
-                arguments = arguments[consumed:]
-            if arguments and arguments[0].casefold() in _DAEMON_LIFECYCLE_SUBCOMMANDS:
-                return True
+    for candidate in _gobby_command_arguments(command):
+        arguments = candidate
+        while arguments and arguments[0].startswith("-"):
+            consumed = 2 if arguments[0] in _GOBBY_OPTIONS_WITH_VALUES else 1
+            arguments = arguments[consumed:]
+        if arguments and arguments[0].casefold() in _DAEMON_LIFECYCLE_SUBCOMMANDS:
+            return True
     return False
 
 
@@ -287,10 +316,8 @@ def _looks_like_criterion_command(
     observed_cores: set[str],
 ) -> bool:
     tokens = safe_split(core_command or command)
-    for index, token in enumerate(tokens):
-        if posixpath.basename(token) != "gobby":
-            continue
-        arguments = tokens[index + 1 :]
+    for candidate in _gobby_command_arguments(core_command or command):
+        arguments = candidate
         while arguments and arguments[0].startswith("-"):
             consumed = 2 if arguments[0] in _GOBBY_OPTIONS_WITH_VALUES else 1
             arguments = arguments[consumed:]
