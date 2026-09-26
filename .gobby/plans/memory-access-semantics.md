@@ -1115,14 +1115,14 @@ and the scoped test-types audit. Contract freshness:
   tdd: true
   source_section: '1.3'
   assigned_agent: backend-developer
-- title: Migration 452 and its schema carriers
+- title: Migration 454 and its schema carriers
   category: code
   task_type: feature
   depends_on:
   - '1.3'
-  validation_criteria: '2.1.1: Migration 452 adds both columns, copies the counts
+  validation_criteria: '2.1.1: Migration 454 adds both columns, copies the counts
     across, resets access, and drops the nine tables in one plain file with no destructive
-    directive. file: `crates/gcore/assets/schema/migrations/452_memory_surfaced_stats_retire_recall_signals.sql`.
+    directive. file: `crates/gcore/assets/schema/migrations/454_memory_surfaced_stats_retire_recall_signals.sql`.
 
     2.1.2: The catalog manifest lists `memories.surfaced_count` and `memories.last_surfaced_at`
     and no `recall_*` table, and the freshness test passes. file: `crates/gcore/assets/schema/catalog.manifest.json`.
@@ -1137,7 +1137,7 @@ and the scoped test-types audit. Contract freshness:
 
     2.1.5: The domain-table pin covers both new columns. test: `tests/storage/test_domain_tables_schema.py::test_memories_surfaced_columns`.
 
-    2.1.6: The five golden grant vectors carry identity 452 and verify against `GOLDEN_SECRET`.
+    2.1.6: The five golden grant vectors carry identity 454 and verify against `GOLDEN_SECRET`.
     test: `tests/runtime_grants/test_golden_vectors.py::test_grant_vectors_round_trip`.
     test: `tests/runtime_grants/test_golden_vectors.py::test_config_revision_signed`.'
   labels:
