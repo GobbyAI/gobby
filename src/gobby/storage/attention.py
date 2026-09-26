@@ -354,9 +354,26 @@ class AttentionStateManager:
             LEFT JOIN LATERAL (
                 SELECT candidate.*
                 FROM terminals candidate
-                WHERE candidate.session_id = session.id
-                  AND candidate.state IN ('pending', 'live')
-                ORDER BY candidate.updated_at DESC
+                WHERE candidate.state IN ('pending', 'live')
+                  AND (
+                      candidate.session_id = session.id
+                      OR (
+                          candidate.session_id IS NULL
+                          AND session.session_type = 'terminal'
+                          AND candidate.project_id = session.project_id
+                          AND candidate.agent_run_id IS NULL
+                          AND candidate.id = CASE
+                              WHEN replace(
+                                  session.terminal_context->>'gobby_terminal_id', '-', ''
+                              ) ~* '^[0-9a-f]{32}$'
+                              THEN replace(
+                                  session.terminal_context->>'gobby_terminal_id', '-', ''
+                              )::uuid
+                          END
+                      )
+                  )
+                ORDER BY (candidate.session_id = session.id) DESC NULLS LAST,
+                         candidate.updated_at DESC
                 LIMIT 1
             ) terminal ON TRUE
             LEFT JOIN LATERAL (
