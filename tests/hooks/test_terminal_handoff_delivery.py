@@ -1218,6 +1218,50 @@ async def test_compact_confirmation_wait_has_a_deadline() -> None:
 
 
 @pytest.mark.asyncio
+async def test_claude_compact_boundary_timeout_does_not_resubmit_without_rejection(
+    hub_db: HubDatabase,
+) -> None:
+    session_manager = _compact_session_manager(hub_db, _NATIVE_WORKER_CONTEXT)
+    claimed = _claimed_compact_attempt(hub_db)
+    pane = SimpleNamespace(backend="native", snapshot=AsyncMock(return_value="Compacting..."))
+    submissions = 0
+
+    async def send_command(*_args: Any, **kwargs: Any) -> tuple[bool, None, bool, None]:
+        nonlocal submissions
+        kwargs["on_command_submitting"]()
+        kwargs["mark_continuation_pending"]()
+        submissions += 1
+        return True, None, True, None
+
+    with (
+        patch(f"{_COMPACT_DELIVERY}._resolve_pane_io", return_value=(pane, None)),
+        patch(f"{_COMPACT_DELIVERY}._interrupt_observer", return_value=(None, None)),
+        patch(f"{_COMPACT_DELIVERY}._turn_settled_observer", return_value=None),
+        patch(f"{_COMPACT_DELIVERY}._send_terminal_compaction_command", side_effect=send_command),
+        patch(f"{_COMPACT_DELIVERY}.composer_reader", return_value=None),
+        patch(f"{_COMPACT_DELIVERY}._CLAUDE_COMPACT_BOUNDARY_CONFIRM_SECONDS", 0.01),
+        patch(f"{_COMPACT_DELIVERY}._COMPACT_BOUNDARY_POLL_SECONDS", 0.005),
+        patch(
+            "gobby.hooks.terminal_handoff_delivery.shielded_terminal_delivery",
+            side_effect=_run_operation,
+        ),
+    ):
+        await terminal_handoff_delivery._settle_delivery(
+            claimed,
+            session_manager=session_manager,
+            agent_run_manager=MagicMock(),
+            terminal_manager=None,
+            terminal_runtime_registry=None,
+        )
+
+    assert submissions == 1
+    gate = SessionVariableManager(hub_db).get_variables(SESSION_ID)[HANDOFF_DISPATCH_GATE_VARIABLE]
+    assert gate["delivery_failed"] is True
+    assert gate["delivery_pending"] is False
+    assert gate["error_code"] == "compact_failed"
+
+
+@pytest.mark.asyncio
 async def test_compact_provider_failure_resubmits_same_attempt(hub_db: HubDatabase) -> None:
     session_manager = _compact_session_manager(hub_db, _NATIVE_WORKER_CONTEXT)
     claimed = _claimed_compact_attempt(hub_db)
