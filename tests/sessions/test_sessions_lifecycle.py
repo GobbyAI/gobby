@@ -1792,6 +1792,87 @@ class TestProcessSessionTranscriptParsers:
         assert snapshot.context_usage_ratio == pytest.approx(104960 / 258400)
 
     @pytest.mark.asyncio
+    async def test_claude_server_tool_turn_replays_final_iteration_occupancy(
+        self, tmp_path: Path, manager: SessionLifecycleManager
+    ) -> None:
+        """Batch replay keeps the summed usage but reports the final call's context."""
+        transcript_path = tmp_path / "claude.jsonl"
+        record = {
+            "type": "assistant",
+            "uuid": "advisor-turn",
+            "timestamp": "2026-09-26T09:01:44.614Z",
+            "message": {
+                "id": "msg_011CfRn9",
+                "content": [
+                    {"type": "server_tool_use", "id": "srvtoolu_1", "name": "advisor", "input": {}},
+                    {"type": "text", "text": "Done."},
+                ],
+                "usage": {
+                    "input_tokens": 34,
+                    "cache_creation_input_tokens": 3477,
+                    "cache_read_input_tokens": 336650,
+                    "output_tokens": 2086,
+                    "iterations": [
+                        {
+                            "type": "message",
+                            "input_tokens": 32,
+                            "output_tokens": 104,
+                            "cache_read_input_tokens": 167055,
+                            "cache_creation_input_tokens": 2540,
+                        },
+                        {
+                            "type": "advisor_message",
+                            "input_tokens": 170393,
+                            "output_tokens": 7516,
+                            "cache_read_input_tokens": 0,
+                            "cache_creation_input_tokens": 0,
+                        },
+                        {
+                            "type": "message",
+                            "input_tokens": 2,
+                            "output_tokens": 1982,
+                            "cache_read_input_tokens": 169595,
+                            "cache_creation_input_tokens": 937,
+                        },
+                    ],
+                },
+            },
+        }
+        transcript_path.write_text(json.dumps(record) + "\n")
+
+        session = MagicMock()
+        session.source = "claude"
+        session.transcript_path = str(transcript_path)
+        session.project_id = "project-id"
+        session.context_window = None
+        session.model = None
+        manager.session_manager.get.return_value = session
+
+        zero_totals = {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cache_creation_tokens": 0,
+            "cache_read_tokens": 0,
+        }
+        manager.token_event_store = MagicMock()
+        manager.token_event_store.get_session_totals.side_effect = lambda *_, **__: dict(
+            zero_totals
+        )
+        manager.token_event_store.record_batch.side_effect = lambda events: [True] * len(events)
+
+        await manager._process_session_transcript("s1", str(transcript_path))
+
+        event = manager.token_event_store.record_batch.call_args.args[0][0]
+        assert event.input_tokens == 34
+        assert event.output_tokens == 2086
+        assert event.cache_creation_tokens == 3477
+        assert event.cache_read_tokens == 336650
+        manager.session_manager.update_context_usage.assert_called_once()
+        snapshot = manager.session_manager.update_context_usage.call_args.args[1]
+        assert snapshot.context_used_tokens == 170534
+        assert snapshot.confidence == "reported"
+
+    @pytest.mark.asyncio
     async def test_grok_turn_completed_does_not_become_occupancy(
         self, tmp_path: Path, manager: SessionLifecycleManager
     ) -> None:
@@ -2106,6 +2187,7 @@ class TestProcessSessionTranscriptTokenPreservation:
         message = MagicMock(spec=ParsedMessage)
         message.model = "claude-opus-4-8"
         message.raw_json = {}
+        message.context_used_tokens = None
         message.usage = TokenUsage(input_tokens=125_071, output_tokens=1)
 
         with patch("gobby.sessions.transcript_processing.get_parser") as parser:

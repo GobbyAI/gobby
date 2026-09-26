@@ -19,6 +19,7 @@ class ClaudeMessageBuilder:
     usage: TokenUsage | None
     model: str | None
     message_id: str | None
+    context_used_tokens: int | None = None
 
     def make(
         self,
@@ -45,10 +46,11 @@ class ClaudeMessageBuilder:
             tool_use_id=tool_use_id,
             model=self.model,
             message_id=self.message_id,
+            context_used_tokens=self.context_used_tokens,
         )
 
     def unknown(self, *, role: ClaudeRole, block_type: str, raw: dict[str, Any]) -> ParsedMessage:
-        return _unknown_block_message(
+        message = _unknown_block_message(
             index=self.index,
             block_type=block_type,
             raw=raw,
@@ -58,6 +60,8 @@ class ClaudeMessageBuilder:
             model=self.model,
             usage=self.usage,
         )
+        message.context_used_tokens = self.context_used_tokens
+        return message
 
 
 def _media_source(block: dict[str, Any], block_type: str) -> dict[str, Any]:

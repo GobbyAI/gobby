@@ -22,6 +22,7 @@ from gobby.llm.context_windows import ReconciledModelContext, reconcile_model_co
 from gobby.sessions.context_usage import (
     context_window_from_raw_message,
     grok_epoch_max_occupancy,
+    normalize_context_usage_source,
     snapshot_from_token_usage,
     snapshot_from_window_metadata,
 )
@@ -486,16 +487,29 @@ class TranscriptProcessingMixin:
                 event_at=canonicalize_event_timestamp(event_timestamp),
                 metadata=metadata,
             )
-            occupancy_snapshot = (
-                None
-                if session_source == "grok"
-                else snapshot_from_token_usage(
+            occupancy_snapshot: ContextUsageSnapshot | None
+            if session_source == "grok":
+                occupancy_snapshot = None
+            elif (
+                msg.context_used_tokens is not None
+                and (reported_source := normalize_context_usage_source(session_source)) is not None
+            ):
+                # A server-tool turn reports the context its final model call
+                # saw; its summed usage would double the occupancy.
+                occupancy_snapshot = ContextUsageSnapshot.from_reported_occupancy(
+                    source=reported_source,
+                    context_window=message_context_window,
+                    context_used_tokens=msg.context_used_tokens,
+                    model=event_model,
+                    epoch_reset=msg.context_epoch_reset,
+                )
+            else:
+                occupancy_snapshot = snapshot_from_token_usage(
                     source=session_source,
                     context_window=message_context_window,
                     usage=usage,
                     model=event_model,
                 )
-            )
             snapshot_plan.append(
                 _PendingTokenEvent(
                     event=event,

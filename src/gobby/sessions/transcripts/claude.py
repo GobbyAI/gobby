@@ -439,6 +439,7 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
             usage=usage,
             model=model,
             message_id=message_id,
+            context_used_tokens=self._reported_occupancy(data),
         )
 
         def _make_compaction_summary() -> ParsedMessage:
@@ -551,7 +552,7 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
         tool_input = None
         tool_result = None
         tool_use_id = None
-        context_used_tokens = None
+        context_used_tokens = self._reported_occupancy(data)
 
         hook_block = self._hook_blocking_attachment(data)
         if hook_block is not None:
@@ -689,6 +690,44 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
             context_used_tokens=context_used_tokens,
         )
 
+    @staticmethod
+    def _usage_payload(data: dict[str, Any]) -> dict[str, Any] | None:
+        """Return the record's usage object: top-level first, then ``message.usage``."""
+        usage_data = data.get("usage")
+        if not usage_data:
+            message = data.get("message")
+            usage_data = message.get("usage") if isinstance(message, dict) else None
+        return usage_data if isinstance(usage_data, dict) and usage_data else None
+
+    @staticmethod
+    def _reported_occupancy(data: dict[str, Any]) -> int | None:
+        """Context size after a server-tool turn, from its final model call.
+
+        Claude Code sums ``message.usage`` over every ``iterations`` entry of
+        type ``message`` when a turn loops through a server-side tool (advisor,
+        web search), so the aggregate roughly doubles the real context. The last
+        message iteration is the prompt the model actually saw. A single
+        iteration equals the aggregate and reports nothing, which keeps the token
+        breakdown as the estimate for ordinary turns.
+        """
+        usage_data = ClaudeTranscriptParser._usage_payload(data)
+        if usage_data is None:
+            return None
+        iterations = usage_data.get("iterations")
+        if not isinstance(iterations, list) or len(iterations) < 2:
+            return None
+        for iteration in reversed(iterations):
+            if not isinstance(iteration, dict) or iteration.get("type") != "message":
+                continue
+            total = 0
+            for key in ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"):
+                value = iteration.get(key, 0)
+                if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                    return None
+                total += value
+            return total
+        return None
+
     def _extract_usage(self, data: dict[str, Any]) -> tuple[TokenUsage | None, str | None]:
         """Extract token usage and model from message data.
 
@@ -698,14 +737,8 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
         message = data.get("message")
         model = message.get("model") if isinstance(message, dict) else data.get("fallbackModel")
 
-        # Check for top-level usage field (some formats)
-        usage_data = data.get("usage")
-
-        # Check inside message object (standard Claude API format)
-        if not usage_data:
-            usage_data = data.get("message", {}).get("usage")
-
-        if not usage_data:
+        usage_data = self._usage_payload(data)
+        if usage_data is None:
             return None, model
 
         # Use explicit presence checks to handle 0 correctly

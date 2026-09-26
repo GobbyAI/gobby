@@ -3008,3 +3008,127 @@ def test_codex_item_canonicalization_matches_exec_adapter() -> None:
         include_tool_activity=True,
     )[0]["tool_activity"]
     assert ledger.count(f"- Bash {duplicate_command}") == 2
+
+
+class TestClaudeUsageIterations:
+    """A server-tool turn reports the context its final model call saw."""
+
+    FIRST_CALL: dict[str, Any] = {
+        "type": "message",
+        "input_tokens": 32,
+        "output_tokens": 104,
+        "cache_read_input_tokens": 167055,
+        "cache_creation_input_tokens": 2540,
+    }
+    ADVISOR_CALL: dict[str, Any] = {
+        "type": "advisor_message",
+        "model": "claude-fable-5-1",
+        "input_tokens": 170393,
+        "output_tokens": 7516,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+    }
+    FINAL_CALL: dict[str, Any] = {
+        "type": "message",
+        "input_tokens": 2,
+        "output_tokens": 1982,
+        "cache_read_input_tokens": 169595,
+        "cache_creation_input_tokens": 937,
+    }
+    FINAL_CALL_CONTEXT = 2 + 169595 + 937
+
+    @pytest.fixture
+    def parser(self) -> ClaudeTranscriptParser:
+        return ClaudeTranscriptParser()
+
+    @staticmethod
+    def _record(iterations: list[dict[str, Any]] | None) -> dict[str, Any]:
+        usage: dict[str, Any] = {
+            "input_tokens": 34,
+            "cache_creation_input_tokens": 3477,
+            "cache_read_input_tokens": 336650,
+            "output_tokens": 2086,
+        }
+        if iterations is not None:
+            usage["iterations"] = iterations
+        return {
+            "type": "assistant",
+            "uuid": "advisor-turn",
+            "timestamp": "2026-09-26T09:01:44.614Z",
+            "message": {
+                "id": "msg_011CfRn9",
+                "model": "claude-fable-5-1",
+                "content": [
+                    {"type": "server_tool_use", "id": "srvtoolu_1", "name": "advisor", "input": {}},
+                    {"type": "text", "text": "Done."},
+                ],
+                "usage": usage,
+            },
+        }
+
+    def test_server_tool_turn_reports_final_iteration_occupancy(
+        self, parser: ClaudeTranscriptParser
+    ) -> None:
+        record = self._record([self.FIRST_CALL, self.ADVISOR_CALL, self.FINAL_CALL])
+
+        message = parser.parse_line(json.dumps(record), 0)
+
+        assert message is not None
+        assert message.usage is not None
+        assert message.usage.input_tokens == 34
+        assert message.usage.output_tokens == 2086
+        assert message.usage.cache_creation_tokens == 3477
+        assert message.usage.cache_read_tokens == 336650
+        assert message.context_used_tokens == self.FINAL_CALL_CONTEXT
+
+    def test_usage_without_iterations_reports_no_occupancy(
+        self, parser: ClaudeTranscriptParser
+    ) -> None:
+        message = parser.parse_line(json.dumps(self._record(None)), 0)
+
+        assert message is not None
+        assert message.usage is not None
+        assert message.usage.cache_read_tokens == 336650
+        assert message.context_used_tokens is None
+
+    def test_single_iteration_keeps_the_usage_estimate(
+        self, parser: ClaudeTranscriptParser
+    ) -> None:
+        message = parser.parse_line(json.dumps(self._record([self.FINAL_CALL])), 0)
+
+        assert message is not None
+        assert message.context_used_tokens is None
+
+    def test_iterations_without_a_message_entry_report_no_occupancy(
+        self, parser: ClaudeTranscriptParser
+    ) -> None:
+        record = self._record([self.ADVISOR_CALL, self.ADVISOR_CALL])
+
+        message = parser.parse_line(json.dumps(record), 0)
+
+        assert message is not None
+        assert message.context_used_tokens is None
+
+    def test_malformed_iteration_counts_report_no_occupancy(
+        self, parser: ClaudeTranscriptParser
+    ) -> None:
+        final_call = {**self.FINAL_CALL, "cache_read_input_tokens": "169595"}
+        record = self._record([self.FIRST_CALL, self.ADVISOR_CALL, final_call])
+
+        message = parser.parse_line(json.dumps(record), 0)
+
+        assert message is not None
+        assert message.context_used_tokens is None
+
+    def test_expanded_blocks_share_the_final_iteration_occupancy(
+        self, parser: ClaudeTranscriptParser
+    ) -> None:
+        record = self._record([self.FIRST_CALL, self.ADVISOR_CALL, self.FINAL_CALL])
+
+        messages = parser._expand_line(json.dumps(record), 0)
+
+        assert [message.content_type for message in messages] == ["server_tool_use", "text"]
+        assert [message.context_used_tokens for message in messages] == [
+            self.FINAL_CALL_CONTEXT,
+            self.FINAL_CALL_CONTEXT,
+        ]
