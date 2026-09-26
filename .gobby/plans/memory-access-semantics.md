@@ -29,14 +29,39 @@ with `get_memory`. Three defects were found while reviewing `docs/research/jev.m
 
 Separately, the recall-signal stack (nine hub tables, a JSONL log, the shadow judge, refit,
 shrinkage, replay, ship gate, drift monitor, and the `gobby memory recall-signals` CLI;
-about 8,100 source lines across 24 modules plus 6,200 test lines) is dormant: every flag
-defaults off, no row has ever been written on this machine, and its cohort excludes the
-index surfacing caller by design. It was built for the retired automatic-recall regime.
+about 8,100 source lines across 24 modules plus 6,200 test lines) was built for the
+retired automatic-recall regime, and its shadow judge is live on this machine. Every flag
+defaults off in code, but the installed `config_store` holds `memory.recall_signal_hub`
+(set 2026-07-10), `memory.recall_signal_logging` (2026-06-15), and
+`memory.shadow_relevance_judging` (2026-08-12) at `true` (no `~/.gobby/config.yaml`
+exists; the flags live only in the store), and the installed `rule_definitions` row for
+the bundled `turn_end` rule `judge-shadow-relevance-on-response` is enabled, so it
+dispatches `gobby-memory:judge_shadow_relevance`
+(`src/gobby/mcp_proxy/tools/memory.py`, near line 741) after every agent response, and
+`judge_shadow_candidate_relevance` (`src/gobby/memory/shadow_relevance.py`, near line 301)
+claims up to eight due `digest_shadow` requests and makes one `call_json_feature` call
+each, pinned to `codex/gpt-5.6-luna`. Read-only hub counts on 2026-09-26 at 13:10 UTC:
+`recall_shadow_judge_state` 13,594 rows (6,743 `complete`, 6,795 `terminal`, 35
+`retryable`, 21 `claimed`); `recall_shadow_prompt_snapshot` 6,743, of which 5,150 by
+`codex/gpt-5.6-luna` since 2026-07-31 and 1,593 by `claude/haiku` before 2026-08-11,
+with 3,662 since 2026-08-25; `~/.gobby/logs/llm.log` records 3,602 `feature_llm_call`
+lines for `feature=memory.shadow_relevance` (`provider=codex`, `model=gpt-5.6-luna`)
+from its 2026-08-25 start to 2026-09-26, about 109 calls a day at a mean latency near
+20 s, 4 of them `schema_failed`; `recall_usefulness` 46,625
+labels (46,274 `digest_shadow`, 21,626 of them since 2026-08-25); `recall_signal_requests`
+19,448; `recall_signal_hits` 130,913; `recall_injection_outcomes` 55,043;
+`recall_shadow_audit_verdicts` 50; `recall_gate_runs` and `recall_holdout_consumed` 0.
+The labels have no live reader: `memory.recall_drift_monitor_enabled` and
+`memory.use_fitted_recall_constants` are absent from the store, so the drift loop and the
+fitted constants stay at their off defaults. The cohort excludes the index surfacing
+caller by design (`SHADOW_ELIGIBLE_CALLERS`, `src/gobby/storage/recall_shadow_signals.py`,
+near line 25), so `memory.surface` requests are recorded and never judged. Decision 10
+stands: retirement removes a live consumer, its Codex spend, and labels nothing reads.
 
 Outcome: `access` means an agent opened the memory; `surfaced` means it was shown; ranking
 decay follows the later of edit and access; the index re-lists a shown-but-unread memory
 after a configurable horizon and never re-lists one already in context; post-task review
-starts from what the task actually read; the dormant telemetry stack and the
+starts from what the task actually read; the recall-signal stack and the
 destructive-migration directive path are gone.
 
 ## Decision Record
@@ -148,6 +173,26 @@ shadow tables or runs the drift loop) while leaving the tree importable; 1.2 rem
 sink side, the storage layer, and the search-debug plumbing that exists only to feed it;
 1.3 removes the thirteen config keys, adds `memory.index_reshow_after_injections`, and
 regenerates the runtime contract once.
+
+Live consumer and stranded rows: the judge runs today (Overview), so 1.1 ends real Codex
+calls and label writes. `shadow_cohort_query("polling", ...)`
+(`src/gobby/storage/recall_shadow_signals.py`, near line 112) filters on the originating
+`r.session_id`, and the only poller is that session's `turn_end` rule, so a request whose
+ten-minute `claimed` lease or `retryable` backoff outlives its session is never polled
+again. On 2026-09-26 at 13:10 UTC `recall_shadow_judge_state` held 56 such rows: 21
+`claimed` with leases expired between 2026-07-21 and 2026-09-20, and 35 `retryable` after
+one attempt each (16 `judge_error:ClaudeSDKRateLimited`, 7 `invalid_response`, 4
+`judge_error:ClaudeSDKShutdownCancellation`, 4 `judge_error:RuntimeError`, 2
+`judge_error:ClaudeSDKProviderFailure`, 2 `judge_error:_InvalidTextGenerationOutputError`),
+34 of them past `next_attempt_at`. The 21 expired claims and those 34 due retryables, 55
+rows, belong to sessions already `expired`; the one retryable still inside its backoff
+belongs to an active session; retries from a still-live session do work (48 `complete`
+rows at attempt 2, 2 at attempt 3), and orphans accrue at about 0.4% of judged requests
+until 1.1 lands. Nothing reads or repairs them once 1.1 deletes the rule,
+tool, and module, and they leave with their table when 2.1's migration 454 executes `DROP
+TABLE IF EXISTS ... RESTRICT` over `recall_shadow_judge_state` and the other eight tables
+(2.1.1); no leaf copies or preserves a row. The three `true` rows in the installed
+`config_store` are the persisted rows 1.3.4 sweeps at load.
 
 ### 1.1 Retire the shadow judge, drift monitor, judge rule, judge tool, and recall-signals CLI [category: refactor]
 `kind: deliverable`
@@ -385,33 +430,44 @@ One plain migration adds the surfaced columns, moves the existing counts across,
 the nine recall tables; the Python model layer then carries the new columns everywhere
 `access_count` / `last_accessed_at` already travel.
 
-### 2.1 Migration 452 and its schema carriers [category: code] (depends: 1.3)
+### 2.1 Migration 454 and its schema carriers [category: code] (depends: 1.3)
 `kind: deliverable`
 [domain: backend]
 
 Targets:
-- `crates/gcore/assets/schema/migrations/452_memory_surfaced_stats_retire_recall_signals.sql`
-- `crates/gcore/src/schema/assets.rs::*` — scope-reason: append the `EmbeddedMigration` entry for 452
+- `crates/gcore/assets/schema/migrations/454_memory_surfaced_stats_retire_recall_signals.sql`
+- `crates/gcore/src/schema/assets.rs::*` — scope-reason: append the `EmbeddedMigration` entry for 454
 - `crates/gcore/assets/schema/catalog.manifest.json::*` — scope-reason: add the two memories columns and remove the nine recall tables
 - `crates/gcore/tests/schema_contract.rs::*` — scope-reason: bump the four identity literals (version, newest file name, latest checksum, assets root hash)
 - `crates/gcore/src/grant/bundle.rs::*` — scope-reason: bump the three no-postgres fallback literals (`GOLDEN_LATEST_CHECKSUM`, `GOLDEN_ASSETS_ROOT_HASH`, `latest_version` at line 218); no grant names a recall table
 - `crates/gdaemon/tests/cli_contract.rs::*` — scope-reason: bump the `latest_version` literal (line 58)
 - `src/gobby/storage/schema_expected_identity.json::*` — scope-reason: regenerated identity pin
-- `tests/runtime_grants/golden/brokered_datastores.json::*` — scope-reason: re-signed at identity 452 (`schema_identity`, `payload_checksum`, `signature`)
-- `tests/runtime_grants/golden/direct_datastores.json::*` — scope-reason: re-signed at identity 452
-- `tests/runtime_grants/golden/old_client_new_grant.json::*` — scope-reason: re-signed at identity 452
-- `tests/runtime_grants/golden/payload_skew_unknown_field.json::*` — scope-reason: re-signed at identity 452; its unknown field stays outside the signed payload
-- `tests/runtime_grants/golden/unavailable_datastores.json::*` — scope-reason: re-signed at identity 452
+- `tests/runtime_grants/golden/brokered_datastores.json::*` — scope-reason: re-signed at identity 454 (`schema_identity`, `payload_checksum`, `signature`)
+- `tests/runtime_grants/golden/direct_datastores.json::*` — scope-reason: re-signed at identity 454
+- `tests/runtime_grants/golden/old_client_new_grant.json::*` — scope-reason: re-signed at identity 454
+- `tests/runtime_grants/golden/payload_skew_unknown_field.json::*` — scope-reason: re-signed at identity 454; its unknown field stays outside the signed payload
+- `tests/runtime_grants/golden/unavailable_datastores.json::*` — scope-reason: re-signed at identity 454
 - `tests/fixtures/test_postgres_db_reset.py::*` — scope-reason: the RESTRICT-FK fixture pair used `recall_holdout_consumed -> recall_gate_runs`; repoint at `machines.owner_user_id -> users.id`
 - `tests/storage/test_domain_tables_schema.py::*` — scope-reason: pin `memories.surfaced_count` and `memories.last_surfaced_at`
 
 **Research context:** Schema authority is Rust: Python has no DDL
-(`tests/storage/test_schema_contract.py`). Baseline is at 420; the newest committed migration on
-0.5.0 is 450 (`450_drop_session_heuristic_title.sql`, #22740, `b9303f8183`, merged in
-`8de59a666f`); 451 is the runbooks plan's (#22808, `451_add_runbook_roles.sql`, not yet in
-the tree), so this plan takes 452 (Program Director, 2026-09-24; the epic asked for the
-renumber at review). The identity literals named below read 450 on HEAD; this leaf bumps
-them to 452 from 450, or from 451 if the runbooks migration has landed first. Templates: migration 436 (add columns, commit `faadba03d1`) and
+(`tests/storage/test_schema_contract.py`). Baseline is at 420; the newest committed migrations on
+0.5.0 are `452_static_plan_review_seats.sql` and `453_plan_review_source_path.sql` (#22912,
+`bab7aac030` and `b050e412c6`), which took the 452 this plan was first given, and no branch or
+worktree carries a higher number (checked 2026-09-26 against 0.5.0 `62fd6d02cf`; Lane 3, which
+landed 452 and 453, holds no pending claim). This plan takes 454, the lowest free slot (Program
+Director, 2026-09-26); the runbooks plan's roles migration and the deploy-runbook ledger take
+the next free numbers. The runner applies every embedded migration whose version has no
+receipt (`crates/gcore/src/schema/runner_plan.rs`, `resolve_pending_migrations`), so landing
+order does not constrain the numbers; only uniqueness does. The number is a plan-time
+allocation, not a reservation: before writing the file the implementer rechecks the migrations
+directory and `assets.rs` on HEAD, and a taken slot is a plan revision through the same route
+as this one, never a number chosen in the leaf. The identity literals named below are bumped
+together, in this leaf's one commit, from whatever HEAD carries at landing to the newest
+embedded version (454 unless a higher number has landed first); on `62fd6d02cf`,
+`schema_contract.rs` (lines 21 and 24) and `schema_expected_identity.json` read 453,
+`bundle.rs` line 218 reads 452, and `cli_contract.rs` line 58 reads 450, drift left by the 451
+through 453 landings and reported to the Program Director. Templates: migration 436 (add columns, commit `faadba03d1`) and
 `439_retire_linear_github_issue_bridge.sql` (multi-table drop as a plain migration). The
 single file, in order: `ALTER TABLE memories ADD COLUMN surfaced_count integer DEFAULT 0,
 ADD COLUMN last_surfaced_at timestamp with time zone;` then `UPDATE memories SET
@@ -446,8 +502,8 @@ latter is what `memories.access_count` carries at line 2368), and no `recall_*` 
 the manifest, so it is final only after step 2. (4) Set the literals.
 `crates/gcore/src/grant/bundle.rs` moves three together in the
 `#[cfg(not(feature = "postgres"))]` fallback: `GOLDEN_LATEST_CHECKSUM` and
-`GOLDEN_ASSETS_ROOT_HASH` (lines 15-18) and `latest_version` (line 218, `450` on HEAD, set by
-#22740 in `b9303f8183`; its guard `grant::tests::expected_schema_identity_tracks_catalog_head`
+`GOLDEN_ASSETS_ROOT_HASH` (lines 15-18) and `latest_version` (line 218, `452` on HEAD, set by
+#22912 in `bab7aac030`; its guard `grant::tests::expected_schema_identity_tracks_catalog_head`
 runs only under gcore's default features, and memory 24090e86 records that #22618 once moved
 only the checksum). `crates/gcore/tests/schema_contract.rs` moves four: the version and the
 newest file name (lines 21 and 24) and the latest checksum and assets root hash asserted
@@ -480,12 +536,12 @@ installed set.
 
 **Acceptance:**
 
-- 2.1.1 - Migration 452 adds both columns, copies the counts across, resets access, and drops the nine tables in one plain file with no destructive directive. file: `crates/gcore/assets/schema/migrations/452_memory_surfaced_stats_retire_recall_signals.sql`.
+- 2.1.1 - Migration 454 adds both columns, copies the counts across, resets access, and drops the nine tables in one plain file with no destructive directive. file: `crates/gcore/assets/schema/migrations/454_memory_surfaced_stats_retire_recall_signals.sql`.
 - 2.1.2 - The catalog manifest lists `memories.surfaced_count` and `memories.last_surfaced_at` and no `recall_*` table, and the freshness test passes. file: `crates/gcore/assets/schema/catalog.manifest.json`. behavior: `GOBBY_SCHEMA_TEST_DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test cargo test --manifest-path crates/gcore/Cargo.toml --features postgres --test catalog_manifest_freshness` passes with the database reached (no skip line).
 - 2.1.3 - Every identity carrier agrees with the checkout binary. file: `src/gobby/storage/schema_expected_identity.json`. test: `tests/storage/test_schema_contract.py::test_expected_identity_matches_gdaemon`.
 - 2.1.4 - The reset fixture's RESTRICT-FK pair is a surviving pair. test: `tests/fixtures/test_postgres_db_reset.py::test_reset_handles_restrict_fk_order`.
 - 2.1.5 - The domain-table pin covers both new columns. test: `tests/storage/test_domain_tables_schema.py::test_memories_surfaced_columns`.
-- 2.1.6 - The five golden grant vectors carry identity 452 and verify against `GOLDEN_SECRET`. test: `tests/runtime_grants/test_golden_vectors.py::test_grant_vectors_round_trip`. test: `tests/runtime_grants/test_golden_vectors.py::test_config_revision_signed`.
+- 2.1.6 - The five golden grant vectors carry identity 454 and verify against `GOLDEN_SECRET`. test: `tests/runtime_grants/test_golden_vectors.py::test_grant_vectors_round_trip`. test: `tests/runtime_grants/test_golden_vectors.py::test_config_revision_signed`.
 
 ### 2.2 Thread surfaced_count and last_surfaced_at through storage, protocol, dream, CLI, and web [category: code] (depends: 2.1)
 `kind: deliverable`
@@ -867,7 +923,7 @@ Targets:
 
 **Research context:** The directive was built for hub backup and restore to a new
 machine, never for migrations; only `426_retire_legacy_wiki.sql` carries it, and 421, 427,
-439, and now 452 drop tables plainly. Rust: `crates/gcore/src/schema/runner.rs` computes
+439, and now 454 drop tables plainly. Rust: `crates/gcore/src/schema/runner.rs` computes
 `stamps_destructive_migrations = is_fresh_lineage` in `BaselineState` (near 151-169) and
 branches on the directive to `stamp_receipt_only` (near 643-660);
 `runner_plan.rs` checks authorization (near 167-176; keep the non-transactional check
@@ -920,10 +976,10 @@ confirm no live spawned worker, close validator, or restart-protected cron run (
 dream; cutover's restart passes no `--wait`), then `uv run gobby cutover` from the main
 checkout: it builds release, proves the start half (worktree guard, installed set, schema
 identity, read-only `gdaemon schema plan`), promotes `gcode`, `gdaemon`, `ghook` as one
-stamped set, and restarts the daemon, which applies 452. Promote `gclient` separately and
+stamped set, and restarts the daemon, which applies 454. Promote `gclient` separately and
 read `sha256` from `~/.gobby/bin/` (never from `target/release/`). Then:
 
-1. `~/.gobby/bin/gdaemon schema version --json` reports `latest_version: 452`; the hub has
+1. `~/.gobby/bin/gdaemon schema version --json` reports `latest_version: 454`; the hub has
    `memories.surfaced_count` and no `recall_*` table.
 2. `gobby-config:get_config_values` shows `memory.index_reshow_after_injections: 5` and
    none of the removed keys; a patch to a removed key is rejected.
@@ -1059,14 +1115,14 @@ and the scoped test-types audit. Contract freshness:
   tdd: true
   source_section: '1.3'
   assigned_agent: backend-developer
-- title: Migration 452 and its schema carriers
+- title: Migration 454 and its schema carriers
   category: code
   task_type: feature
   depends_on:
   - '1.3'
-  validation_criteria: '2.1.1: Migration 452 adds both columns, copies the counts
+  validation_criteria: '2.1.1: Migration 454 adds both columns, copies the counts
     across, resets access, and drops the nine tables in one plain file with no destructive
-    directive. file: `crates/gcore/assets/schema/migrations/452_memory_surfaced_stats_retire_recall_signals.sql`.
+    directive. file: `crates/gcore/assets/schema/migrations/454_memory_surfaced_stats_retire_recall_signals.sql`.
 
     2.1.2: The catalog manifest lists `memories.surfaced_count` and `memories.last_surfaced_at`
     and no `recall_*` table, and the freshness test passes. file: `crates/gcore/assets/schema/catalog.manifest.json`.
@@ -1081,7 +1137,7 @@ and the scoped test-types audit. Contract freshness:
 
     2.1.5: The domain-table pin covers both new columns. test: `tests/storage/test_domain_tables_schema.py::test_memories_surfaced_columns`.
 
-    2.1.6: The five golden grant vectors carry identity 452 and verify against `GOLDEN_SECRET`.
+    2.1.6: The five golden grant vectors carry identity 454 and verify against `GOLDEN_SECRET`.
     test: `tests/runtime_grants/test_golden_vectors.py::test_grant_vectors_round_trip`.
     test: `tests/runtime_grants/test_golden_vectors.py::test_config_revision_signed`.'
   labels:
