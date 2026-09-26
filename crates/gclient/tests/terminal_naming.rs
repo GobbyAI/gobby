@@ -1,10 +1,8 @@
-//! The chrome names a terminal, it does not print its primary key.
+//! The chrome names a terminal and uses a short ID when no name is available.
 //!
-//! These tests pin the D1 label ladder against a real daemon payload: the name
-//! the user gave the pane, then the provider of the session bound to it, then
-//! the command in its foreground, then the literal `shell`. The last rung is a
-//! literal, which is what makes the guarantee at the bottom of this file
-//! possible — no rung can be an id, at any width.
+//! These tests pin the label ladder against a real daemon payload: the name
+//! the user gave the pane, then the command in its foreground, then a short
+//! terminal ID. The provider belongs on the agent row, not the terminal row.
 //!
 //! `title` is deliberately not a rung, and the rows here carry misleading ones
 //! to prove it: the daemon fills `title` from `window_name or pane_title or
@@ -15,7 +13,7 @@ mod mock_daemon;
 
 use gobby_client::daemon::{Daemon, LiveDaemon};
 use gobby_client::ui::chrome::{attention_label, Chrome, RowState};
-use gobby_client::ui::sidebar::{session_rows, TERMINAL_ROW};
+use gobby_client::ui::sidebar::{agent_rows, terminal_rows, TERMINAL_ROW};
 use gobby_client::ui::sidebar_rows::SidebarRow;
 use gobby_client::Workspace;
 use mock_daemon::MockDaemon;
@@ -72,8 +70,7 @@ fn entry(terminal_id: &str, backend: &str) -> Value {
     })
 }
 
-/// The same entry with the provider the daemon resolved for its session, which
-/// is rung 2 of the ladder.
+/// The same entry with the provider the daemon resolved for its session.
 fn entry_with_provider(terminal_id: &str, backend: &str, provider: &str) -> Value {
     let mut entry = entry(terminal_id, backend);
     entry["provider"] = json!(provider);
@@ -113,7 +110,8 @@ async fn sidebar(rows: Vec<Value>, attention: Vec<Value>) -> (Vec<SidebarRow>, V
         .expect("roster reconcile");
 
     let chrome = Chrome::dark();
-    let drawn = session_rows(&workspace, &chrome);
+    let mut drawn = agent_rows(&workspace, &chrome);
+    drawn.extend(terminal_rows(&workspace, &chrome));
     let labels = attention
         .iter()
         .map(|entry| attention_label(&workspace, entry["entry_id"].as_str().expect("entry id")))
@@ -127,7 +125,7 @@ async fn sidebar(rows: Vec<Value>, attention: Vec<Value>) -> (Vec<SidebarRow>, V
     (drawn, labels)
 }
 
-/// Rung 3, and the rung the daemon had to grow a new mechanism to serve: with
+/// Rung 2, and the rung the daemon had to grow a new mechanism to serve: with
 /// no name of its own and no session bound to it, a terminal is called after
 /// whatever is running in it. The titles here are what tmux actually reports
 /// for such panes, and none of them reaches the row.
@@ -148,20 +146,15 @@ async fn the_foreground_command_names_a_terminal_with_no_name_of_its_own() {
         ["nvim", "cargo"],
         "neither row shows the daemon's title"
     );
-    assert_eq!(
-        roster[0].tokens,
-        ["%533"],
-        "the tmux row's address is a token, not part of its name"
-    );
+    assert!(roster[0].reference.is_empty());
+    assert_eq!(roster[0].height(), 3);
     assert_eq!(named, labels);
 }
 
-/// Rung 2 outranks rung 3. A terminal hosting a coding session is called after
-/// the provider driving it, because `codex` says what the row *is* where the
-/// foreground command only says what it is doing this second — the same row
-/// would read `node` a moment later.
+/// A managed run still uses the terminal's foreground command as its row name.
+/// The provider belongs on the agent row, not the terminal row.
 #[tokio::test]
-async fn a_bound_session_is_named_by_its_command_and_carries_its_provider() {
+async fn a_managed_run_is_named_by_its_command_without_a_provider_token() {
     let (roster, named) = sidebar(
         vec![tmux_row(
             AGENT,
@@ -174,36 +167,33 @@ async fn a_bound_session_is_named_by_its_command_and_carries_its_provider() {
     .await;
 
     assert_eq!(roster[0].label, "node");
-    assert_eq!(roster[0].tokens, ["%533", "codex"]);
+    assert_eq!(roster[0].provider, None);
     assert_eq!(named, ["node"]);
 }
 
-/// Rung 4. No name, no session, and a daemon that could not read a foreground
-/// command — a tmux row over REST, whose pane pid is never persisted. The row
-/// still has to render, and what it renders is a word, not an id.
+/// The daemon supplies the spawned shell when no foreground job is active.
 #[tokio::test]
-async fn a_terminal_with_no_name_session_or_command_reads_as_the_shell_it_is() {
+async fn a_terminal_with_no_name_or_session_reads_its_daemon_command() {
     let (roster, named) = sidebar(
         vec![
-            tmux_row(AGENT, Value::Null, "%3", Value::Null),
-            native_row(SHELL, Value::Null),
+            tmux_row(AGENT, Value::Null, "%3", json!("zsh")),
+            native_row(SHELL, json!("zsh")),
         ],
         vec![entry(AGENT, "tmux"), entry(SHELL, "native")],
     )
     .await;
 
     let labels: Vec<&str> = roster.iter().map(|row| row.label.as_str()).collect();
-    assert_eq!(labels, ["shell", "shell"]);
-    assert_eq!(roster[0].tokens, ["%3"]);
-    assert!(roster[1].tokens.is_empty(), "{:?}", roster[1].tokens);
+    assert_eq!(labels, ["zsh", "zsh"]);
+    assert!(roster[0].reference.is_empty());
+    assert!(roster[1].reference.is_empty());
     assert_eq!(named, labels);
 }
 
-/// Commands collide — most panes on this machine are running a shell. The
-/// address is what keeps two of them apart, exactly as it did when the ladder
-/// still named them after their title.
+/// Commands collide — most panes on this machine are running a shell. Stable
+/// row IDs keep equal displayed commands distinct without showing addresses.
 #[tokio::test]
-async fn two_terminals_running_the_same_command_stay_distinguishable_by_address() {
+async fn two_terminals_running_the_same_command_keep_distinct_row_ids() {
     let (roster, _) = sidebar(
         vec![
             tmux_row(AGENT, json!("15"), "%0", json!("zsh")),
@@ -214,16 +204,14 @@ async fn two_terminals_running_the_same_command_stay_distinguishable_by_address(
     .await;
 
     assert!(roster.iter().all(|row| row.label == "zsh"), "{roster:?}");
-    assert_eq!(roster[0].tokens, ["%0"]);
-    assert_eq!(roster[1].tokens, ["%7"]);
+    assert_ne!(roster[0].id, roster[1].id);
+    assert!(roster.iter().all(|row| row.reference.is_empty()));
 }
 
-/// The guarantee the ladder exists for. Every rung above the last can be
-/// missing at once, and the row still never shows a terminal id — not whole,
-/// and not truncated to the leading segment that used to be the fallback and
-/// rendered four identical rows for four different terminals.
+/// When both name and command are absent, the short ID distinguishes terminal
+/// rows and attention labels without displaying a raw terminal UUID.
 #[tokio::test]
-async fn no_terminal_id_reaches_the_sidebar_at_any_width() {
+async fn unnamed_terminals_use_distinct_short_ids_without_exposing_uuids() {
     let (roster, named) = sidebar(
         vec![
             tmux_row(AGENT, Value::Null, "%3", Value::Null),
@@ -233,21 +221,28 @@ async fn no_terminal_id_reaches_the_sidebar_at_any_width() {
     )
     .await;
 
+    let labels: Vec<&str> = roster.iter().map(|row| row.label.as_str()).collect();
+    assert_eq!(labels, [&AGENT[..8], &SHELL[..8]]);
+    assert_eq!(named, labels);
+
     let rendered: Vec<&str> = roster
         .iter()
         .flat_map(|row| {
-            std::iter::once(row.label.as_str()).chain(row.tokens.iter().map(String::as_str))
+            [
+                row.label.as_str(),
+                row.definition.as_str(),
+                row.reference.as_str(),
+                row.detail.as_str(),
+                row.model_slug.as_str(),
+            ]
         })
         .chain(named.iter().map(String::as_str))
         .collect();
     for id in [AGENT, SHELL, ABSENT] {
-        for width in [id.len(), 8, 4] {
-            let prefix = &id[..width];
-            assert!(
-                rendered.iter().all(|text| !text.contains(prefix)),
-                "`{prefix}` reached the chrome: {rendered:?}"
-            );
-        }
+        assert!(
+            rendered.iter().all(|text| !text.contains(id)),
+            "`{id}` reached the chrome: {rendered:?}"
+        );
     }
 }
 
@@ -274,11 +269,8 @@ async fn an_attention_row_keyed_by_session_names_the_terminal_that_hosts_it() {
         rows[0].label, "node",
         "the agent row is named by its terminal's command"
     );
-    assert_eq!(
-        rows[0].tokens,
-        ["%533", "codex"],
-        "the address and the provider are its tokens"
-    );
+    assert_eq!(rows[0].provider.as_deref(), Some("codex"));
+    assert!(rows[0].reference.is_empty());
     assert_eq!(
         rows[0].state,
         RowState::Attention,
@@ -292,7 +284,7 @@ async fn an_attention_row_keyed_by_session_names_the_terminal_that_hosts_it() {
 /// roster terminal no entry names still lists, as a bare terminal under its
 /// own name.
 #[tokio::test]
-async fn an_attention_row_for_an_unknown_terminal_reads_as_a_shell() {
+async fn an_attention_row_for_an_unknown_terminal_reads_as_its_short_id() {
     let (rows, named) = sidebar(
         vec![tmux_row(AGENT, json!("75"), "%533", json!("nvim"))],
         vec![json!({"entry_id": format!("blocked:{ABSENT}"), "kind": "blocked"})],
@@ -306,10 +298,6 @@ async fn an_attention_row_for_an_unknown_terminal_reads_as_a_shell() {
         "the terminal-less entry drew a row: {rows:?}"
     );
     assert_eq!(rows[0].label, "nvim");
-    assert!(
-        rows[0].tokens.iter().any(|token| token == "%533"),
-        "a bare terminal keeps its address as a token: {:?}",
-        rows[0].tokens
-    );
-    assert_eq!(named, ["shell"]);
+    assert_eq!(rows[0].detail, "gclient");
+    assert_eq!(named, [&ABSENT[..8]]);
 }

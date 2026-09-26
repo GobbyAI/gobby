@@ -1,6 +1,7 @@
 use super::*;
 use crate::app::Workspace;
 use crate::ui::hit::SidebarSection;
+use crate::ui::keymap::Keymap;
 use crate::ui::settings::TitleScrolling;
 use crate::ui::sidebar;
 use crate::ui::sidebar_rows::{TICKER_PAUSE, TICKER_STEP};
@@ -100,7 +101,7 @@ fn render_panes_draws_titles_and_focus_marker() {
         "term-alpha",
         "term-beta",
         "gclient",
-        "gclient · Focused",
+        "term-beta · Focused",
         "▸",
         "┌",
         "┐",
@@ -117,21 +118,32 @@ fn render_panes_draws_titles_and_focus_marker() {
 #[test]
 fn bottom_metadata_renders_with_and_without_pane_gaps() {
     for pane_gaps in [true, false] {
-        let (ws, mut chrome) = scripted();
+        let (mut ws, mut chrome) = scripted();
+        for terminal_id in ["term-alpha", "term-beta"] {
+            let pane_id = ws.pane_for_terminal(terminal_id).unwrap();
+            let pane = ws.pane_mut(pane_id);
+            pane.label = None;
+            pane.command = Some("zsh".to_owned());
+            pane.address = Some("0:0:1:2".to_owned());
+        }
         chrome.prefs.pane_gaps = pane_gaps;
         chrome.compute_view(&ws, Rect::new(0, 0, 120, 20));
         let terminal = draw(&ws, &chrome, 120, 20);
         for info in &chrome.view.pane_infos {
             let bottom = info.rect.bottom() - 1;
             let corner = info.rect.right() - 1;
-            let edge = cells(&terminal, bottom, info.rect.x, corner);
-            let expected = if info.is_focused {
-                " gclient · Focused "
+            let edge = cells(&terminal, bottom, info.rect.x + 1, corner);
+            let left = if info.is_focused {
+                " zsh · Focused "
             } else {
-                " gclient "
+                " zsh "
             };
             assert!(
-                edge.ends_with(expected),
+                edge.starts_with(left),
+                "gaps={pane_gaps}: bottom edge {edge:?}"
+            );
+            assert!(
+                edge.ends_with(" gclient 0:0:1:2 "),
                 "gaps={pane_gaps}: bottom edge {edge:?}"
             );
         }
@@ -139,7 +151,7 @@ fn bottom_metadata_renders_with_and_without_pane_gaps() {
 }
 
 #[test]
-fn stacked_panes_without_gaps_keep_metadata_on_their_own_title_row() {
+fn stacked_panes_without_gaps_keep_the_upper_footer_beside_its_title() {
     let mut ws = Workspace::scripted();
     ws.daemon_mut()
         .set_roster(json!({"epoch": "e1", "seq": 1, "entries": []}));
@@ -153,8 +165,8 @@ fn stacked_panes_without_gaps_keep_metadata_on_their_own_title_row() {
     chrome.compute_view(&ws, Rect::new(0, 0, 60, 20));
     let terminal = draw(&ws, &chrome, 60, 20);
 
-    // The upper pane shares its bottom line with the lower pane's title, so
-    // its own metadata moves up beside its title.
+    // The upper pane has no bottom border: its footer shares its title edge
+    // without taking over the lower pane's top edge.
     let upper = info_of(&ws, &chrome, "term-alpha");
     assert!(
         !upper.borders.contains(Borders::BOTTOM),
@@ -162,8 +174,8 @@ fn stacked_panes_without_gaps_keep_metadata_on_their_own_title_row() {
         upper.borders
     );
     let top = cells(&terminal, upper.rect.y, upper.rect.x, upper.rect.right());
-    assert!(top.contains("term-alpha"), "{top:?}");
-    assert!(top.ends_with("─ tmux ┐"), "{top:?}");
+    assert_eq!(top.matches("term-alpha").count(), 2, "{top:?}");
+    assert!(top.ends_with(" tmux ┐"), "{top:?}");
 
     let lower = info_of(&ws, &chrome, "term-beta");
     let shared = cells(&terminal, lower.rect.y, lower.rect.x, lower.rect.right());
@@ -174,7 +186,8 @@ fn stacked_panes_without_gaps_keep_metadata_on_their_own_title_row() {
         lower.rect.x,
         lower.rect.right(),
     );
-    assert!(bottom.ends_with("─ gclient · Focused ┘"), "{bottom:?}");
+    assert!(bottom.contains(" term-beta · Focused "), "{bottom:?}");
+    assert!(bottom.ends_with(" gclient ┘"), "{bottom:?}");
 }
 
 #[test]
@@ -206,7 +219,7 @@ fn header_titles_scroll_left_right_or_truncate_on_the_ticker() {
     );
 
     // Too narrow for a readable window: the header truncates in any mode.
-    let meta = pane_metadata(ws.pane(beta), true);
+    let meta = pane_footer(&ws, ws.pane(beta), true);
     let mut narrow = info.clone();
     narrow.rect.width = 9;
     narrow.is_focused = true;
@@ -242,18 +255,34 @@ fn wide_header_titles_fill_the_edge_exactly_while_scrolling() {
 
 #[test]
 fn header_titles_share_the_sidebar_period() {
-    // The bare-terminal row repeats this label in the narrower sidebar, so
-    // its overrun is longer than the header's and sets the shared period.
+    // The agent task title scrolls in the narrower sidebar, so its overrun
+    // is longer than the header's and sets the shared period.
     let label = "a-long-pane-title-that-overruns-the-sidebar-and-the-header-both";
+    let title = format!("Task #1 - {label}");
     let (mut ws, mut chrome) = scripted();
-    let beta = ws.pane_for_terminal("term-beta").unwrap();
-    ws.pane_mut(beta).label = Some(label.to_owned());
+    chrome.sidebar.pinned = true;
+    ws.daemon_mut().set_roster(json!({
+        "epoch": "e2",
+        "seq": 2,
+        "entries": [{
+            "entry_id": "run:term-alpha",
+            "name": label,
+            "task": {"ref": "#1", "title": label},
+            "terminal": {"terminal_id": "term-alpha", "backend": "native"},
+            "kind": "blocked"
+        }]
+    }));
+    ws.reconcile_subscribe_first().unwrap();
+    chrome.sidebar.machine_filter = Some(sidebar::ALL_MACHINES.to_owned());
+    let alpha = ws.pane_for_terminal("term-alpha").unwrap();
+    ws.pane_mut(alpha).label = Some(label.to_owned());
+    ws.reconcile_subscribe_first().unwrap();
     let area = Rect::new(0, 0, 100, 20);
     chrome.compute_view(&ws, area);
-    let info = info_of(&ws, &chrome, "term-beta");
-    let own = pane_chrome::title_travel(&ws, ws.pane(beta), &info);
-    let sessions = chrome.view.sidebar_section_rects[SidebarSection::Sessions.index()];
-    let side = sidebar::sessions_title_travel(&ws, &chrome, sessions);
+    let info = info_of(&ws, &chrome, "term-alpha");
+    let own = pane_chrome::title_travel(&ws, ws.pane(alpha), &info);
+    let agents = chrome.view.sidebar_section_rects[SidebarSection::Agents.index()];
+    let side = sidebar::agents_title_travel(&ws, &chrome, agents);
     assert!(own > 0 && side > own, "header {own}, sidebar {side}");
     assert_eq!(chrome.view.title_travel, side);
 
@@ -265,9 +294,9 @@ fn header_titles_share_the_sidebar_period() {
     // Past its own period the header is still parked at its tail, waiting
     // for the sidebar row; both jump home together.
     chrome.ticker = (2 * TICKER_PAUSE + own as u64) * TICKER_STEP;
-    assert!(header(&chrome).contains(&label[label.len() - budget..]));
+    assert!(header(&chrome).contains(&title[title.len() - budget..]));
     chrome.ticker = (2 * TICKER_PAUSE + side as u64) * TICKER_STEP;
-    assert!(header(&chrome).contains(&label[..budget]));
+    assert!(header(&chrome).contains(&title[..budget]));
 }
 
 #[test]
@@ -284,25 +313,25 @@ fn hovered_read_only_metadata_underlines_only_while_actionable() {
         .clone();
     let focused = chrome.focused_pane().unwrap();
     let underlined = |ws: &Workspace, chrome: &Chrome| {
-        let meta = pane_metadata(ws.pane(focused), true);
-        let rect = metadata_rect(&info, &meta).unwrap();
+        let meta = pane_footer(ws, ws.pane(focused), true);
+        let rect = footer_rects(&info, &meta).unwrap().0;
         let terminal = draw(ws, chrome, 100, 12);
         let buffer = terminal.backend().buffer();
         let modifier = |x| buffer[(x, rect.y)].modifier;
         (
-            meta.text,
+            meta.left,
             modifier(rect.x).contains(Modifier::UNDERLINED),
             modifier(rect.x + 1).contains(Modifier::UNDERLINED),
         )
     };
     assert_eq!(
         underlined(&ws, &chrome),
-        ("gclient · Focused".to_owned(), false, false)
+        ("term-beta · Focused".to_owned(), false, false)
     );
     ws.pane_mut(focused).take_back = true;
     assert_eq!(
         underlined(&ws, &chrome),
-        ("gclient · Read-only".to_owned(), false, true)
+        ("term-beta · Read-only".to_owned(), false, true)
     );
 }
 
@@ -314,6 +343,44 @@ fn empty_state_names_the_next_step_without_exclamation() {
         .draw(|frame| render_empty(frame, frame.area(), &chrome))
         .unwrap();
     let text = screen(&terminal);
-    assert!(text.contains("No pane open."));
+    assert!(cells(&terminal, 3, 0, 60).contains("No pane open."));
+    assert!(cells(&terminal, 4, 0, 60).contains("ctrl+b w  attach a terminal"));
+    assert!(cells(&terminal, 5, 0, 60).contains("File › New Terminal  start one"));
+    assert!(cells(&terminal, 6, 0, 60).contains("ctrl+b b  open the sidebar"));
+    assert!((0..3).all(|y| cells(&terminal, y, 0, 60).trim().is_empty()));
+    assert!((7..10).all(|y| cells(&terminal, y, 0, 60).trim().is_empty()));
+    assert!(!text.contains("select a terminal in the sidebar"));
     assert!(!text.contains('!'));
+}
+
+#[test]
+fn empty_state_chords_follow_the_live_keymap() {
+    let mut chrome = Chrome::dark();
+    chrome.keymap = Keymap::from_toml(
+        "prefix = \"ctrl+]\"\n[bindings]\nterminal_picker = \"prefix+shift+u\"\ntoggle_sidebar = []\n",
+        "ctrl+b",
+    )
+    .unwrap();
+    let mut terminal = Terminal::new(TestBackend::new(80, 10)).unwrap();
+    terminal
+        .draw(|frame| render_empty(frame, frame.area(), &chrome))
+        .unwrap();
+    let text = screen(&terminal);
+    assert!(text.contains("ctrl+] shift+u  attach a terminal"));
+    assert!(text.contains("unset  open the sidebar"));
+    assert!(!text.contains("ctrl+b w"));
+}
+
+#[test]
+fn empty_state_truncates_all_rows_in_a_narrow_area() {
+    let chrome = Chrome::dark();
+    let mut terminal = Terminal::new(TestBackend::new(8, 10)).unwrap();
+    terminal
+        .draw(|frame| render_empty(frame, frame.area(), &chrome))
+        .unwrap();
+
+    assert_eq!(cells(&terminal, 3, 0, 8), "No pane…");
+    assert_eq!(cells(&terminal, 4, 0, 8), "ctrl+b …");
+    assert_eq!(cells(&terminal, 5, 0, 8), "File › …");
+    assert_eq!(cells(&terminal, 6, 0, 8), "ctrl+b …");
 }

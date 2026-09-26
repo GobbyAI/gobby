@@ -12,10 +12,11 @@ use crate::ui::widgets::{
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Clear, Paragraph};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use ratatui::Frame;
 
 pub mod alerts;
+pub mod info;
 pub mod orphans;
 pub mod project;
 
@@ -127,6 +128,24 @@ pub struct OrphanRow {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Dialog {
+    NewGrid {
+        rows: u8,
+        cols: u8,
+    },
+    Daemon {
+        url: String,
+        gclient_version: String,
+        daemon_version: Option<String>,
+        health: String,
+        last_roster_refresh: Option<std::time::Duration>,
+        stages: Option<String>,
+    },
+    About {
+        url: String,
+        gclient_version: String,
+        daemon_version: Option<String>,
+        machine: String,
+    },
     ConfirmClose {
         target: CloseTarget,
         title: String,
@@ -174,7 +193,9 @@ pub enum Dialog {
         cursor: usize,
     },
     /// The alert log, newest first, scrolled by `scroll` rows.
-    Alerts { scroll: usize },
+    Alerts {
+        scroll: usize,
+    },
     /// Answer an attention prompt: pick an option or type free text.
     Respond {
         entry_id: String,
@@ -189,6 +210,22 @@ pub enum Dialog {
 /// rects the dialog drew, in its button order, so clicks can reach them.
 pub fn render_dialog(frame: &mut Frame, area: Rect, chrome: &Chrome) -> Vec<Rect> {
     match &chrome.dialog {
+        Some(Dialog::NewGrid { rows, cols }) => render_new_grid(frame, area, chrome, *rows, *cols),
+        Some(Dialog::Daemon { .. }) => info::render_daemon(frame, area, chrome),
+        Some(Dialog::About {
+            url,
+            gclient_version,
+            daemon_version,
+            machine,
+        }) => info::render_about(
+            frame,
+            area,
+            chrome,
+            url,
+            gclient_version,
+            daemon_version.as_deref(),
+            machine,
+        ),
         Some(Dialog::ConfirmClose {
             target,
             title,
@@ -256,6 +293,59 @@ pub fn render_dialog(frame: &mut Frame, area: Rect, chrome: &Chrome) -> Vec<Rect
         }) => render_respond(frame, area, chrome, prompt, options, *selected, text),
         None => Vec::new(),
     }
+}
+
+fn render_new_grid(
+    frame: &mut Frame,
+    area: Rect,
+    chrome: &Chrome,
+    rows: u8,
+    cols: u8,
+) -> Vec<Rect> {
+    let p = &chrome.palette;
+    let Some(inner) = render_modal_shell(frame, area, 44, 14, p) else {
+        return Vec::new();
+    };
+    if inner.width < 8 || inner.height < 12 {
+        return Vec::new();
+    }
+    render_modal_header(
+        frame,
+        Rect::new(inner.x + 1, inner.y, inner.width - 2, 1),
+        "new grid",
+        p,
+    );
+
+    let preview = Rect::new(inner.x + 2, inner.y + 1, inner.width - 4, 8);
+    let rows = rows.clamp(1, 4) as u16;
+    let cols = cols.clamp(1, 4) as u16;
+    for row in 0..rows {
+        for col in 0..cols {
+            let x0 = preview.x + col * preview.width / cols;
+            let x1 = preview.x + (col + 1) * preview.width / cols;
+            let y0 = preview.y + row * preview.height / rows;
+            let y1 = preview.y + (row + 1) * preview.height / rows;
+            frame.render_widget(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(p.overlay0)),
+                Rect::new(x0, y0, x1 - x0, y1 - y0),
+            );
+        }
+    }
+    frame.render_widget(
+        Paragraph::new(format!("{rows} × {cols} shells")).style(Style::default().fg(p.text)),
+        Rect::new(inner.x + 2, inner.y + 9, inner.width - 4, 1),
+    );
+    frame.render_widget(
+        Paragraph::new("←→ columns · ↑↓ rows").style(Style::default().fg(p.overlay0)),
+        Rect::new(inner.x + 2, inner.y + 10, inner.width - 4, 1),
+    );
+    frame.render_widget(
+        Paragraph::new("enter create · esc cancel").style(Style::default().fg(p.overlay0)),
+        Rect::new(inner.x + 2, inner.y + 11, inner.width - 4, 1),
+    );
+    Vec::new()
 }
 
 fn primary_button_style(chrome: &Chrome, bg: ratatui::style::Color) -> Style {

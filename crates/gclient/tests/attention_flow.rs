@@ -113,7 +113,7 @@ async fn respond_reaches_daemon() {
             }
         }]
     });
-    for _ in 0..3 {
+    for _ in 0..4 {
         mock.enqueue("GET", "/api/attention/roster", 200, roster.clone());
     }
     mock.enqueue(
@@ -139,7 +139,9 @@ async fn respond_reaches_daemon() {
     let (input_tx, input_rx) = mpsc::channel(32);
 
     let driver = async {
-        wait_for_http_requests(&mock, "GET", "/api/attention/roster", 1).await;
+        // Sidebar fan-out follows the first content draw, after the startup
+        // roster has been installed for response-dialog lookup.
+        wait_for_http_requests(&mock, "GET", "/api/projects", 1).await;
         send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
         send_key(&input_tx, KeyCode::Char('a'), KeyModifiers::NONE).await;
         wait_for_http_requests(&mock, "GET", "/api/attention/roster", 2).await;
@@ -319,16 +321,18 @@ async fn agent_row_click_jumps_and_labels_the_session() {
         .await
         .expect("install initial attachments");
 
-    // Where the loop draws the two rows: both in the sessions section, the
-    // blocked session on its first two-line row and the idle shell (an agent
-    // run under no session) on the row after it. Wide enough that the
-    // respond dialog leaves the sidebar uncovered.
+    // Where the loop draws the two rows: both in the agents section, the
+    // blocked session on its first three-line row and the idle run on the
+    // row after it. Wide enough that the
+    // respond dialog leaves the sidebar uncovered. The sidebar starts
+    // hidden, so the probe and the loop both pin it.
     let area = Rect::new(0, 0, 120, 30);
     let mut probe = Chrome::dark();
+    probe.sidebar.pinned = true;
     probe.compute_view(&workspace, area);
     let sessions = section_body_rect(
-        probe.view.sidebar_section_rects[SidebarSection::Sessions.index()],
-        SidebarSection::Sessions,
+        probe.view.sidebar_section_rects[SidebarSection::Agents.index()],
+        SidebarSection::Agents,
         false,
     );
     let row_height = SidebarRow {
@@ -341,6 +345,7 @@ async fn agent_row_click_jumps_and_labels_the_session() {
     let mut terminal =
         Terminal::new(TestBackend::new(area.width, area.height)).expect("test terminal");
     let mut chrome = Chrome::dark();
+    chrome.sidebar.pinned = true;
     for terminal_id in workspace.roster_terminal_ids() {
         let pane = workspace
             .pane_for_terminal(&terminal_id)
@@ -350,10 +355,8 @@ async fn agent_row_click_jumps_and_labels_the_session() {
     let (input_tx, input_rx) = mpsc::channel(32);
 
     let driver = async {
-        // The loop refetches the roster in its own reconcile and draws before
-        // it selects, so the clicks route against a hit map holding the rows.
-        wait_for_http_requests(&mock, "GET", "/api/attention/roster", 2).await;
-        let taken = websocket_requests(&mock, "terminal_take_control");
+        // The pre-reconciled workspace draws these rows before input begins.
+        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
         send_mouse(
             &input_tx,
             MouseEventKind::Down(MouseButton::Left),
@@ -368,9 +371,8 @@ async fn agent_row_click_jumps_and_labels_the_session() {
             blocked_row,
         )
         .await;
-        // Each click takes control of the terminal it focuses; the blocked
-        // row's click fetches no prompt.
-        wait_for_websocket_requests(&mock, "terminal_take_control", taken + 2).await;
+        // The loop consumes both queued clicks before the closed channel exits;
+        // a click on a held pane need not request control again.
         drop(input_tx);
     };
 
@@ -428,10 +430,24 @@ async fn agent_row_click_jumps_and_labels_the_session() {
         .iter()
         .map(|cell| cell.symbol())
         .collect();
-    assert!(screen.contains("#12217: 15"), "rendered UI: {screen:?}");
-    // The shell is named by its command; its tmux address is a token.
-    assert!(screen.contains("○ zsh"), "rendered UI: {screen:?}");
-    assert!(screen.contains("%16"), "rendered UI: {screen:?}");
-    assert!(!screen.contains("sess-1"), "rendered UI: {screen:?}");
+    assert!(
+        screen.contains("Claude (#12217)"),
+        "rendered UI: {screen:?}"
+    );
+    assert!(screen.contains("○ Unknown"), "rendered UI: {screen:?}");
+    let sidebar: String = terminal
+        .backend()
+        .buffer()
+        .content
+        .chunks(area.width as usize)
+        .flat_map(|row| {
+            row.iter()
+                .skip(sessions.x as usize)
+                .take(sessions.width as usize)
+                .map(|cell| cell.symbol())
+        })
+        .collect();
+    assert!(!sidebar.contains("%16"), "sidebar: {sidebar:?}");
+    assert!(!sidebar.contains("sess-1"), "sidebar: {sidebar:?}");
     mock.shutdown().await;
 }

@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use crossterm::event::{KeyCode, KeyEvent};
 
-use crate::daemon::{Daemon, DaemonError, LiveDaemon, WorkspaceOp};
+use crate::daemon::{Daemon, DaemonError, LiveDaemon, SpawnRequest, WorkspaceOp};
 use crate::frame_source::FrameError;
 use crate::ui::chrome::{attention_pane, Tab};
 use crate::ui::dialogs::project::{complete_directory, expand_home, plural};
@@ -23,10 +23,11 @@ use super::actions::{
     terminate_live_terminal,
 };
 use super::control::{focus_live_pane, release_live_control};
-use super::menu::attention_id;
+use super::menu::{attention_id, ContextMenuKind, MenuAction};
 use super::modal_input::{close_modal, edit_text, ModalOutcome};
 use super::mouse::Placement;
 use super::sync_live_chrome;
+use super::terminal_location::locate_terminal_workspace;
 use super::workspace_actions::{place_live_terminal, send_workspace_op};
 
 /// Make `project_id` the focused project: its roster replaces the current
@@ -112,7 +113,7 @@ pub async fn open_agent_in_new_tab(
     };
     if !chrome.focus_pane(pane) {
         let terminal_id = workspace.pane(pane).terminal_id.clone();
-        place_live_terminal(workspace, chrome, Placement::Tab, &terminal_id, None).await?;
+        place_live_terminal(workspace, chrome, Placement::Tab, &terminal_id, None, None).await?;
     }
     focus_live_pane(workspace, pane).await
 }
@@ -129,7 +130,7 @@ pub(super) async fn reveal_agent(
     };
     if !chrome.focus_pane(pane) {
         let terminal_id = workspace.pane(pane).terminal_id.clone();
-        place_live_terminal(workspace, chrome, Placement::Tab, &terminal_id, None).await?;
+        place_live_terminal(workspace, chrome, Placement::Tab, &terminal_id, None, None).await?;
     }
     Ok(Some(pane))
 }
@@ -141,9 +142,20 @@ pub(super) async fn focus_terminal(
     chrome: &mut Chrome,
     terminal_id: &str,
 ) -> Result<(), FrameError> {
+    if !locate_terminal_workspace(workspace, chrome, terminal_id, true).await? {
+        return Ok(());
+    }
     let pane = terminal_pane(workspace, terminal_id).await?;
     if !chrome.focus_pane(pane) {
-        place_live_terminal(workspace, chrome, Placement::SplitRight, terminal_id, None).await?;
+        place_live_terminal(
+            workspace,
+            chrome,
+            Placement::SplitRight,
+            terminal_id,
+            None,
+            None,
+        )
+        .await?;
     }
     focus_live_pane(workspace, pane).await
 }
@@ -222,6 +234,10 @@ async fn agent_pane(
             None => return Ok(None),
         },
     };
+    let reuse_client_pane = !entry_id.starts_with(TERMINAL_ROW);
+    if !locate_terminal_workspace(workspace, chrome, &terminal_id, reuse_client_pane).await? {
+        return Ok(None);
+    }
     if let Some(pane) = attention_pane(workspace, entry_id) {
         return Ok(Some(pane));
     }
@@ -285,15 +301,29 @@ pub(super) async fn restore_focused(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
 ) -> Result<(), FrameError> {
+    if first_shell_request(workspace, chrome).is_some() {
+        spawn_live_terminal(workspace, chrome, Placement::Tab).await?;
+    }
+    Ok(())
+}
+
+pub(super) fn first_shell_request(
+    workspace: &mut Workspace<LiveDaemon>,
+    chrome: &mut Chrome,
+) -> Option<SpawnRequest> {
     if let Some(project) = workspace.project_id() {
         chrome.focus_project(project);
     }
     // A window inside a gclient pane shows what the outer window opens and
     // never seeds a shell of its own.
     if workspace.in_pane() || !chrome.tabs().tabs.is_empty() || workspace.gobby_home().is_none() {
-        return Ok(());
+        return None;
     }
-    spawn_live_terminal(workspace, chrome, Placement::Tab).await
+    Some(SpawnRequest {
+        project_id: workspace.project_id().map(str::to_owned),
+        cwd: workspace.focused_checkout_path(),
+        ..SpawnRequest::default()
+    })
 }
 
 /// Open the new-project dialog on `~/`.
@@ -561,6 +591,23 @@ pub fn project_dialog_key(chrome: &mut Chrome, key: &KeyEvent) -> ModalOutcome {
         return close_modal(chrome);
     };
     match dialog {
+        Dialog::NewGrid { rows, cols } => match key.code {
+            KeyCode::Left => *cols = cols.saturating_sub(1).max(1),
+            KeyCode::Right => *cols = (*cols + 1).min(4),
+            KeyCode::Up => *rows = rows.saturating_sub(1).max(1),
+            KeyCode::Down => *rows = (*rows + 1).min(4),
+            KeyCode::Enter => {
+                return ModalOutcome::Menu {
+                    kind: ContextMenuKind::Global,
+                    action: MenuAction::NewGrid {
+                        rows: *rows,
+                        cols: *cols,
+                    },
+                }
+            }
+            KeyCode::Esc => return close_modal(chrome),
+            _ => {}
+        },
         Dialog::NewProject {
             path,
             cursor,
@@ -672,6 +719,10 @@ pub fn project_dialog_key(chrome: &mut Chrome, key: &KeyEvent) -> ModalOutcome {
                 *scroll = (*scroll + 1).min(last);
             }
             KeyCode::Enter | KeyCode::Esc | KeyCode::Char('q') => return close_modal(chrome),
+            _ => {}
+        },
+        Dialog::Daemon { .. } | Dialog::About { .. } => match key.code {
+            KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => return close_modal(chrome),
             _ => {}
         },
         Dialog::ConfirmClose { .. } | Dialog::Rename { .. } | Dialog::Respond { .. } => {

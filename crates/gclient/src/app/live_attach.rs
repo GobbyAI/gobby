@@ -1,6 +1,10 @@
 //! Frame-source attachment for live panes: the direct and proxy transports,
 //! their recovery, and the direct locator an attach reply carries.
 
+use std::future::Future;
+use std::path::Path;
+use std::pin::Pin;
+
 use super::*;
 use crate::frame_source::{ProxyFrameSource, UnixSocketFrameSource};
 
@@ -8,6 +12,42 @@ enum ProxyAttachOutcome {
     Attached(Value, String, ProxyFrameSource),
     Refused { code: String, reason: String },
 }
+
+/// A direct attach the daemon granted: its reply, attachment id, locator
+/// and the connected source.
+type DirectAttach = (Value, String, AttachLocator, UnixSocketFrameSource);
+
+/// What one step of a pane's frame recovery came back with.
+pub(super) struct Recovery {
+    pane_id: PaneId,
+    generation: Generation,
+    step: RecoveryStep,
+}
+
+enum RecoveryStep {
+    Detached {
+        terminal_id: String,
+        old_attachment: String,
+        outcome: DetachOutcome,
+    },
+    Attached {
+        outcome: Result<ProxyAttachOutcome, FrameError>,
+    },
+    /// A retried attach's direct try; failing, it falls back to the proxy.
+    DirectAttached {
+        terminal_id: String,
+        outcome: Result<DirectAttach, FrameError>,
+    },
+}
+
+enum DetachOutcome {
+    Retired(Option<String>),
+    Failed(FrameError),
+    Expired,
+}
+
+/// A recovery step in flight; the live loop polls it from a select branch.
+pub(super) type RecoveryFuture = Pin<Box<dyn Future<Output = Recovery> + 'static>>;
 
 /// Refusals the daemon expects to clear on their own: the terminal host is
 /// still starting, or a host step outran its budget. The pane retries these
@@ -27,9 +67,12 @@ impl Workspace<LiveDaemon> {
         }
         let now = tokio::time::Instant::now();
         for pane_id in self.order.clone() {
+            // A recovery beside the loop owns its pane until it lands, even
+            // once the old attachment's finalization detached it.
             if self.attached_generation.get(&pane_id) == Some(&snapshot.generation)
                 || self.panes[&pane_id].attached_generation() == Some(snapshot.generation)
                 || self.panes[&pane_id].attach_retry_pending(now)
+                || self.panes[&pane_id].fallback_in_flight
             {
                 continue;
             }
@@ -42,97 +85,41 @@ impl Workspace<LiveDaemon> {
                     .get_mut(&pane_id)
                     .expect("pane exists")
                     .begin_attaching(request_id.clone(), Transport::Direct, snapshot.generation);
-                match self.request_direct_source(&terminal_id, &request_id).await {
-                    Ok((reply, attachment, locator, source)) => {
-                        self.install_direct_source(pane_id, &reply, attachment, &locator, source);
-                        self.attached_generation
-                            .insert(pane_id, snapshot.generation);
-                        continue;
-                    }
-                    Err(FrameError::Finalized { .. }) => {
-                        self.retire_pane_attachment(pane_id);
-                        self.attached_generation
-                            .insert(pane_id, snapshot.generation);
-                        continue;
-                    }
-                    Err(_) => {}
+                let outcome = request_direct_source(
+                    &self.daemon,
+                    self.gobby_home.as_deref(),
+                    &terminal_id,
+                    &request_id,
+                )
+                .await;
+                if self.finish_direct_attach(pane_id, snapshot.generation, outcome) {
+                    continue;
                 }
             }
             self.begin_live_proxy_attach(pane_id, &terminal_id, snapshot.generation)
-                .await?;
+                .await;
         }
         Ok(())
     }
 
-    async fn request_direct_source(
-        &self,
-        terminal_id: &str,
-        request_id: &str,
-    ) -> Result<(Value, String, AttachLocator, UnixSocketFrameSource), FrameError> {
-        let reply = self
-            .daemon
-            .send(json!({
-                "type": "terminal_attach",
-                "request_id": request_id,
-                "terminal_id": terminal_id,
-                "frame_delivery": "direct",
-                "encoding": "semantic_frame",
-                "viewer": "gclient",
-            }))
-            .await?;
-        if reply.get("success").and_then(Value::as_bool) != Some(true) {
-            return Err(FrameError::Protocol(
-                reply
-                    .get("reason")
-                    .and_then(Value::as_str)
-                    .unwrap_or("terminal attach refused")
-                    .to_string(),
-            ));
-        }
-        let attachment = reply
-            .get("attachment_id")
-            .and_then(Value::as_str)
-            .ok_or_else(|| FrameError::Protocol("attach result omitted attachment_id".into()))?
-            .to_string();
-        let result = self.connect_direct_reply(&reply).await;
-        match result {
-            Ok((locator, source)) => Ok((reply, attachment, locator, source)),
-            Err(error) => {
-                self.daemon
-                    .notify(json!({
-                        "type": "terminal_detach",
-                        "request_id": uuid::Uuid::new_v4().to_string(),
-                        "terminal_id": terminal_id,
-                        "attachment_id": attachment,
-                    }))
-                    .await?;
-                Err(error)
+    /// Settle a direct attach: install its source, or retire the pane whose
+    /// attachment the daemon finalized. False when the proxy is to be tried
+    /// instead.
+    fn finish_direct_attach(
+        &mut self,
+        pane_id: PaneId,
+        generation: Generation,
+        outcome: Result<DirectAttach, FrameError>,
+    ) -> bool {
+        match outcome {
+            Ok((reply, attachment, locator, source)) => {
+                self.install_direct_source(pane_id, &reply, attachment, &locator, source);
             }
+            Err(FrameError::Finalized { .. }) => self.retire_pane_attachment(pane_id),
+            Err(_) => return false,
         }
-    }
-
-    async fn connect_direct_reply(
-        &self,
-        reply: &Value,
-    ) -> Result<(AttachLocator, UnixSocketFrameSource), FrameError> {
-        let locator = direct_reply_locator(reply)?;
-        let cols = reply
-            .get("cols")
-            .and_then(Value::as_u64)
-            .and_then(|value| u16::try_from(value).ok())
-            .unwrap_or(80);
-        let rows = reply
-            .get("rows")
-            .and_then(Value::as_u64)
-            .and_then(|value| u16::try_from(value).ok())
-            .unwrap_or(24);
-        let source = match &self.gobby_home {
-            Some(home) => {
-                UnixSocketFrameSource::from_gobby_home(home, &locator, cols, rows).await?
-            }
-            None => UnixSocketFrameSource::from_env(&locator, cols, rows).await?,
-        };
-        Ok((locator, source))
+        self.attached_generation.insert(pane_id, generation);
+        true
     }
 
     fn install_direct_source(
@@ -168,227 +155,193 @@ impl Workspace<LiveDaemon> {
         );
     }
 
+    /// The next frame of one pane, recovering its source inline when it fails.
     pub async fn recv_live_frame(&mut self, pane_id: PaneId) -> Result<ServerMessage, FrameError> {
         let result = self.recv_pane_frame(pane_id).await;
         let Err(error) = &result else {
             return result;
         };
-        self.recover_live_frame_error(pane_id, error).await?;
+        let mut step = self.begin_frame_recovery(pane_id, error)?;
+        while let Some(recovery) = step {
+            step = self.apply_frame_recovery(recovery.await)?;
+        }
         result
     }
 
-    pub(super) async fn recover_live_frame_error(
+    /// Starts recovering a pane whose frame source failed. The waits run in
+    /// the returned step, which the live loop polls beside itself: awaited
+    /// inline, one pane's detach held the loop while every other pane's
+    /// receiver lagged into a recovery of its own (#22747).
+    pub(super) fn begin_frame_recovery(
         &mut self,
         pane_id: PaneId,
         error: &FrameError,
-    ) -> Result<(), FrameError> {
+    ) -> Result<Option<RecoveryFuture>, FrameError> {
         match error {
-            FrameError::Finalized { .. } => self.retire_pane_attachment(pane_id),
+            FrameError::Finalized { .. } => {
+                self.retire_pane_attachment(pane_id);
+                Ok(None)
+            }
             FrameError::Eof
             | FrameError::Lag
             | FrameError::Cancelled
             | FrameError::Io(_)
             | FrameError::Protocol(_)
-            | FrameError::Daemon(_) => self.recover_proxy_source(pane_id).await?,
+            | FrameError::Daemon(_) => self.begin_proxy_recovery(pane_id),
             // A refused control request never reaches a frame source; nothing
             // to recover. A full host-input queue is the same: the stream is
             // healthy and one keystroke was dropped, which `send_host_input`
             // already put in the pane's status line (#22573).
-            FrameError::Refused(_) | FrameError::Backpressure => {}
+            FrameError::Refused(_) | FrameError::Backpressure => Ok(None),
             // No recovery path either, but not silent: the loop shows what
             // the source reported, so a host swap under a pane is visible.
             FrameError::HostEpochChanged { expected, actual } => {
-                return Err(FrameError::HostEpochChanged {
+                Err(FrameError::HostEpochChanged {
                     expected: expected.clone(),
                     actual: actual.clone(),
-                });
+                })
             }
-            FrameError::Other(detail) => return Err(FrameError::Other(detail.clone())),
+            FrameError::Other(detail) => Err(FrameError::Other(detail.clone())),
         }
-        Ok(())
     }
 
-    async fn recover_proxy_source(&mut self, pane_id: PaneId) -> Result<(), FrameError> {
+    /// Detaches the failed attachment, or attaches straight away when there
+    /// is none; a pane already recovering is left to that recovery.
+    fn begin_proxy_recovery(
+        &mut self,
+        pane_id: PaneId,
+    ) -> Result<Option<RecoveryFuture>, FrameError> {
         let pane = self
             .panes
             .get_mut(&pane_id)
             .ok_or_else(|| FrameError::Protocol("unknown pane".into()))?;
         if pane.fallback_in_flight {
-            return Ok(());
+            return Ok(None);
         }
         pane.fallback_in_flight = true;
-        let result = self.recover_proxy_source_once(pane_id).await;
-        self.clear_fallback_flight(pane_id);
-        result
-    }
-
-    async fn recover_proxy_source_once(&mut self, pane_id: PaneId) -> Result<(), FrameError> {
-        let pane = self.panes.get_mut(&pane_id).expect("pane exists");
         let terminal_id = pane.terminal_id.clone();
-        let (old_attachment, deadline) = pane
+        let detaching = pane
             .begin_detaching(tokio::time::Instant::now())
             .map(|(attachment, _)| {
                 let deadline = pane.detaching_deadline().expect("detaching deadline");
                 (attachment, deadline)
             })
-            .unwrap_or_else(|| (String::new(), tokio::time::Instant::now()));
+            .filter(|(attachment, _)| !attachment.is_empty());
+        // The failed source is never polled again, whatever state it left.
+        let _ = pane.take_frame_source();
         self.attached_generation.remove(&pane_id);
+        let generation = self.daemon.generation();
+        let Some((old_attachment, deadline)) = detaching else {
+            return Ok(self.begin_recovery_attach(pane_id, terminal_id, generation));
+        };
+        let daemon = self.daemon.clone();
+        Ok(Some(Box::pin(async move {
+            let outcome = detach_attachment(&daemon, &terminal_id, &old_attachment, deadline).await;
+            Recovery {
+                pane_id,
+                generation,
+                step: RecoveryStep::Detached {
+                    terminal_id,
+                    old_attachment,
+                    outcome,
+                },
+            }
+        })))
+    }
 
-        if !old_attachment.is_empty() {
-            let daemon = self.daemon.clone();
-            let (_, mut receiver) = daemon.subscribe();
-            let detach = daemon.send(json!({
-                "type": "terminal_detach",
-                "request_id": uuid::Uuid::new_v4().to_string(),
-                "terminal_id": terminal_id,
-                "attachment_id": old_attachment,
-            }));
-            tokio::pin!(detach);
-            let reason = loop {
-                tokio::select! {
-                    reply = &mut detach => {
-                        let reply = match reply {
-                            Ok(reply) => reply,
-                            Err(error) => {
-                                let error = FrameError::from(error);
-                                self.defer_fallback_retry(pane_id, &error);
-                                return Err(error);
-                            }
-                        };
-                        if reply.get("success").and_then(Value::as_bool) != Some(true) {
-                            let error = FrameError::Protocol(
-                                reply.get("reason").and_then(Value::as_str)
-                                    .unwrap_or("terminal detach refused").to_string()
-                            );
-                            self.defer_fallback_retry(pane_id, &error);
-                            return Err(error);
-                        }
-                        break reply.get("reason").and_then(Value::as_str).map(str::to_owned);
+    /// Applies one recovery step, returning the next when there is one.
+    pub(super) fn apply_frame_recovery(
+        &mut self,
+        recovery: Recovery,
+    ) -> Result<Option<RecoveryFuture>, FrameError> {
+        let Recovery {
+            pane_id,
+            generation,
+            step,
+        } = recovery;
+        // A closed pane has nothing to recover, and after a reconnect the
+        // reconcile re-attaches every pane.
+        if !self.panes.contains_key(&pane_id) || self.daemon.generation() != generation {
+            self.clear_fallback_flight(pane_id);
+            return Ok(None);
+        }
+        match step {
+            RecoveryStep::Detached {
+                terminal_id,
+                old_attachment,
+                outcome,
+            } => {
+                let reason = match outcome {
+                    DetachOutcome::Retired(reason) => reason,
+                    DetachOutcome::Failed(error) => {
+                        self.defer_pane_attach(pane_id, "detach_failed", &error);
+                        self.clear_fallback_flight(pane_id);
+                        return Err(error);
                     }
-                    event = receiver.recv() => {
-                        match event {
-                            Ok(DaemonEvent::AttachmentFinalized { attachment_id, payload, .. })
-                                if attachment_id == old_attachment =>
-                            {
-                                break payload.get("reason").and_then(Value::as_str).map(str::to_owned);
-                            }
-                            Ok(_) => {}
-                            Err(_) => {
-                                let reply = match tokio::time::timeout_at(deadline, &mut detach).await {
-                                    Ok(Ok(reply)) => reply,
-                                    Ok(Err(error)) => {
-                                        let error = FrameError::from(error);
-                                        self.defer_fallback_retry(pane_id, &error);
-                                        return Err(error);
-                                    }
-                                    Err(_) => {
-                                        let error = FrameError::Other(
-                                            "detach deadline expired".into()
-                                        );
-                                        self.defer_fallback_retry(pane_id, &error);
-                                        return Ok(());
-                                    }
-                                };
-                                if reply.get("success").and_then(Value::as_bool) != Some(true) {
-                                    let error = FrameError::Protocol(
-                                        "terminal detach refused".into()
-                                    );
-                                    self.defer_fallback_retry(pane_id, &error);
-                                    return Err(error);
-                                }
-                                break reply.get("reason").and_then(Value::as_str).map(str::to_owned);
-                            }
-                        }
-                    }
-                    _ = tokio::time::sleep_until(deadline) => {
+                    DetachOutcome::Expired => {
                         let error = FrameError::Other("detach deadline expired".into());
-                        self.defer_fallback_retry(pane_id, &error);
-                        return Ok(());
+                        self.defer_pane_attach(pane_id, "detach_failed", &error);
+                        self.clear_fallback_flight(pane_id);
+                        return Ok(None);
                     }
+                };
+                if !self
+                    .panes
+                    .get_mut(&pane_id)
+                    .expect("pane exists")
+                    .retire_attachment(&old_attachment, reason)
+                {
+                    self.clear_fallback_flight(pane_id);
+                    return Ok(None);
                 }
-            };
-            if !self
-                .panes
-                .get_mut(&pane_id)
-                .expect("pane exists")
-                .retire_attachment(&old_attachment, reason)
-            {
-                return Ok(());
+                Ok(self.begin_recovery_attach(pane_id, terminal_id, generation))
+            }
+            RecoveryStep::Attached { outcome } => {
+                self.finish_proxy_attach(pane_id, generation, outcome);
+                Ok(None)
+            }
+            RecoveryStep::DirectAttached {
+                terminal_id,
+                outcome,
+            } => {
+                if self.finish_direct_attach(pane_id, generation, outcome) {
+                    self.clear_fallback_flight(pane_id);
+                    return Ok(None);
+                }
+                Ok(self.begin_recovery_attach(pane_id, terminal_id, generation))
             }
         }
-
-        self.begin_live_proxy_attach(pane_id, &terminal_id, self.daemon.generation())
-            .await
-            .map_err(|error| FrameError::Other(error.to_string()))
     }
 
-    fn defer_fallback_retry(&mut self, pane_id: PaneId, error: &FrameError) {
-        self.panes
-            .get_mut(&pane_id)
-            .expect("pane exists")
-            .defer_attach(
-                "detach_failed",
-                &error.to_string(),
-                tokio::time::Instant::now(),
-            );
+    fn begin_recovery_attach(
+        &mut self,
+        pane_id: PaneId,
+        terminal_id: String,
+        generation: Generation,
+    ) -> Option<RecoveryFuture> {
+        let request_id = self.begin_proxy_attach(pane_id, generation)?;
+        let daemon = self.daemon.clone();
+        Some(Box::pin(async move {
+            let outcome = request_proxy_source(&daemon, &terminal_id, &request_id).await;
+            Recovery {
+                pane_id,
+                generation,
+                step: RecoveryStep::Attached { outcome },
+            }
+        }))
     }
 
-    async fn request_proxy_source(
-        &self,
-        terminal_id: &str,
-        request_id: &str,
-    ) -> Result<ProxyAttachOutcome, FrameError> {
-        let (_, receiver) = self.daemon.subscribe();
-        let reply = self
-            .daemon
-            .send(json!({
-                "type": "terminal_attach",
-                "request_id": request_id,
-                "terminal_id": terminal_id,
-                "frame_delivery": "proxy",
-                "encoding": "semantic_frame",
-                "viewer": "gclient",
-            }))
-            .await?;
-        if reply.get("success").and_then(Value::as_bool) != Some(true) {
-            return Ok(ProxyAttachOutcome::Refused {
-                code: reply
-                    .get("code")
-                    .and_then(Value::as_str)
-                    .unwrap_or("attach_refused")
-                    .to_string(),
-                reason: reply
-                    .get("reason")
-                    .and_then(Value::as_str)
-                    .unwrap_or("terminal attach refused")
-                    .to_string(),
-            });
+    /// A failure with no verdict. On a live connection the pane backs off and
+    /// retries; with the connection down it waits detached for the
+    /// reconnect's reconcile, which a backoff earned on the dead socket would
+    /// only hold back (#22747).
+    fn defer_pane_attach(&mut self, pane_id: PaneId, code: &str, error: &FrameError) {
+        let pane = self.panes.get_mut(&pane_id).expect("pane exists");
+        if self.daemon.ready() {
+            pane.defer_attach(code, &error.to_string(), tokio::time::Instant::now());
+        } else {
+            pane.refuse_attach(code, &error.to_string());
         }
-        let attachment = reply
-            .get("attachment_id")
-            .and_then(Value::as_str)
-            .ok_or_else(|| FrameError::Protocol("attach result omitted attachment_id".into()))?
-            .to_string();
-        let mut source = ProxyFrameSource::from_attachment(
-            self.daemon.clone(),
-            terminal_id,
-            attachment.clone(),
-            receiver,
-        )?;
-        let rows = reply
-            .get("rows")
-            .and_then(Value::as_u64)
-            .and_then(|value| u16::try_from(value).ok())
-            .unwrap_or(24);
-        let cols = reply
-            .get("cols")
-            .and_then(Value::as_u64)
-            .and_then(|value| u16::try_from(value).ok())
-            .unwrap_or(80);
-        source
-            .send(&ClientMessage::SetViewport { rows, cols })
-            .await?;
-        Ok(ProxyAttachOutcome::Attached(reply, attachment, source))
     }
 
     async fn begin_live_proxy_attach(
@@ -396,7 +349,16 @@ impl Workspace<LiveDaemon> {
         pane_id: PaneId,
         terminal_id: &str,
         generation: Generation,
-    ) -> Result<(), DaemonError> {
+    ) {
+        let Some(request_id) = self.begin_proxy_attach(pane_id, generation) else {
+            return;
+        };
+        let outcome = request_proxy_source(&self.daemon, terminal_id, &request_id).await;
+        self.finish_proxy_attach(pane_id, generation, outcome);
+    }
+
+    /// Marks the pane attaching and returns the request id, or refuses it.
+    fn begin_proxy_attach(&mut self, pane_id: PaneId, generation: Generation) -> Option<String> {
         // The only route to the proxy transport, for both a row with no direct
         // locator and the fallback after a direct attach dies. Refusing here
         // rather than at each caller keeps `--frame-delivery direct` honest:
@@ -411,14 +373,23 @@ impl Workspace<LiveDaemon> {
                 );
             self.attached_generation.insert(pane_id, generation);
             self.clear_fallback_flight(pane_id);
-            return Ok(());
+            return None;
         }
         let request_id = uuid::Uuid::new_v4().to_string();
         self.panes
             .get_mut(&pane_id)
             .expect("pane exists")
             .begin_attaching(request_id.clone(), Transport::Proxy, generation);
-        match self.request_proxy_source(terminal_id, &request_id).await {
+        Some(request_id)
+    }
+
+    fn finish_proxy_attach(
+        &mut self,
+        pane_id: PaneId,
+        generation: Generation,
+        outcome: Result<ProxyAttachOutcome, FrameError>,
+    ) {
+        match outcome {
             Ok(ProxyAttachOutcome::Attached(reply, attachment, source)) => {
                 if self.panes[&pane_id].tombstones.contains(&attachment) {
                     self.panes
@@ -433,7 +404,6 @@ impl Workspace<LiveDaemon> {
                 }
                 self.attached_generation.insert(pane_id, generation);
                 self.clear_fallback_flight(pane_id);
-                Ok(())
             }
             Ok(ProxyAttachOutcome::Refused { code, reason }) => {
                 let pane = self.panes.get_mut(&pane_id).expect("pane exists");
@@ -444,7 +414,6 @@ impl Workspace<LiveDaemon> {
                     self.attached_generation.insert(pane_id, generation);
                 }
                 self.clear_fallback_flight(pane_id);
-                Ok(())
             }
             Err(FrameError::Finalized { code, reason }) => {
                 self.panes
@@ -453,7 +422,6 @@ impl Workspace<LiveDaemon> {
                     .refuse_attach(&code, &reason);
                 self.attached_generation.insert(pane_id, generation);
                 self.clear_fallback_flight(pane_id);
-                Ok(())
             }
             // No verdict: the daemon did not answer, or the reply was
             // unusable. The pane keeps its place and says so; the live loop
@@ -461,23 +429,71 @@ impl Workspace<LiveDaemon> {
             // (and, at startup, the client) failing on one pane.
             Err(error) => {
                 self.clear_fallback_flight(pane_id);
-                self.panes
-                    .get_mut(&pane_id)
-                    .expect("pane exists")
-                    .defer_attach(
-                        "attach_failed",
-                        &error.to_string(),
-                        tokio::time::Instant::now(),
-                    );
-                Ok(())
+                self.defer_pane_attach(pane_id, "attach_failed", &error);
             }
         }
     }
 
-    /// Whether any pane's deferred attach is due; the live loop's render
-    /// tick runs `attach_ready_panes` when it is.
-    pub(super) fn attach_retry_due(&self, now: tokio::time::Instant) -> bool {
-        self.panes.values().any(|pane| pane.attach_retry_due(now))
+    /// Start every deferred attach that is due, beside the loop as a recovery
+    /// runs: the render tick that finds one due never waits on the daemon
+    /// (#22747). Each takes the launch's order, the direct path first where
+    /// the row offers it, then the proxy.
+    pub(super) fn start_due_attaches(
+        &mut self,
+        now: tokio::time::Instant,
+        include_initial: bool,
+    ) -> Vec<RecoveryFuture> {
+        let snapshot = self.daemon.subscribe().0;
+        if !snapshot.ready || !self.daemon_ready {
+            return Vec::new();
+        }
+        let generation = snapshot.generation;
+        let due: Vec<PaneId> = self
+            .order
+            .iter()
+            .copied()
+            .filter(|pane_id| {
+                let pane = &self.panes[pane_id];
+                (pane.attach_retry_due(now) || (include_initial && !pane.attach_retry_pending(now)))
+                    && !pane.fallback_in_flight
+                    && pane.attached_generation() != Some(generation)
+                    && self.attached_generation.get(pane_id) != Some(&generation)
+            })
+            .collect();
+        let mut started = Vec::new();
+        for pane_id in due {
+            let pane = self.panes.get_mut(&pane_id).expect("pane exists");
+            // The retry owns its pane until it lands, as a recovery does.
+            pane.fallback_in_flight = true;
+            let terminal_id = pane.terminal_id.clone();
+            if !(self.frame_delivery.allows(Transport::Direct) && pane.direct_available) {
+                started.extend(self.begin_recovery_attach(pane_id, terminal_id, generation));
+                continue;
+            }
+            let request_id = uuid::Uuid::new_v4().to_string();
+            pane.begin_attaching(request_id.clone(), Transport::Direct, generation);
+            let daemon = self.daemon.clone();
+            let gobby_home = self.gobby_home.clone();
+            let retry: RecoveryFuture = Box::pin(async move {
+                let outcome = request_direct_source(
+                    &daemon,
+                    gobby_home.as_deref(),
+                    &terminal_id,
+                    &request_id,
+                )
+                .await;
+                Recovery {
+                    pane_id,
+                    generation,
+                    step: RecoveryStep::DirectAttached {
+                        terminal_id,
+                        outcome,
+                    },
+                }
+            });
+            started.push(retry);
+        }
+        started
     }
 
     fn install_proxy_source(
@@ -517,6 +533,17 @@ impl Workspace<LiveDaemon> {
         }
     }
 
+    /// Hands the panes of recoveries a reconnect dropped to its reconcile.
+    pub(super) fn abandon_frame_recoveries(&mut self) {
+        for pane in self.panes.values_mut() {
+            pane.fallback_in_flight = false;
+            // A canceled recovery cannot complete this attach on the new socket.
+            if matches!(&pane.attach, AttachState::Attaching { .. }) {
+                pane.attach = AttachState::Detached;
+            }
+        }
+    }
+
     fn retire_pane_attachment(&mut self, pane_id: PaneId) {
         if let Some(pane) = self.panes.get_mut(&pane_id) {
             let attachment = pane.attachment_id().to_string();
@@ -528,6 +555,185 @@ impl Workspace<LiveDaemon> {
             pane.fallback_in_flight = false;
         }
     }
+}
+
+/// Detaches `attachment_id`, done when the daemon answers or finalizes it,
+/// whichever comes first, or when `deadline` passes.
+async fn detach_attachment(
+    daemon: &LiveDaemon,
+    terminal_id: &str,
+    attachment_id: &str,
+    deadline: tokio::time::Instant,
+) -> DetachOutcome {
+    let (_, mut receiver) = daemon.subscribe();
+    let detach = daemon.send(json!({
+        "type": "terminal_detach",
+        "request_id": uuid::Uuid::new_v4().to_string(),
+        "terminal_id": terminal_id,
+        "attachment_id": attachment_id,
+    }));
+    tokio::pin!(detach);
+    loop {
+        tokio::select! {
+            reply = &mut detach => return detach_reply(reply),
+            event = receiver.recv() => match event {
+                Ok(DaemonEvent::AttachmentFinalized { attachment_id: finalized, payload, .. })
+                    if finalized == attachment_id =>
+                {
+                    let reason = payload.get("reason").and_then(Value::as_str);
+                    return DetachOutcome::Retired(reason.map(str::to_owned));
+                }
+                Ok(_) => {}
+                // A lagged receiver may have lost the finalization; the
+                // answer alone settles it.
+                Err(_) => {
+                    return match tokio::time::timeout_at(deadline, &mut detach).await {
+                        Ok(reply) => detach_reply(reply),
+                        Err(_) => DetachOutcome::Expired,
+                    };
+                }
+            },
+            _ = tokio::time::sleep_until(deadline) => return DetachOutcome::Expired,
+        }
+    }
+}
+
+fn detach_reply(reply: Result<Value, DaemonError>) -> DetachOutcome {
+    let reply = match reply {
+        Ok(reply) => reply,
+        Err(error) => return DetachOutcome::Failed(FrameError::from(error)),
+    };
+    let reason = reply.get("reason").and_then(Value::as_str);
+    if reply.get("success").and_then(Value::as_bool) != Some(true) {
+        let reason = reason.unwrap_or("terminal detach refused");
+        return DetachOutcome::Failed(FrameError::Protocol(reason.to_string()));
+    }
+    DetachOutcome::Retired(reason.map(str::to_owned))
+}
+
+async fn request_direct_source(
+    daemon: &LiveDaemon,
+    gobby_home: Option<&Path>,
+    terminal_id: &str,
+    request_id: &str,
+) -> Result<DirectAttach, FrameError> {
+    let reply = daemon
+        .send(json!({
+            "type": "terminal_attach",
+            "request_id": request_id,
+            "terminal_id": terminal_id,
+            "frame_delivery": "direct",
+            "encoding": "semantic_frame",
+            "viewer": "gclient",
+        }))
+        .await?;
+    if reply.get("success").and_then(Value::as_bool) != Some(true) {
+        return Err(FrameError::Protocol(
+            reply
+                .get("reason")
+                .and_then(Value::as_str)
+                .unwrap_or("terminal attach refused")
+                .to_string(),
+        ));
+    }
+    let attachment = reply
+        .get("attachment_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| FrameError::Protocol("attach result omitted attachment_id".into()))?
+        .to_string();
+    match connect_direct_reply(gobby_home, &reply).await {
+        Ok((locator, source)) => Ok((reply, attachment, locator, source)),
+        Err(error) => {
+            daemon
+                .notify(json!({
+                    "type": "terminal_detach",
+                    "request_id": uuid::Uuid::new_v4().to_string(),
+                    "terminal_id": terminal_id,
+                    "attachment_id": attachment,
+                }))
+                .await?;
+            Err(error)
+        }
+    }
+}
+
+async fn connect_direct_reply(
+    gobby_home: Option<&Path>,
+    reply: &Value,
+) -> Result<(AttachLocator, UnixSocketFrameSource), FrameError> {
+    let locator = direct_reply_locator(reply)?;
+    let cols = reply
+        .get("cols")
+        .and_then(Value::as_u64)
+        .and_then(|value| u16::try_from(value).ok())
+        .unwrap_or(80);
+    let rows = reply
+        .get("rows")
+        .and_then(Value::as_u64)
+        .and_then(|value| u16::try_from(value).ok())
+        .unwrap_or(24);
+    let source = match gobby_home {
+        Some(home) => UnixSocketFrameSource::from_gobby_home(home, &locator, cols, rows).await?,
+        None => UnixSocketFrameSource::from_env(&locator, cols, rows).await?,
+    };
+    Ok((locator, source))
+}
+
+async fn request_proxy_source(
+    daemon: &LiveDaemon,
+    terminal_id: &str,
+    request_id: &str,
+) -> Result<ProxyAttachOutcome, FrameError> {
+    let (_, receiver) = daemon.subscribe();
+    let reply = daemon
+        .send(json!({
+            "type": "terminal_attach",
+            "request_id": request_id,
+            "terminal_id": terminal_id,
+            "frame_delivery": "proxy",
+            "encoding": "semantic_frame",
+            "viewer": "gclient",
+        }))
+        .await?;
+    if reply.get("success").and_then(Value::as_bool) != Some(true) {
+        return Ok(ProxyAttachOutcome::Refused {
+            code: reply
+                .get("code")
+                .and_then(Value::as_str)
+                .unwrap_or("attach_refused")
+                .to_string(),
+            reason: reply
+                .get("reason")
+                .and_then(Value::as_str)
+                .unwrap_or("terminal attach refused")
+                .to_string(),
+        });
+    }
+    let attachment = reply
+        .get("attachment_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| FrameError::Protocol("attach result omitted attachment_id".into()))?
+        .to_string();
+    let mut source = ProxyFrameSource::from_attachment(
+        daemon.clone(),
+        terminal_id,
+        attachment.clone(),
+        receiver,
+    )?;
+    let rows = reply
+        .get("rows")
+        .and_then(Value::as_u64)
+        .and_then(|value| u16::try_from(value).ok())
+        .unwrap_or(24);
+    let cols = reply
+        .get("cols")
+        .and_then(Value::as_u64)
+        .and_then(|value| u16::try_from(value).ok())
+        .unwrap_or(80);
+    source
+        .send(&ClientMessage::SetViewport { rows, cols })
+        .await?;
+    Ok(ProxyAttachOutcome::Attached(reply, attachment, source))
 }
 
 fn direct_reply_locator(reply: &Value) -> Result<AttachLocator, FrameError> {

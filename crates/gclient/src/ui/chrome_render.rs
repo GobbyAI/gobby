@@ -1,29 +1,32 @@
 // upstream: herdr v0.8.0 src/ui.rs
-//! Frame composition (herdr `render`): sidebar, tab bar, tab surface or
-//! empty state, notifications, then the mode overlay.
+//! Frame composition (herdr `render`): menu bar, tab bar, tab surface or
+//! empty state, sidebar, notifications, then the mode overlay.
 
 use crate::app::PaneId;
 use crate::ui::chrome::{Chrome, Mode, WorkspaceView};
+use crate::ui::menu_bar::MenuBarHits;
 use crate::ui::panes::PaneContent;
 use crate::ui::settings::SettingsHits;
 use crate::ui::sidebar::SidebarHits;
 use crate::ui::tabs::TabBarHits;
 use crate::ui::{
-    context_menu, dialogs, keybind_help, navigator, pane_chrome, panes, settings, sidebar, status,
-    tab_surface,
+    context_menu, dialogs, keybind_help, menu_bar, navigator, pane_chrome, panes, settings,
+    sidebar, splash, status, tab_surface,
 };
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
-use ratatui::widgets::Block;
+use ratatui::widgets::{Block, Clear};
 use ratatui::Frame;
 
 /// Every rect the chrome renderers drew this frame; the run loop writes it
 /// back with `Chrome::apply_hits` so hit tests match the screen.
 #[derive(Debug, Clone, Default)]
 pub struct ChromeHits {
+    pub menu_bar: MenuBarHits,
     pub tab_bar: TabBarHits,
     pub sidebar: SidebarHits,
     pub control_indicator: Option<Rect>,
+    pub status_count: Option<Rect>,
     pub toast: Option<Rect>,
     pub settings: Option<SettingsHits>,
     /// Rows of the context menu as drawn, in item order, whenever the menu
@@ -46,22 +49,27 @@ pub fn render_workspace_with<W: WorkspaceView>(
         area,
     );
 
-    let sidebar = render_navigation_chrome(frame, ws, chrome);
+    let menu_bar = menu_bar::render_menu_bar(frame, chrome.view.menu_bar_rect, chrome);
+    // The sidebar after the content: the overlay lies over it.
     let tab_bar = render_content_column(frame, ws, chrome, content);
+    let sidebar = render_navigation_chrome(frame, ws, chrome);
     let mut hits = ChromeHits {
+        menu_bar,
         tab_bar,
         sidebar,
         ..ChromeHits::default()
     };
 
     let status_rect = chrome.view.status_rect;
-    let status_indicator = if status_rect.is_empty() {
-        None
+    let status_hits = if status_rect.is_empty() {
+        status::StatusHits::default()
     } else {
         status::render_status_line(frame, status_rect, ws, chrome)
     };
-    hits.control_indicator =
-        status_indicator.or_else(|| pane_chrome::control_indicator_hit_area(ws, chrome));
+    hits.control_indicator = status_hits
+        .control_indicator
+        .or_else(|| pane_chrome::control_indicator_hit_area(ws, chrome));
+    hits.status_count = status_hits.count;
 
     // Ambient notifications sit above panes, but below interactive overlays.
     hits.toast = render_notifications(frame, chrome);
@@ -116,8 +124,9 @@ pub fn render_workspace<W: WorkspaceView>(
     render_workspace_with(frame, ws, chrome, &mut none)
 }
 
-/// herdr `render_navigation_chrome`: the sidebar column, collapsed or expanded.
-/// Hit areas are returned by the sidebar; the run loop stores them.
+/// herdr `render_navigation_chrome`: the sidebar, pinned as a column or as
+/// the overlay. Hit areas are returned by the sidebar; the run loop stores
+/// them.
 fn render_navigation_chrome<W: WorkspaceView>(
     frame: &mut Frame,
     ws: &W,
@@ -127,11 +136,10 @@ fn render_navigation_chrome<W: WorkspaceView>(
     if rect.width == 0 {
         return SidebarHits::default();
     }
-    if chrome.sidebar.collapsed {
-        sidebar::render_collapsed_sidebar(frame, rect, ws, chrome)
-    } else {
-        sidebar::render_sidebar(frame, rect, ws, chrome)
-    }
+    // The sidebar's panel only sets colours, so the overlay first wipes the
+    // pane glyphs under it; the pinned column holds none.
+    frame.render_widget(Clear, rect);
+    sidebar::render_sidebar(frame, rect, ws, chrome)
 }
 
 /// Tab bar row plus terminal area: the active tab's surface, or the empty
@@ -144,6 +152,29 @@ fn render_content_column<W: WorkspaceView>(
 ) -> TabBarHits {
     let terminal_area = chrome.view.terminal_area;
     if terminal_area.is_empty() {
+        return TabBarHits::default();
+    }
+    if chrome
+        .connection
+        .stages
+        .as_ref()
+        .is_some_and(|stages| !stages.finished())
+    {
+        if let Some(tabs) = chrome.view.tab_bar_rect {
+            frame.render_widget(
+                Block::default().style(Style::new().bg(chrome.palette.panel_bg)),
+                tabs,
+            );
+            let mut x = tabs.x;
+            while x.saturating_add(11) <= tabs.right() {
+                frame.render_widget(
+                    Block::default().style(Style::new().bg(chrome.palette.surface1)),
+                    Rect::new(x, tabs.y, 11, 1),
+                );
+                x = x.saturating_add(12);
+            }
+        }
+        splash::render_splash(frame, terminal_area, chrome);
         return TabBarHits::default();
     }
     if chrome.tabs().tabs.is_empty() {

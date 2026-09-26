@@ -204,15 +204,13 @@ fn carve_matches_upstream_map_and_renders_data() {
         .unwrap();
     let side = screen(&terminal);
     // The sidebar stacks its bands and lists the attention entry under the
-    // sessions band with its reason.
+    // agents band with its three-line row.
     for needle in [
-        " [Menu]",
         " Machines",
         " Projects",
-        " Sessions",
-        "term-alpha",
-        "needs you",
-        "[«]",
+        " Agents",
+        "Unknown",
+        "No assigned task",
     ] {
         assert!(side.contains(needle), "sidebar lacks {needle:?}:\n{side}");
     }
@@ -254,6 +252,8 @@ fn render_workspace_composes_imported_chrome() {
     let ws = scripted_workspace();
     for kind in [ThemeKind::Dark, ThemeKind::Light] {
         let mut chrome = chrome_for(&ws, kind);
+        // Pinned, so the frame composes the sidebar too.
+        chrome.sidebar.pinned = true;
         chrome.mode = Mode::ConfirmClose;
         chrome.dialog = Some(Dialog::ConfirmClose {
             target: CloseTarget::Pane,
@@ -276,9 +276,9 @@ fn render_workspace_composes_imported_chrome() {
         for needle in [
             "term-alpha",
             "term-beta",
-            "needs you",
+            "No assigned task",
             "second",
-            "gclient · Focused",
+            "Unknown · Focused",
             "close",
         ] {
             assert!(
@@ -302,6 +302,7 @@ fn render_workspace_composes_imported_chrome() {
         }
         chrome.mode = Mode::KeybindHelp;
         chrome.dialog = None;
+        chrome.keybind_help.query = "split_vertical".to_owned();
         terminal
             .draw(|frame| {
                 render_workspace(frame, &ws, &chrome);

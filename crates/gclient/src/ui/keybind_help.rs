@@ -19,8 +19,6 @@ use ratatui::Frame;
 /// modal grows with the frame up to these caps.
 const HELP_MAX_WIDTH: u16 = 120;
 const HELP_MAX_HEIGHT: u16 = 40;
-/// Two columns once each can hold a keys cell plus a description.
-const HELP_COLUMN_MIN_WIDTH: u16 = 50;
 const HELP_COLUMN_GAP: u16 = 2;
 
 #[derive(Debug, Clone, Default)]
@@ -51,48 +49,140 @@ pub fn filter_help_entries(entries: Vec<HelpEntry>, query: &str) -> Vec<HelpEntr
         .collect()
 }
 
-/// Body rows: the prefix chord first, then every visible binding.
-pub fn help_lines(chrome: &Chrome) -> Vec<Line<'static>> {
-    let p = &chrome.palette;
-    let key_style = Style::default().fg(p.mauve).add_modifier(Modifier::BOLD);
-    let label_style = Style::default().fg(p.text);
-    let name_style = Style::default().fg(p.overlay1);
-
+fn visible_entries(chrome: &Chrome) -> Vec<HelpEntry> {
     let query = chrome.keybind_help.query.to_lowercase();
     let prefix_label = chrome.keymap.prefix_label.as_str();
     let show_prefix = query.is_empty()
         || "prefix mode".contains(&query)
         || prefix_label.to_lowercase().contains(&query);
-    let entries = filtered_entries(&chrome.keymap, &query);
-    if entries.is_empty() && !show_prefix {
-        return vec![Line::from(Span::styled(
-            " no matching keybinds",
-            Style::default().fg(p.overlay1),
-        ))];
+    let mut entries = filtered_entries(&chrome.keymap, &query);
+    if show_prefix {
+        entries.insert(
+            0,
+            HelpEntry {
+                name: "prefix",
+                description: "Enter prefix mode",
+                keys: prefix_label.to_owned(),
+            },
+        );
     }
+    entries
+}
 
-    let key_width = entries
+fn key_width(entries: &[HelpEntry]) -> usize {
+    entries
         .iter()
         .map(|entry| entry.keys.chars().count())
-        .chain(show_prefix.then(|| prefix_label.chars().count()))
         .max()
-        .unwrap_or(8);
-    let row = |keys: &str, description: &str, name: &str| {
-        Line::from(vec![
-            Span::styled(format!(" {keys:<key_width$} "), key_style),
-            Span::styled(description.to_string(), label_style),
-            Span::styled(format!(" ({name})"), name_style),
-        ])
-    };
+        .unwrap_or(8)
+}
 
-    let mut lines = Vec::with_capacity(entries.len() + 1);
-    if show_prefix {
-        lines.push(row(prefix_label, "Enter prefix mode", "prefix"));
+fn longest_row_without_name(entries: &[HelpEntry], key_width: usize) -> usize {
+    entries
+        .iter()
+        .map(|entry| key_width + 2 + entry.description.chars().count())
+        .max()
+        .unwrap_or(0)
+}
+
+fn wrap_description(description: &str, width: usize) -> Vec<String> {
+    let width = width.max(1);
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    for word in description.split_whitespace() {
+        let word_len = word.chars().count();
+        if !current.is_empty() && current.chars().count() + 1 + word_len > width {
+            lines.push(std::mem::take(&mut current));
+        }
+        if word_len > width {
+            for character in word.chars() {
+                if current.chars().count() == width {
+                    lines.push(std::mem::take(&mut current));
+                }
+                current.push(character);
+            }
+        } else {
+            if !current.is_empty() {
+                current.push(' ');
+            }
+            current.push_str(word);
+        }
     }
-    for entry in &entries {
-        lines.push(row(&entry.keys, entry.description, entry.name));
+    if !current.is_empty() {
+        lines.push(current);
     }
     lines
+}
+
+fn help_groups(chrome: &Chrome, width: u16) -> Vec<Vec<Line<'static>>> {
+    let p = &chrome.palette;
+    let key_style = Style::default().fg(p.mauve).add_modifier(Modifier::BOLD);
+    let label_style = Style::default().fg(p.text);
+    let name_style = Style::default().fg(p.overlay1);
+    let entries = visible_entries(chrome);
+    if entries.is_empty() {
+        return vec![vec![Line::from(Span::styled(
+            " no matching keybinds",
+            Style::default().fg(p.overlay1),
+        ))]];
+    }
+    let key_width = key_width(&entries);
+    let show_names = entries.iter().all(|entry| {
+        key_width + 2 + entry.description.chars().count() + entry.name.chars().count() + 3
+            <= width as usize
+    });
+    entries
+        .iter()
+        .map(|entry| {
+            let key_cell = format!(" {:key_width$} ", entry.keys);
+            let key_cell_width = key_cell.chars().count();
+            let inline = if key_cell_width < width as usize {
+                wrap_description(entry.description, width as usize - key_cell_width)
+            } else {
+                Vec::new()
+            };
+            let below = wrap_description(entry.description, (width as usize).saturating_sub(1));
+            if inline.is_empty() || below.len() + 1 < inline.len() {
+                let mut lines = vec![Line::from(Span::styled(key_cell, key_style))];
+                lines.extend(below.into_iter().map(|chunk| {
+                    Line::from(vec![Span::raw(" "), Span::styled(chunk, label_style)])
+                }));
+                return lines;
+            }
+            let indent = " ".repeat(key_cell_width);
+            inline
+                .into_iter()
+                .enumerate()
+                .map(|(index, chunk)| {
+                    let mut spans = vec![
+                        Span::styled(
+                            if index == 0 {
+                                key_cell.clone()
+                            } else {
+                                indent.clone()
+                            },
+                            key_style,
+                        ),
+                        Span::styled(chunk, label_style),
+                    ];
+                    if show_names {
+                        spans.push(Span::styled(format!(" ({})", entry.name), name_style));
+                    }
+                    Line::from(spans)
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// Body rows: the prefix chord first, then every visible binding.
+/// This unbounded form also supplies the logical row count for keyboard scrolling.
+pub fn help_lines(chrome: &Chrome) -> Vec<Line<'static>> {
+    help_rows(chrome, u16::MAX)
+}
+
+pub fn help_rows(chrome: &Chrome, width: u16) -> Vec<Line<'static>> {
+    help_groups(chrome, width).into_iter().flatten().collect()
 }
 
 pub fn render_keybind_help(frame: &mut Frame, area: Rect, chrome: &Chrome) -> Vec<Rect> {
@@ -153,7 +243,7 @@ pub fn render_keybind_help(frame: &mut Frame, area: Rect, chrome: &Chrome) -> Ve
     };
     frame.render_widget(Paragraph::new(search_line), search_row);
 
-    render_body(frame, stack.content, chrome, help_lines(chrome));
+    render_body(frame, stack.content, chrome);
 
     let dim = Style::default().fg(p.overlay0);
     let key = Style::default().fg(p.text);
@@ -183,37 +273,88 @@ pub fn render_keybind_help(frame: &mut Frame, area: Rect, chrome: &Chrome) -> Ve
             Span::styled("esc/enter", key),
         ])
     };
-    frame.render_widget(Paragraph::new(footer), stack.footer.unwrap_or_default());
+    let footer_area = stack.footer.unwrap_or_default();
+    let footer = if footer.width() <= footer_area.width as usize {
+        footer
+    } else if chrome.keybind_help.search_focused && footer_area.width >= 40 {
+        Line::from(vec![
+            Span::styled(" type filter · ", dim),
+            Span::styled("ctrl+u", key),
+            Span::styled(" clear · ", dim),
+            Span::styled("esc", key),
+            Span::styled(" back", dim),
+        ])
+    } else if chrome.keybind_help.search_focused {
+        Line::from(vec![
+            Span::styled(" esc back · ", dim),
+            Span::styled("ctrl+u", key),
+        ])
+    } else if footer_area.width >= 40 {
+        Line::from(vec![
+            Span::styled(" / search · ", dim),
+            Span::styled("j/k", key),
+            Span::styled(" scroll · ", dim),
+            Span::styled("esc", key),
+            Span::styled(" close", dim),
+        ])
+    } else {
+        Line::from(vec![
+            Span::styled(" / find · ", dim),
+            Span::styled("esc close", key),
+        ])
+    };
+    frame.render_widget(Paragraph::new(footer), footer_area);
     vec![button]
 }
 
-/// Lay `lines` out column-major over `body`, scrolled by
-/// `chrome.keybind_help.scroll` rows, with a scrollbar when they overflow.
-fn render_body(frame: &mut Frame, body: Rect, chrome: &Chrome, lines: Vec<Line<'static>>) {
+/// Lay logical bindings out column-major, wrapping descriptions within each row.
+/// Scroll by bindings so the existing keyboard bound still reaches the last one.
+fn render_body(frame: &mut Frame, body: Rect, chrome: &Chrome) {
     if body.width == 0 || body.height == 0 {
         return;
     }
     let p = &chrome.palette;
-    let columns = if body.width >= 2 * HELP_COLUMN_MIN_WIDTH + HELP_COLUMN_GAP {
-        2u16
-    } else {
-        1
-    };
+    let entries = visible_entries(chrome);
+    let longest = longest_row_without_name(&entries, key_width(&entries));
     let rows = body.height as usize;
-    let capacity = rows * columns as usize;
-    let max_scroll = lines.len().saturating_sub(capacity);
-    let scroll = chrome.keybind_help.scroll.min(max_scroll);
-    let track =
-        (max_scroll > 0).then(|| Rect::new(body.x + body.width - 1, body.y, 1, body.height));
-    let text_width = if track.is_some() {
-        body.width - 1
-    } else {
-        body.width
+    let layout = |has_track: bool| {
+        let text_width = body.width - u16::from(has_track);
+        let columns = if 2 * longest + HELP_COLUMN_GAP as usize <= text_width as usize {
+            2u16
+        } else {
+            1
+        };
+        let column_width = text_width.saturating_sub(HELP_COLUMN_GAP * (columns - 1)) / columns;
+        let groups = help_groups(chrome, column_width);
+        let total_lines = groups.iter().map(Vec::len).sum::<usize>();
+        (columns, column_width, groups, total_lines)
     };
-    let column_width = text_width.saturating_sub(HELP_COLUMN_GAP * (columns - 1)) / columns;
-
-    let end = (scroll + capacity).min(lines.len());
-    let visible = &lines[scroll..end];
+    let initial = layout(false);
+    let has_track = initial.3 > rows * initial.0 as usize;
+    let (columns, column_width, groups, total_lines) =
+        if has_track { layout(true) } else { initial };
+    let capacity = rows * columns as usize;
+    let max_scroll = if has_track {
+        let mut trailing = 0;
+        let mut first_visible = groups.len().saturating_sub(1);
+        for (index, group) in groups.iter().enumerate().rev() {
+            if trailing + group.len() > capacity {
+                break;
+            }
+            trailing += group.len();
+            first_visible = index;
+        }
+        first_visible
+    } else {
+        0
+    };
+    let scroll = chrome.keybind_help.scroll.min(max_scroll);
+    let track = has_track.then(|| Rect::new(body.x + body.width - 1, body.y, 1, body.height));
+    let visible: Vec<_> = groups[scroll..]
+        .iter()
+        .flat_map(|group| group.iter().cloned())
+        .take(capacity)
+        .collect();
     for (column, chunk) in visible.chunks(rows).enumerate() {
         let x = body.x + (column_width + HELP_COLUMN_GAP) * column as u16;
         frame.render_widget(
@@ -226,8 +367,8 @@ fn render_body(frame: &mut Frame, body: Rect, chrome: &Chrome, lines: Vec<Line<'
         return;
     };
     let track_rows = track.height as usize;
-    let thumb_len = ((track_rows * capacity) / (capacity + max_scroll)).max(1);
-    let thumb_top = scroll * track_rows.saturating_sub(thumb_len) / max_scroll;
+    let thumb_len = ((track_rows * capacity) / total_lines).max(1);
+    let thumb_top = scroll * track_rows.saturating_sub(thumb_len) / max_scroll.max(1);
     let cells: Vec<Line<'static>> = (0..track_rows)
         .map(|row| {
             let color = if row >= thumb_top && row < thumb_top + thumb_len {

@@ -3,9 +3,9 @@
 pub mod grid;
 
 use crate::app::run_live_loop;
+use crate::app::startup_stages::{ConnectionView, StartupStages};
 use crate::daemon::LiveDaemon;
 use crate::frame_source::AttachLocator;
-use crate::startup::initial_project;
 use crate::theme::Theme;
 use crate::ui::status::Toast;
 use crate::ui::Chrome;
@@ -46,15 +46,13 @@ pub fn run_ready(
         .build()?
         .block_on(async move {
             let daemon =
-                LiveDaemon::connect_or_wait(ready.daemon_url, ready.token.unwrap_or_default())
-                    .await?;
+                LiveDaemon::unconnected(&ready.daemon_url, ready.token.unwrap_or_default())?;
             let mut workspace = Workspace::live(daemon);
             workspace.set_gobby_home(ready.gobby_home.clone());
             // Without a machine id the sidebar still lists agents; they just
             // sit under an empty machine name until the daemon fills it in.
-            workspace.set_local_machine(
-                gobby_core::machine::read_local_machine_id().unwrap_or_default(),
-            );
+            let machine = gobby_core::machine::read_local_machine_id().unwrap_or_default();
+            workspace.set_local_machine(machine.clone());
             let mut attach = ready.attach;
             if attach.workspace.is_none() {
                 attach.project_id = ready.project.clone();
@@ -63,17 +61,6 @@ pub fn run_ready(
             workspace.set_in_pane(ready.in_pane);
             workspace.set_launch_dir(ready.launch_dir);
             workspace.set_frame_delivery(ready.frame_delivery);
-            // The workspace rows remember the project the window last
-            // showed; the loop's reconcile re-attaches on every connect, so
-            // a daemon that is still down at launch attaches then.
-            if let Err(error) = workspace.attach_live_workspace().await {
-                tracing::warn!(%error, "workspace attach waits for the daemon");
-            }
-            let focused = workspace
-                .workspace_model()
-                .and_then(|model| model.workspace.focused_project_id.clone());
-            let project = initial_project(ready.project, focused.as_deref());
-            workspace.select_project(&project);
             let mut chrome = Chrome::new(Theme::new(ready.prefs.theme_kind()));
             chrome.apply_prefs(ready.prefs);
             chrome.keymap = ready.keymap;
@@ -82,6 +69,15 @@ pub fn run_ready(
                 chrome.notify(Toast::info(notice));
             }
             let mut terminal = Terminal::new(CrosstermBackend::new(std::io::stdout()))?;
+            let now = std::time::Instant::now();
+            chrome.connection = ConnectionView {
+                url: ready.daemon_url,
+                machine,
+                launch_project: ready.project,
+                stages: Some(StartupStages::begin(now)),
+                now,
+                ..ConnectionView::default()
+            };
             let input = gobby_terminal::raw_input::spawn_input_reader();
             run_live_loop(&mut workspace, &mut terminal, &mut chrome, input, switch).await?;
             Ok(())

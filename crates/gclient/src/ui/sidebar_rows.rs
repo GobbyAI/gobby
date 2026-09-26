@@ -1,7 +1,7 @@
 // upstream: herdr v0.8.0 src/ui/sidebar.rs
 //! Sidebar row models: machine rows, project cards with their worktree
-//! rows, and session rows, plus the line builders the sidebar and navigator
-//! share.
+//! rows, agent rows and terminal rows, plus the line builders the sidebar
+//! and navigator share.
 //!
 //! Ported from herdr `resolved_token_spans`: a state glyph plus text tokens
 //! joined by `" "` after the glyph and `" · "` elsewhere; trailing tokens
@@ -14,7 +14,7 @@ use crate::theme::Palette;
 use crate::ui::chrome::{terminal_address, Chrome, RowState, WorkspaceView};
 use crate::ui::settings::TitleScrolling;
 use crate::ui::sidebar::machine_admits;
-use crate::ui::status::{control_indicator, state_dot, state_label, state_label_color};
+use crate::ui::status::{control_indicator, state_dot};
 use crate::ui::text::{display_width, truncate_end};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -34,8 +34,10 @@ pub enum RowKind {
     Project,
     /// A worktree row indented under its project card.
     Worktree,
-    /// A session, agent run or bare terminal row: two lines.
+    /// An agent session or run: definition, task and model on three lines.
     Agent,
+    /// A bare terminal: foreground app and backend on two lines.
+    Terminal,
     /// A machine row: one line.
     Machine,
     /// A project sub-heading of the all-projects sessions list: one dim
@@ -46,16 +48,16 @@ pub enum RowKind {
 #[derive(Debug, Clone, Default)]
 pub struct SidebarRow {
     pub id: String,
-    /// Stable address shown before an agent title. Only `label` tickers.
-    pub title_prefix: String,
+    pub definition: String,
+    pub reference: String,
+    pub provider: Option<String>,
+    pub task: Option<(String, String)>,
+    pub model_slug: String,
     pub label: String,
     pub kind: RowKind,
     pub state: RowState,
     /// The task ref of a worktree row; a machine row's `local`/`all` mark.
     pub detail: String,
-    /// An agent row's second line: provider, model, task ref or tab, and
-    /// remote machine, empties already elided.
-    pub tokens: Vec<String>,
     /// The project card's branch, `~` without one.
     pub branch: Option<String>,
     pub ahead: u32,
@@ -77,10 +79,11 @@ pub struct SidebarRow {
 }
 
 impl SidebarRow {
-    /// Screen lines the row takes: an agent row is two, the rest one.
+    /// Screen lines the row takes: agents use three, terminals two, others one.
     pub fn height(&self) -> u16 {
         match self.kind {
-            RowKind::Agent => 2,
+            RowKind::Agent => 3,
+            RowKind::Terminal => 2,
             RowKind::Project | RowKind::Worktree | RowKind::Machine | RowKind::Group => 1,
         }
     }
@@ -255,17 +258,25 @@ fn nest_prefix(row: &SidebarRow) -> &'static str {
 /// `{marker}{dot} {name} ({branch} ↑a ↓b)` with the group toggle at the
 /// right edge; a worktree row is `{marker}  ├─ {dot} {branch} · {task}`
 /// with the prefix in `overlay0` so the branch sits under its card's name;
-/// a machine row is the same shape without the indent; an agent row is the
-/// herdr composition: state dot, the label always bold, `needs you` after
-/// a blocked one, with its tokens on `row_second_line`; a group row is the
-/// dim project name and a rule. An agent title wider than its budget
-/// scrolls on the shared marquee clock, `max_travel` being the longest
-/// overrun among the rows drawn with it (`row_travel`).
+/// a machine row is the same shape without the indent; an agent row shows
+/// the state glyph, definition and pinned reference; a terminal row shows
+/// the state glyph and foreground app. A group row is the dim project name
+/// and a rule. Agent task titles scroll on the second line.
 pub fn row_line<'a>(
     row: &'a SidebarRow,
     width: u16,
     chrome: &Chrome,
     max_travel: usize,
+) -> Line<'a> {
+    row_line_with_scrolling(row, width, chrome, max_travel, chrome.prefs.title_scrolling)
+}
+
+pub(crate) fn row_line_with_scrolling<'a>(
+    row: &'a SidebarRow,
+    width: u16,
+    chrome: &Chrome,
+    _max_travel: usize,
+    _title_scrolling: TitleScrolling,
 ) -> Line<'a> {
     let p = &chrome.palette;
     let (glyph, glyph_color) = state_dot(row.state, p);
@@ -277,12 +288,10 @@ pub fn row_line<'a>(
     };
     let title_style = if row.selected || row.active {
         Style::default().fg(p.text).add_modifier(Modifier::BOLD)
-    } else if row.kind == RowKind::Agent {
-        Style::default().fg(p.subtext0).add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(p.subtext0)
     };
-    // herdr's default agent token is `overlay0` + dim.
+    // Worktree and machine details retain the quiet token style.
     let detail_style = Style::default()
         .fg(if row.selected { p.mauve } else { p.overlay0 })
         .add_modifier(Modifier::DIM);
@@ -327,42 +336,44 @@ pub fn row_line<'a>(
                 budget.saturating_sub(display_width(prefix)),
             ));
         }
+        RowKind::Terminal => {
+            let prefix = nest_prefix(row);
+            spans.push(Span::styled(prefix, prefix_style));
+            spans.extend(fitted_spans(
+                glyph,
+                (&row.label, title_style),
+                &[],
+                p,
+                budget.saturating_sub(display_width(prefix)),
+            ));
+        }
         RowKind::Agent => {
             let prefix = nest_prefix(row);
             spans.push(Span::styled(prefix, prefix_style));
             let budget = budget.saturating_sub(display_width(prefix));
-            let label_style = Style::default()
-                .fg(state_label_color(row.state, p))
-                .add_modifier(Modifier::DIM);
-            let mut trailing: Vec<(&str, Style)> = (row.state == RowState::Attention)
-                .then(|| (state_label(row.state), label_style))
-                .into_iter()
-                .collect();
-            // As on every row, the state word drops before the title loses a
-            // cell. The session/project address never moves; only the title
-            // window after it does.
-            if display_width(&row.title_prefix) + display_width(&row.label)
-                > title_budget(&trailing, budget)
-            {
-                trailing.clear();
+            let reference = (!row.reference.is_empty()).then(|| format!(" ({})", row.reference));
+            let suffix_width = reference.as_deref().map_or(0, display_width);
+            let name_budget = budget.saturating_sub(2 + suffix_width);
+            spans.push(Span::styled(glyph.0.to_string(), glyph.1));
+            if budget > 1 {
+                spans.push(Span::raw(" "));
+                let name = truncate_end(&row.definition, name_budget);
+                let remaining = budget.saturating_sub(2 + display_width(&name));
+                spans.push(Span::styled(name, title_style));
+                if let Some(reference) = reference {
+                    spans.push(Span::styled(
+                        truncate_end(&reference, remaining),
+                        title_style,
+                    ));
+                }
+                let used: usize = spans.iter().map(|span| display_width(&span.content)).sum();
+                if let Some(provider) = row.provider.as_deref() {
+                    let trailing = format!(" · {provider}");
+                    if used + display_width(&trailing) <= usize::from(width) {
+                        spans.push(Span::styled(trailing, Style::default().fg(p.overlay0)));
+                    }
+                }
             }
-            let label_budget =
-                title_budget(&trailing, budget).saturating_sub(display_width(&row.title_prefix));
-            let label = ticker_window(
-                &row.label,
-                label_budget,
-                chrome.ticker,
-                max_travel,
-                chrome.prefs.title_scrolling,
-            );
-            spans.extend(agent_spans(
-                glyph,
-                (&row.title_prefix, title_style),
-                (&label, title_style),
-                &trailing,
-                p,
-                budget,
-            ));
         }
         RowKind::Group => {
             let style = Style::default().fg(p.overlay0).add_modifier(Modifier::DIM);
@@ -418,30 +429,23 @@ fn card_spans(
     spans
 }
 
-/// The cells `fitted_spans` leaves the title beside `trailing` in
-/// `max_width`: after the glyph, its blank, and every trailing token.
-fn title_budget(trailing: &[(&str, Style)], max_width: usize) -> usize {
-    let tokens: usize = trailing
-        .iter()
-        .filter(|(text, _)| !text.is_empty())
-        .map(|(text, _)| 3 + display_width(text))
-        .sum();
-    max_width.saturating_sub(2 + tokens)
-}
-
-/// Cells an agent row's title overruns its marquee budget by at `width`,
+/// Cells an agent task title overruns its marquee budget by at `width`,
 /// zero when it fits or the row never scrolls. The longest overrun among
 /// the rows drawn together sets their shared period.
 pub fn row_travel(row: &SidebarRow, width: u16) -> usize {
     if row.kind != RowKind::Agent {
         return 0;
     }
-    let budget = usize::from(width).saturating_sub(1 + display_width(nest_prefix(row)));
-    let budget = title_budget(&[], budget).saturating_sub(display_width(&row.title_prefix));
+    let Some((reference, title)) = row.task.as_ref() else {
+        return 0;
+    };
+    let prefix = format!("Task {reference} - ");
+    let budget = usize::from(width)
+        .saturating_sub(3 + display_width(nest_prefix(row)) + display_width(&prefix));
     if budget < TICKER_MIN_WINDOW {
         return 0;
     }
-    display_width(&row.label).saturating_sub(budget)
+    display_width(title).saturating_sub(budget)
 }
 
 /// The `budget`-cell window of `text` the marquee shows at `ticker`: the
@@ -498,81 +502,74 @@ pub fn ticker_window(
     window
 }
 
-fn agent_spans(
-    glyph: (&str, Style),
-    prefix: (&str, Style),
-    title: (&str, Style),
-    trailing: &[(&str, Style)],
-    p: &Palette,
-    max_width: usize,
-) -> Vec<Span<'static>> {
-    let separator_style = Style::default().fg(p.overlay0).add_modifier(Modifier::DIM);
-    let mut spans = vec![Span::styled(glyph.0.to_string(), glyph.1)];
-    let mut remaining = max_width.saturating_sub(display_width(glyph.0));
-    if remaining == 0 {
-        return spans;
-    }
-    spans.push(Span::styled(" ", separator_style));
-    remaining = remaining.saturating_sub(1);
-    let prefix_text = truncate_end(prefix.0, remaining);
-    remaining = remaining.saturating_sub(display_width(&prefix_text));
-    spans.push(Span::styled(prefix_text, prefix.1));
-    let title_text = truncate_end(title.0, remaining);
-    remaining = remaining.saturating_sub(display_width(&title_text));
-    spans.push(Span::styled(title_text, title.1));
-    for (text, style) in trailing {
-        let width = 3 + display_width(text);
-        if text.is_empty() || width > remaining {
-            continue;
-        }
-        spans.push(Span::styled(" · ", separator_style));
-        spans.push(Span::styled((*text).to_string(), *style));
-        remaining -= width;
-    }
-    spans
+/// The fixed task reference and scrolling title, or dim empty-task label,
+/// under an agent definition. A terminal shows its backend here.
+pub fn row_second_line<'a>(row: &'a SidebarRow, width: u16, chrome: &Chrome) -> Line<'a> {
+    row_second_line_with_travel(row, width, chrome, chrome.view.title_travel)
 }
 
-/// An agent row's second line: its tokens under the label, ` · ` apart, in
-/// herdr's dim `overlay0` agent style, dropped from the right as the width
-/// runs out; a nested row keeps its prefix width. Every other row has one
-/// line.
-pub fn row_second_line<'a>(row: &'a SidebarRow, width: u16, chrome: &Chrome) -> Line<'a> {
-    let p = &chrome.palette;
+pub(crate) fn row_second_line_with_travel<'a>(
+    row: &'a SidebarRow,
+    width: u16,
+    chrome: &Chrome,
+    max_travel: usize,
+) -> Line<'a> {
+    let indent = 3 + display_width(nest_prefix(row));
+    let budget = usize::from(width).saturating_sub(indent);
+    let mut spans = vec![Span::raw(" ".repeat(indent.min(usize::from(width))))];
+    let style = Style::default().fg(chrome.palette.overlay0);
+    match row.kind {
+        RowKind::Agent => {
+            if let Some((reference, title)) = row.task.as_ref() {
+                let prefix = format!("Task {reference} - ");
+                let prefix = truncate_end(&prefix, budget);
+                let title_budget = budget.saturating_sub(display_width(&prefix));
+                spans.push(Span::styled(prefix, style));
+                spans.push(Span::styled(
+                    ticker_window(
+                        title,
+                        title_budget,
+                        chrome.ticker,
+                        max_travel,
+                        chrome.prefs.title_scrolling,
+                    ),
+                    style,
+                ));
+            } else {
+                spans.push(Span::styled(
+                    truncate_end("No assigned task", budget),
+                    style.add_modifier(Modifier::DIM),
+                ));
+            }
+        }
+        RowKind::Terminal => spans.push(Span::styled(truncate_end(&row.detail, budget), style)),
+        _ => return Line::default(),
+    }
+    Line::from(spans)
+}
+
+pub fn row_third_line<'a>(row: &'a SidebarRow, width: u16, chrome: &Chrome) -> Line<'a> {
     if row.kind != RowKind::Agent {
         return Line::default();
     }
-    let Some((first, rest)) = row.tokens.split_first() else {
-        return Line::default();
-    };
-    let token_style = Style::default()
-        .fg(if row.selected { p.mauve } else { p.overlay0 })
-        .add_modifier(Modifier::DIM);
-    let rest: Vec<(&str, Style)> = rest
-        .iter()
-        .map(|token| (token.as_str(), token_style))
-        .collect();
-    // One blank for the marker column and the prefix, then the glyph column
-    // blank, so the tokens start under the label (herdr's three-cell indent).
-    let indent = 1 + display_width(nest_prefix(row));
-    let mut spans = vec![Span::raw(" ".repeat(indent))];
-    spans.extend(fitted_spans(
-        (" ", token_style),
-        (first, token_style),
-        &rest,
-        p,
-        usize::from(width).saturating_sub(indent),
-    ));
-    Line::from(spans)
+    let indent = 3 + display_width(nest_prefix(row));
+    let budget = usize::from(width).saturating_sub(indent).min(17);
+    Line::from(vec![
+        Span::raw(" ".repeat(indent.min(usize::from(width)))),
+        Span::styled(
+            truncate_end(&row.model_slug, budget),
+            Style::default().fg(chrome.palette.overlay0),
+        ),
+    ])
 }
 
 /// herdr `resolved_token_spans`, reduced to the glyph + title + trailing
 /// shape: `" "` after the glyph, `" · "` between text tokens. Trailing tokens
 /// are kept from the left while they fit beside the whole title and dropped
 /// from the right otherwise; the title truncates only once it stands alone.
-/// A roster row is identified by its terminal title, so the title outranks
-/// its state and detail tokens here — the tab-bar rule (truncate the tab's
-/// own title so its trailing tokens survive) does not apply to session
-/// titles. Empty tokens are elided with their separators.
+/// Terminal and machine titles outrank their detail tokens here; agent
+/// definitions and references use their own layout above. Empty tokens are
+/// elided with their separators.
 pub fn fitted_spans(
     glyph: (&str, Style),
     title: (&str, Style),

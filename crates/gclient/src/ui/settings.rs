@@ -67,8 +67,34 @@ pub enum AgentSort {
     Priority,
 }
 
+/// The edge the sidebar keeps, pinned or as an overlay.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SidebarSide {
+    #[default]
+    Left,
+    Right,
+}
+
+impl SidebarSide {
+    /// The prefs-file spelling, which the settings row shows.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Left => "left",
+            Self::Right => "right",
+        }
+    }
+
+    pub fn toggled(self) -> Self {
+        match self {
+            Self::Left => Self::Right,
+            Self::Right => Self::Left,
+        }
+    }
+}
+
 /// How an over-long title moves through its window, on the one ticker the
-/// Sessions rows and the pane headers share: off (it truncates), or the
+/// Agents rows and the pane headers share: off (it truncates), or the
 /// direction it travels to reveal its tail.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -130,25 +156,29 @@ pub struct ClientPrefs {
     /// Override file for the keymap; empty means the default path.
     pub keybinds: String,
     pub layout: String,
-    pub pane_borders: bool,
     pub pane_scrollbars: bool,
     pub pane_gaps: bool,
     pub confirm_close: bool,
     pub hide_tab_bar_when_single_tab: bool,
     pub sidebar_width: u16,
+    /// The edge the sidebar keeps.
+    pub sidebar_side: SidebarSide,
+    /// The sidebar keeps its column beside the panes instead of opening as
+    /// an overlay.
+    pub sidebar_pinned: bool,
     /// Held alone, this modifier makes a right-click pass through to the
     /// pane's app instead of opening the pane menu.
     pub right_click_passthrough_modifier: PassthroughModifier,
     /// Order of the sidebar's agent rows.
     pub agent_sort: AgentSort,
-    /// The sidebar starts folded to its rail.
-    pub sidebar_collapsed: bool,
     /// Project ids in the order the user dragged the cards into.
     pub project_order: Vec<String>,
     /// Labels the user gave project cards, by project id.
     pub project_labels: BTreeMap<String, String>,
     /// Direction used by the shared pane/sidebar title ticker.
     pub title_scrolling: TitleScrolling,
+    pub status_left: Vec<String>,
+    pub status_right: Vec<String>,
 }
 
 impl Default for ClientPrefs {
@@ -158,18 +188,20 @@ impl Default for ClientPrefs {
             mouse_capture: true,
             keybinds: String::new(),
             layout: "default".to_string(),
-            pane_borders: true,
             pane_scrollbars: true,
             pane_gaps: true,
             confirm_close: true,
             hide_tab_bar_when_single_tab: false,
             sidebar_width: 26,
+            sidebar_side: SidebarSide::Left,
+            sidebar_pinned: false,
             right_click_passthrough_modifier: PassthroughModifier::None,
             agent_sort: AgentSort::Grouped,
-            sidebar_collapsed: false,
             project_order: Vec::new(),
             project_labels: BTreeMap::new(),
             title_scrolling: TitleScrolling::Left,
+            status_left: vec!["focus".to_string(), "model".to_string()],
+            status_right: vec!["context".to_string(), "tokens".to_string()],
         }
     }
 }
@@ -189,27 +221,29 @@ impl ClientPrefs {
 pub enum SettingsRow {
     Theme,
     MouseCapture,
-    PaneBorders,
     PaneScrollbars,
     PaneGaps,
     ConfirmClose,
     HideTabBarWhenSingleTab,
     SidebarWidth,
+    SidebarSide,
+    SidebarPinned,
     RightClickPassthrough,
     AgentSort,
     TitleScrolling,
 }
 
 impl SettingsRow {
-    pub const ALL: [SettingsRow; 11] = [
+    pub const ALL: [SettingsRow; 12] = [
         SettingsRow::Theme,
         SettingsRow::MouseCapture,
-        SettingsRow::PaneBorders,
         SettingsRow::PaneScrollbars,
         SettingsRow::PaneGaps,
         SettingsRow::ConfirmClose,
         SettingsRow::HideTabBarWhenSingleTab,
         SettingsRow::SidebarWidth,
+        SettingsRow::SidebarSide,
+        SettingsRow::SidebarPinned,
         SettingsRow::RightClickPassthrough,
         SettingsRow::AgentSort,
         SettingsRow::TitleScrolling,
@@ -227,12 +261,13 @@ fn row_label(row: SettingsRow) -> &'static str {
     match row {
         SettingsRow::Theme => "theme",
         SettingsRow::MouseCapture => "mouse capture",
-        SettingsRow::PaneBorders => "pane borders",
         SettingsRow::PaneScrollbars => "pane scrollbars",
         SettingsRow::PaneGaps => "pane gaps",
         SettingsRow::ConfirmClose => "confirm close",
         SettingsRow::HideTabBarWhenSingleTab => "hide tab bar with one tab",
         SettingsRow::SidebarWidth => "sidebar width",
+        SettingsRow::SidebarSide => "sidebar side",
+        SettingsRow::SidebarPinned => "sidebar pinned",
         SettingsRow::RightClickPassthrough => "right-click passthrough",
         SettingsRow::AgentSort => "agent sort",
         SettingsRow::TitleScrolling => "title scrolling",
@@ -251,7 +286,6 @@ fn row_value(row: SettingsRow, prefs: &ClientPrefs) -> String {
     match row {
         SettingsRow::Theme => prefs.theme.clone(),
         SettingsRow::MouseCapture => on_off(prefs.mouse_capture).to_string(),
-        SettingsRow::PaneBorders => on_off(prefs.pane_borders).to_string(),
         SettingsRow::PaneScrollbars => on_off(prefs.pane_scrollbars).to_string(),
         SettingsRow::PaneGaps => on_off(prefs.pane_gaps).to_string(),
         SettingsRow::ConfirmClose => on_off(prefs.confirm_close).to_string(),
@@ -259,6 +293,8 @@ fn row_value(row: SettingsRow, prefs: &ClientPrefs) -> String {
             on_off(prefs.hide_tab_bar_when_single_tab).to_string()
         }
         SettingsRow::SidebarWidth => prefs.sidebar_width.to_string(),
+        SettingsRow::SidebarSide => prefs.sidebar_side.label().to_string(),
+        SettingsRow::SidebarPinned => on_off(prefs.sidebar_pinned).to_string(),
         SettingsRow::RightClickPassthrough => {
             prefs.right_click_passthrough_modifier.label().to_string()
         }
@@ -411,7 +447,39 @@ mod tests {
     #[test]
     fn row_values_follow_prefs() {
         let mut prefs = ClientPrefs::default();
-        assert_eq!(SettingsRow::ALL[1], SettingsRow::MouseCapture);
+        let labels: Vec<&str> = SettingsRow::ALL.into_iter().map(row_label).collect();
+        assert_eq!(
+            labels,
+            [
+                "theme",
+                "mouse capture",
+                "pane scrollbars",
+                "pane gaps",
+                "confirm close",
+                "hide tab bar with one tab",
+                "sidebar width",
+                "sidebar side",
+                "sidebar pinned",
+                "right-click passthrough",
+                "agent sort",
+                "title scrolling",
+            ]
+        );
+        assert_eq!(row_value(SettingsRow::SidebarSide, &prefs), "left");
+        assert_eq!(row_value(SettingsRow::SidebarPinned, &prefs), "off");
+        prefs.sidebar_side = prefs.sidebar_side.toggled();
+        prefs.sidebar_pinned = true;
+        assert_eq!(row_value(SettingsRow::SidebarSide, &prefs), "right");
+        assert_eq!(row_value(SettingsRow::SidebarPinned, &prefs), "on");
+        // Both survive prefs.toml under their own keys.
+        let home = tempfile::tempdir().expect("temp gobby home");
+        let path = crate::prefs::save_prefs(home.path(), &prefs).expect("save prefs");
+        let text = std::fs::read_to_string(path).expect("read prefs");
+        assert!(text.contains("sidebar_side = \"right\""), "{text}");
+        assert!(text.contains("sidebar_pinned = true"), "{text}");
+        let loaded = crate::prefs::load_prefs(home.path()).expect("load prefs");
+        assert_eq!(loaded.sidebar_side, SidebarSide::Right);
+        assert!(loaded.sidebar_pinned);
         assert_eq!(row_value(SettingsRow::Theme, &prefs), "dark");
         assert_eq!(row_value(SettingsRow::MouseCapture, &prefs), "on");
         assert_eq!(row_value(SettingsRow::PaneGaps, &prefs), "on");

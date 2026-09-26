@@ -367,9 +367,9 @@ fn workspace_flags_default_to_the_local_default() {
     );
 }
 
-/// 4.3.2: the sidebar collapse, project order, and project labels round-trip
-/// through `prefs.toml`, and no client source reads or writes a snapshot or
-/// session file any more.
+/// 4.3.2: the sidebar width, project order, and project labels round-trip
+/// through `prefs.toml` (a retired `sidebar_collapsed` key still loads), and
+/// no client source reads or writes a snapshot or session file any more.
 #[test]
 fn prefs_carry_sidebar_and_project_preferences() {
     let home = tempfile::tempdir().expect("temp gobby home");
@@ -392,19 +392,16 @@ fn prefs_carry_sidebar_and_project_preferences() {
     )
     .expect("prefs with sidebar keys load");
     let labels = BTreeMap::from([("a".to_string(), "Alpha".to_string())]);
-    assert!(ready.prefs.sidebar_collapsed);
     assert_eq!(ready.prefs.project_order, ["b", "a"]);
     assert_eq!(ready.prefs.project_labels, labels);
 
     let mut chrome = Chrome::dark();
     chrome.apply_prefs(ready.prefs.clone());
-    assert!(chrome.sidebar.collapsed, "prefs seed the sidebar collapse");
     assert_eq!(chrome.sidebar.width, 30);
     assert_eq!(chrome.sidebar.project_order, ["b", "a"]);
     assert_eq!(chrome.sidebar.project_labels, labels);
 
     // The mirror in `chrome.prefs` is what gets written back.
-    chrome.prefs.sidebar_collapsed = false;
     chrome
         .prefs
         .project_labels
@@ -660,6 +657,20 @@ fn prefs_round_trip_and_reject_unknown_keys() {
         }
     );
 
+    // Keys 3.2a retired still load from an older file, to the defaults, and
+    // a fresh save leaves them out; `deny_unknown_fields` still catches typos.
+    fs::write(
+        &path,
+        "[ui]\npane_borders = false\nsidebar_collapsed = true\n",
+    )
+    .expect("write retired prefs");
+    let retired = load_prefs(&home).expect("retired keys still load");
+    assert_eq!(retired, ClientPrefs::default());
+    save_prefs(&home, &retired).expect("save over retired keys");
+    let text = fs::read_to_string(&path).expect("read resaved prefs");
+    assert!(!text.contains("pane_borders"), "{text}");
+    assert!(!text.contains("sidebar_collapsed"), "{text}");
+
     fs::write(&path, "[ui]\nmouse_captre = false\n").expect("write typo prefs");
     let error = load_prefs(&home).expect_err("unknown key must fail");
     assert!(matches!(error, PrefsError::Parse(_)), "{error:?}");
@@ -672,6 +683,37 @@ fn prefs_round_trip_and_reject_unknown_keys() {
         .expect_err("unknown table must fail")
         .to_string();
     assert!(message.contains("keymapp"), "{message}");
+}
+
+#[test]
+fn status_segment_lists_round_trip_in_prefs() {
+    let home = tempfile::tempdir().expect("temp home");
+    let path = prefs_path(home.path());
+    fs::create_dir_all(path.parent().expect("prefs directory")).expect("create prefs directory");
+    fs::write(
+        &path,
+        "[status]\nleft = [\"model\", \"focus\"]\nright = [\"tokens\", \"context\"]\n",
+    )
+    .expect("write status prefs");
+
+    let prefs = load_prefs(home.path()).expect("load status prefs");
+    assert_eq!(prefs.status_left, ["model", "focus"]);
+    assert_eq!(prefs.status_right, ["tokens", "context"]);
+    save_prefs(home.path(), &prefs).expect("save status prefs");
+    let saved = fs::read_to_string(&path).expect("read saved prefs");
+    assert!(
+        saved.contains("[status]\nleft = [\"model\", \"focus\"]"),
+        "{saved}"
+    );
+    assert!(
+        saved.contains("right = [\"tokens\", \"context\"]"),
+        "{saved}"
+    );
+    fs::write(&path, "[status]\nleft = []\nunknown = 1\n").expect("write status typo");
+    assert!(load_prefs(home.path())
+        .expect_err("unknown status key must fail")
+        .to_string()
+        .contains("unknown"));
 }
 
 struct CountingBackend {
@@ -1069,9 +1111,11 @@ fn ready_carries_an_optional_project() {
 
     let _: fn(&Ready) -> Option<&str> = project_field_is_optional;
     let views_source = include_str!("../src/views/mod.rs");
+    let live_loop_source = include_str!("../src/app/live_loop.rs");
     assert!(
-        views_source.contains("initial_project(ready.project, focused.as_deref())"),
-        "run_ready must open on the initial project"
+        views_source.contains("launch_project: ready.project")
+            && live_loop_source.contains("chrome.connection.launch_project.clone()"),
+        "startup must open on the initial project"
     );
     assert_eq!(
         initial_project(Some("cwd-project".to_string()), Some("saved-project")),

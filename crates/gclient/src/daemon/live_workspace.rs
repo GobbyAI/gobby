@@ -31,6 +31,18 @@ impl LiveDaemon {
         decode(self.request(request).await?)
     }
 
+    /// Read another workspace without changing this socket's event subscription.
+    pub async fn workspace_snapshot(
+        &self,
+        node: Option<&str>,
+        workspace: &str,
+    ) -> Result<WorkspaceSnapshot, DaemonError> {
+        let mut request = attach_request(node, Some(workspace), None);
+        request["type"] = json!("workspace_snapshot");
+        request["request_id"] = json!(Uuid::new_v4().to_string());
+        decode(self.request(request).await?)
+    }
+
     pub(super) async fn workspace_op_live(
         &self,
         op: WorkspaceOp,

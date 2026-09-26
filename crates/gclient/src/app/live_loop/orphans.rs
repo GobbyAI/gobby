@@ -63,6 +63,7 @@ fn orphan_row(row: &TerminalRow, sidebar: &SidebarRows) -> OrphanRow {
         backend: Backend::parse(field("backend").unwrap_or_default()),
         name: field("name")
             .or_else(|| field("title"))
+            .or_else(|| field("command"))
             .map_or_else(|| short_terminal_id(row.id()).to_string(), str::to_string),
         owner: field("session_id").map(|id| session_label(id, sidebar)),
         last_seen: field("updated_at").and_then(clock_time),
@@ -245,7 +246,7 @@ mod tests {
                 "backend": "native",
                 "ownership": "gobby",
                 "state": "orphaned",
-                "title": "shell",
+                "command": "zsh",
             })),
             row(json!({
                 "terminal_id": "tmux-detached",
@@ -307,7 +308,7 @@ mod tests {
                 OrphanRow {
                     terminal_id: "native-orphan".to_string(),
                     backend: Backend::Native,
-                    name: "shell".to_string(),
+                    name: "zsh".to_string(),
                     owner: None,
                     last_seen: None,
                 },

@@ -1,4 +1,4 @@
-//! herdr `src/ui/panes.rs` (17) keep-set render tests.
+//! herdr `src/ui/panes.rs` (15) keep-set render tests.
 
 use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use gobby_client::app::{route_mouse, MouseGesture, MouseOutcome, PaneId as AppPaneId, Workspace};
@@ -14,6 +14,7 @@ use gobby_terminal::selection::Selection;
 use ratatui::layout::{Direction, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::Borders;
+use serde_json::json;
 use std::future::Future;
 
 use super::fixtures::{cell, render};
@@ -190,7 +191,7 @@ parity_tests! {
             let (mut tab, root) = test_tab(AppPaneId(1));
             let right = test_split(&mut tab, root, Direction::Horizontal, AppPaneId(2));
 
-            let infos = apply_pane_chrome(tab.layout.panes(Rect::new(0, 0, 100, 20), root), true, false);
+            let infos = apply_pane_chrome(tab.layout.panes(Rect::new(0, 0, 100, 20), root), false);
             let left = infos.iter().find(|info| info.id == root).unwrap();
             let right = infos.iter().find(|info| info.id == right).unwrap();
 
@@ -203,7 +204,7 @@ parity_tests! {
             let (mut tab, root) = test_tab(AppPaneId(1));
             let bottom = test_split(&mut tab, root, Direction::Vertical, AppPaneId(2));
 
-            let infos = apply_pane_chrome(tab.layout.panes(Rect::new(0, 0, 100, 20), root), true, false);
+            let infos = apply_pane_chrome(tab.layout.panes(Rect::new(0, 0, 100, 20), root), false);
             let top = infos.iter().find(|info| info.id == root).unwrap();
             let bottom = infos.iter().find(|info| info.id == bottom).unwrap();
 
@@ -216,39 +217,13 @@ parity_tests! {
             let (mut tab, root) = test_tab(AppPaneId(1));
             let right = test_split(&mut tab, root, Direction::Horizontal, AppPaneId(2));
 
-            let infos = apply_pane_chrome(tab.layout.panes(Rect::new(0, 0, 100, 20), root), true, true);
+            let infos = apply_pane_chrome(tab.layout.panes(Rect::new(0, 0, 100, 20), root), true);
             let left = infos.iter().find(|info| info.id == root).unwrap();
             let right = infos.iter().find(|info| info.id == right).unwrap();
 
             assert_eq!(left.rect.x + left.rect.width, right.rect.x);
             assert_eq!(left.borders, Borders::ALL);
             assert_eq!(right.borders, Borders::ALL);
-        }
-
-        fn borderless_pane_gaps_add_one_empty_cell_between_panes() {
-            let (mut tab, root) = test_tab(AppPaneId(1));
-            let right = test_split(&mut tab, root, Direction::Horizontal, AppPaneId(2));
-
-            let infos = apply_pane_chrome(tab.layout.panes(Rect::new(0, 0, 100, 20), root), false, true);
-            let left = infos.iter().find(|info| info.id == root).unwrap();
-            let right = infos.iter().find(|info| info.id == right).unwrap();
-
-            assert_eq!(left.rect, Rect::new(0, 0, 49, 20));
-            assert_eq!(right.rect, Rect::new(50, 0, 50, 20));
-            assert!(left.borders.is_empty());
-            assert!(right.borders.is_empty());
-        }
-
-        fn disabled_pane_borders_make_inner_rect_equal_visual_rect() {
-            let (mut tab, root) = test_tab(AppPaneId(1));
-            let right = test_split(&mut tab, root, Direction::Horizontal, AppPaneId(2));
-
-            let infos = apply_pane_chrome(tab.layout.panes(Rect::new(0, 0, 100, 20), right), false, false);
-
-            for info in infos {
-                assert!(info.borders.is_empty());
-                assert_eq!(pane_inner_rect(info.rect, info.borders), info.rect);
-            }
         }
 
         fn global_pane_border_renderer_composes_junctions_and_focus_style() {
@@ -297,7 +272,7 @@ parity_tests! {
             assert_eq!(cell(&terminal, 2, 1).style().fg, Some(palette().accent));
         }
 
-        fn gapped_pane_focus_does_not_color_neighbor_border() {
+fn gapped_pane_focus_does_not_color_neighbor_border() {
             let mut chrome = chrome();
             chrome.prefs.pane_gaps = true;
             let pane_infos = vec![
@@ -325,7 +300,8 @@ parity_tests! {
 
                 assert_eq!(info.rect, area);
                 assert_eq!(info.scrollbar_rect, None);
-                assert_eq!(info.inner_rect, Rect::new(10, 3, 39, 8));
+                // Inside the four edges, less the scrollbar gutter's column.
+                assert_eq!(info.inner_rect, Rect::new(11, 4, 37, 6));
             });
         }
 
@@ -341,7 +317,8 @@ parity_tests! {
 
                 assert_eq!(info.rect, area);
                 assert_eq!(info.scrollbar_rect, None);
-                assert_eq!(info.inner_rect, Rect::new(10, 3, 39, 8));
+                // Inside the four edges, less the scrollbar gutter's column.
+                assert_eq!(info.inner_rect, Rect::new(11, 4, 37, 6));
             });
         }
 
@@ -384,7 +361,7 @@ parity_tests! {
 
                 assert_eq!(info.rect, area);
                 assert_eq!(info.scrollbar_rect, None);
-                assert_eq!(info.inner_rect, area);
+                assert_eq!(info.inner_rect, Rect::new(11, 4, 2, 6));
             });
         }
 
@@ -404,8 +381,9 @@ parity_tests! {
                 let info = &infos[0];
 
                 assert_eq!(info.rect, area);
-                assert_eq!(info.scrollbar_rect, Some(Rect::new(49, 3, 1, 8)));
-                assert_eq!(info.inner_rect, Rect::new(10, 3, 39, 8));
+                assert_eq!(info.scrollbar_rect, Some(Rect::new(48, 4, 1, 6)));
+                // Inside the four edges, less the scrollbar gutter's column.
+                assert_eq!(info.inner_rect, Rect::new(11, 4, 37, 6));
 
                 chrome.prefs.pane_scrollbars = false;
                 let infos = compute_pane_infos(&chrome, &ws, area);
@@ -413,7 +391,7 @@ parity_tests! {
 
                 assert_eq!(info.rect, area);
                 assert_eq!(info.scrollbar_rect, None);
-                assert_eq!(info.inner_rect, area);
+                assert_eq!(info.inner_rect, Rect::new(11, 4, 38, 6));
             });
         }
 
@@ -486,6 +464,50 @@ parity_tests! {
         }
 
     }
+}
+
+#[test]
+fn frame_colour_follows_focus_attention_and_exit() {
+    let mut ws = Workspace::scripted();
+    let focused = ws.open_terminal("focused", "native", "epoch").unwrap();
+    let attention = ws.open_terminal("attention", "native", "epoch").unwrap();
+    let exited = ws.open_terminal("exited", "native", "epoch").unwrap();
+    ws.pane_mut(exited).terminal_state = Some("exited".to_owned());
+    ws.daemon_mut().set_roster(json!({
+        "epoch": "e1", "seq": 1,
+        "entries": [{
+            "entry_id": "run:attention",
+            "terminal": {"terminal_id": "attention", "backend": "native"},
+            "attention": {"attention_id": "att-1", "kind": "actionable"}
+        }]
+    }));
+    ws.reconcile_subscribe_first().unwrap();
+
+    let mut chrome = chrome();
+    chrome.open_pane(focused, "alpha");
+    chrome.open_pane(attention, "alpha");
+    chrome.open_pane(exited, "alpha");
+    assert!(chrome.focus_pane(focused));
+    chrome.compute_view(&ws, Rect::new(0, 0, 90, 18));
+    let terminal = render(90, 18, |frame| {
+        panes::render_panes(frame, &ws, &chrome, &mut |_, _, _| {});
+    });
+    let corner = |pane| {
+        let tab = chrome.active_tab().unwrap();
+        let slot = tab.slots.iter().find(|(_, id)| **id == pane).unwrap().0;
+        let info = chrome
+            .view
+            .pane_infos
+            .iter()
+            .find(|info| info.id == *slot)
+            .unwrap();
+        cell(&terminal, info.rect.x, info.rect.y)
+    };
+    assert_eq!(corner(focused).style().fg, Some(palette().accent));
+    assert_eq!(corner(attention).symbol(), "⍾");
+    assert_eq!(corner(attention).style().fg, Some(palette().yellow));
+    assert_eq!(corner(exited).symbol(), "◌");
+    assert_eq!(corner(exited).style().fg, Some(palette().red));
 }
 
 // gclient-only mouse coverage for the pane surface: herdr drives its split
@@ -583,4 +605,29 @@ fn split_border_drag_sets_ratio() {
         (ratio - 0.9).abs() < f32::EPSILON,
         "the release keeps the ratio: {ratio}"
     );
+}
+
+/// gclient 3.2a: every pane draws all four edges, a lone pane included.
+/// Outside the keep-set macro so the upstream inventory stays exact.
+#[test]
+fn lone_pane_draws_all_four_edges() {
+    let (chrome, ws, root) = app_with_workspace();
+    let area = Rect::new(0, 0, 20, 6);
+    let infos = compute_pane_infos(&chrome, &ws, area);
+    assert_eq!(infos.len(), 1);
+    assert_eq!(infos[0].id, root);
+    assert_eq!(infos[0].rect, area);
+    assert_eq!(infos[0].borders, Borders::ALL);
+    // Inside the edges, less the scrollbar gutter's column.
+    assert_eq!(infos[0].inner_rect, Rect::new(1, 1, 17, 4));
+
+    let terminal = render(area.width, area.height, |frame| {
+        render_pane_borders(&chrome, &infos, &[], &[None], frame)
+    });
+    assert_eq!(cell(&terminal, 0, 0).symbol(), "┌");
+    assert_eq!(cell(&terminal, 19, 0).symbol(), "┐");
+    assert_eq!(cell(&terminal, 0, 5).symbol(), "└");
+    assert_eq!(cell(&terminal, 19, 5).symbol(), "┘");
+    assert_eq!(cell(&terminal, 9, 0).symbol(), "─");
+    assert_eq!(cell(&terminal, 0, 2).symbol(), "│");
 }

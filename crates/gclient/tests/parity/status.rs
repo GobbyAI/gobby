@@ -3,7 +3,8 @@
 use std::collections::BTreeSet;
 
 use gobby_client::app::ControlState;
-use gobby_client::ui::chrome::RowState;
+use gobby_client::daemon::{DaemonError, Generation, RunRow, SidebarRows};
+use gobby_client::ui::chrome::{Mode, RowState};
 use gobby_client::ui::hit::Hit;
 use gobby_client::ui::status::{
     control_indicator, copy_feedback_rect, render_status_line, state_dot, toast_cue_width,
@@ -122,11 +123,11 @@ parity_tests! {
     }
 }
 
-/// 2.5.2 (gclient-only, outside the keep-set): a focused pane with no border
-/// keeps its metadata at the head of the status line, and only an exception
-/// there is a button. Focus is a condition; Read-only and Uncertain take
-/// control back on a press, the pointer resting on them underlines their
-/// words, and the words, not the hue, tell the states apart.
+/// 2.5.2 (gclient-only, outside the keep-set): a focused pane whose edge is
+/// too narrow for its metadata keeps it at the head of the status line, and
+/// only an exception there is a button. Focus is a condition; Read-only and
+/// Uncertain take control back on a press, the pointer resting on them
+/// underlines their words, and the words, not the hue, tell the states apart.
 #[test]
 fn control_indicator_is_a_button() {
     let palette = palette();
@@ -142,24 +143,25 @@ fn control_indicator_is_a_button() {
     let pane = ws.pane_for_terminal("term-alpha").expect("term-alpha pane");
     let mut chrome = Chrome::dark();
     chrome.open_pane(pane, "alpha");
+    chrome.compute_view(&ws, Rect::new(0, 0, 18, 10));
 
     let mut indicator = None;
     let focused = render(80, 1, |frame| {
-        indicator = render_status_line(frame, frame.area(), &ws, &chrome);
+        indicator = render_status_line(frame, frame.area(), &ws, &chrome).control_indicator;
     });
     assert_eq!(indicator, None, "focus is not a button");
     assert_eq!(
-        rect_rows(&focused, Rect::new(0, 0, 18, 1)),
-        vec![" gclient · Focused".to_string()]
+        rect_rows(&focused, Rect::new(0, 0, 21, 1)),
+        vec![" term-alpha · Focused".to_string()]
     );
 
     ws.pane_mut(pane).control = ControlState::LeaseLost;
     ws.pane_mut(pane).take_back = true;
     let lost = render(80, 1, |frame| {
-        indicator = render_status_line(frame, frame.area(), &ws, &chrome);
+        indicator = render_status_line(frame, frame.area(), &ws, &chrome).control_indicator;
     });
     let indicator = indicator.expect("an exception draws the indicator");
-    let button = vec![" gclient · Read-only".to_string()];
+    let button = vec![" term-alpha · Read-only".to_string()];
     let words = || indicator.x + 1..indicator.right();
     let underlined = |terminal: &Terminal<TestBackend>| -> Vec<bool> {
         words()
@@ -201,7 +203,7 @@ fn control_indicator_is_a_button() {
         render_status_line(frame, frame.area(), &ws, &chrome);
     });
     assert!(
-        rect_rows(&uncertain, Rect::new(0, 0, 20, 1))[0].starts_with(" gclient · Uncertain"),
+        rect_rows(&uncertain, Rect::new(0, 0, 23, 1))[0].starts_with(" term-alpha · Uncertain"),
         "Uncertain reads apart from Read-only"
     );
 
@@ -225,4 +227,147 @@ fn control_indicator_is_a_button() {
         states.len(),
         "every state reads without hue: {readings:?}"
     );
+}
+
+#[test]
+fn status_bar_orders_fixed_slots_and_configured_segments() {
+    let mut ws = Workspace::scripted();
+    let mut rows = SidebarRows::default();
+    rows.runs.insert(
+        "alpha".to_string(),
+        vec![RunRow {
+            run_id: "run-alpha".to_string(),
+            effective_reasoning_effort: Some("xhigh".to_string()),
+            ..RunRow::default()
+        }],
+    );
+    ws.daemon_mut().set_sidebar_rows(rows);
+    ws.daemon_mut().set_roster(json!({
+        "epoch": "e1",
+        "seq": 1,
+        "entries": [
+            {
+                "entry_id": "run:term-alpha",
+                "run_id": "run-alpha",
+                "terminal": {"terminal_id": "term-alpha", "backend": "native"},
+                "provider": "codex",
+                "model_display_name": "Fable 5.1",
+                "context_percent": 63,
+                "tokens_used": 12345
+            },
+            {
+                "entry_id": "run:term-beta",
+                "terminal": {"terminal_id": "term-beta", "backend": "native"},
+                "attention": {"attention_id": "att-1", "kind": "actionable"}
+            }
+        ]
+    }));
+    ws.reconcile_subscribe_first().expect("install roster");
+    let alpha = ws
+        .open_terminal("term-alpha", "native", "epoch")
+        .expect("alpha pane");
+    let beta = ws
+        .open_terminal("term-beta", "native", "epoch")
+        .expect("beta pane");
+    let mut chrome = Chrome::dark();
+    chrome.open_tab(alpha, "alpha");
+    chrome.open_tab(beta, "beta");
+    chrome.activate_tab(0);
+    chrome.mode = Mode::Navigate;
+    chrome.compute_view(&ws, Rect::new(0, 0, 100, 20));
+
+    let mut count = None;
+    let healthy = render(100, 1, |frame| {
+        count = render_status_line(frame, frame.area(), &ws, &chrome).count;
+    });
+    let line = &rect_rows(&healthy, Rect::new(0, 0, 100, 1))[0];
+    assert!(line.starts_with(" 1 need you"), "{line:?}");
+    assert!(line.contains("fable-5.1-xhigh"), "{line:?}");
+    assert!(line.contains("63% │ 12,345"), "{line:?}");
+    assert!(line.ends_with("prefix ctrl+b │ navigate "), "{line:?}");
+    let count = count.expect("attention count hit area");
+    chrome.hover = Some(Hit::StatusCount);
+    let hovered = render(100, 1, |frame| {
+        render_status_line(frame, frame.area(), &ws, &chrome);
+    });
+    for x in count.x..count.right() {
+        assert!(
+            cell(&hovered, x, count.y)
+                .modifier
+                .contains(Modifier::UNDERLINED),
+            "count cell {x} should show hover"
+        );
+    }
+    chrome.hover = None;
+
+    chrome.activate_tab(1);
+    assert_eq!(
+        ws.attention_entry_ids(),
+        ["run:term-alpha", "run:term-beta"]
+    );
+    assert!(
+        chrome
+            .active_tab()
+            .expect("beta tab")
+            .slot_for(beta)
+            .is_some(),
+        "attention pane is visible"
+    );
+    chrome.prefs.status_left = vec!["model".to_string()];
+    chrome.prefs.status_right = vec!["context".to_string(), "tokens".to_string()];
+    chrome.compute_view(&ws, Rect::new(0, 0, 100, 20));
+    let mut hits = None;
+    let visible = render(100, 1, |frame| {
+        hits = Some(render_status_line(frame, frame.area(), &ws, &chrome));
+    });
+    let line = &rect_rows(&visible, Rect::new(0, 0, 100, 1))[0];
+    assert!(line.starts_with(" 1 need you"), "{line:?}");
+    assert!(!line.contains("2 need you"), "visible attention: {line:?}");
+    assert!(line.contains("—"), "missing values: {line:?}");
+    assert!(line.contains("— │ — │ prefix"), "missing metrics: {line:?}");
+    assert!(hits.expect("status hits").count.is_some());
+
+    chrome.activate_tab(0);
+    chrome.prefs.status_left = vec!["focus".to_string(), "model".to_string()];
+    chrome.prefs.status_right = vec!["context".to_string(), "tokens".to_string()];
+    chrome.compute_view(&ws, Rect::new(0, 0, 100, 20));
+
+    ws.observe_daemon_disconnect(
+        Generation(1),
+        DaemonError::Unavailable { retry_after: None },
+    );
+    let disconnected = render(100, 1, |frame| {
+        render_status_line(frame, frame.area(), &ws, &chrome);
+    });
+    let line = &rect_rows(&disconnected, Rect::new(0, 0, 100, 1))[0];
+    assert!(
+        line.starts_with(" Daemon unreachable · retrying │ 1 need you"),
+        "{line:?}"
+    );
+    assert!(line.ends_with("prefix ctrl+b │ navigate "), "{line:?}");
+
+    chrome.prefs.status_left = vec![
+        "tokens".to_string(),
+        "unknown".to_string(),
+        "model".to_string(),
+    ];
+    chrome.prefs.status_right = vec!["context".to_string()];
+    let configured = render(100, 1, |frame| {
+        render_status_line(frame, frame.area(), &ws, &chrome);
+    });
+    let line = &rect_rows(&configured, Rect::new(0, 0, 100, 1))[0];
+    assert!(
+        line.starts_with(" Daemon unreachable · retrying │ 1 need you"),
+        "{line:?}"
+    );
+    assert!(
+        line.ends_with("63% │ prefix ctrl+b │ navigate "),
+        "{line:?}"
+    );
+    assert!(
+        !line.contains("fable") || line.contains("fable-5.1-xhigh"),
+        "optional model must render whole or disappear: {line:?}"
+    );
+    assert!(!line.contains("xhigh63%"), "{line:?}");
+    assert!(!line.contains("unknown"), "{line:?}");
 }

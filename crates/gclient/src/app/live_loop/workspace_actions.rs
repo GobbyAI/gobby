@@ -72,10 +72,13 @@ fn placement_op(
     placement: Placement,
     terminal_id: &str,
     worktree_id: Option<String>,
+    project_override: Option<&str>,
 ) -> Option<WorkspaceOp> {
     let model = workspace.workspace_model()?;
-    let project_id = workspace.project_id()?.to_owned();
-    if chrome.active_tab().is_some_and(Tab::is_local) {
+    let project_id = project_override
+        .or_else(|| workspace.project_id())?
+        .to_owned();
+    if project_override.is_none() && chrome.active_tab().is_some_and(Tab::is_local) {
         return None;
     }
     let focused =
@@ -110,8 +113,16 @@ pub(super) async fn place_live_terminal(
     placement: Placement,
     terminal_id: &str,
     worktree_id: Option<String>,
+    project_override: Option<&str>,
 ) -> Result<(), FrameError> {
-    if let Some(op) = placement_op(workspace, chrome, placement, terminal_id, worktree_id) {
+    if let Some(op) = placement_op(
+        workspace,
+        chrome,
+        placement,
+        terminal_id,
+        worktree_id,
+        project_override,
+    ) {
         workspace.expect_placement(terminal_id);
         if !send_workspace_op(workspace, chrome, op).await? {
             workspace.forget_placement(terminal_id);

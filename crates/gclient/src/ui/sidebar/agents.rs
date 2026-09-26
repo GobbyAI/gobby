@@ -1,9 +1,8 @@
 // upstream: herdr v0.8.0 src/client/shell/agent_sidebar.rs
-//! The sessions section: one two-line row per roster entry the machine
+//! The agents section: one three-line row per roster entry the machine
 //! filter and the scope admit — interactive sessions with the agent runs
-//! they spawned nested under them, parentless runs at the top level — and
-//! one per bare terminal (a pane no roster entry names), in tab order or by
-//! urgency (`agent_sort`). The band carries the `[view]` control, which
+//! they spawned nested under them, parentless runs at the top level, in tab
+//! order or by urgency (`agent_sort`). The band carries the `[view]` control, which
 //! opens the menu holding both axes.
 //!
 //! herdr lists every workspace's agents and marks the view with a label in
@@ -16,12 +15,12 @@ use std::cmp::Reverse;
 
 use super::{render_band, render_section_rows, BandStyle, SidebarHits};
 use crate::app::project_tabs::TabSet;
-use crate::app::short_terminal_id;
-use crate::app::sidebar_model::{agent_row_state, pane_state, urgency, AgentEntry, SidebarModel};
-use crate::ui::chrome::{terminal_address, Chrome, RowState, WorkspaceView};
+use crate::app::sidebar_model::{agent_row_state, urgency, AgentEntry, SidebarModel};
+use crate::ui::chrome::{Chrome, RowState, WorkspaceView};
 use crate::ui::hit::SidebarSection;
 use crate::ui::settings::AgentSort;
 use crate::ui::sidebar_rows::{displayed_project_ids, project_label, RowKind, SidebarRow};
+use crate::ui::text::truncate_end;
 use ratatui::layout::Rect;
 use ratatui::Frame;
 
@@ -201,22 +200,17 @@ struct Candidate {
     parent_session_id: Option<String>,
 }
 
-/// The rows: every admitted entry as a two-line row of its label and state
-/// over its provider, model (with the reasoning effort), task ref or tab,
-/// and remote machine tokens, then the bare terminals of the focused
-/// project. Under `grouped` a run nests under the listed session that
+/// The rows: every admitted roster entry as a three-line definition, task
+/// and model slug. Under `grouped` a run nests under the listed session that
 /// spawned it; under `priority` the list is flat. Under the `all` scope
 /// the rows sit under a heading per project, in the projects' order,
 /// projects with nothing live omitted.
-pub fn session_rows<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Vec<SidebarRow> {
+pub fn agent_rows<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Vec<SidebarRow> {
     let mut candidates: Vec<Candidate> = visible_agents(ws, chrome)
         .into_iter()
         .map(|visible| agent_candidate(ws, chrome, visible))
         .collect();
-    candidates.extend(bare_terminals(ws, chrome));
     if chrome.prefs.agent_sort == AgentSort::Priority {
-        // Bare terminals carry no activity stamp and sort after the
-        // entries of their urgency.
         candidates.sort_by_key(|candidate| Reverse(urgency(candidate.row.state)));
     }
     if !chrome.sidebar.all_sessions {
@@ -310,40 +304,19 @@ fn push_children(
 fn agent_candidate<W: WorkspaceView>(ws: &W, chrome: &Chrome, visible: Visible<'_>) -> Candidate {
     let Visible { agent, state, .. } = visible;
     let focused = chrome.focused_pane();
-    let local_machine = ws.sidebar().local_machine.as_str();
     let pane = ws.pane_for_terminal(&agent.terminal_id);
-    let machine = (!agent.machine_id.is_empty() && agent.machine_id != local_machine)
-        .then(|| short_terminal_id(&agent.machine_id).to_string());
-    // The address leads: it is what tells two rows with one title apart.
-    // Then the provider, the model as its provider prints it, and the effort.
-    let model = agent
-        .model_display_name
-        .clone()
-        .or_else(|| agent.model.clone())
-        .map(|model| match agent.effort.as_deref() {
-            Some(effort) => format!("{model} {effort}"),
-            None => model,
-        });
-    let tokens = [
-        terminal_address(ws, &agent.terminal_id),
-        Some(agent.provider.clone()),
-        model,
-        machine,
-    ]
-    .into_iter()
-    .flatten()
-    .filter(|token| !token.is_empty())
-    .collect();
-    let title_prefix = agent
+    let reference = agent
         .session_ref
         .as_deref()
         .map_or_else(String::new, |reference| {
-            let project = chrome.sidebar.all_sessions.then(|| {
-                project_label(ws, chrome, &agent.project_id)
-                    .unwrap_or_else(|| agent.project_id.clone())
-            });
+            let project = (chrome.sidebar.all_sessions
+                && chrome.prefs.agent_sort == AgentSort::Priority)
+                .then(|| {
+                    project_label(ws, chrome, &agent.project_id)
+                        .unwrap_or_else(|| agent.project_id.clone())
+                });
             format!(
-                "{}{reference}: ",
+                "{}{reference}",
                 project.as_deref().unwrap_or_default(),
                 reference = short_session_ref(reference)
             )
@@ -351,11 +324,15 @@ fn agent_candidate<W: WorkspaceView>(ws: &W, chrome: &Chrome, visible: Visible<'
     Candidate {
         row: SidebarRow {
             id: agent.entry_id.clone(),
-            title_prefix,
+            definition: agent.definition_label(),
+            reference,
+            provider: (!agent.managed && !agent.provider.is_empty())
+                .then(|| agent.provider.clone()),
+            task: agent.task_ref.clone().zip(agent.task_title.clone()),
+            model_slug: truncate_end(&agent.model_slug(), 17),
             label: agent_title(agent),
             kind: RowKind::Agent,
             state,
-            tokens,
             active: focused.is_some() && pane == focused,
             ..SidebarRow::default()
         },
@@ -363,55 +340,6 @@ fn agent_candidate<W: WorkspaceView>(ws: &W, chrome: &Chrome, visible: Visible<'
         session_id: agent.session_id.clone(),
         parent_session_id: agent.parent_session_id.clone(),
     }
-}
-
-/// The focused project's panes no roster entry names, when the machine
-/// filter admits this machine: the pane's name over its title and address
-/// where they add something, and its backend.
-fn bare_terminals<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Vec<Candidate> {
-    let model = ws.sidebar();
-    if !machine_admits(ws, chrome, &model.local_machine) {
-        return Vec::new();
-    }
-    let focused = chrome.focused_pane();
-    let project = ws.focused_project().unwrap_or_default().to_string();
-    ws.roster_terminal_ids()
-        .into_iter()
-        .filter(|terminal_id| {
-            !model
-                .agents
-                .iter()
-                .any(|agent| agent.terminal_id == *terminal_id)
-        })
-        .filter_map(|terminal_id| {
-            let pane_id = ws.pane_for_terminal(&terminal_id)?;
-            let pane = ws.pane(pane_id);
-            let name = pane.display_name().to_string();
-            // The foreground job names the row; the address and the backend
-            // that owns it sit under it. The daemon's `title` is neither.
-            let tokens = [
-                terminal_address(ws, &terminal_id),
-                Some(pane.backend.label().to_string()),
-            ]
-            .into_iter()
-            .flatten()
-            .collect();
-            Some(Candidate {
-                row: SidebarRow {
-                    id: format!("{TERMINAL_ROW}{terminal_id}"),
-                    label: name,
-                    kind: RowKind::Agent,
-                    state: pane_state(pane),
-                    tokens,
-                    active: focused == Some(pane_id),
-                    ..SidebarRow::default()
-                },
-                project_id: project.clone(),
-                session_id: None,
-                parent_session_id: None,
-            })
-        })
-        .collect()
 }
 
 /// Entry ids in attention-walk order: the blocked ones first, then the
@@ -432,14 +360,14 @@ pub fn attention_order<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Vec<String>
 
 /// Draw the section into `area` (the content rect, without the separator
 /// column) and record its hits.
-pub(super) fn render_sessions(
+pub(super) fn render_agents(
     frame: &mut Frame,
     area: Rect,
     rows: &[SidebarRow],
     chrome: &Chrome,
     hits: &mut SidebarHits,
 ) {
-    let section = SidebarSection::Sessions;
+    let section = SidebarSection::Agents;
     let (_, controls) = render_band(
         frame,
         area,
@@ -447,7 +375,7 @@ pub(super) fn render_sessions(
         &[VIEW_LABEL],
         BandStyle::section(&chrome.palette),
     );
-    hits.sessions_view = controls.first().copied();
+    hits.agents_view = controls.first().copied();
     render_section_rows(frame, area, section, rows, chrome, hits);
 }
 

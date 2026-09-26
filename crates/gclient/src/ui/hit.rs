@@ -15,15 +15,18 @@ pub enum SidebarSection {
     Machines,
     Projects,
     /// Every roster entry: interactive sessions with their agent runs
-    /// nested under them, plus the bare terminals.
-    Sessions,
+    /// nested under them.
+    Agents,
+    /// The bare terminals: panes no roster entry names.
+    Terminals,
 }
 
 impl SidebarSection {
-    pub const ALL: [SidebarSection; 3] = [
+    pub const ALL: [SidebarSection; 4] = [
         SidebarSection::Machines,
         SidebarSection::Projects,
-        SidebarSection::Sessions,
+        SidebarSection::Agents,
+        SidebarSection::Terminals,
     ];
 
     /// Position from the top: the index into the per-section arrays.
@@ -36,7 +39,8 @@ impl SidebarSection {
         match self {
             SidebarSection::Machines => "Machines",
             SidebarSection::Projects => "Projects",
-            SidebarSection::Sessions => "Sessions",
+            SidebarSection::Agents => "Agents",
+            SidebarSection::Terminals => "Terminals",
         }
     }
 }
@@ -60,16 +64,11 @@ pub enum Hit {
     Machine(String),
     /// The `▸`/`▾` cell at the right edge of a project card with worktrees.
     GroupToggle(String),
-    /// The `[+]` control of the menu band.
-    ProjectsNew,
-    /// The `[Menu]` control of the menu band.
-    ProjectsMenu,
     /// The `[working]`/`[all]` control of the projects band.
     ProjectsFilter,
-    /// The `[view]` control of the sessions band, which opens the menu
+    /// The `[view]` control of the agents band, which opens the menu
     /// carrying the scope and the order.
-    SessionsView,
-    SidebarToggle,
+    AgentsView,
     /// The `│` column between sidebar and content.
     SidebarDivider,
     SidebarEmpty,
@@ -99,7 +98,12 @@ pub enum Hit {
     SettingsDialog,
     /// A button of the open dialog, as an index into its button row.
     DialogButton(usize),
+    /// A menu bar title, as an index into `MenuBarMenu::ALL`.
+    MenuTitle(usize),
+    /// The menu bar beside its titles.
+    MenuBarEmpty,
     ControlIndicator,
+    StatusCount,
     Status,
     Toast,
     Empty,
@@ -126,11 +130,16 @@ pub fn hit_test(view: &ViewState, column: u16, row: u16) -> Hit {
     if view.toast_hit_area.is_some_and(|toast| toast.contains(at)) {
         return Hit::Toast;
     }
-    if view.tab_bar_rect.is_some_and(|bar| bar.contains(at)) {
-        return tab_bar_hit(view, at);
+    if view.menu_bar_rect.contains(at) {
+        return find_at(&view.menu_title_hit_areas, at)
+            .map_or(Hit::MenuBarEmpty, |(index, _)| Hit::MenuTitle(*index));
     }
+    // Before the tab bar: the overlay lies over its row.
     if view.sidebar_rect.contains(at) {
         return sidebar_hit(view, at);
+    }
+    if view.tab_bar_rect.is_some_and(|bar| bar.contains(at)) {
+        return tab_bar_hit(view, at);
     }
     if view
         .control_indicator_hit_area
@@ -161,6 +170,12 @@ pub fn hit_test(view: &ViewState, column: u16, row: u16) -> Hit {
     }
     if let Some(info) = view.pane_infos.iter().find(|info| info.rect.contains(at)) {
         return Hit::PaneBorder(info.id);
+    }
+    if view
+        .status_count_hit_area
+        .is_some_and(|count| count.contains(at))
+    {
+        return Hit::StatusCount;
     }
     if view.status_rect.contains(at) {
         return Hit::Status;
@@ -198,12 +213,6 @@ fn sidebar_hit(view: &ViewState, at: Position) -> Hit {
     if view.sidebar_divider_x == Some(at.x) {
         return Hit::SidebarDivider;
     }
-    if view
-        .sidebar_toggle_hit_area
-        .is_some_and(|rect| rect.contains(at))
-    {
-        return Hit::SidebarToggle;
-    }
     if let Some(section) = SidebarSection::ALL.into_iter().find(|section| {
         view.sidebar_scrollbar_hit_areas[section.index()].is_some_and(|lane| lane.contains(at))
     }) {
@@ -214,10 +223,8 @@ fn sidebar_hit(view: &ViewState, at: Position) -> Hit {
         return Hit::GroupToggle(id.clone());
     }
     let controls = [
-        (view.projects_new_hit_area, Hit::ProjectsNew),
-        (view.projects_menu_hit_area, Hit::ProjectsMenu),
         (view.projects_filter_hit_area, Hit::ProjectsFilter),
-        (view.sessions_view_hit_area, Hit::SessionsView),
+        (view.agents_view_hit_area, Hit::AgentsView),
     ];
     if let Some((_, hit)) = controls
         .into_iter()

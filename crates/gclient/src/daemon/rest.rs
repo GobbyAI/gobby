@@ -79,6 +79,15 @@ impl RestClient {
         self.json(Method::GET, url, None).await
     }
 
+    pub(super) async fn config_version(&self) -> Result<Option<String>, DaemonError> {
+        let url = self.url(&["api", "admin", "config"])?;
+        let response: Value = self.json(Method::GET, url, None).await?;
+        Ok(response
+            .pointer("/config/server/version")
+            .and_then(Value::as_str)
+            .map(str::to_string))
+    }
+
     pub(super) async fn source_status(&self, project: &str) -> Result<SourceStatus, DaemonError> {
         let mut url = self.url(&["api", "source-control", "status"])?;
         url.query_pairs_mut().append_pair("project_id", project);

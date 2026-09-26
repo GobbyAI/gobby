@@ -14,7 +14,7 @@ use tokio::time::Instant;
 use crate::daemon::{Attention, Daemon, ProjectRow, RosterEntry, SidebarRows};
 use crate::ui::chrome::RowState;
 
-use super::{Backend, Pane, Workspace, UNNAMED_PANE};
+use super::{short_terminal_id, Backend, Pane, Workspace};
 
 /// How long a project's source status stays fresh while the sidebar is open.
 pub const GIT_REFRESH_INTERVAL: Duration = Duration::from_secs(10);
@@ -248,8 +248,8 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
             // Each rung is filtered on its own: an empty session title means
             // "unnamed", not "stop looking", so the run and tmux names below it
             // still get their turn. The pane's own ladder ends the chain for a
-            // row that has one, and the last rung covers a roster entry with
-            // no pane open — neither can be an id. The provider is no rung:
+            // row that has one, and the last rung is the short terminal id
+            // for a roster entry with no pane open. The provider is no rung:
             // it rides on the row's second line with the model.
             let session_title = session
                 .and_then(|(_, session)| session.title.clone())
@@ -267,7 +267,7 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
                         .filter(|name| !name.is_empty())
                 })
                 .or_else(|| pane.map(|pane| pane.display_name().to_string()))
-                .unwrap_or_else(|| UNNAMED_PANE.to_string());
+                .unwrap_or_else(|| short_terminal_id(&terminal.terminal_id).to_string());
             let machine_id = session
                 .and_then(|(_, session)| session.machine_id.clone())
                 .or_else(|| run.and_then(|(_, run)| run.machine_id.clone()))
@@ -473,6 +473,22 @@ pub(super) struct PendingSidebar {
     /// The attention roster: a session ending is the only signal that an
     /// agent run left it, since attention events never remove an entry.
     pub(super) roster: bool,
+}
+
+impl PendingSidebar {
+    /// Every row set, for a lagged event receiver: the render tick's refetch
+    /// job reads them beside the loop. Reading them inline held the loop for
+    /// the slowest daemon answer, and the frames that piled up meanwhile
+    /// lagged the receiver again, so the screen never drew (#22747).
+    pub(super) fn everything(project_rows: Vec<String>) -> Self {
+        Self {
+            projects: true,
+            project_rows: project_rows.into_iter().collect(),
+            sessions: true,
+            session_rows: BTreeSet::new(),
+            roster: true,
+        }
+    }
 }
 
 /// The refetch each sidebar row set came from. A refetch runs beside the

@@ -1,25 +1,34 @@
-//! herdr `src/ui.rs` (31), `src/ui/keybind_help.rs` (2), `src/ui/tab_surface.rs`
+//! herdr `src/ui.rs` (29), `src/ui/keybind_help.rs` (2), `src/ui/tab_surface.rs`
 //! (2), and `src/ui/text.rs` (2) keep-set render tests.
 
 use std::borrow::Cow;
 
-use gobby_client::app::{PaneId, Workspace};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use gobby_client::app::{
+    route_modal_key, route_mouse, ContextMenuKind, ContextMenuState, MouseOutcome, PaneId,
+    Workspace,
+};
 use gobby_client::daemon::{Checkout, ProjectRow, SidebarRows, SourceStatus};
+use gobby_client::key_input::KeyInput;
 use gobby_client::ui::chrome::{Chrome, Mode};
 use gobby_client::ui::chrome_render::{
     copy_feedback_offset_for_toast, render_workspace, render_workspace_with,
 };
 use gobby_client::ui::dialogs::Dialog;
-use gobby_client::ui::hit::SidebarSection;
+use gobby_client::ui::hit::{hit_test, Hit, SidebarSection};
 use gobby_client::ui::keybind_help::{filter_help_entries, help_lines};
 use gobby_client::ui::keymap::{HelpEntry, Keymap, HERDR_PREFIX};
+use gobby_client::ui::menu_bar::MenuBarMenu;
 use gobby_client::ui::pane_layout;
 use gobby_client::ui::scrollbar::{
     pane_scrollbar_rect, scrollbar_offset_from_drag_row, scrollbar_offset_from_row,
     scrollbar_thumb, scrollbar_thumb_grab_offset, should_show_scrollbar,
 };
-use gobby_client::ui::settings::{SettingsRow, SETTINGS_POPUP_HEIGHT, SETTINGS_POPUP_WIDTH};
-use gobby_client::ui::sidebar::{collapsed_sections, section_body_rect};
+use gobby_client::ui::settings::{
+    SettingsRow, SidebarSide, SETTINGS_POPUP_HEIGHT, SETTINGS_POPUP_WIDTH,
+};
+use gobby_client::ui::sidebar::section_body_rect;
+use gobby_client::ui::sidebar_rows::project_label;
 use gobby_client::ui::status::{
     render_copy_feedback, render_status_line, toast_notification_rect, Toast, ToastKind,
 };
@@ -39,10 +48,17 @@ use sha2::{Digest, Sha256};
 use super::fixtures::{cell, rect_rows, render, screen};
 use super::token_map::{palette, theme};
 
-/// gclient reserves the bottom row of the content column for its status line
-/// (control state, focused terminal, mode); herdr had no such row, so every
-/// herdr terminal-area height below is one row taller than gclient's.
+/// gclient reserves the frame's last row for its status line (control state,
+/// focused terminal, mode); herdr had no such row, so every herdr
+/// terminal-area height below is one row taller than gclient's for it.
 const STATUS_ROWS: u16 = 1;
+
+/// gclient holds row 0 for its menu bar; herdr had no such row either.
+const MENU_BAR_ROWS: u16 = 1;
+
+/// gclient draws all four edges of every pane, a lone one included; herdr
+/// left a lone pane bare, so its runtime was this much taller and wider.
+const PANE_EDGES: u16 = 2;
 
 /// gclient names the mode in its lowercase status line; herdr drew an
 /// uppercase `PREFIX` badge in the tab-bar row or as a terminal overlay.
@@ -130,9 +146,11 @@ fn with_projects(mut ws: Workspace) -> Workspace {
 }
 
 /// herdr `AppState::test_new()` with `active` pointing at `terminal`: one
-/// auto-named tab showing that terminal's pane.
+/// auto-named tab showing that terminal's pane. herdr's sidebar is always on
+/// screen, so gclient's is pinned.
 fn chrome_for(ws: &Workspace, terminal: &str) -> Chrome {
     let mut chrome = Chrome::new(theme());
+    chrome.sidebar.pinned = true;
     let pane = ws.pane_for_terminal(terminal).expect("terminal pane");
     chrome.open_tab(pane, "");
     chrome
@@ -476,7 +494,7 @@ parity_tests! {
             assert_eq!(chrome.view.tab_bar_rect, None);
             assert_eq!(
                 single_tab_terminal_area,
-                Rect::new(26, 0, 54, 20 - STATUS_ROWS)
+                Rect::new(26, MENU_BAR_ROWS, 54, 20 - MENU_BAR_ROWS - STATUS_ROWS)
             );
             assert!(tabs.tab_hit_areas.is_empty());
             assert_eq!(tabs.new_tab_hit_area, Rect::default());
@@ -485,10 +503,13 @@ parity_tests! {
             chrome.compute_view(&ws, area);
             let tabs = tab_view(&ws, &chrome, area);
 
-            assert_eq!(chrome.view.tab_bar_rect, Some(Rect::new(26, 0, 54, 1)));
+            assert_eq!(
+                chrome.view.tab_bar_rect,
+                Some(Rect::new(26, MENU_BAR_ROWS, 54, 1))
+            );
             assert_eq!(
                 chrome.view.terminal_area,
-                Rect::new(26, 1, 54, 19 - STATUS_ROWS)
+                Rect::new(26, MENU_BAR_ROWS + 1, 54, 19 - MENU_BAR_ROWS - STATUS_ROWS)
             );
             assert_eq!(tabs.tab_hit_areas.len(), 2);
             assert!(tabs.tab_hit_areas.iter().all(|rect| rect.width > 0));
@@ -516,7 +537,7 @@ parity_tests! {
             assert_eq!(chrome.view.tab_bar_rect, None);
             assert_eq!(
                 chrome.view.terminal_area,
-                Rect::new(26, 0, 54, 20 - STATUS_ROWS)
+                Rect::new(26, MENU_BAR_ROWS, 54, 20 - MENU_BAR_ROWS - STATUS_ROWS)
             );
 
             let terminal = render_full(&ws, &chrome, Rect::new(0, 0, 80, 20));
@@ -551,8 +572,14 @@ parity_tests! {
 
                     let one_tab_size = runtime_size(&one_tab_workspace, 0);
                     let two_tab_size = runtime_size(&two_tab_workspace, background_tab);
-                    assert_eq!(one_tab_size, (20 - STATUS_ROWS, 53));
-                    assert_eq!(two_tab_size, (19 - STATUS_ROWS, 53));
+                    assert_eq!(
+                        one_tab_size,
+                        (20 - MENU_BAR_ROWS - STATUS_ROWS - PANE_EDGES, 53 - PANE_EDGES)
+                    );
+                    assert_eq!(
+                        two_tab_size,
+                        (19 - MENU_BAR_ROWS - STATUS_ROWS - PANE_EDGES, 53 - PANE_EDGES)
+                    );
                 });
         }
 
@@ -617,50 +644,6 @@ parity_tests! {
             assert_eq!(chrome.view.sidebar_rect.width, 22);
         }
 
-        fn hidden_collapsed_sidebar_uses_full_width_terminal_area() {
-            let ws = scripted(&["one"]);
-            let mut chrome = chrome_for(&ws, "one");
-            chrome.sidebar.collapsed = true;
-            chrome.sidebar.hide_when_collapsed = true;
-            chrome.mode = Mode::Terminal;
-
-            chrome.compute_view(&ws, Rect::new(0, 0, 80, 20));
-
-            assert_eq!(chrome.view.sidebar_rect, Rect::new(0, 0, 0, 20));
-            assert_eq!(chrome.view.tab_bar_rect, Some(Rect::new(0, 0, 80, 1)));
-            assert_eq!(
-                chrome.view.terminal_area,
-                Rect::new(0, 1, 80, 19 - STATUS_ROWS)
-            );
-            assert!(chrome.view.project_hit_areas.is_empty());
-
-            render_full(&ws, &chrome, Rect::new(0, 0, 80, 20));
-        }
-
-        fn collapsed_sidebar_keeps_active_workspace_highlight_in_terminal_mode() {
-            // herdr's active workspace is gclient's focused project: the
-            // rail highlights the second project card.
-            let mut ws = with_projects(scripted(&["one", "two"]));
-            ws.select_project("proj-two");
-            let mut chrome = chrome_for(&ws, "two");
-            chrome.sidebar.collapsed = true;
-            // Neither project has a live entry: list them both.
-            chrome.sidebar.all_projects = true;
-            chrome.sidebar.selected = 0;
-            chrome.mode = Mode::Terminal;
-
-            chrome.compute_view(&ws, Rect::new(0, 0, 80, 20));
-            let terminal = render_full(&ws, &chrome, Rect::new(0, 0, 80, 20));
-
-            // herdr `collapsed_sidebar_sections`: the cards under the machine dot.
-            let (rail, _) = collapsed_sections(chrome.view.sidebar_rect);
-            let ws_area = rail[SidebarSection::Projects.index()];
-            let active_row = ws_area.y + 1;
-            let active_style = cell(&terminal, ws_area.x, active_row).style();
-
-            assert_eq!(active_style.bg, Some(palette().surface_dim));
-        }
-
         fn expanded_sidebar_workspace_rows_show_state_before_name_without_numbers() {
             // herdr's workspace carried a git checkout on `main`; gclient's
             // one-line project card shows the branch in its parenthetical.
@@ -690,10 +673,10 @@ parity_tests! {
                 "{line1}"
             );
             assert!(!line1.contains("1 one"));
-            // The card is one line: its blank row, then the sessions band.
+            // The card is one line: its blank row, then the agents band.
             assert_eq!(line2.trim(), "", "{line2}");
             let line3 = buffer_row_text(&terminal, card, card.y + 2);
-            assert!(line3.starts_with(" Sessions"), "{line3}");
+            assert!(line3.starts_with(" Agents"), "{line3}");
         }
 
         fn tab_bar_dims_auto_named_tabs_and_emphasizes_custom_tabs() {
@@ -712,9 +695,11 @@ parity_tests! {
             let auto_style = cell(&terminal, auto_rect.x + 1, auto_rect.y).style();
             let custom_style = cell(&terminal, custom_rect.x + 1, custom_rect.y).style();
 
-            assert_eq!(auto_style.fg, Some(palette().overlay0));
-            assert!(auto_style.add_modifier.contains(Modifier::DIM));
-            assert_eq!(custom_style.fg, Some(palette().panel_bg));
+            assert_eq!(auto_style.fg, Some(palette().overlay1));
+            assert_eq!(auto_style.bg, Some(palette().surface0));
+            assert!(!auto_style.add_modifier.contains(Modifier::DIM));
+            assert_eq!(custom_style.fg, Some(palette().text));
+            assert_eq!(custom_style.bg, Some(palette().panel_bg));
             assert!(custom_style.add_modifier.contains(Modifier::BOLD));
         }
 
@@ -733,8 +718,8 @@ parity_tests! {
             let custom_rect = tabs.tab_hit_areas[1];
             let custom_style = cell(&terminal, custom_rect.x + 1, custom_rect.y).style();
 
-            assert_eq!(custom_style.bg, Some(palette().accent));
-            assert_eq!(custom_style.fg, Some(palette().surface_dim));
+            assert_eq!(custom_style.bg, Some(palette().surface_dim));
+            assert_eq!(custom_style.fg, Some(palette().text));
             assert!(custom_style.add_modifier.contains(Modifier::BOLD));
         }
 
@@ -861,7 +846,10 @@ parity_tests! {
                     chrome.compute_view(&ws, Rect::new(0, 0, 40, 12));
 
                     let info = chrome.view.pane_infos.first().expect("pane info");
-                    assert_eq!(info.inner_rect.width + 1, chrome.view.terminal_area.width);
+                    assert_eq!(
+                        info.inner_rect.width + 1 + PANE_EDGES,
+                        chrome.view.terminal_area.width
+                    );
                     assert_eq!(
                         info.scrollbar_rect,
                         Some(Rect::new(
@@ -1105,7 +1093,10 @@ switch_project = "ctrl+1..9"
                     let full_area = Rect::new(0, 0, 106, 20);
                     chrome.compute_view(&ws, full_area);
                     let area = chrome.view.terminal_area;
-                    assert_eq!(area, Rect::new(26, 1, 80, 19 - STATUS_ROWS));
+                    assert_eq!(
+                        area,
+                        Rect::new(26, MENU_BAR_ROWS + 1, 80, 19 - MENU_BAR_ROWS - STATUS_ROWS)
+                    );
                     assert_eq!(chrome.view.pane_infos.len(), 2);
                     assert!(!chrome.view.split_borders.is_empty());
 
@@ -1127,7 +1118,7 @@ switch_project = "ctrl+1..9"
                     let rendered = screen(&terminal);
                     assert!(rendered.contains("LEFT"), "surface: {rendered:?}");
                     assert!(rendered.contains("RIGHT"), "surface: {rendered:?}");
-                    assert!(!rendered.contains("shell-workspace"));
+                    assert!(!rect_rows(&terminal, area).join("\n").contains("shell-workspace"));
                 });
         }
 
@@ -1171,11 +1162,17 @@ switch_project = "ctrl+1..9"
 
                     let frame = terminal.backend().buffer().area;
                     assert_eq!((frame.width, frame.height), (106, 20));
-                    assert_eq!(chrome.view.sidebar_rect, Rect::new(0, 0, 26, 20));
-                    assert_eq!(chrome.view.tab_bar_rect, Some(Rect::new(26, 0, 80, 1)));
+                    assert_eq!(
+                        chrome.view.sidebar_rect,
+                        Rect::new(0, MENU_BAR_ROWS, 26, 20 - MENU_BAR_ROWS - STATUS_ROWS)
+                    );
+                    assert_eq!(
+                        chrome.view.tab_bar_rect,
+                        Some(Rect::new(26, MENU_BAR_ROWS, 80, 1))
+                    );
                     assert_eq!(
                         chrome.view.terminal_area,
-                        Rect::new(26, 1, 80, 19 - STATUS_ROWS)
+                        Rect::new(26, MENU_BAR_ROWS + 1, 80, 19 - MENU_BAR_ROWS - STATUS_ROWS)
                     );
                     assert_eq!(chrome.view.pane_infos.len(), 2);
                     assert!(!chrome.view.split_borders.is_empty());
@@ -1209,12 +1206,22 @@ switch_project = "ctrl+1..9"
                     // reaches this frame (#22536), and again when every band
                     // gained a blank row above it and the rows took the pane
                     // address and backend tokens (#22572), and again when pane
-                    // chrome moved to the pane edges (#22617):
+                    // chrome moved to the pane edges (#22617), and again when
+                    // row 0 went to the menu bar, the status line spanned the
+                    // frame and every pane drew its four edges, and again when
+                    // the sidebar edge took overlay0 (#22745), and again when
+                    // row 0 drew the menu bar titles and the status hint
+                    // moved to the right edge (#22746), and again when the
+                    // sidebar split Agents and bare Terminals (#22748), agent
+                    // and terminal rows gained their final content (#22749),
+                    // and tabs gained project labels and neutral styling (#22750),
+                    // then the configurable segments and attention count
+                    // populated the status row (#22752):
                     // 4.1.3 requires a glyph change to fail here, so this
                     // digest moves only alongside a deliberate render change.
                     assert_eq!(
                         frame_digest(&terminal),
-                        "7beb73355fb6b6dc02d45126b40f6a7d3d805d9d5e7a390544aa8a46418ab1ee"
+                        "383ef43f6a295af208538b57189f72048e75caf605d55296bfc09b4d264b737b"
                     );
                 });
         }
@@ -1233,6 +1240,168 @@ switch_project = "ctrl+1..9"
             assert!(text.contains('…'));
             assert!(display_width(&text) <= 12);
         }
+    }
+}
+
+// ---------------------------------------------------------- gclient frame
+
+#[test]
+fn hidden_sidebar_uses_full_width_terminal_area() {
+    // gclient starts with the sidebar hidden: row 0 is held for the menu
+    // bar, the status line takes the last row, and the tab bar and the
+    // panes take every column between them.
+    let ws = scripted(&["one"]);
+    let mut chrome = Chrome::new(theme());
+    let pane = ws.pane_for_terminal("one").expect("terminal pane");
+    chrome.open_tab(pane, "");
+    chrome.compute_view(&ws, Rect::new(0, 0, 80, 20));
+
+    let view = &chrome.view;
+    assert_eq!(view.sidebar_rect.width, 0);
+    assert_eq!(view.menu_bar_rect, Rect::new(0, 0, 80, 1));
+    assert_eq!(view.status_rect, Rect::new(0, 19, 80, 1));
+    assert_eq!(view.tab_bar_rect, Some(Rect::new(0, 1, 80, 1)));
+    assert_eq!(view.terminal_area, Rect::new(0, 2, 80, 17));
+}
+
+#[test]
+fn overlay_covers_34_columns_without_moving_panes() {
+    // Unpinned, the sidebar opens as an overlay: 34 columns on its side,
+    // from the tab bar row to the row above the status line, over panes
+    // that keep the columns they have with it rolled up.
+    let ws = scripted(&["one"]);
+    let mut chrome = Chrome::new(theme());
+    let pane = ws.pane_for_terminal("one").expect("terminal pane");
+    chrome.open_tab(pane, "");
+    let area = Rect::new(0, 0, 80, 20);
+    chrome.compute_view(&ws, area);
+    let rolled_up = chrome.view.terminal_area;
+
+    chrome.sidebar.overlay = true;
+    chrome.mode = Mode::Navigate;
+    let terminal = render_with_hits(&ws, &mut chrome, area);
+    assert_eq!(chrome.view.sidebar_rect, Rect::new(0, 1, 34, 18));
+    assert_eq!(chrome.view.terminal_area, rolled_up);
+    assert_eq!(
+        chrome.view.sidebar_divider_x, None,
+        "an overlay has no drag edge"
+    );
+    // Its inner edge is accent, the pane's corner under it is gone, and it
+    // takes the clicks on the tab bar row it covers.
+    let edge = cell(&terminal, 33, 5);
+    assert_eq!((edge.symbol(), edge.fg), ("│", chrome.palette.accent));
+    assert_eq!(cell(&terminal, 0, 18).symbol(), " ");
+    assert_eq!(hit_test(&chrome.view, 2, 1), Hit::SidebarEmpty);
+
+    chrome.sidebar.side = SidebarSide::Right;
+    let terminal = render_with_hits(&ws, &mut chrome, area);
+    assert_eq!(chrome.view.sidebar_rect, Rect::new(46, 1, 34, 18));
+    assert_eq!(chrome.view.terminal_area, rolled_up);
+    assert_eq!(cell(&terminal, 46, 5).symbol(), "│");
+
+    // Pinned, it is a column on its side and the content takes the rest.
+    chrome.sidebar.overlay = false;
+    chrome.sidebar.pinned = true;
+    chrome.compute_view(&ws, area);
+    assert_eq!(chrome.view.sidebar_rect, Rect::new(54, 1, 26, 18));
+    assert_eq!(chrome.view.tab_bar_rect, Some(Rect::new(0, 1, 54, 1)));
+    assert_eq!(chrome.view.terminal_area, Rect::new(0, 2, 54, 17));
+    assert_eq!(chrome.view.sidebar_divider_x, Some(54));
+    chrome.sidebar.side = SidebarSide::Left;
+    chrome.compute_view(&ws, area);
+    assert_eq!(chrome.view.sidebar_rect, Rect::new(0, 1, 26, 18));
+    assert_eq!(chrome.view.terminal_area, Rect::new(26, 2, 54, 17));
+    assert_eq!(chrome.view.sidebar_divider_x, Some(25));
+}
+
+#[test]
+fn overlay_rolls_up_on_escape_and_pane_focus() {
+    let ws = scripted(&["one", "two"]);
+    let one = ws.pane_for_terminal("one").expect("pane one");
+    let two = ws.pane_for_terminal("two").expect("pane two");
+    let mut chrome = Chrome::new(theme());
+    chrome.open_pane(one, "split");
+    chrome.open_pane(two, "split");
+    let esc = KeyInput {
+        key: KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+        bytes: Vec::new(),
+    };
+
+    // The overlay holds the keyboard in navigate mode, so the focused pane
+    // shows no cursor under it; Esc rolls it up.
+    chrome.sidebar.overlay = true;
+    chrome.mode = Mode::Navigate;
+    assert_eq!(chrome.cursor_pane(), None);
+    route_modal_key(&ws, &mut chrome, &esc);
+    assert!(!chrome.sidebar.overlay);
+    assert_eq!(chrome.mode, Mode::Terminal);
+    assert!(chrome.focused_pane().is_some());
+    assert_eq!(chrome.cursor_pane(), chrome.focused_pane());
+
+    // Focusing a pane rolls it up too, and hands the keyboard back.
+    chrome.sidebar.overlay = true;
+    chrome.mode = Mode::Navigate;
+    assert!(chrome.focus_pane(one));
+    assert!(!chrome.sidebar.overlay);
+    assert_eq!(chrome.mode, Mode::Terminal);
+
+    // Enter takes the row under the cursor, even with no row to take.
+    chrome.sidebar.overlay = true;
+    chrome.mode = Mode::Navigate;
+    let enter = KeyInput {
+        key: KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        bytes: Vec::new(),
+    };
+    route_modal_key(&ws, &mut chrome, &enter);
+    assert!(!chrome.sidebar.overlay);
+    assert_eq!(chrome.mode, Mode::Terminal);
+}
+
+#[test]
+fn overlay_rolls_up_once_the_terminal_takes_the_keys() {
+    // A menu or the settings raised over the overlay take the keys in their
+    // turn. Dismissed, they hand them to the terminal, and the next frame
+    // rolls the overlay up: left drawn, it took the terminal's clicks and
+    // hid its cursor.
+    let ws = scripted(&["one"]);
+    let pane = ws.pane_for_terminal("one").expect("pane one");
+    let mut chrome = Chrome::new(theme());
+    chrome.open_tab(pane, "");
+    let area = Rect::new(0, 0, 80, 20);
+    let esc = KeyInput {
+        key: KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+        bytes: Vec::new(),
+    };
+
+    for raised in [Mode::ContextMenu, Mode::Settings] {
+        chrome.sidebar.overlay = true;
+        chrome.mode = raised;
+        chrome.menu = (raised == Mode::ContextMenu).then(|| ContextMenuState {
+            kind: ContextMenuKind::Global,
+            anchor: (40, 5),
+            items: Vec::new(),
+            selected: 0,
+            item_rects: Vec::new(),
+        });
+        chrome.compute_view(&ws, area);
+        let terminal_area = chrome.view.terminal_area;
+        assert_eq!(chrome.view.sidebar_rect.width, 34, "{raised:?} over it");
+        assert_eq!(chrome.cursor_pane(), None, "{raised:?} over it");
+
+        route_modal_key(&ws, &mut chrome, &esc);
+        assert_eq!(chrome.mode, Mode::Terminal, "{raised:?} dismissed");
+        chrome.compute_view(&ws, area);
+        assert!(!chrome.sidebar.overlay, "{raised:?} dismissed");
+        assert_eq!(chrome.view.sidebar_rect.width, 0, "{raised:?} dismissed");
+        assert_eq!(
+            chrome.view.terminal_area, terminal_area,
+            "{raised:?} dismissed"
+        );
+        assert!(
+            matches!(hit_test(&chrome.view, 2, 5), Hit::Pane { .. }),
+            "{raised:?} dismissed: the pane takes the click"
+        );
+        assert_eq!(chrome.cursor_pane(), Some(pane), "{raised:?} dismissed");
     }
 }
 
@@ -1258,10 +1427,86 @@ fn hit_text(terminal: &Terminal<TestBackend>, rect: Rect) -> String {
     buffer_row_text(terminal, rect, rect.y)
 }
 
+/// 3.2b.2: a press on a menu bar title hits that title and opens its menu
+/// with the popup's corner under the title's first cell.
+#[test]
+fn menu_bar_titles_hit_and_open_under_their_cell() {
+    let ws = scripted(&["one"]);
+    let mut chrome = Chrome::new(theme());
+    let pane = ws.pane_for_terminal("one").expect("terminal pane");
+    chrome.open_tab(pane, "");
+    render_with_hits(&ws, &mut chrome, Rect::new(0, 0, 80, 20));
+
+    let titles = chrome.view.menu_title_hit_areas.clone();
+    assert_eq!(titles.len(), MenuBarMenu::ALL.len());
+    for (index, rect) in &titles {
+        let menu = MenuBarMenu::ALL[*index];
+        assert_eq!(
+            hit_test(&chrome.view, rect.x + 1, rect.y),
+            Hit::MenuTitle(*index)
+        );
+        let press = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: rect.x + 1,
+            row: rect.y,
+            modifiers: KeyModifiers::NONE,
+        };
+        assert_eq!(
+            route_mouse(&ws, &mut chrome, &press),
+            MouseOutcome::Handled,
+            "{menu:?}"
+        );
+        assert_eq!(chrome.mode, Mode::ContextMenu, "{menu:?}");
+        let open = chrome.menu.take().expect("menu open");
+        assert_eq!(open.kind, ContextMenuKind::MenuBar(menu));
+        assert_eq!(open.anchor, (rect.x, rect.bottom()), "{menu:?}");
+        chrome.mode = Mode::Terminal;
+    }
+    let (_, last) = titles.last().expect("a title");
+    assert_eq!(
+        hit_test(&chrome.view, last.right(), last.y),
+        Hit::MenuBarEmpty
+    );
+}
+
+#[test]
+fn status_count_click_opens_the_sidebar_overlay() {
+    let mut ws = scripted(&["alpha", "beta"]);
+    ws.daemon_mut().set_roster(json!({
+        "epoch": "e1",
+        "seq": 1,
+        "entries": [{
+            "entry_id": "run:beta",
+            "terminal": {"terminal_id": "beta", "backend": "native"},
+            "attention": {"attention_id": "att-beta", "kind": "actionable"}
+        }]
+    }));
+    ws.reconcile_subscribe_first()
+        .expect("install attention roster");
+    let alpha = ws.pane_for_terminal("alpha").expect("alpha pane");
+    let beta = ws.pane_for_terminal("beta").expect("beta pane");
+    let mut chrome = Chrome::new(theme());
+    chrome.open_tab(alpha, "alpha");
+    chrome.open_tab(beta, "beta");
+    chrome.activate_tab(0);
+    render_with_hits(&ws, &mut chrome, Rect::new(0, 0, 100, 20));
+
+    let status = chrome.view.status_rect;
+    let press = MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: status.x + 2,
+        row: status.y,
+        modifiers: KeyModifiers::NONE,
+    };
+    assert_eq!(route_mouse(&ws, &mut chrome, &press), MouseOutcome::Handled);
+    assert!(chrome.sidebar.overlay);
+    assert_eq!(chrome.mode, Mode::Navigate);
+}
+
 #[test]
 fn rendered_hits_match_drawn_cells() {
     // Twenty project cards overflow a 24-row screen's projects section, and
-    // twelve tabs overflow a 74-column bar, so every scroll affordance is
+    // twelve tabs overflow a 72-column bar, so every scroll affordance is
     // drawn.
     let mut ws = Workspace::scripted();
     ws.daemon_mut().set_roster(json!({
@@ -1287,8 +1532,8 @@ fn rendered_hits_match_drawn_cells() {
     let ws = with_projects(ws);
     let mut chrome = chrome_for(&ws, "term-alpha");
     chrome.sidebar.all_projects = true;
-    // Wide enough for the active row's whole title beside its needs-you
-    // word once the sessions scrollbar lane takes a column.
+    // Wide enough for the active row's definition once the terminals
+    // scrollbar lane takes a column.
     chrome.sidebar.width = 28;
     for n in 2..=12 {
         add_tab(&mut chrome, &format!("tab-{n:02}"));
@@ -1304,7 +1549,19 @@ fn rendered_hits_match_drawn_cells() {
     for (index, rect) in &view.tab_hit_areas {
         let name = tab_display_name(&chrome.tabs().tabs, *index).expect("tab name");
         let text = hit_text(&terminal, *rect);
-        assert!(text.contains(&name), "tab {index} at {rect:?}: {text:?}");
+        let project_id = ws.project_id().expect("project selected");
+        let project = project_label(&ws, &chrome, project_id).expect("project label");
+        let expected = format!("{project}:{name}");
+        let visible = text
+            .trim()
+            .trim_start_matches('…')
+            .trim_start_matches("⍾ ")
+            .trim_end_matches('…')
+            .trim();
+        assert!(
+            expected.starts_with(visible),
+            "tab {index} at {rect:?}: {text:?}, expected prefix of {expected:?}"
+        );
     }
     let arrows = [
         (view.tab_scroll_left_hit_area, "<"),
@@ -1328,8 +1585,7 @@ fn rendered_hits_match_drawn_cells() {
         cell(&terminal, divider_x, view.sidebar_rect.y).symbol(),
         "│"
     );
-    // Each section opens with its titled band; the menu band sits above the
-    // first and the footer band's toggle below the last.
+    // Each section opens with its titled band.
     for section in SidebarSection::ALL {
         let rect = view.sidebar_section_rects[section.index()];
         assert!(rect.height > 0, "{section:?} drawn");
@@ -1340,14 +1596,6 @@ fn rendered_hits_match_drawn_cells() {
             "{section:?} band at {band:?}: {text:?}"
         );
     }
-    let menu = view.projects_menu_hit_area.expect("menu control drawn");
-    assert_eq!(menu.y, view.sidebar_rect.y);
-    assert_eq!(hit_text(&terminal, menu), "[Menu]");
-    let new = view.projects_new_hit_area.expect("new control drawn");
-    assert_eq!(hit_text(&terminal, new), "[+]");
-    let toggle = view.sidebar_toggle_hit_area.expect("toggle drawn");
-    assert_eq!(toggle.y, view.sidebar_rect.bottom() - 1);
-    assert_eq!(hit_text(&terminal, toggle), "[«]");
     assert!(!view.project_hit_areas.is_empty());
     assert!(view.project_hit_areas.len() < 20, "projects overflow");
     for (id, rect) in &view.project_hit_areas {
@@ -1358,17 +1606,14 @@ fn rendered_hits_match_drawn_cells() {
     let (entry, rect) = view.agent_hit_areas.first().expect("agent row");
     assert_eq!(entry, "run:term-alpha");
     let text = hit_text(&terminal, *rect);
-    assert!(
-        text.contains("term-alpha"),
-        "agent row at {rect:?}: {text:?}"
-    );
-    // The cards and the twenty two-line sessions rows overflow their
-    // sections; the one machine row does not.
+    assert!(text.contains("Unknown"), "agent row at {rect:?}: {text:?}");
+    // The cards and the bare terminal rows overflow their sections;
+    // the one agent and machine row do not.
     assert_eq!(
         view.sidebar_scrollbar_hit_areas[SidebarSection::Machines.index()],
         None
     );
-    for section in [SidebarSection::Projects, SidebarSection::Sessions] {
+    for section in [SidebarSection::Projects, SidebarSection::Terminals] {
         let lane = view.sidebar_scrollbar_hit_areas[section.index()]
             .unwrap_or_else(|| panic!("{section:?} scrollbar"));
         for y in lane.y..lane.bottom() {
@@ -1376,14 +1621,20 @@ fn rendered_hits_match_drawn_cells() {
         }
     }
 
-    // Each tab shows one pane and no border, so the pane's metadata leads
-    // the status line, where its Read-only is the take-control button.
+    // Each tab shows one pane framed on all four edges, so the pane's
+    // metadata sits on its bottom edge, where its Read-only is the
+    // take-control button; the status row stays plain status.
     let indicator = view.control_indicator_hit_area.expect("control indicator");
-    assert_eq!(indicator.y, view.status_rect.y);
-    assert_eq!(hit_text(&terminal, indicator), " gclient · Read-only");
+    let pane = view.pane_infos.first().expect("pane info").rect;
+    assert_eq!(indicator.y, pane.bottom() - 1);
+    assert_ne!(indicator.y, view.status_rect.y);
+    assert_eq!(
+        hit_text(&terminal, indicator),
+        " Unknown (term-alpha) · Read-only"
+    );
     assert_eq!(
         usize::from(indicator.width),
-        display_width(" gclient · Read-only")
+        display_width(" Unknown (term-alpha) · Read-only ")
     );
 }
 
@@ -1402,12 +1653,13 @@ fn rendered_settings_hits_match_drawn_rows() {
     let labels = [
         "theme",
         "mouse capture",
-        "pane borders",
         "pane scrollbars",
         "pane gaps",
         "confirm close",
         "hide tab bar with one tab",
         "sidebar width",
+        "sidebar side",
+        "sidebar pinned",
         "right-click passthrough",
         "agent sort",
         "title scrolling",
@@ -1479,4 +1731,24 @@ fn open_pane_below_stacks_the_new_slot_under_the_focused_one() {
     empty.open_pane_below(beta, "beta");
     assert_eq!(empty.tabs().tabs.len(), 1);
     assert_eq!(empty.focused_pane(), Some(beta));
+}
+
+// The upstream parity case keeps its pinned identity above; this names the
+// new tab treatment directly for the Chrome refresh acceptance check.
+#[test]
+fn tab_bar_cuts_the_active_tab_out_in_panel_bg() {
+    let ws = scripted(&["test"]);
+    let mut chrome = chrome_for(&ws, "test");
+    add_tab(&mut chrome, "logs");
+    chrome.mode = Mode::Terminal;
+
+    let area = Rect::new(0, 0, 80, 20);
+    chrome.compute_view(&ws, area);
+    let terminal = render_full(&ws, &chrome, area);
+    let active = tab_view(&ws, &chrome, area).tab_hit_areas[1];
+    let style = cell(&terminal, active.x + 1, active.y).style();
+
+    assert_eq!(style.fg, Some(palette().text));
+    assert_eq!(style.bg, Some(palette().panel_bg));
+    assert!(style.add_modifier.contains(Modifier::BOLD));
 }

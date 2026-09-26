@@ -1,6 +1,6 @@
 //! 4.2.1: committed screen goldens for the whole gclient chrome.
 //!
-//! Six scripted workspace states render through the real `render_workspace`
+//! Scripted workspace states render through the real `render_workspace`
 //! into a 120x40 `TestBackend`, then serialise one line per row: the glyphs,
 //! then the run-length-encoded style of every cell with each colour normalised
 //! to its `theme::Palette` role name.
@@ -17,12 +17,15 @@
 //! Regenerate with:
 //!   `GOBBY_UPDATE_SCREENS=1 cargo nextest run -p gobby-client --test screens`
 
-use gobby_client::app::ControlState;
+use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use gobby_client::app::startup_stages::{ConnectionView, StageState, StartupStages};
+use gobby_client::app::{route_mouse, ContextMenuKind, ControlState};
 use gobby_client::daemon::{
-    Checkout, ProjectRow, SessionRow, SidebarRows, SourceStatus, WorktreeRow,
+    Checkout, ProjectRow, RunRow, SessionRow, SidebarRows, SourceStatus, WorktreeRow,
 };
 use gobby_client::theme::{Palette, Theme, ThemeKind};
 use gobby_client::ui::chrome::Mode;
+use gobby_client::ui::menu_bar::MenuBarMenu;
 use gobby_client::ui::{render_workspace, Chrome};
 use gobby_client::Workspace;
 use ratatui::backend::TestBackend;
@@ -33,6 +36,7 @@ use serde_json::json;
 use std::fmt::Write as _;
 use std::fs;
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 /// Every capture is taken at one size, so a golden diff is never a reflow.
 const WIDTH: u16 = 120;
@@ -44,13 +48,21 @@ const UPDATE_ENV: &str = "GOBBY_UPDATE_SCREENS";
 type ScriptedState = fn() -> (Workspace, Chrome);
 
 /// The scripted states, in the order the plan names them.
-const STATES: [(&str, ScriptedState); 6] = [
+const STATES: [(&str, ScriptedState); 14] = [
     ("empty_workspace", empty_workspace),
+    ("splash_connecting", splash_connecting),
+    ("splash_attach_running", splash_attach_running),
+    ("agent_rows", agent_rows),
     ("projects_agents", projects_agents),
     ("split_live", split_live),
+    ("daemon_unreachable", daemon_unreachable),
     ("help_dialog", help_dialog),
     ("label_ladder", label_ladder),
+    ("unnamed_pane", unnamed_pane),
     ("pane_edges", pane_edges),
+    ("menu_bar", menu_bar),
+    ("sidebar_overlay", sidebar_overlay),
+    ("status_segments", status_segments),
 ];
 
 // ---------------------------------------------------------------- the states
@@ -58,6 +70,55 @@ const STATES: [(&str, ScriptedState); 6] = [
 /// Nothing open: the empty state, an empty roster, no tabs.
 fn empty_workspace() -> (Workspace, Chrome) {
     (Workspace::scripted(), Chrome::dark())
+}
+
+fn splash_connecting() -> (Workspace, Chrome) {
+    let (ws, mut chrome) = empty_workspace();
+    let now = Instant::now();
+    chrome.connection = ConnectionView {
+        url: "http://127.0.0.1:60887".into(),
+        machine: "local".into(),
+        stages: Some(StartupStages::for_test(
+            [
+                StageState::Running {
+                    since: now - Duration::from_millis(9800),
+                },
+                StageState::Pending,
+                StageState::Pending,
+                StageState::Pending,
+            ],
+            now,
+        )),
+        now,
+        ..ConnectionView::default()
+    };
+    (ws, chrome)
+}
+
+fn splash_attach_running() -> (Workspace, Chrome) {
+    let (ws, mut chrome) = empty_workspace();
+    let now = Instant::now();
+    chrome.connection = ConnectionView {
+        url: "http://127.0.0.1:60887".into(),
+        machine: "local".into(),
+        daemon_version: Some("0.5.0".into()),
+        stages: Some(StartupStages::for_test(
+            [
+                StageState::Done {
+                    took: Duration::from_millis(300),
+                },
+                StageState::Running {
+                    since: now - Duration::from_millis(2100),
+                },
+                StageState::Pending,
+                StageState::Pending,
+            ],
+            now,
+        )),
+        now,
+        ..ConnectionView::default()
+    };
+    (ws, chrome)
 }
 
 /// The sidebar rows behind `projects_agents`: `alpha` on `main`, two ahead
@@ -102,7 +163,9 @@ fn project_rows() -> SidebarRows {
 
 /// Two projects with `alpha` focused, its worktree child listed under it,
 /// and one agent waiting for attention on `term-alpha`. No pane is open in
-/// chrome, which isolates the sidebar from the tab surface.
+/// chrome, which isolates the sidebar from the tab surface. The sidebar is
+/// pinned, and `split_live` and `help_dialog` keep it pinned; the other
+/// states draw the default frame with it hidden.
 fn projects_agents() -> (Workspace, Chrome) {
     let mut ws = Workspace::scripted();
     ws.daemon_mut().set_sidebar_rows(project_rows());
@@ -121,7 +184,62 @@ fn projects_agents() -> (Workspace, Chrome) {
         ws.open_terminal(terminal_id, "native", "epoch")
             .expect("open terminal");
     }
-    (ws, Chrome::dark())
+    let mut chrome = Chrome::dark();
+    chrome.sidebar.pinned = true;
+    (ws, chrome)
+}
+
+fn agent_rows() -> (Workspace, Chrome) {
+    let mut ws = Workspace::scripted();
+    let mut rows = project_rows();
+    rows.runs.insert(
+        "proj-alpha".into(),
+        vec![RunRow {
+            run_id: "run-long".into(),
+            agent_name: Some("backend-developer-workflow-run".into()),
+            provider: Some("codex".into()),
+            model: Some("gpt-5".into()),
+            terminal_id: Some("term-agent".into()),
+            ..RunRow::default()
+        }],
+    );
+    rows.sessions.insert(
+        "proj-alpha".into(),
+        vec![SessionRow {
+            id: "sess-long".into(),
+            reference: Some("#123".into()),
+            title: Some("Agent row preview".into()),
+            ..SessionRow::default()
+        }],
+    );
+    ws.daemon_mut().set_sidebar_rows(rows);
+    ws.daemon_mut().set_roster(json!({
+        "epoch": "e1",
+        "seq": 1,
+        "entries": [{
+            "entry_id": "run:term-agent",
+            "run_id": "run-long",
+            "session_id": "sess-long",
+            "provider": "codex",
+            "model": "gpt-5",
+            "task": {"ref": "#123", "title": "Implement the full chrome layout with a long scrolling task title"},
+            "terminal": {"terminal_id": "term-agent", "backend": "native"}
+        }]
+    }));
+    ws.select_project("proj-alpha");
+    ws.reconcile_subscribe_first().expect("install roster");
+    ws.open_terminal("term-agent", "native", "epoch")
+        .expect("open agent terminal");
+    ws.open_terminal("term-bare", "native", "epoch")
+        .expect("open bare terminal");
+    let bare = ws.pane_for_terminal("term-bare").expect("bare pane");
+    let pane = ws.pane_mut(bare);
+    pane.label = None;
+    pane.command = Some("nvim".into());
+    let mut chrome = Chrome::dark();
+    chrome.sidebar.pinned = true;
+    chrome.sidebar.width = 34;
+    (ws, chrome)
 }
 
 /// Two live panes split in the first tab, with a second tab behind them.
@@ -141,6 +259,15 @@ fn split_live() -> (Workspace, Chrome) {
     chrome.open_tab(alpha, "second");
     chrome.activate_tab(0);
     assert!(chrome.focus_pane(beta), "focus term-beta");
+    (ws, chrome)
+}
+
+fn daemon_unreachable() -> (Workspace, Chrome) {
+    let (ws, mut chrome) = split_live();
+    let now = Instant::now();
+    chrome.connection.now = now;
+    chrome.connection.url = "http://127.0.0.1:60887".into();
+    chrome.connection.retry_at = Some(now + Duration::from_secs(3));
     (ws, chrome)
 }
 
@@ -196,6 +323,68 @@ fn label_ladder() -> (Workspace, Chrome) {
     (ws, chrome)
 }
 
+fn unnamed_pane() -> (Workspace, Chrome) {
+    let mut ws = Workspace::scripted();
+    ws.daemon_mut()
+        .set_roster(json!({"epoch": "e1", "seq": 1, "entries": []}));
+    ws.reconcile_subscribe_first().expect("install roster");
+    let pane_id = ws
+        .open_terminal("unnamed-terminal", "native", "epoch")
+        .expect("open terminal");
+    let pane = ws.pane_mut(pane_id);
+    pane.label = None;
+    pane.command = Some("zsh".to_owned());
+    let mut chrome = Chrome::dark();
+    chrome.open_pane(pane_id, "alpha");
+    (ws, chrome)
+}
+
+fn status_segments() -> (Workspace, Chrome) {
+    let mut ws = Workspace::scripted();
+    let mut rows = SidebarRows::default();
+    rows.runs.insert(
+        "alpha".to_string(),
+        vec![RunRow {
+            run_id: "run-alpha".to_string(),
+            effective_reasoning_effort: Some("xhigh".to_string()),
+            ..RunRow::default()
+        }],
+    );
+    ws.daemon_mut().set_sidebar_rows(rows);
+    ws.daemon_mut().set_roster(json!({
+        "epoch": "e1",
+        "seq": 1,
+        "entries": [
+            {
+                "entry_id": "run:term-alpha",
+                "run_id": "run-alpha",
+                "terminal": {"terminal_id": "term-alpha", "backend": "native"},
+                "provider": "codex",
+                "model_display_name": "Fable 5.1",
+                "context_percent": 63,
+                "tokens_used": 12345
+            },
+            {
+                "entry_id": "run:term-beta",
+                "terminal": {"terminal_id": "term-beta", "backend": "native"},
+                "attention": {"attention_id": "att-1", "kind": "actionable"}
+            }
+        ]
+    }));
+    ws.reconcile_subscribe_first().expect("install roster");
+    let alpha = ws
+        .open_terminal("term-alpha", "native", "epoch")
+        .expect("open focused agent");
+    let beta = ws
+        .open_terminal("term-beta", "native", "epoch")
+        .expect("open attention agent");
+    let mut chrome = Chrome::dark();
+    chrome.open_tab(alpha, "alpha");
+    chrome.open_tab(beta, "beta");
+    chrome.activate_tab(0);
+    (ws, chrome)
+}
+
 /// The pane edges with pane gaps off, where they share lines: two panes
 /// stacked in one tab.
 ///
@@ -203,7 +392,7 @@ fn label_ladder() -> (Workspace, Chrome) {
 /// name. Its lease is lost, so its metadata reads `Read-only` in the warning
 /// tone. It shares its bottom line with the pane below, so that metadata sits
 /// top-right beside the title. The focused lower pane runs under tmux and
-/// keeps `tmux · Focused` bottom-right. The Sessions row puts the same title
+/// keeps `tmux · Focused` bottom-right. The Agents row puts the same title
 /// behind its stationary `#1742:` prefix.
 fn pane_edges() -> (Workspace, Chrome) {
     let mut ws = Workspace::scripted();
@@ -225,6 +414,7 @@ fn pane_edges() -> (Workspace, Chrome) {
         "entries": [{
             "entry_id": "session:sess-alpha",
             "session_id": "sess-alpha",
+            "provider": "codex",
             "terminal": {"terminal_id": "term-alpha", "backend": "native"}
         }]
     }));
@@ -236,6 +426,8 @@ fn pane_edges() -> (Workspace, Chrome) {
         .expect("open term-beta");
     let alpha = ws.pane_for_terminal("term-alpha").expect("term-alpha pane");
     let beta = ws.pane_for_terminal("term-beta").expect("term-beta pane");
+    ws.pane_mut(alpha).label = None;
+    ws.pane_mut(beta).label = None;
     ws.pane_mut(alpha).control = ControlState::LeaseLost;
 
     let mut chrome = Chrome::dark();
@@ -246,11 +438,66 @@ fn pane_edges() -> (Workspace, Chrome) {
     (ws, chrome)
 }
 
+/// The split with its sidebar opened as the overlay rather than pinned: the
+/// overlay lies over the panes' left 34 columns with an accent edge and holds
+/// the keyboard, and the tab labels move to the bar's far end. Set after
+/// `split_live` returns, since its `focus_pane` rolls an overlay up.
+fn sidebar_overlay() -> (Workspace, Chrome) {
+    let (ws, mut chrome) = split_live();
+    chrome.sidebar.pinned = false;
+    chrome.sidebar.overlay = true;
+    chrome.mode = Mode::Navigate;
+    (ws, chrome)
+}
+
 /// The keybind help dialog over the split. `render_workspace` dims the chrome
 /// behind the mode overlay, so this capture also pins the dimmed background.
 fn help_dialog() -> (Workspace, Chrome) {
     let (ws, mut chrome) = split_live();
     chrome.mode = Mode::KeybindHelp;
+    (ws, chrome)
+}
+
+/// One tab with the View menu open, opened the way a click on its title
+/// opens it: the open title reads reversed and the popup hangs under it.
+fn menu_bar() -> (Workspace, Chrome) {
+    let mut ws = Workspace::scripted();
+    let pane = ws
+        .open_terminal("term-alpha", "native", "epoch")
+        .expect("open term-alpha");
+    let mut chrome = Chrome::dark();
+    chrome.open_tab(pane, "");
+    let area = Rect::new(0, 0, WIDTH, HEIGHT);
+    chrome.compute_view(&ws, area);
+    let mut terminal = Terminal::new(TestBackend::new(WIDTH, HEIGHT)).expect("test backend");
+    let mut hits = None;
+    terminal
+        .draw(|frame| hits = Some(render_workspace(frame, &ws, &chrome)))
+        .expect("draw frame");
+    chrome.view.apply_hits(hits.expect("frame drawn"));
+    let view = MenuBarMenu::ALL
+        .iter()
+        .position(|menu| *menu == MenuBarMenu::View)
+        .and_then(|index| {
+            chrome
+                .view
+                .menu_title_hit_areas
+                .iter()
+                .find(|(drawn, _)| *drawn == index)
+        })
+        .map(|(_, rect)| *rect)
+        .expect("View title drawn");
+    let press = MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: view.x + 1,
+        row: view.y,
+        modifiers: KeyModifiers::NONE,
+    };
+    route_mouse(&ws, &mut chrome, &press);
+    assert_eq!(
+        chrome.menu.as_ref().map(|menu| &menu.kind),
+        Some(&ContextMenuKind::MenuBar(MenuBarMenu::View))
+    );
     (ws, chrome)
 }
 
@@ -445,17 +692,51 @@ fn glyph_rows(capture: &str) -> Vec<&str> {
     capture
         .lines()
         .filter_map(|line| line.split_once(" |"))
-        .map(|(_, glyphs)| glyphs)
+        .map(|(_, glyphs)| glyphs.strip_suffix('|').unwrap_or(glyphs))
         .collect()
 }
 
-/// 3.1.1: the sidebar stacks the menu band, the machines, the projects, the
-/// sessions, and the footer band. A project is a one-line card (state
+#[test]
+fn agent_rows_golden() {
+    let theme = Theme::new(ThemeKind::Dark);
+    let rendered = deterministic_capture("agent_rows", agent_rows, &theme);
+    let rows = glyph_rows(&rendered);
+    assert!(rows[8].contains("backend-developer-work… (#123)"));
+    assert!(rows[9].contains("Task #123 - Implement the full"));
+    assert!(rows[10].contains("gpt-5"));
+    assert!(
+        rows[24].contains("○ nvim"),
+        "foreground app: {:?}",
+        rows[24]
+    );
+    assert!(rows[25].contains("gclient"), "backend: {:?}", rows[25]);
+    assert!(!rendered.contains("term-bare"), "pane ID is not row copy");
+    let slug_style = rendered
+        .lines()
+        .find(|line| line.starts_with("10 :"))
+        .expect("model slug style");
+    assert!(slug_style.contains("overlay0/panel_bg*5"));
+    assert!(!slug_style.contains("overlay0/panel_bg+d"));
+}
+
+#[test]
+fn status_segments_golden() {
+    let theme = Theme::new(ThemeKind::Dark);
+    let rendered = deterministic_capture("status_segments", status_segments, &theme);
+    let rows = glyph_rows(&rendered);
+    let status = rows[usize::from(HEIGHT - 1)];
+    assert!(status.contains("1 need you"), "{status:?}");
+    assert!(status.contains("fable-5.1-xhigh"), "{status:?}");
+    assert!(status.contains("63% │ 12,345"), "{status:?}");
+    assert!(status.contains("prefix ctrl+b"), "{status:?}");
+}
+
+/// 3.1.1: the pinned sidebar stacks the machines, the projects and the
+/// agents under the menu-bar row. A project is a one-line card (state
 /// glyph, name, branch with the ahead/behind counts, fold marker) that lists
 /// its worktrees only while expanded; the `working` filter hides a project
-/// with nothing live; the attention entry lists under the sessions band with
-/// its reason; the collapsed rail numbers the cards and the sessions. The
-/// committed capture pins the exact layout.
+/// with nothing live; the attention entry lists under the agents band.
+/// The committed capture pins the exact layout.
 #[test]
 fn projects_agents_golden() {
     let theme = Theme::new(ThemeKind::Dark);
@@ -467,12 +748,14 @@ fn projects_agents_golden() {
             .unwrap_or_else(|| panic!("no row contains {needle:?}\n{rendered}"))
     };
 
-    assert!(
-        rows[0].starts_with(" [Menu]") && rows[0].contains("[+] "),
-        "menu band: {:?}",
-        rows[0]
+    // Row 0 is the menu bar; the machines band opens the sidebar under it.
+    assert_eq!(
+        rows[0].trim_end(),
+        " Gobby  File  Edit  View  Window  Agent  Help",
+        "menu-bar row"
     );
     let machines = row_containing(" Machines");
+    assert_eq!(machines, 1, "the machines band tops the sidebar");
     let projects = row_containing(" Projects");
     assert!(
         rows[projects].contains("[working]"),
@@ -496,32 +779,32 @@ fn projects_agents_golden() {
         !rendered.contains("○ beta"),
         "the working filter hides a project with nothing live\n{rendered}"
     );
-    let sessions = row_containing(" Sessions");
+    let sessions = row_containing(" Agents");
     assert_eq!(
         sessions,
         alpha + 2,
-        "a blank row separates the cards from the sessions band"
+        "a blank row separates the cards from the agents band"
     );
     assert!(
         rows[sessions].contains("[view]"),
-        "sessions band: {:?}",
+        "agents band: {:?}",
         rows[sessions]
     );
-    let entry = row_containing("term-alpha");
+    let entry = row_containing("Unknown");
     assert_eq!(
         entry,
         sessions + 1,
-        "the attention entry lists under sessions"
+        "the attention entry lists under agents"
     );
     assert!(
-        rows[entry].contains("⍾ term-alpha · needs you"),
-        "a needs-you row carries its reason: {:?}",
+        rows[entry].contains("⍾ Unknown"),
+        "an attention row carries its state glyph: {:?}",
         rows[entry]
     );
+    assert!(rows[entry + 1].contains("No assigned task"));
     assert!(
-        rows[rows.len() - 1].contains("[«] │"),
-        "footer band: {:?}",
-        rows[rows.len() - 1]
+        !rendered.contains("[«]") && !rendered.contains("[Menu]"),
+        "no footer or menu band remains\n{rendered}"
     );
 
     // Expanding the card unfolds its worktree under it and flips the marker.
@@ -538,22 +821,6 @@ fn projects_agents_golden() {
         expanded_rows[alpha + 1].starts_with("   └─ ○ feature · #123"),
         "worktree line: {:?}",
         expanded_rows[alpha + 1]
-    );
-
-    let (ws, mut chrome) = projects_agents();
-    chrome.sidebar.collapsed = true;
-    let rail = capture("projects_agents", &render(&ws, &mut chrome), &theme);
-    assert!(
-        rail.lines().any(|line| line.contains("|1 ⍾")),
-        "the rail numbers the first project\n{rail}"
-    );
-    assert!(
-        rail.lines().any(|line| line.contains("|2 ○")),
-        "the rail numbers the sessions\n{rail}"
-    );
-    assert!(
-        rail.lines().any(|line| line.contains("| » ")),
-        "the rail carries the expand toggle\n{rail}"
     );
 
     let committed = fs::read_to_string(fixture_path("projects_agents"))

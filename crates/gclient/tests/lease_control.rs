@@ -158,13 +158,13 @@ async fn a_refused_take_keeps_take_back_and_names_the_holder() {
         // to finish before queuing take-back; the biased loop will then apply
         // that outcome before this input and make the test independent of
         // scheduler timing.
-        for _ in 0..1_024 {
-            if observed_daemon.pending_counts().2 == 0 {
-                break;
+        timeout(Duration::from_secs(5), async {
+            while observed_daemon.pending_counts().2 != 0 {
+                tokio::task::yield_now().await;
             }
-            tokio::task::yield_now().await;
-        }
-        assert_eq!(observed_daemon.pending_counts().2, 0);
+        })
+        .await
+        .expect("refused take-control reply settles");
         send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
         send_key(&input_tx, KeyCode::Char('A'), KeyModifiers::SHIFT).await;
         wait_for_websocket_requests(&mock, "terminal_take_control", 2).await;
@@ -568,9 +568,15 @@ async fn a_timed_out_request_names_itself_and_keeps_the_pane() {
     let (input_tx, input_rx) = mpsc::channel(256);
 
     let driver = async {
-        // The startup attach is withheld; its deadline passes before the
-        // loop notices the closed input, so the exit is the input's.
+        // The startup attach is withheld. Let its deadline settle before
+        // closing input, which otherwise wins the loop's biased select.
         wait_for_websocket_requests(&mock, "terminal_attach", 1).await;
+        tokio::time::pause();
+        tokio::time::advance(Duration::from_secs(5) + Duration::from_millis(100)).await;
+        for _ in 0..64 {
+            tokio::task::yield_now().await;
+        }
+        tokio::time::resume();
         drop(input_tx);
     };
     let mut switch = TerminalGuard::recording().0;

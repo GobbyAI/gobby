@@ -72,15 +72,8 @@ impl fmt::Display for Backend {
 /// daemon (#22573), so the only honest offer is to take control again.
 pub const HOST_GRANT_UNAVAILABLE: &str = "terminal did not grant input; take control again";
 
-/// The last rung of the pane label ladder (D1): what a terminal is called once
-/// it has no name of its own and no foreground command the daemon could read.
-/// A literal, so no rung of the ladder can be an id.
-pub const UNNAMED_PANE: &str = "shell";
-
-/// A UUID reduced to its leading segment, for the surfaces whose subject *is*
-/// an id: the destroy-orphans dialog, where a dead row has nothing else left to
-/// tell it apart, and machine and session ids with no name yet. Never a pane
-/// label — `display_name` is the ladder that keeps ids out of the chrome.
+/// The first eight characters of a terminal ID, used when no name or command
+/// is available for a pane or a terminal row.
 pub fn short_terminal_id(terminal_id: &str) -> &str {
     match terminal_id.char_indices().nth(8) {
         Some((split, _)) => &terminal_id[..split],
@@ -148,8 +141,10 @@ pub struct Pane {
     pub session_id: Option<String>,
     /// The command in this terminal's foreground, as the daemon observed it:
     /// `zsh` at an idle prompt, `nvim` or `cargo` while a job holds it. Rung 2
-    /// of the label ladder, and the last rung with any information in it.
+    /// of the label ladder, before the short terminal ID fallback.
     pub command: Option<String>,
+    /// The daemon's terminal lifecycle state, when its inventory supplied one.
+    pub terminal_state: Option<String>,
     pub expected_host_epoch: String,
     pub control: ControlState,
     // Chrome consumes this presentation mirror directly. AttachState remains
@@ -237,6 +232,7 @@ impl Pane {
             address: None,
             session_id: None,
             command: None,
+            terminal_state: None,
             expected_host_epoch: epoch,
             control: ControlState::Observe,
             live: true,
@@ -294,14 +290,13 @@ impl Pane {
         pane
     }
 
-    /// What every chrome surface calls a bare terminal, by the D1 ladder: the
-    /// name the user gave the pane, then the command in its foreground, then
-    /// the literal `shell`. A terminal running a Gobby session is named by
-    /// that session's title on the sidebar instead, so the provider is no
-    /// rung here.
+    /// What every chrome surface calls a bare terminal: the name the user gave
+    /// the pane, then the command in its foreground, then a short terminal ID.
+    /// A terminal running a Gobby session is named by that session's title on
+    /// the sidebar instead, so the provider is no rung here.
     ///
-    /// The last rung is a literal so no rung can ever be an id. The daemon's
-    /// own `title` is no rung and the client does not keep it: it comes from
+    /// The ID fallback distinguishes unnamed terminals. The daemon's own
+    /// `title` is no rung and the client does not keep it: it comes from
     /// `window_name or pane_title or session_name`, which yields `zsh` for one
     /// pane and `75`, `[tmux]` or a whole session banner for the next.
     pub fn display_name(&self) -> &str {
@@ -311,7 +306,7 @@ impl Pane {
         if let Some(command) = self.command.as_deref().filter(|name| !name.is_empty()) {
             return command;
         }
-        UNNAMED_PANE
+        short_terminal_id(&self.terminal_id)
     }
 
     pub fn is_observe(&self) -> bool {
@@ -651,13 +646,14 @@ mod tests {
         assert_eq!(pane.displayed_control(), ControlState::Held);
         // The edge metadata agrees: asking is the normal focused state, even
         // while the request is the take-back a Read-only pane offered.
-        let reads = |pane: &Pane| crate::ui::pane_chrome::pane_metadata(pane, true).text;
-        assert_eq!(reads(&pane), "gclient · Focused");
+        let ws = crate::app::Workspace::scripted();
+        let reads = |pane: &Pane| crate::ui::pane_chrome::pane_footer(&ws, pane, true).left;
+        assert_eq!(reads(&pane), "terminal · Focused");
         pane.control = ControlState::LeaseLost;
         pane.take_back = true;
-        assert_eq!(reads(&pane), "gclient · Focused");
+        assert_eq!(reads(&pane), "terminal · Focused");
         pane.control_request = None;
-        assert_eq!(reads(&pane), "gclient · Read-only");
+        assert_eq!(reads(&pane), "terminal · Read-only");
     }
 
     #[test]

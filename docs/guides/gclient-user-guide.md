@@ -46,74 +46,29 @@ section.
 
 Logs go to `~/.gobby/logs/gclient.log`.
 
-## Command mode
-
-`gclient <verb>` performs one workspace action and exits without opening the TUI. Use
-`gclient help` for the current syntax. Commands use the daemon URL and local CLI
-token from the normal Gobby configuration; `--daemon-url` and `--token-file` override
-them. `--json` prints the daemon reply result as JSON.
-
-| Verb | Action |
-| --- | --- |
-| `list [--workspace REF]` | List tabs and panes in a workspace. |
-| `new-tab --project NAME\|ID [--name TITLE] [--workspace REF]` | Create a tab and its first pane. |
-| `split [REF] --right\|--down [--cmd TEXT]` | Split a pane; optional text is submitted in the new pane. |
-| `resize [REF] RATIO` | Set the parent split ratio (between zero and one). |
-| `title [REF] TEXT` | Rename a tab or pane. |
-| `select [REF]` | Set the focus hint for the next client window. |
-| `send-keys [REF] TEXT [--enter]` | Send text to a pane, optionally submitting it. |
-| `capture-pane [REF] [--lines N]` | Print plain pane text (50 lines by default). |
-| `wait-for-output [REF] --pattern REGEX [--timeout S] [--interval S]` | Wait for terminal output to match a pattern. |
-| `kill [REF]` | Close a tab or pane. |
-| `help` | Show command syntax. |
-
-When `title` or `kill` receives a UUID tab ref, add `--kind tab` to distinguish it
-from a pane UUID. For `select` with a pane UUID outside that pane, supply the tab
-with `--tab-ref TAB` and the workspace with `--workspace REF`; inside the pane,
-`GOBBY_TAB_ID` supplies the tab.
-
-Inside a gclient pane, an omitted pane `REF` defaults to `GOBBY_PANE_REF`, and an
-omitted `--workspace` defaults to `GOBBY_WORKSPACE_ID`. Outside a pane, supply those
-values explicitly. Pane and tab refs use the daemon's normal grammar: a UUID or a
-numeric `w`, `n:w`, `n:w:t`, or `n:w:t:p` ref.
-
-Exit status is `0` for success, `1` for a refused workspace operation or a timed-out
-wait, `2` for usage errors or a wait whose pane disappeared, and `3` for connection,
-token, HTTP, or protocol failures. A refused workspace operation prints
-`code: reason` on stderr.
-
 ## Layout
 
 ```text
-┌ sidebar ───────────┬ tab bar: tab-0:0:0  tab-0:0:1 Z  +  ────────┐
-│ [Menu]         [+] │ ┌ ▸ zsh ──────────┐┌ claude ──────────────┐ │
-│                    │ │  pane (focused) ││   pane               │ │
-│ Machines           │ │                 ││                      │ │
-│ ▶ mbp · local      │ └─ tmux · Focused ┘└───────────── gclient ┘ │
-│ └─ ○ studio        │                                             │
-│                    │                                             │
-│ Projects [working] │                                             │
-│ ▶ gobby (0.5.0 ↑2)▾│                                             │
-│   ├─ ○ fix-y · #12 │                                             │
-│                    │                                             │
-│ Sessions    [view] │                                             │
-│ ⍾ #123: fix y      │                                             │
-│   0:0:1:0 · codex  │                                             │
-│ ○ zsh              │                                             │
-│   0:0:0:1 · tmux   │                                             │
-│                [«] │                                             │
-├────────────────────┴─────────────────────────────────────────────┤
-│ prefix ctrl+]                                                    │
-└──────────────────────────────────────────────────────────────────┘
+ 0 |
+ 1 | tab-0:0:0  tab-0:0:1 Z  +
+ 2 |┌ ▸ zsh ───────────────────────┐┌ claude ──────────────────────────┐
+ 3 |│  pane (focused)              ││  pane                            │
+ 4 |│                              ││                                  │
+ 5 |│                              ││                                  │
+ 6 |└────────────── tmux · Focused ┘└───────────────────────── gclient ┘
+ 7 | prefix ctrl+b
 ```
 
-**Sidebar.** A menu band, three sections, and a footer band, with a blank row
-above each section. Every clickable control is bracketed. Machines and Projects
-together never take more than the top half of the sidebar (each scrolls inside
-its cap); Sessions takes the rest.
+This is the frame gclient starts with, row by row. Row 0 stays blank, the tab
+bar is row 1, every pane draws all four edges, and the status line is the last
+row. A pinned sidebar takes the left columns from row 1 down to the status
+line, and the tab bar and panes move right to make room.
 
-- *Menu band* (accent colour): `[Menu]` opens the global menu, `[+]` registers
-  a project.
+**Sidebar.** Hidden when gclient starts; `prefix+b` pins it beside the tabs and
+panes, and again hides it. Three sections, each under a one-row band, with a
+blank row above the Projects and Sessions bands. Every clickable control is
+bracketed. Machines and Projects together never take more than the top half of
+the sidebar (each scrolls inside its cap); Sessions takes the rest.
 - *Machines* lists this machine (the hub, by host name) first, then every other
   machine the daemon knows nested under it with `├─`/`└─`, each with the most
   urgent state of the terminals running there. At most four rows show before
@@ -133,8 +88,11 @@ its cap); Sessions takes the rest.
   `address · provider · model effort · remote machine`, the model spelled as
   its provider prints it. Bare terminals with no session are listed by their
   foreground command over `address · backend`, and answer to click and
-  right-click the same way a session row does. In the all-projects view the
-  fixed prefix is `project#ref:`; in the current-project view it is `#ref:`.
+  right-click the same way a session row does. Selecting one in another
+  workspace switches to that workspace and focuses its existing pane. If the
+  terminal has gone away, the row refreshes and a warning explains that it is
+  unavailable. In the all-projects view the fixed prefix is `project#ref:`;
+  in the current-project view it is `#ref:`.
   Only the title after that prefix scrolls. By default it rests at the start,
   walks left to its end, parks, and jumps home; every scrolling row and pane
   header shares one clock. Settings can reverse that direction or turn it off. The
@@ -144,7 +102,6 @@ its cap); Sessions takes the rest.
   agent runs nested under the session that spawned them) or `priority`
   (flattened urgency order). A `✓` marks the value in force, and choosing it
   again closes the menu unchanged.
-- *Footer band*: `[«]` collapses the sidebar.
 
 State glyphs, on machine, project, and session rows alike:
 
@@ -160,10 +117,6 @@ State glyphs, on machine, project, and session rows alike:
 
 Only needs-you rows carry a word. A font without U+237E shows a box in place of
 `⍾`; the words still identify the row.
-
-Collapse the sidebar with `prefix+b` or `[«]`. Collapsed, it becomes a narrow
-rail: a dot per machine, then numbered project cards, then numbered sessions,
-each list under a `─` rule, with `»` on the last row to expand.
 
 **Tab bar.** One row of tabs for the focused project. A registered project opens
 as its own workspace, so the address is hub, then workspace, then tab, then pane:
@@ -195,11 +148,9 @@ and the next step.
 **Status line.** This line carries only window-global state: the prefix chord,
 shifted when the client runs inside tmux, the current mode when it is not plain
 terminal mode, and `Daemon unreachable.` during an outage. Pane-local title,
-backend, and control state stay on that pane's borders. A focused pane with no
-border at all (the only pane in the tab, or `pane borders` off) has nowhere
-else to put them, so the status line leads with its metadata and ends with its
-title. A focused pane too narrow to fit its metadata on its edge hands only the
-metadata here. Metadata is clickable only while it names an exception: clicking
+backend, and control state stay on that pane's borders. Every pane, a lone one
+included, draws all four edges; a focused pane too narrow to fit its metadata
+on its edge hands the metadata here, where it leads the line. Metadata is clickable only while it names an exception: clicking
 `Read-only` or `Uncertain`, on a border or here, takes control. `Focused` is a
 condition, not a button.
 
@@ -588,7 +539,6 @@ the `done` and `close` buttons. Rows are clickable. Every change is written to
 | --- | --- | --- |
 | theme | `dark` | `dark` or `light` |
 | mouse capture | on | Off leaves selection and scrolling to your terminal emulator |
-| pane borders | on | Draw borders around panes |
 | pane scrollbars | on | Draw a scrollbar lane beside scrolled panes |
 | pane gaps | on | Leave a gap between split panes |
 | confirm close | on | Ask before closing a tab or project |
@@ -599,23 +549,22 @@ the `done` and `close` buttons. Rows are clickable. Every change is written to
 | title scrolling | `left` | `off`, `left`, or `right`: which way over-long session titles and pane headers scroll, on one shared ticker |
 
 The file is optional and every key in it is optional; an unknown key is a
-startup error that names the line. The sidebar writes three keys of its own as
-you use it: `sidebar_collapsed`, `project_order` (project ids in the order you
-dragged them; projects it does not name follow in the daemon's order), and the
-`[ui.project_labels]` table (your label per project id).
+startup error that names the line. The retired keys `pane_borders` and
+`sidebar_collapsed` still load and are dropped on the next save. The sidebar
+writes two keys of its own as you use it: `project_order` (project ids in the
+order you dragged them; projects it does not name follow in the daemon's
+order) and the `[ui.project_labels]` table (your label per project id).
 
 ```toml
 [ui]
 theme = "dark"
 mouse_capture = true
-pane_borders = true
 pane_scrollbars = true
 pane_gaps = true
 confirm_close = true
 hide_tab_bar_when_single_tab = false
 sidebar_width = 26
 title_scrolling = "left"
-sidebar_collapsed = false
 project_order = ["4b1c…", "9e2f…"]
 
 [ui.project_labels]
@@ -673,14 +622,12 @@ Mouse support is on by default; turn it off with `--no-mouse` or the
 | Wheel over the sidebar | Scroll the section under the pointer |
 | Click a tab, the new-tab button, or the scroll arrows | Switch, open, or scroll tabs |
 | Drag a tab onto another tab | Reorder tabs, including when the terminal delivers only press and release events |
-| Click `[Menu]` / `[+]` on the menu band | Open the global menu / add a project |
 | Click a project card / worktree row | Focus the project (expanding its card) / open the worktree |
 | Drag a project card | Reorder projects |
 | Click a `▸`/`▾` fold mark | Fold or unfold the card's worktrees |
 | Click `[working]` / `[all]` on the Projects band | Switch the projects filter |
 | Click `[view]` on the Sessions band | Open the menu holding the sessions scope and order |
 | Click a session or bare terminal row | Focus its pane (a needs-you row's question is already on screen) |
-| Click `[«]` on the footer band | Collapse the sidebar |
 | Click the control indicator | Take, release, or take back control |
 | Drag the sidebar edge or a split border | Resize |
 | Click or drag a scrollbar | Jump or scroll |
@@ -701,7 +648,7 @@ to keep a gesture for the client instead.
 | Project card | rename, close, new worktree, open worktree…, collapse / expand |
 | Worktree row | rename, close, delete worktree checkout… |
 | Session or bare terminal row | focus, open in new tab, respond (when it needs you), mark seen, take / release control, close terminal / destroy orphaned terminal (when orphaned) |
-| Empty tab bar, empty sidebar, or `[Menu]` | new terminal, new tab, new project, settings, keybinding help, alerts…, reload config, toggle sidebar, destroy orphaned terminals…, detach, quit |
+| Empty tab bar or empty sidebar | new terminal, new tab, new project, settings, keybinding help, alerts…, reload config, toggle sidebar, destroy orphaned terminals…, detach, quit |
 | `[view]` on the Sessions band (left click) | this project / all projects, grouped / priority |
 
 `send right-clicks to pane` flips a per-pane flag so the pane's application gets
@@ -725,8 +672,8 @@ after a daemon restart. The client writes nothing about layout.
 | Where | What it holds |
 | --- | --- |
 | Workspace rows on the daemon | Tabs, split layout, tab and pane names, the project's default workspace (distinct from the focused project), and the focus hints (focused project, tab, and pane) |
-| `~/.gobby/client/prefs.toml` | Settings, plus `sidebar_collapsed`, `project_order`, and `[ui.project_labels]`, which the sidebar writes as you change them |
-| The window's own memory | Zoom, scrollback position, copy mode, and the machine, projects, and sessions filters |
+| `~/.gobby/client/prefs.toml` | Settings, plus `project_order` and `[ui.project_labels]`, which the sidebar writes as you change them |
+| The window's own memory | Zoom, whether the sidebar is pinned, scrollback position, copy mode, and the machine, projects, and sessions filters |
 
 On launch the client attaches the workspace — the project's own workspace when
 the launch names a registered project and no `--workspace` was given — and opens
@@ -790,8 +737,8 @@ both from one place:
   example one you started by hand and detached from. Gobby-owned agent sessions
   are always detached and are never listed.
 
-`destroy orphaned terminals…` on the global menu (right-click empty chrome, or
-the sidebar's `[Menu]` control) fetches the current candidates from the daemon and
+`destroy orphaned terminals…` on the global menu (right-click empty chrome)
+fetches the current candidates from the daemon and
 opens a checklist with every row checked. Each row shows the session name or
 title, the backend, the Gobby session that still owns it (or `no session`), and
 the time it was last seen. `j` / `k` or the arrows move, `space` toggles a row,

@@ -123,7 +123,7 @@ pub const BINDINGS: &[BindingSpec] = &[
     spec("help", "Open keybinding help", &["prefix+?"]),
     spec("settings", "Open settings", &["prefix+s"]),
     spec("new_terminal", "Open a new terminal", &[]),
-    spec("new_project", "Add a project", &["prefix+shift+n"]),
+    spec("new_project", "Add a workspace", &["prefix+shift+n"]),
     spec(
         "rename_terminal",
         "Rename the selected terminal",

@@ -1,7 +1,7 @@
 use super::*;
 use crate::app::Workspace;
 use crate::daemon::{Checkout, ProjectRow, SessionRow, SidebarRows, SourceStatus, WorktreeRow};
-use crate::ui::sidebar::session_rows;
+use crate::ui::sidebar::agent_rows;
 use serde_json::json;
 
 fn scripted_workspace() -> Workspace {
@@ -108,25 +108,29 @@ fn project_rows_list_working_projects_and_expand_one_card() {
 }
 
 #[test]
-fn session_rows_point_at_their_terminal() {
+fn agent_and_terminal_rows_are_separate() {
     let ws = scripted_workspace();
     let chrome = Chrome::dark();
-    let rows = session_rows(&ws, &chrome);
+    let rows = agent_rows(&ws, &chrome);
     let ids: Vec<&str> = rows.iter().map(|row| row.id.as_str()).collect();
-    // The roster entry, then the bare terminal no entry names.
-    assert_eq!(ids, ["run:term-alpha", "terminal:term-beta"]);
+    assert_eq!(ids, ["run:term-alpha"]);
     assert_eq!(rows[0].label, "term-alpha");
     assert_eq!(rows[0].kind, RowKind::Agent);
     assert_eq!(rows[0].state, RowState::Attention);
-    assert_eq!(rows[0].height(), 2);
-    assert!(rows[0].tokens.is_empty(), "{:?}", rows[0].tokens);
-    assert_eq!(rows[1].label, "term-beta");
-    assert_eq!(rows[1].tokens, ["gclient"]);
-    assert!(!rows[1].nested);
+    assert_eq!(rows[0].height(), 3);
+    assert_eq!(rows[0].task, None);
+    let terminals = crate::ui::sidebar::terminal_rows(&ws, &chrome);
+    assert_eq!(terminals.len(), 1);
+    assert_eq!(terminals[0].id, "terminal:term-beta");
+    assert_eq!(terminals[0].label, "term-beta");
+    assert_eq!(terminals[0].kind, RowKind::Terminal);
+    assert_eq!(terminals[0].detail, "gclient");
+    assert_eq!(terminals[0].height(), 2);
+    assert!(!terminals[0].nested);
 }
 
 #[test]
-fn session_rows_render_session_effort_without_a_stray_separator() {
+fn agent_rows_render_three_lines_with_the_model_slug() {
     let mut ws = Workspace::scripted();
     ws.daemon_mut().set_sidebar_rows(SidebarRows {
         projects: vec![ProjectRow {
@@ -182,22 +186,45 @@ fn session_rows_render_session_effort_without_a_stray_separator() {
     ws.open_terminal("term-effort", "native", "epoch").unwrap();
     ws.open_terminal("term-bare", "native", "epoch").unwrap();
 
-    let rows = session_rows(&ws, &Chrome::dark());
+    let rows = agent_rows(&ws, &Chrome::dark());
 
-    assert_eq!(rows[0].tokens, ["codex", "gpt-5 high"]);
-    assert_eq!(rows[1].tokens, ["codex", "gpt-5"]);
-    assert_eq!(rows[0].title_prefix, "#77: ");
-    assert_eq!(rows[0].label, "effort session");
+    assert_eq!(rows[0].height(), 3);
+    assert_eq!(rows[0].definition, "Codex");
+    assert_eq!(rows[0].reference, "#77");
+    assert_eq!(rows[0].provider.as_deref(), Some("codex"));
+    assert_eq!(rows[0].model_slug, "gpt-5-high");
+    let third = row_third_line(&rows[0], 34, &Chrome::dark());
+    assert_eq!(line_text(&third), "   gpt-5-high");
+    assert!(third
+        .spans
+        .iter()
+        .all(|span| !span.style.add_modifier.contains(Modifier::DIM)));
+    assert_eq!(rows[1].model_slug, "gpt-5");
+
+    let long = SidebarRow {
+        definition: "An extraordinarily long agent name".into(),
+        reference: "#77".into(),
+        kind: RowKind::Agent,
+        ..SidebarRow::default()
+    };
+    let line = line_text(&row_line(&long, 34, &Chrome::dark(), 0));
+    assert!(line.contains("… (#77)"), "{line}");
 
     let mut all = Chrome::dark();
     all.sidebar.all_sessions = true;
-    let rows = session_rows(&ws, &all);
+    let rows = agent_rows(&ws, &all);
     let effort = rows
         .iter()
         .find(|row| row.id == "session:sess-effort")
         .expect("effort row");
-    assert_eq!(effort.title_prefix, "alpha#77: ");
-    assert_eq!(effort.label, "effort session");
+    assert_eq!(effort.reference, "#77");
+    all.prefs.agent_sort = crate::ui::settings::AgentSort::Priority;
+    let rows = agent_rows(&ws, &all);
+    let effort = rows
+        .iter()
+        .find(|row| row.id == "session:sess-effort")
+        .expect("effort row");
+    assert_eq!(effort.reference, "alpha#77");
 }
 
 #[test]
@@ -253,35 +280,28 @@ fn agent_lines_carry_needs_you_and_nest_under_their_session() {
     let chrome = Chrome::dark();
     let row = SidebarRow {
         id: "run:term-alpha".into(),
-        label: "term-alpha".into(),
+        definition: "Backend".into(),
+        reference: "#123".into(),
+        model_slug: "gpt-5".into(),
+        task: Some(("#123".into(), "Review auth".into())),
         kind: RowKind::Agent,
         state: RowState::Attention,
-        tokens: vec!["codex".into(), "gpt-5".into(), "#123".into()],
         ..SidebarRow::default()
     };
     let wide = line_text(&row_line(&row, 60, &chrome, 0));
-    assert_eq!(wide, " ⍾ term-alpha · needs you");
-    // The state word no longer fits beside the whole title, so it drops
-    // before the title loses a cell.
-    let narrow = line_text(&row_line(&row, 14, &chrome, 0));
-    assert_eq!(narrow, " ⍾ term-alpha");
-    // Too narrow even alone, the title tickers from its head.
-    let tiny = line_text(&row_line(&row, 8, &chrome, 0));
-    assert_eq!(tiny, " ⍾ term-");
-    // An idle row carries no word.
+    assert_eq!(wide, " ⍾ Backend (#123)");
+    assert_eq!(
+        line_text(&row_second_line(&row, 60, &chrome)),
+        "   Task #123 - Review auth"
+    );
+    assert_eq!(line_text(&row_third_line(&row, 60, &chrome)), "   gpt-5");
     let idle = SidebarRow {
         state: RowState::Idle,
         ..row.clone()
     };
-    assert_eq!(line_text(&row_line(&idle, 60, &chrome, 0)), " ○ term-alpha");
-    // The tokens sit under the label and drop from the right.
     assert_eq!(
-        line_text(&row_second_line(&row, 60, &chrome)),
-        "   codex · gpt-5 · #123"
-    );
-    assert_eq!(
-        line_text(&row_second_line(&row, 18, &chrome)),
-        "   codex · gpt-5"
+        line_text(&row_line(&idle, 60, &chrome, 0)),
+        " ○ Backend (#123)"
     );
     let nested = SidebarRow {
         nested: true,
@@ -289,17 +309,17 @@ fn agent_lines_carry_needs_you_and_nest_under_their_session() {
     };
     assert_eq!(
         line_text(&row_line(&nested, 60, &chrome, 0)),
-        " ├─ ⍾ term-alpha · needs you"
+        " ├─ ⍾ Backend (#123)"
     );
     assert_eq!(
         line_text(&row_second_line(&nested, 60, &chrome)),
-        "      codex · gpt-5 · #123"
+        "      Task #123 - Review auth"
     );
-    let bare = SidebarRow {
-        tokens: Vec::new(),
-        ..row
-    };
-    assert_eq!(line_text(&row_second_line(&bare, 60, &chrome)), "");
+    let bare = SidebarRow { task: None, ..row };
+    assert_eq!(
+        line_text(&row_second_line(&bare, 60, &chrome)),
+        "   No assigned task"
+    );
 }
 
 #[test]
@@ -343,45 +363,72 @@ fn every_overflowing_row_uses_the_selected_scroll_direction() {
     chrome.ticker = (TICKER_PAUSE + 2) * TICKER_STEP;
     let row = SidebarRow {
         id: "session:one".into(),
-        label: "abcdefghij".into(),
+        task: Some(("#1".into(), "abcdefghij".into())),
         kind: RowKind::Agent,
         ..SidebarRow::default()
     };
-    assert_eq!(row_travel(&row, 9), 4);
+    assert_eq!(row_travel(&row, 19), 4);
     assert_eq!(row_travel(&row, 60), 0);
     // A plain row scrolls like the active one.
-    assert_eq!(line_text(&row_line(&row, 9, &chrome, 0)), " ○ cdefgh");
+    assert_eq!(
+        line_text(&row_second_line(&row, 19, &chrome)),
+        "   Task #1 - cdefgh"
+    );
     // Beside a longer title it reads the same clock, then parks at its
     // end while the longer one walks on.
-    assert_eq!(line_text(&row_line(&row, 9, &chrome, 10)), " ○ cdefgh");
+    chrome.view.title_travel = 10;
+    assert_eq!(
+        line_text(&row_second_line(&row, 19, &chrome)),
+        "   Task #1 - cdefgh"
+    );
     chrome.ticker = (TICKER_PAUSE + 8) * TICKER_STEP;
-    assert_eq!(line_text(&row_line(&row, 9, &chrome, 10)), " ○ efghij");
+    assert_eq!(
+        line_text(&row_second_line(&row, 19, &chrome)),
+        "   Task #1 - efghij"
+    );
     // Off truncates like any other title.
     chrome.prefs.title_scrolling = TitleScrolling::Off;
-    assert_eq!(line_text(&row_line(&row, 9, &chrome, 10)), " ○ abcde…");
+    assert_eq!(
+        line_text(&row_second_line(&row, 19, &chrome)),
+        "   Task #1 - abcde…"
+    );
 
     // Right uses the same clock in the opposite direction.
     chrome.prefs.title_scrolling = TitleScrolling::Right;
     chrome.ticker = 0;
-    assert_eq!(line_text(&row_line(&row, 9, &chrome, 0)), " ○ efghij");
+    assert_eq!(
+        line_text(&row_second_line(&row, 19, &chrome)),
+        "   Task #1 - efghij"
+    );
     chrome.ticker = (TICKER_PAUSE + 2) * TICKER_STEP;
-    assert_eq!(line_text(&row_line(&row, 9, &chrome, 0)), " ○ cdefgh");
+    assert_eq!(
+        line_text(&row_second_line(&row, 19, &chrome)),
+        "   Task #1 - cdefgh"
+    );
 }
 
 #[test]
-fn agent_address_prefix_stays_fixed_while_unicode_title_scrolls() {
+fn task_prefix_stays_fixed_while_the_title_scrolls() {
     let mut chrome = Chrome::dark();
     let row = SidebarRow {
         id: "session:one".into(),
-        title_prefix: "#13936: ".into(),
-        label: "修复 workspace chrome".into(),
+        definition: "Codex".into(),
+        reference: "#77".into(),
+        task: Some(("#13936".into(), "修复 workspace chrome".into())),
         kind: RowKind::Agent,
         ..SidebarRow::default()
     };
-    let first = line_text(&row_line(&row, 20, &chrome, row_travel(&row, 20)));
+    let first = line_text(&row_second_line(&row, 24, &chrome));
     chrome.ticker = (TICKER_PAUSE + 2) * TICKER_STEP;
-    let later = line_text(&row_line(&row, 20, &chrome, row_travel(&row, 20)));
-    assert!(first.contains("#13936: "), "{first}");
-    assert!(later.contains("#13936: "), "{later}");
+    let later = line_text(&row_second_line(&row, 24, &chrome));
+    assert!(first.contains("Task #13936 - "), "{first}");
+    assert!(later.contains("Task #13936 - "), "{later}");
     assert_ne!(first, later);
+    assert!(row_travel(&row, 24) > 0);
+
+    let unassigned = SidebarRow { task: None, ..row };
+    assert_eq!(
+        line_text(&row_second_line(&unassigned, 24, &chrome)),
+        "   No assigned task"
+    );
 }

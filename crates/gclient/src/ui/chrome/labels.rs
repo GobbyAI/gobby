@@ -8,7 +8,7 @@
 //! handed.
 
 use crate::app::sidebar_model::{agent_row_state, pane_state, AgentEntry};
-use crate::app::{PaneId, UNNAMED_PANE};
+use crate::app::{short_terminal_id, PaneId};
 use crate::ui::chrome::WorkspaceView;
 use crate::ui::sidebar::agent_label;
 
@@ -102,7 +102,7 @@ pub fn attention_label<W: WorkspaceView>(ws: &W, entry_id: &str) -> String {
     // ladder exists to keep out of the chrome (D1), so the row reads as the
     // unnamed terminal it is.
     let Some(pane) = attention_pane(ws, entry_id) else {
-        return UNNAMED_PANE.to_string();
+        return short_terminal_id(attention_subject(entry_id)).to_string();
     };
     let pane = ws.pane(pane);
     let name = pane.display_name();
@@ -133,8 +133,10 @@ pub fn terminal_label<W: WorkspaceView>(ws: &W, terminal_id: &str) -> String {
     if let Some(pane) = ws.pane_for_terminal(terminal_id) {
         return ws.pane(pane).display_name().to_string();
     }
-    agent_for_terminal(ws, terminal_id)
-        .map_or_else(|| UNNAMED_PANE.to_string(), |agent| agent.name.clone())
+    agent_for_terminal(ws, terminal_id).map_or_else(
+        || short_terminal_id(terminal_id).to_string(),
+        |agent| agent.name.clone(),
+    )
 }
 
 pub fn row_state<W: WorkspaceView>(ws: &W, terminal_id: &str) -> RowState {

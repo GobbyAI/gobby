@@ -1,4 +1,4 @@
-//! herdr `src/ui/sidebar.rs` (35) and `src/ui/sidebar/tokens.rs` (6) keep-set
+//! herdr `src/ui/sidebar.rs` (30) and `src/ui/sidebar/tokens.rs` (6) keep-set
 //! render tests.
 //!
 //! State mapping: a herdr workspace card is a gclient project card (one
@@ -30,16 +30,15 @@ use gobby_client::ui::chrome_render::render_workspace;
 use gobby_client::ui::dialogs::{Dialog, RenameKind};
 use gobby_client::ui::hit::SidebarSection;
 use gobby_client::ui::scrollbar::scrollbar_thumb_grab_offset;
-use gobby_client::ui::settings::AgentSort;
+use gobby_client::ui::settings::{AgentSort, SidebarSide};
 use gobby_client::ui::sidebar::{
-    collapsed_sections, next_machine_filter, project_list_metrics, render_collapsed_sidebar,
-    render_sidebar, section_body_rect, section_metrics, section_rects, session_rows,
-    sidebar_layout, SidebarHits, ALL_MACHINES,
+    agent_rows, next_machine_filter, project_list_metrics, render_sidebar, section_body_rect,
+    section_metrics, section_rects, sidebar_layout, terminal_rows, SidebarHits, ALL_MACHINES,
 };
 use gobby_client::ui::sidebar_rows::{
     fitted_spans, project_rows, row_line, row_second_line, RowKind, SidebarRow,
 };
-use gobby_client::ui::status::{state_dot, state_label};
+use gobby_client::ui::status::state_dot;
 use gobby_client::ui::text::display_width;
 use gobby_client::ui::Action;
 use ratatui::backend::TestBackend;
@@ -261,8 +260,10 @@ impl WorkspaceView for Board {
 
 /// herdr's agent panel spans every workspace; gclient's agents section
 /// lists the focused project's local agents until the filter is `all`.
+/// herdr's sidebar is always on screen, so gclient's is pinned.
 fn chrome() -> Chrome {
     let mut chrome = Chrome::new(theme());
+    chrome.sidebar.pinned = true;
     chrome.sidebar.machine_filter = Some(ALL_MACHINES.to_string());
     chrome
 }
@@ -284,20 +285,6 @@ fn draw_sidebar(
     let mut hits = SidebarHits::default();
     let terminal = render(width, height, |frame| {
         hits = render_sidebar(frame, area, board, chrome);
-    });
-    (terminal, hits)
-}
-
-fn draw_collapsed(
-    board: &Board,
-    chrome: &Chrome,
-    width: u16,
-    height: u16,
-) -> (Terminal<TestBackend>, SidebarHits) {
-    let area = Rect::new(0, 0, width, height);
-    let mut hits = SidebarHits::default();
-    let terminal = render(width, height, |frame| {
-        hits = render_collapsed_sidebar(frame, area, board, chrome);
     });
     (terminal, hits)
 }
@@ -357,10 +344,12 @@ fn second_text(row: &SidebarRow, width: u16, chrome: &Chrome) -> String {
 fn plain_row(label: &str, state: RowState, tokens: &[&str]) -> SidebarRow {
     SidebarRow {
         id: label.to_string(),
-        label: label.to_string(),
+        definition: label.to_string(),
         kind: RowKind::Agent,
         state,
-        tokens: tokens.iter().map(|token| token.to_string()).collect(),
+        task: tokens
+            .first()
+            .map(|title| ("#1".to_string(), (*title).to_string())),
         ..SidebarRow::default()
     }
 }
@@ -380,26 +369,26 @@ parity_tests! {
             focus(&mut chrome, &mut board, "one");
             let area = Rect::new(0, 0, 26, 24);
             let (terminal, _) = draw_sidebar(&board, &chrome, area.width, area.height);
-            let body = section_body(&board, &chrome, area, SidebarSection::Sessions);
+            let body = section_body(&board, &chrome, area, SidebarSection::Agents);
             let p = palette();
 
             let first = row_str(&terminal, body.y, 25);
             let second = row_str(&terminal, body.y + 1, 25);
-            assert_eq!(first, format!(" {} one", dot(RowState::Working)));
-            assert_eq!(second, "   pi");
+            assert_eq!(first, format!(" {} pi · pi", dot(RowState::Working)));
+            assert_eq!(second, "   No assigned task");
             // herdr: `!contains("working")`; gclient's working glyph is the
             // whole indicator, so neither line carries the word.
             assert!(!first.contains("working"));
             assert!(!second.contains("working"));
 
-            let workspace_x = find_symbol_x(&terminal, body.y, body.width, "o");
+            let workspace_x = find_symbol_x(&terminal, body.y, body.width, "p");
             let workspace_style = style_at(&terminal, workspace_x, body.y);
             assert_eq!(workspace_style.fg, Some(p.text));
             assert!(workspace_style.add_modifier.contains(Modifier::BOLD));
             assert!(!workspace_style.add_modifier.contains(Modifier::DIM));
             assert_eq!(workspace_style.bg, Some(p.surface_dim));
 
-            let agent_x = find_symbol_x(&terminal, body.y + 1, body.width, "p");
+            let agent_x = find_symbol_x(&terminal, body.y + 1, body.width, "N");
             let agent_style = style_at(&terminal, agent_x, body.y + 1);
             assert_eq!(agent_style.fg, Some(p.overlay0));
             assert!(agent_style.add_modifier.contains(Modifier::DIM));
@@ -416,19 +405,16 @@ parity_tests! {
             let chrome = chrome();
             let area = Rect::new(0, 0, 26, 24);
             let (terminal, _) = draw_sidebar(&board, &chrome, area.width, area.height);
-            let body = section_body(&board, &chrome, area, SidebarSection::Sessions);
+            let body = section_body(&board, &chrome, area, SidebarSection::Agents);
             let p = palette();
-            let workspace = style_at(&terminal, find_symbol_x(&terminal, body.y, body.width, "o"), body.y);
-            let agent = style_at(&terminal, find_symbol_x(&terminal, body.y + 1, body.width, "p"), body.y + 1);
+            let project_body = section_body(&board, &chrome, area, SidebarSection::Projects);
+            let project = style_at(&terminal, find_symbol_x(&terminal, project_body.y, project_body.width, "o"), project_body.y);
+            let agent = style_at(&terminal, find_symbol_x(&terminal, body.y, body.width, "p"), body.y);
 
-            // herdr: `text`; an unfocused gclient title is `subtext0`.
-            assert_eq!(workspace.fg, Some(p.subtext0));
-            // herdr: `!BOLD` under `bold = false`; gclient names every
-            // agent in bold (herdr's default workspace token).
-            assert!(workspace.add_modifier.contains(Modifier::BOLD));
-            assert_eq!(agent.fg, Some(p.overlay0));
-            // herdr: `!DIM` under `dim = false`; gclient keeps the default dim.
-            assert!(agent.add_modifier.contains(Modifier::DIM));
+            assert_eq!(project.fg, Some(p.subtext0));
+            assert_eq!(agent.fg, project.fg);
+            assert!(!project.add_modifier.intersects(Modifier::BOLD | Modifier::DIM));
+            assert!(!agent.add_modifier.intersects(Modifier::BOLD | Modifier::DIM));
         }
 
         fn default_space_workspace_style_tracks_active_state() {
@@ -462,10 +448,10 @@ parity_tests! {
 
         fn space_occurrence_style_applies_without_styling_separator() {
             // herdr styles a custom `$hype` token (`HI`, fg #abcdef, bold);
-            // gclient's styled occurrence is the active agent row's title in
-            // `text` bold, with the ` · ` separator before the needs-you word
-            // (the one trailing token a row carries) left in `overlay0`.
+            // The active definition is bold text; its provider separator
+            // stays in the quieter overlay color.
             let mut board = Board::new(&["HI"]);
+            board.agent_mut("HI").agent_definition_name = Some("HI".into());
             board.set_state("HI", RowState::Attention);
             let mut chrome = chrome();
             focus(&mut chrome, &mut board, "HI");
@@ -485,7 +471,7 @@ parity_tests! {
                 assert_eq!(style.bg, Some(p.surface_dim));
             }
             assert_eq!(separator.fg, Some(p.overlay0));
-            assert!(separator.add_modifier.contains(Modifier::DIM));
+            assert!(!separator.add_modifier.contains(Modifier::DIM));
             assert!(!separator.add_modifier.contains(Modifier::BOLD));
             assert_eq!(separator.bg, Some(p.surface_dim));
         }
@@ -519,44 +505,47 @@ parity_tests! {
             board.add("pi", "pi");
             board.add("claude", "claude");
             let chrome = chrome();
-            // herdr's 20x5 agent panel has a two-row body; gclient's two-line
-            // rows need the four rows a twelve-row sidebar leaves the sessions
-            // section under the menu band, one machine, two cards and their
-            // bands, and the footer band.
-            let area = Rect::new(0, 0, 20, 12);
-            let body = section_body(&board, &chrome, area, SidebarSection::Sessions);
+            // A four-row body fits one three-line agent row after the top-half
+            // cap, the Agents band and its blank row, and the Terminals band.
+            let area = Rect::new(0, 0, 20, 14);
+            let body = section_body(&board, &chrome, area, SidebarSection::Agents);
             assert_eq!(body.height, 4);
             let metrics = project_list_metrics(
-                &[2, 2],
+                &[3, 3],
                 body.height,
-                chrome.sidebar.scroll(SidebarSection::Sessions),
+                chrome.sidebar.scroll(SidebarSection::Agents),
             );
-            let (terminal, _) = draw_sidebar(&board, &chrome, area.width, area.height);
+            let (terminal, hits) = draw_sidebar(&board, &chrome, area.width, area.height);
 
-            assert_eq!(metrics.viewport_rows, 2);
-            assert_eq!(metrics.max_offset_from_bottom, 0);
+            assert_eq!(metrics.viewport_rows, 1);
+            assert_eq!(metrics.max_offset_from_bottom, 1);
             // herdr: `" pi"` / `" claude"` (agent-only rows); gclient leads
             // with the state glyph and title on every other row.
             let first = row_str(&terminal, body.y, body.width);
-            let second = row_str(&terminal, body.y + 2, body.width);
             assert!(first.contains(" pi"), "rendered row: {first:?}");
-            assert!(second.contains(" claude"), "rendered row: {second:?}");
+            assert_eq!(hits.agents.len(), 1);
+            assert_eq!(hits.agents[0].0, "agent:pi");
+            assert_eq!(hits.agents[0].1.height, 3);
         }
 
 
         fn stripped_terminal_title_renders_with_unicode_width_truncation() {
-            // herdr strips the `⠋` spinner from the terminal title; gclient's
-            // row title is the terminal id, which never carries one.
             let mut board = Board::new(&[]);
-            board.add("修复🙂标题很长", "claude");
+            board.add("bare", "claude");
+            board.panes[0].command = Some("修复🙂标题很长".into());
+            board.sidebar.agents.clear();
             let chrome = chrome();
             let area = Rect::new(0, 0, 10, 24);
             let (terminal, _) = draw_sidebar(&board, &chrome, area.width, area.height);
-            let body = section_body(&board, &chrome, area, SidebarSection::Sessions);
+            let body = section_body(&board, &chrome, area, SidebarSection::Terminals);
             let rendered = row_str(&terminal, body.y, 9);
+            let backend = row_str(&terminal, body.y + 1, 9);
 
             assert!(!rendered.contains('⠋'));
-            assert!(rendered.contains('修') && rendered.contains('复'));
+            assert!(rendered.contains('修') && rendered.contains('复'), "rendered={rendered:?}, body={body:?}, rows={:?}", terminal_rows(&board, &chrome));
+            assert_eq!(backend, "   gclie…");
+            assert!(!rendered.contains('@'));
+            assert!(!backend.contains('@'));
 
             let spans = fitted_spans(
                 ("", Style::default()),
@@ -572,34 +561,33 @@ parity_tests! {
         fn variable_agent_heights_pack_the_bottom_and_reveal_targets() {
             // herdr's first agent spans three rows (agent + two custom
             // tokens) in a six-row panel; gclient agent rows are two lines
-            // each, so three terminals in a four-row body carry the same
-            // geometry. Twelve rows leave the sessions that body: the cards
-            // stop at the top half and the sessions take the rest.
+            // each, so three agents in a four-row body carry the same
+            // geometry once Terminals has its own band.
             let board = Board::new(&["one", "two", "three"]);
             let mut chrome = chrome();
-            let area = Rect::new(0, 0, 20, 12);
-            let body = section_body(&board, &chrome, area, SidebarSection::Sessions);
+            let area = Rect::new(0, 0, 20, 13);
+            let body = section_body(&board, &chrome, area, SidebarSection::Agents);
             assert_eq!(body.height, 4);
 
-            let metrics = project_list_metrics(&[2, 2, 2], body.height, 0);
-            assert_eq!(metrics.max_offset_from_bottom, 1);
+            let metrics = project_list_metrics(&[3, 3, 3], body.height, 0);
+            assert_eq!(metrics.max_offset_from_bottom, 2);
             // herdr: `agent_panel_scroll_for_target(&app, area, 0, 2) == 1`;
             // scrolling one row reveals the target row the packed layout hid.
-            *chrome.sidebar.scroll_mut(SidebarSection::Sessions) = 1;
+            *chrome.sidebar.scroll_mut(SidebarSection::Agents) = 2;
             let (_, hits) = draw_sidebar(&board, &chrome, area.width, area.height);
             let ids: Vec<&str> = hits.agents.iter().map(|(id, _)| id.as_str()).collect();
-            assert_eq!(ids, ["agent:two", "agent:three"]);
+            assert_eq!(ids, ["agent:three"]);
         }
 
         fn oversized_space_layout_is_clipped_to_the_section_body() {
             // herdr's six-row space cards overflow a one-row body; gclient's
-            // one-line cards overflow the one-row body a fourteen-row sidebar
+            // one-line cards overflow the one-row body an eleven-row sidebar
             // leaves the projects section: the top half holds the machines
             // band, one machine, its blank row, the projects band and one
             // card, whose blank row yields to the card.
             let board = Board::new(&["one", "two"]);
             let chrome = chrome();
-            let area = Rect::new(0, 0, 20, 14);
+            let area = Rect::new(0, 0, 20, 11);
             let body = section_body(&board, &chrome, area, SidebarSection::Projects);
             assert_eq!(body.height, 1);
 
@@ -617,62 +605,26 @@ parity_tests! {
         }
 
         fn oversized_agent_override_is_clipped_to_the_panel_body() {
-            // herdr overrides claude's rows with six agent tokens in a 20x5
-            // panel; gclient's agent row is two lines in the same body: an
-            // eight-row sidebar leaves the sessions a three-row section (its
-            // band and two rows) once the projects band alone fits the top
-            // half beside the machines.
+            // A complete three-line agent row cannot fit a two-row body.
             let mut board = Board::new(&[]);
             board.add("one", "claude");
             board.set_state("one", RowState::Attention);
             let chrome = chrome();
-            let area = Rect::new(0, 0, 20, 8);
-            let panel = section_rects(&board, &chrome, area)[SidebarSection::Sessions.index()];
-            assert_eq!(panel.height, 3);
-            let body = section_body_rect(panel, SidebarSection::Sessions, false);
+            let area = Rect::new(0, 0, 20, 9);
+            let panel = section_rects(&board, &chrome, area)[SidebarSection::Agents.index()];
+            assert_eq!(panel.height, 4);
+            let body = section_body_rect(panel, SidebarSection::Agents, false);
 
             let metrics = project_list_metrics(
-                &[2],
+                &[3],
                 body.height,
-                chrome.sidebar.scroll(SidebarSection::Sessions),
+                chrome.sidebar.scroll(SidebarSection::Agents),
             );
             let (_, hits) = draw_sidebar(&board, &chrome, area.width, area.height);
 
-            assert_eq!(metrics.viewport_rows, 1);
-            assert_eq!(metrics.max_offset_from_bottom, 0);
-            let entry = hits.agents.last().expect("one agent row").1;
-            // herdr: the clipped entry height equals the body height; a
-            // two-line gclient row fills the two-row body exactly.
-            assert_eq!(body.intersection(entry), entry);
-            assert_eq!(entry.height, 2);
-        }
-
-        fn render_sidebar_toggle_draws_expanded_collapse_icon() {
-            let board = Board::new(&[]);
-            let chrome = chrome();
-            let area = Rect::new(0, 0, 26, 20);
-            let (terminal, hits) = draw_sidebar(&board, &chrome, area.width, area.height);
-
-            // herdr: a bare `«` cell; gclient's footer band draws the
-            // bracketed `[«]` control the toggle hit covers.
-            let toggle = hits.toggle.expect("toggle drawn");
-            assert_eq!(row_str(&terminal, toggle.y, 25).trim(), "[«]");
-            assert_eq!(cell(&terminal, toggle.x + 1, toggle.y).symbol(), "«");
-        }
-
-        fn expanded_sidebar_toggle_sits_inside_sidebar_content() {
-            let board = Board::new(&[]);
-            let chrome = chrome();
-            let area = Rect::new(0, 0, 26, 20);
-            let (_, hits) = draw_sidebar(&board, &chrome, area.width, area.height);
-            let toggle = hits.toggle.expect("toggle drawn");
-
-            // The control ends one blank cell before the separator column,
-            // on the footer band's row.
-            assert_eq!(toggle, sidebar_layout(area, 1, 0).footer.intersection(toggle));
-            assert_eq!(toggle.x + toggle.width, area.x + area.width - 2);
-            assert_eq!(toggle.y, area.y + area.height - 1);
-            assert_eq!(toggle.height, 1);
+            assert_eq!(metrics.viewport_rows, 0);
+            assert_eq!(metrics.max_offset_from_bottom, 1);
+            assert!(hits.agents.is_empty());
         }
 
         fn priority_agent_panel_sort_uses_attention_then_space_order() {
@@ -689,90 +641,16 @@ parity_tests! {
             // leads the grouped order.
             chrome.open_tab(board.pane_id("one"), "one");
 
-            let entries = session_rows(&board, &chrome);
+            let entries = agent_rows(&board, &chrome);
             let labels: Vec<&str> = entries.iter().map(|entry| entry.label.as_str()).collect();
             assert_eq!(labels, ["one", "two", "three", "four"]);
             assert_eq!(entries[3].state, RowState::Attention);
             assert_eq!(entries[0].state, RowState::Working);
 
             chrome.prefs.agent_sort = AgentSort::Priority;
-            let entries = session_rows(&board, &chrome);
+            let entries = agent_rows(&board, &chrome);
             let labels: Vec<&str> = entries.iter().map(|entry| entry.label.as_str()).collect();
             assert_eq!(labels, ["four", "two", "one", "three"]);
-        }
-
-        fn collapsed_sidebar_numbers_grouped_agents_by_list_position() {
-            let mut board = Board::new(&[]);
-            board.add("one", "claude");
-            board.add("two", "claude");
-            let chrome = chrome();
-            let area = Rect::new(0, 0, 4, 12);
-            // herdr numbers its grouped workspaces; gclient's rail numbers
-            // the project cards.
-            let projects_area = collapsed_sections(area).0[SidebarSection::Projects.index()];
-            let (terminal, _) = draw_collapsed(&board, &chrome, area.width, area.height);
-
-            assert_eq!(cell(&terminal, projects_area.x, projects_area.y).symbol(), "1");
-            assert_eq!(cell(&terminal, projects_area.x, projects_area.y + 1).symbol(), "2");
-        }
-
-        fn collapsed_sidebar_keeps_status_visible_for_two_digit_positions() {
-            let mut board = Board::new(&[]);
-            for idx in 1..=10 {
-                board.add(&format!("workspace-{idx}"), "claude");
-            }
-            let chrome = chrome();
-            // Ten cards need a ten-row cards list: a third of the rail.
-            let area = Rect::new(0, 0, 4, 34);
-            let projects_area = collapsed_sections(area).0[SidebarSection::Projects.index()];
-            let (terminal, _) = draw_collapsed(&board, &chrome, area.width, area.height);
-
-            let tenth_row = projects_area.y + 9;
-            assert_eq!(cell(&terminal, projects_area.x, tenth_row).symbol(), "1");
-            assert_eq!(cell(&terminal, projects_area.x + 1, tenth_row).symbol(), "0");
-            // herdr: `"·"`, its idle glyph; gclient's idle glyph via `state_dot`.
-            assert_eq!(
-                cell(&terminal, projects_area.x + 2, tenth_row).symbol(),
-                dot(RowState::Idle)
-            );
-        }
-
-        fn collapsed_sidebar_numbers_priority_agents_by_list_position() {
-            // herdr splits workspace "two" into a second, blocked pane and
-            // priority-sorts it first; gclient lists it as its own workspace
-            // and the blocked state shows on its agent rail row instead.
-            let mut board = Board::new(&[]);
-            board.add("one", "claude");
-            board.add("two", "claude");
-            board.add("two-2", "claude");
-            board.set_state("one", RowState::Working);
-            board.set_state("two", RowState::Working);
-            board.set_state("two-2", RowState::Attention);
-            let chrome = chrome();
-
-            let agents = session_rows(&board, &chrome);
-            assert_eq!(agents[2].label, "two-2");
-            assert_eq!(agents[2].state, RowState::Attention);
-
-            let area = Rect::new(0, 0, 4, 16);
-            let rects = collapsed_sections(area).0;
-            let projects_area = rects[SidebarSection::Projects.index()];
-            let sessions_area = rects[SidebarSection::Sessions.index()];
-            let (terminal, _) = draw_collapsed(&board, &chrome, area.width, area.height);
-
-            assert_eq!(cell(&terminal, projects_area.x, projects_area.y).symbol(), "1");
-            assert_eq!(cell(&terminal, projects_area.x, projects_area.y + 1).symbol(), "2");
-            assert_eq!(cell(&terminal, projects_area.x, projects_area.y + 2).symbol(), "3");
-            // herdr: a red `●`; gclient's needs-you glyph in the warning role.
-            let blocked_row = sessions_area.y + 2;
-            assert_eq!(
-                cell(&terminal, sessions_area.x + 2, blocked_row).symbol(),
-                dot(RowState::Attention)
-            );
-            assert_eq!(
-                style_at(&terminal, sessions_area.x + 2, blocked_row).fg,
-                Some(palette().peach)
-            );
         }
 
         fn all_workspaces_agent_panel_entries_use_live_root_runtime_cwd_for_workspace_label() {
@@ -825,31 +703,29 @@ parity_tests! {
             let mut chrome = chrome();
             focus(&mut chrome, &mut board, "bridge");
 
-            let entries = session_rows(&board, &chrome);
+            let entries = agent_rows(&board, &chrome);
             assert_eq!(entries[0].label, "bridge");
-            assert_eq!(entries[0].tokens[0], "planner");
+            assert_eq!(entries[0].provider.as_deref(), Some("planner"));
         }
 
         fn expanded_sidebar_sections_handle_tiny_heights() {
             // herdr's 0.9 ratio of five rows is a four-row projects request;
-            // gclient has no ratio: five rows hold the menu band, its blank
-            // row and the footer band, and two rows between them, of which
-            // the top half (one row) goes to the machines band, nothing is
-            // left for the projects, and the sessions keep the other.
-            let layout = sidebar_layout(Rect::new(0, 0, 20, 5), 1, 4);
+            // gclient has no ratio: the top half of five rows (two) goes to
+            // the machines band and its row, nothing is left for the
+            // projects; Agents and Terminals split the other three.
+            let layout = sidebar_layout(Rect::new(0, 0, 20, 5), SidebarSide::Left, 1, 4, 0);
 
-            assert_eq!(layout.menu, Rect::new(0, 0, 19, 1));
             assert_eq!(
                 layout.sections,
                 [
-                    Rect::new(0, 2, 19, 1),
-                    Rect::new(0, 3, 19, 0),
-                    Rect::new(0, 3, 19, 1),
+                    Rect::new(0, 0, 19, 2),
+                    Rect::new(0, 2, 19, 0),
+                    Rect::new(0, 2, 19, 2),
+                    Rect::new(0, 4, 19, 1),
                 ]
             );
-            assert_eq!(layout.footer, Rect::new(0, 4, 19, 1));
             // The drawn sidebar follows the layout: a board with one card
-            // shows the bands and the sessions row, and no card.
+            // shows the bands, and no card.
             let board = Board::new(&["one"]);
             let chrome = chrome();
             let (_, hits) = draw_sidebar(&board, &chrome, 20, 5);
@@ -862,16 +738,10 @@ parity_tests! {
 
         fn sidebar_section_divider_is_hidden_for_tiny_heights() {
             // herdr `sidebar_section_divider_rect(20x5, 0.5) == Rect::default()`:
-            // gclient's expanded sidebar draws bands instead of rules, and
-            // the collapsed rail drops its two rules under eight rows.
+            // gclient's sidebar draws bands instead of rules.
             let area = Rect::new(0, 0, 20, 5);
-            assert_eq!(collapsed_sections(area).1, [None; 2]);
-            assert_eq!(collapsed_sections(Rect::new(0, 0, 4, 8)).1, [Some(2), Some(5)]);
-
             let board = Board::new(&["one"]);
             let (terminal, _) = draw_sidebar(&board, &chrome(), area.width, area.height);
-            assert!(rows(&terminal).iter().all(|row| !row.starts_with("──")));
-            let (terminal, _) = draw_collapsed(&board, &chrome(), area.width, area.height);
             assert!(rows(&terminal).iter().all(|row| !row.starts_with("──")));
         }
 
@@ -964,13 +834,13 @@ parity_tests! {
 
         fn workspace_scroll_offset_applies_to_group_children() {
             // herdr hides the collapsed child `issue`; the display entries
-            // are `main` and `notes` in the one-card body a fourteen-row
+            // are `main` and `notes` in the one-card body an eleven-row
             // sidebar leaves the projects.
             let board = Board::new(&["main", "notes"]);
             let mut chrome = chrome();
             chrome.mode = Mode::Terminal;
             *chrome.sidebar.scroll_mut(SidebarSection::Projects) = 1;
-            let area = Rect::new(0, 0, 30, 14);
+            let area = Rect::new(0, 0, 30, 11);
             assert_eq!(
                 section_body(&board, &chrome, area, SidebarSection::Projects).height,
                 1
@@ -1074,7 +944,7 @@ parity_tests! {
             let text = line_text(&row, 60, &chrome);
             assert_eq!(text, format!(" {} pi", dot(RowState::Working)));
             assert_eq!(text.matches('·').count(), 0);
-            assert_eq!(second_text(&row, 60, &chrome), "");
+            assert_eq!(second_text(&row, 60, &chrome), "   No assigned task");
         }
 
         fn state_text_and_arbitrary_values_are_independent_tokens() {
@@ -1085,21 +955,14 @@ parity_tests! {
             let row = plain_row("repo", RowState::Attention, &["reviewing auth"]);
 
             let text = line_text(&row, 60, &chrome);
-            assert_eq!(
-                text,
-                format!(
-                    " {} repo · {}",
-                    dot(RowState::Attention),
-                    state_label(RowState::Attention)
-                )
-            );
-            assert_eq!(second_text(&row, 60, &chrome), "   reviewing auth");
+            assert_eq!(text, format!(" {} repo", dot(RowState::Attention)));
+            assert_eq!(second_text(&row, 60, &chrome), "   Task #1 - reviewing auth");
             let working = plain_row("repo", RowState::Working, &["reviewing auth"]);
             assert_eq!(
                 line_text(&working, 60, &chrome),
                 format!(" {} repo", dot(RowState::Working))
             );
-            assert_eq!(second_text(&working, 60, &chrome), "   reviewing auth");
+            assert_eq!(second_text(&working, 60, &chrome), "   Task #1 - reviewing auth");
         }
 
         fn terminal_title_builtins_are_distinct_from_custom_tokens() {
@@ -1112,7 +975,7 @@ parity_tests! {
             let text = line_text(&row, 60, &chrome);
             assert!(!text.contains('⠋'));
             assert_eq!(text, format!(" {} raw title", dot(RowState::Working)));
-            assert_eq!(second_text(&row, 60, &chrome), "   custom title");
+            assert_eq!(second_text(&row, 60, &chrome), "   Task #1 - custom title");
         }
 
         fn known_agent_override_replaces_default_rows() {
@@ -1124,12 +987,12 @@ parity_tests! {
             board.add("repo", "renamed pi");
             let chrome = chrome();
 
-            let rows = session_rows(&board, &chrome);
-            assert_eq!(rows[0].tokens, ["renamed pi"]);
+            let rows = agent_rows(&board, &chrome);
+            assert_eq!(rows[0].provider.as_deref(), Some("renamed pi"));
 
             board.set_state("repo", RowState::Unknown);
-            let rows = session_rows(&board, &chrome);
-            assert_eq!(rows[0].tokens, ["renamed pi"]);
+            let rows = agent_rows(&board, &chrome);
+            assert_eq!(rows[0].provider.as_deref(), Some("renamed pi"));
             assert_eq!(rows[0].label, "repo");
             assert!(!line_text(&rows[0], 60, &chrome).contains("detached"));
         }
@@ -1143,7 +1006,7 @@ parity_tests! {
             let text = line_text(&row, 60, &chrome);
             assert_eq!(text, format!(" {} feature", dot(RowState::Idle)));
             assert!(!text.contains("worktree/feature") && !text.contains('↑'));
-            assert_eq!(second_text(&row, 60, &chrome), "");
+            assert_eq!(second_text(&row, 60, &chrome), "   No assigned task");
         }
 
         fn workspace_custom_token_can_replace_git_specific_details() {
@@ -1154,7 +1017,7 @@ parity_tests! {
             let text = line_text(&row, 60, &chrome);
             assert_eq!(text, format!(" {} repo", dot(RowState::Idle)));
             let second = second_text(&row, 60, &chrome);
-            assert_eq!(second, "   2 changes");
+            assert_eq!(second, "   Task #1 - 2 changes");
             assert!(!second.contains('↑') && !second.contains('↓'));
         }
     }
@@ -1303,7 +1166,7 @@ fn agent_rows_follow_project_and_machine_filter() {
     let mut chrome = chrome();
     focus(&mut chrome, &mut board, "alpha");
     let labels = |board: &Board, chrome: &Chrome| -> Vec<String> {
-        session_rows(board, chrome)
+        agent_rows(board, chrome)
             .iter()
             .filter(|row| row.kind == RowKind::Agent)
             .map(|row| row.label.clone())
@@ -1320,15 +1183,15 @@ fn agent_rows_follow_project_and_machine_filter() {
     assert_eq!(labels(&board, &chrome), ["alpha-remote"]);
     chrome.sidebar.machine_filter = Some(ALL_MACHINES.to_string());
     assert_eq!(labels(&board, &chrome), ["alpha", "alpha-remote"]);
-    let rows = session_rows(&board, &chrome);
-    assert_eq!(second_text(&rows[0], 40, &chrome), "   claude");
-    assert_eq!(second_text(&rows[1], 40, &chrome), "   native · b2f7c0de");
+    let rows = agent_rows(&board, &chrome);
+    assert_eq!(second_text(&rows[0], 40, &chrome), "   No assigned task");
+    assert_eq!(second_text(&rows[1], 40, &chrome), "   No assigned task");
 
     // The `all` scope adds the other projects' rows under dim group rows,
     // in project order; the group rows are no hits.
     chrome.sidebar.all_sessions = true;
     assert_eq!(labels(&board, &chrome), ["alpha", "alpha-remote", "beta"]);
-    let ids: Vec<String> = session_rows(&board, &chrome)
+    let ids: Vec<String> = agent_rows(&board, &chrome)
         .iter()
         .map(|row| row.id.clone())
         .collect();
@@ -1342,17 +1205,17 @@ fn agent_rows_follow_project_and_machine_filter() {
             "agent:beta"
         ]
     );
-    let (_, hits) = draw_sidebar(&board, &chrome, 34, 20);
+    let (_, hits) = draw_sidebar(&board, &chrome, 34, 26);
     let drawn: Vec<&str> = hits.agents.iter().map(|(id, _)| id.as_str()).collect();
     assert_eq!(drawn, ["agent:alpha", "agent:alpha-remote", "agent:beta"]);
     assert_eq!(
         hits.agents[1].1.y,
-        hits.agents[0].1.y + 2,
+        hits.agents[0].1.y + 3,
         "rows of one group pack"
     );
     assert_eq!(
         hits.agents[2].1.y,
-        hits.agents[1].1.y + 3,
+        hits.agents[1].1.y + 4,
         "the group row sits between the groups"
     );
 
@@ -1383,11 +1246,11 @@ fn agent_rows_follow_project_and_machine_filter() {
     // and a click on a row sets the filter.
     let area = Rect::new(0, 0, 34, 20);
     let (terminal, hits) = draw_sidebar(&board, &chrome, area.width, area.height);
-    let view_control = hits.sessions_view.expect("view control hit");
+    let view_control = hits.agents_view.expect("view control hit");
     let filter = hits.projects_filter.expect("filter control hit");
     assert_eq!(
         row_str(&terminal, view_control.y, 33),
-        " Sessions                 [view]"
+        " Agents                   [view]"
     );
     assert_eq!(
         row_str(&terminal, filter.y, 33),
@@ -1404,7 +1267,7 @@ fn agent_rows_follow_project_and_machine_filter() {
         row_str(&terminal, remote_row.y, 33)
     );
     chrome.view.sidebar_rect = area;
-    chrome.view.sessions_view_hit_area = hits.sessions_view;
+    chrome.view.agents_view_hit_area = hits.agents_view;
     chrome.view.projects_filter_hit_area = hits.projects_filter;
     chrome.view.machine_hit_areas = hits.machines.clone();
     assert_eq!(
@@ -1418,7 +1281,7 @@ fn agent_rows_follow_project_and_machine_filter() {
         MouseOutcome::Handled
     );
     let menu = chrome.menu.as_ref().expect("view menu open");
-    assert_eq!(menu.kind, ContextMenuKind::SessionsView);
+    assert_eq!(menu.kind, ContextMenuKind::AgentsView);
     let items: Vec<(&str, bool)> = menu
         .items
         .iter()
@@ -1458,9 +1321,9 @@ fn agent_rows_follow_project_and_machine_filter() {
     let local = Board::new(&["alpha"]);
     let (_, hits) = draw_sidebar(&local, &chrome, area.width, area.height);
     assert_eq!(hits.machines.len(), 1);
-    assert!(hits.sessions_view.is_some());
+    assert!(hits.agents_view.is_some());
     let (_, hits) = draw_sidebar(&local, &chrome, 26, area.height);
-    assert!(hits.sessions_view.is_some());
+    assert!(hits.agents_view.is_some());
 }
 
 #[test]
@@ -1488,7 +1351,8 @@ fn sidebar_drags_reorder_resize_and_scroll() {
     let area = Rect::new(0, 0, 60, 40);
     draw_with_hits(&ws, &mut chrome, area);
     let sidebar = chrome.view.sidebar_rect;
-    assert_eq!(session_rows(&ws, &chrome).len(), 10);
+    assert_eq!(agent_rows(&ws, &chrome).len(), 5);
+    assert_eq!(terminal_rows(&ws, &chrome).len(), 5);
 
     // A card dragged onto another takes its place; the order is chrome
     // state the loop saves.
@@ -1544,44 +1408,6 @@ fn sidebar_drags_reorder_resize_and_scroll() {
     );
     assert_eq!(chrome.sidebar.project_order, reordered);
 
-    // The toggle collapses and expands; the rail ignores drags and wheels.
-    let toggle = chrome.view.sidebar_toggle_hit_area.expect("toggle drawn");
-    assert_eq!(
-        route(&ws, &mut chrome, LEFT_DOWN, toggle.x, toggle.y),
-        MouseOutcome::Handled
-    );
-    assert!(chrome.sidebar.collapsed);
-    draw_with_hits(&ws, &mut chrome, area);
-    let rail_divider = chrome.view.sidebar_divider_x.expect("rail edge");
-    assert_eq!(
-        route(&ws, &mut chrome, LEFT_DOWN, rail_divider, 5),
-        MouseOutcome::Ignore,
-        "the rail cannot be resized"
-    );
-    assert_eq!(chrome.gesture, None);
-    let toggle = chrome
-        .view
-        .sidebar_toggle_hit_area
-        .expect("rail toggle drawn");
-    assert_eq!(
-        route(
-            &ws,
-            &mut chrome,
-            MouseEventKind::ScrollDown,
-            toggle.x,
-            toggle.y - 2
-        ),
-        MouseOutcome::Handled
-    );
-    assert_eq!(
-        chrome.sidebar.scrolls, [0; 3],
-        "the rail has nothing to scroll"
-    );
-    assert_eq!(
-        route(&ws, &mut chrome, LEFT_DOWN, toggle.x, toggle.y),
-        MouseOutcome::Handled
-    );
-    assert!(!chrome.sidebar.collapsed);
     draw_with_hits(&ws, &mut chrome, area);
 
     // The edge follows the pointer within the width bounds, from the press
@@ -1627,18 +1453,18 @@ fn sidebar_drags_reorder_resize_and_scroll() {
     draw_with_hits(&ws, &mut chrome, area);
 
     // The sections size themselves: the machines and projects sections stop
-    // at the top half of the sidebar and the sessions take the rest, so a
+    // at the top half of the sidebar and Agents and Terminals share the rest, so a
     // press on a band's title starts no gesture. The band controls are the
     // mouse's filter and scope toggles.
     let sections = chrome.view.sidebar_section_rects;
-    // The two bands and the blank row under the menu come off the top.
-    let rows = sidebar.height - 3;
+    // Every row of the column goes to the sections.
+    let rows = sidebar.height;
     assert_eq!(
         sections[0].height + sections[1].height,
         rows / 2,
         "the cards fill the top half"
     );
-    assert_eq!(sections[2].height, rows - rows / 2);
+    assert_eq!(sections[2].height + sections[3].height, rows - rows / 2);
     let projects_band = sections[SidebarSection::Projects.index()].y;
     assert_eq!(
         route(&ws, &mut chrome, LEFT_DOWN, sidebar.x + 1, projects_band),
@@ -1654,18 +1480,15 @@ fn sidebar_drags_reorder_resize_and_scroll() {
         route(&ws, &mut chrome, LEFT_DOWN, filter.x, filter.y),
         MouseOutcome::Action(Action::ToggleProjectsFilter)
     );
-    let view_control = chrome
-        .view
-        .sessions_view_hit_area
-        .expect("sessions view drawn");
-    assert_eq!(view_control.y, sections[SidebarSection::Sessions.index()].y);
+    let view_control = chrome.view.agents_view_hit_area.expect("agents view drawn");
+    assert_eq!(view_control.y, sections[SidebarSection::Agents.index()].y);
     assert_eq!(
         route(&ws, &mut chrome, LEFT_DOWN, view_control.x, view_control.y),
         MouseOutcome::Handled
     );
     assert_eq!(
         chrome.menu.as_ref().map(|menu| menu.kind.clone()),
-        Some(ContextMenuKind::SessionsView)
+        Some(ContextMenuKind::AgentsView)
     );
     chrome.menu = None;
     chrome.mode = Mode::Terminal;
@@ -1683,7 +1506,7 @@ fn sidebar_drags_reorder_resize_and_scroll() {
         MouseOutcome::Handled
     );
     let projects_scroll = |chrome: &Chrome| chrome.sidebar.scroll(SidebarSection::Projects);
-    let sessions_scroll = |chrome: &Chrome| chrome.sidebar.scroll(SidebarSection::Sessions);
+    let agents_scroll = |chrome: &Chrome| chrome.sidebar.scroll(SidebarSection::Agents);
     assert_eq!(projects_scroll(&chrome), MOUSE_SCROLL_LINES);
     route(&ws, &mut chrome, MouseEventKind::ScrollDown, col, row);
     assert_eq!(projects_scroll(&chrome), projects_max, "clamped at the end");
@@ -1691,23 +1514,34 @@ fn sidebar_drags_reorder_resize_and_scroll() {
     assert_eq!(projects_scroll(&chrome), projects_max - MOUSE_SCROLL_LINES);
     route(&ws, &mut chrome, MouseEventKind::ScrollUp, col, row);
     assert_eq!(projects_scroll(&chrome), 0, "clamped at the top");
-    let sessions_max =
-        section_metrics(&ws, &chrome, SidebarSection::Sessions).max_offset_from_bottom;
+    let terminals_max =
+        section_metrics(&ws, &chrome, SidebarSection::Terminals).max_offset_from_bottom;
+    assert!(terminals_max > 0, "bare terminals overflow their section");
+    let (col, row) = row_cell(&chrome.view.agent_hit_areas, "terminal:term-5");
+    route(&ws, &mut chrome, MouseEventKind::ScrollDown, col, row);
+    assert_eq!(
+        chrome.sidebar.scroll(SidebarSection::Terminals),
+        terminals_max
+    );
+    assert_eq!(agents_scroll(&chrome), 0, "Agents scroll is independent");
+    route(&ws, &mut chrome, MouseEventKind::ScrollUp, col, row);
+    assert_eq!(chrome.sidebar.scroll(SidebarSection::Terminals), 0);
+    let agents_max = section_metrics(&ws, &chrome, SidebarSection::Agents).max_offset_from_bottom;
     assert!(
-        sessions_max > 0 && sessions_max < MOUSE_SCROLL_LINES,
-        "the sessions list overflows by less than a notch: {sessions_max}"
+        agents_max > 0 && agents_max <= MOUSE_SCROLL_LINES,
+        "the agents list overflows by less than a notch: {agents_max}"
     );
     let (col, row) = row_cell(&chrome.view.agent_hit_areas, "run:term-0");
     route(&ws, &mut chrome, MouseEventKind::ScrollDown, col, row);
-    assert_eq!(sessions_scroll(&chrome), sessions_max);
+    assert_eq!(agents_scroll(&chrome), agents_max);
     assert_eq!(
         projects_scroll(&chrome),
         0,
         "the cards are not the list under the pointer"
     );
     route(&ws, &mut chrome, MouseEventKind::ScrollUp, col, row);
-    assert_eq!(sessions_scroll(&chrome), 0);
-    let sessions_band = sections[SidebarSection::Sessions.index()].y;
+    assert_eq!(agents_scroll(&chrome), 0);
+    let sessions_band = sections[SidebarSection::Agents.index()].y;
     route(
         &ws,
         &mut chrome,
@@ -1716,8 +1550,8 @@ fn sidebar_drags_reorder_resize_and_scroll() {
         sessions_band,
     );
     assert_eq!(
-        sessions_scroll(&chrome),
-        sessions_max,
+        agents_scroll(&chrome),
+        agents_max,
         "a section band belongs to the list under it"
     );
     route(
@@ -1732,7 +1566,7 @@ fn sidebar_drags_reorder_resize_and_scroll() {
         MOUSE_SCROLL_LINES,
         "the projects band belongs to the cards"
     );
-    chrome.sidebar.scrolls = [0; 3];
+    chrome.sidebar.scrolls = [0; 4];
     draw_with_hits(&ws, &mut chrome, area);
 
     // The scrollbar track jumps the list; the thumb drags it.
