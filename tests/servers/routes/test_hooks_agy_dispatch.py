@@ -565,6 +565,64 @@ async def test_startup_claim_mutation_keeps_hook_loop_responsive(
     assert response.status_code == expected_status
 
 
+@pytest.mark.parametrize(
+    "operation", ["claim_envelope_processing", "release_envelope_processing_claim"]
+)
+async def test_envelope_claim_lifecycle_keeps_hook_loop_responsive(
+    monkeypatch: pytest.MonkeyPatch,
+    session_storage: SessionManager,
+    operation: str,
+) -> None:
+    server = _capability_gate_server(session_storage)
+    owner_thread = threading.get_ident()
+    entered = threading.Event()
+    release = threading.Event()
+    retryable = AgentRunIngressRetryableError(
+        session_id="agy-child", expected_run_id="run-1", reason="run is not durable yet"
+    )
+
+    async def claim(*args: Any, **kwargs: Any) -> StartupClaimLease:
+        return StartupClaimLease("session-1", 1, "owner-1")
+
+    async def fail_adapter(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        raise retryable
+
+    def blocked_io(*args: Any, **kwargs: Any) -> bool:
+        entered.set()
+        assert threading.get_ident() != owner_thread
+        assert release.wait(2)
+        return True
+
+    monkeypatch.setattr(hooks_routes, "preflight_agy_startup_claim_bounded", claim)
+    monkeypatch.setattr(hooks_routes, "_run_adapter_hook", fail_adapter)
+    monkeypatch.setattr(hooks_routes, "rollback_agy_startup_claim", lambda *args: None)
+    monkeypatch.setattr(hooks_routes, "envelope_processing_owner_token", lambda _id: None)
+    monkeypatch.setattr(hooks_routes, "claim_envelope_processing", lambda _id: True)
+    monkeypatch.setattr(hooks_routes, "release_envelope_processing_claim", lambda _id: True)
+    monkeypatch.setattr(hooks_routes, operation, blocked_io)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=server.app), base_url="http://test"
+    ) as client:
+        request = asyncio.create_task(
+            client.post(
+                "/api/hooks/execute",
+                headers={ENVELOPE_ID_HEADER: "env-agy-lifecycle"},
+                json=_agy_pre_invocation_envelope(),
+            )
+        )
+        try:
+            assert await asyncio.wait_for(asyncio.to_thread(entered.wait, 2), timeout=3)
+            heartbeat = asyncio.Event()
+            asyncio.get_running_loop().call_soon(heartbeat.set)
+            await asyncio.wait_for(heartbeat.wait(), timeout=1)
+        finally:
+            release.set()
+            response = await request
+
+    assert response.status_code == 503
+
+
 class TestAgyAdapterTimeoutRetry:
     def test_timeout_without_capability_rejects_before_adapter(
         self,
