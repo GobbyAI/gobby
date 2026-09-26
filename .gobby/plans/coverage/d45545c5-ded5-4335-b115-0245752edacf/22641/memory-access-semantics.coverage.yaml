@@ -1,11 +1,11 @@
 header:
   plan_id: memory-access-semantics
-  plan_hash: 5652d1c8d1531af66ad35698fca1829fdf5045967e0960194a7ed09e9e913cb3
+  plan_hash: 60449907eb3a2fab15051c438408e9be170648899167c92fa56869db0578bf83
   root_task_ref: '22641'
   project_id: d45545c5-ded5-4335-b115-0245752edacf
-  generated_at: '2026-09-24T14:40:40Z'
+  generated_at: '2026-09-26T13:19:12Z'
   task_tree_source: db
-  task_tree_source_hash: eacb8c2b16174d827e6217ad923e9a3f61cd2c9f17657bdc3176e0f55adffa91
+  task_tree_source_hash: 5f00db7af09434992ee306ba15933098d5652708c634958dd13e7e71523f34e8
   evidence_summary: []
   evidence: []
 rows:
@@ -79,6 +79,11 @@ rows:
       seven `storage/recall_*.py` modules, `_search_debug.py`, and the usefulness-label
       contract no longer exist a...'
     matched_artifact_ref: src/gobby/memory/recall_signal_log.py
+  - leaf_task_ref: '#22837'
+    validation_criteria_snippet: '1.1.1: The judge, drift evaluator, and CLI group
+      modules no longer exist and nothing under `src/` imports them. file: `src/gobby/memory/shadow_relevance.py`.
+      f...'
+    matched_artifact_ref: src/gobby/memory/recall_signal_log.py
   deferral_target: null
   detail: ''
 - section_id: '1.2'
@@ -90,6 +95,11 @@ rows:
     validation_criteria_snippet: '1.2.1: The eight `memory/recall_*.py` modules, the
       seven `storage/recall_*.py` modules, `_search_debug.py`, and the usefulness-label
       contract no longer exist a...'
+    matched_artifact_ref: SearchService
+  - leaf_task_ref: '#22837'
+    validation_criteria_snippet: '1.1.1: The judge, drift evaluator, and CLI group
+      modules no longer exist and nothing under `src/` imports them. file: `src/gobby/memory/shadow_relevance.py`.
+      f...'
     matched_artifact_ref: SearchService
   deferral_target: null
   detail: ''
@@ -103,6 +113,11 @@ rows:
       seven `storage/recall_*.py` modules, `_search_debug.py`, and the usefulness-label
       contract no longer exist a...'
     matched_artifact_ref: src/gobby/memory/manager.py
+  - leaf_task_ref: '#22837'
+    validation_criteria_snippet: '1.1.1: The judge, drift evaluator, and CLI group
+      modules no longer exist and nothing under `src/` imports them. file: `src/gobby/memory/shadow_relevance.py`.
+      f...'
+    matched_artifact_ref: src/gobby/memory/manager.py
   deferral_target: null
   detail: ''
 - section_id: '1.2'
@@ -114,6 +129,11 @@ rows:
     validation_criteria_snippet: '1.2.1: The eight `memory/recall_*.py` modules, the
       seven `storage/recall_*.py` modules, `_search_debug.py`, and the usefulness-label
       contract no longer exist a...'
+    matched_artifact_ref: src/gobby/mcp_proxy/tools/memory.py
+  - leaf_task_ref: '#22837'
+    validation_criteria_snippet: '1.1.1: The judge, drift evaluator, and CLI group
+      modules no longer exist and nothing under `src/` imports them. file: `src/gobby/memory/shadow_relevance.py`.
+      f...'
     matched_artifact_ref: src/gobby/mcp_proxy/tools/memory.py
   deferral_target: null
   detail: ''
@@ -127,6 +147,11 @@ rows:
       seven `storage/recall_*.py` modules, `_search_debug.py`, and the usefulness-label
       contract no longer exist a...'
     matched_artifact_ref: tests/memory/test_recall_benchmark.py::test_recall_benchmark_arms
+  - leaf_task_ref: '#22837'
+    validation_criteria_snippet: '1.1.1: The judge, drift evaluator, and CLI group
+      modules no longer exist and nothing under `src/` imports them. file: `src/gobby/memory/shadow_relevance.py`.
+      f...'
+    matched_artifact_ref: tests/memory/test_recall_benchmark.py::test_recall_benchmark_arms
   deferral_target: null
   detail: ''
 - section_id: '1.2'
@@ -138,6 +163,11 @@ rows:
     validation_criteria_snippet: '1.2.1: The eight `memory/recall_*.py` modules, the
       seven `storage/recall_*.py` modules, `_search_debug.py`, and the usefulness-label
       contract no longer exist a...'
+    matched_artifact_ref: recall-signal
+  - leaf_task_ref: '#22837'
+    validation_criteria_snippet: '1.1.1: The judge, drift evaluator, and CLI group
+      modules no longer exist and nothing under `src/` imports them. file: `src/gobby/memory/shadow_relevance.py`.
+      f...'
     matched_artifact_ref: recall-signal
   deferral_target: null
   detail: ''
@@ -559,6 +589,10 @@ rows:
   plan_node_hash: 796b7144ab3d22f923d39994ca4fc4ff141de1c447ba02be66e3206b9f65d803
   status: covered
   leaves:
+  - leaf_task_ref: '#22844'
+    validation_criteria_snippet: '3.3.1: An id with any record in `accessed_memory_ids`,
+      whichever task tagged it, is never rendered again in the epoch. test: `tests/workflows/test_memory_index...'
+    matched_artifact_ref: tests/mcp_proxy/tools/test_memory_review.py::test_accessed_candidates_listed_first
   - leaf_task_ref: '#22845'
     validation_criteria_snippet: '3.4.1: Accessed candidates tagged with the closing
       task or untagged come first with `source: accessed`, in fetch order. test: `tests/mcp_proxy/tools/test_memor...'
@@ -570,6 +604,10 @@ rows:
   plan_node_hash: 1064c42052b4b79d49a352d0e8aafa098e9ea095b5094864e7325d537aa9ee22
   status: covered
   leaves:
+  - leaf_task_ref: '#22844'
+    validation_criteria_snippet: '3.3.1: An id with any record in `accessed_memory_ids`,
+      whichever task tagged it, is never rendered again in the epoch. test: `tests/workflows/test_memory_index...'
+    matched_artifact_ref: tests/mcp_proxy/tools/test_memory_review.py::test_other_task_accessed_records_excluded
   - leaf_task_ref: '#22845'
     validation_criteria_snippet: '3.4.1: Accessed candidates tagged with the closing
       task or untagged come first with `source: accessed`, in fetch order. test: `tests/mcp_proxy/tools/test_memor...'
@@ -581,6 +619,10 @@ rows:
   plan_node_hash: 09f41916fe285eb919e6bf71df087b495df7d91522df73681b16cc4ed1a36fa6
   status: covered
   leaves:
+  - leaf_task_ref: '#22844'
+    validation_criteria_snippet: '3.3.1: An id with any record in `accessed_memory_ids`,
+      whichever task tagged it, is never rendered again in the epoch. test: `tests/workflows/test_memory_index...'
+    matched_artifact_ref: tests/mcp_proxy/tools/test_memory_review.py::test_closing_session_accessed_records_included
   - leaf_task_ref: '#22845'
     validation_criteria_snippet: '3.4.1: Accessed candidates tagged with the closing
       task or untagged come first with `source: accessed`, in fetch order. test: `tests/mcp_proxy/tools/test_memor...'
@@ -592,6 +634,10 @@ rows:
   plan_node_hash: a35fa82b899faccbcfe779e01743af61877aed92ed32815a5f708d4eb5e78bd3
   status: covered
   leaves:
+  - leaf_task_ref: '#22844'
+    validation_criteria_snippet: '3.3.1: An id with any record in `accessed_memory_ids`,
+      whichever task tagged it, is never rendered again in the epoch. test: `tests/workflows/test_memory_index...'
+    matched_artifact_ref: tests/mcp_proxy/tools/test_memory_review.py::test_search_tier_deduped_against_accessed
   - leaf_task_ref: '#22845'
     validation_criteria_snippet: '3.4.1: Accessed candidates tagged with the closing
       task or untagged come first with `source: accessed`, in fetch order. test: `tests/mcp_proxy/tools/test_memor...'
@@ -603,6 +649,10 @@ rows:
   plan_node_hash: 1be42243440465809ce8e5d2033e458ed9e4a146ab5a0223a3b33d42475e63ed
   status: covered
   leaves:
+  - leaf_task_ref: '#22844'
+    validation_criteria_snippet: '3.3.1: An id with any record in `accessed_memory_ids`,
+      whichever task tagged it, is never rendered again in the epoch. test: `tests/workflows/test_memory_index...'
+    matched_artifact_ref: docs/guides/memory.md
   - leaf_task_ref: '#22845'
     validation_criteria_snippet: '3.4.1: Accessed candidates tagged with the closing
       task or untagged come first with `source: accessed`, in fetch order. test: `tests/mcp_proxy/tools/test_memor...'

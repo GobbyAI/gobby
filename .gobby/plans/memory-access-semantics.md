@@ -29,14 +29,39 @@ with `get_memory`. Three defects were found while reviewing `docs/research/jev.m
 
 Separately, the recall-signal stack (nine hub tables, a JSONL log, the shadow judge, refit,
 shrinkage, replay, ship gate, drift monitor, and the `gobby memory recall-signals` CLI;
-about 8,100 source lines across 24 modules plus 6,200 test lines) is dormant: every flag
-defaults off, no row has ever been written on this machine, and its cohort excludes the
-index surfacing caller by design. It was built for the retired automatic-recall regime.
+about 8,100 source lines across 24 modules plus 6,200 test lines) was built for the
+retired automatic-recall regime, and its shadow judge is live on this machine. Every flag
+defaults off in code, but the installed `config_store` holds `memory.recall_signal_hub`
+(set 2026-07-10), `memory.recall_signal_logging` (2026-06-15), and
+`memory.shadow_relevance_judging` (2026-08-12) at `true` (no `~/.gobby/config.yaml`
+exists; the flags live only in the store), and the installed `rule_definitions` row for
+the bundled `turn_end` rule `judge-shadow-relevance-on-response` is enabled, so it
+dispatches `gobby-memory:judge_shadow_relevance`
+(`src/gobby/mcp_proxy/tools/memory.py`, near line 741) after every agent response, and
+`judge_shadow_candidate_relevance` (`src/gobby/memory/shadow_relevance.py`, near line 301)
+claims up to eight due `digest_shadow` requests and makes one `call_json_feature` call
+each, pinned to `codex/gpt-5.6-luna`. Read-only hub counts on 2026-09-26 at 13:10 UTC:
+`recall_shadow_judge_state` 13,594 rows (6,743 `complete`, 6,795 `terminal`, 35
+`retryable`, 21 `claimed`); `recall_shadow_prompt_snapshot` 6,743, of which 5,150 by
+`codex/gpt-5.6-luna` since 2026-07-31 and 1,593 by `claude/haiku` before 2026-08-11,
+with 3,662 since 2026-08-25; `~/.gobby/logs/llm.log` records 3,602 `feature_llm_call`
+lines for `feature=memory.shadow_relevance` (`provider=codex`, `model=gpt-5.6-luna`)
+from its 2026-08-25 start to 2026-09-26, about 109 calls a day at a mean latency near
+20 s, 4 of them `schema_failed`; `recall_usefulness` 46,625
+labels (46,274 `digest_shadow`, 21,626 of them since 2026-08-25); `recall_signal_requests`
+19,448; `recall_signal_hits` 130,913; `recall_injection_outcomes` 55,043;
+`recall_shadow_audit_verdicts` 50; `recall_gate_runs` and `recall_holdout_consumed` 0.
+The labels have no live reader: `memory.recall_drift_monitor_enabled` and
+`memory.use_fitted_recall_constants` are absent from the store, so the drift loop and the
+fitted constants stay at their off defaults. The cohort excludes the index surfacing
+caller by design (`SHADOW_ELIGIBLE_CALLERS`, `src/gobby/storage/recall_shadow_signals.py`,
+near line 25), so `memory.surface` requests are recorded and never judged. Decision 10
+stands: retirement removes a live consumer, its Codex spend, and labels nothing reads.
 
 Outcome: `access` means an agent opened the memory; `surfaced` means it was shown; ranking
 decay follows the later of edit and access; the index re-lists a shown-but-unread memory
 after a configurable horizon and never re-lists one already in context; post-task review
-starts from what the task actually read; the dormant telemetry stack and the
+starts from what the task actually read; the recall-signal stack and the
 destructive-migration directive path are gone.
 
 ## Decision Record
@@ -148,6 +173,26 @@ shadow tables or runs the drift loop) while leaving the tree importable; 1.2 rem
 sink side, the storage layer, and the search-debug plumbing that exists only to feed it;
 1.3 removes the thirteen config keys, adds `memory.index_reshow_after_injections`, and
 regenerates the runtime contract once.
+
+Live consumer and stranded rows: the judge runs today (Overview), so 1.1 ends real Codex
+calls and label writes. `shadow_cohort_query("polling", ...)`
+(`src/gobby/storage/recall_shadow_signals.py`, near line 112) filters on the originating
+`r.session_id`, and the only poller is that session's `turn_end` rule, so a request whose
+ten-minute `claimed` lease or `retryable` backoff outlives its session is never polled
+again. On 2026-09-26 at 13:10 UTC `recall_shadow_judge_state` held 56 such rows: 21
+`claimed` with leases expired between 2026-07-21 and 2026-09-20, and 35 `retryable` after
+one attempt each (16 `judge_error:ClaudeSDKRateLimited`, 7 `invalid_response`, 4
+`judge_error:ClaudeSDKShutdownCancellation`, 4 `judge_error:RuntimeError`, 2
+`judge_error:ClaudeSDKProviderFailure`, 2 `judge_error:_InvalidTextGenerationOutputError`),
+34 of them past `next_attempt_at`. The 21 expired claims and those 34 due retryables, 55
+rows, belong to sessions already `expired`; the one retryable still inside its backoff
+belongs to an active session; retries from a still-live session do work (48 `complete`
+rows at attempt 2, 2 at attempt 3), and orphans accrue at about 0.4% of judged requests
+until 1.1 lands. Nothing reads or repairs them once 1.1 deletes the rule,
+tool, and module, and they leave with their table when 2.1's migration 452 executes `DROP
+TABLE IF EXISTS ... RESTRICT` over `recall_shadow_judge_state` and the other eight tables
+(2.1.1); no leaf copies or preserves a row. The three `true` rows in the installed
+`config_store` are the persisted rows 1.3.4 sweeps at load.
 
 ### 1.1 Retire the shadow judge, drift monitor, judge rule, judge tool, and recall-signals CLI [category: refactor]
 `kind: deliverable`
