@@ -36,6 +36,8 @@ use super::{PaneId, SidebarFetch, SidebarFetchFuture, Workspace, WorkspaceModel}
 mod actions;
 mod control;
 pub(super) mod menu;
+mod menu_bar;
+pub(super) mod menu_dispatch;
 pub(super) mod modal_input;
 pub(super) mod mouse;
 pub(super) mod orphans;

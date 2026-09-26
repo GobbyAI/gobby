@@ -21,8 +21,10 @@ mod workspace_panes;
 pub use attach::AttachState;
 pub use live::{ControlOutcome, SidebarFetch, SidebarFetchFuture};
 pub use live_loop::menu::{
-    item_rects, menu_rect, ContextMenuKind, ContextMenuState, MenuAction, MenuItem,
+    build_menu, item_rects, menu_rect, ArrangeLayout, ContextMenuKind, ContextMenuState,
+    MenuAction, MenuItem,
 };
+pub use live_loop::menu_dispatch::apply_live_menu_action;
 pub use live_loop::modal_input::{apply_rename, route_modal_key, ModalOutcome};
 pub use live_loop::mouse::{
     anchor_selection, extend_selection, finish_selection, route_mouse, ClickRun, MouseGesture,

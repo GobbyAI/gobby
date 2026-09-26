@@ -7307,6 +7307,7 @@ async fn daemon_restart_refetches_workspace_snapshot() {
 async fn run_pane_move_case(
     tabs: &[(&[&str], &str)],
     chords: Vec<(KeyCode, KeyModifiers)>,
+    final_op: &str,
 ) -> (
     MockDaemon,
     Workspace<LiveDaemon>,
@@ -7341,6 +7342,20 @@ async fn run_pane_move_case(
             send_chord(&input_tx, code, modifiers).await;
             settle_live_event().await;
         }
+        timeout(Duration::from_secs(1), async {
+            loop {
+                if websocket_requests(&mock, "workspace_op")
+                    .iter()
+                    .any(|request| request["op"] == final_op)
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("pane move operation reached daemon");
+        settle_live_event().await;
         drop(input_tx);
     };
     let mut switch = TerminalGuard::recording().0;
@@ -7366,6 +7381,7 @@ async fn moving_pane_to_existing_tab_preserves_terminal_and_reflows_source() {
             (&["terminal-c"], "terminal-c"),
         ],
         vec![(KeyCode::Char('@'), KeyModifiers::NONE)],
+        "pane.move",
     )
     .await;
     let moves: Vec<_> = websocket_requests(&mock, "workspace_op")
@@ -7410,6 +7426,7 @@ async fn moving_last_pane_removes_empty_source_tab() {
             (KeyCode::Char('2'), KeyModifiers::NONE),
             (KeyCode::Char('1'), KeyModifiers::SHIFT),
         ],
+        "pane.move",
     )
     .await;
     let model = workspace.workspace_model().expect("workspace model");
@@ -7434,6 +7451,7 @@ async fn moving_pane_to_new_tab_keeps_its_process_and_closes_placeholder() {
     let (mock, workspace, chrome, seeded) = run_pane_move_case(
         &[(&["terminal-a"], "terminal-a")],
         vec![(KeyCode::Char('C'), KeyModifiers::SHIFT)],
+        "pane.close",
     )
     .await;
     let ops = websocket_requests(&mock, "workspace_op");
@@ -8109,10 +8127,10 @@ async fn context_menu_dispatches_items_and_closes_outside() {
         settle_live_event().await;
 
         // Bare tab-bar space opens the global menu; clicking `reload config`
-        // (its seventh row, after `alerts…`) re-reads the prefs file.
+        // (its sixth row) re-reads the prefs file.
         press(MouseButton::Right, bare_cell).await;
-        hover(item_cell(bare_cell, 6)).await;
-        press(MouseButton::Left, item_cell(bare_cell, 6)).await;
+        hover(item_cell(bare_cell, 5)).await;
+        press(MouseButton::Left, item_cell(bare_cell, 5)).await;
         settle_live_event().await;
 
         // The tab's menu: `close tab` runs the confirm-close path.

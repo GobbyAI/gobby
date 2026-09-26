@@ -14,7 +14,6 @@ use crate::ui::chrome::{attention_pane, Tab};
 use crate::ui::dialogs::{CloseScope, CloseTarget, Dialog, RenameKind};
 use crate::ui::navigator::NavigatorState;
 use crate::ui::sidebar::attention_order;
-use crate::ui::sidebar_rows::project_label;
 use crate::ui::status::Toast;
 use crate::ui::{Action, Chrome, Mode};
 use crossterm::event::KeyEvent;
@@ -27,22 +26,20 @@ use super::control::{
     focus_live_pane, observe_live_pane, release_live_control, send_live_report,
     set_live_scroll_offset, take_live_control,
 };
-use super::menu::{apply_local_menu_action, ContextMenuKind, MenuAction};
-use super::modal_input::{apply_rename, open_alerts_dialog, ModalOutcome};
+use super::menu_dispatch::apply_live_menu_action;
+use super::modal_input::{apply_rename, ModalOutcome};
 use super::mouse::{MouseOutcome, Placement};
-use super::orphans::{agent_orphan, destroy_orphans, open_destroy_orphans_dialog};
+use super::orphans::destroy_orphans;
 use super::projection::close_slot;
 use super::projects::{
-    close_live_terminal, close_project, close_project_confirmed, create_worktree, focus_agent,
-    focus_project, focus_terminal, mark_agent_seen, open_agent_in_new_tab, open_new_project_dialog,
-    open_new_worktree_dialog, open_open_worktree_dialog, open_remove_worktree_dialog,
-    open_worktree, remove_worktree, rename_project, reveal_agent, submit_new_project,
+    close_live_terminal, close_project_confirmed, create_worktree, focus_agent, focus_project,
+    focus_terminal, open_new_project_dialog, open_worktree, remove_worktree, submit_new_project,
 };
 use super::sync_live_chrome;
 use super::workspace_actions::{
-    apply_daemon_menu_action, close_daemon_pane, close_daemon_tab, move_active_daemon_tab,
-    move_daemon_tab, move_focused_pane_to_tab, place_live_terminal, rename_daemon_target,
-    resize_daemon_split, swap_live_slots,
+    close_daemon_pane, close_daemon_tab, move_active_daemon_tab, move_daemon_tab,
+    move_focused_pane_to_tab, place_live_terminal, rename_daemon_target, resize_daemon_split,
+    swap_live_slots,
 };
 
 mod sidebar;
@@ -189,115 +186,6 @@ pub(super) async fn apply_live_modal_outcome(
         }
     }
     Ok(false)
-}
-
-/// A context menu item. A keymap action runs as its chord would once the
-/// menu's pane or tab is the focused one (the pane is observed, so the lease
-/// stays the action's decision); `respond` focuses the entry's pane and opens
-/// its dialog; the project and worktree row items run the `projects` flows,
-/// the agent row items its agent helpers; the chrome-only items go through
-/// `apply_local_menu_action`.
-async fn apply_live_menu_action(
-    workspace: &mut Workspace<LiveDaemon>,
-    chrome: &mut Chrome,
-    kind: ContextMenuKind,
-    action: MenuAction,
-) -> Result<bool, FrameError> {
-    match action {
-        MenuAction::Act(action) => {
-            focus_menu_target(workspace, chrome, &kind).await?;
-            if action == Action::Quit {
-                return Ok(true);
-            }
-            handle_live_action(workspace, chrome, action).await?;
-        }
-        MenuAction::Respond(entry_id) => {
-            if let Some(pane) = attention_pane(workspace, &entry_id) {
-                chrome.focus_pane(pane);
-                focus_live_pane(workspace, pane).await?;
-            }
-            open_response_dialog(workspace, chrome, Some(&entry_id)).await?;
-        }
-        MenuAction::FocusProject(project_id) => {
-            focus_project(workspace, chrome, &project_id).await?;
-        }
-        MenuAction::OpenWorktreeTab(worktree_id) => {
-            open_worktree(workspace, chrome, &worktree_id).await?;
-        }
-        MenuAction::NewWorktree(project_id) => {
-            open_new_worktree_dialog(workspace, chrome, &project_id);
-        }
-        MenuAction::OpenWorktree(project_id) => {
-            open_open_worktree_dialog(workspace, chrome, &project_id);
-        }
-        MenuAction::RemoveWorktree(worktree_id) => {
-            open_remove_worktree_dialog(workspace, chrome, &worktree_id);
-        }
-        MenuAction::CloseProject(project_id) => {
-            close_project(workspace, chrome, &project_id).await?;
-        }
-        MenuAction::RenameProject(project_id) => {
-            let current = project_label(workspace, chrome, &project_id).unwrap_or_default();
-            rename_project(chrome, &project_id, &current);
-        }
-        MenuAction::FocusAgent(entry_id) => focus_agent(workspace, chrome, &entry_id).await?,
-        MenuAction::OpenAgentInNewTab(entry_id) => {
-            open_agent_in_new_tab(workspace, chrome, &entry_id).await?;
-        }
-        MenuAction::MarkSeen(entry_id) => mark_agent_seen(workspace, &entry_id).await?,
-        MenuAction::ShowAlerts => open_alerts_dialog(chrome),
-        MenuAction::DestroyOrphans => open_destroy_orphans_dialog(workspace, chrome).await,
-        MenuAction::DestroyTerminal(terminal_id) => {
-            let target = agent_orphan(workspace, &terminal_id);
-            destroy_orphans(workspace, chrome, vec![target]).await?;
-        }
-        MenuAction::CloseTerminal(pane) => {
-            close_live_terminal(workspace, chrome, pane).await?;
-        }
-        MenuAction::TakeControl(pane) => {
-            focus_menu_target(workspace, chrome, &kind).await?;
-            take_live_control(workspace, pane);
-        }
-        MenuAction::ReleaseControl(pane) => {
-            focus_menu_target(workspace, chrome, &kind).await?;
-            release_live_control(workspace, pane).await?;
-        }
-        _ => {
-            if !apply_daemon_menu_action(workspace, chrome, &action).await? {
-                apply_local_menu_action(workspace, chrome, &action);
-            }
-        }
-    }
-    Ok(false)
-}
-
-/// Make the menu's pane or tab the one keymap actions act on: a worktree
-/// row's is the tab opened from it, an agent row's the pane its entry maps
-/// to, revealed and observed so the lease stays the action's decision.
-async fn focus_menu_target(
-    workspace: &mut Workspace<LiveDaemon>,
-    chrome: &mut Chrome,
-    kind: &ContextMenuKind,
-) -> Result<(), FrameError> {
-    match kind {
-        ContextMenuKind::Pane(pane) if chrome.focused_pane() != Some(*pane) => {
-            chrome.focus_pane(*pane);
-            observe_live_pane(workspace, *pane).await?;
-        }
-        ContextMenuKind::Tab(index) if *index != chrome.active_index() => {
-            activate_live_tab(workspace, chrome, *index).await?;
-        }
-        ContextMenuKind::Worktree(worktree_id) => {
-            open_worktree(workspace, chrome, worktree_id).await?;
-        }
-        ContextMenuKind::Agent(entry_id) => {
-            if let Some(pane) = reveal_agent(workspace, chrome, entry_id).await? {
-                observe_live_pane(workspace, pane).await?;
-            }
-        }
-        _ => {}
-    }
-    Ok(())
 }
 
 /// Hand `url` to `opener` detached: null stdio, and a thread reaps it so a

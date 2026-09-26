@@ -1,5 +1,7 @@
 use super::*;
-use crate::app::Workspace;
+use crate::app::{ControlState, Workspace};
+use crate::ui::settings::AgentSort;
+use crate::ui::Action;
 
 fn labels(state: &ContextMenuState) -> Vec<&'static str> {
     state.items.iter().map(|item| item.label).collect()
@@ -94,10 +96,9 @@ fn menus_list_items_per_target_and_state() {
         [
             "new terminal",
             "new tab",
-            "new project",
+            "new workspace…",
             "settings",
             "keybinding help",
-            "alerts…",
             "reload config",
             "toggle sidebar",
             "destroy orphaned terminals…",
@@ -106,24 +107,23 @@ fn menus_list_items_per_target_and_state() {
         ]
     );
     assert_eq!(menu.items[2].action, MenuAction::Act(Action::NewProject));
-    assert_eq!(menu.items[5].action, MenuAction::ShowAlerts);
-    assert_eq!(menu.items[6].action, MenuAction::Act(Action::ReloadConfig));
-    assert_eq!(menu.items[10].action, MenuAction::Act(Action::Quit));
+    assert_eq!(menu.items[5].action, MenuAction::Act(Action::ReloadConfig));
+    assert_eq!(menu.items[9].action, MenuAction::Act(Action::Quit));
     assert!(menu.items.iter().all(|item| item.enabled));
 
     // Rows sit one cell inside the popup at the anchor: `destroy orphaned
-    // terminals…` makes it 31 wide, eleven items make it 13 tall.
+    // terminals…` makes it 31 wide, ten items make it 12 tall.
     assert_eq!(
         menu_rect(menu.anchor, &menu.items),
-        Rect::new(40, 12, 31, 13)
+        Rect::new(40, 12, 31, 12)
     );
-    assert_eq!(menu.item_rects.len(), 11);
+    assert_eq!(menu.item_rects.len(), 10);
     assert_eq!(menu.item_rects[0], Rect::new(41, 13, 29, 1));
     assert_eq!(menu_hit(&menu, 41, 13), Some(0));
     assert_eq!(menu_hit(&menu, 57, 15), Some(2));
     assert_eq!(menu_hit(&menu, 40, 13), None, "the border is not a row");
-    assert_eq!(menu_hit(&menu, 45, 23), Some(10), "the last row");
-    assert_eq!(menu_hit(&menu, 45, 24), None, "below the last row");
+    assert_eq!(menu_hit(&menu, 45, 22), Some(9), "the last row");
+    assert_eq!(menu_hit(&menu, 45, 23), None, "below the last row");
     let short = [item("zoom", MenuAction::Act(Action::Zoom))];
     assert_eq!(
         menu_rect((0, 0), &short).width,
@@ -166,20 +166,39 @@ fn menu_bar_menus_regroup_items_per_title() {
     };
 
     let gobby = menu(&ws, &chrome, MenuBarMenu::Gobby);
-    assert_eq!(labels(&gobby), ["alerts…", "settings"]);
+    assert_eq!(labels(&gobby), ["settings", "reload config", "quit"]);
     assert_eq!(
         actions(&gobby),
-        [MenuAction::ShowAlerts, MenuAction::Act(Action::Settings)]
+        [
+            MenuAction::Act(Action::Settings),
+            MenuAction::Act(Action::ReloadConfig),
+            MenuAction::Act(Action::Quit),
+        ]
     );
 
     let file = menu(&ws, &chrome, MenuBarMenu::File);
-    assert_eq!(labels(&file), ["new project", "new tab", "new pane"]);
+    assert_eq!(
+        labels(&file),
+        [
+            "new terminal",
+            "new tab",
+            "new workspace…",
+            "rename tab",
+            "close tab",
+            "destroy orphaned terminals…",
+            "detach",
+        ]
+    );
     assert_eq!(
         actions(&file),
         [
-            MenuAction::Act(Action::NewProject),
-            MenuAction::Act(Action::NewTab),
             MenuAction::Act(Action::NewTerminal),
+            MenuAction::Act(Action::NewTab),
+            MenuAction::Act(Action::NewProject),
+            MenuAction::Act(Action::RenameTab),
+            MenuAction::Act(Action::CloseTab),
+            MenuAction::DestroyOrphans,
+            MenuAction::Act(Action::Detach),
         ]
     );
 
@@ -220,10 +239,14 @@ fn menu_bar_menus_regroup_items_per_title() {
     let view = menu(&ws, &chrome, MenuBarMenu::View);
     let band = build_menu(&ws, &chrome, ContextMenuKind::AgentsView, (0, 1)).items;
     assert_eq!(view.items[..band.len()], band[..]);
-    assert_eq!(labels(&view)[band.len()..], ["show sidebar", "pin sidebar"]);
+    assert_eq!(
+        labels(&view)[band.len()..],
+        ["working projects", "show sidebar", "pin sidebar"]
+    );
     assert_eq!(
         actions(&view)[band.len()..],
         [
+            MenuAction::Act(Action::ToggleProjectsFilter),
             MenuAction::Act(Action::ToggleSidebar),
             MenuAction::PinSidebar
         ]
@@ -232,24 +255,36 @@ fn menu_bar_menus_regroup_items_per_title() {
     let window = menu(&ws, &chrome, MenuBarMenu::Window);
     assert_eq!(
         labels(&window),
-        ["next tab", "previous tab", "next pane", "previous pane"]
+        [
+            "split right",
+            "split down",
+            "zoom",
+            "close pane",
+            "resize mode"
+        ]
     );
     assert_eq!(
         actions(&window),
         [
-            MenuAction::Act(Action::NextTab),
-            MenuAction::Act(Action::PreviousTab),
-            MenuAction::Act(Action::CyclePaneNext),
-            MenuAction::Act(Action::CyclePanePrevious),
+            MenuAction::Act(Action::SplitVertical),
+            MenuAction::Act(Action::SplitHorizontal),
+            MenuAction::Act(Action::Zoom),
+            MenuAction::Act(Action::ClosePane),
+            MenuAction::Act(Action::ResizeMode),
         ]
     );
 
     let help = menu(&ws, &chrome, MenuBarMenu::Help);
-    assert_eq!(labels(&help), ["keys"]);
-    assert_eq!(actions(&help), [MenuAction::Act(Action::Help)]);
+    assert_eq!(labels(&help), ["keys", "alerts…"]);
+    assert_eq!(
+        actions(&help),
+        [MenuAction::Act(Action::Help), MenuAction::ShowAlerts]
+    );
 
-    // The Agent menu's items are section 3.11's.
-    assert!(menu(&ws, &chrome, MenuBarMenu::Agent).items.is_empty());
+    let agent = menu(&ws, &chrome, MenuBarMenu::Agent);
+    assert_eq!(agent.items.len(), 9);
+    assert!(!agent.items[0].enabled);
+    assert!(!agent.items[1].enabled);
 
     // With no pane focused, Edit shows its pane items disabled.
     let edit = menu(&ws, &Chrome::dark(), MenuBarMenu::Edit);
@@ -258,6 +293,34 @@ fn menu_bar_menus_regroup_items_per_title() {
         ["copy mode", "rename pane", "rename tab", "rename terminal"]
     );
     assert!(edit.items.iter().all(|item| !item.enabled));
+}
+
+#[test]
+fn agent_menu_disables_navigation_when_its_only_attention_is_focused() {
+    let mut ws = Workspace::scripted();
+    let pane = ws
+        .open_terminal("term-attention", "native", "epoch")
+        .expect("open terminal");
+    let mut chrome = Chrome::dark();
+    chrome.open_pane(pane, "attention");
+    ws.attention.entries.push(crate::daemon::RosterEntry {
+        entry_id: format!("run:{}", ws.pane(pane).terminal_id),
+        ..Default::default()
+    });
+
+    let menu = build_menu(
+        &ws,
+        &chrome,
+        ContextMenuKind::MenuBar(MenuBarMenu::Agent),
+        (0, 1),
+    );
+    assert!(menu.items[0].enabled);
+    assert!(menu.items[1].enabled);
+    assert!(!menu.items[7].enabled, "next would revisit the same pane");
+    assert!(
+        !menu.items[8].enabled,
+        "previous would revisit the same pane"
+    );
 }
 
 #[test]
