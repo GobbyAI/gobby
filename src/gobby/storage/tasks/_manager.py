@@ -513,7 +513,7 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
         delegated_to_session_id: str,
         reason: str,
     ) -> Task:
-        """Record the filer-approved delegation of an open task."""
+        """Record an authorized delegation of an open task."""
         result = _delegate_task(
             self.db,
             task_id,

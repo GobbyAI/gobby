@@ -563,7 +563,7 @@ class TerminalWsMixin:
         finally:
             # The observer looks the terminal row up for an interrupt key; the
             # client's reply must not wait on that.
-            record_turn_observation(
+            await record_turn_observation(
                 self,
                 terminal_id,
                 kind=kind,

@@ -419,7 +419,7 @@ class ProxyHub:
                     observer = getattr(self._owner, "terminal_turn_observer", None)
                     output = mapped.get("data")
                     if observer is not None and isinstance(output, str):
-                        observer.observe_output(record.terminal_id, output)
+                        await observer.observe_output_async(record.terminal_id, output)
                 try:
                     seq = self._owner._leases().next_message_seq(record.attachment_id)
                 except Exception:

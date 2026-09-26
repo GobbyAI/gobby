@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
+from threading import Event, get_ident
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
@@ -23,6 +28,114 @@ class _Terminals:
         if terminal_id != self._terminal_id:
             return None
         return SimpleNamespace(session_id=self._session_id)
+
+
+def test_concurrent_output_waits_for_interrupt_candidate_recording(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    _sessions, session_id, _lifecycle, observer = _observer(
+        temp_db, sample_project["id"], provider="qwen"
+    )
+    entered = Event()
+    release = Event()
+
+    class BlockingTerminals(_Terminals):
+        def get(self, terminal_id: str) -> SimpleNamespace | None:
+            entered.set()
+            assert release.wait(5)
+            return super().get(terminal_id)
+
+    observer.set_terminal_manager(BlockingTerminals("terminal-1", session_id))
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        recorded = pool.submit(observer.record_mediated_input, "terminal-1", "\x03", "delivered")
+        assert entered.wait(5)
+        observed = pool.submit(observer.observe_output, "terminal-1", "interrupted")
+        try:
+            with pytest.raises(FutureTimeoutError):
+                observed.result(timeout=0.1)
+        finally:
+            release.set()
+        assert recorded.result(timeout=5) is True
+        assert observed.result(timeout=5) is True
+
+
+@pytest.mark.asyncio
+async def test_async_observer_offloads_lookup_and_skips_idle_output(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    _sessions, session_id, _lifecycle, observer = _observer(
+        temp_db, sample_project["id"], provider="qwen"
+    )
+    lookup_threads: list[int] = []
+
+    class RecordingTerminals(_Terminals):
+        def get(self, terminal_id: str) -> SimpleNamespace | None:
+            lookup_threads.append(get_ident())
+            return super().get(terminal_id)
+
+    terminals = RecordingTerminals("terminal-1", session_id)
+
+    def unexpected_query(*_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("idle output must not query terminals")
+
+    terminals.db = SimpleNamespace(fetchone=unexpected_query)
+    observer.set_terminal_manager(terminals)
+    assert await observer.observe_output_async("terminal-1", "interrupted") is False
+    assert await observer.observe_run_output_async("run-1", "interrupted") is False
+    with patch(
+        "gobby.sessions.terminal_turn_observer.asyncio.to_thread",
+        side_effect=AssertionError("ordinary input must not use a worker"),
+    ):
+        assert await observer.record_mediated_input_async("terminal-1", "x", "delivered") is False
+    assert lookup_threads == []
+    assert await observer.record_mediated_input_async("terminal-1", "\x03", "delivered") is True
+    assert lookup_threads and lookup_threads[0] != get_ident()
+    assert await observer.observe_output_async("terminal-1", "interrupted") is True
+
+
+async def test_cancelled_input_keeps_worker_order_and_socket_loop_live(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    _sessions, session_id, _lifecycle, observer = _observer(
+        temp_db, sample_project["id"], provider="qwen"
+    )
+    entered = Event()
+    release = Event()
+    heartbeat = Event()
+
+    class BlockingTerminals(_Terminals):
+        def get(self, terminal_id: str) -> SimpleNamespace | None:
+            entered.set()
+            assert release.wait(5)
+            return super().get(terminal_id)
+
+    observer.set_terminal_manager(BlockingTerminals("terminal-1", session_id))
+
+    def release_after_heartbeat() -> bool:
+        saw_heartbeat = heartbeat.wait(2)
+        release.set()
+        return saw_heartbeat
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        input_task = asyncio.create_task(
+            observer.record_mediated_input_async("terminal-1", "\x03", "delivered")
+        )
+        assert await asyncio.to_thread(entered.wait, 5)
+        input_task.cancel()
+        await asyncio.sleep(0)
+        output_task = asyncio.create_task(
+            observer.observe_output_async("terminal-1", "interrupted")
+        )
+        asyncio.get_running_loop().call_soon(heartbeat.set)
+        release_future = pool.submit(release_after_heartbeat)
+        input_task.cancel()  # A second cancellation must not release ordering early.
+        try:
+            with pytest.raises(asyncio.CancelledError):
+                await input_task
+            assert await output_task is True
+            assert release_future.result(timeout=5) is True
+        finally:
+            release.set()
 
 
 def _observer(

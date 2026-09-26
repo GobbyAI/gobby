@@ -335,7 +335,7 @@ class WebSocketServer(
         if host_manager is not None:
             host_manager.set_input_activity_sink(self._observe_input_activity)
 
-    def _observe_input_activity(self, event: InputActivityEvent) -> None:
+    async def _observe_input_activity(self, event: InputActivityEvent) -> None:
         """Keep turn observation and the quarantine lift for typing that bypassed us.
 
         Runs on the host event reader for every accepted direct write, so it
@@ -345,10 +345,10 @@ class WebSocketServer(
         observer = self.terminal_turn_observer
         if observer is not None:
             payload = _INTERRUPT_PAYLOADS.get(event.interrupt or "", "")
-            observer.record_mediated_input(event.terminal_id, payload, "delivered")
+            await observer.record_mediated_input_async(event.terminal_id, payload, "delivered")
         coordinator = self.write_coordinator
         if coordinator is not None:
-            coordinator.observe_operator_input(event.terminal_id)
+            await coordinator.observe_operator_input_async(event.terminal_id)
 
     @property
     def daemon_config(self) -> DaemonConfig | None:

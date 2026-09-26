@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 from typing import Any
 from unittest.mock import patch
 
@@ -134,3 +136,230 @@ async def test_delegate_task_rejects_ended_receiver(
 
     assert "error" in result
     assert "live" in result["error"].lower()
+
+
+@pytest.mark.parametrize("filer_status", ["expired", "closed"])
+async def test_current_receiver_can_transfer_after_filer_ends(
+    temp_db: HubDatabase, sample_project: dict[str, Any], filer_status: str
+) -> None:
+    sessions, filer, receiver, task, registry = _setup(temp_db, sample_project)
+    successor = sessions.register(
+        external_id="delegation-successor",
+        machine_id="21000000-0000-4000-8000-000000000002",
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    with session_context_for_test(filer.id):
+        initial = await registry.call(
+            "delegate_task",
+            {
+                "task_id": task.id,
+                "delegated_to_session_ref": f"#{receiver.seq_num}",
+                "reason": "Initial lane assignment.",
+            },
+        )
+    assert "error" not in initial, initial
+
+    sessions.update_status(filer.id, filer_status)
+    with session_context_for_test(receiver.id):
+        result = await registry.call(
+            "delegate_task",
+            {
+                "task_id": task.id,
+                "delegated_to_session_ref": f"#{successor.seq_num}",
+                "reason": "PD approved a transfer after the filer ended.",
+            },
+        )
+
+    assert "error" not in result, result
+    assert result["delegated_to_session_id"] == successor.id
+    assert result["delegated_by_session_id"] == receiver.id
+    assert result["reason"] == "PD approved a transfer after the filer ended."
+
+
+@pytest.mark.parametrize(
+    "filer_status",
+    ["active", "paused", "interrupted", "awaiting_input", "awaiting_approval", "awaiting_handoff"],
+)
+async def test_current_receiver_cannot_transfer_while_filer_is_live(
+    temp_db: HubDatabase, sample_project: dict[str, Any], filer_status: str
+) -> None:
+    sessions, filer, receiver, task, registry = _setup(temp_db, sample_project)
+    successor = sessions.register(
+        external_id="delegation-successor",
+        machine_id="21000000-0000-4000-8000-000000000002",
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    with session_context_for_test(filer.id):
+        initial = await registry.call(
+            "delegate_task",
+            {
+                "task_id": task.id,
+                "delegated_to_session_ref": f"#{receiver.seq_num}",
+                "reason": "Initial lane assignment.",
+            },
+        )
+    assert "error" not in initial, initial
+    if filer_status != "active":
+        sessions.update_status(filer.id, filer_status)
+
+    with session_context_for_test(receiver.id):
+        result = await registry.call(
+            "delegate_task",
+            {
+                "task_id": task.id,
+                "delegated_to_session_ref": f"#{successor.seq_num}",
+                "reason": "Premature transfer.",
+            },
+        )
+
+    assert "Only the session that filed" in result["error"]
+    assert LocalTaskManager(temp_db).get_task(task.id).delegated_to_session_id == receiver.id
+
+
+async def test_unrelated_session_cannot_transfer_after_filer_ends(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    sessions, filer, receiver, task, registry = _setup(temp_db, sample_project)
+    outsider = sessions.register(
+        external_id="delegation-outsider",
+        machine_id="21000000-0000-4000-8000-000000000002",
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    successor = sessions.register(
+        external_id="delegation-successor",
+        machine_id="21000000-0000-4000-8000-000000000002",
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    with session_context_for_test(filer.id):
+        initial = await registry.call(
+            "delegate_task",
+            {
+                "task_id": task.id,
+                "delegated_to_session_ref": f"#{receiver.seq_num}",
+                "reason": "Initial lane assignment.",
+            },
+        )
+    assert "error" not in initial, initial
+    sessions.update_status(filer.id, "expired")
+
+    with session_context_for_test(outsider.id):
+        result = await registry.call(
+            "delegate_task",
+            {
+                "task_id": task.id,
+                "delegated_to_session_ref": f"#{successor.seq_num}",
+                "reason": "Unrelated takeover.",
+            },
+        )
+
+    assert "error" in result
+    assert LocalTaskManager(temp_db).get_task(task.id).delegated_to_session_id == receiver.id
+
+
+def test_ended_receiver_cannot_transfer_after_filer_ends(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    sessions, filer, receiver, task, _ = _setup(temp_db, sample_project)
+    successor = sessions.register(
+        external_id="delegation-successor",
+        machine_id="21000000-0000-4000-8000-000000000002",
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    manager = LocalTaskManager(temp_db)
+    manager.delegate_task(
+        task.id,
+        delegated_by_session_id=filer.id,
+        delegated_to_session_id=receiver.id,
+        reason="Initial lane assignment.",
+    )
+    sessions.update_status(filer.id, "expired")
+    sessions.update_status(receiver.id, "expired")
+
+    with pytest.raises(ValueError, match="Only the session that filed"):
+        manager.delegate_task(
+            task.id,
+            delegated_by_session_id=receiver.id,
+            delegated_to_session_id=successor.id,
+            reason="Ended receiver must not transfer.",
+        )
+    assert manager.get_task(task.id).delegated_to_session_id == receiver.id
+
+
+def test_current_receiver_cannot_transfer_to_ended_target(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    sessions, filer, receiver, task, _ = _setup(temp_db, sample_project)
+    successor = sessions.register(
+        external_id="delegation-successor",
+        machine_id="21000000-0000-4000-8000-000000000002",
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    manager = LocalTaskManager(temp_db)
+    manager.delegate_task(
+        task.id,
+        delegated_by_session_id=filer.id,
+        delegated_to_session_id=receiver.id,
+        reason="Initial lane assignment.",
+    )
+    sessions.update_status(filer.id, "expired")
+    sessions.update_status(successor.id, "expired")
+
+    with pytest.raises(ValueError, match="live receiving session"):
+        manager.delegate_task(
+            task.id,
+            delegated_by_session_id=receiver.id,
+            delegated_to_session_id=successor.id,
+            reason="Ended target must not receive.",
+        )
+    assert manager.get_task(task.id).delegated_to_session_id == receiver.id
+
+
+def test_competing_receiver_transfers_have_one_winner(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    sessions, filer, receiver, task, _ = _setup(temp_db, sample_project)
+    successors = [
+        sessions.register(
+            external_id=f"delegation-successor-{index}",
+            machine_id="21000000-0000-4000-8000-000000000002",
+            source="codex",
+            project_id=sample_project["id"],
+        )
+        for index in range(2)
+    ]
+    manager = LocalTaskManager(temp_db)
+    manager.delegate_task(
+        task.id,
+        delegated_by_session_id=filer.id,
+        delegated_to_session_id=receiver.id,
+        reason="Initial lane assignment.",
+    )
+    sessions.update_status(filer.id, "expired")
+    barrier = Barrier(2)
+
+    def transfer(successor: Session) -> Task | str:
+        barrier.wait()
+        try:
+            return LocalTaskManager(temp_db).delegate_task(
+                task.id,
+                delegated_by_session_id=receiver.id,
+                delegated_to_session_id=successor.id,
+                reason=f"Transfer to {successor.seq_num}.",
+            )
+        except ValueError as exc:
+            return str(exc)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = list(pool.map(transfer, successors))
+
+    assert sum(isinstance(outcome, Task) for outcome in outcomes) == 1
+    assert sum(isinstance(outcome, str) for outcome in outcomes) == 1
+    winning_task = next(outcome for outcome in outcomes if isinstance(outcome, Task))
+    assert manager.get_task(task.id).delegated_to_session_id == winning_task.delegated_to_session_id
+    assert winning_task.delegated_to_session_id in {successor.id for successor in successors}
