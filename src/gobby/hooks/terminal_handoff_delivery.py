@@ -53,7 +53,8 @@ _TERMINAL_SOURCES = frozenset(
 )
 _RETRY_GUIDANCE = (
     "Terminal handoff delivery failed after set_handoff returned. "
-    "Retry gobby-sessions:set_handoff before calling any other tool."
+    "Retry gobby-sessions:set_handoff after clearing any held provider command; "
+    "recover the payload first if needed."
 )
 _COMPOSER_OCCUPIED_ERROR_CODE = "composer_occupied"
 _COMPOSER_OCCUPIED_GUIDANCE = (
@@ -468,10 +469,16 @@ def _compensate_delivery_failure(
         "delivery_failed": not abandoned,
         "delivery_pending": False,
         "delivery_abandoned": abandoned,
+        "delivery_state": "failed_not_deliverable",
         "attempt_id": claimed.attempt_id,
         "clear_session": claimed.clear_session,
         "reason": reason,
         "retry_guidance": _ABANDON_GUIDANCE if abandoned else guidance,
+        "recovery_guidance": (
+            "Authored content is available through "
+            f"gobby-sessions:get_handoff(failed_attempt_id={claimed.attempt_id!r}); "
+            "this explicit read does not deliver it."
+        ),
     }
     if abandoned:
         failure["error_code"] = _ABANDONED_ERROR_CODE

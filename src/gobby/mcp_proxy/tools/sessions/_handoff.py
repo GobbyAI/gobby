@@ -16,6 +16,7 @@ from gobby.sessions.handoff import (
     PENDING_HANDOFF_VARIABLE,
     consume_pending_handoff,
     normalize_feedback_observations,
+    recover_failed_handoff,
     write_feedback_batch,
 )
 from gobby.sessions.handoff_records import agent_run_attempt_id, get_agent_end_handoff
@@ -151,11 +152,37 @@ def register_handoff_tools(
         except ValueError:
             return None
 
-    async def get_handoff(agent_run_id: str | None = None) -> dict[str, Any]:
-        """Consume a continuation handoff or read one agent run's final handoff."""
+    async def get_handoff(
+        agent_run_id: str | None = None, failed_attempt_id: str | None = None
+    ) -> dict[str, Any]:
+        """Consume a continuation or explicitly read an undelivered handoff."""
         session_id = _current_session_id()
         if session_id is None:
             return {"success": False, "error": "No session context available"}
+        if agent_run_id is not None and failed_attempt_id is not None:
+            return {
+                "success": False,
+                "error": "Select one handoff",
+                "error_code": "invalid_selector",
+            }
+        if failed_attempt_id is not None:
+            markdown = recover_failed_handoff(session_manager.db, session_id, failed_attempt_id)
+            if markdown is None:
+                return {
+                    "success": True,
+                    "found": False,
+                    "session_id": session_id,
+                    "attempt_id": failed_attempt_id,
+                    "handoff": "",
+                }
+            return {
+                "success": True,
+                "found": True,
+                "session_id": session_id,
+                "attempt_id": failed_attempt_id,
+                "delivery_state": "failed_not_deliverable",
+                "handoff": markdown,
+            }
         if agent_run_id is not None:
             try:
                 agent_run_attempt_id(agent_run_id)
@@ -290,12 +317,16 @@ def register_handoff_tools(
         description=(
             "With no arguments, consume the one pending compact/clear handoff. With "
             "agent_run_id, idempotently read that child run's final agent_end handoff as "
-            "its parent session or a bound clear successor."
+            "its parent session or a bound clear successor. With failed_attempt_id, "
+            "explicitly read the caller's failed undelivered handoff without delivery or receipt."
         ),
-        brief="Consume a continuation handoff or read a child run's final handoff.",
+        brief="Consume a continuation or explicitly read an undelivered handoff.",
         input_schema={
             "type": "object",
-            "properties": {"agent_run_id": {"type": "string"}},
+            "properties": {
+                "agent_run_id": {"type": "string"},
+                "failed_attempt_id": {"type": "string"},
+            },
             "additionalProperties": False,
         },
         func=get_handoff,

@@ -14,7 +14,6 @@ from gobby.sessions.handoff_records import (
     FoundWorkEntry,
     HandoffPayload,
     build_handoff_payload,
-    delete_undelivered_handoff,
     insert_delivery_receipt,
     insert_handoff_record,
 )
@@ -34,6 +33,7 @@ HANDOFF_PULL_PENDING_VARIABLE = "handoff_pull_pending"
 HANDOFF_DISPATCH_GATE_VARIABLE = "context_compact_handoff_result"
 HANDOFF_UNAVAILABLE_VARIABLE = "context_compact_handoff_unavailable"
 HANDOFF_DELIVERY_FAILURES_VARIABLE = "context_compact_handoff_delivery_failures"
+FAILED_HANDOFF_VARIABLE = "failed_handoff_attempt"
 FOUND_WORK_VARIABLE = "set_handoff_found_work"
 
 _OPTIONAL_FEEDBACK_FIELDS = ("suggestion", "disposition")
@@ -421,6 +421,7 @@ def stage_handoff_attempt(
             (session_id,),
         ).fetchone()
         variables = _load_variables(variable_row["variables"] if variable_row else None)
+        variables.pop(FAILED_HANDOFF_VARIABLE, None)
         prior_markers = {name: variables[name] for name in marker_updates if name in variables}
         missing_markers = frozenset(name for name in marker_updates if name not in variables)
         handoff_record_id, _authored_at = insert_handoff_record(conn, session_id, handoff)
@@ -432,6 +433,10 @@ def stage_handoff_attempt(
                     "prior_handoff_markdown": session_row["handoff_markdown"],
                     "prior_status": prior_status,
                 }
+        marker_updates[PENDING_HANDOFF_VARIABLE]["restore_state"] = {
+            "prior_markers": prior_markers,
+            "missing_markers": sorted(missing_markers),
+        }
         variables.update(marker_updates)
 
         if prior_status is not None:
@@ -504,11 +509,18 @@ def restore_handoff_attempt(
             or pending.get("handoff_record_id") != state.handoff_record_id
         ):
             return False
-        if not delete_undelivered_handoff(
-            conn,
-            state.handoff_record_id,
-            state.session_id,
-        ):
+        staged = conn.execute(
+            """
+            SELECT h.id FROM session_handoffs AS h
+            WHERE h.id = %s AND h.session_id = %s
+              AND NOT EXISTS (
+                  SELECT 1 FROM session_handoff_deliveries AS d WHERE d.handoff_id = h.id
+              )
+            FOR UPDATE OF h
+            """,
+            (state.handoff_record_id, state.session_id),
+        ).fetchone()
+        if staged is None:
             return False
 
         for name in state.missing_markers:
@@ -516,6 +528,11 @@ def restore_handoff_attempt(
             if not isinstance(current, Mapping) or current.get("attempt_id") == state.attempt_id:
                 variables.pop(name, None)
         variables.update(state.prior_markers)
+        variables[FAILED_HANDOFF_VARIABLE] = {
+            "attempt_id": state.attempt_id,
+            "handoff_record_id": state.handoff_record_id,
+            "delivery_state": "failed_not_deliverable",
+        }
         variables.update(marker_updates or {})
         conn.execute(
             "UPDATE sessions SET handoff_markdown = %s, updated_at = %s WHERE id = %s",
@@ -531,6 +548,43 @@ def restore_handoff_attempt(
             )
         _store_variables(conn, state.session_id, variables, exists=True)
     return True
+
+
+def _attempt_state_from_marker(
+    session_id: str,
+    attempt_id: str,
+    marker: Mapping[str, Any],
+    *,
+    staged_markers: frozenset[str],
+) -> HandoffAttemptState | None:
+    handoff_record_id = marker.get("handoff_record_id")
+    if not isinstance(handoff_record_id, str) or not handoff_record_id:
+        return None
+    snapshot = marker.get("restore_state")
+    prior_markers: dict[str, Any] = {}
+    missing_markers = staged_markers
+    if isinstance(snapshot, Mapping):
+        prior = snapshot.get("prior_markers")
+        missing = snapshot.get("missing_markers")
+        if (
+            isinstance(prior, dict)
+            and all(isinstance(name, str) and name in staged_markers for name in prior)
+            and isinstance(missing, list)
+            and all(isinstance(name, str) and name in staged_markers for name in missing)
+            and not prior.keys() & set(missing)
+        ):
+            prior_markers = prior
+            missing_markers = frozenset(missing)
+    prior_status = marker.get("prior_status")
+    return HandoffAttemptState(
+        session_id=session_id,
+        attempt_id=attempt_id,
+        handoff_record_id=handoff_record_id,
+        prior_handoff_markdown=marker.get("prior_handoff_markdown"),
+        prior_markers=prior_markers,
+        missing_markers=missing_markers,
+        prior_status=prior_status if isinstance(prior_status, str) else None,
+    )
 
 
 def staged_handoff_tool_result(
@@ -645,32 +699,59 @@ def restore_staged_handoff(
     marker = variables.get(PENDING_HANDOFF_VARIABLE)
     if not isinstance(marker, Mapping) or marker.get("attempt_id") != attempt_id:
         return False
-    handoff_record_id = marker.get("handoff_record_id")
-    if not isinstance(handoff_record_id, str) or not handoff_record_id:
-        return False
-    state = HandoffAttemptState(
-        session_id=session_id,
-        attempt_id=attempt_id,
-        handoff_record_id=handoff_record_id,
-        prior_handoff_markdown=marker.get("prior_handoff_markdown"),
-        prior_markers={},
-        missing_markers=frozenset(
+    state = _attempt_state_from_marker(
+        session_id,
+        attempt_id,
+        marker,
+        staged_markers=frozenset(
             {
                 PENDING_HANDOFF_VARIABLE,
                 HANDOFF_PULL_PENDING_VARIABLE,
                 HANDOFF_TURN_END_PENDING_VARIABLE,
+                FOUND_WORK_VARIABLE,
             }
         ),
-        prior_status=(
-            marker.get("prior_status") if isinstance(marker.get("prior_status"), str) else None
-        ),
     )
+    if state is None:
+        return False
     updates = (
         {HANDOFF_DISPATCH_GATE_VARIABLE: dict(failure_result)}
         if failure_result is not None
         else None
     )
     return restore_handoff_attempt(db, state, marker_updates=updates)
+
+
+def recover_failed_handoff(db: HubDatabase, session_id: str, attempt_id: str) -> str | None:
+    """Read an owner's failed payload without making it deliverable or creating a receipt."""
+    with db.transaction() as conn:
+        variable_row = conn.execute(
+            "SELECT variables FROM session_variables WHERE session_id = %s FOR UPDATE",
+            (session_id,),
+        ).fetchone()
+        if variable_row is None:
+            return None
+        marker = _load_variables(variable_row["variables"]).get(FAILED_HANDOFF_VARIABLE)
+        if (
+            not isinstance(marker, Mapping)
+            or marker.get("attempt_id") != attempt_id
+            or marker.get("delivery_state") != "failed_not_deliverable"
+        ):
+            return None
+        handoff_id = marker.get("handoff_record_id")
+        if not isinstance(handoff_id, str) or not handoff_id:
+            return None
+        row = conn.execute(
+            """
+            SELECT h.rendered_markdown FROM session_handoffs AS h
+            WHERE h.id = %s AND h.session_id = %s
+              AND NOT EXISTS (
+                  SELECT 1 FROM session_handoff_deliveries AS d WHERE d.handoff_id = h.id
+              )
+            """,
+            (handoff_id, session_id),
+        ).fetchone()
+        return str(row["rendered_markdown"]) if row is not None else None
 
 
 def consume_pending_handoff(db: HubDatabase, caller_session_id: str) -> ConsumedHandoff | None:

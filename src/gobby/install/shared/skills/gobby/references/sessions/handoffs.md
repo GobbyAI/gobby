@@ -94,6 +94,11 @@ manual compact/clear, or absent marker returns empty. Do not pass `session_id`,
 search for another session's summary, or create an archival summary to recover
 it. Separately, a parent or its bound clear successor may idempotently read a
 child's final handoff with `get_handoff(agent_run_id=...)`.
+If terminal delivery fails, use the returned attempt ID with
+`get_handoff(failed_attempt_id=...)` to explicitly recover the authored payload.
+That read neither delivers the handoff nor creates a receipt; clear any held
+provider command before retrying `set_handoff`. A new staged attempt replaces the
+failed recovery marker.
 
 Guide: [Creating and reading handoffs](../../../../../../../../docs/guides/sessions.md#creating-and-reading-handoffs).
 

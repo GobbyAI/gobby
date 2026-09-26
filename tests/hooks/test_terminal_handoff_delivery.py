@@ -34,6 +34,7 @@ from gobby.mcp_proxy.tools.sessions._terminal_handoff_delivery import (
     _wait_for_compact_boundary,
 )
 from gobby.sessions import compact_continuation
+from gobby.sessions.clear_continuation import CLEAR_ATTEMPT_VARIABLE, stage_clear_attempt
 from gobby.sessions.compact_continuation import (
     _HANDOFF_COMPACT_CONTINUATION_TASKS,
     HANDOFF_COMPACT_CONTINUE_VARIABLE,
@@ -41,8 +42,11 @@ from gobby.sessions.compact_continuation import (
     mark_handoff_compact_continuation_pending,
 )
 from gobby.sessions.handoff import (
+    FAILED_HANDOFF_VARIABLE,
+    FOUND_WORK_VARIABLE,
     HANDOFF_DELIVERY_FAILURES_VARIABLE,
     HANDOFF_DISPATCH_GATE_VARIABLE,
+    HANDOFF_TURN_END_PENDING_VARIABLE,
     HANDOFF_UNAVAILABLE_VARIABLE,
     PENDING_HANDOFF_VARIABLE,
     ClaimedHandoffDelivery,
@@ -1092,6 +1096,67 @@ def _claimed_compact_attempt(hub_db: HubDatabase) -> ClaimedHandoffDelivery:
     return claimed
 
 
+@pytest.mark.parametrize(
+    "prior_markers,legacy_snapshot",
+    [
+        ({}, False),
+        ({}, True),
+        ({FOUND_WORK_VARIABLE: ["previous"], HANDOFF_TURN_END_PENDING_VARIABLE: False}, False),
+    ],
+)
+def test_failed_clear_delivery_restores_all_staged_markers_without_attempt_state(
+    hub_db: HubDatabase, prior_markers: dict[str, Any], legacy_snapshot: bool
+) -> None:
+    session_manager = _compact_session_manager(hub_db, _NATIVE_WORKER_CONTEXT)
+    if prior_markers:
+        SessionVariableManager(hub_db).merge_variables(SESSION_ID, prior_markers)
+        before = SessionVariableManager(hub_db).get_variables(SESSION_ID)
+        assert all(before[name] == value for name, value in prior_markers.items())
+    staged = stage_clear_attempt(
+        hub_db,
+        SESSION_ID,
+        attempt_id=ATTEMPT_ID,
+        handoff=build_handoff_payload(current_state="ready", next_steps=["continue"]),
+        terminal_context=_NATIVE_WORKER_CONTEXT,
+        chat_context=None,
+    )
+    claimed = claim_staged_handoff_delivery(
+        hub_db, SESSION_ID, ATTEMPT_ID, recover_unarmed_gate=True
+    )
+    assert claimed is not None
+    assert claimed.clear_session is True
+    assert claimed.handoff_record_id == staged.handoff_record_id
+    assert staged.prior_markers == prior_markers
+    pending = SessionVariableManager(hub_db).get_variables(SESSION_ID)[PENDING_HANDOFF_VARIABLE]
+    if legacy_snapshot:
+        pending.pop("restore_state")
+        SessionVariableManager(hub_db).merge_variables(
+            SESSION_ID, {PENDING_HANDOFF_VARIABLE: pending}
+        )
+    else:
+        assert pending["restore_state"]["prior_markers"] == prior_markers
+    assert (
+        SessionVariableManager(hub_db).get_variables(SESSION_ID)[HANDOFF_TURN_END_PENDING_VARIABLE]
+        is True
+    )
+
+    terminal_handoff_delivery._compensate_delivery_failure(hub_db, claimed, "provider rejected")
+
+    session = session_manager.get(SESSION_ID)
+    assert session is not None
+    assert session.status == "active"
+    variables = SessionVariableManager(hub_db).get_variables(SESSION_ID)
+    assert CLEAR_ATTEMPT_VARIABLE not in variables
+    assert PENDING_HANDOFF_VARIABLE not in variables
+    for name in (HANDOFF_TURN_END_PENDING_VARIABLE, FOUND_WORK_VARIABLE):
+        if name in prior_markers:
+            assert variables[name] == prior_markers[name]
+        else:
+            assert name not in variables
+    assert variables[FAILED_HANDOFF_VARIABLE]["handoff_record_id"] == staged.handoff_record_id
+    assert variables[HANDOFF_DISPATCH_GATE_VARIABLE]["delivery_failed"] is True
+
+
 def test_compact_failure_reads_only_fresh_claude_local_command_stderr(tmp_path: Path) -> None:
     transcript = tmp_path / "claude.jsonl"
     record = {
@@ -1461,6 +1526,60 @@ async def test_compact_provider_failure_exhausts_to_failure_settlement(hub_db: H
         )
         is None
     )
+
+
+async def test_held_compact_failed_interrupt_preserves_undelivered_payload(
+    hub_db: HubDatabase,
+) -> None:
+    session_manager = _compact_session_manager(hub_db, _NATIVE_WORKER_CONTEXT)
+    claimed = _claimed_compact_attempt(hub_db)
+    pane = SimpleNamespace(backend="native", snapshot=AsyncMock(return_value="/compact"))
+    reason = "CLI did not confirm interruption after 3 attempts"
+    send_command = AsyncMock(return_value=(False, reason, False, {"interrupted": False}))
+
+    with (
+        patch(f"{_COMPACT_DELIVERY}._resolve_pane_io", return_value=(pane, None)),
+        patch(f"{_COMPACT_DELIVERY}._interrupt_observer", return_value=(None, None)),
+        patch(f"{_COMPACT_DELIVERY}._turn_settled_observer", return_value=None),
+        patch(f"{_COMPACT_DELIVERY}._send_terminal_compaction_command", send_command),
+        patch(f"{_COMPACT_DELIVERY}.composer_reader", return_value=None),
+        patch(
+            "gobby.hooks.terminal_handoff_delivery.shielded_terminal_delivery",
+            side_effect=_run_operation,
+        ),
+    ):
+        await terminal_handoff_delivery._settle_delivery(
+            claimed,
+            session_manager=session_manager,
+            agent_run_manager=MagicMock(),
+            terminal_manager=None,
+            terminal_runtime_registry=None,
+        )
+
+    send_command.assert_awaited_once()
+    variables = SessionVariableManager(hub_db).get_variables(SESSION_ID)
+    assert variables[HANDOFF_DISPATCH_GATE_VARIABLE]["reason"] == reason
+    assert variables[HANDOFF_DISPATCH_GATE_VARIABLE]["delivery_state"] == "failed_not_deliverable"
+    assert "failed_attempt_id" in variables[HANDOFF_DISPATCH_GATE_VARIABLE]["recovery_guidance"]
+    assert variables[FAILED_HANDOFF_VARIABLE] == {
+        "attempt_id": ATTEMPT_ID,
+        "handoff_record_id": claimed.handoff_record_id,
+        "delivery_state": "failed_not_deliverable",
+    }
+    assert PENDING_HANDOFF_VARIABLE not in variables
+    assert (
+        hub_db.fetchone(
+            "SELECT 1 FROM session_handoffs WHERE id = %s", (claimed.handoff_record_id,)
+        )
+        is not None
+    )
+    assert (
+        hub_db.fetchone(
+            "SELECT 1 FROM session_handoff_deliveries WHERE attempt_id = %s", (ATTEMPT_ID,)
+        )
+        is None
+    )
+    assert claim_staged_handoff_delivery(hub_db, SESSION_ID, ATTEMPT_ID) is None
 
 
 async def test_tmux_pane_session_still_receives_the_continuation_by_tmux(
