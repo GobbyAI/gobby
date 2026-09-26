@@ -99,12 +99,12 @@ Josh confirmed these on 2026-09-25:
 - No production code changes in planning task #22909.
 - Internal callers keep their behavior. Brief applies at the MCP tool boundary: the wrapper
   function the registry exposes. Shared builders used by internal paths keep returning the full
-  shape; see `CloseEvaluation.response` in 1.6 and `_agent_result_payload` in 1.9.
+  shape; see `CloseEvaluation.response` in 1.6 and `_agent_result_payload` in 1.8.
 - Every agent workflow YAML, rule, and reference that reads a field is either kept working (the
   field stays in brief) or updated in the same deliverable.
 - Production files at 850 lines or more that must change are split in the same deliverable. That
   includes `src/gobby/mcp_proxy/tools/agents_query_tools.py`, which is already over the
-  1,000-line ceiling at 1,004 lines (found work, fixed in 1.9).
+  1,000-line ceiling at 1,004 lines (found work, fixed in 1.8).
 - The PD routes implementation leaves to a free developer lane without diverting Lane 1 (Chrome)
   or daemon stability work. All leaves are independent except where a heading says `depends`.
 
@@ -156,7 +156,7 @@ Consumers unchanged:
 **Acceptance:**
 - 1.1.1 - `src/gobby/servers/routes/mcp/endpoints/_responses.py` defines `elapsed_ms` and holds the five moved response helpers; `execution.py` is below 850 lines. file: `src/gobby/servers/routes/mcp/endpoints/_responses.py`.
 - 1.1.2 - No `response_time_ms` in `execution.py`, `discovery.py`, `server.py`, or `registry.py` is assigned from anything but `elapsed_ms`. file: `src/gobby/servers/routes/mcp/endpoints/execution.py`.
-- 1.1.3 - test: `tests/servers/routes/mcp_endpoints/test_response_timing.py::test_proxy_results_report_integer_response_time_ms` calls a tool route, a list route, and a schema route and asserts `isinstance(body["response_time_ms"], int)`.
+- 1.1.3 - test: `tests/servers/routes/mcp_endpoints/test_response_timing.py::test_proxy_results_report_integer_response_time_ms` drives every envelope through the route test client: `call_mcp_tool` (`execution.py:620`) on its success path, its timeout path (`_timeout_response_payload`, `execution.py:110`), and its unknown-tool error path; the `mcp_proxy` handler (`execution.py:777`); `list_mcp_tools` and `get_tool_schema`; `search_mcp_tools` (`discovery.py:468`); `set_mcp_server_enabled` (`server.py:471`); and `get_mcp_status` (`registry.py:99`). It asserts `isinstance(body["response_time_ms"], int)` on each response, error envelopes included.
 
 **Verification:** run the new test plus `tests/servers/test_mcp_routes.py` and `tests/servers/routes/mcp_endpoints/` with `GOBBY_TEST_PROTECT=1`, then `uv run ruff check` and `uv run mypy` on the touched files.
 
@@ -462,6 +462,7 @@ Targets:
 - `src/gobby/mcp_proxy/tools/tasks/_lifecycle_claim.py::*` — scope-reason: the claim response text prescribes `get_task(brief=false)`
 - `src/gobby/mcp_proxy/tools/spawn_agent/_step_state.py::*` — scope-reason: step guidance text prescribes `get_task(brief=false)`
 - `src/gobby/storage/tasks/_models.py::*` — scope-reason: a model docstring or guidance string prescribes `get_task(brief=false)`
+- `tests/workflows/test_workflows_agent_definitions.py::*` — scope-reason: a guard test asserting no bundled definition prescribes `get_task(brief=false)` is added beside the existing bundled-definition checks
 
 **Research context:**
 - The caller audit found `get_task(brief=false)` prescribed for ordinary task reading in nine
@@ -471,6 +472,9 @@ Targets:
   settings, and dependency summaries, which is everything those instructions ask agents to read.
   Under Decision Record 2, prescribing full mode for normal work contradicts the contract.
 - Bundled templates sync to the DB on the next daemon start; the implementer does not run sync.
+- `tests/workflows/test_workflows_dry_run.py` holds unit tests of the dry-run evaluator only;
+  the bundled-definition loader (`AGENTS_DIR`, `_load_yaml`) lives in
+  `tests/workflows/test_workflows_agent_definitions.py`, so the guard test goes there.
 
 **Implementation:** replace each prescription with plain `get_task` and say the card includes
 dependencies and acceptance criteria. Keep any wording that is explicitly about debugging.
@@ -479,11 +483,11 @@ dependencies and acceptance criteria. Keep any wording that is explicitly about 
 - 1.7.1 - `gcode grep -F "brief=false" src/gobby/install/shared/workflows/agents -m 50` returns no `get_task` prescription. behavior: no bundled agent definition prescribes `get_task(brief=false)`.
 - 1.7.2 - `gcode grep -F "brief=false" src/gobby/install/shared/skills/gobby/references -m 50` returns no `get_task` prescription outside debugging wording. behavior: no skill reference prescribes `get_task(brief=false)` for ordinary reads.
 - 1.7.3 - `src/gobby/mcp_proxy/tools/tasks/_lifecycle_claim.py`, `src/gobby/mcp_proxy/tools/spawn_agent/_step_state.py`, and `src/gobby/storage/tasks/_models.py` no longer prescribe `get_task(brief=false)`. file: `src/gobby/mcp_proxy/tools/tasks/_lifecycle_claim.py`.
-- 1.7.4 - test: `tests/workflows/test_workflows_dry_run.py::test_bundled_agent_definitions_dry_run` (or the existing bundled-definition validation test) passes for every edited definition.
+- 1.7.4 - test: `tests/workflows/test_workflows_agent_definitions.py::test_no_bundled_definition_prescribes_full_get_task` loads every bundled agent YAML and asserts no prompt or step text contains `get_task(brief=false)`; the module's existing bundled-definition tests pass for every edited definition.
 
 **Granularity:** more than six Target files, all one mechanical text change with one reason. Splitting by file type would create per-file chores, which the drafting rules forbid.
 
-**Verification:** run the bundled agent-definition validation tests and `tests/skills/test_reference_library.py` with `GOBBY_TEST_PROTECT=1`, and rerun the two `gcode grep` checks.
+**Verification:** run `tests/workflows/test_workflows_agent_definitions.py` and `tests/skills/test_reference_library.py` with `GOBBY_TEST_PROTECT=1`, and rerun the two `gcode grep` checks.
 
 ## P4: Agent and session tools
 `kind: framing`
@@ -540,7 +544,10 @@ Consumers unchanged:
   - `child_status, progress_age_seconds, stall_suspected, blocked_on_parent`;
   - `recovery_pending` when present, and `dirty_paths` when non-empty;
   - `capture` only when `prefix_truncated` or `malformed` is true;
-  - `live_output: {available: true}` only while the run is active and live output is available.
+  - `live_output: {available: true}` only while the run is active and live output is available;
+  - `prompt` whenever `include_prompt` is true: `_agent_result_payload` adds it at
+    `agents_payloads.py:168` and the brief filter never removes it, so the flag means the
+    same in both modes.
 - Brief drops `sandbox`, `external_write_grant`, `provider`, `model`, counters, `started_at`,
   `completed_at`, `result_at`, `last_progress_at`, `wait_kind`, `child_session_id`,
   `notification_*`, and the rest of `live_output`.
@@ -554,6 +561,7 @@ Consumers unchanged:
 - 1.8.3 - test: `tests/mcp_proxy/tools/test_agent_live_output.py::test_wait_for_agent_brief_advertises_live_output_availability` asserts an active run carries `live_output == {"available": True}`.
 - 1.8.4 - `src/gobby/mcp_proxy/tools/agents_wait_tools.py` registers `wait_for_agent` and `wait_for_output`; `agents_query_tools.py` is below 850 lines. file: `src/gobby/mcp_proxy/tools/agents_wait_tools.py`.
 - 1.8.5 - test: `tests/mcp_proxy/tools/test_agents.py::TestWaitForAgent::test_public_signature_only_accepts_run_id` asserts the parameters are exactly `run_id` and `brief`.
+- 1.8.6 - test: `tests/mcp_proxy/tools/test_agents.py::TestGetAgentResult::test_prompt_opt_in_survives_brief` sits beside `test_prompt_is_opt_in` (`:242`) and asserts all four combinations: `prompt` is absent for `include_prompt=False` and present for `include_prompt=True`, with `brief` true and with `brief=False`.
 
 **Verification:** run `tests/mcp_proxy/tools/test_agents.py`, `test_agent_capture_results.py`, `test_agent_live_output.py`, `test_agent_live_stats.py`, `tests/agents/test_headless_coordination_waits.py`, `tests/events/test_wake_wiring.py`, `tests/agents/watchdog/test_close_review_parked_caller.py`, and `tests/runner_init/test_detection_registry_composition.py` with `GOBBY_TEST_PROTECT=1`; ruff and mypy on the touched sources.
 
@@ -622,16 +630,25 @@ Consumers unchanged:
 
 **Implementation:**
 - `get_handoff(agent_run_id=None, brief: bool = True)`.
-- On the consumed path with brief true, remove from `handoff` exactly the lines equal to the
-  rendered `as_note()` text of each returned `found_work` entry, so the text is computed from the
-  entries rather than matched by prefix.
-- `handoff` never becomes empty. All other paths are unchanged.
+- On the consumed path with brief true, strip the found-work notes inside the `## Notes`
+  region only. `build_handoff_payload` (`handoff_records.py:74-144`) renders them first under
+  `## Notes` as `- ` bullets, `FoundWorkEntry.as_note` (`:29`) is
+  `Found work: {finding} ({disposition} {ref})`, and a finding may span lines, so a note is a
+  bullet block: the `- ` line plus every following line up to the next `- ` bullet or
+  heading. For each returned `found_work` entry the block whose text equals
+  `"- " + entry.as_note()` is removed; nothing is matched by prefix or outside the region, so
+  a look-alike line elsewhere in the markdown stays. When the region is left with no bullets
+  its `## Notes` heading goes too. `ConsumedHandoff` (`sessions/handoff.py:117`) carries only
+  `markdown` and `found_work`, so the projection is a pure function of those two values.
+- `handoff` never becomes empty. Every other byte of the markdown and the `agent_run_id` path
+  are unchanged.
 - Docs note that `brief` is optional and that found work appears once, structured.
 
 **Acceptance:**
-- 1.10.1 - test: `tests/sessions/test_handoff_found_work.py::test_brief_get_handoff_lists_found_work_once` asserts the consumed brief `handoff` contains no found-work note line and `found_work` still lists every entry.
+- 1.10.1 - test: `tests/sessions/test_handoff_found_work.py::test_brief_get_handoff_lists_found_work_once` asserts the consumed brief `handoff` contains no found-work note block and `found_work` still lists every entry.
 - 1.10.2 - test: `tests/sessions/test_handoff_found_work.py::test_found_work_renders_as_notes_and_round_trips` passes with `brief=False`.
 - 1.10.3 - `docs/contracts/session-boundary.md` and `src/gobby/install/shared/skills/gobby/references/sessions/handoffs.md` describe the optional `brief` argument. file: `docs/contracts/session-boundary.md`.
+- 1.10.4 - test: `tests/sessions/test_handoff_found_work.py::test_brief_get_handoff_strips_only_notes_blocks` covers a multiline finding, a look-alike `Found work:` line outside `## Notes` that survives, a handoff with no found work returned byte-identical, an emptied `## Notes` heading dropped, `brief=False` unchanged, and the `agent_run_id` path unchanged.
 
 **Verification:** run `tests/sessions/test_handoff_found_work.py`, `tests/sessions/test_handoff.py`, `tests/hooks/test_stop_handoff_pending.py`, `tests/workflows/test_memory_lifecycle_rules.py`, and `tests/workflows/test_progressive_discovery_rules.py` with `GOBBY_TEST_PROTECT=1`; ruff and mypy on `_handoff.py`.
 
@@ -647,6 +664,7 @@ Targets:
 - `src/gobby/servers/routes/rules.py::*` — scope-reason: `list_rules_endpoint` passes `brief=False` explicitly for the web UI
 - `tests/mcp_proxy/tools/test_rule_tools.py::*` — scope-reason: default-call assertions change
 - `tests/mcp_proxy/tools/workflows/test_workflow_project_scope.py::*` — scope-reason: the `list_rules` call reads the default shape
+- `tests/servers/routes/test_rules_routes.py::*` — scope-reason: a full-summary assertion for `GET /api/rules` is added beside the class-based `test_list_all_rules` (`:119`)
 
 Consumers unchanged:
 - `src/gobby/cli/rules.py` — no-edit-reason: has its own listing implementation.
@@ -662,10 +680,10 @@ Consumers unchanged:
 
 **Acceptance:**
 - 1.11.1 - test: `tests/mcp_proxy/tools/test_rule_tools.py::test_list_rules_defaults_to_brief` asserts a no-argument call returns entries with exactly `name, event, group, enabled`.
-- 1.11.2 - test: `tests/servers/routes/test_rules_routes.py::test_list_rules_endpoint_returns_full_summary` (or the existing rules-route test file) asserts `GET /api/rules` still returns full summaries.
+- 1.11.2 - test: `tests/servers/routes/test_rules_routes.py::test_list_rules_endpoint_returns_full_summary` asserts `GET /api/rules` still returns every `_rule_summary` field.
 - 1.11.3 - `src/gobby/mcp_proxy/tools/workflows/_rules.py::list_rules` description says `brief=false` is only for debugging. file: `src/gobby/mcp_proxy/tools/workflows/_rules.py`.
 
-**Verification:** run `tests/mcp_proxy/tools/test_rule_tools.py`, `tests/mcp_proxy/tools/workflows/test_workflow_project_scope.py`, and the rules route tests with `GOBBY_TEST_PROTECT=1`; ruff and mypy on the touched sources.
+**Verification:** run `tests/mcp_proxy/tools/test_rule_tools.py`, `tests/mcp_proxy/tools/workflows/test_workflow_project_scope.py`, and `tests/servers/routes/test_rules_routes.py` with `GOBBY_TEST_PROTECT=1`; ruff and mypy on the touched sources.
 
 ### 1.12 Align existing brief wording [category: code]
 `kind: deliverable`
@@ -678,6 +696,7 @@ Targets:
 - `src/gobby/install/shared/prompts/mcp/progressive-discovery.md`
 - `src/gobby/install/shared/skills/gobby/references/skills/loading.md`
 - `src/gobby/install/shared/skills/gobby/references/skills/lifecycle.md`
+- `tests/mcp_proxy/test_instructions.py::*` — scope-reason: a test asserting the brief sentence is added beside `test_instructions_name_gated_skill_file_tools` (`:161`)
 
 **Research context:**
 - Existing wording:
@@ -693,25 +712,111 @@ Targets:
 **Acceptance:**
 - 1.12.1 - The `send_message` and `list_pipeline_executions` descriptions contain "only for debugging". file: `src/gobby/mcp_proxy/tools/agent_messaging.py`.
 - 1.12.2 - The `get_skill` and `get_skill_file` descriptions, `src/gobby/mcp_proxy/instructions.py`, `src/gobby/install/shared/prompts/mcp/progressive-discovery.md`, `references/skills/loading.md`, and `references/skills/lifecycle.md` say `brief=false` is only for debugging or skill management (ids, hash, version). file: `src/gobby/mcp_proxy/instructions.py`.
-- 1.12.3 - test: `tests/mcp_proxy/test_instructions.py::test_instructions_describe_brief_contract` (or the existing instructions test) asserts the server instructions contain the brief sentence.
+- 1.12.3 - test: `tests/mcp_proxy/test_instructions.py::test_instructions_describe_brief_contract` asserts the server instructions say `brief=false` is only for debugging or skill management.
 
-**Verification:** run the instructions, skills, and messaging tests with `GOBBY_TEST_PROTECT=1`; ruff and mypy on the touched sources.
+**Verification:** run `tests/mcp_proxy/test_instructions.py` and the skills and messaging tool tests with `GOBBY_TEST_PROTECT=1`; ruff and mypy on the touched sources.
 
 ## P6: Verification
 `kind: framing`
 
-### 1.13 End-to-end size check [category: manual] (depends: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.8, 1.9, 1.10, 1.11)
+### 1.13 Paired brief/full parity check [category: test] (depends: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.8, 1.9, 1.10, 1.11)
 `kind: deliverable`
 
 Targets:
-- `.gobby/plans/research/mcp-output-verbosity-2026-09-25.md`
+- `tests/mcp_proxy/test_brief_parity.py`
 
-**Research context:** the baseline is the research note's per-tool table, measured from Claude
-transcripts with the scratchpad `mcpsize.py` method: each `mcp__gobby__call_tool` result is
-joined to its `tool_use` block and the result text length is summed per server and tool.
+**Research context:**
+- Each leaf pins its own exact brief key set. This leaf adds the one cross-tool check the
+  per-leaf tests cannot express: for every in-scope tool, brief and full come from the same call
+  inputs, and brief keeps the handle and outcome, adds nothing beyond its declared derived
+  fields, drops every Decision Record 5 field, and is smaller by a stated bound.
+- It runs on isolated fixtures and never against the daemon or the user's database. The
+  fixtures are the ones the leaf tests already build: `create_memory_registry(lambda:
+  mock_memory_manager)` with `MockMemory` rows (`tests/mcp_proxy/tools/test_memory_tools.py:35`,
+  `:115`) for `search_memories`, `get_memory`, and `create_memory`; the same factory with mocked
+  task and session managers (`tests/mcp_proxy/tools/test_memory_review.py::_registry`, `:55`)
+  for `review_task_memories`; `create_task_registry(mock_task_manager)` with `sample_task`
+  (`tests/mcp_proxy/tools/conftest.py:98`, `:106`) for `get_task`; `create_agents_registry`
+  over a mock runner with a terminal run built as `_make_mock_agent_run` builds one
+  (`tests/mcp_proxy/tools/test_agents.py:59`, `:119`) for `wait_for_agent` and
+  `get_agent_result`; `register_crud_tools` over a mock session manager
+  (`tests/mcp_proxy/tools/test_sessions_query_tools.py:24`, `:46`) for `get_session`; a
+  `SessionManager` over `temp_db` with a staged handoff
+  (`tests/sessions/test_handoff_found_work.py:68`, `:109`) for `get_handoff`, staged twice
+  with the same `_payload` because the no-argument call consumes it: `set_handoff`, consume
+  with `brief=False`, `set_handoff` again, consume with `brief` defaulted; and
+  `list_rules(def_manager, ...)` over `temp_db` rules
+  (`tests/mcp_proxy/tools/test_rule_tools.py:25-76`) for `list_rules`. `close_task` pairs the
+  1.6 projection `brief_close_payload` against a diagnostic-mode `CloseEvaluation.response()`
+  literal built from the 1.6 field list with one `failed` gate and the rest `passed`; that the
+  wrapper applies the projection is 1.6.1's and 1.6.2's.
+- Fixtures are sized to the research note's medians: ten search hits, five similar and five
+  review candidates with 600-character bodies, a completed run with a 200-character `result`
+  carrying `sandbox`, `capture`, `live_output`, provider and model, counters, timestamps, and
+  the notification fields (brief keeps `result` verbatim, so the bound depends on the metadata
+  outweighing it), a session with `handoff_markdown`, `summary_markdown`, `original_prompt`,
+  `last_assistant_content`, and `terminal_context` populated, a handoff with three found-work
+  entries, and twenty rules.
+- `temp_db` (`tests/conftest.py:371`) is the isolated test hub, so the two DB-backed cases run
+  with `DATABASE_URL` pointed at it like every other storage test.
+
+**Implementation:**
+- `PARITY_CASES`: one entry per in-scope tool with `tool`, `build` (returns the callable and
+  its call kwargs from the fixtures above), `must_match` (the handle and outcome values, list
+  items by id: `success` everywhere; `memories[].id`; `memory.id`, `similar_existing[].id`,
+  `auto_superseded`; `candidates[].id`, `source_task_id`, `pending_reviews_complete`; `ref`,
+  `state.is_closed`; `closed`, `can_close`, `error`, `reviewer_run_id`; `run_id`, `status`,
+  `result`, `error`, `terminal_reason`; `found`, `claimed_task_refs`, `parent_session_id`,
+  `agent_run_id`; `found_work`, `found_work_gate_armed`; the `name` of every listed rule),
+  `derived` (keys brief may add: `summary`, `when`, `gates_passed`, `task_ref`, `ref`), and
+  `max_ratio`.
+- `NEVER_IN_BRIEF`: `seq_num`, `path_cache`, `created_by_agent`, `access_count`,
+  `source_type`, `policy_hash`, `transcript_path`, `score_range`, `threshold_axis`,
+  `recall_request_id`, `reviewer_provider`, `reviewer_model`, `notification_registered`,
+  `notification_session_id`, `checklist`, `transcript_evidence`, `validation_feedback`,
+  `sandbox`, `external_write_grant`.
+- Measurement envelope: each side is the dict the tool function returns, serialized as
+  `json.dumps(value, default=str)`, before the proxy adds `response_time_ms` or an offload
+  wrapper; that is the same text `mcpsize.py` measured in transcripts, minus the envelope.
+- Size bound: `len(json.dumps(brief, default=str)) <= max_ratio * len(json.dumps(full,
+  default=str))`, with `max_ratio = 0.5` where the leaf replaces bodies or lists with index
+  lines or counts (`search_memories`, `create_memory`, `review_task_memories`, `close_task`,
+  `wait_for_agent`, `get_agent_result`, `get_session`, `list_rules`) and `max_ratio = 0.99`
+  where brief only drops duplicates (`get_memory`, `get_task`, `get_handoff`).
+- The test calls each tool twice with identical inputs, `brief` defaulted and `brief=False`,
+  except `close_task`, whose pair is `brief_close_payload(literal)` against the literal, and
+  asserts the four invariants; a second test pins the case table to the in-scope set.
 
 **Acceptance:**
-- 1.13.1 - After the daemon restart that publishes the change, one call of each in-scope tool with default arguments returns the brief shape, and each result's size is recorded in `.gobby/plans/research/mcp-output-verbosity-2026-09-25.md` beside the baseline median. file: `.gobby/plans/research/mcp-output-verbosity-2026-09-25.md`.
-- 1.13.2 - A seven-day re-measurement with the same method is appended to the note, reporting total MCP output characters and each in-scope tool's median against the baseline. behavior: seven-day re-measurement appended beside the baseline.
+- 1.13.1 - test: `tests/mcp_proxy/test_brief_parity.py::test_brief_projections_are_subsets_and_smaller` is parametrized over `PARITY_CASES`, obtains each pair as the Implementation states (two calls per tool; the projection over the literal for `close_task`), and asserts, per tool, that every `must_match` value is equal in brief and full, every brief key is a full key or a declared derived key, no `NEVER_IN_BRIEF` key appears anywhere in brief, and the size bound holds.
+- 1.13.2 - test: `tests/mcp_proxy/test_brief_parity.py::test_parity_cases_cover_every_in_scope_tool` asserts the case table's tool names equal `{search_memories, get_memory, create_memory, review_task_memories, get_task, close_task, wait_for_agent, get_agent_result, get_session, get_handoff, list_rules}`, so a tool added to the brief contract later is a deliberate test edit.
 
-**Verification:** manual; run by the Researcher or the PD after the restart that publishes the change.
+**Verification:** `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/test_brief_parity.py -q`; ruff on the test module.
+
+## V1: Verification
+`kind: verification`
+
+Run after every leaf and again before the PD lands the branch: each leaf's own **Verification**
+line, then `uv run ruff format --check src/ && uv run ruff check src/ && uv run mypy src/`, then
+`uv run gobby plans validate .gobby/plans/mcp-brief-response-contract.md -p /Users/josh/Projects/gobby`.
+Do not run the full pytest suite.
+
+Live check, after the PD-owned daemon restart that publishes the change (announced globally
+before and after, outside quiet hours): the PD files a direct task (`category: manual`) for the
+Researcher or takes it directly. From a fresh session, call each read-only in-scope tool once
+with `brief` defaulted: `search_memories` with a fixed query and `limit=10`, `get_memory` on one
+returned hit, `get_task` on a known ref, `get_session` on the caller's own ref, `list_rules`, and
+`get_agent_result` on an existing terminal run. Measure each result as the character length of
+the proxy's JSON result text (the `mcpsize.py` measure), record it beside the baseline median in
+`.gobby/plans/research/mcp-output-verbosity-2026-09-25.md`, and judge it by the 1.13 bound: at or
+below half the baseline median for the tools that replace bodies or lists, below the baseline for
+the tools that only drop duplicates. The mutating and consuming tools (`create_memory`,
+`review_task_memories`, `close_task`, `wait_for_agent`, `get_handoff`) are checked only by 1.13
+on isolated fixtures, never against live state. A tool over its bound is a bug in its leaf, found
+work for the implementing lane, not a plan revision.
+
+Seven-day re-measurement: after seven days of transcripts on the new daemon, rerun the research
+note's `mcpsize.py` method and append total MCP output characters and each in-scope tool's
+median against the baseline. It is a report, not a gate: teaching-gate reloads (Decision Record
+10) and the offload envelope stay outside this plan, so the total is expected to fall by the
+in-scope share only.
