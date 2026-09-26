@@ -7,6 +7,7 @@ import json
 import logging
 import threading
 import time
+from concurrent.futures import Future
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -20,6 +21,7 @@ from fastapi.testclient import TestClient
 import gobby.servers.routes.mcp.hooks as hooks_routes
 from gobby.adapters.agy_contract import AGY_FORCE_CONTINUE_LIMIT
 from gobby.config.app import DaemonConfig
+from gobby.hooks.adapter_execution import AdapterHookTimeout
 from gobby.hooks.agent_run_ingress import AgentRunIngressRetryableError
 from gobby.hooks.envelope_dedupe import (
     ENVELOPE_ID_HEADER,
@@ -608,6 +610,58 @@ async def test_envelope_claim_lifecycle_keeps_hook_loop_responsive(
             client.post(
                 "/api/hooks/execute",
                 headers={ENVELOPE_ID_HEADER: "env-agy-lifecycle"},
+                json=_agy_pre_invocation_envelope(),
+            )
+        )
+        try:
+            assert await asyncio.wait_for(asyncio.to_thread(entered.wait, 2), timeout=3)
+            heartbeat = asyncio.Event()
+            asyncio.get_running_loop().call_soon(heartbeat.set)
+            await asyncio.wait_for(heartbeat.wait(), timeout=1)
+        finally:
+            release.set()
+            response = await request
+
+    assert response.status_code == 503
+
+
+async def test_timeout_finalizer_registration_keeps_hook_loop_responsive(
+    monkeypatch: pytest.MonkeyPatch,
+    session_storage: SessionManager,
+) -> None:
+    server = _capability_gate_server(session_storage)
+    owner_thread = threading.get_ident()
+    entered = threading.Event()
+    release = threading.Event()
+    worker_future: Future[dict[str, Any]] = Future()
+
+    async def claim(*args: Any, **kwargs: Any) -> StartupClaimLease:
+        return StartupClaimLease("session-1", 1, "owner-1")
+
+    async def fail_adapter(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        raise AdapterHookTimeout(executor_future=worker_future)
+
+    def blocked_registration(*args: Any, **kwargs: Any) -> None:
+        assert args[0] is worker_future
+        entered.set()
+        assert threading.get_ident() != owner_thread
+        assert release.wait(2)
+
+    monkeypatch.setattr(hooks_routes, "preflight_agy_startup_claim_bounded", claim)
+    monkeypatch.setattr(hooks_routes, "_run_adapter_hook", fail_adapter)
+    monkeypatch.setattr(hooks_routes, "invalidate_agy_startup_claim", lambda *args: None)
+    monkeypatch.setattr(hooks_routes, "claim_envelope_processing", lambda _id: True)
+    monkeypatch.setattr(hooks_routes, "envelope_processing_owner_token", lambda _id: "owner-1")
+    monkeypatch.setattr(hooks_routes, "start_envelope_lease_renewal", lambda *_args: None)
+    monkeypatch.setattr(hooks_routes, "schedule_adapter_timeout_finalization", blocked_registration)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=server.app), base_url="http://test"
+    ) as client:
+        request = asyncio.create_task(
+            client.post(
+                "/api/hooks/execute",
+                headers={ENVELOPE_ID_HEADER: "env-agy-timeout-finalizer"},
                 json=_agy_pre_invocation_envelope(),
             )
         )

@@ -839,7 +839,8 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                     ):
                         live_worker = True
                         lease_outlives_request = True
-                        schedule_adapter_timeout_finalization(
+                        await asyncio.to_thread(
+                            schedule_adapter_timeout_finalization,
                             executor_future,
                             envelope_id=envelope_id,
                             owner_token=owner_token,
