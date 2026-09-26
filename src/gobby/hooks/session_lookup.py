@@ -262,7 +262,9 @@ class SessionLookupService:
         cwd = hook_cwd(event.data, event.cwd)
         raw_terminal_context = event.data.get("terminal_context")
         terminal_context = raw_terminal_context if isinstance(raw_terminal_context, dict) else None
-        terminal_context = enrich_terminal_context_with_cwd(terminal_context, cwd)
+        terminal_context = enrich_terminal_context_with_cwd(
+            terminal_context, cwd, external_id=event.session_id
+        )
         if terminal_process_contexts_match(
             getattr(session, "terminal_context", None),
             terminal_context,
@@ -285,6 +287,7 @@ class SessionLookupService:
         terminal_context = enrich_terminal_context_with_cwd(
             terminal_context,
             hook_cwd(event.data, event.cwd),
+            external_id=event.session_id,
         )
         if not terminal_context:
             return
@@ -349,7 +352,9 @@ class SessionLookupService:
         cwd = hook_cwd(event.data, event.cwd)
         raw_terminal_context = event.data.get("terminal_context")
         terminal_context = raw_terminal_context if isinstance(raw_terminal_context, dict) else None
-        terminal_context = enrich_terminal_context_with_cwd(terminal_context, cwd)
+        terminal_context = enrich_terminal_context_with_cwd(
+            terminal_context, cwd, external_id=event.session_id
+        )
         owner = self._session_manager.find_live_interactive_pane_owner(
             terminal_context,
             machine_id,
@@ -544,7 +549,9 @@ class SessionLookupService:
         cwd = hook_cwd(event.data, event.cwd)
         raw_terminal_context = event.data.get("terminal_context")
         terminal_context = raw_terminal_context if isinstance(raw_terminal_context, dict) else None
-        terminal_context = enrich_terminal_context_with_cwd(terminal_context, cwd)
+        terminal_context = enrich_terminal_context_with_cwd(
+            terminal_context, cwd, external_id=event.session_id
+        )
         platform_session_id = self._session_manager.register_session(
             external_id=external_id,
             machine_id=machine_id,

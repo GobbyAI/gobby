@@ -2155,3 +2155,39 @@ def test_pre_created_native_resume_rebinds_new_terminal(
     rebound = terminals.get_live_for_session(session.id)
     assert rebound is not None
     assert rebound.id == terminal_id
+
+
+def test_expire_stale_terminal_sessions_keeps_codex_seats_in_other_panes() -> None:
+    """Seats resolved to their own TUI share nothing; only a reused pane expires."""
+    session_manager = MagicMock()
+    session_manager.db.fetchall.return_value = [
+        {
+            "id": "seat-b-other-pane",
+            "terminal_context": {"tty": "/dev/ttys002", "parent_pid": 23170},
+        },
+        {
+            "id": "legacy-host-identity",
+            "terminal_context": {"tty": None, "parent_pid": 93395},
+        },
+        {
+            "id": "previous-seat-same-pane",
+            "terminal_context": {"tty": "/dev/ttys001", "parent_pid": 18877},
+        },
+    ]
+    expired: list[tuple[str, str]] = []
+
+    def mark_session_expired(session_id: str, *, cause: str) -> bool:
+        expired.append((session_id, cause))
+        return True
+
+    session_manager.mark_session_expired.side_effect = mark_session_expired
+    handler = SimpleNamespace(_session_manager=session_manager, logger=MagicMock())
+
+    expire_stale_terminal_sessions_for_context(
+        handler,
+        session_id="seat-a",
+        project_id="project-1",
+        terminal_context={"tty": "/dev/ttys001", "parent_pid": 22512},
+    )
+
+    assert expired == [("previous-seat-same-pane", "context_reuse")]

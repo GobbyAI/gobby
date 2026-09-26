@@ -687,6 +687,7 @@ class TestHookManagerBeforeAgent:
                 return_value=SimpleNamespace(
                     create_time=lambda: 1784592177.0,
                     name=lambda: "codex",
+                    cmdline=lambda: ["codex", "--yolo"],
                 ),
             ),
         ):

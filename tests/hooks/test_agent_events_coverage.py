@@ -101,6 +101,8 @@ class _TestHandler(AgentEventHandlerMixin):
         # Session status transitions belong to the TurnLifecycleReducer; tests
         # that assert a transition install a MagicMock here.
         self._turn_lifecycle = None
+        # STOP schedules staged terminal handoffs only when a run manager exists.
+        self._agent_run_manager = None
 
 
 # ---------------------------------------------------------------------------

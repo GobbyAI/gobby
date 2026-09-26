@@ -75,6 +75,7 @@ def session_start_should_defer(
     terminal_context = enrich_terminal_context_with_cwd(
         terminal_context,
         hook_cwd(event.data, event.cwd),
+        external_id=event.session_id,
     )
     if is_gobby_acp_child(terminal_context):
         return False
@@ -312,6 +313,7 @@ def activate_materialized_session(
         terminal_context = enrich_terminal_context_with_cwd(
             terminal_context,
             hook_cwd(input_data, event.cwd),
+            external_id=external_id,
         )
 
     if session_obj is None and handler._session_manager:

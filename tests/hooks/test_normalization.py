@@ -2441,9 +2441,9 @@ class TestUnexpandedShellReferencePaths:
         assert "canonical_file_paths" not in data
 
     def test_variable_redirection_target_stays_pathless(self) -> None:
-        # extract_redirection_paths already drops variable targets; the segment
-        # then normalizes as the documented path-less execute residual. Pin that
-        # no phantom path appears either way.
+        # extract_redirection_paths drops variable targets, and since #22565 an
+        # unresolvable output redirection is an unknown-scope write rather than an
+        # execute residual. Pin that no phantom path appears either way.
         data: dict[str, Any] = {
             "tool_name": "Bash",
             "tool_input": {"command": "echo probe > $OUT/log.txt"},
@@ -2451,7 +2451,7 @@ class TestUnexpandedShellReferencePaths:
 
         normalize_tool_fields(data)
 
-        assert data["canonical_tool_kind"] == "execute"
+        assert data["canonical_tool_kind"] == "write"
         assert "canonical_file_path" not in data
         assert "canonical_file_paths" not in data
 

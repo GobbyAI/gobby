@@ -135,7 +135,9 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
     existing_session = None
     raw_terminal_context = input_data.get("terminal_context")
     terminal_context = raw_terminal_context if isinstance(raw_terminal_context, dict) else None
-    terminal_context = enrich_terminal_context_with_cwd(terminal_context, cwd)
+    terminal_context = enrich_terminal_context_with_cwd(
+        terminal_context, cwd, external_id=external_id
+    )
 
     if is_gobby_acp_child(terminal_context):
         handler.logger.info(

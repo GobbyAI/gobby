@@ -39,7 +39,9 @@ def build_synthetic_session_start(event: HookEvent, session_id: str) -> HookEven
     cwd = hook_cwd(event.data, event.cwd)
     raw_terminal_context = event.data.get("terminal_context")
     terminal_context = raw_terminal_context if isinstance(raw_terminal_context, dict) else None
-    terminal_context = enrich_terminal_context_with_cwd(terminal_context, cwd)
+    terminal_context = enrich_terminal_context_with_cwd(
+        terminal_context, cwd, external_id=event.session_id
+    )
     transcript_path = event.data.get("transcript_path")
 
     data: dict[str, Any] = {"source": "startup"}
@@ -112,6 +114,7 @@ def activate_deferred_session(
     terminal_context = enrich_terminal_context_with_cwd(
         terminal_context,
         hook_cwd(event.data, event.cwd),
+        external_id=event.session_id,
     )
 
     resolution = None

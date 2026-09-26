@@ -1,11 +1,20 @@
 """Tests for normalized hook terminal context."""
 
+import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import psutil
 import pytest
 
-from gobby.hooks.terminal_context import enrich_terminal_context_with_cwd, hook_cwd
+from gobby.hooks.terminal_context import (
+    clear_codex_seat_index,
+    enrich_terminal_context_with_cwd,
+    hook_cwd,
+)
+from gobby.sessions.handoff_identity import terminal_contexts_match
 
 pytestmark = pytest.mark.unit
 
@@ -84,4 +93,219 @@ def test_droid_identity_is_the_process_that_survives_compress_and_clear(
         "parent_pid": expected_pid,
         "parent_create_time": expected_create_time,
         "parent_name": "droid",
+    }
+
+
+HOST_PID = 93395
+THREAD_A = "01a0d6a4-4800-7d90-a5d8-3b751ad44281"
+THREAD_B = "01a0d723-8589-75d2-adb9-9263ee2bd8bf"
+HOST_TERMINAL_ID = "358981a1-df59-43bd-a04e-6cd698238442"
+# What ghook builds inside the shared app-server daemon: the daemon's own pid and the
+# exited pane whose environment the daemon inherited when it was first launched.
+HOST_CONTEXT: dict[str, Any] = {
+    "parent_pid": HOST_PID,
+    "tty": None,
+    "tmux_pane": None,
+    "tmux_socket_path": None,
+    "tmux_window_id": None,
+    "tmux_session": None,
+    "term_program": None,
+    "gobby_session_id": None,
+    "gobby_parent_session_id": None,
+    "gobby_agent_run_id": None,
+    "gobby_project_id": None,
+    "gobby_workflow_name": None,
+    "gobby_acp_child": None,
+    "gobby_terminal_id": HOST_TERMINAL_ID,
+    "gobby_pane_ref": None,
+}
+
+
+@pytest.fixture(autouse=True)
+def _fresh_seat_index() -> Iterator[None]:
+    clear_codex_seat_index()
+    yield
+    clear_codex_seat_index()
+
+
+def _managed_host() -> MagicMock:
+    host = _process(
+        HOST_PID, ["codex", "app-server", "--listen", "unix://", "--managed-daemon"], 50.0, None
+    )
+    host.info = {"name": "codex"}
+    return host
+
+
+def _seat(pid: int, thread_id: str, *, tty: str, terminal_id: str, create_time: float) -> MagicMock:
+    seat = _process(pid, ["codex", "resume", thread_id, "--yolo"], create_time, None)
+    seat.info = {"name": "codex"}
+    seat.terminal.return_value = tty
+    seat.environ.return_value = {
+        "GOBBY_HOME": "/Users/josh/.gobby",
+        "GOBBY_TERMINAL_ID": terminal_id,
+        "TERM": "xterm-256color",
+    }
+    return seat
+
+
+def _seat_context(pid: int, *, tty: str, terminal_id: str, create_time: float) -> dict[str, Any]:
+    return {
+        "cwd": "/repo",
+        "parent_pid": pid,
+        "parent_create_time": create_time,
+        "parent_name": "codex",
+        "tty": tty,
+        "tmux_pane": None,
+        "tmux_socket_path": None,
+        "tmux_window_id": None,
+        "tmux_session": None,
+        "term_program": None,
+        "gobby_session_id": None,
+        "gobby_parent_session_id": None,
+        "gobby_agent_run_id": None,
+        "gobby_project_id": None,
+        "gobby_workflow_name": None,
+        "gobby_acp_child": None,
+        "gobby_terminal_id": terminal_id,
+        "gobby_pane_ref": None,
+    }
+
+
+@contextmanager
+def _process_table(processes: list[MagicMock]) -> Iterator[MagicMock]:
+    """Patch psutil so ``Process(pid)`` and ``process_iter`` read one mutable table."""
+
+    def lookup(pid: int) -> MagicMock:
+        for process in processes:
+            if process.pid == pid:
+                return process
+        raise psutil.NoSuchProcess(pid)
+
+    with (
+        patch("gobby.hooks.terminal_context.psutil.Process", side_effect=lookup),
+        patch(
+            "gobby.hooks.terminal_context.psutil.process_iter",
+            side_effect=lambda **_: list(processes),
+        ) as process_iter,
+    ):
+        yield process_iter
+
+
+def test_codex_shared_host_hooks_take_identity_from_each_seat_process() -> None:
+    seat_a = _seat(22512, THREAD_A, tty="/dev/ttys001", terminal_id="pane-a", create_time=10.0)
+    seat_b = _seat(23170, THREAD_B, tty="/dev/ttys002", terminal_id="pane-b", create_time=11.0)
+
+    with _process_table([_managed_host(), seat_a, seat_b]) as process_iter:
+        context_a = enrich_terminal_context_with_cwd(
+            dict(HOST_CONTEXT), "/repo", external_id=THREAD_A
+        )
+        context_b = enrich_terminal_context_with_cwd(
+            dict(HOST_CONTEXT), "/repo", external_id=THREAD_B
+        )
+
+    assert context_a == _seat_context(
+        22512, tty="/dev/ttys001", terminal_id="pane-a", create_time=10.0
+    )
+    assert context_b == _seat_context(
+        23170, tty="/dev/ttys002", terminal_id="pane-b", create_time=11.0
+    )
+    assert not terminal_contexts_match(context_a, context_b)
+    assert process_iter.call_count == 1
+
+
+def test_codex_shared_host_without_a_seat_process_records_no_identity(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with (
+        _process_table([_managed_host()]),
+        caplog.at_level(logging.WARNING, logger="gobby.hooks.terminal_context"),
+    ):
+        result = enrich_terminal_context_with_cwd(dict(HOST_CONTEXT), "/repo", external_id=THREAD_A)
+
+    assert result == {"cwd": "/repo"}
+    assert THREAD_A in caplog.text
+    assert str(HOST_PID) in caplog.text
+
+
+def test_gobby_spawned_codex_app_server_keeps_its_own_identity() -> None:
+    worker = _process(49478, ["codex", "app-server"], 7.0, None)
+
+    with _process_table([worker]) as process_iter:
+        result = enrich_terminal_context_with_cwd(
+            {"parent_pid": 49478, "gobby_terminal_id": "pane-w", "gobby_agent_run_id": "run-1"},
+            "/repo",
+            external_id=THREAD_A,
+        )
+
+    assert result == {
+        "cwd": "/repo",
+        "parent_pid": 49478,
+        "parent_create_time": 7.0,
+        "parent_name": "codex",
+        "gobby_terminal_id": "pane-w",
+        "gobby_agent_run_id": "run-1",
+    }
+    process_iter.assert_not_called()
+
+
+def test_seat_index_rescans_when_the_recorded_seat_process_is_gone() -> None:
+    table = [
+        _managed_host(),
+        _seat(22512, THREAD_A, tty="/dev/ttys001", terminal_id="pane-a", create_time=10.0),
+    ]
+
+    with _process_table(table) as process_iter:
+        enrich_terminal_context_with_cwd(dict(HOST_CONTEXT), "/repo", external_id=THREAD_A)
+        enrich_terminal_context_with_cwd(dict(HOST_CONTEXT), "/repo", external_id=THREAD_A)
+        assert process_iter.call_count == 1
+
+        table[:] = [
+            _managed_host(),
+            _seat(30001, THREAD_A, tty="/dev/ttys004", terminal_id="pane-d", create_time=20.0),
+        ]
+        result = enrich_terminal_context_with_cwd(dict(HOST_CONTEXT), "/repo", external_id=THREAD_A)
+
+    assert process_iter.call_count == 2
+    assert result == _seat_context(
+        30001, tty="/dev/ttys004", terminal_id="pane-d", create_time=20.0
+    )
+
+
+def test_unresolved_thread_does_not_rescan_on_every_hook() -> None:
+    fresh_seat = _process(31000, ["codex", "--yolo"], 12.0, None)
+    fresh_seat.info = {"name": "codex"}
+
+    with _process_table([_managed_host(), fresh_seat]) as process_iter:
+        first = enrich_terminal_context_with_cwd(dict(HOST_CONTEXT), "/repo", external_id=THREAD_A)
+        second = enrich_terminal_context_with_cwd(dict(HOST_CONTEXT), "/repo", external_id=THREAD_A)
+
+    assert first == second == {"cwd": "/repo"}
+    assert process_iter.call_count == 1
+
+
+def test_seat_inside_tmux_carries_its_pane_identity() -> None:
+    seat = _seat(22512, THREAD_A, tty="/dev/ttys001", terminal_id="pane-a", create_time=10.0)
+    seat.environ.return_value = {
+        **seat.environ.return_value,
+        "TMUX": "/tmp/tmux-501/default,123,0",
+        "TMUX_PANE": "%73",
+        "TERM_PROGRAM": "tmux",
+    }
+
+    with (
+        _process_table([_managed_host(), seat]),
+        patch(
+            "gobby.hooks.terminal_context.query_tmux_identity", return_value=("@3", "main")
+        ) as query_tmux_identity,
+    ):
+        result = enrich_terminal_context_with_cwd(dict(HOST_CONTEXT), "/repo", external_id=THREAD_A)
+
+    query_tmux_identity.assert_called_once_with("/tmp/tmux-501/default", "%73")
+    assert result == {
+        **_seat_context(22512, tty="/dev/ttys001", terminal_id="pane-a", create_time=10.0),
+        "tmux_pane": "%73",
+        "tmux_socket_path": "/tmp/tmux-501/default",
+        "tmux_window_id": "@3",
+        "tmux_session": "main",
+        "term_program": "tmux",
     }
