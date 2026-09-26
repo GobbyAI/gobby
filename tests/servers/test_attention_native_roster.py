@@ -123,3 +123,49 @@ def test_bound_native_session_is_on_the_roster(
     assert released.state == "live"
     assert released.session_id is None
     assert f"session:{session.id}" not in _roster_entries(temp_db, session_manager, terminals)
+
+
+def test_context_named_unbound_native_terminal_is_on_the_roster(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    session_manager: SessionManager,
+) -> None:
+    project_id = sample_project["id"]
+    terminals = TerminalManager(temp_db)
+    terminal_id = str(uuid.uuid4())
+    terminals.create_pending(
+        terminal_id=terminal_id,
+        project_id=project_id,
+        backend="native",
+        ownership="gobby",
+        spawn_key=terminal_id,
+    )
+    host_epoch = str(uuid.uuid4())
+    host_terminal_id = str(uuid.uuid4())
+    terminals.promote_to_live(
+        terminal_id,
+        locator={"host_terminal_id": host_terminal_id},
+        locator_key=native_locator_key(host_epoch, host_terminal_id),
+        host_epoch=host_epoch,
+    )
+    session = session_manager.register(
+        external_id=f"unbound-native-roster-{uuid.uuid4()}",
+        machine_id=require_machine_id(),
+        source="codex",
+        project_id=project_id,
+        terminal_context={"gobby_terminal_id": terminal_id},
+    )
+    terminal = terminals.get(terminal_id)
+    assert terminal is not None and terminal.session_id is None
+
+    entry = _roster_entries(temp_db, session_manager, terminals)[f"session:{session.id}"]
+    assert entry["terminal"]["terminal_id"] == terminal_id
+
+    other_session = session_manager.register(
+        external_id=f"other-native-roster-{uuid.uuid4()}",
+        machine_id=require_machine_id(),
+        source="codex",
+        project_id=project_id,
+    )
+    assert terminals.bind_session(terminal_id, other_session.id, project_id) is not None
+    assert f"session:{session.id}" not in _roster_entries(temp_db, session_manager, terminals)
