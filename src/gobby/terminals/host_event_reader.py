@@ -1,14 +1,15 @@
 """The gterm event-stream consumer, split out of the host manager for size.
 
 Exit events settle terminal rows off the event loop; ``input_activity`` events reach
-the sink the composition root installed and never touch the database here.
+the sink the composition root installed, which offloads its database work.
 """
 
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
 from gobby.terminals.host_client import HostClient, HostManagerStopped
@@ -25,7 +26,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-InputActivitySink = Callable[[InputActivityEvent], None]
+InputActivitySink = Callable[[InputActivityEvent], Awaitable[None] | None]
 
 
 async def connect_event_stream(manager: TerminalHostManager, since: int | None) -> HostEventStream:
@@ -55,7 +56,9 @@ async def apply_host_event(manager: TerminalHostManager, event: HostEvent) -> No
         sink = manager.input_activity_sink
         if sink is not None:
             try:
-                sink(event)
+                result = sink(event)
+                if inspect.isawaitable(result):
+                    await result
             except Exception:
                 logger.exception("input activity sink failed for terminal %s", event.terminal_id)
     else:

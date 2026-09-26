@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from threading import RLock
 from typing import Any, Literal, Protocol
 
 from gobby.sessions.turn_lifecycle import TurnEvidence, TurnLifecycleReducer
@@ -78,9 +80,48 @@ class TerminalTurnObserver:
         self._timeout_seconds = timeout_seconds
         self._clock = clock or time.monotonic
         self._candidates: dict[str, InterruptCandidate] = {}
+        # Worker threads protect mutations; async callers preserve input/output order.
+        self._lock = RLock()
+        self._async_lock = asyncio.Lock()
 
     def set_terminal_manager(self, terminal_manager: _TerminalStore | None) -> None:
-        self._terminal_manager = terminal_manager
+        with self._lock:
+            self._terminal_manager = terminal_manager
+
+    async def record_mediated_input_async(
+        self,
+        terminal_id: str,
+        payload: str,
+        outcome: WriteOutcome,
+        *,
+        input_seq: int | None = None,
+    ) -> bool:
+        async with self._async_lock:
+            if outcome == "refused" or not is_interrupt_input(payload):
+                return self.record_mediated_input(
+                    terminal_id, payload, outcome, input_seq=input_seq
+                )
+            return await asyncio.to_thread(
+                self.record_mediated_input,
+                terminal_id,
+                payload,
+                outcome,
+                input_seq=input_seq,
+            )
+
+    async def observe_output_async(self, terminal_id: str, output: str) -> bool:
+        async with self._async_lock:
+            with self._lock:
+                if terminal_id not in self._candidates:
+                    return False
+            return await asyncio.to_thread(self.observe_output, terminal_id, output)
+
+    async def observe_run_output_async(self, run_id: str, output: str) -> bool:
+        async with self._async_lock:
+            with self._lock:
+                if not self._candidates:
+                    return False
+            return await asyncio.to_thread(self.observe_run_output, run_id, output)
 
     def record_mediated_input(
         self,
@@ -91,6 +132,17 @@ class TerminalTurnObserver:
         input_seq: int | None = None,
     ) -> bool:
         """Record a delivered/indeterminate Esc or Ctrl-C for the current turn."""
+        with self._lock:
+            return self._record_mediated_input(terminal_id, payload, outcome, input_seq=input_seq)
+
+    def _record_mediated_input(
+        self,
+        terminal_id: str,
+        payload: str,
+        outcome: WriteOutcome,
+        *,
+        input_seq: int | None,
+    ) -> bool:
         self._expire()
         if outcome == "refused":
             return False
@@ -119,6 +171,10 @@ class TerminalTurnObserver:
 
     def observe_output(self, terminal_id: str, output: str) -> bool:
         """Consume provider output and apply interruption on exact correlation."""
+        with self._lock:
+            return self._observe_output(terminal_id, output)
+
+    def _observe_output(self, terminal_id: str, output: str) -> bool:
         self._expire()
         candidate = self._candidates.get(terminal_id)
         if candidate is None or not output:
@@ -155,6 +211,10 @@ class TerminalTurnObserver:
 
     def observe_run_output(self, run_id: str, output: str) -> bool:
         """Resolve agent-reader output to its live terminal, when available."""
+        with self._lock:
+            return self._observe_run_output(run_id, output)
+
+    def _observe_run_output(self, run_id: str, output: str) -> bool:
         manager = self._terminal_manager
         if manager is None:
             return False
@@ -173,12 +233,14 @@ class TerminalTurnObserver:
         return self.observe_output(str(terminal_id), output)
 
     def clear_terminal(self, terminal_id: str) -> None:
-        self._candidates.pop(terminal_id, None)
+        with self._lock:
+            self._candidates.pop(terminal_id, None)
 
     def clear_session(self, session_id: str) -> None:
-        for terminal_id, candidate in tuple(self._candidates.items()):
-            if candidate.session_id == session_id:
-                self._candidates.pop(terminal_id, None)
+        with self._lock:
+            for terminal_id, candidate in tuple(self._candidates.items()):
+                if candidate.session_id == session_id:
+                    self._candidates.pop(terminal_id, None)
 
     def _expire(self) -> None:
         threshold = self._clock() - self._timeout_seconds

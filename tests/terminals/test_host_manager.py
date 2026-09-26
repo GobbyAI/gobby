@@ -492,7 +492,11 @@ async def test_input_activity_reaches_sink_not_settle_exit(
     host.last_event_epoch = epoch
     host.last_event_seq = 4
     seen: list[InputActivityEvent] = []
-    host.set_input_activity_sink(seen.append)
+
+    async def observe_input(event: InputActivityEvent) -> None:
+        seen.append(event)
+
+    host.set_input_activity_sink(observe_input)
     typed = InputActivityEvent(row.id, "ht-typed", "att-1", "input", 1, "ctrl_c", epoch, 5)
 
     def failing_sink(_event: InputActivityEvent) -> None:

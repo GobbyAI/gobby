@@ -8,7 +8,7 @@ WriteKind = Literal["input", "paste", "text"]
 WriteOutcome = Literal["delivered", "indeterminate", "refused"]
 
 
-def record_turn_observation(
+async def record_turn_observation(
     owner: Any,
     terminal_id: str,
     *,
@@ -22,7 +22,7 @@ def record_turn_observation(
     if observer is None:
         return
     input_seq = seq if isinstance(seq, int) and not isinstance(seq, bool) else None
-    observer.record_mediated_input(
+    await observer.record_mediated_input_async(
         terminal_id,
         payload if kind == "input" else "",
         outcome,
