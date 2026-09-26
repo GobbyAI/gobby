@@ -8,7 +8,7 @@
 | lane-2-stability.md | gobby#14505 |
 | lane-3-hooks.md | gobby#14531 |
 | lane-4-backlog.md | gobby#14506 |
-| rust-migration.md | gobby#14549 |
+| rust-migration.md | gobby#14639 |
 | lane-manager.md | gobby#14556 |
 | code-reviewer.md | gobby#14527 |
 | researcher.md | gobby#14550 |
