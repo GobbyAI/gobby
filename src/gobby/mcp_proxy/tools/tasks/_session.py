@@ -32,7 +32,7 @@ def create_session_registry(ctx: RegistryContext) -> InternalToolRegistry:
     )
 
     def delegate_task(task_id: str, delegated_to_session_ref: str, reason: str) -> dict[str, Any]:
-        """Let a task filer hand an open finding to another live session."""
+        """Let a filer or current receiver after the filer ends hand off an open finding."""
         from gobby.utils.session_context import get_current_session_id
 
         caller_session_id = get_current_session_id()
