@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+import asyncio
 import json
+from threading import Event, get_ident
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
+import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import gobby.servers.routes.embeddings as embeddings_routes
+from gobby.ai import build_daemon_ai_capability_registry
 from gobby.ai.embedding_switch_service import SwitchOperationStatus
 from gobby.ai.embeddings import EmbeddingService
 from gobby.config.app import DaemonConfig
@@ -43,6 +47,50 @@ def _client(config: DaemonConfig) -> TestClient:
     app = FastAPI()
     app.include_router(create_embeddings_router(server))
     return TestClient(app)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["GET", "POST"])
+async def test_registry_build_keeps_embeddings_route_loop_responsive(
+    monkeypatch: pytest.MonkeyPatch, method: str
+) -> None:
+    server = MagicMock()
+    server.config = _config(api_key="secret")
+    app = FastAPI()
+    app.include_router(create_embeddings_router(server))
+    original = build_daemon_ai_capability_registry
+    owner_thread = get_ident()
+    entered = Event()
+    release = Event()
+
+    def blocked_registry(config: DaemonConfig) -> Any:
+        entered.set()
+        assert get_ident() != owner_thread
+        assert release.wait(2)
+        return original(config)
+
+    async def fake_generate_embeddings(*args: Any, **kwargs: Any) -> list[list[float]]:
+        return [[0.1]]
+
+    monkeypatch.setattr(embeddings_routes, "build_daemon_ai_capability_registry", blocked_registry)
+    monkeypatch.setattr(EmbeddingService, "generate_embeddings", fake_generate_embeddings)
+    path = "/api/embeddings/status" if method == "GET" else "/api/embeddings"
+    payload = None if method == "GET" else {"input": "hello"}
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        request = asyncio.create_task(client.request(method, path, json=payload))
+        try:
+            assert await asyncio.wait_for(asyncio.to_thread(entered.wait, 2), timeout=3)
+            heartbeat = asyncio.Event()
+            asyncio.get_running_loop().call_soon(heartbeat.set)
+            await asyncio.wait_for(heartbeat.wait(), timeout=1)
+        finally:
+            release.set()
+            response = await request
+
+    assert response.status_code == 200
 
 
 def test_embeddings_status_reports_disabled_config() -> None:
