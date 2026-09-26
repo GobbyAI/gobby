@@ -93,9 +93,18 @@ placed agent therefore never exists unplaced, and a refused placement spawns not
    placements.
 3. **Bind before exec.** The reserved pane is bound with
    `set_pane_terminal(owns_terminal=True)` to the terminal row that
-   `TerminalManager.create_pending` creates in the spawn executor. The binding happens
-   before `reserve_observer` and `prepare_spawn`, so it precedes provider exec and the
-   SRT-wrapped command.
+   `TerminalManager.create_pending` creates in the spawn executor. The as-is order,
+   VERIFIED by R2 #14640, is:
+   1. `_prepare_provider_sandbox`;
+   2. `prepare_sandbox_launch` (SRT policy plus a real `--preflight`);
+   3. `wrap_provider_command`;
+   4. `create_pending`;
+   5. `reserve_observer` / `prepare_spawn`;
+   6. provider exec.
+
+   Binding right after `create_pending` therefore follows a successful SRT wrap and
+   precedes exec. A wrap failure never creates a terminal row, so only the
+   reservation needs releasing.
    - Rejected: adopting after launch via `tab_create`/`pane_split(terminal_id=...)`.
      `WorkspaceOps._adoptable` requires `state == "live"`, which means the agent would
      run unplaced first, and gclient's `created` handler would already have opened it
@@ -117,14 +126,20 @@ placed agent therefore never exists unplaced, and a refused placement spawns not
    reservation, provider or wrap failure, bind conflict, and cancellation.
    - A pane whose terminal was bound with `owns_terminal=True` kills that terminal on
      removal, so no orphan shell or unplaced agent survives.
+   - Placed launches default `cleanup_isolation_on_failure` to true for isolation that
+     this call created. As-is, the default is false (`spawn_agent_impl`,
+     `_failure_cleanup.py`), which leaves a worktree behind after a refused seat.
+     Reused worktrees and clones (`worktree_id` / `clone_id`) are never removed.
 6. **Managed SRT is mandatory for placed launches.** Preflight refuses with
    `placement_error: "sandbox_required"` unless the effective sandbox config is
    `enabled` with `backend == "srt"`. The config checked is the daemon-owned
    `agent_sandbox_config` after `apply_write_grant`, or the managed runtime profile's
-   config.
-   - A wrap failure in `wrap_provider_command` and the provider spawn plans already
-     fail closed before exec (memory 0a4ac03d, INFERRED; see 1.2 verification). Placed
-     launches reuse that path unchanged.
+   config. Preflight also runs the side-effect-free `verify_srt_installation`.
+   - The full SRT policy and `--preflight` need the isolation cwd and the run_id, so
+     they stay where they are. VERIFIED by R2: `_prepare_provider_sandbox` catches
+     `OSError`/`ValueError`/`SrtRuntimeError`, fails the run, and returns "Sandbox
+     startup failed closed" before `create_pending`. Placed launches reuse that path
+     unchanged, and its failure releases the reservation.
    - Unplaced spawns keep today's config-driven behaviour. Hand-launched seats are out
      of scope.
 7. **Live-seat refusal.** Preflight refuses with `placement_error: "seat_live"` when
@@ -132,6 +147,13 @@ placed agent therefore never exists unplaced, and a refused placement spawns not
    title or label equals `title` and whose bound terminal is `pending` or `live`.
    Re-running a runbook pipeline therefore cannot double-launch a seat. A seat whose
    terminal has ended can be relaunched.
+   - An in-flight reservation with the same title also counts as live.
+   - Preflight's seat check is repeated inside `reserve` under a per-workspace
+     `asyncio.Lock` held across check and insert, so two concurrent launches of one
+     seat cannot both pass. The daemon is a single process, and the in-flight pane set
+     is per process too (VERIFIED by R2).
+   - As-is, the only spawn idempotency key is `task_id` (`_spawn_guards.py`). Taskless
+     seats had no guard until this check.
 8. **Parent identity.** A placed spawn from a pipeline is parented to the pipeline's
    child session. That session is created by `PipelineExecutor` with
    `source="pipeline"`, the run's `project_id` and `parent_session_id=caller`, and
@@ -146,14 +168,25 @@ placed agent therefore never exists unplaced, and a refused placement spawns not
 
    - The project is resolved from the parent session by
      `_resolve_spawn_project_context`. The workspace actor is the parent session id.
+     VERIFIED by R2: the CLI takes the project from the cwd's `.gobby/project.json`;
+     cron takes it from `job.project_id`.
    - No new identity mechanism is added.
+   - Fail-closed gap: when child-session registration fails, `PipelineExecutor` falls
+     back to the caller session. For CLI runs that is the system session, and the
+     project may then resolve from ambient context. A placed spawn refuses with
+     `placement_error: "parent_unresolved"` when its parent is the system session
+     itself, or when the project did not come from an explicit `project_path` or the
+     parent session.
 9. **Seat spawn blocks are policy, not code, today.** No bundled rule blocks
    `spawn_agent` by seat. The blocks live in role files, and #22899 /
    `agent-definition-profiles.md` plan their enforcement.
    - Decision: running a pipeline is not a bypass. A seat forbidden from `spawn_agent`
      is equally forbidden from starting a spawning pipeline through `run_pipeline`.
    - When enforcement lands (outside this plan), it keys on the originating
-     non-pipeline session in the pipeline child's parent chain.
+     non-pipeline session in the pipeline child's parent chain. It must be in-tool or
+     at `run_pipeline`, because pipeline `mcp` steps call the proxy with
+     `enforce_workflow=False` and skip the rule engine (VERIFIED by R2:
+     `workflows/pipeline/handlers.py`, `tool_execution.py`).
    - Runbook pipelines are started by the operator (CLI) or by the PD.
 10. **gclient reconciliation.** gclient must not show a placed agent twice or unplaced.
     - A `created` event for a terminal that a known pane already holds opens nothing
@@ -291,7 +324,9 @@ New API (all names are new):
     (`pending`/`live`) gives `seat_live`.
 
   It returns a `ResolvedPlacement`.
-- `reserve(resolved)`: marks the pane in flight and inserts it. It uses `create_tab`
+- `reserve(resolved)`: under a per-workspace `asyncio.Lock` held across check and
+  insert, repeats the live-seat check (counting in-flight reservations with the same
+  title as live), then marks the pane in flight and inserts it. It uses `create_tab`
   with the title for `tab`, or `add_pane` beside the pane plus the label for `split`.
   It returns `ReservedPane(pane_id, tab_id, workspace_id, pane_ref, tab_ref)`. Nothing
   is emitted yet.
@@ -325,6 +360,7 @@ New API (all names are new):
 - 1.1.2 - Preflight refuses an unknown ref, an out-of-scope project and a foreign node, and inserts no row. test: `tests/terminals/test_workspace_agent_panes.py::test_preflight_refusals_have_no_side_effects`.
 - 1.1.3 - Preflight refuses `seat_live` when the same-titled tab or pane holds a pending or live terminal, and allows relaunch when that terminal has ended. test: `tests/terminals/test_workspace_agent_panes.py::test_live_seat_refused_ended_seat_allowed`.
 - 1.1.4 - Reserve then bind produces a bound pane with `owns_terminal=True`, clears the in-flight mark, and emits exactly one `tab.created` or `pane.added`. test: `tests/terminals/test_workspace_agent_panes.py::test_reserve_bind_emits_once`.
+- 1.1.6 - Two concurrent reservations of the same workspace and title yield exactly one reservation and one `seat_live` refusal. test: `tests/terminals/test_workspace_agent_panes.py::test_concurrent_same_seat_reserves_once`.
 - 1.1.5 - Release removes the reserved pane, and the tab it emptied, and is idempotent. test: `tests/terminals/test_workspace_agent_panes.py::test_release_is_idempotent`.
 
 ### 1.2 spawn_agent placement input, SRT requirement, binding and reply [category: code] (depends: 1.1)
@@ -348,8 +384,13 @@ Move the placed-launch branch into the new `_placement.py` so that `_implementat
 
 1. Right after the parent/`can_spawn` checks and the sandbox config resolution, and
    before isolation is created: `preflight_placement(...)`. It returns `None` when no
-   placement is given. It raises `sandbox_required` unless the effective sandbox config
-   is `enabled` with `backend == "srt"`, and it runs `AgentPaneReserver.preflight`. On
+   placement is given. It does the following:
+   - raises `sandbox_required` unless the effective sandbox config is `enabled` with
+     `backend == "srt"` and `verify_srt_installation` passes;
+   - raises `parent_unresolved` when the parent session is the system session itself,
+     or when the project came from ambient context rather than from `project_path` or
+     the parent session;
+   - runs `AgentPaneReserver.preflight`. On
    refusal, return `{"success": false, "placement_error": code, "error": message}`
    before any side effect.
 2. After `reserve_agent_slot` succeeds: `reserve_placement(...)`. It calls
@@ -363,7 +404,10 @@ Move the placed-launch branch into the new `_placement.py` so that `_implementat
    them.
 
 Every failure path after reservation, including `CancelledError`, calls `release`
-after `cleanup_failed_spawn` inside the `_spawn_failure` routing.
+after `cleanup_failed_spawn` inside the `_spawn_failure` routing. A placed launch
+defaults `cleanup_isolation_on_failure` to true for isolation it created, so a refused
+or failed seat leaves no worktree or clone. Reused `worktree_id` / `clone_id`
+isolation is never removed.
 
 In `spawn_executor.py`, `_runtime_spawn` calls `request.placement_reservation`'s bind
 callback immediately after `manager.create_pending` returns the terminal id. That is
@@ -452,6 +496,8 @@ Consumers unchanged:
 - 1.2.4 - An SRT wrap failure returns `success: false`, runs `cleanup_failed_spawn`, releases the pane, and never starts the provider. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_wrap_failure_refuses_and_releases_pane`.
 - 1.2.5 - A successful placed spawn returns synchronously with run_id, terminal_id, workspace, tab_ref and pane_ref. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_placed_spawn_reply_carries_refs`.
 - 1.2.6 - A slot, lease or active-task refusal after preflight leaves no pane, and a bind `busy` conflict fails the terminal and releases the pane. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_late_refusals_release_reservation`.
+- 1.2.8 - A placed spawn whose parent is the system session, or whose project resolved from ambient context, is refused with `parent_unresolved` before any side effect. A pipeline child parented to the system or cron session is accepted. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_system_parent_fallback_refused`.
+- 1.2.9 - A placed spawn that fails after creating its own worktree removes that worktree, and one that reused a `worktree_id` keeps it. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_failed_placed_spawn_cleans_created_isolation_only`.
 - 1.2.7 - `spawn_executor` re-exports `_runtime_spawn` and `_promote_prepared` from `spawn_executor_runtime`. symbol: `_runtime_spawn`. file: `src/gobby/agents/spawn_executor_runtime.py`.
 
 ## P2: gclient placement reconciliation
