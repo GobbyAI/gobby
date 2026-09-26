@@ -236,7 +236,9 @@ class ProcessorTranscriptMixin:
                 start_index=last_index + 1,
             )
             parser_source = _parser_source(parser)
-            parsed_records = normalize_transcript_records(raw_records, parser_source)
+            parsed_records = await asyncio.to_thread(
+                normalize_transcript_records, raw_records, parser_source
+            )
             parsed_messages: list[ParsedMessage] = [
                 r for r in parsed_records if isinstance(r, ParsedMessage)
             ]
@@ -257,7 +259,9 @@ class ProcessorTranscriptMixin:
             raise
 
         session_manager = self.session_manager
-        if session_manager is not None and lifecycle_interrupt_from_lines(parser_source, new_lines):
+        if session_manager is not None and await asyncio.to_thread(
+            lifecycle_interrupt_from_lines, parser_source, new_lines
+        ):
 
             def reduce_transcript_interrupt() -> None:
                 lifecycle = TurnLifecycleReducer(session_manager)

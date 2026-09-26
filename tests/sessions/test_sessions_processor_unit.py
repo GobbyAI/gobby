@@ -10,7 +10,7 @@ import json
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from threading import get_ident
+from threading import Event, get_ident
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -1280,6 +1280,45 @@ class TestProcessSession:
 
         with patch.object(processor_transcripts, "_parse_incremental_records", parse_off_loop):
             await processor._process_session("session-1", str(transcript))
+
+        assert processor._byte_offsets["session-1"] == transcript.stat().st_size
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "function_name", ["normalize_transcript_records", "lifecycle_interrupt_from_lines"]
+    )
+    async def test_transcript_batch_work_keeps_owner_loop_responsive(
+        self, tmp_path: Path, function_name: str
+    ) -> None:
+        from gobby.sessions import processor_transcripts
+
+        transcript = tmp_path / "transcript.jsonl"
+        transcript.write_text(json.dumps({"type": "user", "message": {"content": "hello"}}) + "\n")
+        processor = SessionMessageProcessor(MagicMock(), session_manager=MagicMock())
+        processor.register_session("session-1", str(transcript), source="claude")
+        owner_thread = get_ident()
+        entered = Event()
+        release = Event()
+        original = getattr(processor_transcripts, function_name)
+
+        def blocked_call(*args: Any, **kwargs: Any) -> Any:
+            entered.set()
+            assert get_ident() != owner_thread
+            assert release.wait(2)
+            return original(*args, **kwargs)
+
+        with patch.object(processor_transcripts, function_name, blocked_call):
+            processing = asyncio.create_task(
+                processor._process_session("session-1", str(transcript))
+            )
+            try:
+                assert await asyncio.wait_for(asyncio.to_thread(entered.wait, 2), timeout=3)
+                heartbeat = asyncio.Event()
+                asyncio.get_running_loop().call_soon(heartbeat.set)
+                await asyncio.wait_for(heartbeat.wait(), timeout=1)
+            finally:
+                release.set()
+                await processing
 
         assert processor._byte_offsets["session-1"] == transcript.stat().st_size
 
