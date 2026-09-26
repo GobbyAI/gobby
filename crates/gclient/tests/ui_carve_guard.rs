@@ -302,6 +302,7 @@ fn render_workspace_composes_imported_chrome() {
         }
         chrome.mode = Mode::KeybindHelp;
         chrome.dialog = None;
+        chrome.keybind_help.query = "split_vertical".to_owned();
         terminal
             .draw(|frame| {
                 render_workspace(frame, &ws, &chrome);
