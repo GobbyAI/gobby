@@ -144,17 +144,17 @@ async def _wait_for_interrupt(
 ) -> bool | None:
     """Poll the transcript observer for a fresh interrupt during one attempt."""
     if attempt_seconds <= 0:
-        return observe_interrupt()
+        return await asyncio.to_thread(observe_interrupt)
 
     elapsed = 0.0
     while elapsed < attempt_seconds:
-        observed = observe_interrupt()
+        observed = await asyncio.to_thread(observe_interrupt)
         if observed is not False:
             return observed
         delay = min(poll_seconds, attempt_seconds - elapsed)
         await asyncio.sleep(delay)
         elapsed += delay
-    return observe_interrupt()
+    return await asyncio.to_thread(observe_interrupt)
 
 
 async def _confirm_interrupt(
@@ -169,12 +169,12 @@ async def _confirm_interrupt(
     """Send the interrupt key until the CLI's transcript confirms the turn stopped."""
     pressed = False
     for _attempt in range(_INTERRUPT_ATTEMPTS):
-        if pressed and turn_settled is not None and turn_settled() is True:
+        if pressed and turn_settled is not None and (await asyncio.to_thread(turn_settled)) is True:
             # Grok goal mode can start a successor about 92 ms after a completed
             # turn. Confirm that the composer stays idle before treating it as
             # the interrupt result or sending another Ctrl+C.
             await asyncio.sleep(_TURN_SETTLE_POLL_SECONDS)
-            if turn_settled() is True:
+            if (await asyncio.to_thread(turn_settled)) is True:
                 return True, None, None
         ok, reason = await send_pane_key(
             pane, key, session_id, action="sending compaction interrupt"
@@ -275,13 +275,13 @@ async def _interrupt_turn(
     return True, None, None
 
 
-def _turn_already_settled(
+async def _turn_already_settled(
     turn_settled: Callable[[], bool | None] | None,
     session_id: str,
     command: str,
 ) -> bool:
     """Return whether the CLI's transcript shows no running turn, so no interrupt is sent."""
-    if turn_settled is None or turn_settled() is not True:
+    if turn_settled is None or (await asyncio.to_thread(turn_settled)) is not True:
         return False
     logger.info(
         "Session %s has no running turn; submitting %s without an interrupt",
@@ -313,10 +313,10 @@ async def _wait_for_turn_to_settle(
         return False
     deadline = time.monotonic() + wait_seconds
     while True:
-        if _turn_already_settled(turn_settled, session_id, command):
+        if await _turn_already_settled(turn_settled, session_id, command):
             return True
         recorded = getattr(turn_settled, "delivery_turn_recorded", None)
-        if callable(recorded) and recorded():
+        if callable(recorded) and await asyncio.to_thread(recorded):
             return True
         remaining = deadline - time.monotonic()
         if remaining <= 0:
@@ -474,7 +474,7 @@ async def _send_terminal_compaction_command(
                 wait_seconds=settle_wait_seconds,
                 poll_seconds=settle_poll_seconds,
             )
-        if turn_settled is None or turn_settled() is not True:
+        if turn_settled is None or (await asyncio.to_thread(turn_settled)) is not True:
             interrupted, reason, detail = await _interrupt_turn(
                 pane,
                 interrupt_key,

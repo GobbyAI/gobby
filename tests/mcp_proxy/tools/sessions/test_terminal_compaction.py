@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -26,6 +27,7 @@ from gobby.mcp_proxy.tools.sessions._terminal_compaction import (
     _TURN_SETTLE_POLL_SECONDS,
     _confirm_interrupt,
     _send_terminal_compaction_command,
+    _wait_for_interrupt,
 )
 from gobby.sessions.transcript_cursor import (
     build_interrupt_observer,
@@ -499,6 +501,62 @@ async def test_grok_recorded_goal_mode_compact_replay_succeeds_on_first_delivery
     assert result[0] is True
     assert pane.ctrl_c_presses == 2
     assert pane.typed == [f"{_COMMAND}\n"]
+
+
+@pytest.mark.asyncio
+async def test_compaction_turn_observer_keeps_event_loop_responsive() -> None:
+    pane = _GrokPane()
+    loop = asyncio.get_running_loop()
+    entered = asyncio.Event()
+    release = threading.Event()
+    observer_threads: list[int] = []
+
+    def turn_settled() -> bool:
+        observer_threads.append(threading.get_ident())
+        loop.call_soon_threadsafe(entered.set)
+        if not release.wait(timeout=2):
+            raise TimeoutError("turn observer remained blocked")
+        return True
+
+    delivery = asyncio.create_task(_send(pane, lambda: True, turn_settled=turn_settled))
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        await asyncio.sleep(0)
+        assert not release.is_set()
+    finally:
+        release.set()
+
+    result, _, _ = await delivery
+    assert result == (True, None, True, {"interrupted": False})
+    assert observer_threads
+    assert all(thread_id != threading.get_ident() for thread_id in observer_threads)
+
+
+@pytest.mark.asyncio
+async def test_compaction_interrupt_observer_keeps_event_loop_responsive() -> None:
+    loop = asyncio.get_running_loop()
+    entered = asyncio.Event()
+    release = threading.Event()
+    observer_threads: list[int] = []
+
+    def observe_interrupt() -> bool:
+        observer_threads.append(threading.get_ident())
+        loop.call_soon_threadsafe(entered.set)
+        if not release.wait(timeout=2):
+            raise TimeoutError("interrupt observer remained blocked")
+        return True
+
+    observation = asyncio.create_task(_wait_for_interrupt(observe_interrupt, attempt_seconds=0.02))
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        await asyncio.sleep(0)
+        assert not release.is_set()
+    finally:
+        release.set()
+
+    assert await observation is True
+    assert len(observer_threads) == 1
+    assert observer_threads[0] != threading.get_ident()
 
 
 @pytest.mark.asyncio
