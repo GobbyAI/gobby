@@ -468,10 +468,14 @@ class PlanReviewEvidenceService:
                 raise ReviewEvidenceError(
                     "invalid_seats", "review seats must be live sessions in the project"
                 )
-            resolved = self.manifests.resolve_evidence_path(
-                locked,
-                plan_path or locked.source_plan_path or locked.plan_path,
-            )
+            source_path = plan_path or locked.source_plan_path
+            if source_path is None or (
+                locked.source_plan_path is None and not Path(source_path).is_absolute()
+            ):
+                raise ReviewEvidenceError(
+                    "invalid_plan_path", "legacy evidence requires an absolute plan_path"
+                )
+            resolved = self.manifests.resolve_evidence_path(locked, source_path)
             if resolved.read_bytes() != locked.snapshot:
                 raise ReviewEvidenceError(
                     "stale_snapshot", "plan bytes differ from reviewed evidence"

@@ -317,6 +317,7 @@ async def test_preserved_worktree_evidence_rebinds_to_live_successor_coordinator
             "UPDATE plan_review_evidence SET source_plan_path = NULL WHERE evidence_id = %s",
             (evidence_id,),
         )
+    review.primary_plan.write_bytes(review.worktree_plan.read_bytes())
     SessionManager(service.db).update_status(ended_coordinator_id, "expired")
     _, successor_coordinator_id = _static_seats(review)
     with pytest.raises(ReviewEvidenceError) as ended:
@@ -344,7 +345,16 @@ async def test_preserved_worktree_evidence_rebinds_to_live_successor_coordinator
             coordinator_session_id=successor_coordinator_id,
             caller_session_id=review.primary_session_id,
         )
-    assert stale.value.code == "stale_snapshot"
+    assert stale.value.code == "invalid_plan_path"
+    with pytest.raises(ReviewEvidenceError) as relative:
+        service.bind_static_review_seats(
+            evidence_id,
+            writer_session_id=writer_id,
+            coordinator_session_id=successor_coordinator_id,
+            caller_session_id=review.primary_session_id,
+            plan_path=REVIEW_PLAN,
+        )
+    assert relative.value.code == "invalid_plan_path"
     with session_context_for_test(review.primary_session_id):
         response = await _review_registry(service.db, review.project_id).call(
             "bind_static_review_seats",
