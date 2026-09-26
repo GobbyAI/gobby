@@ -5,7 +5,7 @@
 01 | Machines                │ alpha:alpha     ⍾ alpha:second    +                                                          |
 01 : -/surface0*1 subtext0/surface0+b*8 -/surface0*16 overlay0/panel_bg*1 text/panel_bg+b*15 -/surface0*1 overlay1/surface0*1 yellow/surface0*1 overlay1/surface0*19 -/surface0*57
 02 | ⍾ scripted · local      │⍾ term-alpha ─────────────────────────────────┐┌ ▸ term-beta ────────────────────────────────┐|
-02 : -/surface_dim*1 yellow/surface_dim*1 overlay0/surface_dim+d*1 text/surface_dim+b*8 overlay0/surface_dim+d*8 -/surface_dim*6 overlay0/panel_bg*1 yellow/panel_bg*1 overlay0/panel_bg*12 yellow/panel_bg*34 accent/panel_bg*1 accent/panel_bg+b*13 accent/panel_bg*33
+02 : -/surface_dim*1 yellow/surface_dim*1 overlay0/surface_dim+d*1 text/surface_dim+b*8 overlay0/surface_dim*8 -/surface_dim*6 overlay0/panel_bg*1 yellow/panel_bg*1 overlay0/panel_bg*12 yellow/panel_bg*34 accent/panel_bg*1 accent/panel_bg+b*13 accent/panel_bg*33
 03 |                         ││                                             ││                                             │|
 03 : -/panel_bg*25 overlay0/panel_bg*1 yellow/panel_bg*1 -/panel_bg*45 yellow/panel_bg*1 accent/panel_bg*1 -/panel_bg*45 accent/panel_bg*1
 04 | Projects      [working] ││                                             ││                                             │|

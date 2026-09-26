@@ -78,5 +78,5 @@
 37 : -/panel_bg+d*2 accent/panel_bg*1 overlay0/panel_bg*8 text/panel_bg*1 overlay0/panel_bg*10 text/panel_bg*16 overlay0/panel_bg*9 text/panel_bg*9 -/panel_bg*61 accent/panel_bg*1 -/panel_bg+d*1 accent/panel_bg+d*1
 38 |  └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘ ┘|
 38 : -/panel_bg+d*2 accent/panel_bg*116 accent/panel_bg+bd*1 accent/panel_bg+d*1
-39 | —                                                                                         — · — │ prefix ctrl+b │ keys |
-39 : -/surface0+d*1 subtext0/surface0+d*1 -/surface0+d*89 subtext0/surface0+d*24 accent/surface0+d*4 -/surface0+d*1
+39 | 1 agent · 2 terminals · —                                                                 — · — │ prefix ctrl+b │ keys |
+39 : -/surface0+d*1 subtext0/surface0+d*25 -/surface0+d*65 subtext0/surface0+d*24 accent/surface0+d*4 -/surface0+d*1

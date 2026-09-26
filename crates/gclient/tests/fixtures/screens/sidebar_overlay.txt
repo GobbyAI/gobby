@@ -5,7 +5,7 @@
 01 | Machines                        │                                                  alpha:alpha     ⍾ alpha:second    + |
 01 : -/surface0*1 subtext0/surface0+b*8 -/surface0*24 accent/panel_bg*1 -/surface0*49 text/panel_bg+b*15 -/surface0*1 overlay1/surface0*1 yellow/surface0*1 overlay1/surface0*19
 02 | ⍾ scripted · local              │─────────────────────────┐┌ ▸ term-beta ─────────────────────────────────────────────┐|
-02 : -/surface_dim*1 yellow/surface_dim*1 overlay0/surface_dim+d*1 text/surface_dim+b*8 overlay0/surface_dim+d*8 -/surface_dim*14 accent/panel_bg*1 yellow/panel_bg*26 accent/panel_bg*1 accent/panel_bg+b*13 accent/panel_bg*46
+02 : -/surface_dim*1 yellow/surface_dim*1 overlay0/surface_dim+d*1 text/surface_dim+b*8 overlay0/surface_dim*8 -/surface_dim*14 accent/panel_bg*1 yellow/panel_bg*26 accent/panel_bg*1 accent/panel_bg+b*13 accent/panel_bg*46
 03 |                                 │                         ││                                                          │|
 03 : -/panel_bg*33 accent/panel_bg*1 -/panel_bg+d*24 -/panel_bg*1 yellow/panel_bg*1 accent/panel_bg*1 -/panel_bg*58 accent/panel_bg*1
 04 | Projects              [working] │                         ││                                                          │|
@@ -78,5 +78,5 @@
 37 : -/panel_bg*33 accent/panel_bg*1 -/panel_bg+d*24 -/panel_bg*1 yellow/panel_bg*1 accent/panel_bg*1 -/panel_bg*58 accent/panel_bg*1
 38 |                                 │──────────────── gclient ┘└ term-beta · Focused ──────────────────────────── gclient ┘|
 38 : -/panel_bg*33 accent/panel_bg*1 yellow/panel_bg*16 overlay0/panel_bg*9 yellow/panel_bg*1 accent/panel_bg*1 accent/panel_bg+b*21 accent/panel_bg*28 accent/panel_bg+b*9 accent/panel_bg*1
-39 | —                                                                                     — · — │ prefix ctrl+b │ navigate |
-39 : -/surface0*1 subtext0/surface0*1 -/surface0*85 subtext0/surface0*24 accent/surface0*8 -/surface0*1
+39 | 1 agent · 2 terminals · —                                                             — · — │ prefix ctrl+b │ navigate |
+39 : -/surface0*1 subtext0/surface0*25 -/surface0*61 subtext0/surface0*24 accent/surface0*8 -/surface0*1

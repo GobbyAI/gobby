@@ -287,10 +287,8 @@ pub(crate) fn row_line_with_scrolling<'a>(
     } else {
         Style::default().fg(p.subtext0)
     };
-    // Worktree and machine details retain the quiet token style.
-    let detail_style = Style::default()
-        .fg(if row.selected { p.mauve } else { p.overlay0 })
-        .add_modifier(Modifier::DIM);
+    // Worktree and machine details retain the quiet token color.
+    let detail_style = Style::default().fg(if row.selected { p.mauve } else { p.overlay0 });
     let prefix_style = Style::default().fg(p.overlay0);
     let marker = if row.selected { "▸" } else { " " };
     let mut spans = vec![Span::styled(marker, marker_style)];
@@ -372,7 +370,7 @@ pub(crate) fn row_line_with_scrolling<'a>(
             }
         }
         RowKind::Group => {
-            let style = Style::default().fg(p.overlay0).add_modifier(Modifier::DIM);
+            let style = Style::default().fg(p.overlay0);
             let name = truncate_end(&row.label, budget.saturating_sub(2));
             let rule = budget.saturating_sub(display_width(&name) + 1);
             spans.push(Span::styled(name, style));
@@ -573,13 +571,14 @@ pub fn fitted_spans(
     p: &Palette,
     max_width: usize,
 ) -> Vec<Span<'static>> {
-    let separator_style = Style::default().fg(p.overlay0).add_modifier(Modifier::DIM);
+    let separator_style = Style::default().fg(p.overlay0);
+    let spacer_style = separator_style.add_modifier(Modifier::DIM);
     let mut spans = vec![Span::styled(glyph.0.to_string(), glyph.1)];
     let remaining = max_width.saturating_sub(display_width(glyph.0));
     if remaining < 2 || title.0.is_empty() {
         return spans;
     }
-    spans.push(Span::styled(" ", separator_style));
+    spans.push(Span::styled(" ", spacer_style));
     let remaining = remaining - 1;
     let trailing: Vec<&(&str, Style)> = trailing
         .iter()

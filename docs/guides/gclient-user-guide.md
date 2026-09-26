@@ -191,6 +191,9 @@ sidebar. If you changed the keymap, these hints show your current chords.
 `◐ connecting · <stage> · <elapsed>` or an outage as
 `× Daemon unreachable · retry in <n> s`. Off-tab attention adds
 `⍾ 1 needs you` or `⍾ N need you`; ordinary off-tab agents do not enter that count.
+Once connected, the line also shows separate totals for agents and bare terminals.
+These totals give way to focused pane metadata or drop as whole segments when
+the window is too narrow for the right-hand hints.
 The right end shows the prefix chord,
 shifted when the client runs inside tmux, and the current mode when it is not
 plain terminal mode. Pane-local title, backend, and control state stay on that

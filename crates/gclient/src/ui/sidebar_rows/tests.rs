@@ -228,6 +228,28 @@ fn agent_rows_render_three_lines_with_the_model_slug() {
 }
 
 #[test]
+fn machine_detail_keeps_its_color_without_dimming_text() {
+    let row = SidebarRow {
+        kind: RowKind::Machine,
+        label: "mbp".into(),
+        detail: "local".into(),
+        ..SidebarRow::default()
+    };
+    let line = row_line(&row, 34, &Chrome::dark(), 0);
+    assert!(line_text(&line).contains(" · local"));
+    for span in line.spans {
+        if span.content.trim().is_empty() {
+            continue;
+        }
+        assert!(
+            !span.style.add_modifier.contains(Modifier::DIM),
+            "visible span {:?} is dimmed",
+            span.content
+        );
+    }
+}
+
+#[test]
 fn project_lines_carry_the_toggle_branch_and_counts() {
     let chrome = Chrome::dark();
     let row = SidebarRow {

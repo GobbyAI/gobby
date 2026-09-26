@@ -1216,12 +1216,13 @@ switch_project = "ctrl+1..9"
                     // and terminal rows gained their final content (#22749),
                     // and tabs gained project labels and neutral styling (#22750),
                     // then the configurable segments and attention count
-                    // populated the status row (#22752):
+                    // populated the status row (#22752), and the separate
+                    // agent and bare-terminal totals joined it (#22941):
                     // 4.1.3 requires a glyph change to fail here, so this
                     // digest moves only alongside a deliberate render change.
                     assert_eq!(
                         frame_digest(&terminal),
-                        "a6267744f6c1da4da5b58683aa408df55152dd984830f97573d9f948dc25e590"
+                        "3c7340d8bb69e287570bb15a99c6e062f6516665e03bf8c7dd283a74c86ee88b"
                     );
                 });
         }

@@ -5,7 +5,7 @@
 01 | Machines                        │                                                                                      |
 01 : -/surface0*1 subtext0/surface0+b*8 -/surface0*24 overlay0/panel_bg*1 -/panel_bg*86
 02 | ○ scripted · local              │                                                                                      |
-02 : -/surface_dim*1 overlay0/surface_dim*1 overlay0/surface_dim+d*1 text/surface_dim+b*8 overlay0/surface_dim+d*8 -/surface_dim*14 overlay0/panel_bg*1 -/panel_bg*86
+02 : -/surface_dim*1 overlay0/surface_dim*1 overlay0/surface_dim+d*1 text/surface_dim+b*8 overlay0/surface_dim*8 -/surface_dim*14 overlay0/panel_bg*1 -/panel_bg*86
 03 |                                 │                                                                                      |
 03 : -/panel_bg*33 overlay0/panel_bg*1 -/panel_bg*86
 04 | Projects              [working] │                                                                                      |
@@ -78,5 +78,5 @@
 37 : -/panel_bg*33 overlay0/panel_bg*1 -/panel_bg*86
 38 |                                 │                                                                                      |
 38 : -/panel_bg*33 overlay0/panel_bg*1 -/panel_bg*86
-39 |                                                                                                          prefix ctrl+b |
-39 : -/surface0*106 subtext0/surface0*13 -/surface0*1
+39 | 1 agent · 1 terminal                                                                                     prefix ctrl+b |
+39 : -/surface0*1 subtext0/surface0*20 -/surface0*85 subtext0/surface0*13 -/surface0*1

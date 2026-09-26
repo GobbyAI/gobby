@@ -281,7 +281,10 @@ fn status_bar_orders_fixed_slots_and_configured_segments() {
         count = render_status_line(frame, frame.area(), &ws, &chrome).count;
     });
     let line = &rect_rows(&healthy, Rect::new(0, 0, 100, 1))[0];
-    assert!(line.starts_with(" ⍾ 1 needs you"), "{line:?}");
+    assert!(
+        line.starts_with(" ⍾ 1 needs you · 2 agents · 0 terminals"),
+        "{line:?}"
+    );
     assert!(line.contains("fable-5.1-xhigh"), "{line:?}");
     assert!(line.contains("63% · 12,345"), "{line:?}");
     assert!(line.ends_with("prefix ctrl+b │ navigate "), "{line:?}");
@@ -319,6 +322,7 @@ fn status_bar_orders_fixed_slots_and_configured_segments() {
     });
     let line = &rect_rows(&visible, Rect::new(0, 0, 100, 1))[0];
     assert!(!line.contains("needs you"), "visible attention: {line:?}");
+    assert!(line.starts_with(" 2 agents · 0 terminals"), "{line:?}");
     assert!(line.contains("—"), "missing values: {line:?}");
     assert!(line.contains("— · — │ prefix"), "missing metrics: {line:?}");
     assert!(hits.expect("status hits").count.is_none());
@@ -340,6 +344,7 @@ fn status_bar_orders_fixed_slots_and_configured_segments() {
         line.starts_with(" × Daemon unreachable · retrying │ ⍾ 1 needs you"),
         "{line:?}"
     );
+    assert!(!line.contains("agents 63%"), "clipped total: {line:?}");
     assert!(line.ends_with("prefix ctrl+b │ navigate "), "{line:?}");
 
     chrome.prefs.status_left = vec![

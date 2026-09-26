@@ -2,6 +2,7 @@
 //! Toasts, copy feedback, and the state glyphs shared by sidebar,
 //! navigator, and pane titles.
 
+use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use crate::app::{ControlState, Pane};
@@ -442,7 +443,52 @@ pub fn render_status_line<W: WorkspaceView>(
         ));
     }
     let mut optional_spans = 0;
-    let mut optional_started = false;
+    // Pane overflow can contain an actionable control button. Let it take
+    // the left slot before the informational totals on a narrow row. A
+    // starting or disconnected roster cannot supply truthful totals yet.
+    let totals_ready = ws.daemon_ready()
+        && ws.daemon_error().is_none()
+        && chrome.connection.retry_at.is_none()
+        && chrome
+            .connection
+            .stages
+            .as_ref()
+            .is_none_or(|stages| stages.finished());
+    if totals_ready && focused_overflow(ws, chrome).is_none() {
+        let agents = &ws.sidebar().agents;
+        let agent_total = agents.len();
+        let agent_terminals: HashSet<&str> = agents
+            .iter()
+            .map(|agent| agent.terminal_id.as_str())
+            .collect();
+        let terminal_total = ws
+            .roster_terminal_ids()
+            .into_iter()
+            .filter(|terminal_id| {
+                !agent_terminals.contains(terminal_id.as_str())
+                    && ws.pane_for_terminal(terminal_id).is_some()
+            })
+            .count();
+        let (_, first) = append(
+            format!(
+                "{agent_total} agent{}",
+                if agent_total == 1 { "" } else { "s" }
+            ),
+            base.fg(p.subtext0),
+            if hidden > 0 { " · " } else { " │ " },
+        );
+        optional_spans += if first { 1 } else { 2 };
+        let (_, first) = append(
+            format!(
+                "{terminal_total} terminal{}",
+                if terminal_total == 1 { "" } else { "s" }
+            ),
+            base.fg(p.subtext0),
+            " · ",
+        );
+        optional_spans += if first { 1 } else { 2 };
+    }
+    let mut optional_started = optional_spans > 0;
     for name in &chrome.prefs.status_left {
         let Some(segment) = StatusSegment::parse(name) else {
             continue;
@@ -520,8 +566,8 @@ pub fn render_status_line<W: WorkspaceView>(
     let right_area = Rect::new(hint_area.x - right_width, area.y, right_width, 1);
     let fixed_spans = spans.len() - optional_spans;
     // Preserve the fixed connection and attention slots. Optional left
-    // segments disappear whole before the right slot can cut through one.
-    let left_limit = right_area.x.saturating_sub(area.x);
+    // segments, including totals, disappear whole before the right slot.
+    let left_limit = right_area.x.saturating_sub(area.x).saturating_sub(3);
     while left_width > left_limit && spans.len() > fixed_spans {
         let removed = spans.pop().expect("optional status segment");
         left_width = left_width.saturating_sub(display_width_u16(removed.content.as_ref()));
@@ -675,10 +721,11 @@ mod tests {
         // The focused pane's border carries its title and metadata; the
         // prefix and the mode word sit at the right end on surface0.
         let (text, indicator) = draw_status(&ws, &chrome);
-        assert_eq!(
-            text,
-            format!(" ⍾ 1 needs you{:>66}", "prefix ctrl+b │ navigate ")
+        assert!(
+            text.starts_with(" ⍾ 1 needs you · 0 agents · 2 terminals"),
+            "{text}"
         );
+        assert!(text.ends_with("prefix ctrl+b │ navigate "), "{text}");
         assert_eq!(indicator, None);
         let (terminal, _) = status_terminal(&ws, &chrome);
         let buffer = terminal.backend().buffer();
@@ -773,6 +820,10 @@ mod tests {
             text.starts_with(" ◐ connecting · workspace attach · 2.1 s"),
             "status should name the running stage: {text}"
         );
+        assert!(
+            !text.contains("0 agents"),
+            "roster is still loading: {text}"
+        );
 
         chrome.connection.stages = None;
         chrome.connection.retry_at = Some(now + Duration::from_secs(3));
@@ -781,6 +832,7 @@ mod tests {
             text.starts_with(" × Daemon unreachable · retry in 3 s"),
             "status should show the retry countdown: {text}"
         );
+        assert!(!text.contains("0 agents"), "roster is unavailable: {text}");
     }
 
     #[test]
@@ -804,14 +856,16 @@ mod tests {
             assert_eq!(chrome.view.pane_infos[0].borders, Borders::ALL);
 
             let (text, indicator) = draw_status(&ws, &chrome);
-            assert_eq!(text, format!("{:>80}", "prefix ctrl+b "));
+            assert!(text.starts_with(" 0 agents · 1 terminal"), "{text}");
+            assert!(text.ends_with("prefix ctrl+b "), "{text}");
             assert_eq!(indicator, None);
 
             // An exception's button stays on the edge too.
             ws.pane_mut(id).control = ControlState::LeaseLost;
             ws.pane_mut(id).take_back = true;
             let (text, indicator) = draw_status(&ws, &chrome);
-            assert_eq!(text, format!("{:>80}", "prefix ctrl+b "));
+            assert!(text.starts_with(" 0 agents · 1 terminal"), "{text}");
+            assert!(text.ends_with("prefix ctrl+b "), "{text}");
             assert_eq!(indicator, None);
             assert!(crate::ui::pane_chrome::control_indicator_hit_area(&ws, &chrome).is_some());
         }
