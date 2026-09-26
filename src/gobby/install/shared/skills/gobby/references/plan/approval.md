@@ -16,8 +16,8 @@ Use the complete canonical approved result, never reconstructed fields:
 
 Use render_plan_changelog_round only to inspect canonical rendering; never hand-edit fences. Preserve V1 as one kind: verification section with bold round labels, not noncanonical round headings.
 
-## Approval without adversarial review
-Coordinator supplies complete routing decisions to derive_plan_handoff_manifest and passes its exact source_plan_hash, rendered_plan_hash and manifest_digest to apply_plan_handoff_manifest. Apply re-derives and rejects drift before atomic write; exact rendered-hash retries are idempotent. Run expansion-mode validation afterward. Never synthesize reviewer verdicts, attestation, or evidence, and never invoke a stub manifest emitter.
+## Handoff-manifest route
+Used when adversarial review is skipped, and by the Plan Adversary seat on plan council consensus after Josh's approval. The applying session supplies complete routing decisions to derive_plan_handoff_manifest and passes its exact source_plan_hash, rendered_plan_hash and manifest_digest to apply_plan_handoff_manifest. Apply re-derives and rejects drift before atomic write; exact rendered-hash retries are idempotent. Run expansion-mode validation afterward. Never synthesize reviewer verdicts, attestation, or evidence, and never invoke a stub manifest emitter.
 
 ## Lessons and boundaries
 Reviewer-miss requires every participating section hash unchanged since an earlier finalized round. Fixer-induced-defect requires changed causal section hashes, causal_finding_id and introduced_in_round. A dual-class lesson needs both proof bundles; each independently proven class remains recordable even if the other is unproven. Use review-learning's class-scoped identity, source_kind plan_review, guardrail_target checklist, rule_id plan-review:<category>; a plan-file path is not a promotion anchor. Mint at most five proven lessons per plan, reserving a slot per present class and using its deterministic ranking. Rank reviewer misses by completed rounds missed and fixer-induced defects by
@@ -31,4 +31,4 @@ For an already-approved autonomous planning-stage review whose lesson mint faile
 
 See [Manifest-on-approval contract](../../../../../../../../docs/contracts/plan-coverage.md#manifest-on-approval-contract).
 
-_Last verified: 2026-09-12_
+_Last verified: 2026-09-26_

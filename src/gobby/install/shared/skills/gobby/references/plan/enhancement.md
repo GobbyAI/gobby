@@ -2,7 +2,7 @@
 Load for a selected enhancement pass or processing its suggestions.
 
 ## Discover and launch
-Load standalone restraint before forming suggestions and proportionality alongside it. Base-validate the canonical plan. Interactive enhancement is optional, advisory, explicitly authorized, and capped at one round unless changed. Inspect installed agent definitions for provider/model/defaults; template presence proves no active setting.
+Load standalone restraint before forming suggestions and proportionality alongside it. Base-validate the canonical plan. Interactive enhancement is optional, advisory, explicitly authorized, and capped at one round unless changed; the plan council's Writer spawns it once per plan under Josh's standing authorization. Inspect installed agent definitions for provider/model/defaults; template presence proves no active setting.
 The coordinator spawns plan-enhancer-taskless without task_id, with isolation none, artifact path, round/cap and parent session. Immediately save a structured handoff with clear_session=false. Use an event-driven agent wait when no independent work remains.
 
 ## Review the whole plan through two lenses
@@ -26,4 +26,4 @@ Failures use agent lifecycle diagnostics and complete report retrieval. Do not r
 
 See [Optional enhancement](../../../../../../../../docs/guides/plans-and-plan-mode.md#optional-enhancement).
 
-_Last verified: 2026-09-12_
+_Last verified: 2026-09-26_

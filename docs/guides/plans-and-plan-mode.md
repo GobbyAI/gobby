@@ -122,7 +122,12 @@ Taskless review uses `plan-adversary-taskless`. After project-aware validation, 
 passes the returned evidence ID, canonical path, clean deterministic sweep report,
 round number, review cap, and parent session ID, then binds the spawned run with
 `bind_evidence_run`. Spawn/bind failure expires the evidence; successful binding
-is followed immediately by a structured `set_handoff(clear_session=false)`. The adversary loads
+is followed immediately by a structured `set_handoff(clear_session=false)`. An
+unspawned interactive round binds through `bind_static_review_seats` instead:
+the evidence owner names the exact live Writer and coordinator session UUIDs,
+the binding is immutable and exclusive with a run binding, and the round's
+writes are seat-gated (the Writer appends and repairs, the coordinator applies
+the manifest, the owner finalizes). The adversary loads
 `gobby:references/plan/review.md` and standalone `proportionality`, returns structured findings or approval to
 the parent, and calls `end_agent_run`. It does not claim or mutate Gobby tasks.
 The adversary now also carries an `over-engineering` review dimension: mechanism
@@ -140,7 +145,8 @@ Each round records reviewer run/session, verdict, findings, and resolution
 notes. Keep prior rounds for audit. The reviewer reads an immutable snapshot,
 completes three review lanes and returns server-validated coverage attestation;
 it never writes the manifest. A rejection is appended and finalized with its
-canonical result before the coordinator applies accepted typed repairs.
+canonical result before the coordinator (the Writer seat in a static-seat
+round) applies accepted typed repairs.
 
 On user-accepted approval, the coordinator calls `apply_plan_review_manifest`,
 then `append_plan_changelog_round`, `finalize_plan_review_evidence`, and
@@ -166,6 +172,34 @@ uv run gobby build <plan-file> --planning-seed-state approved --completed-plan-r
 
 `/gobby plan references expansion` loads manual expansion guidance for debugging and
 targeted reruns.
+
+## Plan Council Flow
+
+Josh's standing seats (Plan Writer, Program Director, Plan Adversary) run one
+interactive flow per plan, set on 2026-09-26, with no numbered review rounds:
+
+1. The Plan Writer drafts the plan and passes base validation.
+2. The Writer spawns `plan-enhancer-taskless` once and folds in accepted
+   suggestions.
+3. The Program Director reviews the design and puts product decisions to Josh
+   through the Assistant.
+4. Josh approves. Approval is mandatory and precedes review.
+5. The Program Director passes the plan to the Plan Adversary, which reviews
+   it and sends findings to the Writer.
+6. The Writer edits, and the two seats converse through
+   `gobby-agents:send_message` until consensus; unresolved disagreements go to
+   the Program Director.
+7. On consensus the Writer records one dated prose consensus entry under
+   `## V1 Plan Changelog` and commits. From those bytes the Adversary derives
+   and applies `## M1 Task Manifest` through `derive_plan_handoff_manifest`
+   and `apply_plan_handoff_manifest`, then expansion-mode validation runs.
+   Any edit after derivation needs fresh hashes.
+
+The manifest is still written only after approval; the council changes the
+actor, not the gate. The evidence-round protocol above stays the contract for
+spawned taskless reviewers and `gobby build` stage reviews. Old plans, and
+implemented plans that never had adversarial review, move to
+`.gobby/plans/completed/` (registered plans through `archive_plan`).
 
 ## Plan Records
 
@@ -248,7 +282,8 @@ and plan approval state rather than only static plan files.
 - `validate_plan`
 
 Review evidence uses `prepare_plan_review_round`, `get_plan_review_snapshot`,
-`bind_evidence_run`, `expire_plan_review_evidence`, and `verify_plan_unchanged`.
+`bind_evidence_run`, `bind_static_review_seats`, `expire_plan_review_evidence`,
+and `verify_plan_unchanged`.
 Manifest derivation/application, coverage attestation, typed repairs, changelog
 append/finalization, and lesson checkpoint tools share this service. Discover
 unknown names with `list_tools`; fetch a known unleased schema directly.
@@ -274,4 +309,4 @@ override plan-mode restrictions on unrelated files.
 - [workflow-rules.md](workflow-rules.md)
 - [tdd-enforcement.md](tdd-enforcement.md)
 
-_Last verified: 2026-09-12_
+_Last verified: 2026-09-26_

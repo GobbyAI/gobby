@@ -275,6 +275,22 @@
     {
       "surface": "mcp",
       "server": "gobby-plans",
+      "tool": "bind_static_review_seats",
+      "reference": "src/gobby/install/shared/skills/gobby/references/plan/review.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/plans/review_evidence.py",
+        "symbol": "bind_static_review_seats"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-inspection",
+        "static-seats-current"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-plans",
       "tool": "verify_plan_unchanged",
       "reference": "src/gobby/install/shared/skills/gobby/references/plan/review.md",
       "implementation": {
@@ -898,7 +914,7 @@
       "id": "registered-inventory",
       "kind": "live-read-only",
       "command": "list_tools(gobby-plans); list_tools(gobby-tasks-ops)",
-      "result": "23 plan tools and50 task-ops tools inspected;14 task-ops tools assigned to plan.",
+      "result": "23 plan tools and50 task-ops tools inspected;14 task-ops tools assigned to plan. The 2026-09-26 recount (#22942) found 24 plan tools: #22912 added bind_static_review_seats.",
       "schemas_read": [
         "gobby-plans:create_plan",
         "gobby-plans:apply_plan_handoff_manifest",
@@ -968,6 +984,12 @@
       "kind": "cli-introspection",
       "command": "uv run python: recursively inspect visible Click commands, unwrapped callback source identities and parameter declarations without invoking callbacks",
       "result": "Mapped previously omitted public command identities, including operator task/plan equivalents and PostgreSQL administration. All mappings point to existing operation topics; CLI callbacks were not invoked against live state."
+    },
+    {
+      "id": "static-seats-current",
+      "kind": "isolated-tests",
+      "command": "list_tools(gobby-plans); gcode symbol-at src/gobby/mcp_proxy/tools/plans/review_evidence.py:174 and src/gobby/plans/review_evidence.py:405,514,596,710,749,828; DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/plans/test_static_review_seats.py tests/mcp_proxy/tools/test_plan_review_evidence_errors.py -q -p no:cacheprovider",
+      "result": "26 passed in 19.52s. Source reads verified the static seat rules documented in review.md: only the evidence owner binds, the seats are three distinct live project sessions, the binding is immutable and exclusive with a run binding, plan bytes must match the snapshot, the Writer seat gates append and repairs, the coordinator seat gates manifest apply, the owner finalizes and checkpoints the lesson mint, and expire admits a live bound seat or, once every seat has ended, any live project session."
     }
   ],
   "discrepancies": [
