@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -503,11 +504,20 @@ async def test_idle_check_reuses_attention_pane_and_stops_on_unknown(
 
 
 @pytest.mark.asyncio
-async def test_tmux_monitor_reports_interactive_prompt_without_injection(
+async def test_tmux_monitor_reads_interactive_terminal_off_loop_and_reports_prompt(
     temp_db: HubDatabase,
     session_manager: SessionManager,
     sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    loop_thread = threading.get_ident()
+    get_live_for_session = TerminalManager.get_live_for_session
+
+    def get_live_on_worker(self: TerminalManager, session_id: str) -> Any:
+        assert threading.get_ident() != loop_thread
+        return get_live_for_session(self, session_id)
+
+    monkeypatch.setattr(TerminalManager, "get_live_for_session", get_live_on_worker)
     manager = _attention_manager(temp_db)
     session = _interactive_session(session_manager, sample_project)
     sessions = MagicMock()

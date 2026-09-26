@@ -6,10 +6,12 @@ import asyncio
 import hashlib
 import json
 import os
+import weakref
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from datetime import datetime
+from functools import partial
 from typing import Literal, Protocol
 
 from gobby.storage.terminals import Terminal, UnresolvedWriteCapacityError
@@ -120,6 +122,26 @@ class IdempotencyConflictError(RuntimeError):
     code = "idempotency_conflict"
 
 
+async def _finish_offloop[T](operation: Callable[[], T], *, complete_on_cancel: bool = False) -> T:
+    """Drain a hub mutation before its caller releases the terminal lock."""
+    task = asyncio.create_task(asyncio.to_thread(operation))
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                continue
+            except Exception:
+                break
+        if complete_on_cancel:
+            return task.result()
+        if not task.cancelled():
+            task.exception()
+        raise
+
+
 class WriteCoordinator:
     """Serializes writes, latches action_key, and revalidates leases."""
 
@@ -135,6 +157,9 @@ class WriteCoordinator:
         self.lease_registry = lease_registry
         self._daemon_epoch = lease_registry.daemon_epoch
         self._attention_gate: Callable[[Terminal], Awaitable[None]] | None = None
+        self._logical_action_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = (
+            weakref.WeakValueDictionary()
+        )
         # Terminals quarantined through this coordinator since their row was
         # last read; lets an operator write lift a quarantine set after its
         # attachment snapshot was taken without re-reading the row.
@@ -149,31 +174,45 @@ class WriteCoordinator:
     def lock_held(self, terminal_id: str) -> bool:
         return self.lease_registry.lock_held(terminal_id)
 
+    def logical_action_lock(self, terminal_id: str) -> asyncio.Lock:
+        """Serialize a multi-write action across its drain, settle, and send steps."""
+        lock = self._logical_action_locks.get(terminal_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._logical_action_locks[terminal_id] = lock
+        return lock
+
     async def write(
         self,
         request: WriteRequest,
         *,
         on_dispatch: Callable[[], None] | None = None,
+        on_settled: Callable[[WriteOutcome], None] | None = None,
     ) -> WriteOutcome:
         async with self.lease_registry.lock(request.terminal_id):
             payload_fingerprint = (
                 _payload_fingerprint(request) if request.idempotency_key is not None else None
             )
             if payload_fingerprint is not None:
-                replay = self._idempotent_replay(request, payload_fingerprint)
+                replay = await asyncio.to_thread(
+                    self._idempotent_replay, request, payload_fingerprint
+                )
                 if replay is not None:
                     return replay
-            blocked = self._blocked_automatic(
-                request.terminal_id, request.action_key, request.origin
+            blocked = await asyncio.to_thread(
+                self._blocked_automatic, request.terminal_id, request.action_key, request.origin
             )
             if blocked is not None:
                 return blocked
-            return await self._write_locked(
+            outcome = await self._write_locked(
                 request,
                 latch=_latches(request),
                 on_dispatch=on_dispatch,
                 payload_fingerprint=payload_fingerprint,
             )
+            if on_settled is not None:
+                await _finish_offloop(partial(on_settled, outcome), complete_on_cancel=True)
+            return outcome
 
     def observe_resolved(self, terminal_id: str, action_key: str) -> None:
         """Positive observation of one logical action; clears only that key."""
@@ -183,12 +222,20 @@ class WriteCoordinator:
             self._quarantined.discard(terminal_id)
             self._store.clear_automatic_write_quarantine(terminal_id)
 
+    async def observe_resolved_async(self, terminal_id: str, action_key: str) -> None:
+        """Keep settlement inside an action lock through caller cancellation."""
+        await _finish_offloop(partial(self.observe_resolved, terminal_id, action_key))
+
     async def clear_on_exit(self, terminal_id: str) -> None:
         """Terminal exit clears every unresolved key and the quarantine pair."""
         async with self.lease_registry.lock(terminal_id):
-            self._store.clear_all_unresolved_writes(terminal_id)
-            self._quarantined.discard(terminal_id)
-            self._store.clear_automatic_write_quarantine(terminal_id)
+
+            def clear() -> None:
+                self._store.clear_all_unresolved_writes(terminal_id)
+                self._quarantined.discard(terminal_id)
+                self._store.clear_automatic_write_quarantine(terminal_id)
+
+            await _finish_offloop(clear)
 
     def quarantine(self, terminal_id: str, action_key: str) -> None:
         self._quarantined.add(terminal_id)
@@ -218,7 +265,9 @@ class WriteCoordinator:
         still applies to unlatched automatic actions.
         """
         async with self.lease_registry.lock(terminal_id):
-            blocked = self._blocked_automatic(terminal_id, action_key, origin)
+            blocked = await asyncio.to_thread(
+                self._blocked_automatic, terminal_id, action_key, origin
+            )
             if blocked is not None:
                 return blocked
             dispatched = False
@@ -231,7 +280,7 @@ class WriteCoordinator:
                         attachment_id=attachment_id,
                         expected_generation=expected_lease_generation,
                     )
-                    self._persist(terminal_id, action_key, origin)
+                    await _finish_offloop(lambda: self._persist(terminal_id, action_key, origin))
                 for step in steps:
                     if isinstance(step, SequenceDelay):
                         await asyncio.sleep(step.seconds)
@@ -252,24 +301,26 @@ class WriteCoordinator:
                         return outcome
                     if isinstance(outcome, Delivered):
                         continue
-                self._clear(terminal_id, action_key)
+                await _finish_offloop(
+                    lambda: self._clear(terminal_id, action_key), complete_on_cancel=True
+                )
                 return Delivered()
             except asyncio.CancelledError:
                 if in_flight is not None:
                     await asyncio.shield(in_flight)
                     dispatched = True
                 if not dispatched:
-                    self._clear(terminal_id, action_key)
+                    await _finish_offloop(lambda: self._clear(terminal_id, action_key))
                 raise
             except UnresolvedWriteCapacityError:
                 raise
             except StaleTerminalLeaseError:
                 if not dispatched:
-                    self._clear(terminal_id, action_key)
+                    await _finish_offloop(lambda: self._clear(terminal_id, action_key))
                 raise
             except TerminalWriteError as exc:
                 if exc.stage == "none" and not dispatched:
-                    self._clear(terminal_id, action_key)
+                    await _finish_offloop(lambda: self._clear(terminal_id, action_key))
                 raise
 
     async def run_native_wake_batch(
@@ -291,6 +342,19 @@ class WriteCoordinator:
             runtime: NativeTerminalRuntime | None = None
             prepared: list[NativeBatchTarget] = []
             had_wake_latch: dict[str, bool] = {}
+            new_latches: list[tuple[str, str]] = []
+
+            def clear_new_latches() -> None:
+                for terminal_id, action_key in new_latches:
+                    self._clear(terminal_id, action_key)
+
+            async def preflight[T](operation: Awaitable[T]) -> T:
+                try:
+                    return await operation
+                except asyncio.CancelledError:
+                    await _finish_offloop(clear_new_latches)
+                    raise
+
             for request in requests:
                 if request.terminal_id in duplicate_terminals:
                     results[request.result_id] = NativeBatchResult(
@@ -303,11 +367,16 @@ class WriteCoordinator:
                     )
                     continue
                 try:
-                    terminal = self._require(request.terminal_id)
-                    blocked = self._blocked_automatic(
-                        request.terminal_id,
-                        request.clear_action_key,
-                        "automatic",
+                    terminal = await preflight(
+                        asyncio.to_thread(self._require, request.terminal_id)
+                    )
+                    blocked = await preflight(
+                        asyncio.to_thread(
+                            self._blocked_automatic,
+                            request.terminal_id,
+                            request.clear_action_key,
+                            "automatic",
+                        )
                     )
                 except KeyError:
                     results[request.result_id] = NativeBatchResult(
@@ -358,9 +427,20 @@ class WriteCoordinator:
                 had_latch = request.wake_action_key in terminal.unresolved_writes
                 had_wake_latch[request.result_id] = had_latch
                 if not had_latch:
+                    new_latches.append((request.terminal_id, request.wake_action_key))
                     try:
-                        self._persist(request.terminal_id, request.wake_action_key, "automatic")
+                        await preflight(
+                            _finish_offloop(
+                                partial(
+                                    self._persist,
+                                    request.terminal_id,
+                                    request.wake_action_key,
+                                    "automatic",
+                                )
+                            )
+                        )
                     except UnresolvedWriteCapacityError as exc:
+                        new_latches.pop()
                         results[request.result_id] = NativeBatchResult(
                             request.result_id,
                             NativeBatchFailure(
@@ -391,17 +471,19 @@ class WriteCoordinator:
                         for target in prepared
                     ]
                 request_by_result = {request.result_id: request for request in requests}
-                for result in batch_results:
-                    request = request_by_result[result.result_id]
-                    if isinstance(result.outcome, Delivered):
-                        self._clear(request.terminal_id, request.wake_action_key)
-                    elif (
-                        isinstance(result.outcome, NativeBatchFailure)
-                        and result.outcome.stage == "none"
-                        and not had_wake_latch[result.result_id]
-                    ):
-                        self._clear(request.terminal_id, request.wake_action_key)
-                    results[result.result_id] = result
+
+                def settle_results() -> None:
+                    for result in batch_results:
+                        request = request_by_result[result.result_id]
+                        if isinstance(result.outcome, Delivered) or (
+                            isinstance(result.outcome, NativeBatchFailure)
+                            and result.outcome.stage == "none"
+                            and not had_wake_latch[result.result_id]
+                        ):
+                            self._clear(request.terminal_id, request.wake_action_key)
+                        results[result.result_id] = result
+
+                await _finish_offloop(settle_results, complete_on_cancel=True)
 
         return [results[request.result_id] for request in requests]
 
@@ -415,7 +497,7 @@ class WriteCoordinator:
     ) -> WriteOutcome:
         terminal = request.terminal
         if terminal is None:
-            terminal = self._require(request.terminal_id)
+            terminal = await asyncio.to_thread(self._require, request.terminal_id)
         if request.origin == "attention" and self._attention_gate is not None:
             await self._attention_gate(terminal)
         self._revalidate_lease(
@@ -425,26 +507,35 @@ class WriteCoordinator:
             expected_generation=request.expected_lease_generation,
         )
         if latch:
-            self._persist(
-                request.terminal_id,
-                request.action_key,
-                request.origin,
-                payload_fingerprint=payload_fingerprint,
-            )
+            try:
+                await _finish_offloop(
+                    lambda: self._persist(
+                        request.terminal_id,
+                        request.action_key,
+                        request.origin,
+                        payload_fingerprint=payload_fingerprint,
+                    )
+                )
+            except asyncio.CancelledError:
+                await _finish_offloop(lambda: self._clear(request.terminal_id, request.action_key))
+                raise
         if on_dispatch is not None:
             on_dispatch()
         try:
             outcome = await self._dispatch(request, terminal)
         except TerminalWriteError as exc:
             if latch and exc.stage == "none":
-                self._clear(request.terminal_id, request.action_key)
+                await _finish_offloop(lambda: self._clear(request.terminal_id, request.action_key))
             raise
         except Exception:
             raise
         if latch and not isinstance(outcome, IndeterminateWrite):
-            self._clear(request.terminal_id, request.action_key)
+            await _finish_offloop(
+                lambda: self._clear(request.terminal_id, request.action_key),
+                complete_on_cancel=True,
+            )
         if isinstance(outcome, Delivered) and request.origin == "operator":
-            self._release_quarantine(terminal)
+            await self._release_quarantine_async(terminal)
         return outcome
 
     def _idempotent_replay(
@@ -535,17 +626,34 @@ class WriteCoordinator:
         against, so a keystroke never re-reads the terminal; the store is consulted
         only when no holder snapshot exists.
         """
-        terminal: Terminal | None = None
+        terminal = self._operator_terminal_snapshot(terminal_id)
+        if terminal is None:
+            terminal = self._store.get(terminal_id)
+        if terminal is not None:
+            self._release_quarantine(terminal)
+
+    async def observe_operator_input_async(self, terminal_id: str) -> None:
+        """Handle host input while keeping lease access on the event loop."""
+        terminal = self._operator_terminal_snapshot(terminal_id)
+        if terminal is None:
+            terminal = await asyncio.to_thread(self._store.get, terminal_id)
+        if terminal is not None:
+            await self._release_quarantine_async(terminal)
+
+    def _operator_terminal_snapshot(self, terminal_id: str) -> Terminal | None:
         holder = self.lease_registry.holder(terminal_id)
         if holder is not None:
             record = self.lease_registry.get(holder)
             if record is not None:
-                terminal = record.terminal
-        if terminal is None:
-            terminal = self._store.get(terminal_id)
-        if terminal is None:
-            return
-        self._release_quarantine(terminal)
+                return record.terminal
+        return None
+
+    async def _release_quarantine_async(self, terminal: Terminal) -> None:
+        if self._prepare_quarantine_release(terminal):
+            await _finish_offloop(
+                partial(self._store.clear_automatic_write_quarantine, terminal.id),
+                complete_on_cancel=True,
+            )
 
     def _release_quarantine(self, terminal: Terminal) -> None:
         """Lift an automatic-write quarantine once the operator has typed.
@@ -555,12 +663,16 @@ class WriteCoordinator:
         read, so a burst of keystrokes costs one round trip per quarantine
         episode rather than one per key.
         """
+        if self._prepare_quarantine_release(terminal):
+            self._store.clear_automatic_write_quarantine(terminal.id)
+
+    def _prepare_quarantine_release(self, terminal: Terminal) -> bool:
         if terminal.automatic_write_quarantined_at is None and terminal.id not in self._quarantined:
-            return
+            return False
         self._quarantined.discard(terminal.id)
         terminal.automatic_write_quarantined_at = None
         terminal.automatic_write_quarantine_action_key = None
-        self._store.clear_automatic_write_quarantine(terminal.id)
+        return True
 
     async def _dispatch(
         self,
@@ -568,7 +680,7 @@ class WriteCoordinator:
         terminal: Terminal | None = None,
     ) -> WriteOutcome:
         if terminal is None:
-            terminal = self._require(request.terminal_id)
+            terminal = await asyncio.to_thread(self._require, request.terminal_id)
         try:
             runtime = self.runtime_for(terminal)
         except UnregisteredBackendError as exc:

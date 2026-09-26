@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager
 from datetime import datetime
+from functools import partial
 from typing import Any, Protocol
 from uuid import UUID
 
@@ -25,7 +27,7 @@ class ReconcileError(RuntimeError):
 class SupportsIdentityLookup(Protocol):
     def get(self, terminal_id: str) -> Terminal | None: ...
 
-    def get_by_identity(self, terminal_id: str, spawn_key: str) -> Terminal | None: ...
+    def get_many(self, terminal_ids: Sequence[str]) -> dict[str, Terminal]: ...
 
     def list_live_by_machine(self, machine_id: str) -> list[Terminal]: ...
 
@@ -76,18 +78,45 @@ def _interrupt_run(run_manager: Any, run_id: str | None) -> None:
         cancel(run_id, terminal_reason="daemon_stop")
 
 
-def _durable_terminal_id(terminal_id: str) -> bool:
-    """True when the host row names a gobby terminals-table id.
+def _orphan_and_interrupt(
+    terminal_manager: SupportsIdentityLookup,
+    run_manager: Any | None,
+    terminal_id: str,
+    run_id: str | None,
+) -> None:
+    terminal_manager.mark_orphaned(terminal_id)
+    _interrupt_run(run_manager, run_id)
+
+
+def _canonical_terminal_id(terminal_id: str) -> str | None:
+    """Normalize a host row's gobby terminals-table id.
 
     Tmux observers use ``locator_key`` (``tmux:socket:pid:start:%pane``) as
     ``terminal_id``. Those slots are not unknown native children and must not
     be UUID-parsed or killed during adoption.
     """
     try:
-        UUID(terminal_id)
+        return str(UUID(terminal_id))
     except ValueError:
-        return False
-    return True
+        return None
+
+
+async def _settle_offloop(operation: Callable[[], Any]) -> Any:
+    """Finish a hub mutation before releasing its caller's settlement lock."""
+    task = asyncio.create_task(asyncio.to_thread(operation))
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                continue
+            except Exception:
+                break
+        if not task.cancelled():
+            task.exception()
+        raise
 
 
 async def reconcile_host_inventory(
@@ -104,29 +133,48 @@ async def reconcile_host_inventory(
 ) -> str | None:
     """Apply the 3.1.9 adoption matrix. Returns last error or None."""
     list_reconcilable = getattr(terminal_manager, "list_reconcilable_by_machine", None)
-    durable_rows = (
-        list_reconcilable(machine_id)
-        if callable(list_reconcilable)
-        else terminal_manager.list_live_by_machine(machine_id)
+    durable_rows = await asyncio.to_thread(
+        list_reconcilable if callable(list_reconcilable) else terminal_manager.list_live_by_machine,
+        machine_id,
     )
     db_rows = [row for row in durable_rows if row.backend == "native"]
 
-    host_by_id = {(str(row.terminal_id), str(row.spawn_key)): row for row in host_rows}
+    host_by_id = {
+        (_canonical_terminal_id(str(row.terminal_id)), str(row.spawn_key)): row for row in host_rows
+    }
+    host_ids = [
+        terminal_id
+        for row in host_rows
+        if (terminal_id := _canonical_terminal_id(str(row.terminal_id))) is not None
+    ]
+    by_id = await asyncio.to_thread(terminal_manager.get_many, host_ids)
+    unknown_ids = [
+        terminal_id
+        for row in host_rows
+        if (terminal_id := _canonical_terminal_id(str(row.terminal_id))) is not None
+        and (terminal_id not in by_id or by_id[terminal_id].spawn_key != str(row.spawn_key))
+    ]
+    if unknown_ids:
+        if unknown_grace_seconds > 0:
+            await asyncio.sleep(unknown_grace_seconds)
+        retry_by_id = await asyncio.to_thread(terminal_manager.get_many, unknown_ids)
+    else:
+        retry_by_id = {}
     seen: set[str] = set()
 
     for row in host_rows:
-        terminal_id = str(row.terminal_id)
+        terminal_id = _canonical_terminal_id(str(row.terminal_id))
         spawn_key = str(row.spawn_key)
-        if not _durable_terminal_id(terminal_id):
+        if terminal_id is None:
             continue
-        durable = terminal_manager.get_by_identity(terminal_id, spawn_key)
+        durable = by_id.get(terminal_id)
+        if durable is not None and durable.spawn_key != spawn_key:
+            durable = None
         commit_state = getattr(row, "commit_state", "committed")
         if durable is None:
-            if unknown_grace_seconds > 0:
-                import asyncio
-
-                await asyncio.sleep(unknown_grace_seconds)
-            again = terminal_manager.get_by_identity(terminal_id, spawn_key)
+            again = retry_by_id.get(terminal_id)
+            if again is not None and again.spawn_key != spawn_key:
+                again = None
             if again is not None and again.state in {"pending", "live"}:
                 continue
             await kill(str(getattr(row, "host_terminal_id", terminal_id)))
@@ -135,40 +183,49 @@ async def reconcile_host_inventory(
         if durable.state == "pending" and commit_state == "committed":
             host_terminal_id = str(getattr(row, "host_terminal_id", terminal_id))
             async with terminal_manager.settle_lock(durable.id):
-                current = terminal_manager.get(durable.id)
+                current = await asyncio.to_thread(terminal_manager.get, durable.id)
                 if current is not None and (
                     current.attempt_generation == durable.attempt_generation
                     and current.attempt_started_at == durable.attempt_started_at
                 ):
-                    terminal_manager.promote_to_live(
-                        durable.id,
-                        locator={"host_terminal_id": host_terminal_id},
-                        locator_key=native_locator_key(host_epoch, host_terminal_id),
-                        host_epoch=host_epoch,
+                    await _settle_offloop(
+                        partial(
+                            terminal_manager.promote_to_live,
+                            durable.id,
+                            locator={"host_terminal_id": host_terminal_id},
+                            locator_key=native_locator_key(host_epoch, host_terminal_id),
+                            host_epoch=host_epoch,
+                        )
                     )
         elif durable.state == "pending" and commit_state == "prepared":
             if settle_indeterminate:
                 async with terminal_manager.settle_lock(durable.id):
-                    current = terminal_manager.get(durable.id)
+                    current = await asyncio.to_thread(terminal_manager.get, durable.id)
                     if current is None or (
                         current.attempt_generation != durable.attempt_generation
                         or current.attempt_started_at != durable.attempt_started_at
                     ):
                         continue
                     await kill(str(getattr(row, "host_terminal_id", terminal_id)))
-                    terminal_manager.fail_pending_attempt(
-                        durable.id,
-                        attempt_generation=durable.attempt_generation,
-                        attempt_started_at=durable.attempt_started_at,
+                    await _settle_offloop(
+                        partial(
+                            terminal_manager.fail_pending_attempt,
+                            durable.id,
+                            attempt_generation=durable.attempt_generation,
+                            attempt_started_at=durable.attempt_started_at,
+                        )
                     )
                 continue
             pgid = getattr(row, "pgid", None)
             start_time = getattr(row, "start_time", None)
             if isinstance(pgid, int):
-                terminal_manager.merge_process_reap_record(
-                    durable.id,
-                    pgid=pgid,
-                    start_time=start_time,
+                await _settle_offloop(
+                    partial(
+                        terminal_manager.merge_process_reap_record,
+                        durable.id,
+                        pgid=pgid,
+                        start_time=start_time,
+                    )
                 )
 
     for durable in db_rows:
@@ -184,28 +241,38 @@ async def reconcile_host_inventory(
             ):
                 continue
             async with terminal_manager.settle_lock(durable.id):
-                current = terminal_manager.get(durable.id)
+                current = await asyncio.to_thread(terminal_manager.get, durable.id)
                 if current is not None and (
                     current.attempt_generation == durable.attempt_generation
                     and current.attempt_started_at == durable.attempt_started_at
                 ):
-                    terminal_manager.fail_pending_attempt(
-                        durable.id,
-                        attempt_generation=durable.attempt_generation,
-                        attempt_started_at=durable.attempt_started_at,
+                    await _settle_offloop(
+                        partial(
+                            terminal_manager.fail_pending_attempt,
+                            durable.id,
+                            attempt_generation=durable.attempt_generation,
+                            attempt_started_at=durable.attempt_started_at,
+                        )
                     )
             continue
         if durable.state == "live" and durable.host_epoch == host_epoch:
-            terminal_manager.mark_exited(durable.id)
+            await _settle_offloop(partial(terminal_manager.mark_exited, durable.id))
             continue
         if durable.state == "live" and durable.host_epoch != host_epoch:
-            terminal_manager.mark_orphaned(durable.id)
-            _interrupt_run(run_manager, durable.agent_run_id)
+            await _settle_offloop(
+                partial(
+                    _orphan_and_interrupt,
+                    terminal_manager,
+                    run_manager,
+                    durable.id,
+                    durable.agent_run_id,
+                )
+            )
             continue
         if (
             durable.state == "orphaned"
             and durable.host_epoch != host_epoch
             and not recorded_process_group_is_alive(durable.process)
         ):
-            terminal_manager.mark_exited(durable.id)
+            await _settle_offloop(partial(terminal_manager.mark_exited, durable.id))
     return None

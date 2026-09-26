@@ -63,6 +63,10 @@ def _terminal_rows_from_legacy_ids(monkeypatch: pytest.MonkeyPatch) -> None:
         return make_memory_terminal(terminal_id=terminal_id, session_name=terminal_id)
 
     monkeypatch.setattr("gobby.storage.terminals.TerminalManager.get", get)
+    monkeypatch.setattr(
+        "gobby.storage.terminals.TerminalManager.get_many",
+        lambda _self, ids: {terminal_id: get(_self, terminal_id) for terminal_id in ids},
+    )
 
 
 def _make_monitor_with_db(callback: MagicMock) -> TmuxPaneMonitor:
@@ -225,6 +229,39 @@ async def test_all_alive_noop() -> None:
     callback.assert_not_called()
     assert callback.call_count == 0
     assert not callback.called
+
+
+@pytest.mark.asyncio
+async def test_check_panes_batches_terminal_rows_off_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests.terminals.fakes import make_memory_terminal
+
+    loop_thread = threading.get_ident()
+    batches: list[list[str]] = []
+
+    def get_many(_self: object, terminal_ids: list[str]) -> dict[str, object]:
+        assert threading.get_ident() != loop_thread
+        batches.append(terminal_ids)
+        return {
+            terminal_id: make_memory_terminal(terminal_id=terminal_id, session_name=terminal_id)
+            for terminal_id in terminal_ids
+        }
+
+    monkeypatch.setattr("gobby.storage.terminals.TerminalManager.get_many", get_many)
+    monitor = _make_monitor_with_db(MagicMock())
+    runs = [_make_agent_run(run_id=f"run-{i}", terminal_id=f"gobby-agent-{i}") for i in range(3)]
+    with (
+        patch(
+            "gobby.agents.tmux.pane_monitor.TmuxSessionManager.list_sessions",
+            return_value=[TmuxSessionInfo(name=f"gobby-agent-{i}") for i in range(3)],
+        ),
+        patch("gobby.storage.agents.LocalAgentRunManager") as mock_arm_cls,
+    ):
+        mock_arm_cls.return_value.list_active_for_machine.return_value = runs
+        await monitor._check_panes()
+
+    assert batches == [[f"gobby-agent-{i}" for i in range(3)]]
 
 
 @pytest.mark.asyncio

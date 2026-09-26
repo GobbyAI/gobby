@@ -9,7 +9,7 @@ from typing import Any, cast
 import pytest
 
 from gobby.terminals.leases import TerminalLeaseRegistry
-from gobby.terminals.runtime import IndeterminateWrite, LoopMisuse
+from gobby.terminals.runtime import IndeterminateWrite, LoopMisuse, Suppressed
 from gobby.terminals.sync_bridge import TerminalEffectBridge
 from gobby.terminals.write_coordinator import (
     UnresolvedWriteStore,
@@ -76,6 +76,45 @@ async def test_timeout_cancel_late_completion_and_loop_misuse() -> None:
     from gobby.terminals.runtime import Suppressed
 
     assert isinstance(retry, Suppressed)
+
+
+@pytest.mark.asyncio
+async def test_late_retain_holds_write_lock_before_same_key_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    loop = asyncio.get_running_loop()
+    terminal = make_memory_terminal()
+    store = MemoryTerminalStore(terminal)
+    hold = asyncio.Event()
+    runtime = FakeRuntime(hold=hold)
+    coordinator = WriteCoordinator(
+        cast(UnresolvedWriteStore, store),
+        runtime_registry(runtime),
+        lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
+    )
+    bridge = TerminalEffectBridge(loop, coordinator, timeout_seconds=0.1)
+    retaining = threading.Event()
+    release = threading.Event()
+    original_retain = coordinator.retain_unresolved
+
+    def blocked_retain(terminal_id: str, action_key: str, origin: str) -> None:
+        retaining.set()
+        assert release.wait(timeout=5)
+        original_retain(terminal_id, action_key, origin)
+
+    monkeypatch.setattr(coordinator, "retain_unresolved", blocked_retain)
+    timed_out = asyncio.create_task(asyncio.to_thread(bridge.run, _request(terminal.id)))
+    await runtime.started.wait()
+    assert isinstance(await timed_out, IndeterminateWrite)
+    hold.set()
+    assert await asyncio.to_thread(retaining.wait, 5)
+    retry = asyncio.create_task(coordinator.write(_request(terminal.id)))
+    await asyncio.sleep(0)
+    assert coordinator.lock_held(terminal.id)
+    assert runtime.write_log == [("text", "from-hook")]
+    release.set()
+    assert isinstance(await retry, Suppressed)
+    assert runtime.write_log == [("text", "from-hook")]
 
 
 @pytest.mark.asyncio

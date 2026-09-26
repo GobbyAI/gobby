@@ -8,6 +8,7 @@ import logging
 import os
 import shutil
 import tempfile
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -1079,6 +1080,95 @@ async def test_native_wake_batch_preserves_target_results_order_and_latches() ->
     assert "wake:session-1" not in terminals[0].unresolved_writes
     assert "wake:session-2" in terminals[1].unresolved_writes
     assert "wake:session-3" in terminals[2].unresolved_writes
+
+
+@pytest.mark.asyncio
+async def test_native_wake_batch_cancellation_clears_prepared_latches_before_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    host = FakeHostClient()
+    runtime = NativeTerminalRuntime(host, frame_host_epoch=host.host_epoch)
+    terminals = [_native_terminal(host, host_terminal_id=f"ht-{index}") for index in range(2)]
+    store = MemoryTerminalStore()
+    store.rows.update({terminal.id: terminal for terminal in terminals})
+    coordinator = WriteCoordinator(
+        cast(UnresolvedWriteStore, store),
+        runtime_registry(runtime),
+        lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
+    )
+    started = threading.Event()
+    release = threading.Event()
+    original_get = store.get
+
+    def hold_second_read(terminal_id: str) -> Any:
+        if terminal_id == terminals[1].id:
+            started.set()
+            assert release.wait(timeout=5)
+        return original_get(terminal_id)
+
+    monkeypatch.setattr(store, "get", hold_second_read)
+    requests = [
+        NativeWakeBatchRequest(
+            result_id=f"session-{index}",
+            terminal_id=terminal.id,
+            clear_action_key=f"wake-clear:session-{index}",
+            wake_action_key=f"wake:session-{index}",
+            operations=(NativeBatchOperation(kind="text", payload="continue"),),
+        )
+        for index, terminal in enumerate(terminals)
+    ]
+    task = asyncio.create_task(coordinator.run_native_wake_batch(requests))
+    assert await asyncio.to_thread(started.wait, 5)
+    task.cancel()
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert all(not terminal.unresolved_writes for terminal in terminals)
+    assert host.batches == []
+
+
+@pytest.mark.asyncio
+async def test_native_wake_batch_cancellation_after_delivery_returns_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    host = FakeHostClient()
+    runtime = NativeTerminalRuntime(host, frame_host_epoch=host.host_epoch)
+    terminal = _native_terminal(host)
+    store = MemoryTerminalStore(terminal)
+    coordinator = WriteCoordinator(
+        cast(UnresolvedWriteStore, store),
+        runtime_registry(runtime),
+        lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
+    )
+    cleared = threading.Event()
+    release = threading.Event()
+    original_clear = store.clear_unresolved_write
+
+    def hold_post_delivery_clear(terminal_id: str, action_key: str) -> Any:
+        result = original_clear(terminal_id, action_key)
+        if action_key == "wake:session-1":
+            cleared.set()
+            assert release.wait(timeout=5)
+        return result
+
+    monkeypatch.setattr(store, "clear_unresolved_write", hold_post_delivery_clear)
+    request = NativeWakeBatchRequest(
+        result_id="session-1",
+        terminal_id=terminal.id,
+        clear_action_key="wake-clear:session-1",
+        wake_action_key="wake:session-1",
+        operations=(NativeBatchOperation(kind="text", payload="continue"),),
+    )
+
+    task = asyncio.create_task(coordinator.run_native_wake_batch([request]))
+    assert await asyncio.to_thread(cleared.wait, 5)
+    task.cancel()
+    release.set()
+    results = await task
+
+    assert isinstance(results[0].outcome, Delivered)
+    assert len(host.batches) == 1
+    assert "wake:session-1" not in terminal.unresolved_writes
 
 
 @pytest.mark.asyncio

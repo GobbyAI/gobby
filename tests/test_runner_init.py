@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+import threading
 from contextlib import ExitStack
 from pathlib import Path
 from types import SimpleNamespace
@@ -392,6 +393,102 @@ class TestWakeTmuxSenders:
             ("text", "Message from Gobby daemon: New activity available."),
             ("key", "enter"),
         ]
+
+    @pytest.mark.parametrize("cancel_first", [False, True])
+    @pytest.mark.asyncio
+    async def test_concurrent_wakes_wait_for_drain_settle_and_send(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        cancel_first: bool,
+    ) -> None:
+        from gobby.terminals.write_coordinator import UnresolvedWriteStore, WriteCoordinator
+        from tests.terminals.fakes import (
+            FakeRuntime,
+            MemoryTerminalStore,
+            make_memory_terminal,
+            runtime_registry,
+        )
+
+        terminal = make_memory_terminal(session_name="gobby-agent-concurrent")
+        store = MemoryTerminalStore(terminal)
+        runtime = FakeRuntime()
+        coordinator = WriteCoordinator(
+            cast(UnresolvedWriteStore, store),
+            runtime_registry(runtime),
+            lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
+        )
+        store.persist_unresolved_write(
+            terminal.id, f"wake:{terminal.id}", "automatic", daemon_epoch="test-epoch"
+        )
+        started = threading.Event()
+        release = threading.Event()
+        second_requested = asyncio.Event()
+        original_observe = coordinator.observe_resolved
+        original_lock = coordinator.logical_action_lock
+        calls = 0
+        lock_calls = 0
+
+        def track_lock(terminal_id: str) -> asyncio.Lock:
+            nonlocal lock_calls
+            lock_calls += 1
+            if lock_calls == 2:
+                second_requested.set()
+            return original_lock(terminal_id)
+
+        def delayed_observe(terminal_id: str, action_key: str) -> None:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                started.set()
+                assert release.wait(timeout=5)
+            original_observe(terminal_id, action_key)
+
+        monkeypatch.setattr(coordinator, "observe_resolved", delayed_observe)
+        monkeypatch.setattr(coordinator, "logical_action_lock", track_lock)
+        monkeypatch.setattr(
+            "gobby.runner_init.orchestration.wake_write_services",
+            lambda: (store, coordinator),
+        )
+        first = asyncio.create_task(
+            _send_tmux_session_wake(
+                terminal.session_name or "",
+                "first",
+                submit=True,
+                clear_before_submit=True,
+                cli_source="claude",
+            )
+        )
+        assert await asyncio.to_thread(started.wait, 5)
+        second = asyncio.create_task(
+            _send_tmux_session_wake(
+                terminal.session_name or "",
+                "second",
+                submit=True,
+                clear_before_submit=True,
+                cli_source="claude",
+            )
+        )
+        await asyncio.wait_for(second_requested.wait(), timeout=5)
+        assert runtime.write_log == [("key", key) for key in composer_clear_sequence("claude")]
+        if cancel_first:
+            first.cancel()
+            await asyncio.sleep(0)
+            assert runtime.write_log == [("key", key) for key in composer_clear_sequence("claude")]
+        release.set()
+        if cancel_first:
+            with pytest.raises(asyncio.CancelledError):
+                await first
+            await second
+        else:
+            await asyncio.gather(first, second)
+        expected: list[tuple[str, str]] = [
+            ("key", key) for key in composer_clear_sequence("claude")
+        ]
+        if not cancel_first:
+            expected.extend([("text", "first"), ("key", "enter")])
+        expected.extend(("key", key) for key in composer_clear_sequence("claude"))
+        expected.extend([("text", "second"), ("key", "enter")])
+        assert runtime.write_log == expected
 
     @pytest.mark.asyncio
     async def test_wake_send_aborts_on_indeterminate_write_without_recording_delivery(

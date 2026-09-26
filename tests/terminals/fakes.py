@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator, Callable, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -94,6 +94,13 @@ class MemoryTerminalStore:
 
     def get(self, terminal_id: str) -> Terminal | None:
         return self.rows.get(terminal_id)
+
+    def get_many(self, terminal_ids: Sequence[str]) -> dict[str, Terminal]:
+        return {
+            terminal_id: self.rows[terminal_id]
+            for terminal_id in terminal_ids
+            if terminal_id in self.rows
+        }
 
     def get_by_identity(self, terminal_id: str, spawn_key: str) -> Terminal | None:
         current = self.rows.get(terminal_id)

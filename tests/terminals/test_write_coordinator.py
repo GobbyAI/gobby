@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import threading
 from typing import Any, Literal, cast
 
 import pytest
@@ -88,6 +89,153 @@ async def _grant(
     )
     assert result.granted
     return result.lease_generation
+
+
+@pytest.mark.asyncio
+async def test_require_reads_terminal_on_worker_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    coordinator, _runtime, store = _coordinator()
+    terminal_id = next(iter(store.rows))
+    loop_thread = threading.get_ident()
+    original_get = store.get
+    reads: list[str] = []
+
+    def get_on_worker(requested_id: str) -> Terminal | None:
+        assert threading.get_ident() != loop_thread
+        reads.append(requested_id)
+        return original_get(requested_id)
+
+    monkeypatch.setattr(store, "get", get_on_worker)
+    outcome = await coordinator.write(
+        WriteRequest(
+            terminal_id=terminal_id,
+            action_key="worker-read",
+            origin="daemon",
+            kind="text",
+            payload="hello",
+        )
+    )
+    assert isinstance(outcome, Delivered)
+    assert reads == [terminal_id]
+
+
+async def test_observe_resolved_async_keeps_all_store_calls_off_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    coordinator, _runtime, store = _coordinator()
+    terminal_id = next(iter(store.rows))
+    store.persist_unresolved_write(terminal_id, "wake:old", "automatic", daemon_epoch="test-epoch")
+    loop_thread = threading.get_ident()
+    original_clear = store.clear_unresolved_write
+    original_get = store.get
+    observed: list[str] = []
+
+    def worker_clear(requested_id: str, action_key: str) -> Terminal:
+        assert threading.get_ident() != loop_thread
+        observed.append("clear")
+        return original_clear(requested_id, action_key)
+
+    def worker_get(requested_id: str) -> Terminal | None:
+        assert threading.get_ident() != loop_thread
+        observed.append("get")
+        return original_get(requested_id)
+
+    monkeypatch.setattr(store, "clear_unresolved_write", worker_clear)
+    monkeypatch.setattr(store, "get", worker_get)
+
+    await coordinator.observe_resolved_async(terminal_id, "wake:old")
+
+    assert observed == ["clear", "get"]
+
+
+@pytest.mark.asyncio
+async def test_cancel_during_offloop_latch_waits_and_clears_before_unlock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    coordinator, runtime, store = _coordinator()
+    terminal_id = next(iter(store.rows))
+    persisted = threading.Event()
+    release = threading.Event()
+    original_persist = store.persist_unresolved_write
+
+    def hold_persist(*args: Any, **kwargs: Any) -> Terminal:
+        row = original_persist(*args, **kwargs)
+        persisted.set()
+        assert release.wait(timeout=5)
+        return row
+
+    monkeypatch.setattr(store, "persist_unresolved_write", hold_persist)
+    task = asyncio.create_task(
+        coordinator.write(
+            WriteRequest(
+                terminal_id=terminal_id,
+                action_key="cancel-before-dispatch",
+                origin="automatic",
+                kind="text",
+                payload="hello",
+            )
+        )
+    )
+    assert await asyncio.to_thread(persisted.wait, 5)
+    task.cancel()
+    await _let_tasks_run()
+    assert coordinator.lock_held(terminal_id)
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert not coordinator.lock_held(terminal_id)
+    assert _unresolved(store, terminal_id) == {}
+    assert runtime.write_log == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("sequence", [False, True])
+async def test_cancel_during_delivered_clear_returns_result_without_duplicate_retry(
+    monkeypatch: pytest.MonkeyPatch,
+    sequence: bool,
+) -> None:
+    coordinator, runtime, store = _coordinator()
+    terminal_id = next(iter(store.rows))
+    clearing = threading.Event()
+    release = threading.Event()
+    original_clear = store.clear_unresolved_write
+
+    def hold_clear(requested_id: str, action_key: str) -> Terminal:
+        row = original_clear(requested_id, action_key)
+        clearing.set()
+        assert release.wait(timeout=5)
+        return row
+
+    monkeypatch.setattr(store, "clear_unresolved_write", hold_clear)
+    request = WriteRequest(
+        terminal_id=terminal_id,
+        action_key="delivered-once",
+        origin="automatic",
+        kind="text",
+        payload="hello",
+    )
+
+    async def attempt() -> WriteOutcome:
+        if sequence:
+            return await coordinator.run_sequence(
+                terminal_id,
+                action_key=request.action_key,
+                origin="automatic",
+                steps=[request],
+            )
+        return await coordinator.write(request)
+
+    task = asyncio.create_task(attempt())
+    assert await asyncio.to_thread(clearing.wait, 5)
+    task.cancel()
+    release.set()
+    try:
+        outcome = await task
+    except asyncio.CancelledError:
+        outcome = await attempt()
+    assert isinstance(outcome, Delivered)
+    assert runtime.write_log == [("text", "hello")]
 
 
 @pytest.mark.asyncio
@@ -505,6 +653,35 @@ async def test_operator_input_with_attached_terminal_touches_no_store() -> None:
     assert runtime.write_log == [("input", b"x")]
     assert store.calls == []
     assert _unresolved(store, terminal.id) == {}
+
+
+async def test_unattached_operator_input_reads_and_clears_on_worker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    coordinator, _runtime, store, terminal = _counting_coordinator()
+    store.set_automatic_write_quarantine(terminal.id, "wake:older")
+    loop_thread = threading.get_ident()
+    original_get = store.get
+    original_clear = store.clear_automatic_write_quarantine
+    called: list[str] = []
+
+    def worker_get(terminal_id: str) -> Terminal | None:
+        assert threading.get_ident() != loop_thread
+        called.append("get")
+        return original_get(terminal_id)
+
+    def worker_clear(terminal_id: str) -> Terminal:
+        assert threading.get_ident() != loop_thread
+        called.append("clear")
+        return original_clear(terminal_id)
+
+    monkeypatch.setattr(store, "get", worker_get)
+    monkeypatch.setattr(store, "clear_automatic_write_quarantine", worker_clear)
+
+    await coordinator.observe_operator_input_async(terminal.id)
+
+    assert called == ["get", "clear"]
+    assert terminal.automatic_write_quarantined_at is None
 
 
 @pytest.mark.asyncio

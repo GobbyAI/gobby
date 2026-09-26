@@ -146,46 +146,47 @@ async def _send_tmux_session_wake(
     if terminal is None:
         raise RuntimeError(f"no terminal for wake identity {identity}")
     action_key = f"wake:{terminal.id}"
-    steps: list[WriteRequest | SequenceDelay] = []
-    if not submit:
-        steps.append(
-            WriteRequest(
-                terminal_id=terminal.id,
-                action_key=action_key,
-                origin="automatic",
-                kind="text",
-                payload=message,
-            )
-        )
-    else:
-        literal_text = message.rstrip("\n")
-        if clear_before_submit:
-            await _drain_composer_before_wake(coordinator, terminal, identity, cli_source)
-            if literal_text:
-                steps.append(SequenceDelay(seconds=TMUX_TEXT_ENTER_DELAY_SECONDS))
-        if literal_text:
+    async with coordinator.logical_action_lock(terminal.id):
+        steps: list[WriteRequest | SequenceDelay] = []
+        if not submit:
             steps.append(
                 WriteRequest(
                     terminal_id=terminal.id,
                     action_key=action_key,
                     origin="automatic",
                     kind="text",
-                    payload=literal_text,
+                    payload=message,
                 )
             )
-            steps.append(SequenceDelay(seconds=TMUX_TEXT_ENTER_DELAY_SECONDS))
-        steps.append(
-            WriteRequest(
-                terminal_id=terminal.id,
-                action_key=action_key,
-                origin="automatic",
-                kind="key",
-                payload="enter",
+        else:
+            literal_text = message.rstrip("\n")
+            if clear_before_submit:
+                await _drain_composer_before_wake(coordinator, terminal, identity, cli_source)
+                if literal_text:
+                    steps.append(SequenceDelay(seconds=TMUX_TEXT_ENTER_DELAY_SECONDS))
+            if literal_text:
+                steps.append(
+                    WriteRequest(
+                        terminal_id=terminal.id,
+                        action_key=action_key,
+                        origin="automatic",
+                        kind="text",
+                        payload=literal_text,
+                    )
+                )
+                steps.append(SequenceDelay(seconds=TMUX_TEXT_ENTER_DELAY_SECONDS))
+            steps.append(
+                WriteRequest(
+                    terminal_id=terminal.id,
+                    action_key=action_key,
+                    origin="automatic",
+                    kind="key",
+                    payload="enter",
+                )
             )
+        await _deliver_wake_action(
+            coordinator, terminal.id, identity, action_key=action_key, steps=steps
         )
-    await _deliver_wake_action(
-        coordinator, terminal.id, identity, action_key=action_key, steps=steps
-    )
 
 
 async def _deliver_wake_action(
@@ -259,10 +260,10 @@ async def _drain_composer_before_wake(
         ],
         latch=False,
     )
-    _settle_earlier_wake(coordinator, terminal, f"wake:{terminal.id}")
+    await _settle_earlier_wake(coordinator, terminal, f"wake:{terminal.id}")
 
 
-def _settle_earlier_wake(coordinator: Any, terminal: Any, action_key: str) -> None:
+async def _settle_earlier_wake(coordinator: Any, terminal: Any, action_key: str) -> None:
     """Release the latch of an earlier wake once the composer is known empty.
 
     Called only after the drain was Delivered, so whatever the earlier attempt
@@ -282,7 +283,7 @@ def _settle_earlier_wake(coordinator: Any, terminal: Any, action_key: str) -> No
         terminal.id,
         latched.get("at", "quarantine"),
     )
-    coordinator.observe_resolved(terminal.id, action_key)
+    await coordinator.observe_resolved_async(terminal.id, action_key)
 
 
 async def _send_tmux_pane_wake(

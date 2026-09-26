@@ -10,7 +10,7 @@ import stat
 import threading
 import tomllib
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, call, patch
@@ -33,6 +33,7 @@ from gobby.terminals.host_reconcile import ReconcileError, reconcile_host_invent
 from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.utils.machine_id import require_machine_id
 from tests._timing import wait_for_condition
+from tests.terminals.fakes import MemoryTerminalStore, make_memory_terminal
 from tests.terminals.host_fakes import (
     FakeControlClient,
     FakeHostProcess,
@@ -1109,11 +1110,11 @@ async def test_unknown_host_rechecks_before_kill(
     lookups = {"n": 0}
 
     class RecheckingManager(TerminalManager):
-        def get_by_identity(self, terminal_id: str, spawn_key: str) -> Any:
+        def get_many(self, terminal_ids: Sequence[str]) -> dict[str, Terminal]:
             lookups["n"] += 1
-            found = super().get_by_identity(terminal_id, spawn_key)
-            if found is None and terminal_id == unknown_id and lookups["n"] >= 2:
-                return self.create_pending(
+            found = super().get_many(terminal_ids)
+            if unknown_id in terminal_ids and unknown_id not in found and lookups["n"] >= 2:
+                found[unknown_id] = self.create_pending(
                     terminal_id=unknown_id,
                     project_id=sample_project["id"],
                     backend="native",
@@ -1128,6 +1129,93 @@ async def test_unknown_host_rechecks_before_kill(
     await host.start()
     await host.reconcile()
     assert "ht-unknown" not in client.kill_calls
+
+
+@pytest.mark.asyncio
+async def test_reconcile_batches_identity_reads_off_loop(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    loop_thread = threading.get_ident()
+    base = TerminalManager(temp_db)
+    pending = [_pending(base, sample_project["id"]) for _ in range(3)]
+    batches: list[list[str]] = []
+
+    class ThreadBoundManager(TerminalManager):
+        def list_reconcilable_by_machine(self, machine_id: str) -> list[Terminal]:
+            assert threading.get_ident() != loop_thread
+            return super().list_reconcilable_by_machine(machine_id)
+
+        def get_many(self, terminal_ids: Sequence[str]) -> dict[str, Terminal]:
+            assert threading.get_ident() != loop_thread
+            batches.append(list(terminal_ids))
+            return super().get_many(terminal_ids)
+
+        def get(self, terminal_id: str) -> Terminal | None:
+            assert threading.get_ident() != loop_thread
+            return super().get(terminal_id)
+
+    manager = ThreadBoundManager(temp_db)
+    rows = [
+        FakeListRow(
+            terminal_id=row.id.upper() if index == 0 else row.id,
+            spawn_key=row.spawn_key,
+            host_terminal_id=f"host-{index}",
+            commit_state="committed",
+        )
+        for index, row in enumerate(pending)
+    ]
+    kill = AsyncMock()
+    await reconcile_host_inventory(
+        terminal_manager=manager,
+        machine_id=require_machine_id(),
+        host_epoch="test-epoch",
+        host_rows=rows,
+        spawn_in_doubt_seconds=60,
+        run_manager=None,
+        kill=kill,
+    )
+    assert batches == [[row.id for row in pending]]
+    assert [_loaded(base, row.id).state for row in pending] == ["live"] * 3
+    kill.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_orphan_transition_still_interrupts_agent_run() -> None:
+    terminal = make_memory_terminal(backend="native")
+    terminal.host_epoch = "old-epoch"
+    terminal.agent_run_id = "run-orphaned"
+    started = threading.Event()
+    release = threading.Event()
+
+    class BlockingStore(MemoryTerminalStore):
+        def mark_orphaned(self, terminal_id: str) -> Terminal | None:
+            result = super().mark_orphaned(terminal_id)
+            started.set()
+            assert release.wait(timeout=5)
+            return result
+
+    store = BlockingStore(terminal)
+    runs = FakeRunManager()
+    task = asyncio.create_task(
+        reconcile_host_inventory(
+            terminal_manager=store,
+            machine_id=terminal.machine_id,
+            host_epoch="new-epoch",
+            host_rows=[],
+            spawn_in_doubt_seconds=60,
+            run_manager=runs,
+            kill=AsyncMock(),
+        )
+    )
+    assert await asyncio.to_thread(started.wait, 5)
+    task.cancel()
+    assert runs.interrupted == []
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert terminal.state == "orphaned"
+    assert runs.interrupted == ["run-orphaned"]
 
 
 @pytest.mark.asyncio

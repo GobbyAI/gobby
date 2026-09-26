@@ -376,27 +376,28 @@ class WatchdogRecoveryCoordinator:
         if target is None:
             return False
         terminal, coordinator = target
-        cleared = await self._deliver(
-            coordinator,
-            terminal.id,
-            f"idle-reprompt-clear:{run.id}",
-            [("key", key) for key in composer_clear_sequence(run.provider)],
-        )
-        if not cleared:
-            logger.debug("Failed to clear queued prompt before reprompting agent %s", run.id)
-            if not await self._recover_failed_reprompt_clear(run, tmux_name):
+        async with coordinator.logical_action_lock(terminal.id):
+            cleared = await self._deliver(
+                coordinator,
+                terminal.id,
+                f"idle-reprompt-clear:{run.id}",
+                [("key", key) for key in composer_clear_sequence(run.provider)],
+            )
+            if not cleared:
+                logger.debug("Failed to clear queued prompt before reprompting agent %s", run.id)
+                if not await self._recover_failed_reprompt_clear(run, tmux_name):
+                    return False
+            # The emptied composer settles an earlier reprompt whose Enter never
+            # resolved; left latched, it would suppress every later reprompt.
+            await coordinator.observe_resolved_async(terminal.id, f"idle-reprompt:{run.id}")
+            sent = await self._deliver(
+                coordinator,
+                terminal.id,
+                f"idle-reprompt:{run.id}",
+                [("text", reprompt_message), ("key", "enter")],
+            )
+            if not sent:
                 return False
-        # The emptied composer settles an earlier reprompt whose Enter never
-        # resolved; left latched, it would suppress every later reprompt.
-        coordinator.observe_resolved(terminal.id, f"idle-reprompt:{run.id}")
-        sent = await self._deliver(
-            coordinator,
-            terminal.id,
-            f"idle-reprompt:{run.id}",
-            [("text", reprompt_message), ("key", "enter")],
-        )
-        if not sent:
-            return False
         self._idle_detector.for_provider(run.provider).record_reprompt(run.id)
         return True
 
