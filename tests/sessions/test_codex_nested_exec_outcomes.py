@@ -417,6 +417,61 @@ def test_running_pty_failure_survives_truncated_prior_chunk() -> None:
     assert outcomes[2].result["success"] is True
 
 
+def test_rtk_pytest_summary_closes_pty_validation_without_exit_code() -> None:
+    parser = CodexTranscriptParser()
+    command = "uv run rtk pytest tests/terminals/test_pane_io.py"
+    outcomes = _outcomes(
+        parser,
+        [
+            _call(
+                "shell",
+                "exec",
+                'const r = await tools.exec_command({cmd:"zsh",tty:true}); text(r);',
+            ),
+            _output("shell", json.dumps({"session_id": 901, "output": "ready"})),
+            _call(
+                "green",
+                "exec",
+                "const r = await tools.write_stdin("
+                f"{{session_id:901,chars:{json.dumps(command + chr(10))}}}); "
+                "text(JSON.stringify(r));",
+            ),
+            _output("green", json.dumps({"session_id": 901, "output": "Pytest: 58 passed"})),
+        ],
+    )
+
+    assert [(item.command, item.result["success"]) for item in outcomes] == [(command, True)]
+
+
+def test_pty_summary_does_not_finish_compound_validation_early() -> None:
+    parser = CodexTranscriptParser()
+    command = "uv run rtk pytest tests/a.py && uv run rtk pytest tests/b.py"
+    outcomes = _outcomes(
+        parser,
+        [
+            _call(
+                "shell",
+                "exec",
+                'const r = await tools.exec_command({cmd:"zsh",tty:true}); text(r);',
+            ),
+            _output("shell", json.dumps({"session_id": 901, "output": "ready"})),
+            _call(
+                "first-summary",
+                "exec",
+                "const r = await tools.write_stdin("
+                f"{{session_id:901,chars:{json.dumps(command + chr(10))}}}); "
+                "text(JSON.stringify(r));",
+            ),
+            _output(
+                "first-summary",
+                json.dumps({"session_id": 901, "output": "Pytest: 1 passed, 0 failed"}),
+            ),
+        ],
+    )
+
+    assert outcomes == []
+
+
 def test_direct_write_stdin_poll_preserves_original_execution_identity() -> None:
     parser = CodexTranscriptParser()
     outcomes = _outcomes(

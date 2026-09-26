@@ -596,7 +596,7 @@ class ExecutionChainCorrelator:
         if not execution.literal_command:
             return None
         matches = classify_validation_segments(execution.literal_command)
-        if not any("test" in match.categories for match in matches):
+        if len(matches) != 1 or matches[0].is_compound or "test" not in matches[0].categories:
             return None
         if runner_reported_failures(output):
             success = False

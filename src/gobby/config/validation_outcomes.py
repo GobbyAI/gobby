@@ -15,7 +15,7 @@ _RUNNER_SUCCESS_PATTERNS = (
     re.compile(r"(?m)^\s*test result:\s*ok\.\s*[1-9]\d* passed;\s*0 failed\b"),
     re.compile(r"(?m)^\s*Summary\s+\[[^\]\n]+\]\s+\d+ tests? run:\s*[1-9]\d* passed\b"),
     re.compile(r"(?m)^=+\s+[1-9]\d* passed(?:,\s*\d+ skipped)?\s+in\s+\d"),
-    re.compile(r"(?m)^Pytest:\s*[1-9]\d* passed,\s*0 failed\b"),
+    re.compile(r"(?m)^Pytest:[ \t]*[1-9]\d* passed(?:,[ \t]*0 failed)?[ \t]*$"),
 )
 
 
