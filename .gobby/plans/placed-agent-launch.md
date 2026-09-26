@@ -152,8 +152,18 @@ placed agent therefore never exists unplaced, and a refused placement spawns not
      `asyncio.Lock` held across check and insert, so two concurrent launches of one
      seat cannot both pass. The daemon is a single process, and the in-flight pane set
      is per process too (VERIFIED by R2).
-   - As-is, the only spawn idempotency key is `task_id` (`_spawn_guards.py`). Taskless
-     seats had no guard until this check.
+   - As-is, the only spawn idempotency key is `task_id` (`_spawn_guards.py`: the
+     `RuntimeDispatchMutex` and the active-run checks are taken only when `task_id` is
+     set). `AgentRun` has no seat, role or project field. Taskless seats had no guard
+     until this check.
+   - A runbook seat is by definition a placed launch, because `title` is required.
+     Unplaced spawns are not seats and keep today's task-keyed guards. The seat key
+     includes the workspace, so the per-workspace lock serializes every launch of one
+     seat. `_adoptable` / `_refuse_held` only stop re-adopting an occupied terminal;
+     they are not a seat guard and are not relied on.
+   - Rejected: keying the seat on (project, agent_name). One agent definition
+     legitimately fills several seats (for example two developer lanes), and
+     `AgentRun` would need a project join and a new mutex key.
 8. **Parent identity.** A placed spawn from a pipeline is parented to the pipeline's
    child session. That session is created by `PipelineExecutor` with
    `source="pipeline"`, the run's `project_id` and `parent_session_id=caller`, and
