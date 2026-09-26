@@ -16,6 +16,7 @@ from gobby.config.validation_detection import (
     normalize_validation_evidence_command,
     resolve_validation_detection_config,
 )
+from gobby.config.validation_outcomes import runner_reported_failures
 from gobby.sessions.transcript_tool_metadata import extract_result_metadata
 from gobby.tasks.command_equivalence import parse_validation_shell
 
@@ -28,14 +29,6 @@ _OUTPUT_CHAR_LIMIT = 16_000
 _ENV_ASSIGNMENT_PREFIX = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
 _SHELL_COMMAND_WRAPPERS = {"bash", "fish", "sh", "zsh"}
 _NODE_WRAPPERS = {"node", "nodejs"}
-
-_RUNNER_FAILURE_PATTERNS = (
-    re.compile(r"\b[1-9]\d*[^\S\n]+(?:failed|failures?|errors?)\b", re.IGNORECASE),
-    re.compile(
-        r"(?m)^\s*(?:FAILED\s+\S|ERROR\s+\S+::|---\s+FAIL:|FAIL\s+\S|test result:\s*FAILED\b)"
-    ),
-    re.compile(r"(?m)^\s*Failing new (?:errors|issues) >= \w+: [1-9]\d*\b"),
-)
 
 _HOOK_BLOCKING_ATTACHMENT = "hook_blocking_error"
 _TOOL_DENIAL_KIND_KEYS = ("toolDenialKind", "tool_denial_kind")
@@ -245,7 +238,7 @@ def extract_outcome(
 ) -> tuple[EvidenceOutcome, int | None, str | None]:
     """Classify one shell result as a validation pass, failure, or unknown."""
     exit_code = _find_exit_code(result)
-    if _runner_reported_failures(output) and (
+    if runner_reported_failures(output) and (
         not aggregate_status_is_trustworthy or exit_code is None
     ):
         return "failure", exit_code, None
@@ -294,12 +287,6 @@ def infer_failure_categories(output: str | None) -> frozenset[str]:
     if any(pattern.search(output) for pattern in _TEST_FAILURE_PATTERNS):
         categories.add("test")
     return frozenset(categories)
-
-
-def _runner_reported_failures(output: str | None) -> bool:
-    if not output:
-        return False
-    return any(pattern.search(output) for pattern in _RUNNER_FAILURE_PATTERNS)
 
 
 def _find_exit_code(result: Any) -> int | None:

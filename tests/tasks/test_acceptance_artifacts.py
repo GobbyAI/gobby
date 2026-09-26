@@ -20,7 +20,11 @@ from gobby.tasks.acceptance_artifacts import (
     validation_run_covers_test,
     validation_run_names_test,
 )
-from gobby.tasks.tdd_evidence import evaluate_tdd_evidence, is_test_convention_path
+from gobby.tasks.tdd_evidence import (
+    TddEvidenceResult,
+    evaluate_tdd_evidence,
+    is_test_convention_path,
+)
 from gobby.tasks.transcript_evidence import merge_transcript_evidence
 from gobby.tasks.transcript_evidence_models import (
     TranscriptEdit,
@@ -1105,6 +1109,46 @@ def test_tdd_evidence_accepts_rtk_class_dot_failure() -> None:
     )
     assert non_assertion.passed is False
     assert non_assertion.red_runs == ()
+
+
+def test_tdd_evidence_credits_rtk_not_implemented_raise_after_stub_edit() -> None:
+    started = datetime(2026, 9, 26, tzinfo=UTC)
+    test = AcceptanceTest(
+        reference="tests/test_feature.py::test_feature",
+        path="tests/test_feature.py",
+        symbol="test_feature",
+        body="def test_feature(): assert feature() == 1",
+    )
+    edits = (
+        _edit(test.path, started, 1),
+        _edit("src/feature.py", started + timedelta(minutes=1), 2),
+        _edit("src/feature.py", started + timedelta(minutes=3), 4),
+    )
+    location_only = """\
+Pytest: 0 passed, 1 failed
+Failures:
+1. [FAIL] test_feature
+    tests/test_feature.py:9: in test_feature
+    src/feature.py:3: in feature
+"""
+    green = _run(test, started + timedelta(minutes=4), "success", "1 passed", 5)
+
+    def evaluate(red_output: str) -> TddEvidenceResult:
+        return evaluate_tdd_evidence(
+            (test,),
+            TranscriptEvidence(
+                edits=edits,
+                validation_runs=(
+                    _run(test, started + timedelta(minutes=2), "failure", red_output, 3),
+                    green,
+                ),
+            ),
+        )
+
+    assert not evaluate(location_only).passed
+    result = evaluate(location_only + "    raise NotImplementedError\n")
+    assert result.passed
+    assert result.red_runs == ("pytest tests/test_feature.py::test_feature",)
 
 
 def test_tdd_evidence_merges_handoff_sessions_by_position() -> None:

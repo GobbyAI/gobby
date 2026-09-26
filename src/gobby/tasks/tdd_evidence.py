@@ -33,6 +33,10 @@ _PYTHON_EXCEPTION_DETAIL_RE = re.compile(
     r"^\s*E\s+(?:[A-Za-z_][A-Za-z0-9_.]*)(?:Error|Exception)(?::|\s*$)",
     re.MULTILINE,
 )
+_RAISE_EXCEPTION_DETAIL_RE = re.compile(
+    r"^[ \t]*>?[ \t]*raise[ \t]+[A-Za-z_][\w.]*(?:Error|Exception)\b",
+    re.MULTILINE,
+)
 _PASS_STATUS_RE = re.compile(r"\b(?:PASSED|SKIPPED|XFAIL|XPASS)\b", re.IGNORECASE)
 _FAILURE_SECTION_BOUNDARY_RE = re.compile(
     r"^(?:_{2,}\s+\S.*\s+_{2,}|(?:FAILED|ERROR|PASSED|SKIPPED)\s+\S.*|"
@@ -441,7 +445,11 @@ def _section_has_artifact_location(section: str, test: AcceptanceTest) -> bool:
 
 
 def _section_has_failure_detail(section: str) -> bool:
-    return bool(_ASSERTION_DETAIL_RE.search(section) or _PYTHON_EXCEPTION_DETAIL_RE.search(section))
+    return bool(
+        _ASSERTION_DETAIL_RE.search(section)
+        or _PYTHON_EXCEPTION_DETAIL_RE.search(section)
+        or _RAISE_EXCEPTION_DETAIL_RE.search(section)
+    )
 
 
 def _path_matches_artifact(path: str, test: AcceptanceTest) -> bool:
