@@ -1387,6 +1387,14 @@ built and installed binaries:
   Consumer sweep additions: the contained Ask probe harness and its two tests
   (5.1, 5.3), the three token-file `AuthService` test harnesses (4.3), and two
   `daemon_instance` consumers (1.3).
+  Open for review (PD, 2026-09-26; resolve before M1): (a) 4.2 refuses `gobby auth
+  login` on a `datastore_mode: local` bootstrap instead of switching the mode; the PD
+  prefers the explicit refusal pending full review. (b) 5.2 folds in three inferred
+  items: cutover restarts with `--full`, a start-refusal exit is not respawned, and the
+  backend holds no pid-lock descriptor. (c) 1.3 and 4.2 carry no Granularity record.
+  (d) After 5.1 the lease view reads a `deployment_runtime` row that only gdaemon
+  writes, but `tests/ask/native_probe_harness.py` runs a contained runner without
+  gdaemon; the plan does not yet say how the probe gets that row.
 
 **Round 1** `kind: enhancement`
 
