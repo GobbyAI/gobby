@@ -164,8 +164,14 @@ Confirmed with Josh on 2026-09-21 during elicitation.
     builds one council tab named after the plan with four panes (writer on top, vertical
     0.50; below it enhancer | adversary | mechanic at equal widths; the mechanic pane
     replaced the researcher lookup pane in decision 18). Lane developer
-    panes stay out of both scripts: the Program Director opens them per lane with
-    `/goal` (ruling 23).
+    panes stay out of both scripts: the Program Director opens them per lane on the
+    lane's developer definition with a task claim and no native `/goal` kickoff
+    (ruling 23, amended by Josh's 2026-09-25 decision in #22924, Decide whether lane
+    /goal should be retired: `/goal` is retired from developer lanes because a paused
+    or stalled native goal is invisible to Gobby; the claimed task, the
+    `require-task-close` stop gate, handoffs and the lane manager's status waits are
+    the continuity controls, and the lane manager recovers a stalled lane through
+    them, #22927 Retire lane /goal and make Lane Manager recover stalled lanes).
 15. **Pending rulings Q3-Q5** (same message). #22713 folds as no block: a claiming
     session may amend its own task's `description`, `validation_criteria` and `labels`,
     the claim-time values must reach the close reviewer durably, and the disclosure order
@@ -320,8 +326,8 @@ Confirmed with Josh on 2026-09-21 during elicitation.
     code on 0.5.0 in the main checkout; every other role that changes code works in its
     own worktree, which the launch creates or reuses through the existing `isolation:
     worktree` path; the twelve runbook roles change no code, so their worktree field is
-    "none", and lane developer panes (`/goal`) are the worktree case that 1.5's
-    acceptance proves. To-be, recorded and not designed because Josh is still shaping
+    "none", and lane developer panes (opened with a task claim, decision 14) are the
+    worktree case that 1.5's acceptance proves. To-be, recorded and not designed because Josh is still shaping
     it: typed privileged commands, roughly `gobby ops restart|cutover|promote|push`,
     that a sandboxed caller can trigger and that run outside the sandbox; once they
     exist the program-director can be sandboxed too; no deliverable. The Non-goals "No
@@ -1456,14 +1462,14 @@ skill; tests in `<module>/tests.rs`). Work order: after 1.5 and before 1.3 (deci
 `kind: deliverable`
 
 Targets:
-- `crates/gclient/src/command.rs`
-- `crates/gclient/src/command/verbs.rs`
-- `crates/gclient/src/command/tests.rs`
+- `crates/gclient/src/command.rs::*` — scope-reason: the module landed under #22695 (1f81b0fcf1) after approval; 2.1's `dispatch` entry and verb table span it
+- `crates/gclient/src/command/verbs.rs::*` — scope-reason: landed under #22695 after approval; 2.1's verb handlers span the module
+- `crates/gclient/src/command/tests.rs::*` — scope-reason: landed under #22695 after approval; 2.1's verb unit tests span the module
 - `crates/gclient/src/lib.rs::*` — scope-reason: one `pub mod command;` line in a module list that has no indexed symbols
 - `crates/gclient/src/startup.rs::run`
 - `crates/gclient/src/startup.rs::USAGE`
 - `crates/gclient/src/daemon/rest.rs::*` — scope-reason: one `pub(crate) async fn spawn_agent_tool(url, token, body)` beside the existing REST helpers, posting `/api/mcp/gobby-agents/tools/spawn_agent`; `daemon/mod.rs` (924 lines) is untouched because the command module calls the helper directly
-- `crates/gclient/tests/command_mode.rs`
+- `crates/gclient/tests/command_mode.rs::*` — scope-reason: landed under #22695 after approval; 2.1's command-mode integration tests span the file
 - `crates/gclient/tests/mock_daemon/workspace.rs::*` — scope-reason: `WorkspaceSim::apply` answers `pane.read` and `pane.wait_for_output` for the verb tests, and `WorkspaceSim::adopt_pane` mirrors each canned launch reply into the simulated tree for the script tests
 - `src/gobby/install/shared/workflows/runbooks/orchestration-v1.sh`
 - `src/gobby/install/shared/workflows/runbooks/plan-council-v1.sh`
@@ -2004,11 +2010,15 @@ persona text delivered once; the handoff carries state only.
   registry sync; rules on found work, duplicate consolidation and track order; holds the
   three approvals (new agent role, rule change, sandbox change) and sends Josh FYIs on
   his web link; confirms a task is open before ordering work against it; opens lane
-  developer panes with `/goal` and gives the lane manager only bounded runs; commits by
-  explicit path only, pushes only to `origin`, restarts and cuts over only through the
-  gobby CLI after a `global` announcement, reads the hub with `psql` and never writes it.
-  Divergence: the lane manager no longer spawns lane workers on its own; the Program
-  Director opens lane panes with `/goal` and lands every candidate itself (ruling 23).
+  developer panes with a task claim and no native `/goal` (decision 14) and gives the
+  lane manager only bounded runs; commits by explicit path only, pushes only to
+  `origin`, restarts and cuts over only through the gobby CLI after a `global`
+  announcement, reads the hub with `psql` and never writes it. Divergence: the lane
+  manager no longer spawns lane workers on its own; the Program Director opens lane
+  panes with a task claim and lands every candidate itself (ruling 23); native `/goal`
+  is retired from developer lanes, and a stalled lane is recovered by the lane manager
+  through the claimed task, the stop gate, handoffs and its status waits, never by a
+  goal resume (#22924, #22927).
   (3) Can do: every MCP tool (no `blocked_mcp_tools`), every native tool (no
   `blocked_tools`, because it merges and validates by hand); code-edit right: yes, the
   only role that edits code on 0.5.0, in the main checkout (decision 20). (4) Sandbox:
@@ -2105,7 +2115,10 @@ persona text delivered once; the handoff carries state only.
   (1.5) that the assistant runs, never through a headless `spawn_agent` and never with
   `terminal_backend`." Divergence: named `lane-manager` because "dispatcher" is the
   build-stage dispatcher (ruling 22); no persistent or semi-persistent launches and no
-  TTLs; stands down after restart 8 (ruling 23). (3) Can do: `gobby-agents:spawn_agent`
+  TTLs; stands down after restart 8 (ruling 23); recovers a stalled developer lane
+  through the claimed task, the stop gate, handoffs and its status waits, classifying
+  every status match at once even under a hold, and never through a native `/goal`
+  resume (#22927). (3) Can do: `gobby-agents:spawn_agent`
   for bounded worker runs (`isolation: worktree`, a task, a timeout) and
   `list_running_agents`; `blocked_mcp_tools: ["gobby-agents:kill_agent",
   "gobby-tasks:claim_task", "gobby-tasks:close_task"]`; no `blocked_tools`; code-edit
@@ -2927,9 +2940,10 @@ Consumers unchanged:
    once with `spawn_agent` and `placement.split` from the assistant pane; in each pane
    `gobby-workflows:get_variable step_workflow_complete` is false and the run's
    `agent_step_instances` row exists, exactly as a headless `spawn_agent` of the same
-   definition gives; then open a lane developer pane with `/goal` (its definition's
-   `isolation: worktree`) and confirm `pwd` in the pane is under the worktree path and
-   `get_workspace` shows the pane's `worktree_path`; kill the scratch tabs.
+   definition gives; then open a lane developer pane with a task claim and no `/goal`
+   (its definition's `isolation: worktree`) and confirm `pwd` in the pane is under the
+   worktree path and `get_workspace` shows the pane's `worktree_path`; kill the scratch
+   tabs.
 
 **Enhancement round 1 of 1** (kind: enhancement). enhancer_run
 `fa6aa37e-ab77-43cd-a1e5-1b9af49c8803` (plan-enhancer-taskless, grok/grok-4.7/high,
