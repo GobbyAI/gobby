@@ -326,6 +326,18 @@ async def test_a_repaint_after_enter_is_polled_until_the_composer_settles(
 
 
 @pytest.mark.asyncio
+async def test_stale_empty_frame_does_not_hide_a_held_command(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pane = _ScriptedPane([ComposerRead("empty"), ComposerRead("draft", _TEXT)])
+
+    result = await _submit(pane, monkeypatch, verify_seconds=0.02)
+
+    assert result.ok is False
+    assert pane.keys.count("enter") > 1
+
+
+@pytest.mark.asyncio
 async def test_unreadable_composer_after_enter_logs_at_debug(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:

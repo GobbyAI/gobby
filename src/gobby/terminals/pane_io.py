@@ -416,22 +416,20 @@ async def composer_verdict(
 ) -> ComposerVerdict:
     """Poll the composer for a positive read of whether it still holds ``text``.
 
-    ``left`` is an ``empty`` composer or a draft that is no longer ours: the Enter
-    landed. ``held`` is a draft whose row still starts with the text after the whole
-    window: the CLI never took it. ``unknown`` is what an Enter leaves behind while
-    the CLI repaints — no frame, no snapshot, a redraw the manifest cannot classify
-    — so it keeps polling, and an ``unknown`` that outlives the window is
-    ``unreadable``: no evidence either way, never proof that the text went in.
+    Read through the full window: an initially empty frame can be stale before
+    the CLI paints a held draft. At the deadline, ``left`` means the composer is
+    empty or has a different draft, ``held`` means it still starts with our text,
+    and ``unreadable`` means there was no classifiable final frame.
     """
     prefix = text[:COMPOSER_MATCH_CHARS]
     elapsed = 0.0
     while True:
         read = composer_read(await pane.snapshot(COMPOSER_PROBE_LINES, mode="ansi"))
-        if read.state == "empty" or (
-            read.state == "draft" and read.line is not None and not read.line.startswith(prefix)
-        ):
-            return "left"
         if elapsed >= window_seconds:
+            if read.state == "empty" or (
+                read.state == "draft" and read.line is not None and not read.line.startswith(prefix)
+            ):
+                return "left"
             return "held" if read.state == "draft" else "unreadable"
         delay = min(poll_seconds, window_seconds - elapsed)
         await asyncio.sleep(delay)

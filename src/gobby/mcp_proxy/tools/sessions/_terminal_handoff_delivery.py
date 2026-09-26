@@ -46,10 +46,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _COMPACT_BOUNDARY_CONFIRM_SECONDS = 150.0
+_CLAUDE_COMPACT_BOUNDARY_CONFIRM_SECONDS = 600.0
 _COMPACT_BOUNDARY_POLL_SECONDS = 2.0
 _COMPACT_PROVIDER_RETRIES = 2
 _COMPACT_RETRY_BACKOFF_SECONDS = 1.0
 _COMPACT_ERROR_PREFIX = "Error during compaction:"
+_COMPACT_BOUNDARY_TIMEOUT_REASON = (
+    "compact boundary was not observed before the confirmation deadline"
+)
 
 
 def _claude_compact_error_cursor(session: Any) -> TranscriptTailCursor | None:
@@ -93,9 +97,13 @@ async def _wait_for_compact_boundary(
     pane: Any,
     before_command: str | None,
     cursor: TranscriptTailCursor | None,
+    *,
+    timeout_seconds: float | None = None,
 ) -> str | None:
     """Return an error or wait for one boundary within this delivery operation."""
-    deadline = asyncio.get_running_loop().time() + _COMPACT_BOUNDARY_CONFIRM_SECONDS
+    deadline = asyncio.get_running_loop().time() + (
+        _COMPACT_BOUNDARY_CONFIRM_SECONDS if timeout_seconds is None else timeout_seconds
+    )
     while not waiter.event.is_set():
         error = await asyncio.to_thread(_fresh_compact_error, cursor) if cursor else None
         if error is not None:
@@ -111,7 +119,7 @@ async def _wait_for_compact_boundary(
                     return line.strip()
         remaining = deadline - asyncio.get_running_loop().time()
         if remaining <= 0:
-            return "compact boundary was not observed before the confirmation deadline"
+            return _COMPACT_BOUNDARY_TIMEOUT_REASON
         try:
             await asyncio.wait_for(
                 waiter.event.wait(), timeout=min(_COMPACT_BOUNDARY_POLL_SECONDS, remaining)
@@ -241,7 +249,15 @@ async def deliver_staged_compact_handoff(
                 if detail is not None:
                     failure_result.update(detail)
                 break
-            failure = await _wait_for_compact_boundary(waiter, pane, before_command, cursor)
+            failure = await _wait_for_compact_boundary(
+                waiter,
+                pane,
+                before_command,
+                cursor,
+                timeout_seconds=(
+                    _CLAUDE_COMPACT_BOUNDARY_CONFIRM_SECONDS if source == "claude" else None
+                ),
+            )
             if failure is not None:
                 disarm_compact_boundary_waiter(session_id, attempt_id)
             if (
@@ -251,7 +267,9 @@ async def deliver_staged_compact_handoff(
             ):
                 break
             clear_handoff_compact_continuation_pending(db, session_id, attempt_id=attempt_id)
-            if submission == _COMPACT_PROVIDER_RETRIES:
+            if (source == "claude" and failure == _COMPACT_BOUNDARY_TIMEOUT_REASON) or (
+                submission == _COMPACT_PROVIDER_RETRIES
+            ):
                 failure_result = {
                     "compacted": False,
                     "reason": failure,
