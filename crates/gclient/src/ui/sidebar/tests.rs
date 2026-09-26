@@ -9,6 +9,7 @@ use serde_json::json;
 /// plus one attention entry on `term-alpha` and a bare `term-beta`.
 fn scripted_workspace() -> Workspace {
     let mut ws = Workspace::scripted();
+    ws.set_local_machine("local");
     let project = |id: &str, name: &str| ProjectRow {
         id: id.to_string(),
         name: name.to_string(),
@@ -49,6 +50,8 @@ fn scripted_workspace() -> Workspace {
         "seq": 1,
         "entries": [{
             "entry_id": "run:term-alpha",
+            "provider": "codex",
+            "model": "gpt-6-sol",
             "terminal": {"terminal_id": "term-alpha", "backend": "native"},
             "attention": {"attention_id": "att-1", "kind": "actionable", "fingerprint": "fp-1"}
         }]
@@ -176,9 +179,9 @@ fn expanded_sidebar_draws_the_bands_and_records_the_hits() {
     // One control, so the band fits the default width; the scope and the
     // order live in its menu.
     assert_eq!(lines[6], " Agents           [view] │");
-    assert_eq!(lines[7], " ⍾ Unknown               │");
+    assert_eq!(lines[7], " ⍾ Codex                 │");
     assert_eq!(lines[8], "   No assigned task      │");
-    assert!(blank(lines[9]), "{:?}", lines[9]);
+    assert_eq!(lines[9], "   gpt-6-sol             │");
     assert!(blank(lines[22]), "{:?}", lines[22]);
     assert_eq!(lines[23], " Terminals               │");
     assert_eq!(lines[24], " ○ term-beta             │");
@@ -210,6 +213,17 @@ fn expanded_sidebar_draws_the_bands_and_records_the_hits() {
         ]
     );
     assert_eq!(hits.scrollbars, [None; 4]);
+}
+
+#[test]
+fn missing_local_machine_does_not_hide_agents_or_draw_a_phantom_machine() {
+    let mut ws = scripted_workspace();
+    ws.set_local_machine("");
+    let chrome = Chrome::dark();
+
+    assert!(machine_rows(&ws, &chrome).is_empty());
+    assert_eq!(agent_rows(&ws, &chrome).len(), 1);
+    assert_eq!(terminal_rows(&ws, &chrome).len(), 1);
 }
 
 #[test]

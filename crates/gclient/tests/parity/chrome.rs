@@ -1216,12 +1216,13 @@ switch_project = "ctrl+1..9"
                     // and terminal rows gained their final content (#22749),
                     // and tabs gained project labels and neutral styling (#22750),
                     // then the configurable segments and attention count
-                    // populated the status row (#22752):
+                    // populated the status row (#22752), and the separate
+                    // agent and bare-terminal totals joined it (#22941):
                     // 4.1.3 requires a glyph change to fail here, so this
                     // digest moves only alongside a deliberate render change.
                     assert_eq!(
                         frame_digest(&terminal),
-                        "383ef43f6a295af208538b57189f72048e75caf605d55296bfc09b4d264b737b"
+                        "3c7340d8bb69e287570bb15a99c6e062f6516665e03bf8c7dd283a74c86ee88b"
                     );
                 });
         }
@@ -1628,13 +1629,10 @@ fn rendered_hits_match_drawn_cells() {
     let pane = view.pane_infos.first().expect("pane info").rect;
     assert_eq!(indicator.y, pane.bottom() - 1);
     assert_ne!(indicator.y, view.status_rect.y);
-    assert_eq!(
-        hit_text(&terminal, indicator),
-        " Unknown (term-alpha) · Read-only"
-    );
+    assert_eq!(hit_text(&terminal, indicator), " term-alpha · Read-only");
     assert_eq!(
         usize::from(indicator.width),
-        display_width(" Unknown (term-alpha) · Read-only ")
+        display_width(" term-alpha · Read-only ")
     );
 }
 

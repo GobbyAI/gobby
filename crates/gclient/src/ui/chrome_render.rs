@@ -197,7 +197,13 @@ fn render_notifications(frame: &mut Frame, chrome: &Chrome) -> Option<Rect> {
     let area = if terminal_area.is_empty() {
         frame.area()
     } else {
-        terminal_area
+        // Keep notifications off the pane's top and right border cells.
+        Rect::new(
+            terminal_area.x.saturating_add(1),
+            terminal_area.y.saturating_add(1),
+            terminal_area.width.saturating_sub(2),
+            terminal_area.height.saturating_sub(2),
+        )
     };
     status::render_toast_notification(frame, area, chrome)
 }
@@ -250,6 +256,7 @@ pub fn rects_overlap(a: Rect, b: Rect) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui::status::Toast;
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
 
@@ -273,6 +280,21 @@ mod tests {
         assert!(rects_overlap(a, Rect::new(1, 1, 0, 0)));
         assert!(!rects_overlap(Rect::new(0, 0, 0, 0), Rect::new(0, 0, 0, 0)));
         assert!(!rects_overlap(a, Rect::new(4, 4, 0, 0)));
+    }
+
+    #[test]
+    fn notifications_leave_the_pane_border_visible() {
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        let mut chrome = Chrome::dark();
+        chrome.view.terminal_area = Rect::new(0, 1, 80, 22);
+        chrome.notify(Toast::info("connected"));
+        let mut notification = None;
+        terminal
+            .draw(|frame| notification = render_notifications(frame, &chrome))
+            .unwrap();
+        let rect = notification.expect("toast drawn");
+        assert!(rect.y > chrome.view.terminal_area.y);
+        assert!(rect.right() < chrome.view.terminal_area.right());
     }
 
     #[test]

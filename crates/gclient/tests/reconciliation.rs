@@ -63,7 +63,7 @@ fn subscribe_first_no_regression() {
     assert_eq!(calls[0], "WS subscribe");
     assert!(calls[1].starts_with("GET /api/attention/roster"));
 
-    let ids: Vec<_> = ws.attention_entry_ids();
+    let ids: Vec<_> = ws.roster_entry_ids();
     assert!(
         !ids.contains(&"run:early".to_string()),
         "seq 4 same-epoch must be discarded, got {ids:?}"
@@ -876,7 +876,7 @@ async fn live_attention_subscribe_first_no_regression() {
         .await
         .expect("apply event sent during roster fetch");
     assert_eq!(
-        workspace.attention_entry_ids(),
+        workspace.roster_entry_ids(),
         vec![
             "run:base".to_string(),
             "run:before".to_string(),
@@ -915,7 +915,7 @@ async fn live_attention_subscribe_first_no_regression() {
         .expect("apply post-roster event once");
     assert_eq!(workspace.attention_applied_seqs(), vec![3, 4, 5]);
     assert!(!workspace
-        .attention_entry_ids()
+        .roster_entry_ids()
         .contains(&"run:duplicate".to_string()));
 
     mock.enqueue(
@@ -946,7 +946,7 @@ async fn live_attention_subscribe_first_no_regression() {
         .expect("epoch change refetches attention roster");
     assert_eq!(workspace.attention_epoch(), "attention-2");
     assert_eq!(
-        workspace.attention_entry_ids(),
+        workspace.roster_entry_ids(),
         vec!["run:new-epoch".to_string()]
     );
     assert_eq!(workspace.attention_applied_seqs(), vec![2]);

@@ -16,7 +16,6 @@ use gobby_terminal::layout::NavDirection;
 use crate::daemon::Daemon;
 use crate::key_input::KeyInput;
 use crate::prefs::save_prefs;
-use crate::theme::ThemeKind;
 use crate::ui::dialogs::{CloseTarget, Dialog, OrphanRow, RenameKind};
 use crate::ui::keybind_help::help_lines;
 use crate::ui::navigator::{
@@ -375,15 +374,14 @@ fn step_settings_row<W: WorkspaceView>(ws: &W, chrome: &mut Chrome, delta: isize
     let prefs = &mut chrome.prefs;
     match row {
         SettingsRow::Theme => {
-            let kind = match prefs.theme_kind() {
-                ThemeKind::Dark => ThemeKind::Light,
-                ThemeKind::Light => ThemeKind::Dark,
-            };
-            prefs.theme = match kind {
-                ThemeKind::Dark => "dark",
-                ThemeKind::Light => "light",
-            }
-            .to_owned();
+            let choices = ["dark", "light", "system"];
+            let index = choices
+                .iter()
+                .position(|choice| choice.eq_ignore_ascii_case(&prefs.theme))
+                .unwrap_or(0);
+            let next = (index as isize + delta).rem_euclid(choices.len() as isize) as usize;
+            prefs.theme = choices[next].to_owned();
+            let kind = prefs.theme_kind();
             chrome.set_theme(kind);
         }
         SettingsRow::MouseCapture => {
@@ -561,4 +559,23 @@ fn navigate_key<W: WorkspaceView>(ws: &W, chrome: &mut Chrome, key: &KeyEvent) -
         _ => return ModalOutcome::Passthrough,
     }
     ModalOutcome::Consumed
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn theme_setting_cycles_through_system_in_both_directions() {
+        let ws = Workspace::scripted();
+        let mut chrome = Chrome::dark();
+        step_settings_row(&ws, &mut chrome, 1);
+        assert_eq!(chrome.prefs.theme, "light");
+        step_settings_row(&ws, &mut chrome, 1);
+        assert_eq!(chrome.prefs.theme, "system");
+        step_settings_row(&ws, &mut chrome, 1);
+        assert_eq!(chrome.prefs.theme, "dark");
+        step_settings_row(&ws, &mut chrome, -1);
+        assert_eq!(chrome.prefs.theme, "system");
+    }
 }

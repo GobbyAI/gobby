@@ -5,13 +5,13 @@
 01 | Machines                        │                                                                                      |
 01 : -/surface0*1 subtext0/surface0+b*8 -/surface0*24 overlay0/panel_bg*1 -/panel_bg*86
 02 | ○ scripted · local              │                                                                                      |
-02 : -/surface_dim*1 overlay0/surface_dim*1 overlay0/surface_dim+d*1 text/surface_dim+b*8 overlay0/surface_dim+d*8 -/surface_dim*14 overlay0/panel_bg*1 -/panel_bg*86
+02 : -/surface_dim*1 overlay0/surface_dim*1 overlay0/surface_dim+d*1 text/surface_dim+b*8 overlay0/surface_dim*8 -/surface_dim*14 overlay0/panel_bg*1 -/panel_bg*86
 03 |                                 │                                                                                      |
 03 : -/panel_bg*33 overlay0/panel_bg*1 -/panel_bg*86
 04 | Projects              [working] │                                                                                      |
 04 : -/surface0*1 subtext0/surface0+b*8 -/surface0*14 overlay0/surface0*9 -/surface0*1 overlay0/panel_bg*1 -/panel_bg*86
 05 | ○ alpha (main ↑2 ↓1)           ▸│                                                                                      |
-05 : -/surface_dim*1 overlay0/surface_dim*1 overlay0/surface_dim+d*1 text/surface_dim+b*5 overlay0/surface_dim+d*2 subtext0/surface_dim*4 green/surface_dim*3 red/surface_dim*3 overlay0/surface_dim+d*1 -/surface_dim*11 accent/surface_dim*1 overlay0/panel_bg*1 -/panel_bg*86
+05 : -/surface_dim*1 overlay0/surface_dim*1 overlay0/surface_dim+d*1 text/surface_dim+b*5 subtext0/surface_dim*6 green/surface_dim*3 subtext0/surface_dim*4 -/surface_dim*11 accent/surface_dim*1 overlay0/panel_bg*1 -/panel_bg*86
 06 |                                 │                                                                                      |
 06 : -/panel_bg*33 overlay0/panel_bg*1 -/panel_bg*86
 07 | Agents                   [view] │                                                                                      |
@@ -19,9 +19,9 @@
 08 | ○ backend-developer-work… (#123)│                                                                                      |
 08 : -/panel_bg*1 overlay0/panel_bg*1 -/panel_bg*1 subtext0/panel_bg*30 overlay0/panel_bg*1 -/panel_bg*86
 09 |   Task #123 - Implement the full│                                                                                      |
-09 : -/panel_bg*3 overlay0/panel_bg*31 -/panel_bg*86
+09 : -/panel_bg*3 subtext0/panel_bg*30 overlay0/panel_bg*1 -/panel_bg*86
 10 |   gpt-5                         │                                                                                      |
-10 : -/panel_bg*3 overlay0/panel_bg*5 -/panel_bg*25 overlay0/panel_bg*1 -/panel_bg*86
+10 : -/panel_bg*3 subtext0/panel_bg*5 -/panel_bg*25 overlay0/panel_bg*1 -/panel_bg*86
 11 |                                 │                                                      ▄▄▀                             |
 11 : -/panel_bg*33 overlay0/panel_bg*1 -/panel_bg*54 panel_bg/panel_bg*3 -/panel_bg*29
 12 |                                 │                            ▀▀▄▄▄     ▄▄▄▄▀▀▄▄▄▄ ▄▄▀▀▀▀▀▀                             |
@@ -51,7 +51,7 @@
 24 | ○ nvim                          │                                    ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                  |
 24 : -/panel_bg*1 overlay0/panel_bg*1 overlay0/panel_bg+d*1 subtext0/panel_bg*4 -/panel_bg*26 overlay0/panel_bg*1 -/panel_bg*36 panel_bg/panel_bg*1 overlay0/panel_bg*4 panel_bg/panel_bg*11 -/panel_bg*34
 25 |   gclient                       │                                                                                      |
-25 : -/panel_bg*3 overlay0/panel_bg*7 -/panel_bg*23 overlay0/panel_bg*1 -/panel_bg*86
+25 : -/panel_bg*3 subtext0/panel_bg*7 -/panel_bg*23 overlay0/panel_bg*1 -/panel_bg*86
 26 |                                 │                            No pane open.                                             |
 26 : -/panel_bg*33 overlay0/panel_bg*1 -/panel_bg*28 overlay1/panel_bg+b*13 -/panel_bg*45
 27 |                                 │                            ctrl+b w  attach a terminal                               |
@@ -78,5 +78,5 @@
 37 : -/panel_bg*33 overlay0/panel_bg*1 -/panel_bg*86
 38 |                                 │                                                                                      |
 38 : -/panel_bg*33 overlay0/panel_bg*1 -/panel_bg*86
-39 | 1 need you                                                                                               prefix ctrl+b |
-39 : -/surface0*1 accent/surface0*10 -/surface0*95 subtext0/surface0*13 -/surface0*1
+39 | 1 agent · 1 terminal                                                                                     prefix ctrl+b |
+39 : -/surface0*1 subtext0/surface0*20 -/surface0*85 subtext0/surface0*13 -/surface0*1

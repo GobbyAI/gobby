@@ -2,7 +2,7 @@
 //! Modal dialogs: confirm close, rename, and the Gobby attention respond
 //! prompt. No plugin or repository-checkout dialogs.
 
-use crate::app::Backend;
+use crate::app::{Backend, PaneId};
 use crate::ui::chrome::Chrome;
 use crate::ui::widgets::{
     action_button_row_rects, centered_popup_rect, modal_choice_rows, modal_description,
@@ -56,9 +56,9 @@ impl RenameKind {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CloseTarget {
-    Pane,
-    Tab,
-    Terminal,
+    Pane(PaneId),
+    Tab(String),
+    Terminal(PaneId),
     /// A project without worktree children; the id names it.
     Project(String),
     /// A project and its worktree children; the id names the project.
@@ -68,9 +68,9 @@ pub enum CloseTarget {
 impl CloseTarget {
     fn noun(&self) -> &'static str {
         match self {
-            CloseTarget::Pane => "pane",
-            CloseTarget::Tab => "tab",
-            CloseTarget::Terminal => "terminal",
+            CloseTarget::Pane(_) => "pane",
+            CloseTarget::Tab(_) => "tab",
+            CloseTarget::Terminal(_) => "terminal",
             CloseTarget::Project(_) => "project",
             CloseTarget::WorktreeGroup(_) => "worktree group",
         }

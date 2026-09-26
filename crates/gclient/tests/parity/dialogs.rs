@@ -3,7 +3,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use gobby_client::app::{
     route_modal_key, route_mouse, ContextMenuKind, ContextMenuState, MenuAction, MenuItem,
-    ModalOutcome, MouseOutcome,
+    ModalOutcome, MouseOutcome, PaneId,
 };
 use gobby_client::key_input::KeyInput;
 use gobby_client::ui::chrome::{Chrome, Mode};
@@ -36,7 +36,7 @@ const CONFIRM_CLOSE_POPUP: (u16, u16) = (64, 6);
 
 /// herdr's confirm-close acts on the sidebar's selected workspace. gclient's
 /// sidebar rows are roster terminals, so its close scope is the terminal.
-const CLOSE_TARGET: CloseTarget = CloseTarget::Terminal;
+const CLOSE_TARGET: CloseTarget = CloseTarget::Terminal(PaneId(1));
 
 /// herdr `confirm_close_overlay_text(app, runtimes) -> (title, detail)`.
 ///
@@ -169,7 +169,7 @@ fn left_click(column: u16, row: u16) -> MouseEvent {
 /// event in `Mode::ConfirmClose` was swallowed, so the buttons were paint.
 fn confirm_close_dialog(chrome: &mut Chrome) {
     chrome.dialog = Some(Dialog::ConfirmClose {
-        target: CloseTarget::Tab,
+        target: CloseTarget::Tab("tab-0".to_owned()),
         title: "%836".to_string(),
         scope: CloseScope::Panes(1),
     });
@@ -235,7 +235,7 @@ fn confirm_close_buttons_take_clicks() {
     assert_eq!(chrome.mode, Mode::Terminal);
     assert_eq!(
         outcome,
-        MouseOutcome::Confirm(CloseTarget::Tab),
+        MouseOutcome::Confirm(CloseTarget::Tab("tab-0".to_owned())),
         "close asks the loop to act, as Enter does"
     );
 }
@@ -367,7 +367,7 @@ fn pane_rects(chrome: &Chrome, area: Rect) -> Vec<Rect> {
 
 fn confirm_close_terminal() -> Dialog {
     Dialog::ConfirmClose {
-        target: CloseTarget::Terminal,
+        target: CLOSE_TARGET,
         title: "term-alpha".to_string(),
         scope: CloseScope::Panes(1),
     }
@@ -458,7 +458,7 @@ fn modal_keys_drive_every_mode() {
     chrome.mode = Mode::ConfirmClose;
     assert_eq!(
         press(&ws, &mut chrome, KeyCode::Char('y')),
-        ModalOutcome::Confirm(CloseTarget::Terminal)
+        ModalOutcome::Confirm(CLOSE_TARGET)
     );
     assert_eq!(chrome.mode, Mode::Terminal);
     assert_eq!(chrome.dialog, None);

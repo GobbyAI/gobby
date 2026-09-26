@@ -85,6 +85,9 @@ pub fn pane_footer<W: WorkspaceView>(ws: &W, pane: &Pane, focused: bool) -> Pane
     let identity = agent.map_or_else(
         || pane.display_name().to_owned(),
         |agent| {
+            if agent.agent_definition_name.is_none() && agent.provider.trim().is_empty() {
+                return pane.display_name().to_owned();
+            }
             let project = sidebar
                 .projects
                 .iter()
@@ -96,10 +99,15 @@ pub fn pane_footer<W: WorkspaceView>(ws: &W, pane: &Pane, focused: bool) -> Pane
                 .or(agent.session_ref.as_deref())
                 .unwrap_or_default();
             let definition = agent.definition_label();
-            if project.is_empty() && reference.is_empty() {
+            if reference.is_empty() {
                 definition
             } else {
-                format!("{definition} ({project}{reference})")
+                let reference = if reference.starts_with(&format!("{project}#")) {
+                    reference.to_owned()
+                } else {
+                    format!("{project}{reference}")
+                };
+                format!("{definition} ({reference})")
             }
         },
     );

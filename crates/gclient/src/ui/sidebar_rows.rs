@@ -96,19 +96,15 @@ pub fn project_label<W: WorkspaceView>(
     chrome: &Chrome,
     project_id: &str,
 ) -> Option<String> {
+    if let Some(label) = chrome.sidebar.project_labels.get(project_id) {
+        return Some(label.clone());
+    }
     let project = ws
         .sidebar()
         .projects
         .iter()
         .find(|project| project.project_id == project_id)?;
-    Some(
-        chrome
-            .sidebar
-            .project_labels
-            .get(project_id)
-            .cloned()
-            .unwrap_or_else(|| project.name.clone()),
-    )
+    Some(project.name.clone())
 }
 
 /// Project cards in the user's order, the expanded card followed by its
@@ -291,10 +287,8 @@ pub(crate) fn row_line_with_scrolling<'a>(
     } else {
         Style::default().fg(p.subtext0)
     };
-    // Worktree and machine details retain the quiet token style.
-    let detail_style = Style::default()
-        .fg(if row.selected { p.mauve } else { p.overlay0 })
-        .add_modifier(Modifier::DIM);
+    // Worktree and machine details retain the quiet token color.
+    let detail_style = Style::default().fg(if row.selected { p.mauve } else { p.overlay0 });
     let prefix_style = Style::default().fg(p.overlay0);
     let marker = if row.selected { "▸" } else { " " };
     let mut spans = vec![Span::styled(marker, marker_style)];
@@ -376,7 +370,7 @@ pub(crate) fn row_line_with_scrolling<'a>(
             }
         }
         RowKind::Group => {
-            let style = Style::default().fg(p.overlay0).add_modifier(Modifier::DIM);
+            let style = Style::default().fg(p.overlay0);
             let name = truncate_end(&row.label, budget.saturating_sub(2));
             let rule = budget.saturating_sub(display_width(&name) + 1);
             spans.push(Span::styled(name, style));
@@ -398,7 +392,7 @@ fn card_spans(
     p: &Palette,
     max_width: usize,
 ) -> Vec<Span<'static>> {
-    let paren_style = Style::default().fg(p.overlay0).add_modifier(Modifier::DIM);
+    let paren_style = Style::default().fg(p.subtext0);
     let branch_style = Style::default().fg(if row.active { p.mauve } else { p.overlay0 });
     let mut paren = vec![
         Span::styled(" (", paren_style),
@@ -416,7 +410,7 @@ fn card_spans(
     if row.behind > 0 {
         paren.push(Span::styled(
             format!(" ↓{}", row.behind),
-            Style::default().fg(p.red),
+            Style::default().fg(p.subtext0),
         ));
     }
     paren.push(Span::styled(")", paren_style));
@@ -517,7 +511,7 @@ pub(crate) fn row_second_line_with_travel<'a>(
     let indent = 3 + display_width(nest_prefix(row));
     let budget = usize::from(width).saturating_sub(indent);
     let mut spans = vec![Span::raw(" ".repeat(indent.min(usize::from(width))))];
-    let style = Style::default().fg(chrome.palette.overlay0);
+    let style = Style::default().fg(chrome.palette.subtext0);
     match row.kind {
         RowKind::Agent => {
             if let Some((reference, title)) = row.task.as_ref() {
@@ -538,7 +532,7 @@ pub(crate) fn row_second_line_with_travel<'a>(
             } else {
                 spans.push(Span::styled(
                     truncate_end("No assigned task", budget),
-                    style.add_modifier(Modifier::DIM),
+                    Style::default().fg(chrome.palette.overlay1),
                 ));
             }
         }
@@ -558,7 +552,7 @@ pub fn row_third_line<'a>(row: &'a SidebarRow, width: u16, chrome: &Chrome) -> L
         Span::raw(" ".repeat(indent.min(usize::from(width)))),
         Span::styled(
             truncate_end(&row.model_slug, budget),
-            Style::default().fg(chrome.palette.overlay0),
+            Style::default().fg(chrome.palette.subtext0),
         ),
     ])
 }
@@ -577,13 +571,14 @@ pub fn fitted_spans(
     p: &Palette,
     max_width: usize,
 ) -> Vec<Span<'static>> {
-    let separator_style = Style::default().fg(p.overlay0).add_modifier(Modifier::DIM);
+    let separator_style = Style::default().fg(p.overlay0);
+    let spacer_style = separator_style.add_modifier(Modifier::DIM);
     let mut spans = vec![Span::styled(glyph.0.to_string(), glyph.1)];
     let remaining = max_width.saturating_sub(display_width(glyph.0));
     if remaining < 2 || title.0.is_empty() {
         return spans;
     }
-    spans.push(Span::styled(" ", separator_style));
+    spans.push(Span::styled(" ", spacer_style));
     let remaining = remaining - 1;
     let trailing: Vec<&(&str, Style)> = trailing
         .iter()

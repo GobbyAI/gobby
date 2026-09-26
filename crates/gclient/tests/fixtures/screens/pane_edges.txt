@@ -4,8 +4,8 @@
 00 : panel_bg/accent+b*120
 01 | alpha:alpha    +                                                                                                       |
 01 : text/panel_bg+b*15 overlay1/surface0*3 -/surface0*102
-02 |┌ Ship the Unicode 修 复  to pane headers ───────────────────────────────────── Codex (alpha#1742) · Read-only ─ gclient ┐|
-02 : overlay0/panel_bg*20 -/-*1 overlay0/panel_bg*1 -/-*1 overlay0/panel_bg*54 yellow/panel_bg*32 overlay0/panel_bg*1 yellow/panel_bg*9 overlay0/panel_bg*1
+02 |┌ Ship the Unicode 修 复  to pane headers ───────────────────────────────────── Codex (alpha#1742) · Read-only · gclient ┐|
+02 : overlay0/panel_bg*20 -/-*1 overlay0/panel_bg*1 -/-*1 overlay0/panel_bg*54 yellow/panel_bg*42 overlay0/panel_bg*1
 03 |│                                                                                                                      │|
 03 : overlay0/panel_bg*1 -/panel_bg*118 overlay0/panel_bg*1
 04 |│                                                                                                                      │|
@@ -78,5 +78,5 @@
 37 : accent/panel_bg*1 -/panel_bg*118 accent/panel_bg*1
 38 |└ term-bet · Focused ──────────────────────────────────────────────────────────────────────────────────────────── tmux ┘|
 38 : accent/panel_bg*1 accent/panel_bg+b*20 accent/panel_bg*92 accent/panel_bg+b*6 accent/panel_bg*1
-39 | —                                                                                                — │ — │ prefix ctrl+b |
-39 : -/surface0*1 subtext0/surface0*1 -/surface0*96 subtext0/surface0*21 -/surface0*1
+39 | 1 agent · 1 terminal · —                                                                         — · — │ prefix ctrl+b |
+39 : -/surface0*1 subtext0/surface0*24 -/surface0*73 subtext0/surface0*21 -/surface0*1

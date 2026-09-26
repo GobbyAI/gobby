@@ -191,7 +191,7 @@ fn agent_rows_render_three_lines_with_the_model_slug() {
     assert_eq!(rows[0].height(), 3);
     assert_eq!(rows[0].definition, "Codex");
     assert_eq!(rows[0].reference, "#77");
-    assert_eq!(rows[0].provider.as_deref(), Some("codex"));
+    assert_eq!(rows[0].provider, None);
     assert_eq!(rows[0].model_slug, "gpt-5-high");
     let third = row_third_line(&rows[0], 34, &Chrome::dark());
     assert_eq!(line_text(&third), "   gpt-5-high");
@@ -225,6 +225,28 @@ fn agent_rows_render_three_lines_with_the_model_slug() {
         .find(|row| row.id == "session:sess-effort")
         .expect("effort row");
     assert_eq!(effort.reference, "alpha#77");
+}
+
+#[test]
+fn machine_detail_keeps_its_color_without_dimming_text() {
+    let row = SidebarRow {
+        kind: RowKind::Machine,
+        label: "mbp".into(),
+        detail: "local".into(),
+        ..SidebarRow::default()
+    };
+    let line = row_line(&row, 34, &Chrome::dark(), 0);
+    assert!(line_text(&line).contains(" · local"));
+    for span in line.spans {
+        if span.content.trim().is_empty() {
+            continue;
+        }
+        assert!(
+            !span.style.add_modifier.contains(Modifier::DIM),
+            "visible span {:?} is dimmed",
+            span.content
+        );
+    }
 }
 
 #[test]

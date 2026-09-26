@@ -155,13 +155,18 @@ pub(super) async fn apply_live_modal_outcome(
         }
         ModalOutcome::Action(Action::Quit) => return Ok(true),
         ModalOutcome::Action(action) => handle_live_action(workspace, chrome, action).await?,
-        ModalOutcome::Confirm(CloseTarget::Tab) => close_live_tab(workspace, chrome).await?,
-        ModalOutcome::Confirm(CloseTarget::Pane) => close_live_pane(workspace, chrome).await?,
-        ModalOutcome::Confirm(CloseTarget::Terminal) => {
-            if let Some(pane) = chrome.focused_pane() {
-                terminate_live_terminal(workspace, pane).await?;
-                sync_live_chrome(workspace, chrome);
+        ModalOutcome::Confirm(CloseTarget::Tab(tab_id)) => {
+            if chrome.active_tab().is_some_and(|tab| tab.id == tab_id) {
+                close_live_tab(workspace, chrome).await?;
             }
+        }
+        ModalOutcome::Confirm(CloseTarget::Pane(pane)) => {
+            if workspace.panes.contains_key(&pane) && chrome.focus_pane(pane) {
+                close_live_pane(workspace, chrome).await?;
+            }
+        }
+        ModalOutcome::Confirm(CloseTarget::Terminal(pane)) => {
+            close_live_terminal(workspace, chrome, pane).await?;
         }
         ModalOutcome::Confirm(
             CloseTarget::Project(project_id) | CloseTarget::WorktreeGroup(project_id),
@@ -224,20 +229,44 @@ pub(super) async fn handle_live_action(
         Action::NewProject => open_new_project_dialog(chrome),
         Action::CloseTerminal => {
             if let Some(pane_id) = chrome.focused_pane() {
-                close_live_terminal(workspace, chrome, pane_id).await?;
+                if chrome.prefs.confirm_close {
+                    chrome.dialog = Some(Dialog::ConfirmClose {
+                        target: CloseTarget::Terminal(pane_id),
+                        title: workspace.pane(pane_id).display_name().to_owned(),
+                        scope: CloseScope::Panes(1),
+                    });
+                    chrome.mode = Mode::ConfirmClose;
+                } else {
+                    close_live_terminal(workspace, chrome, pane_id).await?;
+                }
             }
         }
-        Action::ClosePane => close_live_pane(workspace, chrome).await?,
+        Action::ClosePane => {
+            if chrome.prefs.confirm_close {
+                if let Some(pane_id) = chrome.focused_pane() {
+                    chrome.dialog = Some(Dialog::ConfirmClose {
+                        target: CloseTarget::Pane(pane_id),
+                        title: workspace.pane(pane_id).display_name().to_owned(),
+                        scope: CloseScope::Panes(1),
+                    });
+                    chrome.mode = Mode::ConfirmClose;
+                } else {
+                    close_live_pane(workspace, chrome).await?;
+                }
+            } else {
+                close_live_pane(workspace, chrome).await?;
+            }
+        }
         Action::CloseTab => {
-            let Some((title, panes)) = chrome
+            let Some((id, title, panes)) = chrome
                 .active_tab()
-                .map(|tab| (tab.title.clone(), tab.slots.len()))
+                .map(|tab| (tab.id.clone(), tab.title.clone(), tab.slots.len()))
             else {
                 return Ok(());
             };
             if chrome.prefs.confirm_close {
                 chrome.dialog = Some(Dialog::ConfirmClose {
-                    target: CloseTarget::Tab,
+                    target: CloseTarget::Tab(id),
                     title,
                     scope: CloseScope::Panes(panes),
                 });

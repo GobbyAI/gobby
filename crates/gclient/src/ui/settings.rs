@@ -194,7 +194,7 @@ impl Default for ClientPrefs {
             hide_tab_bar_when_single_tab: false,
             sidebar_width: 26,
             sidebar_side: SidebarSide::Left,
-            sidebar_pinned: false,
+            sidebar_pinned: true,
             right_click_passthrough_modifier: PassthroughModifier::None,
             agent_sort: AgentSort::Grouped,
             project_order: Vec::new(),
@@ -208,10 +208,12 @@ impl Default for ClientPrefs {
 
 impl ClientPrefs {
     pub fn theme_kind(&self) -> ThemeKind {
-        if self.theme.eq_ignore_ascii_case("light") {
-            ThemeKind::Light
-        } else {
-            ThemeKind::Dark
+        match self.theme.to_ascii_lowercase().as_str() {
+            "light" => ThemeKind::Light,
+            "system" if matches!(dark_light::detect(), Ok(dark_light::Mode::Light)) => {
+                ThemeKind::Light
+            }
+            _ => ThemeKind::Dark,
         }
     }
 }
@@ -466,7 +468,7 @@ mod tests {
             ]
         );
         assert_eq!(row_value(SettingsRow::SidebarSide, &prefs), "left");
-        assert_eq!(row_value(SettingsRow::SidebarPinned, &prefs), "off");
+        assert_eq!(row_value(SettingsRow::SidebarPinned, &prefs), "on");
         prefs.sidebar_side = prefs.sidebar_side.toggled();
         prefs.sidebar_pinned = true;
         assert_eq!(row_value(SettingsRow::SidebarSide, &prefs), "right");

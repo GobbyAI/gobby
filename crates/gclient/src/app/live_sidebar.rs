@@ -2,6 +2,30 @@
 
 use super::*;
 
+#[derive(Default)]
+pub(in crate::app) struct SessionRetry {
+    failures: u8,
+    next_at: Option<Instant>,
+}
+
+impl SessionRetry {
+    fn ready(&self, now: Instant) -> bool {
+        self.next_at.is_none_or(|next| now >= next)
+    }
+
+    fn started(&mut self, now: Instant, jitter: u64) {
+        self.failures = self.failures.saturating_add(1).min(6);
+        let ceiling = 1_u64 << self.failures;
+        let lower = ceiling / 2;
+        self.next_at = Some(now + std::time::Duration::from_secs(lower + jitter % (lower + 1)));
+    }
+
+    fn succeeded(&mut self) {
+        self.failures = 0;
+        self.next_at = None;
+    }
+}
+
 impl Workspace<LiveDaemon> {
     pub fn roster_refresh_age(&self) -> Option<std::time::Duration> {
         self.last_roster_refresh_completed_at.map(|at| at.elapsed())
@@ -85,7 +109,13 @@ impl Workspace<LiveDaemon> {
     /// so a refresh that fails waits out `GIT_REFRESH_INTERVAL` instead of
     /// retrying every tick. `apply_sidebar_fetch` installs the result.
     pub fn start_sidebar_refetch(&mut self) -> Option<SidebarFetchFuture> {
-        let pending = std::mem::take(&mut self.pending_sidebar);
+        let mut pending = std::mem::take(&mut self.pending_sidebar);
+        let now = Instant::now();
+        if !self.session_retry.ready(now) {
+            self.pending_sidebar.sessions = pending.sessions;
+            self.pending_sidebar.session_rows = std::mem::take(&mut pending.session_rows);
+            pending.sessions = false;
+        }
         if !pending.projects
             && !pending.sessions
             && !pending.roster
@@ -99,6 +129,10 @@ impl Workspace<LiveDaemon> {
         }
         if pending.roster {
             self.roster_refreshed_at = Instant::now();
+        }
+        if pending.sessions || !pending.session_rows.is_empty() {
+            self.session_retry
+                .started(now, uuid::Uuid::new_v4().as_u128() as u64);
         }
         let request = SidebarRequest {
             seq: self.sidebar_stamps.next(),
@@ -118,6 +152,13 @@ impl Workspace<LiveDaemon> {
     /// row set: a set a later refetch already replaced is stale and stays
     /// out.
     pub fn apply_sidebar_fetch(&mut self, fetch: SidebarFetch) {
+        if fetch.sessions_attempted {
+            if fetch.sessions_failed {
+                self.pending_sidebar.sessions = true;
+            } else {
+                self.session_retry.succeeded();
+            }
+        }
         let seq = fetch.seq;
         let stamps = &mut self.sidebar_stamps;
         if let Some(projects) = fetch.projects {
@@ -270,6 +311,8 @@ pub struct SidebarFetch {
     projects: Option<Vec<ProjectRow>>,
     project_rows: Vec<(String, Option<SourceStatus>, Option<Vec<WorktreeRow>>)>,
     sessions: Vec<(String, Vec<SessionRow>, Vec<RunRow>)>,
+    sessions_attempted: bool,
+    sessions_failed: bool,
     roster: Option<RosterSnapshot>,
 }
 
@@ -364,6 +407,7 @@ impl SidebarRequest {
             }
         }
         if self.sessions || !self.session_rows.is_empty() {
+            fetch.sessions_attempted = true;
             let mut projects = checked_out.clone();
             if let Some(focused) = self.focused.filter(|focused| !projects.contains(focused)) {
                 projects.push(focused);
@@ -380,6 +424,7 @@ impl SidebarRequest {
                     Some(&project),
                     &mut failure,
                 ) else {
+                    fetch.sessions_failed = true;
                     continue;
                 };
                 let Some(runs) = optional(
@@ -388,6 +433,7 @@ impl SidebarRequest {
                     Some(&project),
                     &mut failure,
                 ) else {
+                    fetch.sessions_failed = true;
                     continue;
                 };
                 fetch.sessions.push((project, sessions, runs));
@@ -398,5 +444,29 @@ impl SidebarRequest {
             Some(error) if !gathered => Err(error),
             _ => Ok(fetch),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn session_retry_uses_jittered_exponential_delay_and_resets_after_success() {
+        let now = Instant::now();
+        let mut retry = SessionRetry::default();
+        for exponent in 1..=6 {
+            retry.started(now, 0);
+            let lower = 1_u64 << (exponent - 1);
+            assert!(!retry.ready(now + std::time::Duration::from_secs(lower - 1)));
+            assert!(retry.ready(now + std::time::Duration::from_secs(lower)));
+        }
+        retry.started(now, 32);
+        assert!(!retry.ready(now + std::time::Duration::from_secs(63)));
+        assert!(retry.ready(now + std::time::Duration::from_secs(64)));
+        retry.succeeded();
+        assert!(retry.ready(now));
+        retry.started(now, 0);
+        assert!(retry.ready(now + std::time::Duration::from_secs(1)));
     }
 }

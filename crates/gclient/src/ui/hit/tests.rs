@@ -21,6 +21,7 @@ const HEIGHT: u16 = 40;
 /// The sidebar is pinned so its hits are covered too.
 fn split_live() -> (Workspace, Chrome) {
     let mut ws = Workspace::scripted();
+    ws.set_local_machine("local");
     ws.daemon_mut().set_sidebar_rows(SidebarRows {
         projects: vec![ProjectRow {
             id: "proj-alpha".to_string(),
@@ -255,7 +256,7 @@ fn sidebar_scrollbar_lane_hits_by_section() {
 fn dialog_buttons_hit_first_and_clear_with_the_dialog() {
     let (ws, mut chrome) = split_live();
     chrome.dialog = Some(Dialog::ConfirmClose {
-        target: CloseTarget::Tab,
+        target: CloseTarget::Tab(chrome.active_tab().expect("tab").id.clone()),
         title: "alpha".to_string(),
         scope: CloseScope::Panes(2),
     });

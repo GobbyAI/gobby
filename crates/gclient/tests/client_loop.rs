@@ -797,7 +797,7 @@ async fn loop_routes_input_and_frames() {
         !ws.daemon().ws_connected(),
         "the run loop must finish its shutdown seam before returning"
     );
-    assert_eq!(ws.attention_entry_ids(), vec!["entry-loop".to_string()]);
+    assert_eq!(ws.roster_entry_ids(), vec!["entry-loop".to_string()]);
     assert!(ws.pane(pane).frames_rendered() >= 2);
     let screen: String = terminal
         .backend()
@@ -1398,6 +1398,8 @@ async fn closing_a_pane_spares_an_external_tmux_session() {
         wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
         send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
         send_key(&input_tx, KeyCode::Char('x'), KeyModifiers::NONE).await;
+        assert!(websocket_requests(&mock, "terminal_release_control").is_empty());
+        send_key(&input_tx, KeyCode::Char('y'), KeyModifiers::NONE).await;
         wait_for_websocket_requests(&mock, "terminal_release_control", 1).await;
         settle_live_event().await;
         drop(input_tx);
@@ -3268,6 +3270,7 @@ async fn select_spawn_attach_terminate_loop() {
         );
         let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
         let mut chrome = Chrome::dark();
+        chrome.prefs.confirm_close = false;
         // `new_terminal` ships without a chord (`prefix+shift+n` adds a
         // project); the loop under test spawns through an override.
         chrome.keymap =
@@ -6578,8 +6581,10 @@ async fn control_indicator_click_takes_back_only_a_lost_lease() {
         // A click routes against the frame last drawn, and the loop draws on
         // its render tick: let one pass so Read-only is on screen to click.
         tokio::time::pause();
-        tokio::time::advance(RENDER_TICK * 2).await;
-        settle_live_event().await;
+        for _ in 0..9 {
+            tokio::time::advance(RENDER_TICK).await;
+            settle_live_event().await;
+        }
         tokio::time::resume();
         mock.enqueue_take_control_reply(true, 2, None);
         click().await;
@@ -7972,6 +7977,7 @@ async fn context_menu_dispatches_items_and_closes_outside() {
     workspace.set_gobby_home(home.path().to_path_buf());
     let light = ClientPrefs {
         theme: "light".to_string(),
+        sidebar_pinned: false,
         ..ClientPrefs::default()
     };
     save_prefs(home.path(), &light).expect("prefs for reload");
@@ -8139,6 +8145,12 @@ async fn context_menu_dispatches_items_and_closes_outside() {
             key(KeyCode::Down).await;
         }
         key(KeyCode::Enter).await;
+        settle_live_event().await;
+        assert!(
+            websocket_requests(&mock, "terminal_kill").is_empty(),
+            "close pane must wait for confirmation"
+        );
+        key(KeyCode::Char('y')).await;
         wait_for_websocket_requests(&mock, "terminal_kill", 1).await;
         assert_eq!(
             terminal_of(&websocket_requests(&mock, "terminal_kill")[0]),
@@ -8180,11 +8192,11 @@ async fn context_menu_dispatches_items_and_closes_outside() {
     assert_eq!(chrome.mode, Mode::ConfirmClose, "close tab asks first");
     assert!(
         matches!(
-            chrome.dialog,
+            chrome.dialog.as_ref(),
             Some(Dialog::ConfirmClose {
-                target: CloseTarget::Tab,
+                target: CloseTarget::Tab(id),
                 ..
-            })
+            }) if chrome.active_tab().is_some_and(|tab| tab.id == *id)
         ),
         "the confirm-close dialog targets the tab: {:?}",
         chrome.dialog
@@ -8473,7 +8485,7 @@ async fn one_failing_project_query_does_not_starve_the_roster() {
 
     assert!(workspace.daemon_ready());
     assert_eq!(
-        workspace.attention_entry_ids(),
+        workspace.roster_entry_ids(),
         ["run:a"],
         "the roster names the panes a person can reach, so it never waits behind \
          another query"
@@ -8689,7 +8701,7 @@ async fn sidebar_model_follows_daemon_events() {
         .expect("drain session event");
     assert_eq!(gets("/api/attention/roster"), 2);
     assert_eq!(
-        workspace.attention_entry_ids(),
+        workspace.roster_entry_ids(),
         ["run:a", "run:c"],
         "the session event refetched the roster and dropped the ended run"
     );
@@ -8724,7 +8736,7 @@ async fn sidebar_model_follows_daemon_events() {
         .await
         .expect("drain attention event");
     assert_eq!(
-        workspace.attention_entry_ids(),
+        workspace.roster_entry_ids(),
         ["run:a"],
         "the attention refetch dropped the entry the daemon no longer returns"
     );
@@ -12104,6 +12116,7 @@ async fn closing_a_bare_terminal_row_kills_that_row_not_the_focused_pane() {
 
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
     let mut chrome = pinned_chrome();
+    chrome.prefs.confirm_close = false;
     show_roster(&workspace, &mut chrome);
     chrome.focus_pane(first);
     let (input_tx, input_rx) = mpsc::channel(32);
@@ -12217,6 +12230,7 @@ async fn closing_an_unshown_agent_row_kills_that_row_not_the_focused_pane() {
 
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
     let mut chrome = pinned_chrome();
+    chrome.prefs.confirm_close = false;
     let (input_tx, input_rx) = mpsc::channel(32);
     let driver = async {
         wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
@@ -12335,6 +12349,7 @@ async fn closing_an_external_row_releases_the_lease_instead_of_killing_it() {
 
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
     let mut chrome = pinned_chrome();
+    chrome.prefs.confirm_close = false;
     show_roster(&workspace, &mut chrome);
     let (input_tx, input_rx) = mpsc::channel(32);
     let driver = async {

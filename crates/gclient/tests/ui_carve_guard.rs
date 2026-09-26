@@ -256,7 +256,7 @@ fn render_workspace_composes_imported_chrome() {
         chrome.sidebar.pinned = true;
         chrome.mode = Mode::ConfirmClose;
         chrome.dialog = Some(Dialog::ConfirmClose {
-            target: CloseTarget::Pane,
+            target: CloseTarget::Pane(chrome.focused_pane().expect("focused pane")),
             title: "term-beta".to_string(),
             scope: CloseScope::Panes(1),
         });
@@ -278,7 +278,7 @@ fn render_workspace_composes_imported_chrome() {
             "term-beta",
             "No assigned task",
             "second",
-            "Unknown · Focused",
+            "term-alpha · Focused",
             "close",
         ] {
             assert!(

@@ -169,11 +169,17 @@ fn hidden_tab_with_attention_carries_the_mark() {
     ws.daemon_mut().set_roster(json!({
         "epoch": "attention-1",
         "seq": 1,
-        "entries": [{
-            "entry_id": "run:second",
-            "terminal": {"terminal_id": "term-second", "backend": "native"},
-            "attention": {"attention_id": "att-second", "kind": "actionable"},
-        }],
+        "entries": [
+            {
+                "entry_id": "run:first",
+                "terminal": {"terminal_id": "term-first", "backend": "native"}
+            },
+            {
+                "entry_id": "run:second",
+                "terminal": {"terminal_id": "term-second", "backend": "native"},
+                "attention": {"attention_id": "att-second", "kind": "actionable"}
+            }
+        ],
     }));
     ws.reconcile_subscribe_first().expect("attention roster");
 

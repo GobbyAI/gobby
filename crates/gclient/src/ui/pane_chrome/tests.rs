@@ -39,6 +39,7 @@ fn pane_title_prefers_task_then_label_then_provisional() {
             vec![SessionRow {
                 id: "sess-alpha".to_owned(),
                 title: Some("Ship the Unicode 修复".to_owned()),
+                reference: Some("gobby#1742".to_owned()),
                 ..SessionRow::default()
             }],
         )]
@@ -112,10 +113,15 @@ fn pane_title_prefers_task_then_label_then_provisional() {
     assert_eq!(pane_title(&ws, ws.pane(pane_id)), "manual title");
     ws.pane_mut(pane_id).label = None;
     assert_eq!(pane_title(&ws, ws.pane(pane_id)), "Ship the Unicode 修复");
+    assert_eq!(
+        pane_footer(&ws, ws.pane(pane_id), false).left,
+        "Codex (gobby#1742)"
+    );
 
     ws.daemon_mut().set_sidebar_rows(SidebarRows::default());
     ws.reconcile_subscribe_first().unwrap();
     assert_eq!(pane_title(&ws, ws.pane(pane_id)), "Codex");
+    assert_eq!(pane_footer(&ws, ws.pane(pane_id), false).left, "Codex");
 
     let mut fallback = Pane::new(PaneId(99), "term-fallback", Backend::Native, "epoch");
     fallback.label = Some("renamed pane".to_owned());
@@ -123,6 +129,25 @@ fn pane_title_prefers_task_then_label_then_provisional() {
     fallback.label = None;
     fallback.command = Some("nvim".to_owned());
     assert_eq!(pane_title(&ws, &fallback), "");
+}
+
+#[test]
+fn bare_shell_footer_uses_its_command_instead_of_unknown_agent_identity() {
+    let mut ws = Workspace::scripted();
+    ws.daemon_mut().set_roster(json!({
+        "epoch": "e1",
+        "seq": 1,
+        "entries": [{
+            "entry_id": "session:shell",
+            "session_id": "shell",
+            "terminal": {"terminal_id": "term-shell", "backend": "native"}
+        }]
+    }));
+    ws.reconcile_subscribe_first().unwrap();
+    let mut pane = Pane::new(PaneId(101), "term-shell", Backend::Native, "epoch");
+    pane.command = Some("zsh".to_owned());
+    assert_eq!(ws.sidebar().agents.len(), 1);
+    assert_eq!(pane_footer(&ws, &pane, true).left, "zsh · Focused");
 }
 
 #[test]

@@ -134,7 +134,12 @@ impl AgentEntry {
             .or(self.model.as_deref())
             .unwrap_or_default()
             .to_lowercase();
-        let mut slug = model.split_whitespace().collect::<Vec<_>>().join("-");
+        let slug = model.split_whitespace().collect::<Vec<_>>().join("-");
+        let provider_prefix = format!("{}-", self.provider.to_lowercase());
+        let mut slug = slug
+            .strip_prefix(&provider_prefix)
+            .unwrap_or(&slug)
+            .to_string();
         if let Some(effort) = &self.effort {
             slug.push('-');
             slug.push_str(effort);
@@ -540,10 +545,19 @@ impl<D: Daemon> Workspace<D> {
         self.roster_ids.clone()
     }
 
+    pub fn roster_entry_ids(&self) -> Vec<String> {
+        self.attention
+            .entries
+            .iter()
+            .map(|entry| entry.entry_id.clone())
+            .collect()
+    }
+
     pub fn attention_entry_ids(&self) -> Vec<String> {
         self.attention
             .entries
             .iter()
+            .filter(|entry| entry.attention.is_some())
             .map(|entry| entry.entry_id.clone())
             .collect()
     }

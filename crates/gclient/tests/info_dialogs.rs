@@ -214,7 +214,10 @@ async fn help_menu_ends_with_about_gobby_and_both_entries_open() {
                 assert_eq!(url, "http://127.0.0.1:60887");
                 assert_eq!(gclient_version, env!("CARGO_PKG_VERSION"));
                 assert_eq!(daemon_version.as_deref(), Some("0.5.0"));
-                assert_eq!(machine, "workstation");
+                assert_eq!(
+                    machine,
+                    gobby_client::ui::sidebar::local_hostname().unwrap_or("workstation")
+                );
             }
             other => panic!("unexpected dialog: {other:?}"),
         }
