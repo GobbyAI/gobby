@@ -12,10 +12,15 @@ _RUNNER_FAILURE_PATTERNS = (
     re.compile(r"(?m)^\s*Failing new (?:errors|issues) >= \w+: [1-9]\d*\b"),
 )
 _RUNNER_SUCCESS_PATTERNS = (
-    re.compile(r"(?m)^\s*test result:\s*ok\.\s*[1-9]\d* passed;\s*0 failed\b"),
-    re.compile(r"(?m)^\s*Summary\s+\[[^\]\n]+\]\s+\d+ tests? run:\s*[1-9]\d* passed\b"),
-    re.compile(r"(?m)^=+\s+[1-9]\d* passed(?:,\s*\d+ skipped)?\s+in\s+\d"),
-    re.compile(r"(?m)^Pytest:[ \t]*[1-9]\d* passed(?:,[ \t]*0 failed)?[ \t]*$"),
+    re.compile(
+        r"(?m)^[ \t]*test result:[ \t]*ok\.[ \t]*[1-9]\d* passed;[ \t]*0 failed[^\r\n]*\r?\n"
+    ),
+    re.compile(
+        r"(?m)^[ \t]*Summary[ \t]+\[[^\]\r\n]+\][ \t]+\d+ tests? run:"
+        r"[ \t]*[1-9]\d* passed(?:,[ \t]*(?:\d+ skipped|0 failed))*[ \t]*\r?\n"
+    ),
+    re.compile(r"(?m)^=+[ \t]+[1-9]\d* passed(?:,[ \t]*\d+ skipped)?[ \t]+in[ \t]+\d[^\r\n]*\r?\n"),
+    re.compile(r"(?m)^Pytest:[ \t]*[1-9]\d* passed(?:,[ \t]*0 failed)?[ \t]*\r?\n"),
 )
 
 
