@@ -1209,6 +1209,66 @@ FAILED tests/test_feature.py::test_feature - NotImplementedError
     assert result.green_runs
 
 
+@pytest.mark.parametrize(
+    "red_detail",
+    ["assertion failed: description was cut", "panicked at 'not yet implemented'"],
+)
+def test_tdd_evidence_credits_rust_stub_first_red(red_detail: str) -> None:
+    started = datetime(2026, 9, 26, tzinfo=UTC)
+    symbol = "the_description_column_is_never_cut_at_narrow_widths"
+    test = AcceptanceTest(
+        reference=f"crates/gclient/tests/keybind_help.rs::{symbol}",
+        path="crates/gclient/tests/keybind_help.rs",
+        symbol=symbol,
+        body=f"fn {symbol}() {{ assert!(description_is_visible()); }}",
+    )
+    command = (
+        "CARGO_BUILD_JOBS=2 cargo nextest run -p gobby-client --test keybind_help "
+        f"-E 'test({symbol})' --test-threads 2"
+    )
+    red = replace(
+        _run(
+            test,
+            started + timedelta(minutes=2),
+            "failure",
+            f"FAIL gobby-client::keybind_help {symbol}\n{red_detail}",
+            3,
+        ),
+        command=command,
+        matcher_id="cargo-nextest",
+        label="cargo nextest",
+    )
+    green = replace(
+        _run(
+            test,
+            started + timedelta(minutes=4),
+            "success",
+            f"PASS gobby-client::keybind_help {symbol}",
+            5,
+        ),
+        command=command,
+        matcher_id="cargo-nextest",
+        label="cargo nextest",
+    )
+    evidence = TranscriptEvidence(
+        edits=(
+            _edit(test.path, started, 1),
+            _edit("crates/gclient/src/ui/keybind_help.rs", started + timedelta(minutes=1), 2),
+            _edit("crates/gclient/src/ui/keybind_help.rs", started + timedelta(minutes=3), 4),
+        ),
+        validation_runs=(red, green),
+    )
+
+    result = evaluate_tdd_evidence((test,), evidence)
+
+    assert result.passed is True
+    assert result.red_runs == (command,)
+    assert result.green_runs == (command,)
+
+    reconstructed_red = replace(evidence, edits=evidence.edits[:2])
+    assert evaluate_tdd_evidence((test,), reconstructed_red).passed is False
+
+
 def test_tdd_evidence_accepts_pytest_q_red_with_trailing_failed_line() -> None:
     started = datetime(2026, 8, 31, tzinfo=UTC)
     test = AcceptanceTest(
