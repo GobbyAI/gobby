@@ -208,7 +208,11 @@ PostCompact or SessionStart source=compact records the compact delivery receipt.
 Submitting the command leaves delivery pending. The same bounded delivery operation
 checks for a fresh provider error or a missing boundary, then resubmits the command
 for the staged attempt with backoff. Exhaustion compensates the undelivered attempt
-and exposes retry guidance. A receipt prevents late failure compensation from
+and exposes retry guidance. Compensation clears pending delivery markers but retains
+the authored payload under an explicit `failed_not_deliverable` attempt marker. The
+owner can read it only with `get_handoff(failed_attempt_id=...)`; that read creates
+no receipt and cannot dispatch a held command. A new staged attempt replaces the
+failed marker. A receipt prevents late failure compensation from
 rolling back a confirmed boundary; `get_handoff()` can still retry the receipt
 idempotently while consuming the marker.
 A compact successor binds to a row of its exact terminal process that is
@@ -239,7 +243,7 @@ Manual `/clear` has no marker. Its new session is independent and receives no ha
 
 ## Pull-Only Recovery
 
-`get_handoff()` accepts no lookup arguments. It checks only:
+No-argument `get_handoff()` checks only:
 
 1. the caller row for an in-place compact marker;
 2. the caller's direct predecessor for a clear marker.
@@ -252,6 +256,11 @@ row and on a clear successor alike. No skill tier rides the handoff: the session
 reset empties the loaded-skills and completed-reference ledgers and the rule gates demand each skill again at its
 first use.
 The persisted Markdown remains available to UI/API session reads.
+`get_handoff(failed_attempt_id=...)` is an explicit owner-only read of the most
+recent failed attempt. It returns authored content marked `failed_not_deliverable`,
+without a delivery receipt or pending marker. It cannot make a failed attempt
+eligible for automatic delivery. `get_handoff(agent_run_id=...)` separately reads
+a child's final handoff for its parent or bound clear successor.
 
 No handoff content is injected through provider `additionalContext`; no bounded copy,
 summary pointer, stale-tail merge, or latest-project fallback participates in delivery.

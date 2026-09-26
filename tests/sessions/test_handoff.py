@@ -871,7 +871,7 @@ async def test_get_handoff_does_not_consume_while_delivery_pending(
     }
 
 
-def test_failed_attempt_restores_handoff_and_deletes_only_staged_content(
+def test_failed_attempt_restores_session_and_retains_undelivered_content(
     temp_db: HubDatabase,
     session_manager: SessionManager,
 ) -> None:
@@ -909,12 +909,100 @@ def test_failed_attempt_restores_handoff_and_deletes_only_staged_content(
         "SELECT COUNT(*) AS count FROM session_handoffs WHERE session_id = %s",
         (session.id,),
     )
-    assert handoff_count is not None and handoff_count["count"] == 0
+    assert handoff_count is not None and handoff_count["count"] == 1
+    assert sv_mgr.get_variables(session.id)["failed_handoff_attempt"] == {
+        "attempt_id": state.attempt_id,
+        "handoff_record_id": state.handoff_record_id,
+        "delivery_state": "failed_not_deliverable",
+    }
     feedback_count = temp_db.fetchone(
         "SELECT COUNT(*) AS count FROM session_feedback WHERE session_id = %s",
         (session.id,),
     )
     assert feedback_count is not None and feedback_count["count"] == len(feedback_ids) == 1
+
+
+async def test_failed_compact_payload_requires_explicit_recovery(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+) -> None:
+    session = _registered_session(session_manager)
+    payload = build_handoff_payload(
+        current_state="Unsubmitted compact command remains in the composer.",
+        next_steps=["Clear the draft, then continue."],
+    )
+    attempt_id = "f" * 32
+    staged = stage_handoff_attempt(
+        temp_db,
+        session.id,
+        attempt_id=attempt_id,
+        handoff=payload,
+        clear_session=False,
+    )
+
+    assert restore_staged_handoff(
+        temp_db,
+        session.id,
+        attempt_id,
+        failure_result={
+            "delivery_failed": True,
+            "delivery_pending": False,
+            "reason": "CLI did not confirm interruption after 3 attempts",
+        },
+    )
+    variables = SessionVariableManager(temp_db).get_variables(session.id)
+    assert PENDING_HANDOFF_VARIABLE not in variables
+    assert HANDOFF_PULL_PENDING_VARIABLE not in variables
+    assert variables["failed_handoff_attempt"] == {
+        "attempt_id": attempt_id,
+        "handoff_record_id": staged.handoff_record_id,
+        "delivery_state": "failed_not_deliverable",
+    }
+    assert (
+        temp_db.fetchone(
+            "SELECT 1 FROM session_handoffs WHERE id = %s", (staged.handoff_record_id,)
+        )
+        is not None
+    )
+    assert (
+        temp_db.fetchone(
+            "SELECT 1 FROM session_handoff_deliveries WHERE attempt_id = %s", (attempt_id,)
+        )
+        is None
+    )
+    assert claim_staged_handoff_delivery(temp_db, session.id, attempt_id) is None
+
+    registry = create_session_messages_registry(session_manager=session_manager, db=temp_db)
+    with session_context_for_test(session.id):
+        automatic = await registry.call("get_handoff", {})
+        recovered = await registry.call("get_handoff", {"failed_attempt_id": attempt_id})
+
+    assert automatic["found"] is False
+    assert recovered == {
+        "success": True,
+        "found": True,
+        "session_id": session.id,
+        "attempt_id": attempt_id,
+        "delivery_state": "failed_not_deliverable",
+        "handoff": payload.rendered_markdown,
+    }
+    assert (
+        temp_db.fetchone(
+            "SELECT 1 FROM session_handoff_deliveries WHERE attempt_id = %s", (attempt_id,)
+        )
+        is None
+    )
+
+    stage_handoff_attempt(
+        temp_db,
+        session.id,
+        attempt_id="e" * 32,
+        handoff=build_handoff_payload(current_state="Fresh.", next_steps=["Continue."]),
+        clear_session=False,
+    )
+    with session_context_for_test(session.id):
+        stale = await registry.call("get_handoff", {"failed_attempt_id": attempt_id})
+    assert stale["found"] is False
 
 
 def test_delivery_receipt_is_idempotent_and_prevents_compensation(
@@ -1343,7 +1431,10 @@ async def test_tool_schemas_expose_new_surface_and_legacy_names_are_absent(
     assert get_schema is not None
     assert get_schema.input_schema == {
         "type": "object",
-        "properties": {"agent_run_id": {"type": "string"}},
+        "properties": {
+            "agent_run_id": {"type": "string"},
+            "failed_attempt_id": {"type": "string"},
+        },
         "additionalProperties": False,
     }
     feedback_schema = registry.get_tool_metadata("feedback")

@@ -41,6 +41,7 @@ from gobby.sessions.compact_continuation import (
     mark_handoff_compact_continuation_pending,
 )
 from gobby.sessions.handoff import (
+    FAILED_HANDOFF_VARIABLE,
     HANDOFF_DELIVERY_FAILURES_VARIABLE,
     HANDOFF_DISPATCH_GATE_VARIABLE,
     HANDOFF_UNAVAILABLE_VARIABLE,
@@ -1461,6 +1462,60 @@ async def test_compact_provider_failure_exhausts_to_failure_settlement(hub_db: H
         )
         is None
     )
+
+
+async def test_held_compact_failed_interrupt_preserves_undelivered_payload(
+    hub_db: HubDatabase,
+) -> None:
+    session_manager = _compact_session_manager(hub_db, _NATIVE_WORKER_CONTEXT)
+    claimed = _claimed_compact_attempt(hub_db)
+    pane = SimpleNamespace(backend="native", snapshot=AsyncMock(return_value="/compact"))
+    reason = "CLI did not confirm interruption after 3 attempts"
+    send_command = AsyncMock(return_value=(False, reason, False, {"interrupted": False}))
+
+    with (
+        patch(f"{_COMPACT_DELIVERY}._resolve_pane_io", return_value=(pane, None)),
+        patch(f"{_COMPACT_DELIVERY}._interrupt_observer", return_value=(None, None)),
+        patch(f"{_COMPACT_DELIVERY}._turn_settled_observer", return_value=None),
+        patch(f"{_COMPACT_DELIVERY}._send_terminal_compaction_command", send_command),
+        patch(f"{_COMPACT_DELIVERY}.composer_reader", return_value=None),
+        patch(
+            "gobby.hooks.terminal_handoff_delivery.shielded_terminal_delivery",
+            side_effect=_run_operation,
+        ),
+    ):
+        await terminal_handoff_delivery._settle_delivery(
+            claimed,
+            session_manager=session_manager,
+            agent_run_manager=MagicMock(),
+            terminal_manager=None,
+            terminal_runtime_registry=None,
+        )
+
+    send_command.assert_awaited_once()
+    variables = SessionVariableManager(hub_db).get_variables(SESSION_ID)
+    assert variables[HANDOFF_DISPATCH_GATE_VARIABLE]["reason"] == reason
+    assert variables[HANDOFF_DISPATCH_GATE_VARIABLE]["delivery_state"] == "failed_not_deliverable"
+    assert "failed_attempt_id" in variables[HANDOFF_DISPATCH_GATE_VARIABLE]["recovery_guidance"]
+    assert variables[FAILED_HANDOFF_VARIABLE] == {
+        "attempt_id": ATTEMPT_ID,
+        "handoff_record_id": claimed.handoff_record_id,
+        "delivery_state": "failed_not_deliverable",
+    }
+    assert PENDING_HANDOFF_VARIABLE not in variables
+    assert (
+        hub_db.fetchone(
+            "SELECT 1 FROM session_handoffs WHERE id = %s", (claimed.handoff_record_id,)
+        )
+        is not None
+    )
+    assert (
+        hub_db.fetchone(
+            "SELECT 1 FROM session_handoff_deliveries WHERE attempt_id = %s", (ATTEMPT_ID,)
+        )
+        is None
+    )
+    assert claim_staged_handoff_delivery(hub_db, SESSION_ID, ATTEMPT_ID) is None
 
 
 async def test_tmux_pane_session_still_receives_the_continuation_by_tmux(

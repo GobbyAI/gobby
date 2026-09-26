@@ -233,7 +233,7 @@ calls.
 | `get_session_messages` | Read rendered transcript messages. |
 | `search_session_messages` | Search rendered transcript messages by substring. |
 | `set_handoff` | Stage an authored handoff and dispatch the current session's compact or clear boundary. |
-| `get_handoff` | Consume the current session's pending handoff; with `agent_run_id`, read the child run's final handoff. |
+| `get_handoff` | Consume the current session's pending handoff; with `failed_attempt_id`, read the caller's undelivered attempt; with `agent_run_id`, read a child run's final handoff. |
 | `feedback` | Submit the current epoch survey without marking it human-reviewed. |
 | `set_title` | Set the caller’s sticky manual title. |
 | `register_session` | Register hookless clients such as SDK-driven agents. |
@@ -450,6 +450,10 @@ operations create no marker, so they also return an empty handoff. Persisted
 pending, turn-start meta skill loads wait so the pull runs before
 `gobby:references/skills/loading.md`, `gobby:references/memory/overview.md`,
 `brevity`, and `restraint` reloads.
+If terminal delivery fails, the failure result gives an `attempt_id`. The owner can
+call `get_handoff(failed_attempt_id="<attempt_id>")` to recover its authored content.
+This explicit read does not deliver the handoff, create a receipt, or submit a held
+`/compact` command. Clear a held command before retrying `set_handoff`.
 
 For terminal sessions, the tool result reports `handoff_staged=true` and
 `delivery_pending=true` before Gobby touches provider input. The proxy strips the
