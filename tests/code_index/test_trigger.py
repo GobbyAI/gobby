@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections import deque
 from collections.abc import Iterator, Mapping, Sequence
@@ -13,6 +14,7 @@ from typing import Any, cast
 
 import pytest
 
+from gobby.code_index.eligibility import code_index_id_for_root
 from gobby.code_index.gcode_gateway import (
     GcodeCommandResult,
     GcodeDaemonConfigUnavailableError,
@@ -85,8 +87,9 @@ class RecordingGateway(GcodeGateway):
 
 
 class FirstCallBlockingGateway(RecordingGateway):
-    def __init__(self) -> None:
+    def __init__(self, first_result: GcodeCommandResult | None = None) -> None:
         super().__init__()
+        self.first_result = first_result
         self.first_call_started = asyncio.Event()
         self.release_first_call = asyncio.Event()
         self.active_calls = 0
@@ -108,6 +111,8 @@ class FirstCallBlockingGateway(RecordingGateway):
             if len(self.calls) == 1:
                 self.first_call_started.set()
                 await self.release_first_call.wait()
+                if self.first_result is not None:
+                    return self.first_result
             return _result(timeout_seconds=timeout or 0.01)
         finally:
             self.active_calls -= 1
@@ -156,6 +161,14 @@ async def _wait_for_call_count(gateway: RecordingGateway, expected: int) -> None
             return
         await _next_loop_turn()
     pytest.fail(f"expected {expected} gateway calls, received {len(gateway.calls)}")
+
+
+async def _wait_for_suspension(trigger: CodeIndexTrigger, root_key: str) -> None:
+    for _ in range(20):
+        if root_key in trigger._suspended_by_root:
+            return
+        await _next_loop_turn()
+    pytest.fail(f"expected a suspended batch for {root_key}")
 
 
 async def _wait_for_scheduled_callback(
@@ -292,23 +305,151 @@ async def test_flush_passes_overlay_claim_to_launch_factory(tmp_path: Path) -> N
     )
     worktree = tmp_path / "worktree"
     worktree.mkdir()
-    overlay_id = "0d1a4ce8-6f21-5d59-8abc-9d2f5b2b8a7a"
+    gateway.outcomes.append(_result(returncode=2, stderr='{"error":"checkout_required"}'))
+    trigger.notify_file_changed(str(worktree / "src" / "foo.py"), "parent-project", str(worktree))
+    await _wait_for_suspension(trigger, str(worktree))
+    assert opened == [("parent-project", None)]
+
+    (worktree / ".gobby").mkdir()
+    (worktree / ".gobby" / "isolation.json").write_text(
+        json.dumps({"parent_project_path": str(tmp_path), "parent_project_id": "parent-project"}),
+        encoding="utf-8",
+    )
+    overlay_id = code_index_id_for_root(worktree)
     trigger.notify_file_changed(
         str(worktree / "src" / "foo.py"),
         "parent-project",
         str(worktree),
-        code_overlay_project_id=overlay_id,
     )
-    await _wait_for_call_count(gateway, 1)
+    await _wait_for_call_count(gateway, 2)
 
-    assert opened == [("parent-project", overlay_id)]
+    assert opened == [("parent-project", None), ("parent-project", overlay_id)]
 
     # An ordinary project root carries no overlay claim.
     plain = tmp_path / "plain"
     plain.mkdir()
     trigger.notify_file_changed(str(plain / "bar.py"), "parent-project", str(plain))
+    await _wait_for_call_count(gateway, 3)
+    assert opened[2] == ("parent-project", None)
+
+
+@pytest.mark.parametrize("error_code", ["checkout_required", "checkout_mismatch"])
+@pytest.mark.asyncio
+async def test_checkout_failure_waits_for_changed_file(
+    harness: TriggerHarness,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    error_code: str,
+) -> None:
+    file_path = tmp_path / "src" / "foo.py"
+    file_path.parent.mkdir()
+    file_path.write_text("old", encoding="utf-8")
+    root_key = str(tmp_path)
+    harness.gateway.outcomes.append(_result(returncode=2, stderr=f'{{"error":"{error_code}"}}'))
+
+    with caplog.at_level(logging.WARNING, logger="gobby.code_index.trigger"):
+        harness.trigger.notify_file_changed(str(file_path), "proj-1", root_key)
+        await _wait_for_suspension(harness.trigger, root_key)
+        assert harness.trigger._pending_by_root[root_key] == {"src/foo.py"}
+        assert root_key not in harness.trigger._scheduled_by_root
+
+        harness.trigger.notify_file_changed(str(file_path), "proj-1", root_key)
+        await _next_loop_turn()
+        await _next_loop_turn()
+        assert len(harness.gateway.calls) == 1
+        assert caplog.text.count("gcode index exited 2") == 1
+
+        file_path.write_text("changed", encoding="utf-8")
+        harness.trigger.notify_file_changed(str(file_path), "proj-1", root_key)
+        await _wait_for_call_count(harness.gateway, 2)
+
+    assert root_key not in harness.trigger._suspended_by_root
+
+
+@pytest.mark.asyncio
+async def test_checkout_marker_repair_wakes_suspended_batch_with_same_overlay_id(
+    harness: TriggerHarness,
+    tmp_path: Path,
+) -> None:
+    marker = tmp_path / ".gobby" / "isolation.json"
+    marker.parent.mkdir()
+    marker.write_text(
+        json.dumps({"parent_project_path": str(tmp_path.parent), "parent_project_id": "old"}),
+        encoding="utf-8",
+    )
+    overlay_id = code_index_id_for_root(tmp_path)
+    root_key = str(tmp_path)
+    harness.gateway.outcomes.append(_result(returncode=2, stderr='{"error":"checkout_mismatch"}'))
+
+    harness.trigger.notify_file_changed("src/foo.py", "proj-1", root_key)
+    await _wait_for_suspension(harness.trigger, root_key)
+    assert harness.trigger._suspended_by_root[root_key].overlay_id == overlay_id
+
+    marker.write_text(
+        json.dumps({"parent_project_path": str(tmp_path.parent), "parent_project_id": "repaired"}),
+        encoding="utf-8",
+    )
+    harness.trigger.notify_file_changed("src/foo.py", "proj-1", root_key)
+    await _wait_for_call_count(harness.gateway, 2)
+    assert root_key not in harness.trigger._suspended_by_root
+
+
+@pytest.mark.asyncio
+async def test_edit_during_checkout_failure_gets_follow_up_attempt(
+    harness: TriggerHarness,
+    tmp_path: Path,
+) -> None:
+    gateway = FirstCallBlockingGateway(
+        first_result=_result(returncode=2, stderr='{"error":"checkout_required"}')
+    )
+    harness.trigger._gcode_gateway = gateway
+    file_path = tmp_path / "src" / "foo.py"
+    file_path.parent.mkdir()
+    file_path.write_text("old", encoding="utf-8")
+    root_key = str(tmp_path)
+
+    harness.trigger.notify_file_changed(str(file_path), "proj-1", root_key)
+    await gateway.first_call_started.wait()
+    file_path.write_text("changed", encoding="utf-8")
+    harness.trigger.notify_file_changed(str(file_path), "proj-1", root_key)
+    await _next_loop_turn()
+    await _next_loop_turn()
+    assert harness.trigger._pending_by_root[root_key] == {"src/foo.py"}
+    gateway.release_first_call.set()
     await _wait_for_call_count(gateway, 2)
-    assert opened[1] == ("parent-project", None)
+
+    assert root_key not in harness.trigger._suspended_by_root
+    assert root_key not in harness.trigger._pending_by_root
+
+
+@pytest.mark.asyncio
+async def test_cancelled_active_batch_retains_files_until_next_event(tmp_path: Path) -> None:
+    gateway = FirstCallBlockingGateway()
+    breaker = SyncCircuitBreaker(
+        name="Gcode daemon-config",
+        probe_target="daemon config endpoint",
+        operation="daemon-owned gcode work",
+        failure_threshold=1,
+        base_backoff_seconds=30.0,
+        max_backoff_seconds=900.0,
+        monotonic=FakeClock(),
+    )
+    trigger = CodeIndexTrigger(
+        loop=asyncio.get_running_loop(), gcode_gateway=gateway, daemon_config_breaker=breaker
+    )
+    root_key = str(tmp_path)
+    trigger.notify_file_changed("src/foo.py", "proj-1", root_key)
+    await gateway.first_call_started.wait()
+
+    active = next(iter(trigger._active_tasks_by_root[root_key]))
+    active.cancel()
+    await asyncio.gather(active, return_exceptions=True)
+    await _next_loop_turn()
+    assert trigger._pending_by_root[root_key] == {"src/foo.py"}
+    assert root_key not in trigger._scheduled_by_root
+
+    trigger.notify_file_changed("src/foo.py", "proj-1", root_key)
+    await _wait_for_call_count(gateway, 2)
 
 
 @pytest.mark.asyncio

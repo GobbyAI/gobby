@@ -10,13 +10,16 @@ import asyncio
 import json
 import logging
 import os
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
+from gobby.code_index.eligibility import overlay_project_id_for_root
 from gobby.code_index.gcode_gateway import (
     GcodeCommandResult,
     GcodeDaemonConfigUnavailableError,
     GcodeGateway,
+    _typed_gcode_error,
 )
 from gobby.code_index.maintenance_launch import open_launch_async
 from gobby.code_index.sync_breaker import SyncCircuitBreaker
@@ -25,6 +28,22 @@ if TYPE_CHECKING:
     from gobby.code_index.maintenance_launch import MaintenanceLaunchFactory
 
 logger = logging.getLogger(__name__)
+_CHECKOUT_MARKERS = (".gobby/isolation.json", ".gobby/project.json")
+
+
+def _file_version(root: str, path: str) -> tuple[int, int, int, int, int] | None:
+    try:
+        stat = (Path(root) / path).stat()
+    except OSError:
+        return None
+    return (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+
+
+@dataclass
+class _SuspendedBatch:
+    overlay_id: str | None
+    file_versions: dict[str, tuple[int, int, int, int, int] | None]
+    marker_versions: dict[str, tuple[int, int, int, int, int] | None]
 
 
 class _LaunchFactorySource(Protocol):
@@ -61,9 +80,7 @@ class CodeIndexTrigger:
         # Pending files grouped by canonical root path.
         self._pending_by_root: dict[str, set[str]] = {}
         self._project_id_by_root: dict[str, str] = {}
-        # Overlay claim per root: derived code-index id for worktree/clone
-        # roots, None for ordinary project roots.
-        self._overlay_by_root: dict[str, str | None] = {}
+        self._suspended_by_root: dict[str, _SuspendedBatch] = {}
         self._scheduled_by_root: dict[str, asyncio.Handle] = {}
         self._active_tasks_by_root: dict[str, set[asyncio.Task[None]]] = {}
         self._active_files_by_root: dict[str, set[str]] = {}
@@ -75,25 +92,20 @@ class CodeIndexTrigger:
         file_path: str,
         project_id: str,
         root_path: str,
-        code_overlay_project_id: str | None = None,
     ) -> None:
         """Thread-safe notification that a file was edited.
 
         Can be called from any thread. Schedules end-of-tick indexing on the
-        event loop. ``code_overlay_project_id`` carries the derived overlay id
-        when ``root_path`` is a worktree/clone isolation workspace, so the
-        launch grant admits gcode's writes under that id.
+        event loop. The overlay grant is resolved from the root when the batch
+        launches, so a repaired isolation marker is visible on retry.
         """
-        self._loop.call_soon_threadsafe(
-            self._schedule_file, file_path, project_id, root_path, code_overlay_project_id
-        )
+        self._loop.call_soon_threadsafe(self._schedule_file, file_path, project_id, root_path)
 
     def _schedule_file(
         self,
         file_path: str,
         project_id: str,
         root_path: str,
-        code_overlay_project_id: str | None = None,
     ) -> None:
         """Add a file to its root's next batch (runs on the event loop)."""
         root_key = self._root_key(root_path)
@@ -103,7 +115,23 @@ class CodeIndexTrigger:
             return
         self._pending_by_root.setdefault(root_key, set()).add(normalized_path)
         self._project_id_by_root[root_key] = project_id
-        self._overlay_by_root[root_key] = code_overlay_project_id
+
+        suspended = self._suspended_by_root.get(root_key)
+        if suspended is not None:
+            overlay_id = overlay_project_id_for_root(Path(root_key))
+            if (
+                overlay_id == suspended.overlay_id
+                and all(
+                    _file_version(root_key, marker) == suspended.marker_versions[marker]
+                    for marker in _CHECKOUT_MARKERS
+                )
+                and normalized_path in suspended.file_versions
+                and _file_version(root_key, normalized_path)
+                == suspended.file_versions[normalized_path]
+            ):
+                return
+            self._suspended_by_root.pop(root_key, None)
+            self._clear_retry_backoff(root_key)
 
         if root_key in self._scheduled_by_root:
             return
@@ -111,7 +139,7 @@ class CodeIndexTrigger:
 
     def _schedule_batch(self, root_key: str, delay: float | None = None) -> None:
         """Queue one immediate batch or delayed retry for a root."""
-        if root_key in self._scheduled_by_root:
+        if root_key in self._scheduled_by_root or root_key in self._suspended_by_root:
             return
         if delay is None:
             handle = self._loop.call_soon(self._start_batch, root_key)
@@ -122,11 +150,12 @@ class CodeIndexTrigger:
     def _start_batch(self, root_key: str) -> None:
         """Start a root's pending files that do not overlap active work."""
         self._scheduled_by_root.pop(root_key, None)
+        if root_key in self._suspended_by_root:
+            return
         pending = self._pending_by_root.get(root_key)
         if not pending:
             if not self._active_tasks_by_root.get(root_key):
                 self._project_id_by_root.pop(root_key, None)
-                self._overlay_by_root.pop(root_key, None)
             return
 
         active_files = self._active_files_by_root.setdefault(root_key, set())
@@ -170,16 +199,41 @@ class CodeIndexTrigger:
         try:
             task.result()
         except asyncio.CancelledError:
+            self._pending_by_root.setdefault(root_key, set()).update(files)
             logger.debug("gcode index batch cancelled for %s", root_key)
+            return
         except Exception:
+            self._pending_by_root.setdefault(root_key, set()).update(files)
             logger.exception("gcode index batch task failed for %s", root_key)
+            return
 
         if self._pending_by_root.get(root_key):
-            if root_key not in self._scheduled_by_root:
+            if root_key not in self._scheduled_by_root and root_key not in self._suspended_by_root:
                 self._schedule_batch(root_key)
         elif root_key not in self._scheduled_by_root and root_key not in self._active_tasks_by_root:
             self._project_id_by_root.pop(root_key, None)
-            self._overlay_by_root.pop(root_key, None)
+
+    def _suspend_checkout_failure(self, root_key: str, project_id: str, files: set[str]) -> None:
+        """Keep files without retrying a checkout error until the root changes."""
+        pending = self._pending_by_root.setdefault(root_key, set())
+        notified_during_batch = bool(pending)
+        pending.update(files)
+        self._project_id_by_root[root_key] = project_id
+        if notified_during_batch:
+            # The follow-up event has not been indexed yet; allow one more batch.
+            self._suspended_by_root.pop(root_key, None)
+            return
+        self._clear_retry_backoff(root_key)
+        scheduled = self._scheduled_by_root.pop(root_key, None)
+        if scheduled is not None:
+            scheduled.cancel()
+        self._suspended_by_root[root_key] = _SuspendedBatch(
+            overlay_id=overlay_project_id_for_root(Path(root_key)),
+            file_versions={path: _file_version(root_key, path) for path in pending},
+            marker_versions={
+                marker: _file_version(root_key, marker) for marker in _CHECKOUT_MARKERS
+            },
+        )
 
     def _requeue_for_retry(
         self,
@@ -274,7 +328,7 @@ class CodeIndexTrigger:
                     factory,
                     project_id,
                     timeout_seconds=timeout,
-                    code_overlay_project_id=self._overlay_by_root.get(root_key),
+                    code_overlay_project_id=overlay_project_id_for_root(Path(root_key)),
                 ) as launch:
                     result = await self._gcode_gateway.incremental_index(
                         Path(root_key),
@@ -285,6 +339,7 @@ class CodeIndexTrigger:
             self._daemon_config_breaker.record_success()
             if result.success:
                 self._clear_retry_backoff(root_key)
+                self._suspended_by_root.pop(root_key, None)
                 busy_files = _busy_files_from_result(result, files)
                 if busy_files:
                     self._requeue_for_retry(root_key, project_id, busy_files)
@@ -320,7 +375,14 @@ class CodeIndexTrigger:
                         root_key,
                         detail,
                     )
-                self._requeue_for_retry(root_key, project_id, files)
+                payload = _typed_gcode_error(result.stderr) if result.returncode == 2 else None
+                if payload is not None and payload.get("error") in {
+                    "checkout_required",
+                    "checkout_mismatch",
+                }:
+                    self._suspend_checkout_failure(root_key, project_id, files)
+                else:
+                    self._requeue_for_retry(root_key, project_id, files)
         except GcodeDaemonConfigUnavailableError:
             self._daemon_config_breaker.record_failure()
             self._requeue_for_retry(
