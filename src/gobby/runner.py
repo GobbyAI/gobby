@@ -114,8 +114,11 @@ async def _run_blocking_startup_phase(
     try:
         await asyncio.shield(worker)
     finally:
-        if not worker.done():
-            await asyncio.shield(worker)
+        while not worker.done():
+            try:
+                await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                continue
 
 
 class GobbyRunner:

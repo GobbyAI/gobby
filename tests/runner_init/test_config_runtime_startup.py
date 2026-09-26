@@ -178,7 +178,7 @@ async def test_synchronous_startup_phases_keep_loop_responsive(
         await startup
 
 
-async def test_cancelled_startup_waits_for_storage_before_rollback(
+async def test_twice_cancelled_startup_waits_for_storage_before_rollback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     events: list[str] = []
@@ -201,6 +201,9 @@ async def test_cancelled_startup_waits_for_storage_before_rollback(
 
     startup = asyncio.create_task(GobbyRunner.create())
     assert await asyncio.wait_for(asyncio.to_thread(entered.wait, 2), timeout=3)
+    startup.cancel()
+    await asyncio.sleep(0)
+    assert "rollback" not in events
     startup.cancel()
     await asyncio.sleep(0)
     assert "rollback" not in events
