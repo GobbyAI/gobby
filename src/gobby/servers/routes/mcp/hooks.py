@@ -723,7 +723,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
             except AgentRunIngressRetryableError as exc:
                 inc_counter("hooks_failed_total")
                 if claim_lease is not None:
-                    rollback_agy_startup_claim(hook_manager, claim_lease)
+                    await asyncio.to_thread(rollback_agy_startup_claim, hook_manager, claim_lease)
                 released = bool(envelope_id and release_envelope_processing_claim(envelope_id))
                 logger.warning(
                     "Retrying managed hook until durable run identity is available",
@@ -750,7 +750,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
             except DaemonNotReadyError as exc:
                 inc_counter("hooks_failed_total")
                 if claim_lease is not None:
-                    rollback_agy_startup_claim(hook_manager, claim_lease)
+                    await asyncio.to_thread(rollback_agy_startup_claim, hook_manager, claim_lease)
                 released = bool(envelope_id and release_envelope_processing_claim(envelope_id))
                 logger.warning(
                     "Retrying hook after daemon-not-ready gate",
@@ -777,7 +777,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                 # Invalid request - still return graceful response
                 inc_counter("hooks_failed_total")
                 if claim_lease is not None:
-                    rollback_agy_startup_claim(hook_manager, claim_lease)
+                    await asyncio.to_thread(rollback_agy_startup_claim, hook_manager, claim_lease)
                 if _is_codex_root_context_miss(source, payload, e):
                     logger.debug(
                         "Skipping Codex hook without project context: %s",
@@ -803,7 +803,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
             except TimeoutError as exc:
                 inc_counter("hooks_failed_total")
                 if claim_lease is not None:
-                    invalidate_agy_startup_claim(hook_manager, claim_lease)
+                    await asyncio.to_thread(invalidate_agy_startup_claim, hook_manager, claim_lease)
                 timeout_seconds = hook_timeout
                 timeout_log_extra = {
                     "source": source,
@@ -901,7 +901,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                 # This prevents confusing "hook failed" warnings in Claude Code
                 inc_counter("hooks_failed_total")
                 if claim_lease is not None:
-                    rollback_agy_startup_claim(hook_manager, claim_lease)
+                    await asyncio.to_thread(rollback_agy_startup_claim, hook_manager, claim_lease)
                 logger.exception(
                     "Hook execution failed: %s",
                     hook_type,

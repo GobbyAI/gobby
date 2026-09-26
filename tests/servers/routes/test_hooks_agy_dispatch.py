@@ -13,9 +13,11 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, call, patch
 from uuid import uuid4
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+import gobby.servers.routes.mcp.hooks as hooks_routes
 from gobby.adapters.agy_contract import AGY_FORCE_CONTINUE_LIMIT
 from gobby.config.app import DaemonConfig
 from gobby.hooks.agent_run_ingress import AgentRunIngressRetryableError
@@ -509,6 +511,58 @@ def _capability_gate_server(session_storage: SessionManager) -> Any:
     server.app.state.hook_manager = MagicMock()
     server.app.state.hook_manager.shutdown_async = AsyncMock()
     return server
+
+
+@pytest.mark.parametrize(
+    ("operation", "failure", "expected_status"),
+    [
+        ("rollback_agy_startup_claim", ValueError("bad hook"), 200),
+        ("invalidate_agy_startup_claim", TimeoutError("slow hook"), 503),
+    ],
+)
+async def test_startup_claim_mutation_keeps_hook_loop_responsive(
+    monkeypatch: pytest.MonkeyPatch,
+    session_storage: SessionManager,
+    operation: str,
+    failure: Exception,
+    expected_status: int,
+) -> None:
+    server = _capability_gate_server(session_storage)
+    owner_thread = threading.get_ident()
+    entered = threading.Event()
+    release = threading.Event()
+
+    async def claim(*args: Any, **kwargs: Any) -> StartupClaimLease:
+        return StartupClaimLease("session-1", 1, "owner-1")
+
+    async def fail_adapter(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        raise failure
+
+    def blocked_mutation(*args: Any, **kwargs: Any) -> None:
+        entered.set()
+        assert threading.get_ident() != owner_thread
+        assert release.wait(2)
+
+    monkeypatch.setattr(hooks_routes, "preflight_agy_startup_claim_bounded", claim)
+    monkeypatch.setattr(hooks_routes, "_run_adapter_hook", fail_adapter)
+    monkeypatch.setattr(hooks_routes, operation, blocked_mutation)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=server.app), base_url="http://test"
+    ) as client:
+        request = asyncio.create_task(
+            client.post("/api/hooks/execute", json=_agy_pre_invocation_envelope())
+        )
+        try:
+            assert await asyncio.wait_for(asyncio.to_thread(entered.wait, 2), timeout=3)
+            heartbeat = asyncio.Event()
+            asyncio.get_running_loop().call_soon(heartbeat.set)
+            await asyncio.wait_for(heartbeat.wait(), timeout=1)
+        finally:
+            release.set()
+            response = await request
+
+    assert response.status_code == expected_status
 
 
 class TestAgyAdapterTimeoutRetry:
