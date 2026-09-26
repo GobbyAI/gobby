@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import shutil
 import subprocess  # nosec B404 - reads git commit times for staleness reporting
@@ -17,6 +18,8 @@ from typing import IO
 from gobby.install.bin_freshness_github import SourceUnavailableError
 from gobby.utils import spawn
 from gobby.utils.native_bin import native_bin_dir
+
+logger = logging.getLogger(__name__)
 
 NATIVE_BINARY_MODE = 0o755
 
@@ -118,7 +121,9 @@ def _write_staged_binary(path: Path, source: IO[bytes]) -> None:
 # Unpublished managed binaries (gterm, gclient) carry a static crate version, so
 # their version stamp can never report staleness. The only honest freshness test
 # is the content of the artifact the workspace build just produced, recorded here
-# beside the binary so the next install can compare without promoting.
+# beside the binary so the next install can compare without promoting. A build
+# that confirms the installed binary current re-records the stamp, so its mtime
+# is the last time the installed bytes were known to match the source.
 SOURCE_HASH_SUFFIX = "-source-sha256"
 
 
@@ -169,11 +174,28 @@ def clear_source_hash(bin_dir: Path, name: str) -> None:
 
 
 def workspace_binary_is_current(bin_dir: Path, name: str, built: Path, installed: Path) -> bool:
-    """True when the installed binary already came from this exact build artifact."""
+    """True when the installed binary already came from this exact build artifact.
+
+    A True answer re-records the stamp so its mtime says when the installed bytes
+    were last confirmed against a build of the source. The signed binary itself is
+    never touched: a new inode is what a real promotion means.
+    """
     if not installed.exists():
         return False
     recorded = read_source_hash(bin_dir, name)
-    return recorded is not None and recorded == file_sha256(built)
+    if recorded is None or recorded != file_sha256(built):
+        return False
+    try:
+        write_source_hash(bin_dir, name, recorded)
+    except OSError:
+        # The answer stands; only the evidence for the status marker is lost.
+        logger.warning(
+            "%s: installed binary is current but its source-hash stamp could not be "
+            "re-recorded; status may keep reporting it stale",
+            name,
+            exc_info=True,
+        )
+    return True
 
 
 # Which crates a binary is built from. `workspace_binary_is_current` answers a
@@ -232,6 +254,11 @@ def last_source_commit_time(crates_root: Path, crates: tuple[str, ...]) -> float
 def native_bin_predates_source(name: str, *, bin_dir: Path | None = None) -> bool | None:
     """True when `name`'s installed binary predates the last commit to its crates.
 
+    The install time is the newer of the binary's mtime and the source-hash
+    stamp's: a build that confirmed the installed binary current re-records the
+    stamp without promoting a new inode, and that confirmation is as good as a
+    promotion. A missing or unreadable stamp leaves the binary's mtime alone.
+
     None means the question could not be asked -- an unknown binary, an install
     from a release with no `crates/` to compare against, a binary that is not
     installed, or an unreadable git history. A caller reporting this should say
@@ -243,12 +270,16 @@ def native_bin_predates_source(name: str, *, bin_dir: Path | None = None) -> boo
     root = _workspace_crates_root()
     if root is None:
         return None
-    installed = (bin_dir or native_bin_dir()) / name
+    bin_root = bin_dir or native_bin_dir()
     try:
-        installed_at = installed.stat().st_mtime
+        installed_at = (bin_root / name).stat().st_mtime
     except OSError:
         return None
+    try:
+        confirmed_at = source_hash_path(bin_root, name).stat().st_mtime
+    except OSError:
+        confirmed_at = installed_at
     committed_at = last_source_commit_time(root, crates)
     if committed_at is None:
         return None
-    return committed_at > installed_at
+    return committed_at > max(installed_at, confirmed_at)

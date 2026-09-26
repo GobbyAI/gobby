@@ -890,12 +890,47 @@ class TestWorkspaceBinaryFreshness:
 
         assert workspace_binary_is_current(bin_dir, "gclient", built, installed) is True
 
+    def test_a_current_build_refreshes_the_stamp_without_touching_the_binary(
+        self, tmp_path: Path
+    ) -> None:
+        """A `current` answer proves the installed bytes match the source; record when."""
+        bin_dir, built, installed = self._workspace(tmp_path)
+        digest = file_sha256(built)
+        write_source_hash(bin_dir, "gclient", digest)
+        stamp = bin_freshness_promotion.source_hash_path(bin_dir, "gclient")
+        os.utime(stamp, (1000.0, 1000.0))
+        os.utime(installed, (1000.0, 1000.0))
+
+        assert workspace_binary_is_current(bin_dir, "gclient", built, installed) is True
+
+        assert read_source_hash(bin_dir, "gclient") == digest
+        assert stamp.stat().st_mtime > 1000.0
+        assert installed.stat().st_mtime == 1000.0
+        assert installed.read_bytes() == b"installed-and-signed"
+
+    def test_a_failed_stamp_refresh_still_answers_current(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Recording is evidence for the status marker, never part of the answer."""
+        bin_dir, built, installed = self._workspace(tmp_path)
+        write_source_hash(bin_dir, "gclient", file_sha256(built))
+
+        def _read_only(*_args: object, **_kwargs: object) -> None:
+            raise OSError("read-only bin dir")
+
+        monkeypatch.setattr(bin_freshness_promotion, "write_source_hash", _read_only, raising=True)
+
+        assert workspace_binary_is_current(bin_dir, "gclient", built, installed) is True
+
     def test_changed_build_is_not_current(self, tmp_path: Path) -> None:
         bin_dir, built, installed = self._workspace(tmp_path)
         write_source_hash(bin_dir, "gclient", file_sha256(built))
+        stamp = bin_freshness_promotion.source_hash_path(bin_dir, "gclient")
+        os.utime(stamp, (1000.0, 1000.0))
         built.write_bytes(b"rebuilt-artifact")
 
         assert workspace_binary_is_current(bin_dir, "gclient", built, installed) is False
+        assert stamp.stat().st_mtime == 1000.0
 
     def test_missing_hash_is_not_current(self, tmp_path: Path) -> None:
         bin_dir, built, installed = self._workspace(tmp_path)
@@ -986,6 +1021,33 @@ class TestNativeBinPredatesSource:
         self._install(bin_dir, "gclient", mtime=2000.0)
 
         assert native_bin_predates_source("gclient", bin_dir=bin_dir) is False
+
+    def test_a_confirmed_current_binary_is_fresh_without_a_new_inode(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A build that matched the stamp re-recorded it; the old inode is not stale."""
+        _, bin_dir = self._checkout(
+            tmp_path, monkeypatch, commit_times={("gclient", "gcore"): 2000.0}
+        )
+        self._install(bin_dir, "gclient", mtime=1000.0)
+        write_source_hash(bin_dir, "gclient", "deadbeef")
+        stamp = bin_freshness_promotion.source_hash_path(bin_dir, "gclient")
+        os.utime(stamp, (3000.0, 3000.0))
+
+        assert native_bin_predates_source("gclient", bin_dir=bin_dir) is False
+
+    def test_a_stamp_older_than_the_commit_is_still_stale(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _, bin_dir = self._checkout(
+            tmp_path, monkeypatch, commit_times={("gclient", "gcore"): 2000.0}
+        )
+        self._install(bin_dir, "gclient", mtime=1000.0)
+        write_source_hash(bin_dir, "gclient", "deadbeef")
+        stamp = bin_freshness_promotion.source_hash_path(bin_dir, "gclient")
+        os.utime(stamp, (1500.0, 1500.0))
+
+        assert native_bin_predates_source("gclient", bin_dir=bin_dir) is True
 
     def test_gclient_watches_gcore_because_it_depends_on_it(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
