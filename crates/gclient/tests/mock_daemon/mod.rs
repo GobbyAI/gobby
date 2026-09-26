@@ -300,6 +300,14 @@ impl MockDaemon {
             .seed(project, tabs)
     }
 
+    pub fn seed_other_workspace(&self, project: &str, tabs: &[(&[&str], &str)]) -> String {
+        self.state
+            .lock()
+            .expect("mock state")
+            .workspace
+            .seed_other_workspace(project, tabs)
+    }
+
     /// The tab id of `terminal_id` on the current or a parked workspace.
     pub fn tab_for_terminal(&self, terminal_id: &str) -> Option<String> {
         self.state
@@ -1015,12 +1023,21 @@ fn websocket_reply(state: &Arc<Mutex<MockState>>, request: &Value) -> Option<Val
         })),
         "workspace_attach" => {
             let mut state = state.lock().expect("mock state");
-            if request.get("workspace").is_none() {
+            if let Some(workspace) = request.get("workspace").and_then(Value::as_str) {
+                state.workspace.select_workspace(workspace);
+            } else {
                 if let Some(project_id) = request.get("project_id").and_then(Value::as_str) {
                     state.workspace.open_project(project_id);
                 }
             }
             Some(state.workspace.attach_reply(request.get("request_id")))
+        }
+        "workspace_snapshot" => {
+            let state = state.lock().expect("mock state");
+            state.workspace.snapshot_reply_for(
+                request.get("workspace")?.as_str()?,
+                request.get("request_id"),
+            )
         }
         "workspace_op" => {
             let mut state = state.lock().expect("mock state");
@@ -1040,6 +1057,21 @@ fn websocket_reply(state: &Arc<Mutex<MockState>>, request: &Value) -> Option<Val
                     "code": code,
                     "reason": reason,
                 }));
+            }
+            if matches!(
+                request.get("op").and_then(Value::as_str),
+                Some("tab.create" | "pane.split")
+            ) {
+                if let Some(terminal_id) = request.get("terminal_id").and_then(Value::as_str) {
+                    if let Some(held_ref) = state.workspace.held_ref_for_terminal(terminal_id) {
+                        return Some(json!({
+                            "type": "workspace_error",
+                            "request_id": request.get("request_id"),
+                            "code": "busy",
+                            "reason": format!("Terminal {terminal_id} is held by pane {held_ref}"),
+                        }));
+                    }
+                }
             }
             if !state.workspace.knows(request) {
                 let id = ["pane", "tab"]

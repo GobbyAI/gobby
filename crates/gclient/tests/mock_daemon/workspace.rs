@@ -4,6 +4,8 @@
 //! `src/gobby/terminals/workspace_ops.py` does. Ids are `mock-tab-N` and
 //! `mock-pane-N`; refs are the lowest free number per scope.
 
+use std::collections::HashSet;
+
 use serde_json::{json, Value};
 
 const FIXTURE: &str =
@@ -17,6 +19,7 @@ pub struct WorkspaceSim {
     panes: Vec<Value>,
     /// Workspaces parked when a project opens as its own workspace.
     parked: Vec<(Value, Vec<Value>, Vec<Value>)>,
+    cross_workspace_held_ids: HashSet<String>,
     daemon_epoch: String,
     seq: u64,
     next_id: u64,
@@ -31,6 +34,7 @@ impl WorkspaceSim {
             tabs: fixture["tabs"].as_array().cloned().unwrap_or_default(),
             panes: fixture["panes"].as_array().cloned().unwrap_or_default(),
             parked: Vec::new(),
+            cross_workspace_held_ids: HashSet::new(),
             daemon_epoch: fixture["snapshot"]["daemon_epoch"]
                 .as_str()
                 .unwrap_or_default()
@@ -110,6 +114,25 @@ impl WorkspaceSim {
         self.workspace["focused_project_id"] = json!(project);
         self.workspace["focused_tab_id"] = json!(seeded.first().map(|(id, _)| id.clone()));
         seeded
+    }
+
+    pub fn seed_other_workspace(&mut self, project: &str, tabs: &[(&[&str], &str)]) -> String {
+        let previous = self.workspace_id();
+        self.workspace["node_ref"] = json!(0);
+        self.workspace["ref"] = json!(0);
+        self.open_project(project);
+        let id = self.workspace_id();
+        self.seed(project, tabs);
+        self.cross_workspace_held_ids.extend(
+            tabs.iter()
+                .flat_map(|(terminals, _)| terminals.iter().map(|id| (*id).to_owned())),
+        );
+        // Match a real 0:1:0:0 pane address, independently of the older
+        // one-based refs in the shared snapshot fixture.
+        self.tabs[0]["ref"] = json!(0);
+        self.panes[0]["ref"] = json!(0);
+        self.restore_workspace(&previous);
+        id
     }
 
     /// Open `project_id` as its own workspace, creating the next ref when needed.
@@ -194,6 +217,53 @@ impl WorkspaceSim {
             "tabs": self.tabs,
             "panes": self.panes,
             "snapshot": {"daemon_epoch": self.daemon_epoch, "seq": self.seq},
+        })
+    }
+
+    pub fn snapshot_reply_for(
+        &self,
+        workspace_id: &str,
+        request_id: Option<&Value>,
+    ) -> Option<Value> {
+        let (workspace, tabs, panes) = if self.workspace_id() == workspace_id {
+            (&self.workspace, &self.tabs, &self.panes)
+        } else {
+            let (workspace, tabs, panes) = self
+                .parked
+                .iter()
+                .find(|(workspace, _, _)| workspace["id"].as_str() == Some(workspace_id))?;
+            (workspace, tabs, panes)
+        };
+        Some(json!({
+            "type": "workspace_snapshot",
+            "request_id": request_id.cloned().unwrap_or(Value::Null),
+            "workspace": workspace,
+            "tabs": tabs,
+            "panes": panes,
+            "snapshot": {"daemon_epoch": self.daemon_epoch, "seq": self.seq},
+        }))
+    }
+
+    pub fn select_workspace(&mut self, workspace_id: &str) {
+        self.restore_workspace(workspace_id);
+    }
+
+    pub fn held_ref_for_terminal(&self, terminal_id: &str) -> Option<String> {
+        if !self.cross_workspace_held_ids.contains(terminal_id) {
+            return None;
+        }
+        self.parked.iter().find_map(|(workspace, tabs, panes)| {
+            let pane = panes
+                .iter()
+                .find(|pane| pane["terminal_id"] == terminal_id)?;
+            let tab = tabs.iter().find(|tab| tab["id"] == pane["tab_id"])?;
+            Some(format!(
+                "{}:{}:{}:{}",
+                workspace["node_ref"].as_u64()?,
+                workspace["ref"].as_u64()?,
+                tab["ref"].as_u64()?,
+                pane["ref"].as_u64()?
+            ))
         })
     }
 

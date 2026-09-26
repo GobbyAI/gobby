@@ -27,6 +27,7 @@ use super::menu::attention_id;
 use super::modal_input::{close_modal, edit_text, ModalOutcome};
 use super::mouse::Placement;
 use super::sync_live_chrome;
+use super::terminal_location::locate_terminal_workspace;
 use super::workspace_actions::{place_live_terminal, send_workspace_op};
 
 /// Make `project_id` the focused project: its roster replaces the current
@@ -141,6 +142,9 @@ pub(super) async fn focus_terminal(
     chrome: &mut Chrome,
     terminal_id: &str,
 ) -> Result<(), FrameError> {
+    if !locate_terminal_workspace(workspace, chrome, terminal_id, true).await? {
+        return Ok(());
+    }
     let pane = terminal_pane(workspace, terminal_id).await?;
     if !chrome.focus_pane(pane) {
         place_live_terminal(
@@ -230,6 +234,10 @@ async fn agent_pane(
             None => return Ok(None),
         },
     };
+    let reuse_client_pane = !entry_id.starts_with(TERMINAL_ROW);
+    if !locate_terminal_workspace(workspace, chrome, &terminal_id, reuse_client_pane).await? {
+        return Ok(None);
+    }
     if let Some(pane) = attention_pane(workspace, entry_id) {
         return Ok(Some(pane));
     }

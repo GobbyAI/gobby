@@ -88,8 +88,11 @@ the sidebar (each scrolls inside its cap); Sessions takes the rest.
   `address · provider · model effort · remote machine`, the model spelled as
   its provider prints it. Bare terminals with no session are listed by their
   foreground command over `address · backend`, and answer to click and
-  right-click the same way a session row does. In the all-projects view the
-  fixed prefix is `project#ref:`; in the current-project view it is `#ref:`.
+  right-click the same way a session row does. Selecting one in another
+  workspace switches to that workspace and focuses its existing pane. If the
+  terminal has gone away, the row refreshes and a warning explains that it is
+  unavailable. In the all-projects view the fixed prefix is `project#ref:`;
+  in the current-project view it is `#ref:`.
   Only the title after that prefix scrolls. By default it rests at the start,
   walks left to its end, parks, and jumps home; every scrolling row and pane
   header shares one clock. Settings can reverse that direction or turn it off. The

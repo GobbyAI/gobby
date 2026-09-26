@@ -45,6 +45,7 @@ mod reconnect;
 pub use projection::sync_live_chrome;
 mod startup;
 mod suspend;
+mod terminal_location;
 mod workspace_actions;
 mod workspaces;
 

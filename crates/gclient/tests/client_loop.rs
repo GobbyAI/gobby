@@ -235,6 +235,27 @@ fn show_roster(workspace: &Workspace<LiveDaemon>, chrome: &mut Chrome) {
     }
 }
 
+fn bare_terminal_row_anchor(workspace: &Workspace<LiveDaemon>, terminal_id: &str) -> (u16, u16) {
+    let area = Rect::new(0, 0, 120, 40);
+    let mut probe = pinned_chrome();
+    show_roster(workspace, &mut probe);
+    probe.compute_view(workspace, area);
+    let mut probe_terminal = Terminal::new(TestBackend::new(120, 40)).expect("probe terminal");
+    let mut hits = None;
+    probe_terminal
+        .draw(|frame| hits = Some(render_workspace(frame, workspace, &probe)))
+        .expect("draw probe frame");
+    probe.view.apply_hits(hits.expect("probe frame drawn"));
+    let row_id = format!("{TERMINAL_ROW}{terminal_id}");
+    probe
+        .view
+        .agent_hit_areas
+        .iter()
+        .find(|(entry, _)| *entry == row_id)
+        .map(|(_, rect)| (rect.x + 1, rect.y))
+        .expect("bare terminal row drawn")
+}
+
 /// A dark chrome with the sidebar pinned. The sidebar starts hidden, and its
 /// rows draw and take clicks only while it is on screen.
 fn pinned_chrome() -> Chrome {
@@ -11783,6 +11804,178 @@ async fn clicking_a_bare_terminal_row_focuses_that_terminal() {
         "clicking the row focuses the terminal it names"
     );
     assert_ne!(second, first, "the click moved focus off the starting pane");
+    mock.shutdown().await;
+}
+
+#[tokio::test]
+async fn clicking_a_bare_terminal_in_workspace_one_focuses_its_existing_pane() {
+    const TARGET: &str = "d506b730-0205-440d-b4f4-64d810d32738";
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    mock.seed_workspace("project-1", &[(&["terminal-a"], "terminal-a")]);
+    let owning_workspace = mock.seed_other_workspace("project-1", &[(&[TARGET], TARGET)]);
+    for _ in 0..3 {
+        mock.enqueue(
+            "GET",
+            "/api/terminals?",
+            200,
+            json!({
+                "items": [
+                    {"terminal_id": "terminal-a", "backend": "native", "state": "live"},
+                    {"terminal_id": TARGET, "backend": "native", "state": "live"}
+                ],
+                "next_cursor": null,
+                "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
+            }),
+        );
+    }
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon);
+    workspace.select_project("project-1");
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("install both terminal rows");
+    let original_workspace = workspace
+        .workspace_model()
+        .expect("attached workspace")
+        .workspace
+        .id
+        .clone();
+    assert_ne!(original_workspace, owning_workspace);
+
+    let (column, row) = bare_terminal_row_anchor(&workspace, TARGET);
+
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
+    let mut chrome = pinned_chrome();
+    show_roster(&workspace, &mut chrome);
+    let (input_tx, input_rx) = mpsc::channel(32);
+    let driver = async {
+        send_mouse(
+            &input_tx,
+            MouseEventKind::Down(MouseButton::Left),
+            column,
+            row,
+            KeyModifiers::NONE,
+        )
+        .await;
+        wait_for_take_control_of(&mock, TARGET).await;
+        drop(input_tx);
+    };
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    assert_eq!(
+        workspace
+            .workspace_model()
+            .expect("attached workspace")
+            .workspace
+            .id,
+        owning_workspace,
+        "selection attaches the terminal's owning workspace"
+    );
+    assert_eq!(
+        chrome.focused_pane(),
+        workspace.pane_for_terminal(TARGET),
+        "selection reveals the row's existing pane"
+    );
+    assert!(
+        workspace_ops(&mock, "pane.split")
+            .iter()
+            .chain(workspace_ops(&mock, "tab.create").iter())
+            .all(|request| request["terminal_id"] != TARGET),
+        "selection must not duplicate a terminal already placed elsewhere"
+    );
+    mock.shutdown().await;
+}
+
+#[tokio::test]
+async fn clicking_a_stale_bare_terminal_refreshes_its_row_without_placing_it() {
+    const TARGET: &str = "stale-terminal";
+    let mock = MockDaemon::start("local-token").await;
+    mock.seed_workspace("project-1", &[(&["terminal-a"], "terminal-a")]);
+    mock.enqueue(
+        "GET",
+        "/api/terminals?",
+        200,
+        json!({
+            "items": [
+                {"terminal_id": "terminal-a", "backend": "native", "state": "live"},
+                {"terminal_id": TARGET, "backend": "native", "state": "live"}
+            ],
+            "next_cursor": null,
+            "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
+        }),
+    );
+    mock.enqueue(
+        "GET",
+        "/api/terminals?",
+        200,
+        json!({
+            "items": [{"terminal_id": "terminal-a", "backend": "native", "state": "live"}],
+            "next_cursor": null,
+            "snapshot": {"daemon_epoch": "epoch-1", "seq": 2}
+        }),
+    );
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon);
+    workspace.select_project("project-1");
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("install stale roster row");
+    let (column, row) = bare_terminal_row_anchor(&workspace, TARGET);
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
+    let mut chrome = pinned_chrome();
+    show_roster(&workspace, &mut chrome);
+    let (input_tx, input_rx) = mpsc::channel(32);
+    let driver = async {
+        send_mouse(
+            &input_tx,
+            MouseEventKind::Down(MouseButton::Left),
+            column,
+            row,
+            KeyModifiers::NONE,
+        )
+        .await;
+        wait_for_http_requests(&mock, "GET", "/api/terminals?", 2).await;
+        drop(input_tx);
+    };
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    assert!(workspace.pane_for_terminal(TARGET).is_none());
+    assert!(terminal_rows(&workspace, &chrome)
+        .iter()
+        .all(|entry| entry.id != format!("{TERMINAL_ROW}{TARGET}")));
+    assert!(chrome
+        .toasts
+        .iter()
+        .any(|active| active.toast.title == "Terminal is no longer available"));
+    assert!(workspace_ops(&mock, "pane.split").is_empty());
+    assert!(workspace_ops(&mock, "tab.create").is_empty());
     mock.shutdown().await;
 }
 
