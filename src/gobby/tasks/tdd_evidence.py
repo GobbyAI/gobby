@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import re
 import shlex
-from collections.abc import Iterable
-from dataclasses import dataclass
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass, replace
 from pathlib import PurePosixPath
 
 from gobby.tasks.acceptance_artifacts import (
@@ -125,16 +125,21 @@ def _contains_word(value: str, word: str) -> bool:
 def evaluate_tdd_evidence(
     tests: tuple[AcceptanceTest, ...],
     evidence: TranscriptEvidence,
+    *,
+    renamed_test_paths: Mapping[str, tuple[str, ...]] | None = None,
 ) -> TddEvidenceResult:
     """Require one assertion-backed cycle and later coverage of every named test."""
     if not tests:
-        return TddEvidenceResult(True, True, ())
+        return TddEvidenceResult(
+            False, False, ("TDD is required but no named test reference resolved.",)
+        )
 
     findings: list[str] = []
     cycle: tuple[TranscriptValidationRun, TranscriptEdit] | None = None
     for test in tests:
+        test_paths = (test.path, *(renamed_test_paths or {}).get(test.path, ()))
         test_edits = sorted(
-            (edit for edit in evidence.edits if edit.path == test.path),
+            (edit for edit in evidence.edits if edit.path in test_paths),
             key=lambda edit: edit.order,
         )
         if not test_edits:
@@ -145,6 +150,15 @@ def evaluate_tdd_evidence(
         red_rejection = None
         production_edit_seen = False
         for test_edit in test_edits:
+            red_test = (
+                test
+                if test_edit.path == test.path
+                else replace(
+                    test,
+                    path=test_edit.path,
+                    reference=f"{test_edit.path}::{test.symbol}",
+                )
+            )
             production_edits = sorted(
                 (
                     edit
@@ -158,13 +172,13 @@ def evaluate_tdd_evidence(
             production_edit_seen = True
             production_edit = production_edits[0]
             window_red, window_rejection = _find_red_run(
-                test, evidence, test_edit.order, production_edit
+                red_test, evidence, test_edit.order, production_edit
             )
             red_rejection = window_rejection or red_rejection
             if window_red is None:
                 for later_production_edit in production_edits[1:]:
                     window_red, window_rejection = _find_red_run(
-                        test,
+                        red_test,
                         evidence,
                         production_edit.order,
                         later_production_edit,

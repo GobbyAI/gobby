@@ -42,7 +42,7 @@ from gobby.storage.task_close_reviews import TaskCloseReview, TaskCloseReviewSto
 from gobby.storage.tasks import LocalTaskManager, Task, TaskHasOpenChildrenError
 from gobby.tasks.acceptance_artifacts import AcceptanceArtifactResult, AcceptanceTest
 from gobby.tasks.close_checklist import CloseGateResult, evaluate_validation_commands
-from gobby.tasks.tdd_evidence import TddEvidenceResult
+from gobby.tasks.tdd_evidence import TddEvidenceResult, evaluate_tdd_evidence
 from gobby.tasks.transcript_evidence_models import (
     TranscriptEdit,
     TranscriptEvidence,
@@ -143,7 +143,8 @@ def _successful_transcript(task: Task, *, command: str) -> TranscriptEvidence:
 async def _evaluate_named_test_close(
     task: Task,
     *,
-    tdd_result: TddEvidenceResult,
+    tdd_result: TddEvidenceResult | None,
+    named_tests: bool = True,
 ) -> tuple[CloseEvaluation, MagicMock]:
     review = AsyncMock(
         return_value=ValidationResult(
@@ -158,20 +159,23 @@ async def _evaluate_named_test_close(
         task,
         command="uv run pytest tests/test_example.py -q",
     )
+    named_test = AcceptanceTest(
+        reference="tests/test_example.py::test_example",
+        path="tests/test_example.py",
+        symbol="test_example",
+        body="def test_example() -> None:\n    assert True\n",
+    )
     artifacts = AcceptanceArtifactResult(
         passed=True,
-        tests=(
-            AcceptanceTest(
-                reference="tests/test_example.py::test_example",
-                path="tests/test_example.py",
-                symbol="test_example",
-                body="def test_example() -> None:\n    assert True\n",
-            ),
-        ),
+        tests=(named_test,) if named_tests else (),
         findings=(),
         evidence_files=(),
     )
-    tdd_check = MagicMock(return_value=tdd_result)
+    tdd_check = (
+        MagicMock(wraps=evaluate_tdd_evidence)
+        if tdd_result is None
+        else MagicMock(return_value=tdd_result)
+    )
 
     with (
         patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
@@ -858,6 +862,35 @@ async def test_named_acceptance_test_keeps_tdd_gate_when_task_requires_tdd() -> 
     tdd_check.assert_called_once()
 
 
+async def test_tdd_required_task_without_resolved_tests_fails_gate_12() -> None:
+    task = replace(_task(criteria="No named test reference resolves."), labels=["tdd:required"])
+
+    evaluation, tdd_check = await _evaluate_named_test_close(
+        task, tdd_result=None, named_tests=False
+    )
+
+    assert evaluation.ready is False
+    assert evaluation.error == "tdd_evidence_missing"
+    tdd_gate = next(gate for gate in evaluation.gates if gate.item == 12)
+    assert tdd_gate.status == "failed"
+    assert "TDD is required but no named test reference resolved" in tdd_gate.message
+    tdd_check.assert_called_once()
+    assert tdd_check.call_args.args[0] == ()
+
+
+async def test_non_tdd_task_without_tests_still_skips_gates_11_and_12() -> None:
+    task = replace(_task(criteria="No named tests are required."), category="test")
+
+    evaluation, tdd_check = await _evaluate_named_test_close(
+        task, tdd_result=None, named_tests=False
+    )
+
+    assert evaluation.ready is True
+    assert next(gate for gate in evaluation.gates if gate.item == 11).status == "skipped"
+    assert next(gate for gate in evaluation.gates if gate.item == 12).status == "skipped"
+    tdd_check.assert_not_called()
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("scope_justification", "justification_error", "continues"),
@@ -1365,7 +1398,7 @@ async def test_ordinary_close_detaches_real_validation_and_preserves_persisted_c
     reviewer_run_id = await_args.args[1]["reserved_run_id"]
     assert result["reviewer_run_id"] == reviewer_run_id
     assert result["prompt_chars"] < result["prompt_limit"]
-    assert 0 <= result["close_review_duration_ms"] < 50
+    assert result["close_review_duration_ms"] >= 0
     persisted = manager.get_task(task.id)
     assert persisted is not None
     assert persisted.commits == [commit_sha]

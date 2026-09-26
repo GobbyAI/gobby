@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from gobby.tasks.commits import collect_commit_diff_text
+from gobby.tasks.commits import collect_commit_diff_text, collect_commit_rename_aliases_async
 
 pytestmark = pytest.mark.unit
 
@@ -48,6 +48,35 @@ def repo(tmp_path: Path) -> Path:
 
 def test_empty_commit_set_has_no_patch() -> None:
     assert collect_commit_diff_text([], cwd=".") == ""
+
+
+@pytest.mark.asyncio
+async def test_linked_renames_follow_history_but_not_copies_or_new_files(repo: Path) -> None:
+    (repo / "tests").mkdir()
+    first = _commit(
+        repo, "tests/old_test_feature.py", "def test_feature():\n    assert 1\n", "test"
+    )
+    _git(repo, "mv", "tests/old_test_feature.py", "tests/mid_test_feature.py")
+    _git(repo, "commit", "--no-gpg-sign", "-q", "-m", "rename once")
+    second = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "mv", "tests/mid_test_feature.py", "tests/new_test_feature.py")
+    _git(repo, "commit", "--no-gpg-sign", "-q", "-m", "rename twice")
+    third = _git(repo, "rev-parse", "HEAD")
+    copied = _commit(
+        repo, "tests/copied_test_feature.py", "def test_feature():\n    assert 1\n", "copy"
+    )
+    added = _commit(repo, "tests/added_test_feature.py", "def test_new():\n    assert 1\n", "new")
+
+    aliases = await collect_commit_rename_aliases_async(
+        [added, third, copied, second, first], cwd=repo
+    )
+
+    assert aliases["tests/new_test_feature.py"] == (
+        "tests/old_test_feature.py",
+        "tests/mid_test_feature.py",
+    )
+    assert "tests/copied_test_feature.py" not in aliases
+    assert "tests/added_test_feature.py" not in aliases
 
 
 def test_single_commit_returns_exactly_its_patch(repo: Path) -> None:

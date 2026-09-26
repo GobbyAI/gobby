@@ -226,6 +226,45 @@ def test_non_lifecycle_gobby_commands_still_register() -> None:
     assert "excluded_criterion_commands" not in payload
 
 
+@pytest.mark.parametrize(
+    "span",
+    [
+        "Gobby MCP proxy tools unavailable",
+        "gobby MCP proxy tools unavailable",
+        "gobby mcp proxy tools unavailable",
+        "uv run gobby mcp proxy tools unavailable",
+        "about gobby",
+        "example git add src/gobby/tasks/criterion_commands.py and git commit",
+    ],
+)
+def test_prose_shaped_backticks_are_not_commands(span: str) -> None:
+    assert authored_criterion_commands(f"The plan notes `{span}`.") == []
+
+
+def test_real_python_and_git_commands_remain_mandatory() -> None:
+    criteria = (
+        "Run `uv run python -c 'import sys; print(sys.version)'` and "
+        "`git add src/gobby/tasks/criterion_commands.py && git commit -m fix`."
+    )
+    assert authored_criterion_commands(criteria) == [
+        "uv run python -c 'import sys; print(sys.version)'",
+        "git add src/gobby/tasks/criterion_commands.py && git commit -m fix",
+    ]
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git grep gobby",
+        "git grep -- gobby",
+        "git grep gobby restart",
+        "uv run --project gobby python -V",
+    ],
+)
+def test_gobby_operand_does_not_hide_criterion(command: str) -> None:
+    assert authored_criterion_commands(f"Run `{command}`.") == [command]
+
+
 def test_live_criteria_never_register_command_spans() -> None:
     criteria = (
         "- Focused tests pass.\n"

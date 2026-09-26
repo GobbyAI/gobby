@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gobby.storage.tasks import TaskNotFoundError
+from gobby.tasks.diff_manifest import ManifestItem, ManifestParser
 from gobby.tasks.diff_paging import (
     MAX_COMMITS_LIMIT,
     MAX_LIMIT_BYTES,
@@ -165,6 +166,47 @@ async def _ancestry_order(commit_shas: list[str], *, cwd: str | Path) -> list[st
     members = set(wanted)
     ordered = [sha for sha in listed.decode("ascii", errors="replace").split() if sha in members]
     return ordered if len(ordered) == len(members) else None
+
+
+async def collect_commit_rename_aliases_async(
+    commit_shas: list[str], *, cwd: str | Path
+) -> dict[str, tuple[str, ...]]:
+    """Collect prior test paths for files renamed by linked commits."""
+    if not commit_shas:
+        return {}
+    ordered = await _ancestry_order(commit_shas, cwd=cwd)
+    if ordered is None:
+        return {}
+    aliases: dict[str, tuple[str, ...]] = {}
+    for sha in ordered:
+        manifest = await _git_bytes(
+            ["show", "--format=", "--name-status", "-z", "-M", "--diff-merges=first-parent", sha],
+            cwd=cwd,
+        )
+        if manifest is None:
+            return {}
+        old_path: str | None = None
+
+        def emit(item: ManifestItem, raw_path: bytes) -> None:
+            nonlocal old_path
+            path = os.fsdecode(raw_path)
+            status = str(item["status"])[0]
+            if status == "R":
+                if item.get("role") == "old":
+                    old_path = path
+                elif old_path is not None:
+                    aliases[path] = (*aliases.pop(old_path, ()), old_path)
+                    old_path = None
+            elif status in {"A", "D"} or (status == "C" and item.get("role") == "new"):
+                aliases.pop(path, None)
+
+        parser = ManifestParser(sha, emit)
+        try:
+            parser.feed(manifest)
+            parser.finish()
+        except DiffPagingError:
+            return {}
+    return aliases
 
 
 async def _is_merge(sha: str, *, cwd: str | Path) -> bool:
