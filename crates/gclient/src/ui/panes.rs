@@ -636,6 +636,9 @@ fn render_pane_metadata(frame: &mut Frame, chrome: &Chrome, info: &PaneInfo, foo
     }
     buf.set_string(left.x, left.y, format!(" {} ", footer.left), style);
     buf.set_string(right.x, right.y, format!(" {} ", footer.right), style);
+    if left.y == info.rect.y && info.rect.height > 1 {
+        buf.set_string(left.right(), left.y, "·", style);
+    }
     if info.is_focused && footer.actionable && matches!(chrome.hover, Some(Hit::ControlIndicator)) {
         let words = Rect::new(left.x + 1, left.y, left.width.saturating_sub(2), 1);
         buf.set_style(words, Style::default().add_modifier(Modifier::UNDERLINED));

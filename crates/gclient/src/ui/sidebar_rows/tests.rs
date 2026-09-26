@@ -191,7 +191,7 @@ fn agent_rows_render_three_lines_with_the_model_slug() {
     assert_eq!(rows[0].height(), 3);
     assert_eq!(rows[0].definition, "Codex");
     assert_eq!(rows[0].reference, "#77");
-    assert_eq!(rows[0].provider.as_deref(), Some("codex"));
+    assert_eq!(rows[0].provider, None);
     assert_eq!(rows[0].model_slug, "gpt-5-high");
     let third = row_third_line(&rows[0], 34, &Chrome::dark());
     assert_eq!(line_text(&third), "   gpt-5-high");

@@ -166,6 +166,9 @@ pub(super) async fn close_live_terminal(
     chrome: &mut Chrome,
     pane_id: PaneId,
 ) -> Result<(), FrameError> {
+    if !workspace.panes.contains_key(&pane_id) {
+        return Ok(());
+    }
     // An external pane is a terminal the user attached rather than one
     // gclient spawned, so closing it is a detach. A shown pane also leaves
     // its slot; an unshown pane only needs its control lease released.

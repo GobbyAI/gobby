@@ -3,7 +3,7 @@
 use crate::daemon::LiveDaemon;
 use crate::frame_source::FrameError;
 use crate::ui::chrome::attention_pane;
-use crate::ui::dialogs::Dialog;
+use crate::ui::dialogs::{CloseScope, CloseTarget, Dialog};
 use crate::ui::sidebar_rows::project_label;
 use crate::ui::{Action, Chrome, Mode};
 
@@ -94,7 +94,19 @@ pub async fn apply_live_menu_action(
             destroy_orphans(workspace, chrome, vec![target]).await?;
         }
         MenuAction::CloseTerminal(pane) => {
-            close_live_terminal(workspace, chrome, pane).await?;
+            if !workspace.panes.contains_key(&pane) {
+                return Ok(false);
+            }
+            if chrome.prefs.confirm_close {
+                chrome.dialog = Some(Dialog::ConfirmClose {
+                    target: CloseTarget::Terminal(pane),
+                    title: workspace.pane(pane).display_name().to_owned(),
+                    scope: CloseScope::Panes(1),
+                });
+                chrome.mode = Mode::ConfirmClose;
+            } else {
+                close_live_terminal(workspace, chrome, pane).await?;
+            }
         }
         MenuAction::TakeControl(pane) => {
             focus_menu_target(workspace, chrome, &kind).await?;
@@ -142,11 +154,18 @@ fn open_daemon_dialog(workspace: &Workspace<LiveDaemon>, chrome: &mut Chrome) {
 }
 
 fn open_about_dialog(chrome: &mut Chrome) {
+    let machine = crate::ui::sidebar::local_hostname()
+        .or_else(|| {
+            (!chrome.connection.machine.is_empty())
+                .then(|| crate::app::short_terminal_id(&chrome.connection.machine))
+        })
+        .unwrap_or("unknown")
+        .to_owned();
     chrome.dialog = Some(Dialog::About {
         url: chrome.connection.url.clone(),
         gclient_version: env!("CARGO_PKG_VERSION").to_owned(),
         daemon_version: chrome.connection.daemon_version.clone(),
-        machine: chrome.connection.machine.clone(),
+        machine,
     });
     chrome.mode = Mode::ProjectDialog;
 }
@@ -179,4 +198,21 @@ async fn focus_menu_target(
         _ => {}
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn about_names_the_local_machine_like_the_sidebar() {
+        let mut chrome = Chrome::dark();
+        chrome.connection.machine = "12345678-aaaa-bbbb-cccc-ddddeeeeffff".to_owned();
+        open_about_dialog(&mut chrome);
+        let Some(Dialog::About { machine, .. }) = &chrome.dialog else {
+            panic!("about dialog");
+        };
+        let expected = crate::ui::sidebar::local_hostname().unwrap_or("12345678");
+        assert_eq!(machine, expected);
+    }
 }

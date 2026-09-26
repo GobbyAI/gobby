@@ -374,7 +374,7 @@ parity_tests! {
 
             let first = row_str(&terminal, body.y, 25);
             let second = row_str(&terminal, body.y + 1, 25);
-            assert_eq!(first, format!(" {} pi · pi", dot(RowState::Working)));
+            assert_eq!(first, format!(" {} pi", dot(RowState::Working)));
             assert_eq!(second, "   No assigned task");
             // herdr: `!contains("working")`; gclient's working glyph is the
             // whole indicator, so neither line carries the word.
@@ -390,8 +390,8 @@ parity_tests! {
 
             let agent_x = find_symbol_x(&terminal, body.y + 1, body.width, "N");
             let agent_style = style_at(&terminal, agent_x, body.y + 1);
-            assert_eq!(agent_style.fg, Some(p.overlay0));
-            assert!(agent_style.add_modifier.contains(Modifier::DIM));
+            assert_eq!(agent_style.fg, Some(p.overlay1));
+            assert!(!agent_style.add_modifier.contains(Modifier::DIM));
             assert!(!agent_style.add_modifier.contains(Modifier::BOLD));
             assert_eq!(agent_style.bg, Some(p.surface_dim));
         }
@@ -448,8 +448,7 @@ parity_tests! {
 
         fn space_occurrence_style_applies_without_styling_separator() {
             // herdr styles a custom `$hype` token (`HI`, fg #abcdef, bold);
-            // The active definition is bold text; its provider separator
-            // stays in the quieter overlay color.
+            // The active definition is bold text, shown only once.
             let mut board = Board::new(&["HI"]);
             board.agent_mut("HI").agent_definition_name = Some("HI".into());
             board.set_state("HI", RowState::Attention);
@@ -461,7 +460,7 @@ parity_tests! {
             let p = palette();
             let h = style_at(&terminal, find_symbol_x(&terminal, row, 25, "H"), row);
             let i = style_at(&terminal, find_symbol_x(&terminal, row, 25, "I"), row);
-            let separator = style_at(&terminal, find_symbol_x(&terminal, row, 25, "·"), row);
+            assert!(!row_str(&terminal, row, 25).contains('·'));
 
             for style in [h, i] {
                 // herdr: the configured `#abcdef`.
@@ -470,10 +469,6 @@ parity_tests! {
                 assert!(!style.add_modifier.contains(Modifier::DIM));
                 assert_eq!(style.bg, Some(p.surface_dim));
             }
-            assert_eq!(separator.fg, Some(p.overlay0));
-            assert!(!separator.add_modifier.contains(Modifier::DIM));
-            assert!(!separator.add_modifier.contains(Modifier::BOLD));
-            assert_eq!(separator.bg, Some(p.surface_dim));
         }
 
         fn occurrence_foreground_flattens_composite_git_status_colors() {
@@ -705,7 +700,7 @@ parity_tests! {
 
             let entries = agent_rows(&board, &chrome);
             assert_eq!(entries[0].label, "bridge");
-            assert_eq!(entries[0].provider.as_deref(), Some("planner"));
+            assert_eq!(entries[0].provider, None);
         }
 
         fn expanded_sidebar_sections_handle_tiny_heights() {
@@ -988,11 +983,11 @@ parity_tests! {
             let chrome = chrome();
 
             let rows = agent_rows(&board, &chrome);
-            assert_eq!(rows[0].provider.as_deref(), Some("renamed pi"));
+            assert_eq!(rows[0].provider, None);
 
             board.set_state("repo", RowState::Unknown);
             let rows = agent_rows(&board, &chrome);
-            assert_eq!(rows[0].provider.as_deref(), Some("renamed pi"));
+            assert_eq!(rows[0].provider, None);
             assert_eq!(rows[0].label, "repo");
             assert!(!line_text(&rows[0], 60, &chrome).contains("detached"));
         }
@@ -1332,11 +1327,10 @@ fn sidebar_drags_reorder_resize_and_scroll() {
     // `scroll_workspace_list` and the list scrollbar's thumb drag and track
     // jump; herdr's `set_sidebar_section_split` has no gclient counterpart
     // since the sections size themselves.
-    // Eighteen cards overflow the projects section (capped at the top
-    // half of the sidebar) by more than a wheel notch; the ten sessions rows
-    // (five roster entries and five bare terminals) overflow the sessions
-    // list by less.
-    let mut ws = sidebar_workspace(10);
+    // Eighteen cards overflow the projects section by more than a wheel
+    // notch; five agent rows and eleven bare terminals exercise both
+    // independently scrolling lower sections.
+    let mut ws = sidebar_workspace(16);
     ws.daemon_mut().set_sidebar_rows(SidebarRows {
         projects: (0..18)
             .map(|index| scripted_project(&format!("proj-{index}"), &format!("project-{index}")))
@@ -1352,7 +1346,7 @@ fn sidebar_drags_reorder_resize_and_scroll() {
     draw_with_hits(&ws, &mut chrome, area);
     let sidebar = chrome.view.sidebar_rect;
     assert_eq!(agent_rows(&ws, &chrome).len(), 5);
-    assert_eq!(terminal_rows(&ws, &chrome).len(), 5);
+    assert_eq!(terminal_rows(&ws, &chrome).len(), 11);
 
     // A card dragged onto another takes its place; the order is chrome
     // state the loop saves.
@@ -1497,7 +1491,7 @@ fn sidebar_drags_reorder_resize_and_scroll() {
     let projects_max =
         section_metrics(&ws, &chrome, SidebarSection::Projects).max_offset_from_bottom;
     assert!(
-        projects_max > MOUSE_SCROLL_LINES && projects_max < 2 * MOUSE_SCROLL_LINES,
+        (MOUSE_SCROLL_LINES..2 * MOUSE_SCROLL_LINES).contains(&projects_max),
         "the cards overflow by more than a notch: {projects_max}"
     );
     let (col, row) = row_cell(&chrome.view.project_hit_areas, "proj-1");
@@ -1518,13 +1512,17 @@ fn sidebar_drags_reorder_resize_and_scroll() {
         section_metrics(&ws, &chrome, SidebarSection::Terminals).max_offset_from_bottom;
     assert!(terminals_max > 0, "bare terminals overflow their section");
     let (col, row) = row_cell(&chrome.view.agent_hit_areas, "terminal:term-5");
-    route(&ws, &mut chrome, MouseEventKind::ScrollDown, col, row);
+    for _ in 0..3 {
+        route(&ws, &mut chrome, MouseEventKind::ScrollDown, col, row);
+    }
     assert_eq!(
         chrome.sidebar.scroll(SidebarSection::Terminals),
         terminals_max
     );
     assert_eq!(agents_scroll(&chrome), 0, "Agents scroll is independent");
-    route(&ws, &mut chrome, MouseEventKind::ScrollUp, col, row);
+    for _ in 0..3 {
+        route(&ws, &mut chrome, MouseEventKind::ScrollUp, col, row);
+    }
     assert_eq!(chrome.sidebar.scroll(SidebarSection::Terminals), 0);
     let agents_max = section_metrics(&ws, &chrome, SidebarSection::Agents).max_offset_from_bottom;
     assert!(

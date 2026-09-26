@@ -69,6 +69,7 @@ fn menus_list_items_per_target_and_state() {
     let entry_id = format!("run:{}", ws.pane(focused).terminal_id);
     ws.attention.entries.push(crate::daemon::RosterEntry {
         entry_id: entry_id.clone(),
+        attention: Some(crate::daemon::Attention::default()),
         ..Default::default()
     });
     chrome.toggle_zoom();
@@ -334,6 +335,7 @@ fn agent_menu_disables_navigation_when_its_only_attention_is_focused() {
     chrome.open_pane(pane, "attention");
     ws.attention.entries.push(crate::daemon::RosterEntry {
         entry_id: format!("run:{}", ws.pane(pane).terminal_id),
+        attention: Some(crate::daemon::Attention::default()),
         ..Default::default()
     });
 

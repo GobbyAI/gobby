@@ -78,5 +78,5 @@
 37 : accent/panel_bg*1 -/panel_bg*118 accent/panel_bg*1
 38 |└ zsh · Focused ────────────────────────────────────────────────────────────────────────────────────────────── gclient ┘|
 38 : accent/panel_bg*1 accent/panel_bg+b*15 accent/panel_bg*94 accent/panel_bg+b*9 accent/panel_bg*1
-39 | —                                                                                                — │ — │ prefix ctrl+b |
+39 | —                                                                                                — · — │ prefix ctrl+b |
 39 : -/surface0*1 subtext0/surface0*1 -/surface0*96 subtext0/surface0*21 -/surface0*1

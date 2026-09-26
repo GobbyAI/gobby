@@ -281,9 +281,9 @@ fn status_bar_orders_fixed_slots_and_configured_segments() {
         count = render_status_line(frame, frame.area(), &ws, &chrome).count;
     });
     let line = &rect_rows(&healthy, Rect::new(0, 0, 100, 1))[0];
-    assert!(line.starts_with(" 1 need you"), "{line:?}");
+    assert!(line.starts_with(" ⍾ 1 needs you"), "{line:?}");
     assert!(line.contains("fable-5.1-xhigh"), "{line:?}");
-    assert!(line.contains("63% │ 12,345"), "{line:?}");
+    assert!(line.contains("63% · 12,345"), "{line:?}");
     assert!(line.ends_with("prefix ctrl+b │ navigate "), "{line:?}");
     let count = count.expect("attention count hit area");
     chrome.hover = Some(Hit::StatusCount);
@@ -301,10 +301,7 @@ fn status_bar_orders_fixed_slots_and_configured_segments() {
     chrome.hover = None;
 
     chrome.activate_tab(1);
-    assert_eq!(
-        ws.attention_entry_ids(),
-        ["run:term-alpha", "run:term-beta"]
-    );
+    assert_eq!(ws.attention_entry_ids(), ["run:term-beta"]);
     assert!(
         chrome
             .active_tab()
@@ -321,11 +318,10 @@ fn status_bar_orders_fixed_slots_and_configured_segments() {
         hits = Some(render_status_line(frame, frame.area(), &ws, &chrome));
     });
     let line = &rect_rows(&visible, Rect::new(0, 0, 100, 1))[0];
-    assert!(line.starts_with(" 1 need you"), "{line:?}");
-    assert!(!line.contains("2 need you"), "visible attention: {line:?}");
+    assert!(!line.contains("needs you"), "visible attention: {line:?}");
     assert!(line.contains("—"), "missing values: {line:?}");
-    assert!(line.contains("— │ — │ prefix"), "missing metrics: {line:?}");
-    assert!(hits.expect("status hits").count.is_some());
+    assert!(line.contains("— · — │ prefix"), "missing metrics: {line:?}");
+    assert!(hits.expect("status hits").count.is_none());
 
     chrome.activate_tab(0);
     chrome.prefs.status_left = vec!["focus".to_string(), "model".to_string()];
@@ -341,7 +337,7 @@ fn status_bar_orders_fixed_slots_and_configured_segments() {
     });
     let line = &rect_rows(&disconnected, Rect::new(0, 0, 100, 1))[0];
     assert!(
-        line.starts_with(" Daemon unreachable · retrying │ 1 need you"),
+        line.starts_with(" × Daemon unreachable · retrying │ ⍾ 1 needs you"),
         "{line:?}"
     );
     assert!(line.ends_with("prefix ctrl+b │ navigate "), "{line:?}");
@@ -357,7 +353,7 @@ fn status_bar_orders_fixed_slots_and_configured_segments() {
     });
     let line = &rect_rows(&configured, Rect::new(0, 0, 100, 1))[0];
     assert!(
-        line.starts_with(" Daemon unreachable · retrying │ 1 need you"),
+        line.starts_with(" × Daemon unreachable · retrying │ ⍾ 1 needs you"),
         "{line:?}"
     );
     assert!(

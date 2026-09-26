@@ -122,7 +122,7 @@ pub fn machine_admits<W: WorkspaceView>(ws: &W, chrome: &Chrome, machine_id: &st
     match chrome.sidebar.machine_filter.as_deref() {
         Some(ALL_MACHINES) => true,
         Some(machine) => machine_id == machine,
-        None => machine_id == ws.sidebar().local_machine,
+        None => ws.sidebar().local_machine.is_empty() || machine_id == ws.sidebar().local_machine,
     }
 }
 
@@ -233,7 +233,7 @@ pub fn agent_rows<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Vec<SidebarRow> 
         }
         rows.push(SidebarRow {
             id: format!("{GROUP_ROW}{project}"),
-            label: project_label(ws, chrome, &project).unwrap_or_else(|| project.clone()),
+            label: project_label(ws, chrome, &project).unwrap_or_else(|| "Project".to_string()),
             kind: RowKind::Group,
             ..SidebarRow::default()
         });
@@ -311,10 +311,7 @@ fn agent_candidate<W: WorkspaceView>(ws: &W, chrome: &Chrome, visible: Visible<'
         .map_or_else(String::new, |reference| {
             let project = (chrome.sidebar.all_sessions
                 && chrome.prefs.agent_sort == AgentSort::Priority)
-                .then(|| {
-                    project_label(ws, chrome, &agent.project_id)
-                        .unwrap_or_else(|| agent.project_id.clone())
-                });
+                .then(|| project_label(ws, chrome, &agent.project_id).unwrap_or_default());
             format!(
                 "{}{reference}",
                 project.as_deref().unwrap_or_default(),
@@ -326,8 +323,6 @@ fn agent_candidate<W: WorkspaceView>(ws: &W, chrome: &Chrome, visible: Visible<'
             id: agent.entry_id.clone(),
             definition: agent.definition_label(),
             reference,
-            provider: (!agent.managed && !agent.provider.is_empty())
-                .then(|| agent.provider.clone()),
             task: agent.task_ref.clone().zip(agent.task_title.clone()),
             model_slug: truncate_end(&agent.model_slug(), 17),
             label: agent_title(agent),

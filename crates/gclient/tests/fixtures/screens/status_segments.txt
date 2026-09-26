@@ -76,7 +76,7 @@
 36 : accent/panel_bg*1 -/panel_bg*118 accent/panel_bg*1
 37 |│                                                                                                                      │|
 37 : accent/panel_bg*1 -/panel_bg*118 accent/panel_bg*1
-38 |└ Codex (alpha) · Focused ──────────────────────────────────────────────────────────────────────────────────── gclient ┘|
-38 : accent/panel_bg*1 accent/panel_bg+b*25 accent/panel_bg*84 accent/panel_bg+b*9 accent/panel_bg*1
-39 | 1 need you │ fable-5.1-xhigh                                                              63% │ 12,345 │ prefix ctrl+b |
-39 : -/surface0*1 accent/surface0*10 subtext0/surface0*18 -/surface0*62 subtext0/surface0*28 -/surface0*1
+38 |└ Codex · Focused ──────────────────────────────────────────────────────────────────────────────────────────── gclient ┘|
+38 : accent/panel_bg*1 accent/panel_bg+b*17 accent/panel_bg*92 accent/panel_bg+b*9 accent/panel_bg*1
+39 | ⍾ 1 needs you │ fable-5.1-xhigh                                                           63% · 12,345 │ prefix ctrl+b |
+39 : -/surface0*1 yellow/surface0*13 subtext0/surface0*18 -/surface0*59 subtext0/surface0*28 -/surface0*1

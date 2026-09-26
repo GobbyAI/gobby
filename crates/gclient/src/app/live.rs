@@ -7,6 +7,7 @@ use std::pin::Pin;
 use tokio::sync::mpsc::UnboundedSender;
 #[path = "live_sidebar.rs"]
 mod live_sidebar;
+pub(super) use live_sidebar::SessionRetry;
 pub use live_sidebar::{SidebarFetch, SidebarFetchFuture};
 
 pub(super) mod relist;
@@ -30,6 +31,7 @@ impl Workspace<LiveDaemon> {
             sidebar: SidebarModel::default(),
             git_refreshed_at: Instant::now(),
             roster_refreshed_at: Instant::now(),
+            session_retry: SessionRetry::default(),
             last_roster_refresh_completed_at: None,
             pending_sidebar: PendingSidebar::default(),
             sidebar_stamps: SidebarStamps::default(),

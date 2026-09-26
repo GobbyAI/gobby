@@ -96,19 +96,15 @@ pub fn project_label<W: WorkspaceView>(
     chrome: &Chrome,
     project_id: &str,
 ) -> Option<String> {
+    if let Some(label) = chrome.sidebar.project_labels.get(project_id) {
+        return Some(label.clone());
+    }
     let project = ws
         .sidebar()
         .projects
         .iter()
         .find(|project| project.project_id == project_id)?;
-    Some(
-        chrome
-            .sidebar
-            .project_labels
-            .get(project_id)
-            .cloned()
-            .unwrap_or_else(|| project.name.clone()),
-    )
+    Some(project.name.clone())
 }
 
 /// Project cards in the user's order, the expanded card followed by its
@@ -398,7 +394,7 @@ fn card_spans(
     p: &Palette,
     max_width: usize,
 ) -> Vec<Span<'static>> {
-    let paren_style = Style::default().fg(p.overlay0).add_modifier(Modifier::DIM);
+    let paren_style = Style::default().fg(p.subtext0);
     let branch_style = Style::default().fg(if row.active { p.mauve } else { p.overlay0 });
     let mut paren = vec![
         Span::styled(" (", paren_style),
@@ -416,7 +412,7 @@ fn card_spans(
     if row.behind > 0 {
         paren.push(Span::styled(
             format!(" ↓{}", row.behind),
-            Style::default().fg(p.red),
+            Style::default().fg(p.subtext0),
         ));
     }
     paren.push(Span::styled(")", paren_style));
@@ -517,7 +513,7 @@ pub(crate) fn row_second_line_with_travel<'a>(
     let indent = 3 + display_width(nest_prefix(row));
     let budget = usize::from(width).saturating_sub(indent);
     let mut spans = vec![Span::raw(" ".repeat(indent.min(usize::from(width))))];
-    let style = Style::default().fg(chrome.palette.overlay0);
+    let style = Style::default().fg(chrome.palette.subtext0);
     match row.kind {
         RowKind::Agent => {
             if let Some((reference, title)) = row.task.as_ref() {
@@ -538,7 +534,7 @@ pub(crate) fn row_second_line_with_travel<'a>(
             } else {
                 spans.push(Span::styled(
                     truncate_end("No assigned task", budget),
-                    style.add_modifier(Modifier::DIM),
+                    Style::default().fg(chrome.palette.overlay1),
                 ));
             }
         }
@@ -558,7 +554,7 @@ pub fn row_third_line<'a>(row: &'a SidebarRow, width: u16, chrome: &Chrome) -> L
         Span::raw(" ".repeat(indent.min(usize::from(width)))),
         Span::styled(
             truncate_end(&row.model_slug, budget),
-            Style::default().fg(chrome.palette.overlay0),
+            Style::default().fg(chrome.palette.subtext0),
         ),
     ])
 }

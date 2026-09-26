@@ -82,12 +82,13 @@ pub fn machine_rows<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Vec<SidebarRow
         .filter(|machine| *machine != local)
         .collect();
     let count = nodes.len();
-    std::iter::once((local, None))
+    (!local.is_empty())
+        .then_some((local, None))
+        .into_iter()
         .chain(
-            nodes
-                .into_iter()
-                .enumerate()
-                .map(|(index, machine)| (machine, Some(index + 1 == count))),
+            nodes.into_iter().enumerate().map(|(index, machine)| {
+                (machine, (!local.is_empty()).then_some(index + 1 == count))
+            }),
         )
         .map(|(machine, nested)| {
             let is_local = machine == local;
@@ -111,7 +112,7 @@ pub fn machine_rows<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Vec<SidebarRow
             let active = match filter {
                 Some(ALL_MACHINES) => true,
                 Some(selected) => selected == machine,
-                None => is_local,
+                None => local.is_empty() || is_local,
             };
             SidebarRow {
                 id: machine.to_string(),

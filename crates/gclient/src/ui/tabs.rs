@@ -82,7 +82,7 @@ fn tab_chrome_label<W: WorkspaceView>(
     };
     let project = ws
         .focused_project()
-        .map(|id| project_label(ws, chrome, id).unwrap_or_else(|| id.to_string()));
+        .map(|id| project_label(ws, chrome, id).unwrap_or_else(|| "Project".to_string()));
     let mut label = match project {
         Some(project) => format!("{project}:{name}"),
         None => name,

@@ -1221,7 +1221,7 @@ switch_project = "ctrl+1..9"
                     // digest moves only alongside a deliberate render change.
                     assert_eq!(
                         frame_digest(&terminal),
-                        "383ef43f6a295af208538b57189f72048e75caf605d55296bfc09b4d264b737b"
+                        "a6267744f6c1da4da5b58683aa408df55152dd984830f97573d9f948dc25e590"
                     );
                 });
         }
@@ -1628,13 +1628,10 @@ fn rendered_hits_match_drawn_cells() {
     let pane = view.pane_infos.first().expect("pane info").rect;
     assert_eq!(indicator.y, pane.bottom() - 1);
     assert_ne!(indicator.y, view.status_rect.y);
-    assert_eq!(
-        hit_text(&terminal, indicator),
-        " Unknown (term-alpha) · Read-only"
-    );
+    assert_eq!(hit_text(&terminal, indicator), " term-alpha · Read-only");
     assert_eq!(
         usize::from(indicator.width),
-        display_width(" Unknown (term-alpha) · Read-only ")
+        display_width(" term-alpha · Read-only ")
     );
 }
 

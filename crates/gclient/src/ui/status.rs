@@ -8,6 +8,7 @@ use crate::app::{ControlState, Pane};
 use crate::daemon::DaemonError;
 use crate::theme::Palette;
 use crate::ui::chrome::{Chrome, Mode, RowState, WorkspaceView};
+use crate::ui::dialogs::Dialog;
 use crate::ui::hit::Hit;
 use crate::ui::pane_chrome::{footer_rects, pane_footer};
 use crate::ui::status_segments::{segment_text, StatusSegment};
@@ -164,8 +165,13 @@ fn toast_cue_color(kind: ToastKind, p: &Palette) -> Color {
 }
 
 /// Status-line name for a non-terminal mode.
-fn mode_name(mode: Mode) -> Option<&'static str> {
-    Some(match mode {
+fn mode_name(chrome: &Chrome) -> Option<&'static str> {
+    if chrome.mode == Mode::ProjectDialog
+        && matches!(chrome.dialog.as_ref(), Some(Dialog::About { .. }))
+    {
+        return Some("about");
+    }
+    Some(match chrome.mode {
         Mode::Terminal => return None,
         Mode::Navigate => "navigate",
         Mode::Prefix => "prefix",
@@ -348,10 +354,10 @@ pub fn render_status_line<W: WorkspaceView>(
     let mut spans = vec![Span::styled(" ", base)];
     let mut left_width = 1_u16;
     let mut has_part = false;
-    let mut append = |text: String, style: Style| {
+    let mut append = |text: String, style: Style, separator: &'static str| {
         let first = !has_part;
         if has_part {
-            spans.push(Span::styled(" │ ", base.fg(p.subtext0)));
+            spans.push(Span::styled(separator, base.fg(p.subtext0)));
             left_width = left_width.saturating_add(3);
         }
         let start = left_width;
@@ -364,7 +370,7 @@ pub fn render_status_line<W: WorkspaceView>(
 
     // Connection state and off-tab attention occupy the fixed slot, regardless of prefs.
     if let Some(DaemonError::Workspace(error)) = ws.daemon_error() {
-        append(error.reason.clone(), base.fg(p.red));
+        append(error.reason.clone(), base.fg(p.red), " │ ");
     } else if chrome.connection.retry_at.is_some()
         || (!ws.daemon_ready() && ws.daemon_error().is_some())
     {
@@ -378,7 +384,11 @@ pub fn render_status_line<W: WorkspaceView>(
             }
             Some(_) | None => "retrying".to_string(),
         };
-        append(format!("Daemon unreachable · {retry}"), base.fg(p.red));
+        append(
+            format!("× Daemon unreachable · {retry}"),
+            base.fg(p.red),
+            " │ ",
+        );
     } else if let Some((stage, elapsed)) = chrome
         .connection
         .stages
@@ -392,9 +402,10 @@ pub fn render_status_line<W: WorkspaceView>(
                 elapsed.unwrap_or_default().as_secs_f64()
             ),
             base.fg(p.accent),
+            " │ ",
         );
     } else if !ws.daemon_ready() {
-        append("Daemon unreachable".to_string(), base.fg(p.red));
+        append("× Daemon unreachable".to_string(), base.fg(p.red), " │ ");
     }
     let hidden = ws
         .attention_entry_ids()
@@ -414,12 +425,15 @@ pub fn render_status_line<W: WorkspaceView>(
         })
         .count();
     if hidden > 0 {
-        let label = format!("{hidden} need you");
-        let mut style = base.fg(p.accent);
+        let label = format!(
+            "⍾ {hidden} {} you",
+            if hidden == 1 { "needs" } else { "need" }
+        );
+        let mut style = base.fg(p.peach);
         if matches!(chrome.hover, Some(Hit::StatusCount)) {
             style = style.add_modifier(Modifier::UNDERLINED);
         }
-        let (start, _) = append(label.clone(), style);
+        let (start, _) = append(label.clone(), style, " │ ");
         hits.count = Some(Rect::new(
             area.x.saturating_add(start),
             area.y,
@@ -428,6 +442,7 @@ pub fn render_status_line<W: WorkspaceView>(
         ));
     }
     let mut optional_spans = 0;
+    let mut optional_started = false;
     for name in &chrome.prefs.status_left {
         let Some(segment) = StatusSegment::parse(name) else {
             continue;
@@ -450,7 +465,8 @@ pub fn render_status_line<W: WorkspaceView>(
             style = style.add_modifier(Modifier::UNDERLINED);
         }
         let width = display_width_u16(&text);
-        let (start, first) = append(text, style);
+        let (start, first) = append(text, style, if optional_started { " · " } else { " │ " });
+        optional_started = true;
         optional_spans += if first { 1 } else { 2 };
         if actionable {
             let x = if first {
@@ -473,7 +489,7 @@ pub fn render_status_line<W: WorkspaceView>(
         format!("prefix {}", chrome.keymap.prefix_label),
         base.fg(p.subtext0),
     )];
-    if let Some(name) = mode_name(chrome.mode) {
+    if let Some(name) = mode_name(chrome) {
         hint.push(Span::styled(" │ ", base.fg(p.subtext0)));
         hint.push(Span::styled(name, base.fg(p.accent)));
     }
@@ -494,7 +510,7 @@ pub fn render_status_line<W: WorkspaceView>(
         .filter_map(|name| StatusSegment::parse(name))
         .filter_map(|segment| segment_text(segment, ws, chrome))
         .collect::<Vec<_>>()
-        .join(" │ ");
+        .join(" · ");
     let right = if right.is_empty() {
         String::new()
     } else {
@@ -509,7 +525,10 @@ pub fn render_status_line<W: WorkspaceView>(
     while left_width > left_limit && spans.len() > fixed_spans {
         let removed = spans.pop().expect("optional status segment");
         left_width = left_width.saturating_sub(display_width_u16(removed.content.as_ref()));
-        if spans.last().is_some_and(|span| span.content == " │ ") {
+        if spans
+            .last()
+            .is_some_and(|span| span.content == " │ " || span.content == " · ")
+        {
             spans.pop();
             left_width = left_width.saturating_sub(3);
         }
@@ -559,6 +578,19 @@ mod tests {
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
     use serde_json::json;
+
+    #[test]
+    fn about_dialog_has_its_own_mode_label() {
+        let mut chrome = Chrome::dark();
+        chrome.mode = Mode::ProjectDialog;
+        chrome.dialog = Some(Dialog::About {
+            url: String::new(),
+            gclient_version: String::new(),
+            daemon_version: None,
+            machine: String::new(),
+        });
+        assert_eq!(mode_name(&chrome), Some("about"));
+    }
 
     fn screen(terminal: &Terminal<TestBackend>) -> String {
         terminal
@@ -624,7 +656,10 @@ mod tests {
         ws.daemon_mut().set_roster(json!({
             "epoch": "e1",
             "seq": 1,
-            "entries": [{"entry_id": "run:term-alpha", "kind": "blocked"}]
+            "entries": [{
+                "entry_id": "run:term-alpha",
+                "attention": {"kind": "actionable"}
+            }]
         }));
         ws.reconcile_subscribe_first().unwrap();
         ws.open_terminal("term-alpha", "native", "epoch").unwrap();
@@ -642,7 +677,7 @@ mod tests {
         let (text, indicator) = draw_status(&ws, &chrome);
         assert_eq!(
             text,
-            format!(" 1 need you{:>69}", "prefix ctrl+b │ navigate ")
+            format!(" ⍾ 1 needs you{:>66}", "prefix ctrl+b │ navigate ")
         );
         assert_eq!(indicator, None);
         let (terminal, _) = status_terminal(&ws, &chrome);
@@ -651,6 +686,7 @@ mod tests {
         for x in 0..80 {
             assert_eq!(buffer[(x, 0)].bg, p.surface0, "x={x}");
         }
+        assert_eq!(buffer[(1, 0)].fg, p.peach, "attention marker");
         assert_eq!(buffer[(55, 0)].fg, p.subtext0, "the prefix hint");
         for x in 71..79 {
             assert_eq!(buffer[(x, 0)].fg, p.accent, "the mode word, x={x}");
@@ -670,6 +706,43 @@ mod tests {
             text.contains("prefix ctrl+]"),
             "status lacks the prefix cue: {text}"
         );
+    }
+
+    #[test]
+    fn off_tab_count_excludes_idle_roster_entries_and_visible_attention() {
+        let mut ws = Workspace::scripted();
+        ws.daemon_mut().set_roster(json!({
+            "epoch": "e1",
+            "seq": 1,
+            "entries": [
+                {
+                    "entry_id": "run:visible",
+                    "terminal": {"terminal_id": "visible", "backend": "native"},
+                    "attention": {"kind": "actionable"}
+                },
+                {
+                    "entry_id": "run:off-tab",
+                    "terminal": {"terminal_id": "off-tab", "backend": "native"},
+                    "attention": {"kind": "actionable"}
+                },
+                {
+                    "entry_id": "run:idle",
+                    "terminal": {"terminal_id": "idle", "backend": "native"}
+                }
+            ]
+        }));
+        ws.reconcile_subscribe_first().unwrap();
+        let visible = ws.open_terminal("visible", "native", "epoch").unwrap();
+        let mut chrome = Chrome::dark();
+        chrome.open_pane(visible, "alpha");
+        chrome.compute_view(&ws, Rect::new(0, 0, 120, 20));
+        chrome.prefs.status_left.clear();
+        chrome.prefs.status_right.clear();
+
+        assert_eq!(ws.roster_entry_ids().len(), 3);
+        assert_eq!(ws.attention_entry_ids().len(), 2);
+        let (text, _) = draw_status(&ws, &chrome);
+        assert!(text.starts_with(" ⍾ 1 needs you"), "{text}");
     }
 
     #[test]
@@ -705,7 +778,7 @@ mod tests {
         chrome.connection.retry_at = Some(now + Duration::from_secs(3));
         let (text, _) = draw_status(&ws, &chrome);
         assert!(
-            text.starts_with(" Daemon unreachable · retry in 3 s"),
+            text.starts_with(" × Daemon unreachable · retry in 3 s"),
             "status should show the retry countdown: {text}"
         );
     }

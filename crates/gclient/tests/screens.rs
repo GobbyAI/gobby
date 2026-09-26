@@ -168,6 +168,7 @@ fn project_rows() -> SidebarRows {
 /// states draw the default frame with it hidden.
 fn projects_agents() -> (Workspace, Chrome) {
     let mut ws = Workspace::scripted();
+    ws.set_local_machine("local");
     ws.daemon_mut().set_sidebar_rows(project_rows());
     ws.daemon_mut().set_roster(json!({
         "epoch": "e1",
@@ -191,6 +192,7 @@ fn projects_agents() -> (Workspace, Chrome) {
 
 fn agent_rows() -> (Workspace, Chrome) {
     let mut ws = Workspace::scripted();
+    ws.set_local_machine("local");
     let mut rows = project_rows();
     rows.runs.insert(
         "proj-alpha".into(),
@@ -715,8 +717,8 @@ fn agent_rows_golden() {
         .lines()
         .find(|line| line.starts_with("10 :"))
         .expect("model slug style");
-    assert!(slug_style.contains("overlay0/panel_bg*5"));
-    assert!(!slug_style.contains("overlay0/panel_bg+d"));
+    assert!(slug_style.contains("subtext0/panel_bg*5"));
+    assert!(!slug_style.contains("subtext0/panel_bg+d"));
 }
 
 #[test]
@@ -725,9 +727,9 @@ fn status_segments_golden() {
     let rendered = deterministic_capture("status_segments", status_segments, &theme);
     let rows = glyph_rows(&rendered);
     let status = rows[usize::from(HEIGHT - 1)];
-    assert!(status.contains("1 need you"), "{status:?}");
+    assert!(status.contains("1 needs you"), "{status:?}");
     assert!(status.contains("fable-5.1-xhigh"), "{status:?}");
-    assert!(status.contains("63% │ 12,345"), "{status:?}");
+    assert!(status.contains("63% · 12,345"), "{status:?}");
     assert!(status.contains("prefix ctrl+b"), "{status:?}");
 }
 

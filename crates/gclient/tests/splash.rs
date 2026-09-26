@@ -130,7 +130,7 @@ fn status_segment_names_the_running_stage_and_the_retry_countdown() {
     chrome.connection.retry_at = Some(chrome.connection.now + Duration::from_secs(3));
     let line = draw_status(&mut terminal, &chrome);
     assert!(
-        line.starts_with(" Daemon unreachable · retry in 3 s"),
+        line.starts_with(" × Daemon unreachable · retry in 3 s"),
         "status should show the retry deadline: {line}"
     );
 }

@@ -215,6 +215,9 @@ pub async fn run_live_loop<B: Backend>(
     let mut suspend_signal = install_suspend_signal(workspace, &mut loop_error);
     let mut render_tick = tokio::time::interval(RENDER_TICK);
     render_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut next_frame_render_at = Instant::now();
+    let mut system_theme_watcher = None;
+    let mut system_theme_watch_attempted = false;
     let mut prefix_armed = false;
     let mut reconnect_job = None;
     let mut startup_job = if launch_pending {
@@ -469,9 +472,13 @@ pub async fn run_live_loop<B: Backend>(
                         Err(error) => chrome.notify(Toast::error(error.to_string())),
                     }
                 }
-                if let Err(error) = render_live_workspace(terminal, workspace, chrome) {
-                    workspace.latch_exit(error.to_string());
-                    loop_error = Some(error);
+                let now = Instant::now();
+                if now >= next_frame_render_at {
+                    next_frame_render_at = now + RENDER_TICK * 4;
+                    if let Err(error) = render_live_workspace(terminal, workspace, chrome) {
+                        workspace.latch_exit(error.to_string());
+                        loop_error = Some(error);
+                    }
                 }
             }
             result = await_sidebar_job(&mut sidebar_job), if sidebar_job.is_some() => {
@@ -481,7 +488,10 @@ pub async fn run_live_loop<B: Backend>(
                         workspace.apply_sidebar_fetch(fetch);
                         None
                     }
-                    Err(error) => Some(error),
+                    Err(error) => {
+                        workspace.request_focused_sessions();
+                        Some(error)
+                    }
                 };
                 settle_sidebar_banner(chrome, &mut sidebar_error_shown, error.as_ref());
                 if let Some(project) = first_shell_pending.take() {
@@ -566,6 +576,23 @@ pub async fn run_live_loop<B: Backend>(
                 }
             }
             _ = render_tick.tick() => {
+                if chrome.prefs.theme.eq_ignore_ascii_case("system") {
+                    if !system_theme_watch_attempted {
+                        system_theme_watcher = dark_light::subscribe().ok();
+                        system_theme_watch_attempted = true;
+                    }
+                    if let Some(watcher) = &system_theme_watcher {
+                        for mode in watcher.try_iter() {
+                            chrome.set_theme(if mode == dark_light::Mode::Light {
+                                crate::theme::ThemeKind::Light
+                            } else {
+                                crate::theme::ThemeKind::Dark
+                            });
+                        }
+                    }
+                } else if let Some(watcher) = &system_theme_watcher {
+                    for _ in watcher.try_iter() {}
+                }
                 chrome.connection.now = std::time::Instant::now();
                 chrome.ticker = chrome.ticker.wrapping_add(1);
                 chrome.expire_toasts(std::time::Instant::now());
@@ -588,9 +615,16 @@ pub async fn run_live_loop<B: Backend>(
                 if !launch_pending && reconnect_stage.is_none() && sidebar_job.is_none() {
                     sidebar_job = workspace.start_sidebar_refetch();
                 }
-                if let Err(error) = render_live_workspace(terminal, workspace, chrome) {
-                    workspace.latch_exit(error.to_string());
-                    loop_error = Some(error);
+                // Rendering on every 16 ms timer tick rebuilds the full frame
+                // while idle. The marquee advances only once per TICKER_STEP.
+                if chrome
+                    .ticker
+                    .is_multiple_of(crate::ui::sidebar_rows::TICKER_STEP)
+                {
+                    if let Err(error) = render_live_workspace(terminal, workspace, chrome) {
+                        workspace.latch_exit(error.to_string());
+                        loop_error = Some(error);
+                    }
                 }
             }
         }
