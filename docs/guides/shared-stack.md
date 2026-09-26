@@ -157,7 +157,7 @@ source/fixture audit of this guide does not perform that live cutover.
 
 Use the [remote Docker stack live-test runbook](remote-docker-acceptance.md) for the
 physical M0 acceptance run, together with the hub-PC move plan
-(`.gobby/plans/hub-pc-datastore-move.md`, R0-R7). The runbook writes captured artifacts
+(`.gobby/plans/completed/hub-pc-datastore-move.md`, R0-R7). The runbook writes captured artifacts
 to `.gobby/acceptance/<UTC-run-id>/`. Fill in the checklist below from the runbook's
 Completion record before closing #19600.
 

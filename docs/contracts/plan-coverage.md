@@ -399,10 +399,12 @@ Adversary seats) runs the interactive flow Josh set on 2026-09-26 with no
 numbered review rounds: the Writer drafts and spawns one enhancer pass, the
 Program Director reviews the design and puts product decisions to Josh, Josh
 approves, the Adversary reviews and converses with the Writer by
-`send_message` to consensus, and the Adversary then derives and applies M1
-through `derive_plan_handoff_manifest` and `apply_plan_handoff_manifest`,
-followed by expansion-mode validation. Approval still precedes the manifest
-write; the council changes the actor, not the gate. The evidence-round
+`send_message` to consensus, the Writer records one dated prose consensus
+entry under `## V1 Plan Changelog`, and the Adversary then derives and applies
+M1 from those bytes through `derive_plan_handoff_manifest` and
+`apply_plan_handoff_manifest`, followed by expansion-mode validation. Any
+edit after derivation requires fresh hashes. Approval still precedes the
+manifest write; the council changes the actor, not the gate. The evidence-round
 protocol in this contract remains the path for spawned taskless reviewers and
 `gobby build` stage reviews.
 

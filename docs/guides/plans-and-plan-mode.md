@@ -183,9 +183,11 @@ interactive flow per plan, set on 2026-09-26, with no numbered review rounds:
 6. The Writer edits, and the two seats converse through
    `gobby-agents:send_message` until consensus; unresolved disagreements go to
    the Program Director.
-7. On consensus the Adversary derives and applies `## M1 Task Manifest` through
-   `derive_plan_handoff_manifest` and `apply_plan_handoff_manifest`, then
-   expansion-mode validation runs.
+7. On consensus the Writer records one dated prose consensus entry under
+   `## V1 Plan Changelog` and commits. From those bytes the Adversary derives
+   and applies `## M1 Task Manifest` through `derive_plan_handoff_manifest`
+   and `apply_plan_handoff_manifest`, then expansion-mode validation runs.
+   Any edit after derivation needs fresh hashes.
 
 The manifest is still written only after approval; the council changes the
 actor, not the gate. The evidence-round protocol above stays the contract for

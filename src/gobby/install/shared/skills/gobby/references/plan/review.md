@@ -5,6 +5,7 @@ Load before preparing, performing, or processing adversarial plan review.
 Review is optional and requires its own authorization. Base-validate canonical bytes immediately before each round; a manifest-bearing plan also passes expansion mode. Resolve deterministic residue through [repair](repair.md) before preparing evidence.
 Call gobby-plans:prepare_plan_review_round immediately before spawning plan-adversary-taskless without task_id and with isolation none. Supply evidence ID, canonical path, clean scope-specific sweep report, round/cap and parent. Bind once with bind_evidence_run; expire failed launches/binds. Immediately save a structured clear_session=false handoff, then use event-driven waits.
 Reviewer reads get_plan_review_snapshot for immutable bytes and does not reread the live artifact. Complete any oversized-result retrieval before using it. Never edit the plan. Taskless reviewers never mutate task state; stage-native reviewers use only their authorized verdict transitions.
+The evidence rounds above belong to spawned taskless reviewers and gobby build stages. Josh's plan council runs none: after Josh's approval the static Plan Adversary seat reviews the committed plan, sends findings to the Plan Writer by send_message, converses to consensus, then derives and applies M1 through [approval](approval.md)'s handoff-manifest route. It never edits the plan file.
 
 ## Review obligations
 Load [coverage](coverage.md) and its linked contract before checking grammar.
@@ -29,4 +30,4 @@ Present every finding with full metadata and collect individual accept/decline v
 Spawned taskless reviewers deliver the exact JSON to their parent through send_message, then end_agent_run with the current required structured handoff (current_state and next_steps). Stage-native reviewers first use the authorized approve_review/reject_review/escalate_task stage path, then deliver the exact result and end their run. Fetch those schemas; older no-argument end_agent_run examples are obsolete.
 See [Plans and plan mode](../../../../../../../../docs/guides/plans-and-plan-mode.md#optional-adversarial-review).
 
-_Last verified: 2026-09-19_
+_Last verified: 2026-09-26_
