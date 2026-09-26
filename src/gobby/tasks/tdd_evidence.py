@@ -168,7 +168,7 @@ def evaluate_tdd_evidence(
                         evidence,
                         production_edit.order,
                         later_production_edit,
-                        require_not_implemented=True,
+                        require_not_implemented=not test.path.endswith(".rs"),
                     )
                     red_rejection = window_rejection or red_rejection
                     if window_red is not None:
