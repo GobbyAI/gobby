@@ -394,7 +394,9 @@ mod tests {
     use crate::ui::settings::PassthroughModifier;
     use crossterm::event::{KeyModifiers, MouseButton};
     use gobby_terminal::protocol::{FrameData, PaneModes};
+    use ratatui::backend::TestBackend;
     use ratatui::layout::Rect;
+    use ratatui::Terminal;
 
     /// `pane`'s app tracks every motion and asked for SGR reports.
     fn track_mouse(ws: &mut Workspace, pane: PaneId) {
@@ -470,6 +472,65 @@ mod tests {
             row,
             modifiers,
         )
+    }
+
+    #[test]
+    fn info_dialog_esc_caps_close_on_click_and_keyboard() {
+        let ws = Workspace::scripted();
+        let dialogs = [
+            Dialog::Daemon {
+                url: "http://localhost".to_owned(),
+                gclient_version: "0.5.0".to_owned(),
+                daemon_version: None,
+                health: "ok".to_owned(),
+                last_roster_refresh: None,
+                stages: None,
+            },
+            Dialog::About {
+                url: "http://localhost".to_owned(),
+                gclient_version: "0.5.0".to_owned(),
+                daemon_version: None,
+                machine: "local".to_owned(),
+            },
+        ];
+        for dialog in dialogs {
+            let mut chrome = Chrome::dark();
+            chrome.dialog = Some(dialog.clone());
+            chrome.mode = Mode::ProjectDialog;
+            let area = Rect::new(0, 0, 100, 30);
+            let mut terminal =
+                Terminal::new(TestBackend::new(area.width, area.height)).expect("test backend");
+            let mut buttons = Vec::new();
+            terminal
+                .draw(|frame| {
+                    buttons = crate::ui::dialogs::render_dialog(frame, area, &chrome);
+                })
+                .expect("draw dialog");
+            assert_eq!(buttons.len(), 1, "{dialog:?} must expose its esc cap");
+            let close = buttons[0];
+            chrome.view.dialog_button_hit_areas = buttons;
+            assert_eq!(
+                hit_test(&chrome.view, close.x, close.y),
+                Hit::DialogButton(0)
+            );
+            assert_eq!(
+                route_mouse(
+                    &ws,
+                    &mut chrome,
+                    &down(close.x, close.y, KeyModifiers::NONE)
+                ),
+                MouseOutcome::Modal(ModalOutcome::Close)
+            );
+            assert!(chrome.dialog.is_none());
+
+            chrome.dialog = Some(dialog);
+            chrome.mode = Mode::ProjectDialog;
+            assert_eq!(
+                project_dialog_key(&mut chrome, &KeyEvent::from(KeyCode::Esc)),
+                ModalOutcome::Close
+            );
+            assert!(chrome.dialog.is_none());
+        }
     }
 
     #[test]

@@ -36,9 +36,10 @@ pub fn render_daemon(frame: &mut Frame, area: Rect, chrome: &Chrome) -> Vec<Rect
         "daemon",
         p,
     );
+    let close = Rect::new(inner.right().saturating_sub(10), inner.y, 9, 1);
     frame.render_widget(
         Paragraph::new("esc close").style(Style::default().fg(p.accent)),
-        Rect::new(inner.right().saturating_sub(10), inner.y, 9, 1),
+        close,
     );
     let roster = last_roster_refresh
         .map(|age| format!("refreshed {} s ago", age.as_secs()))
@@ -59,7 +60,7 @@ pub fn render_daemon(frame: &mut Frame, area: Rect, chrome: &Chrome) -> Vec<Rect
             Rect::new(inner.x + 2, inner.y + row, inner.width - 4, 1),
         );
     }
-    Vec::new()
+    vec![close]
 }
 
 pub fn render_about(
@@ -100,9 +101,10 @@ pub fn render_about(
         "about gobby",
         p,
     );
+    let close = Rect::new(inner.right().saturating_sub(10), inner.y, 9, 1);
     frame.render_widget(
         Paragraph::new("esc close").style(Style::default().fg(p.accent)),
-        Rect::new(inner.right().saturating_sub(10), inner.y, 9, 1),
+        close,
     );
 
     let x = if show_mark { inner.x + 32 } else { inner.x + 2 };
@@ -148,5 +150,5 @@ pub fn render_about(
         inner.y + 10,
         Line::from(Span::styled("gobby.ai", Style::default().fg(p.overlay0))),
     );
-    Vec::new()
+    vec![close]
 }
