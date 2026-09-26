@@ -80,7 +80,6 @@ async fn focus_hints_seed_and_follow_the_last_actor() {
     mock.use_unique_attachment_ids();
     let ids = ["terminal-a", "terminal-b", "terminal-c"];
     mock.enqueue("GET", "/api/terminals?", 200, terminal_page(&ids));
-    mock.enqueue("GET", "/api/terminals?", 200, terminal_page(&ids));
     // mock-tab-1 holds mock-pane-2 (a) and mock-pane-3 (b, focused);
     // mock-tab-4 holds mock-pane-5 (c). The seed points the workspace's
     // hints at the first tab, so a previous actor moves them to the second.
@@ -119,8 +118,16 @@ async fn focus_hints_seed_and_follow_the_last_actor() {
     let (input_tx, input_rx) = mpsc::channel(32);
 
     let driver = async {
-        // The window's first hint echoes what it seeded from the rows.
-        wait_until(|| !focus_hint_ops(&mock).is_empty()).await;
+        // The first control request proves the window drew the seeded tab.
+        wait_until(|| {
+            mock.requests().iter().any(|request| {
+                request.body.as_ref().is_some_and(|body| {
+                    body.get("type") == Some(&json!("terminal_take_control"))
+                        && body.get("terminal_id") == Some(&json!("terminal-c"))
+                })
+            })
+        })
+        .await;
         send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
         send_key(&input_tx, KeyCode::Char('n'), KeyModifiers::NONE).await;
         wait_until(|| {
@@ -144,8 +151,8 @@ async fn focus_hints_seed_and_follow_the_last_actor() {
     );
     result.expect("live loop exits cleanly");
 
-    // The loop may echo the seeded hint once more after its own attach;
-    // the order of distinct hints is what the rows see.
+    // The first hint came from the previous actor; startup treats it as the
+    // baseline, then writes the next focus back.
     let mut hints = focus_hint_ops(&mock);
     hints.dedup();
     assert_eq!(

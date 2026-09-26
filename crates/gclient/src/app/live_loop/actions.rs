@@ -791,12 +791,32 @@ pub(super) async fn spawn_live_shell(
         cwd,
         ..SpawnRequest::default()
     };
-    match workspace.daemon().spawn(request).await? {
+    let outcome = workspace.daemon().spawn(request).await?;
+    finish_live_shell_spawn(workspace, chrome, placement, worktree_id, None, outcome).await
+}
+
+pub(super) async fn finish_live_shell_spawn(
+    workspace: &mut Workspace<LiveDaemon>,
+    chrome: &mut Chrome,
+    placement: Placement,
+    worktree_id: Option<String>,
+    project_override: Option<&str>,
+    outcome: SpawnOutcome,
+) -> Result<(), FrameError> {
+    match outcome {
         SpawnOutcome::Created { terminal_id, .. } => {
             workspace.pending_spawns.insert(terminal_id.clone());
             workspace.fetch_roster().await?;
             workspace.attach_ready_panes().await?;
-            place_live_terminal(workspace, chrome, placement, &terminal_id, worktree_id).await?;
+            place_live_terminal(
+                workspace,
+                chrome,
+                placement,
+                &terminal_id,
+                worktree_id,
+                project_override,
+            )
+            .await?;
             sync_live_chrome(workspace, chrome);
         }
         SpawnOutcome::Refused { reason } => chrome.notify(Toast::warning(reason)),

@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use crossterm::event::{KeyCode, KeyEvent};
 
-use crate::daemon::{Daemon, DaemonError, LiveDaemon, WorkspaceOp};
+use crate::daemon::{Daemon, DaemonError, LiveDaemon, SpawnRequest, WorkspaceOp};
 use crate::frame_source::FrameError;
 use crate::ui::chrome::{attention_pane, Tab};
 use crate::ui::dialogs::project::{complete_directory, expand_home, plural};
@@ -112,7 +112,7 @@ pub async fn open_agent_in_new_tab(
     };
     if !chrome.focus_pane(pane) {
         let terminal_id = workspace.pane(pane).terminal_id.clone();
-        place_live_terminal(workspace, chrome, Placement::Tab, &terminal_id, None).await?;
+        place_live_terminal(workspace, chrome, Placement::Tab, &terminal_id, None, None).await?;
     }
     focus_live_pane(workspace, pane).await
 }
@@ -129,7 +129,7 @@ pub(super) async fn reveal_agent(
     };
     if !chrome.focus_pane(pane) {
         let terminal_id = workspace.pane(pane).terminal_id.clone();
-        place_live_terminal(workspace, chrome, Placement::Tab, &terminal_id, None).await?;
+        place_live_terminal(workspace, chrome, Placement::Tab, &terminal_id, None, None).await?;
     }
     Ok(Some(pane))
 }
@@ -143,7 +143,15 @@ pub(super) async fn focus_terminal(
 ) -> Result<(), FrameError> {
     let pane = terminal_pane(workspace, terminal_id).await?;
     if !chrome.focus_pane(pane) {
-        place_live_terminal(workspace, chrome, Placement::SplitRight, terminal_id, None).await?;
+        place_live_terminal(
+            workspace,
+            chrome,
+            Placement::SplitRight,
+            terminal_id,
+            None,
+            None,
+        )
+        .await?;
     }
     focus_live_pane(workspace, pane).await
 }
@@ -285,15 +293,29 @@ pub(super) async fn restore_focused(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
 ) -> Result<(), FrameError> {
+    if first_shell_request(workspace, chrome).is_some() {
+        spawn_live_terminal(workspace, chrome, Placement::Tab).await?;
+    }
+    Ok(())
+}
+
+pub(super) fn first_shell_request(
+    workspace: &mut Workspace<LiveDaemon>,
+    chrome: &mut Chrome,
+) -> Option<SpawnRequest> {
     if let Some(project) = workspace.project_id() {
         chrome.focus_project(project);
     }
     // A window inside a gclient pane shows what the outer window opens and
     // never seeds a shell of its own.
     if workspace.in_pane() || !chrome.tabs().tabs.is_empty() || workspace.gobby_home().is_none() {
-        return Ok(());
+        return None;
     }
-    spawn_live_terminal(workspace, chrome, Placement::Tab).await
+    Some(SpawnRequest {
+        project_id: workspace.project_id().map(str::to_owned),
+        cwd: workspace.focused_checkout_path(),
+        ..SpawnRequest::default()
+    })
 }
 
 /// Open the new-project dialog on `~/`.

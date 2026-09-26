@@ -436,7 +436,7 @@ async fn live_created_event_attaches_before_next_reconciliation() {
             loop {
                 let created_attached = mock.requests().iter().any(|request| {
                     request.body.as_ref().is_some_and(|body| {
-                        body.get("type") == Some(&json!("terminal_attach"))
+                        body.get("type") == Some(&json!("terminal_set_viewport"))
                             && body.get("terminal_id") == Some(&json!("terminal-created"))
                     })
                 });
@@ -447,7 +447,7 @@ async fn live_created_event_attaches_before_next_reconciliation() {
             }
         })
         .await
-        .expect("created terminal attaches without waiting for a relist");
+        .expect("created terminal becomes live without waiting for a relist");
         drop(input_tx);
     };
 
@@ -4128,20 +4128,18 @@ async fn detach_reply_errors_retry_panes_without_reconnecting() {
 async fn daemon_loss_renders_read_only_until_recovery() {
     let mock = MockDaemon::start("local-token").await;
     mock.use_unique_attachment_ids();
-    for _ in 0..2 {
-        mock.enqueue(
-            "GET",
-            "/api/terminals?",
-            200,
-            json!({
-                "items": [
-                    {"terminal_id": "terminal-loss", "backend": "native", "state": "live"}
-                ],
-                "next_cursor": null,
-                "snapshot": {"daemon_epoch": "epoch-loss", "seq": 1}
-            }),
-        );
-    }
+    mock.enqueue(
+        "GET",
+        "/api/terminals?",
+        200,
+        json!({
+            "items": [
+                {"terminal_id": "terminal-loss", "backend": "native", "state": "live"}
+            ],
+            "next_cursor": null,
+            "snapshot": {"daemon_epoch": "epoch-loss", "seq": 1}
+        }),
+    );
     mock.enqueue(
         "GET",
         "/api/terminals?",
@@ -4286,7 +4284,7 @@ async fn daemon_loss_renders_read_only_until_recovery() {
                     request.method == "GET" && request.target.starts_with("/api/terminals?")
                 })
                 .count();
-            if roster_reads >= 3 {
+            if roster_reads >= 2 {
                 break;
             }
             tokio::task::yield_now().await;
@@ -4815,6 +4813,10 @@ async fn control_tombstone_retires_the_attachment() {
         );
         mock.allow_ws("terminal_take_control");
 
+        // The timed-out control reply is delivered to the loop on its own
+        // channel. Wait for that branch to start detaching before advancing
+        // the detach deadline.
+        wait_for_websocket_requests(&mock, "terminal_detach", 1).await;
         tokio::time::advance(Duration::from_secs(2) + RENDER_TICK * 2).await;
         tokio::time::resume();
         wait_for_websocket_requests(&mock, "terminal_set_viewport", 2).await;
@@ -6227,6 +6229,7 @@ async fn wheel_and_scrollbar_drive_scrollback() {
 async fn wheel_over_a_tmux_pane_asks_the_daemon_for_nothing() {
     let mock = MockDaemon::start("local-token").await;
     mock.use_unique_attachment_ids();
+    mock.set_attach_backend("terminal-tmux", "tmux");
     for _ in 0..2 {
         mock.enqueue(
             "GET",
@@ -6251,6 +6254,10 @@ async fn wheel_over_a_tmux_pane_asks_the_daemon_for_nothing() {
     let pane = workspace
         .pane_for_terminal("terminal-tmux")
         .expect("roster pane");
+    assert!(
+        !workspace.pane(pane).backend.is_native(),
+        "tmux roster row stays tmux after attachment"
+    );
 
     // Mirror the loop's one-pane chrome and confirm the notch's cell really
     // lands on the pane, so an empty request log means the wheel was consumed
@@ -6299,7 +6306,8 @@ async fn wheel_over_a_tmux_pane_asks_the_daemon_for_nothing() {
     result.expect("live loop exits cleanly");
     assert!(
         websocket_requests(&mock, "terminal_set_scroll_offset").is_empty(),
-        "a tmux pane never asks the daemon to scroll"
+        "a tmux pane never asks the daemon to scroll: {:?}",
+        websocket_requests(&mock, "terminal_set_scroll_offset")
     );
     assert_eq!(
         workspace.pane(pane).scroll_offset(),
@@ -6722,14 +6730,12 @@ async fn wired_actions_split_focus_swap_and_switch_tabs() {
             "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
         })
     };
-    for _ in 0..2 {
-        mock.enqueue(
-            "GET",
-            "/api/terminals?",
-            200,
-            roster_page(&["terminal-a", "terminal-b", "terminal-c"]),
-        );
-    }
+    mock.enqueue(
+        "GET",
+        "/api/terminals?",
+        200,
+        roster_page(&["terminal-a", "terminal-b", "terminal-c"]),
+    );
     mock.enqueue(
         "GET",
         "/api/terminals?",
@@ -7886,14 +7892,12 @@ async fn context_menu_dispatches_items_and_closes_outside() {
             "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
         })
     };
-    for _ in 0..2 {
-        mock.enqueue(
-            "GET",
-            "/api/terminals?",
-            200,
-            roster_page(&["terminal-a", "terminal-b"]),
-        );
-    }
+    mock.enqueue(
+        "GET",
+        "/api/terminals?",
+        200,
+        roster_page(&["terminal-a", "terminal-b"]),
+    );
     let daemon = LiveDaemon::connect(mock.url(), "local-token")
         .await
         .expect("connect live daemon");
@@ -8080,7 +8084,7 @@ async fn context_menu_dispatches_items_and_closes_outside() {
             initial,
             "close pane acts on the pane under the menu, not the focused one"
         );
-        wait_for_http_requests(&mock, "GET", "/api/terminals?", 4).await;
+        wait_for_http_requests(&mock, "GET", "/api/terminals?", 3).await;
         settle_live_event().await;
 
         // Bare tab-bar space opens the global menu; clicking `reload config`
@@ -9440,7 +9444,8 @@ async fn assert_daemon_hosted_activation(path: ExplicitActivation) -> usize {
     chrome.open_pane(shown, workspace.pane(shown).display_name());
     let (input_tx, input_rx) = mpsc::channel(32);
     let driver = async {
-        wait_for_http_requests(&mock, "GET", "/api/attention/roster", 2).await;
+        // The resize follows the loop's first content draw and hit-map update.
+        wait_for_websocket_requests(&mock, "terminal_resize", 1).await;
         activate_daemon_hosted_terminal(&input_tx, path, agent_cell).await;
         timeout(Duration::from_secs(1), async {
             loop {
@@ -9604,7 +9609,6 @@ async fn assert_agent_row_click_activates_tab_showing_existing_pane() {
     chrome.activate_tab(0);
     let (input_tx, input_rx) = mpsc::channel(32);
     let driver = async {
-        wait_for_http_requests(&mock, "GET", "/api/attention/roster", 2).await;
         wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
         let before = websocket_requests(&mock, "terminal_take_control").len();
         send_mouse(
@@ -10339,23 +10343,16 @@ async fn a_detached_worktree_row_does_not_latch_exit() {
         .expect("connect live daemon");
     let mut workspace = Workspace::live(daemon);
     workspace.select_project("project-1");
+    workspace
+        .fetch_sidebar_rows()
+        .await
+        .expect("load detached worktree rows");
     let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
     let mut chrome = pinned_chrome();
     chrome.sidebar.expanded_project = Some("project-1".to_string());
     let (input_tx, input_rx) = mpsc::channel(16);
 
-    let driver = async {
-        timeout(Duration::from_secs(1), async {
-            while !mock.requests().iter().any(|request| {
-                request.method == "GET" && request.target.starts_with(worktrees_path)
-            }) {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("startup fetches the worktrees");
-        drop(input_tx);
-    };
+    let driver = async { drop(input_tx) };
     let mut switch = TerminalGuard::recording().0;
     let (result, ()) = tokio::join!(
         run_live_loop(
@@ -10847,21 +10844,19 @@ async fn row_menus_dispatch_project_and_agent_actions() {
             json!({"current_branch": "0.5.0", "ahead": 0, "behind": 0, "repo_path": "/repo", "worktree_count": 1}),
         );
     }
-    for _ in 0..2 {
-        mock.enqueue(
-            "GET",
-            worktrees_path,
-            200,
-            json!({"worktrees": [worktree("wt-1", "spare")]}),
-        );
-        mock.enqueue(
-            "GET",
-            "/api/terminals?",
-            200,
-            terminal_page(&["terminal-a"]),
-        );
-        mock.enqueue("GET", "/api/attention/roster", 200, roster.clone());
-    }
+    mock.enqueue(
+        "GET",
+        worktrees_path,
+        200,
+        json!({"worktrees": [worktree("wt-1", "spare")]}),
+    );
+    mock.enqueue(
+        "GET",
+        "/api/terminals?",
+        200,
+        terminal_page(&["terminal-a"]),
+    );
+    mock.enqueue("GET", "/api/attention/roster", 200, roster.clone());
     mock.enqueue(
         "POST",
         "/api/source-control/worktrees",
@@ -10934,7 +10929,7 @@ async fn row_menus_dispatch_project_and_agent_actions() {
     chrome.sidebar.toggle_group("project-1");
     let (input_tx, input_rx) = mpsc::channel(256);
     let driver = async {
-        wait_for_http_requests(&mock, "GET", "/api/attention/roster", 2).await;
+        wait_for_websocket_requests(&mock, "terminal_set_viewport", 1).await;
         settle_live_event().await;
         let press = |button, (column, row): (u16, u16)| {
             send_mouse(
@@ -11914,15 +11909,13 @@ async fn closing_an_unshown_agent_row_kills_that_row_not_the_focused_pane() {
     for _ in 0..4 {
         mock.enqueue("GET", "/api/projects", 200, sidebar_project_row());
     }
-    for _ in 0..2 {
-        mock.enqueue(
-            "GET",
-            "/api/terminals?",
-            200,
-            terminal_page(&[SHOWN, UNSHOWN]),
-        );
-        mock.enqueue("GET", "/api/attention/roster", 200, roster.clone());
-    }
+    mock.enqueue(
+        "GET",
+        "/api/terminals?",
+        200,
+        terminal_page(&[SHOWN, UNSHOWN]),
+    );
+    mock.enqueue("GET", "/api/attention/roster", 200, roster.clone());
     mock.enqueue("GET", "/api/terminals?", 200, terminal_page(&[SHOWN]));
     mock.seed_workspace("project-1", &[(&[SHOWN], SHOWN)]);
 
@@ -11965,7 +11958,6 @@ async fn closing_an_unshown_agent_row_kills_that_row_not_the_focused_pane() {
     let mut chrome = pinned_chrome();
     let (input_tx, input_rx) = mpsc::channel(32);
     let driver = async {
-        wait_for_http_requests(&mock, "GET", "/api/attention/roster", 2).await;
         wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
         let press = |button, (column, row): (u16, u16)| {
             send_mouse(
@@ -12094,7 +12086,11 @@ async fn closing_an_external_row_releases_the_lease_instead_of_killing_it() {
                 KeyModifiers::NONE,
             )
         };
+        tokio::time::pause();
         press(MouseButton::Right, anchor).await;
+        tokio::time::advance(RENDER_TICK * 2).await;
+        settle_live_event().await;
+        tokio::time::resume();
         // `close terminal` is the fifth item of an unblocked row's menu.
         press(MouseButton::Left, (anchor.0 + 2, anchor.1 + 1 + 4)).await;
         wait_for_websocket_requests(&mock, "terminal_release_control", 1).await;
@@ -12423,7 +12419,7 @@ async fn reconnect_rearms_direct_from_the_fresh_roster_row() {
     let mock = MockDaemon::start("local-token").await;
     mock.use_unique_attachment_ids();
     let terminal_id = "terminal-rearm";
-    let (mut workspace, _) = live_workspace_with_scripted_direct(&mock, terminal_id, 2).await;
+    let (mut workspace, _) = live_workspace_with_scripted_direct(&mock, terminal_id, 1).await;
     // The reconnect's roster read: the same terminal, now with a locator.
     mock.enqueue(
         "GET",
@@ -12511,6 +12507,10 @@ async fn tab_and_split_shells_start_in_the_focused_checkout() {
     let mut workspace = Workspace::live(daemon);
     workspace.select_project("project-1");
     workspace.set_launch_dir(std::path::PathBuf::from("/launch-dir"));
+    workspace
+        .fetch_sidebar_rows()
+        .await
+        .expect("load the focused checkout before opening shells");
     let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
     let mut chrome = Chrome::dark();
     let (input_tx, input_rx) = mpsc::channel(16);

@@ -18,6 +18,7 @@
 //!   `GOBBY_UPDATE_SCREENS=1 cargo nextest run -p gobby-client --test screens`
 
 use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use gobby_client::app::startup_stages::{ConnectionView, StageState, StartupStages};
 use gobby_client::app::{route_mouse, ContextMenuKind, ControlState};
 use gobby_client::daemon::{
     Checkout, ProjectRow, RunRow, SessionRow, SidebarRows, SourceStatus, WorktreeRow,
@@ -35,6 +36,7 @@ use serde_json::json;
 use std::fmt::Write as _;
 use std::fs;
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 /// Every capture is taken at one size, so a golden diff is never a reflow.
 const WIDTH: u16 = 120;
@@ -46,11 +48,14 @@ const UPDATE_ENV: &str = "GOBBY_UPDATE_SCREENS";
 type ScriptedState = fn() -> (Workspace, Chrome);
 
 /// The scripted states, in the order the plan names them.
-const STATES: [(&str, ScriptedState); 11] = [
+const STATES: [(&str, ScriptedState); 14] = [
     ("empty_workspace", empty_workspace),
+    ("splash_connecting", splash_connecting),
+    ("splash_attach_running", splash_attach_running),
     ("agent_rows", agent_rows),
     ("projects_agents", projects_agents),
     ("split_live", split_live),
+    ("daemon_unreachable", daemon_unreachable),
     ("help_dialog", help_dialog),
     ("label_ladder", label_ladder),
     ("unnamed_pane", unnamed_pane),
@@ -65,6 +70,55 @@ const STATES: [(&str, ScriptedState); 11] = [
 /// Nothing open: the empty state, an empty roster, no tabs.
 fn empty_workspace() -> (Workspace, Chrome) {
     (Workspace::scripted(), Chrome::dark())
+}
+
+fn splash_connecting() -> (Workspace, Chrome) {
+    let (ws, mut chrome) = empty_workspace();
+    let now = Instant::now();
+    chrome.connection = ConnectionView {
+        url: "http://127.0.0.1:60887".into(),
+        machine: "local".into(),
+        stages: Some(StartupStages::for_test(
+            [
+                StageState::Running {
+                    since: now - Duration::from_millis(9800),
+                },
+                StageState::Pending,
+                StageState::Pending,
+                StageState::Pending,
+            ],
+            now,
+        )),
+        now,
+        ..ConnectionView::default()
+    };
+    (ws, chrome)
+}
+
+fn splash_attach_running() -> (Workspace, Chrome) {
+    let (ws, mut chrome) = empty_workspace();
+    let now = Instant::now();
+    chrome.connection = ConnectionView {
+        url: "http://127.0.0.1:60887".into(),
+        machine: "local".into(),
+        daemon_version: Some("0.5.0".into()),
+        stages: Some(StartupStages::for_test(
+            [
+                StageState::Done {
+                    took: Duration::from_millis(300),
+                },
+                StageState::Running {
+                    since: now - Duration::from_millis(2100),
+                },
+                StageState::Pending,
+                StageState::Pending,
+            ],
+            now,
+        )),
+        now,
+        ..ConnectionView::default()
+    };
+    (ws, chrome)
 }
 
 /// The sidebar rows behind `projects_agents`: `alpha` on `main`, two ahead
@@ -205,6 +259,15 @@ fn split_live() -> (Workspace, Chrome) {
     chrome.open_tab(alpha, "second");
     chrome.activate_tab(0);
     assert!(chrome.focus_pane(beta), "focus term-beta");
+    (ws, chrome)
+}
+
+fn daemon_unreachable() -> (Workspace, Chrome) {
+    let (ws, mut chrome) = split_live();
+    let now = Instant::now();
+    chrome.connection.now = now;
+    chrome.connection.url = "http://127.0.0.1:60887".into();
+    chrome.connection.retry_at = Some(now + Duration::from_secs(3));
     (ws, chrome)
 }
 

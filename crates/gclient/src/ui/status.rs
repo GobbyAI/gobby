@@ -5,6 +5,7 @@
 use std::time::{Duration, Instant};
 
 use crate::app::{ControlState, Pane};
+use crate::daemon::DaemonError;
 use crate::theme::Palette;
 use crate::ui::chrome::{Chrome, Mode, RowState, WorkspaceView};
 use crate::ui::hit::Hit;
@@ -361,8 +362,38 @@ pub fn render_status_line<W: WorkspaceView>(
     };
     let mut hits = StatusHits::default();
 
-    // Health and off-tab attention occupy the fixed slot, regardless of prefs.
-    if !ws.daemon_ready() {
+    // Connection state and off-tab attention occupy the fixed slot, regardless of prefs.
+    if let Some(DaemonError::Workspace(error)) = ws.daemon_error() {
+        append(error.reason.clone(), base.fg(p.red));
+    } else if chrome.connection.retry_at.is_some()
+        || (!ws.daemon_ready() && ws.daemon_error().is_some())
+    {
+        let retry = match chrome.connection.retry_at {
+            Some(at) if at > chrome.connection.now => {
+                let remaining = at.duration_since(chrome.connection.now);
+                let seconds = remaining
+                    .as_secs()
+                    .saturating_add(u64::from(remaining.subsec_nanos() > 0));
+                format!("retry in {seconds} s")
+            }
+            Some(_) | None => "retrying".to_string(),
+        };
+        append(format!("Daemon unreachable · {retry}"), base.fg(p.red));
+    } else if let Some((stage, elapsed)) = chrome
+        .connection
+        .stages
+        .as_ref()
+        .and_then(|stages| stages.running().map(|stage| (stage, stages.elapsed(stage))))
+    {
+        append(
+            format!(
+                "◐ connecting · {} · {:.1} s",
+                stage.label(),
+                elapsed.unwrap_or_default().as_secs_f64()
+            ),
+            base.fg(p.accent),
+        );
+    } else if !ws.daemon_ready() {
         append("Daemon unreachable".to_string(), base.fg(p.red));
     }
     let hidden = ws
@@ -396,6 +427,7 @@ pub fn render_status_line<W: WorkspaceView>(
             1,
         ));
     }
+    let mut optional_spans = 0;
     for name in &chrome.prefs.status_left {
         let Some(segment) = StatusSegment::parse(name) else {
             continue;
@@ -419,6 +451,7 @@ pub fn render_status_line<W: WorkspaceView>(
         }
         let width = display_width_u16(&text);
         let (start, first) = append(text, style);
+        optional_spans += if first { 1 } else { 2 };
         if actionable {
             let x = if first {
                 area.x
@@ -433,8 +466,6 @@ pub fn render_status_line<W: WorkspaceView>(
             ));
         }
     }
-    frame.render_widget(Paragraph::new(Line::from(spans)).style(base), area);
-
     // The prefix is the way into every chord, quit included, so the status
     // line always names it; under an outer tmux it is the shifted chord.
     // Drawn last, it keeps the right end when the row is too narrow for both.
@@ -471,6 +502,19 @@ pub fn render_status_line<W: WorkspaceView>(
     };
     let right_width = display_width_u16(&right).min(hint_area.x.saturating_sub(area.x));
     let right_area = Rect::new(hint_area.x - right_width, area.y, right_width, 1);
+    let fixed_spans = spans.len() - optional_spans;
+    // Preserve the fixed connection and attention slots. Optional left
+    // segments disappear whole before the right slot can cut through one.
+    let left_limit = right_area.x.saturating_sub(area.x);
+    while left_width > left_limit && spans.len() > fixed_spans {
+        let removed = spans.pop().expect("optional status segment");
+        left_width = left_width.saturating_sub(display_width_u16(removed.content.as_ref()));
+        if spans.last().is_some_and(|span| span.content == " │ ") {
+            spans.pop();
+            left_width = left_width.saturating_sub(3);
+        }
+    }
+    frame.render_widget(Paragraph::new(Line::from(spans)).style(base), area);
     if right_width > 0 {
         frame.render_widget(Paragraph::new(right).style(base.fg(p.subtext0)), right_area);
     }
@@ -485,6 +529,7 @@ pub fn render_status_line<W: WorkspaceView>(
     };
     hits.control_indicator = hits
         .control_indicator
+        .filter(|button| button.right() <= area.x.saturating_add(left_width))
         .map(|button| button.intersection(uncovered))
         .filter(|button| !button.is_empty());
     hits.count = hits
@@ -628,6 +673,44 @@ mod tests {
     }
 
     #[test]
+    fn status_slot_names_connecting_stage_and_retry() {
+        use crate::app::startup_stages::{StageState, StartupStages};
+
+        let ws = Workspace::scripted();
+        let mut chrome = Chrome::dark();
+        chrome.prefs.status_left.clear();
+        chrome.prefs.status_right.clear();
+        let now = Instant::now();
+        chrome.connection.now = now;
+        chrome.connection.stages = Some(StartupStages::for_test(
+            [
+                StageState::Done {
+                    took: Duration::from_millis(300),
+                },
+                StageState::Running {
+                    since: now - Duration::from_millis(2100),
+                },
+                StageState::Pending,
+                StageState::Pending,
+            ],
+            now,
+        ));
+        let (text, _) = draw_status(&ws, &chrome);
+        assert!(
+            text.starts_with(" ◐ connecting · workspace attach · 2.1 s"),
+            "status should name the running stage: {text}"
+        );
+
+        chrome.connection.stages = None;
+        chrome.connection.retry_at = Some(now + Duration::from_secs(3));
+        let (text, _) = draw_status(&ws, &chrome);
+        assert!(
+            text.starts_with(" Daemon unreachable · retry in 3 s"),
+            "status should show the retry countdown: {text}"
+        );
+    }
+
+    #[test]
     fn lone_pane_keeps_its_metadata_on_its_edge() {
         for backend in ["native", "tmux"] {
             let mut ws = Workspace::scripted();
@@ -723,8 +806,8 @@ mod tests {
             .modifier
             .contains(Modifier::UNDERLINED));
 
-        // A row too narrow for both keeps the hint at its right end, and the
-        // button keeps only the cells that still show its words.
+        // A row too narrow for both keeps the hint at its right end and drops
+        // the optional button whole, so no clipped label remains clickable.
         let mut terminal = Terminal::new(TestBackend::new(30, 1)).unwrap();
         let mut indicator = None;
         terminal
@@ -732,9 +815,9 @@ mod tests {
                 indicator = render_status_line(frame, frame.area(), &ws, &chrome).control_indicator
             })
             .unwrap();
-        assert_eq!(screen(&terminal), " term-beta · Reaprefix ctrl+b ");
-        assert_eq!(indicator, Some(Rect::new(0, 0, 16, 1)));
-        // The hint takes none of the covered button's bold or underline.
+        assert_eq!(screen(&terminal), "                prefix ctrl+b ");
+        assert_eq!(indicator, None);
+        // The hint takes none of the button's bold or underline.
         let buffer = terminal.backend().buffer();
         let styled: Vec<u16> = (16..30)
             .filter(|&x| !buffer[(x, 0)].modifier.is_empty())

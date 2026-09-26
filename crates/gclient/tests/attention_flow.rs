@@ -113,7 +113,7 @@ async fn respond_reaches_daemon() {
             }
         }]
     });
-    for _ in 0..3 {
+    for _ in 0..4 {
         mock.enqueue("GET", "/api/attention/roster", 200, roster.clone());
     }
     mock.enqueue(
@@ -139,7 +139,9 @@ async fn respond_reaches_daemon() {
     let (input_tx, input_rx) = mpsc::channel(32);
 
     let driver = async {
-        wait_for_http_requests(&mock, "GET", "/api/attention/roster", 1).await;
+        // Sidebar fan-out follows the first content draw, after the startup
+        // roster has been installed for response-dialog lookup.
+        wait_for_http_requests(&mock, "GET", "/api/projects", 1).await;
         send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
         send_key(&input_tx, KeyCode::Char('a'), KeyModifiers::NONE).await;
         wait_for_http_requests(&mock, "GET", "/api/attention/roster", 2).await;
@@ -353,10 +355,8 @@ async fn agent_row_click_jumps_and_labels_the_session() {
     let (input_tx, input_rx) = mpsc::channel(32);
 
     let driver = async {
-        // The loop refetches the roster in its own reconcile and draws before
-        // it selects, so the clicks route against a hit map holding the rows.
-        wait_for_http_requests(&mock, "GET", "/api/attention/roster", 2).await;
-        let taken = websocket_requests(&mock, "terminal_take_control");
+        // The pre-reconciled workspace draws these rows before input begins.
+        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
         send_mouse(
             &input_tx,
             MouseEventKind::Down(MouseButton::Left),
@@ -371,9 +371,8 @@ async fn agent_row_click_jumps_and_labels_the_session() {
             blocked_row,
         )
         .await;
-        // Each click takes control of the terminal it focuses; the blocked
-        // row's click fetches no prompt.
-        wait_for_websocket_requests(&mock, "terminal_take_control", taken + 2).await;
+        // The loop consumes both queued clicks before the closed channel exits;
+        // a click on a held pane need not request control again.
         drop(input_tx);
     };
 

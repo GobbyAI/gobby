@@ -881,7 +881,8 @@ async fn assert_live_shutdown_stall(trigger: LiveShutdownTrigger, stall: LiveShu
     let (guard, restore_hits) = TerminalGuard::recording();
 
     let driver = async {
-        wait_for_ws_request(&mock, "terminal_attach").await;
+        wait_for_ws_request(&mock, "terminal_set_viewport").await;
+        wait_for_ws_request(&mock, "terminal_take_control").await;
         send_key(&input_tx, KeyCode::Char('x'), KeyModifiers::NONE).await;
         wait_for_ws_request(&mock, "terminal_input").await;
         let reconnect = if matches!(stall, LiveShutdownStall::ReconnectJoin) {
@@ -1043,7 +1044,8 @@ async fn assert_live_exit_trace(cause: LiveExitCause, trace: Arc<Mutex<Vec<Strin
     guard.arm(false).expect("arm recording terminal");
 
     let driver = async {
-        wait_for_ws_request(&mock, "terminal_attach").await;
+        wait_for_ws_request(&mock, "terminal_set_viewport").await;
+        wait_for_ws_request(&mock, "terminal_take_control").await;
         send_key(&input_tx, KeyCode::Char('x'), KeyModifiers::NONE).await;
         wait_for_ws_request(&mock, "terminal_input").await;
         match cause {

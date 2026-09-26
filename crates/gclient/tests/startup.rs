@@ -1111,9 +1111,11 @@ fn ready_carries_an_optional_project() {
 
     let _: fn(&Ready) -> Option<&str> = project_field_is_optional;
     let views_source = include_str!("../src/views/mod.rs");
+    let live_loop_source = include_str!("../src/app/live_loop.rs");
     assert!(
-        views_source.contains("initial_project(ready.project, focused.as_deref())"),
-        "run_ready must open on the initial project"
+        views_source.contains("launch_project: ready.project")
+            && live_loop_source.contains("chrome.connection.launch_project.clone()"),
+        "startup must open on the initial project"
     );
     assert_eq!(
         initial_project(Some("cwd-project".to_string()), Some("saved-project")),

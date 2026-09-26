@@ -59,6 +59,11 @@ impl Workspace<LiveDaemon> {
         }))
     }
 
+    pub(crate) fn start_initial_relist(&mut self) -> RelistFuture {
+        self.request_relist();
+        self.start_relist().expect("initial relist was requested")
+    }
+
     /// Installs a background relist unless something newer overtook it.
     pub(crate) fn apply_relist(&mut self, relist: Relist) {
         if relist.generation != self.relist.generation

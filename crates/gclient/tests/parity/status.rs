@@ -341,7 +341,7 @@ fn status_bar_orders_fixed_slots_and_configured_segments() {
     });
     let line = &rect_rows(&disconnected, Rect::new(0, 0, 100, 1))[0];
     assert!(
-        line.starts_with(" Daemon unreachable │ 1 need you"),
+        line.starts_with(" Daemon unreachable · retrying │ 1 need you"),
         "{line:?}"
     );
     assert!(line.ends_with("prefix ctrl+b │ navigate "), "{line:?}");
@@ -357,12 +357,17 @@ fn status_bar_orders_fixed_slots_and_configured_segments() {
     });
     let line = &rect_rows(&configured, Rect::new(0, 0, 100, 1))[0];
     assert!(
-        line.starts_with(" Daemon unreachable │ 1 need you │ 12,345 │ fable-5.1-xhigh"),
+        line.starts_with(" Daemon unreachable · retrying │ 1 need you"),
         "{line:?}"
     );
     assert!(
         line.ends_with("63% │ prefix ctrl+b │ navigate "),
         "{line:?}"
     );
+    assert!(
+        !line.contains("fable") || line.contains("fable-5.1-xhigh"),
+        "optional model must render whole or disappear: {line:?}"
+    );
+    assert!(!line.contains("xhigh63%"), "{line:?}");
     assert!(!line.contains("unknown"), "{line:?}");
 }

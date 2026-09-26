@@ -83,14 +83,14 @@ impl Workspace<LiveDaemon> {
     /// the roster has not delivered. A row the daemon does not serve yet
     /// stays unresolved: its slot renders empty until a later event or
     /// reconcile retries.
-    pub(super) async fn open_unresolved_terminals(&mut self) {
+    pub(super) fn unresolved_terminal_ids(&self) -> Vec<String> {
         let Some(project) = self.project_id.as_deref() else {
-            return;
+            return Vec::new();
         };
         let Some(model) = &self.workspace_model else {
-            return;
+            return Vec::new();
         };
-        let missing: Vec<String> = model
+        model
             .panes()
             .filter(|pane| {
                 model
@@ -99,8 +99,11 @@ impl Workspace<LiveDaemon> {
             })
             .filter_map(|pane| pane.terminal_id.clone())
             .filter(|terminal_id| self.pane_for_terminal(terminal_id).is_none())
-            .collect();
-        for terminal_id in missing {
+            .collect()
+    }
+
+    pub(super) async fn open_unresolved_terminals(&mut self) {
+        for terminal_id in self.unresolved_terminal_ids() {
             // Best effort: an unavailable row leaves the slot empty.
             let _ = self.open_live_terminal(&terminal_id).await;
         }

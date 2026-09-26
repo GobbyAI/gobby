@@ -12,6 +12,7 @@ pub mod project_tabs;
 pub mod run_loop;
 mod scripted_input;
 pub mod sidebar_model;
+pub mod startup_stages;
 pub mod viewer_state;
 mod window_state;
 pub mod workspace_ops;
@@ -726,6 +727,10 @@ impl Workspace {
 }
 
 impl<D: Daemon> Workspace<D> {
+    pub fn daemon_error(&self) -> Option<&DaemonError> {
+        self.daemon_error.as_ref()
+    }
+
     pub fn retire_indeterminate_control(
         &mut self,
         pane_id: PaneId,

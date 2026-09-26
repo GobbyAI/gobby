@@ -438,7 +438,11 @@ impl Workspace<LiveDaemon> {
     /// runs: the render tick that finds one due never waits on the daemon
     /// (#22747). Each takes the launch's order, the direct path first where
     /// the row offers it, then the proxy.
-    pub(super) fn start_due_attaches(&mut self, now: tokio::time::Instant) -> Vec<RecoveryFuture> {
+    pub(super) fn start_due_attaches(
+        &mut self,
+        now: tokio::time::Instant,
+        include_initial: bool,
+    ) -> Vec<RecoveryFuture> {
         let snapshot = self.daemon.subscribe().0;
         if !snapshot.ready || !self.daemon_ready {
             return Vec::new();
@@ -450,7 +454,7 @@ impl Workspace<LiveDaemon> {
             .copied()
             .filter(|pane_id| {
                 let pane = &self.panes[pane_id];
-                pane.attach_retry_due(now)
+                (pane.attach_retry_due(now) || (include_initial && !pane.attach_retry_pending(now)))
                     && !pane.fallback_in_flight
                     && pane.attached_generation() != Some(generation)
                     && self.attached_generation.get(pane_id) != Some(&generation)
@@ -533,6 +537,10 @@ impl Workspace<LiveDaemon> {
     pub(super) fn abandon_frame_recoveries(&mut self) {
         for pane in self.panes.values_mut() {
             pane.fallback_in_flight = false;
+            // A canceled recovery cannot complete this attach on the new socket.
+            if matches!(&pane.attach, AttachState::Attaching { .. }) {
+                pane.attach = AttachState::Detached;
+            }
         }
     }
 

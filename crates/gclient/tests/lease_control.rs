@@ -568,9 +568,15 @@ async fn a_timed_out_request_names_itself_and_keeps_the_pane() {
     let (input_tx, input_rx) = mpsc::channel(256);
 
     let driver = async {
-        // The startup attach is withheld; its deadline passes before the
-        // loop notices the closed input, so the exit is the input's.
+        // The startup attach is withheld. Let its deadline settle before
+        // closing input, which otherwise wins the loop's biased select.
         wait_for_websocket_requests(&mock, "terminal_attach", 1).await;
+        tokio::time::pause();
+        tokio::time::advance(Duration::from_secs(5) + Duration::from_millis(100)).await;
+        for _ in 0..64 {
+            tokio::task::yield_now().await;
+        }
+        tokio::time::resume();
         drop(input_tx);
     };
     let mut switch = TerminalGuard::recording().0;

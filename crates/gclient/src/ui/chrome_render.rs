@@ -11,7 +11,7 @@ use crate::ui::sidebar::SidebarHits;
 use crate::ui::tabs::TabBarHits;
 use crate::ui::{
     context_menu, dialogs, keybind_help, menu_bar, navigator, pane_chrome, panes, settings,
-    sidebar, status, tab_surface,
+    sidebar, splash, status, tab_surface,
 };
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
@@ -152,6 +152,29 @@ fn render_content_column<W: WorkspaceView>(
 ) -> TabBarHits {
     let terminal_area = chrome.view.terminal_area;
     if terminal_area.is_empty() {
+        return TabBarHits::default();
+    }
+    if chrome
+        .connection
+        .stages
+        .as_ref()
+        .is_some_and(|stages| !stages.finished())
+    {
+        if let Some(tabs) = chrome.view.tab_bar_rect {
+            frame.render_widget(
+                Block::default().style(Style::new().bg(chrome.palette.panel_bg)),
+                tabs,
+            );
+            let mut x = tabs.x;
+            while x.saturating_add(11) <= tabs.right() {
+                frame.render_widget(
+                    Block::default().style(Style::new().bg(chrome.palette.surface1)),
+                    Rect::new(x, tabs.y, 11, 1),
+                );
+                x = x.saturating_add(12);
+            }
+        }
+        splash::render_splash(frame, terminal_area, chrome);
         return TabBarHits::default();
     }
     if chrome.tabs().tabs.is_empty() {

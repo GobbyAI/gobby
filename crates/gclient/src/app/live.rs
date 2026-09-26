@@ -5,6 +5,9 @@ use std::collections::BTreeSet;
 use std::future::Future;
 use std::pin::Pin;
 use tokio::sync::mpsc::UnboundedSender;
+#[path = "live_sidebar.rs"]
+mod live_sidebar;
+pub use live_sidebar::{SidebarFetch, SidebarFetchFuture};
 
 pub(super) mod relist;
 
@@ -71,10 +74,6 @@ impl Workspace<LiveDaemon> {
         self.daemon_ready
     }
 
-    pub fn daemon_error(&self) -> Option<&DaemonError> {
-        self.daemon_error.as_ref()
-    }
-
     /// An empty `backend` leaves a known pane's backend alone: not every
     /// terminal event names one.
     fn ensure_live_pane(&mut self, terminal_id: &str, backend: &str) -> PaneId {
@@ -134,6 +133,15 @@ impl Workspace<LiveDaemon> {
         &mut self,
         terminal_id: &str,
     ) -> Result<PaneId, FrameError> {
+        let pane = self.open_live_terminal_unattached(terminal_id).await?;
+        self.attach_ready_panes().await?;
+        Ok(pane)
+    }
+
+    pub(super) async fn open_live_terminal_unattached(
+        &mut self,
+        terminal_id: &str,
+    ) -> Result<PaneId, FrameError> {
         if let Some(pane) = self.pane_for_terminal(terminal_id) {
             return Ok(pane);
         }
@@ -143,8 +151,20 @@ impl Workspace<LiveDaemon> {
             self.roster_ids.push(terminal_id.to_string());
         }
         self.rebuild_sidebar();
-        self.attach_ready_panes().await?;
         Ok(pane)
+    }
+
+    pub(super) fn install_unresolved_rows(&mut self, rows: Vec<TerminalRow>) {
+        for row in rows {
+            if self.pane_for_terminal(&row.terminal_id).is_some() {
+                continue;
+            }
+            self.install_live_row(&row);
+            if !self.roster_ids.contains(&row.terminal_id) {
+                self.roster_ids.push(row.terminal_id);
+            }
+        }
+        self.rebuild_sidebar();
     }
 
     fn install_live_rows(&mut self, mut rows: Vec<TerminalRow>) {
@@ -175,181 +195,6 @@ impl Workspace<LiveDaemon> {
         // Roster order is pane order: the window's order first, new rows
         // after it in daemon order (`ensure_live_pane` appends them).
         self.roster_ids = self.tab_order();
-    }
-
-    /// Replace the roster wholesale: an entry the daemon no longer returns is
-    /// gone, whatever an event said about it.
-    async fn fetch_attention(&mut self) -> Result<(), DaemonError> {
-        let roster = self.daemon.attention_roster().await?;
-        // A background roster refetch started earlier lands stale, and one
-        // queued but not yet started has its answer — including the next one
-        // the interval would have asked for.
-        self.sidebar_stamps.roster = self.sidebar_stamps.next();
-        self.pending_sidebar.roster = false;
-        self.roster_refreshed_at = Instant::now();
-        self.install_attention(roster);
-        Ok(())
-    }
-
-    fn install_attention(&mut self, (epoch, seq, entries): RosterSnapshot) {
-        self.attention.epoch = epoch;
-        self.attention.seq = seq;
-        self.attention.entries = entries;
-        self.attention.applied_seqs = vec![seq];
-        self.rebuild_sidebar();
-    }
-
-    /// Fetch every sidebar row: projects, then status and worktrees for each
-    /// project checked out here, then the sessions and runs of every
-    /// checked-out project and the focused one. Reconcile and the dialogs
-    /// wait on this; the render tick never does.
-    pub async fn fetch_sidebar_rows(&mut self) -> Result<(), DaemonError> {
-        self.sidebar_rows.projects = self.daemon.projects().await?;
-        self.sidebar_rows.statuses.clear();
-        self.sidebar_rows.worktrees.clear();
-        // Every row set is fresh from here: a refetch started earlier and
-        // still in flight lands stale.
-        let seq = self.sidebar_stamps.next();
-        self.sidebar_stamps.stamp_all(seq);
-        self.pending_sidebar = PendingSidebar {
-            projects: false,
-            project_rows: self.checked_out_projects().into_iter().collect(),
-            sessions: true,
-            session_rows: BTreeSet::new(),
-            roster: false,
-        };
-        self.flush_sidebar_refetches().await
-    }
-
-    fn checked_out_projects(&self) -> Vec<String> {
-        self.sidebar_rows
-            .projects
-            .iter()
-            .filter(|project| project.checkout.is_some())
-            .map(|project| project.id.clone())
-            .collect()
-    }
-
-    /// Queue a refetch of every checked-out project's sessions and runs (the
-    /// focused one included); the next render tick starts it.
-    pub fn request_focused_sessions(&mut self) {
-        self.pending_sidebar.sessions = true;
-    }
-
-    /// Start the refetches queued since the last start, at most one per
-    /// route and project however many events asked for it, on a clone of
-    /// the daemon so the loop keeps drawing while they run; `None` when
-    /// nothing is queued. The git rows count as refreshed from this moment,
-    /// so a refresh that fails waits out `GIT_REFRESH_INTERVAL` instead of
-    /// retrying every tick. `apply_sidebar_fetch` installs the result.
-    pub fn start_sidebar_refetch(&mut self) -> Option<SidebarFetchFuture> {
-        let pending = std::mem::take(&mut self.pending_sidebar);
-        if !pending.projects
-            && !pending.sessions
-            && !pending.roster
-            && pending.project_rows.is_empty()
-            && pending.session_rows.is_empty()
-        {
-            return None;
-        }
-        if !pending.project_rows.is_empty() {
-            self.git_refreshed_at = Instant::now();
-        }
-        if pending.roster {
-            self.roster_refreshed_at = Instant::now();
-        }
-        let request = SidebarRequest {
-            seq: self.sidebar_stamps.next(),
-            projects: pending.projects,
-            project_rows: pending.project_rows,
-            checked_out: self.checked_out_projects(),
-            sessions: pending.sessions,
-            session_rows: pending.session_rows,
-            focused: self.project_id.clone(),
-            roster: pending.roster,
-        };
-        let daemon = self.daemon.clone();
-        Some(Box::pin(async move { request.run(&daemon).await }))
-    }
-
-    /// Install the rows one `start_sidebar_refetch` job produced, row set by
-    /// row set: a set a later refetch already replaced is stale and stays
-    /// out.
-    pub fn apply_sidebar_fetch(&mut self, fetch: SidebarFetch) {
-        let seq = fetch.seq;
-        let stamps = &mut self.sidebar_stamps;
-        if let Some(projects) = fetch.projects {
-            if SidebarStamps::accept(&mut stamps.projects, seq) {
-                self.sidebar_rows.projects = projects;
-            }
-        }
-        for (project, status, worktrees) in fetch.project_rows {
-            let stamp = stamps.project_rows.entry(project.clone()).or_default();
-            if !SidebarStamps::accept(stamp, seq) {
-                continue;
-            }
-            if let Some(worktrees) = worktrees {
-                self.sidebar_rows
-                    .worktrees
-                    .retain(|row| row.project_id != project);
-                self.sidebar_rows.worktrees.extend(worktrees);
-            }
-            if let Some(status) = status {
-                self.sidebar_rows.statuses.insert(project, status);
-            }
-        }
-        for (project, sessions, runs) in fetch.sessions {
-            let stamp = stamps.sessions.entry(project.clone()).or_default();
-            if SidebarStamps::accept(stamp, seq) {
-                self.sidebar_rows.sessions.insert(project.clone(), sessions);
-                self.sidebar_rows.runs.insert(project, runs);
-            }
-        }
-        if let Some(roster) = fetch.roster {
-            if SidebarStamps::accept(&mut stamps.roster, seq) {
-                let (epoch, roster_seq, _) = &roster;
-                if *epoch == self.attention.epoch && *roster_seq < self.attention.seq {
-                    // An event newer than this snapshot already landed;
-                    // installing it would undo that event, so ask again.
-                    self.pending_sidebar.roster = true;
-                } else {
-                    self.install_attention(roster);
-                }
-            }
-        }
-        self.rebuild_sidebar();
-    }
-
-    /// Run the queued refetches inline and install them, for the reconcile
-    /// and drain paths where a stale sidebar would be worse than the wait.
-    pub async fn flush_sidebar_refetches(&mut self) -> Result<(), DaemonError> {
-        if let Some(job) = self.start_sidebar_refetch() {
-            let fetch = job.await?;
-            self.apply_sidebar_fetch(fetch);
-        }
-        Ok(())
-    }
-
-    /// Queue a status refresh for every checked-out project once the last
-    /// one is older than `GIT_REFRESH_INTERVAL`; the render tick starts it.
-    pub fn request_git_refresh_if_due(&mut self) {
-        if self.git_refreshed_at.elapsed() < GIT_REFRESH_INTERVAL {
-            return;
-        }
-        self.pending_sidebar
-            .project_rows
-            .extend(self.checked_out_projects());
-    }
-
-    /// Queues a roster, session and run refetch once the last roster fetch is
-    /// older than `ROSTER_REFRESH_INTERVAL`; the render tick starts it. Events
-    /// refetch sooner; this is the backstop for a missed event or failed fetch.
-    pub fn request_roster_refresh_if_due(&mut self) {
-        if self.roster_refreshed_at.elapsed() < ROSTER_REFRESH_INTERVAL {
-            return;
-        }
-        self.pending_sidebar.roster = true;
-        self.pending_sidebar.sessions = true;
     }
 
     /// Records the control request a focus change or a queued key needs. It is
@@ -643,47 +488,6 @@ impl Workspace<LiveDaemon> {
         Ok(())
     }
 
-    /// Queue the refetch a project, worktree, or session event calls for;
-    /// `flush_sidebar_refetches` runs each at most once per drain.
-    fn note_sidebar_message(&mut self, message: &Value) {
-        let project_id = message
-            .get("project_id")
-            .and_then(Value::as_str)
-            .map(str::to_string);
-        match message_kind(message) {
-            Some("project_event") => {
-                self.pending_sidebar.projects = true;
-                if let Some(project_id) = project_id {
-                    self.pending_sidebar.project_rows.insert(project_id);
-                }
-            }
-            Some("worktree_event") => match project_id {
-                Some(project_id) => {
-                    self.pending_sidebar.project_rows.insert(project_id);
-                }
-                // A worktree event without its project refreshes every
-                // checkout rather than guessing which one moved.
-                None => self
-                    .pending_sidebar
-                    .project_rows
-                    .extend(self.checked_out_projects()),
-            },
-            Some("session_event") => {
-                match project_id {
-                    Some(project_id) => {
-                        self.pending_sidebar.session_rows.insert(project_id);
-                    }
-                    // A session event without its project refetches every
-                    // tracked project rather than guessing which one
-                    // changed: a deleted session leaves no row to name it.
-                    None => self.pending_sidebar.sessions = true,
-                }
-                self.pending_sidebar.roster = true;
-            }
-            _ => {}
-        }
-    }
-
     fn accept_lifecycle(&self, epoch: &str, seq: u64) -> bool {
         self.lifecycle
             .as_ref()
@@ -713,174 +517,11 @@ fn is_cursor_error(error: &DaemonError) -> bool {
     detail.contains("cursor_stale") || detail.contains("invalid cursor")
 }
 
-/// Keeps one sidebar row query's failure from ending the refetch: the error is
-/// logged, remembered for the caller's banner, and reported as an absent row.
-fn optional<T>(
-    result: Result<T, DaemonError>,
-    what: &'static str,
-    project: Option<&str>,
-    failure: &mut Option<DaemonError>,
-) -> Option<T> {
-    match result {
-        Ok(value) => Some(value),
-        Err(error) => {
-            // The project belongs in the line: which one went sick is what a
-            // stale row is diagnosed from.
-            tracing::warn!(
-                %what,
-                project = project.unwrap_or(""),
-                %error,
-                "sidebar row refresh failed"
-            );
-            failure.get_or_insert(error);
-            None
-        }
-    }
-}
-
-/// Rows one background sidebar refetch produced; `apply_sidebar_fetch`
-/// installs them.
-#[derive(Debug, Default)]
-pub struct SidebarFetch {
-    /// The refetch that produced the rows, in start order.
-    seq: u64,
-    projects: Option<Vec<ProjectRow>>,
-    project_rows: Vec<(String, Option<SourceStatus>, Option<Vec<WorktreeRow>>)>,
-    sessions: Vec<(String, Vec<SessionRow>, Vec<RunRow>)>,
-    roster: Option<RosterSnapshot>,
-}
-
-/// The attention roster as the daemon returned it: epoch, seq, entries.
-type RosterSnapshot = (String, u64, Vec<RosterEntry>);
-
 /// What one control request came back with.
 pub struct ControlOutcome {
     pub(super) pane_id: PaneId,
     pub(super) request: u64,
     pub(super) reply: Result<Value, DaemonError>,
-}
-
-/// A running sidebar refetch; the live loop polls it from a select branch.
-pub type SidebarFetchFuture =
-    Pin<Box<dyn Future<Output = Result<SidebarFetch, DaemonError>> + 'static>>;
-
-/// What one refetch asks the daemon for.
-struct SidebarRequest {
-    seq: u64,
-    projects: bool,
-    project_rows: BTreeSet<String>,
-    /// The projects checked out here when the request was made; a refetched
-    /// project list replaces it. A project with no checkout has no git rows.
-    checked_out: Vec<String>,
-    /// Whether the sessions and runs of every checked-out project (and the
-    /// focused one) are wanted: the roster's entries join their own
-    /// project, so the all-projects scope lists them where they belong.
-    sessions: bool,
-    /// The projects whose sessions and runs one named event each asked for,
-    /// fetched instead of the sweep when `sessions` is false. A project this
-    /// client does not track is dropped: its rows have nowhere to go.
-    session_rows: BTreeSet<String>,
-    focused: Option<String>,
-    roster: bool,
-}
-
-impl SidebarRequest {
-    async fn run(self, daemon: &LiveDaemon) -> Result<SidebarFetch, DaemonError> {
-        let mut fetch = SidebarFetch {
-            seq: self.seq,
-            ..SidebarFetch::default()
-        };
-        // No row query starves another. Each records its own failure and the
-        // refetch fails only when it gathered nothing at all, so a daemon that is
-        // really gone still raises the banner while one sick project cannot empty
-        // the sidebar. The roster runs first because it names the panes a person
-        // can reach, and it must never wait behind a project's git status.
-        let mut failure = None;
-        let mut gathered = false;
-        if self.roster {
-            if let Some(roster) = optional(
-                daemon.attention_roster().await,
-                "attention roster",
-                None,
-                &mut failure,
-            ) {
-                fetch.roster = Some(roster);
-                gathered = true;
-            }
-        }
-        let mut checked_out = self.checked_out;
-        if self.projects {
-            // A project list this refetch could not read leaves the caller's
-            // known checkouts standing in for it.
-            if let Some(projects) =
-                optional(daemon.projects().await, "projects", None, &mut failure)
-            {
-                checked_out = projects
-                    .iter()
-                    .filter(|row| row.checkout.is_some())
-                    .map(|row| row.id.clone())
-                    .collect();
-                fetch.projects = Some(projects);
-                gathered = true;
-            }
-        }
-        for project in self.project_rows {
-            if !checked_out.contains(&project) {
-                continue;
-            }
-            let status = optional(
-                daemon.source_status(&project).await,
-                "source status",
-                Some(&project),
-                &mut failure,
-            );
-            let worktrees = optional(
-                daemon.worktrees(&project).await,
-                "worktrees",
-                Some(&project),
-                &mut failure,
-            );
-            if status.is_some() || worktrees.is_some() {
-                fetch.project_rows.push((project, status, worktrees));
-                gathered = true;
-            }
-        }
-        if self.sessions || !self.session_rows.is_empty() {
-            let mut projects = checked_out.clone();
-            if let Some(focused) = self.focused.filter(|focused| !projects.contains(focused)) {
-                projects.push(focused);
-            }
-            if !self.sessions {
-                projects.retain(|project| self.session_rows.contains(project));
-            }
-            for project in projects {
-                // A project whose rows this refetch could not read keeps the ones
-                // it already has, and the rest of the sidebar still refreshes.
-                let Some(sessions) = optional(
-                    daemon.sessions(&project).await,
-                    "sessions",
-                    Some(&project),
-                    &mut failure,
-                ) else {
-                    continue;
-                };
-                let Some(runs) = optional(
-                    daemon.agent_runs(&project).await,
-                    "agent runs",
-                    Some(&project),
-                    &mut failure,
-                ) else {
-                    continue;
-                };
-                fetch.sessions.push((project, sessions, runs));
-                gathered = true;
-            }
-        }
-        match failure {
-            Some(error) if !gathered => Err(error),
-            _ => Ok(fetch),
-        }
-    }
 }
 
 /// The command in the terminal's foreground, as the daemon observed it when it

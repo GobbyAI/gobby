@@ -61,11 +61,13 @@ struct MockState {
     websocket_failures: usize,
     websocket_gate: Option<Arc<Notify>>,
     websocket_read_gate: Option<Arc<Notify>>,
+    attach_hold: Option<Arc<Notify>>,
     active_websockets: usize,
     websocket_closes: usize,
     unique_attachment_ids: bool,
     next_attachment_id: u64,
     attach_lease_holders: Vec<(String, Value)>,
+    attach_backends: Vec<(String, String)>,
     /// `(granted, lease_generation, reason, host_input_granted)`. The last
     /// field is the terminal host's input grant, which a direct native pane
     /// needs before it may type on its own frame socket (#22573).
@@ -121,11 +123,13 @@ impl MockDaemon {
             websocket_failures: 0,
             websocket_gate: None,
             websocket_read_gate: None,
+            attach_hold: None,
             active_websockets: 0,
             websocket_closes: 0,
             unique_attachment_ids: false,
             next_attachment_id: 0,
             attach_lease_holders: Vec::new(),
+            attach_backends: Vec::new(),
             take_control_replies: VecDeque::new(),
             write_outcomes: VecDeque::new(),
             kill_refusals: VecDeque::new(),
@@ -341,6 +345,14 @@ impl MockDaemon {
         self.state.lock().expect("mock state").unique_attachment_ids = true;
     }
 
+    pub fn set_attach_backend(&self, terminal_id: &str, backend: &str) {
+        self.state
+            .lock()
+            .expect("mock state")
+            .attach_backends
+            .push((terminal_id.to_string(), backend.to_string()));
+    }
+
     pub fn set_attach_lease_holder(&self, terminal_id: &str, holder: Value) {
         self.state
             .lock()
@@ -470,6 +482,12 @@ impl MockDaemon {
         let gate = Arc::new(Notify::new());
         self.state.lock().expect("mock state").websocket_gate = Some(Arc::clone(&gate));
         gate
+    }
+
+    pub fn hold_attach(&self) -> Arc<Notify> {
+        let hold = Arc::new(Notify::new());
+        self.state.lock().expect("mock state").attach_hold = Some(Arc::clone(&hold));
+        hold
     }
 
     pub fn suppress_ws(&self, kind: &str) {
@@ -765,6 +783,14 @@ async fn serve_websocket(
                         .map_err(std::io::Error::other)?;
                 }
                 if let Some(reply) = reply {
+                    let hold = if value.get("type").and_then(Value::as_str) == Some("workspace_attach") {
+                        state.lock().expect("mock state").attach_hold.take()
+                    } else {
+                        None
+                    };
+                    if let Some(hold) = hold {
+                        hold.notified().await;
+                    }
                     websocket.send(Message::Text(reply.to_string().into())).await
                         .map_err(std::io::Error::other)?;
                 }
@@ -865,13 +891,23 @@ fn websocket_reply(state: &Arc<Mutex<MockState>>, request: &Value) -> Option<Val
                     Some(id.as_str()) == request.get("terminal_id").and_then(Value::as_str)
                 })
                 .map(|(_, holder)| holder.clone());
+            let backend = state
+                .lock()
+                .expect("mock state")
+                .attach_backends
+                .iter()
+                .find(|(id, _)| {
+                    Some(id.as_str()) == request.get("terminal_id").and_then(Value::as_str)
+                })
+                .map_or("native", |(_, backend)| backend.as_str())
+                .to_string();
             Some(json!({
                 "type": "terminal_attach_result",
                 "request_id": request.get("request_id"),
                 "terminal_id": request.get("terminal_id"),
                 "attachment_id": attachment_id,
                 "success": true,
-                "backend": "native",
+                "backend": backend,
                 "rows": 24,
                 "cols": 80,
                 "lease_generation": 0,
@@ -1102,6 +1138,8 @@ fn default_response(method: &str, target: &str) -> QueuedResponse {
         })
     } else if method == "GET" && target == "/api/attention/roster" {
         json!({"epoch": "attention-1", "seq": 0, "entries": []})
+    } else if method == "GET" && target == "/api/admin/config" {
+        json!({"status": "success", "config": {"server": {"version": "0.5.0"}}})
     } else if method == "GET" && target == "/api/projects" {
         json!([])
     } else if method == "GET" && target.starts_with("/api/source-control/status?") {
