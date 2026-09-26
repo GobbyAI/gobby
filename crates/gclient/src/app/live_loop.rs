@@ -34,6 +34,7 @@ use super::sidebar_model::SidebarModel;
 use super::{PaneId, SidebarFetch, SidebarFetchFuture, Workspace, WorkspaceModel};
 
 mod actions;
+pub(super) mod arrange;
 mod control;
 pub(super) mod menu;
 mod menu_bar;

@@ -37,6 +37,12 @@ fn menus_list_items_per_target_and_state() {
             "split right",
             "split down",
             "zoom",
+            "arrange: even horizontal",
+            "arrange: even vertical",
+            "arrange: main horizontal",
+            "arrange: main vertical",
+            "arrange: tiled",
+            "new grid…",
             "take control",
             "copy mode",
             "send right-clicks to pane",
@@ -44,9 +50,9 @@ fn menus_list_items_per_target_and_state() {
         ]
     );
     assert_eq!(menu.items[1].action, MenuAction::SwapWithFocused(other));
-    assert_eq!(menu.items[5].action, MenuAction::TakeControl(other));
-    assert_eq!(menu.items[7].action, MenuAction::TogglePassthrough(other));
-    assert_eq!(menu.items[8].action, MenuAction::Act(Action::ClosePane));
+    assert_eq!(menu.items[11].action, MenuAction::TakeControl(other));
+    assert_eq!(menu.items[13].action, MenuAction::TogglePassthrough(other));
+    assert_eq!(menu.items[14].action, MenuAction::Act(Action::ClosePane));
     assert_eq!(
         (menu.kind, menu.anchor, menu.selected),
         (ContextMenuKind::Pane(other), (10, 5), 0)
@@ -75,6 +81,12 @@ fn menus_list_items_per_target_and_state() {
             "split right",
             "split down",
             "unzoom",
+            "arrange: even horizontal",
+            "arrange: even vertical",
+            "arrange: main horizontal",
+            "arrange: main vertical",
+            "arrange: tiled",
+            "new grid…",
             "release control",
             "respond",
             "copy mode",
@@ -83,8 +95,8 @@ fn menus_list_items_per_target_and_state() {
         ]
     );
     assert_eq!(menu.items[1].action, MenuAction::ClearPaneName(focused));
-    assert_eq!(menu.items[5].action, MenuAction::ReleaseControl(focused));
-    assert_eq!(menu.items[6].action, MenuAction::Respond(entry_id));
+    assert_eq!(menu.items[11].action, MenuAction::ReleaseControl(focused));
+    assert_eq!(menu.items[12].action, MenuAction::Respond(entry_id));
 
     let menu = build_menu(&ws, &chrome, ContextMenuKind::Tab(0), (3, 0));
     assert_eq!(labels(&menu), ["new tab", "rename tab", "close tab"]);
@@ -260,7 +272,13 @@ fn menu_bar_menus_regroup_items_per_title() {
             "split down",
             "zoom",
             "close pane",
-            "resize mode"
+            "resize mode",
+            "arrange: even horizontal",
+            "arrange: even vertical",
+            "arrange: main horizontal",
+            "arrange: main vertical",
+            "arrange: tiled",
+            "new grid…",
         ]
     );
     assert_eq!(
@@ -271,14 +289,25 @@ fn menu_bar_menus_regroup_items_per_title() {
             MenuAction::Act(Action::Zoom),
             MenuAction::Act(Action::ClosePane),
             MenuAction::Act(Action::ResizeMode),
+            MenuAction::Arrange(ArrangeLayout::EvenHorizontal),
+            MenuAction::Arrange(ArrangeLayout::EvenVertical),
+            MenuAction::Arrange(ArrangeLayout::MainHorizontal),
+            MenuAction::Arrange(ArrangeLayout::MainVertical),
+            MenuAction::Arrange(ArrangeLayout::Tiled),
+            MenuAction::OpenNewGrid,
         ]
     );
 
     let help = menu(&ws, &chrome, MenuBarMenu::Help);
-    assert_eq!(labels(&help), ["keys", "alerts…"]);
+    assert_eq!(labels(&help), ["keys", "alerts…", "daemon", "about gobby"]);
     assert_eq!(
         actions(&help),
-        [MenuAction::Act(Action::Help), MenuAction::ShowAlerts]
+        [
+            MenuAction::Act(Action::Help),
+            MenuAction::ShowAlerts,
+            MenuAction::ShowDaemon,
+            MenuAction::ShowAbout,
+        ]
     );
 
     let agent = menu(&ws, &chrome, MenuBarMenu::Agent);

@@ -5,7 +5,8 @@ use crate::ui::menu_bar::MenuBarMenu;
 use crate::ui::{Action, Chrome, WorkspaceView};
 
 use super::menu::{
-    agents_view_items, blocked_entry, enabled_if, item, passthrough_label, MenuAction, MenuItem,
+    agents_view_items, arrange_items, blocked_entry, enabled_if, item, passthrough_label,
+    MenuAction, MenuItem,
 };
 
 pub fn menu_bar_items<W: WorkspaceView>(
@@ -52,31 +53,35 @@ pub fn menu_bar_items<W: WorkspaceView>(
             items.push(item("pin sidebar", MenuAction::PinSidebar));
             items
         }
-        MenuBarMenu::Window => vec![
-            enabled_if(
-                act("split right", Action::SplitVertical),
-                chrome.focused_pane().is_some(),
-            ),
-            enabled_if(
-                act("split down", Action::SplitHorizontal),
-                chrome.focused_pane().is_some(),
-            ),
-            enabled_if(
-                act(
-                    if chrome.is_zoomed() { "unzoom" } else { "zoom" },
-                    Action::Zoom,
+        MenuBarMenu::Window => {
+            let mut items = vec![
+                enabled_if(
+                    act("split right", Action::SplitVertical),
+                    chrome.focused_pane().is_some(),
                 ),
-                chrome.focused_pane().is_some(),
-            ),
-            enabled_if(
-                act("close pane", Action::ClosePane),
-                chrome.focused_pane().is_some(),
-            ),
-            enabled_if(
-                act("resize mode", Action::ResizeMode),
-                chrome.focused_pane().is_some(),
-            ),
-        ],
+                enabled_if(
+                    act("split down", Action::SplitHorizontal),
+                    chrome.focused_pane().is_some(),
+                ),
+                enabled_if(
+                    act(
+                        if chrome.is_zoomed() { "unzoom" } else { "zoom" },
+                        Action::Zoom,
+                    ),
+                    chrome.focused_pane().is_some(),
+                ),
+                enabled_if(
+                    act("close pane", Action::ClosePane),
+                    chrome.focused_pane().is_some(),
+                ),
+                enabled_if(
+                    act("resize mode", Action::ResizeMode),
+                    chrome.focused_pane().is_some(),
+                ),
+            ];
+            items.extend(arrange_items());
+            items
+        }
         MenuBarMenu::Agent => {
             let entry = focused.and_then(|pane| blocked_entry(ws, pane));
             let has_entry = entry.is_some();
@@ -115,6 +120,8 @@ pub fn menu_bar_items<W: WorkspaceView>(
         MenuBarMenu::Help => vec![
             act("keys", Action::Help),
             item("alerts…", MenuAction::ShowAlerts),
+            item("daemon", MenuAction::ShowDaemon),
+            item("about gobby", MenuAction::ShowAbout),
         ],
     }
 }

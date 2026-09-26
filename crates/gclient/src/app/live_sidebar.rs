@@ -3,6 +3,10 @@
 use super::*;
 
 impl Workspace<LiveDaemon> {
+    pub fn roster_refresh_age(&self) -> Option<std::time::Duration> {
+        self.last_roster_refresh_completed_at.map(|at| at.elapsed())
+    }
+
     /// Replace the roster wholesale: an entry the daemon no longer returns is
     /// gone, whatever an event said about it.
     pub(super) async fn fetch_attention(&mut self) -> Result<(), DaemonError> {
@@ -18,6 +22,7 @@ impl Workspace<LiveDaemon> {
     }
 
     pub(crate) fn install_attention(&mut self, (epoch, seq, entries): RosterSnapshot) {
+        self.last_roster_refresh_completed_at = Some(Instant::now());
         self.attention.epoch = epoch;
         self.attention.seq = seq;
         self.attention.entries = entries;

@@ -20,6 +20,7 @@ mod workspace_panes;
 
 pub use attach::AttachState;
 pub use live::{ControlOutcome, SidebarFetch, SidebarFetchFuture};
+pub use live_loop::arrange::plan_arrange;
 pub use live_loop::menu::{
     build_menu, item_rects, menu_rect, ArrangeLayout, ContextMenuKind, ContextMenuState,
     MenuAction, MenuItem,
@@ -34,8 +35,8 @@ pub use live_loop::mouse::{
 pub use live_loop::projects::{
     close_project, close_project_confirmed, create_worktree, focus_agent, focus_project,
     open_new_project_dialog, open_new_worktree_dialog, open_open_worktree_dialog,
-    open_remove_worktree_dialog, open_worktree, remove_worktree, rename_project,
-    submit_new_project,
+    open_remove_worktree_dialog, open_worktree, project_dialog_key, remove_worktree,
+    rename_project, submit_new_project,
 };
 pub use live_loop::run_live_loop;
 pub use live_loop::sync_live_chrome;
@@ -105,6 +106,7 @@ pub struct Workspace<D: Daemon = ScriptedDaemon> {
     sidebar: SidebarModel,
     git_refreshed_at: Instant,
     roster_refreshed_at: Instant,
+    last_roster_refresh_completed_at: Option<Instant>,
     pending_sidebar: PendingSidebar,
     sidebar_stamps: SidebarStamps,
     pending_attention: Option<attention::PendingAttention>,
@@ -210,6 +212,7 @@ impl Workspace {
             sidebar: SidebarModel::default(),
             git_refreshed_at: Instant::now(),
             roster_refreshed_at: Instant::now(),
+            last_roster_refresh_completed_at: None,
             pending_sidebar: PendingSidebar::default(),
             sidebar_stamps: SidebarStamps::default(),
             pending_attention: None,

@@ -8135,7 +8135,7 @@ async fn context_menu_dispatches_items_and_closes_outside() {
             roster_page(&[other, SPAWNED]),
         );
         press(MouseButton::Right, cell_of(&initial)).await;
-        for _ in 0..10 {
+        for _ in 0..20 {
             key(KeyCode::Down).await;
         }
         key(KeyCode::Enter).await;

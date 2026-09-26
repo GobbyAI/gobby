@@ -3,8 +3,9 @@
 use crate::daemon::LiveDaemon;
 use crate::frame_source::FrameError;
 use crate::ui::chrome::attention_pane;
+use crate::ui::dialogs::Dialog;
 use crate::ui::sidebar_rows::project_label;
-use crate::ui::{Action, Chrome};
+use crate::ui::{Action, Chrome, Mode};
 
 use super::super::attention::open_response_dialog;
 use super::super::Workspace;
@@ -33,6 +34,16 @@ pub async fn apply_live_menu_action(
     action: MenuAction,
 ) -> Result<bool, FrameError> {
     match action {
+        MenuAction::NewGrid { rows, cols } => {
+            super::arrange::create_grid(workspace, chrome, rows, cols).await?;
+        }
+        MenuAction::OpenNewGrid => {
+            chrome.dialog = Some(Dialog::NewGrid { rows: 2, cols: 2 });
+            chrome.mode = Mode::ProjectDialog;
+        }
+        MenuAction::Arrange(layout) => {
+            super::arrange::apply_arrange(workspace, chrome, layout).await?;
+        }
         MenuAction::Act(action) => {
             focus_menu_target(workspace, chrome, &kind).await?;
             if action == Action::Quit {
@@ -75,6 +86,8 @@ pub async fn apply_live_menu_action(
         }
         MenuAction::MarkSeen(entry_id) => mark_agent_seen(workspace, &entry_id).await?,
         MenuAction::ShowAlerts => open_alerts_dialog(chrome),
+        MenuAction::ShowDaemon => open_daemon_dialog(workspace, chrome),
+        MenuAction::ShowAbout => open_about_dialog(chrome),
         MenuAction::DestroyOrphans => open_destroy_orphans_dialog(workspace, chrome).await,
         MenuAction::DestroyTerminal(terminal_id) => {
             let target = agent_orphan(workspace, &terminal_id);
@@ -98,6 +111,44 @@ pub async fn apply_live_menu_action(
         }
     }
     Ok(false)
+}
+
+fn open_daemon_dialog(workspace: &Workspace<LiveDaemon>, chrome: &mut Chrome) {
+    let stages = chrome.connection.stages.as_ref();
+    let health = if let Some(stage) = stages.and_then(|stages| stages.running()) {
+        format!("connecting · {}", stage.label())
+    } else if workspace.daemon_ready() {
+        "ok".to_owned()
+    } else {
+        format!(
+            "unreachable: {}",
+            workspace
+                .daemon_error()
+                .map(ToString::to_string)
+                .unwrap_or_else(|| "daemon unavailable".to_owned())
+        )
+    };
+    chrome.dialog = Some(Dialog::Daemon {
+        url: chrome.connection.url.clone(),
+        gclient_version: env!("CARGO_PKG_VERSION").to_owned(),
+        daemon_version: chrome.connection.daemon_version.clone(),
+        health,
+        last_roster_refresh: workspace.roster_refresh_age(),
+        stages: stages
+            .filter(|stages| stages.finished())
+            .map(|stages| stages.summary()),
+    });
+    chrome.mode = Mode::ProjectDialog;
+}
+
+fn open_about_dialog(chrome: &mut Chrome) {
+    chrome.dialog = Some(Dialog::About {
+        url: chrome.connection.url.clone(),
+        gclient_version: env!("CARGO_PKG_VERSION").to_owned(),
+        daemon_version: chrome.connection.daemon_version.clone(),
+        machine: chrome.connection.machine.clone(),
+    });
+    chrome.mode = Mode::ProjectDialog;
 }
 
 /// Make the menu's pane or tab the one keymap actions act on: a worktree

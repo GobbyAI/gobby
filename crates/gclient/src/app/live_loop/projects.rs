@@ -23,7 +23,7 @@ use super::actions::{
     terminate_live_terminal,
 };
 use super::control::{focus_live_pane, release_live_control};
-use super::menu::attention_id;
+use super::menu::{attention_id, ContextMenuKind, MenuAction};
 use super::modal_input::{close_modal, edit_text, ModalOutcome};
 use super::mouse::Placement;
 use super::sync_live_chrome;
@@ -591,6 +591,23 @@ pub fn project_dialog_key(chrome: &mut Chrome, key: &KeyEvent) -> ModalOutcome {
         return close_modal(chrome);
     };
     match dialog {
+        Dialog::NewGrid { rows, cols } => match key.code {
+            KeyCode::Left => *cols = cols.saturating_sub(1).max(1),
+            KeyCode::Right => *cols = (*cols + 1).min(4),
+            KeyCode::Up => *rows = rows.saturating_sub(1).max(1),
+            KeyCode::Down => *rows = (*rows + 1).min(4),
+            KeyCode::Enter => {
+                return ModalOutcome::Menu {
+                    kind: ContextMenuKind::Global,
+                    action: MenuAction::NewGrid {
+                        rows: *rows,
+                        cols: *cols,
+                    },
+                }
+            }
+            KeyCode::Esc => return close_modal(chrome),
+            _ => {}
+        },
         Dialog::NewProject {
             path,
             cursor,
@@ -702,6 +719,10 @@ pub fn project_dialog_key(chrome: &mut Chrome, key: &KeyEvent) -> ModalOutcome {
                 *scroll = (*scroll + 1).min(last);
             }
             KeyCode::Enter | KeyCode::Esc | KeyCode::Char('q') => return close_modal(chrome),
+            _ => {}
+        },
+        Dialog::Daemon { .. } | Dialog::About { .. } => match key.code {
+            KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => return close_modal(chrome),
             _ => {}
         },
         Dialog::ConfirmClose { .. } | Dialog::Rename { .. } | Dialog::Respond { .. } => {

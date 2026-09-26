@@ -158,13 +158,13 @@ async fn a_refused_take_keeps_take_back_and_names_the_holder() {
         // to finish before queuing take-back; the biased loop will then apply
         // that outcome before this input and make the test independent of
         // scheduler timing.
-        for _ in 0..1_024 {
-            if observed_daemon.pending_counts().2 == 0 {
-                break;
+        timeout(Duration::from_secs(5), async {
+            while observed_daemon.pending_counts().2 != 0 {
+                tokio::task::yield_now().await;
             }
-            tokio::task::yield_now().await;
-        }
-        assert_eq!(observed_daemon.pending_counts().2, 0);
+        })
+        .await
+        .expect("refused take-control reply settles");
         send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
         send_key(&input_tx, KeyCode::Char('A'), KeyModifiers::SHIFT).await;
         wait_for_websocket_requests(&mock, "terminal_take_control", 2).await;

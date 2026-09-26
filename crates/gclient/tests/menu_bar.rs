@@ -179,7 +179,10 @@ fn file_menu_says_new_workspace_and_help_holds_the_alert_log() {
             "detach",
         ]
     );
-    assert_eq!(labels(MenuBarMenu::Help), ["keys", "alerts…"]);
+    assert_eq!(
+        labels(MenuBarMenu::Help),
+        ["keys", "alerts…", "daemon", "about gobby"]
+    );
     assert_eq!(
         labels(MenuBarMenu::Gobby),
         ["settings", "reload config", "quit"]
@@ -229,7 +232,13 @@ async fn every_menu_bar_item_dispatches_to_a_handler() {
             "split down",
             "zoom",
             "close pane",
-            "resize mode"
+            "resize mode",
+            "arrange: even horizontal",
+            "arrange: even vertical",
+            "arrange: main horizontal",
+            "arrange: main vertical",
+            "arrange: tiled",
+            "new grid…",
         ]
     );
 

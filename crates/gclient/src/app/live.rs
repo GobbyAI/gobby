@@ -30,6 +30,7 @@ impl Workspace<LiveDaemon> {
             sidebar: SidebarModel::default(),
             git_refreshed_at: Instant::now(),
             roster_refreshed_at: Instant::now(),
+            last_roster_refresh_completed_at: None,
             pending_sidebar: PendingSidebar::default(),
             sidebar_stamps: SidebarStamps::default(),
             pending_attention: None,

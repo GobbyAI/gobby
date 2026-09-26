@@ -24,7 +24,9 @@ use super::actions::toggle_sidebar_pin;
 mod items;
 pub use items::attention_id;
 use items::{agent_items, global_items, pane_items, project_items, tab_items, worktree_items};
-pub(super) use items::{agents_view_items, blocked_entry, enabled_if, item, passthrough_label};
+pub(super) use items::{
+    agents_view_items, arrange_items, blocked_entry, enabled_if, item, passthrough_label,
+};
 
 /// What the menu was opened on.
 #[derive(Debug, Clone, PartialEq, Eq)]

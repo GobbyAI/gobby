@@ -6,7 +6,30 @@ use crate::ui::settings::AgentSort;
 use crate::ui::sidebar::agent_blocked;
 use crate::ui::{Action, Chrome, WorkspaceView};
 
-use super::{MenuAction, MenuItem};
+use super::{ArrangeLayout, MenuAction, MenuItem};
+
+pub(in crate::app::live_loop) fn arrange_items() -> Vec<MenuItem> {
+    vec![
+        item(
+            "arrange: even horizontal",
+            MenuAction::Arrange(ArrangeLayout::EvenHorizontal),
+        ),
+        item(
+            "arrange: even vertical",
+            MenuAction::Arrange(ArrangeLayout::EvenVertical),
+        ),
+        item(
+            "arrange: main horizontal",
+            MenuAction::Arrange(ArrangeLayout::MainHorizontal),
+        ),
+        item(
+            "arrange: main vertical",
+            MenuAction::Arrange(ArrangeLayout::MainVertical),
+        ),
+        item("arrange: tiled", MenuAction::Arrange(ArrangeLayout::Tiled)),
+        item("new grid…", MenuAction::OpenNewGrid),
+    ]
+}
 
 /// herdr `ContextMenu::items` for a pane, in its order: rename, clear the
 /// label it has, swap with the focused pane when it is another pane, the
@@ -33,8 +56,9 @@ pub(super) fn pane_items<W: WorkspaceView>(ws: &W, chrome: &Chrome, pane: PaneId
             if zoomed { "unzoom" } else { "zoom" },
             MenuAction::Act(Action::Zoom),
         ),
-        control_item(state, pane),
     ]);
+    items.extend(arrange_items());
+    items.push(control_item(state, pane));
     if let Some(entry_id) = blocked_entry(ws, pane) {
         items.push(item("respond", MenuAction::Respond(entry_id)));
     }
