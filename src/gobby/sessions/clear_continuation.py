@@ -20,8 +20,10 @@ from gobby.sessions.compact_continuation import (
 from gobby.sessions.handoff import (
     FOUND_WORK_VARIABLE,
     HANDOFF_PULL_PENDING_VARIABLE,
+    HANDOFF_TURN_END_PENDING_VARIABLE,
     PENDING_HANDOFF_VARIABLE,
     HandoffAttemptState,
+    _attempt_state_from_marker,
     _store_variables,
     restore_handoff_attempt,
     stage_handoff_attempt,
@@ -543,19 +545,24 @@ def clear_failed_attempt(
             marker = _marker_from_variables(variables)
             if not _unconsumed_attempt(marker, attempt_id):
                 return False
-            handoff_record_id = marker.get("handoff_record_id")
-            if not isinstance(handoff_record_id, str) or not handoff_record_id:
+            pending = variables.get(PENDING_HANDOFF_VARIABLE)
+            if not isinstance(pending, Mapping) or pending.get("attempt_id") != attempt_id:
                 return False
-            prior_status = marker.get("prior_status")
-            attempt_state = HandoffAttemptState(
-                session_id=session_id,
-                attempt_id=attempt_id,
-                handoff_record_id=handoff_record_id,
-                prior_handoff_markdown=marker.get("prior_handoff_markdown"),
-                prior_markers={},
-                missing_markers=frozenset({CLEAR_ATTEMPT_VARIABLE, PENDING_HANDOFF_VARIABLE}),
-                prior_status=prior_status if isinstance(prior_status, str) else None,
+            attempt_state = _attempt_state_from_marker(
+                session_id,
+                attempt_id,
+                pending,
+                staged_markers=frozenset(
+                    {
+                        CLEAR_ATTEMPT_VARIABLE,
+                        PENDING_HANDOFF_VARIABLE,
+                        HANDOFF_TURN_END_PENDING_VARIABLE,
+                        FOUND_WORK_VARIABLE,
+                    }
+                ),
             )
+            if attempt_state is None:
+                return False
         return restore_handoff_attempt(db, attempt_state, marker_updates=marker_updates)
     except Exception:
         logger.warning(

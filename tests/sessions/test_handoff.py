@@ -23,6 +23,7 @@ from gobby.sessions.clear_continuation import (
     take_clear_handoff_marker,
 )
 from gobby.sessions.handoff import (
+    FOUND_WORK_VARIABLE,
     HANDOFF_DISPATCH_GATE_VARIABLE,
     HANDOFF_PULL_PENDING_VARIABLE,
     HANDOFF_TURN_END_PENDING_VARIABLE,
@@ -932,6 +933,10 @@ async def test_failed_compact_payload_requires_explicit_recovery(
         next_steps=["Clear the draft, then continue."],
     )
     attempt_id = "f" * 32
+    SessionVariableManager(temp_db).merge_variables(
+        session.id,
+        {FOUND_WORK_VARIABLE: ["previous"], HANDOFF_TURN_END_PENDING_VARIABLE: False},
+    )
     staged = stage_handoff_attempt(
         temp_db,
         session.id,
@@ -953,6 +958,8 @@ async def test_failed_compact_payload_requires_explicit_recovery(
     variables = SessionVariableManager(temp_db).get_variables(session.id)
     assert PENDING_HANDOFF_VARIABLE not in variables
     assert HANDOFF_PULL_PENDING_VARIABLE not in variables
+    assert variables[FOUND_WORK_VARIABLE] == ["previous"]
+    assert variables[HANDOFF_TURN_END_PENDING_VARIABLE] is False
     assert variables["failed_handoff_attempt"] == {
         "attempt_id": attempt_id,
         "handoff_record_id": staged.handoff_record_id,

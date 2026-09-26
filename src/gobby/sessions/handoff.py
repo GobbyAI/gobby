@@ -433,6 +433,10 @@ def stage_handoff_attempt(
                     "prior_handoff_markdown": session_row["handoff_markdown"],
                     "prior_status": prior_status,
                 }
+        marker_updates[PENDING_HANDOFF_VARIABLE]["restore_state"] = {
+            "prior_markers": prior_markers,
+            "missing_markers": sorted(missing_markers),
+        }
         variables.update(marker_updates)
 
         if prior_status is not None:
@@ -544,6 +548,43 @@ def restore_handoff_attempt(
             )
         _store_variables(conn, state.session_id, variables, exists=True)
     return True
+
+
+def _attempt_state_from_marker(
+    session_id: str,
+    attempt_id: str,
+    marker: Mapping[str, Any],
+    *,
+    staged_markers: frozenset[str],
+) -> HandoffAttemptState | None:
+    handoff_record_id = marker.get("handoff_record_id")
+    if not isinstance(handoff_record_id, str) or not handoff_record_id:
+        return None
+    snapshot = marker.get("restore_state")
+    prior_markers: dict[str, Any] = {}
+    missing_markers = staged_markers
+    if isinstance(snapshot, Mapping):
+        prior = snapshot.get("prior_markers")
+        missing = snapshot.get("missing_markers")
+        if (
+            isinstance(prior, dict)
+            and all(isinstance(name, str) and name in staged_markers for name in prior)
+            and isinstance(missing, list)
+            and all(isinstance(name, str) and name in staged_markers for name in missing)
+            and not prior.keys() & set(missing)
+        ):
+            prior_markers = prior
+            missing_markers = frozenset(missing)
+    prior_status = marker.get("prior_status")
+    return HandoffAttemptState(
+        session_id=session_id,
+        attempt_id=attempt_id,
+        handoff_record_id=handoff_record_id,
+        prior_handoff_markdown=marker.get("prior_handoff_markdown"),
+        prior_markers=prior_markers,
+        missing_markers=missing_markers,
+        prior_status=prior_status if isinstance(prior_status, str) else None,
+    )
 
 
 def staged_handoff_tool_result(
@@ -658,16 +699,11 @@ def restore_staged_handoff(
     marker = variables.get(PENDING_HANDOFF_VARIABLE)
     if not isinstance(marker, Mapping) or marker.get("attempt_id") != attempt_id:
         return False
-    handoff_record_id = marker.get("handoff_record_id")
-    if not isinstance(handoff_record_id, str) or not handoff_record_id:
-        return False
-    state = HandoffAttemptState(
-        session_id=session_id,
-        attempt_id=attempt_id,
-        handoff_record_id=handoff_record_id,
-        prior_handoff_markdown=marker.get("prior_handoff_markdown"),
-        prior_markers={},
-        missing_markers=frozenset(
+    state = _attempt_state_from_marker(
+        session_id,
+        attempt_id,
+        marker,
+        staged_markers=frozenset(
             {
                 PENDING_HANDOFF_VARIABLE,
                 HANDOFF_PULL_PENDING_VARIABLE,
@@ -675,10 +711,9 @@ def restore_staged_handoff(
                 FOUND_WORK_VARIABLE,
             }
         ),
-        prior_status=(
-            marker.get("prior_status") if isinstance(marker.get("prior_status"), str) else None
-        ),
     )
+    if state is None:
+        return False
     updates = (
         {HANDOFF_DISPATCH_GATE_VARIABLE: dict(failure_result)}
         if failure_result is not None
