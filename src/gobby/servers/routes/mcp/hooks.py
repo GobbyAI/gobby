@@ -24,7 +24,7 @@ from gobby.config.hooks import HookTimeoutConfig
 from gobby.hooks.adapter_execution import HOOK_ADAPTER_MAX_WORKERS as _HOOK_ADAPTER_MAX_WORKERS
 from gobby.hooks.adapter_execution import (
     AdapterHookTimeout,
-    schedule_adapter_timeout_finalization,
+    register_adapter_timeout_finalization,
     start_envelope_lease_renewal,
 )
 from gobby.hooks.adapter_execution import (
@@ -839,13 +839,16 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                     ):
                         live_worker = True
                         lease_outlives_request = True
-                        await asyncio.to_thread(
-                            schedule_adapter_timeout_finalization,
-                            executor_future,
-                            envelope_id=envelope_id,
-                            owner_token=owner_token,
-                            hook_type=hook_type if isinstance(hook_type, str) else None,
-                        )
+                        try:
+                            await register_adapter_timeout_finalization(
+                                executor_future,
+                                envelope_id=envelope_id,
+                                owner_token=owner_token,
+                                hook_type=hook_type if isinstance(hook_type, str) else None,
+                            )
+                        except Exception:
+                            lease_outlives_request = False
+                            raise
                 if envelope_has_hook_response_capability(
                     request_metadata.get("response_capability")
                 ):

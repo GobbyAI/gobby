@@ -113,6 +113,34 @@ def schedule_adapter_timeout_finalization(
     executor_future.add_done_callback(_on_done)
 
 
+async def register_adapter_timeout_finalization(
+    executor_future: Future[dict[str, Any]],
+    *,
+    envelope_id: str,
+    owner_token: str,
+    hook_type: str | None,
+) -> None:
+    """Keep the lease owned until its off-loop finalizer is registered."""
+    registration = asyncio.create_task(
+        asyncio.to_thread(
+            schedule_adapter_timeout_finalization,
+            executor_future,
+            envelope_id=envelope_id,
+            owner_token=owner_token,
+            hook_type=hook_type,
+        )
+    )
+    try:
+        await asyncio.shield(registration)
+    finally:
+        while not registration.done():
+            try:
+                await asyncio.shield(registration)
+            except asyncio.CancelledError:
+                continue
+        registration.result()
+
+
 class _SessionAdmission:
     """One session's adapter admission lock and its outstanding reservations."""
 
