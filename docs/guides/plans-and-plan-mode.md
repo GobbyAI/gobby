@@ -122,7 +122,12 @@ Taskless review uses `plan-adversary-taskless`. After project-aware validation, 
 passes the returned evidence ID, canonical path, clean deterministic sweep report,
 round number, review cap, and parent session ID, then binds the spawned run with
 `bind_evidence_run`. Spawn/bind failure expires the evidence; successful binding
-is followed immediately by a structured `set_handoff(clear_session=false)`. The adversary loads
+is followed immediately by a structured `set_handoff(clear_session=false)`. An
+unspawned interactive round binds through `bind_static_review_seats` instead:
+the evidence owner names the exact live Writer and coordinator session UUIDs,
+the binding is immutable and exclusive with a run binding, and the round's
+writes are seat-gated (the Writer appends and repairs, the coordinator applies
+the manifest, the owner finalizes). The adversary loads
 `gobby:references/plan/review.md` and standalone `proportionality`, returns structured findings or approval to
 the parent, and calls `end_agent_run`. It does not claim or mutate Gobby tasks.
 The adversary now also carries an `over-engineering` review dimension: mechanism
@@ -140,7 +145,8 @@ Each round records reviewer run/session, verdict, findings, and resolution
 notes. Keep prior rounds for audit. The reviewer reads an immutable snapshot,
 completes three review lanes and returns server-validated coverage attestation;
 it never writes the manifest. A rejection is appended and finalized with its
-canonical result before the coordinator applies accepted typed repairs.
+canonical result before the coordinator (the Writer seat in a static-seat
+round) applies accepted typed repairs.
 
 On user-accepted approval, the coordinator calls `apply_plan_review_manifest`,
 then `append_plan_changelog_round`, `finalize_plan_review_evidence`, and
@@ -276,7 +282,8 @@ and plan approval state rather than only static plan files.
 - `validate_plan`
 
 Review evidence uses `prepare_plan_review_round`, `get_plan_review_snapshot`,
-`bind_evidence_run`, `expire_plan_review_evidence`, and `verify_plan_unchanged`.
+`bind_evidence_run`, `bind_static_review_seats`, `expire_plan_review_evidence`,
+and `verify_plan_unchanged`.
 Manifest derivation/application, coverage attestation, typed repairs, changelog
 append/finalization, and lesson checkpoint tools share this service. Discover
 unknown names with `list_tools`; fetch a known unleased schema directly.
@@ -302,4 +309,4 @@ override plan-mode restrictions on unrelated files.
 - [workflow-rules.md](workflow-rules.md)
 - [tdd-enforcement.md](tdd-enforcement.md)
 
-_Last verified: 2026-09-12_
+_Last verified: 2026-09-26_
