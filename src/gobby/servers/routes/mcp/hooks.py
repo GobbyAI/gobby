@@ -24,7 +24,7 @@ from gobby.config.hooks import HookTimeoutConfig
 from gobby.hooks.adapter_execution import HOOK_ADAPTER_MAX_WORKERS as _HOOK_ADAPTER_MAX_WORKERS
 from gobby.hooks.adapter_execution import (
     AdapterHookTimeout,
-    schedule_adapter_timeout_finalization,
+    register_adapter_timeout_finalization,
     start_envelope_lease_renewal,
 )
 from gobby.hooks.adapter_execution import (
@@ -562,13 +562,15 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                     source=source,
                 )
 
-            if envelope_id and not claim_envelope_processing(envelope_id):
-                stored_response = envelope_terminal_response(envelope_id)
+            if envelope_id and not await asyncio.to_thread(claim_envelope_processing, envelope_id):
+                stored_response = await asyncio.to_thread(envelope_terminal_response, envelope_id)
                 if stored_response is not None:
                     logger.info("Replaying processed hook envelope %s result", envelope_id)
                     return stored_response
-                marker = read_envelope_marker(envelope_id)
-                if marker is None and claim_envelope_processing(envelope_id):
+                marker = await asyncio.to_thread(read_envelope_marker, envelope_id)
+                if marker is None and await asyncio.to_thread(
+                    claim_envelope_processing, envelope_id
+                ):
                     logger.info("Reclaimed expired hook envelope marker %s", envelope_id)
                 elif not isinstance(marker, dict) or not isinstance(marker.get("status"), str):
                     reason = "duplicate envelope marker malformed"
@@ -577,9 +579,9 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                         status_code=409,
                         content={"status": "malformed_marker", "reason": reason},
                     )
-                elif clear_stale_envelope_processing_marker(
-                    envelope_id
-                ) and claim_envelope_processing(envelope_id):
+                elif await asyncio.to_thread(
+                    clear_stale_envelope_processing_marker, envelope_id
+                ) and await asyncio.to_thread(claim_envelope_processing, envelope_id):
                     logger.info("Reclaimed stale hook envelope processing marker %s", envelope_id)
                 else:
                     status = marker["status"]
@@ -598,7 +600,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                     )
 
             if envelope_id:
-                owner_token = envelope_processing_owner_token(envelope_id)
+                owner_token = await asyncio.to_thread(envelope_processing_owner_token, envelope_id)
                 if owner_token:
                     lease_renewal = start_envelope_lease_renewal(envelope_id, owner_token)
 
@@ -653,7 +655,10 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                 )
             except StartupClaimPreflightTimeout as exc:
                 inc_counter("hooks_failed_total")
-                released = bool(envelope_id and release_envelope_processing_claim(envelope_id))
+                released = bool(
+                    envelope_id
+                    and await asyncio.to_thread(release_envelope_processing_claim, envelope_id)
+                )
                 logger.warning(
                     "Retrying hook after startup-claim preflight timeout",
                     extra=_hook_log_extra(
@@ -723,8 +728,11 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
             except AgentRunIngressRetryableError as exc:
                 inc_counter("hooks_failed_total")
                 if claim_lease is not None:
-                    rollback_agy_startup_claim(hook_manager, claim_lease)
-                released = bool(envelope_id and release_envelope_processing_claim(envelope_id))
+                    await asyncio.to_thread(rollback_agy_startup_claim, hook_manager, claim_lease)
+                released = bool(
+                    envelope_id
+                    and await asyncio.to_thread(release_envelope_processing_claim, envelope_id)
+                )
                 logger.warning(
                     "Retrying managed hook until durable run identity is available",
                     extra=_hook_log_extra(
@@ -750,8 +758,11 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
             except DaemonNotReadyError as exc:
                 inc_counter("hooks_failed_total")
                 if claim_lease is not None:
-                    rollback_agy_startup_claim(hook_manager, claim_lease)
-                released = bool(envelope_id and release_envelope_processing_claim(envelope_id))
+                    await asyncio.to_thread(rollback_agy_startup_claim, hook_manager, claim_lease)
+                released = bool(
+                    envelope_id
+                    and await asyncio.to_thread(release_envelope_processing_claim, envelope_id)
+                )
                 logger.warning(
                     "Retrying hook after daemon-not-ready gate",
                     extra=_hook_log_extra(
@@ -777,7 +788,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                 # Invalid request - still return graceful response
                 inc_counter("hooks_failed_total")
                 if claim_lease is not None:
-                    rollback_agy_startup_claim(hook_manager, claim_lease)
+                    await asyncio.to_thread(rollback_agy_startup_claim, hook_manager, claim_lease)
                 if _is_codex_root_context_miss(source, payload, e):
                     logger.debug(
                         "Skipping Codex hook without project context: %s",
@@ -803,7 +814,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
             except TimeoutError as exc:
                 inc_counter("hooks_failed_total")
                 if claim_lease is not None:
-                    invalidate_agy_startup_claim(hook_manager, claim_lease)
+                    await asyncio.to_thread(invalidate_agy_startup_claim, hook_manager, claim_lease)
                 timeout_seconds = hook_timeout
                 timeout_log_extra = {
                     "source": source,
@@ -828,19 +839,26 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                     ):
                         live_worker = True
                         lease_outlives_request = True
-                        schedule_adapter_timeout_finalization(
-                            executor_future,
-                            envelope_id=envelope_id,
-                            owner_token=owner_token,
-                            hook_type=hook_type if isinstance(hook_type, str) else None,
-                        )
+                        try:
+                            await register_adapter_timeout_finalization(
+                                executor_future,
+                                envelope_id=envelope_id,
+                                owner_token=owner_token,
+                                hook_type=hook_type if isinstance(hook_type, str) else None,
+                            )
+                        except Exception:
+                            lease_outlives_request = False
+                            raise
                 if envelope_has_hook_response_capability(
                     request_metadata.get("response_capability")
                 ):
                     released = False
                     if not live_worker:
                         released = bool(
-                            envelope_id and release_envelope_processing_claim(envelope_id)
+                            envelope_id
+                            and await asyncio.to_thread(
+                                release_envelope_processing_claim, envelope_id
+                            )
                         )
                     logger.warning(
                         "Retrying hook after adapter timeout",
@@ -901,7 +919,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                 # This prevents confusing "hook failed" warnings in Claude Code
                 inc_counter("hooks_failed_total")
                 if claim_lease is not None:
-                    rollback_agy_startup_claim(hook_manager, claim_lease)
+                    await asyncio.to_thread(rollback_agy_startup_claim, hook_manager, claim_lease)
                 logger.exception(
                     "Hook execution failed: %s",
                     hook_type,
@@ -948,7 +966,9 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                     if lease_renewal is not None:
                         lease_renewal.cancel()
                     if envelope_id and owner_token:
-                        release_envelope_processing_claim(envelope_id, owner_token=owner_token)
+                        await asyncio.to_thread(
+                            release_envelope_processing_claim, envelope_id, owner_token=owner_token
+                        )
             total_seconds = time.perf_counter() - start_time
             dominant_phase, dominant_seconds, phase_durations = observe_hook_phase_timings(
                 phase_timings,
