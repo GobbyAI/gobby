@@ -48,7 +48,7 @@ fresh round.
 
 - BR-01 fixed. 1.13 is no longer a `category: manual` deliverable. It is a `category: test`
   leaf (paired brief/full parity check, one test module) so it expands 1:1, and the
-  post-restart live check plus the seven-day re-measurement moved to a new `## V1:
+  post-restart live check plus the seven-day re-measurement moved to a new `## V2:
   Verification` (`kind: verification`) section that assigns them to the PD's direct-task path
   (`category: manual` direct task for the Researcher or the PD). Both measurement obligations
   are preserved.
@@ -76,8 +76,8 @@ fresh round.
   keys, no Decision Record 5 field in brief), and a stated size criterion (`max_ratio` 0.5 for
   the body-dropping tools, 0.99 for the duplicate-dropping ones). Mutation and consume paths
   (`create_memory`, `review_task_memories`, `close_task`, `wait_for_agent`, `get_handoff`) run
-  only on those fixtures; the V1 live check calls read-only tools only, with named arguments.
-  The seven-day report is a separate observational step in V1, not a gate.
+  only on those fixtures; the V2 live check calls read-only tools only, with named arguments.
+  The seven-day report is a separate observational step in V2, not a gate.
 - BR-06 fixed. Both Constraints cross-references now say 1.8.
 - BR-07 fixed. 1.1.3 drives every envelope: `call_mcp_tool` success, timeout, and
   unknown-tool error paths, the `mcp_proxy` handler, `list_mcp_tools`, `get_tool_schema`,
