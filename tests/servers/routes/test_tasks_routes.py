@@ -6,11 +6,14 @@ create_http_server() with a real LocalTaskManager backed by temp_db.
 
 from __future__ import annotations
 
+import asyncio
 import json
+import threading
 from collections.abc import Iterator
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 from starlette.testclient import TestClient
 
@@ -1054,6 +1057,43 @@ class TestCloseTask:
         assert response.status_code == 200
         data = response.json()
         assert data["state"]["is_closed"] is True
+
+    @pytest.mark.asyncio
+    async def test_close_commit_keeps_event_loop_responsive(
+        self,
+        server: Any,
+        task_manager: LocalTaskManager,
+        sample_task: dict[str, Any],
+    ) -> None:
+        owner_thread = threading.get_ident()
+        entered = threading.Event()
+        release = threading.Event()
+        original_close = task_manager.close_task
+
+        def blocked_close(*args: Any, **kwargs: Any) -> Any:
+            entered.set()
+            assert threading.get_ident() != owner_thread
+            assert release.wait(2)
+            return original_close(*args, **kwargs)
+
+        with patch.object(task_manager, "close_task", side_effect=blocked_close):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=server.app), base_url="http://test"
+            ) as async_client:
+                request = asyncio.create_task(
+                    async_client.post(f"/api/tasks/{sample_task['id']}/close")
+                )
+                try:
+                    assert await asyncio.wait_for(asyncio.to_thread(entered.wait, 2), timeout=3)
+                    heartbeat = asyncio.Event()
+                    asyncio.get_running_loop().call_soon(heartbeat.set)
+                    await asyncio.wait_for(heartbeat.wait(), timeout=1)
+                finally:
+                    release.set()
+                    response = await request
+
+        assert response.status_code == 200
+        assert response.json()["state"]["is_closed"] is True
 
     def test_close_with_reason(self, client: TestClient, sample_task: dict) -> None:
         response = client.post(
