@@ -478,6 +478,10 @@ HANDOFF_PREREQUISITE_EVENTS = [
         {"mcp_server": "gobby-agents", "mcp_tool": "end_agent_run"},
         id="end-agent-run",
     ),
+    pytest.param(
+        {"mcp_server": "gobby-agents", "mcp_tool": "wait_for_coordination"},
+        id="wait-for-coordination",
+    ),
     pytest.param({"tool_name": "get_tool_schema"}, id="bare-get-tool-schema"),
     pytest.param({"tool_name": "list_tools"}, id="bare-list-tools"),
     pytest.param(

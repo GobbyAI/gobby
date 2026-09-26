@@ -23,7 +23,7 @@ rules:
       )
       and not (
         event.data.get('mcp_server') == 'gobby-agents'
-        and event.data.get('mcp_tool') in ('send_message', 'end_agent_run')
+        and event.data.get('mcp_tool') in ('send_message', 'end_agent_run', 'wait_for_coordination')
       )
       and not (
         event.data.get('mcp_server') == 'gobby-skills'
@@ -90,7 +90,7 @@ rules:
       )
       and not (
         event.data.get('mcp_server') == 'gobby-agents'
-        and event.data.get('mcp_tool') in ('send_message', 'end_agent_run')
+        and event.data.get('mcp_tool') in ('send_message', 'end_agent_run', 'wait_for_coordination')
       )
       and not (
         event.data.get('mcp_server') == 'gobby-skills'
