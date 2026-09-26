@@ -128,7 +128,9 @@ def evaluate_tdd_evidence(
 ) -> TddEvidenceResult:
     """Require one assertion-backed cycle and later coverage of every named test."""
     if not tests:
-        return TddEvidenceResult(True, True, ())
+        return TddEvidenceResult(
+            False, False, ("TDD is required but no named test reference resolved.",)
+        )
 
     findings: list[str] = []
     cycle: tuple[TranscriptValidationRun, TranscriptEdit] | None = None

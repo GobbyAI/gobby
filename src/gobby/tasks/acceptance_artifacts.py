@@ -20,6 +20,13 @@ _ARTIFACT_REF_RE = re.compile(
     r"(?:\s*`(?P<quoted>[^`]+)`|\s+(?P<bare>[^\s,;]+))",
     re.IGNORECASE | re.MULTILINE,
 )
+_INLINE_ARTIFACT_REF_RE = re.compile(
+    r"^[ \t]*(?:>[ \t]*)?(?:[-*+][ \t]+|\d+[.)][ \t]+)?"
+    r"[A-Za-z0-9]+(?:\.[A-Za-z0-9]+)+:[ \t]+"
+    r"(?:[^`\n]|`[^`\n]*`)*?\b(?P<kind>test|file):"
+    r"(?:[ \t]*`(?P<quoted>[^`]+)`|[ \t]+(?P<bare>[^\s,;]+))",
+    re.IGNORECASE | re.MULTILINE,
+)
 # An unbackticked token only counts as a reference when it is shaped like one.
 # Backticks are an unconditional statement of intent, so they skip this filter and a
 # malformed backticked reference still fails loudly.
@@ -72,7 +79,11 @@ class AcceptanceArtifactResult:
 def extract_artifact_references(criteria: str, kind: str) -> tuple[str, ...]:
     """Extract stable, deduplicated test or file references from criteria."""
     references: list[str] = []
-    for match in _ARTIFACT_REF_RE.finditer(criteria):
+    matches = sorted(
+        (*_ARTIFACT_REF_RE.finditer(criteria), *_INLINE_ARTIFACT_REF_RE.finditer(criteria)),
+        key=lambda match: match.start(),
+    )
+    for match in matches:
         if match.group("kind").casefold() != kind.casefold():
             continue
         value = (match.group("quoted") or match.group("bare") or "").strip().rstrip(".")

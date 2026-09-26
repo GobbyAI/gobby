@@ -286,7 +286,7 @@ def _looks_like_criterion_command(
     tokens = safe_split(core_command or command)
     if len(tokens) < 2:
         return False
-    return posixpath.basename(tokens[0]).casefold() in _CRITERION_COMMAND_PREFIXES
+    return posixpath.basename(tokens[0]) in _CRITERION_COMMAND_PREFIXES
 
 
 def authored_criterion_commands(criteria: str) -> list[str]:
@@ -365,8 +365,7 @@ def _is_command_shaped_span(command: str) -> bool:
     equivalence = classify_validation_command_equivalence(command)
     if _looks_like_criterion_command(command, equivalence.core_command, set()):
         return True
-    names = {posixpath.basename(token).casefold() for token in tokens}
-    return bool(names & _CRITERION_COMMAND_PREFIXES) or tokens[0].casefold() in _CONDITIONAL_TOKENS
+    return tokens[0] in _CONDITIONAL_TOKENS
 
 
 def _malformed_command_reason(command: str) -> str | None:

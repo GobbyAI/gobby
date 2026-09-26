@@ -113,6 +113,25 @@ def test_expansion_prefixed_references_are_extracted() -> None:
     )
 
 
+def test_inline_criterion_test_reference_is_extracted() -> None:
+    criteria = (
+        "3.2.2: A partition skips the write. test: "
+        "`crates/x/src/a_tests.rs::unchanged_partition_skips_write`.\n"
+        "- 3.2.3: The `test: examples/example.rs::not_a_test` sample is inert; "
+        "test: `tests/test_real.py::test_real`.\n"
+        "- test: `tests/test_list.py::test_list`\n"
+        "1) 3.2.5: A numbered criterion. test: `tests/test_number.py::test_number`.\n"
+        "Prose containing 3.2.4: test: `tests/test_prose.py::test_prose`."
+    )
+
+    assert artifacts_module.extract_artifact_references(criteria, "test") == (
+        "crates/x/src/a_tests.rs::unchanged_partition_skips_write",
+        "tests/test_real.py::test_real",
+        "tests/test_list.py::test_list",
+        "tests/test_number.py::test_number",
+    )
+
+
 def test_inline_code_examples_are_not_artifact_references() -> None:
     criteria = (
         "The schema describes `test: path::test_symbol`, examples use "
