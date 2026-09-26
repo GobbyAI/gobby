@@ -18,18 +18,18 @@ fn embedded_assets_publish_a_complete_schema_identity() {
     assert_eq!(identity.runner_protocol_version, RUNNER_PROTOCOL_VERSION);
     assert_eq!(identity.baseline.version, BASELINE_VERSION);
     assert_eq!(identity.baseline.checksum, BASELINE_CHECKSUM);
-    assert_eq!(identity.latest_asset.version, 452);
+    assert_eq!(identity.latest_asset.version, 453);
     assert_eq!(
         identity.latest_asset.filename,
-        "452_static_plan_review_seats.sql"
+        "453_plan_review_source_path.sql"
     );
     assert_eq!(
         identity.latest_asset.checksum,
-        "f21cc03c96fc7fb82ba45d8864610d3074b83884c3f3098fcb3420a1263ec95c"
+        "0be9a127177734dde26314a5abe71aef93eee5609c3a0b3f43798ea7a0a612bc"
     );
     assert_eq!(
         identity.root_hash,
-        "13bbec189390231b5b9765b8075f85fac2fa5084df4b60a0b24274bc39279ff3"
+        "3f393b50ed658afea348c6ff2cd5afb96bf4e45f17a5d4e681d42dcb11dc968a"
     );
 
     let _public_runner_type = std::any::type_name::<SchemaRunner<'static>>();
@@ -42,6 +42,7 @@ fn catalog_pins_static_plan_review_seat_columns_and_constraints() {
     for column in [
         "plan_review_evidence.static_writer_session_id",
         "plan_review_evidence.static_coordinator_session_id",
+        "plan_review_evidence.source_plan_path",
     ] {
         assert!(
             catalog["columns"]

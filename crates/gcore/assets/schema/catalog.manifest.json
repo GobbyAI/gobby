@@ -3041,6 +3041,10 @@
       "definition": "bytea|bytea|NO||NEVER"
     },
     {
+      "name": "plan_review_evidence.source_plan_path",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
       "name": "plan_review_evidence.stage",
       "definition": "text|text|YES||NEVER"
     },

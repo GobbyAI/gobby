@@ -34,6 +34,8 @@ from tests.fixtures.isolated_checkout import (
     install_isolated_checkout_project,
     write_project_marker,
 )
+from tests.plans.review_evidence_helpers import needs_review_result
+from tests.review_coverage_helpers import coverage_attestation
 
 pytestmark = pytest.mark.unit
 
@@ -92,6 +94,25 @@ def worktree_review(
         worktree_plan=worktree_plan,
         worktree_session_id=worktree_session.id,
     )
+
+
+def _static_seats(review: WorktreeReview) -> tuple[str, str]:
+    sessions = SessionManager(review.service.db)
+    owner = sessions.get(review.primary_session_id)
+    assert owner is not None and owner.machine_id is not None
+    writer = sessions.register(
+        external_id=f"worktree-writer-{uuid.uuid4()}",
+        machine_id=owner.machine_id,
+        source="codex",
+        project_id=review.project_id,
+    )
+    coordinator = sessions.register(
+        external_id=f"worktree-coordinator-{uuid.uuid4()}",
+        machine_id=owner.machine_id,
+        source="codex",
+        project_id=review.project_id,
+    )
+    return writer.id, coordinator.id
 
 
 def _review_registry(db: HubDatabase, project_id: str) -> InternalToolRegistry:
@@ -195,6 +216,166 @@ def test_absolute_worktree_plan_path_resolves_against_worktree(
     assert evidence.snapshot == review.worktree_plan.read_bytes()
     assert evidence.plan_path == REVIEW_PLAN
     assert review.service.verify_plan_unchanged(prepared.evidence_id, review.worktree_plan)
+
+
+def test_static_review_keeps_prepared_worktree_path_through_manifest_and_finalize(
+    worktree_review: WorktreeReview,
+) -> None:
+    review = worktree_review
+    service = review.service
+    writer_id, coordinator_id = _static_seats(review)
+    primary_bytes = review.primary_plan.read_bytes()
+    prepared = service.prepare_plan_review_round(
+        project_id=review.project_id,
+        plan_path=review.worktree_plan,
+        round_number=1,
+        session_id=review.primary_session_id,
+    )
+    evidence_id = prepared.evidence_id
+    assert service.get_evidence(evidence_id).source_plan_path == str(review.worktree_plan)
+
+    review.primary_plan.write_bytes(review.worktree_plan.read_bytes())
+    with pytest.raises(ReviewEvidenceError) as wrong_checkout:
+        service.verify_plan_unchanged(evidence_id, review.primary_plan)
+    assert wrong_checkout.value.code == "wrong_plan"
+    with pytest.raises(ReviewEvidenceError) as wrong_replay:
+        service.prepare_plan_review_round(
+            project_id=review.project_id,
+            plan_path=review.primary_plan,
+            round_number=1,
+            session_id=review.primary_session_id,
+        )
+    assert wrong_replay.value.code == "review_round_active"
+    review.primary_plan.write_bytes(primary_bytes)
+
+    bound = service.bind_static_review_seats(
+        evidence_id,
+        writer_session_id=writer_id,
+        coordinator_session_id=coordinator_id,
+        caller_session_id=review.primary_session_id,
+    )
+    assert bound.source_plan_path == str(review.worktree_plan)
+    derived = service.derive_plan_review_manifest(evidence_id, {})
+    entries = derived["manifest_entries"]
+    assert isinstance(entries, list)
+    result: dict[str, object] = {
+        "verdict": "approved",
+        "findings": [],
+        "routing_decisions": {},
+        "manifest_entries": entries,
+        "coverage_attestation": coverage_attestation(
+            evidence_id=evidence_id, manifest_entries=entries
+        ),
+    }
+    with pytest.raises(ReviewEvidenceError) as wrong_manifest_path:
+        service.apply_plan_review_manifest(
+            evidence_id,
+            result,
+            plan_path=review.primary_plan,
+            run_id=None,
+            caller_session_id=coordinator_id,
+        )
+    assert wrong_manifest_path.value.code == "wrong_plan"
+    applied = service.apply_plan_review_manifest(
+        evidence_id,
+        result,
+        plan_path=review.worktree_plan,
+        run_id=None,
+        caller_session_id=coordinator_id,
+    )
+    assert applied["applied"] is True
+    assert (
+        service.append_plan_changelog_round(
+            evidence_id, "**Round 1**", result, caller_session_id=writer_id
+        )["applied"]
+        is True
+    )
+    assert (
+        service.finalize_plan_review_evidence(
+            evidence_id, result, caller_session_id=review.primary_session_id
+        ).finalized_at
+        is not None
+    )
+    assert review.primary_plan.read_bytes() == primary_bytes
+
+
+async def test_preserved_worktree_evidence_rebinds_to_live_successor_coordinator(
+    worktree_review: WorktreeReview,
+) -> None:
+    review = worktree_review
+    service = review.service
+    writer_id, ended_coordinator_id = _static_seats(review)
+    prepared = service.prepare_plan_review_round(
+        project_id=review.project_id,
+        plan_path=review.worktree_plan,
+        round_number=1,
+        session_id=review.primary_session_id,
+    )
+    evidence_id = prepared.evidence_id
+    with service.db.transaction() as transaction:
+        transaction.execute(
+            "UPDATE plan_review_evidence SET source_plan_path = NULL WHERE evidence_id = %s",
+            (evidence_id,),
+        )
+    SessionManager(service.db).update_status(ended_coordinator_id, "expired")
+    _, successor_coordinator_id = _static_seats(review)
+    with pytest.raises(ReviewEvidenceError) as ended:
+        service.bind_static_review_seats(
+            evidence_id,
+            writer_session_id=writer_id,
+            coordinator_session_id=ended_coordinator_id,
+            caller_session_id=review.primary_session_id,
+            plan_path=review.worktree_plan,
+        )
+    assert ended.value.code == "invalid_seats"
+    with pytest.raises(ReviewEvidenceError) as unauthorized:
+        service.bind_static_review_seats(
+            evidence_id,
+            writer_session_id=writer_id,
+            coordinator_session_id=successor_coordinator_id,
+            caller_session_id=writer_id,
+            plan_path=review.worktree_plan,
+        )
+    assert unauthorized.value.code == "unauthorized_seat"
+    with pytest.raises(ReviewEvidenceError) as stale:
+        service.bind_static_review_seats(
+            evidence_id,
+            writer_session_id=writer_id,
+            coordinator_session_id=successor_coordinator_id,
+            caller_session_id=review.primary_session_id,
+        )
+    assert stale.value.code == "stale_snapshot"
+    with session_context_for_test(review.primary_session_id):
+        response = await _review_registry(service.db, review.project_id).call(
+            "bind_static_review_seats",
+            {
+                "evidence_id": evidence_id,
+                "writer_session_id": writer_id,
+                "coordinator_session_id": successor_coordinator_id,
+                "plan_path": str(review.worktree_plan),
+            },
+        )
+    assert response["ok"] is True, response
+    bound = service.get_evidence(evidence_id)
+    assert bound.evidence_id == evidence_id
+    assert bound.source_plan_path == str(review.worktree_plan)
+    assert bound.static_coordinator_session_id == successor_coordinator_id
+    assert bound.dispatch_run_id is None
+    result = needs_review_result(evidence_id)
+    primary_bytes = review.primary_plan.read_bytes()
+    assert (
+        service.append_plan_changelog_round(
+            evidence_id, "**Round 1**", result, caller_session_id=writer_id
+        )["applied"]
+        is True
+    )
+    assert (
+        service.finalize_plan_review_evidence(
+            evidence_id, result, caller_session_id=review.primary_session_id
+        ).finalized_at
+        is not None
+    )
+    assert review.primary_plan.read_bytes() == primary_bytes
 
 
 def test_plan_paths_outside_registered_roots_fail_invalid_plan_path(

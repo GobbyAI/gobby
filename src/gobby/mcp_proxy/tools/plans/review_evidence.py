@@ -175,6 +175,7 @@ def register_review_evidence_tools(
         evidence_id: str,
         writer_session_id: str,
         coordinator_session_id: str,
+        plan_path: str | None = None,
     ) -> dict[str, object]:
         try:
             evidence = service.bind_static_review_seats(
@@ -182,6 +183,7 @@ def register_review_evidence_tools(
                 writer_session_id=writer_session_id,
                 coordinator_session_id=coordinator_session_id,
                 caller_session_id=get_current_session_id(),
+                plan_path=plan_path,
             )
         except (ReviewEvidenceError, OSError, psycopg.Error) as exc:
             return _error_payload(exc, "bind_static_review_seats_failed")
@@ -199,7 +201,8 @@ def register_review_evidence_tools(
             "Evidence owner binds an unspawned interactive round to exact Writer and "
             "coordinator session UUIDs. Binding is immutable and mutually exclusive with an agent "
             "run; an elapsed preparation lease may be renewed only while this is the current "
-            "unchanged attempt."
+            "unchanged attempt. For evidence prepared before source paths were persisted, pass "
+            "the original absolute registered plan_path to recover its checkout."
         ),
         input_schema={
             "type": "object",
@@ -212,6 +215,10 @@ def register_review_evidence_tools(
                 "coordinator_session_id": {
                     "type": "string",
                     "description": "Persisted coordinator session UUID, not a session ref.",
+                },
+                "plan_path": {
+                    "type": "string",
+                    "description": "Original absolute plan path for a pre-migration evidence row.",
                 },
             },
             "required": ["evidence_id", "writer_session_id", "coordinator_session_id"],

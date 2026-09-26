@@ -58,6 +58,7 @@ class PlanReviewEvidenceStore:
         transaction: Transaction,
         project_id: str,
         plan_path: str,
+        source_plan_path: str,
         plan_hash: str,
         sections: tuple[SectionHash, ...],
         snapshot: bytes,
@@ -71,12 +72,12 @@ class PlanReviewEvidenceStore:
         row = transaction.execute(
             """
             INSERT INTO plan_review_evidence (
-                evidence_id, project_id, plan_path, plan_hash, section_manifest,
+                evidence_id, project_id, plan_path, source_plan_path, plan_hash, section_manifest,
                 snapshot, round_number, session_id, task_id, stage,
                 lease_expires_at
             )
             VALUES (
-                %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s,
                 NOW() + (%s * INTERVAL '1 second')
             )
             RETURNING *
@@ -85,6 +86,7 @@ class PlanReviewEvidenceStore:
                 evidence_id,
                 project_id,
                 plan_path,
+                source_plan_path,
                 plan_hash,
                 json.dumps([section.to_dict() for section in sections]),
                 snapshot,
@@ -237,12 +239,14 @@ class PlanReviewEvidenceStore:
         evidence_id: str,
         writer_session_id: str,
         coordinator_session_id: str,
+        source_plan_path: str,
     ) -> PlanReviewEvidence:
         row = transaction.execute(
             """
             UPDATE plan_review_evidence
             SET static_writer_session_id = %s,
                 static_coordinator_session_id = %s,
+                source_plan_path = COALESCE(source_plan_path, %s),
                 lease_expires_at = NULL
             WHERE evidence_id = %s
               AND finalized_at IS NULL
@@ -252,7 +256,7 @@ class PlanReviewEvidenceStore:
               AND static_coordinator_session_id IS NULL
             RETURNING *
             """,
-            (writer_session_id, coordinator_session_id, evidence_id),
+            (writer_session_id, coordinator_session_id, source_plan_path, evidence_id),
         ).fetchone()
         if row is not None:
             return PlanReviewEvidence.from_row(row)
