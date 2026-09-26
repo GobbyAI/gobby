@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 from textwrap import dedent
 from types import SimpleNamespace
@@ -915,6 +916,7 @@ def test_failed_attempt_restores_session_and_retains_undelivered_content(
         "attempt_id": state.attempt_id,
         "handoff_record_id": state.handoff_record_id,
         "delivery_state": "failed_not_deliverable",
+        "found_work": [],
     }
     feedback_count = temp_db.fetchone(
         "SELECT COUNT(*) AS count FROM session_feedback WHERE session_id = %s",
@@ -964,6 +966,7 @@ async def test_failed_compact_payload_requires_explicit_recovery(
         "attempt_id": attempt_id,
         "handoff_record_id": staged.handoff_record_id,
         "delivery_state": "failed_not_deliverable",
+        "found_work": [],
     }
     assert (
         temp_db.fetchone(
@@ -1010,6 +1013,83 @@ async def test_failed_compact_payload_requires_explicit_recovery(
     with session_context_for_test(session.id):
         stale = await registry.call("get_handoff", {"failed_attempt_id": attempt_id})
     assert stale["found"] is False
+
+
+@pytest.mark.asyncio
+async def test_failed_attempt_reconciles_only_a_confirmed_late_compact(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+) -> None:
+    session = _registered_session(session_manager)
+    attempt_id = "d" * 32
+    payload = build_handoff_payload(
+        current_state="The provider compacted after delivery timed out.",
+        next_steps=["Resume the assigned task."],
+    )
+    staged = stage_handoff_attempt(
+        temp_db,
+        session.id,
+        attempt_id=attempt_id,
+        handoff=payload,
+        clear_session=False,
+    )
+    assert restore_staged_handoff(
+        temp_db,
+        session.id,
+        attempt_id,
+        failure_result={
+            "attempt_id": attempt_id,
+            "clear_session": False,
+            "delivery_failed": True,
+            "delivery_state": "failed_not_deliverable",
+            "error_code": "interrupt_unconfirmed",
+        },
+    )
+    registry = create_session_messages_registry(session_manager=session_manager, db=temp_db)
+    with session_context_for_test(session.id):
+        unconfirmed = await registry.call(
+            "get_handoff", {"failed_attempt_id": attempt_id, "reconcile_late_compact": True}
+        )
+    assert unconfirmed["found"] is False
+    assert (
+        temp_db.fetchone(
+            "SELECT 1 FROM session_handoff_deliveries WHERE attempt_id = %s", (attempt_id,)
+        )
+        is None
+    )
+
+    SessionVariableManager(temp_db).set_variable(
+        session.id, "compact_notification_started_at", "2000-01-01T00:00:00+00:00"
+    )
+    with session_context_for_test(session.id):
+        stale_boundary = await registry.call(
+            "get_handoff", {"failed_attempt_id": attempt_id, "reconcile_late_compact": True}
+        )
+    assert stale_boundary["found"] is False
+
+    SessionVariableManager(temp_db).set_variable(
+        session.id, "compact_notification_started_at", datetime.now(UTC).isoformat()
+    )
+    with session_context_for_test(session.id):
+        recovered = await registry.call(
+            "get_handoff", {"failed_attempt_id": attempt_id, "reconcile_late_compact": True}
+        )
+
+    assert recovered["found"] is True
+    assert recovered["handoff"] == payload.rendered_markdown
+    assert recovered["delivery_state"] == "reconciled_late_compact"
+    variables = SessionVariableManager(temp_db).get_variables(session.id)
+    assert "failed_handoff_attempt" not in variables
+    assert HANDOFF_DISPATCH_GATE_VARIABLE not in variables
+    receipt = temp_db.fetchone(
+        "SELECT handoff_id, boundary_kind, continuation_session_id "
+        "FROM session_handoff_deliveries WHERE attempt_id = %s",
+        (attempt_id,),
+    )
+    assert receipt is not None
+    assert str(receipt["handoff_id"]) == staged.handoff_record_id
+    assert receipt["boundary_kind"] == "compact"
+    assert str(receipt["continuation_session_id"]) == session.id
 
 
 def test_delivery_receipt_is_idempotent_and_prevents_compensation(
@@ -1441,6 +1521,7 @@ async def test_tool_schemas_expose_new_surface_and_legacy_names_are_absent(
         "properties": {
             "agent_run_id": {"type": "string"},
             "failed_attempt_id": {"type": "string"},
+            "reconcile_late_compact": {"type": "boolean", "default": False},
         },
         "additionalProperties": False,
     }

@@ -19,6 +19,7 @@ from gobby.sessions.handoff import (
     recover_failed_handoff,
     write_feedback_batch,
 )
+from gobby.sessions.handoff_reconciliation import reconcile_late_compact_handoff
 from gobby.sessions.handoff_records import agent_run_attempt_id, get_agent_end_handoff
 from gobby.storage.sessions._title_defaults import MANUAL_TITLE_SOURCE
 from gobby.utils.session_context import get_current_session_id
@@ -153,7 +154,9 @@ def register_handoff_tools(
             return None
 
     async def get_handoff(
-        agent_run_id: str | None = None, failed_attempt_id: str | None = None
+        agent_run_id: str | None = None,
+        failed_attempt_id: str | None = None,
+        reconcile_late_compact: bool = False,
     ) -> dict[str, Any]:
         """Consume a continuation or explicitly read an undelivered handoff."""
         session_id = _current_session_id()
@@ -165,7 +168,36 @@ def register_handoff_tools(
                 "error": "Select one handoff",
                 "error_code": "invalid_selector",
             }
+        if reconcile_late_compact and failed_attempt_id is None:
+            return {
+                "success": False,
+                "error_code": "invalid_selector",
+                "error": "Select a failed attempt",
+            }
         if failed_attempt_id is not None:
+            if reconcile_late_compact:
+                result = reconcile_late_compact_handoff(
+                    session_manager.db, session_id, failed_attempt_id
+                )
+                if result is not None:
+                    late_handoff, gate_armed = result
+                    return {
+                        "success": True,
+                        "found": True,
+                        "session_id": session_id,
+                        "attempt_id": failed_attempt_id,
+                        "delivery_state": "reconciled_late_compact",
+                        "handoff": late_handoff.markdown,
+                        "found_work": [entry.as_dict() for entry in late_handoff.found_work],
+                        "found_work_gate_armed": gate_armed,
+                    }
+                return {
+                    "success": True,
+                    "found": False,
+                    "session_id": session_id,
+                    "attempt_id": failed_attempt_id,
+                    "handoff": "",
+                }
             markdown = recover_failed_handoff(session_manager.db, session_id, failed_attempt_id)
             if markdown is None:
                 return {
@@ -318,7 +350,9 @@ def register_handoff_tools(
             "With no arguments, consume the one pending compact/clear handoff. With "
             "agent_run_id, idempotently read that child run's final agent_end handoff as "
             "its parent session or a bound clear successor. With failed_attempt_id, "
-            "explicitly read the caller's failed undelivered handoff without delivery or receipt."
+            "explicitly read the caller's failed undelivered handoff without delivery or receipt. "
+            "Set reconcile_late_compact=true with failed_attempt_id to deliver only after a "
+            "matching, timely provider compact notification."
         ),
         brief="Consume a continuation or explicitly read an undelivered handoff.",
         input_schema={
@@ -326,6 +360,7 @@ def register_handoff_tools(
             "properties": {
                 "agent_run_id": {"type": "string"},
                 "failed_attempt_id": {"type": "string"},
+                "reconcile_late_compact": {"type": "boolean", "default": False},
             },
             "additionalProperties": False,
         },

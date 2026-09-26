@@ -523,6 +523,7 @@ def restore_handoff_attempt(
         if staged is None:
             return False
 
+        staged_found_work = variables.get(FOUND_WORK_VARIABLE)
         for name in state.missing_markers:
             current = variables.get(name)
             if not isinstance(current, Mapping) or current.get("attempt_id") == state.attempt_id:
@@ -532,6 +533,7 @@ def restore_handoff_attempt(
             "attempt_id": state.attempt_id,
             "handoff_record_id": state.handoff_record_id,
             "delivery_state": "failed_not_deliverable",
+            "found_work": staged_found_work,
         }
         variables.update(marker_updates or {})
         conn.execute(
