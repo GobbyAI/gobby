@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import psutil
 import pytest
 
 from gobby.config.app import DaemonConfig
@@ -708,6 +709,128 @@ class TestHookManagerBeforeAgent:
         assert isinstance(session.terminal_context["parent_create_time"], float)
         initial_rename.assert_called_once()
         promoted_rename.assert_not_called()
+
+    def test_shared_codex_app_server_seats_keep_distinct_identities(
+        self,
+        hook_manager_with_mocks: HookManager,
+        temp_dir: Path,
+    ) -> None:
+        """Two seats hooked through one managed app-server bind to their own TUIs.
+
+        Codex 0.157 fires every seat's hooks from one ``codex app-server
+        --managed-daemon`` process, so ghook reports the daemon's pid and inherited
+        GOBBY_TERMINAL_ID for both seats (#22929). Each session must instead record
+        the ``codex resume <thread>`` process in its own pane, and the second seat's
+        start must not expire the first.
+        """
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
+        from gobby.hooks.terminal_context import clear_codex_seat_index
+
+        manager = hook_manager_with_mocks
+        host_pid = 93395
+        host_context = {
+            "parent_pid": host_pid,
+            "tty": None,
+            "tmux_pane": None,
+            "tmux_socket_path": None,
+            "tmux_window_id": None,
+            "tmux_session": None,
+            "term_program": None,
+            "gobby_session_id": None,
+            "gobby_agent_run_id": None,
+            "gobby_terminal_id": "358981a1-df59-43bd-a04e-6cd698238442",
+            "gobby_pane_ref": None,
+        }
+        seats = {
+            "01a0d6a4-4800-7d90-a5d8-3b751ad44281": (
+                22512,
+                "/dev/ttys001",
+                "99b23bfd-3aa7-4ebc-9037-071aefb56955",
+            ),
+            "01a0d723-8589-75d2-adb9-9263ee2bd8bf": (
+                23170,
+                "/dev/ttys003",
+                "eb81fd00-e2f6-47f2-a0e1-448159a1aeec",
+            ),
+        }
+
+        def process(pid: int, cmdline: list[str], create_time: float) -> MagicMock:
+            mock = MagicMock()
+            mock.pid = pid
+            mock.info = {"name": "codex"}
+            mock.name.return_value = "codex"
+            mock.cmdline.return_value = cmdline
+            mock.create_time.return_value = create_time
+            return mock
+
+        host = process(
+            host_pid, ["codex", "app-server", "--listen", "unix://", "--managed-daemon"], 50.0
+        )
+        table = [host]
+        for offset, (thread_id, (pid, tty, terminal_id)) in enumerate(seats.items()):
+            seat = process(pid, ["codex", "resume", thread_id, "--yolo"], 100.0 + offset)
+            seat.terminal.return_value = tty
+            seat.environ.return_value = {"GOBBY_TERMINAL_ID": terminal_id}
+            table.append(seat)
+
+        def lookup(pid: int) -> MagicMock:
+            for candidate in table:
+                if candidate.pid == pid:
+                    return candidate
+            raise psutil.NoSuchProcess(pid)
+
+        session_ids: dict[str, str] = {}
+        clear_codex_seat_index()
+        try:
+            with (
+                patch("gobby.hooks.event_handlers._session_start.schedule_tmux_window_rename"),
+                patch("gobby.sessions.tmux_window_naming.schedule_tmux_window_rename"),
+                patch("gobby.hooks.terminal_context.psutil.Process", side_effect=lookup),
+                patch(
+                    "gobby.hooks.terminal_context.psutil.process_iter",
+                    side_effect=lambda **_: list(table),
+                ),
+            ):
+                for thread_id in seats:
+                    start = HookEvent(
+                        event_type=HookEventType.SESSION_START,
+                        session_id=thread_id,
+                        source=SessionSource.CODEX,
+                        timestamp=datetime.now(UTC),
+                        data={"source": "startup", "cwd": str(temp_dir)},
+                        machine_id=LOCAL_MACHINE_ID,
+                    )
+                    assert manager.handle(start).decision == "allow"
+                    prompt = CodexHooksAdapter().translate_to_hook_event(
+                        {
+                            "hook_type": "UserPromptSubmit",
+                            "input_data": {
+                                "session_id": thread_id,
+                                "prompt": "Which pane am I in?",
+                                "cwd": str(temp_dir),
+                                "terminal_context": dict(host_context),
+                                "machine_id": LOCAL_MACHINE_ID,
+                            },
+                            "source": "codex",
+                        }
+                    )
+                    assert prompt is not None
+                    assert manager.handle(prompt).decision == "allow"
+                    session_ids[thread_id] = prompt.metadata["_platform_session_id"]
+        finally:
+            clear_codex_seat_index()
+
+        assert len(set(session_ids.values())) == 2
+        for thread_id, (pid, tty, terminal_id) in seats.items():
+            session = manager._session_manager.get(session_ids[thread_id])
+            assert session is not None
+            assert session.status == "active"
+            assert session.terminal_context is not None
+            assert session.terminal_context["cwd"] == str(temp_dir)
+            assert session.terminal_context["parent_pid"] == pid
+            assert session.terminal_context["parent_name"] == "codex"
+            assert session.terminal_context["tty"] == tty
+            assert session.terminal_context["gobby_terminal_id"] == terminal_id
 
     def test_before_agent_allows(
         self,
