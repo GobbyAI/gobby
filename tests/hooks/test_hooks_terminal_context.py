@@ -5,6 +5,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
 from unittest.mock import MagicMock, patch
+from uuid import UUID
 
 import psutil
 import pytest
@@ -137,9 +138,44 @@ def _managed_host() -> MagicMock:
 
 
 def _seat(pid: int, thread_id: str, *, tty: str, terminal_id: str, create_time: float) -> MagicMock:
-    seat = _process(pid, ["codex", "resume", thread_id, "--yolo"], create_time, None)
+    return _codex_tui(
+        pid,
+        ["codex", "resume", thread_id, "--yolo"],
+        tty=tty,
+        terminal_id=terminal_id,
+        create_time=create_time,
+    )
+
+
+def _fresh_seat(
+    pid: int,
+    *,
+    tty: str,
+    terminal_id: str,
+    create_time: float,
+    cwd: str = "/repo",
+    parent: MagicMock | None = None,
+) -> MagicMock:
+    """A seat launched as ``codex --yolo <prompt>``: no thread id in argv."""
+    seat = _codex_tui(
+        pid,
+        ["codex", "--yolo", "fix the failing test"],
+        tty=tty,
+        terminal_id=terminal_id,
+        create_time=create_time,
+    )
+    seat.cwd.return_value = cwd
+    seat.parent.return_value = parent
+    return seat
+
+
+def _codex_tui(
+    pid: int, cmdline: list[str], *, tty: str, terminal_id: str, create_time: float
+) -> MagicMock:
+    seat = _process(pid, cmdline, create_time, None)
     seat.info = {"name": "codex"}
     seat.terminal.return_value = tty
+    seat.cwd.return_value = "/repo"
     seat.environ.return_value = {
         "GOBBY_HOME": "/Users/josh/.gobby",
         "GOBBY_TERMINAL_ID": terminal_id,
@@ -309,3 +345,135 @@ def test_seat_inside_tmux_carries_its_pane_identity() -> None:
         "tmux_session": "main",
         "term_program": "tmux",
     }
+
+
+# A fresh seat's thread id is a UUIDv7 minted a second or two after the TUI starts.
+FRESH_MINTED_AT = 1_790_000_000.5
+FRESH_THREAD = "01a0db67-65f3-7961-a61c-c959158deffb"
+
+
+def _uuid7(minted_at: float) -> str:
+    """A UUIDv7 minted at ``minted_at`` UNIX seconds, as Codex mints thread ids."""
+    milliseconds = int(minted_at * 1000)
+    return str(UUID(int=(milliseconds << 80) | (7 << 76) | (0x2 << 62) | 0x1234_5678_9ABC))
+
+
+def test_uuid7_helper_decodes_a_real_codex_thread_id() -> None:
+    # Thread 01a0db67-... was minted at 2026-09-26T01:49:41.747Z on a live seat.
+    assert _uuid7(1_790_387_381.747) == "01a0db67-65f3-7000-8000-123456789abc"
+    assert (UUID(FRESH_THREAD).int >> 80) / 1000.0 == 1_790_387_381.747
+
+
+def test_fresh_seat_adopts_the_tui_created_just_before_its_thread() -> None:
+    thread = _uuid7(FRESH_MINTED_AT)
+    seat = _fresh_seat(
+        71386, tty="/dev/ttys001", terminal_id="pane-a", create_time=FRESH_MINTED_AT - 1.5
+    )
+
+    with _process_table([_managed_host(), seat]):
+        result = enrich_terminal_context_with_cwd(dict(HOST_CONTEXT), "/repo", external_id=thread)
+
+    assert result == _seat_context(
+        71386, tty="/dev/ttys001", terminal_id="pane-a", create_time=FRESH_MINTED_AT - 1.5
+    )
+
+
+def test_fresh_seat_prefers_the_newest_earlier_tui() -> None:
+    thread = _uuid7(FRESH_MINTED_AT)
+    older = _fresh_seat(
+        71000, tty="/dev/ttys001", terminal_id="pane-a", create_time=FRESH_MINTED_AT - 20.0
+    )
+    newer = _fresh_seat(
+        71386, tty="/dev/ttys002", terminal_id="pane-b", create_time=FRESH_MINTED_AT - 1.5
+    )
+
+    with _process_table([_managed_host(), newer, older]):
+        result = enrich_terminal_context_with_cwd(dict(HOST_CONTEXT), "/repo", external_id=thread)
+
+    assert result == _seat_context(
+        71386, tty="/dev/ttys002", terminal_id="pane-b", create_time=FRESH_MINTED_AT - 1.5
+    )
+
+
+def test_fresh_seat_ignores_tuis_outside_the_creation_window(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    thread = _uuid7(FRESH_MINTED_AT)
+    later = _fresh_seat(
+        71500, tty="/dev/ttys001", terminal_id="pane-a", create_time=FRESH_MINTED_AT + 0.5
+    )
+    stale = _fresh_seat(
+        70000, tty="/dev/ttys002", terminal_id="pane-b", create_time=FRESH_MINTED_AT - 61.0
+    )
+
+    with (
+        _process_table([_managed_host(), stale, later]),
+        caplog.at_level(logging.WARNING, logger="gobby.hooks.terminal_context"),
+    ):
+        result = enrich_terminal_context_with_cwd(dict(HOST_CONTEXT), "/repo", external_id=thread)
+
+    assert result == {"cwd": "/repo"}
+    assert thread in caplog.text
+
+
+def test_fresh_seat_ignores_other_cwds_and_codex_parented_helpers() -> None:
+    thread = _uuid7(FRESH_MINTED_AT)
+    eligible = _fresh_seat(
+        71000, tty="/dev/ttys001", terminal_id="pane-a", create_time=FRESH_MINTED_AT - 10.0
+    )
+    elsewhere = _fresh_seat(
+        71386,
+        tty="/dev/ttys002",
+        terminal_id="pane-b",
+        create_time=FRESH_MINTED_AT - 1.5,
+        cwd="/elsewhere",
+    )
+    helper = _fresh_seat(
+        71400,
+        tty="/dev/ttys001",
+        terminal_id="pane-a",
+        create_time=FRESH_MINTED_AT - 0.5,
+        parent=eligible,
+    )
+
+    with _process_table([_managed_host(), eligible, elsewhere, helper]):
+        result = enrich_terminal_context_with_cwd(dict(HOST_CONTEXT), "/repo", external_id=thread)
+
+    assert result == _seat_context(
+        71000, tty="/dev/ttys001", terminal_id="pane-a", create_time=FRESH_MINTED_AT - 10.0
+    )
+
+
+def test_fresh_seat_never_adopts_a_resumed_seat() -> None:
+    thread = _uuid7(FRESH_MINTED_AT)
+    resumed = _seat(
+        22512, THREAD_A, tty="/dev/ttys001", terminal_id="pane-a", create_time=FRESH_MINTED_AT - 1.0
+    )
+
+    with _process_table([_managed_host(), resumed]):
+        result = enrich_terminal_context_with_cwd(dict(HOST_CONTEXT), "/repo", external_id=thread)
+
+    assert result == {"cwd": "/repo"}
+
+
+def test_fresh_seat_adoption_is_cached_without_a_rescan() -> None:
+    thread = _uuid7(FRESH_MINTED_AT)
+    seat = _fresh_seat(
+        71386, tty="/dev/ttys001", terminal_id="pane-a", create_time=FRESH_MINTED_AT - 1.5
+    )
+    table = [_managed_host(), seat]
+
+    with _process_table(table) as process_iter:
+        first = enrich_terminal_context_with_cwd(dict(HOST_CONTEXT), "/repo", external_id=thread)
+        second = enrich_terminal_context_with_cwd(dict(HOST_CONTEXT), "/repo", external_id=thread)
+        assert process_iter.call_count == 1
+
+        table[:] = [_managed_host()]
+        third = enrich_terminal_context_with_cwd(dict(HOST_CONTEXT), "/repo", external_id=thread)
+
+    expected = _seat_context(
+        71386, tty="/dev/ttys001", terminal_id="pane-a", create_time=FRESH_MINTED_AT - 1.5
+    )
+    assert first == second == expected
+    assert third == {"cwd": "/repo"}
+    assert process_iter.call_count == 2

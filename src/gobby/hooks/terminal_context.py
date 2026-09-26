@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 from collections.abc import Mapping
 from typing import Any
+from uuid import UUID
 
 import psutil
 
@@ -17,7 +19,11 @@ _DROID_PROCESS_NAME = "droid"
 _CODEX_PROCESS_NAME = "codex"
 _CODEX_APP_SERVER_ARG = "app-server"
 _CODEX_SHARED_HOST_FLAG = "--managed-daemon"
+_CODEX_RESUME_ARG = "resume"
 _SEAT_RESCAN_INTERVAL_SECONDS = 30.0
+# A fresh seat mints its thread within a second or two of starting; the window covers a
+# slow start without reaching back to an unrelated TUI.
+_FRESH_SEAT_WINDOW_SECONDS = 60.0
 
 # Every key ghook derives from its own process and environment. Under a shared Codex
 # app-server host those values describe the host, never the seat that fired the hook.
@@ -82,7 +88,11 @@ def enrich_terminal_context_with_cwd(
     enriched = dict(terminal_context)
     if cwd_text and not _non_empty_str(enriched.get("cwd")):
         enriched["cwd"] = cwd_text
-    _record_parent_process_identity(enriched, external_id=_non_empty_str(external_id))
+    _record_parent_process_identity(
+        enriched,
+        external_id=_non_empty_str(external_id),
+        cwd=_non_empty_str(enriched.get("cwd")),
+    )
     return enriched
 
 
@@ -90,6 +100,7 @@ def _record_parent_process_identity(
     terminal_context: dict[str, Any],
     *,
     external_id: str | None,
+    cwd: str | None,
 ) -> None:
     terminal_context.pop("parent_create_time", None)
     terminal_context.pop("parent_name", None)
@@ -107,7 +118,7 @@ def _record_parent_process_identity(
     try:
         hook_parent = psutil.Process(pid)
         if _is_codex_shared_host(hook_parent):
-            _replace_with_codex_seat_identity(terminal_context, hook_parent, external_id)
+            _replace_with_codex_seat_identity(terminal_context, hook_parent, external_id, cwd)
             return
         process = _stable_cli_process(hook_parent)
         if process is not hook_parent:
@@ -158,15 +169,16 @@ def _replace_with_codex_seat_identity(
     terminal_context: dict[str, Any],
     host: psutil.Process,
     external_id: str | None,
+    cwd: str | None,
 ) -> None:
     """Swap the shared host's identity for the seat TUI that owns ``external_id``."""
     for key in _PROCESS_IDENTITY_KEYS:
         terminal_context.pop(key, None)
-    seat = _SEAT_INDEX.resolve(external_id) if external_id else None
+    seat = _SEAT_INDEX.resolve(external_id, cwd) if external_id else None
     if seat is None:
         logger.warning(
-            "Codex shared app-server host pid %s: no seat process resumes thread %s; "
-            "recording no terminal identity",
+            "Codex shared app-server host pid %s: no seat process resumes thread %s or "
+            "started in the hook cwd just before it; recording no terminal identity",
             host.pid,
             external_id,
         )
@@ -205,21 +217,26 @@ def _seat_identity(seat: psutil.Process) -> dict[str, Any]:
 class _CodexSeatIndex:
     """Map Codex thread ids to their live seat TUI processes.
 
-    Only a resumed seat names its thread in argv (``codex resume <thread-id>``). A full
-    process scan costs tens of milliseconds, so the index rescans when a thread is
-    unknown or its recorded process is gone, and rate-limits repeated misses for the
-    same thread, which is what a fresh seat with no thread in argv produces on every hook.
+    A resumed seat names its thread in argv (``codex resume <thread-id>``), the primary
+    match. A fresh seat carries no thread in argv, but Codex thread ids are UUIDv7, so
+    the thread's mint time is known: the newest seat TUI started in the hook's cwd at
+    most ``_FRESH_SEAT_WINDOW_SECONDS`` before that time is adopted for the thread. A
+    full process scan costs tens of milliseconds, so the index rescans only when a
+    thread is unknown or its recorded process is gone, and rate-limits repeated misses
+    for the same thread.
     """
 
     def __init__(self) -> None:
         self._seats: list[tuple[int, float, tuple[str, ...]]] = []
+        self._adopted: dict[str, tuple[int, float]] = {}
         self._missed_at: dict[str, float] = {}
 
     def clear(self) -> None:
         self._seats = []
+        self._adopted = {}
         self._missed_at = {}
 
-    def resolve(self, thread_id: str) -> psutil.Process | None:
+    def resolve(self, thread_id: str, cwd: str | None) -> psutil.Process | None:
         seat = self._cached(thread_id)
         if seat is not None:
             return seat
@@ -230,6 +247,8 @@ class _CodexSeatIndex:
         self._rescan()
         seat = self._cached(thread_id)
         if seat is None:
+            seat = self._adopt(thread_id, cwd)
+        if seat is None:
             self._missed_at[thread_id] = now
         else:
             self._missed_at.pop(thread_id, None)
@@ -237,15 +256,43 @@ class _CodexSeatIndex:
 
     def _cached(self, thread_id: str) -> psutil.Process | None:
         for pid, create_time, cmdline in self._seats:
-            if thread_id not in cmdline:
+            if thread_id in cmdline:
+                process = _recorded_process(pid, create_time)
+                if process is not None:
+                    return process
+        adopted = self._adopted.get(thread_id)
+        if adopted is not None:
+            process = _recorded_process(*adopted)
+            if process is not None:
+                return process
+            del self._adopted[thread_id]
+        return None
+
+    def _adopt(self, thread_id: str, cwd: str | None) -> psutil.Process | None:
+        """Adopt the newest fresh seat TUI started just before ``thread_id`` was minted.
+
+        Runs only on a fresh scan. The window is strictly earlier than the thread and
+        deliberately narrow: a wrong seat sends keystrokes into another operator's
+        terminal, so no identity beats a guess.
+        """
+        minted_at = _thread_minted_at(thread_id)
+        if minted_at is None:
+            return None
+        for pid, create_time, cmdline in reversed(self._seats):
+            if create_time > minted_at:
+                continue
+            if minted_at - create_time > _FRESH_SEAT_WINDOW_SECONDS:
+                break
+            if _CODEX_RESUME_ARG in cmdline:
                 continue
             try:
                 process = psutil.Process(pid)
-                # Same tolerance as terminal_ownership.recorded_process_is_alive.
-                if abs(process.create_time() - create_time) < 1.0:
-                    return process
+                if not _is_fresh_seat_tui(process, cwd):
+                    continue
             except _PSUTIL_ERRORS:
-                pass
+                continue
+            self._adopted[thread_id] = (pid, create_time)
+            return process
         return None
 
     def _rescan(self) -> None:
@@ -269,6 +316,44 @@ class _CodexSeatIndex:
             for thread_id, missed_at in self._missed_at.items()
             if missed_at >= cutoff
         }
+
+
+def _recorded_process(pid: int, create_time: float) -> psutil.Process | None:
+    """The live process behind a recorded pid and create time, or None once it is gone."""
+    try:
+        process = psutil.Process(pid)
+        # Same tolerance as terminal_ownership.recorded_process_is_alive.
+        if abs(process.create_time() - create_time) < 1.0:
+            return process
+    except _PSUTIL_ERRORS:
+        pass
+    return None
+
+
+def _is_fresh_seat_tui(process: psutil.Process, cwd: str | None) -> bool:
+    """A seat TUI is launched from a shell, never forked by another codex process, and
+    runs in the hook's cwd when that cwd is known."""
+    parent = process.parent()
+    if parent is not None and parent.name() == _CODEX_PROCESS_NAME:
+        return False
+    if cwd is None:
+        return True
+    try:
+        process_cwd: str = process.cwd()
+    except _PSUTIL_ERRORS:
+        return True
+    return os.path.realpath(process_cwd) == os.path.realpath(cwd)
+
+
+def _thread_minted_at(thread_id: str) -> float | None:
+    """UNIX seconds at which a UUIDv7 thread id was minted; None for any other id."""
+    try:
+        parsed = UUID(thread_id)
+    except ValueError:
+        return None
+    if parsed.version != 7:
+        return None
+    return (parsed.int >> 80) / 1000.0
 
 
 _SEAT_INDEX = _CodexSeatIndex()
