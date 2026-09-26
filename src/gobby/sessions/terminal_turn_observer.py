@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import re
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from threading import RLock
 from typing import Any, Literal, Protocol
@@ -23,6 +23,24 @@ _AGY_INTERRUPT_RE = re.compile(
 )
 _SUPPORTED_PROVIDERS = frozenset({"qwen", "agy"})
 _INTERRUPT_INPUTS = frozenset({"\x03", "\x1b"})
+
+
+async def _await_worker_before_cancellation(worker: Coroutine[Any, Any, bool]) -> bool:
+    """Keep the caller's ordering lock until its thread finishes, even if cancelled."""
+    task = asyncio.create_task(worker)
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                continue
+            except Exception:
+                break
+        if not task.cancelled():
+            task.exception()
+        raise
 
 
 class _SessionStore(Protocol):
@@ -101,12 +119,14 @@ class TerminalTurnObserver:
                 return self.record_mediated_input(
                     terminal_id, payload, outcome, input_seq=input_seq
                 )
-            return await asyncio.to_thread(
-                self.record_mediated_input,
-                terminal_id,
-                payload,
-                outcome,
-                input_seq=input_seq,
+            return await _await_worker_before_cancellation(
+                asyncio.to_thread(
+                    self.record_mediated_input,
+                    terminal_id,
+                    payload,
+                    outcome,
+                    input_seq=input_seq,
+                )
             )
 
     async def observe_output_async(self, terminal_id: str, output: str) -> bool:
@@ -114,14 +134,18 @@ class TerminalTurnObserver:
             with self._lock:
                 if terminal_id not in self._candidates:
                     return False
-            return await asyncio.to_thread(self.observe_output, terminal_id, output)
+            return await _await_worker_before_cancellation(
+                asyncio.to_thread(self.observe_output, terminal_id, output)
+            )
 
     async def observe_run_output_async(self, run_id: str, output: str) -> bool:
         async with self._async_lock:
             with self._lock:
                 if not self._candidates:
                     return False
-            return await asyncio.to_thread(self.observe_run_output, run_id, output)
+            return await _await_worker_before_cancellation(
+                asyncio.to_thread(self.observe_run_output, run_id, output)
+            )
 
     def record_mediated_input(
         self,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from threading import Event, get_ident
@@ -90,6 +91,51 @@ async def test_async_observer_offloads_lookup_and_skips_idle_output(
     assert await observer.record_mediated_input_async("terminal-1", "\x03", "delivered") is True
     assert lookup_threads and lookup_threads[0] != get_ident()
     assert await observer.observe_output_async("terminal-1", "interrupted") is True
+
+
+async def test_cancelled_input_keeps_worker_order_and_socket_loop_live(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    _sessions, session_id, _lifecycle, observer = _observer(
+        temp_db, sample_project["id"], provider="qwen"
+    )
+    entered = Event()
+    release = Event()
+    heartbeat = Event()
+
+    class BlockingTerminals(_Terminals):
+        def get(self, terminal_id: str) -> SimpleNamespace | None:
+            entered.set()
+            assert release.wait(5)
+            return super().get(terminal_id)
+
+    observer.set_terminal_manager(BlockingTerminals("terminal-1", session_id))
+
+    def release_after_heartbeat() -> bool:
+        saw_heartbeat = heartbeat.wait(2)
+        release.set()
+        return saw_heartbeat
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        input_task = asyncio.create_task(
+            observer.record_mediated_input_async("terminal-1", "\x03", "delivered")
+        )
+        assert await asyncio.to_thread(entered.wait, 5)
+        input_task.cancel()
+        await asyncio.sleep(0)
+        output_task = asyncio.create_task(
+            observer.observe_output_async("terminal-1", "interrupted")
+        )
+        asyncio.get_running_loop().call_soon(heartbeat.set)
+        release_future = pool.submit(release_after_heartbeat)
+        input_task.cancel()  # A second cancellation must not release ordering early.
+        try:
+            with pytest.raises(asyncio.CancelledError):
+                await input_task
+            assert await output_task is True
+            assert release_future.result(timeout=5) is True
+        finally:
+            release.set()
 
 
 def _observer(
