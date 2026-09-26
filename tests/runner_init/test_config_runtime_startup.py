@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable, Iterator
 from pathlib import Path
+from threading import Event, get_ident
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
@@ -71,7 +72,13 @@ def _patch_runner_phases(
     runtime: _Runtime,
     events: list[str],
 ) -> None:
-    def storage(runner: GobbyRunner, _path: object, _verbose: bool) -> None:
+    def storage(
+        runner: GobbyRunner,
+        _path: object,
+        _verbose: bool,
+        *,
+        broadcast_loop: asyncio.AbstractEventLoop | None = None,
+    ) -> None:
         events.append("storage")
         runner.startup_config = DaemonConfig()
         runner.bootstrap_config = BootstrapConfig()
@@ -139,6 +146,70 @@ async def test_startup_constructs_one_runtime(monkeypatch: pytest.MonkeyPatch) -
     ]
 
 
+@pytest.mark.parametrize("phase", ["open_storage_and_config", "init_startup_content"])
+async def test_synchronous_startup_phases_keep_loop_responsive(
+    monkeypatch: pytest.MonkeyPatch, phase: str
+) -> None:
+    events: list[str] = []
+    _patch_runner_phases(monkeypatch, _Runtime(events), events)
+    original = getattr(runner_init, phase)
+    owner_loop = asyncio.get_running_loop()
+    owner_thread = get_ident()
+    entered = Event()
+    release = Event()
+
+    def blocked_phase(*args: Any, **kwargs: Any) -> Any:
+        entered.set()
+        assert get_ident() != owner_thread
+        if phase == "open_storage_and_config":
+            assert kwargs["broadcast_loop"] is owner_loop
+        assert release.wait(2)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(runner_init, phase, blocked_phase)
+    startup = asyncio.create_task(GobbyRunner.create())
+    try:
+        assert await asyncio.wait_for(asyncio.to_thread(entered.wait, 2), timeout=3)
+        heartbeat = asyncio.Event()
+        owner_loop.call_soon(heartbeat.set)
+        await asyncio.wait_for(heartbeat.wait(), timeout=1)
+    finally:
+        release.set()
+        await startup
+
+
+async def test_cancelled_startup_waits_for_storage_before_rollback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    _patch_runner_phases(monkeypatch, _Runtime(events), events)
+    original = runner_init.open_storage_and_config
+    entered = Event()
+    release = Event()
+
+    def blocked_storage(*args: Any, **kwargs: Any) -> Any:
+        entered.set()
+        assert release.wait(2)
+        events.append("storage.finished")
+        return original(*args, **kwargs)
+
+    async def rollback(_runner: GobbyRunner) -> None:
+        events.append("rollback")
+
+    monkeypatch.setattr(runner_init, "open_storage_and_config", blocked_storage)
+    monkeypatch.setattr("gobby.runner_rollback.rollback_runner_resources_async", rollback)
+
+    startup = asyncio.create_task(GobbyRunner.create())
+    assert await asyncio.wait_for(asyncio.to_thread(entered.wait, 2), timeout=3)
+    startup.cancel()
+    await asyncio.sleep(0)
+    assert "rollback" not in events
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await startup
+    assert events.index("storage.finished") < events.index("rollback")
+
+
 async def test_startup_checks_bundled_content_off_the_loop_before_publishing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -148,8 +219,14 @@ async def test_startup_checks_bundled_content_off_the_loop_before_publishing(
     _patch_runner_phases(monkeypatch, _Runtime(events), events)
     open_storage = runner_init.open_storage_and_config
 
-    def storage_with_database(runner: GobbyRunner, path: Path | None, verbose: bool) -> None:
-        open_storage(runner, path, verbose)
+    def storage_with_database(
+        runner: GobbyRunner,
+        path: Path | None,
+        verbose: bool,
+        *,
+        broadcast_loop: asyncio.AbstractEventLoop | None = None,
+    ) -> None:
+        open_storage(runner, path, verbose, broadcast_loop=broadcast_loop)
         runner.database = cast(HubDatabase, MagicMock())
 
     checked: list[Path] = []
