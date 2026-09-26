@@ -1,6 +1,7 @@
 use super::*;
 use crate::app::Workspace;
 use crate::ui::hit::SidebarSection;
+use crate::ui::keymap::Keymap;
 use crate::ui::settings::TitleScrolling;
 use crate::ui::sidebar;
 use crate::ui::sidebar_rows::{TICKER_PAUSE, TICKER_STEP};
@@ -342,6 +343,44 @@ fn empty_state_names_the_next_step_without_exclamation() {
         .draw(|frame| render_empty(frame, frame.area(), &chrome))
         .unwrap();
     let text = screen(&terminal);
-    assert!(text.contains("No pane open."));
+    assert!(cells(&terminal, 3, 0, 60).contains("No pane open."));
+    assert!(cells(&terminal, 4, 0, 60).contains("ctrl+b w  attach a terminal"));
+    assert!(cells(&terminal, 5, 0, 60).contains("File › New Terminal  start one"));
+    assert!(cells(&terminal, 6, 0, 60).contains("ctrl+b b  open the sidebar"));
+    assert!((0..3).all(|y| cells(&terminal, y, 0, 60).trim().is_empty()));
+    assert!((7..10).all(|y| cells(&terminal, y, 0, 60).trim().is_empty()));
+    assert!(!text.contains("select a terminal in the sidebar"));
     assert!(!text.contains('!'));
+}
+
+#[test]
+fn empty_state_chords_follow_the_live_keymap() {
+    let mut chrome = Chrome::dark();
+    chrome.keymap = Keymap::from_toml(
+        "prefix = \"ctrl+]\"\n[bindings]\nterminal_picker = \"prefix+shift+u\"\ntoggle_sidebar = []\n",
+        "ctrl+b",
+    )
+    .unwrap();
+    let mut terminal = Terminal::new(TestBackend::new(80, 10)).unwrap();
+    terminal
+        .draw(|frame| render_empty(frame, frame.area(), &chrome))
+        .unwrap();
+    let text = screen(&terminal);
+    assert!(text.contains("ctrl+] shift+u  attach a terminal"));
+    assert!(text.contains("unset  open the sidebar"));
+    assert!(!text.contains("ctrl+b w"));
+}
+
+#[test]
+fn empty_state_truncates_all_rows_in_a_narrow_area() {
+    let chrome = Chrome::dark();
+    let mut terminal = Terminal::new(TestBackend::new(8, 10)).unwrap();
+    terminal
+        .draw(|frame| render_empty(frame, frame.area(), &chrome))
+        .unwrap();
+
+    assert_eq!(cells(&terminal, 3, 0, 8), "No pane…");
+    assert_eq!(cells(&terminal, 4, 0, 8), "ctrl+b …");
+    assert_eq!(cells(&terminal, 5, 0, 8), "File › …");
+    assert_eq!(cells(&terminal, 6, 0, 8), "ctrl+b …");
 }

@@ -6,18 +6,19 @@ use crate::app::{Pane, PaneId};
 use crate::theme::Palette;
 use crate::ui::chrome::{Chrome, Mode, WorkspaceView};
 use crate::ui::hit::Hit;
+use crate::ui::marks::{self, MarkPalette};
 use crate::ui::pane_chrome::{
     self, footer_rects, pane_footer, title_budget, top_reserve, PaneFooter,
 };
 use crate::ui::pane_layout::{self, PaneInfo, SplitBorder};
 use crate::ui::scrollbar::render_pane_scrollbar;
 use crate::ui::sidebar_rows::ticker_window;
-use crate::ui::text::truncate_end;
+use crate::ui::text::{display_width, truncate_end};
 use gobby_terminal::layout::ScrollMetrics;
 use gobby_terminal::selection::Selection;
 use ratatui::layout::{Alignment, Direction, Rect};
 use ratatui::style::{Modifier, Style};
-use ratatui::text::Line;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 use std::collections::HashMap;
@@ -197,23 +198,71 @@ pub fn render_empty(frame: &mut Frame, area: Rect, chrome: &Chrome) {
     if area.height < 2 || area.width < 8 {
         return;
     }
+
+    let mark = marks::goblin_small();
+    let show_mark = area.width >= mark.cols && area.height >= mark.rows + 5;
+    let text_y = if show_mark {
+        let mark_y = area.y + (area.height - (mark.rows + 5)) / 2;
+        let mark_x = area.x + (area.width - mark.cols) / 2;
+        marks::render_mark(
+            frame,
+            (mark_x, mark_y),
+            mark,
+            &MarkPalette::dimmed(p, chrome.theme.kind),
+        );
+        mark_y + mark.rows + 1
+    } else {
+        area.y + area.height.saturating_sub(4) / 2
+    };
+
+    let binding_label = |name: &str| {
+        chrome
+            .keymap
+            .binding(name)
+            .and_then(|binding| binding.chords.first())
+            .map(|chord| {
+                chord.label.strip_prefix("prefix+").map_or_else(
+                    || chord.label.clone(),
+                    |key| format!("{} {key}", chrome.keymap.prefix_label),
+                )
+            })
+            .unwrap_or_else(|| "unset".to_owned())
+    };
+    let subtext = Style::default().fg(p.subtext0);
+    let overlay = Style::default().fg(p.overlay0);
+    let row = |lead: &str, action: &str, width: u16| {
+        let clipped = truncate_end(&format!("{lead}  {action}"), usize::from(width));
+        if let Some(rest) = clipped.strip_prefix(lead) {
+            Line::from(vec![
+                Span::styled(lead.to_owned(), subtext),
+                Span::styled(rest.to_owned(), overlay),
+            ])
+        } else {
+            Line::styled(clipped, subtext)
+        }
+    };
+    let picker_label = binding_label("terminal_picker");
+    let sidebar_label = binding_label("toggle_sidebar");
+    let width = 30usize
+        .max(display_width(&picker_label) + 2 + display_width("attach a terminal"))
+        .max(display_width(&sidebar_label) + 2 + display_width("open the sidebar"))
+        .min(usize::from(area.width)) as u16;
     let lines = vec![
         Line::styled(
-            "No pane open.",
+            truncate_end("No pane open.", usize::from(width)),
             Style::default().fg(p.overlay1).add_modifier(Modifier::BOLD),
         ),
-        Line::styled(
-            "select a terminal in the sidebar to attach",
-            Style::default().fg(p.overlay0),
-        ),
+        row(&picker_label, "attach a terminal", width),
+        row("File › New Terminal", "start one", width),
+        row(&sidebar_label, "open the sidebar", width),
     ];
     let rect = Rect::new(
-        area.x,
-        area.y + area.height.saturating_sub(2) / 2,
-        area.width,
-        2,
+        area.x + (area.width - width) / 2,
+        text_y,
+        width,
+        area.height.min(4),
     );
-    frame.render_widget(Paragraph::new(lines).alignment(Alignment::Center), rect);
+    frame.render_widget(Paragraph::new(lines), rect);
 }
 
 /// What a pane body says when its grid cannot be painted, and who sizes
