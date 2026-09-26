@@ -52,7 +52,11 @@ non-goals.
    which resolve to ten definitions: `assistant`, `program-director`,
    `lane-manager`, `developer` (the five lane panes), `code-reviewer`,
    `researcher`, `archivist`, `log-monitor`, `plan-writer`, `plan-adversary`.
-   Every seat carries tag `seat`. There is no analyst seat: no pane runs one.
+   Every seat carries tag `seat`. That tag is a template catalogue marker read
+   by the 3.5 file-based test only: `sync_bundled_agents` writes installed
+   rows with `tags=["gobby"]` and never propagates YAML tags, and no runtime
+   consumer needs a seat tag on the row. There is no analyst seat: no pane
+   runs one.
    Where a stage one-shot owns the noun today (`researcher.yaml`,
    `plan-adversary.yaml`), the seat body replaces the one-shot body under the
    same name. Josh's standing ruling (memory 6102cd1d, 2026-09-24): `gobby
@@ -92,21 +96,43 @@ non-goals.
    `roles` rule group, injected once per context epoch. Prompts are not templated
    (`prompt_for` returns raw text), so a rule is the only dedup mechanism.
 6. **Spawn policy is enforced by rules.** All seats: block
-   `gobby-agents:spawn_agent` and `gobby-agents:dispatch_batch`. Plan Writer
+   `gobby-agents:spawn_agent`, `gobby-agents:dispatch_batch`,
+   `gobby-agents:deploy_runbook`, and `gobby-agents:retry_runbook_deployment`
+   (#22895's replacement for the batch tool and its spawn-capable retry;
+   its plan records this listing as a cross-plan obligation, and
+   `dispatch_batch` leaves the list once #22895's 5.1 deletes the tool). Plan Writer
    exception: `agent == "plan-enhancer-taskless"`, `isolation == "none"`, at most
-   one pass per claimed planning task. `_common.md` names the exception. This is
-   the explicit spawn authorization Josh's proposed flow needs; until it lands,
-   no seat spawns.
-7. **Step workflows authored for seats with a fixed loop:** `developer`,
-   `plan-writer`, `plan-adversary`, `code-reviewer`, `log-monitor`.
-   Message-driven seats (assistant, program-director, lane-manager, archivist,
-   researcher) carry no `step_workflow`; a single "serve" step adds nothing.
-   Interactive execution of step instances is #22903's.
+   one pass per claimed planning task, tracked as a per-task ledger of task
+   UUIDs in session variables (2.2), never as a session boolean: reclaiming
+   the same task, `create_task(claim=true)`, a failed spawn, and context loss
+   all leave the ledger as it is; only a claim of a different planning task
+   makes a new pass eligible. `_common.md` names the exception. This is the
+   explicit spawn authorization Josh's proposed flow needs; until it lands, no
+   seat spawns.
+7. **Step workflows authored for seats with a fixed loop or required skills:**
+   `developer`, `plan-writer`, `plan-adversary`, `code-reviewer`,
+   `log-monitor`, and `researcher`. `required_skills` are enforced only by a
+   step gate (`dispatch/skill_composition.py:80` reads them from
+   `step_workflow.variables`), so every seat that declares them opens with a
+   `load_skills` step; the researcher's workflow is `load_skills` → `serve`
+   and nothing more. Message-driven seats without required skills (assistant,
+   program-director, lane-manager, archivist) carry no `step_workflow`; a
+   single "serve" step adds nothing there. Interactive execution of step
+   instances is #22903's.
 8. **Tool restrictions are declared on the definition** (`blocked_tools`,
    `blocked_mcp_tools`). As-is they apply to spawned sessions only; #22903 applies
-   them at activation. Read-only seats use the runbooks list:
+   them at activation. Read-only seats (`lane-manager`, `code-reviewer`,
+   `log-monitor`, `researcher`, `plan-adversary`) use the runbooks list:
    `Edit`, `KillShell`, `MultiEdit`, `NotebookEdit`, `Write`, `apply_patch`,
-   `edit_file`, `notebook_edit`, `replace`, `write_file`.
+   `edit_file`, `notebook_edit`, `replace`, `write_file`. Seats that write a
+   bounded set of paths (`assistant`: `docs/` and `.gobby/roles/`;
+   `archivist`: the desktop digest file) carry no write block at all:
+   `_check_agent_tool_enforcement` applies `blocked_tools` unconditionally
+   with no path exception, so a block plus a prose carve-out cannot both hold.
+   Their write scope is a path-aware `before_tool` rule in the `roles` group
+   (2.2) that blocks writes outside the allowed prefixes, the mechanism
+   `worker-safety/block-docker-policy-edits.yaml` already uses
+   (`canonical_tool_kind`, `canonical_file_paths`, a registered path helper).
 9. **No backend field.** Definitions never name a terminal backend. Workspace
    panes resolve native gterm; the only tmux fallback is `spawn_agent`'s
    `terminal_backend`, owned by #21565.
@@ -123,10 +149,16 @@ non-goals.
     `model`, `isolation: inherit`, `timeout: 0`, `surfaces: [spawn, persona]`
     with one prompt text under a YAML anchor used by both blocks. A pane gets
     its provider from Josh's launch line; a spawned seat gets the caller's.
-13. **Rollout without restart.** After merge the PD runs
-    `gobby-workflows:reload_cache` from the main checkout; rule rows and agent rows
-    are re-synced and the engine picks rule rows up without restart. Restart is
-    the announced fallback.
+13. **Rollout is a PD-owned restart, then sync, then activation.** 1.1 and
+    3.2 change imported Python (`AgentDefinitionBody`, dispatch and expansion
+    routing); `gobby-workflows:reload_cache` re-syncs definition rows and
+    clears the pipeline cache but reloads no module, so a running daemon
+    would keep dropping `version`, accepting `skills`, and routing to the
+    deleted names. After the branch lands, the PD announces and runs the
+    restart from the main checkout (global notice before and after, outside
+    quiet hours), inspects the sync result for errors and shadowed rows, and
+    only then do seats activate (4.1). `reload_cache` alone is enough for
+    later data-only changes to seat YAML or rules.
 14. **Writer/Enhancer/Adversary flow.** Encoded in `plan-writer.yaml` and
     `plan-adversary.yaml`: Writer drafts and validates; one bounded
     enhancer pass (Decision 6); PD evaluates enhancement choices for Josh; Writer
@@ -145,6 +177,21 @@ non-goals.
     `apply_plan_handoff_manifest` with the Adversary's routing decisions and the
     returned hashes. Nobody hand-edits M1 (coverage contract, Manifest-on-Approval).
     Expansion waits for PD confirmation of Josh's approval.
+    Checkpoint handshake, for every verdict: the Adversary sends the Writer
+    the canonical round result; the Writer records a disposition and
+    rationale per finding, appends the round with
+    `gobby-plans:append_plan_changelog_round(evidence_id, prose,
+    round_result)`, and acknowledges by `send_message`; the Adversary then
+    calls `finalize_plan_review_evidence`; only after that does the Writer
+    repair or revise (rejection) or the PD apply the manifest (approval). A
+    refused append or finalize is reported back with the exact error and the
+    round stays open; a fresh candidate starts a fresh round. Runtime gap
+    found in this plan's own round 1: `append_plan_changelog_round` requires
+    a `dispatch_run_id` and `bind_evidence_run` requires a live spawned run
+    whose parent is the evidence session, so a static Adversary seat cannot
+    complete the handshake today. That repair is #22912's (D3); until it
+    lands, seat review rounds deliver an assessment but cannot finalize
+    evidence.
 
 ## As-Is Facts
 `kind: framing`
@@ -194,9 +241,11 @@ Current code, recorded so executors and reviewers separate them from the target:
 - Decisions reach Josh as clickable links or buttons sent by the Assistant; ask
   once, never nag. Conditional sign-off: the "reply in the terminal" line applies
   only while Josh is at the desk.
-- Production `.py` files stay under 1,000 lines; no targeted file is at the
-  850-line trigger (`agent_models.py` 219, `sync.py` 299,
-  `skill_composition.py` 133).
+- Production `.py` files stay under 1,000 lines. `condition_helpers.py` (995)
+  cannot take the 2.2 helper, which lives in a new module;
+  `safe_evaluator.py` (865) gains two registration lines and stays under the
+  ceiling; `storage/definitions/agents.py` (740), `agent_models.py` (219),
+  `sync.py` (299), and `skill_composition.py` (133) are clear.
 - Boundaries: #22902 owns what a definition declares and how the bundle is
   validated; #22903 owns how a session receives, rehydrates, and enforces it
   (including the `is_spawned` step gate and persona rule scoping); #22899 owns
@@ -229,11 +278,15 @@ Targets:
 - `src/gobby/install/shared/workflows/agents/researcher.yaml::*` — scope-reason: remove the retired top-level skills map
 - `src/gobby/install/shared/workflows/agents/tech-writer.yaml::*` — scope-reason: remove the retired top-level skills map
 - `src/gobby/install/shared/workflows/agents/triage-agent.yaml::*` — scope-reason: remove the retired top-level skills map
+- `src/gobby/storage/definitions/agents.py::parent_body`
 - `tests/workflows/test_agent_definitions_v2.py::*` — scope-reason: cover the rejected key and stored version
+- `tests/agents/test_agents_sync.py::*` — scope-reason: cover a stored body that still carries the retired skills map
 
-**Granularity:** eleven Target files, but one behavior: the schema change and the
-ten YAML edits it forces are one commit and one test run; splitting the YAML
-edits would leave the bundle failing validation between leaves.
+**Granularity:** thirteen Target files, but one behavior: the schema change,
+the ten YAML edits it forces, and the stored-body read path are one commit
+and one test run; splitting the YAML edits would leave the bundle failing
+validation between leaves, and splitting the read path would leave every
+installed row unreadable between commits.
 
 **Research context:** `AgentDefinitionBody` (`agent_models.py:78-219`) declares
 `skills: dict[str, list[str]]` with no reader anywhere under `src/gobby` (grep for
@@ -257,10 +310,29 @@ re-exports the models unchanged. Existing tests:
 is the pattern to extend. `template_hashes.py` hashes the parent body, so the
 bundled hash changes once; that is expected drift refreshed by sync.
 
+Stored rows: every pre-change `definition_json` carries the serialized default
+`skills: {}` (`default_factory=dict`), and the ten bundled rows carry the
+prose maps, so rejecting the key on the model alone would make every installed
+row fail validation on read. `storage/definitions/agents.py::parent_body`
+(`:78`) is the single read path that strips step-body keys before validation;
+it also drops a `skills` key whose value is an empty map, so pre-change rows
+resolve unchanged. A stored non-empty map is not hidden: before the schema
+change lands, the leaf inventories rows outside bundled ownership that carry
+one (the storage query over `definition_json` the executor confirms against
+the JSONB column) and rewrites them through the storage update path with the
+map removed; bundled rows are refreshed by sync drift on the first sync after
+the YAML edits. YAML input (`sync.py` bundled path and
+`validate_workflow_definition_data` import path) never passes through
+`parent_body`, so any `skills` key on input is rejected.
+
 Verification planned: `GOBBY_TEST_PROTECT=1 uv run pytest
 tests/workflows/test_agent_definitions_v2.py tests/workflows/test_agent_models.py
 tests/agents/test_agents_sync.py -q`; `uv run ruff check`, `uv run mypy` on the
-changed file.
+changed files.
+
+Consumers unchanged:
+- `src/gobby/agents/sync.py` — no-edit-reason: it validates each bundled YAML as `AgentDefinitionBody` first (`:180`), which now rejects the key, and only then strips the dumped body through `parent_body`; its stored-row drift comparison (`:89`, `:104`) gains the empty-map drop for free.
+- `src/gobby/workflows/imports.py` — no-edit-reason: it validates the imported body first (`:68`), so an imported `skills` key is rejected, and then strips the dumped body through `parent_body` unchanged.
 
 **Acceptance:**
 
@@ -275,6 +347,10 @@ changed file.
 - 1.1.3 - No bundled agent YAML contains a top-level `skills` key and every bundled
   YAML still validates against the body. test:
   `tests/workflows/test_agent_definitions_v2.py::test_bundled_agents_carry_no_skills_map`.
+- 1.1.4 - A stored body carrying `skills: {}` resolves after the change, and a
+  stored non-empty map is surfaced by the inventory, not silently dropped.
+  symbol: `src/gobby/storage/definitions/agents.py::parent_body`. test:
+  `tests/agents/test_agents_sync.py::test_stored_body_with_empty_skills_map_resolves`.
 
 ## P2: Shared Seat Rules
 `kind: framing`
@@ -346,13 +422,17 @@ receives nothing.
 - 2.1.4 - The rule group is documented. behavior: "`roles` row" in
   `src/gobby/install/shared/workflows/rules/AGENTS.md`.
 
-### 2.2 Seat spawn policy with the Plan Writer enhancer exception [category: config] (depends: 2.1)
+### 2.2 Seat spawn and write policy with the Plan Writer enhancer exception [category: code] (depends: 2.1)
 `kind: deliverable`
 
 Targets:
 - `src/gobby/install/shared/workflows/rules/roles/seat-spawn-policy.yaml`
+- `src/gobby/install/shared/workflows/rules/roles/seat-write-scope.yaml`
+- `src/gobby/workflows/condition_helpers_paths.py`
+- `src/gobby/workflows/safe_evaluator.py::*` — scope-reason: register the write_paths_within helper in the condition namespace beside touches_docker_policy_path
 - `.gobby/roles/_common.md`
 - `tests/workflows/test_seat_rules.py`
+- `tests/workflows/test_condition_helpers_paths.py`
 
 **Research context:** `before_tool` rules read the proxy call as `tool_input`
 with `server_name`, `tool_name`, and `arguments`
@@ -366,33 +446,105 @@ Block effects name MCP tools with `mcp_tools:`. `after_tool` MCP events expose
 accepts a literal or an expression (`engine/effects.py::_apply_set_variable`;
 `auto-task/inject-autonomous-mode.yaml:38` uses an expression). `claimed_tasks`
 is a mapping keyed by task id (`hooks/event_handlers/_session_start/claims.py:61-77`,
-and the same rule tests membership with `in`), so the bound uses a boolean
-rather than indexing. No bundled rule blocks `spawn_agent` for interactive
-sessions today; only `worker-safety/no-agent-spawn-for-merge.yaml`
-(`agent_scope: [merge]`).
+and the same rule tests membership with `in`). No bundled rule blocks
+`spawn_agent` for interactive sessions today; only
+`worker-safety/no-agent-spawn-for-merge.yaml` (`agent_scope: [merge]`).
 
-Rules in one file, tags `[roles, seat, enforcement, gobby, default]`:
+Ledger facts: `claim_task` answers a task the session already holds with
+`already_claimed: True` (`mcp_proxy/tools/tasks/_lifecycle_claim.py:249`) and
+`create_task(claim=true)` never passes through `claim_task`, so a claim event
+cannot safely re-arm a boolean. The bound is two session-variable ledgers of
+task ids, `plan_writer_planning_tasks` (planning tasks this session claimed)
+and `plan_writer_enhancer_tasks` (planning tasks whose pass is spent); both
+persist with the other session variables across compaction. Eligibility is a
+claimed planning task present in the first ledger and absent from the second.
+
+Write-scope facts: before-tool normalization annotates every write with
+`event.data['canonical_tool_kind'] == 'write'`,
+`event.data['canonical_file_paths']` (empty when the target is opaque), and
+`event.data['canonical_repo_mutation']`
+(`hooks/_normalization_canonical.py:898-945`,
+`hooks/_path_scope.py::apply_path_scope_metadata`).
+`worker-safety/block-docker-policy-edits.yaml` is the pattern: it fails closed
+when `canonical_file_paths` is empty and otherwise calls the registered helper
+`touches_docker_policy_path(event.data, tool_input)`
+(`workflows/condition_helpers.py:198`, registered at `safe_evaluator.py:646`).
+`condition_helpers.py` is 995 lines, so the new helper lives in a new module
+`workflows/condition_helpers_paths.py`: `write_paths_within(event_data,
+tool_input, prefixes) -> bool` is True only when every path from
+`condition_helpers._event_and_tool_paths` resolves, against
+`current_tool_cwd` and `current_project_root` from `hooks/_path_scope.py`,
+under one of `prefixes` (a relative prefix is project-relative; an absolute
+prefix matches as-is); an empty path set returns False.
+
+Size: `safe_evaluator.py` is 865 lines, so this leaf does not grow it. Move
+the path-helper registration out of `safe_evaluator.py`: the new module
+`src/gobby/workflows/condition_helpers_paths.py` exports
+`PATH_CONDITION_HELPERS = {"touches_docker_policy_path": ...,
+"write_paths_within": ...}`, `safe_evaluator.py` drops its direct
+`touches_docker_policy_path` import and dict entry (`:566`, `:646`) and
+merges `**PATH_CONDITION_HELPERS` into the namespace in their place, so the
+file ends the leaf no longer than it starts.
+
+Rules in `seat-spawn-policy.yaml`, tags `[roles, seat, enforcement, gobby, default]`:
 
 - `seat-no-spawn`: `event: before_tool`, priority 10, `when:` seat match (2.1
   condition) and seat is not `plan-writer`; effect `block` with `mcp_tools:
-  ["gobby-agents:spawn_agent", "gobby-agents:dispatch_batch"]`, reason: seats do
-  not spawn; the automated close reviewer is the only spawn path; send work to the
-  PD.
+  ["gobby-agents:spawn_agent", "gobby-agents:dispatch_batch",
+  "gobby-agents:deploy_runbook", "gobby-agents:retry_runbook_deployment"]`
+  (the two runbook tools are #22895's; listing them before they exist
+  blocks nothing and holds once they land; `dispatch_batch` is dropped from
+  the list when #22895's 5.1 deletes it), reason: seats do not spawn,
+  deploy, or retry a deployment; the automated close reviewer is the only
+  spawn path; send work to the PD.
+- `plan-writer-track-claim`: `event: after_tool`, `when:` seat is
+  `plan-writer`, `event.data.get('mcp_server') == 'gobby-tasks'`,
+  `event.data.get('mcp_tool') in ['claim_task', 'create_task']`, and the
+  output reports success; effect `set_variable plan_writer_planning_tasks`
+  with an expression that adds the output's task id (`task_id` from
+  `claim_task`, `id` from `create_task`) to the ledger when absent. Neither
+  payload carries a task category (`_lifecycle_claim.py:249` returns
+  `success`, `task_id`, `title`; `_crud.py:361-366` returns `id`, `seq_num`,
+  `ref`), so the rule does not filter on one: every task the Plan Writer
+  claims is a planning task by seat contract, and the ledger records every
+  successful claim. An `already_claimed` reclaim matches the rule and
+  changes nothing.
 - `plan-writer-enhancer-only`: `event: before_tool`, priority 10, `when:` seat is
   `plan-writer` and not (`arguments.agent == 'plan-enhancer-taskless'` and
-  `arguments.isolation == 'none'` and `variables.get('task_claimed')` and
-  `not variables.get('plan_writer_enhancer_pass_used')`); effect `block` on
-  `gobby-agents:spawn_agent` and `gobby-agents:dispatch_batch`, reason naming the
-  exact allowed call and that one pass per claimed planning task is permitted.
+  `arguments.isolation == 'none'` and
+  `any(t in (variables.get('plan_writer_planning_tasks') or []) and t not in (variables.get('plan_writer_enhancer_tasks') or []) for t in (variables.get('claimed_tasks') or {}))`);
+  effect `block` on `gobby-agents:spawn_agent`,
+  `gobby-agents:dispatch_batch`, `gobby-agents:deploy_runbook`, and
+  `gobby-agents:retry_runbook_deployment`, reason naming the exact allowed
+  call and that one pass per claimed planning task is permitted.
 - `plan-writer-enhancer-consumed`: `event: after_tool`, `when:` seat is
   `plan-writer` and `event.data.get('mcp_server') == 'gobby-agents'` and
   `event.data.get('mcp_tool') == 'spawn_agent'` and the output reports success;
-  effect `set_variable plan_writer_enhancer_pass_used: true`.
-- `plan-writer-enhancer-rearm`: `event: after_tool`, `when:` seat is
-  `plan-writer` and `event.data.get('mcp_server') == 'gobby-tasks'` and
-  `event.data.get('mcp_tool') == 'claim_task'` and the output carries a
-  `task_id`; effect `set_variable plan_writer_enhancer_pass_used: false`. A new
-  claimed planning task therefore re-arms exactly one pass.
+  effect `set_variable plan_writer_enhancer_tasks` with an expression that adds
+  every currently claimed id that is in `plan_writer_planning_tasks`. A failed
+  spawn changes nothing. There is no re-arm rule: a consumed id never becomes
+  eligible again, and only a claim of a different planning task admits a pass.
+
+The ledger expressions run in `safe_evaluator`: the executor uses list
+concatenation if the evaluator accepts it and otherwise a comma-joined string
+with `split(',')` membership, and pins the chosen form in the tests.
+
+Rules in `seat-write-scope.yaml`, same tags, `event: before_tool`, priority 15:
+
+- `assistant-write-scope`: `when:` seat is `assistant` and
+  `event.data.get('canonical_tool_kind') == 'write'` and
+  `not write_paths_within(event.data, tool_input, ['docs/', '.gobby/roles/'])`;
+  effect `block`, reason: the Assistant writes only under `docs/` and
+  `.gobby/roles/`; name the target with a literal path.
+- `archivist-write-scope`: same shape for `archivist` with prefixes
+  `['/Users/josh/Desktop/gobby-digest-']`; reason: the Archivist writes only
+  the desktop digest.
+
+Tests with the real engine as 2.1 does: the enhancer bound covers a reclaim
+that returns `already_claimed`, `create_task(claim=true)` of the same task, a
+failed spawn, a `compact` session_start, and a claim of
+a second planning task; the write scope covers one allowed and one blocked
+write per seat and an opaque write with no path.
 
 `_common.md` third bullet becomes: "Do not spawn agents. The automated
 task-close reviewer is the only permitted spawn path, plus the Plan Writer's
@@ -401,16 +553,31 @@ single `plan-enhancer-taskless` pass per claimed planning task (rule
 
 **Acceptance:**
 
-- 2.2.1 - A non-writer seat's `spawn_agent` and `dispatch_batch` calls are blocked
-  with the seat reason. file:
+- 2.2.1 - A non-writer seat's `spawn_agent`, `dispatch_batch`,
+  `deploy_runbook`, and `retry_runbook_deployment` calls are blocked with
+  the seat reason. file:
   `src/gobby/install/shared/workflows/rules/roles/seat-spawn-policy.yaml`. test:
   `tests/workflows/test_seat_rules.py::test_seats_cannot_spawn`.
 - 2.2.2 - The Plan Writer may spawn `plan-enhancer-taskless` with `isolation:
-  none` once per claimed planning task; a second attempt for the same task, a
-  different agent, another isolation, or no claimed task is blocked. test:
-  `tests/workflows/test_seat_rules.py::test_plan_writer_enhancer_pass_is_bounded`.
+  none` once per claimed planning task: a reclaim answered with
+  `already_claimed`, a `create_task(claim=true)` of the same task, a failed
+  spawn, and a compact leave the ledgers unchanged; a second attempt for the
+  same task, a different agent, another isolation, or no claimed task is
+  blocked; claiming a different planning task admits
+  exactly one more pass. test:
+  `tests/workflows/test_seat_rules.py::test_plan_writer_enhancer_pass_is_per_task`.
 - 2.2.3 - The shared role rules name the exception. behavior:
   "plan-writer-enhancer-only" in `.gobby/roles/_common.md`.
+- 2.2.4 - The Assistant's write under `docs/` is allowed and under `src/`
+  blocked; the Archivist's write to the desktop digest is allowed and any
+  write inside the checkout blocked; a write with no resolvable path is
+  blocked for both. file:
+  `src/gobby/install/shared/workflows/rules/roles/seat-write-scope.yaml`. test:
+  `tests/workflows/test_seat_rules.py::test_seat_write_scope_is_path_aware`.
+- 2.2.5 - `write_paths_within` resolves relative and absolute paths against the
+  project root and tool cwd and is callable from a rule condition. symbol:
+  `src/gobby/workflows/condition_helpers_paths.py::write_paths_within`. test:
+  `tests/workflows/test_condition_helpers_paths.py::test_write_paths_within_resolves_prefixes`.
 
 ## P3: Seat Definitions
 `kind: framing`
@@ -429,9 +596,35 @@ policy (Decision 10), then the two baseline sections every seat inherits from
 `apply_persona` replaces the default persona rather than layering on it. Role
 text comes from the current `.gobby/roles/*.md` files and the runbooks plan §3.2
 persona highlights; session refs and epic numbers stay out of prompts (they are
-roster and task state). Step transitions use variables the seat sets with the
-proxy `set_variable` tool or that a step's `on_mcp_success` handler sets after a
-named MCP call (`WorkflowStep.on_mcp_success`, `definitions.py:560`).
+roster and task state).
+
+Step state: transitions read the merged variables with instance variables
+last (`engine/enforcement_completion.py::_process_step_after_tool`), so a flag
+declared in `step_workflow.variables` can be flipped only by
+`gobby-workflows:set_variable(scope="step")`
+(`mcp_proxy/tools/workflows/_variables.py:84`) or by a step handler; the
+top-level proxy `set_variable` is session-scoped (`stdio_tools.py:338`) and is
+ignored for declared instance names
+(`tests/workflows/test_step_runtime_transitions.py::test_native_set_variable_does_not_shadow_workflow_local_variable`).
+Every seat prompt therefore names `gobby-workflows:set_variable(scope="step")`
+for the flags it sets by hand, every step whose flags the seat sets lists
+`gobby-workflows:set_variable` in its MCP allowlist, and `on_mcp_success`
+handlers (`WorkflowStep.on_mcp_success`, `definitions.py:586`; entries
+`{server, tool, when?, action: set_variable, variable, value}` evaluated with
+`vars`, `tool_input`, `tool_output`, where `tool_input` carries the MCP
+arguments promoted to its top level by
+`enforcement_checks.py::_step_handler_tool_input`, so
+`tool_input.get('content')` reads a `send_message` argument directly) live on
+the step whose allowlist carries the tool they watch. Every seat with `required_skills` opens with a
+`load_skills` step (allowed MCP: `gobby-skills:get_skill`,
+`gobby-skills:get_skill_file`; transition when
+`all(skill_loaded(skill) for skill in vars.required_skills)`, the
+`backend-developer.yaml:174-217` gate) because the required set is enforced
+only by a step gate (Decision 7). Every loop seat carries a correlation
+variable (the task, candidate, window, or evidence it is working) and resets
+its flags in the handler of the call that ends the unit of work, so two
+consecutive units run through the loop without a manual reset; 3.5 pins that
+with engine tests.
 
 ### 3.1 Coordination seats: assistant, program-director, lane-manager [category: config] (depends: 2.2)
 `kind: deliverable`
@@ -457,11 +650,11 @@ COMMIT= NOTE=`; verdict blockers to PD; no review, land, restart, or code).
 Selectors: all three add `tag:worker-safety` exclusions that block interactive
 destructive shell (`no-destructive-shell-interactive`) stay via `tag:default`;
 program-director additionally includes `name:no-force-push-interactive`,
-`name:no-destructive-git-interactive`; assistant and lane-manager carry the
-Decision 8 read-only `blocked_tools` list with the assistant's carve-out for
-`.md` writes under `docs/` and `.gobby/roles/` stated in prose (enforcement of
-that carve-out is #22903's activation). Continuity: compact, never clear. No
-`step_workflow` (Decision 7).
+`name:no-destructive-git-interactive`; lane-manager carries the Decision 8
+read-only `blocked_tools` list; assistant carries no write block, and its
+`docs/` and `.gobby/roles/` scope is enforced by `assistant-write-scope`
+(2.2), which the prompt names. Continuity: compact, never clear. No
+`step_workflow` and no `required_skills` (Decision 7).
 
 **Acceptance:**
 
@@ -493,6 +686,7 @@ Targets:
 - `src/gobby/install/shared/prompts/expansion/system.md`
 - `src/gobby/install/shared/skills/gobby/references/plan/expansion.md`
 - `src/gobby/tasks/prompts/expand-task-tdd.md`
+- `docs/contracts/plan-coverage.md`
 - `src/gobby/mcp_proxy/tools/spawn_agent/_factory.py::*` — scope-reason: retarget the default agent name and its docstring
 - `src/gobby/plans/manifest_emitter.py::*` — scope-reason: retarget the category-to-agent map and fallback
 - `src/gobby/tasks/categories.py::*` — scope-reason: map the backend, frontend, and fullstack domains to developer
@@ -549,13 +743,25 @@ paragraph, and the claim-step `description` label. The shared workflow is
 gobby:references/tasks/overview.md]`, and `load_additional_skills`
 (`backend-developer.yaml:174-217`) already gates on
 `all(skill_loaded(skill) for skill in vars.additional_skills)`, so task-routed
-skills need no new mechanism: the prompt tells the developer to read the
-claimed task and set `additional_skills` with the proxy `set_variable` before
-that step runs. Routing table in the prompt: task touches `web/` → `impeccable`
-(the design contract in `AGENTS.md` requires it) and `typescript`; touches
-`crates/` → `rust` (`AGENTS.md` requires it before editing Rust); Python only →
-nothing beyond the required set; docs only → `tech-writer`. All four exist
-under the bundled skills directory.
+skills need no new gate: a `route_skills` step between `claim` and
+`load_required_skills` (allowed MCP: `gobby-tasks:get_task`,
+`gobby-workflows:set_variable`) has the seat read the claimed task, map its
+paths and `implementation_domain` through the prompt's routing table, merge
+any skills the task description names, write `additional_skills` with
+`gobby-workflows:set_variable(scope="step")`, then set `skills_routed`; its
+`on_mcp_success` for `gobby-tasks:get_task` with `when:
+tool_output.get('id') == vars.assigned_task_id` binds `assigned_task_ref`
+from `tool_output.get('ref')`, the `#NNNNN` form the event line carries
+(`task_summary_payload`, `tasks/_formatters.py:147-149`, returns `ref`,
+`id`, and `seq_num` for the brief card), because `claim_task` returns only
+the UUID;
+transition to `load_required_skills` when `vars.skills_routed and
+vars.assigned_task_ref`. Routing table
+in the prompt: task touches `web/` → `impeccable` (the design contract in
+`AGENTS.md` requires it) and `typescript`; touches `crates/` → `rust`
+(`AGENTS.md` requires it before editing Rust); Python only → nothing beyond
+the required set; docs only → `tech-writer`. All four exist under the bundled
+skills directory.
 
 `developer.yaml` is `backend-developer.yaml` with: `name: developer`, `tags:
 [gobby, seat]`, Decision 12 provider, model, and isolation, `rule_selectors.include:
@@ -567,11 +773,27 @@ TASK_TITLE= RUN= WT= COMMIT= NOTE=`; HOLD/GO discipline; found work on the
 lane's surface is the lane's; no restarts or binary promotion unless the PD
 says so; work in the lane's worktree; the skill routing table; then the
 `## Platform Context` and `## Skills` baseline sections and the continuity
-policy, clear between tasks), and the `terminate` step replaced by `submit`
-(allowed MCP: `send_message`, `close_task`, `link_commit`; `on_mcp_success`
-for `gobby-agents:send_message` resets `task_claimed`,
-`implementation_complete`, `additional_skills_loaded`; transition to `claim`
-when `not vars.task_claimed`). No `exit_condition`. The claim step keeps the
+policy, clear between tasks), steps `claim` → `route_skills` →
+`load_required_skills` → `load_additional_skills` → `implement` → `submit`,
+and `step_workflow.variables` extended with `assigned_task_id: null`,
+`assigned_task_ref: null`, `skills_routed: false`, `candidate_sent: false`,
+`bounced: false`. Loop
+wiring: `claim` keeps its `gobby-tasks:claim_task` success handler for
+`task_claimed` and adds one that binds `assigned_task_id` from
+`tool_output.get('task_id')`; `submit` (allowed MCP: `send_message`,
+`close_task`, `link_commit`, `gobby-workflows:set_variable`) has an
+`on_mcp_success` for `gobby-agents:send_message` with `when:
+'EVENT=CANDIDATE' in str(tool_input.get('content')) and
+str(vars.assigned_task_ref) in str(tool_input.get('content'))` that sets
+`candidate_sent`; a BOUNCE from the reviewer is recorded by the seat as
+`bounced` (step scope) and `submit` transitions to `implement` when
+`vars.bounced`, where the seat clears `bounced` and `implementation_complete`
+before rework; a `gobby-tasks:close_task` success handler resets
+`task_claimed`, `implementation_complete`, `additional_skills_loaded`,
+`skills_routed`, `candidate_sent`, `bounced`, `assigned_task_id`, and
+`assigned_task_ref`, and `submit` transitions to `claim` when
+`not vars.task_claimed`. No
+`exit_condition`. The claim step keeps the
 "Spawned agents normally arrive" phrases that
 `test_workflows_agent_definitions.py::test_claim_guidance_accounts_for_spawn_preclaim`
 pins, with `developer` replacing the three names in that list and in
@@ -587,7 +809,10 @@ and fullstack domains to the three names; `tasks/expansion/_common.py:29,65-68,
 and a frontend-versus-backend score heuristic that collapses to `developer`;
 `plans/manifest_emitter.py:64-70` has the same map; `spawn_agent/_factory.py:
 627-757` defaults `agent` to `backend-developer`; the three prompt and
-reference texts describe the routing in prose. All become `developer`;
+reference texts describe the routing in prose, and
+`docs/contracts/plan-coverage.md:507-515` (Category and TDD Policy) maps the
+implementation domains to the three names and becomes the single `developer`
+mapping. All become `developer`;
 `implementation_domain` stays on tasks as a hint the developer reads for its
 skill table. The `assigned_agent` parameter description in the task CRUD tool
 module quotes the old name as an example only; that module sits at the
@@ -606,8 +831,9 @@ commands.
 
 - 3.2.1 - `developer` validates, is `seat`-tagged, selects `tag:roles`, carries
   the lane flow with the CANDIDATE event line, HOLD/GO discipline, and the
-  skill routing table, and declares the claim → load skills → implement →
-  submit loop. behavior: "EVENT=CANDIDATE" in
+  skill routing table, and declares the claim → route skills → load skills →
+  implement → submit loop whose close-task handler resets it for the next
+  task. behavior: "EVENT=CANDIDATE" in
   `src/gobby/install/shared/workflows/agents/developer.yaml`.
 - 3.2.2 - `backend-developer.yaml`, `frontend-developer.yaml`, and
   `fullstack-developer.yaml` no longer exist and no routing constant, stage
@@ -636,15 +862,22 @@ Targets:
 
 **Research context:** `code-reviewer`: read-only `blocked_tools`; selectors add
 `tag:review-learning`; `required_skills: [code-review, restraint]`;
-`step_workflow.variables: {candidate_received: false, verdict_ready: false}`;
-steps `await` (allowed MCP: `send_message`, sessions read, the proxy
-`set_variable`; transition to `review` when `vars.candidate_received`, which
-the seat sets from the PD's CANDIDATE message), `review` (read-only tools plus
-`gcode` and `git diff`; transition to `verdict` when `vars.verdict_ready`),
-`verdict` (allowed MCP: `send_message`, `set_variable`; the message carries
-`EVENT=CANDIDATE_VERDICT ... VERDICT=LAND|BOUNCE` with HIGH/MEDIUM/LOW findings
-to PD and author lane; the seat then resets both variables and the step
-transitions to `await`). Continuity: clear between verdicts.
+`step_workflow.variables: {candidate_received: false, verdict_ready: false,
+candidate_task: null}`; steps `load_skills` → `await` (allowed MCP:
+`send_message`, sessions read, `gobby-workflows:set_variable`; the seat
+records the PD's CANDIDATE line by setting `candidate_task` to its `TASK=`
+value and `candidate_received` at step scope; transition to `review` when
+`vars.candidate_received`) → `review` (read-only tools plus `gcode` and `git
+diff`, `gobby-workflows:set_variable`; transition to `verdict` when
+`vars.verdict_ready`) → `verdict` (allowed MCP: `send_message`,
+`gobby-workflows:set_variable`; the message carries `EVENT=CANDIDATE_VERDICT
+TASK=#NNNNN ... VERDICT=LAND|BOUNCE` with HIGH/MEDIUM/LOW findings to PD and
+author lane; `on_mcp_success` for `gobby-agents:send_message` with `when:
+'EVENT=CANDIDATE_VERDICT' in str(tool_input.get('content')) and
+str(vars.candidate_task) in str(tool_input.get('content'))` resets
+`candidate_received`, `verdict_ready`, and `candidate_task`; transition to
+`await` when `not vars.candidate_received`). Continuity: clear between
+verdicts.
 
 `researcher.yaml` is today the discovery one-shot bound to the `research`
 stage (`stages.yaml:16`) with a claim → load_skill → draft workflow that ends
@@ -657,7 +890,11 @@ one-shot's claim step, marker, and MCP allowlist: remove the `researcher`
 entry; `analyst`, `architect`, and `product-manager` stay.
 `test_workflows_agent_definitions.py:157` pins `researcher` to codex and a
 model, and `:224` lists it among agents with a claim step; both rows change to
-the seat's shape (`inherit`, no model, no claim step).
+the seat's shape (`inherit`, no model, no claim step). The seat body carries
+`required_skills: [research, restraint, brevity]` and therefore the two-step
+workflow `load_skills` → `serve` (allowed MCP: research, memory, sessions,
+and plans reads plus `send_message`; no transition out, no `exit_condition`),
+the Decision 7 exception.
 `trajectory-monitor.yaml` is a review-stage reviewer, not a log monitor.
 Role text: `archivist.md` (sole writer of
 `/Users/josh/Desktop/gobby-digest-<date>.md`, "Lane queues" section from PD
@@ -669,8 +906,10 @@ all mapped`), `researcher.md` (research only; findings to PD; decisions for Josh
 via the Assistant; asks PD before killing processes). Selectors: archivist and
 log-monitor use `tag:roles`, `tag:context-handoff`, `tag:memory-lifecycle`,
 `tag:worker-safety`, and `tag:default`; researcher adds
-`tag:task-skill-gates`. All four read-only; the archivist's digest write is
-outside the checkout and stated in prose. `required_skills`: log-monitor
+`tag:task-skill-gates`. code-reviewer, log-monitor, and researcher carry the
+Decision 8 read-only list; archivist carries no write block, and its desktop
+digest scope is enforced by `archivist-write-scope` (2.2), which the prompt
+names. `required_skills`: log-monitor
 `[brevity, gobby:references/observability/diagnostics.md,
 gobby:references/observability/metrics.md]`; researcher
 `[research, restraint, brevity]`. `monitor.md` names `gobby:log-monitor-tick`,
@@ -681,11 +920,17 @@ live role file, and the `log-monitor` prompt carries the tick procedure as an
 explicit checklist (log families under `~/.gobby/logs/`, warning counts per
 family, load only on a breach, matched windows for performance verdicts) with
 no skill reference for it. `log-monitor` step workflow:
-`step_workflow.variables: {tick_done: false}`; `tick` (allowed MCP: skills,
-sessions read, the proxy `set_variable`, `send_message`; transition to
-`report` when `vars.tick_done`) → `report` (`on_mcp_success` for
-`gobby-agents:send_message` sets `tick_done: false`; transition to `tick` when
-`not vars.tick_done`), no exit. Continuity: archivist and log-monitor compact,
+`step_workflow.variables: {tick_done: false, tick_window: null}`;
+`load_skills` → `tick` (allowed MCP: skills, sessions read,
+`gobby-workflows:set_variable`; the seat sets `tick_window` to the
+`HH:MM-HH:MM` window it examined and `tick_done`, both at step scope;
+transition to `report` when `vars.tick_done`) → `report` (allowed MCP:
+`send_message`, `gobby-workflows:set_variable`; `on_mcp_success` for
+`gobby-agents:send_message` with `when: 'Systems nominal' in
+str(tool_input.get('content')) or 'EVENT=ALARM' in
+str(tool_input.get('content'))` resets `tick_done` and `tick_window`;
+transition to `tick` when `not vars.tick_done`), no exit; a status reply to
+the PD that is neither line leaves the step where it is. Continuity: archivist and log-monitor compact,
 never clear; researcher and code-reviewer clear after each report or verdict.
 `sandbox_profile: research` on `researcher` is deferred (D2) until #22899's
 field lands.
@@ -696,15 +941,16 @@ field lands.
   bundled skills (`code-review`, `restraint`), and declares the await → review
   → verdict loop with the verdict grammar. file:
   `src/gobby/install/shared/workflows/agents/code-reviewer.yaml`.
-- 3.3.2 - `archivist` validates, is `seat`-tagged, read-only inside the
-  checkout, and carries the digest contract. file:
+- 3.3.2 - `archivist` validates, is `seat`-tagged, carries no write block,
+  names `archivist-write-scope`, and carries the digest contract. file:
   `src/gobby/install/shared/workflows/agents/archivist.yaml`.
 - 3.3.3 - `log-monitor` validates, is `seat`-tagged, declares the tick → report
   loop, carries the nominal and ALARM grammar, and names no
   `gobby:log-monitor-tick` skill. behavior: "Systems nominal | window" in
   `src/gobby/install/shared/workflows/agents/log-monitor.yaml`.
 - 3.3.4 - `researcher` validates as a seat (`seat`-tagged, read-only, inherited
-  provider, no claim step), and the discovery-agent tests no longer list it.
+  provider, `load_skills` → `serve`, no claim step), and the discovery-agent
+  tests no longer list it.
   file: `src/gobby/install/shared/workflows/agents/researcher.yaml`. test:
   `tests/agents/test_discovery_agents.py::test_discovery_agent_yaml_validates_and_is_enabled`.
 
@@ -719,7 +965,7 @@ Targets:
 - `tests/agents/test_plan_adversary_no_edits_on_reject.py::*` — scope-reason: run against the seat body
 - `tests/agents/test_plan_adversary_self_check.py::*` — scope-reason: run against the seat body
 - `tests/agents/test_plan_adversary_internal_research_definition.py::*` — scope-reason: the reviewer-model pin and spawn-hook assertions cover the taskless reviewer only
-- `tests/mcp_proxy/test_stage_review_schema.py::*` — scope-reason: the staged review schema is a build contract; retarget to plan-adversary-taskless or delete
+- `tests/mcp_proxy/test_stage_review_schema.py::*` — scope-reason: keep both tests; only the final YAML text-parity check reads the seat body
 - `tests/skills/test_plan_adversary_rejection.py::*` — scope-reason: run against the seat body
 - `tests/skills/test_plan_skill_grammar.py::*` — scope-reason: run against the seat body
 - `tests/agents/test_discovery_agents.py::*` — scope-reason: the plan-adversary task-skill-gate exclusion assertion reads the seat body
@@ -738,13 +984,50 @@ rejection is findings-only with no plan-file edits, plan edits are attributed
 to the writer, manifest application is delegated and
 `apply_plan_review_repairs` is blocked, the identity guard precedes manifest
 derivation, the self-check retry is capped at three, and `kill_agent` is
-absent. Assertions on `claim`, `terminate`, `end_agent_run`, the staged
-verdict path, and the pinned reviewer model are stage mechanics: run each
-module against the seat body, keep what passes, retarget the rest to
-`plan-adversary-taskless` (steps `load_skill` → `review` only)
-where it has the step, and delete assertions with no seat or taskless
-equivalent. `test_discovery_agents.py:210` and
-`test_workflows_agent_definitions.py:151` also read `plan-adversary`.
+absent. Retargets by module (the seat has steps `load_skills` → `await` →
+`review` → `resolve`; `plan-adversary-taskless` has `load_skill` → `review`
+with per-skill `*_loaded` variables and no `terminate`):
+
+- `test_plan_adversary_loads_plan_review.py`: the eight `load_skill` tests
+  (`test_has_load_skill_step_between_claim_and_review` through
+  `test_transition_gates_on_both_skills_loaded`) retarget to
+  `plan-adversary-taskless`, and the seat's `load_skills` gate is covered by
+  3.5; `test_claim_step_uses_normal_delegated_claim`,
+  `test_claim_step_treats_closed_assigned_task_as_claim_complete`,
+  `test_review_step_completes_on_closed_task_review_error`,
+  `test_terminate_step_only_allows_end_agent_run`, and
+  `test_review_step_leaves_end_agent_run_to_engine_gate` are deleted (no seat
+  or taskless equivalent); `test_review_step_completes_on_review_rejection`
+  retargets to `plan-adversary-taskless`; the prompt-contract tests
+  (`test_instructions_reference_plan_review`,
+  `test_instructions_reference_proportionality`,
+  `test_review_rejection_and_requirements_contracts_preserved`,
+  `test_plan_identity_precondition_blocks_unknown_covers`,
+  `test_round_scoped_findings_header_referenced`,
+  `test_critical_rules_preserved`, `test_kill_agent_removed_from_instructions`,
+  `test_call_tool_uses_ambient_session_context`) run against the seat body.
+- `test_plan_adversary_manifest.py`:
+  `test_staged_verdict_proceeds_directly_to_normal_agent_completion` is
+  deleted; `test_review_step_does_not_block_review_approval` and
+  `test_review_step_blocks_coordinator_owned_plan_writes` read the seat's
+  `review` step; the other nine prompt-contract tests run against the seat body.
+- `test_plan_adversary_self_check.py`:
+  `test_self_check_delegates_to_manifest_apply`,
+  `test_pre_verdict_parsing_delegated_upstream`, and
+  `test_retry_capped_at_three` run against the seat body; the five yolo,
+  needs-human, and force-approve tests are deleted (spawned-run escalation
+  paths; the taskless prompt carries none of those phrases).
+- `test_plan_adversary_internal_research_definition.py`:
+  `test_adversary_agents_pin_the_reviewer_model` covers
+  `plan-adversary-taskless` only; every other test keeps both names.
+- `test_stage_review_schema.py`: keep `test_reject_review_uses_shared_finding_schema`
+  and `test_finding_schema_parity_with_adversary_contracts`, changing only the
+  final YAML text-parity check to read the seat body.
+- `test_plan_adversary_no_edits_on_reject.py`,
+  `test_plan_adversary_rejection.py`, `test_plan_skill_grammar.py`: run against
+  the seat body with only the loader changed.
+- `test_discovery_agents.py:210` and `test_workflows_agent_definitions.py:151`
+  read the seat body (inherited provider, no model).
 Skill references that exist today: `gobby:references/plan/drafting.md`,
 `gobby:references/plan/coverage.md`, `gobby:references/plan/review.md`,
 `gobby:references/plan/enhancement.md`, `restraint`, `proportionality`. Role
@@ -759,41 +1042,91 @@ memory review-lessons-value shows empty pools).
 enforcement is #22903's); selectors `tag:default`, `tag:roles`,
 `tag:plan-mode`; `variables: {plan_mode: true}` as `planner.yaml:118` does;
 `required_skills: [restraint, gobby:references/plan/drafting.md,
-gobby:references/plan/coverage.md]`; steps `draft` (transition to `enhance`
-when `vars.draft_validated`, set after `uv run gobby plans validate` passes),
-`enhance` (allowed MCP includes `gobby-agents:spawn_agent` guarded by 2.2 and
-`wait_for_agent`; transition to `revise` when `vars.enhancement_reviewed`),
-`revise` (transition to `adversary` when `vars.candidate_sent`), `adversary`
-(allowed MCP: `send_message`, `wait_for_coordination`, plans read; transition to
-`revise` on returned findings, to `handoff` when `vars.consensus`), `handoff`
-(sends the candidate plus disagreements to PD; transition to `draft` when a new
-planning task is claimed). No `exit_condition`. Continuity: clear between plans.
+gobby:references/plan/coverage.md]`; `step_workflow.variables: {plan_task:
+null, draft_validated: false, enhancement_reviewed: false, candidate_sent:
+false, round_received: false, round_checkpointed: false, round_finalized:
+false, consensus: false}`, each set by the seat at step scope unless a
+handler is named below; steps `load_skills` → `draft` (allowed MCP: tasks,
+plans, `gobby-workflows:set_variable`; `on_mcp_success` for
+`gobby-tasks:claim_task` binds `plan_task` from `tool_output.get('task_id')`;
+the seat sets `draft_validated` after `uv run gobby plans validate` passes;
+transition to `enhance` when `vars.draft_validated`) → `enhance` (allowed MCP
+includes `gobby-agents:spawn_agent` guarded by 2.2 and `wait_for_agent`;
+transition to `revise` when `vars.enhancement_reviewed`) → `revise` (allowed
+MCP: plans, `gobby-tasks:link_commit`, `send_message`,
+`gobby-workflows:set_variable`; `on_mcp_success`
+for `gobby-agents:send_message` with `when: 'EVENT=CANDIDATE' in
+str(tool_input.get('content'))` sets `candidate_sent` and clears
+`round_received`, `round_checkpointed`, `round_finalized`, `consensus`;
+transition to `adversary` when `vars.candidate_sent`) → `adversary` (allowed
+MCP: `send_message`, `wait_for_coordination`, plans read,
+`gobby-workflows:set_variable`; the seat sets `round_received` when the
+Adversary's canonical round result arrives; transition to `checkpoint` when
+`vars.round_received`) → `checkpoint` (allowed MCP:
+`gobby-plans:append_plan_changelog_round`, `send_message`,
+`wait_for_coordination`, `gobby-workflows:set_variable`; `on_mcp_success` for
+`gobby-plans:append_plan_changelog_round` sets `round_checkpointed`; the seat
+acknowledges by `send_message`, waits for the Adversary's finalize
+confirmation, then sets `consensus` for an approval and `round_finalized`;
+an `on_mcp_success` for `gobby-workflows:set_variable` with `when:
+tool_input.get('name') == 'round_finalized'` clears `candidate_sent`;
+transition to `revise` when `vars.round_finalized and not vars.consensus`,
+to `handoff` when `vars.round_finalized and vars.consensus`) → `handoff`
+(allowed MCP: `send_message`, `gobby-plans:update_plan_hash`, `link_commit`,
+`close_task`, `gobby-workflows:set_variable`; sends the candidate plus
+disagreements to the PD, waits for the PD's confirmation of Josh's approval,
+refreshes the registered plan's row hash and coverage manifest with
+`gobby-plans:update_plan_hash` and commits the manifest with the round file
+(memory 5538e963: the close reviewer bounces a registered plan whose manifest
+still carries the registration-time hash, and `regenerate_coverage_manifest`
+refuses until the hash moves), then closes the task; `on_mcp_success` for
+`gobby-tasks:close_task` resets every flag and `plan_task`; transition to
+`draft` when `not vars.plan_task`). No `exit_condition`. Continuity: clear
+between plans. A refused append is reported to the Adversary with the exact
+error and the step stays in `checkpoint`; until #22912 lands (D3) the seat
+records the refusal and holds the canonical plan unchanged, as this plan's
+own round 1 did.
 
 `plan-adversary`: read-only; `required_skills: [restraint, proportionality,
 gobby:references/plan/review.md, gobby:references/plan/coverage.md]`;
 `step_workflow.variables: {round_prepared: false, verdict_ready: false,
-consensus: false}`; steps `await` (allowed MCP: `send_message`, plans read,
-`prepare_plan_review_round`; `on_mcp_success` for `prepare_plan_review_round`
-sets `round_prepared: true`; transition to `review` when `vars.round_prepared`)
-→ `review` (allowed MCP: `get_plan_review_snapshot`, `derive_plan_review_manifest`,
-`validate_plan_review_coverage`, `finalize_plan_review_evidence`,
-`send_message`, the proxy `set_variable`; findings with stable ids, blocking or
-nit, category from the review vocabulary; transition to `resolve` when
-`vars.verdict_ready`) → `resolve` (loops with the Writer by `send_message` until
-`vars.consensus` or a recorded disagreement; on consensus sends the PD the
-approval payload from Decision 14; `on_mcp_success` for
-`finalize_plan_review_evidence` resets `round_prepared`; transition to `await`).
-Prompt states Decision 14: the seat derives and returns the manifest content
-and never writes M1; the PD applies it.
+consensus: false, evidence_id: null}`; steps `load_skills` → `await` (allowed
+MCP: `send_message`, `wait_for_coordination`, plans read,
+`gobby-plans:prepare_plan_review_round`; `on_mcp_success` for
+`gobby-plans:prepare_plan_review_round` sets `round_prepared` and binds
+`evidence_id` from `tool_output.get('evidence_id')`; transition to `review`
+when `vars.round_prepared`) → `review` (allowed MCP:
+`get_plan_review_snapshot`, `derive_plan_review_manifest`,
+`validate_plan_review_coverage`, `send_message`,
+`gobby-workflows:set_variable`; findings with stable ids, blocking or nit,
+category from the review vocabulary; the seat sends the Writer the canonical
+round result and sets `verdict_ready`; transition to `resolve` when
+`vars.verdict_ready`) → `resolve` (allowed MCP: `send_message`,
+`wait_for_coordination`, `gobby-plans:finalize_plan_review_evidence`,
+`gobby-workflows:set_variable`; the seat waits for the Writer's append
+acknowledgement, sets `consensus` for an approval or a recorded disagreement
+set, then finalizes with `vars.evidence_id`; `finalize_plan_review_evidence`
+is allowed in no other step; its `on_mcp_success` with `when:
+tool_input.get('evidence_id') == vars.evidence_id` resets `round_prepared`,
+`verdict_ready`, `consensus`, and `evidence_id`; transition to `await` when
+`not vars.round_prepared`; on an approval the seat then sends the PD the
+Decision 14 approval payload naming the `evidence_id` the finalize result
+returned, and both `resolve` and `await` carry `send_message`, so the send is
+allowed whichever step holds after the finalize pass). A refused finalize is reported to the Writer and PD with the
+exact error and the step stays in `resolve`. Prompt states Decision 14: the
+seat derives and returns the manifest content and never writes M1; the PD
+applies it.
 
 **Acceptance:**
 
 - 3.4.1 - `plan-writer` validates, is `seat`-tagged, and declares the
-  draft → enhance → revise → adversary → handoff loop with the bounded enhancer
-  pass and PD approval gate. file:
+  load skills → draft → enhance → revise → adversary → checkpoint → handoff
+  loop with the bounded enhancer pass, the checkpoint handshake, and the PD
+  approval gate, reset by its close-task handler. file:
   `src/gobby/install/shared/workflows/agents/plan-writer.yaml`.
 - 3.4.2 - `plan-adversary` validates as a seat, is read-only, and declares the
-  await → review → resolve loop that never writes the manifest. file:
+  load skills → await → review → resolve loop keyed on `evidence_id` that
+  never writes the manifest and allows finalize only in `resolve`. file:
   `src/gobby/install/shared/workflows/agents/plan-adversary.yaml`.
 - 3.4.3 - The review-contract wiring tests pass against the seat body: review
   and proportionality skills load before review, rejection is findings-only,
@@ -804,11 +1137,18 @@ and never writes M1; the PD applies it.
   the 1.1 `skills` removal, and the taskless reviewer contract still holds.
   test:
   `tests/agents/test_plan_adversary_internal_research_definition.py::test_taskless_review_status_allows_protocol_failure_without_verdict`.
+- 3.4.5 - Both planning seats' prompts and steps carry the Decision 14
+  checkpoint handshake (append, acknowledge, finalize, then repair or apply),
+  and one rejected and one approved static-seat round run through it once
+  #22912 lands. behavior: "append_plan_changelog_round" in
+  `src/gobby/install/shared/workflows/agents/plan-writer.yaml`.
 
 ### 3.5 Seat bundle contract test [category: test] (depends: 3.1, 3.2, 3.3, 3.4)
 `kind: deliverable`
 
-Target: `tests/workflows/test_seat_definitions.py`
+Targets:
+- `tests/workflows/test_seat_definitions.py`
+- `tests/workflows/test_seat_step_loops.py`
 
 **Research context:** `tests/workflows/test_workflows_agent_definitions.py`
 already loads every bundled YAML (`AGENTS_DIR = get_bundled_agents_path()`,
@@ -826,15 +1166,35 @@ grammar). Seat invariants to pin: `surfaces == [spawn, persona]`;
 `type`, `version`, and `version` is a body field after 1.1), which also rejects
 `terminal_backend`, `backend`, and `sandbox`; `rule_selectors.include` contains
 `tag:roles`; every `step_workflow.variables.required_skills` entry resolves;
-read-only seats (`assistant`, `lane-manager`, `code-reviewer`, `archivist`,
-`log-monitor`, `researcher`, `plan-adversary`) carry the Decision 8
-`blocked_tools` list; seats with a step workflow (`developer`, `plan-writer`,
-`plan-adversary`, `code-reviewer`, `log-monitor`) declare no `exit_condition`;
-every seat prompt contains the `## Platform Context` and `## Skills` baseline
-sections; every seat prompt mentions `gobby-agents:send_message`; the
-`developer` prompt contains `EVENT=CANDIDATE` and names `impeccable`, `rust`,
-`typescript`, and `tech-writer` in its routing table. The test runs against the
+read-only seats (`lane-manager`, `code-reviewer`, `log-monitor`,
+`researcher`, `plan-adversary`) carry the Decision 8 `blocked_tools` list;
+`assistant` and `archivist` carry no write tool in `blocked_tools` and their
+prompts name `assistant-write-scope` and `archivist-write-scope`; every seat
+with `required_skills` has a step workflow whose first step is `load_skills`
+gated on `all(skill_loaded(skill) for skill in vars.required_skills)`; seats
+with a step workflow (`developer`, `plan-writer`, `plan-adversary`,
+`code-reviewer`, `log-monitor`, `researcher`) declare no `exit_condition`;
+every step whose transition reads a flag the seat sets by hand lists
+`gobby-workflows:set_variable` in its MCP allowlist; every seat prompt
+contains the `## Platform Context` and `## Skills` baseline sections; every
+seat prompt mentions `gobby-agents:send_message`; the `developer` prompt
+contains `EVENT=CANDIDATE` and names `impeccable`, `rust`, `typescript`, and
+`tech-writer` in its routing table. The contract test runs against the
 checkout, not the database, so it needs no daemon.
+
+Loop tests: `tests/workflows/test_step_runtime_transitions.py` drives bundled
+workflows through the real engine against a temporary `HubDatabase`
+(`_setup_workflow`, `_after_mcp_tool`, `_before_mcp_set_variable`,
+`_after_set_variable`); `test_seat_step_loops.py` follows it and, for each
+loop seat, runs two consecutive units of work: `developer` claims two tasks
+in turn and `assigned_task_id` and `assigned_task_ref` rebind to the second
+after the first
+`close_task`; `code-reviewer` receives two candidates and the verdict reset
+fires only on the message naming `candidate_task`; `plan-adversary` prepares
+two rounds with distinct `evidence_id` values and finalize resets only on the
+matching id; `plan-writer` takes a rejection through `checkpoint` back to
+`revise` and an approval through `checkpoint` to `handoff`; `log-monitor`
+reports two windows and a non-report message leaves `tick_done` set.
 
 **Acceptance:**
 
@@ -849,6 +1209,10 @@ checkout, not the database, so it needs no daemon.
 - 3.5.4 - The `developer` routing table names only bundled skills and the lane
   event line. test:
   `tests/workflows/test_seat_definitions.py::test_developer_routes_skills_by_task`.
+- 3.5.5 - Every loop seat runs two consecutive units of work through the real
+  step engine with its correlation variable rebound and its flags reset by
+  the named handler, and a non-matching message leaves the step unchanged.
+  test: `tests/workflows/test_seat_step_loops.py::test_loop_seats_reset_between_units`.
 
 ## P4: Migration And Documentation
 `kind: framing`
@@ -899,10 +1263,13 @@ reference. `apply_persona` persists `_persona_name`, which survives compaction
 and re-injects the persona; the 2.x rules key on it. Retiring the roster and
 role files is #22903's (binding) work.
 
-Rollout (Decision 13): after merge, the PD calls `gobby-workflows:reload_cache`
-from the main checkout, confirms `gobby agents show <seat>` for one seat, then
-each live session calls `apply_persona` for its seat on its next turn and reports
-the receipt to the PD, as done for #22894.
+Rollout (Decision 13): after the branch lands, the PD announces the restart
+globally, restarts the daemon from the main checkout outside quiet hours,
+announces completion, inspects the startup sync result for errors and
+shadowed rows, and confirms `gobby agents show <seat>` prints the seat row
+for one seat; only then does each live session call `apply_persona` for its
+seat on its next turn and report the receipt to the PD, as done for #22894.
+`reload_cache` alone does not reload the 1.1, 2.2, and 3.2 Python.
 
 **Acceptance:**
 
@@ -984,21 +1351,66 @@ deferral:
     - 3.3.4
 ```
 
+## D3 Static-seat review checkpoint prerequisite (depends: 3.4)
+`kind: deferred`
+
+Round 1 of this plan's own review found that `append_plan_changelog_round`
+requires a `dispatch_run_id` and `bind_evidence_run` requires a live spawned
+run whose parent is the evidence session, so the Decision 14 handshake cannot
+complete for a static Adversary seat. The PD filed #22912 (static plan-review
+seat evidence binding) under #22691, blocking #22902, assigned to Lane 3
+(gobby#14531) after #22680, pending the PD's load-window GO. The seat prompts
+in 3.4 describe the handshake as the target flow and the `checkpoint` and
+`resolve` steps carry the calls; its live exercise waits on #22912 and a
+restart.
+
+```yaml
+deferral:
+  task_ref: "#22912"
+  reason: "Runtime prerequisite: interactive evidence checkpoint and finalization need a spawned run binding that a static seat cannot supply."
+  owner: "program-director"
+  original_acceptance_items:
+    - 3.4.5
+```
+
 ## V1: Verification
 `kind: verification`
 
 Run after the final edit of each leaf and again before the PD lands the branch:
 
 ```bash
-GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/test_agent_definitions_v2.py tests/workflows/test_agent_models.py tests/workflows/test_workflows_agent_definitions.py tests/workflows/test_seat_definitions.py tests/workflows/test_seat_rules.py tests/workflows/test_default_agent_role_contract.py tests/workflows/test_retired_bundled_definitions.py tests/agents/test_agents_sync.py tests/agents/test_discovery_agents.py tests/agents/test_plan_adversary_loads_plan_review.py tests/agents/test_plan_adversary_manifest.py tests/agents/test_plan_adversary_no_edits_on_reject.py tests/agents/test_plan_adversary_self_check.py tests/agents/test_plan_adversary_internal_research_definition.py tests/skills/test_plan_adversary_rejection.py tests/skills/test_plan_skill_grammar.py tests/dispatch tests/build_pipeline tests/tasks/test_expansion_service_compile_plan_12725.py -q
+GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/test_agent_definitions_v2.py tests/workflows/test_agent_models.py tests/workflows/test_workflows_agent_definitions.py tests/workflows/test_seat_definitions.py tests/workflows/test_seat_step_loops.py tests/workflows/test_seat_rules.py tests/workflows/test_condition_helpers_paths.py tests/workflows/test_step_runtime_transitions.py tests/workflows/test_default_agent_role_contract.py tests/workflows/test_retired_bundled_definitions.py tests/agents/test_agents_sync.py tests/agents/test_discovery_agents.py tests/agents/test_plan_adversary_loads_plan_review.py tests/agents/test_plan_adversary_manifest.py tests/agents/test_plan_adversary_no_edits_on_reject.py tests/agents/test_plan_adversary_self_check.py tests/agents/test_plan_adversary_internal_research_definition.py tests/skills/test_plan_adversary_rejection.py tests/skills/test_plan_skill_grammar.py tests/mcp_proxy/test_stage_review_schema.py tests/dispatch tests/build_pipeline tests/tasks/test_expansion_service_compile_plan_12725.py -q
 uv run ruff format --check src/ && uv run ruff check src/ && uv run mypy src/
 uv run gobby plans validate .gobby/plans/agent-definition-profiles.md -p /Users/josh/Projects/gobby
 ```
 
-Live check after `reload_cache` from the main checkout: `gobby agents show
-plan-writer` prints the seat row with `version: "1.0"`; the Plan Writer session
-calls `apply_persona(agent="plan-writer")` and on its next turn sees the seat
-prompt plus the shared seat guidance once; a deliberate
+Live check after the PD-owned restart (Decision 13, 4.1): `gobby agents show
+plan-writer` prints the seat row with `version: "1.0"`; the Plan Writer
+session calls `apply_persona(agent="plan-writer")` and on its next turn sees
+the seat prompt plus the shared seat guidance once; a deliberate
 `spawn_agent(agent="default")` from that session is blocked by
-`plan-writer-enhancer-only`. Do not run the full pytest suite. No daemon restart
-is required; if one is, it is announced globally before and after.
+`plan-writer-enhancer-only`; an Assistant write under `src/` is blocked by
+`assistant-write-scope`; `gobby agents show backend-developer` reports no
+such definition. Do not run the full pytest suite. The restart is announced
+globally before and after, outside quiet hours, and no seat activates before
+it.
+
+Round 1 (Adversary gobby#14579, message 5c6cf6a7, snapshot 7e975ca8): needs_review, 8 blocking and 3 nits. Writer dispositions, each accepted; repairs are staged in the Writer's private draft and land in a fresh candidate after this round is finalized.
+
+- PA-001 accept. A session boolean cannot be a per-task ledger; already_claimed reclaims and create_task(claim=true) never re-arm it. Repair: two session-variable ledgers of task UUIDs (plan_writer_planning_tasks, plan_writer_enhancer_tasks), track-claim and consumed handlers, no re-arm rule, engine tests for reclaim, create-and-claim, failed spawn, compact, and task switch (Decision 6, 2.2, acceptance 2.2.2).
+- PA-002 accept. Instance variables shadow session writes. Repair: every hand-set flag uses gobby-workflows:set_variable(scope="step") named in the step's MCP allowlist, handlers for tool-driven flags, 3.5 invariant (P3 intro, every seat).
+- PA-003 accept. Repair: every seat with required_skills opens with a load_skills step gated on all(skill_loaded(...)); researcher gets load_skills -> serve; developer gains route_skills before the load gate so task-derived skills are merged before the empty-list transition (Decision 7, P3 intro, 3.2, 3.3, 3.5).
+- PA-004 accept. Repair: each loop seat carries a correlation variable (assigned_task_id/assigned_task_ref, candidate_task, tick_window, evidence_id, plan_task), resets in the handler of the call that ends the unit, handlers live on the step that runs the tool, message handlers match the event and id; 3.5 engine tests run two consecutive units per seat (3.2, 3.3, 3.4, acceptance 3.5.5).
+- PA-005 accept. Repair: Decision 14 and 3.4 specify the append, acknowledge, finalize, then repair or apply handshake with refusal handling and fresh-round behavior; Josh's approval precedes expansion. The static-seat runtime gap (dispatch_run_id, bind_evidence_run) is recorded as D3 on #22912, which has since landed and is being exercised by this very append.
+- PA-006 accept. Repair: assistant and archivist carry no write block; their scope is a path-aware before_tool rule (seat-write-scope.yaml) using a registered write_paths_within helper in a new condition_helpers_paths.py, registration moved out of safe_evaluator.py to respect its size; tests for allowed, blocked, and opaque writes (Decision 8, 2.2, 3.1, 3.3).
+- PA-007 accept. Repair: storage/definitions/agents.py::parent_body drops an empty stored skills map on read; non-empty stored maps outside bundled ownership are inventoried and rewritten before the schema cutover; bundled rows refresh by sync drift; sync.py and imports.py listed as consumers unchanged with reasons (1.1, acceptance 1.1.4).
+- PA-008 accept. Repair: rollout is a PD-owned restart from the main checkout after the branch lands, then sync inspection, then activation; reload_cache only for later data-only changes; V1 live checks for version, retired-name routing, and persona receipt (Decision 13, 4.1, V1).
+- PA-009 accept (nit). Decision 2 now states the seat tag is a template catalogue marker read by the 3.5 file test only; sync writes tags=[gobby].
+- PA-010 accept (nit). 3.4 keeps both API tests in test_stage_review_schema.py, changes only the final YAML text-parity check, and names the exact assertions to retarget or delete per module.
+- PA-011 accept (nit). docs/contracts/plan-coverage.md joins the 3.2 Targets so Category and TDD Policy maps to the single developer definition.
+
+No disagreements to escalate. Canonical bytes of the reviewed artifact are unchanged for this checkpoint; the repaired candidate is validated and will be committed after finalization.
+
+```json plan-review-round
+{"evidence_id":"954b3556-9531-49b2-86cf-8f576146bf25","plan_hash":"7e975ca8a25544c45c1117da4ed61c47a0c83dc55f953ae97f9b142f83fcf78c","round_number":1,"round_result":{"coverage_attestation":{"adjacent_variant_complete":true,"attestation_digest":"fc21ffce3ce7a7a8e747f54be5963d4a76bf65f37e13747fc277f5936e71b807","cross_lane_interaction_complete":true,"disposition_counts":{"dismissed":0,"emitted_findings":11,"total":11},"evidence_id":"954b3556-9531-49b2-86cf-8f576146bf25","lanes":[{"candidate_count":2,"lane_id":"requirements_traceability","status":"completed"},{"candidate_count":3,"lane_id":"repository_blast_radius","status":"delegated-verified"},{"candidate_count":6,"lane_id":"runtime_invariants","status":"completed"}],"shadow_manifest_status":{"entry_count":10,"manifest_digest":"741daeaf1505adf20aefbb12a14bf8ae16f79b7a877c6968788c5ef4514a8ec4","status":"valid"},"source_digest":"183135622ef42f9a5d21c6d6f9e47c4cffe2951547a5e36e284ee0d66a7c5b44","version":1},"findings":[{"category":"unhandled-edge","check_key":"enhancer-budget-bound-to-task","description":"The budget is a session boolean reset by every successful claim_task response containing task_id. claim_task returns success=true, task_id, already_claimed=true when the same session reclaims the same task (src/gobby/mcp_proxy/tools/tasks/_lifecycle_claim.py). Thus claim A → enhancer → claim A grants another pass. task_claimed only means the claim map is nonempty; it does not prove category=planning. create_task(claim=true) and context loss also have no defined budget behavior.","finding_id":"PA-001","fix":"Bind enhancer eligibility and consumption to the canonical claimed planning-task UUID. Define same-task reclaim, create-and-claim, failed spawn, context loss, and task switch behavior; never reset consumption solely because claim_task succeeded. Specify the exact event payload access and add engine tests for each case.","location":"§2.2 enhancer-only, consumed, and rearm rules","prevention":"Test the full allowance lifecycle with real claim response shapes, including already_claimed and non-planning claims.","root_cause":"A session flag is being used as a per-task authorization ledger.","section_id":"2.2","severity":"blocking"},{"category":"unhandled-edge","check_key":"step-state-write-scope","description":"The specified proxy top-level set_variable writes session scope only (stdio_tools.py::set_variable). The engine evaluates transitions with instance.variables overriding session variables and deliberately does not copy a native write over an existing instance key (enforcement_completion.py::_process_step_after_tool). candidate_received, verdict_ready, tick_done, consensus, and additional_skills are declared in the step instance, so the proposed manual writes cannot advance those gates.","finding_id":"PA-002","fix":"Specify gobby-workflows:set_variable with scope='step' for workflow-local state, with its schema-discovery and MCP allowlist entries, or use correlated on_mcp_success handlers. Reserve top-level set_variable for genuinely session-scoped state. Sweep every seat and add real-engine transition tests that use the exact public call shape.","location":"§3.2–3.4 manually set step variables","prevention":"Exercise transitions through the public variable tool instead of mutating instance fixtures directly.","root_cause":"Session state and workflow-instance state are separate stores with instance precedence.","section_id":"3.4","severity":"blocking"},{"category":"missing-requirement","check_key":"required-skills-have-reachable-load-path","description":"§3.4 promises a load_skill gate before review, but its actual await→review→resolve specification has no load_skill step and its await/review MCP allowlists omit the skill loaders. Code-reviewer likewise declares required skills without a load gate. Researcher has no step_workflow yet is assigned required_skills, whose only supported storage/read location is step_workflow.variables (dispatch/skill_composition.py). Developer starts with additional_skills=[] and the engine chains transitions, so it can leave the load gate before task-derived skills are populated.","finding_id":"PA-003","fix":"Give each seat an explicit supported skill attachment and loading contract. Add a reachable, tracked skill-loading gate for workflow seats; decide how the workflow-free researcher must load its three skills without introducing an ignored field. Populate/merge developer task and domain skills before evaluating the empty-list transition, preserving task-supplied TDD skills. Test refused review/implementation before complete loads and successful admission afterward.","location":"§3.2 task skill routing; §3.3 researcher/reviewer skills; §3.4 load_skill contract; §3.5 checks","prevention":"Validate executable admission behavior, including first use and task changes, rather than only resolving skill names on disk.","root_cause":"Declaring a list of required skills does not execute or enforce loading it.","section_id":"3.4","severity":"blocking"},{"category":"unhandled-edge","check_key":"persistent-loops-reset-and-correlate","description":"The proposed persistent loops do not define complete round/task resets. The Adversary allows finalize_plan_review_evidence in review but attaches its round_prepared reset only to resolve, whose handlers cannot see that earlier completion. verdict_ready/consensus stay true across returns to await; the engine immediately follows successive true transitions. Writer likewise leaves draft_validated/enhancement_reviewed/candidate_sent/consensus stale. Developer resets task_claimed on any send_message in submit, without matching the candidate/task or rebinding assigned_task_id for the next claim; inherited completion handlers compare against assigned_task_id. Several idle steps also omit the event-driven wait tools.","finding_id":"PA-004","fix":"Specify state ownership, initialization, matching task/evidence IDs, reset timing, and allowed wait tools for every reusable loop. Place each success handler in the step that executes its tool; condition message completion on the intended recipient/event/task. For the developer, bind the new claimed UUID and define candidate/bounce/close flow. Add engine tests for two consecutive tasks/rounds, rejection then revision, unrelated messages, failed tools, and idle wait.","location":"§3.2 submit loop; §3.3 observation/reviewer loops; §3.4 Writer/Adversary loops","prevention":"Run each proposed loop twice with real handler and transition evaluation; verify that stale flags cannot skip a phase.","root_cause":"One-shot step fragments were converted to long-lived loops without closing their lifecycle.","section_id":"3.4","severity":"blocking"},{"category":"bad-sequencing","check_key":"interactive-review-checkpoint-before-finalize","description":"The static-seat flow calls finalize_plan_review_evidence without first creating a durable canonical V1 checkpoint. Interactive evidence finalization calls require_durable_checkpoint, which raises missing_v1_checkpoint unless append_plan_changelog_round has written the matching canonical round (review_checkpoint_service.py:98). The seat is correctly forbidden to write the plan, but no Writer/PD append-and-ack step is specified for either verdict.","finding_id":"PA-005","fix":"Specify the existing-tool handshake: Adversary sends canonical result; coordinator records individual finding dispositions and appends the canonical round; coordinator acknowledges the checkpoint; the designated owner finalizes evidence; only then may Writer repair/revise or PD proceed toward approved manifest application. Include failure/retry and fresh-round behavior, and retain explicit Josh approval before expansion.","location":"Decision 14 and §3.4 evidence finalization protocol","prevention":"Exercise one rejected and one approved static-seat round through append/finalize without a spawned run_id.","root_cause":"The protocol omitted a durable checkpoint required by the existing interactive evidence API.","section_id":"3.4","severity":"blocking"},{"category":"missing-requirement","check_key":"write-exceptions-representable-in-definition","description":"Assistant and Archivist must write permitted files, but both are required to carry a global block on Write/Edit/apply_patch and other write tools. _check_agent_tool_enforcement enforces those blocks unconditionally before later exemptions; it has no path exception. Prose cannot make the allowed digest/docs write work for the declared spawn surface, and the plan assigns future exception enforcement to activation without defining the declarative policy that activation could consume.","finding_id":"PA-006","fix":"Choose and specify a compatible declaration: use an existing path-aware rule/capability for the allowed writes and avoid contradictory global tool blocks, or define a concrete jointly owned activation contract and defer those seats' enforced rollout until it lands. Carry the assistant/archivist allowed and denied paths into acceptance tests; do not require both an unconditional block and a successful exception.","location":"Decision 8; §3.1 assistant carve-out; §3.3 archivist digest; §3.5 blanket blocklist","prevention":"Test one permitted and one forbidden write for each seat with an exception, on both supported activation surfaces.","root_cause":"Tool-wide denial and path-scoped write authority are being treated as interchangeable.","section_id":"3.3","severity":"blocking"},{"category":"unhandled-edge","check_key":"persisted-skill-key-migration","description":"Current AgentDefinitionBody.model_dump includes skills (even its default empty map), and bundled sync writes that body into definition_json. _body_from_row validates stored bodies directly. Rejecting any skills key makes old stored bodies invalid until rewritten; sync only refreshes managed bundled rows and explicitly skips unmanaged/shadowing rows. Removing ten YAML maps does not specify treatment of persisted custom/project/soft-deleted bodies. D1 covers other persistence defects and does not assign this new schema migration.","finding_id":"PA-007","fix":"Inventory affected persisted definition and snapshot forms and specify their one-time migration or explicit retirement, preserving user-owned content and the chosen prose migration policy. Add the actual migration owner/Targets and tests proving an old stored body can resolve after cutover, while new submitted skills keys are rejected. If a separate prerequisite owns it, record a concrete typed dependency and gate the schema cutover.","location":"§1.1 schema retirement and D1 persistence boundary","prevention":"Test the schema change against pre-change serialized bodies, including unmanaged definitions, rather than only new YAML.","root_cause":"Input-schema rejection was planned without the storage transition for data serialized by the old model.","section_id":"1.1","severity":"blocking"},{"category":"bad-sequencing","check_key":"rollout-reloads-python-code-before-sync","description":"The plan changes Python model and routing code but says reload_cache makes rollout live without a restart. reload_cache re-syncs definitions and clears the pipeline cache; it does not reload AgentDefinitionBody, dispatch, or expansion modules. A daemon holding the old model still drops version and accepts the retired skills field, and retains old routing after the YAMLs have been deleted. Checking one displayed seat does not establish a coherent runtime cutover.","finding_id":"PA-008","fix":"Require a coordinated PD-owned daemon restart/cutover after the Python changes are installed, unless an already-completed fresh process is explicitly verified. Sync under that process, inspect sync errors/shadowed rows, then activate the seats. Keep reload_cache-only rollout for subsequent data-only changes. Add bounded live checks for stored version, retired-name routing, and the intended persona/rule receipt.","location":"Decision 13; §4.1 rollout; V1 live verification","prevention":"Separate Python process activation from registry/cache refresh in rollout acceptance.","root_cause":"Refreshing stored configuration was mistaken for reloading imported Python code.","section_id":"4.1","severity":"blocking"},{"category":"traceability","check_key":"seat-tag-runtime-vs-template-contract","description":"The seat tag is currently template-only: AgentDefinitionBody ignores tags and sync_bundled_agents creates/restores rows with tags=['gobby']; _build_agent_update_fields does not propagate YAML tags. The new file-based test passes while installed rows are not seat-tagged.","finding_id":"PA-009","fix":"State explicitly that seat is a template catalogue marker if no runtime consumer needs it. If installed seat metadata is intended, target sync tag propagation and test create/update/restore while preserving ownership tags.","location":"Decision 2; §3.5 seat-tagged catalogue test","prevention":"Distinguish raw YAML metadata checks from assertions about installed rows.","root_cause":"File-only contract tests do not cover the sync projection.","section_id":"3.5","severity":"nit"},{"category":"weak-testability","check_key":"test-retarget-keeps-independent-api-contract","description":"tests/mcp_proxy/test_stage_review_schema.py is not entirely a retired agent-shape test. test_reject_review_uses_shared_finding_schema tests the live reject_review API and never reads agent YAML; test_finding_schema_parity_with_adversary_contracts mostly tests that same API and only its final check concatenates the two YAML texts. The broad 'retarget to plan-adversary-taskless or delete' instruction is avoidably ambiguous.","finding_id":"PA-010","fix":"Keep both API schema tests; adjust only the staged-file textual parity check if needed, and name the exact obsolete step/model assertions to remove or retarget in the eight wiring modules. Add seat-specific counterparts for retained behavior rather than weakening assertions to fit the new YAML.","location":"§3.4 retarget-or-delete test instructions","prevention":"Classify each assertion by its behavior owner before retiring a definition.","root_cause":"Module-level labels conflate agent-shape checks with independent live API contracts.","section_id":"3.4","severity":"nit"},{"category":"traceability","check_key":"canonical-routing-doc-updated","description":"The mandatory Plan-Coverage Contract still states that backend/frontend/fullstack route to the three definitions this plan deletes (docs/contracts/plan-coverage.md:507-515). Neither 3.2 nor 4.2 owns that canonical documentation consumer.","finding_id":"PA-011","fix":"Add docs/contracts/plan-coverage.md to the routing migration or a dependent docs deliverable and update Category/TDD Policy to the single-developer mapping while retaining implementation_domain semantics.","location":"§3.2 routing migration and §4.2 documentation Targets","prevention":"Include canonical contracts in the literal consumer sweep.","root_cause":"The rename inventory covered runtime/prompt consumers but missed the governing contract.","section_id":"4.2","severity":"nit"}],"verdict":"needs_review"},"session_id":"3ce7b2cd-1a6c-4946-893c-cc4d5ac0fd9e"}
+```
