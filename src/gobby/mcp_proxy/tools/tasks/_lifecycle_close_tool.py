@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Literal
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -35,10 +36,10 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
         response_detail: Literal["concise", "diagnostic"] = "concise",
     ) -> dict[str, Any]:
         if not preview:
-            active = active_review_response(ctx, task_id)
+            active = await asyncio.to_thread(active_review_response, ctx, task_id)
             if active is not None:
                 return active
-            supersede_close_retry_wait(ctx, task_id)
+            await asyncio.to_thread(supersede_close_retry_wait, ctx, task_id)
         close_arguments = {
             "task_id": task_id,
             "reason": reason,

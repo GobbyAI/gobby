@@ -1041,6 +1041,46 @@ async def test_blocked_preview_returns_diagnostics_without_commit() -> None:
     commit.assert_not_awaited()
 
 
+@pytest.mark.parametrize("blocked_name", ["active_review_response", "supersede_close_retry_wait"])
+async def test_close_prelude_storage_keeps_loop_responsive(blocked_name: str) -> None:
+    ctx = _ctx(_task())
+    registry = InternalToolRegistry("gobby-tasks")
+    register_close_task(registry, ctx)
+    evaluation = CloseEvaluation("task").fail(
+        9, "uncommitted_task_edits", "uncommitted_task_edits", "Commit task edits."
+    )
+    owner_thread = threading.get_ident()
+    entered = threading.Event()
+    release = threading.Event()
+
+    def blocked(*_args: object, **_kwargs: object) -> None:
+        entered.set()
+        assert threading.get_ident() != owner_thread
+        assert release.wait(2)
+
+    active = blocked if blocked_name == "active_review_response" else lambda *_args: None
+    supersede = blocked if blocked_name == "supersede_close_retry_wait" else lambda *_args: None
+
+    with (
+        patch.object(close_tool, "active_review_response", active),
+        patch.object(close_tool, "supersede_close_retry_wait", supersede),
+        patch.object(close_tool, "_evaluate_close", AsyncMock(return_value=evaluation)),
+    ):
+        request = asyncio.create_task(
+            registry.call("close_task", {"task_id": "task", "changes_summary": "Implemented."})
+        )
+        try:
+            assert await asyncio.wait_for(asyncio.to_thread(entered.wait, 2), timeout=3)
+            heartbeat = asyncio.Event()
+            asyncio.get_running_loop().call_soon(heartbeat.set)
+            await asyncio.wait_for(heartbeat.wait(), timeout=1)
+        finally:
+            release.set()
+            result = await request
+
+    assert result["closed"] is False
+
+
 @pytest.mark.asyncio
 async def test_ready_preview_returns_same_evaluation_without_committing() -> None:
     ctx = _ctx(_task())
