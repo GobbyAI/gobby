@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import threading
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
@@ -2435,3 +2437,80 @@ async def test_idle_reprompt_drains_with_clear_sequence(
     ]
     assert ("key", "escape") not in _runtime_of(monitor).write_log
     assert monitor._idle_detector.get_state(run.id).reprompt_count == 1
+
+
+@pytest.mark.parametrize("cancel_first", [False, True])
+async def test_concurrent_idle_reprompts_serialize_settle_and_send(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    agent_run_manager: LocalAgentRunManager,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    cancel_first: bool,
+) -> None:
+    transcript_path = tmp_path / "codex-concurrent-reprompt.jsonl"
+    _write_codex_lifecycle_transcript(transcript_path)
+    monitor, run = _make_idle_monitor_run(
+        temp_db=temp_db,
+        session_manager=session_manager,
+        sample_project=sample_project,
+        agent_run_manager=agent_run_manager,
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd1099",
+        transcript_path=transcript_path,
+    )
+    recovery = monitor._idle_check_handler._recovery
+    target = recovery._write_target(run)
+    assert target is not None
+    _terminal, coordinator = target
+    settling = threading.Event()
+    release = threading.Event()
+    second_requested = asyncio.Event()
+    original_lock = coordinator.logical_action_lock
+    lock_calls = 0
+    operations: list[str] = []
+
+    def track_lock(terminal_id: str) -> asyncio.Lock:
+        nonlocal lock_calls
+        lock_calls += 1
+        if lock_calls == 2:
+            second_requested.set()
+        return original_lock(terminal_id)
+
+    def hold_first_settle(_terminal_id: str, _action_key: str) -> None:
+        if not settling.is_set():
+            settling.set()
+            assert release.wait(timeout=5)
+
+    async def record_delivery(
+        _coordinator: Any, _terminal_id: str, action_key: str, _steps: Any
+    ) -> bool:
+        operations.append("clear" if action_key.startswith("idle-reprompt-clear:") else "send")
+        return True
+
+    monkeypatch.setattr(coordinator, "logical_action_lock", track_lock)
+    monkeypatch.setattr(coordinator, "observe_resolved", hold_first_settle)
+    monkeypatch.setattr(recovery, "_deliver", record_delivery)
+
+    first = asyncio.create_task(
+        recovery._attempt_idle_reprompt(run, tmux_name="test", reprompt_message="continue")
+    )
+    assert await asyncio.to_thread(settling.wait, 5)
+    second = asyncio.create_task(
+        recovery._attempt_idle_reprompt(run, tmux_name="test", reprompt_message="continue")
+    )
+    await asyncio.wait_for(second_requested.wait(), timeout=5)
+    assert operations == ["clear"]
+    if cancel_first:
+        first.cancel()
+        await asyncio.sleep(0)
+        assert operations == ["clear"]
+    release.set()
+    if cancel_first:
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        assert await second
+        assert operations == ["clear", "clear", "send"]
+    else:
+        assert all(await asyncio.gather(first, second))
+        assert operations == ["clear", "send", "clear", "send"]

@@ -76,16 +76,18 @@ class TerminalEffectBridge:
         marker: threading.Event,
         waiter_returned: threading.Event,
     ) -> WriteOutcome:
-        async def marked_write() -> WriteOutcome:
-            outcome = await self._coordinator.write(request, on_dispatch=marker.set)
+        def retain_if_late(_outcome: WriteOutcome) -> None:
             if waiter_returned.is_set() and request.origin == "automatic":
-                await asyncio.to_thread(
-                    self._coordinator.retain_unresolved,
+                self._coordinator.retain_unresolved(
                     request.terminal_id,
                     request.action_key,
                     request.origin,
                 )
-            return outcome
+
+        async def marked_write() -> WriteOutcome:
+            return await self._coordinator.write(
+                request, on_dispatch=marker.set, on_settled=retain_if_late
+            )
 
         task = asyncio.create_task(marked_write())
         item = _InFlight(task=task, terminal_id=request.terminal_id, action_key=request.action_key)

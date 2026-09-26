@@ -78,6 +78,16 @@ def _interrupt_run(run_manager: Any, run_id: str | None) -> None:
         cancel(run_id, terminal_reason="daemon_stop")
 
 
+def _orphan_and_interrupt(
+    terminal_manager: SupportsIdentityLookup,
+    run_manager: Any | None,
+    terminal_id: str,
+    run_id: str | None,
+) -> None:
+    terminal_manager.mark_orphaned(terminal_id)
+    _interrupt_run(run_manager, run_id)
+
+
 def _canonical_terminal_id(terminal_id: str) -> str | None:
     """Normalize a host row's gobby terminals-table id.
 
@@ -249,8 +259,15 @@ async def reconcile_host_inventory(
             await _settle_offloop(partial(terminal_manager.mark_exited, durable.id))
             continue
         if durable.state == "live" and durable.host_epoch != host_epoch:
-            await _settle_offloop(partial(terminal_manager.mark_orphaned, durable.id))
-            await _settle_offloop(partial(_interrupt_run, run_manager, durable.agent_run_id))
+            await _settle_offloop(
+                partial(
+                    _orphan_and_interrupt,
+                    terminal_manager,
+                    run_manager,
+                    durable.id,
+                    durable.agent_run_id,
+                )
+            )
             continue
         if (
             durable.state == "orphaned"

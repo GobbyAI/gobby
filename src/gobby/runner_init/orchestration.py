@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
@@ -147,46 +146,47 @@ async def _send_tmux_session_wake(
     if terminal is None:
         raise RuntimeError(f"no terminal for wake identity {identity}")
     action_key = f"wake:{terminal.id}"
-    steps: list[WriteRequest | SequenceDelay] = []
-    if not submit:
-        steps.append(
-            WriteRequest(
-                terminal_id=terminal.id,
-                action_key=action_key,
-                origin="automatic",
-                kind="text",
-                payload=message,
-            )
-        )
-    else:
-        literal_text = message.rstrip("\n")
-        if clear_before_submit:
-            await _drain_composer_before_wake(coordinator, terminal, identity, cli_source)
-            if literal_text:
-                steps.append(SequenceDelay(seconds=TMUX_TEXT_ENTER_DELAY_SECONDS))
-        if literal_text:
+    async with coordinator.logical_action_lock(terminal.id):
+        steps: list[WriteRequest | SequenceDelay] = []
+        if not submit:
             steps.append(
                 WriteRequest(
                     terminal_id=terminal.id,
                     action_key=action_key,
                     origin="automatic",
                     kind="text",
-                    payload=literal_text,
+                    payload=message,
                 )
             )
-            steps.append(SequenceDelay(seconds=TMUX_TEXT_ENTER_DELAY_SECONDS))
-        steps.append(
-            WriteRequest(
-                terminal_id=terminal.id,
-                action_key=action_key,
-                origin="automatic",
-                kind="key",
-                payload="enter",
+        else:
+            literal_text = message.rstrip("\n")
+            if clear_before_submit:
+                await _drain_composer_before_wake(coordinator, terminal, identity, cli_source)
+                if literal_text:
+                    steps.append(SequenceDelay(seconds=TMUX_TEXT_ENTER_DELAY_SECONDS))
+            if literal_text:
+                steps.append(
+                    WriteRequest(
+                        terminal_id=terminal.id,
+                        action_key=action_key,
+                        origin="automatic",
+                        kind="text",
+                        payload=literal_text,
+                    )
+                )
+                steps.append(SequenceDelay(seconds=TMUX_TEXT_ENTER_DELAY_SECONDS))
+            steps.append(
+                WriteRequest(
+                    terminal_id=terminal.id,
+                    action_key=action_key,
+                    origin="automatic",
+                    kind="key",
+                    payload="enter",
+                )
             )
+        await _deliver_wake_action(
+            coordinator, terminal.id, identity, action_key=action_key, steps=steps
         )
-    await _deliver_wake_action(
-        coordinator, terminal.id, identity, action_key=action_key, steps=steps
-    )
 
 
 async def _deliver_wake_action(
@@ -283,7 +283,7 @@ async def _settle_earlier_wake(coordinator: Any, terminal: Any, action_key: str)
         terminal.id,
         latched.get("at", "quarantine"),
     )
-    await asyncio.to_thread(coordinator.observe_resolved, terminal.id, action_key)
+    await coordinator.observe_resolved_async(terminal.id, action_key)
 
 
 async def _send_tmux_pane_wake(

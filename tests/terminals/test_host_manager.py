@@ -33,6 +33,7 @@ from gobby.terminals.host_reconcile import ReconcileError, reconcile_host_invent
 from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.utils.machine_id import require_machine_id
 from tests._timing import wait_for_condition
+from tests.terminals.fakes import MemoryTerminalStore, make_memory_terminal
 from tests.terminals.host_fakes import (
     FakeControlClient,
     FakeHostProcess,
@@ -1177,6 +1178,44 @@ async def test_reconcile_batches_identity_reads_off_loop(
     assert batches == [[row.id for row in pending]]
     assert [_loaded(base, row.id).state for row in pending] == ["live"] * 3
     kill.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_orphan_transition_still_interrupts_agent_run() -> None:
+    terminal = make_memory_terminal(backend="native")
+    terminal.host_epoch = "old-epoch"
+    terminal.agent_run_id = "run-orphaned"
+    started = threading.Event()
+    release = threading.Event()
+
+    class BlockingStore(MemoryTerminalStore):
+        def mark_orphaned(self, terminal_id: str) -> Terminal | None:
+            result = super().mark_orphaned(terminal_id)
+            started.set()
+            assert release.wait(timeout=5)
+            return result
+
+    store = BlockingStore(terminal)
+    runs = FakeRunManager()
+    task = asyncio.create_task(
+        reconcile_host_inventory(
+            terminal_manager=store,
+            machine_id=terminal.machine_id,
+            host_epoch="new-epoch",
+            host_rows=[],
+            spawn_in_doubt_seconds=60,
+            run_manager=runs,
+            kill=AsyncMock(),
+        )
+    )
+    assert await asyncio.to_thread(started.wait, 5)
+    task.cancel()
+    assert runs.interrupted == []
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert terminal.state == "orphaned"
+    assert runs.interrupted == ["run-orphaned"]
 
 
 @pytest.mark.asyncio
