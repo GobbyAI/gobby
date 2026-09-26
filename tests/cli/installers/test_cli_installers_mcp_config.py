@@ -20,7 +20,6 @@ from gobby.cli.installers.mcp_config import (
     remove_mcp_server_json,
     remove_mcp_server_toml,
     remove_project_mcp_server,
-    strip_mcp_tool_overrides_toml,
 )
 from gobby.cli.installers.mcp_config_json import _resolved_gobby_mcp_command
 from gobby.cli.installers.mcp_config_shared import _remove_toml_table_block
@@ -315,6 +314,7 @@ class TestConfigureMCPServerTOML:
             "args": ["mcp-server"],
             "startup_timeout_sec": 120,
             "tool_timeout_sec": 360,
+            "default_tools_approval_mode": "approve",
         }
 
     def test_appends_to_existing(self, tmp_path: Path) -> None:
@@ -334,6 +334,7 @@ class TestConfigureMCPServerTOML:
             '[mcp_servers.gobby]\ncommand = "uv"\n'
             "startup_timeout_sec = 120\n"
             "tool_timeout_sec = 360\n"
+            'default_tools_approval_mode = "approve"\n'
         )
         result = configure_mcp_server_toml(config)
         assert result["success"] is True
@@ -367,6 +368,41 @@ class TestConfigureMCPServerTOML:
         assert second_result["already_configured"] is True
         assert config.read_text() == first_content
 
+    def test_adds_missing_default_tools_approval_mode(self, tmp_path: Path) -> None:
+        config = tmp_path / "config.toml"
+        config.write_text(
+            '[mcp_servers.gobby]\ncommand = "gobby"\nargs = ["mcp-server"]\n'
+            "startup_timeout_sec = 120\ntool_timeout_sec = 360\n\n"
+            "[mcp_servers.gobby.tools.call_tool]\n"
+            'approval_mode = "approve"\n'
+        )
+
+        result = configure_mcp_server_toml(config)
+
+        assert result["success"] is True
+        assert result["updated"] is True
+        gobby_server = tomllib.loads(config.read_text())["mcp_servers"]["gobby"]
+        assert gobby_server["default_tools_approval_mode"] == "approve"
+        assert gobby_server["tools"] == {"call_tool": {"approval_mode": "approve"}}
+
+    def test_replaces_wrong_default_tools_approval_mode(self, tmp_path: Path) -> None:
+        config = tmp_path / "config.toml"
+        config.write_text(
+            '[mcp_servers.gobby]\ncommand = "gobby"\nargs = ["mcp-server"]\n'
+            "startup_timeout_sec = 120\ntool_timeout_sec = 360\n"
+            'default_tools_approval_mode = "prompt"\n'
+        )
+
+        first_result = configure_mcp_server_toml(config)
+        first_content = config.read_text()
+        second_result = configure_mcp_server_toml(config)
+
+        assert first_result["updated"] is True
+        parsed = tomllib.loads(first_content)
+        assert parsed["mcp_servers"]["gobby"]["default_tools_approval_mode"] == "approve"
+        assert second_result["already_configured"] is True
+        assert config.read_text() == first_content
+
     def test_repairs_uv_run_stale_config(self, tmp_path: Path) -> None:
         config = tmp_path / "config.toml"
         config.write_text(
@@ -383,6 +419,7 @@ class TestConfigureMCPServerTOML:
             "args": ["mcp-server"],
             "startup_timeout_sec": 120,
             "tool_timeout_sec": 360,
+            "default_tools_approval_mode": "approve",
         }
 
     def test_repairs_uv_run_directory_stale_config(self, tmp_path: Path) -> None:
@@ -401,6 +438,7 @@ class TestConfigureMCPServerTOML:
             "args": ["mcp-server"],
             "startup_timeout_sec": 120,
             "tool_timeout_sec": 360,
+            "default_tools_approval_mode": "approve",
         }
 
     def test_keeps_uv_run_project_config(self, tmp_path: Path) -> None:
@@ -410,6 +448,7 @@ class TestConfigureMCPServerTOML:
             'args = ["run", "--project", "/repo/gobby", "gobby", "mcp-server"]\n'
             "startup_timeout_sec = 120\n"
             "tool_timeout_sec = 360\n"
+            'default_tools_approval_mode = "approve"\n'
         )
         result = configure_mcp_server_toml(config)
 
@@ -524,149 +563,6 @@ class TestRemoveMCPServerTOML:
         content = config.read_text()
         assert "# top comment" in content
         assert "# keep this comment" in content
-
-
-# ---------------------------------------------------------------------------
-# strip_mcp_tool_overrides_toml
-# ---------------------------------------------------------------------------
-
-
-class TestStripMCPToolOverridesTOML:
-    """Tests for strip_mcp_tool_overrides_toml."""
-
-    def test_file_not_exists(self, tmp_path: Path) -> None:
-        config = tmp_path / "config.toml"
-        result = strip_mcp_tool_overrides_toml(config)
-        assert result["success"] is True
-        assert result["stripped"] is False
-
-    def test_no_mcp_servers(self, tmp_path: Path) -> None:
-        config = tmp_path / "config.toml"
-        config.write_text('model = "gpt-5.4"\n')
-        result = strip_mcp_tool_overrides_toml(config)
-        assert result["success"] is True
-        assert result["stripped"] is False
-
-    def test_server_not_present(self, tmp_path: Path) -> None:
-        config = tmp_path / "config.toml"
-        config.write_text('[mcp_servers.other]\ncommand = "node"\n')
-        result = strip_mcp_tool_overrides_toml(config)
-        assert result["success"] is True
-        assert result["stripped"] is False
-
-    def test_no_tools_subtable(self, tmp_path: Path) -> None:
-        config = tmp_path / "config.toml"
-        config.write_text(
-            '[mcp_servers.gobby]\ncommand = "uv"\nargs = ["run", "gobby", "mcp-server"]\n'
-        )
-        result = strip_mcp_tool_overrides_toml(config)
-        assert result["success"] is True
-        assert result["stripped"] is False
-
-    def test_strips_tools(self, tmp_path: Path) -> None:
-        config = tmp_path / "config.toml"
-        config.write_text(
-            '[mcp_servers.gobby]\ncommand = "uv"\n'
-            'args = ["run", "gobby", "mcp-server"]\n\n'
-            "[mcp_servers.gobby.tools.call_tool]\n"
-            'approval_mode = "approve"\n\n'
-            "[mcp_servers.gobby.tools.get_tool_schema]\n"
-            'approval_mode = "approve"\n'
-        )
-        result = strip_mcp_tool_overrides_toml(config)
-        assert result["success"] is True
-        assert result["stripped"] is True
-        content = config.read_text()
-        assert "tools" not in content
-        assert "approval_mode" not in content
-        assert "command" in content
-        assert "uv" in content
-
-    def test_preserves_other_servers(self, tmp_path: Path) -> None:
-        config = tmp_path / "config.toml"
-        config.write_text(
-            '[mcp_servers.gobby]\ncommand = "uv"\n\n'
-            "[mcp_servers.gobby.tools.call_tool]\n"
-            'approval_mode = "approve"\n\n'
-            '[mcp_servers.other]\ncommand = "node"\n\n'
-            "[mcp_servers.other.tools.search]\n"
-            'approval_mode = "approve"\n'
-        )
-        result = strip_mcp_tool_overrides_toml(config)
-        assert result["success"] is True
-        assert result["stripped"] is True
-        with open(config, "rb") as f:
-            parsed = tomllib.load(f)
-        # gobby tools stripped
-        assert "tools" not in parsed["mcp_servers"]["gobby"]
-        # other server tools preserved
-        assert "tools" in parsed["mcp_servers"]["other"]
-        assert "search" in parsed["mcp_servers"]["other"]["tools"]
-
-    def test_creates_backup(self, tmp_path: Path) -> None:
-        config = tmp_path / "config.toml"
-        original = (
-            '[mcp_servers.gobby]\ncommand = "uv"\n\n'
-            "[mcp_servers.gobby.tools.call_tool]\n"
-            'approval_mode = "approve"\n'
-        )
-        config.write_text(original)
-        result = strip_mcp_tool_overrides_toml(config)
-        assert result["success"] is True
-        assert result["backup_path"] is not None
-        backup = Path(result["backup_path"])
-        assert backup.exists()
-        assert backup.read_text() == original
-
-    def test_custom_server_name(self, tmp_path: Path) -> None:
-        config = tmp_path / "config.toml"
-        config.write_text(
-            '[mcp_servers.custom]\ncommand = "uv"\n\n'
-            "[mcp_servers.custom.tools.call_tool]\n"
-            'approval_mode = "approve"\n'
-        )
-        result = strip_mcp_tool_overrides_toml(config, server_name="custom")
-        assert result["success"] is True
-        assert result["stripped"] is True
-        with open(config, "rb") as f:
-            parsed = tomllib.load(f)
-        assert "tools" not in parsed["mcp_servers"]["custom"]
-
-    def test_invalid_toml(self, tmp_path: Path) -> None:
-        config = tmp_path / "config.toml"
-        config.write_text("[invalid\ngarbage")
-        result = strip_mcp_tool_overrides_toml(config)
-        assert result["success"] is False
-        assert "Failed to parse TOML" in result["error"]
-
-    def test_backup_failure(self, tmp_path: Path) -> None:
-        config = tmp_path / "config.toml"
-        config.write_text(
-            '[mcp_servers.gobby]\ncommand = "uv"\n\n'
-            "[mcp_servers.gobby.tools.call_tool]\n"
-            'approval_mode = "approve"\n'
-        )
-        with patch.object(Path, "write_text", side_effect=OSError("fail")):
-            result = strip_mcp_tool_overrides_toml(config)
-        assert result["success"] is False
-        assert "Failed to create backup" in result["error"]
-
-    def test_preserves_comments(self, tmp_path: Path) -> None:
-        config = tmp_path / "config.toml"
-        config.write_text(
-            "# top comment\n"
-            '[mcp_servers.gobby]\ncommand = "uv"\n'
-            "# keep server comment\n\n"
-            "[mcp_servers.gobby.tools.call_tool]\n"
-            'approval_mode = "approve"\n'
-        )
-
-        result = strip_mcp_tool_overrides_toml(config)
-
-        assert result["success"] is True
-        content = config.read_text()
-        assert "# top comment" in content
-        assert "# keep server comment" in content
 
 
 # ---------------------------------------------------------------------------

@@ -34,7 +34,6 @@ from .hook_commands import (
 from .mcp_config import (
     configure_mcp_server_toml,
     remove_mcp_server_toml,
-    strip_mcp_tool_overrides_toml,
 )
 from .shared import (
     clean_project_hooks,
@@ -526,7 +525,6 @@ def install_codex(
         "config_updated": False,
         "mcp_configured": False,
         "mcp_already_configured": False,
-        "mcp_tools_stripped": False,
         "trust": None,
         "error": None,
     }
@@ -609,13 +607,6 @@ def install_codex(
         result["mcp_already_configured"] = mcp_result.get("already_configured", False)
     else:
         logger.warning("Failed to configure MCP server: %s", mcp_result["error"])
-
-    # 5b. Strip per-tool approval overrides so tools inherit session approval mode
-    strip_result = strip_mcp_tool_overrides_toml(codex_config_path)
-    if strip_result["success"] and strip_result.get("stripped"):
-        result["mcp_tools_stripped"] = True
-    elif not strip_result["success"]:
-        logger.warning("Failed to strip MCP tool overrides: %s", strip_result["error"])
 
     try:
         trust_result = seed_gobby_home_trust("codex")

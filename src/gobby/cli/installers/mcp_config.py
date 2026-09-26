@@ -18,7 +18,6 @@ from .mcp_config_json import (
 from .mcp_config_toml import (
     configure_mcp_server_toml,
     remove_mcp_server_toml,
-    strip_mcp_tool_overrides_toml,
 )
 
 logger = logging.getLogger(__name__)
@@ -31,6 +30,5 @@ __all__ = [
     "remove_mcp_server_json",
     "remove_mcp_server_toml",
     "remove_project_mcp_server",
-    "strip_mcp_tool_overrides_toml",
     "time",
 ]

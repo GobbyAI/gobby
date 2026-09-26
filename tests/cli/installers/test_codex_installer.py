@@ -652,46 +652,36 @@ class TestInstallCodex:
         assert result["success"] is False
         assert "global hooks" in result["error"]
 
-    def test_install_strips_tool_overrides(
+    def test_install_preapproves_gobby_mcp_tools(
         self,
         mock_home: Path,
         mock_install_dir: Path,
         mock_shared_content: Any,
-        mock_mcp_configure: Any,
     ) -> None:
-        """Test that install strips per-tool approval overrides from config.toml."""
+        """Install pre-approves Gobby's MCP tools and keeps Codex's saved per-tool approvals."""
         from gobby.cli.installers.codex import install_codex
 
-        # Pre-seed config.toml with per-tool approval overrides
         codex_dir = mock_home / ".codex"
         codex_dir.mkdir(parents=True, exist_ok=True)
         config_path = codex_dir / "config.toml"
         config_path.write_text(
             "features.codex_hooks = true\n\n"
-            '[mcp_servers.gobby]\ncommand = "uv"\n'
-            'args = ["run", "gobby", "mcp-server"]\n\n'
+            '[mcp_servers.gobby]\ncommand = "gobby"\n'
+            'args = ["mcp-server"]\n'
+            "startup_timeout_sec = 120\ntool_timeout_sec = 360\n\n"
             "[mcp_servers.gobby.tools.call_tool]\n"
-            'approval_mode = "approve"\n\n'
-            "[mcp_servers.gobby.tools.get_tool_schema]\n"
             'approval_mode = "approve"\n'
         )
-
-        mock_mcp_configure.return_value = {
-            "success": True,
-            "added": False,
-            "already_configured": True,
-        }
 
         result = install_codex(mock_home)
 
         assert result["success"] is True
-        assert result["mcp_tools_stripped"] is True
-
-        # Verify tools overrides are gone but server config preserved
-        content = config_path.read_text()
-        assert "approval_mode" not in content
-        assert "uv" in content
-        _assert_stable_hooks_feature(_load_toml_file(config_path))
+        assert "mcp_tools_stripped" not in result
+        config = _load_toml_file(config_path)
+        gobby_server = config["mcp_servers"]["gobby"]
+        assert gobby_server["default_tools_approval_mode"] == "approve"
+        assert gobby_server["tools"]["call_tool"]["approval_mode"] == "approve"
+        _assert_stable_hooks_feature(config)
 
     def test_install_repairs_stale_uv_directory_mcp_entry(
         self,
@@ -918,7 +908,6 @@ class TestInstallCodexProjectHooks:
         with (
             patch("gobby.cli.installers.codex.install_global_hooks", return_value=[]),
             patch("gobby.cli.installers.codex.configure_mcp_server_toml") as mock_mcp,
-            patch("gobby.cli.installers.codex.strip_mcp_tool_overrides_toml") as mock_strip,
         ):
             result = install_codex_project_hooks(project_path)
 
@@ -926,7 +915,6 @@ class TestInstallCodexProjectHooks:
         config_data = _load_toml_file(mock_home / ".codex" / "config.toml")
         assert "mcp_servers" not in config_data
         mock_mcp.assert_not_called()
-        mock_strip.assert_not_called()
 
 
 class TestUninstallCodex:

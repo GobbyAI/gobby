@@ -17,6 +17,11 @@ _GOBBY_MCP_COMMAND = "gobby"
 _GOBBY_MCP_ARGS = ["mcp-server"]
 _CODEX_GOBBY_MCP_STARTUP_TIMEOUT_SEC: int = 120
 _CODEX_GOBBY_MCP_TOOL_TIMEOUT_SEC: int = 360
+# Codex requires approval for MCP tools that are not annotated read-only whenever
+# a thread runs under a sandboxed permission profile (workspace-write); with
+# approval_policy never the call is denied instead of prompted. Pre-approving
+# Gobby's own server keeps every seat working regardless of profile.
+_CODEX_GOBBY_MCP_DEFAULT_TOOLS_APPROVAL_MODE = "approve"
 
 
 def _facade_attr(name: str, default: Any) -> Any:
@@ -136,6 +141,13 @@ def _needs_codex_gobby_mcp_startup_timeout(server_config: Any) -> bool:
     return configured_timeout < _CODEX_GOBBY_MCP_STARTUP_TIMEOUT_SEC
 
 
+def _needs_codex_gobby_mcp_tools_approval_mode(server_config: Any) -> bool:
+    configured_mode = server_config.get("default_tools_approval_mode")
+    if not isinstance(configured_mode, str):
+        return True
+    return configured_mode != _CODEX_GOBBY_MCP_DEFAULT_TOOLS_APPROVAL_MODE
+
+
 def _is_repairable_stale_gobby_mcp_server_config(server_config: Any) -> bool:
     if _command_basename(server_config.get("command")) != "uv":
         return False
@@ -182,6 +194,8 @@ def _repair_stale_gobby_mcp_server_toml(
         updates["tool_timeout_sec"] = _CODEX_GOBBY_MCP_TOOL_TIMEOUT_SEC
     if _needs_codex_gobby_mcp_startup_timeout(server_config):
         updates["startup_timeout_sec"] = _CODEX_GOBBY_MCP_STARTUP_TIMEOUT_SEC
+    if _needs_codex_gobby_mcp_tools_approval_mode(server_config):
+        updates["default_tools_approval_mode"] = _CODEX_GOBBY_MCP_DEFAULT_TOOLS_APPROVAL_MODE
 
     if not updates:
         return None, None
