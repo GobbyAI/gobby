@@ -13,16 +13,21 @@ use super::Chrome;
 pub const ALERT_LOG_CAP: usize = 200;
 
 impl Chrome {
-    /// Show `toast` and append it to the alert log. The stack keeps the
-    /// newest [`TOAST_STACK`] toasts.
+    /// Show `toast` and append it to the alert log. Identical active alerts
+    /// share one visible toast; the stack keeps the newest [`TOAST_STACK`].
     pub fn notify(&mut self, toast: Toast) {
         self.alert_log.push(toast.clone());
         if self.alert_log.len() > ALERT_LOG_CAP {
             self.alert_log.remove(0);
         }
+        let now = Instant::now();
+        self.expire_toasts(now);
+        if self.toasts.iter().any(|active| active.toast == toast) {
+            return;
+        }
         self.toasts.push(ActiveToast {
             toast,
-            shown_at: Instant::now(),
+            shown_at: now,
         });
         if self.toasts.len() > TOAST_STACK {
             self.toasts.remove(0);
@@ -87,6 +92,38 @@ mod tests {
             .map(|toast| toast.title.as_str())
             .collect();
         assert_eq!(logged, ["one", "two", "three", "four"]);
+    }
+
+    #[test]
+    fn repeated_active_alert_appears_once_but_logs_every_event() {
+        let mut chrome = Chrome::dark();
+        chrome.notify(Toast::error("Daemon unavailable."));
+        let shown_at = chrome.toasts[0].shown_at;
+        chrome.notify(Toast::error("Daemon unavailable."));
+        chrome.notify(Toast::error("Daemon unavailable."));
+
+        assert_eq!(titles(&chrome), ["Daemon unavailable."]);
+        assert_eq!(chrome.toasts[0].shown_at, shown_at);
+        assert_eq!(chrome.alert_log.len(), 3);
+
+        chrome.notify(Toast::error("Daemon unavailable.").with_body("another pane"));
+        chrome.notify(Toast::warning("Daemon unavailable."));
+        assert_eq!(chrome.toasts.len(), 3, "different alerts remain visible");
+        assert_eq!(chrome.alert_log.len(), 5);
+    }
+
+    #[test]
+    fn repeated_alert_can_reappear_after_its_ttl() {
+        let mut chrome = Chrome::dark();
+        chrome.notify(Toast::error("Daemon unavailable."));
+        chrome.toasts[0].shown_at = Instant::now() - TOAST_TTL;
+        let expired_at = chrome.toasts[0].shown_at;
+
+        chrome.notify(Toast::error("Daemon unavailable."));
+
+        assert_eq!(titles(&chrome), ["Daemon unavailable."]);
+        assert!(chrome.toasts[0].shown_at > expired_at);
+        assert_eq!(chrome.alert_log.len(), 2);
     }
 
     #[test]
