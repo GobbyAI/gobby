@@ -238,6 +238,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
         Configured APIRouter with agent definition endpoints
     """
     router = APIRouter(prefix="/api/agents", tags=["agents"])
+    run_list_inflight: dict[tuple[str | None, int, str | None], asyncio.Task[dict[str, Any]]] = {}
 
     def _get_manager() -> Any:
         from gobby.storage.definitions import AgentDefinitionManager
@@ -719,15 +720,9 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
             logger.exception("Error listing running agents: %s", e)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
-    @router.get("/runs")
-    async def list_agent_runs(
-        status: str | None = Query(None),
-        limit: int = Query(50, ge=1, le=200),
-        project_id: str | None = Query(
-            None, description="Filter by project ID (via parent session)"
-        ),
+    async def load_agent_runs(
+        status: str | None, limit: int, project_id: str | None
     ) -> dict[str, Any]:
-        """List recent agent runs from the database with session enrichment."""
         try:
             from gobby.storage.agents import LocalAgentRunManager
 
@@ -740,7 +735,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
                 session_ids = [run.child_session_id for run in records if run.child_session_id]
                 return projections, session_ids
 
-            projections, session_ids = await asyncio.to_thread(load_runs)
+            projections, session_ids = await server.run_db(load_runs)
 
             # Enrich with session data (token usage, cost)
             enriched = []
@@ -762,6 +757,31 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
         except Exception as e:
             logger.exception("Error listing agent runs: %s", e)
             raise HTTPException(status_code=500, detail="Internal server error") from e
+
+    @router.get("/runs")
+    async def list_agent_runs(
+        status: str | None = Query(None),
+        limit: int = Query(50, ge=1, le=200),
+        project_id: str | None = Query(
+            None, description="Filter by project ID (via parent session)"
+        ),
+    ) -> dict[str, Any]:
+        """List recent agent runs, sharing simultaneous reads of the same slice."""
+        key = (status, limit, project_id)
+        task = run_list_inflight.get(key)
+        if task is None:
+            task = asyncio.create_task(load_agent_runs(status, limit, project_id))
+            run_list_inflight[key] = task
+
+            def settle(completed: asyncio.Task[dict[str, Any]]) -> None:
+                run_list_inflight.pop(key, None)
+                if not completed.cancelled():
+                    completed.exception()
+
+            task.add_done_callback(settle)
+
+        # The shared read finishes even when one HTTP client stops waiting.
+        return await asyncio.shield(task)
 
     @router.get("/runs/{run_id}")
     async def get_agent_run_detail(run_id: str) -> dict[str, Any]:

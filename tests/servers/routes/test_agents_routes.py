@@ -17,11 +17,14 @@ from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from fastapi.routing import APIRoute
 from starlette.testclient import TestClient
 
 from gobby.config.app import DaemonConfig
+from gobby.servers.http import HTTPServer
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.definitions import AgentDefinitionManager
+from gobby.storage.executor import DatabaseExecutor
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.workflows.definitions import AgentDefinitionBody
@@ -63,6 +66,81 @@ def test_agent_run_listing_projects_off_event_loop(
 
     assert response.status_code == 200
     assert response.json()["count"] == 1
+
+
+def test_agent_run_list_uses_db_executor_when_default_pool_is_busy(server: HTTPServer) -> None:
+    route = next(
+        route
+        for route in server.app.routes
+        if isinstance(route, APIRoute) and route.path == "/api/agents/runs"
+    )
+    db_executor = DatabaseExecutor(max_workers=1)
+    server.services.db_executor = db_executor
+
+    async def exercise() -> dict[str, Any]:
+        loop = asyncio.get_running_loop()
+        started = asyncio.Event()
+        release = threading.Event()
+
+        def occupy_default_pool() -> None:
+            loop.call_soon_threadsafe(started.set)
+            release.wait(timeout=3)
+
+        with ThreadPoolExecutor(max_workers=1) as default_executor:
+            loop.set_default_executor(default_executor)
+            blocker = loop.run_in_executor(None, occupy_default_pool)
+            try:
+                await asyncio.wait_for(started.wait(), timeout=1)
+                return await asyncio.wait_for(route.endpoint(None, 50, None), timeout=1)
+            finally:
+                release.set()
+                await blocker
+
+    try:
+        result = asyncio.run(exercise())
+    finally:
+        db_executor.shutdown()
+        db_executor.join()
+
+    assert result["status"] == "success"
+
+
+@pytest.mark.asyncio
+async def test_agent_run_list_shares_concurrent_identical_reads(
+    server: HTTPServer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    route = next(
+        route
+        for route in server.app.routes
+        if isinstance(route, APIRoute) and route.path == "/api/agents/runs"
+    )
+    started = threading.Event()
+    release = threading.Event()
+    calls = 0
+
+    def blocked_list(*_args: object, **_kwargs: object) -> list[SimpleNamespace]:
+        nonlocal calls
+        calls += 1
+        started.set()
+        release.wait(timeout=3)
+        return [SimpleNamespace(child_session_id=None, to_list_dict=lambda: {"run_id": "one"})]
+
+    monkeypatch.setattr(LocalAgentRunManager, "list_by_status_summary", blocked_list)
+    first = asyncio.create_task(route.endpoint(None, 50, None))
+    arrived = await asyncio.to_thread(started.wait, 2)
+    second = asyncio.create_task(route.endpoint(None, 50, None))
+    await asyncio.sleep(0)
+    try:
+        first.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+    finally:
+        release.set()
+    second_result = await second
+
+    assert arrived
+    assert calls == 1
+    assert second_result["runs"] == [{"run_id": "one"}]
 
 
 def test_agent_run_list_is_bounded_and_detail_keeps_large_fields(
@@ -1386,7 +1464,7 @@ class TestCancelAgentRun:
         original_cancel = LocalAgentRunManager.cancel
         attempts = 0
 
-        def fail_once(instance, run_id):
+        def fail_once(instance: LocalAgentRunManager, run_id: str) -> AgentRun | None:
             nonlocal attempts
             attempts += 1
             if attempts == 1:
@@ -1431,7 +1509,7 @@ class TestCleanupAgentRuns:
     def test_cleanup_routes_through_lifecycle_acknowledgement(
         self,
         client: TestClient,
-        server,
+        server: HTTPServer,
     ) -> None:
         sweep = AsyncMock(return_value=["run-timeout", "run-pending"])
         server.services.agent_lifecycle_monitor = SimpleNamespace(
