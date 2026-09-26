@@ -793,7 +793,7 @@ Targets:
 
 **Verification:** `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/test_brief_parity.py -q`; ruff on the test module.
 
-## V1: Verification
+## V2: Verification
 `kind: verification`
 
 Run after every leaf and again before the PD lands the branch: each leaf's own **Verification**
