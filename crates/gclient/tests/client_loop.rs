@@ -7307,6 +7307,7 @@ async fn daemon_restart_refetches_workspace_snapshot() {
 async fn run_pane_move_case(
     tabs: &[(&[&str], &str)],
     chords: Vec<(KeyCode, KeyModifiers)>,
+    source_tab_index: usize,
     final_op: &str,
 ) -> (
     MockDaemon,
@@ -7324,6 +7325,8 @@ async fn run_pane_move_case(
         mock.enqueue("GET", "/api/terminals?", 200, roster_items(&terminals));
     }
     let seeded = mock.seed_workspace("project-1", tabs);
+    let source_tab = &seeded[source_tab_index].0;
+    let moved_pane = &seeded[source_tab_index].1[0];
     let daemon = LiveDaemon::connect(mock.url(), "local-token")
         .await
         .expect("connect live daemon");
@@ -7355,7 +7358,23 @@ async fn run_pane_move_case(
         })
         .await
         .expect("pane move operation reached daemon");
-        settle_live_event().await;
+        timeout(Duration::from_secs(1), async {
+            loop {
+                if websocket_requests(&mock, "workspace_op")
+                    .iter()
+                    .any(|request| {
+                        request["op"] == "workspace.set_focus_hints"
+                            && request["pane"] == *moved_pane
+                            && request["tab"] != *source_tab
+                    })
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("pane move event updated the focused tab");
         drop(input_tx);
     };
     let mut switch = TerminalGuard::recording().0;
@@ -7381,6 +7400,7 @@ async fn moving_pane_to_existing_tab_preserves_terminal_and_reflows_source() {
             (&["terminal-c"], "terminal-c"),
         ],
         vec![(KeyCode::Char('@'), KeyModifiers::NONE)],
+        0,
         "pane.move",
     )
     .await;
@@ -7426,6 +7446,7 @@ async fn moving_last_pane_removes_empty_source_tab() {
             (KeyCode::Char('2'), KeyModifiers::NONE),
             (KeyCode::Char('1'), KeyModifiers::SHIFT),
         ],
+        1,
         "pane.move",
     )
     .await;
@@ -7451,6 +7472,7 @@ async fn moving_pane_to_new_tab_keeps_its_process_and_closes_placeholder() {
     let (mock, workspace, chrome, seeded) = run_pane_move_case(
         &[(&["terminal-a"], "terminal-a")],
         vec![(KeyCode::Char('C'), KeyModifiers::SHIFT)],
+        0,
         "pane.close",
     )
     .await;
