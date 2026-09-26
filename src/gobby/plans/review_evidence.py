@@ -159,6 +159,8 @@ class PlanReviewEvidenceService:
                         session_id=session_id,
                         task_id=task_id,
                         stage=stage,
+                        source_plan_path=str(resolved),
+                        snapshot=snapshot,
                     ):
                         prepared = active.prepared_result()
                     elif self._attempt_is_dead(active):
@@ -191,6 +193,8 @@ class PlanReviewEvidenceService:
                                 session_id=session_id,
                                 task_id=task_id,
                                 stage=stage,
+                                source_plan_path=str(resolved),
+                                snapshot=snapshot,
                             )
                         ),
                         None,
@@ -203,6 +207,7 @@ class PlanReviewEvidenceService:
                         transaction=transaction,
                         project_id=project_id,
                         plan_path=relative_path,
+                        source_plan_path=str(resolved),
                         plan_hash=plan_hash,
                         sections=sections,
                         snapshot=snapshot,
@@ -324,12 +329,7 @@ class PlanReviewEvidenceService:
         plan_path: str | Path,
     ) -> bool:
         evidence = self.get_evidence(evidence_id)
-        resolved, relative_path = self._resolve_plan_path(evidence.project_id, plan_path)
-        if relative_path != evidence.plan_path:
-            raise ReviewEvidenceError(
-                "wrong_plan",
-                f"evidence belongs to {evidence.plan_path}, not {relative_path}",
-            )
+        resolved = self.manifests.resolve_evidence_path(evidence, plan_path)
         self._verify_reviewed_bytes(evidence, resolved.read_bytes())
         return True
 
@@ -409,6 +409,7 @@ class PlanReviewEvidenceService:
         writer_session_id: str,
         coordinator_session_id: str,
         caller_session_id: str | None,
+        plan_path: str | Path | None = None,
     ) -> PlanReviewEvidence:
         """Bind one live interactive attempt to three exact, persisted session seats."""
         evidence = self.get_evidence(evidence_id)
@@ -467,7 +468,15 @@ class PlanReviewEvidenceService:
                 raise ReviewEvidenceError(
                     "invalid_seats", "review seats must be live sessions in the project"
                 )
-            if self._evidence_path(locked).read_bytes() != locked.snapshot:
+            source_path = plan_path or locked.source_plan_path
+            if source_path is None or (
+                locked.source_plan_path is None and not Path(source_path).is_absolute()
+            ):
+                raise ReviewEvidenceError(
+                    "invalid_plan_path", "legacy evidence requires an absolute plan_path"
+                )
+            resolved = self.manifests.resolve_evidence_path(locked, source_path)
+            if resolved.read_bytes() != locked.snapshot:
                 raise ReviewEvidenceError(
                     "stale_snapshot", "plan bytes differ from reviewed evidence"
                 )
@@ -476,6 +485,7 @@ class PlanReviewEvidenceService:
                 evidence_id=evidence_id,
                 writer_session_id=writer_session_id,
                 coordinator_session_id=coordinator_session_id,
+                source_plan_path=str(resolved),
             )
 
     def expire_plan_review_evidence(
@@ -568,10 +578,11 @@ class PlanReviewEvidenceService:
         allow_approval_replay: bool = False,
     ) -> PlanReviewEvidence:
         evidence = self.get_evidence(evidence_id)
-        _, relative_path = self._resolve_plan_path(project_id, plan_path)
+        resolved, relative_path = self._resolve_plan_path(project_id, plan_path)
         token_matches = (
             evidence.project_id == project_id
             and evidence.plan_path == relative_path
+            and (evidence.source_plan_path is None or str(resolved) == evidence.source_plan_path)
             and evidence.round_number == round_number
             and evidence.session_id == session_id
             and evidence.task_id == task_id
@@ -682,12 +693,7 @@ class PlanReviewEvidenceService:
         if plan_path is None:
             resolved = self._evidence_path(evidence)
         else:
-            resolved, relative_path = self._resolve_plan_path(evidence.project_id, plan_path)
-            if relative_path != evidence.plan_path:
-                raise ReviewEvidenceError(
-                    "wrong_plan",
-                    f"evidence belongs to {evidence.plan_path}, not {relative_path}",
-                )
+            resolved = self.manifests.resolve_evidence_path(evidence, plan_path)
         mutation = PlanReviewEvidenceMutation(
             project_id=evidence.project_id,
             plan_path=evidence.plan_path,
@@ -806,12 +812,7 @@ class PlanReviewEvidenceService:
         if plan_path is None:
             resolved = self._evidence_path(evidence)
         else:
-            resolved, relative_path = self._resolve_plan_path(evidence.project_id, plan_path)
-            if relative_path != evidence.plan_path:
-                raise ReviewEvidenceError(
-                    "wrong_plan",
-                    f"evidence belongs to {evidence.plan_path}, not {relative_path}",
-                )
+            resolved = self.manifests.resolve_evidence_path(evidence, plan_path)
         if not evidence.is_interactive:
             raise ReviewEvidenceError(
                 "not_interactive_evidence",
@@ -973,10 +974,16 @@ class PlanReviewEvidenceService:
         session_id: str | None,
         task_id: str | None,
         stage: str | None,
+        source_plan_path: str,
+        snapshot: bytes,
     ) -> bool:
         return (
             evidence.round_number == round_number
             and evidence.session_id == session_id
             and evidence.task_id == task_id
             and evidence.stage == stage
+            and (
+                evidence.source_plan_path == source_plan_path
+                or (evidence.source_plan_path is None and evidence.snapshot == snapshot)
+            )
         )

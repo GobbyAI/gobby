@@ -204,9 +204,7 @@ class ReviewManifestService:
                 "invalid_manifest",
                 "manifest application requires an approved round result",
             )
-        _, relative_path = self.resolve_plan_path(evidence.project_id, plan_path)
-        if relative_path != evidence.plan_path:
-            raise ReviewEvidenceError("wrong_plan", "evidence belongs to another plan")
+        self.resolve_evidence_path(evidence, plan_path)
         authorize_attempt(
             evidence_id,
             project_id=evidence.project_id,
@@ -356,11 +354,16 @@ class ReviewManifestService:
         resolved = normalize_plan_path(root, plan_path)
         return resolved, resolved.relative_to(root).as_posix()
 
-    def evidence_path(self, evidence: PlanReviewEvidence) -> Path:
+    def resolve_evidence_path(self, evidence: PlanReviewEvidence, plan_path: str | Path) -> Path:
         resolved, relative_path = self.resolve_plan_path(
             evidence.project_id,
-            evidence.plan_path,
+            plan_path,
         )
-        if relative_path != evidence.plan_path:
+        if relative_path != evidence.plan_path or (
+            evidence.source_plan_path is not None and str(resolved) != evidence.source_plan_path
+        ):
             raise ReviewEvidenceError("wrong_plan", "evidence plan path changed")
         return resolved
+
+    def evidence_path(self, evidence: PlanReviewEvidence) -> Path:
+        return self.resolve_evidence_path(evidence, evidence.source_plan_path or evidence.plan_path)

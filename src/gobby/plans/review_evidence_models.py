@@ -108,6 +108,7 @@ class PlanReviewEvidence:
     created_at: datetime
     static_writer_session_id: str | None = None
     static_coordinator_session_id: str | None = None
+    source_plan_path: str | None = None
 
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> PlanReviewEvidence:
@@ -160,6 +161,7 @@ class PlanReviewEvidence:
             created_at=cast(datetime, row["created_at"]),
             static_writer_session_id=_optional_string(row["static_writer_session_id"]),
             static_coordinator_session_id=_optional_string(row["static_coordinator_session_id"]),
+            source_plan_path=_optional_string(row["source_plan_path"]),
         )
 
     @property
