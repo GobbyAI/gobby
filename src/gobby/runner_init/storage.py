@@ -147,7 +147,13 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
     init_startup_content(runner)
 
 
-def open_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbose: bool) -> None:
+def open_storage_and_config(
+    runner: GobbyRunner,
+    config_path: Path | None,
+    verbose: bool,
+    *,
+    broadcast_loop: asyncio.AbstractEventLoop | None = None,
+) -> None:
     """Initialize config, telemetry, database, secrets, and core managers."""
     if config_path is not None and not config_path.exists():
         raise FileNotFoundError(
@@ -266,7 +272,7 @@ def open_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
     if runner.startup_config.telemetry and runner.startup_config.telemetry.traces_enabled:
         from gobby.telemetry.providers import add_span_storage_exporter
 
-        broadcast_loop = asyncio.get_running_loop()
+        broadcast_loop = broadcast_loop or asyncio.get_running_loop()
 
         def _broadcast_proxy(span: dict[str, Any]) -> None:
             """Proxy for trace event broadcasting via WebSocket."""

@@ -17,6 +17,7 @@ import asyncio
 import logging
 import os
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Self
 
@@ -104,6 +105,20 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
+
+
+async def _run_blocking_startup_phase(
+    function: Callable[..., None], *args: Any, **kwargs: Any
+) -> None:
+    worker = asyncio.create_task(asyncio.to_thread(function, *args, **kwargs))
+    try:
+        await asyncio.shield(worker)
+    finally:
+        while not worker.done():
+            try:
+                await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                continue
 
 
 class GobbyRunner:
@@ -264,12 +279,18 @@ class GobbyRunner:
                 open_storage_and_config,
             )
 
-            open_storage_and_config(self, config_path, verbose)
+            await _run_blocking_startup_phase(
+                open_storage_and_config,
+                self,
+                config_path,
+                verbose,
+                broadcast_loop=asyncio.get_running_loop(),
+            )
             # The refusal asks Git, so it runs off the loop, ahead of every bundled
             # publish (#22829).
             if refusal := await asyncio.to_thread(bundled_content_refusal, self):
                 raise RuntimeError(refusal)
-            init_startup_content(self)
+            await _run_blocking_startup_phase(init_startup_content, self)
             startup_snapshot = await self.config_runtime.start()
             from gobby.runner_init.storage import bootstrap_overlaid_config
 
