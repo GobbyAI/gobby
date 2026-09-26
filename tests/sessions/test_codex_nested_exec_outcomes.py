@@ -355,6 +355,68 @@ def test_pty_write_stdin_chain_survives_repeated_yields_and_parser_hydration() -
     ]
 
 
+def test_running_pty_failure_survives_truncated_prior_chunk() -> None:
+    parser = CodexTranscriptParser()
+    command = "cargo nextest run -p gobby-code -E 'test(stale_model_label_reads_as_deterministic)'"
+    outcomes = _outcomes(
+        parser,
+        [
+            _call(
+                "shell",
+                "exec",
+                'const r = await tools.exec_command({cmd:"zsh",tty:true}); text(r);',
+            ),
+            _output("shell", json.dumps({"session_id": 901, "output": "ready"})),
+            _call(
+                "truncated",
+                "exec",
+                'const r = await tools.write_stdin({session_id:901,chars:"printf ready\\n"}); '
+                "text(JSON.stringify(r));",
+            ),
+            _output("truncated", 'Warning: truncated output\n{"session_id":901,"output":"'),
+            _call(
+                "red",
+                "exec",
+                "const r = await tools.write_stdin("
+                f"{{session_id:901,chars:{json.dumps(command + chr(10))}}}); "
+                "text(JSON.stringify(r));",
+            ),
+            _output(
+                "red",
+                json.dumps(
+                    {
+                        "session_id": 901,
+                        "output": (
+                            "assertion `left == right` failed\n"
+                            "test result: FAILED. 0 passed; 1 failed"
+                        ),
+                    }
+                ),
+            ),
+            _call(
+                "green",
+                "exec",
+                "const r = await tools.write_stdin("
+                f"{{session_id:901,chars:{json.dumps(command + chr(10))}}}); "
+                "text(r.output); if (r.session_id) text(`SESSION_ID=${r.session_id}`);",
+            ),
+            _output(
+                "green",
+                "test result: ok. 1 passed; 0 failed; 0 ignored\n"
+                "Summary 1 test run: 1 passed\nSESSION_ID=901",
+            ),
+        ],
+    )
+
+    assert len(outcomes) == 3
+    assert outcomes[0].result["success"] is None
+    assert outcomes[1].command == command
+    assert outcomes[1].result["success"] is False
+    assert "assertion `left == right` failed" in outcomes[1].result["output"]
+    assert outcomes[2].command == command
+    assert outcomes[2].result["success"] is True
+
+
 def test_direct_write_stdin_poll_preserves_original_execution_identity() -> None:
     parser = CodexTranscriptParser()
     outcomes = _outcomes(

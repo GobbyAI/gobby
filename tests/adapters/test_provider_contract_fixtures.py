@@ -12,6 +12,7 @@ import pytest
 from gobby.adapters.codex_impl.app_server_adapter import CodexAdapter
 from gobby.adapters.codex_impl.execution_chain import (
     ExecutionChainCorrelator,
+    extract_functions_write_stdin_command,
     validate_functions_exec_wrapper,
 )
 from gobby.adapters.codex_impl.item_normalization import (
@@ -42,7 +43,8 @@ def _enveloped_provider_jsonl_paths() -> list[Path]:
     return [
         path
         for path in sorted(PROVIDER_CONTRACT_ROOT.rglob("*.jsonl"))
-        if path.name != "terminal-functions-exec-rollout-0.144.6.jsonl"
+        if path.name
+        not in {"terminal-functions-exec-rollout-0.144.6.jsonl", "goal_compact_2026_09_23.jsonl"}
     ]
 
 
@@ -91,6 +93,12 @@ def test_provider_jsonl_records_have_contract_envelope(path: Path) -> None:
         assert {"provider", "event", "payload"}.issubset(payload)
 
 
+def test_grok_compact_capture_records_have_event_metadata() -> None:
+    path = PROVIDER_CONTRACT_ROOT / "grok" / "goal_compact_2026_09_23.jsonl"
+    for payload in _load_jsonl(path):
+        assert {"attempt", "ts", "type"}.issubset(payload)
+
+
 @pytest.mark.parametrize(
     "path",
     _provider_json_paths(),
@@ -106,6 +114,11 @@ def test_provider_json_fixtures_have_contract_metadata(path: Path) -> None:
         assert payload["providers"]
         for entry in payload["providers"]:
             assert {"provider", "version", "official_source", "capture_command"}.issubset(entry)
+    elif "cases" in payload:
+        assert {"provider", "version", "schema_version", "capture_date", "provenance"}.issubset(
+            payload
+        )
+        assert payload["cases"]
     else:
         assert {"provider", "capture_type"}.issubset(payload)
 
@@ -334,6 +347,137 @@ def _dynamic_exec_item(
     }
 
 
+def test_codex_nested_write_stdin_uses_typed_pty_command() -> None:
+    adapter = CodexAdapter()
+    opener = _dynamic_exec_item(
+        arguments='const r = await tools.exec_command({cmd:"zsh",tty:true}); text(r);',
+        content_texts=[json.dumps({"session_id": 901, "output": "ready"})],
+    )
+    opener["id"] = "open-pty"
+    command = "cargo nextest run -p gobby-code -E 'test(stale_model_label_reads_as_deterministic)'"
+    wrapper = (
+        "const r = await tools.write_stdin("
+        f"{{session_id:901, chars:{json.dumps(command + chr(10))}}}); text(JSON.stringify(r));"
+    )
+    result_item = _dynamic_exec_item(
+        arguments=wrapper,
+        content_texts=[
+            "Script completed\nOutput:\n",
+            json.dumps(
+                {"exit_code": 1, "output": "assertion failed\n1 test run: 0 passed, 1 failed"}
+            ),
+        ],
+    )
+    result_item["id"] = "typed-test"
+
+    adapter._build_completed_tool_data(opener)
+    result = adapter._build_completed_tool_data(result_item)
+
+    assert result["tool_input"] == {"command": command}
+    assert result["tool_outcome"]["status"] == "failed"
+
+
+def test_codex_nested_write_stdin_rejects_literal_outside_call() -> None:
+    wrapper = (
+        'const bait = {chars:"cargo test"}; '
+        "await tools.write_stdin({session_id:901, chars:command});"
+    )
+
+    assert extract_functions_write_stdin_command(wrapper) is None
+
+
+def test_codex_nested_write_stdin_reuses_pty_for_distinct_commands() -> None:
+    adapter = CodexAdapter()
+    opener = _dynamic_exec_item(
+        arguments='const r = await tools.exec_command({cmd:"zsh",tty:true}); text(r);',
+        content_texts=[json.dumps({"session_id": 901, "output": "ready"})],
+    )
+    opener["id"] = "open-pty"
+    adapter._build_completed_tool_data(opener)
+
+    for call_id, command, output in (
+        ("first", "printf ready", 'Warning: truncated output\n{"session_id":901,"output":"'),
+        (
+            "second",
+            "cargo nextest run -p gobby-code",
+            json.dumps({"exit_code": 1, "output": "failed"}),
+        ),
+    ):
+        item = _dynamic_exec_item(
+            arguments=(
+                "const r = await tools.write_stdin("
+                f"{{session_id:901, chars:{json.dumps(command + chr(10))}}}); "
+                "text(JSON.stringify(r));"
+            ),
+            content_texts=["Script completed\nOutput:\n", output],
+        )
+        item["id"] = call_id
+        result = adapter._build_completed_tool_data(item)
+
+    assert result["tool_name"] == "Bash"
+    assert result["tool_input"] == {"command": "cargo nextest run -p gobby-code"}
+    assert result["tool_outcome"]["status"] == "failed"
+
+
+def test_codex_nested_write_stdin_credits_runner_failure_in_running_shell() -> None:
+    adapter = CodexAdapter()
+    opener = _dynamic_exec_item(
+        arguments='const r = await tools.exec_command({cmd:"zsh",tty:true}); text(r);',
+        content_texts=[json.dumps({"session_id": 901, "output": "ready"})],
+    )
+    opener["id"] = "open-pty"
+    adapter._build_completed_tool_data(opener)
+    command = "cargo nextest run -p gobby-code -E 'test(stale_model_label_reads_as_deterministic)'"
+    item = _dynamic_exec_item(
+        arguments=(
+            "const r = await tools.write_stdin("
+            f"{{session_id:901, chars:{json.dumps(command + chr(10))}}}); "
+            "text(JSON.stringify(r));"
+        ),
+        content_texts=[
+            "Script completed\nOutput:\n",
+            json.dumps(
+                {
+                    "session_id": 901,
+                    "output": (
+                        "thread 'stale_model_label_reads_as_deterministic' panicked\n"
+                        "assertion `left == right` failed\n"
+                        "Summary 1 test run: 0 passed, 1 failed"
+                    ),
+                }
+            ),
+        ],
+    )
+    item["id"] = "failed-test"
+
+    result = adapter._build_completed_tool_data(item)
+
+    assert result["tool_input"] == {"command": command}
+    assert result["tool_outcome"]["status"] == "failed"
+
+
+def test_codex_nested_write_stdin_without_runner_summary_stays_unknown() -> None:
+    adapter = CodexAdapter()
+    opener = _dynamic_exec_item(
+        arguments='const r = await tools.exec_command({cmd:"zsh",tty:true}); text(r);',
+        content_texts=[json.dumps({"session_id": 901, "output": "ready"})],
+    )
+    opener["id"] = "open-pty"
+    adapter._build_completed_tool_data(opener)
+    item = _dynamic_exec_item(
+        arguments=(
+            'const r = await tools.write_stdin({session_id:901, chars:"cargo test\\n"}); '
+            "text(JSON.stringify(r));"
+        ),
+        content_texts=[json.dumps({"session_id": 901, "output": "Compiling gobby-code"})],
+    )
+    item["id"] = "running-test"
+
+    result = adapter._build_completed_tool_data(item)
+
+    assert result["tool_outcome"]["status"] == "unknown"
+
+
 @pytest.mark.parametrize(
     ("exit_code", "expected_status"),
     [(0, "succeeded"), (7, "failed")],
@@ -488,18 +632,18 @@ def test_codex_functions_exec_stable_replay_preserves_literal_command() -> None:
 
 def test_codex_functions_exec_session_collision_fails_closed() -> None:
     adapter = CodexAdapter()
-    adapter._build_completed_tool_data(
-        _dynamic_exec_item(
-            arguments='await tools.exec_command({cmd:"uv run pytest tests/a.py"});',
-            content_texts=[json.dumps({"session_id": 901, "output": "running"})],
-        )
+    first = _dynamic_exec_item(
+        arguments='await tools.exec_command({cmd:"uv run pytest tests/a.py"});',
+        content_texts=[json.dumps({"session_id": 901, "output": "running"})],
     )
-    adapter._build_completed_tool_data(
-        _dynamic_exec_item(
-            arguments='await tools.exec_command({cmd:"uv run pytest tests/b.py"});',
-            content_texts=[json.dumps({"session_id": 901, "output": "running"})],
-        )
+    first["id"] = "first-opener"
+    second = _dynamic_exec_item(
+        arguments='await tools.exec_command({cmd:"uv run pytest tests/b.py"});',
+        content_texts=[json.dumps({"session_id": 901, "output": "running"})],
     )
+    second["id"] = "second-opener"
+    adapter._build_completed_tool_data(first)
+    adapter._build_completed_tool_data(second)
     result = adapter._build_completed_tool_data(
         _dynamic_exec_item(
             arguments="await tools.write_stdin({session_id:901});",

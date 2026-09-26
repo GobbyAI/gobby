@@ -8,6 +8,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import Any, Literal
 
+from gobby.config.validation_detection import classify_validation_segments
+from gobby.config.validation_outcomes import runner_reported_failures, runner_reported_success
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.hooks.tool_outcomes import ToolOutcome, ToolOutcomeStatus
 
@@ -49,7 +51,15 @@ _REPEATED_EXEC_SCAFFOLD_RE = re.compile(
     r"\b(?:do|for|while)\b|\.(?:forEach|map|reduce)\s*\(|\bPromise\.all\s*\("
 )
 _WRITE_STDIN_CALL_RE = re.compile(r"\btools\.write_stdin\s*\(")
+_WRITE_STDIN_ARGS_RE = re.compile(
+    r"""\btools\.write_stdin\s*\(\s*\{((?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^}"'])*)\}\s*\)""",
+    re.DOTALL,
+)
 _WRITE_STDIN_SESSION_RE = re.compile(r"\bsession_id\s*:\s*(\"(?:\\.|[^\"\\])*\"|-?\d+)")
+_WRITE_STDIN_CHARS_RE = re.compile(
+    r'(?:^|[{,])\s*(?:chars|"chars")\s*:\s*("(?:\\.|[^"\\])*")',
+    re.DOTALL,
+)
 _YIELDED_CELL_RE = re.compile(r"^Script running with cell ID ([A-Za-z0-9._:-]+)\s*$")
 
 
@@ -134,15 +144,38 @@ def extract_functions_write_stdin_session_id(arguments: Any) -> str | None:
         return _normalize_session_id(arguments.get("session_id"))
     if not isinstance(arguments, str):
         return None
-    if len(_WRITE_STDIN_CALL_RE.findall(arguments)) != 1:
+    body = _nested_write_stdin_args(arguments)
+    if body is None:
         return None
-    matches = _WRITE_STDIN_SESSION_RE.findall(arguments)
+    matches = _WRITE_STDIN_SESSION_RE.findall(body)
     if len(matches) != 1:
         return None
     try:
         return _normalize_session_id(json.loads(matches[0]))
     except (TypeError, ValueError):
         return None
+
+
+def extract_functions_write_stdin_command(arguments: Any) -> str | None:
+    """Return one literal command typed by nested write_stdin, excluding polls."""
+    body = _nested_write_stdin_args(arguments)
+    if body is None:
+        return None
+    matches = _WRITE_STDIN_CHARS_RE.findall(body)
+    if len(matches) != 1:
+        return None
+    try:
+        chars = json.loads(matches[0])
+    except (TypeError, ValueError):
+        return None
+    return chars.strip() if isinstance(chars, str) and chars.strip() else None
+
+
+def _nested_write_stdin_args(arguments: Any) -> str | None:
+    if not isinstance(arguments, str) or len(_WRITE_STDIN_CALL_RE.findall(arguments)) != 1:
+        return None
+    match = _WRITE_STDIN_ARGS_RE.search(arguments)
+    return match.group(1) if match else None
 
 
 def extract_direct_write_stdin_session_id(arguments: Any) -> str | None:
@@ -455,6 +488,9 @@ class ExecutionChainCorrelator:
                 )
             elif session_id is not None:
                 execution = self._sessions.get(session_id)
+                typed = extract_functions_write_stdin_command(arguments)
+                if execution is not None and typed:
+                    execution = replace(execution, literal_command=typed)
             elif allow_unattributed:
                 execution = PendingExecution(call_id)
         elif name in WRITE_STDIN_NAMES:
@@ -492,9 +528,8 @@ class ExecutionChainCorrelator:
 
         running_session = extract_direct_exec_running_session_id(output)
         if running_session is not None:
-            pending = replace(execution, session_id=running_session)
-            self._set_pending(self._sessions, running_session, pending)
-            return ExecutionResolution("pending", execution=pending)
+            results = decoded_exec_results(output)
+            return self._resolve_running_session(execution, running_session, results)
 
         native_terminal = extract_direct_exec_terminal_result(output)
         if native_terminal is not None:
@@ -520,16 +555,60 @@ class ExecutionChainCorrelator:
         }
         if len(results) == 1 and len(session_ids) == 1:
             session_id = next(iter(session_ids))
-            pending = replace(execution, session_id=session_id)
-            self._set_pending(self._sessions, session_id, pending)
-            return ExecutionResolution("pending", execution=pending)
+            return self._resolve_running_session(execution, session_id, results)
 
-        self._clear_execution(execution)
+        if execution.session_id is not None:
+            active = self._sessions.get(execution.session_id)
+            if active is not None and active.outer_call_id == execution.outer_call_id:
+                output_text = "\n".join(_iter_output_text(output))[-16_000:]
+                summary = self._runner_summary_result(execution, output_text)
+                if summary is not None:
+                    return ExecutionResolution("terminal", execution=execution, results=(summary,))
+        if execution.session_id is None:
+            self._clear_execution(execution)
+        elif execution.cell_id is not None:
+            # A truncated PTY chunk is undecidable, not proof that the shell ended.
+            self._cells.pop(execution.cell_id, None)
         return ExecutionResolution(
             "unknown",
             execution=execution,
             reason="terminal_result_missing_structured_outcome",
         )
+
+    def _resolve_running_session(
+        self,
+        execution: PendingExecution,
+        session_id: str,
+        results: list[dict[str, Any]],
+    ) -> ExecutionResolution:
+        pending = replace(execution, session_id=session_id)
+        self._set_pending(self._sessions, session_id, pending)
+        if self._sessions.get(session_id) is pending and len(results) == 1:
+            runner_output = results[0].get("output")
+            if isinstance(runner_output, str):
+                summary = self._runner_summary_result(pending, runner_output)
+                if summary is not None:
+                    return ExecutionResolution("terminal", execution=pending, results=(summary,))
+        return ExecutionResolution("pending", execution=pending)
+
+    @staticmethod
+    def _runner_summary_result(execution: PendingExecution, output: str) -> dict[str, Any] | None:
+        if not execution.literal_command:
+            return None
+        matches = classify_validation_segments(execution.literal_command)
+        if not any("test" in match.categories for match in matches):
+            return None
+        if runner_reported_failures(output):
+            success = False
+        elif runner_reported_success(output):
+            success = True
+        else:
+            return None
+        return {
+            "success": success,
+            "output": output,
+            "outcome_provenance": "codex.execution_chain.runner_output",
+        }
 
     def correlate(self, data: dict[str, Any]) -> dict[str, Any]:
         """Correlate one live completed item and promote terminal results to Bash."""
@@ -639,7 +718,9 @@ class ExecutionChainCorrelator:
             and existing is not None
             and (
                 existing.outer_call_id != execution.outer_call_id
-                or existing.literal_command != execution.literal_command
+                or (
+                    pending is self._cells and existing.literal_command != execution.literal_command
+                )
             )
         ):
             pending.pop(key, None)
