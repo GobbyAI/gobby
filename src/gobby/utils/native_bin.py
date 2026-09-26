@@ -8,6 +8,8 @@ import sys
 from pathlib import Path
 
 NATIVE_BIN_DIR_ENV = "GOBBY_NATIVE_BIN_DIR"
+SET_MEMBERS = ("gcode", "gdaemon", "ghook")
+IDENTITY_STAMP_NAME = ".gdaemon-schema-identity.json"
 
 
 def native_bin_name(name: str) -> str:
