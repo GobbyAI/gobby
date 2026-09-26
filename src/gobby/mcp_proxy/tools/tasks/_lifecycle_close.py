@@ -72,6 +72,7 @@ from gobby.tasks.acceptance_artifacts import (
 )
 from gobby.tasks.close_checklist import evaluate_validation_commands
 from gobby.tasks.commits import collect_commit_diff_text_async as collect_commit_diff_text
+from gobby.tasks.commits import collect_commit_rename_aliases_async
 from gobby.tasks.criteria_contract import operational_actions_from_command
 from gobby.tasks.state_semantics import get_claimed_session_id
 from gobby.tasks.tdd_evidence import evaluate_tdd_evidence, task_requires_tdd
@@ -681,7 +682,12 @@ async def _evaluate_close(
                 additional_skills=task.additional_skills or (),
                 validation_criteria=task.validation_criteria,
             ):
-                tdd = evaluate_tdd_evidence(artifacts.tests, transcript)
+                rename_aliases = await collect_commit_rename_aliases_async(
+                    commit_shas, cwd=repo_path
+                )
+                tdd = evaluate_tdd_evidence(
+                    artifacts.tests, transcript, renamed_test_paths=rename_aliases
+                )
                 tdd_details = tdd.details()
                 # Gate 12 and gate 13 both ask whether the loop was followed rather than
                 # whether the deliverable is sound, so a justified deliberate close waives

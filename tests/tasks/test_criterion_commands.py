@@ -230,6 +230,9 @@ def test_non_lifecycle_gobby_commands_still_register() -> None:
     "span",
     [
         "Gobby MCP proxy tools unavailable",
+        "gobby MCP proxy tools unavailable",
+        "gobby mcp proxy tools unavailable",
+        "uv run gobby mcp proxy tools unavailable",
         "about gobby",
         "example git add src/gobby/tasks/criterion_commands.py and git commit",
     ],

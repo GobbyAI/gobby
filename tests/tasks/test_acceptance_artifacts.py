@@ -132,6 +132,18 @@ def test_inline_criterion_test_reference_is_extracted() -> None:
     )
 
 
+def test_multiple_inline_test_references_on_one_criterion_are_extracted() -> None:
+    criteria = (
+        "3.2.2: test: `tests/a.py::test_a` and test: `tests/b.py::test_b`; "
+        "the `test: examples/example.py::not_a_test` example is inert."
+    )
+
+    assert artifacts_module.extract_artifact_references(criteria, "test") == (
+        "tests/a.py::test_a",
+        "tests/b.py::test_b",
+    )
+
+
 def test_inline_code_examples_are_not_artifact_references() -> None:
     criteria = (
         "The schema describes `test: path::test_symbol`, examples use "
@@ -687,6 +699,51 @@ def test_tdd_evidence_requires_assertion_red_before_source_edit() -> None:
     assert result.passed is True
     assert result.red_runs
     assert result.green_runs
+
+
+def test_tdd_evidence_credits_red_before_linked_test_rename() -> None:
+    started = datetime(2026, 9, 26, tzinfo=UTC)
+    test = AcceptanceTest(
+        reference="tests/new_test_feature.py::test_feature",
+        path="tests/new_test_feature.py",
+        symbol="test_feature",
+        body="def test_feature(): assert feature() == 1",
+    )
+    old_test = replace(
+        test,
+        reference="tests/old_test_feature.py::test_feature",
+        path="tests/old_test_feature.py",
+    )
+    evidence = TranscriptEvidence(
+        edits=(
+            _edit(old_test.path, started, 1),
+            _edit("src/feature.py", started + timedelta(minutes=2), 3),
+        ),
+        validation_runs=(
+            _run(
+                old_test,
+                started + timedelta(minutes=1),
+                "failure",
+                "FAILED tests/old_test_feature.py::test_feature\nE assert 0 == 1",
+                2,
+            ),
+            _run(
+                test,
+                started + timedelta(minutes=3),
+                "success",
+                "tests/new_test_feature.py::test_feature PASSED",
+                4,
+            ),
+        ),
+    )
+
+    assert not evaluate_tdd_evidence((test,), evidence).passed
+    result = evaluate_tdd_evidence(
+        (test,), evidence, renamed_test_paths={test.path: (old_test.path,)}
+    )
+    assert result.passed
+    assert result.red_runs == ("pytest tests/old_test_feature.py::test_feature",)
+    assert result.green_runs == ("pytest tests/new_test_feature.py::test_feature",)
 
 
 def test_tdd_evidence_ignores_other_test_edits_before_red() -> None:

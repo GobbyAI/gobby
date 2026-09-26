@@ -61,6 +61,13 @@ _CRITERION_COMMAND_PREFIXES = frozenset(
         "zsh",
     }
 )
+_GOBBY_CLI_SUBCOMMANDS = frozenset(
+    """agents auth build clones comms cron cutover datastores embeddings feedback files
+    health hooks hub-backup hub-maintenance init install lease mcp-proxy mcp-server memory
+    merge nodes observations pack panes pipelines plan plans postgres profiles projects qdrant
+    restart rules schema secrets service sessions skills stages start status stop sync tasks
+    test-quality test-types tokens ui uninstall unpack variables webhooks workspaces worktrees""".split()
+)
 _DAEMON_LIFECYCLE_SUBCOMMANDS = frozenset({"start", "stop", "restart", "cutover"})
 _GOBBY_OPTIONS_WITH_VALUES = frozenset({"--config"})
 DAEMON_LIFECYCLE_COMMAND_REASON = (
@@ -279,11 +286,20 @@ def _looks_like_criterion_command(
     core_command: str | None,
     observed_cores: set[str],
 ) -> bool:
+    tokens = safe_split(core_command or command)
+    for index, token in enumerate(tokens):
+        if posixpath.basename(token) != "gobby":
+            continue
+        arguments = tokens[index + 1 :]
+        while arguments and arguments[0].startswith("-"):
+            consumed = 2 if arguments[0] in _GOBBY_OPTIONS_WITH_VALUES else 1
+            arguments = arguments[consumed:]
+        if not arguments or arguments[0] not in _GOBBY_CLI_SUBCOMMANDS:
+            return False
     if core_command in observed_cores:
         return True
     if classify_validation_segments(command):
         return True
-    tokens = safe_split(core_command or command)
     if len(tokens) < 2:
         return False
     return posixpath.basename(tokens[0]) in _CRITERION_COMMAND_PREFIXES
