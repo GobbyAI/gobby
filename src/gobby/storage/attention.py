@@ -405,7 +405,10 @@ class AttentionStateManager:
         with self.ordering.synchronized():
             self._sweep_empty_rows_locked()
             rows = self.db.fetchall(
-                "SELECT * FROM attention_states WHERE state IS NOT NULL ORDER BY entry_id"
+                """SELECT * FROM attention_states
+                WHERE state IS NOT NULL
+                   OR jsonb_typeof(payload->'turn_lifecycle'->'provider_error') = 'object'
+                ORDER BY entry_id"""
             )
             states = tuple(AttentionState.from_row(row) for row in rows)
             raw_metadata = metadata_snapshot() if metadata_snapshot is not None else {}

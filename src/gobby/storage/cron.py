@@ -392,10 +392,17 @@ class CronJobStorage(CronRunStorageMixin):
             interval_seconds,
         )
 
-    def update_job(
-        self, job_id: str, *, require_non_shell: bool = False, **fields: Any
+    def update_job(self, job_id: str, **fields: Any) -> CronJob | None:
+        """Update cron job fields for an operator or internal caller."""
+        return self._update_job(job_id, fields, require_non_shell=False)
+
+    def update_non_shell_job(self, job_id: str, **fields: Any) -> CronJob | None:
+        """Update only a non-shell cron job for an authenticated agent."""
+        return self._update_job(job_id, fields, require_non_shell=True)
+
+    def _update_job(
+        self, job_id: str, fields: dict[str, Any], *, require_non_shell: bool
     ) -> CronJob | None:
-        """Update cron job fields."""
         if not fields:
             return self.get_job(job_id)
 

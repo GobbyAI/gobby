@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from concurrent.futures import CancelledError as FutureCancelledError
 from concurrent.futures import Future
 from datetime import UTC, datetime
@@ -34,6 +35,49 @@ from gobby.utils.project_context import get_workflow_project_path
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.worktrees.deletion import probe_missing_worktree_git_state
 from gobby.worktrees.git import WorktreeGitManager
+
+MAX_PROVIDER_ERROR_RESUMES = 3
+PROVIDER_ERROR_BACKOFF_SECONDS = (1.0, 2.0, 4.0)
+PROVIDER_ERROR_RESUME_PROMPT = (
+    "The previous turn stopped because of a temporary provider API error. "
+    "Continue the interrupted work."
+)
+_HTTP_STATUS = re.compile(r"\b(?:HTTP\s*)?([1-5][0-9]{2})\b", re.IGNORECASE)
+
+
+def _stop_failure_error(event: HookEvent) -> tuple[str, str, bool]:
+    raw_type = event.data.get("error")
+    error_type = " ".join(raw_type.split())[:80] if isinstance(raw_type, str) else "unknown"
+    rendered = event.data.get("last_assistant_message")
+    if not isinstance(rendered, str) or not rendered.strip():
+        rendered = event.data.get("error_details")
+    if not isinstance(rendered, str) or not rendered.strip():
+        rendered = error_type
+    message = " ".join(rendered.split())[:240]
+    details = event.data.get("error_details")
+    diagnostic = " ".join(
+        value for value in (error_type, rendered, details) if isinstance(value, str)
+    ).lower()
+    statuses = {int(match.group(1)) for match in _HTTP_STATUS.finditer(diagnostic)}
+    terminal = any(status in {400, 401, 402, 403, 404, 422} for status in statuses)
+    terminal = terminal or any(
+        marker in diagnostic
+        for marker in ("authentication", "unauthorized", "billing", "invalid_request")
+    )
+    retryable = not terminal and (
+        any(status == 429 or 500 <= status <= 599 for status in statuses)
+        or any(
+            marker in diagnostic
+            for marker in (
+                "server_error",
+                "internal server error",
+                "overloaded",
+                "rate_limit",
+                "rate limit",
+            )
+        )
+    )
+    return error_type or "unknown", message, retryable
 
 
 class MiscEventHandlerMixin(EventHandlersBase):
@@ -300,8 +344,105 @@ class MiscEventHandlerMixin(EventHandlersBase):
     def handle_stop_failure(self, event: HookEvent) -> HookResponse:
         """Handle STOP_FAILURE event."""
         self._log_observe_only_event("STOP_FAILURE", event)
-        self._end_turn_lifecycle(event, "ended_non_user")
+        session_id = event.metadata.get("_platform_session_id")
+        lifecycle = self._turn_lifecycle
+        if not isinstance(session_id, str) or not session_id or lifecycle is None:
+            return HookResponse(decision="allow")
+        error_type, message, retryable = _stop_failure_error(event)
+        try:
+            transition = lifecycle.record_provider_failure(
+                session_id,
+                error_type=error_type,
+                message=message,
+                retryable=retryable,
+                max_resumes=MAX_PROVIDER_ERROR_RESUMES,
+                evidence=self._turn_evidence(event),
+            )
+        except Exception:
+            self.logger.warning("Failed to record provider error for %s", session_id, exc_info=True)
+            return HookResponse(decision="allow")
+        failure = transition.lifecycle.provider_error
+        if not transition.applied or failure is None:
+            return HookResponse(decision="allow")
+        if not retryable or failure.attempts > MAX_PROVIDER_ERROR_RESUMES:
+            return HookResponse(decision="allow")
+
+        loop = self._event_loop
+        if loop is None or not loop.is_running():
+            self._block_provider_failure(session_id, transition.generation, failure.attempts)
+            return HookResponse(decision="allow")
+        operation = self._resume_provider_failure(
+            session_id, transition.generation, failure.attempts
+        )
+        try:
+            future = asyncio.run_coroutine_threadsafe(operation, loop)
+        except Exception:
+            operation.close()
+            self._block_provider_failure(session_id, transition.generation, failure.attempts)
+            self.logger.warning(
+                "Failed to schedule provider recovery for %s", session_id, exc_info=True
+            )
+            return HookResponse(decision="allow")
+        future.add_done_callback(self._log_provider_recovery_result)
         return HookResponse(decision="allow")
+
+    async def _resume_provider_failure(
+        self, session_id: str, generation: int, attempts: int
+    ) -> None:
+        await asyncio.sleep(PROVIDER_ERROR_BACKOFF_SECONDS[attempts - 1])
+        lifecycle = self._turn_lifecycle
+        if lifecycle is None:
+            return
+        state = await asyncio.to_thread(lifecycle.get, session_id)
+        failure = state.provider_error
+        if (
+            failure is None
+            or state.generation != generation
+            or failure.attempts != attempts
+            or state.turn_state != "terminal"
+        ):
+            return
+        app = get_app_context()
+        dispatcher = app.wake_dispatcher if app is not None else None
+        if dispatcher is None:
+            await asyncio.to_thread(self._block_provider_failure, session_id, generation, attempts)
+            return
+        try:
+            result = await dispatcher.wake(
+                session_id,
+                PROVIDER_ERROR_RESUME_PROMPT,
+                {
+                    "message_type": "provider_error_resume",
+                    "completion_id": f"provider-error:{generation}:{attempts}",
+                    "error_type": failure.error_type,
+                },
+                bypass_debounce=True,
+                prompt=PROVIDER_ERROR_RESUME_PROMPT,
+            )
+        except Exception:
+            self.logger.warning("Provider recovery wake failed for %s", session_id, exc_info=True)
+            result = {"delivered": False}
+        if not result.get("delivered") and result.get("skipped") != "session_active":
+            await asyncio.to_thread(self._block_provider_failure, session_id, generation, attempts)
+
+    def _block_provider_failure(self, session_id: str, generation: int, attempts: int) -> None:
+        lifecycle = self._turn_lifecycle
+        if lifecycle is None:
+            return
+        try:
+            lifecycle.block_provider_failure(session_id, generation=generation, attempts=attempts)
+        except Exception:
+            self.logger.warning(
+                "Failed to raise provider attention for %s", session_id, exc_info=True
+            )
+
+    def _log_provider_recovery_result(self, future: Future[None]) -> None:
+        try:
+            future.result()
+        except FutureCancelledError:
+            self.logger.debug("Provider recovery cancelled")
+        except Exception:
+            self.logger.warning("Provider recovery failed", exc_info=True)
 
     def handle_task_created(self, event: HookEvent) -> HookResponse:
         """Handle TASK_CREATED event."""
