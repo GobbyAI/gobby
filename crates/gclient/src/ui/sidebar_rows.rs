@@ -36,7 +36,7 @@ pub enum RowKind {
     Worktree,
     /// An agent session or run: definition, task and model on three lines.
     Agent,
-    /// A bare terminal: foreground app and backend on two lines.
+    /// A bare terminal: foreground app and address, over its working directory.
     Terminal,
     /// A machine row: one line.
     Machine,
@@ -537,7 +537,7 @@ pub fn ticker_window(
 }
 
 /// The fixed task reference and scrolling title, or dim empty-task label,
-/// under an agent definition. A terminal shows its backend here.
+/// under an agent definition. A terminal shows its working directory here.
 pub fn row_second_line<'a>(row: &'a SidebarRow, width: u16, chrome: &Chrome) -> Line<'a> {
     row_second_line_with_travel(row, width, chrome, chrome.view.title_travel)
 }

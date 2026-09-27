@@ -51,11 +51,11 @@ Logs go to `~/.gobby/logs/gclient.log`.
 ```text
  0 | Gobby  File  Edit  View  Window  Agent  Help
  1 | tab-0:0:0  tab-0:0:1 Z  +
- 2 |┌ ▸ zsh ───────────────────────┐┌ claude ──────────────────────────┐
+ 2 |┌ ○ zsh · Focused ─────────────┐┌ ○ #1742: Codex ──────────────────┐
  3 |│  pane (focused)              ││  pane                            │
  4 |│                              ││                                  │
  5 |│                              ││                                  │
- 6 |└ zsh · Focused ──────── tmux ┘└ claude ──────────────── gclient ┘
+ 6 |└──────────────────── tmux %16 ┘└───────────────────────── 0:0:1:2 ┘
  7 |                                              prefix ctrl+b
 
     The sidebar starts pinned beside the tabs and panes. Unpin it to use
@@ -149,7 +149,10 @@ second after the section scrolls or while the navigate cursor is in it.
   name or foreground command. The pane's address sits at the right edge, as
   the pane's corner prints it, and gives way when the name needs the room.
   The working directory sits below, with `~` for your home, once the daemon
-  reports one. Click or right-click one as you would an agent row.
+  reports one. The client relists every five seconds, so the directory and
+  command follow a `cd` or a new program within that time; a directory the
+  daemon can no longer read drops the line. Click or right-click one as you
+  would an agent row.
 
 State glyphs, on machine, project, and session rows alike. The same table opens
 first in the keybinding help as the attention legend:
@@ -190,18 +193,22 @@ settings.
 
 **Panes.** A tab holds one or more terminals in nested splits; each pane is a
 workspace row with a ref such as `0:0:1:2`, and its name is that row's label.
-A pane's top border names the agent's task (`Task #ref - title`) when one is
-known; otherwise it uses the pane label, then the session title or agent
-definition. The focused pane's title starts with `▸`. Over-long pane titles
-share the Agents ticker. The bottom-left border names the agent definition
-and reference, without a repeated project prefix, followed by `Focused` on
-the focused pane or an exceptional `Read-only` / `Uncertain` state when typing
-is unsafe. The bottom-right border names the pane's address: its workspace
-ref such as `0:0:1:2`, `tmux %16` for a tmux pane, or the backend alone
+A pane's top-left corner names who sits in it: the agent's state glyph, its
+session reference, and its definition, as in `○ #1742: Codex`. The project
+leads the reference (`○ gobby#1742: Codex`) only in the all-projects priority
+view. A seat with no definition names its provider, such as `○ Claude Code`,
+and a bare shell shows its name, such as `○ zsh`. The focused pane appends
+` · Focused`, or ` · Read-only` / ` · Uncertain` when typing is unsafe;
+unfocused panes carry no condition word. The focused title is bold in the
+accent, a seat that needs you reads in the warning hue, and a read-only or
+uncertain focused pane is dimmed. The task title stays on the Agents row.
+Over-long pane titles share the Agents ticker. The bottom-left corner is
+empty. The bottom-right corner names the pane's address: its workspace ref
+such as `0:0:1:2`, `tmux %16` for a tmux pane, or the backend alone
 (`gclient`, `tmux`) until the address is known (see
 [Attach and control](#attach-and-control)). With `pane gaps` off, a pane above
 another shares that pane's top line and has no bottom edge of its own; its
-metadata moves to the top-right of its own title row, unless that would leave the
+address moves to the top-right of its own title row, unless that would leave the
 title fewer than four cells. A pane that has not yet received
 a frame says `waiting for frames`; a pane whose size another viewer set says
 `sized by <viewer>` on its bottom row. An empty tab shows a dimmed goblin mark
@@ -217,16 +224,16 @@ no state yet count as idle, so the counts sum to the agents on this machine. A
 count of zero draws nothing. Clicking the needs-you count opens the sidebar in
 navigate mode. An outage leads the line with
 `× Daemon unreachable · retrying in <n> s`, and the last known counts stay
-beside it. The idle, active, and gone counts give way to focused pane metadata
+beside it. The idle, active, and gone counts give way to the focused pane's title
 or drop whole when the window is too narrow for the right-hand hints.
 The right end shows the prefix chord,
 shifted when the client runs inside tmux, and the current mode when it is not
-plain terminal mode. Pane-local title, backend, and control state stay on that
-pane's borders. With default pane gaps, every pane, a lone one included, draws
-all four edges; a focused pane too narrow to fit its metadata
-on its edge hands the metadata here, where it leads the line. Metadata is
-clickable only while it names an exception: clicking
-`Read-only` or `Uncertain`, on a border or here, takes control. `Focused` is a
+plain terminal mode. Pane-local title, address, and control state stay on that
+pane's borders. Every pane draws a top edge; a focused pane four cells wide or
+narrower has no room for its title there and hands it here, where it leads the
+line. The title is clickable only while it names an exception: clicking a title
+that ends `Read-only` or `Uncertain`, on the border or here, takes control, and
+hovering it underlines the title's words. `Focused` is a
 condition, not a button.
 
 **Alerts.** Messages that used to sit in the status line are toasts: they
@@ -482,12 +489,12 @@ workspace and survive detach and reattach.
 Every pane you open is *attached*: it receives frames. Whether your keystrokes
 reach it depends on the control lease, summarized at the pane's bottom-right.
 
-| Pane metadata | Meaning |
+| Pane title ends | Meaning |
 | --- | --- |
-| `gclient · Focused` / `tmux · Focused` | This is the focused pane. It holds the lease or is acquiring it; keys, pastes, and mouse reports are delivered in order. |
-| `gclient` / `tmux` | An ordinary unfocused pane, including one deliberately observed with `alt+click`. |
-| `backend · Read-only` | Another viewer took the lease, or the host refused this pane's input. Typing is refused; click the metadata or use `prefix+shift+a` to take control. |
-| `backend · Uncertain` | A proxied write's outcome is unknown after a disconnect. Typing is refused; click the metadata or take control again to continue. |
+| ` · Focused` | This is the focused pane. It holds the lease or is acquiring it; keys, pastes, and mouse reports are delivered in order. |
+| (no condition word) | An ordinary unfocused pane, including one deliberately observed with `alt+click`. |
+| ` · Read-only` | Another viewer took the lease, or the host refused this pane's input. Typing is refused; click the title or use `prefix+shift+a` to take control. |
+| ` · Uncertain` | A proxied write's outcome is unknown after a disconnect. Typing is refused; click the title or take control again to continue. |
 
 ### Where your keystrokes go
 
@@ -500,7 +507,7 @@ grant.
 
 Every other pane keeps typing through the daemon — tmux panes, remote panes,
 and any pane whose direct connection failed and fell back to `proxy`. Those
-are the panes that can show `◌ read-only`, because only a write the daemon
+are the panes that can show `· Uncertain`, because only a write the daemon
 acknowledges can have an unknown outcome. No indicator tells the two apart; a
 pane that typed instantly and then went sluggish fell back, and
 `~/.gobby/logs/gclient.log` records it.
@@ -532,7 +539,7 @@ Asking the daemon who may type costs one round trip, and that round trip belongs
 to the focus change or completed click, never to a key. For a free pane, keys,
 pastes, and forwarded mouse reports you produce before the grant lands
 are held in order and written the instant it does. Nothing is dropped and nothing
-announces a mode — the pane reads `backend · Focused` throughout. Only a daemon
+announces a mode — the pane's title ends `· Focused` throughout. Only a daemon
 that stops answering can overrun that queue, and then a warning toast says
 `too much typed while acquiring control; the rest was dropped`.
 
@@ -545,8 +552,8 @@ types: the first key takes control for you. A forwarded mouse report does not,
 so a pane you deliberately left observing stays that way under the pointer.
 
 `prefix+u`, `prefix+q`, and `ctrl+\` release the lease. The daemon can refuse a
-take: the pane's metadata then reads `backend · Read-only`, the reason arrives
-as a toast, and clicking the metadata takes control back.
+take: the pane's title then ends `· Read-only`, the reason arrives
+as a toast, and clicking the title takes control back.
 On quit, the client releases every held lease and detaches every pane; the
 terminals keep running.
 
@@ -803,7 +810,7 @@ The client rides through the gap. When the daemon's connection drops:
 
 Panes, tabs, and held control therefore survive `gobby restart`. On a pane that
 types through the daemon, a write whose outcome the daemon never confirmed leaves
-it `◌ read-only` until you take control again; a direct native pane has no such
+it `· Uncertain` until you take control again; a direct native pane has no such
 write to lose, and retaking control re-grants its input on the host. If the host
 itself was drained or replaced, the affected terminals are gone and their panes
 disappear on the next roster refresh.

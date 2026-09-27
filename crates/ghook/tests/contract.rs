@@ -1563,6 +1563,9 @@ fn daemon_adapter_timeout_agy_skip_stdout_is_protojson_legal() -> TestResult {
         assert_ne!(stdout.get("status"), Some(&Value::String("error".into())));
         assert_stderr_empty(&output, &format!("agy {hook_type} adapter timeout"))?;
         assert_eq!(inbox_envelopes(gobby_home.path())?.len(), 1, "{hook_type}");
+        let failures = read_failure_artifacts(gobby_home.path())?;
+        assert_eq!(failures.len(), 1, "{hook_type}");
+        assert_eq!(failures[0]["hook_type"], hook_type);
     }
 
     Ok(())
@@ -1572,7 +1575,7 @@ fn daemon_adapter_timeout_agy_skip_stdout_is_protojson_legal() -> TestResult {
 fn codex_interrupt_retry_timeout_and_delivery_failures_emit_no_stdout() -> TestResult {
     for (body, expected_exit, expected_failures) in [
         (r#"{"status":"retry"}"#, 0, 0),
-        (r#"{"status":"retry","retry_kind":"adapter_timeout"}"#, 0, 0),
+        (r#"{"status":"retry","retry_kind":"adapter_timeout"}"#, 0, 1),
         (r#"{"error":"down"}"#, 1, 1),
     ] {
         let home = tempfile::tempdir()?;
@@ -1887,7 +1890,43 @@ fn enqueue_only_failure_does_not_fall_back_to_direct_post() -> TestResult {
 }
 
 #[test]
-fn stop_post_connect_failure_with_shutdown_marker_is_suppressed_and_dequeued() -> TestResult {
+fn planned_shutdown_stop_enqueue_only_failure_writes_diagnostic() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let gobby_home = tempfile::tempdir()?;
+    let hooks_dir = gobby_home.path().join("hooks");
+    fs::create_dir_all(&hooks_dir)?;
+    fs::write(hooks_dir.join("inbox"), b"not a directory")?;
+    let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs_f64();
+    fs::write(
+        gobby_home.path().join("shutdown_intent_active.json"),
+        format!(r#"{{"intent":"restart","timestamp":{now}}}"#),
+    )?;
+
+    let output = run_ghook_with_dirs_and_args(
+        home.path(),
+        gobby_home.path(),
+        Some("claude"),
+        Some("Stop"),
+        &closed_local_url()?,
+        VALID_STDIN,
+        RunGhookExtras {
+            env: &[],
+            args: &["--enqueue-only"],
+            cwd: None,
+        },
+    )?;
+
+    assert_eq!(output.status.code(), Some(0));
+    assert_json_stdout(&output, serde_json::json!({"continue": true}))?;
+    let failures = read_failure_artifacts(gobby_home.path())?;
+    assert_eq!(failures.len(), 1);
+    assert_eq!(failures[0]["hook_type"], "Stop");
+    assert_eq!(failures[0]["failure_kind"], "enqueue");
+    Ok(())
+}
+
+#[test]
+fn stop_connect_failure_with_shutdown_marker_retains_envelope_and_diagnostic() -> TestResult {
     let home = tempfile::tempdir()?;
     let gobby_home = tempfile::tempdir()?;
     let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs_f64();
@@ -1895,7 +1934,7 @@ fn stop_post_connect_failure_with_shutdown_marker_is_suppressed_and_dequeued() -
         gobby_home.path().join("shutdown_intent_active.json"),
         format!(r#"{{"intent":"restart","timestamp":{now}}}"#),
     )?;
-    let (daemon_url, health_daemon) = start_health_only_daemon()?;
+    let daemon_url = closed_local_url()?;
 
     let output = run_ghook_with_dirs(
         home.path(),
@@ -1906,22 +1945,15 @@ fn stop_post_connect_failure_with_shutdown_marker_is_suppressed_and_dequeued() -
         VALID_STDIN,
         &[],
     )?;
-    let health_request = join_daemon(health_daemon)?;
-
-    assert!(health_request.contains("GET /api/health HTTP/1.1"));
     assert_eq!(output.status.code(), Some(0));
     assert_json_stdout(&output, serde_json::json!({"continue": true}))?;
     assert_stderr_empty(&output, "planned shutdown Stop")?;
 
-    let inbox = gobby_home.path().join("hooks").join("inbox");
-    assert!(
-        inbox.is_dir(),
-        "Stop envelope should be enqueued before suppression"
-    );
-    assert!(
-        fs::read_dir(&inbox)?.next().is_none(),
-        "suppressed Stop envelope should be deleted"
-    );
+    assert_eq!(inbox_envelopes(gobby_home.path())?.len(), 1);
+    let failures = read_failure_artifacts(gobby_home.path())?;
+    assert_eq!(failures.len(), 1);
+    assert_eq!(failures[0]["failure_kind"], "connect");
+    assert_eq!(failures[0]["hook_type"], "Stop");
 
     Ok(())
 }
@@ -2142,17 +2174,21 @@ fn read_single_inbox_envelope(gobby_home: &Path) -> Result<Value, Box<dyn std::e
 }
 
 fn read_failure_artifacts(gobby_home: &Path) -> Result<Vec<Value>, Box<dyn std::error::Error>> {
-    let failure_dir = gobby_home.join("hooks").join("inbox").join("failures");
-    if !failure_dir.exists() {
-        return Ok(Vec::new());
+    let mut paths = Vec::new();
+    for failure_dir in [
+        gobby_home.join("hooks").join("inbox").join("failures"),
+        gobby_home.join("hooks").join("failures"),
+    ] {
+        if failure_dir.is_dir() {
+            paths.extend(
+                fs::read_dir(failure_dir)?
+                    .collect::<Result<Vec<_>, _>>()?
+                    .into_iter()
+                    .map(|entry| entry.path())
+                    .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("json")),
+            );
+        }
     }
-
-    let mut paths = fs::read_dir(failure_dir)?
-        .collect::<Result<Vec<_>, _>>()?
-        .into_iter()
-        .map(|entry| entry.path())
-        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("json"))
-        .collect::<Vec<_>>();
     paths.sort();
 
     paths
@@ -2174,10 +2210,6 @@ fn start_daemon(response: String) -> io::Result<(String, JoinHandle<io::Result<S
         Ok(request)
     });
     Ok((format!("http://{addr}"), handle))
-}
-
-fn start_health_only_daemon() -> io::Result<(String, JoinHandle<io::Result<String>>)> {
-    start_daemon(http_ok_json("{}"))
 }
 
 fn join_daemon(handle: JoinHandle<io::Result<String>>) -> io::Result<String> {

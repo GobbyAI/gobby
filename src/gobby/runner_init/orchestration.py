@@ -286,36 +286,6 @@ async def _settle_earlier_wake(coordinator: Any, terminal: Any, action_key: str)
     await coordinator.observe_resolved_async(terminal.id, action_key)
 
 
-async def _send_tmux_pane_wake(
-    pane_id: str,
-    message: str,
-    tmux_socket_path: str | None,
-    *,
-    submit: bool = False,
-    clear_before_submit: bool = False,
-    cli_source: str | None = None,
-) -> None:
-    from gobby.agents.tmux.text_injection import (
-        send_literal_text_to_tmux_target,
-        submit_literal_text_to_tmux_target,
-    )
-
-    tmux_cmd = ["tmux"]
-    if tmux_socket_path:
-        tmux_cmd.extend(["-S", tmux_socket_path])
-
-    if submit:
-        await submit_literal_text_to_tmux_target(
-            pane_id,
-            message,
-            tmux_cmd=tmux_cmd,
-            clear_before_submit=clear_before_submit,
-            cli_source=cli_source,
-        )
-    else:
-        await send_literal_text_to_tmux_target(pane_id, message, tmux_cmd=tmux_cmd)
-
-
 def _init_pipeline_heartbeat(runner: GobbyRunner) -> PipelineHeartbeatService | None:
     """Create a cross-project pipeline heartbeat for the daemon."""
     try:
@@ -444,7 +414,6 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
         session_manager=runner.session_manager,
         ism_manager=ism_manager,
         tmux_sender=_send_tmux_session_wake,
-        tmux_pane_sender=_send_tmux_pane_wake,
         native_batch_sender=_send_native_wake_batch,
         agent_run_manager=agent_run_manager,
         run_db=runner.db_executor.run,

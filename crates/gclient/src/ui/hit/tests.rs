@@ -192,7 +192,7 @@ fn hit_test_covers_split_live_layout() {
     assert_eq!(at(view, lane.x, lane.y), scrollbar);
 
     // Only a genuine exceptional pane state is a control, on the pane's
-    // bottom edge; the global status row stays plain status.
+    // top-left title; the global status row stays plain status.
     let status = view.status_rect;
     let indicator = view.control_indicator_hit_area.expect("indicator drawn");
     assert_ne!(indicator.y, status.y);

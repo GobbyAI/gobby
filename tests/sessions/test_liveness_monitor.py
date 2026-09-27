@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, call, patch
@@ -70,10 +71,22 @@ class _Storage:
         self.db = MagicMock()
         self.expire_result = expire_result
         self.expire_calls: list[str] = []
+        self.guarded_expire_calls: list[tuple[str, str, str, datetime]] = []
         self.update = MagicMock()
 
     def expire_if_active(self, session_id: str) -> object | None:
         self.expire_calls.append(session_id)
+        return self.expire_result
+
+    def expire_if_paused_terminal_exited(
+        self,
+        session_id: str,
+        *,
+        terminal_id: str,
+        machine_id: str,
+        observed_updated_at: datetime,
+    ) -> object | None:
+        self.guarded_expire_calls.append((session_id, terminal_id, machine_id, observed_updated_at))
         return self.expire_result
 
 
@@ -738,3 +751,66 @@ class TestGetActiveTerminalSessions:
         assert len(warnings) == 1
         assert "hub temporarily unavailable; skipping pass" in warnings[0].getMessage()
         assert warnings[0].exc_info is None
+
+
+def test_paused_native_id_only_context_is_liveness_candidate(storage: _Storage) -> None:
+    observed = datetime(2026, 9, 27, tzinfo=UTC)
+    terminal_id = "20000000-0000-4000-8000-000000000004"
+    storage.db.fetchall.return_value = [
+        {
+            "id": "paused-seat",
+            "source": "codex",
+            "status": "paused",
+            "machine_id": "21000000-0000-4000-8000-000000000003",
+            "updated_at": observed,
+            "terminal_context": {"gobby_terminal_id": terminal_id},
+        }
+    ]
+    monitor = SessionLivenessMonitor(session_storage=cast(Any, storage))
+
+    records = monitor._get_active_terminal_sessions()
+
+    assert len(records) == 1
+    assert records[0].terminal_context == {"gobby_terminal_id": terminal_id}
+    assert records[0].updated_at == observed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", ["confirmed", "remote", "active", "startup", "hub_outage"])
+async def test_only_local_paused_exited_native_candidate_enters_guarded_expiry(
+    storage: _Storage,
+    case: str,
+) -> None:
+    observed = datetime(2026, 9, 27, tzinfo=UTC)
+    local_id = "21000000-0000-4000-8000-000000000003"
+    terminal_id = "20000000-0000-4000-8000-000000000004"
+    storage.expire_result = object()
+    storage.db.fetchall.return_value = [
+        {
+            "id": "paused-seat",
+            "source": "codex",
+            "status": "active" if case == "active" else "paused",
+            "machine_id": "21000000-0000-4000-8000-000000000004" if case == "remote" else local_id,
+            "updated_at": observed,
+            "terminal_context": {"gobby_terminal_id": terminal_id},
+        }
+    ]
+    if case == "hub_outage":
+        storage.db.fetchall.side_effect = RuntimeError("hub unavailable")
+    terminal_manager = MagicMock()
+    terminal_manager.get_live_for_session.return_value = None
+    monitor = SessionLivenessMonitor(
+        session_storage=cast(Any, storage),
+        terminal_manager=terminal_manager,
+        startup_ready=lambda: case != "startup",
+    )
+    with (
+        patch.object(monitor, "_get_tmux_inventories_by_socket", return_value={}),
+        patch.object(liveness_mod, "get_machine_id", return_value=local_id),
+        patch.object(liveness_mod, "retire_session_hook_effects"),
+    ):
+        await monitor._check_sessions()
+
+    expected = [("paused-seat", terminal_id, local_id, observed)] if case == "confirmed" else []
+    assert storage.guarded_expire_calls == expected
+    assert storage.expire_calls == []

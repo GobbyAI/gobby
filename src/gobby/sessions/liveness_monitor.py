@@ -19,6 +19,7 @@ import subprocess
 import time
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from gobby.agents.tmux.session_manager import TmuxReleaseOutcome
@@ -41,6 +42,7 @@ from gobby.terminal_ownership import (
 from gobby.terminals.lookup import manager_for_terminal_context
 from gobby.utils import spawn
 from gobby.utils.logging import ThrottledLogger
+from gobby.utils.machine_id import get_machine_id
 
 if TYPE_CHECKING:
     from gobby.sessions.processor import SessionMessageProcessor
@@ -69,6 +71,7 @@ class _TerminalLivenessRecord:
     status: str = "active"
     machine_id: str | None = None
     terminal_context: dict[str, Any] | None = None
+    updated_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -203,6 +206,34 @@ class SessionLivenessMonitor:
 
         for record in active_sessions:
             if record.session_id in self._recently_handled:
+                continue
+
+            native_id = (record.terminal_context or {}).get("gobby_terminal_id")
+            if record.status == "paused" and isinstance(native_id, str) and native_id:
+                local_machine_id = get_machine_id()
+                if (
+                    self.terminal_manager is None
+                    or local_machine_id is None
+                    or record.machine_id != local_machine_id
+                    or record.updated_at is None
+                ):
+                    continue
+                try:
+                    live = await asyncio.to_thread(
+                        self.terminal_manager.get_live_for_session, record.session_id
+                    )
+                except Exception:
+                    logger.warning(
+                        "SessionLivenessMonitor: failed to inspect terminal for session %s",
+                        record.session_id,
+                        exc_info=True,
+                    )
+                    continue
+                if live is None and await self._expire_session(
+                    record.session_id,
+                    native_expiry=(native_id, local_machine_id, record.updated_at),
+                ):
+                    self._recently_handled[record.session_id] = now
                 continue
 
             has_tmux_target = bool(record.tmux_pane or getattr(record, "tmux_window_id", None))
@@ -383,7 +414,8 @@ class SessionLivenessMonitor:
         try:
             rows = self._session_manager.db.fetchall(
                 """
-                SELECT s.id, s.source, s.status, s.machine_id, s.terminal_context
+                SELECT s.id, s.source, s.status, s.machine_id, s.updated_at,
+                       s.terminal_context
                 FROM sessions s
                 LEFT JOIN agent_runs ar ON ar.id = s.agent_run_id
                 WHERE s.status = ANY(%s)
@@ -433,7 +465,13 @@ class SessionLivenessMonitor:
             tmux_window_id = get_tmux_window_id(ctx)
             tmux_session = get_tmux_session_name(ctx)
 
-            if parent_pid is None and not tmux_pane and not tmux_window_id:
+            native_id = ctx.get("gobby_terminal_id")
+            native_candidate = (
+                self._row_value(row, "status") == "paused"
+                and isinstance(native_id, str)
+                and bool(native_id)
+            )
+            if parent_pid is None and not tmux_pane and not tmux_window_id and not native_candidate:
                 continue
 
             result.append(
@@ -449,6 +487,7 @@ class SessionLivenessMonitor:
                     status=self._row_value(row, "status") or "active",
                     machine_id=self._row_value(row, "machine_id"),
                     terminal_context=ctx,
+                    updated_at=self._row_value(row, "updated_at"),
                 )
             )
 
@@ -572,13 +611,28 @@ class SessionLivenessMonitor:
         }
         return {socket: self._list_tmux_inventory(socket) for socket in sockets}
 
-    async def _expire_session(self, session_id: str) -> bool:
+    async def _expire_session(
+        self,
+        session_id: str,
+        *,
+        native_expiry: tuple[str, str, datetime] | None = None,
+    ) -> bool:
         """Conditionally expire a session, then dispatch cleanup work."""
         try:
-            expired_session = await asyncio.to_thread(
-                self._session_manager.expire_if_active,
-                session_id,
-            )
+            if native_expiry is None:
+                expired_session = await asyncio.to_thread(
+                    self._session_manager.expire_if_active,
+                    session_id,
+                )
+            else:
+                terminal_id, machine_id, observed_updated_at = native_expiry
+                expired_session = await asyncio.to_thread(
+                    self._session_manager.expire_if_paused_terminal_exited,
+                    session_id,
+                    terminal_id=terminal_id,
+                    machine_id=machine_id,
+                    observed_updated_at=observed_updated_at,
+                )
         except Exception:
             logger.warning(
                 "SessionLivenessMonitor: failed to expire session %s",

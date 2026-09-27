@@ -2,6 +2,7 @@ use super::*;
 use crate::app::{Backend, PaneId, Workspace};
 use crate::daemon::{ProjectRow, SessionRow, SidebarRows, WorkspaceSnapshot};
 use crate::ui::pane_layout;
+use crate::ui::settings::AgentSort;
 use serde_json::json;
 
 fn info(rect: Rect, borders: Borders, is_focused: bool) -> PaneInfo {
@@ -15,17 +16,17 @@ fn info(rect: Rect, borders: Borders, is_focused: bool) -> PaneInfo {
     }
 }
 
-fn footer(left: &str, right: &str) -> PaneFooter {
-    PaneFooter {
-        left: left.to_owned(),
-        right: right.to_owned(),
+fn corners(title: &str, address: &str) -> PaneCorners {
+    PaneCorners {
+        title: title.to_owned(),
+        address: address.to_owned(),
         tone: MetadataTone::Focused,
         actionable: false,
     }
 }
 
 #[test]
-fn pane_title_prefers_task_then_label_then_provisional() {
+fn corner_title_leads_with_glyph_ref_and_definition() {
     let mut ws = Workspace::scripted();
     ws.daemon_mut().set_sidebar_rows(SidebarRows {
         projects: vec![ProjectRow {
@@ -61,11 +62,6 @@ fn pane_title_prefers_task_then_label_then_provisional() {
     ws.select_project("proj-alpha");
     ws.reconcile_subscribe_first().unwrap();
     ws.open_terminal("term-alpha", "native", "epoch").unwrap();
-    let session_pane = ws.pane(ws.pane_for_terminal("term-alpha").unwrap());
-    assert_eq!(
-        pane_title(&ws, session_pane),
-        "Task #42 - Finish pane chrome"
-    );
     let mut snapshot: WorkspaceSnapshot = serde_json::from_str(include_str!(
         "../../../../../tests/fixtures/terminal_ws_golden/workspace_snapshot.json"
     ))
@@ -76,63 +72,72 @@ fn pane_title_prefers_task_then_label_then_provisional() {
     snapshot.panes[1].reference = 2;
     snapshot.panes[1].terminal_id = Some("term-alpha".to_owned());
     ws.apply_workspace_snapshot(snapshot);
-    let session_pane = ws.pane(ws.pane_for_terminal("term-alpha").unwrap());
-    let footer = pane_footer(&ws, session_pane, true);
-    assert_eq!(footer.left, "Codex (gobby#42) · Focused");
-    assert_eq!(footer.right, "0:0:1:2");
+    let mut chrome = Chrome::dark();
+    let pane_id = ws.pane_for_terminal("term-alpha").unwrap();
+
+    // The session ref, not the task: the task title lives on the Agents row.
+    let focused = pane_corners(&ws, &chrome, ws.pane(pane_id), true);
+    assert_eq!(focused.title, "○ #1742: Codex · Focused");
+    assert_eq!(focused.address, "0:0:1:2");
+    let unfocused = pane_corners(&ws, &chrome, ws.pane(pane_id), false);
+    assert_eq!(unfocused.title, "○ #1742: Codex");
+
+    // The project leads the ref only where every project's rows mix.
+    chrome.sidebar.all_sessions = true;
+    chrome.prefs.agent_sort = AgentSort::Priority;
+    assert_eq!(
+        pane_corners(&ws, &chrome, ws.pane(pane_id), false).title,
+        "○ gobby#1742: Codex"
+    );
+    chrome.sidebar.all_sessions = false;
+
     let mut tmux_pane = Pane::new(PaneId(100), "term-alpha", Backend::Tmux, "epoch");
     tmux_pane.address = Some("%15".to_owned());
-    assert_eq!(pane_footer(&ws, &tmux_pane, true).right, "tmux %15");
-
-    ws.daemon_mut().set_roster(json!({
-        "epoch": "e1", "seq": 2,
-        "entries": [{
-            "entry_id": "session:sess-alpha",
-            "session_id": "sess-alpha",
-            "provider": "codex",
-            "terminal": {"terminal_id": "term-alpha", "backend": "native"},
-            "task": {"ref": "#42"}
-        }]
-    }));
-    ws.reconcile_subscribe_first().unwrap();
-    let pane_id = ws.pane_for_terminal("term-alpha").unwrap();
-    assert_eq!(pane_title(&ws, ws.pane(pane_id)), "Task #42");
-
-    ws.daemon_mut().set_roster(json!({
-        "epoch": "e1", "seq": 3,
-        "entries": [{
-            "entry_id": "session:sess-alpha",
-            "session_id": "sess-alpha",
-            "provider": "codex",
-            "terminal": {"terminal_id": "term-alpha", "backend": "native"}
-        }]
-    }));
-    ws.reconcile_subscribe_first().unwrap();
-    let pane_id = ws.pane_for_terminal("term-alpha").unwrap();
-    ws.pane_mut(pane_id).label = Some("manual title".to_owned());
-    assert_eq!(pane_title(&ws, ws.pane(pane_id)), "manual title");
-    ws.pane_mut(pane_id).label = None;
-    assert_eq!(pane_title(&ws, ws.pane(pane_id)), "Ship the Unicode 修复");
     assert_eq!(
-        pane_footer(&ws, ws.pane(pane_id), false).left,
-        "Codex (gobby#1742)"
+        pane_corners(&ws, &chrome, &tmux_pane, true).address,
+        "tmux %15"
     );
 
+    // No session ref: the definition alone.
     ws.daemon_mut().set_sidebar_rows(SidebarRows::default());
     ws.reconcile_subscribe_first().unwrap();
-    assert_eq!(pane_title(&ws, ws.pane(pane_id)), "Codex");
-    assert_eq!(pane_footer(&ws, ws.pane(pane_id), false).left, "Codex");
+    assert_eq!(
+        pane_corners(&ws, &chrome, ws.pane(pane_id), false).title,
+        "○ Codex"
+    );
 
     let mut fallback = Pane::new(PaneId(99), "term-fallback", Backend::Native, "epoch");
     fallback.label = Some("renamed pane".to_owned());
-    assert_eq!(pane_title(&ws, &fallback), "renamed pane");
+    assert_eq!(
+        pane_corners(&ws, &chrome, &fallback, false).title,
+        "○ renamed pane"
+    );
     fallback.label = None;
     fallback.command = Some("nvim".to_owned());
-    assert_eq!(pane_title(&ws, &fallback), "");
+    assert_eq!(pane_corners(&ws, &chrome, &fallback, false).title, "○ nvim");
 }
 
 #[test]
-fn bare_shell_footer_uses_its_command_instead_of_unknown_agent_identity() {
+fn a_seat_without_a_definition_names_its_provider() {
+    let mut ws = Workspace::scripted();
+    ws.daemon_mut().set_roster(json!({
+        "epoch": "e1", "seq": 1,
+        "entries": [{
+            "entry_id": "run:orphan",
+            "provider": "claude_code",
+            "terminal": {"terminal_id": "term-orphan", "backend": "native"}
+        }]
+    }));
+    ws.reconcile_subscribe_first().unwrap();
+    let pane = ws.open_terminal("term-orphan", "native", "epoch").unwrap();
+    assert_eq!(
+        pane_corners(&ws, &Chrome::dark(), ws.pane(pane), true).title,
+        "○ Claude Code · Focused"
+    );
+}
+
+#[test]
+fn bare_shell_title_uses_its_command_instead_of_unknown_agent_identity() {
     let mut ws = Workspace::scripted();
     ws.daemon_mut().set_roster(json!({
         "epoch": "e1",
@@ -147,95 +152,85 @@ fn bare_shell_footer_uses_its_command_instead_of_unknown_agent_identity() {
     let mut pane = Pane::new(PaneId(101), "term-shell", Backend::Native, "epoch");
     pane.command = Some("zsh".to_owned());
     assert_eq!(ws.sidebar().agents.len(), 1);
-    assert_eq!(pane_footer(&ws, &pane, true).left, "zsh · Focused");
-}
-
-#[test]
-fn agent_footer_omits_empty_project_reference() {
-    let mut ws = Workspace::scripted();
-    ws.daemon_mut().set_roster(json!({
-        "epoch": "e1", "seq": 1,
-        "entries": [{
-            "entry_id": "run:orphan",
-            "provider": "codex",
-            "terminal": {"terminal_id": "term-orphan", "backend": "native"}
-        }]
-    }));
-    ws.reconcile_subscribe_first().unwrap();
-    let pane = ws.open_terminal("term-orphan", "native", "epoch").unwrap();
     assert_eq!(
-        pane_footer(&ws, ws.pane(pane), true).left,
-        "Codex · Focused"
+        pane_corners(&ws, &Chrome::dark(), &pane, true).title,
+        "○ zsh · Focused"
     );
 }
 
 #[test]
-fn pane_metadata_maps_focus_and_exception_states_per_backend() {
+fn a_seat_that_needs_you_reads_in_the_attention_tone() {
+    let mut ws = Workspace::scripted();
+    ws.daemon_mut().set_roster(json!({
+        "epoch": "e1", "seq": 1,
+        "entries": [{
+            "entry_id": "run:asking",
+            "provider": "codex",
+            "terminal": {"terminal_id": "term-asking", "backend": "native"},
+            "attention": {"attention_id": "att-1", "kind": "actionable"}
+        }]
+    }));
+    ws.reconcile_subscribe_first().unwrap();
+    let pane = ws.open_terminal("term-asking", "native", "epoch").unwrap();
+    let chrome = Chrome::dark();
+    let unfocused = pane_corners(&ws, &chrome, ws.pane(pane), false);
+    assert_eq!(
+        (unfocused.title.as_str(), unfocused.tone),
+        ("⍾ Codex", MetadataTone::Attention)
+    );
+    // Focus outranks the ask in the hue; the glyph still says it.
+    let focused = pane_corners(&ws, &chrome, ws.pane(pane), true);
+    assert_eq!(
+        (focused.title.as_str(), focused.tone),
+        ("⍾ Codex · Focused", MetadataTone::Focused)
+    );
+}
+
+#[test]
+fn corners_map_focus_and_exception_states_per_backend() {
     let ws = Workspace::scripted();
+    let chrome = Chrome::dark();
     for (backend, name) in [(Backend::Native, "gclient"), (Backend::Tmux, "tmux")] {
         let mut pane = Pane::new(PaneId(1), "term", backend, "epoch");
         pane.command = Some("zsh".to_owned());
         let reads = |pane: &Pane, focused| {
-            let footer = pane_footer(&ws, pane, focused);
-            (footer.left, footer.right, footer.tone, footer.actionable)
+            let corners = pane_corners(&ws, &chrome, pane, focused);
+            (
+                corners.title,
+                corners.address,
+                corners.tone,
+                corners.actionable,
+            )
         };
+        let expect =
+            |title: &str, tone, actionable| (title.to_owned(), name.to_owned(), tone, actionable);
         assert_eq!(
             reads(&pane, false),
-            (
-                "zsh".to_owned(),
-                name.to_owned(),
-                MetadataTone::Ordinary,
-                false
-            )
+            expect("○ zsh", MetadataTone::Ordinary, false)
         );
         assert_eq!(
             reads(&pane, true),
-            (
-                "zsh · Focused".to_owned(),
-                name.to_owned(),
-                MetadataTone::Focused,
-                false
-            )
+            expect("○ zsh · Focused", MetadataTone::Focused, false)
         );
         pane.control = ControlState::Held;
         assert_eq!(
             reads(&pane, true),
-            (
-                "zsh · Focused".to_owned(),
-                name.to_owned(),
-                MetadataTone::Focused,
-                false
-            )
+            expect("○ zsh · Focused", MetadataTone::Focused, false)
         );
         pane.control = ControlState::LeaseLost;
         assert_eq!(
             reads(&pane, true),
-            (
-                "zsh · Read-only".to_owned(),
-                name.to_owned(),
-                MetadataTone::Warning,
-                true
-            )
+            expect("○ zsh · Read-only", MetadataTone::Held, true)
         );
-        // An unfocused pane still names its exception.
+        // The focus word, exception included, is absent on unfocused panes.
         assert_eq!(
             reads(&pane, false),
-            (
-                "zsh · Read-only".to_owned(),
-                name.to_owned(),
-                MetadataTone::Warning,
-                true
-            )
+            expect("○ zsh", MetadataTone::Ordinary, false)
         );
         pane.control = ControlState::UncertainReadOnly;
         assert_eq!(
             reads(&pane, true),
-            (
-                "zsh · Uncertain".to_owned(),
-                name.to_owned(),
-                MetadataTone::Warning,
-                true
-            )
+            expect("○ zsh · Uncertain", MetadataTone::Held, true)
         );
         // A refused host write or grant leaves the pane observing with
         // take-back offered: the same Read-only, in the same tone.
@@ -243,58 +238,52 @@ fn pane_metadata_maps_focus_and_exception_states_per_backend() {
         pane.take_back = true;
         assert_eq!(
             reads(&pane, true),
-            (
-                "zsh · Read-only".to_owned(),
-                name.to_owned(),
-                MetadataTone::Warning,
-                true
-            )
+            expect("○ zsh · Read-only", MetadataTone::Held, true)
         );
     }
 }
 
 #[test]
-fn footer_occupies_both_bottom_corners() {
+fn the_address_takes_the_bottom_right_corner_alone() {
     let rect = Rect::new(10, 2, 50, 8);
-    let text = footer("zsh · Focused", "0:0:1:2");
-    let (left, right) = footer_rects(&info(rect, Borders::ALL, true), &text).unwrap();
-    assert_eq!(left.x, rect.x + 1);
-    assert_eq!(right.right(), rect.right() - 1);
-    assert_eq!(left.y, rect.bottom() - 1);
-    assert!(left.right() < right.x);
-    assert_eq!(top_reserve(&info(rect, Borders::ALL, true), &text), 0);
+    let text = corners("○ zsh · Focused", "0:0:1:2");
+    let bordered = info(rect, Borders::ALL, true);
+    let address = address_rect(&bordered, &text).unwrap();
+    assert_eq!(address.right(), rect.right() - 1);
+    assert_eq!(address.y, rect.bottom() - 1);
+    assert_eq!(top_reserve(&bordered, &text), 0);
+    let title = title_rect(&bordered, &text).unwrap();
+    assert_eq!((title.x, title.y), (rect.x + 1, rect.y));
+    assert_eq!(usize::from(title.width), display_width(&text.title) + 2);
 
-    // Too narrow for the padded text: nothing is drawn rather than a cut word.
-    let narrow = info(Rect::new(0, 0, 12, 8), Borders::ALL, true);
-    assert_eq!(footer_rects(&narrow, &text), None);
-    // No border at all: the status line carries it instead.
-    assert_eq!(footer_rects(&info(rect, Borders::NONE, true), &text), None);
+    // Too narrow for the padded address: nothing is drawn rather than a cut id.
+    let narrow = info(Rect::new(0, 0, 10, 8), Borders::ALL, true);
+    assert_eq!(address_rect(&narrow, &text), None);
+    // No border at all: the status line carries the title instead.
+    let bare = info(rect, Borders::NONE, true);
+    assert_eq!(address_rect(&bare, &text), None);
+    assert_eq!(title_rect(&bare, &text), None);
 }
 
 #[test]
-fn shared_divider_moves_upper_footer_beside_title() {
-    let footer = footer("Codex (proj#42) · Read-only", "0:0:1:2");
+fn shared_divider_moves_upper_address_beside_title() {
+    let text = corners("○ #42: Codex · Read-only", "0:0:1:2");
     let upper = info(
         Rect::new(10, 2, 100, 8),
         Borders::TOP | Borders::LEFT | Borders::RIGHT,
         true,
     );
-    let reserve = top_reserve(&upper, &footer);
-    assert_eq!(
-        reserve,
-        display_width(&footer.left) + display_width(&footer.right) + 5
-    );
-    let (left, right) = footer_rects(&upper, &footer).unwrap();
-    assert_eq!(left.y, upper.rect.y);
-    assert_eq!(right.y, upper.rect.y);
-    assert_eq!(right.right(), upper.rect.right() - 1);
-    assert_eq!(left.right() + 1, right.x);
-    let title_end = upper.rect.x + 2 + title_budget(upper.rect.width, true, reserve) as u16;
-    assert!(title_end < left.x);
+    let reserve = top_reserve(&upper, &text);
+    assert_eq!(reserve, display_width(&text.address) + 3);
+    let address = address_rect(&upper, &text).unwrap();
+    assert_eq!(address.y, upper.rect.y);
+    assert_eq!(address.right(), upper.rect.right() - 1);
+    let title_end = upper.rect.x + 2 + title_budget(upper.rect.width, reserve) as u16;
+    assert!(title_end < address.x);
 
-    let cramped = info(Rect::new(10, 2, 44, 8), upper.borders, true);
-    assert_eq!(top_reserve(&cramped, &footer), 0);
-    assert_eq!(footer_rects(&cramped, &footer), None);
+    let cramped = info(Rect::new(10, 2, 17, 8), upper.borders, true);
+    assert_eq!(top_reserve(&cramped, &text), 0);
+    assert_eq!(address_rect(&cramped, &text), None);
 }
 
 #[test]
@@ -303,15 +292,17 @@ fn title_travel_measures_each_header_window() {
     ws.daemon_mut()
         .set_roster(json!({"epoch": "e1", "seq": 1, "entries": []}));
     ws.reconcile_subscribe_first().unwrap();
+    let chrome = Chrome::dark();
     let mut pane = Pane::new(PaneId(1), "term", Backend::Native, "epoch");
-    pane.label = Some("a-title-of-thirty-cells-wide!!".to_owned());
+    // "○ " plus 28 cells: a 30-cell title unfocused, 40 with " · Focused".
+    pane.label = Some("a-title-of-twenty-eight-cell".to_owned());
     let bordered = info(Rect::new(0, 0, 20, 6), Borders::ALL, false);
-    assert_eq!(title_travel(&ws, &pane, &bordered), 30 - 16);
+    assert_eq!(title_travel(&ws, &chrome, &pane, &bordered), 30 - 16);
     let focused = info(Rect::new(0, 0, 20, 6), Borders::ALL, true);
-    assert_eq!(title_travel(&ws, &pane, &focused), 30 - 14);
+    assert_eq!(title_travel(&ws, &chrome, &pane, &focused), 40 - 16);
     // No top edge, or a window under the readable minimum, never scrolls.
     let borderless = info(Rect::new(0, 0, 20, 6), Borders::NONE, true);
-    assert_eq!(title_travel(&ws, &pane, &borderless), 0);
-    let tiny = info(Rect::new(0, 0, 9, 6), Borders::ALL, true);
-    assert_eq!(title_travel(&ws, &pane, &tiny), 0);
+    assert_eq!(title_travel(&ws, &chrome, &pane, &borderless), 0);
+    let tiny = info(Rect::new(0, 0, 7, 6), Borders::ALL, true);
+    assert_eq!(title_travel(&ws, &chrome, &pane, &tiny), 0);
 }

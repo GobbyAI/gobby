@@ -93,6 +93,7 @@ impl Workspace<LiveDaemon> {
         }
         let id = PaneId(self.next_pane);
         self.next_pane += 1;
+        self.relist.invalidate();
         self.panes.insert(
             id,
             Pane::new_detached(id, terminal_id, Backend::parse(backend), ""),

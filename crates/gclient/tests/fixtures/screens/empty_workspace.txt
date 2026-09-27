@@ -60,7 +60,7 @@
 28 : -/-*45 overlay1/-+b*13 -/-*62
 29 |                                             ctrl+b w  attach a terminal                                                |
 29 : -/-*45 subtext0/-*8 overlay0/-*19 -/-*48
-30 |                                             File › New Terminal  start one                                             |
+30 |                                             File › New terminal  start one                                             |
 30 : -/-*45 subtext0/-*19 overlay0/-*11 -/-*45
 31 |                                             ctrl+b b  open the sidebar                                                 |
 31 : -/-*45 subtext0/-*8 overlay0/-*18 -/-*49
