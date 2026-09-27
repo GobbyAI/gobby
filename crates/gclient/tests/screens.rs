@@ -517,11 +517,23 @@ fn render(ws: &Workspace, chrome: &mut Chrome) -> Terminal<TestBackend> {
     terminal
 }
 
-/// `Palette::entries` resolved to the colours the render actually paints with.
+/// `Palette::entries` resolved to the colours the render actually paints
+/// with, then the chrome's own fields no herdr name covers: the bar and its
+/// inks, the line and the wordmark. Those come after the entries, so where
+/// one repeats a token (`bar_open_ink` is the dark `surface_dim`) the
+/// capture keeps naming the entry.
 fn roles(theme: &Theme) -> Vec<(&'static str, Color)> {
+    let palette = theme.palette();
     Palette::entries(theme)
         .into_iter()
         .map(|(name, token)| (name, token.color()))
+        .chain([
+            ("bar", palette.bar),
+            ("bar_ink", palette.bar_ink),
+            ("bar_open_ink", palette.bar_open_ink),
+            ("line", palette.line),
+            ("wordmark", palette.wordmark),
+        ])
         .collect()
 }
 
@@ -703,22 +715,22 @@ fn agent_rows_golden() {
     let theme = Theme::new(ThemeKind::Dark);
     let rendered = deterministic_capture("agent_rows", agent_rows, &theme);
     let rows = glyph_rows(&rendered);
-    assert!(rows[8].contains("backend-developer-work… (#123)"));
-    assert!(rows[9].contains("Task #123 - Implement the full"));
-    assert!(rows[10].contains("gpt-5"));
+    assert!(rows[9].contains("backend-developer-work… (#123)"));
+    assert!(rows[10].contains("Task #123 - Implement the full"));
+    assert!(rows[11].contains("gpt-5"));
     assert!(
-        rows[24].contains("○ nvim"),
+        rows[25].contains("○ nvim"),
         "foreground app: {:?}",
-        rows[24]
+        rows[25]
     );
-    assert!(rows[25].contains("gclient"), "backend: {:?}", rows[25]);
+    assert!(rows[26].contains("gclient"), "backend: {:?}", rows[26]);
     assert!(!rendered.contains("term-bare"), "pane ID is not row copy");
     let slug_style = rendered
         .lines()
-        .find(|line| line.starts_with("10 :"))
+        .find(|line| line.starts_with("11 :"))
         .expect("model slug style");
-    assert!(slug_style.contains("subtext0/panel_bg*5"));
-    assert!(!slug_style.contains("subtext0/panel_bg+d"));
+    assert!(slug_style.contains("subtext0/-*5"));
+    assert!(!slug_style.contains("subtext0/-+d"));
 }
 
 #[test]
@@ -750,14 +762,15 @@ fn projects_agents_golden() {
             .unwrap_or_else(|| panic!("no row contains {needle:?}\n{rendered}"))
     };
 
-    // Row 0 is the menu bar; the machines band opens the sidebar under it.
+    // Rows 0 and 1 are the menu bar and its line; the machines band opens the
+    // sidebar under them.
     assert_eq!(
         rows[0].trim_end(),
         " Gobby  File  Edit  View  Window  Agent  Help",
         "menu-bar row"
     );
     let machines = row_containing(" Machines");
-    assert_eq!(machines, 1, "the machines band tops the sidebar");
+    assert_eq!(machines, 2, "the machines band tops the sidebar");
     let projects = row_containing(" Projects");
     assert!(
         rows[projects].contains("[working]"),
@@ -769,7 +782,7 @@ fn projects_agents_golden() {
     let alpha = row_containing("⍾ alpha");
     assert_eq!(alpha, projects + 1, "the card follows the one-row band");
     assert!(
-        rows[alpha].starts_with(" ⍾ alpha (main ↑2 ↓1)") && rows[alpha].contains("▸│"),
+        rows[alpha].starts_with(" ⍾ alpha (main ↑2 ↓1)") && rows[alpha].trim_end().ends_with('▸'),
         "folded card: {:?}",
         rows[alpha]
     );
@@ -815,7 +828,7 @@ fn projects_agents_golden() {
     let expanded = capture("projects_agents", &render(&ws, &mut chrome), &theme);
     let expanded_rows = glyph_rows(&expanded);
     assert!(
-        expanded_rows[alpha].contains("▾│"),
+        expanded_rows[alpha].trim_end().ends_with('▾'),
         "expanded card: {:?}",
         expanded_rows[alpha]
     );

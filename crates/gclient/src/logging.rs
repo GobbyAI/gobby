@@ -18,9 +18,10 @@ type DayClock = Arc<dyn Fn() -> u64 + Send + Sync>;
 ///
 /// Logging is file-only. Failure to create the log file is returned to the
 /// caller instead of silently falling back to stdout and corrupting the TUI.
+/// The log lives under the same Gobby home as the client's preferences, so
+/// `GOBBY_HOME` moves both.
 pub fn init() -> Result<PathBuf> {
-    let home = std::env::var_os("HOME").context("HOME is not set")?;
-    init_in(&PathBuf::from(home).join(".gobby"))
+    init_in(&gobby_core::gobby_home()?)
 }
 
 /// Install file tracing below an explicit Gobby home directory.

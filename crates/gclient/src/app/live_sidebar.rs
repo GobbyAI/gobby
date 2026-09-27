@@ -2,15 +2,22 @@
 
 use super::*;
 
+/// Jittered exponential backoff for one sidebar query that a failure
+/// re-queues: every attempt pushes the next one out, and a success resets it.
 #[derive(Default)]
-pub(in crate::app) struct SessionRetry {
+pub(in crate::app) struct FetchRetry {
     failures: u8,
     next_at: Option<Instant>,
 }
 
-impl SessionRetry {
+impl FetchRetry {
     fn ready(&self, now: Instant) -> bool {
         self.next_at.is_none_or(|next| now >= next)
+    }
+
+    /// An attempt started and has not succeeded since.
+    fn unsettled(&self) -> bool {
+        self.failures > 0
     }
 
     fn started(&mut self, now: Instant, jitter: u64) {
@@ -102,6 +109,14 @@ impl Workspace<LiveDaemon> {
         self.pending_sidebar.sessions = true;
     }
 
+    /// Queue again what a refetch that gathered nothing had asked for. Only a
+    /// project event asks for the project list otherwise, so without this a
+    /// list that failed at startup stays empty until a project changes.
+    pub fn requeue_failed_sidebar_fetch(&mut self) {
+        self.request_focused_sessions();
+        self.pending_sidebar.projects |= self.projects_retry.unsettled();
+    }
+
     /// Start the refetches queued since the last start, at most one per
     /// route and project however many events asked for it, on a clone of
     /// the daemon so the loop keeps drawing while they run; `None` when
@@ -115,6 +130,10 @@ impl Workspace<LiveDaemon> {
             self.pending_sidebar.sessions = pending.sessions;
             self.pending_sidebar.session_rows = std::mem::take(&mut pending.session_rows);
             pending.sessions = false;
+        }
+        if !self.projects_retry.ready(now) {
+            self.pending_sidebar.projects = pending.projects;
+            pending.projects = false;
         }
         if !pending.projects
             && !pending.sessions
@@ -132,6 +151,10 @@ impl Workspace<LiveDaemon> {
         }
         if pending.sessions || !pending.session_rows.is_empty() {
             self.session_retry
+                .started(now, uuid::Uuid::new_v4().as_u128() as u64);
+        }
+        if pending.projects {
+            self.projects_retry
                 .started(now, uuid::Uuid::new_v4().as_u128() as u64);
         }
         let request = SidebarRequest {
@@ -157,6 +180,13 @@ impl Workspace<LiveDaemon> {
                 self.pending_sidebar.sessions = true;
             } else {
                 self.session_retry.succeeded();
+            }
+        }
+        if fetch.projects_attempted {
+            if fetch.projects.is_some() {
+                self.projects_retry.succeeded();
+            } else {
+                self.pending_sidebar.projects = true;
             }
         }
         let seq = fetch.seq;
@@ -309,6 +339,7 @@ pub struct SidebarFetch {
     /// The refetch that produced the rows, in start order.
     seq: u64,
     projects: Option<Vec<ProjectRow>>,
+    projects_attempted: bool,
     project_rows: Vec<(String, Option<SourceStatus>, Option<Vec<WorktreeRow>>)>,
     sessions: Vec<(String, Vec<SessionRow>, Vec<RunRow>)>,
     sessions_attempted: bool,
@@ -370,6 +401,7 @@ impl SidebarRequest {
         let mut checked_out = self.checked_out;
         let mut project_rows = self.project_rows;
         if self.projects {
+            fetch.projects_attempted = true;
             // A project list this refetch could not read leaves the caller's
             // known checkouts standing in for it.
             if let Some(projects) =
@@ -452,9 +484,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn session_retry_uses_jittered_exponential_delay_and_resets_after_success() {
+    fn fetch_retry_uses_jittered_exponential_delay_and_resets_after_success() {
         let now = Instant::now();
-        let mut retry = SessionRetry::default();
+        let mut retry = FetchRetry::default();
         for exponent in 1..=6 {
             retry.started(now, 0);
             let lower = 1_u64 << (exponent - 1);

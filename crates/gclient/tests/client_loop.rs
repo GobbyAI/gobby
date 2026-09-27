@@ -5032,7 +5032,7 @@ async fn a_key_the_overlay_passes_on_rolls_it_up() {
     let band: String = (0..34)
         .map(|x| next_frame.backend().buffer()[(x, 1)].symbol().to_string())
         .collect();
-    assert!(!band.contains("Machines"), "row 1 is the tab bar: {band:?}");
+    assert!(!band.contains("Machines"), "row 2 is the tab bar: {band:?}");
     mock.shutdown().await;
 }
 
@@ -5086,14 +5086,14 @@ async fn prefix_b_opens_the_overlay_or_unpins_the_column() {
         let sidebar = chrome.view.sidebar_rect;
         let terminal_area = chrome.view.terminal_area;
         let band: String = (0..sidebar.width.max(9))
-            .map(|x| next_frame.backend().buffer()[(x, 1)].symbol().to_string())
+            .map(|x| next_frame.backend().buffer()[(x, 2)].symbol().to_string())
             .collect();
         if pinned_before {
             assert!(!chrome.sidebar.pinned, "prefix+b unpins the column");
             assert!(!chrome.sidebar.overlay, "unpinning opens no overlay");
             assert_eq!(sidebar.width, 0, "a hidden sidebar takes no columns");
             assert_eq!(terminal_area.x, 0, "the panes start at the left edge");
-            assert!(!band.contains("Machines"), "row 1 is the tab bar: {band:?}");
+            assert!(!band.contains("Machines"), "row 2 is the tab bar: {band:?}");
         } else {
             assert!(!chrome.sidebar.pinned, "the overlay leaves the pin alone");
             assert!(chrome.sidebar.overlay, "prefix+b opens the overlay");
@@ -5102,7 +5102,7 @@ async fn prefix_b_opens_the_overlay_or_unpins_the_column() {
             assert_eq!(terminal_area.x, 0, "the panes keep their place under it");
             assert!(
                 band.contains("Machines"),
-                "row 1 draws the first band over the tab bar: {band:?}"
+                "row 2 draws the first band over the tab bar: {band:?}"
             );
         }
         mock.shutdown().await;
@@ -10071,7 +10071,6 @@ fn draw_pane_bodies(
         .draw(|frame| {
             chrome.compute_view(ws, frame.area());
             let focused = chrome.focused_pane();
-            let palette = chrome.palette;
             let mut content =
                 |frame: &mut ratatui::Frame<'_>, area: Rect, pane: gobby_client::app::PaneId| {
                     gobby_client::views::grid::render(
@@ -10079,7 +10078,6 @@ fn draw_pane_bodies(
                         area,
                         ws.pane(pane),
                         focused == Some(pane),
-                        &palette,
                     );
                 };
             gobby_client::ui::render_workspace_with(frame, ws, chrome, &mut content);

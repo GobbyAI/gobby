@@ -43,7 +43,7 @@ use gobby_client::ui::text::display_width;
 use gobby_client::ui::Action;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Span;
 use ratatui::Terminal;
 use serde_json::json;
@@ -442,8 +442,8 @@ parity_tests! {
             assert!(!inactive
                 .add_modifier
                 .intersects(Modifier::BOLD | Modifier::DIM));
-            // herdr: `Color::Reset`; gclient fills the sidebar with `panel_bg`.
-            assert_eq!(inactive.bg, Some(p.panel_bg));
+            // herdr: `Color::Reset`; the sidebar sits on the terminal's ground.
+            assert_eq!(inactive.bg, Some(Color::Reset));
         }
 
         fn space_occurrence_style_applies_without_styling_separator() {

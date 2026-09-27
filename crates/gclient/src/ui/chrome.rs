@@ -196,11 +196,16 @@ impl Tab {
 pub struct ViewState {
     /// Row 0 across the whole frame, reserved for the menu bar.
     pub menu_bar_rect: Rect,
+    /// Row 1 across the whole frame: the line under the menu bar.
+    pub menu_bar_line: Rect,
     /// Menu bar title cells, by index into `MenuBarMenu::ALL`.
     pub menu_title_hit_areas: Vec<(usize, Rect)>,
     /// Zero-width unless the sidebar is pinned.
     pub sidebar_rect: Rect,
     pub tab_bar_rect: Option<Rect>,
+    /// The line row under the tab bar, across the content column; empty
+    /// without a tab bar.
+    pub tab_bar_line: Rect,
     pub tab_hit_areas: Vec<(usize, Rect)>,
     pub tab_scroll_left_hit_area: Option<Rect>,
     pub tab_scroll_right_hit_area: Option<Rect>,
@@ -668,18 +673,17 @@ impl Chrome {
         }
         let bands = Layout::vertical([
             Constraint::Length(1),
+            Constraint::Length(1),
             Constraint::Min(1),
             Constraint::Length(1),
         ])
         .split(area);
-        let (menu_bar_rect, middle, status_rect) = (bands[0], bands[1], bands[2]);
+        let (menu_bar_rect, menu_bar_line, middle, status_rect) =
+            (bands[0], bands[1], bands[2], bands[3]);
         let (sidebar_rect, content) = self.sidebar.layout(middle, self.sidebar_width(middle));
-        let (tab_bar_rect, terminal_area) = if self.show_tab_bar() {
-            let rows = Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).split(content);
-            (Some(rows[0]), rows[1])
-        } else {
-            (None, content)
-        };
+        let surface = crate::ui::tab_surface::compute_tab_surface(content, self.show_tab_bar());
+        let tab_bar_rect = (surface.tabs.height > 0).then_some(surface.tabs);
+        let (tab_bar_line, terminal_area) = (surface.line, surface.body);
         let (mut pane_infos, split_borders) = match self.active_tab() {
             Some(tab) => pane_layout::pane_geometry(
                 tab,
@@ -735,8 +739,10 @@ impl Chrome {
         let title_travel = title_travel.max(sidebar::agents_title_travel(ws, self, agents_rect));
         self.view = ViewState {
             menu_bar_rect,
+            menu_bar_line,
             sidebar_rect,
             tab_bar_rect,
+            tab_bar_line,
             terminal_area,
             status_rect,
             pane_infos,

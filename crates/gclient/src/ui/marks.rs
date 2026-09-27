@@ -220,7 +220,7 @@ impl MarkPalette {
             ink: Some(palette.ink),
             glint: Some(palette.glint),
             dim: Some(palette.dim),
-            braille: palette.accent,
+            braille: palette.wordmark,
         }
     }
 
@@ -242,7 +242,7 @@ impl MarkPalette {
             ink: Some(lines),
             glint: None,
             dim: Some(lines),
-            braille: palette.accent,
+            braille: palette.wordmark,
         }
     }
 

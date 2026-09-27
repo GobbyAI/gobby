@@ -1,6 +1,7 @@
 // upstream: herdr v0.8.0 src/ui.rs
-//! Frame composition (herdr `render`): menu bar, tab bar, tab surface or
-//! empty state, sidebar, notifications, then the mode overlay.
+//! Frame composition (herdr `render`): the splash alone until the first
+//! frame lands, else menu bar, tab bar, tab surface or empty state,
+//! sidebar and notifications; then the mode overlay on either.
 
 use crate::app::PaneId;
 use crate::ui::chrome::{Chrome, Mode, WorkspaceView};
@@ -15,7 +16,7 @@ use crate::ui::{
 };
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
-use ratatui::widgets::{Block, Clear};
+use ratatui::widgets::{Clear, Paragraph};
 use ratatui::Frame;
 
 /// Every rect the chrome renderers drew this frame; the run loop writes it
@@ -44,35 +45,14 @@ pub fn render_workspace_with<W: WorkspaceView>(
     content: &mut PaneContent<'_>,
 ) -> ChromeHits {
     let area = frame.area();
-    frame.render_widget(
-        Block::new().style(Style::new().bg(chrome.palette.panel_bg)),
-        area,
-    );
-
-    let menu_bar = menu_bar::render_menu_bar(frame, chrome.view.menu_bar_rect, chrome);
-    // The sidebar after the content: the overlay lies over it.
-    let tab_bar = render_content_column(frame, ws, chrome, content);
-    let sidebar = render_navigation_chrome(frame, ws, chrome);
-    let mut hits = ChromeHits {
-        menu_bar,
-        tab_bar,
-        sidebar,
-        ..ChromeHits::default()
-    };
-
-    let status_rect = chrome.view.status_rect;
-    let status_hits = if status_rect.is_empty() {
-        status::StatusHits::default()
+    // Nothing fills the frame: the ground is the terminal's own, so a hosted
+    // default colour passes straight through.
+    let mut hits = if splashing(ws, chrome) {
+        splash::render_splash(frame, area, chrome);
+        ChromeHits::default()
     } else {
-        status::render_status_line(frame, status_rect, ws, chrome)
+        render_chrome(frame, ws, chrome, content)
     };
-    hits.control_indicator = status_hits
-        .control_indicator
-        .or_else(|| pane_chrome::control_indicator_hit_area(ws, chrome));
-    hits.status_count = status_hits.count;
-
-    // Ambient notifications sit above panes, but below interactive overlays.
-    hits.toast = render_notifications(frame, chrome);
 
     let terminal_area = chrome.view.terminal_area;
     let close_area = if terminal_area.is_empty() {
@@ -114,6 +94,72 @@ pub fn render_workspace_with<W: WorkspaceView>(
     hits
 }
 
+/// Until startup draws its first frame, the goblin and the wordmark stand alone
+/// on the ground: no bar, tabs, sidebar, status or toasts. A first connect
+/// that failed (a retry scheduled, or a daemon error) never finishes its
+/// stages, so it falls through to the chrome, whose status line says what
+/// went wrong.
+fn splashing<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> bool {
+    chrome
+        .connection
+        .stages
+        .as_ref()
+        .is_some_and(|stages| !stages.finished())
+        && chrome.connection.retry_at.is_none()
+        && ws.daemon_error().is_none()
+}
+
+/// The menu bar and the line under it, the content column with the line
+/// under its tab row, the sidebar over both, then the status line and the
+/// toasts.
+fn render_chrome<W: WorkspaceView>(
+    frame: &mut Frame,
+    ws: &W,
+    chrome: &Chrome,
+    content: &mut PaneContent<'_>,
+) -> ChromeHits {
+    let menu_bar = menu_bar::render_menu_bar(frame, chrome.view.menu_bar_rect, chrome);
+    render_line(frame, chrome.view.menu_bar_line, chrome);
+    render_line(frame, chrome.view.tab_bar_line, chrome);
+    // The sidebar after the content: the overlay lies over it.
+    let tab_bar = render_content_column(frame, ws, chrome, content);
+    let sidebar = render_navigation_chrome(frame, ws, chrome);
+    let mut hits = ChromeHits {
+        menu_bar,
+        tab_bar,
+        sidebar,
+        ..ChromeHits::default()
+    };
+
+    let status_rect = chrome.view.status_rect;
+    let status_hits = if status_rect.is_empty() {
+        status::StatusHits::default()
+    } else {
+        status::render_status_line(frame, status_rect, ws, chrome)
+    };
+    hits.control_indicator = status_hits
+        .control_indicator
+        .or_else(|| pane_chrome::control_indicator_hit_area(ws, chrome));
+    hits.status_count = status_hits.count;
+
+    // Ambient notifications sit above panes, but below interactive overlays.
+    hits.toast = render_notifications(frame, chrome);
+    hits
+}
+
+/// One row of `▀` in the line colour over the ground: the upper half of the
+/// row reads as a thin black line under the bar or under the tabs.
+fn render_line(frame: &mut Frame, rect: Rect, chrome: &Chrome) {
+    if rect.is_empty() {
+        return;
+    }
+    frame.render_widget(
+        Paragraph::new("▀".repeat(usize::from(rect.width)))
+            .style(Style::new().fg(chrome.palette.line)),
+        rect,
+    );
+}
+
 /// Compose the whole frame with empty pane bodies.
 pub fn render_workspace<W: WorkspaceView>(
     frame: &mut Frame,
@@ -152,29 +198,6 @@ fn render_content_column<W: WorkspaceView>(
 ) -> TabBarHits {
     let terminal_area = chrome.view.terminal_area;
     if terminal_area.is_empty() {
-        return TabBarHits::default();
-    }
-    if chrome
-        .connection
-        .stages
-        .as_ref()
-        .is_some_and(|stages| !stages.finished())
-    {
-        if let Some(tabs) = chrome.view.tab_bar_rect {
-            frame.render_widget(
-                Block::default().style(Style::new().bg(chrome.palette.panel_bg)),
-                tabs,
-            );
-            let mut x = tabs.x;
-            while x.saturating_add(11) <= tabs.right() {
-                frame.render_widget(
-                    Block::default().style(Style::new().bg(chrome.palette.surface1)),
-                    Rect::new(x, tabs.y, 11, 1),
-                );
-                x = x.saturating_add(12);
-            }
-        }
-        splash::render_splash(frame, terminal_area, chrome);
         return TabBarHits::default();
     }
     if chrome.tabs().tabs.is_empty() {

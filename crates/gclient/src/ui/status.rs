@@ -390,21 +390,6 @@ pub fn render_status_line<W: WorkspaceView>(
             base.fg(p.red),
             " │ ",
         );
-    } else if let Some((stage, elapsed)) = chrome
-        .connection
-        .stages
-        .as_ref()
-        .and_then(|stages| stages.running().map(|stage| (stage, stages.elapsed(stage))))
-    {
-        append(
-            format!(
-                "◐ connecting · {} · {:.1} s",
-                stage.label(),
-                elapsed.unwrap_or_default().as_secs_f64()
-            ),
-            base.fg(p.accent),
-            " │ ",
-        );
     } else if !ws.daemon_ready() {
         append("× Daemon unreachable".to_string(), base.fg(p.red), " │ ");
     }
@@ -793,39 +778,13 @@ mod tests {
     }
 
     #[test]
-    fn status_slot_names_connecting_stage_and_retry() {
-        use crate::app::startup_stages::{StageState, StartupStages};
-
+    fn status_slot_names_the_retry_countdown() {
         let ws = Workspace::scripted();
         let mut chrome = Chrome::dark();
         chrome.prefs.status_left.clear();
         chrome.prefs.status_right.clear();
         let now = Instant::now();
         chrome.connection.now = now;
-        chrome.connection.stages = Some(StartupStages::for_test(
-            [
-                StageState::Done {
-                    took: Duration::from_millis(300),
-                },
-                StageState::Running {
-                    since: now - Duration::from_millis(2100),
-                },
-                StageState::Pending,
-                StageState::Pending,
-            ],
-            now,
-        ));
-        let (text, _) = draw_status(&ws, &chrome);
-        assert!(
-            text.starts_with(" ◐ connecting · workspace attach · 2.1 s"),
-            "status should name the running stage: {text}"
-        );
-        assert!(
-            !text.contains("0 agents"),
-            "roster is still loading: {text}"
-        );
-
-        chrome.connection.stages = None;
         chrome.connection.retry_at = Some(now + Duration::from_secs(3));
         let (text, _) = draw_status(&ws, &chrome);
         assert!(

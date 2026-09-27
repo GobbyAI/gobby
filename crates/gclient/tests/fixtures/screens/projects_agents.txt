@@ -1,82 +1,82 @@
 # gclient screen golden: projects_agents
 # 120x40, dark theme, colours normalised to theme::Palette roles
 00 | Gobby  File  Edit  View  Window  Agent  Help                                                                           |
-00 : panel_bg/accent+b*120
-01 | Machines                │                                                                                              |
-01 : -/surface0*1 subtext0/surface0+b*8 -/surface0*16 overlay0/panel_bg*1 -/panel_bg*94
-02 | ⍾ scripted · local      │                                                                                              |
-02 : -/surface_dim*1 yellow/surface_dim*1 overlay0/surface_dim+d*1 text/surface_dim+b*8 overlay0/surface_dim*8 -/surface_dim*6 overlay0/panel_bg*1 -/panel_bg*94
-03 |                         │                                                                                              |
-03 : -/panel_bg*25 overlay0/panel_bg*1 -/panel_bg*94
-04 | Projects      [working] │                                                                                              |
-04 : -/surface0*1 subtext0/surface0+b*8 -/surface0*6 overlay0/surface0*9 -/surface0*1 overlay0/panel_bg*1 -/panel_bg*94
-05 | ⍾ alpha (main ↑2 ↓1)   ▸│                                                                                              |
-05 : -/surface_dim*1 yellow/surface_dim*1 overlay0/surface_dim+d*1 text/surface_dim+b*5 subtext0/surface_dim*6 green/surface_dim*3 subtext0/surface_dim*4 -/surface_dim*3 accent/surface_dim*1 overlay0/panel_bg*1 -/panel_bg*94
-06 |                         │                                                                                              |
-06 : -/panel_bg*25 overlay0/panel_bg*1 -/panel_bg*94
-07 | Agents           [view] │                                                                                              |
-07 : -/surface0*1 subtext0/surface0+b*6 -/surface0*11 overlay0/surface0*6 -/surface0*1 overlay0/panel_bg*1 -/panel_bg*94
-08 | ⍾ Unknown               │                                                                                              |
-08 : -/panel_bg*1 yellow/panel_bg*1 -/panel_bg*1 subtext0/panel_bg*7 -/panel_bg*15 overlay0/panel_bg*1 -/panel_bg*94
-09 |   No assigned task      │                                                                                              |
-09 : -/panel_bg*3 overlay1/panel_bg*16 -/panel_bg*6 overlay0/panel_bg*1 -/panel_bg*94
-10 |                         │                                                                                              |
-10 : -/panel_bg*25 overlay0/panel_bg*1 -/panel_bg*94
-11 |                         │                                                          ▄▄▀                                 |
-11 : -/panel_bg*25 overlay0/panel_bg*1 -/panel_bg*58 panel_bg/panel_bg*3 -/panel_bg*33
-12 |                         │                                ▀▀▄▄▄     ▄▄▄▄▀▀▄▄▄▄ ▄▄▀▀▀▀▀▀                                 |
-12 : -/panel_bg*25 overlay0/panel_bg*1 -/panel_bg*32 panel_bg/panel_bg*1 panel_bg/overlay0*1 overlay0/panel_bg*1 panel_bg/panel_bg*2 -/panel_bg*5 panel_bg/panel_bg*3 overlay0/panel_bg*1 panel_bg/overlay0*2 overlay0/panel_bg*1 panel_bg/panel_bg*3 -/panel_bg*1 panel_bg/panel_bg*2 panel_bg/overlay0*2 panel_bg/panel_bg*1 overlay0/overlay0*1 overlay0/panel_bg*1 panel_bg/panel_bg*1 -/panel_bg*33
-13 |                         │                                ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                  |
-13 : -/panel_bg*25 overlay0/panel_bg*1 -/panel_bg*32 panel_bg/panel_bg*1 overlay0/panel_bg*1 overlay0/overlay0*1 overlay0/panel_bg*2 overlay0/overlay0*1 panel_bg/overlay0*1 panel_bg/panel_bg*1 panel_bg/overlay0*2 overlay0/overlay0*10 panel_bg/overlay0*2 overlay0/panel_bg*1 panel_bg/overlay0*1 overlay0/overlay0*2 overlay0/panel_bg*1 panel_bg/panel_bg*1 -/panel_bg*34
-14 |                         │                                 ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                   |
-14 : -/panel_bg*25 overlay0/panel_bg*1 -/panel_bg*33 panel_bg/panel_bg*1 overlay0/overlay0*7 overlay0/panel_bg*5 overlay0/overlay0*5 overlay0/panel_bg*6 overlay0/overlay0*1 panel_bg/panel_bg*1 -/panel_bg*35
-15 |                         │                                 ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                   |
-15 : -/panel_bg*25 overlay0/panel_bg*1 -/panel_bg*33 panel_bg/panel_bg*1 overlay0/overlay0*5 overlay0/panel_bg*1 panel_bg/overlay0*1 overlay0/overlay0*2 overlay0/panel_bg*2 overlay0/overlay0*1 panel_bg/overlay0*1 overlay0/panel_bg*3 panel_bg/panel_bg*1 panel_bg/overlay0*1 overlay0/overlay0*1 overlay0/panel_bg*2 overlay0/overlay0*2 panel_bg/panel_bg*2 -/panel_bg*35
-16 |                         │                                  ▀▀▀▀▀▀▀▀▀▄▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                   |
-16 : -/panel_bg*25 overlay0/panel_bg*1 -/panel_bg*34 panel_bg/panel_bg*1 panel_bg/overlay0*4 panel_bg/panel_bg*1 overlay0/overlay0*2 panel_bg/panel_bg*4 overlay0/overlay0*1 panel_bg/panel_bg*1 overlay0/overlay0*2 panel_bg/panel_bg*1 overlay0/overlay0*1 panel_bg/panel_bg*3 panel_bg/overlay0*1 overlay0/overlay0*1 overlay0/panel_bg*1 panel_bg/panel_bg*1 -/panel_bg*35
-17 |                         │                                  ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                    |
-17 : -/panel_bg*25 overlay0/panel_bg*1 -/panel_bg*34 panel_bg/panel_bg*1 overlay0/panel_bg*1 overlay0/overlay0*3 panel_bg/overlay0*1 panel_bg/panel_bg*1 overlay0/panel_bg*1 overlay0/overlay0*3 overlay0/panel_bg*1 panel_bg/panel_bg*1 panel_bg/overlay0*1 overlay0/overlay0*3 panel_bg/overlay0*1 overlay0/panel_bg*4 panel_bg/overlay0*1 panel_bg/panel_bg*1 -/panel_bg*36
-18 |                         │                                   ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                    |
-18 : -/panel_bg*25 overlay0/panel_bg*1 -/panel_bg*35 panel_bg/panel_bg*1 overlay0/panel_bg*1 overlay0/overlay0*3 overlay0/panel_bg*2 panel_bg/overlay0*2 overlay0/overlay0*9 overlay0/panel_bg*2 overlay0/overlay0*2 panel_bg/panel_bg*1 -/panel_bg*36
-19 |                         │                                    ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                     |
-19 : -/panel_bg*25 overlay0/panel_bg*1 -/panel_bg*36 panel_bg/panel_bg*2 overlay0/panel_bg*1 overlay0/overlay0*3 panel_bg/overlay0*7 panel_bg/panel_bg*1 panel_bg/overlay0*3 overlay0/overlay0*2 overlay0/panel_bg*1 panel_bg/panel_bg*1 -/panel_bg*37
-20 |                         │                                       ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                    |
-20 : -/panel_bg*25 overlay0/panel_bg*1 -/panel_bg*39 panel_bg/panel_bg*2 overlay0/panel_bg*3 overlay0/overlay0*4 panel_bg/panel_bg*10 -/panel_bg*36
-21 |                         │                                      ▄▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                     |
-21 : -/panel_bg*25 overlay0/panel_bg*1 -/panel_bg*38 panel_bg/panel_bg*1 panel_bg/overlay0*1 overlay0/overlay0*2 panel_bg/panel_bg*1 overlay0/overlay0*2 panel_bg/overlay0*2 panel_bg/panel_bg*10 -/panel_bg*37
-22 |                         │                                      ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                    |
-22 : -/panel_bg*25 overlay0/panel_bg*1 -/panel_bg*38 panel_bg/panel_bg*1 overlay0/overlay0*3 overlay0/panel_bg*2 overlay0/overlay0*1 panel_bg/overlay0*2 overlay0/overlay0*3 panel_bg/panel_bg*6 panel_bg/overlay0*1 panel_bg/panel_bg*1 -/panel_bg*36
-23 | Terminals               │                                      ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                    |
-23 : -/surface0*1 subtext0/surface0+b*9 -/surface0*15 overlay0/panel_bg*1 -/panel_bg*38 panel_bg/panel_bg*1 overlay0/panel_bg*1 overlay0/overlay0*8 overlay0/panel_bg*1 panel_bg/panel_bg*5 overlay0/overlay0*2 overlay0/panel_bg*1 panel_bg/panel_bg*1 -/panel_bg*36
-24 | ○ term-beta             │                                        ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                      |
-24 : -/panel_bg*1 overlay0/panel_bg*1 overlay0/panel_bg+d*1 subtext0/panel_bg*9 -/panel_bg*13 overlay0/panel_bg*1 -/panel_bg*40 panel_bg/panel_bg*1 overlay0/panel_bg*4 panel_bg/panel_bg*11 -/panel_bg*38
-25 |   gclient               │                                                                                              |
-25 : -/panel_bg*3 subtext0/panel_bg*7 -/panel_bg*15 overlay0/panel_bg*1 -/panel_bg*94
-26 | ○ term-gamma            │                                No pane open.                                                 |
-26 : -/panel_bg*1 overlay0/panel_bg*1 overlay0/panel_bg+d*1 subtext0/panel_bg*10 -/panel_bg*12 overlay0/panel_bg*1 -/panel_bg*32 overlay1/panel_bg+b*13 -/panel_bg*49
-27 |   gclient               │                                ctrl+b w  attach a terminal                                   |
-27 : -/panel_bg*3 subtext0/panel_bg*7 -/panel_bg*15 overlay0/panel_bg*1 -/panel_bg*32 subtext0/panel_bg*8 overlay0/panel_bg*19 -/panel_bg*35
-28 |                         │                                File › New Terminal  start one                                |
-28 : -/panel_bg*25 overlay0/panel_bg*1 -/panel_bg*32 subtext0/panel_bg*19 overlay0/panel_bg*11 -/panel_bg*32
-29 |                         │                                ctrl+b b  open the sidebar                                    |
-29 : -/panel_bg*25 overlay0/panel_bg*1 -/panel_bg*32 subtext0/panel_bg*8 overlay0/panel_bg*18 -/panel_bg*36
-30 |                         │                                                                                              |
-30 : -/panel_bg*25 overlay0/panel_bg*1 -/panel_bg*94
-31 |                         │                                                                                              |
-31 : -/panel_bg*25 overlay0/panel_bg*1 -/panel_bg*94
-32 |                         │                                                                                              |
-32 : -/panel_bg*25 overlay0/panel_bg*1 -/panel_bg*94
-33 |                         │                                                                                              |
-33 : -/panel_bg*25 overlay0/panel_bg*1 -/panel_bg*94
-34 |                         │                                                                                              |
-34 : -/panel_bg*25 overlay0/panel_bg*1 -/panel_bg*94
-35 |                         │                                                                                              |
-35 : -/panel_bg*25 overlay0/panel_bg*1 -/panel_bg*94
-36 |                         │                                                                                              |
-36 : -/panel_bg*25 overlay0/panel_bg*1 -/panel_bg*94
-37 |                         │                                                                                              |
-37 : -/panel_bg*25 overlay0/panel_bg*1 -/panel_bg*94
-38 |                         │                                                                                              |
-38 : -/panel_bg*25 overlay0/panel_bg*1 -/panel_bg*94
+00 : bar_ink/bar+b*120
+01 |▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀|
+01 : line/-*120
+02 | Machines                                                                                                               |
+02 : -/surface0*1 subtext0/surface0+b*8 -/surface0*16 -/-*95
+03 | ⍾ scripted · local       ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀|
+03 : -/surface_dim*1 yellow/surface_dim*1 overlay0/surface_dim+d*1 text/surface_dim+b*8 overlay0/surface_dim*8 -/surface_dim*6 -/-*1 line/-*94
+04 |                                                                                                                        |
+04 : -/-*120
+05 | Projects      [working]                                                                                                |
+05 : -/surface0*1 subtext0/surface0+b*8 -/surface0*6 overlay0/surface0*9 -/surface0*1 -/-*95
+06 | ⍾ alpha (main ↑2 ↓1)   ▸                                                                                               |
+06 : -/surface_dim*1 yellow/surface_dim*1 overlay0/surface_dim+d*1 text/surface_dim+b*5 subtext0/surface_dim*6 green/surface_dim*3 subtext0/surface_dim*4 -/surface_dim*3 accent/surface_dim*1 -/-*95
+07 |                                                                                                                        |
+07 : -/-*120
+08 | Agents           [view]                                                                                                |
+08 : -/surface0*1 subtext0/surface0+b*6 -/surface0*11 overlay0/surface0*6 -/surface0*1 -/-*95
+09 | ⍾ Unknown                                                                                                              |
+09 : -/-*1 yellow/-*1 -/-*1 subtext0/-*7 -/-*110
+10 |   No assigned task                                                                                                     |
+10 : -/-*3 overlay1/-*16 -/-*101
+11 |                                                                                      ▄▄▀                               |
+11 : -/-*86 panel_bg/-*2 panel_bg/panel_bg*1 -/-*31
+12 |                                                        ▀▀▄▄        ▄▄▄▄▄▄▄▄▄    ▄▄▄▀▀▀▀▀                               |
+12 : -/-*56 panel_bg/panel_bg*2 panel_bg/-*2 -/-*8 panel_bg/-*9 -/-*4 panel_bg/-*3 panel_bg/overlay0*2 overlay0/overlay0*1 overlay0/panel_bg*1 panel_bg/-*1 -/-*31
+13 |                                                        ▀▀▀▀▀▀▀▀▄▄▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                |
+13 : -/-*56 panel_bg/panel_bg*1 overlay0/panel_bg*1 overlay0/overlay0*1 overlay0/panel_bg*1 panel_bg/overlay0*4 panel_bg/-*2 panel_bg/panel_bg*1 panel_bg/overlay0*2 overlay0/overlay0*8 panel_bg/overlay0*3 panel_bg/panel_bg*1 overlay0/panel_bg*2 panel_bg/overlay0*2 overlay0/overlay0*1 overlay0/panel_bg*1 panel_bg/panel_bg*1 -/-*32
+14 |                                                         ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                 |
+14 : -/-*57 panel_bg/panel_bg*1 overlay0/overlay0*1 panel_bg/panel_bg*1 panel_bg/overlay0*2 overlay0/overlay0*2 panel_bg/overlay0*1 overlay0/overlay0*21 panel_bg/panel_bg*1 -/-*33
+15 |                                                         ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                 |
+15 : -/-*57 panel_bg/panel_bg*1 overlay0/overlay0*7 overlay0/panel_bg*1 panel_bg/panel_bg*1 panel_bg/overlay0*4 panel_bg/panel_bg*1 overlay0/panel_bg*1 overlay0/overlay0*4 overlay0/panel_bg*1 panel_bg/panel_bg*1 panel_bg/overlay0*5 panel_bg/panel_bg*1 overlay0/panel_bg*1 panel_bg/panel_bg*1 -/-*33
+16 |                                                         ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀ ▀▀▀▀▀▀                                 |
+16 : -/-*57 panel_bg/-*1 panel_bg/panel_bg*1 overlay0/panel_bg*5 panel_bg/panel_bg*1 panel_bg/overlay0*1 overlay0/overlay0*1 overlay0/panel_bg*1 overlay0/-*2 overlay0/panel_bg*1 overlay0/overlay0*1 panel_bg/overlay0*1 panel_bg/panel_bg*1 overlay0/panel_bg*2 panel_bg/panel_bg*2 overlay0/overlay0*1 overlay0/panel_bg*1 -/-*1 panel_bg/panel_bg*1 overlay0/panel_bg*1 overlay0/overlay0*2 panel_bg/panel_bg*1 panel_bg/-*1 -/-*33
+17 |                                                          ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                  |
+17 : -/-*58 panel_bg/panel_bg*1 panel_bg/overlay0*1 overlay0/overlay0*3 panel_bg/overlay0*1 panel_bg/panel_bg*1 overlay0/overlay0*2 panel_bg/overlay0*1 panel_bg/panel_bg*3 panel_bg/overlay0*1 overlay0/overlay0*1 panel_bg/panel_bg*1 overlay0/overlay0*3 panel_bg/panel_bg*1 overlay0/overlay0*1 panel_bg/overlay0*1 panel_bg/panel_bg*2 panel_bg/overlay0*1 overlay0/overlay0*2 panel_bg/panel_bg*1 -/-*34
+18 |                                                          ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                  |
+18 : -/-*58 panel_bg/-*1 panel_bg/panel_bg*1 overlay0/overlay0*4 panel_bg/overlay0*1 panel_bg/panel_bg*1 overlay0/panel_bg*2 overlay0/overlay0*2 overlay0/panel_bg*2 panel_bg/panel_bg*1 panel_bg/overlay0*1 overlay0/overlay0*4 panel_bg/overlay0*1 panel_bg/panel_bg*1 overlay0/panel_bg*3 panel_bg/panel_bg*1 panel_bg/overlay0*1 panel_bg/panel_bg*1 -/-*34
+19 |                                                           ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                  |
+19 : -/-*59 panel_bg/-*1 panel_bg/panel_bg*1 overlay0/overlay0*4 overlay0/panel_bg*2 overlay0/overlay0*1 panel_bg/overlay0*2 overlay0/overlay0*10 overlay0/panel_bg*2 overlay0/overlay0*2 overlay0/panel_bg*1 panel_bg/-*1 -/-*34
+20 |                                                             ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                   |
+20 : -/-*61 panel_bg/-*1 overlay0/panel_bg*1 overlay0/overlay0*4 panel_bg/overlay0*3 overlay0/panel_bg*7 panel_bg/overlay0*4 overlay0/overlay0*2 panel_bg/panel_bg*1 panel_bg/-*1 -/-*35
+21 |                                                               ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▄▄                                  |
+21 : -/-*63 panel_bg/-*1 panel_bg/panel_bg*1 overlay0/panel_bg*2 overlay0/overlay0*7 overlay0/panel_bg*1 panel_bg/panel_bg*9 panel_bg/-*2 -/-*34
+22 |                                                                ▄▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                   |
+22 : -/-*64 panel_bg/-*1 panel_bg/overlay0*2 panel_bg/panel_bg*1 panel_bg/overlay0*3 overlay0/panel_bg*3 panel_bg/panel_bg*11 -/-*35
+23 |                                                               ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▄                                   |
+23 : -/-*63 panel_bg/panel_bg*1 overlay0/overlay0*4 panel_bg/panel_bg*1 overlay0/overlay0*2 overlay0/panel_bg*2 panel_bg/panel_bg*1 panel_bg/overlay0*2 panel_bg/panel_bg*8 panel_bg/-*1 -/-*35
+24 | Terminals                                                     ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▄                                  |
+24 : -/surface0*1 subtext0/surface0+b*9 -/surface0*15 -/-*38 panel_bg/panel_bg*1 overlay0/overlay0*4 panel_bg/overlay0*2 overlay0/overlay0*6 overlay0/panel_bg*1 panel_bg/panel_bg*6 overlay0/overlay0*2 panel_bg/-*1 -/-*34
+25 | ○ term-beta                                                    ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                   |
+25 : -/-*1 overlay0/-*1 overlay0/-+d*1 subtext0/-*9 -/-*52 panel_bg/panel_bg*1 overlay0/overlay0*8 overlay0/panel_bg*2 panel_bg/panel_bg*6 overlay0/panel_bg*1 overlay0/overlay0*1 overlay0/panel_bg*1 panel_bg/panel_bg*1 -/-*35
+26 |   gclient                                                       ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                      |
+26 : -/-*3 subtext0/-*7 -/-*55 panel_bg/-*2 overlay0/-*1 overlay0/panel_bg*1 panel_bg/panel_bg*3 overlay0/panel_bg*2 panel_bg/panel_bg*4 panel_bg/-*4 -/-*38
+27 | ○ term-gamma                                                                                                           |
+27 : -/-*1 overlay0/-*1 overlay0/-+d*1 subtext0/-*10 -/-*107
+28 |   gclient                                                No pane open.                                                 |
+28 : -/-*3 subtext0/-*7 -/-*48 overlay1/-+b*13 -/-*49
+29 |                                                          ctrl+b w  attach a terminal                                   |
+29 : -/-*58 subtext0/-*8 overlay0/-*19 -/-*35
+30 |                                                          File › New Terminal  start one                                |
+30 : -/-*58 subtext0/-*19 overlay0/-*11 -/-*32
+31 |                                                          ctrl+b b  open the sidebar                                    |
+31 : -/-*58 subtext0/-*8 overlay0/-*18 -/-*36
+32 |                                                                                                                        |
+32 : -/-*120
+33 |                                                                                                                        |
+33 : -/-*120
+34 |                                                                                                                        |
+34 : -/-*120
+35 |                                                                                                                        |
+35 : -/-*120
+36 |                                                                                                                        |
+36 : -/-*120
+37 |                                                                                                                        |
+37 : -/-*120
+38 |                                                                                                                        |
+38 : -/-*120
 39 | ⍾ 1 needs you · 1 agent · 2 terminals                                                                    prefix ctrl+b |
 39 : -/surface0*1 yellow/surface0*13 subtext0/surface0*24 -/surface0*68 subtext0/surface0*13 -/surface0*1

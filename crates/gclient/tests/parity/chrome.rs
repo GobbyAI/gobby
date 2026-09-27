@@ -53,8 +53,9 @@ use super::token_map::{palette, theme};
 /// terminal-area height below is one row taller than gclient's for it.
 const STATUS_ROWS: u16 = 1;
 
-/// gclient holds row 0 for its menu bar; herdr had no such row either.
-const MENU_BAR_ROWS: u16 = 1;
+/// gclient holds row 0 for its menu bar and row 1 for the line under it;
+/// herdr had neither row.
+const MENU_BAR_ROWS: u16 = 2;
 
 /// gclient draws all four edges of every pane, a lone one included; herdr
 /// left a lone pane bare, so its runtime was this much taller and wider.
@@ -509,7 +510,7 @@ parity_tests! {
             );
             assert_eq!(
                 chrome.view.terminal_area,
-                Rect::new(26, MENU_BAR_ROWS + 1, 54, 19 - MENU_BAR_ROWS - STATUS_ROWS)
+                Rect::new(26, MENU_BAR_ROWS + 2, 54, 18 - MENU_BAR_ROWS - STATUS_ROWS)
             );
             assert_eq!(tabs.tab_hit_areas.len(), 2);
             assert!(tabs.tab_hit_areas.iter().all(|rect| rect.width > 0));
@@ -578,7 +579,7 @@ parity_tests! {
                     );
                     assert_eq!(
                         two_tab_size,
-                        (19 - MENU_BAR_ROWS - STATUS_ROWS - PANE_EDGES, 53 - PANE_EDGES)
+                        (18 - MENU_BAR_ROWS - STATUS_ROWS - PANE_EDGES, 53 - PANE_EDGES)
                     );
                 });
         }
@@ -1095,7 +1096,7 @@ switch_project = "ctrl+1..9"
                     let area = chrome.view.terminal_area;
                     assert_eq!(
                         area,
-                        Rect::new(26, MENU_BAR_ROWS + 1, 80, 19 - MENU_BAR_ROWS - STATUS_ROWS)
+                        Rect::new(26, MENU_BAR_ROWS + 2, 80, 18 - MENU_BAR_ROWS - STATUS_ROWS)
                     );
                     assert_eq!(chrome.view.pane_infos.len(), 2);
                     assert!(!chrome.view.split_borders.is_empty());
@@ -1172,7 +1173,7 @@ switch_project = "ctrl+1..9"
                     );
                     assert_eq!(
                         chrome.view.terminal_area,
-                        Rect::new(26, MENU_BAR_ROWS + 1, 80, 19 - MENU_BAR_ROWS - STATUS_ROWS)
+                        Rect::new(26, MENU_BAR_ROWS + 2, 80, 18 - MENU_BAR_ROWS - STATUS_ROWS)
                     );
                     assert_eq!(chrome.view.pane_infos.len(), 2);
                     assert!(!chrome.view.split_borders.is_empty());
@@ -1217,12 +1218,14 @@ switch_project = "ctrl+1..9"
                     // and tabs gained project labels and neutral styling (#22750),
                     // then the configurable segments and attention count
                     // populated the status row (#22752), and the separate
-                    // agent and bare-terminal totals joined it (#22941):
+                    // agent and bare-terminal totals joined it (#22941), and
+                    // lines drew under the menu bar and the tabs while the
+                    // sidebar edge lost its glyph (#22944):
                     // 4.1.3 requires a glyph change to fail here, so this
                     // digest moves only alongside a deliberate render change.
                     assert_eq!(
                         frame_digest(&terminal),
-                        "3c7340d8bb69e287570bb15a99c6e062f6516665e03bf8c7dd283a74c86ee88b"
+                        "c332de2db7ed8781c7f45f847d91165489016290064fee14155f70382309cfde"
                     );
                 });
         }
@@ -1260,9 +1263,11 @@ fn hidden_sidebar_uses_full_width_terminal_area() {
     let view = &chrome.view;
     assert_eq!(view.sidebar_rect.width, 0);
     assert_eq!(view.menu_bar_rect, Rect::new(0, 0, 80, 1));
+    assert_eq!(view.menu_bar_line, Rect::new(0, 1, 80, 1));
     assert_eq!(view.status_rect, Rect::new(0, 19, 80, 1));
-    assert_eq!(view.tab_bar_rect, Some(Rect::new(0, 1, 80, 1)));
-    assert_eq!(view.terminal_area, Rect::new(0, 2, 80, 17));
+    assert_eq!(view.tab_bar_rect, Some(Rect::new(0, 2, 80, 1)));
+    assert_eq!(view.tab_bar_line, Rect::new(0, 3, 80, 1));
+    assert_eq!(view.terminal_area, Rect::new(0, 4, 80, 15));
 }
 
 #[test]
@@ -1281,37 +1286,37 @@ fn overlay_covers_34_columns_without_moving_panes() {
     chrome.sidebar.overlay = true;
     chrome.mode = Mode::Navigate;
     let terminal = render_with_hits(&ws, &mut chrome, area);
-    assert_eq!(chrome.view.sidebar_rect, Rect::new(0, 1, 34, 18));
+    assert_eq!(chrome.view.sidebar_rect, Rect::new(0, 2, 34, 17));
     assert_eq!(chrome.view.terminal_area, rolled_up);
     assert_eq!(
         chrome.view.sidebar_divider_x, None,
         "an overlay has no drag edge"
     );
-    // Its inner edge is accent, the pane's corner under it is gone, and it
-    // takes the clicks on the tab bar row it covers.
-    let edge = cell(&terminal, 33, 5);
-    assert_eq!((edge.symbol(), edge.fg), ("│", chrome.palette.accent));
+    // Its edge column is bare (no separator glyph), the pane's corner under
+    // it is gone, and it takes the clicks on the tab bar row it covers.
+    assert_eq!(cell(&terminal, 33, 5).symbol(), " ");
     assert_eq!(cell(&terminal, 0, 18).symbol(), " ");
-    assert_eq!(hit_test(&chrome.view, 2, 1), Hit::SidebarEmpty);
+    assert_eq!(hit_test(&chrome.view, 2, 2), Hit::SidebarEmpty);
 
     chrome.sidebar.side = SidebarSide::Right;
     let terminal = render_with_hits(&ws, &mut chrome, area);
-    assert_eq!(chrome.view.sidebar_rect, Rect::new(46, 1, 34, 18));
+    assert_eq!(chrome.view.sidebar_rect, Rect::new(46, 2, 34, 17));
     assert_eq!(chrome.view.terminal_area, rolled_up);
-    assert_eq!(cell(&terminal, 46, 5).symbol(), "│");
+    assert_eq!(cell(&terminal, 46, 5).symbol(), " ");
 
     // Pinned, it is a column on its side and the content takes the rest.
     chrome.sidebar.overlay = false;
     chrome.sidebar.pinned = true;
     chrome.compute_view(&ws, area);
-    assert_eq!(chrome.view.sidebar_rect, Rect::new(54, 1, 26, 18));
-    assert_eq!(chrome.view.tab_bar_rect, Some(Rect::new(0, 1, 54, 1)));
-    assert_eq!(chrome.view.terminal_area, Rect::new(0, 2, 54, 17));
+    assert_eq!(chrome.view.sidebar_rect, Rect::new(54, 2, 26, 17));
+    assert_eq!(chrome.view.tab_bar_rect, Some(Rect::new(0, 2, 54, 1)));
+    assert_eq!(chrome.view.tab_bar_line, Rect::new(0, 3, 54, 1));
+    assert_eq!(chrome.view.terminal_area, Rect::new(0, 4, 54, 15));
     assert_eq!(chrome.view.sidebar_divider_x, Some(54));
     chrome.sidebar.side = SidebarSide::Left;
     chrome.compute_view(&ws, area);
-    assert_eq!(chrome.view.sidebar_rect, Rect::new(0, 1, 26, 18));
-    assert_eq!(chrome.view.terminal_area, Rect::new(26, 2, 54, 17));
+    assert_eq!(chrome.view.sidebar_rect, Rect::new(0, 2, 26, 17));
+    assert_eq!(chrome.view.terminal_area, Rect::new(26, 4, 54, 15));
     assert_eq!(chrome.view.sidebar_divider_x, Some(25));
 }
 
@@ -1581,10 +1586,11 @@ fn rendered_hits_match_drawn_cells() {
         assert_eq!(hit_text(&terminal, rect).trim(), "+");
     }
 
+    // The divider is the bare drag lane: a hit area with no glyph.
     let divider_x = view.sidebar_divider_x.expect("sidebar divider");
     assert_eq!(
         cell(&terminal, divider_x, view.sidebar_rect.y).symbol(),
-        "│"
+        " "
     );
     // Each section opens with its titled band.
     for section in SidebarSection::ALL {

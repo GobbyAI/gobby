@@ -2,8 +2,9 @@
 //! Sidebar: machines, project cards, agents and bare terminals, each under a
 //! one-row band.
 //!
-//! herdr geometry kept where it still applies: a `│` separator column on
-//! the right. The section rules herdr let the user drag are gone: the
+//! The sidebar sits on the terminal's ground with no fill and no separator
+//! glyph; herdr's edge column stays reserved as the drag lane of a pinned
+//! sidebar. The section rules herdr let the user drag are gone: the
 //! machines take up to `MACHINES_MAX_ROWS`, the projects what their cards
 //! need within the top half, and agents and terminals share the rest.
 
@@ -156,24 +157,7 @@ pub fn render_sidebar<W: WorkspaceView>(
     if area.width == 0 || area.height == 0 {
         return hits;
     }
-    let p = &chrome.palette;
     let is_navigating = chrome.mode == Mode::Navigate;
-    frame.render_widget(
-        Block::default().style(Style::default().bg(p.panel_bg)),
-        area,
-    );
-    // The overlay's edge stays accent while a menu opens over it.
-    draw_separator_column(
-        frame,
-        area,
-        chrome.sidebar.edge_x(area),
-        if is_navigating || chrome.sidebar.overlay {
-            p.accent
-        } else {
-            p.overlay0
-        },
-    );
-
     let machines = machine_rows(ws, chrome);
     let mut projects = project_rows(ws, chrome);
     if !is_navigating {
@@ -469,14 +453,6 @@ pub fn section_gap_rows(section: SidebarSection) -> u16 {
     match section {
         SidebarSection::Machines | SidebarSection::Projects | SidebarSection::Agents => GAP_ROWS,
         SidebarSection::Terminals => 0,
-    }
-}
-
-fn draw_separator_column(frame: &mut Frame, area: Rect, x: u16, color: Color) {
-    let buf = frame.buffer_mut();
-    for y in area.y..area.y + area.height {
-        buf[(x, y)].set_symbol("│");
-        buf[(x, y)].set_style(Style::default().fg(color));
     }
 }
 
