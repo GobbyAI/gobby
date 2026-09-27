@@ -524,6 +524,75 @@ SELECT
                 (content, message_id),
             )
 
+    # Callback keyboard decisions: metadata_json.callback_state is absent while the
+    # decision is pending and becomes "answered" or "superseded" exactly once.
+    # callback_generation counts keyboard reissues so concurrent stale clicks
+    # reissue at most once per observed generation.
+
+    def answer_callback_decision(self, message_id: str) -> bool:
+        """Mark a pending keyboard decision answered; False when it was not pending."""
+        with self.db.transaction() as conn:
+            row = conn.execute(
+                """
+                UPDATE comms_messages
+                   SET metadata_json = jsonb_set(metadata_json, '{callback_state}', '"answered"')
+                 WHERE id = %s AND NOT (metadata_json ? 'callback_state')
+                RETURNING id
+                """,
+                (message_id,),
+            ).fetchone()
+        return row is not None
+
+    def supersede_callback_decision(self, message_id: str) -> None:
+        """Close a pending decision whose keyboard was removed by an edit."""
+        with self.db.transaction() as conn:
+            conn.execute(
+                """
+                UPDATE comms_messages
+                   SET metadata_json = jsonb_set(metadata_json, '{callback_state}', '"superseded"')
+                 WHERE id = %s
+                   AND metadata_json ? 'inline_keyboard'
+                   AND NOT (metadata_json ? 'callback_state')
+                """,
+                (message_id,),
+            )
+
+    def claim_callback_reissue(self, message_id: str, generation: int) -> bool:
+        """Advance a pending decision's keyboard generation if it is still ``generation``."""
+        with self.db.transaction() as conn:
+            row = conn.execute(
+                """
+                UPDATE comms_messages
+                   SET metadata_json = jsonb_set(
+                           metadata_json, '{callback_generation}', to_jsonb(%s::int + 1)
+                       )
+                 WHERE id = %s
+                   AND NOT (metadata_json ? 'callback_state')
+                   AND COALESCE((metadata_json->>'callback_generation')::int, 0) = %s
+                RETURNING id
+                """,
+                (generation, message_id, generation),
+            ).fetchone()
+        return row is not None
+
+    def replace_callback_keyboard(
+        self, message_id: str, keyboard: list[list[dict[str, str]]]
+    ) -> None:
+        """Record a keyboard replaced by an edit so reissues use the current buttons."""
+        with self.db.transaction() as conn:
+            conn.execute(
+                """
+                UPDATE comms_messages
+                   SET metadata_json = metadata_json || jsonb_build_object(
+                           'inline_keyboard', %s::jsonb,
+                           'callback_generation',
+                           COALESCE((metadata_json->>'callback_generation')::int, 0) + 1
+                       )
+                 WHERE id = %s
+                """,
+                (json.dumps(keyboard), message_id),
+            )
+
     # --- Routing Rules ---
 
     # --- Attachments ---

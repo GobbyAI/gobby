@@ -480,6 +480,34 @@ class TelegramAdapter(BaseChannelAdapter):
         else:
             self._edit_overflow_ids.pop(message_key, None)
 
+    async def reissue_callback_keyboard(
+        self, source: CommsMessage, chat_id: str, message_id: str
+    ) -> None:
+        """Replace a stored decision message's buttons with freshly registered tokens."""
+        reply_markup = self._callback_registry.register_keyboard(
+            source.metadata_json.get("inline_keyboard"),
+            session_id=source.session_id,
+            chat_id=chat_id,
+            thread_id=source.platform_thread_id,
+            ttl_seconds=source.metadata_json.get("callback_ttl_seconds", 300),
+            action=source.metadata_json.get("callback_action"),
+            project_id=source.metadata_json.get("callback_project_id"),
+        )
+        try:
+            result = await self._post_json(
+                "editMessageReplyMarkup",
+                {"chat_id": chat_id, "message_id": message_id, "reply_markup": reply_markup},
+            )
+            if not result.get("ok"):
+                description = str(result.get("description", "unknown Telegram API error"))
+                raise RuntimeError(f"Telegram editMessageReplyMarkup failed: {description}")
+        except BaseException:
+            self._callback_registry.discard_keyboard(reply_markup)
+            raise
+        self._remember_callback_keyboard(
+            (chat_id, source.platform_message_id or message_id), reply_markup
+        )
+
     async def send_attachment(
         self, message: CommsMessage, attachment: CommsAttachment, file_path: Path
     ) -> str | None:
@@ -758,15 +786,23 @@ class TelegramAdapter(BaseChannelAdapter):
             status = message.metadata_json.get("callback_status")
             if status == "ok":
                 text = "Selection received."
+            elif status == "reissued":
+                text = (
+                    "These buttons had expired. Fresh buttons are attached; tap your choice again."
+                )
+            elif status == "answered":
+                text = "This decision was already answered."
+            elif status == "superseded":
+                text = "This decision was withdrawn or replaced."
             elif status == "expired":
                 text = "This action has expired."
             else:
                 text = "This action is no longer available."
+            payload: dict[str, Any] = {"callback_query_id": callback_id, "text": text}
+            if status != "ok":
+                payload["show_alert"] = True
             try:
-                await self._post_json(
-                    "answerCallbackQuery",
-                    {"callback_query_id": callback_id, "text": text},
-                )
+                await self._post_json("answerCallbackQuery", payload)
             except httpx.HTTPStatusError as exc:
                 if exc.response.status_code != 400:
                     raise

@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.communications.models import CommsAttachment, CommsMessage
 from gobby.communications.sticker_vision import apply_sticker_vision
+from gobby.communications.telegram_decisions import settle_decision_callback
 from gobby.communications.voice import apply_voice_transcription
 from gobby.communications.webhook_verification import verify_webhook_with_timeout
 
@@ -85,8 +86,9 @@ class InboundCommunications:
                     handled.append(message)
                     continue
 
-                callback_status = message.metadata_json.get("callback_status")
-                if message.content_type == "callback" and callback_status != "ok":
+                if message.content_type == "callback" and not await settle_decision_callback(
+                    manager, channel, adapter, message
+                ):
                     handled.append(message)
                     continue
 

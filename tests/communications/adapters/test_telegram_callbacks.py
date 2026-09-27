@@ -302,7 +302,7 @@ async def test_adapter_rejects_expired_callback_without_agent_content() -> None:
         await adapter.acknowledge_webhook_messages([callback])
     post_json.assert_awaited_once_with(
         "answerCallbackQuery",
-        {"callback_query_id": "callback-1", "text": "This action has expired."},
+        {"callback_query_id": "callback-1", "text": "This action has expired.", "show_alert": True},
     )
 
 

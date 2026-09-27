@@ -290,6 +290,15 @@ class CommunicationsManager:
                 stored_message.id,
                 content,
             )
+            if inline_keyboard is not None:
+                await asyncio.to_thread(
+                    self._store.replace_callback_keyboard, stored_message.id, inline_keyboard
+                )
+            elif channel.channel_type == "telegram" and stored_message.metadata_json.get(
+                "inline_keyboard"
+            ):
+                # editMessageText without reply_markup removes Telegram's buttons.
+                await asyncio.to_thread(self._store.supersede_callback_decision, stored_message.id)
 
     def telegram_sender_label(self, channel: ChannelConfig, session_id: str | None) -> str | None:
         """Return the agent name to add after Telegram rendering."""
