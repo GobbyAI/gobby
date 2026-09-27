@@ -16,9 +16,13 @@ that every existing guard, lease, isolation path, sandbox wrap and caller-projec
 authority still applies. That holds whether the caller is a session, a pipeline `mcp`
 step, the CLI or cron.
 
-The pane is reserved before any side effect of the spawn. It is bound to the agent's
-terminal while that terminal is still `pending`, which is before provider exec. A
-placed agent therefore never exists unplaced, and a refused placement spawns nothing.
+Placement runs in two steps. A side-effect-free preflight runs before isolation is
+created, so a refused preflight spawns nothing. The guarded reservation runs later, at
+dispatch. By then every existing guard has passed and the isolation, child session and
+agent run exist, but no terminal row does. A reservation that fails or is cancelled
+leaves no pane, and the existing spawn cleanup removes what dispatch created. The
+reserved pane is bound to the agent's terminal while that terminal is still `pending`,
+which is before provider exec, so a placed agent never exists unplaced.
 
 ## Constraints
 `kind: framing`
@@ -28,7 +32,9 @@ placed agent therefore never exists unplaced, and a refused placement spawns not
   not required.
 - Placement is a `spawn_agent` input. A pipeline reaches it through an existing `mcp`
   step. Guards, leases, isolation and caller-project authority are preserved.
-- Validation happens before side effects: a refused placement spawns nothing.
+- Validation happens before side effects: a refused preflight spawns nothing. A
+  reservation refused at dispatch starts no agent, and the existing spawn cleanup
+  removes what dispatch created.
 - Sandbox and role authority follow the closed #22899 decisions. Profiles are
   definition-only, and `spawn_agent` gains no sandbox input.
 - This planning task contains no code and no live spawning.
@@ -51,7 +57,7 @@ placed agent therefore never exists unplaced, and a refused placement spawns not
 - Monolith ceiling: these targets are already at or above 850 lines:
   - `_implementation.py`: 964
   - `spawn_executor.py`: 962
-  - `workspace_ops.py`: 973
+  - `workspace_ops.py`: 982
   - `storage/workspaces.py`: 973
 
   New logic lands in new modules. Each deliverable that touches one of these files
@@ -120,24 +126,40 @@ placed agent therefore never exists unplaced, and a refused placement spawns not
    A pipeline `mcp` step therefore fails deterministically, and a later split step can
    use `${{steps.<id>.output.pane_ref}}`. Unplaced spawns keep today's background
    behaviour.
-5. **Compensation.** The placed branch runs inside one compensation boundary in
-   `_placement.py`. The boundary opens when the reservation succeeds and closes with
-   the final response. The pane is retained only when that response has
-   `success: true`. Every other exit releases the reservation in a `finally`-style
-   path, so release still runs when cleanup raises. The exits are:
-   - a returned `success: false`. `finalize_executed_spawn` (`_execution.py`) reports
-     provider and SRT preparation failure, terminal liveness failure, start-run
-     failure and auto-claim failure this way, after it has already run
-     `cleanup_failed_spawn`;
-   - an exception or `CancelledError`, which `_execute_spawn_phase` routes to
-     `_spawn_failure`, which runs `cleanup_failed_spawn`;
-   - a bind conflict, which the executor turns into a failed `SpawnResult` (1.2).
+5. **Compensation.** The placed branch runs in `run_placed_spawn` (`_placement.py`),
+   which has two phases.
+   - Reserve. `reserve` either returns a reserved pane or leaves nothing: no pane or
+     tab row, no in-flight mark and no seat entry (1.1). `run_placed_spawn` wraps the
+     call in the same exits that `_execute_spawn_phase` uses. A typed refusal and any
+     other exception return through `_spawn_failure`, and a `CancelledError` runs
+     `_spawn_failure` and is re-raised. `_spawn_failure` runs `cleanup_failed_spawn`,
+     which removes the run, the child session and created isolation. There is no pane
+     to release.
+   - After reserve. The compensation boundary opens when `reserve` returns and closes
+     with the final response. The pane is retained only when that response has
+     `success: true`. Every other exit releases the reservation in a `finally`, so
+     release still runs when cleanup raises. The exits are:
+     - a returned `success: false`. `finalize_executed_spawn` (`_execution.py`)
+       reports provider and SRT preparation failure, terminal liveness failure,
+       start-run failure and auto-claim failure this way, after it has already run
+       `cleanup_failed_spawn`;
+     - an exception or `CancelledError`, which `_execute_spawn_phase` routes to
+       `_spawn_failure`, which runs `cleanup_failed_spawn`;
+     - a bind conflict, which the executor turns into a failed `SpawnResult` (1.2).
 
-   The boundary reuses those existing cleanups and adds only the release, so no path
-   cleans up twice. Release removes the reserved pane or tab, which is the same
-   removal as `WorkspaceOps._roll_back`.
-   - A pane whose terminal was bound with `owns_terminal=True` kills that terminal on
-     removal, so no orphan shell or unplaced agent survives.
+   The boundary reuses those existing cleanups and adds only the release, so
+   `cleanup_failed_spawn` runs exactly once on every failure exit.
+   - Terminal kill has one owner on every failure exit: `cleanup_failed_spawn`. Its
+     `_terminate_spawn_process` step kills the terminal and marks the row `failed` or
+     `exited` before release runs.
+   - Release follows the order of `WorkspaceOps.pane_close`: remove the row, publish
+     the removal, then kill an owned terminal that is still `pending` or `live`.
+     After a completed cleanup the terminal is already inactive, so release kills
+     nothing and no terminal is killed twice.
+   - When `cleanup_failed_spawn` raises before its terminate step, release finds the
+     owned terminal still active and kills it. A kill that fails marks the row
+     `orphaned`, as `WorkspaceOps._kill` does, so it stays listed and `terminal_kill`
+     retries it. No live terminal outlives its pane unlisted.
    - Placed launches default `cleanup_isolation_on_failure` to true for isolation that
      this call created. As-is, the default is false (`spawn_agent_impl`,
      `_failure_cleanup.py`), which leaves a worktree behind after a refused seat.
@@ -362,13 +384,15 @@ Targets:
 - `tests/terminals/test_workspace_agent_panes.py`
 
 Add a new module, `workspace_agent_panes.py`. It owns the placement lifecycle for
-agent panes, so `workspace_ops.py` (973 lines) and `storage/workspaces.py` (973 lines)
+agent panes, so `workspace_ops.py` (982 lines) and `storage/workspaces.py` (973 lines)
 stay unchanged. `AgentPaneReserver` is constructed from the same `WorkspaceManager`,
-`TerminalManager`, `SessionManager` (for `ActorScope`) and event-publish callback that
-`WorkspaceOps` receives, and it holds the per-workspace lock map. 1.3 builds the one
-daemon-scoped instance. It reuses `_pane_of` (`workspace_contract.py`),
-`mint_pane_id`, `mark_spawn_in_flight`, `clear_spawn_in_flight`, `create_tab`,
-`add_pane`, `set_pane_terminal`, `remove_pane` and `truncate_title`.
+`TerminalManager`, `TerminalRuntimeRegistry`, `SessionManager` (for `ActorScope`) and
+event-publish callback that `WorkspaceOps` receives. It holds the per-workspace lock
+map and its own map of in-flight seat entries. 1.3 builds the one daemon-scoped
+instance. It reuses `_pane_of` (`workspace_contract.py`), `mint_pane_id`,
+`mark_spawn_in_flight`, `clear_spawn_in_flight`, `create_tab`, `add_pane`,
+`rename_pane`, `set_pane_terminal`, `remove_pane`, `truncate_title`, `kill_terminal`
+(`terminals/termination.py`) and `TerminalManager.mark_orphaned`.
 
 New API (all names are new):
 - `AgentPlacement`: a frozen dataclass parsed from the `placement` input. It has two
@@ -395,22 +419,50 @@ New API (all names are new):
   It returns an immutable `ResolvedPlacement`.
 - `reserve(resolved, *, worktree_id)`: under the per-workspace `asyncio.Lock` held
   across check and insert, it repeats the live-seat check on the same key, counting
-  in-flight reservations with the same canonical title as live. Then it marks the
-  pane in flight and inserts it. It uses `create_tab` with the title and `worktree_id`
-  for `tab`, or `add_pane` beside the pane with the mapped axis plus the label for
-  `split`. `worktree_id` is the finalized isolation association: `None` for isolation
-  none, the existing id for a reused worktree, and the new id for a fresh worktree. A
-  split joins an existing tab, so it stores no worktree. `reserve` returns
+  in-flight reservations with the same canonical title as live. Then it mints the pane
+  id, records the seat entry, marks the pane in flight and inserts it. It uses
+  `create_tab` with the title and `worktree_id` for `tab`. For `split` it uses
+  `add_pane` beside the pane with the mapped axis, then `rename_pane` for the label.
+  `worktree_id` is the finalized isolation association: `None` for isolation none, the
+  existing id for a reused worktree, and the new id for a fresh worktree. A split joins
+  an existing tab, so it stores no worktree. `reserve` returns
   `ReservedPane(pane_id, tab_id, workspace_id, pane_ref, tab_ref)`. Nothing is emitted
   yet.
+- `reserve` is atomic. It returns a `ReservedPane`, or it raises and leaves no pane
+  row, tab row, in-flight mark or seat entry. It is built from existing facilities:
+  - The mark is an in-memory set (`WorkspaceManager.mark_spawn_in_flight`), and the
+    seat entry lives in the reserver's own map. Both are set on the event-loop thread
+    with no await before the insert starts. Both are cleared in a `finally` on every
+    exit except a successful return.
+  - `create_tab` inserts the tab and its pane in one transaction, and `add_pane`
+    inserts the pane and rewrites the layout in one transaction. A failed insert
+    therefore leaves no partial row. Only the split label is a second statement.
+  - The insert and the label run as one task awaited through `asyncio.shield`, the
+    pattern `_runtime_spawn` uses for `prepare_spawn` (`spawn_executor.py`). On
+    `CancelledError`, `reserve` first waits for that task to settle, so no commit can
+    land after the rollback. Then it rolls back and re-raises.
+  - Rollback removes the row by the pre-minted pane id and publishes the removal, as
+    `WorkspaceOps._roll_back` does. It tolerates `WorkspaceNotFoundError` when the
+    insert never committed, and it runs shielded so a repeated cancellation cannot
+    strand it.
+  - If the rollback itself fails, the mark is still cleared. The unbound row is then
+    out of flight, and the next `sweep_dead_panes` prunes it, which is the fallback
+    `_roll_back` documents. `reserve` raises the original error.
 - `bind(reserved, terminal_id)`: calls `set_pane_terminal(owns_terminal=True)`, clears
-  the in-flight mark, and emits `tab.created` or `pane.added` with the bound pane. A
-  `UniqueViolation` or a missing row raises `AgentPlacementError("busy"/"not_found")`.
-- `release(reserved)`: clears the in-flight mark and removes the pane (and a tab it
-  emptied), publishing the removal. It is idempotent and tolerates a row that is
-  already gone. It does not kill the terminal: the spawn cleanup owns that.
+  the in-flight mark and the seat entry, and emits `tab.created` or `pane.added` with
+  the bound pane. A `UniqueViolation` or a missing row raises
+  `AgentPlacementError("busy"/"not_found")`.
+- `release(reserved)`: removes the pane (and a tab it emptied), publishes the removal,
+  and clears the in-flight mark and the seat entry. It follows the order of
+  `WorkspaceOps.pane_close`: `remove_pane`, then the removal events, then
+  `kill_terminal` for the removed pane's owned terminal when that terminal is still
+  `pending` or `live`. A kill that fails marks the row orphaned, as
+  `WorkspaceOps._kill` does. In a placed spawn `cleanup_failed_spawn` has normally
+  already killed the terminal and marked it inactive. Release therefore kills only
+  when that cleanup raised before its terminate step (decision 5). It is idempotent and
+  tolerates a row that is already gone.
 
-**Granularity:** eight acceptance items, but one production file and one lifecycle
+**Granularity:** eleven acceptance items, but one production file and one lifecycle
 owner: the reservation state machine (preflight, reserve, bind, release) of one agent
 pane. The items are that machine's refusals and transitions, and none is closeable
 without the others.
@@ -419,7 +471,8 @@ without the others.
 - The reserve-then-fill order mirrors `WorkspaceOps.tab_create` and
   `WorkspaceOps.pane_split` (the in-flight mark protects the unbound pane from sweeps
   and from workspace close). `_fill` / `_roll_back` show the rollback and publish
-  semantics to copy.
+  semantics to copy, and `pane_close` / `_kill` show the release order and the
+  orphan fallback.
 - `_adoptable` is deliberately not reused, because it requires a `live` terminal
   (decision 3).
 - Seat label: `workspace_tabs.title` via `create_tab(title=)`, and pane labels via
@@ -447,6 +500,9 @@ without the others.
 - 1.1.6 - Two concurrent reservations of the same workspace and canonical title yield exactly one reservation and one `seat_live` refusal, for same-kind and cross-kind pairs. test: `tests/terminals/test_workspace_agent_panes.py::test_concurrent_same_seat_reserves_once`.
 - 1.1.7 - A `right` split is stored with axis `horizontal`, and a `down` split with axis `vertical`. test: `tests/terminals/test_workspace_agent_panes.py::test_split_axis_maps_to_storage_axis`.
 - 1.1.8 - A tab reservation stores the `worktree_id` passed to `reserve`: none for isolation none, the reused id for a reused worktree, and the new id for a fresh worktree. test: `tests/terminals/test_workspace_agent_panes.py::test_reserve_stores_final_worktree_association`.
+- 1.1.9 - A `create_tab` or `add_pane` failure, and a `rename_pane` failure after `add_pane` committed, each leave no pane row, tab row, in-flight mark or seat entry, and a later reserve of the same seat succeeds. test: `tests/terminals/test_workspace_agent_panes.py::test_reserve_insert_failure_leaves_nothing`.
+- 1.1.10 - A reserve cancelled while its insert is running waits for the insert to settle, removes any committed row, clears the mark and the seat entry, and re-raises `CancelledError`. A later reserve of the same seat succeeds. test: `tests/terminals/test_workspace_agent_panes.py::test_reserve_cancelled_before_return_leaves_nothing`.
+- 1.1.11 - Release kills an owned terminal that is still `pending` or `live`, kills nothing when that terminal is already inactive, and marks the row orphaned when the kill fails. test: `tests/terminals/test_workspace_agent_panes.py::test_release_kills_only_an_active_owned_terminal`.
 
 ### 1.2 Executor binds a placed terminal before exec [category: code]
 `kind: deliverable`
@@ -545,8 +601,8 @@ Targets:
 - `tests/mcp_proxy/tools/test_agents_spawn_tools.py::*` — scope-reason: add the resolver pass-through test beside the existing spawn tool registration tests
 
 `WebSocketServer.configure_terminals` builds one `AgentPaneReserver` next to
-`WorkspaceOps`, from the same workspace manager, terminal manager, `SessionManager`
-and `publish=self.broadcast_workspace_event`, under the same condition: a workspace
+`WorkspaceOps`, from the same workspace manager, terminal manager, runtime registry,
+`SessionManager` and `publish=self.broadcast_workspace_event`, under the same condition: a workspace
 manager is present and the sessions are a `SessionManager`. Otherwise it stays `None`.
 The server stores it as `agent_pane_reserver`.
 
@@ -563,7 +619,8 @@ is called per tool call, so the registry never caches a value read before
 defaults to `None` and sits after the existing ones. The new
 `AgentsRegistryContext.agent_pane_reserver_resolver` field is appended with a
 `None` default, and the reserver type is imported under `TYPE_CHECKING` only.
-Constructing the reserver stores references and an empty lock map and touches no
+Constructing the reserver stores references, an empty lock map and an empty seat-entry
+map, and touches no
 storage, so test servers that build `WorkspaceOps` also get an inert reserver.
 
 **Granularity:** seven production Target files, but one behavior: one resolver
@@ -628,7 +685,7 @@ Consumers unchanged:
 
 **Acceptance:**
 
-- 1.3.1 - `configure_terminals` builds exactly one `AgentPaneReserver` with the same workspace manager, terminal manager, sessions and publish callback as `WorkspaceOps`, and builds none when `WorkspaceOps` is not built. test: `tests/terminals/test_composition_roots.py::test_configure_terminals_builds_one_agent_pane_reserver`.
+- 1.3.1 - `configure_terminals` builds exactly one `AgentPaneReserver` with the same workspace manager, terminal manager, runtime registry, sessions and publish callback as `WorkspaceOps`, and builds none when `WorkspaceOps` is not built. test: `tests/terminals/test_composition_roots.py::test_configure_terminals_builds_one_agent_pane_reserver`.
 - 1.3.2 - `register_agent_spawn_tools` hands the context's resolver to `create_spawn_agent_registry` unchanged, and each resolution returns the server's single reserver. test: `tests/mcp_proxy/tools/test_agents_spawn_tools.py::test_spawn_registry_resolves_one_daemon_reserver`.
 
 ### 1.4 spawn_agent placement input, compensation and reply [category: code] (depends: 1.1, 1.2, 1.3)
@@ -675,20 +732,25 @@ grow past the ceiling: `spawn_agent_impl` gains only two call sites.
    `SpawnRequest.placement_binder` to bind the reserved pane, awaits
    `_execute_spawn_phase()` inline, and on success returns `build_spawn_response(...)`
    with the new `workspace`, `tab_ref` and `pane_ref` fields. `build_spawn_response`
-   gains an optional `placement` argument that adds them. A reserve-time refusal
-   (`seat_live` lost to a concurrent launch, or `busy`) returns through the existing
-   `_spawn_failure`, which cleans the run, the child session and created isolation.
+   gains an optional `placement` argument that adds them. `spawn_agent_impl` passes
+   its `_spawn_failure` and `_execute_spawn_phase` closures to `run_placed_spawn`.
+   Every reserve failure returns through `_spawn_failure`, which cleans the run, the
+   child session and created isolation (decision 5). A typed refusal (`seat_live` lost
+   to a concurrent launch, or `busy`) adds its `placement_error` code to that reply.
+   Any other exception returns the same way. A `CancelledError` runs `_spawn_failure`
+   and is re-raised, as `_execute_spawn_phase` does.
 
 `run_placed_spawn` is the decision 5 compensation boundary. From the successful
 `reserve` to the final response, it retains the pane only when the response has
 `success: true`, and it releases in a `finally` so release still runs when cleanup
-raises. It reuses the cleanup that `finalize_executed_spawn` and `_spawn_failure`
-already run, so no path cleans up twice. A placed launch defaults
+raises. Release kills the bound terminal only when that cleanup raised before killing
+it (decision 5). It reuses the cleanup that `finalize_executed_spawn` and
+`_spawn_failure` already run, so no path cleans up twice. A placed launch defaults
 `cleanup_isolation_on_failure` to true for isolation it created, so a refused or failed
 seat leaves no worktree or clone. Reused `worktree_id` / `clone_id` isolation is never
 removed.
 
-**Granularity:** ten acceptance items and five production Target files, but one
+**Granularity:** eleven acceptance items and five production Target files, but one
 lifecycle owner: one placed `spawn_agent` call from preflight to reply. The refusals,
 the compensation boundary and the reply are the exits of that one call. Splitting
 them would land a reservation without its compensation.
@@ -748,12 +810,13 @@ Consumers unchanged:
 - 1.4.2 - A placed spawn with a sandbox config that is not SRT, or not enabled, is refused with `sandbox_required` before any side effect. Unplaced spawns are unaffected. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_placed_launch_requires_managed_srt`.
 - 1.4.3 - A provider or SRT preparation failure that `finalize_executed_spawn` returns as `success: false` releases the pane, runs `cleanup_failed_spawn` exactly once, and never starts the provider. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_wrap_failure_refuses_and_releases_pane`.
 - 1.4.4 - A later returned failure (terminal liveness or start-run) releases the pane, kills the bound terminal, and runs `cleanup_failed_spawn` exactly once. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_late_returned_failure_releases_pane_once`.
-- 1.4.5 - An exception, a `CancelledError` and a bind `busy` conflict each release the pane, and release still runs when `cleanup_failed_spawn` raises. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_exceptions_and_cancellation_release_pane`.
+- 1.4.5 - An exception, a `CancelledError` and a bind `busy` conflict each release the pane, and release still runs when `cleanup_failed_spawn` raises. When that cleanup raises before its terminate step, release kills the bound terminal, or marks it orphaned when the kill fails. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_exceptions_and_cancellation_release_pane`.
 - 1.4.6 - A successful placed spawn returns synchronously with run_id, terminal_id, workspace, tab_ref and pane_ref, and keeps its pane bound. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_placed_spawn_reply_carries_refs`.
 - 1.4.7 - A slot, lease or active-task refusal leaves no pane, and the loser of a reserve-time `seat_live` race cleans its run, child session and created isolation. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_late_refusals_leave_no_pane`.
 - 1.4.8 - An explicit `project_path` is accepted. A resolved parent is accepted, including a pipeline child parented to the system or cron session. An ambient-only project and a parent that is the system session itself are refused with `parent_unresolved` before any side effect. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_parent_and_project_provenance`.
 - 1.4.9 - A placed spawn that fails after creating its own worktree removes that worktree, and one that reused a `worktree_id` keeps it. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_failed_placed_spawn_cleans_created_isolation_only`.
 - 1.4.10 - Two concurrent placed spawns of one seat through the registry yield one placed agent and one `seat_live`, and the winner's bind publishes `tab.created` or `pane.added` through the server's workspace broadcast before provider exec. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_concurrent_placed_spawns_share_one_reserver`.
+- 1.4.11 - A `reserve` that raises, and a cancellation that arrives while `reserve` is running, each run `_spawn_failure` once, which removes the run, the child session and created isolation, and leave no pane, tab or in-flight mark. The cancellation is re-raised. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_reserve_failure_and_cancellation_clean_dispatch_state`.
 
 ## P2: gclient placement reconciliation
 `kind: framing`
@@ -806,7 +869,7 @@ the existing workspace model and projection and adds no placement registry.
   that `crates/gclient/tests/arrange.rs` uses. Tests limited to `apply_event` would not
   prove the live behaviour.
 - Load the `rust` skill and `crates/CLAUDE.md` before editing.
-- Planned checks: `cargo test -p gclient --test placed_agent`, `cargo clippy -p gclient`.
+- Planned checks: `cargo test -p gobby-client --test placed_agent`, `cargo clippy -p gobby-client`.
   A crate change goes live only after a rebuild and install through
   `promote_workspace_binary_set`, and gclient is promoted separately (it is not in the
   stamped set). A PD slot is required.
@@ -876,7 +939,7 @@ the managed wrapper stubbed at the SRT binary boundary.
 
 End-to-end check after 1.1 to 1.4, 2.1 and 3.1 land, run in an isolated environment only:
 - 1.1 to 1.4 focused pytest;
-- `cargo test -p gclient --test placed_agent`;
+- `cargo test -p gobby-client --test placed_agent`;
 - the 3.1 isolated-daemon pipeline test.
 
 After a PD-scheduled restart and gclient promotion, the operator smoke test is:
@@ -948,4 +1011,16 @@ refused re-run. Researchers never touch the live daemon or its seats.
 - declined: none
 - no new product scope was approved; each change repairs a stated invariant with an
   existing mechanism. No second enhancer pass.
-- next: Program Director design review, then Josh's approval, then the Plan Adversary.
+- Program Director design review of 9f4209f1e1 (gobby#14610, 2026-09-27) accepted the
+  three-way split and the reservation after the existing guards, and asked for four
+  repairs, folded here without new scope:
+  - reserve atomicity under exceptions and cancellation (decision 5, 1.1 `reserve`,
+    1.1.9, 1.1.10, 1.4 step 2, 1.4.11);
+  - one terminal-kill owner, with a release backstop when cleanup raises (decision 5,
+    1.1 `release`, 1.1.11, 1.3, 1.4.5);
+  - Overview and Constraints wording that separates the side-effect-free preflight
+    from the guarded reservation;
+  - the `gobby-client` cargo package in 2.1 and V1.
+  The `workspace_ops.py` size is re-measured at 982 lines.
+- next: Program Director check of these repairs, then Josh's approval, then the Plan
+  Adversary.
