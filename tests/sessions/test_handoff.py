@@ -59,6 +59,7 @@ from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.sessions._title_defaults import provider_title_label
 from gobby.storage.tasks import LocalTaskManager, Task
+from gobby.terminals.pane_io import PaneIO, send_pane_key
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.fixtures.isolated_checkout import write_project_marker
@@ -1158,6 +1159,19 @@ async def test_codex_rollout_recovers_compact_without_hook_after_restart(
 ) -> None:
     session = _registered_session(session_manager)
     attempt_id = "b" * 32
+
+    async def failed_enter(key: str) -> tuple[bool, str]:
+        assert key == "enter"
+        return False, "native key write failed (none): enter"
+
+    pane = cast(PaneIO, SimpleNamespace(backend="native", target="test", send_key=failed_enter))
+    sent, legacy_reason = await send_pane_key(
+        pane, "enter", session.id, action="submitting /compact"
+    )
+    assert sent is False
+    assert legacy_reason == (
+        f"native key write failed (none): enter (session {session.id} while submitting /compact)"
+    )
     payload = build_handoff_payload(
         current_state="The provider compacted after an uncertain Enter.",
         next_steps=["Resume the assigned task."],
@@ -1174,9 +1188,14 @@ async def test_codex_rollout_recovers_compact_without_hook_after_restart(
             "clear_session": False,
             "delivery_failed": True,
             "delivery_state": "failed_not_deliverable",
-            "reason": "native key write failed (none): enter",
+            "reason": legacy_reason,
         },
     )
+    stored_gate = SessionVariableManager(temp_db).get_variables(session.id)[
+        HANDOFF_DISPATCH_GATE_VARIABLE
+    ]
+    assert stored_gate["reason"] == legacy_reason
+    assert "error_code" not in stored_gate
     SessionVariableManager(temp_db).set_variable(
         session.id,
         HANDOFF_COMPACT_CONTINUE_VARIABLE,
@@ -1279,7 +1298,10 @@ async def test_late_compact_cannot_deliver_superseded_attempt(
         "delivery_state": "failed_not_deliverable",
     }
     if legacy_ambiguous_enter:
-        failure_result["reason"] = "native key write failed (none): enter"
+        failure_result["reason"] = (
+            "native key write failed (none): enter "
+            f"(session {session.id} while submitting /compact)"
+        )
     else:
         failure_result["error_code"] = "compact_unconfirmed"
     assert restore_staged_handoff(

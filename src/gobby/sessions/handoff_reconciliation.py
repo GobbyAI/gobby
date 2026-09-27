@@ -28,13 +28,17 @@ from gobby.workflows.found_work_gate import arm_found_work_gate
 def is_legacy_codex_ambiguous_enter_failure(gate: Mapping[str, object], source: str | None) -> bool:
     """Recognize failed Codex Enter writes recorded before they had an error code."""
     reason = gate.get("reason")
+    if not isinstance(reason, str):
+        return False
+    pane_reason, separator, action = reason.partition(" (session ")
     return (
         source == "codex"
         and gate.get("error_code") is None
         and gate.get("clear_session") is False
-        and isinstance(reason, str)
-        and " key write failed (" in reason
-        and reason.endswith(": enter")
+        and bool(separator)
+        and " key write failed (" in pane_reason
+        and pane_reason.endswith(": enter")
+        and action.endswith(" while submitting /compact)")
     )
 
 

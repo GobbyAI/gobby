@@ -369,7 +369,11 @@ class TestRegisterTerminalTools:
         ("error_code", "reason"),
         [
             ("compact_unconfirmed", None),
-            (None, "native key write failed (none): enter"),
+            (
+                None,
+                "native key write failed (none): enter "
+                "(session session-1 while submitting /compact)",
+            ),
         ],
     )
     def test_set_handoff_rejects_second_attempt_while_compact_unconfirmed(
