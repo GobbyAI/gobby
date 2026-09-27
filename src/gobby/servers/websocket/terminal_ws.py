@@ -12,7 +12,12 @@ from gobby.servers.websocket.terminal_input import WriteOutcome, record_turn_obs
 from gobby.storage.projects import GLOBAL_PROJECT_ID
 from gobby.storage.sessions import LIVE_SESSION_STATUS_ORDER
 from gobby.storage.terminals import AttachLocator, HostEpochMismatchError
-from gobby.terminals.foreground import foreground_commands, process_shell, shell_pid
+from gobby.terminals.foreground import (
+    foreground_commands,
+    process_shell,
+    shell_cwds,
+    shell_pid,
+)
 from gobby.terminals.leases import (
     LifecyclePublicationError,
     SizingDecision,
@@ -138,6 +143,8 @@ class TerminalWsMixin:
     terminal_services: Any | None = None
     terminal_host_manager: Any | None = None
     open_proxy_frame: Any | None = None
+    # The sweep in flight, which every list request joins until it settles.
+    _tmux_sweep: asyncio.Task[dict[str, Any]] | None = None
 
     if TYPE_CHECKING:
 
@@ -330,7 +337,7 @@ class TerminalWsMixin:
             )
             return
         machine_id = require_machine_id()
-        panes = await self._sweep_tmux_panes(manager, machine_id)
+        panes = await self.sweep_tmux_panes(manager, machine_id)
         # The page query, like the sweep, runs off the loop: a slow database
         # then delays this reply instead of every other connection's input.
         items, has_more = await asyncio.to_thread(
@@ -342,10 +349,9 @@ class TerminalWsMixin:
             cursor_id=cursor_id,
             limit=limit,
         )
-        native_commands = await asyncio.to_thread(
-            foreground_commands,
-            {row.id: pid for row in items if (pid := shell_pid(row)) is not None},
-        )
+        shell_pids = {row.id: pid for row in items if (pid := shell_pid(row)) is not None}
+        native_commands = await asyncio.to_thread(foreground_commands, shell_pids)
+        native_cwds = await asyncio.to_thread(shell_cwds, shell_pids)
         serialized = []
         for row in items:
             item = inventory_item(row, lease_holder=self._leases().holder_info(row.id))
@@ -371,6 +377,7 @@ class TerminalWsMixin:
                 or (pane.pane_command if pane is not None else None)
                 or process_shell(row)
             )
+            item["cwd"] = native_cwds.get(row.id) or (pane.pane_path if pane is not None else None)
             serialized.append(item)
         item_cursors = [f"{row.created_at.isoformat()}|{row.id}" for row in items]
         next_cursor = None if not has_more else item_cursors[-1]
@@ -394,11 +401,14 @@ class TerminalWsMixin:
             return
         await self._send_json(websocket, payload)
 
-    async def _sweep_tmux_panes(self, manager: Any, machine_id: str) -> dict[str, Any]:
+    async def sweep_tmux_panes(self, manager: Any, machine_id: str) -> dict[str, Any]:
         """Mirror the tmux servers into ``terminals`` before listing; never fails the list.
 
-        Bounded by ``TMUX_SWEEP_BUDGET_SECONDS``: an unresponsive tmux drops this
-        list back to the database rather than holding the connection.
+        Bounded by ``TMUX_SWEEP_BUDGET_SECONDS``, session query included: an
+        unresponsive tmux or a stalled query drops this list back to the
+        database rather than holding the connection. A sweep that outlives
+        its budget keeps running, and later lists join it until it settles,
+        so a stall never stacks one worker thread per request.
 
         A pane whose working directory is not inside a registered project is
         filed under the global project, so it shows up whichever project the
@@ -415,7 +425,8 @@ class TerminalWsMixin:
         if not tmux_managers:
             return {}
         session_manager = getattr(self, "session_manager", None)
-        try:
+
+        async def sweep() -> dict[str, Any]:
             sessions = (
                 []
                 if session_manager is None
@@ -426,16 +437,23 @@ class TerminalWsMixin:
                     limit=1000,
                 )
             )
-            return await asyncio.wait_for(
-                sweep_tmux_terminals(
-                    manager,
-                    tmux_managers,
-                    machine_id=machine_id,
-                    owners=pane_owners(sessions),
-                    fallback_project_id=GLOBAL_PROJECT_ID,
-                ),
-                timeout=TMUX_SWEEP_BUDGET_SECONDS,
+            return await sweep_tmux_terminals(
+                manager,
+                tmux_managers,
+                machine_id=machine_id,
+                owners=pane_owners(sessions),
+                fallback_project_id=GLOBAL_PROJECT_ID,
             )
+
+        task = self._tmux_sweep
+        if task is None or task.done():
+            task = asyncio.ensure_future(sweep())
+            # Every waiter may have timed out; read the outcome so it is not
+            # reported as never retrieved.
+            task.add_done_callback(lambda done: done.cancelled() or done.exception())
+            self._tmux_sweep = task
+        try:
+            return await asyncio.wait_for(asyncio.shield(task), timeout=TMUX_SWEEP_BUDGET_SECONDS)
         except TimeoutError:
             logger.warning(
                 "tmux terminal discovery exceeded %.1fs; listing from the database",

@@ -145,7 +145,7 @@ async def test_snapshot_orders_lifecycle_events(
     _create_pending(manager, sample_project["id"])
     server = _server()
     server.terminal_manager = manager
-    monkeypatch.setattr(server, "_sweep_tmux_panes", AsyncMock(return_value={}))
+    monkeypatch.setattr(server, "sweep_tmux_panes", AsyncMock(return_value={}))
 
     before_socket = MockWebSocket()
     server.clients[before_socket] = {}
@@ -586,7 +586,7 @@ async def test_byte_cap_truncation_preserves_forward_progress(
     page_row = _Row(title="x" * 500)
     server = _server()
     server.terminal_manager = _PageManager([page_row])
-    monkeypatch.setattr(server, "_sweep_tmux_panes", AsyncMock(return_value={}))
+    monkeypatch.setattr(server, "sweep_tmux_panes", AsyncMock(return_value={}))
     monkeypatch.setattr(
         "gobby.servers.websocket.terminal_ws.require_machine_id", lambda: LOCAL_MACHINE_ID
     )

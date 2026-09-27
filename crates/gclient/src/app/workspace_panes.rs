@@ -105,6 +105,7 @@ impl<D: Daemon> Workspace<D> {
     }
 
     pub(super) fn remove_terminal(&mut self, terminal_id: &str) {
+        self.relist.invalidate();
         self.pending_spawns.remove(terminal_id);
         let ids: Vec<PaneId> = self
             .order

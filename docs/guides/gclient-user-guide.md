@@ -149,7 +149,10 @@ second after the section scrolls or while the navigate cursor is in it.
   name or foreground command. The pane's address sits at the right edge, as
   the pane's corner prints it, and gives way when the name needs the room.
   The working directory sits below, with `~` for your home, once the daemon
-  reports one. Click or right-click one as you would an agent row.
+  reports one. The client relists every five seconds, so the directory and
+  command follow a `cd` or a new program within that time; a directory the
+  daemon can no longer read drops the line. Click or right-click one as you
+  would an agent row.
 
 State glyphs, on machine, project, and session rows alike. The same table opens
 first in the keybinding help as the attention legend:
