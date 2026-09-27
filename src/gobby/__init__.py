@@ -1,4 +1,4 @@
-"""Gobby - A local-first daemon to unify your AI coding tools.
+"""Gobby - fleet management for AI coding agents.
 
 Session tracking and handoffs across Claude Code, Codex, Qwen, Grok, and Droid.
 An MCP proxy that discovers tools without flooding context. Task management
