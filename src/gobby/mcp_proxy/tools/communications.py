@@ -11,6 +11,7 @@ from gobby.mcp_proxy.tools.memory_scope import get_current_project_id
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_resolution import resolve_session_reference
+from gobby.storage.worktrees import LocalWorktreeManager, WorktreeStatus
 from gobby.utils.datetime import utc_now
 from gobby.utils.project_context import get_project_context
 from gobby.utils.session_context import get_current_session_id
@@ -26,6 +27,14 @@ def _is_project_seq_ref(ref: str) -> bool:
     if separator:
         return bool(project) and "#" not in project and seq.isdigit()
     return ref.isdigit()
+
+
+def _is_within(path: Path, root: Path) -> bool:
+    """True when resolved ``path`` lies under ``root`` once ``root`` resolves strictly."""
+    try:
+        return path.is_relative_to(root.expanduser().resolve(strict=True))
+    except OSError:
+        return False
 
 
 def create_communications_registry(
@@ -132,7 +141,24 @@ def create_communications_registry(
         except ValueError as e:
             return {"success": False, "error": str(e)}
 
-    @registry.tool(description="Send an existing local file to a communication channel.")
+    def _registered_worktree_roots(project_context: dict[str, Any] | None) -> list[Path]:
+        """Paths of the caller project's active or stale worktrees on this machine."""
+        project_id = project_context.get("id") if project_context else None
+        if db is None or not project_id:
+            return []
+        worktrees = LocalWorktreeManager(db).list_worktrees(
+            project_id=str(project_id),
+            status=(WorktreeStatus.ACTIVE.value, WorktreeStatus.STALE.value),
+            limit=1000,
+        )
+        return [Path(worktree.worktree_path) for worktree in worktrees]
+
+    @registry.tool(
+        description=(
+            "Send an existing local file to a communication channel. The file must be "
+            "inside the project checkout or one of its active or stale registered worktrees."
+        )
+    )
     async def send_attachment(
         channel: str,
         file_path: str,
@@ -154,8 +180,8 @@ def create_communications_registry(
             )
             if configured_root is None:
                 return {"success": False, "error": "Attachment workspace is unavailable"}
-            resolved_root = configured_root.expanduser().resolve(strict=True)
-            if not resolved_path.is_relative_to(resolved_root):
+            allowed_roots = [configured_root, *_registered_worktree_roots(project_context)]
+            if not any(_is_within(resolved_path, root) for root in allowed_roots):
                 return {
                     "success": False,
                     "error": f"Attachment path is outside the workspace: {file_path}",

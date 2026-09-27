@@ -149,8 +149,10 @@ when adapter-specific metadata is required. `thread_id` is copied to the
 platform reply/thread field and overrides a thread remembered for the session.
 
 `send_attachment` requires an existing regular file inside the resolved
-workspace. Paths are expanded and resolved before the containment check, so
-symlinks cannot select a file outside that workspace. An unavailable workspace,
+workspace: the project checkout or one of the project's active or stale
+registered worktrees on this machine. Merged, abandoned, and other projects'
+worktrees are excluded. Paths are expanded and resolved before the containment
+check, so symlinks cannot select a file outside that workspace. An unavailable workspace,
 missing file, directory, or out-of-workspace file returns `success: false`
 before delivery. The manager also checks the adapter's attachment-size limit;
 inspect the returned message status and error to confirm delivery.
