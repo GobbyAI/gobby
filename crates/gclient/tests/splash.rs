@@ -143,7 +143,7 @@ fn the_splash_is_the_whole_frame_until_a_failed_first_connect_falls_through() {
     assert!(menu.starts_with(" Gobby  File "), "{menu}");
     let status = row(&terminal, 39);
     assert!(
-        status.contains("× Daemon unreachable · retry in 3 s"),
+        status.contains("× Daemon unreachable · retrying in 3 s"),
         "{status}"
     );
 }

@@ -158,6 +158,10 @@ first in the keybinding help as the attention legend:
 | `◌` | gone | gone | process or relay missing (see *Orphaned terminals*) |
 | `·` | no state yet | idle | the first seconds after a spawn, before the daemon has a state |
 
+A machine, project, or worktree row shows the most urgent state among its
+agents: needs you, then gone, then active, then idle. Output unseen, held, and
+no state yet roll up as idle, and a row with no agents is idle.
+
 Only needs-you rows carry a word. A font without U+237E shows a box in place of
 `⍾`; the words still identify the row.
 
@@ -166,10 +170,12 @@ as its own workspace, so the address is hub, then workspace, then tab, then pane
 Gobby on workspace 0 and Game Goblins on the next workspace is `0:1:0`, not a
 second tab of workspace 0. `prefix+c` still opens a tab inside the attached
 workspace. `prefix+shift+g` switches to the next workspace on this node. See
-[Workspaces](#workspaces). A tab you have not renamed is named for its own
-address, `tab-` followed by its `node:workspace:tab` ref (`tab-0:0:1`), which
-stays put while the panes inside it change what they run; a renamed tab shows
-its name, and a zoomed tab adds ` Z`. A new-tab button follows the last tab; scroll
+[Workspaces](#workspaces). A tab you have not renamed shows its number and
+`Untitled` (`6: Untitled`), which stays put while the panes inside it change
+what they run; a renamed tab shows its name alone, and a zoomed tab adds ` Z`.
+A tab leads with the rolled-up state of the agents on its panes, the active tab
+included: `⍾`, `◌`, or `▶`. An idle tab shows no glyph. A new-tab button follows
+the last tab; scroll
 arrows appear when tabs overflow. The bar hides when only one tab is open if you
 turn on `hide tab bar with one tab` in settings.
 
@@ -193,13 +199,15 @@ omits the mark. From there, use the live `prefix+w` binding to attach a
 terminal, **File › New terminal** to start one, or `prefix+b` to open the
 sidebar. If you changed the keymap, these hints show your current chords.
 
-**Status line.** The fixed left slot shows connection progress as
-`◐ connecting · <stage> · <elapsed>` or an outage as
-`× Daemon unreachable · retry in <n> s`. Off-tab attention adds
-`⍾ 1 needs you` or `⍾ N need you`; ordinary off-tab agents do not enter that count.
-Once connected, the line also shows separate totals for agents and bare terminals.
-These totals give way to focused pane metadata or drop as whole segments when
-the window is too narrow for the right-hand hints.
+**Status line.** The left counts every agent on this machine by its legend
+state, whatever the sidebar shows: `⍾ 1 needs you` or `⍾ N need you`, then
+`N idle`, `N active`, and `◌ N gone`, separated by `│`. Output unseen, held, and
+no state yet count as idle, so the counts sum to the agents on this machine. A
+count of zero draws nothing. Clicking the needs-you count opens the sidebar in
+navigate mode. An outage leads the line with
+`× Daemon unreachable · retrying in <n> s`, and the last known counts stay
+beside it. The idle, active, and gone counts give way to focused pane metadata
+or drop whole when the window is too narrow for the right-hand hints.
 The right end shows the prefix chord,
 shifted when the client runs inside tmux, and the current mode when it is not
 plain terminal mode. Pane-local title, backend, and control state stay on that
@@ -766,7 +774,7 @@ The client rides through the gap. When the daemon's connection drops:
 1. The pane contents stay visible but frozen while the daemon is unreachable.
    A toast names the URL and cause (`Daemon unreachable at <url>: <error>`),
    while the status bar's left slot shows
-   `× Daemon unreachable · retry in <n> s` and counts down to the next attempt.
+   `× Daemon unreachable · retrying in <n> s` and counts down to the next attempt.
 2. The client retries with backoff until the daemon answers, however the
    connection was lost: a deliberate stop or restart shows as *going away*, any
    other loss as *unavailable*. It never gives up on its own; `prefix+shift+q`
@@ -795,7 +803,7 @@ completed stage's timing and the final summary are logged to
 `~/.gobby/logs/gclient.log`.
 
 With the daemon stopped, the first failed health check ends the splash: the
-chrome opens and the status bar shows `× Daemon unreachable · retry in <n> s`.
+chrome opens and the status bar shows `× Daemon unreachable · retrying in <n> s`.
 Once the daemon answers, the remaining stages run, the status segment clears, and the
 workspace opens. A malformed daemon URL, refused token, unusable gterm host,
 or broken prefs file still reports its own error.

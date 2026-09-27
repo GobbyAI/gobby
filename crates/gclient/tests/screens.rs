@@ -385,6 +385,9 @@ fn status_segments() -> (Workspace, Chrome) {
     chrome.open_tab(alpha, "alpha");
     chrome.open_tab(beta, "beta");
     chrome.activate_tab(0);
+    // The model, context and token segments are opt-in.
+    chrome.prefs.status_left = vec!["focus".to_string(), "model".to_string()];
+    chrome.prefs.status_right = vec!["context".to_string(), "tokens".to_string()];
     (ws, chrome)
 }
 
@@ -748,7 +751,7 @@ fn status_segments_golden() {
     let rendered = deterministic_capture("status_segments", status_segments, &theme);
     let rows = glyph_rows(&rendered);
     let status = rows[usize::from(HEIGHT - 1)];
-    assert!(status.contains("1 needs you"), "{status:?}");
+    assert!(status.contains("⍾ 1 needs you │ 1 idle"), "{status:?}");
     assert!(status.contains("claude-fable-5.1-xhigh"), "{status:?}");
     assert!(status.contains("63% · 12,345"), "{status:?}");
     assert!(status.contains("prefix ctrl+b"), "{status:?}");
@@ -759,7 +762,8 @@ fn status_segments_golden() {
 /// glyph, name, branch with the ahead/behind counts, fold marker) that lists
 /// its worktrees only while expanded; the `working` filter hides a project
 /// with nothing live; the attention entry lists under the agents band.
-/// The committed capture pins the exact layout.
+/// `screens_match_committed_captures` pins the exact layout; comparing it
+/// here as well raced that test's rewrite under the update flag.
 #[test]
 fn projects_agents_golden() {
     let theme = Theme::new(ThemeKind::Dark);
@@ -845,14 +849,6 @@ fn projects_agents_golden() {
         expanded_rows[alpha + 1].starts_with("   └─ ○ feature · #123"),
         "worktree line: {:?}",
         expanded_rows[alpha + 1]
-    );
-
-    let committed = fs::read_to_string(fixture_path("projects_agents"))
-        .unwrap_or_else(|error| panic!("projects_agents golden: {error}"));
-    assert!(
-        rendered == committed,
-        "projects_agents drifted from its capture\n{}",
-        first_difference(&rendered, &committed)
     );
 }
 

@@ -356,7 +356,7 @@ fn project_entry(row: &ProjectRow, inputs: &SidebarInputs, agents: &[AgentEntry]
                     .find_map(|agent| agent.task_ref.clone())
                     .or_else(|| worktree.task_id.clone()),
                 role: worktree.workspace_role.clone(),
-                state: most_urgent(bound.iter().map(|agent| agent.state)),
+                state: rollup(bound.iter().map(|agent| agent.state)),
             }
         })
         .collect();
@@ -375,7 +375,7 @@ fn project_entry(row: &ProjectRow, inputs: &SidebarInputs, agents: &[AgentEntry]
         ahead: status.and_then(|status| status.ahead),
         behind: status.and_then(|status| status.behind),
         worktrees,
-        state: most_urgent(own.iter().map(|agent| agent.state)),
+        state: rollup(own.iter().map(|agent| agent.state)),
     }
 }
 
@@ -392,9 +392,21 @@ pub fn urgency(state: RowState) -> u8 {
     }
 }
 
-/// herdr's collapsed parent: the most urgent of its children's states.
-fn most_urgent(states: impl Iterator<Item = RowState>) -> RowState {
+/// The attention legend's class for a state: needs you, gone and active
+/// keep their own; output unseen, held and no state yet count as idle.
+pub fn state_class(state: RowState) -> RowState {
+    match state {
+        RowState::Attention | RowState::Orphaned | RowState::Working => state,
+        RowState::Paused | RowState::Unseen | RowState::Idle | RowState::Unknown => RowState::Idle,
+    }
+}
+
+/// A container's state: the most urgent class among its members, needs
+/// you over gone over active over idle, and idle with no members.
+pub fn rollup(states: impl IntoIterator<Item = RowState>) -> RowState {
     states
+        .into_iter()
+        .map(state_class)
         .max_by_key(|state| urgency(*state))
         .unwrap_or(RowState::Idle)
 }
@@ -441,9 +453,9 @@ fn resolve_state(
     if orphaned {
         return RowState::Orphaned;
     }
-    // A paused or awaiting turn sits until the agent or user resumes it.
-    if lifecycle_status.is_some_and(|status| status == "paused" || status.starts_with("awaiting_"))
-    {
+    // Held is a run someone paused on purpose. An agent awaiting input,
+    // approval or a handoff sits at its prompt and reads by its pane.
+    if lifecycle_status == Some("paused") {
         return RowState::Paused;
     }
     if lifecycle_status.is_some_and(|status| matches!(status, "running" | "active")) {

@@ -1222,12 +1222,14 @@ switch_project = "ctrl+1..9"
                     // agent and bare-terminal totals joined it (#22941), and
                     // lines drew under the menu bar and the tabs while the
                     // sidebar edge lost its glyph, then the menus, tab labels
-                    // and agent rows took their approved wording (#22944):
+                    // and agent rows took their approved wording, and the
+                    // status row traded its totals and placeholders for this
+                    // machine's agents by legend class (#22944):
                     // 4.1.3 requires a glyph change to fail here, so this
                     // digest moves only alongside a deliberate render change.
                     assert_eq!(
                         frame_digest(&terminal),
-                        "08679b7253a3e2c99845da46b010b8b9b685917cf7cfc9bd8b08812450103500"
+                        "8602b4c329b576968273fd417ad1dd789b5702c1300e185fc8e1f3ee74ab9142"
                     );
                 });
         }

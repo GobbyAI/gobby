@@ -1,16 +1,18 @@
 // upstream: herdr v0.8.0 src/ui/tabs.rs
 //! Tab bar with scroll arrows, hit areas, and the new-tab button.
 
+use crate::app::sidebar_model::rollup;
 use crate::app::MouseGesture;
-use crate::ui::chrome::{Chrome, Tab, WorkspaceView};
+use crate::ui::chrome::{Chrome, RowState, Tab, WorkspaceView};
 use crate::ui::settings::SidebarSide;
+use crate::ui::sidebar::agents::agent_state;
+use crate::ui::status::state_dot;
 use crate::ui::text::display_width_u16;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
-use std::collections::HashSet;
 
 const MIN_TAB_WIDTH: u16 = 12;
 const NEW_TAB_WIDTH: u16 = 3;
@@ -273,29 +275,28 @@ pub fn render_tab_bar<W: WorkspaceView>(
         return TabBarHits::default();
     }
     let tabs = &chrome.tabs().tabs;
-    let attention_entries: HashSet<String> = ws.attention_entry_ids().into_iter().collect();
-    let attention_panes: Vec<_> = ws
-        .sidebar()
-        .agents
+    let p = &chrome.palette;
+    // A tab takes the most urgent state of the agents on its panes, the
+    // active tab included; an idle tab draws no glyph.
+    let glyphs: Vec<Option<(&str, Color)>> = tabs
         .iter()
-        .filter(|agent| attention_entries.contains(&agent.entry_id))
-        .filter_map(|agent| ws.pane_for_terminal(&agent.terminal_id))
+        .map(|tab| {
+            let state = rollup(ws.sidebar().agents.iter().filter_map(|agent| {
+                let pane = ws.pane_for_terminal(&agent.terminal_id)?;
+                tab.slot_for(pane).is_some().then(|| agent_state(ws, agent))
+            }));
+            (state != RowState::Idle).then(|| state_dot(state, p))
+        })
         .collect();
     let labels: Vec<String> = (0..tabs.len())
         .map(|idx| {
             let label = tab_chrome_label(ws, chrome, tabs, idx);
-            if idx != chrome.active_index()
-                && attention_panes
-                    .iter()
-                    .any(|pane| tabs[idx].slot_for(*pane).is_some())
-            {
-                format!("⍾ {label}")
-            } else {
-                label
+            match glyphs[idx] {
+                Some((glyph, _)) => format!("{glyph} {label}"),
+                None => label,
             }
         })
         .collect();
-    let p = &chrome.palette;
     // An overlay covers one end of the bar, so the tabs fit, and scroll when
     // they do not, in the columns beside it.
     let beside = if chrome.sidebar.overlay {
@@ -390,14 +391,13 @@ pub fn render_tab_bar<W: WorkspaceView>(
         };
         let width = rect.width as usize;
         let text = format!(" {:width$}", name, width = width.saturating_sub(1));
-        let line = if let Some(rest) = text.strip_prefix(" ⍾") {
-            Line::from(vec![
+        let line = match glyphs[idx] {
+            Some((glyph, color)) => Line::from(vec![
                 Span::raw(" "),
-                Span::styled("⍾", Style::default().fg(p.yellow)),
-                Span::raw(rest.to_string()),
-            ])
-        } else {
-            Line::raw(text)
+                Span::styled(glyph, Style::default().fg(color)),
+                Span::raw(text[1 + glyph.len()..].to_string()),
+            ]),
+            None => Line::raw(text),
         };
         frame.render_widget(Paragraph::new(line).style(style), rect);
     }

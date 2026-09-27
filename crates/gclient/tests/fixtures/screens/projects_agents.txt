@@ -78,5 +78,5 @@
 37 : -/-*120
 38 |                                                                                                                        |
 38 : -/-*120
-39 | ⍾ 1 needs you · 1 agent · 2 terminals                                                                    prefix ctrl+b |
-39 : -/surface0*1 yellow/surface0*13 subtext0/surface0*24 -/surface0*68 subtext0/surface0*13 -/surface0*1
+39 | ⍾ 1 needs you                                                                                            prefix ctrl+b |
+39 : -/surface0*1 yellow/surface0*1 subtext0/surface0*12 -/surface0*92 subtext0/surface0*13 -/surface0*1

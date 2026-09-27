@@ -78,5 +78,5 @@
 37 : accent/-*1 -/-*118 accent/-*1
 38 |└ term-bet · Focused ──────────────────────────────────────────────────────────────────────────────────────────── tmux ┘|
 38 : accent/-*1 accent/-+b*20 accent/-*92 accent/-+b*6 accent/-*1
-39 | 1 agent · 1 terminal · —                                                                         — · — │ prefix ctrl+b |
-39 : -/surface0*1 subtext0/surface0*24 -/surface0*73 subtext0/surface0*21 -/surface0*1
+39 | 1 idle                                                                                                   prefix ctrl+b |
+39 : -/surface0*1 subtext0/surface0*6 -/surface0*99 subtext0/surface0*13 -/surface0*1

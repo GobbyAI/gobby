@@ -4,8 +4,8 @@
 00 : bar_ink/bar+b*120
 01 |▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀|
 01 : line/-*120
-02 | Machines                  alpha        ⍾ second    +                                                                   |
-02 : -/surface0*1 subtext0/surface0+b*8 -/surface0*16 -/-*1 text/-+b*12 -/surface0*1 overlay1/surface0*1 yellow/surface0*1 overlay1/surface0*13 -/surface0*66
+02 | Machines                  ⍾ alpha      ⍾ second    +                                                                   |
+02 : -/surface0*1 subtext0/surface0+b*8 -/surface0*16 -/-*1 text/-+b*1 yellow/-+b*1 text/-+b*10 -/surface0*1 overlay1/surface0*1 yellow/surface0*1 overlay1/surface0*13 -/surface0*66
 03 | ⍾ scripted · local       ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀|
 03 : -/surface_dim*1 yellow/surface_dim*1 overlay0/surface_dim+d*1 text/surface_dim+b*8 overlay0/surface_dim*8 -/surface_dim*6 -/-*1 line/-*94
 04 |                          ⍾ term-alpha ─────────────────────────────────┐┌ ▸ term-beta ────────────────────────────────┐|
@@ -78,5 +78,5 @@
 37 : -/-*26 yellow/-*1 -/-*45 yellow/-*1 accent/-*1 -/-*45 accent/-*1
 38 |                          └ term-alpha ──────────────────────── gclient ┘└ term-beta · Focused ─────────────── gclient ┘|
 38 : -/-*26 yellow/-*1 overlay0/-*12 yellow/-*24 overlay0/-*9 yellow/-*1 accent/-*1 accent/-+b*21 accent/-*15 accent/-+b*9 accent/-*1
-39 | × Daemon unreachable · retry in 3 s │ —                                                          — · — │ prefix ctrl+b |
-39 : -/surface0*1 red/surface0*35 subtext0/surface0*4 -/surface0*58 subtext0/surface0*21 -/surface0*1
+39 | × Daemon unreachable · retrying in 3 s │ ⍾ 1 needs you                                                   prefix ctrl+b |
+39 : -/surface0*1 red/surface0*20 subtext0/surface0*21 yellow/surface0*1 subtext0/surface0*12 -/surface0*51 subtext0/surface0*13 -/surface0*1
