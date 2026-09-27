@@ -12,7 +12,12 @@ from gobby.servers.websocket.terminal_input import WriteOutcome, record_turn_obs
 from gobby.storage.projects import GLOBAL_PROJECT_ID
 from gobby.storage.sessions import LIVE_SESSION_STATUS_ORDER
 from gobby.storage.terminals import AttachLocator, HostEpochMismatchError
-from gobby.terminals.foreground import foreground_commands, process_shell, shell_pid
+from gobby.terminals.foreground import (
+    foreground_commands,
+    process_shell,
+    shell_cwds,
+    shell_pid,
+)
 from gobby.terminals.leases import (
     LifecyclePublicationError,
     SizingDecision,
@@ -342,10 +347,9 @@ class TerminalWsMixin:
             cursor_id=cursor_id,
             limit=limit,
         )
-        native_commands = await asyncio.to_thread(
-            foreground_commands,
-            {row.id: pid for row in items if (pid := shell_pid(row)) is not None},
-        )
+        shell_pids = {row.id: pid for row in items if (pid := shell_pid(row)) is not None}
+        native_commands = await asyncio.to_thread(foreground_commands, shell_pids)
+        native_cwds = await asyncio.to_thread(shell_cwds, shell_pids)
         serialized = []
         for row in items:
             item = inventory_item(row, lease_holder=self._leases().holder_info(row.id))
@@ -371,6 +375,7 @@ class TerminalWsMixin:
                 or (pane.pane_command if pane is not None else None)
                 or process_shell(row)
             )
+            item["cwd"] = native_cwds.get(row.id) or (pane.pane_path if pane is not None else None)
             serialized.append(item)
         item_cursors = [f"{row.created_at.isoformat()}|{row.id}" for row in items]
         next_cursor = None if not has_more else item_cursors[-1]

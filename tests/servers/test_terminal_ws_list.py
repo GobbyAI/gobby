@@ -309,9 +309,13 @@ async def test_list_names_the_foreground_command_for_both_backends(
         return_value=subprocess.CompletedProcess(args=["ps"], returncode=0, stdout=table, stderr="")
     )
 
+    process = MagicMock()
+    process.return_value.cwd.return_value = "/srv/app"
+
     with (
         patch("gobby.servers.websocket.terminal_ws.sweep_tmux_terminals", sweep),
         patch("gobby.terminals.foreground.spawn.run", ps),
+        patch("gobby.terminals.foreground.psutil.Process", process),
     ):
         page = await listed(server, {"request_id": "commands"})
 
@@ -320,6 +324,11 @@ async def test_list_names_the_foreground_command_for_both_backends(
     # the shell pid the host recorded, and both land on one field.
     assert by_id[pane.id]["command"] == "vim"
     assert by_id[promoted.id]["command"] == "nvim"
+    # The working directory follows the same split: tmux's pane path, and the
+    # native shell's own directory.
+    assert by_id[pane.id]["cwd"] == "/Users/dev/projects/gobby"
+    assert by_id[promoted.id]["cwd"] == "/srv/app"
+    process.assert_called_once_with(4242)
 
 
 async def test_list_falls_back_to_the_spawn_shell_for_a_native_row(

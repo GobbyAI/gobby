@@ -10,7 +10,12 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query
 
 from gobby.storage.terminals import AttachLocator, Terminal, TerminalManager
-from gobby.terminals.foreground import foreground_commands, process_shell, shell_pid
+from gobby.terminals.foreground import (
+    foreground_commands,
+    process_shell,
+    shell_cwds,
+    shell_pid,
+)
 from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.ws_protocol import (
     TERMINAL_LIST_DEFAULT_PAGE_SIZE,
@@ -81,13 +86,16 @@ def create_terminals_router(server: HTTPServer) -> APIRouter:
             cursor_id=cursor_id,
             limit=page_size,
         )
-        commands = _foreground_commands(items)
+        pids = _shell_pids(items)
+        commands = foreground_commands(pids)
+        cwds = shell_cwds(pids)
         registry = _lease_registry()
         serialized = [
             _row_json(
                 row,
                 _attach(server, manager, row),
                 commands.get(row.id),
+                cwds.get(row.id),
                 registry.holder_info(row.id),
             )
             for row in items
@@ -117,10 +125,12 @@ def create_terminals_router(server: HTTPServer) -> APIRouter:
         row = manager.get(terminal_id)
         if row is None or row.machine_id != machine_id:
             raise HTTPException(status_code=404, detail="terminal not found")
+        pids = _shell_pids([row])
         return _row_json(
             row,
             _attach(server, manager, row),
-            _foreground_commands([row]).get(row.id),
+            foreground_commands(pids).get(row.id),
+            shell_cwds(pids).get(row.id),
             _lease_registry().holder_info(row.id),
         )
 
@@ -163,15 +173,16 @@ def _attach(server: HTTPServer, manager: TerminalManager, row: Terminal) -> Atta
         return None
 
 
-def _foreground_commands(rows: list[Terminal]) -> dict[str, str]:
-    """The command in each row's terminal foreground, for the rows that record a shell."""
-    return foreground_commands({row.id: pid for row in rows if (pid := shell_pid(row)) is not None})
+def _shell_pids(rows: list[Terminal]) -> dict[str, int]:
+    """Each row's shell pid, for the rows that record one."""
+    return {row.id: pid for row in rows if (pid := shell_pid(row)) is not None}
 
 
 def _row_json(
     row: Terminal,
     attach: AttachLocator | None,
     command: str | None,
+    cwd: str | None,
     lease_holder: dict[str, str | None] | None,
 ) -> dict[str, Any]:
     payload = inventory_item(row, lease_holder=lease_holder)
@@ -179,4 +190,5 @@ def _row_json(
     payload["created_at"] = row.created_at.isoformat()
     payload["attach"] = None if attach is None else asdict(attach)
     payload["command"] = command or process_shell(row)
+    payload["cwd"] = cwd
     return payload

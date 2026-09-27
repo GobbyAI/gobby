@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 from dataclasses import dataclass, field
 from typing import Any
 from unittest.mock import patch
 
+import psutil
 import pytest
 
 from gobby.terminals.foreground import (
@@ -14,6 +16,7 @@ from gobby.terminals.foreground import (
     command_name,
     foreground_commands,
     process_shell,
+    shell_cwds,
     shell_pid,
 )
 
@@ -139,3 +142,19 @@ def test_process_shell_reads_the_recorded_basename(
     process: dict[str, Any] | None, shell: str | None
 ) -> None:
     assert process_shell(Row(process=process)) == shell
+
+
+def test_a_live_shell_reports_its_working_directory() -> None:
+    assert shell_cwds({"me": os.getpid()}) == {"me": os.getcwd()}
+
+
+def test_an_unreadable_or_unstarted_shell_has_no_working_directory() -> None:
+    denied = psutil.AccessDenied(pid=4242)
+    with patch("gobby.terminals.foreground.psutil.Process", side_effect=denied) as process:
+        assert shell_cwds({"denied": 4242, "unstarted": 0}) == {}
+
+    process.assert_called_once_with(4242)
+    with patch(
+        "gobby.terminals.foreground.psutil.Process", side_effect=psutil.NoSuchProcess(pid=54321)
+    ):
+        assert shell_cwds({"gone": 54321}) == {}

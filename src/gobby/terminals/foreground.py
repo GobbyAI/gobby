@@ -19,6 +19,8 @@ import logging
 import subprocess
 from collections.abc import Mapping
 
+import psutil
+
 from gobby.utils import spawn
 
 logger = logging.getLogger(__name__)
@@ -96,6 +98,27 @@ def foreground_commands(shell_pids: Mapping[str, int]) -> dict[str, str]:
     return resolved
 
 
+def shell_cwds(shell_pids: Mapping[str, int]) -> dict[str, str]:
+    """Map each key in ``shell_pids`` to its shell's working directory.
+
+    The shell's own directory is the prompt's, which is what a Terminals row
+    shows; a job the shell runs almost always shares it. Each lookup is one
+    in-process ``psutil`` call. Keys whose shell is gone or unreadable are
+    absent, as in :func:`foreground_commands`.
+    """
+    resolved: dict[str, str] = {}
+    for key, pid in shell_pids.items():
+        if pid <= 0:
+            continue
+        try:
+            cwd = psutil.Process(pid).cwd()
+        except (psutil.Error, OSError):
+            continue
+        if cwd:
+            resolved[key] = cwd
+    return resolved
+
+
 def shell_pid(row: object) -> int | None:
     """The pid of the shell a terminal row runs, when the row records one.
 
@@ -124,4 +147,4 @@ def process_shell(row: object) -> str | None:
     return shell if isinstance(shell, str) and shell else None
 
 
-__all__ = ["command_name", "foreground_commands", "process_shell", "shell_pid"]
+__all__ = ["command_name", "foreground_commands", "process_shell", "shell_cwds", "shell_pid"]

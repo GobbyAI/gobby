@@ -228,7 +228,14 @@ def test_a_native_row_reports_the_command_in_its_terminal_foreground(
         return_value=subprocess.CompletedProcess(args=["ps"], returncode=0, stdout=table, stderr="")
     )
 
-    with patch("gobby.terminals.foreground.spawn.run", run), _client(temp_db) as client:
+    process = MagicMock()
+    process.return_value.cwd.return_value = "/srv/app"
+
+    with (
+        patch("gobby.terminals.foreground.spawn.run", run),
+        patch("gobby.terminals.foreground.psutil.Process", process),
+        _client(temp_db) as client,
+    ):
         listing = client.get("/api/terminals", params={"project_id": sample_project["id"]})
         detail = client.get(f"/api/terminals/{native.id}")
 
@@ -238,6 +245,10 @@ def test_a_native_row_reports_the_command_in_its_terminal_foreground(
     # than missing: the label ladder reads one field for every backend.
     assert rows[promoted.id]["command"] is None
     assert detail.json()["command"] == "nvim"
+    # The shell's working directory rides beside it, absent the same way.
+    assert rows[native.id]["cwd"] == "/srv/app"
+    assert rows[promoted.id]["cwd"] is None
+    assert detail.json()["cwd"] == "/srv/app"
 
 
 def test_a_native_row_falls_back_to_its_spawn_shell(
