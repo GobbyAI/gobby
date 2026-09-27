@@ -572,6 +572,9 @@ impl Workspace {
                 })?;
         }
         let pane = self.panes.get_mut(&id).expect("pane");
+        if pane.scroll_offset != rows {
+            pane.scrolled_at = Some(std::time::Instant::now());
+        }
         pane.scroll_offset = rows;
         if rows == 0 {
             pane.new_output = false;

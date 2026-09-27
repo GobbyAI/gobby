@@ -193,13 +193,18 @@ pub(super) fn down<W: WorkspaceView>(
             });
             focus_active_tab(chrome, observe_only)
         }
+        // An edge count pages the strip one screen; the next draw clamps it.
         Hit::TabScrollLeft => {
-            chrome.tab_scroll = chrome.tab_scroll.saturating_sub(1);
+            let shown = &chrome.view.tab_hit_areas;
+            let first = shown.first().map_or(0, |(idx, _)| *idx);
+            chrome.tab_scroll = first.saturating_sub(shown.len().max(1));
             chrome.tab_scroll_follow_active = false;
             MouseOutcome::Handled
         }
         Hit::TabScrollRight => {
-            chrome.tab_scroll = chrome.tab_scroll.saturating_add(1);
+            if let Some((last, _)) = chrome.view.tab_hit_areas.last() {
+                chrome.tab_scroll = last + 1;
+            }
             chrome.tab_scroll_follow_active = false;
             MouseOutcome::Handled
         }
@@ -275,7 +280,9 @@ pub(super) fn down<W: WorkspaceView>(
                 }
                 None => {
                     let offset = scrollbar_offset_from_row(metrics, track, row);
-                    *chrome.sidebar.scroll_mut(section) = metrics.max_offset_from_bottom - offset;
+                    chrome
+                        .sidebar
+                        .set_scroll(section, metrics.max_offset_from_bottom - offset);
                 }
             }
             MouseOutcome::Handled
@@ -407,7 +414,9 @@ pub(super) fn drag<W: WorkspaceView>(
             };
             let metrics = section_metrics(ws, chrome, section);
             let offset = scrollbar_offset_from_drag_row(metrics, track, mouse.row, grab_offset);
-            *chrome.sidebar.scroll_mut(section) = metrics.max_offset_from_bottom - offset;
+            chrome
+                .sidebar
+                .set_scroll(section, metrics.max_offset_from_bottom - offset);
             MouseOutcome::Handled
         }
         Some(MouseGesture::SplitDrag { border }) => {

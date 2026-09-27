@@ -107,7 +107,9 @@ in preferences; unpinned it opens as an overlay on the saved side.
 Four sections, each under a one-row band: Machines, Projects, Agents, and
 Terminals. Every clickable control is bracketed. Machines and Projects together
 never take more than the top half of the sidebar (each scrolls inside its cap);
-Agents and Terminals share the rest.
+Agents and Terminals share the rest. A section with more rows than room draws a
+scrollbar thumb and no track. The thumb is dim at rest, and brightens for a
+second after the section scrolls or while the navigate cursor is in it.
 
 - *Machines* lists this machine (the hub, by host name) first, then every other
   machine the daemon knows nested under it with `├─`/`└─`, each with the most
@@ -175,9 +177,12 @@ workspace. `prefix+shift+g` switches to the next workspace on this node. See
 what they run; a renamed tab shows its name alone, and a zoomed tab adds ` Z`.
 A tab leads with the rolled-up state of the agents on its panes, the active tab
 included: `⍾`, `◌`, or `▶`. An idle tab shows no glyph. A new-tab button follows
-the last tab; scroll
-arrows appear when tabs overflow. The bar hides when only one tab is open if you
-turn on `hide tab bar with one tab` in settings.
+the last tab. When the tabs overflow, each shows whole or not at all, the
+new-tab button stays at the right end, and each edge counts the tabs hidden
+beyond it (`‹ 3`, `2 ›`). A count takes `⍾` and the needs-you colour when one of
+those tabs needs you, and a click on it pages the bar one screen. The bar hides
+when only one tab is open if you turn on `hide tab bar with one tab` in
+settings.
 
 **Panes.** A tab holds one or more terminals in nested splits; each pane is a
 workspace row with a ref such as `0:0:1:2`, and its name is that row's label.
@@ -607,7 +612,7 @@ the `done` and `close` buttons. Rows are clickable. Every change is written to
 | --- | --- | --- |
 | theme | `dark` | `dark`, `light`, or `system`; system follows OS appearance while the client is open (dark if the OS does not specify one); also changed by **View › Theme** |
 | mouse capture | on | Off leaves selection and scrolling to your terminal emulator |
-| pane scrollbars | on | Draw a scrollbar lane beside scrolled panes |
+| pane scrollbars | on | Draw a scrollbar lane beside scrolled panes; its thumb is dim at rest and brightens while the pane is focused or for a second after it scrolls |
 | pane gaps | on | Leave a gap between split panes |
 | confirm close | on | Ask before closing a pane, terminal, tab, or project |
 | hide tab bar with one tab | off | Hide the tab bar when a project has a single tab |
@@ -690,7 +695,7 @@ Mouse support is on by default; turn it off with `--no-mouse` or the
 | Wheel over a pane | Scroll its scrollback; on an alternate screen the wheel sends arrow keys instead |
 | Wheel over the tab bar | Switch tabs |
 | Wheel over the sidebar | Scroll the section under the pointer |
-| Click a tab, the new-tab button, or the scroll arrows | Switch, open, or scroll tabs |
+| Click a tab, the new-tab button, or an edge count | Switch tabs, open one, or page the bar one screen |
 | Drag a tab onto another tab | Reorder tabs, including when the terminal delivers only press and release events |
 | Click a project card / worktree row | Focus the project (expanding its card) / open the worktree |
 | Drag a project card | Reorder projects |

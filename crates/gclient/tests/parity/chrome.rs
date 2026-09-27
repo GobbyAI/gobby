@@ -771,22 +771,23 @@ parity_tests! {
             assert!(tabs.tab_hit_areas[2].width > 0);
             assert!(tabs.new_tab_hit_area.width > 0);
 
-            let last_visible = tabs
+            // gclient: the new-tab button stays at the right end with the
+            // right count against it, and every tab shown is whole; each
+            // label is under the twelve-column minimum.
+            assert_eq!(tabs.new_tab_hit_area.right(), area.right());
+            assert_eq!(
+                tabs.tab_scroll_right_hit_area.right(),
+                tabs.new_tab_hit_area.x
+            );
+            let shown: Vec<Rect> = tabs
                 .tab_hit_areas
                 .iter()
-                .rev()
-                .find(|rect| rect.width > 0)
                 .copied()
-                .expect("last visible tab");
-
-            assert_eq!(
-                tabs.tab_scroll_right_hit_area.x,
-                last_visible.x + last_visible.width
-            );
-            assert_eq!(
-                tabs.new_tab_hit_area.x,
-                tabs.tab_scroll_right_hit_area.x + tabs.tab_scroll_right_hit_area.width
-            );
+                .filter(|rect| rect.width > 0)
+                .collect();
+            assert!(shown.iter().all(|rect| rect.width == 12), "{shown:?}");
+            let last_visible = shown.last().expect("last visible tab");
+            assert!(last_visible.right() <= tabs.tab_scroll_right_hit_area.x);
         }
 
         fn tab_bar_clamps_manual_scroll_at_last_visible_tab() {
@@ -1560,29 +1561,27 @@ fn rendered_hits_match_drawn_cells() {
     for (index, rect) in &view.tab_hit_areas {
         let expected = tab_label(&ws, &chrome.tabs().tabs, *index);
         let text = hit_text(&terminal, *rect);
-        let visible = text
-            .trim()
-            .trim_start_matches('…')
-            .trim_start_matches("⍾ ")
-            .trim_end_matches('…')
-            .trim();
+        let visible = text.trim().trim_start_matches("⍾ ");
         assert!(
             expected.starts_with(visible),
             "tab {index} at {rect:?}: {text:?}, expected prefix of {expected:?}"
         );
     }
-    let arrows = [
-        (view.tab_scroll_left_hit_area, "<"),
-        (view.tab_scroll_right_hit_area, ">"),
-    ];
+    // Each edge counts the tabs hidden beyond it.
     assert!(
-        arrows.iter().any(|(rect, _)| rect.is_some()),
-        "scroll arrows"
+        view.tab_scroll_left_hit_area.is_some() || view.tab_scroll_right_hit_area.is_some(),
+        "edge counts"
     );
-    for (rect, glyph) in arrows {
-        if let Some(rect) = rect {
-            assert_eq!(hit_text(&terminal, rect).trim(), glyph);
-        }
+    let before = view.tab_hit_areas.first().map_or(0, |(index, _)| *index);
+    let after =
+        chrome.tabs().tabs.len() - view.tab_hit_areas.last().map_or(0, |(index, _)| index + 1);
+    if let Some(rect) = view.tab_scroll_left_hit_area {
+        let text = hit_text(&terminal, rect).replace("⍾ ", "");
+        assert_eq!(text.trim(), format!("‹ {before}"));
+    }
+    if let Some(rect) = view.tab_scroll_right_hit_area {
+        let text = hit_text(&terminal, rect).replace("⍾ ", "");
+        assert_eq!(text.trim(), format!("{after} ›"));
     }
     if let Some(rect) = view.new_tab_hit_area {
         assert_eq!(hit_text(&terminal, rect).trim(), "+");
@@ -1625,9 +1624,23 @@ fn rendered_hits_match_drawn_cells() {
     for section in [SidebarSection::Projects, SidebarSection::Terminals] {
         let lane = view.sidebar_scrollbar_hit_areas[section.index()]
             .unwrap_or_else(|| panic!("{section:?} scrollbar"));
-        for y in lane.y..lane.bottom() {
-            assert_eq!(cell(&terminal, lane.x, y).symbol(), "▕", "lane row {y}");
-        }
+        // No track: only the thumb draws, one run of the lane's rows; a
+        // one-row lane is all thumb.
+        let thumb: Vec<u16> = (lane.y..lane.bottom())
+            .filter(|&y| cell(&terminal, lane.x, y).symbol() == "▕")
+            .collect();
+        let (Some(top), Some(bottom)) = (thumb.first(), thumb.last()) else {
+            panic!("{section:?} draws no thumb");
+        };
+        assert!(
+            lane.height == 1 || thumb.len() < usize::from(lane.height),
+            "{section:?}: {thumb:?}"
+        );
+        assert_eq!(
+            usize::from(bottom - top + 1),
+            thumb.len(),
+            "{section:?}: {thumb:?}"
+        );
     }
 
     // Each tab shows one pane framed on all four edges, so the pane's

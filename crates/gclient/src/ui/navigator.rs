@@ -408,7 +408,7 @@ fn render_navigator_scrollbar(frame: &mut Frame, body: Rect, line_count: usize, 
     }
     let track = Rect::new(body.x + body.width - 1, body.y, 1, body.height);
     let p = &chrome.palette;
-    render_scrollbar(frame, metrics, track, p.surface_dim, p.overlay0, "▕");
+    render_scrollbar(frame, metrics, track, Some(p.surface_dim), p.overlay0, "▕");
 }
 
 /// herdr `metadata_width`.

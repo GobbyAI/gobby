@@ -100,7 +100,7 @@ pub(super) fn wheel<W: WorkspaceView>(
             } else {
                 (current + MOUSE_SCROLL_LINES).min(max)
             };
-            *chrome.sidebar.scroll_mut(section) = next;
+            chrome.sidebar.set_scroll(section, next);
             MouseOutcome::Handled
         }
         Hit::Pane { slot, .. } | Hit::PaneBorder(slot) | Hit::PaneScrollbar { slot, .. } => {
