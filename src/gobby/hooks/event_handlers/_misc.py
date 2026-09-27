@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from concurrent.futures import CancelledError as FutureCancelledError
 from concurrent.futures import Future
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -24,11 +25,13 @@ from gobby.sessions.compact_continuation import (
     consume_and_schedule_handoff_compact_continuation,
     notify_compact_boundary,
 )
+from gobby.sessions.compact_markers import COMPACT_NOTIFICATION_STARTED_AT_VARIABLE
 from gobby.sessions.context_usage import normalize_context_usage_source
 from gobby.sessions.token_usage import typed_json_token_usage
 from gobby.storage.context_usage_snapshot import ContextUsageSnapshot
 from gobby.storage.token_events import build_session_usage_payload
 from gobby.utils.project_context import get_workflow_project_path
+from gobby.workflows.state_manager import SessionVariableManager
 from gobby.worktrees.deletion import probe_missing_worktree_git_state
 from gobby.worktrees.git import WorktreeGitManager
 
@@ -235,6 +238,17 @@ class MiscEventHandlerMixin(EventHandlersBase):
         except Exception:
             self.logger.warning(
                 "POST_COMPACT: failed notifying compact boundary for session %s",
+                session_id,
+                exc_info=True,
+            )
+
+        try:
+            SessionVariableManager(self._session_manager.db).set_variable(
+                session_id, COMPACT_NOTIFICATION_STARTED_AT_VARIABLE, datetime.now(UTC).isoformat()
+            )
+        except Exception:
+            self.logger.warning(
+                "POST_COMPACT: failed recording compact notification for session %s",
                 session_id,
                 exc_info=True,
             )

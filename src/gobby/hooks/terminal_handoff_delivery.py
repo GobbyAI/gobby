@@ -56,6 +56,11 @@ _RETRY_GUIDANCE = (
     "Retry gobby-sessions:set_handoff after clearing any held provider command; "
     "recover the payload first if needed."
 )
+_COMPACT_UNCONFIRMED_GUIDANCE = (
+    "The provider has not confirmed the compact boundary yet. Wait for it, then call "
+    "gobby-sessions:get_handoff to recover this attempt. Do not submit /compact again "
+    "unless the pane proves the command was never accepted and remains in the composer."
+)
 _COMPOSER_OCCUPIED_ERROR_CODE = "composer_occupied"
 _COMPOSER_OCCUPIED_GUIDANCE = (
     "Terminal handoff delivery was withheld: the operator has an unsent draft in the "
@@ -464,6 +469,19 @@ def _compensate_delivery_failure(
     guidance = _RETRY_GUIDANCE
     if error_code == _COMPOSER_OCCUPIED_ERROR_CODE:
         guidance = _COMPOSER_OCCUPIED_GUIDANCE
+    elif error_code == "compact_unconfirmed":
+        guidance = _COMPACT_UNCONFIRMED_GUIDANCE
+    recovery_guidance = (
+        "Authored content is available through "
+        f"gobby-sessions:get_handoff(failed_attempt_id={claimed.attempt_id!r}); "
+        "this explicit read does not deliver it."
+    )
+    if error_code == "compact_unconfirmed":
+        recovery_guidance = (
+            "Once a compact boundary arrives, call "
+            "gobby-sessions:get_handoff(failed_attempt_id="
+            f"{claimed.attempt_id!r}, reconcile_late_compact=true) to deliver this attempt."
+        )
     failure: dict[str, Any] = {
         "compacted": False,
         "delivery_failed": not abandoned,
@@ -474,11 +492,7 @@ def _compensate_delivery_failure(
         "clear_session": claimed.clear_session,
         "reason": reason,
         "retry_guidance": _ABANDON_GUIDANCE if abandoned else guidance,
-        "recovery_guidance": (
-            "Authored content is available through "
-            f"gobby-sessions:get_handoff(failed_attempt_id={claimed.attempt_id!r}); "
-            "this explicit read does not deliver it."
-        ),
+        "recovery_guidance": recovery_guidance,
     }
     if abandoned:
         failure["error_code"] = _ABANDONED_ERROR_CODE
