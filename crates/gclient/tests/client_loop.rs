@@ -13613,3 +13613,175 @@ async fn a_lagged_proxy_pane_reattaches_beside_the_loop() {
     assert_ne!(json!(pane.attachment_id()), retired);
     mock.shutdown().await;
 }
+
+/// A row's working directory and command follow its shell: the roster relists
+/// every five seconds, one request at a time and beside the loop, and each
+/// answer replaces both, a null clearing what the last answer showed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_roster_refreshes_each_rows_directory_and_command() {
+    const TERMINAL_ID: &str = "terminal-cd";
+    let roster = |cwd: Value, command: &str| {
+        json!({
+            "items": [{
+                "terminal_id": TERMINAL_ID,
+                "backend": "native",
+                "state": "live",
+                "cwd": cwd,
+                "command": command,
+            }],
+            "next_cursor": null,
+            "snapshot": {"daemon_epoch": "epoch-1", "seq": 0},
+        })
+    };
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    // The launch reconcile's list.
+    mock.enqueue(
+        "GET",
+        "/api/terminals?",
+        200,
+        roster(json!("/repo/a"), "vim"),
+    );
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon.clone());
+    workspace.select_project("project-1");
+    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(16);
+    let mut seen_before_refresh = None;
+    let driver = async {
+        settle_before_lag(&mock).await;
+        let listed = request_count(&mock, "GET", "/api/terminals?");
+        let hold = mock.enqueue_held("GET", "/api/terminals?", 200, roster(Value::Null, "zsh"));
+        // The relist after it stays out, so nothing overwrites what it installs.
+        let _next = mock.enqueue_held("GET", "/api/terminals?", 200, roster(Value::Null, "zsh"));
+        // Nothing asks: the interval alone brings the next relist.
+        wait_for_http_requests(&mock, "GET", "/api/terminals?", listed + 1).await;
+        // While it is out, the loop keeps serving events and starts no second
+        // relist.
+        let sessions = request_count(&mock, "GET", "/api/sessions?");
+        mock.send_event(json!({"type": "session_event", "project_id": "project-1"}));
+        wait_for_http_requests(&mock, "GET", "/api/sessions?", sessions + 1).await;
+        seen_before_refresh = Some(request_count(&mock, "GET", "/api/terminals?") - listed);
+        hold.notify_one();
+        // The next relist starts only once this answer is applied.
+        wait_for_http_requests(&mock, "GET", "/api/terminals?", listed + 2).await;
+        drop(input_tx);
+    };
+    let mut switch = TerminalGuard::recording().0;
+    let run = async {
+        tokio::join!(
+            run_live_loop(
+                &mut workspace,
+                &mut terminal,
+                &mut chrome,
+                input_rx,
+                &mut switch
+            ),
+            driver
+        )
+    };
+    let Ok((result, ())) = timeout(Duration::from_secs(20), run).await else {
+        panic!("the roster refresh stalled: {:?}", mock.activity());
+    };
+    result.expect("refreshed loop");
+    assert_eq!(
+        seen_before_refresh,
+        Some(1),
+        "one relist in flight at a time: {:?}",
+        mock.activity()
+    );
+    let pane = workspace
+        .pane_for_terminal(TERMINAL_ID)
+        .expect("the refreshed row keeps its pane");
+    assert_eq!(
+        workspace.pane(pane).cwd,
+        None,
+        "a null directory clears the old one"
+    );
+    assert_eq!(workspace.pane(pane).command.as_deref(), Some("zsh"));
+    mock.shutdown().await;
+}
+
+/// A relist asked for before a pane opened here answers without it. The
+/// periodic relist makes that race common, so a pane the loop installs itself
+/// outdates any relist in flight rather than being reaped by its answer.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_relist_older_than_a_pane_opened_here_does_not_reap_it() {
+    let mock = MockDaemon::start("local-token").await;
+    // The launch reconcile's list.
+    mock.enqueue("GET", "/api/terminals?", 200, roster_items(&["terminal-a"]));
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon.clone());
+    let seeded = mock.seed_workspace("project-1", &[(&["terminal-a"], "terminal-a")]);
+    let (tab_id, panes) = seeded[0].clone();
+    workspace.select_project("project-1");
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(16);
+
+    let driver = async {
+        wait_for_websocket_requests(&mock, "terminal_set_viewport", 1).await;
+        let listed = request_count(&mock, "GET", "/api/terminals?");
+        let hold = mock.enqueue_held("GET", "/api/terminals?", 200, roster_items(&["terminal-a"]));
+        // The relist asked again once the stale answer is dropped stays out,
+        // so no later answer can restore a reaped pane.
+        let _asked_again = mock.enqueue_held(
+            "GET",
+            "/api/terminals?",
+            200,
+            roster_items(&["terminal-a", "terminal-late"]),
+        );
+        lag_the_loop_receiver(&mock, &daemon);
+        wait_for_http_requests(&mock, "GET", "/api/terminals?", listed + 1).await;
+        // While that relist is out, a new tab's shell opens here.
+        mock.enqueue(
+            "GET",
+            "/api/terminals/terminal-late",
+            200,
+            json!({"terminal_id": "terminal-late", "backend": "native", "state": "live"}),
+        );
+        mock.send_event_and_wait(pane_added_event(
+            &tab_id,
+            &panes[0],
+            "mock-pane-late",
+            "terminal-late",
+            1,
+        ))
+        .await;
+        wait_until(|| terminal_row_requests(&mock, "terminal-late") >= 1).await;
+        settle_live_event().await;
+        hold.notify_one();
+        wait_for_http_requests(&mock, "GET", "/api/terminals?", listed + 2).await;
+        settle_live_event().await;
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let run = async {
+        tokio::join!(
+            run_live_loop(
+                &mut workspace,
+                &mut terminal,
+                &mut chrome,
+                input_rx,
+                &mut switch
+            ),
+            driver
+        )
+    };
+    let Ok((result, ())) = timeout(Duration::from_secs(10), run).await else {
+        panic!("the raced relist stalled: {:?}", mock.activity());
+    };
+    result.expect("raced loop");
+    assert!(
+        workspace.pane_for_terminal("terminal-late").is_some(),
+        "an answer older than the pane reaped it: {:?}",
+        mock.activity()
+    );
+    mock.shutdown().await;
+}

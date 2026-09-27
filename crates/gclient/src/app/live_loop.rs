@@ -268,6 +268,7 @@ pub async fn run_live_loop<B: Backend>(
         // (#22573).
         workspace.start_control_request(&control_tx);
         if !launch_pending && reconnect_stage.is_none() && relist_job.is_none() {
+            workspace.refresh_relist();
             relist_job = workspace.start_relist();
         }
         tokio::select! {
