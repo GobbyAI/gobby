@@ -534,13 +534,13 @@ parity_tests! {
             let (terminal, _) = draw_sidebar(&board, &chrome, area.width, area.height);
             let body = section_body(&board, &chrome, area, SidebarSection::Terminals);
             let rendered = row_str(&terminal, body.y, 9);
-            let backend = row_str(&terminal, body.y + 1, 9);
+            let directory = row_str(&terminal, body.y + 1, 9);
 
             assert!(!rendered.contains('⠋'));
             assert!(rendered.contains('修') && rendered.contains('复'), "rendered={rendered:?}, body={body:?}, rows={:?}", terminal_rows(&board, &chrome));
-            assert_eq!(backend, "   gclie…");
+            assert_eq!(directory, "");
             assert!(!rendered.contains('@'));
-            assert!(!backend.contains('@'));
+            assert!(!directory.contains('@'));
 
             let spans = fitted_spans(
                 ("", Style::default()),

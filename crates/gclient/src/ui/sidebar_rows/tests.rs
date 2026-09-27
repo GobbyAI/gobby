@@ -109,7 +109,9 @@ fn project_rows_list_working_projects_and_expand_one_card() {
 
 #[test]
 fn agent_and_terminal_rows_are_separate() {
-    let ws = scripted_workspace();
+    let mut ws = scripted_workspace();
+    let beta = ws.pane_for_terminal("term-beta").unwrap();
+    ws.pane_mut(beta).cwd = Some("/srv/app".into());
     let chrome = Chrome::dark();
     let rows = agent_rows(&ws, &chrome);
     let ids: Vec<&str> = rows.iter().map(|row| row.id.as_str()).collect();
@@ -124,7 +126,8 @@ fn agent_and_terminal_rows_are_separate() {
     assert_eq!(terminals[0].id, "terminal:term-beta");
     assert_eq!(terminals[0].label, "term-beta");
     assert_eq!(terminals[0].kind, RowKind::Terminal);
-    assert_eq!(terminals[0].detail, "gclient");
+    assert_eq!(terminals[0].detail, "/srv/app");
+    assert_eq!(terminals[0].address, "gclient");
     assert_eq!(terminals[0].height(), 2);
     assert!(!terminals[0].nested);
 }
@@ -460,5 +463,76 @@ fn the_whole_task_line_tickers_as_one_string() {
     assert_eq!(
         line_text(&row_second_line(&unassigned, 24, &chrome)),
         "   No assigned task"
+    );
+}
+
+#[test]
+fn a_worktree_name_too_long_for_its_row_scrolls_on_the_shared_clock() {
+    let mut chrome = Chrome::dark();
+    let worktree = SidebarRow {
+        id: "wt-long".into(),
+        label: "feature-with-a-long-name".into(),
+        kind: RowKind::Worktree,
+        detail: "#123".into(),
+        nested: true,
+        last_child: true,
+        ..SidebarRow::default()
+    };
+    // The marker, indent, `└─ `, glyph and spacer leave the name 12 cells.
+    assert_eq!(worktree_name_budget(&worktree, 20), 12);
+    assert_eq!(
+        row_travel(&worktree, 20),
+        display_width(&worktree.label) - 12
+    );
+    assert_eq!(
+        line_text(&row_line(&worktree, 20, &chrome, 0)),
+        "   └─ ○ feature-with"
+    );
+    chrome.ticker = (TICKER_PAUSE + 2) * TICKER_STEP;
+    assert_eq!(
+        line_text(&row_line(&worktree, 20, &chrome, 0)),
+        "   └─ ○ ature-with-a"
+    );
+
+    // A name that fits once its task drops stays still.
+    let fits = SidebarRow {
+        label: "feature-name".into(),
+        ..worktree
+    };
+    assert_eq!(row_travel(&fits, 20), 0);
+    assert_eq!(
+        line_text(&row_line(&fits, 20, &chrome, 0)),
+        "   └─ ○ feature-name"
+    );
+}
+
+#[test]
+fn a_terminal_row_puts_its_address_at_the_right_edge_while_the_name_leaves_room() {
+    let chrome = Chrome::dark();
+    let row = SidebarRow {
+        id: "terminal:t1".into(),
+        label: "zsh".into(),
+        kind: RowKind::Terminal,
+        detail: "~/Projects/gobby".into(),
+        address: "0:0:0:2".into(),
+        ..SidebarRow::default()
+    };
+    assert_eq!(
+        line_text(&row_line(&row, 20, &chrome, 0)),
+        " ○ zsh       0:0:0:2"
+    );
+    assert_eq!(
+        line_text(&row_second_line(&row, 20, &chrome)),
+        "   ~/Projects/gobby"
+    );
+
+    // The name outranks the address.
+    let long = SidebarRow {
+        label: "cargo-nextest-run".into(),
+        ..row
+    };
+    assert_eq!(
+        line_text(&row_line(&long, 20, &chrome, 0)),
+        " ○ cargo-nextest-run"
     );
 }

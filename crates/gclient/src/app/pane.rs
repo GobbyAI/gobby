@@ -143,6 +143,10 @@ pub struct Pane {
     /// `zsh` at an idle prompt, `nvim` or `cargo` while a job holds it. Rung 2
     /// of the label ladder, before the short terminal ID fallback.
     pub command: Option<String>,
+    /// The terminal's working directory, as the daemon observed it. Absent
+    /// until the daemon reports one; the Terminals row leaves its second
+    /// line blank meanwhile.
+    pub cwd: Option<String>,
     /// The daemon's terminal lifecycle state, when its inventory supplied one.
     pub terminal_state: Option<String>,
     pub expected_host_epoch: String,
@@ -235,6 +239,7 @@ impl Pane {
             address: None,
             session_id: None,
             command: None,
+            cwd: None,
             terminal_state: None,
             expected_host_epoch: epoch,
             control: ControlState::Observe,

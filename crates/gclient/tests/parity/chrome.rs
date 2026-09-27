@@ -1225,12 +1225,16 @@ switch_project = "ctrl+1..9"
                     // sidebar edge lost its glyph, then the menus, tab labels
                     // and agent rows took their approved wording, and the
                     // status row traded its totals and placeholders for this
-                    // machine's agents by legend class (#22944):
+                    // machine's agents by legend class, and Terminals rows
+                    // took the pane's address at their right edge over a
+                    // blank directory line (#22944):
                     // 4.1.3 requires a glyph change to fail here, so this
                     // digest moves only alongside a deliberate render change.
                     assert_eq!(
                         frame_digest(&terminal),
-                        "8602b4c329b576968273fd417ad1dd789b5702c1300e185fc8e1f3ee74ab9142"
+                        "e937e05caffaa9e677a00c51e58574a21d74b9845042782cce524adfafe6041e",
+                        "the frame moved; read it against the boards before pinning:\n{}",
+                        rect_rows(&terminal, frame).join("\n")
                     );
                 });
         }

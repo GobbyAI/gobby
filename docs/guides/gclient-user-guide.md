@@ -123,6 +123,8 @@ second after the section scrolls or while the navigate cursor is in it.
   edge. Only one project is expanded at a time: selecting a project expands it
   and folds the others, and its worktrees appear under the card as
   `├─ glyph branch · #task`, with `~` for the branch of a detached worktree.
+  A branch too long for its row drops the task and scrolls on the same clock
+  as the Agents titles.
   The band's control toggles `[working]` (projects
   with a live session, run, or terminal on the current machine filter, plus the
   focused one) and `[all]`.
@@ -144,8 +146,10 @@ second after the section scrolls or while the navigate cursor is in it.
   (flattened urgency order). A `✓` marks the value in force, and choosing it
   again closes the menu unchanged.
 - *Terminals* lists bare terminals without an agent row by their given pane
-  name or foreground command, with the backend below. Click or right-click
-  one as you would an agent row.
+  name or foreground command. The pane's address sits at the right edge, as
+  the pane's corner prints it, and gives way when the name needs the room.
+  The working directory sits below, with `~` for your home, once the daemon
+  reports one. Click or right-click one as you would an agent row.
 
 State glyphs, on machine, project, and session rows alike. The same table opens
 first in the keybinding help as the attention legend:
@@ -192,7 +196,9 @@ definition. The focused pane's title starts with `▸`. Over-long pane titles
 share the Agents ticker. The bottom-left border names the agent definition
 and reference, without a repeated project prefix, followed by `Focused` on
 the focused pane or an exceptional `Read-only` / `Uncertain` state when typing
-is unsafe. The bottom-right border names the backend and address (see
+is unsafe. The bottom-right border names the pane's address: its workspace
+ref such as `0:0:1:2`, `tmux %16` for a tmux pane, or the backend alone
+(`gclient`, `tmux`) until the address is known (see
 [Attach and control](#attach-and-control)). With `pane gaps` off, a pane above
 another shares that pane's top line and has no bottom edge of its own; its
 metadata moves to the top-right of its own title row, unless that would leave the
@@ -250,7 +256,8 @@ short terminal address alone identifies it rather than a long UUID.
 Where two terminals share a name — most panes on a machine are running a shell
 — the address is what tells them apart: the pane's workspace ref (`0:0:0:1`),
 or the tmux pane id of an external tmux pane, which you can type straight into
-tmux. The address sits under every sidebar row and leads the navigator's detail.
+tmux. The address sits at the right edge of a Terminals row and leads the
+navigator's detail.
 A session's provider
 (`claude`, `codex`, `droid`) is a token beside the address rather than the
 terminal's name.

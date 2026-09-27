@@ -79,7 +79,7 @@ fn pane_title_prefers_task_then_label_then_provisional() {
     let session_pane = ws.pane(ws.pane_for_terminal("term-alpha").unwrap());
     let footer = pane_footer(&ws, session_pane, true);
     assert_eq!(footer.left, "Codex (gobby#42) · Focused");
-    assert_eq!(footer.right, "gclient 0:0:1:2");
+    assert_eq!(footer.right, "0:0:1:2");
     let mut tmux_pane = Pane::new(PaneId(100), "term-alpha", Backend::Tmux, "epoch");
     tmux_pane.address = Some("%15".to_owned());
     assert_eq!(pane_footer(&ws, &tmux_pane, true).right, "tmux %15");
@@ -256,7 +256,7 @@ fn pane_metadata_maps_focus_and_exception_states_per_backend() {
 #[test]
 fn footer_occupies_both_bottom_corners() {
     let rect = Rect::new(10, 2, 50, 8);
-    let text = footer("zsh · Focused", "gclient 0:0:1:2");
+    let text = footer("zsh · Focused", "0:0:1:2");
     let (left, right) = footer_rects(&info(rect, Borders::ALL, true), &text).unwrap();
     assert_eq!(left.x, rect.x + 1);
     assert_eq!(right.right(), rect.right() - 1);
@@ -273,7 +273,7 @@ fn footer_occupies_both_bottom_corners() {
 
 #[test]
 fn shared_divider_moves_upper_footer_beside_title() {
-    let footer = footer("Codex (proj#42) · Read-only", "gclient 0:0:1:2");
+    let footer = footer("Codex (proj#42) · Read-only", "0:0:1:2");
     let upper = info(
         Rect::new(10, 2, 100, 8),
         Borders::TOP | Borders::LEFT | Borders::RIGHT,
@@ -292,7 +292,7 @@ fn shared_divider_moves_upper_footer_beside_title() {
     let title_end = upper.rect.x + 2 + title_budget(upper.rect.width, true, reserve) as u16;
     assert!(title_end < left.x);
 
-    let cramped = info(Rect::new(10, 2, 50, 8), upper.borders, true);
+    let cramped = info(Rect::new(10, 2, 44, 8), upper.borders, true);
     assert_eq!(top_reserve(&cramped, &footer), 0);
     assert_eq!(footer_rects(&cramped, &footer), None);
 }

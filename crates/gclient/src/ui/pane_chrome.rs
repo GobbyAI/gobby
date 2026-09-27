@@ -1,7 +1,7 @@
 // upstream: none (Gobby's pane header ladder and edge metadata)
 //! What a pane's chrome says and where it fits: the header title on the top
-//! edge, with identity and control on the bottom-left and backend address
-//! on the bottom-right. A shared divider moves the upper pane's footer
+//! edge, with identity and control on the bottom-left and the pane's
+//! address on the bottom-right. A shared divider moves the upper pane's footer
 //! beside its title; a pane without room hands its condition to status.
 
 use crate::app::{ControlState, Pane};
@@ -72,7 +72,7 @@ pub struct PaneFooter {
     pub actionable: bool,
 }
 
-/// The backend, plus the pane's condition when focus or an exception gives
+/// The pane's address, plus its condition when focus or an exception gives
 /// it one. Asking for control is the normal focused state (#22573): input
 /// queues until the grant lands. Read-only (another viewer took the lease,
 /// or the host refused input) and Uncertain override Focused.
@@ -111,18 +111,7 @@ pub fn pane_footer<W: WorkspaceView>(ws: &W, pane: &Pane, focused: bool) -> Pane
             }
         },
     );
-    let backend = pane.backend.label();
-    let address = if pane.backend.is_native() {
-        ws.workspace_model()
-            .and_then(|model| model.pane_ref_for_terminal(&pane.terminal_id))
-            .or_else(|| pane.address.clone())
-    } else {
-        pane.address.clone()
-    };
-    let right = address.map_or_else(
-        || backend.to_owned(),
-        |address| format!("{backend} {address}"),
-    );
+    let right = pane_address(ws, pane);
     let exception = if pane.is_acquiring() {
         None
     } else if pane.take_back || pane.control == ControlState::LeaseLost {
@@ -151,6 +140,25 @@ pub fn pane_footer<W: WorkspaceView>(ws: &W, pane: &Pane, focused: bool) -> Pane
             tone: MetadataTone::Ordinary,
             actionable: false,
         },
+    }
+}
+
+/// Where the user finds this pane: a native pane's workspace ref
+/// (`0:0:1:2`), a tmux pane's `tmux %16`, or the backend word alone while
+/// the address is unknown. The bottom-right corner and the pane's
+/// Terminals row both print it.
+pub fn pane_address<W: WorkspaceView>(ws: &W, pane: &Pane) -> String {
+    let backend = pane.backend.label();
+    if pane.backend.is_native() {
+        ws.workspace_model()
+            .and_then(|model| model.pane_ref_for_terminal(&pane.terminal_id))
+            .or_else(|| pane.address.clone())
+            .unwrap_or_else(|| backend.to_owned())
+    } else {
+        pane.address.as_deref().map_or_else(
+            || backend.to_owned(),
+            |address| format!("{backend} {address}"),
+        )
     }
 }
 

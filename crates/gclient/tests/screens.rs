@@ -731,11 +731,15 @@ fn agent_rows_golden() {
     );
     assert!(rows[11].contains("gpt-5"));
     assert!(
-        rows[25].contains("○ nvim"),
-        "foreground app: {:?}",
+        rows[25].contains("○ nvim") && rows[25].contains("gclient"),
+        "foreground app with its address: {:?}",
         rows[25]
     );
-    assert!(rows[26].contains("gclient"), "backend: {:?}", rows[26]);
+    assert!(
+        !rows[26].contains("gclient"),
+        "no directory reported: {:?}",
+        rows[26]
+    );
     assert!(!rendered.contains("term-bare"), "pane ID is not row copy");
     let slug_style = rendered
         .lines()

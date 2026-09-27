@@ -1,4 +1,5 @@
-//! Direct-attach eligibility read from a `/api/terminals` row.
+//! What the client reads from a `/api/terminals` row: direct-attach
+//! eligibility, and the working directory the daemon observed.
 //!
 //! The row ships a flat `asdict(AttachLocator)`: a native terminal is named
 //! by `host_terminal_id`; a tmux pane is named by its physical locator. The
@@ -101,4 +102,21 @@ fn a_tmux_generation_must_be_an_integer() {
             "server_pid={bogus} is not a server generation"
         );
     }
+}
+
+#[test]
+fn a_row_carries_the_working_directory_the_daemon_observed() {
+    let with_cwd = |cwd: Value| -> TerminalRow {
+        serde_json::from_value(json!({
+            "terminal_id": "terminal-1",
+            "backend": "native",
+            "state": "live",
+            "cwd": cwd,
+        }))
+        .expect("a daemon row must decode")
+    };
+    assert_eq!(row_cwd(&with_cwd(json!("/repo"))).as_deref(), Some("/repo"));
+    assert_eq!(row_cwd(&with_cwd(json!(""))), None);
+    assert_eq!(row_cwd(&with_cwd(Value::Null)), None);
+    assert_eq!(row_cwd(&row(native_attach())), None);
 }
