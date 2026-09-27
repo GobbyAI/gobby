@@ -441,6 +441,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                     ),
                     staged_payload=(staged_payload if isinstance(staged_payload, dict) else None),
                     force_continue_execution_num=execution_num,
+                    skip_empty_receipt=hook_type in ("PreToolUse", "pre-tool-use", "BeforeTool"),
                 )
             else:
                 response = strip_unbudgeted_force_continue(response)
