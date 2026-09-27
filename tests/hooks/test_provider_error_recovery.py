@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from gobby.adapters.grok import GrokAdapter
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.event_handlers._misc import (
     PROVIDER_ERROR_RESUME_PROMPT,
@@ -34,13 +35,17 @@ def _event(error: str, message: str, session_id: str = "session", turn: int = 1)
 
 
 def _case(
-    temp_db: HubDatabase, sample_project: dict[str, Any], loop: asyncio.AbstractEventLoop
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    loop: asyncio.AbstractEventLoop,
+    *,
+    source: str = "claude",
 ) -> tuple[EventHandlers, str, TurnLifecycleReducer, AttentionStateManager]:
     sessions = SessionManager(temp_db)
     session = sessions.register(
         external_id="provider-error-hook",
         machine_id=None,
-        source="claude",
+        source=source,
         project_id=sample_project["id"],
     )
     attention = AttentionStateManager(temp_db)
@@ -138,6 +143,50 @@ async def test_retryable_failure_persists_and_wakes_once(
             PROVIDER_ERROR_RESUME_PROMPT,
         )
     ]
+
+
+@pytest.mark.asyncio
+async def test_grok_structured_rate_limit_resumes_with_error_fallback(
+    temp_db: HubDatabase, sample_project: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gobby.hooks.event_handlers import _misc
+
+    handlers, session_id, lifecycle, attention = _case(
+        temp_db, sample_project, asyncio.get_running_loop(), source="grok"
+    )
+    event = GrokAdapter().translate_to_hook_event(
+        {
+            "hook_type": "StopFailure",
+            "input_data": {
+                "sessionId": "grok-session",
+                "errorDetails": {"code": "rate_limit", "retryable": True},
+                "lastAssistantMessage": "Working",
+                "phase": "streaming",
+                "stopHookActive": True,
+            },
+        }
+    )
+    event.metadata["_platform_session_id"] = session_id
+    lifecycle.begin_turn(
+        session_id, TurnEvidence(source="grok", provider_turn_key=event.provider_turn_key)
+    )
+    wake = RecordingWake()
+    monkeypatch.setattr(_misc, "get_app_context", lambda: SimpleNamespace(wake_dispatcher=wake))
+    monkeypatch.setattr(_misc, "PROVIDER_ERROR_BACKOFF_SECONDS", (0.0, 0.0, 0.0))
+
+    handlers.handle_stop_failure(event)
+    await asyncio.wait_for(wake.called.wait(), 1.0)
+
+    failure = lifecycle.get(session_id).provider_error
+    assert failure is not None
+    assert failure.error_type == "rate_limit"
+    assert failure.message == "Provider error: rate limit"
+    assert failure.retryable is True
+    assert len(wake.calls) == 1
+    assert wake.calls[0][1] == PROVIDER_ERROR_RESUME_PROMPT
+    current = attention.get(session_attention_entry_id(session_id))
+    assert current is not None
+    assert current.state is None
 
 
 @pytest.mark.asyncio

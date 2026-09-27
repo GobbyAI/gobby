@@ -46,15 +46,23 @@ _HTTP_STATUS = re.compile(r"\b(?:HTTP\s*)?([1-5][0-9]{2})\b", re.IGNORECASE)
 
 
 def _stop_failure_error(event: HookEvent) -> tuple[str, str, bool]:
-    raw_type = event.data.get("error")
-    error_type = " ".join(raw_type.split())[:80] if isinstance(raw_type, str) else "unknown"
-    rendered = event.data.get("last_assistant_message")
-    if not isinstance(rendered, str) or not rendered.strip():
-        rendered = event.data.get("error_details")
-    if not isinstance(rendered, str) or not rendered.strip():
-        rendered = error_type
-    message = " ".join(rendered.split())[:240]
     details = event.data.get("error_details")
+    structured = details if isinstance(details, dict) else None
+    raw_type = event.data.get("error")
+    if (not isinstance(raw_type, str) or not raw_type.strip()) and structured is not None:
+        raw_type = structured.get("code") or structured.get("type")
+    error_type = " ".join(raw_type.split())[:80] if isinstance(raw_type, str) else "unknown"
+    if structured is not None:
+        rendered = structured.get("message")
+        if not isinstance(rendered, str) or not rendered.strip():
+            rendered = f"Provider error: {error_type.replace('_', ' ')}"
+    else:
+        rendered = event.data.get("last_assistant_message")
+        if not isinstance(rendered, str) or not rendered.strip():
+            rendered = details
+        if not isinstance(rendered, str) or not rendered.strip():
+            rendered = error_type
+    message = " ".join(rendered.split())[:240]
     diagnostic = " ".join(
         value for value in (error_type, rendered, details) if isinstance(value, str)
     ).lower()
@@ -64,18 +72,19 @@ def _stop_failure_error(event: HookEvent) -> tuple[str, str, bool]:
         marker in diagnostic
         for marker in ("authentication", "unauthorized", "billing", "invalid_request")
     )
-    retryable = not terminal and (
-        any(status == 429 or 500 <= status <= 599 for status in statuses)
-        or any(
-            marker in diagnostic
-            for marker in (
-                "server_error",
-                "internal server error",
-                "overloaded",
-                "rate_limit",
-                "rate limit",
-            )
+    structured_retryable = structured.get("retryable") if structured else None
+    inferred_retryable = any(status == 429 or 500 <= status <= 599 for status in statuses) or any(
+        marker in diagnostic
+        for marker in (
+            "server_error",
+            "internal server error",
+            "overloaded",
+            "rate_limit",
+            "rate limit",
         )
+    )
+    retryable = not terminal and (
+        structured_retryable if isinstance(structured_retryable, bool) else inferred_retryable
     )
     return error_type or "unknown", message, retryable
 
