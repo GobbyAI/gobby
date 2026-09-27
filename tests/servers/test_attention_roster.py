@@ -228,6 +228,8 @@ def test_ordering_coordinator_no_regression(temp_db: HubDatabase) -> None:
     )
 
     def transition_during_snapshot() -> None:
+        cleared = manager.transition("run:first", state=None)
+        assert cleared.applied is True
         _open(manager, "run:during-snapshot", "during-snapshot")
 
     def update_metadata() -> None:
@@ -256,11 +258,89 @@ def test_ordering_coordinator_no_regression(temp_db: HubDatabase) -> None:
     assert errors == []
     assert max_active_critical_sections == 1
     assert snapshots[0].seq == 2
+    assert "run:first" in {state.entry_id for state in snapshots[0].states}
     assert "run:during-snapshot" not in {state.entry_id for state in snapshots[0].states}
     assert snapshots[0].metadata["run:first"] == {"text": "older"}
-    assert manager.ordering.seq == 5
+    cleared = manager.get("run:first")
+    assert cleared is not None and cleared.state is None
+    assert any(event["entry_id"] == "run:first" and event["state"] is None for event in events)
+    assert manager.ordering.seq == 6
     assert metadata["run:first"] == {"text": "newest"}
     assert AttentionStateManager(temp_db, epoch="epoch-b").epoch != manager.epoch
+
+
+def test_snapshot_filters_null_rows_and_sweeps_legacy_empty_rows(
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = [1000.0]
+    monkeypatch.setattr("gobby.storage.attention.monotonic", lambda: clock[0])
+    manager = AttentionStateManager(temp_db, epoch="prune-snapshot")
+    manager.transition(
+        "session:lifecycle",
+        state=None,
+        session_id="lifecycle",
+        payload={"turn_lifecycle": {"generation": 3}},
+    )
+    for entry_id in ("run:z", "run:a"):
+        _open(manager, entry_id, "approval")
+    recent = _open(manager, "run:recent", "recent")
+    manager.transition(
+        recent.entry_id,
+        state=None,
+        expected_attention_id=recent.attention_id,
+    )
+    with temp_db.transaction() as transaction:
+        transaction.execute(
+            """
+            INSERT INTO attention_states (entry_id, attention_id, updated_at)
+            SELECT 'run:legacy-' || n, 'legacy-' || n, now() - interval '2 hours'
+            FROM generate_series(1, 257) AS n
+            """
+        )
+
+    clock[0] += 61.0
+    first = manager.snapshot()
+    remaining = temp_db.fetchone(
+        "SELECT COUNT(*) AS count FROM attention_states WHERE state IS NULL AND payload = '{}'::jsonb AND updated_at < now() - interval '1 hour'"
+    )
+    assert [state.entry_id for state in first.states] == ["run:a", "run:z"]
+    assert first.seq == 5
+    assert remaining is not None and remaining["count"] == 1
+    assert manager.get("session:lifecycle") is not None
+    assert manager.get("run:recent") is not None
+
+    second = manager.snapshot()
+    remaining = temp_db.fetchone(
+        "SELECT COUNT(*) AS count FROM attention_states WHERE state IS NULL AND payload = '{}'::jsonb AND updated_at < now() - interval '1 hour'"
+    )
+    assert [state.entry_id for state in second.states] == ["run:a", "run:z"]
+    assert second.seq == first.seq
+    assert remaining is not None and remaining["count"] == 0
+    assert manager.get("run:recent") is not None
+
+
+def test_empty_row_sweep_rechecks_after_quiet_period(
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = [1000.0]
+    monkeypatch.setattr("gobby.storage.attention.monotonic", lambda: clock[0])
+    manager = AttentionStateManager(temp_db)
+    manager.snapshot()
+    with temp_db.transaction() as transaction:
+        transaction.execute(
+            """
+            INSERT INTO attention_states (entry_id, attention_id, updated_at)
+            VALUES ('run:old', 'old', now() - interval '2 hours')
+            """
+        )
+
+    manager.snapshot()
+    assert manager.get("run:old") is not None
+    clock[0] += 61.0
+    manager.snapshot()
+    assert manager.get("run:old") is None
 
 
 def test_mark_seen_episode(temp_db: HubDatabase) -> None:
