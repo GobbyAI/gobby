@@ -78,5 +78,5 @@
 37 : -/-*120
 38 |                                                                                                                        |
 38 : -/-*120
-39 | 0 agents · 0 terminals                                                                                   prefix ctrl+b |
-39 : -/surface0*1 subtext0/surface0*22 -/surface0*83 subtext0/surface0*13 -/surface0*1
+39 |                                                                                                          prefix ctrl+b |
+39 : -/surface0*106 subtext0/surface0*13 -/surface0*1

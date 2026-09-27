@@ -78,5 +78,5 @@
 37 : accent/-*1 -/-*118 accent/-*1
 38 |└ term-alpha · Focused ─────────────────────────────────────────────────────────────────────────────────────── gclient ┘|
 38 : accent/-*1 accent/-+b*22 accent/-*87 accent/-+b*9 accent/-*1
-39 | 0 agents · 1 terminal · —                                                                 — · — │ prefix ctrl+b │ menu |
-39 : -/surface0*1 subtext0/surface0*25 -/surface0*65 subtext0/surface0*24 accent/surface0*4 -/surface0*1
+39 |                                                                                                   prefix ctrl+b │ menu |
+39 : -/surface0*99 subtext0/surface0*16 text/surface0*4 -/surface0*1

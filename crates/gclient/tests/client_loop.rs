@@ -8755,7 +8755,7 @@ async fn sidebar_model_follows_daemon_events() {
     // An attention event within the epoch carries only the attention; the
     // refetch it queues brings the lifecycle_status the glyph is drawn from.
     let mut waiting = sidebar_roster_entry("run:a", "run-a", "terminal-a");
-    waiting["lifecycle_status"] = json!("awaiting_input");
+    waiting["lifecycle_status"] = json!("paused");
     mock.enqueue(
         "GET",
         "/api/attention/roster",
@@ -8791,7 +8791,7 @@ async fn sidebar_model_follows_daemon_events() {
     );
     assert_eq!(
         workspace.sidebar().agents[0].lifecycle_status.as_deref(),
-        Some("awaiting_input"),
+        Some("paused"),
         "the refetch reconciled the lifecycle status"
     );
     assert_eq!(workspace.sidebar().agents[0].state, RowState::Paused);

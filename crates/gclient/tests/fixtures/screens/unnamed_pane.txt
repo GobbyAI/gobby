@@ -78,5 +78,5 @@
 37 : accent/-*1 -/-*118 accent/-*1
 38 |└ zsh · Focused ────────────────────────────────────────────────────────────────────────────────────────────── gclient ┘|
 38 : accent/-*1 accent/-+b*15 accent/-*94 accent/-+b*9 accent/-*1
-39 | 0 agents · 1 terminal · —                                                                        — · — │ prefix ctrl+b |
-39 : -/surface0*1 subtext0/surface0*25 -/surface0*72 subtext0/surface0*21 -/surface0*1
+39 |                                                                                                          prefix ctrl+b |
+39 : -/surface0*106 subtext0/surface0*13 -/surface0*1

@@ -198,7 +198,7 @@ impl Board {
             }
             RowState::Idle => {}
             RowState::Paused => {
-                self.agent_mut(name).lifecycle_status = Some("awaiting_input".to_string());
+                self.agent_mut(name).lifecycle_status = Some("paused".to_string());
             }
             RowState::Orphaned => {
                 let agent = self.agent_mut(name);

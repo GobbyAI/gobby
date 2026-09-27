@@ -152,7 +152,7 @@ parity_tests! {
 }
 
 #[test]
-fn hidden_tab_with_attention_carries_the_mark() {
+fn every_tab_carries_the_rolled_up_state_of_its_agents() {
     let mut ws = Workspace::scripted();
     let first = ws
         .open_terminal("term-first", "native", "epoch")
@@ -160,11 +160,16 @@ fn hidden_tab_with_attention_carries_the_mark() {
     let second = ws
         .open_terminal("term-second", "native", "epoch")
         .expect("second terminal");
+    let third = ws
+        .open_terminal("term-third", "native", "epoch")
+        .expect("third terminal");
     let mut chrome = Chrome::new(theme());
     chrome.open_tab(first, "");
     chrome.open_tab(second, "");
+    chrome.open_tab(third, "");
     chrome.tabs_mut().tabs[0].id = "0:0:1".into();
     chrome.tabs_mut().tabs[1].id = "0:0:2".into();
+    chrome.tabs_mut().tabs[2].id = "0:0:3".into();
     chrome.activate_tab(0);
 
     ws.daemon_mut().set_roster(json!({
@@ -173,7 +178,13 @@ fn hidden_tab_with_attention_carries_the_mark() {
         "entries": [
             {
                 "entry_id": "run:first",
-                "terminal": {"terminal_id": "term-first", "backend": "native"}
+                "terminal": {"terminal_id": "term-first", "backend": "native"},
+                "lifecycle_status": "running"
+            },
+            {
+                "entry_id": "run:third",
+                "terminal": {"terminal_id": "term-third", "backend": "native"},
+                "lifecycle_status": "awaiting_input"
             },
             {
                 "entry_id": "run:second",
@@ -190,22 +201,29 @@ fn hidden_tab_with_attention_carries_the_mark() {
     draw(&mut term, |frame| {
         hits = render_tab_bar(frame, area, &ws, &chrome);
     });
+    // The active tab carries its state too; an agent awaiting input is
+    // idle, and an idle tab draws no glyph.
     let row = buffer_row_text(&term, area, 0);
+    assert!(row.contains("▶ 1: Untitled"), "tab row: {row:?}");
     assert!(row.contains("⍾ 2: Untitled"), "tab row: {row:?}");
-    assert!(!row.contains("⍾ 1: Untitled"), "tab row: {row:?}");
-    let second_rect = hits.tabs[1].1;
-    assert_eq!(cell(&term, second_rect.x + 1, second_rect.y).symbol(), "⍾");
-    assert_eq!(
-        cell(&term, second_rect.x + 1, second_rect.y).style().fg,
-        Some(palette().yellow)
-    );
+    assert!(row.contains(" 3: Untitled"), "tab row: {row:?}");
+    assert!(!row.contains('‖') && !row.contains('○'), "tab row: {row:?}");
+    for (idx, glyph, color) in [(0, "▶", palette().accent), (1, "⍾", palette().peach)] {
+        let rect = hits.tabs[idx].1;
+        assert_eq!(cell(&term, rect.x + 1, rect.y).symbol(), glyph);
+        assert_eq!(cell(&term, rect.x + 1, rect.y).style().fg, Some(color));
+    }
 
     chrome.activate_tab(1);
     let mut term = terminal(area.width, area.height);
     draw(&mut term, |frame| {
         render_tab_bar(frame, area, &ws, &chrome);
     });
-    assert!(!buffer_row_text(&term, area, 0).contains('⍾'));
+    let row = buffer_row_text(&term, area, 0);
+    assert!(
+        row.contains("⍾ 2: Untitled"),
+        "the active tab keeps it: {row:?}"
+    );
 }
 
 // Plan 2.2 tab bar mouse: gclient tests driving `route_mouse` over the drawn

@@ -93,7 +93,7 @@ pub fn next_machine_filter(model: &SidebarModel, current: Option<&str>) -> Optio
 
 /// The row state: the pane's live state where one is attached, else the
 /// roster's.
-pub(super) fn agent_state<W: WorkspaceView>(ws: &W, agent: &AgentEntry) -> RowState {
+pub(crate) fn agent_state<W: WorkspaceView>(ws: &W, agent: &AgentEntry) -> RowState {
     let pane = ws
         .pane_for_terminal(&agent.terminal_id)
         .map(|pane| ws.pane(pane));

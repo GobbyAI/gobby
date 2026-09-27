@@ -10,6 +10,7 @@ use gobby_client::ui::status::{
     control_indicator, copy_feedback_rect, render_status_line, state_dot, toast_cue_width,
     toast_notification_rect, Toast, ToastKind,
 };
+use gobby_client::ui::status_segments::{agent_counts, AgentCounts};
 use gobby_client::ui::text::display_width_u16;
 use gobby_client::ui::Chrome;
 use gobby_client::Workspace;
@@ -282,14 +283,17 @@ fn status_bar_orders_fixed_slots_and_configured_segments() {
         count = render_status_line(frame, frame.area(), &ws, &chrome).count;
     });
     let line = &rect_rows(&healthy, Rect::new(0, 0, 100, 1))[0];
-    assert!(
-        line.starts_with(" ⍾ 1 needs you · 2 agents · 0 terminals"),
-        "{line:?}"
-    );
-    assert!(line.contains("gpt-6-sol-xhigh"), "{line:?}");
-    assert!(line.contains("63% · 12,345"), "{line:?}");
-    assert!(line.ends_with("prefix ctrl+b │ navigate "), "{line:?}");
+    // The defaults: this machine's agents by class, then the prefix and the
+    // mode. The model, context and token segments are opt-in.
+    assert!(line.starts_with(" ⍾ 1 needs you │ 1 idle  "), "{line:?}");
+    assert!(!line.contains("gpt"), "{line:?}");
+    assert!(line.ends_with("  prefix ctrl+b │ navigate "), "{line:?}");
     let count = count.expect("attention count hit area");
+    assert_eq!(
+        (count.x, count.width),
+        (1, 13),
+        "the hit covers the glyph and its words"
+    );
     chrome.hover = Some(Hit::StatusCount);
     let hovered = render(100, 1, |frame| {
         render_status_line(frame, frame.area(), &ws, &chrome);
@@ -322,11 +326,15 @@ fn status_bar_orders_fixed_slots_and_configured_segments() {
         hits = Some(render_status_line(frame, frame.area(), &ws, &chrome));
     });
     let line = &rect_rows(&visible, Rect::new(0, 0, 100, 1))[0];
-    assert!(!line.contains("needs you"), "visible attention: {line:?}");
-    assert!(line.starts_with(" 2 agents · 0 terminals"), "{line:?}");
-    assert!(line.contains("—"), "missing values: {line:?}");
-    assert!(line.contains("— · — │ prefix"), "missing metrics: {line:?}");
-    assert!(hits.expect("status hits").count.is_none());
+    // The count is machine-wide, so attention on the active tab stays in
+    // it. Segments the focused pane has no value for draw nothing.
+    assert!(line.starts_with(" ⍾ 1 needs you │ 1 idle  "), "{line:?}");
+    assert!(!line.contains('—'), "no placeholder: {line:?}");
+    assert!(
+        line.ends_with("  prefix ctrl+b │ navigate "),
+        "no right segment: {line:?}"
+    );
+    assert!(hits.expect("status hits").count.is_some());
 
     chrome.activate_tab(0);
     chrome.prefs.status_left = vec!["focus".to_string(), "model".to_string()];
@@ -345,7 +353,7 @@ fn status_bar_orders_fixed_slots_and_configured_segments() {
         line.starts_with(" × Daemon unreachable · retrying │ ⍾ 1 needs you"),
         "{line:?}"
     );
-    assert!(!line.contains("agents 63%"), "clipped total: {line:?}");
+    assert!(!line.contains("gpt"), "the model drops whole: {line:?}");
     assert!(line.ends_with("prefix ctrl+b │ navigate "), "{line:?}");
 
     chrome.prefs.status_left = vec![
@@ -372,4 +380,120 @@ fn status_bar_orders_fixed_slots_and_configured_segments() {
     );
     assert!(!line.contains("xhigh63%"), "{line:?}");
     assert!(!line.contains("unknown"), "{line:?}");
+}
+
+/// Point 11: the status line counts every agent on this machine by legend
+/// class, whatever the sidebar filter or the active tab shows, and the counts
+/// sum to that agent total.
+#[test]
+fn status_counts_every_agent_on_this_machine_by_class() {
+    let mut ws = Workspace::scripted();
+    ws.set_local_machine("local");
+    let mut rows = SidebarRows::default();
+    rows.runs.insert(
+        "alpha".to_string(),
+        vec![RunRow {
+            run_id: "run-remote".to_string(),
+            machine_id: Some("remote".to_string()),
+            ..RunRow::default()
+        }],
+    );
+    ws.daemon_mut().set_sidebar_rows(rows);
+    let terminal = |id: &str| json!({"terminal_id": id, "backend": "native"});
+    ws.daemon_mut().set_roster(json!({
+        "epoch": "e1",
+        "seq": 1,
+        "entries": [
+            {
+                "entry_id": "run:visible",
+                "terminal": terminal("visible"),
+                "attention": {"kind": "actionable"}
+            },
+            {
+                "entry_id": "run:off-tab",
+                "terminal": terminal("off-tab"),
+                "attention": {"kind": "actionable"}
+            },
+            {"entry_id": "run:idle", "terminal": terminal("idle")},
+            {"entry_id": "run:held", "terminal": terminal("held"), "lifecycle_status": "paused"},
+            {
+                "entry_id": "run:waiting",
+                "terminal": terminal("waiting"),
+                "lifecycle_status": "awaiting_input"
+            },
+            {
+                "entry_id": "run:working",
+                "terminal": terminal("working"),
+                "lifecycle_status": "running"
+            },
+            {
+                "entry_id": "run:gone",
+                "terminal": {"terminal_id": "gone", "backend": "native", "state": "orphaned"}
+            },
+            {
+                "entry_id": "run:remote",
+                "run_id": "run-remote",
+                "terminal": terminal("remote"),
+                "lifecycle_status": "running"
+            }
+        ]
+    }));
+    ws.reconcile_subscribe_first().expect("install roster");
+    let visible = ws
+        .open_terminal("visible", "native", "epoch")
+        .expect("visible pane");
+    let mut chrome = Chrome::dark();
+    chrome.open_pane(visible, "alpha");
+    chrome.compute_view(&ws, Rect::new(0, 0, 120, 20));
+
+    // Attention on the active tab counts too; held and awaiting agents count
+    // as idle; the run on another machine is not counted.
+    let counts = agent_counts(&ws);
+    assert_eq!(
+        counts,
+        AgentCounts {
+            need_you: 2,
+            idle: 3,
+            active: 1,
+            gone: 1,
+        }
+    );
+    let local = ws
+        .sidebar()
+        .agents
+        .iter()
+        .filter(|agent| agent.machine_id == "local")
+        .count();
+    assert_eq!(local, 7, "the remote run is still a sidebar agent");
+    assert_eq!(
+        counts.need_you + counts.idle + counts.active + counts.gone,
+        local,
+        "the counts sum to the agents on this machine"
+    );
+
+    let status = render(120, 1, |frame| {
+        render_status_line(frame, frame.area(), &ws, &chrome);
+    });
+    let line = &rect_rows(&status, Rect::new(0, 0, 120, 1))[0];
+    assert!(
+        line.starts_with(" ⍾ 2 need you │ 3 idle │ 1 active │ ◌ 1 gone  "),
+        "{line:?}"
+    );
+    let gone = line
+        .find('◌')
+        .map(|byte| line[..byte].chars().count())
+        .expect("gone count");
+    let gone = u16::try_from(gone).expect("gone column");
+    for x in gone..gone + 8 {
+        assert_eq!(
+            cell(&status, x, 0).fg,
+            chrome.palette.red,
+            "gone count, x={x}"
+        );
+    }
+    assert_eq!(
+        cell(&status, 3, 0).fg,
+        chrome.palette.subtext0,
+        "count words"
+    );
 }

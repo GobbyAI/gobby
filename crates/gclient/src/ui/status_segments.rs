@@ -1,8 +1,12 @@
 // upstream: none (Gobby configurable status-row values)
-//! Configurable status-row values. Health and attention stay in the fixed slot.
+//! Status-row values: the configurable segments, and this machine's agents
+//! counted by legend class. Health and the needs-you count stay in the fixed
+//! slot.
 
-use crate::ui::chrome::{Chrome, WorkspaceView};
+use crate::app::sidebar_model::state_class;
+use crate::ui::chrome::{Chrome, RowState, WorkspaceView};
 use crate::ui::pane_chrome::pane_footer;
+use crate::ui::sidebar::agents::agent_state;
 use crate::ui::status::focused_overflow;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,6 +29,36 @@ impl StatusSegment {
     }
 }
 
+/// Every agent on this machine by its legend class, whatever the sidebar
+/// filter shows. The four counts sum to that agent total.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct AgentCounts {
+    pub need_you: usize,
+    pub idle: usize,
+    pub active: usize,
+    pub gone: usize,
+}
+
+pub fn agent_counts<W: WorkspaceView>(ws: &W) -> AgentCounts {
+    let model = ws.sidebar();
+    let mut counts = AgentCounts::default();
+    for agent in model
+        .agents
+        .iter()
+        .filter(|agent| model.local_machine.is_empty() || agent.machine_id == model.local_machine)
+    {
+        match state_class(agent_state(ws, agent)) {
+            RowState::Attention => counts.need_you += 1,
+            RowState::Orphaned => counts.gone += 1,
+            RowState::Working => counts.active += 1,
+            _ => counts.idle += 1,
+        }
+    }
+    counts
+}
+
+/// A segment's text, or `None` when the focused pane has no value for it:
+/// an absent segment draws nothing, never a placeholder.
 pub fn segment_text<W: WorkspaceView>(
     segment: StatusSegment,
     ws: &W,
@@ -39,20 +73,19 @@ pub fn segment_text<W: WorkspaceView>(
         .agents
         .iter()
         .find(|agent| agent.terminal_id == pane.terminal_id);
-    Some(match segment {
+    match segment {
         StatusSegment::Model => agent
             .filter(|agent| agent.model_display_name.is_some() || agent.model.is_some())
             .map(|agent| agent.model_slug())
-            .filter(|model| !model.is_empty())
-            .unwrap_or_else(|| "—".to_string()),
+            .filter(|model| !model.is_empty()),
         StatusSegment::Context => agent
             .and_then(|agent| agent.context_percent)
-            .map_or_else(|| "—".to_string(), |percent| format!("{percent}%")),
+            .map(|percent| format!("{percent}%")),
         StatusSegment::Tokens => agent
             .and_then(|agent| agent.tokens_used)
-            .map_or_else(|| "—".to_string(), grouped_tokens),
+            .map(grouped_tokens),
         StatusSegment::Focus => unreachable!("handled above"),
-    })
+    }
 }
 
 fn grouped_tokens(tokens: u64) -> String {

@@ -200,8 +200,8 @@ impl Default for ClientPrefs {
             project_order: Vec::new(),
             project_labels: BTreeMap::new(),
             title_scrolling: TitleScrolling::Left,
-            status_left: vec!["focus".to_string(), "model".to_string()],
-            status_right: vec!["context".to_string(), "tokens".to_string()],
+            status_left: vec!["focus".to_string()],
+            status_right: Vec::new(),
         }
     }
 }

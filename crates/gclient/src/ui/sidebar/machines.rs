@@ -11,8 +11,8 @@ use std::sync::OnceLock;
 use super::agents::agent_state;
 use super::{render_band, render_section_rows, BandStyle, SidebarHits, ALL_MACHINES};
 use crate::app::short_terminal_id;
-use crate::app::sidebar_model::urgency;
-use crate::ui::chrome::{Chrome, RowState, WorkspaceView};
+use crate::app::sidebar_model::rollup;
+use crate::ui::chrome::{Chrome, WorkspaceView};
 use crate::ui::hit::SidebarSection;
 use crate::ui::sidebar_rows::{RowKind, SidebarRow};
 use ratatui::layout::Rect;
@@ -92,13 +92,13 @@ pub fn machine_rows<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Vec<SidebarRow
         )
         .map(|(machine, nested)| {
             let is_local = machine == local;
-            let state = model
-                .agents
-                .iter()
-                .filter(|agent| agent.machine_id == machine)
-                .map(|agent| agent_state(ws, agent))
-                .max_by_key(|state| urgency(*state))
-                .unwrap_or(RowState::Idle);
+            let state = rollup(
+                model
+                    .agents
+                    .iter()
+                    .filter(|agent| agent.machine_id == machine)
+                    .map(|agent| agent_state(ws, agent)),
+            );
             let label = if is_local {
                 local_hostname().unwrap_or_else(|| short_terminal_id(machine))
             } else {
