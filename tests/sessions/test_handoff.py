@@ -1174,7 +1174,7 @@ async def test_codex_rollout_recovers_compact_without_hook_after_restart(
             "clear_session": False,
             "delivery_failed": True,
             "delivery_state": "failed_not_deliverable",
-            "error_code": "compact_unconfirmed",
+            "reason": "native key write failed (none): enter",
         },
     )
     SessionVariableManager(temp_db).set_variable(
@@ -1186,6 +1186,11 @@ async def test_codex_rollout_recovers_compact_without_hook_after_restart(
         "SELECT authored_at FROM session_handoffs WHERE id = %s", (staged.handoff_record_id,)
     )
     assert authored_row is not None
+    SessionVariableManager(temp_db).set_variable(
+        session.id,
+        "compact_notification_started_at",
+        (authored_row["authored_at"] + timedelta(seconds=1)).isoformat(),
+    )
     rollout = tmp_path / "codex-rollout.jsonl"
     compacted = json.dumps(
         {
@@ -1209,6 +1214,23 @@ async def test_codex_rollout_recovers_compact_without_hook_after_restart(
         unrelated = await registry.call("get_handoff", {})
     assert unrelated["found"] is False
     assert unrelated["delivery_unconfirmed"] is True
+    assert unrelated["error_code"] == "compact_unconfirmed"
+    assert unrelated["attempt_id"] == attempt_id
+
+    rollout.write_text(
+        json.dumps({"type": "session_meta", "payload": {"id": session.external_id}})
+        + "\n"
+        + json.dumps(
+            {
+                "type": "compacted",
+                "timestamp": (authored_row["authored_at"] + timedelta(minutes=11)).isoformat(),
+            }
+        )
+        + "\n"
+    )
+    with session_context_for_test(session.id):
+        stale = await registry.call("get_handoff", {})
+    assert stale["found"] is False
 
     rollout.write_bytes(
         (
@@ -1236,28 +1258,35 @@ async def test_codex_rollout_recovers_compact_without_hook_after_restart(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("legacy_ambiguous_enter", [False, True])
 async def test_late_compact_cannot_deliver_superseded_attempt(
     temp_db: HubDatabase,
     session_manager: SessionManager,
+    tmp_path: Path,
+    legacy_ambiguous_enter: bool,
 ) -> None:
     session = _registered_session(session_manager)
     stale_attempt_id = "a" * 32
     newer_attempt_id = "b" * 32
     payload = build_handoff_payload(current_state="First attempt", next_steps=["Resume."])
-    stage_handoff_attempt(
+    staged = stage_handoff_attempt(
         temp_db, session.id, attempt_id=stale_attempt_id, handoff=payload, clear_session=False
     )
+    failure_result = {
+        "attempt_id": stale_attempt_id,
+        "clear_session": False,
+        "delivery_failed": True,
+        "delivery_state": "failed_not_deliverable",
+    }
+    if legacy_ambiguous_enter:
+        failure_result["reason"] = "native key write failed (none): enter"
+    else:
+        failure_result["error_code"] = "compact_unconfirmed"
     assert restore_staged_handoff(
         temp_db,
         session.id,
         stale_attempt_id,
-        failure_result={
-            "attempt_id": stale_attempt_id,
-            "clear_session": False,
-            "delivery_failed": True,
-            "delivery_state": "failed_not_deliverable",
-            "error_code": "compact_unconfirmed",
-        },
+        failure_result=failure_result,
     )
     stage_handoff_attempt(
         temp_db,
@@ -1269,6 +1298,27 @@ async def test_late_compact_cannot_deliver_superseded_attempt(
     SessionVariableManager(temp_db).set_variable(
         session.id, "compact_notification_started_at", datetime.now(UTC).isoformat()
     )
+    if legacy_ambiguous_enter:
+        authored_row = temp_db.fetchone(
+            "SELECT authored_at FROM session_handoffs WHERE id = %s", (staged.handoff_record_id,)
+        )
+        assert authored_row is not None
+        rollout = tmp_path / "superseded-rollout.jsonl"
+        rollout.write_text(
+            json.dumps({"type": "session_meta", "payload": {"id": session.external_id}})
+            + "\n"
+            + json.dumps(
+                {
+                    "type": "compacted",
+                    "timestamp": (authored_row["authored_at"] + timedelta(seconds=1)).isoformat(),
+                }
+            )
+            + "\n"
+        )
+        with temp_db.transaction() as conn:
+            conn.execute(
+                "UPDATE sessions SET transcript_path = %s WHERE id = %s", (str(rollout), session.id)
+            )
     registry = create_session_messages_registry(session_manager=session_manager, db=temp_db)
     with session_context_for_test(session.id):
         result = await registry.call(

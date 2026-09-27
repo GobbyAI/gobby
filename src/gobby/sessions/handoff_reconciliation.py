@@ -25,6 +25,19 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.found_work_gate import arm_found_work_gate
 
 
+def is_legacy_codex_ambiguous_enter_failure(gate: Mapping[str, object], source: str | None) -> bool:
+    """Recognize failed Codex Enter writes recorded before they had an error code."""
+    reason = gate.get("reason")
+    return (
+        source == "codex"
+        and gate.get("error_code") is None
+        and gate.get("clear_session") is False
+        and isinstance(reason, str)
+        and " key write failed (" in reason
+        and reason.endswith(": enter")
+    )
+
+
 def reconcile_late_compact_handoff(
     db: HubDatabase, session_id: str, attempt_id: str
 ) -> tuple[ConsumedHandoff, bool] | None:
@@ -46,6 +59,9 @@ def reconcile_late_compact_handoff(
         variables = _load_variables(variable_row["variables"])
         marker = variables.get(FAILED_HANDOFF_VARIABLE)
         gate = variables.get(HANDOFF_DISPATCH_GATE_VARIABLE)
+        legacy_ambiguous_enter = isinstance(
+            gate, Mapping
+        ) and is_legacy_codex_ambiguous_enter_failure(gate, session["source"])
         if (
             not isinstance(marker, Mapping)
             or marker.get("attempt_id") != attempt_id
@@ -54,8 +70,11 @@ def reconcile_late_compact_handoff(
             or gate.get("attempt_id") != attempt_id
             or gate.get("delivery_failed") is not True
             or gate.get("clear_session") is not False
-            or gate.get("error_code")
-            not in {"interrupt_unconfirmed", "compact_unconfirmed", "compact_failed"}
+            or (
+                gate.get("error_code")
+                not in {"interrupt_unconfirmed", "compact_unconfirmed", "compact_failed"}
+                and not legacy_ambiguous_enter
+            )
             or PENDING_HANDOFF_VARIABLE in variables
         ):
             return None
@@ -85,13 +104,15 @@ def reconcile_late_compact_handoff(
             if gate.get("error_code") == "compact_unconfirmed"
             else timedelta(minutes=10)
         )
-        raw_boundary = variables.get(COMPACT_NOTIFICATION_STARTED_AT_VARIABLE)
-        try:
-            boundary = (
-                datetime.fromisoformat(raw_boundary) if isinstance(raw_boundary, str) else None
-            )
-        except ValueError:
-            boundary = None
+        boundary = None
+        if not legacy_ambiguous_enter:
+            raw_boundary = variables.get(COMPACT_NOTIFICATION_STARTED_AT_VARIABLE)
+            try:
+                boundary = (
+                    datetime.fromisoformat(raw_boundary) if isinstance(raw_boundary, str) else None
+                )
+            except ValueError:
+                boundary = None
         if (
             boundary is None
             or boundary.tzinfo is None

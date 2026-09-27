@@ -21,7 +21,10 @@ from gobby.sessions.handoff import (
     recover_failed_handoff,
     write_feedback_batch,
 )
-from gobby.sessions.handoff_reconciliation import reconcile_late_compact_handoff
+from gobby.sessions.handoff_reconciliation import (
+    is_legacy_codex_ambiguous_enter_failure,
+    reconcile_late_compact_handoff,
+)
 from gobby.sessions.handoff_records import agent_run_attempt_id, get_agent_end_handoff
 from gobby.storage.sessions._title_defaults import MANUAL_TITLE_SOURCE
 from gobby.utils.session_context import get_current_session_id
@@ -277,7 +280,11 @@ def register_handoff_tools(
             and PENDING_HANDOFF_VARIABLE not in variables
         ):
             attempt_id = str(gate["attempt_id"])
-            if gate.get("error_code") == "compact_unconfirmed":
+            session = session_manager.get(session_id)
+            legacy_ambiguous_enter = is_legacy_codex_ambiguous_enter_failure(
+                gate, getattr(session, "source", None)
+            )
+            if gate.get("error_code") == "compact_unconfirmed" or legacy_ambiguous_enter:
                 result = reconcile_late_compact_handoff(session_manager.db, session_id, attempt_id)
                 if result is not None:
                     late_handoff, gate_armed = result
@@ -299,11 +306,24 @@ def register_handoff_tools(
                 "delivery_failed": True,
                 "delivery_abandoned": gate.get("delivery_abandoned") is True,
                 "delivery_state": "failed_not_deliverable",
-                "delivery_unconfirmed": gate.get("error_code") == "compact_unconfirmed",
-                "error_code": gate.get("error_code"),
+                "delivery_unconfirmed": (
+                    gate.get("error_code") == "compact_unconfirmed" or legacy_ambiguous_enter
+                ),
+                "error_code": (
+                    "compact_unconfirmed" if legacy_ambiguous_enter else gate.get("error_code")
+                ),
                 "reason": gate.get("reason"),
-                "retry_guidance": gate.get("retry_guidance"),
-                "recovery_guidance": gate.get("recovery_guidance"),
+                "retry_guidance": (
+                    "Do not stage another compact while this Enter write is unconfirmed."
+                    if legacy_ambiguous_enter
+                    else gate.get("retry_guidance")
+                ),
+                "recovery_guidance": (
+                    "Call get_handoff again after Codex records a matching compact boundary; "
+                    "failed_attempt_id reads the authored handoff without consuming it."
+                    if legacy_ambiguous_enter
+                    else gate.get("recovery_guidance")
+                ),
                 "handoff": "",
             }
         pending_marker = variables.get(PENDING_HANDOFF_VARIABLE)
