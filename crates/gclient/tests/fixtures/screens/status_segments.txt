@@ -76,7 +76,7 @@
 36 : accent/-*1 -/-*118 accent/-*1
 37 |│                                                                                                                      │|
 37 : accent/-*1 -/-*118 accent/-*1
-38 |└ Codex · Focused ──────────────────────────────────────────────────────────────────────────────────────────── gclient ┘|
-38 : accent/-*1 accent/-+b*17 accent/-*92 accent/-+b*9 accent/-*1
-39 | ⍾ 1 needs you · 2 agents · 0 terminals · fable-5.1-xhigh                                  63% · 12,345 │ prefix ctrl+b |
-39 : -/surface0*1 yellow/surface0*13 subtext0/surface0*43 -/surface0*34 subtext0/surface0*28 -/surface0*1
+38 |└ Claude · Focused ─────────────────────────────────────────────────────────────────────────────────────────── gclient ┘|
+38 : accent/-*1 accent/-+b*18 accent/-*91 accent/-+b*9 accent/-*1
+39 | ⍾ 1 needs you · 2 agents · 0 terminals · claude-fable-5.1-xhigh                           63% · 12,345 │ prefix ctrl+b |
+39 : -/surface0*1 yellow/surface0*13 subtext0/surface0*50 -/surface0*27 subtext0/surface0*28 -/surface0*1

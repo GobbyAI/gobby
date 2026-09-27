@@ -361,7 +361,8 @@ fn status_segments() -> (Workspace, Chrome) {
                 "entry_id": "run:term-alpha",
                 "run_id": "run-alpha",
                 "terminal": {"terminal_id": "term-alpha", "backend": "native"},
-                "provider": "codex",
+                "provider": "claude",
+                "model": "claude-fable-5-1",
                 "model_display_name": "Fable 5.1",
                 "context_percent": 63,
                 "tokens_used": 12345
@@ -748,7 +749,7 @@ fn status_segments_golden() {
     let rows = glyph_rows(&rendered);
     let status = rows[usize::from(HEIGHT - 1)];
     assert!(status.contains("1 needs you"), "{status:?}");
-    assert!(status.contains("fable-5.1-xhigh"), "{status:?}");
+    assert!(status.contains("claude-fable-5.1-xhigh"), "{status:?}");
     assert!(status.contains("63% · 12,345"), "{status:?}");
     assert!(status.contains("prefix ctrl+b"), "{status:?}");
 }

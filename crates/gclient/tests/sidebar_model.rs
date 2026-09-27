@@ -546,7 +546,13 @@ fn model_slug_lowercases_hyphenates_and_appends_effort() {
 
     assert_eq!(
         agent(Some("Fable 5.1"), Some("claude-fable-5-1"), Some("xhigh")).model_slug(),
-        "fable-5.1-xhigh"
+        "claude-fable-5.1-xhigh",
+        "the raw id's family leads when the display name drops it"
+    );
+    assert_eq!(
+        agent(Some("GPT-6 Sol"), Some("gpt-6-sol"), Some("xhigh")).model_slug(),
+        "gpt-6-sol-xhigh",
+        "a display name that keeps the family is not prefixed twice"
     );
     assert_eq!(
         agent(Some("Claude  Opus\t5.5"), None, None).model_slug(),
