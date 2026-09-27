@@ -8,6 +8,8 @@ from collections.abc import Callable
 from gobby.config.values import ConfigValuesError, ConfigValuesService
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.config_repository import MAX_CONFIG_REVISION
+from gobby.utils.local_token import AgentApiTokenClaims
+from gobby.utils.session_context import get_request_principal
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +54,17 @@ def create_config_registry(
         values: dict[str, object] | None = None,
         unset: list[str] | None = None,
     ) -> dict[str, object]:
+        try:
+            principal = await get_request_principal()
+        except LookupError:
+            principal = None
+        if isinstance(principal, AgentApiTokenClaims):
+            return ConfigValuesError(
+                "forbidden",
+                "Agent API tokens cannot modify daemon configuration",
+                (),
+                status_code=403,
+            ).public_body()
         try:
             return await service_getter().patch(
                 expected_revision=_validate_revision(expected_revision),

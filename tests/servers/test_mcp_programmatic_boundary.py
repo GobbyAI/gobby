@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Collection, Iterator, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -13,11 +13,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+from gobby.config.values import ConfigValuesService
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.hook_manager import HookManager
 from gobby.mcp_proxy.manager import MCPClientManager
 from gobby.mcp_proxy.server import GobbyDaemonTools
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
+from gobby.mcp_proxy.tools.config import create_config_registry
 from gobby.mcp_proxy.tools.internal import InternalRegistryManager, InternalToolRegistry
 from gobby.mcp_proxy.wait_tools import (
     MCP_WRAPPER_PROTOCOL_VERSION,
@@ -79,6 +81,7 @@ class Boundary:
     project_id: str
     target: EchoTarget
     message_calls: list[str]
+    config_patches: list[tuple[int, dict[str, object], list[str]]]
     metrics: MagicMock
 
     def call(self, route: str, arguments: Any, *, bridge: bool = False) -> dict[str, Any]:
@@ -189,6 +192,16 @@ def boundary(
         send_message,
     )
     internal.add_registry(messages)
+    config_patches: list[tuple[int, dict[str, object], list[str]]] = []
+
+    async def record_config_patch(
+        *, expected_revision: int, values: Mapping[str, object], unset: Collection[str]
+    ) -> dict[str, object]:
+        config_patches.append((expected_revision, dict(values), list(unset)))
+        return {"committed": True, "revision": expected_revision + 1}
+
+    config_service = cast(ConfigValuesService, SimpleNamespace(patch=record_config_patch))
+    internal.add_registry(create_config_registry(lambda: config_service))
     metrics = MagicMock()
     manager = MagicMock(spec=MCPClientManager)
     manager.session_manager = sessions
@@ -235,6 +248,7 @@ def boundary(
             project_id,
             target,
             message_calls,
+            config_patches,
             metrics,
         )
     finally:
@@ -400,6 +414,52 @@ def test_operator_message_call_retains_programmatic_path(boundary: Boundary, rou
     assert response.status_code == 200
     assert response.json()["success"] is True
     assert boundary.message_calls == ["isolated message"]
+
+
+@pytest.mark.parametrize("boundary", ["agent", "operator"], indirect=True)
+@pytest.mark.parametrize(
+    "route", ["/api/mcp/tools/call", "/api/mcp/gobby-config/tools/patch_config_values"]
+)
+def test_config_patch_requires_operator_authority(boundary: Boundary, route: str) -> None:
+    if boundary.agent:
+        schema = boundary.client.post(
+            "/api/mcp/tools/schema",
+            json={"server_name": "gobby-config", "tool_name": "patch_config_values"},
+            headers=boundary.headers,
+        )
+        assert schema.status_code == 200
+    patch_args = {
+        "expected_revision": 4,
+        "values": {
+            "agent_sandbox": {"enabled": False},
+            "rules": {"enforcement_enabled": False},
+        },
+    }
+    body = (
+        {"server_name": "gobby-config", "tool_name": "patch_config_values", "arguments": patch_args}
+        if route == "/api/mcp/tools/call"
+        else patch_args
+    )
+    response = boundary.client.post(route, json=body, headers=boundary.headers)
+    assert response.status_code == 200
+    result = response.json()
+    if boundary.agent:
+        assert result["result"]["error"]["code"] == "forbidden"
+        assert boundary.config_patches == []
+    else:
+        assert result["success"] is True
+        assert boundary.config_patches == [(4, patch_args["values"], [])]
+
+
+@pytest.mark.parametrize("boundary", ["agent"], indirect=True)
+def test_agent_token_cannot_patch_config_through_rest(boundary: Boundary) -> None:
+    response = boundary.client.patch(
+        "/api/config/values",
+        json={"expected_revision": 4, "values": {"agent_sandbox": {"enabled": False}}},
+        headers=boundary.headers,
+    )
+    assert response.status_code == 401
+    assert boundary.config_patches == []
 
 
 @pytest.mark.parametrize("boundary", ["agent", "operator"], indirect=True)
