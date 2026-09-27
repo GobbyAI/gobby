@@ -374,7 +374,11 @@ def schedule_codex_prompt_delivery(
     def finish_delivery(done: asyncio.Task[None]) -> None:
         _CODEX_PROMPT_DELIVERY_TASKS.discard(done)
         if done.cancelled():
-            logger.warning("Codex prompt delivery task cancelled for run %s", run_id)
+            logger.warning(
+                "Codex prompt delivery task cancelled for run %s terminal %s",
+                run_id,
+                terminal.id,
+            )
         elif error := done.exception():
             logger.error(
                 "Codex prompt delivery task crashed for run %s: %s",
@@ -490,8 +494,9 @@ async def _deliver_codex_prompt(
             # The prompt may have landed; the latched unresolved write is the
             # observation path, so the run is not failed here.
             logger.error(
-                "Codex spawn prompt write was indeterminate for run %s; Enter not sent",
+                "Codex spawn prompt write was indeterminate for run %s terminal %s; Enter not sent",
                 run_id,
+                terminal.id,
             )
             return
         if not isinstance(outcome, Delivered):
@@ -510,6 +515,12 @@ async def _deliver_codex_prompt(
                 ),
                 cleanup_agent=cleanup_agent,
             )
+            return
+        logger.info(
+            "Codex prompt transport_sequence_completed for run %s terminal %s",
+            run_id,
+            terminal.id,
+        )
     except asyncio.CancelledError:
         raise
     except Exception as exc:

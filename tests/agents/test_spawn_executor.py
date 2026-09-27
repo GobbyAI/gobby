@@ -2834,17 +2834,26 @@ class TestCodexPromptDelivery:
     """The spawn prompt is typed into the Codex composer, never passed in argv."""
 
     @pytest.mark.asyncio
-    async def test_delivers_prompt_once_composer_renders(self) -> None:
+    async def test_delivers_prompt_once_composer_renders(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
         runtime = FakeRuntime()
         runtime.snapshot_effects = ["", "› Ask Codex anything"]
         coordinator, terminal = _codex_delivery_target(runtime)
         run_manager = MagicMock()
+        prompt = "synthetic-private-marker"
 
-        with _fast_codex_delivery():
-            await _deliver_codex_prompt(coordinator, terminal, "Do the task", "run-1", run_manager)
+        with (
+            _fast_codex_delivery(),
+            caplog.at_level(logging.INFO, logger="gobby.agents.spawn_executor_support"),
+        ):
+            await _deliver_codex_prompt(coordinator, terminal, prompt, "run-1", run_manager)
 
         assert runtime.snapshot_effects == []
-        assert runtime.write_log == [("text", "Do the task"), ("key", "enter")]
+        assert runtime.write_log == [("text", prompt), ("key", "enter")]
+        assert "transport_sequence_completed" in caplog.text
+        assert "run-1" in caplog.text and str(terminal.id) in caplog.text
+        assert prompt not in caplog.text
         run_manager.fail_uninitialized_prompt_delivery.assert_not_called()
         assert not runtime.killed_ids
 
@@ -3234,7 +3243,9 @@ class TestCodexPromptDelivery:
         )
 
     @pytest.mark.asyncio
-    async def test_codex_prompt_aborts_on_indeterminate_without_enter(self) -> None:
+    async def test_codex_prompt_aborts_on_indeterminate_without_enter(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
         """An indeterminate paste may have landed: no Enter, and the run stays alive."""
         from gobby.terminals.runtime import IndeterminateWrite
 
@@ -3244,12 +3255,17 @@ class TestCodexPromptDelivery:
         coordinator, terminal = _codex_delivery_target(runtime)
         run_manager = MagicMock()
 
+        prompt = "synthetic-private-marker"
         with _fast_codex_delivery():
-            await _deliver_codex_prompt(coordinator, terminal, "Do the task", "run-1", run_manager)
+            await _deliver_codex_prompt(coordinator, terminal, prompt, "run-1", run_manager)
 
         kinds = [kind for kind, _payload in runtime.write_log]
         assert "enter" not in kinds
         assert kinds == ["text"]
+        assert "indeterminate" in caplog.text
+        assert "run-1" in caplog.text and str(terminal.id) in caplog.text
+        assert "transport_sequence_completed" not in caplog.text
+        assert prompt not in caplog.text
         run_manager.fail_uninitialized_prompt_delivery.assert_not_called()
         assert not runtime.killed_ids
 
@@ -3315,6 +3331,29 @@ class TestCodexPromptDelivery:
             await asyncio.gather(*pending)
 
         deliver.assert_awaited_once_with(coordinator, terminal, "Go", "run-1", run_manager, None)
+        assert not spawn_executor_support._CODEX_PROMPT_DELIVERY_TASKS
+
+    @pytest.mark.asyncio
+    async def test_cancelled_delivery_logs_terminal_without_failing_run(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        runtime = FakeRuntime()
+        runtime.snapshot_effects = [asyncio.CancelledError()]
+        coordinator, terminal = _codex_delivery_target(runtime)
+        run_manager = MagicMock()
+        prompt = "synthetic-private-marker"
+
+        assert schedule_codex_prompt_delivery(coordinator, terminal, prompt, "run-1", run_manager)
+        pending = list(spawn_executor_support._CODEX_PROMPT_DELIVERY_TASKS)
+        assert len(pending) == 1
+        await asyncio.gather(*pending, return_exceptions=True)
+        await asyncio.sleep(0)
+
+        assert "delivery task cancelled" in caplog.text
+        assert "run-1" in caplog.text and str(terminal.id) in caplog.text
+        assert "transport_sequence_completed" not in caplog.text
+        assert prompt not in caplog.text
+        run_manager.fail_uninitialized_prompt_delivery.assert_not_called()
         assert not spawn_executor_support._CODEX_PROMPT_DELIVERY_TASKS
 
 
