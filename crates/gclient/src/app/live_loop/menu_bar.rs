@@ -51,6 +51,7 @@ pub fn menu_bar_items<W: WorkspaceView>(
             ));
             items.push(act("Show sidebar", Action::ToggleSidebar));
             items.push(item("Pin sidebar", MenuAction::PinSidebar));
+            items.push(act("Legend", Action::Help));
             items.push(item(theme_row_label(chrome), MenuAction::ThemeMenu));
             items
         }

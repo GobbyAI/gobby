@@ -33,7 +33,7 @@ fn state_dot_role(state: RowState, p: &Palette) -> Color {
     match state {
         RowState::Attention => p.peach,
         RowState::Orphaned => p.red,
-        RowState::Paused => p.yellow,
+        RowState::Paused => p.overlay1,
         RowState::Working => p.accent,
         RowState::Unseen => p.teal,
         RowState::Idle | RowState::Unknown => p.overlay0,

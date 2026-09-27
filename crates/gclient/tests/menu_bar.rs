@@ -1,18 +1,20 @@
 mod mock_daemon;
 
-use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use gobby_client::app::apply_live_menu_action;
 use gobby_client::app::{
-    build_menu, route_mouse, ContextMenuKind, ControlState, MenuAction, MouseOutcome,
+    build_menu, route_modal_key, route_mouse, ContextMenuKind, ControlState, MenuAction,
+    ModalOutcome, MouseOutcome,
 };
 use gobby_client::daemon::LiveDaemon;
+use gobby_client::key_input::KeyInput;
 use gobby_client::prefs::load_prefs;
 use gobby_client::theme::ThemeKind;
 use gobby_client::ui::chrome::Mode;
 use gobby_client::ui::keymap::BINDINGS;
 use gobby_client::ui::menu_bar::MenuBarMenu;
 use gobby_client::ui::status::Toast;
-use gobby_client::ui::{render_workspace, Chrome};
+use gobby_client::ui::{render_workspace, Action, Chrome};
 use gobby_client::Workspace;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
@@ -231,6 +233,7 @@ async fn every_menu_bar_item_dispatches_to_a_handler() {
             "Working projects",
             "Show sidebar",
             "Pin sidebar",
+            "Legend",
             "Theme: Dark ▸",
         ]
     );
@@ -305,14 +308,14 @@ fn draw(terminal: &mut Terminal<TestBackend>, fixture: &mut LiveMenuFixture) {
     fixture.chrome.apply_hits(hits.expect("frame drawn"));
 }
 
-// Regression: the drawn Theme row once did nothing when the loop dispatched
-// it. Each click here goes the live loop's way, the press routed and its menu
-// outcome applied, so the row must open its choices and a pick must save.
-#[tokio::test]
-async fn clicking_the_theme_row_opens_its_choices_and_a_pick_saves_it() {
-    let mut fixture = live_menu_fixture(true, false).await;
-    let mut terminal = Terminal::new(TestBackend::new(100, 30)).expect("test backend");
-    draw(&mut terminal, &mut fixture);
+/// Open the View menu from its title, then its theme row, the live loop's
+/// way: each press routed and its menu outcome applied, a frame drawn after
+/// each. Hands back the theme row as the View menu drew it.
+async fn open_the_theme_choices(
+    terminal: &mut Terminal<TestBackend>,
+    fixture: &mut LiveMenuFixture,
+) -> Rect {
+    draw(terminal, fixture);
     let view = MenuBarMenu::ALL
         .iter()
         .position(|menu| *menu == MenuBarMenu::View)
@@ -330,7 +333,7 @@ async fn clicking_the_theme_row_opens_its_choices_and_a_pick_saves_it() {
         route_mouse(&fixture.workspace, &mut fixture.chrome, &press),
         MouseOutcome::Handled
     );
-    draw(&mut terminal, &mut fixture);
+    draw(terminal, fixture);
     let menu = fixture.chrome.menu.as_ref().expect("View menu open");
     let row = menu
         .items
@@ -355,7 +358,18 @@ async fn clicking_the_theme_row_opens_its_choices_and_a_pick_saves_it() {
         Mode::ContextMenu,
         "the choices stay open"
     );
-    draw(&mut terminal, &mut fixture);
+    draw(terminal, fixture);
+    row
+}
+
+// Regression: the drawn Theme row once did nothing when the loop dispatched
+// it. The row must open its choices beside the View menu, which stays open
+// behind them, and a pick must save.
+#[tokio::test]
+async fn clicking_the_theme_row_opens_its_choices_and_a_pick_saves_it() {
+    let mut fixture = live_menu_fixture(true, false).await;
+    let mut terminal = Terminal::new(TestBackend::new(100, 30)).expect("test backend");
+    let row = open_the_theme_choices(&mut terminal, &mut fixture).await;
     let choices = fixture.chrome.menu.as_ref().expect("theme choices open");
     assert_eq!(choices.kind, ContextMenuKind::Theme);
     let labels: Vec<&str> = choices.items.iter().map(|item| item.label).collect();
@@ -365,6 +379,18 @@ async fn clicking_the_theme_row_opens_its_choices_and_a_pick_saves_it() {
         "beside the View menu"
     );
     assert_eq!(choices.item_rects[0].y, row.y, "level with the theme row");
+    let parent = choices.parent.as_deref().expect("the View menu stays open");
+    assert_eq!(parent.kind, ContextMenuKind::MenuBar(MenuBarMenu::View));
+    assert_eq!(parent.items[parent.selected].action, MenuAction::ThemeMenu);
+    assert_eq!(
+        parent.item_rects[parent.selected], row,
+        "drawn where it was"
+    );
+    let buffer = terminal.backend().buffer();
+    let drawn: String = (row.x..row.right())
+        .map(|x| buffer[(x, row.y)].symbol())
+        .collect();
+    assert!(drawn.contains("Theme: Dark ▸"), "{drawn:?}");
 
     let light = choices.item_rects[1];
     let press = left_press((light.x + 1, light.y));
@@ -379,5 +405,49 @@ async fn clicking_the_theme_row_opens_its_choices_and_a_pick_saves_it() {
     assert_eq!(fixture.chrome.theme.kind, ThemeKind::Light);
     let saved = load_prefs(fixture.home.path()).expect("load prefs");
     assert_eq!(saved.theme, "light");
+    fixture.mock.shutdown().await;
+}
+
+// The View menu stays live behind the theme choices: a press on one of its
+// rows acts on that row, and Esc closes both menus.
+#[tokio::test]
+async fn the_view_menu_behind_the_theme_choices_stays_live() {
+    let mut fixture = live_menu_fixture(true, false).await;
+    let mut terminal = Terminal::new(TestBackend::new(100, 30)).expect("test backend");
+    open_the_theme_choices(&mut terminal, &mut fixture).await;
+    let parent = fixture
+        .chrome
+        .menu
+        .as_ref()
+        .and_then(|menu| menu.parent.as_deref())
+        .expect("View menu behind the choices");
+    let sidebar = parent
+        .items
+        .iter()
+        .position(|item| item.label == "Show sidebar")
+        .map(|index| parent.item_rects[index])
+        .expect("Show sidebar drawn");
+    let press = left_press((sidebar.x + 1, sidebar.y));
+    assert_eq!(
+        route_mouse(&fixture.workspace, &mut fixture.chrome, &press),
+        MouseOutcome::Menu {
+            kind: ContextMenuKind::MenuBar(MenuBarMenu::View),
+            action: MenuAction::Act(Action::ToggleSidebar),
+        }
+    );
+    assert!(fixture.chrome.menu.is_none(), "the row ran and both closed");
+
+    open_the_theme_choices(&mut terminal, &mut fixture).await;
+    let esc = KeyInput {
+        key: KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+        bytes: Vec::new(),
+    };
+    let outcome = route_modal_key(&fixture.workspace, &mut fixture.chrome, &esc);
+    assert!(matches!(outcome, ModalOutcome::Close));
+    assert!(
+        fixture.chrome.menu.is_none(),
+        "Esc closes the choices and the View menu"
+    );
+    assert_eq!(fixture.chrome.mode, Mode::Terminal);
     fixture.mock.shutdown().await;
 }

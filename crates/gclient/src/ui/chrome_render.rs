@@ -33,6 +33,8 @@ pub struct ChromeHits {
     /// Rows of the context menu as drawn, in item order, whenever the menu
     /// overlay ran; `Chrome::apply_hits` writes them into the open menu.
     pub menu_rows: Option<Vec<Rect>>,
+    /// Rows of the open menu's parent as drawn, when the overlay ran.
+    pub parent_menu_rows: Option<Vec<Rect>>,
     /// Buttons of the open dialog as drawn, in its button order.
     pub dialog_buttons: Vec<Rect>,
 }
@@ -87,7 +89,9 @@ pub fn render_workspace_with<W: WorkspaceView>(
         // Composited last and over an undimmed workspace: the menu is
         // contextual, so what it acts on stays readable.
         Mode::ContextMenu => {
-            hits.menu_rows = Some(context_menu::render_context_menu(frame, area, chrome));
+            let (rows, parent_rows) = context_menu::render_context_menu(frame, area, chrome);
+            hits.menu_rows = Some(rows);
+            hits.parent_menu_rows = Some(parent_rows);
         }
         Mode::Terminal | Mode::Navigate | Mode::Prefix | Mode::Copy | Mode::Resize => {}
     }

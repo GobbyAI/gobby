@@ -270,6 +270,7 @@ impl ViewState {
             settings,
             // The open menu owns its rows; `Chrome::apply_hits` places them.
             menu_rows: _,
+            parent_menu_rows: _,
             dialog_buttons,
         } = hits;
         self.dialog_button_hit_areas = dialog_buttons;
@@ -651,10 +652,19 @@ impl Chrome {
     }
 
     /// Write the rects the renderers drew back where the hit tests read
-    /// them: the chrome map into `view`, the menu rows into the open menu.
+    /// them: the chrome map into `view`, the menu rows into the open menu
+    /// and the menu it opened from.
     pub fn apply_hits(&mut self, mut hits: ChromeHits) {
         if let (Some(menu), Some(rows)) = (self.menu.as_mut(), hits.menu_rows.take()) {
             menu.item_rects = rows;
+        }
+        if let (Some(parent), Some(rows)) = (
+            self.menu
+                .as_mut()
+                .and_then(|menu| menu.parent.as_deref_mut()),
+            hits.parent_menu_rows.take(),
+        ) {
+            parent.item_rects = rows;
         }
         self.view.apply_hits(hits);
     }

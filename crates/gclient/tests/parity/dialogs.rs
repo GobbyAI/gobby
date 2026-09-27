@@ -692,6 +692,7 @@ fn context_menu_renders_anchored_and_clamped() {
             items: items.clone(),
             selected: 0,
             item_rects: Vec::new(),
+            parent: None,
         });
     };
     let draw = |chrome: &mut Chrome| {

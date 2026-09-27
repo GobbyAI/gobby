@@ -18,13 +18,32 @@ use crate::theme::Palette;
 use crate::ui::widgets::render_panel_shell;
 use crate::ui::Chrome;
 
-/// Draw the open menu over the frame and hand back the row rect of each item
-/// as drawn, in item order; empty when the frame cannot hold the panel.
-pub fn render_context_menu(frame: &mut Frame, area: Rect, chrome: &Chrome) -> Vec<Rect> {
+/// Draw the open menu over the frame, the menu it opened from first and
+/// beneath it, and hand back the row rect of each item as drawn, in item
+/// order: the open menu's, then its parent's; empty when the frame cannot
+/// hold the panel.
+pub fn render_context_menu(
+    frame: &mut Frame,
+    area: Rect,
+    chrome: &Chrome,
+) -> (Vec<Rect>, Vec<Rect>) {
     let Some(menu) = chrome.menu.as_ref() else {
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     };
-    let palette = &chrome.palette;
+    let parent = menu
+        .parent
+        .as_deref()
+        .map(|parent| draw_menu(frame, area, &chrome.palette, parent))
+        .unwrap_or_default();
+    (draw_menu(frame, area, &chrome.palette, menu), parent)
+}
+
+fn draw_menu(
+    frame: &mut Frame,
+    area: Rect,
+    palette: &Palette,
+    menu: &ContextMenuState,
+) -> Vec<Rect> {
     let popup = popup_rect(area, menu);
     if render_panel_shell(frame, popup, palette.surface0, palette.panel_bg).is_none() {
         return Vec::new();
