@@ -263,12 +263,14 @@ def agent_manager(temp_db) -> AgentDefinitionManager:
 
 
 @pytest.fixture
-def server(temp_db, task_manager):
-    return create_http_server(
+def server(temp_db, task_manager, monkeypatch: pytest.MonkeyPatch):
+    result = create_http_server(
         config=DaemonConfig(),
         database=temp_db,
         task_manager=task_manager,
     )
+    monkeypatch.setattr(result.auth_service, "request_principal", lambda _request: None)
+    return result
 
 
 @pytest.fixture
@@ -289,19 +291,25 @@ def client(server) -> TestClient:
         ("POST", "/api/agents/definitions/import/bundled", None),
     ],
 )
+@pytest.mark.parametrize("rejected_principal", [False, True])
 def test_agent_token_cannot_mutate_definitions(
     server: HTTPServer,
     client: TestClient,
     method: str,
     path: str,
     body: dict[str, Any] | None,
+    rejected_principal: bool,
 ) -> None:
-    claims = AgentApiTokenClaims(
-        session_id="agent-session",
-        project_id="project",
-        machine_id="machine",
-        iat=1,
-        exp=2,
+    claims = (
+        False
+        if rejected_principal
+        else AgentApiTokenClaims(
+            session_id="agent-session",
+            project_id="project",
+            machine_id="machine",
+            iat=1,
+            exp=2,
+        )
     )
     with (
         patch.object(server.auth_service, "request_principal", return_value=claims),

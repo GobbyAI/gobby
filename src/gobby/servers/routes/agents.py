@@ -19,7 +19,6 @@ from pydantic import BaseModel, Field, ValidationError, field_validator, model_v
 from gobby.agents.reasoning import normalize_reasoning_effort
 from gobby.storage.definitions import DefinitionNameConflictError, DefinitionNotFoundError
 from gobby.storage.hub.protocol import WorkflowDefinitionMutation
-from gobby.utils.local_token import AgentApiTokenClaims
 from gobby.workflows.agent_models import AgentPromptBlocks
 
 if TYPE_CHECKING:
@@ -248,7 +247,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
 
     async def _require_definition_operator(request: Request) -> None:
         principal = await server.run_db(server.auth_service.request_principal, request)
-        if isinstance(principal, AgentApiTokenClaims):
+        if principal is not None:
             raise HTTPException(
                 status_code=403,
                 detail="Agent API tokens cannot modify agent definitions",

@@ -49,7 +49,6 @@ from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.definitions.variables import SessionVariableDefaultManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
-from gobby.utils.local_token import AgentApiTokenClaims
 from gobby.utils.project_context import get_project_context, get_workflow_project_path
 from gobby.utils.session_context import get_request_principal
 from gobby.workflows.pipeline_loader import PipelineLoader
@@ -229,7 +228,7 @@ def create_workflows_registry(
             principal = await get_request_principal()
         except LookupError:
             return False  # Internal callers have no request principal.
-        return isinstance(principal, AgentApiTokenClaims)
+        return principal is not None
 
     forbidden_agent_write = {
         "success": False,

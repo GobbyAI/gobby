@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from types import SimpleNamespace
-from typing import cast
+from typing import Literal, cast
 
 import pytest
 
@@ -43,10 +43,13 @@ pytestmark = pytest.mark.unit
         ("reload_cache", {}),
     ],
 )
+@pytest.mark.parametrize("rejected_principal", [False, True])
 async def test_agent_token_cannot_mutate_definitions(
-    tool_name: str, arguments: dict[str, object]
+    tool_name: str, arguments: dict[str, object], rejected_principal: bool
 ) -> None:
-    async def principal() -> AgentApiTokenClaims:
+    async def principal() -> AgentApiTokenClaims | Literal[False]:
+        if rejected_principal:
+            return False
         return AgentApiTokenClaims(
             session_id="agent-session",
             project_id="project",
