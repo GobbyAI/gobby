@@ -14,6 +14,7 @@ use crate::protocol::{write_message, ServerMessage};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ControlClose {
     Deadline,
+    Io,
     Overflow,
     Disconnected,
 }
@@ -34,13 +35,14 @@ pub async fn write_outbound<W: AsyncWrite + Unpin>(
             line = too_large.to_string();
         }
         line.push('\n');
-        match timeout(deadline, writer.write_all(line.as_bytes())).await {
-            Ok(Ok(())) => {
-                if writer.flush().await.is_err() {
-                    return ControlClose::Overflow;
-                }
-            }
-            Ok(Err(_)) => return ControlClose::Overflow,
+        match timeout(deadline, async {
+            writer.write_all(line.as_bytes()).await?;
+            writer.flush().await
+        })
+        .await
+        {
+            Ok(Ok(())) => {}
+            Ok(Err(_)) => return ControlClose::Io,
             Err(_) => {
                 let _ = timeout(
                     Duration::from_millis(20),

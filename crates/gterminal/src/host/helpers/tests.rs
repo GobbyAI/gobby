@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use serde_json::{Map, Value};
 
-use super::{push_terminal_ansi, resolved_spawn_cwd};
+use super::{push_semantic_frame, push_terminal_ansi, resolved_spawn_cwd};
 use crate::host::backpressure::FrameMailbox;
 use crate::host::state::Attachment;
 use crate::protocol::render_ansi::BlitEncoder;
@@ -53,6 +53,7 @@ fn attachment() -> (Attachment, FrameMailbox) {
         desynced: true,
         delta_len: 0,
         delta_bytes: 0,
+        last_semantic_frame: None,
         encoder: BlitEncoder::new(),
     };
     (att, mailbox)
@@ -63,6 +64,27 @@ fn terminal_frame(mailbox: &FrameMailbox) -> TerminalFrame {
         ServerMessage::Terminal(frame) => frame,
         other => panic!("expected a terminal frame, got {other:?}"),
     }
+}
+
+#[test]
+fn semantic_frame_tracks_content_and_resyncs_after_overflow() {
+    let (mut att, mailbox) = attachment();
+    let first = frame(vec![cell("A", 0); 6]);
+    assert!(push_semantic_frame(&mut att, first.clone(), usize::MAX));
+    assert!(matches!(mailbox.try_pop(), Some(ServerMessage::Frame(sent)) if sent == first));
+    mailbox.note_drain();
+    assert!(!push_semantic_frame(&mut att, first.clone(), usize::MAX));
+    assert!(mailbox.try_pop().is_none());
+
+    let changed = frame(vec![cell("B", 0); 6]);
+    assert!(push_semantic_frame(&mut att, changed.clone(), 1));
+    assert!(att.desynced);
+    assert!(mailbox.try_pop().is_none());
+    assert!(push_semantic_frame(&mut att, changed.clone(), usize::MAX));
+    assert!(matches!(mailbox.try_pop(), Some(ServerMessage::Frame(sent)) if sent == changed));
+    mailbox.note_drain();
+    assert!(!att.desynced);
+    assert!(!push_semantic_frame(&mut att, changed, usize::MAX));
 }
 
 #[test]

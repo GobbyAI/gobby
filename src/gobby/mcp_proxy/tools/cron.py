@@ -260,9 +260,8 @@ def create_cron_registry(
             if restricted and action_type == "shell":
                 return _agent_forbidden()
 
-            updated = await asyncio.to_thread(
-                cron_storage.update_job, job_id, require_non_shell=restricted, **kwargs
-            )
+            update = cron_storage.update_non_shell_job if restricted else cron_storage.update_job
+            updated = await asyncio.to_thread(update, job_id, **kwargs)
             if not updated:
                 return {"success": False, "error": f"Cron job not found: {job_id}"}
             return {"success": True, "job": updated.to_dict()}

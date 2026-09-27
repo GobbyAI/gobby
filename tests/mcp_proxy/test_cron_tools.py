@@ -449,6 +449,7 @@ async def test_agent_cannot_convert_job_to_shell(
 
     assert result["error_code"] == "forbidden"
     mock_storage.update_job.assert_not_called()
+    mock_storage.update_non_shell_job.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -485,16 +486,16 @@ async def test_agent_cannot_update_existing_shell_job(
 async def test_agent_can_update_non_shell_job(
     registry: InternalToolRegistry, mock_storage: MagicMock
 ) -> None:
-    mock_storage.update_job.return_value = _make_job(action_type="pipeline", name="Updated")
+    mock_storage.update_non_shell_job.return_value = _make_job(
+        action_type="pipeline", name="Updated"
+    )
     tool = registry.get_tool("update_cron_job")
     assert tool is not None
     with _caller(_agent_claims()):
         result = await tool(job_id="cj-abc123", name="Updated")
 
     assert result["success"] is True
-    mock_storage.update_job.assert_called_once_with(
-        "cj-abc123", require_non_shell=True, name="Updated"
-    )
+    mock_storage.update_non_shell_job.assert_called_once_with("cj-abc123", name="Updated")
 
 
 @pytest.mark.asyncio
@@ -546,9 +547,7 @@ async def test_operator_can_manage_shell_jobs(
         run = await registry.call("run_cron_job", {"job_id": "cj-abc123"})
 
     assert all(result["success"] for result in (created, updated, toggled, deleted, run))
-    mock_storage.update_job.assert_called_once_with(
-        "cj-abc123", require_non_shell=False, action_type="shell"
-    )
+    mock_storage.update_job.assert_called_once_with("cj-abc123", action_type="shell")
 
 
 def test_agent_update_rechecks_action_at_write(
@@ -573,7 +572,7 @@ def test_agent_update_rechecks_action_at_write(
 
     monkeypatch.setattr(storage, "_normalize_update_fields", switch_to_shell)
     with pytest.raises(PermissionError):
-        storage.update_job(job.id, require_non_shell=True, name="Tampered")
+        storage.update_non_shell_job(job.id, name="Tampered")
 
     current = storage.get_job(job.id)
     assert current is not None

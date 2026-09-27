@@ -20,6 +20,7 @@ from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 
 from gobby.agents.prompt_detector import PromptDetector
+from gobby.sessions.turn_lifecycle import TurnEvidence, TurnLifecycleReducer
 from gobby.servers.http import HTTPServer
 from gobby.servers.routes.attention import AttentionAnswer, AttentionPane, create_attention_router
 from gobby.storage.agents import LocalAgentRunManager
@@ -30,6 +31,7 @@ from gobby.storage.attention import (
     AttentionStateManager,
 )
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.utils.machine_id import require_machine_id
 from tests.agents.detection_test_support import BundledDetectionRegistry
@@ -930,3 +932,81 @@ async def test_roster_p95_stays_below_deadline_with_shared_executor_load(
 
     p95 = sorted(latencies)[18]
     assert p95 < 1.0, f"roster p95 {p95:.3f}s exceeded the 1s loaded-test budget"
+
+
+def test_roster_exposes_provider_error_before_attention_blocks(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sessions = SessionManager(temp_db)
+    session = sessions.register(
+        external_id="provider-error-roster",
+        machine_id=None,
+        source="claude",
+        project_id=sample_project["id"],
+    )
+    session.terminal_context = {"tmux_pane": "%1"}
+    attention = AttentionStateManager(temp_db)
+    lifecycle = TurnLifecycleReducer(sessions, attention)
+    evidence = TurnEvidence(source="claude", provider_turn_key="provider-turn-1")
+    lifecycle.begin_turn(session.id, evidence)
+    lifecycle.record_provider_failure(
+        session.id,
+        error_type="api_error",
+        message="API Error: 500 Internal server error",
+        retryable=True,
+        max_resumes=3,
+        evidence=evidence,
+    )
+    monkeypatch.setattr(
+        attention,
+        "load_roster_rows",
+        lambda *_args, **_kwargs: [_roster_session(session)],
+    )
+    server = _server(temp_db, attention, [session])
+    with _client(server) as client:
+        response = client.get("/api/attention/roster")
+    assert response.status_code == 200
+    entry = response.json()["entries"][0]
+    assert entry["attention"] is None
+    assert entry["provider_error"]["error_type"] == "api_error"
+    assert entry["provider_error"]["message"] == "API Error: 500 Internal server error"
+    assert entry["provider_error"]["attempts"] == 1
+
+    for turn in range(2, 5):
+        next_evidence = TurnEvidence(source="claude", provider_turn_key=f"provider-turn-{turn}")
+        lifecycle.begin_turn(session.id, next_evidence)
+        lifecycle.record_provider_failure(
+            session.id,
+            error_type="api_error",
+            message="API Error: 500 Internal server error",
+            retryable=True,
+            max_resumes=3,
+            evidence=next_evidence,
+        )
+    run = SimpleNamespace(
+        id="provider-error-run",
+        child_session_id=session.id,
+        status="running",
+        task_id=None,
+        provider="claude",
+        model=None,
+        terminal_id=None,
+        pid=None,
+        updated_at=session.updated_at,
+    )
+    monkeypatch.setattr(
+        attention,
+        "load_roster_rows",
+        lambda *_args, **_kwargs: [_roster_run(run), _roster_session(session)],
+    )
+    with _client(server) as client:
+        run_response = client.get("/api/attention/roster")
+
+    assert run_response.status_code == 200
+    run_entries = run_response.json()["entries"]
+    assert len(run_entries) == 1
+    assert run_entries[0]["entry_id"] == "run:provider-error-run"
+    assert run_entries[0]["attention"]["reason"] == "provider_error"
+    assert run_entries[0]["provider_error"]["attempts"] == 4

@@ -193,8 +193,11 @@ class WakeDispatcher:
         session_id: str,
         message: str,
         result: dict[str, Any],
+        *,
+        bypass_debounce: bool = False,
+        prompt: str = CONTINUE_WAKE_MESSAGE,
     ) -> dict[str, Any]:
-        """Wake a session with a completion notification.
+        """Persist a notification, then wake the session.
 
         Args:
             session_id: Target session to wake
@@ -234,7 +237,9 @@ class WakeDispatcher:
             return {**failure, "ism_persisted": False}
 
         priority = str(result.get("priority") or "normal")
-        live_result = await self.dispatch_live_wake(session_id, priority=priority)
+        live_result = await self.dispatch_live_wake(
+            session_id, priority=priority, bypass_debounce=bypass_debounce, prompt=prompt
+        )
         return {**live_result, "ism_persisted": True}
 
     async def dispatch_live_wake(
@@ -242,6 +247,8 @@ class WakeDispatcher:
         session_id: str,
         *,
         priority: str = "normal",
+        bypass_debounce: bool = False,
+        prompt: str = CONTINUE_WAKE_MESSAGE,
     ) -> dict[str, Any]:
         """Send a live wake signal after durable mailbox storage is complete."""
         self._require_owner_loop()
@@ -250,7 +257,9 @@ class WakeDispatcher:
             lock = asyncio.Lock()
             self._live_wake_locks[session_id] = lock
         async with lock:
-            result = await self._dispatch_live_wake_unlocked(session_id, priority=priority)
+            result = await self._dispatch_live_wake_unlocked(
+                session_id, priority=priority, bypass_debounce=bypass_debounce, prompt=prompt
+            )
             if result.get("skipped") == "session_active":
                 self._schedule_deferred_refresh(session_id, priority=priority)
             return normalize_live_wake_result(result)
@@ -358,6 +367,8 @@ class WakeDispatcher:
         *,
         session: Any | None = None,
         priority: str = "normal",
+        bypass_debounce: bool = False,
+        prompt: str = CONTINUE_WAKE_MESSAGE,
     ) -> dict[str, Any]:
         """Send a live wake signal while holding the per-session wake lock."""
         if session is None:
@@ -413,7 +424,7 @@ class WakeDispatcher:
             return state_failure
 
         if session_type == "web_chat":
-            if not self._should_send_live_wake(session_id, session):
+            if not bypass_debounce and not self._should_send_live_wake(session_id, session):
                 return wake_debounced_result(session_id, method="web_chat")
             result = await self._dispatch_web_chat_wake(session_id, priority=priority)
             if result.get("delivered"):
@@ -425,7 +436,7 @@ class WakeDispatcher:
         terminal_route = await self._terminal_route_for_session(session)
         terminal = terminal_route.managed_terminal
         if terminal is not None and self._tmux_sender is not None:
-            if not self._should_send_live_wake(session_id, session):
+            if not bypass_debounce and not self._should_send_live_wake(session_id, session):
                 return wake_debounced_result(session_id, method="terminal")
             return await self._send_managed_terminal_wake(
                 session_id,
@@ -433,6 +444,7 @@ class WakeDispatcher:
                 terminal,
                 self._tmux_sender,
                 priority=priority,
+                prompt=prompt,
             )
 
         if agent_depth == 0:
@@ -444,7 +456,7 @@ class WakeDispatcher:
             )
 
         # Terminal agents with no managed row may still have an SDK resume route.
-        if not self._should_send_live_wake(session_id, session):
+        if not bypass_debounce and not self._should_send_live_wake(session_id, session):
             return wake_debounced_result(session_id, method="live_wake")
 
         # SDK agent → try resume via sdk_session_id
@@ -460,7 +472,7 @@ class WakeDispatcher:
                     session = current
                 try:
                     await asyncio.wait_for(
-                        self._sdk_resumer(sdk_session_id, CONTINUE_WAKE_SIGNAL),
+                        self._sdk_resumer(sdk_session_id, f"{prompt}\n"),
                         timeout=LIVE_WAKE_TIMEOUT_SECONDS,
                     )
                     self._record_live_wake(session_id, session)
@@ -584,6 +596,7 @@ class WakeDispatcher:
         send: TmuxSender,
         *,
         priority: str = "normal",
+        prompt: str = CONTINUE_WAKE_MESSAGE,
     ) -> dict[str, Any]:
         """Wake a session through the terminal row that hosts it.
 
@@ -607,7 +620,7 @@ class WakeDispatcher:
         try:
             await send(
                 terminal_id,
-                CONTINUE_WAKE_MESSAGE,
+                prompt,
                 submit=True,
                 clear_before_submit=True,
                 cli_source=getattr(session, "source", None),

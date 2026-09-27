@@ -1713,6 +1713,57 @@ class TestWakeDispatch:
         assert result["method"] == "web_chat"
         assert result["error_code"] == "no_live_web_chat_session"
 
+    @pytest.mark.asyncio
+    async def test_provider_retry_bypasses_debounce_but_preserves_draft_guard(
+        self,
+        session_manager: MagicMock,
+        ism_manager: MagicMock,
+        tmux_sender: AsyncMock,
+    ) -> None:
+        from gobby.agents.idle_detector import ComposerRead
+        from gobby.events.live_wake import TerminalActivity
+
+        session_manager.get.return_value = FakeSession(
+            id=WAKE_SESSION_ID,
+            agent_depth=1,
+            terminal_context={"tmux_session": "gobby-agent-abc"},
+            status="paused",
+        )
+        probe = AsyncMock(return_value=TerminalActivity(ComposerRead("empty", None)))
+        dispatcher = WakeDispatcher(
+            session_manager=session_manager,
+            ism_manager=ism_manager,
+            tmux_sender=tmux_sender,
+            terminal_manager=_managed_terminal(),
+            activity_probe=probe,
+        )
+
+        first = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
+        debounced = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
+        retry_prompt = "Continue the interrupted work."
+        retried = await dispatcher.wake(
+            WAKE_SESSION_ID,
+            retry_prompt,
+            {"message_type": "provider_error_resume", "completion_id": "failed-turn-1"},
+            bypass_debounce=True,
+            prompt=retry_prompt,
+        )
+
+        assert first["delivered"] is True
+        assert debounced["delivered"] is False
+        assert debounced["skipped"] == "debounced"
+        assert retried["delivered"] is True
+        assert tmux_sender.await_count == 2
+        assert tmux_sender.await_args.args[1] == retry_prompt
+        assert ism_manager.create_message.call_args.kwargs["content"] == retry_prompt
+
+        probe.return_value = TerminalActivity(ComposerRead("draft", "operator draft"))
+        guarded = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID, bypass_debounce=True)
+
+        assert guarded["delivered"] is False
+        assert guarded["skipped"] == "composer_occupied"
+        assert tmux_sender.await_count == 2
+
 
 class TestComposerGate:
     """A positive draft read withholds the live wake; anything else drains as before."""
