@@ -364,6 +364,72 @@ class TestRegisterTerminalTools:
         assert result["clear_session"] is False
         send_command.assert_not_awaited()
 
+    @pytest.mark.parametrize("clear_session", [False, True])
+    def test_set_handoff_rejects_second_attempt_while_compact_unconfirmed(
+        self, clear_session: bool
+    ) -> None:
+        registry = _TestRegistry(name="test", description="test")
+        session = MagicMock(
+            id="session-1",
+            project_id="project-1",
+            session_type="terminal",
+            source="codex",
+            status="active",
+            terminal_context={"tmux_pane": "%12"},
+        )
+        session_manager = MagicMock()
+        session_manager.get.return_value = session
+        session_manager.resolve_session_reference.side_effect = lambda ref, project_id=None: ref
+        pane = MagicMock(backend="tmux", target="%12")
+        pane.snapshot = AsyncMock(return_value="ready")
+        attempt_id = "a" * 32
+
+        with patch(
+            "gobby.mcp_proxy.tools.sessions._terminal.LocalAgentRunManager",
+            return_value=MagicMock(),
+        ):
+            register_terminal_tools(
+                registry, session_manager, MagicMock(fetchone=MagicMock(return_value=None))
+            )
+        set_handoff = registry.get_tool("set_handoff")
+        assert set_handoff is not None
+
+        with (
+            session_context_for_test("session-1"),
+            patch(
+                "gobby.mcp_proxy.tools.sessions._terminal.SessionVariableManager"
+            ) as variable_manager,
+            patch(
+                "gobby.mcp_proxy.tools.sessions._terminal._resolve_pane_io",
+                return_value=(pane, None),
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.sessions._terminal._interrupt_observer",
+                return_value=(None, None),
+            ),
+            patch("gobby.mcp_proxy.tools.sessions._terminal.stage_handoff_attempt") as stage,
+        ):
+            variable_manager.return_value.get_variables.return_value = {
+                "context_compact_handoff_result": {
+                    "delivery_failed": True,
+                    "error_code": "compact_unconfirmed",
+                    "attempt_id": attempt_id,
+                },
+                "failed_handoff_attempt": {"attempt_id": attempt_id},
+            }
+            result = asyncio.run(
+                set_handoff(
+                    current_state="New handoff",
+                    next_steps=["Continue."],
+                    clear_session=clear_session,
+                )
+            )
+
+        assert result["error_code"] == "compact_unconfirmed"
+        assert result["attempt_id"] == attempt_id
+        assert result["handoff_staged"] is False
+        stage.assert_not_called()
+
     def test_set_handoff_clear_stages_before_terminal_delivery(self) -> None:
         registry = _TestRegistry(name="test", description="test")
         session = MagicMock(

@@ -453,7 +453,13 @@ async def _send_terminal_compaction_command(
     readiness_before_command: str | None = None
     rejection: dict[str, str] | None = None
     interrupt_sent = False
-    for resubmission in range(1 + _COMPACTION_REJECTION_RETRIES):
+    # A compact command may have started despite a transient rejection view.
+    # Never type it again; only the verified-submit ladder may retry Enter when
+    # it can still see the original command in the composer.
+    rejection_retries = (
+        0 if command in _CLI_COMPACT_COMMANDS.values() else _COMPACTION_REJECTION_RETRIES
+    )
+    for resubmission in range(1 + rejection_retries):
         if resubmission:
             logger.warning(
                 "Session %s rejected %s while its task was still running; "
