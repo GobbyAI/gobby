@@ -357,6 +357,14 @@ fn empty_state_names_the_next_step_without_exclamation() {
         .draw(|frame| render_empty(frame, frame.area(), &chrome))
         .unwrap();
     assert!(cells(&terminal, 6, 0, 60).contains("ctrl+b b  hide the sidebar"));
+
+    // An open overlay is what it rolls up.
+    chrome.sidebar.pinned = false;
+    chrome.sidebar.overlay = true;
+    terminal
+        .draw(|frame| render_empty(frame, frame.area(), &chrome))
+        .unwrap();
+    assert!(cells(&terminal, 6, 0, 60).contains("ctrl+b b  close the sidebar"));
 }
 
 #[test]

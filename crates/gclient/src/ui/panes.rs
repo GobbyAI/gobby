@@ -239,9 +239,12 @@ pub fn render_empty(frame: &mut Frame, area: Rect, chrome: &Chrome) {
     };
     let picker_label = binding_label("terminal_picker");
     let sidebar_label = binding_label("toggle_sidebar");
-    // The toggle unpins a pinned column and otherwise opens the overlay.
+    // The toggle unpins a pinned column, rolls up an open overlay, and
+    // otherwise opens the overlay.
     let sidebar_step = if chrome.sidebar.pinned {
         "hide the sidebar"
+    } else if chrome.sidebar.overlay {
+        "close the sidebar"
     } else {
         "open the sidebar"
     };
