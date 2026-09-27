@@ -223,7 +223,7 @@ def _server(
     server.terminal_runtime_registry = SimpleNamespace(resolve=lambda _backend: runtime)
     server.write_coordinator = SimpleNamespace(write=AsyncMock(return_value=runtime.write_result))
     server.terminal_config = SimpleNamespace(default_backend=backend)
-    cast(Any, server)._sweep_tmux_panes = AsyncMock(return_value={})
+    cast(Any, server).sweep_tmux_panes = AsyncMock(return_value={})
     return server, manager, runtime
 
 

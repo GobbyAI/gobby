@@ -6,7 +6,7 @@ import json
 import subprocess
 import uuid
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
@@ -33,16 +33,20 @@ def _machine() -> Any:
         yield
 
 
-def _server(temp_db: HubDatabase) -> Any:
+def _server(temp_db: HubDatabase, websocket_server: Any = None) -> Any:
     from types import SimpleNamespace
 
     manager = TerminalManager(temp_db)
-    return SimpleNamespace(services=SimpleNamespace(terminal_manager=manager, database=temp_db))
+    return SimpleNamespace(
+        services=SimpleNamespace(
+            terminal_manager=manager, database=temp_db, websocket_server=websocket_server
+        )
+    )
 
 
-def _client(temp_db: HubDatabase) -> TestClient:
+def _client(temp_db: HubDatabase, websocket_server: Any = None) -> TestClient:
     app = FastAPI()
-    app.include_router(create_terminals_router(_server(temp_db)))
+    app.include_router(create_terminals_router(_server(temp_db, websocket_server)))
     return TestClient(app)
 
 
@@ -230,25 +234,36 @@ def test_a_native_row_reports_the_command_in_its_terminal_foreground(
 
     process = MagicMock()
     process.return_value.cwd.return_value = "/srv/app"
+    # The WS server's tmux sweep, which the REST list now runs too.
+    pane = MagicMock(pane_command="vim", pane_path="/Users/dev/projects/gobby")
+    sweep = AsyncMock(return_value={promoted.locator_key: pane})
+    websocket_server = MagicMock(sweep_tmux_panes=sweep, lease_registry=None)
 
     with (
         patch("gobby.terminals.foreground.spawn.run", run),
         patch("gobby.terminals.foreground.psutil.Process", process),
-        _client(temp_db) as client,
+        _client(temp_db, websocket_server) as client,
     ):
         listing = client.get("/api/terminals", params={"project_id": sample_project["id"]})
         detail = client.get(f"/api/terminals/{native.id}")
 
     rows = {row["id"]: row for row in listing.json()["items"]}
     assert rows[native.id]["command"] == "nvim"
-    # A tmux row records no shell pid, so the key is present and empty rather
-    # than missing: the label ladder reads one field for every backend.
-    assert rows[promoted.id]["command"] is None
     assert detail.json()["command"] == "nvim"
-    # The shell's working directory rides beside it, absent the same way.
     assert rows[native.id]["cwd"] == "/srv/app"
-    assert rows[promoted.id]["cwd"] is None
     assert detail.json()["cwd"] == "/srv/app"
+    # A tmux row records no shell pid; the sweep supplies its pane's own
+    # command and directory, the fields the gclient sidebar relist reads.
+    assert rows[promoted.id]["command"] == "vim"
+    assert rows[promoted.id]["cwd"] == "/Users/dev/projects/gobby"
+    sweep.assert_awaited_once()
+
+    # Without a sweep (no WS server) a tmux row's fields are present and null.
+    with patch("gobby.terminals.foreground.spawn.run", run), _client(temp_db) as client:
+        bare = client.get("/api/terminals", params={"project_id": sample_project["id"]})
+    bare_rows = {row["id"]: row for row in bare.json()["items"]}
+    assert bare_rows[promoted.id]["command"] is None
+    assert bare_rows[promoted.id]["cwd"] is None
 
 
 def test_a_native_row_falls_back_to_its_spawn_shell(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -44,12 +45,14 @@ def create_terminals_router(server: HTTPServer) -> APIRouter:
             raise HTTPException(status_code=503, detail="terminal_manager unavailable")
         return manager
 
-    def _lease_registry() -> TerminalLeaseRegistry:
-        nonlocal fallback_registry
-        websocket_server = getattr(server.services, "websocket_server", None) or getattr(
+    def _websocket_server() -> Any:
+        return getattr(server.services, "websocket_server", None) or getattr(
             server, "websocket_server", None
         )
-        registry = getattr(websocket_server, "lease_registry", None)
+
+    def _lease_registry() -> TerminalLeaseRegistry:
+        nonlocal fallback_registry
+        registry = getattr(_websocket_server(), "lease_registry", None)
         if isinstance(registry, TerminalLeaseRegistry):
             return registry
         if fallback_registry is None:
@@ -57,7 +60,7 @@ def create_terminals_router(server: HTTPServer) -> APIRouter:
         return fallback_registry
 
     @router.get("/api/terminals")
-    def list_terminals(
+    async def list_terminals(
         project_id: str = Query(...),
         states: str | None = Query(None),
         backend: str | None = Query(None),
@@ -77,7 +80,15 @@ def create_terminals_router(server: HTTPServer) -> APIRouter:
             if created_at is None and cursor_id is None
             else None
         )
-        items, has_more = manager.list_page(
+        # The same bounded tmux sweep that fronts the WS list, so a tmux
+        # row reports its pane's command and directory here too. It never
+        # fails the list; the page work after it runs off the loop.
+        sweep = getattr(_websocket_server(), "sweep_tmux_panes", None)
+        panes = {} if sweep is None else await sweep(manager, machine_id)
+        return await asyncio.to_thread(
+            _serve_page,
+            manager,
+            panes,
             [project_id],
             machine_id=machine_id,
             states=parsed_states,
@@ -85,21 +96,36 @@ def create_terminals_router(server: HTTPServer) -> APIRouter:
             cursor_created_at=created_at,
             cursor_id=cursor_id,
             limit=page_size,
+            snapshot=snapshot,
         )
+
+    def _serve_page(
+        manager: TerminalManager,
+        panes: dict[str, Any],
+        project_ids: list[str],
+        *,
+        snapshot: Any,
+        **page_query: Any,
+    ) -> dict[str, Any]:
+        items, has_more = manager.list_page(project_ids, **page_query)
         pids = _shell_pids(items)
         commands = foreground_commands(pids)
         cwds = shell_cwds(pids)
         registry = _lease_registry()
-        serialized = [
-            _row_json(
-                row,
-                _attach(server, manager, row),
-                commands.get(row.id),
-                cwds.get(row.id),
-                registry.holder_info(row.id),
+        serialized = []
+        for row in items:
+            # A native row is probed from its shell pid; a tmux row reads
+            # its pane from the sweep.
+            pane = panes.get(row.locator_key or "")
+            serialized.append(
+                _row_json(
+                    row,
+                    _attach(server, manager, row),
+                    commands.get(row.id) or (pane.pane_command if pane else None),
+                    cwds.get(row.id) or (pane.pane_path if pane else None),
+                    registry.holder_info(row.id),
+                )
             )
-            for row in items
-        ]
         next_cursor = None
         item_cursors = [f"{row.created_at.isoformat()}|{row.id}" for row in items]
         if has_more and items:

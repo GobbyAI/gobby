@@ -335,7 +335,7 @@ class TerminalWsMixin:
             )
             return
         machine_id = require_machine_id()
-        panes = await self._sweep_tmux_panes(manager, machine_id)
+        panes = await self.sweep_tmux_panes(manager, machine_id)
         # The page query, like the sweep, runs off the loop: a slow database
         # then delays this reply instead of every other connection's input.
         items, has_more = await asyncio.to_thread(
@@ -399,7 +399,7 @@ class TerminalWsMixin:
             return
         await self._send_json(websocket, payload)
 
-    async def _sweep_tmux_panes(self, manager: Any, machine_id: str) -> dict[str, Any]:
+    async def sweep_tmux_panes(self, manager: Any, machine_id: str) -> dict[str, Any]:
         """Mirror the tmux servers into ``terminals`` before listing; never fails the list.
 
         Bounded by ``TMUX_SWEEP_BUDGET_SECONDS``: an unresponsive tmux drops this
