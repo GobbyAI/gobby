@@ -409,7 +409,10 @@ async def handle_attached_plan_approval(
             ),
             timeout=_PLAN_TERMINAL_OPERATION_TIMEOUT_SECONDS,
         )
-    except (TimeoutError, OSError, RuntimeError, ValueError) as exc:
+    except TimeoutError:
+        logger.warning("Native plan keystroke dispatch timed out for terminal %s", terminal.id)
+        outcome = IndeterminateWrite("plan approval dispatch timed out")
+    except (OSError, RuntimeError, ValueError) as exc:
         logger.warning(
             "Native plan keystroke dispatch failed for terminal %s: %s",
             terminal.id,

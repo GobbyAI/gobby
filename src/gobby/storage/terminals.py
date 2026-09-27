@@ -643,6 +643,19 @@ class TerminalManager(TerminalSettlementMixin):
         )
         return None if row is None else Terminal.from_row(row)
 
+    def get_latest_for_session(self, session_id: str) -> Terminal | None:
+        """Newest terminal evidence for a session, including settled and orphaned rows."""
+        row = self.db.fetchone(
+            """
+            SELECT * FROM terminals
+            WHERE session_id = %s
+            ORDER BY updated_at DESC, id DESC
+            LIMIT 1
+            """,
+            (str(UUID(session_id)),),
+        )
+        return None if row is None else Terminal.from_row(row)
+
     def resolve_live_for_session(self, session: Session) -> Terminal | None:
         """Resolve a bound row or an eligible row named by terminal context."""
         bound = self.get_live_for_session(session.id)

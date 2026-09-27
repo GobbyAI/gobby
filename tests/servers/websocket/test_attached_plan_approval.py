@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from contextlib import contextmanager
 from types import SimpleNamespace
@@ -322,6 +323,47 @@ class TestAttachedPlanApprovalDispatch:
                 ),
             )
 
+        assert (
+            cast(AsyncMock, server._send_error).await_args.kwargs["code"]
+            == "PLAN_DISPATCH_UNCONFIRMED"
+        )
+        ws.send.assert_not_awaited()
+
+    async def test_in_flight_dispatch_timeout_is_unconfirmed(self) -> None:
+        server = ConcreteSessionControl()
+        ws = _make_ws()
+        cast(MagicMock, server.session_manager).get.return_value = _make_terminal_session(
+            tmux_pane=None
+        )
+        started = asyncio.Event()
+
+        async def dispatch_in_flight(*_args: Any, **_kwargs: Any) -> Delivered:
+            started.set()
+            await asyncio.Event().wait()
+            return Delivered()
+
+        with (
+            _wire_native(server, MagicMock()),
+            patch(
+                "gobby.servers.websocket.handlers.plan_approval."
+                "_PLAN_TERMINAL_OPERATION_TIMEOUT_SECONDS",
+                0.01,
+            ),
+        ):
+            server.write_coordinator.run_sequence = AsyncMock(side_effect=dispatch_in_flight)
+            await handle_attached_plan_approval(
+                server,
+                ws,
+                "term-1",
+                {"decision": "approve", "option_id": "approve_yolo"},
+                registry=_registry_with(
+                    "example",
+                    "approve_yolo",
+                    PlanKeystrokeSequence(strokes=(PlanKeystroke("1", literal=True),)),
+                ),
+            )
+
+        assert started.is_set()
         assert (
             cast(AsyncMock, server._send_error).await_args.kwargs["code"]
             == "PLAN_DISPATCH_UNCONFIRMED"

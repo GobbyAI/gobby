@@ -90,8 +90,30 @@ async def _reconcile_agent_runs_after_restart(
         if not terminal_id:
             reconciled += await _refresh_surviving_run(runner, run, resolved_run_ids)
             continue
+        if manager is None:
+            await _fence_reconciliation_run(
+                runner,
+                run,
+                "terminal_manager_unavailable",
+                "terminal state cannot be verified during restart reconciliation",
+            )
+            continue
         row = await _terminal_row(runner, manager, str(terminal_id))
-        if row is None or row.state == "exited":
+        if row is None:
+            await _fence_reconciliation_run(
+                runner,
+                run,
+                "terminal_row_missing",
+                f"terminal {terminal_id} has no authoritative exit evidence",
+            )
+        elif getattr(row, "agent_run_id", None) not in {None, str(run.id)}:
+            await _fence_reconciliation_run(
+                runner,
+                run,
+                "terminal_ownership_mismatch",
+                f"terminal {row.id} belongs to a different agent run",
+            )
+        elif row.state == "exited":
             missing_runs.append(run)
         elif row.backend == "native":
             native_runs.append((run, row))
@@ -180,21 +202,18 @@ async def _reconcile_native_runs(
     runs: list[tuple[Any, Terminal]],
     resolved_run_ids: set[str] | None,
 ) -> int:
-    """Park and resume native runs whose terminal the host manager already lost.
-
-    Native rows are owned by the gterm host manager: it orphans them on host
-    loss and interrupts their runs, so reconciliation trusts the row state and
-    never probes the host (which may not be re-adopted yet at this point).
-    """
+    """Reconnect live native runs and fence uncertain terminal states."""
     reconciled = 0
     for run, row in runs:
         if row.state == "live":
             reconciled += await _refresh_surviving_run(runner, run, resolved_run_ids)
             continue
-        if await _cleanup_missing_terminal_agent_run(runner, run, row.id):
-            reconciled += 1
-            if resolved_run_ids is not None:
-                resolved_run_ids.add(str(run.id))
+        await _fence_reconciliation_run(
+            runner,
+            run,
+            f"native_terminal_{row.state}",
+            f"native terminal {row.id} has uncertain liveness",
+        )
     return reconciled
 
 
@@ -234,11 +253,15 @@ async def _resolve_provisional_daemon_resume_row(
         )
 
     terminal_manager = getattr(runner, "terminal_manager", None)
-    row = (
-        await _run_db(runner, terminal_manager.get_live_for_session, child_session_id)
-        if terminal_manager is not None
-        else None
-    )
+    if terminal_manager is None:
+        await _fence_reconciliation_run(
+            runner,
+            run,
+            "provisional_terminal_manager_unavailable",
+            "terminal state cannot be verified during daemon resume",
+        )
+        return False
+    row = await _run_db(runner, terminal_manager.get_latest_for_session, child_session_id)
     if row is not None and row.agent_run_id != run.id:
         await _fence_reconciliation_run(
             runner,
@@ -247,7 +270,23 @@ async def _resolve_provisional_daemon_resume_row(
             f"terminal {row.id} belongs to a different agent run",
         )
         return False
-    if row is not None and row.backend != "native":
+    if row is not None and row.state == "orphaned":
+        await _fence_reconciliation_run(
+            runner,
+            run,
+            "provisional_terminal_orphaned",
+            f"terminal {row.id} has uncertain liveness",
+        )
+        return False
+    if row is not None and row.state not in {"pending", "live", "exited"}:
+        await _fence_reconciliation_run(
+            runner,
+            run,
+            "provisional_terminal_state_unknown",
+            f"terminal {row.id} has unexpected state {row.state}",
+        )
+        return False
+    if row is not None and row.state != "exited" and row.backend != "native":
         await _fence_unsupported_terminal(runner, run, row)
         return False
     if row is not None and row.state == "pending":

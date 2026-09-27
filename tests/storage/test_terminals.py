@@ -121,6 +121,45 @@ def test_get_many_fetches_any_number_of_terminals_in_one_query(
     assert len(fetchall.call_args.args[1][0]) == 3
 
 
+def test_latest_for_session_includes_orphaned_terminal_evidence(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    session_manager: SessionManager,
+) -> None:
+    manager = _manager(temp_db)
+    session_id = session_manager.register(
+        external_id="orphaned-evidence-session",
+        machine_id=LOCAL_MACHINE_ID,
+        source="claude",
+        project_id=sample_project["id"],
+    ).id
+    terminal_id = str(uuid.uuid4())
+    pending = manager.create_pending(
+        terminal_id=terminal_id,
+        project_id=sample_project["id"],
+        backend="native",
+        ownership="gobby",
+        spawn_key=terminal_id,
+        session_id=session_id,
+    )
+    host_terminal_id = str(uuid.uuid4())
+    epoch = str(uuid.uuid4())
+    live = manager.promote_to_live(
+        pending.id,
+        locator={"host_terminal_id": host_terminal_id},
+        locator_key=native_locator_key(epoch, host_terminal_id),
+        host_epoch=epoch,
+    )
+    assert live is not None
+    orphaned = manager.mark_orphaned(live.id)
+    assert orphaned is not None
+
+    assert manager.get_live_for_session(session_id) is None
+    latest = manager.get_latest_for_session(session_id)
+    assert latest is not None
+    assert (latest.id, latest.session_id, latest.state) == (terminal_id, session_id, "orphaned")
+
+
 def test_failed_spawn_leaves_reapable_pending_row(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],

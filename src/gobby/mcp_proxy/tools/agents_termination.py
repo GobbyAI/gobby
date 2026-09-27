@@ -124,6 +124,7 @@ async def _complete_self_terminated_run(
         from gobby.agents.capture import terminate_managed_runtime_async
         from gobby.storage.agents import LocalAgentRunManager, TerminalAction
         from gobby.storage.terminals import TerminalManager
+        from gobby.terminals.runtime import UnregisteredBackendError
 
         manager = LocalAgentRunManager(kill_db)
         terminal_manager = TerminalManager(kill_db)
@@ -143,7 +144,15 @@ async def _complete_self_terminated_run(
                 "error": "terminal runtime registry unavailable",
                 "error_code": "terminal_runtime_unavailable",
             }
-        runtime = registry.resolve(terminal.backend)
+        try:
+            runtime = registry.resolve(terminal.backend)
+        except UnregisteredBackendError:
+            return {
+                "success": False,
+                "run_id": run.id,
+                "error": f"unsupported terminal backend: {terminal.backend}",
+                "error_code": "unsupported_terminal_backend",
+            }
 
         async def terminalize(
             _action: TerminalAction,
