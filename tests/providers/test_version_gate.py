@@ -422,12 +422,12 @@ async def test_agy_capability_registry_uses_published_support_record_without_sec
     assert spawn.available is True
     assert tool_chat.available is False
     assert tool_chat.reason == (
-        "AGY configures MCP servers only globally; a per-request controlled-tool set "
+        "Antigravity configures MCP servers only globally; a per-request controlled-tool set "
         "cannot be confined to one process"
     )
     assert vision.available is False
     assert vision.reason == (
-        "AGY accepts no image input; vision requires the model to open a file path itself"
+        "Antigravity accepts no image input; vision requires the model to open a file path itself"
     )
     assert web_chat.metadata["agy_supported"] is True
     assert web_chat.metadata["agy_installed_version"] == "1.1.18"
@@ -444,7 +444,7 @@ def test_agy_capability_registry_tracks_support_record_replacements() -> None:
         installed_version="1.1.18",
         required_version=AGY_REQUIRED_VERSION,
         supported=True,
-        reason="AGY 1.1.18 meets required version 1.1.18.",
+        reason="Antigravity 1.1.18 meets required version 1.1.18.",
         identity=None,
     )
     unsupported = AgySupportRecord(
@@ -526,7 +526,7 @@ async def test_web_chat_create_session_awaits_ensure_before_agy_launch() -> None
             installed_version="1.1.18",
             required_version=AGY_REQUIRED_VERSION,
             supported=True,
-            reason="AGY 1.1.18 meets required version 1.1.18.",
+            reason="Antigravity 1.1.18 meets required version 1.1.18.",
             identity=None,
         )
     )

@@ -499,14 +499,14 @@ def test_daemon_registry_scopes_agy_to_strict_text_generation_when_installed(
     assert vision is not None
     assert vision.available is False
     assert vision.reason == (
-        "AGY accepts no image input; vision requires the model to open a file path itself"
+        "Antigravity accepts no image input; vision requires the model to open a file path itself"
     )
 
     tool_chat = registry.binding(AICapability.TOOL_CHAT, "agy")
     assert tool_chat is not None
     assert tool_chat.available is False
     assert tool_chat.reason == (
-        "AGY configures MCP servers only globally; a per-request controlled-tool set "
+        "Antigravity configures MCP servers only globally; a per-request controlled-tool set "
         "cannot be confined to one process"
     )
 
@@ -528,7 +528,7 @@ def test_tool_chat_binding_keeps_agy_unavailable_without_adapter_branch() -> Non
     assert "only globally" in (binding.reason or "")
     assert (
         _tool_chat_binding(
-            ProviderMetadata("agy", "agy", "AGY", ".gemini"),
+            ProviderMetadata("agy", "agy", "Antigravity", ".gemini"),
             lambda _entry: True,
             {},
             0.0,
@@ -546,7 +546,7 @@ def test_daemon_registry_marks_agy_text_generation_unavailable_when_cli_absent()
     binding = registry.binding(AICapability.TEXT_GENERATE, "agy")
     assert binding is not None
     assert binding.available is False
-    assert binding.reason == "AGY CLI is not installed."
+    assert binding.reason == "Antigravity CLI is not installed."
     assert binding.strict_models is True
     assert binding.models == tuple(AGY_MODELS)
 

@@ -1029,7 +1029,7 @@ async def test_agy_resume_uses_conversation_and_add_dir(
     _patch_common(monkeypatch, spawner=spawner, finalize=finalize)
     record = SimpleNamespace(
         supported=True,
-        reason="AGY 1.1.18 meets required version 1.1.18.",
+        reason="Antigravity 1.1.18 meets required version 1.1.18.",
     )
     monkeypatch.setattr(
         resume_executor,
@@ -1073,7 +1073,7 @@ async def test_agy_resume_refuses_unsupported_record_before_spawn(
     _patch_common(monkeypatch, spawner=spawner, finalize=finalize)
     record = SimpleNamespace(
         supported=False,
-        reason="Installed AGY version 1.1.0 does not meet required version 1.1.18.",
+        reason="Installed Antigravity version 1.1.0 does not meet required version 1.1.18.",
     )
     monkeypatch.setattr(
         resume_executor,

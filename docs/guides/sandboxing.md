@@ -53,7 +53,7 @@ Daemon-owned provider launches continue through their managed launch path.
 
 The shell allowlist is deliberately literal: a single `--help`, `-h`, or
 `--version` argument; `codex -V`; `-v` for Claude, Droid, Grok, or Qwen;
-bare `help` for Codex, Droid, Grok, or AGY; `grok version`/`grok v`;
+bare `help` for Codex, Droid, Grok, or Antigravity; `grok version`/`grok v`;
 `codex login status`; and `claude auth status` (optionally `--json` or `--text`).
 Recognized subcommand help, such as `codex exec --help`, `codex help login`,
 and `claude auth status --help`, also qualifies. Prompt operands or other
@@ -251,7 +251,7 @@ Git network access remains independent. Web chat has its own configured defaults
 
 ## Launch And Lifecycle
 
-Gobby constructs the complete Claude, Codex, Qwen, Grok, Droid, or AGY command first,
+Gobby constructs the complete Claude, Codex, Qwen, Grok, Droid, or Antigravity command first,
 preflights SRT, and then wraps that argv exactly once before tmux creation.
 Provider-native OS sandbox flags are omitted in SRT mode, while provider approval
 policies, tool permissions, MCP/browser/computer-use controls, authentication,
@@ -261,7 +261,7 @@ Hook delivery is fail-open for every tool-use event. No CLI treats `PreToolUse`
 as critical, so a PreToolUse denial degrades to allow when the daemon is
 unreachable. Lifecycle failure policy is provider-specific: Claude uses kebab-case lifecycle
 names, Codex/Qwen/Droid use PascalCase, and Grok uses snake_case names. Those
-registered lifecycle hooks fail closed. AGY has no critical hooks and fails open
+registered lifecycle hooks fail closed. Antigravity has no critical hooks and fails open
 for delivery failure. Turn-level `Stop` is never critical. The authoritative
 registry is `crates/ghook/src/cli_config.rs`.
 
@@ -304,7 +304,7 @@ sandbox run directory.
 Explicit `provider-native` mode retains the existing provider renderers as an
 operator-selected override. A surface/provider combination without a renderer is
 rejected rather than falling back. Web-chat SDK, app-server, ACP, stream-jsonrpc,
-and AGY stream-json transports keep session-owned lifetimes and policy-hash resume
+and Antigravity stream-json transports keep session-owned lifetimes and policy-hash resume
 checks regardless of the selected backend.
 
 ## Security Boundary

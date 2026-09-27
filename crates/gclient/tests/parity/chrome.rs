@@ -509,7 +509,7 @@ parity_tests! {
             );
             assert_eq!(
                 chrome.view.terminal_area,
-                Rect::new(26, MENU_BAR_ROWS + 2, 54, 18 - MENU_BAR_ROWS - STATUS_ROWS)
+                Rect::new(26, MENU_BAR_ROWS + 1, 54, 19 - MENU_BAR_ROWS - STATUS_ROWS)
             );
             assert_eq!(tabs.tab_hit_areas.len(), 2);
             assert!(tabs.tab_hit_areas.iter().all(|rect| rect.width > 0));
@@ -578,7 +578,7 @@ parity_tests! {
                     );
                     assert_eq!(
                         two_tab_size,
-                        (18 - MENU_BAR_ROWS - STATUS_ROWS - PANE_EDGES, 53 - PANE_EDGES)
+                        (19 - MENU_BAR_ROWS - STATUS_ROWS - PANE_EDGES, 53 - PANE_EDGES)
                     );
                 });
         }
@@ -695,11 +695,11 @@ parity_tests! {
             let auto_style = cell(&terminal, auto_rect.x + 1, auto_rect.y).style();
             let custom_style = cell(&terminal, custom_rect.x + 1, custom_rect.y).style();
 
-            assert_eq!(auto_style.fg, Some(palette().overlay1));
+            assert_eq!(auto_style.fg, Some(palette().subtext0));
             assert_eq!(auto_style.bg, Some(palette().surface0));
             assert!(!auto_style.add_modifier.contains(Modifier::DIM));
             assert_eq!(custom_style.fg, Some(palette().text));
-            assert_eq!(custom_style.bg, Some(palette().panel_bg));
+            assert_eq!(custom_style.bg, Some(palette().surface1));
             assert!(custom_style.add_modifier.contains(Modifier::BOLD));
         }
 
@@ -718,9 +718,9 @@ parity_tests! {
             let custom_rect = tabs.tab_hit_areas[1];
             let custom_style = cell(&terminal, custom_rect.x + 1, custom_rect.y).style();
 
-            // gclient: the active tab is always on the terminal's own
-            // ground, so a reset panel background changes nothing.
-            assert_eq!(custom_style.bg, Some(Color::Reset));
+            // gclient: the active tab always sits on the raised surface,
+            // so a reset panel background changes nothing.
+            assert_eq!(custom_style.bg, Some(palette().surface1));
             assert_eq!(custom_style.fg, Some(palette().text));
             assert!(custom_style.add_modifier.contains(Modifier::BOLD));
         }
@@ -1098,7 +1098,7 @@ switch_project = "ctrl+1..9"
                     let area = chrome.view.terminal_area;
                     assert_eq!(
                         area,
-                        Rect::new(26, MENU_BAR_ROWS + 2, 80, 18 - MENU_BAR_ROWS - STATUS_ROWS)
+                        Rect::new(26, MENU_BAR_ROWS + 1, 80, 19 - MENU_BAR_ROWS - STATUS_ROWS)
                     );
                     assert_eq!(chrome.view.pane_infos.len(), 2);
                     assert!(!chrome.view.split_borders.is_empty());
@@ -1175,7 +1175,7 @@ switch_project = "ctrl+1..9"
                     );
                     assert_eq!(
                         chrome.view.terminal_area,
-                        Rect::new(26, MENU_BAR_ROWS + 2, 80, 18 - MENU_BAR_ROWS - STATUS_ROWS)
+                        Rect::new(26, MENU_BAR_ROWS + 1, 80, 19 - MENU_BAR_ROWS - STATUS_ROWS)
                     );
                     assert_eq!(chrome.view.pane_infos.len(), 2);
                     assert!(!chrome.view.split_borders.is_empty());
@@ -1235,7 +1235,7 @@ switch_project = "ctrl+1..9"
                     // digest moves only alongside a deliberate render change.
                     assert_eq!(
                         frame_digest(&terminal),
-                        "a4769bdbdec97dc68f0befc66123f3fcd20959cadfcd3f3c11ae56994d658a54",
+                        "473c55f6da0afb0b52467e8a79d29f8c546cc47443e77142865fe601d23d3484",
                         "the frame moved; read it against the boards before pinning:\n{}",
                         rect_rows(&terminal, frame).join("\n")
                     );
@@ -1278,8 +1278,7 @@ fn hidden_sidebar_uses_full_width_terminal_area() {
     assert_eq!(view.menu_bar_line, Rect::new(0, 1, 80, 1));
     assert_eq!(view.status_rect, Rect::new(0, 19, 80, 1));
     assert_eq!(view.tab_bar_rect, Some(Rect::new(0, 2, 80, 1)));
-    assert_eq!(view.tab_bar_line, Rect::new(0, 3, 80, 1));
-    assert_eq!(view.terminal_area, Rect::new(0, 4, 80, 15));
+    assert_eq!(view.terminal_area, Rect::new(0, 3, 80, 16));
 }
 
 #[test]
@@ -1322,13 +1321,12 @@ fn overlay_covers_34_columns_without_moving_panes() {
     chrome.compute_view(&ws, area);
     assert_eq!(chrome.view.sidebar_rect, Rect::new(54, 2, 26, 17));
     assert_eq!(chrome.view.tab_bar_rect, Some(Rect::new(0, 2, 54, 1)));
-    assert_eq!(chrome.view.tab_bar_line, Rect::new(0, 3, 54, 1));
-    assert_eq!(chrome.view.terminal_area, Rect::new(0, 4, 54, 15));
+    assert_eq!(chrome.view.terminal_area, Rect::new(0, 3, 54, 16));
     assert_eq!(chrome.view.sidebar_divider_x, Some(54));
     chrome.sidebar.side = SidebarSide::Left;
     chrome.compute_view(&ws, area);
     assert_eq!(chrome.view.sidebar_rect, Rect::new(0, 2, 26, 17));
-    assert_eq!(chrome.view.terminal_area, Rect::new(26, 4, 54, 15));
+    assert_eq!(chrome.view.terminal_area, Rect::new(26, 3, 54, 16));
     assert_eq!(chrome.view.sidebar_divider_x, Some(25));
 }
 
@@ -1759,9 +1757,9 @@ fn open_pane_below_stacks_the_new_slot_under_the_focused_one() {
 }
 
 // The upstream parity case keeps its pinned identity above; this names the
-// tab treatment directly: the active tab opens onto the terminal's ground.
+// tab treatment directly: the active tab rises on the raised surface.
 #[test]
-fn tab_bar_opens_the_active_tab_onto_the_terminal_ground() {
+fn tab_bar_raises_the_active_tab_in_every_theme() {
     let ws = scripted(&["test"]);
     let mut chrome = chrome_for(&ws, "test");
     add_tab(&mut chrome, "logs");
@@ -1773,14 +1771,18 @@ fn tab_bar_opens_the_active_tab_onto_the_terminal_ground() {
     let active = tab_view(&ws, &chrome, area).tab_hit_areas[1];
     let style = cell(&terminal, active.x + 1, active.y).style();
 
-    // Dark paints the ground; System leaves the terminal's own.
+    // The same surface in Dark and under System, where the host's own
+    // ground would read as a hole in the bar.
     assert_eq!(style.fg, Some(palette().text));
-    assert_eq!(style.bg, Some(palette().panel_bg));
+    assert_eq!(style.bg, Some(palette().surface1));
     assert!(style.add_modifier.contains(Modifier::BOLD));
 
     chrome.prefs.theme = "system".to_string();
     let terminal = render_full(&ws, &chrome, area);
     let style = cell(&terminal, active.x + 1, active.y).style();
     assert_eq!(style.fg, Some(palette().text));
-    assert_eq!(style.bg, Some(Color::Reset));
+    assert_eq!(style.bg, Some(palette().surface1));
+
+    // The pane body starts right under the tab row: no rule between them.
+    assert_eq!(chrome.view.terminal_area.y, active.y + 1);
 }

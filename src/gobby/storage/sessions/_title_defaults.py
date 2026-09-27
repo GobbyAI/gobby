@@ -9,7 +9,7 @@ TASK_TITLE_SOURCE = "task"
 MANUAL_TITLE_SOURCE = "manual"
 
 _PROVIDER_TITLE_LABELS = {
-    "agy": "AGY",
+    "agy": "Antigravity",
     "claude": "Claude",
     "claude_code": "Claude Code",
     "codex": "Codex",

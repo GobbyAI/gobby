@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use gobby_client::app::sidebar_model::{
-    agent_state, build, rollup, AgentEntry, SidebarInputs, SidebarModel,
+    agent_state, build, provider_label, rollup, AgentEntry, SidebarInputs, SidebarModel,
 };
 use gobby_client::app::{Backend, Pane, PaneId};
 use gobby_client::daemon::{
@@ -616,4 +616,11 @@ fn model_slug_lowercases_hyphenates_and_appends_effort() {
         "the raw model stands in for a missing display name"
     );
     assert_eq!(agent(None, None, None).model_slug(), "");
+}
+
+#[test]
+fn agy_sessions_are_labelled_antigravity() {
+    assert_eq!(provider_label("agy"), "Antigravity");
+    assert_eq!(provider_label(" AGY "), "Antigravity");
+    assert_eq!(provider_label("codex"), "Codex");
 }

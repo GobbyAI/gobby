@@ -13,7 +13,7 @@ from gobby.servers.provider_model_discovery import get_cli_version
 
 AGY_REQUIRED_VERSION = "1.1.18"
 AGY_UNPUBLISHED_REASON = "version probe has not run"
-AGY_REVALIDATING_REASON = "AGY binary changed; revalidating"
+AGY_REVALIDATING_REASON = "Antigravity binary changed; revalidating"
 
 _VERSION_RE = re.compile(r"v?(\d+\.\d+\.\d+)")
 _path_locks_guard = asyncio.Lock()
@@ -143,13 +143,13 @@ def _parse_installed_version(output: str | None) -> str | None:
 
 def _unsupported_reason(installed_label: str) -> str:
     return (
-        f"Installed AGY version {installed_label} does not meet required version "
+        f"Installed Antigravity version {installed_label} does not meet required version "
         f"{AGY_REQUIRED_VERSION}."
     )
 
 
 def _supported_reason(installed: str) -> str:
-    return f"AGY {installed} meets required version {AGY_REQUIRED_VERSION}."
+    return f"Antigravity {installed} meets required version {AGY_REQUIRED_VERSION}."
 
 
 def _record_for(

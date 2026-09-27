@@ -81,14 +81,17 @@ pub struct SidebarLayout {
 /// The layout of `area`, from its first row to its last: the machines band
 /// with up to `MACHINES_MAX_ROWS` of its `machine_rows`, the projects band
 /// with its `project_rows` while the two stay within the top half, and the
-/// sessions with everything left, the projects and sessions bands each
-/// under a blank row. A section short of its rows scrolls; one with no room
-/// at all is empty.
+/// agents and terminals with everything left, the projects and agents bands
+/// each under a blank row. With no `terminal_rows` the agents keep their
+/// `agent_rows` and blank row, and the terminals band follows them over the
+/// rest. A section short of its rows scrolls; one with no room at all is
+/// empty.
 pub fn sidebar_layout(
     area: Rect,
     side: SidebarSide,
     machine_rows: u16,
     project_rows: u16,
+    agent_rows: u16,
     terminal_rows: u16,
 ) -> SidebarLayout {
     // The edge column faces the content: last on the left, first on the right.
@@ -113,7 +116,8 @@ pub fn sidebar_layout(
     let terminals = if remaining < 2 {
         0
     } else if terminal_rows == 0 {
-        BAND_ROWS
+        let agents = (BAND_ROWS + GAP_ROWS).saturating_add(agent_rows);
+        remaining - agents.min(remaining - BAND_ROWS)
     } else {
         remaining / 2
     };
@@ -139,8 +143,22 @@ pub fn section_rects<W: WorkspaceView>(ws: &W, chrome: &Chrome, area: Rect) -> [
             .map(|row| usize::from(row.height()))
             .sum(),
     );
+    let agents = rows_u16(
+        agent_rows(ws, chrome)
+            .iter()
+            .map(|row| usize::from(row.height()))
+            .sum(),
+    );
     let terminals = rows_u16(terminal_rows(ws, chrome).len());
-    sidebar_layout(area, chrome.sidebar.side, machines, projects, terminals).sections
+    sidebar_layout(
+        area,
+        chrome.sidebar.side,
+        machines,
+        projects,
+        agents,
+        terminals,
+    )
+    .sections
 }
 
 fn rows_u16(rows: usize) -> u16 {
@@ -172,6 +190,7 @@ pub fn render_sidebar<W: WorkspaceView>(
         chrome.sidebar.side,
         rows_u16(machines.len()),
         rows_u16(projects.iter().map(|row| usize::from(row.height())).sum()),
+        rows_u16(agents.iter().map(|row| usize::from(row.height())).sum()),
         rows_u16(terminals.len()),
     );
     machines::render_machines(frame, layout.sections[0], &machines, chrome, &mut hits);
@@ -328,7 +347,7 @@ pub(super) fn render_section_rows(
             let row_style = if row.selected {
                 Style::default().bg(p.surface1)
             } else if row.active {
-                Style::default().bg(p.surface_dim)
+                Style::default().bg(p.surface0)
             } else {
                 Style::default()
             };

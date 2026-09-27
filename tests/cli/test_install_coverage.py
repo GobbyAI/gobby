@@ -870,7 +870,7 @@ class TestInstallCommand:
 
         assert result.exit_code == 0
         assert "Components to configure: agy, postgres, qdrant, falkordb" in result.output
-        assert "AGY CLI" in result.output
+        assert "Antigravity CLI" in result.output
         mock_agy.assert_called_once()
         mock_hooks.assert_not_called()
 

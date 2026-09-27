@@ -58,7 +58,7 @@ class AgySourceError(ValueError):
     def __init__(self, code: str, detail: str) -> None:
         self.source_key = _SOURCE_KEY
         self.code = code
-        super().__init__(f"AGY source {_SOURCE_KEY!r} failed ({code}): {detail}")
+        super().__init__(f"Antigravity source {_SOURCE_KEY!r} failed ({code}): {detail}")
 
 
 @dataclass(frozen=True, slots=True)

@@ -407,7 +407,7 @@ Both rules fail open when `gcode` cannot serve the request:
 - A gcode call records its scope before it runs. A raw read of that file stays
   allowed for the turn unless the call returns output with no error. This
   covers providers that never report a failure: Droid emits no hook for a
-  nonzero exit, and AGY's post-tool hook carries no output.
+  nonzero exit, and Antigravity's post-tool hook carries no output.
 - A reported gcode failure opens the scope it attempted for the rest of the
   turn, even without a pre-tool hook (Codex app-server reports auto-approved
   commands only on completion).

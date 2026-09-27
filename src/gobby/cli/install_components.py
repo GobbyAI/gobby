@@ -95,7 +95,7 @@ COMPONENT_LABELS: dict[str, str] = {
     "grok": "Grok CLI",
     "qwen": "Qwen CLI",
     "droid": "Droid CLI",
-    "agy": "AGY CLI",
+    "agy": "Antigravity CLI",
     "git-hooks": "Git hooks",
     "rtk": "RTK",
     "impeccable": "Impeccable",
