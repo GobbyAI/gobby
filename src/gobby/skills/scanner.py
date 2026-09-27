@@ -2,10 +2,12 @@
 
 import hashlib
 import logging
+import re
 import tempfile
 import time
 from collections import OrderedDict
 from collections.abc import Mapping
+from dataclasses import replace
 from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -157,9 +159,24 @@ def scan_skill_content(
     """
     from clawcare.discovery import discover
     from clawcare.integrations.codex import CodexAdapter
+    from clawcare.scanner.rules import resolve_rules
     from clawcare.scanner.scanner import scan_root
 
     start = time.monotonic()
+    rules = resolve_rules([_DEFAULT_CLAWCARE_RULESET])
+    for index, rule in enumerate(rules):
+        if rule.id != "CRIT_SECRET_EXFIL":
+            continue
+        pattern = rule.pattern.pattern
+        if r"(POST\b|" not in pattern:
+            if "(POST|" not in pattern:
+                raise RuntimeError("ClawCare secret exfiltration POST rule changed")
+            # POST inside 'postgres' is not an outbound HTTP method.
+            pattern = pattern.replace("(POST|", r"(POST\b|", 1)
+            rules[index] = replace(rule, pattern=re.compile(pattern, rule.pattern.flags))
+        break
+    else:
+        raise RuntimeError("ClawCare secret exfiltration rule is unavailable")
 
     # ClawCare expects an on-disk root so it can apply the Codex skill adapter.
     with tempfile.TemporaryDirectory(prefix=f"skill-{safe_temp_component(name)}-") as temp_dir:
@@ -185,7 +202,7 @@ def scan_skill_content(
             # would silently skip oversized files instead of scanning them.
             scope["include_globs"] = ["*"]
             scope["max_file_size_kb"] = max(512, max_file_bytes // 1024 + 1)
-            raw_findings.extend(scan_root(root, scope))
+            raw_findings.extend(scan_root(root, scope, rules=rules))
 
         raw_findings.sort(key=lambda finding: finding.sort_key())
         findings: list[dict[str, Any]] = []
