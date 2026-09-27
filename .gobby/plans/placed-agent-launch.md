@@ -997,7 +997,7 @@ Consumers unchanged:
 - 1.2.7 - The claim is taken before `create_pending` is dispatched and released after a successful promote or a bind failure. While it is held, `cleanup_failed_spawn` and `terminal_kill` each report not settled, leave the row `orphaned` and start no runtime terminate. A prepare slower than `spawn_in_doubt_seconds` is reaped by neither reaper. test: `tests/agents/test_spawn_executor_placement_bind.py::test_in_doubt_claim_spans_prepare`.
 - 1.2.8 - A late prepare failure is not proof. A tmux session created before a failing dimension query, and a native terminal created on the host whose spawn response was lost, are each found and killed with proof before the row settles `exited`. A native probe that cannot reach the host leaves the row `orphaned`. test: `tests/agents/test_spawn_executor_placement_bind.py::test_late_prepare_failure_requires_proven_absence`.
 - 1.2.9 - With a binder, each exit E1-E14 either releases the claim inline or hands it to exactly one owner, and none leaves the id held without an owner. Each case is one parametrized row. Cancellation cases cancel the caller repeatedly while the stage's worker is still running, and the owner awaits that worker's real completion. A `create_pending` whose row commits after the cancellation gets that row settled by the owner. The E12 cases (observer bind failure, `CommitSpawnRefusedError`, native commit error, lost CAS), with a kill that raises or is swallowed, leave the row unterminalized until the owner's proof, and the owner kills through the `prepared` identity. test: `tests/agents/test_spawn_executor_placement_bind.py::test_every_exit_releases_or_hands_off_the_claim`.
-- 1.2.10 - An injected failure of `mark_kill_failed` still lets the owner consume the prepare and make its kill decision. A final settlement write that fails after three retries leaves the claim held and the row unsettled. With `mark_kill_failed` failing on every retry and the kill unproven, a `record_orphan_identity` CAS that matches no row keeps the claim held, and the row keeps its prepared identity for restart recovery. A final `exited` or `fail_pending_attempt` read back in the wrong state also keeps the claim, and an already-`exited` row releases. On a timeout the row is `orphaned` while the prepare is still unresolved. test: `tests/agents/test_spawn_executor_placement_bind.py::test_owner_contains_storage_failures`.
+- 1.2.10 - An injected failure of `mark_kill_failed` still lets the owner consume the prepare and make its kill decision. A final settlement write that fails after three retries leaves the claim held and the row unsettled. With `mark_kill_failed` failing on every retry and the kill unproven, a `record_orphan_identity` CAS that matches no row keeps the claim held, and after a restart reconcile recovers the row from the strict host inventory. A final `exited` or `fail_pending_attempt` read back in the wrong state also keeps the claim, and an already-`exited` row releases. On a timeout the row is `orphaned` while the prepare is still unresolved. test: `tests/agents/test_spawn_executor_placement_bind.py::test_owner_contains_storage_failures`.
 
 ### 1.3 One daemon-scoped reserver reaches spawn_agent [category: code] (depends: 1.1)
 `kind: deliverable`
@@ -2633,4 +2633,10 @@ brings its own sync-owned fixtures:
   retries the orphan transition before recording the identity (1.2.10).
   `SupportsIdentityLookup` wording corrected: only `record_orphan_identity` is
   new.
-- next: Adversary review of the repaired candidate.
+- Plan Adversary consensus (gobby#14579, 2026-09-27) on `b4f5559124`: the
+  confirmed-settlement rule closes PAL-07. PAL-06, PAL-07, PAL-10 and the earlier
+  substantive findings are resolved at plan level. The final wording correction
+  is in 1.2.10: when both writes fail, the claim stays held and restart recovers
+  the row from the strict host inventory; no durable prepared identity is
+  asserted. The Adversary derives M1, and the Program Director applies it.
+  Expansion waits for the Program Director.
