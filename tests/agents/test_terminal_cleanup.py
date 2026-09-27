@@ -82,9 +82,8 @@ async def test_terminal_cleanup_failure_logs_do_not_include_exception_text(
 
     with (
         caplog.at_level("WARNING", logger="gobby.agents.terminal_cleanup"),
-        patch.object(
-            terminal_cleanup.terminal_delivery,
-            "deliver_and_cleanup_terminal_run",
+        patch(
+            "gobby.agents.terminal_delivery.deliver_and_cleanup_terminal_run",
             new=AsyncMock(side_effect=RuntimeError(marker)),
         ),
     ):
