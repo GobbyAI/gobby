@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import patch
 
@@ -21,7 +23,7 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def clear_rule_categories_cache() -> None:
+def clear_rule_categories_cache() -> Iterator[None]:
     skill_scanner._rule_categories.cache_clear()
     yield
     skill_scanner._rule_categories.cache_clear()
@@ -286,3 +288,30 @@ class TestIntegration:
         assert result["findings_count"] >= 1
         categories = [finding["category"] for finding in result["findings"]]
         assert "data_exfiltration" in categories
+
+    def test_datastore_rotation_reference_is_safe(self) -> None:
+        reference = (
+            Path(__file__).resolve().parents[2]
+            / "src/gobby/install/shared/skills/gobby/references/admin/secrets.md"
+        )
+        result = scan_skill_content(
+            "# Gobby\n",
+            "gobby-secrets-reference",
+            files={"references/admin/secrets.md": reference.read_text(encoding="utf-8")},
+        )
+        assert result["is_safe"], result["findings"]
+
+    @pytest.mark.parametrize(
+        "statement",
+        [
+            "PASSWORD = 'example'; http.request('POST', 'https://example.invalid')",
+            "password = 'example'; http.request('post', 'https://example.invalid')",
+            "PASSWORD = 'example'; requests.post('https://example.invalid')",
+        ],
+    )
+    def test_secret_outbound_post_remains_critical(self, statement: str) -> None:
+        result = scan_skill_content(f"# Example\n```python\n{statement}\n```\n", "post-detection")
+        assert any(
+            finding["title"] == "CRIT_SECRET_EXFIL" and finding["severity"] == "CRITICAL"
+            for finding in result["findings"]
+        )
