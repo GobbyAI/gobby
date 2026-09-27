@@ -1,4 +1,4 @@
-"""Rules govern agent bridge traffic while programmatic calls retain attribution."""
+"""Agent MCP calls enforce rules while operator calls retain their own boundary."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -24,6 +24,7 @@ from gobby.mcp_proxy.wait_tools import (
     MCP_WRAPPER_PROTOCOL_VERSION_HEADER,
 )
 from gobby.servers.auth_service import AuthService
+from gobby.servers.http import HTTPServer
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.auth import AuthStore, hash_token
 from gobby.storage.definitions.rules import RuleDefinitionManager
@@ -68,6 +69,8 @@ class EchoTarget:
 @dataclass
 class Boundary:
     client: TestClient
+    http_server: HTTPServer
+    agent: bool
     proxy: ToolProxyService
     variables: SessionVariableManager
     hooks: WorkflowHookHandler
@@ -75,6 +78,7 @@ class Boundary:
     session_id: str
     project_id: str
     target: EchoTarget
+    message_calls: list[str]
     metrics: MagicMock
 
     def call(self, route: str, arguments: Any, *, bridge: bool = False) -> dict[str, Any]:
@@ -126,8 +130,17 @@ def boundary(
         name="boundary-schema-gate",
         definition_json={
             "event": "before_tool",
-            "when": "event.data.get('tool_name') == 'mcp__gobby__call_tool' and 'gobby-boundary:echo' not in variables.get('unlocked_tools', [])",
+            "when": "tool_input.get('server_name') == 'gobby-boundary' and 'gobby-boundary:echo' not in variables.get('unlocked_tools', [])",
             "effects": [{"type": "block", "reason": "Fetch the echo schema first"}],
+        },
+        priority=1,
+    )
+    rules.create(
+        name="boundary-message-gate",
+        definition_json={
+            "event": "before_tool",
+            "when": "tool_input.get('server_name') == 'gobby-agents' and tool_input.get('tool_name') == 'send_message'",
+            "effects": [{"type": "block", "reason": "Messaging blocked by workflow"}],
         },
         priority=1,
     )
@@ -162,6 +175,20 @@ def boundary(
     )
     internal = InternalRegistryManager()
     internal.add_registry(registry)
+    message_calls: list[str] = []
+
+    def send_message(content: str) -> dict[str, Any]:
+        message_calls.append(content)
+        return {"success": True}
+
+    messages = InternalToolRegistry("gobby-agents")
+    messages.register(
+        "send_message",
+        "Record an isolated message",
+        {"type": "object", "properties": {"content": {"type": "string"}}, "required": ["content"]},
+        send_message,
+    )
+    internal.add_registry(messages)
     metrics = MagicMock()
     manager = MagicMock(spec=MCPClientManager)
     manager.session_manager = sessions
@@ -198,6 +225,8 @@ def boundary(
     try:
         yield Boundary(
             client,
+            server,
+            request.param == "agent",
             proxy,
             variables,
             hooks,
@@ -205,6 +234,7 @@ def boundary(
             session.id,
             project_id,
             target,
+            message_calls,
             metrics,
         )
     finally:
@@ -212,6 +242,7 @@ def boundary(
         hooks.shutdown()
 
 
+@pytest.mark.parametrize("boundary", ["operator"], indirect=True)
 @pytest.mark.parametrize("route", ["/api/mcp/tools/call", f"/api/mcp/{SERVER}/tools/echo"])
 def test_programmatic_calls_skip_rules_and_preserve_attribution(
     boundary: Boundary, route: str
@@ -247,6 +278,152 @@ def test_programmatic_calls_skip_rules_and_preserve_attribution(
     assert state["saw_after_tool"] is True
 
 
+@pytest.mark.parametrize("boundary", ["agent"], indirect=True)
+@pytest.mark.parametrize("route", ["/api/mcp/tools/call", f"/api/mcp/{SERVER}/tools/echo"])
+def test_unmarked_agent_call_obeys_workflow_rules(boundary: Boundary, route: str) -> None:
+    listed = boundary.client.get(f"/api/mcp/{SERVER}/tools", headers=boundary.headers)
+    assert listed.status_code == 200
+    assert SERVER in boundary.variables.get_variables(boundary.session_id)["listed_servers"]
+
+    blocked = boundary.call(route, {"value": "hello"})
+    assert blocked["success"] is False
+    assert blocked["error_code"] == "TOOL_BLOCKED"
+    assert "Fetch the echo schema" in blocked["error"]
+    assert boundary.target.calls == []
+
+    schema = boundary.client.post(
+        "/api/mcp/tools/schema",
+        headers=boundary.headers,
+        json={"server_name": SERVER, "tool_name": "echo"},
+    )
+    assert schema.status_code == 200
+    assert schema.json()["inputSchema"]["required"] == ["value", "session_id"]
+    with patch.object(
+        boundary.proxy,
+        "_apply_after_tool_workflow",
+        wraps=boundary.proxy._apply_after_tool_workflow,
+    ) as after_tool:
+        allowed = boundary.call(route, {"value": "hello"})
+    assert after_tool.await_count == 1
+    assert allowed["success"] is True
+    assert allowed["result"] == {"value": "hello", "session_id": boundary.session_id}
+    state = boundary.variables.get_variables(boundary.session_id)
+    assert state["saw_before_tool"] is True
+    assert state["saw_after_tool"] is True
+
+
+@pytest.mark.parametrize("boundary", ["agent"], indirect=True)
+@pytest.mark.parametrize("route", ["/api/mcp/tools/call", f"/api/mcp/{SERVER}/tools/echo"])
+def test_unmarked_agent_failure_updates_error_bookkeeping(boundary: Boundary, route: str) -> None:
+    schema = boundary.client.post(
+        "/api/mcp/tools/schema",
+        headers=boundary.headers,
+        json={"server_name": SERVER, "tool_name": "echo"},
+    )
+    assert schema.status_code == 200
+    boundary.target.failing = True
+    failed = boundary.call(route, {"value": "hello"})
+    assert failed["success"] is False
+    assert "target failed" in failed["error"]
+    state = boundary.variables.get_variables(boundary.session_id)
+    assert len(state["open_tool_errors"]) == 1
+    assert state["saw_after_tool"] is True
+
+
+@pytest.mark.parametrize("boundary", ["agent"], indirect=True)
+@pytest.mark.parametrize("route", ["/api/mcp/tools/call", f"/api/mcp/{SERVER}/tools/echo"])
+def test_unmarked_agent_call_requires_bound_session(boundary: Boundary, route: str) -> None:
+    body: dict[str, Any] = {"value": "hello"}
+    if route == "/api/mcp/tools/call":
+        body = {"server_name": SERVER, "tool_name": "echo", "arguments": body}
+
+    missing = boundary.headers.copy()
+    del missing["X-Gobby-Session-Id"]
+    response = boundary.client.post(route, json=body, headers=missing)
+    assert response.status_code == 401
+
+    mismatched = boundary.headers | {"X-Gobby-Session-Id": "00000000-0000-4000-8000-000000000002"}
+    response = boundary.client.post(route, json=body, headers=mismatched)
+    assert response.status_code == 401
+    assert boundary.target.calls == []
+
+
+@pytest.mark.parametrize("boundary", ["agent"], indirect=True)
+@pytest.mark.parametrize("route", ["/api/mcp/tools/call", f"/api/mcp/{SERVER}/tools/echo"])
+def test_marked_agent_call_emits_one_after_tool(boundary: Boundary, route: str) -> None:
+    schema = boundary.client.post(
+        "/api/mcp/tools/schema",
+        headers=boundary.headers | BRIDGE_HEADERS,
+        json={"server_name": SERVER, "tool_name": "echo"},
+    )
+    assert schema.status_code == 200
+    with patch.object(
+        boundary.proxy,
+        "_apply_after_tool_workflow",
+        wraps=boundary.proxy._apply_after_tool_workflow,
+    ) as after_tool:
+        allowed = boundary.call(route, {"value": "hello"}, bridge=True)
+    assert allowed["success"] is True
+    assert after_tool.await_count == 1
+
+
+@pytest.mark.parametrize("boundary", ["agent"], indirect=True)
+@pytest.mark.parametrize(
+    "route", ["/api/mcp/tools/call", "/api/mcp/gobby-agents/tools/send_message"]
+)
+@pytest.mark.parametrize("bridge", [False, True])
+def test_agent_message_rule_blocks_marked_and_unmarked_calls(
+    boundary: Boundary, route: str, bridge: bool
+) -> None:
+    body: dict[str, Any] = {"content": "isolated message"}
+    if route == "/api/mcp/tools/call":
+        body = {"server_name": "gobby-agents", "tool_name": "send_message", "arguments": body}
+    headers = boundary.headers | (BRIDGE_HEADERS if bridge else {})
+    response = boundary.client.post(route, json=body, headers=headers)
+    assert response.status_code == 200
+    result = response.json()
+    assert result["success"] is False
+    assert result["error_code"] == "TOOL_BLOCKED"
+    assert "Messaging blocked by workflow" in result["error"]
+    assert boundary.message_calls == []
+
+
+@pytest.mark.parametrize("boundary", ["operator"], indirect=True)
+@pytest.mark.parametrize(
+    "route", ["/api/mcp/tools/call", "/api/mcp/gobby-agents/tools/send_message"]
+)
+def test_operator_message_call_retains_programmatic_path(boundary: Boundary, route: str) -> None:
+    body: dict[str, Any] = {"content": "isolated message"}
+    if route == "/api/mcp/tools/call":
+        body = {"server_name": "gobby-agents", "tool_name": "send_message", "arguments": body}
+    response = boundary.client.post(route, json=body, headers=boundary.headers)
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    assert boundary.message_calls == ["isolated message"]
+
+
+@pytest.mark.parametrize("boundary", ["agent", "operator"], indirect=True)
+@pytest.mark.parametrize(
+    "route", ["/api/mcp/tools/call", "/api/mcp/gobby-agents/tools/send_message"]
+)
+def test_proxy_unavailable_refuses_agent_but_preserves_operator_fallback(
+    boundary: Boundary, route: str
+) -> None:
+    boundary.http_server._tools_handler = cast(GobbyDaemonTools, SimpleNamespace(tool_proxy=None))
+    body: dict[str, Any] = {"content": "isolated message"}
+    if route == "/api/mcp/tools/call":
+        body = {"server_name": "gobby-agents", "tool_name": "send_message", "arguments": body}
+    response = boundary.client.post(route, json=body, headers=boundary.headers)
+    if boundary.agent:
+        assert response.status_code == 503
+        assert boundary.message_calls == []
+    else:
+        assert response.status_code == 200
+        assert response.json()["success"] is True
+        assert boundary.message_calls == ["isolated message"]
+
+
+@pytest.mark.parametrize("boundary", ["operator"], indirect=True)
 @pytest.mark.parametrize("route", ["/api/mcp/tools/call", f"/api/mcp/{SERVER}/tools/echo"])
 def test_programmatic_errors_and_discovery_leave_agent_state_untouched(
     boundary: Boundary, route: str
