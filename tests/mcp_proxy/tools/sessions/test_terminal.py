@@ -365,8 +365,19 @@ class TestRegisterTerminalTools:
         send_command.assert_not_awaited()
 
     @pytest.mark.parametrize("clear_session", [False, True])
+    @pytest.mark.parametrize(
+        ("error_code", "reason"),
+        [
+            ("compact_unconfirmed", None),
+            (
+                None,
+                "native key write failed (none): enter "
+                "(session session-1 while submitting /compact)",
+            ),
+        ],
+    )
     def test_set_handoff_rejects_second_attempt_while_compact_unconfirmed(
-        self, clear_session: bool
+        self, clear_session: bool, error_code: str | None, reason: str | None
     ) -> None:
         registry = _TestRegistry(name="test", description="test")
         session = MagicMock(
@@ -409,12 +420,17 @@ class TestRegisterTerminalTools:
             ),
             patch("gobby.mcp_proxy.tools.sessions._terminal.stage_handoff_attempt") as stage,
         ):
+            gate = {
+                "delivery_failed": True,
+                "attempt_id": attempt_id,
+                "clear_session": False,
+            }
+            if error_code is not None:
+                gate["error_code"] = error_code
+            if reason is not None:
+                gate["reason"] = reason
             variable_manager.return_value.get_variables.return_value = {
-                "context_compact_handoff_result": {
-                    "delivery_failed": True,
-                    "error_code": "compact_unconfirmed",
-                    "attempt_id": attempt_id,
-                },
+                "context_compact_handoff_result": gate,
                 "failed_handoff_attempt": {"attempt_id": attempt_id},
             }
             result = asyncio.run(

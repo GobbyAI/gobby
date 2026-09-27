@@ -95,6 +95,7 @@ _SUBMIT_VERIFY_POLL_SECONDS = 0.1
 SUBMIT_ENTER_GAP_SECONDS = 1.5
 COMPOSER_NOT_CLEAN_ERROR_CODE = "composer_not_clean"
 TEXT_NOT_SUBMITTED_ERROR_CODE = "command_not_submitted"
+ENTER_DELIVERY_UNCONFIRMED_ERROR_CODE = "enter_delivery_unconfirmed"
 
 
 class PaneIO(Protocol):
@@ -481,7 +482,9 @@ async def submit_text(
     while True:
         ok, reason = await send_pane_key(pane, "enter", session_id, action=f"submitting {label}")
         if not ok:
-            return SubmitResult(False, reason)
+            # The newline in type_text may already have submitted a short command.
+            # A failed follow-up Enter does not prove the provider rejected it.
+            return SubmitResult(False, reason, ENTER_DELIVERY_UNCONFIRMED_ERROR_CODE)
         enter_count += 1
         if composer_read is None:
             return SubmitResult(True)

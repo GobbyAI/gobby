@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -17,8 +18,11 @@ from gobby.mcp_proxy.tools.sessions._terminal_compaction import (
     _send_terminal_compaction_command,
 )
 from gobby.mcp_proxy.tools.sessions._terminal_handoff_delivery import (
+    _wait_for_compact_boundary,
     deliver_staged_compact_handoff,
 )
+from gobby.sessions.compact_continuation import CompactBoundaryWaiter
+from gobby.sessions.transcript_cursor import CodexRolloutCursor
 from gobby.terminals.composer import composer_clear_sequence
 from gobby.terminals.pane_io import ComposerReader, RuntimePaneIO, TmuxPaneIO
 from gobby.terminals.runtime import SnapshotMode
@@ -151,6 +155,73 @@ async def test_codex_uses_ctrl_c_and_the_line_drain() -> None:
     assert result == (True, None, True, None)
     assert pane.keys == ["ctrl_c", *composer_clear_sequence("codex"), "enter"]
     assert pane.typed == ["/clear\n"]
+
+
+@pytest.mark.asyncio
+async def test_failed_followup_enter_keeps_codex_compact_attempt_pending() -> None:
+    class FailedEnterPane(_ComposerPane):
+        async def send_key(self, key: str) -> tuple[bool, str | None]:
+            self.keys.append(key)
+            return (False, "native key write failed") if key == "enter" else (True, None)
+
+    pane = FailedEnterPane()
+    mark = MagicMock(return_value=True)
+    clear = MagicMock(return_value=True)
+    schedule = MagicMock(return_value=True)
+    result = await _send_terminal_compaction_command(
+        pane,
+        "/compact",
+        "session-1",
+        cli_source="codex",
+        mark_continuation_pending=mark,
+        clear_continuation_pending=clear,
+        schedule_continuation_readiness=schedule,
+        continuation_readiness_capture_lines=100,
+        turn_settled=lambda: True,
+        settle_seconds=0,
+    )
+
+    assert result == (True, None, True, {"enter_delivery_unconfirmed": True})
+    assert pane.typed == ["/compact\n"]
+    assert pane.keys == [*composer_clear_sequence("codex"), "enter"]
+    mark.assert_called_once()
+    clear.assert_not_called()
+    schedule.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_codex_rollout_compact_completes_wait_without_postcompact_hook(
+    tmp_path: Path,
+) -> None:
+    import asyncio
+
+    rollout = tmp_path / "rollout.jsonl"
+    rollout.write_text('{"type":"session_meta","payload":{"id":"codex-session"}}\n')
+    cursor = CodexRolloutCursor.at_eof(rollout)
+    with rollout.open("a") as stream:
+        stream.write('{"type":"compacted","timestamp":"2026-09-27T16:00:20Z"}\n')
+    waiter = CompactBoundaryWaiter(
+        "attempt", "handoff", None, asyncio.Event(), asyncio.get_running_loop()
+    )
+    calls: list[str] = []
+
+    def receive_boundary() -> bool:
+        calls.append("compacted")
+        waiter.loop.call_soon_threadsafe(waiter.event.set)
+        return True
+
+    result = await _wait_for_compact_boundary(
+        waiter,
+        _ComposerPane(),
+        None,
+        None,
+        timeout_seconds=0.1,
+        codex_cursor=cursor,
+        on_codex_boundary=receive_boundary,
+    )
+
+    assert result is None
+    assert calls == ["compacted"]
 
 
 @pytest.mark.asyncio
