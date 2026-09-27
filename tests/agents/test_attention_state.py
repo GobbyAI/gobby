@@ -154,11 +154,9 @@ async def test_blocked_transition_broadcasts_agent_event(
     )
 
     pty_reader = MagicMock()
-    tmux_reader = MagicMock()
     websocket = MagicMock()
     websocket.broadcast_agent_event = AsyncMock()
     monkeypatch.setattr("gobby.agents.pty_reader.get_pty_reader_manager", lambda: pty_reader)
-    monkeypatch.setattr("gobby.agents.tmux.get_tmux_output_reader", lambda: tmux_reader)
     setup_agent_event_broadcasting(websocket)
 
     def publish(payload: dict[str, object]) -> None:
@@ -535,7 +533,6 @@ async def test_idle_handler_checks_attention_without_waiting_for_idle(
         agent_run_manager=run_manager,
         db=temp_db,
         get_session_manager=lambda: None,
-        tmux=MagicMock(),
         idle_detector=MagicMock(),
         prompt_detector=PromptDetector(DETECTION_REGISTRY, "claude"),
         stall_classifier=StallClassifier(DETECTION_REGISTRY, "claude"),
@@ -586,7 +583,6 @@ async def test_idle_check_reuses_attention_pane_and_stops_on_unknown(
         agent_run_manager=run_manager,
         db=temp_db,
         get_session_manager=lambda: None,
-        tmux=MagicMock(),
         idle_detector=idle_detector,
         prompt_detector=PromptDetector(DETECTION_REGISTRY, "claude"),
         stall_classifier=StallClassifier(DETECTION_REGISTRY, "claude"),

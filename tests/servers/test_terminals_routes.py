@@ -82,7 +82,7 @@ def test_terminal_rest_surface(temp_db: HubDatabase, sample_project: dict[str, A
         assert detail.status_code == 200
         payload = detail.json()
         assert payload["id"] == promoted.id
-        assert payload["attach"]["backend"] == "tmux"
+        assert payload["attach"] is None
         other = uuid.uuid4()
         isolated = client.get("/api/terminals", params={"project_id": str(other)})
         assert isolated.json()["items"] == []
@@ -153,7 +153,7 @@ def test_terminal_inventory_is_paginated(
 async def test_dimension_bounds_rejected(
     temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
-    from unittest.mock import AsyncMock, MagicMock
+    from unittest.mock import MagicMock
 
     from gobby.servers.websocket.server import WebSocketServer
 
@@ -234,15 +234,10 @@ def test_a_native_row_reports_the_command_in_its_terminal_foreground(
 
     process = MagicMock()
     process.return_value.cwd.return_value = "/srv/app"
-    # The WS server's tmux sweep, which the REST list now runs too.
-    pane = MagicMock(pane_command="vim", pane_path="/Users/dev/projects/gobby")
-    sweep = AsyncMock(return_value={promoted.locator_key: pane})
-    websocket_server = MagicMock(sweep_tmux_panes=sweep, lease_registry=None)
-
     with (
         patch("gobby.terminals.foreground.spawn.run", run),
         patch("gobby.terminals.foreground.psutil.Process", process),
-        _client(temp_db, websocket_server) as client,
+        _client(temp_db) as client,
     ):
         listing = client.get("/api/terminals", params={"project_id": sample_project["id"]})
         detail = client.get(f"/api/terminals/{native.id}")
@@ -252,18 +247,9 @@ def test_a_native_row_reports_the_command_in_its_terminal_foreground(
     assert detail.json()["command"] == "nvim"
     assert rows[native.id]["cwd"] == "/srv/app"
     assert detail.json()["cwd"] == "/srv/app"
-    # A tmux row records no shell pid; the sweep supplies its pane's own
-    # command and directory, the fields the gclient sidebar relist reads.
-    assert rows[promoted.id]["command"] == "vim"
-    assert rows[promoted.id]["cwd"] == "/Users/dev/projects/gobby"
-    sweep.assert_awaited_once()
-
-    # Without a sweep (no WS server) a tmux row's fields are present and null.
-    with patch("gobby.terminals.foreground.spawn.run", run), _client(temp_db) as client:
-        bare = client.get("/api/terminals", params={"project_id": sample_project["id"]})
-    bare_rows = {row["id"]: row for row in bare.json()["items"]}
-    assert bare_rows[promoted.id]["command"] is None
-    assert bare_rows[promoted.id]["cwd"] is None
+    # Historical tmux rows stay visible without querying a live pane.
+    assert rows[promoted.id]["command"] is None
+    assert rows[promoted.id]["cwd"] is None
 
 
 def test_a_native_row_falls_back_to_its_spawn_shell(

@@ -912,7 +912,6 @@ class TestInitSubsystems:
             patch.object(runner_lifecycle_subsystems, "_check_embedding_service", async_noop),
             patch.object(runner_lifecycle_subsystems, "_cleanup_metrics_on_startup"),
             patch.object(runner_lifecycle_subsystems, "_initialize_vector_store", async_noop),
-            patch.object(runner_lifecycle_subsystems, "_check_tmux_health", async_noop),
             patch.object(
                 runner_lifecycle_subsystems,
                 "_start_agent_lifecycle_monitor",
@@ -1075,7 +1074,6 @@ class TestShutdownDaemonServices:
             patch.object(runner_lifecycle_subsystems, "_cleanup_metrics_on_startup"),
             patch.object(runner_lifecycle_subsystems, "_initialize_vector_store", async_noop),
             patch.object(runner_lifecycle_subsystems, "_start_core_services", async_noop),
-            patch.object(runner_lifecycle_subsystems, "_check_tmux_health", async_noop),
             patch.object(
                 runner_lifecycle_subsystems,
                 "_start_agent_lifecycle_monitor",
@@ -2757,10 +2755,7 @@ class TestAgentEventBroadcasting:
 
         old_callback = rb._agent_event_callback
         try:
-            with (
-                patch("gobby.agents.pty_reader.get_pty_reader_manager"),
-                patch("gobby.agents.tmux.get_tmux_output_reader"),
-            ):
+            with patch("gobby.agents.pty_reader.get_pty_reader_manager"):
                 setup_agent_event_broadcasting(mock_ws_server)
 
             assert rb._agent_event_callback is not None
@@ -3383,7 +3378,7 @@ class TestAgentEventBroadcastingCallback:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ("event_type", "expected_task_count"),
-        [("agent_started", 3), ("agent_completed", 4)],
+        [("agent_started", 2), ("agent_completed", 3)],
     )
     async def test_broadcast_tasks_retained_until_completion(
         self,
@@ -3402,31 +3397,16 @@ class TestAgentEventBroadcastingCallback:
         mock_ws_server = MagicMock()
         mock_ws_server.broadcast_agent_event = AsyncMock(side_effect=wait_for_release)
         mock_ws_server.broadcast_tmux_session_event = AsyncMock(side_effect=wait_for_release)
-        # The reader attaches by the terminal row's session name, resolved
-        # through the websocket server's terminal manager.
-        mock_ws_server.terminal_manager.get.return_value = SimpleNamespace(
-            session_name="agent-run-123", spawn_key=None
-        )
-
         mock_pty_manager = MagicMock()
         mock_pty_manager.stop_reader = AsyncMock(side_effect=wait_for_release)
-        mock_tmux_reader = MagicMock()
-        mock_tmux_reader.start_reader = AsyncMock(side_effect=wait_for_release)
-        mock_tmux_reader.stop_reader = AsyncMock(side_effect=wait_for_release)
 
         old_callback = rb._agent_event_callback
         tasks_before = set(rb._agent_broadcast_tasks)
         scheduled_tasks: set[asyncio.Task[None]] = set()
         try:
-            with (
-                patch(
-                    "gobby.agents.pty_reader.get_pty_reader_manager",
-                    return_value=mock_pty_manager,
-                ),
-                patch(
-                    "gobby.agents.tmux.get_tmux_output_reader",
-                    return_value=mock_tmux_reader,
-                ),
+            with patch(
+                "gobby.agents.pty_reader.get_pty_reader_manager",
+                return_value=mock_pty_manager,
             ):
                 setup_agent_event_broadcasting(mock_ws_server)
 
@@ -3435,9 +3415,7 @@ class TestAgentEventBroadcastingCallback:
                 "run-123",
                 {"terminal_id": "terminal-123"},
             )
-            # Only a start resolves the attach name; a kill broadcasts by terminal id.
-            expected_lookups = [call("terminal-123")] if event_type == "agent_started" else []
-            assert mock_ws_server.terminal_manager.get.call_args_list == expected_lookups
+            mock_ws_server.terminal_manager.get.assert_not_called()
 
             scheduled_tasks = rb._agent_broadcast_tasks - tasks_before
             assert len(scheduled_tasks) == expected_task_count
@@ -3470,10 +3448,7 @@ class TestAgentEventBroadcastingCallback:
 
         old_callback = rb._agent_event_callback
         try:
-            with (
-                patch("gobby.agents.pty_reader.get_pty_reader_manager"),
-                patch("gobby.agents.tmux.get_tmux_output_reader"),
-            ):
+            with patch("gobby.agents.pty_reader.get_pty_reader_manager"):
                 setup_agent_event_broadcasting(mock_ws_server)
 
             fire_agent_event(
@@ -3513,10 +3488,7 @@ class TestAgentEventBroadcastingCallback:
 
         old_callback = rb._agent_event_callback
         try:
-            with (
-                patch("gobby.agents.pty_reader.get_pty_reader_manager"),
-                patch("gobby.agents.tmux.get_tmux_output_reader"),
-            ):
+            with patch("gobby.agents.pty_reader.get_pty_reader_manager"):
                 setup_agent_event_broadcasting(mock_ws_server)
 
             fire_agent_event(
@@ -3549,10 +3521,7 @@ class TestAgentEventBroadcastingCallback:
 
         old_callback = rb._agent_event_callback
         try:
-            with (
-                patch("gobby.agents.pty_reader.get_pty_reader_manager"),
-                patch("gobby.agents.tmux.get_tmux_output_reader"),
-            ):
+            with patch("gobby.agents.pty_reader.get_pty_reader_manager"):
                 setup_agent_event_broadcasting(mock_ws_server)
 
             fire_agent_event(
@@ -3584,10 +3553,7 @@ class TestAgentEventBroadcastingCallback:
 
         old_callback = rb._agent_event_callback
         try:
-            with (
-                patch("gobby.agents.pty_reader.get_pty_reader_manager"),
-                patch("gobby.agents.tmux.get_tmux_output_reader"),
-            ):
+            with patch("gobby.agents.pty_reader.get_pty_reader_manager"):
                 setup_agent_event_broadcasting(mock_ws_server)
 
             fire_agent_event(
@@ -5501,26 +5467,18 @@ class TestAgentOutputReaderShutdown:
         assert cleanup_pid_file.call_count == 1
 
     @pytest.mark.asyncio
-    async def test_shutdown_drains_both_readers_and_propagates_failures(self) -> None:
+    async def test_shutdown_drains_pty_reader_and_propagates_failures(self) -> None:
         import gobby.runner_broadcasting as rb
 
         mock_ws_server = MagicMock()
         pty_reader = MagicMock()
         pty_reader.stop_all = AsyncMock(side_effect=RuntimeError("PTY drain failed"))
-        tmux_reader = MagicMock()
-        tmux_reader.stop_all = AsyncMock()
         old_callback = rb._agent_event_callback
         old_readers = rb._agent_output_readers
         try:
-            with (
-                patch(
-                    "gobby.agents.pty_reader.get_pty_reader_manager",
-                    return_value=pty_reader,
-                ),
-                patch(
-                    "gobby.agents.tmux.get_tmux_output_reader",
-                    return_value=tmux_reader,
-                ),
+            with patch(
+                "gobby.agents.pty_reader.get_pty_reader_manager",
+                return_value=pty_reader,
             ):
                 rb.setup_agent_event_broadcasting(mock_ws_server)
 
@@ -5529,9 +5487,7 @@ class TestAgentOutputReaderShutdown:
 
             assert str(exc_info.value.exceptions[0]) == "PTY drain failed"
             pty_reader.stop_all.assert_awaited_once_with()
-            tmux_reader.stop_all.assert_awaited_once_with()
             pty_reader.set_output_callback.assert_called_with(None)
-            tmux_reader.set_output_callback.assert_called_with(None)
             assert rb._agent_event_callback is None
             assert rb._agent_output_readers is None
         finally:

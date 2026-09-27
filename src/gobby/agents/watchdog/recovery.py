@@ -36,7 +36,6 @@ from gobby.workflows.step_context import (
 
 if TYPE_CHECKING:
     from gobby.agents.agent_cleanup import AgentCleanupHandler
-    from gobby.agents.tmux.session_manager import TmuxSessionManager
     from gobby.agents.watchdog import TranscriptWatchdogReader, WatchdogReaderRegistry
     from gobby.agents.watchdog.models import WatchdogTranscriptSnapshot
     from gobby.agents.watchdog.transcript_resolver import WatchdogTranscriptResolver
@@ -73,7 +72,6 @@ class WatchdogRecoveryCoordinator:
         agent_run_manager: LocalAgentRunManager,
         db: HubDatabase,
         get_session_manager: Callable[[], SessionManager | None],
-        tmux: TmuxSessionManager,
         idle_detector: IdleDetector,
         watchdog_readers: WatchdogReaderRegistry,
         cleanup_handler: AgentCleanupHandler,
@@ -86,7 +84,6 @@ class WatchdogRecoveryCoordinator:
         self._agent_run_manager = agent_run_manager
         self.db = db
         self._get_session_manager = get_session_manager
-        self._tmux = tmux
         self._idle_detector = idle_detector
         self._watchdog_readers = watchdog_readers
         self._cleanup_handler = cleanup_handler

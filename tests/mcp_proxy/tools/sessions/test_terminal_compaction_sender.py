@@ -20,7 +20,7 @@ from gobby.mcp_proxy.tools.sessions._terminal_handoff_delivery import (
     deliver_staged_compact_handoff,
 )
 from gobby.terminals.composer import composer_clear_sequence
-from gobby.terminals.pane_io import ComposerReader, RuntimePaneIO, TmuxPaneIO
+from gobby.terminals.pane_io import ComposerReader, RuntimePaneIO
 from gobby.terminals.runtime import SnapshotMode
 from tests.agents.detection_test_support import BundledDetectionRegistry
 
@@ -333,20 +333,18 @@ def test_resolve_pane_io_prefers_the_live_terminal_row() -> None:
     terminal_manager.get_live_for_session.return_value = terminal
     registry = MagicMock()
 
-    with patch.object(_terminal, "_resolve_tmux_target") as resolve_tmux:
-        pane, error = _terminal._resolve_pane_io(
-            "session-1",
-            MagicMock(),
-            MagicMock(),
-            terminal_manager=terminal_manager,
-            terminal_runtime_registry=registry,
-        )
+    pane, error = _terminal._resolve_pane_io(
+        "session-1",
+        MagicMock(),
+        MagicMock(),
+        terminal_manager=terminal_manager,
+        terminal_runtime_registry=registry,
+    )
 
     assert error is None
     assert isinstance(pane, RuntimePaneIO)
     assert (pane.backend, pane.target) == ("native", "term-1")
     registry.resolve.assert_called_once_with("native")
-    resolve_tmux.assert_not_called()
 
 
 def test_resolve_pane_io_uses_gterm_terminal_named_by_context() -> None:
@@ -371,43 +369,37 @@ def test_resolve_pane_io_uses_gterm_terminal_named_by_context() -> None:
     terminal_manager.get.return_value = terminal
     registry = MagicMock()
 
-    with patch.object(_terminal, "_resolve_tmux_target") as resolve_tmux:
-        pane, error = _terminal._resolve_pane_io(
-            "session-1",
-            session_manager,
-            MagicMock(),
-            terminal_manager=terminal_manager,
-            terminal_runtime_registry=registry,
-        )
+    pane, error = _terminal._resolve_pane_io(
+        "session-1",
+        session_manager,
+        MagicMock(),
+        terminal_manager=terminal_manager,
+        terminal_runtime_registry=registry,
+    )
 
     assert error is None
     assert isinstance(pane, RuntimePaneIO)
     assert (pane.backend, pane.target) == ("native", terminal_id)
-    resolve_tmux.assert_not_called()
 
 
-def test_resolve_pane_io_falls_back_to_raw_tmux() -> None:
+def test_resolve_pane_io_requires_a_managed_terminal() -> None:
     terminal_manager = MagicMock()
     terminal_manager.get_live_for_session.return_value = None
-    tmux = MagicMock()
 
-    with patch.object(_terminal, "_resolve_tmux_target", return_value=("%4", tmux, None)):
-        pane, error = _terminal._resolve_pane_io(
-            "session-1",
-            MagicMock(),
-            MagicMock(),
-            terminal_manager=terminal_manager,
-            terminal_runtime_registry=MagicMock(),
-        )
-    assert error is None
-    assert isinstance(pane, TmuxPaneIO)
-    assert (pane.backend, pane.target) == ("tmux", "%4")
+    pane, error = _terminal._resolve_pane_io(
+        "session-1",
+        MagicMock(),
+        MagicMock(),
+        terminal_manager=terminal_manager,
+        terminal_runtime_registry=MagicMock(),
+    )
+    assert pane is None
+    assert error == "No live managed terminal for session session-1"
 
-    with patch.object(_terminal, "_resolve_tmux_target", return_value=(None, None, "no pane")):
-        assert _terminal._resolve_pane_io(
-            "session-1",
-            MagicMock(),
-            MagicMock(),
-            terminal_manager=None,
-            terminal_runtime_registry=None,
-        ) == (None, "no pane")
+    assert _terminal._resolve_pane_io(
+        "session-1",
+        MagicMock(),
+        MagicMock(),
+        terminal_manager=None,
+        terminal_runtime_registry=None,
+    ) == (None, error)

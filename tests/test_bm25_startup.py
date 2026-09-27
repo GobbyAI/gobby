@@ -84,7 +84,6 @@ async def test_init_subsystems_skips_code_index_workers_after_failed_repair(
         "_cleanup_stale_expansion_runs_on_startup",
         "_initialize_vector_store",
         "_start_core_services",
-        "_check_tmux_health",
         "_start_agent_lifecycle_monitor",
         "_start_cron_scheduler",
         "_recover_pipelines",

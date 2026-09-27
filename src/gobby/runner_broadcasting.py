@@ -77,7 +77,7 @@ class CommunicationsEventBroadcaster(Protocol):
 # from spawn and completion paths without going through the registry.
 _agent_event_callback: Any | None = None
 _agent_broadcast_tasks: set[asyncio.Task[None]] = set()
-_agent_output_readers: tuple[Any, Any] | None = None
+_agent_output_readers: tuple[Any, ...] | None = None
 _terminal_lifecycle_tasks: set[asyncio.Task[dict[str, Any]]] = set()
 
 
@@ -224,14 +224,12 @@ async def _dispatch_pipeline_terminal_event(
 
 
 def setup_agent_event_broadcasting(websocket_server: WebSocketServer) -> None:
-    """Set up WebSocket broadcasting for agent lifecycle events, PTY reading, and tmux streaming."""
+    """Set up WebSocket broadcasting for agent lifecycle events and PTY reading."""
     from gobby.agents.pty_reader import get_pty_reader_manager
-    from gobby.agents.tmux import get_tmux_output_reader
 
     global _agent_event_callback, _agent_output_readers
 
     pty_manager = get_pty_reader_manager()
-    tmux_reader = get_tmux_output_reader()
 
     # Set up output callbacks to broadcast via WebSocket
     async def broadcast_terminal_output(run_id: str, data: str) -> None:
@@ -242,7 +240,6 @@ def setup_agent_event_broadcasting(websocket_server: WebSocketServer) -> None:
         await _emit_pty_terminal_output(websocket_server, run_id, data)
 
     pty_manager.set_output_callback(broadcast_terminal_output)
-    tmux_reader.set_output_callback(broadcast_terminal_output)
 
     def broadcast_agent_event(event_type: str, run_id: str, data: dict[str, Any]) -> None:
         """Broadcast agent events via WebSocket (non-blocking).
@@ -268,25 +265,8 @@ def setup_agent_event_broadcasting(websocket_server: WebSocketServer) -> None:
             )
             return
 
-        # Handle tmux output reader start for tmux terminal agents
         if event_type == "agent_started":
             terminal_id = data.get("terminal_id")
-            terminal_manager = websocket_server.terminal_manager
-            terminal = (
-                terminal_manager.get(str(terminal_id))
-                if terminal_id and terminal_manager is not None
-                else None
-            )
-            raw_attach_name = None if terminal is None else terminal.session_name
-            attach_name = raw_attach_name if isinstance(raw_attach_name, str) else None
-            if attach_name:
-                _attach_name = attach_name
-
-                async def start_tmux_reader() -> None:
-                    await tmux_reader.start_reader(run_id, _attach_name)
-
-                _schedule_agent_broadcast(start_tmux_reader(), event_type=event_type)
-
             if terminal_id:
                 _ws = websocket_server
                 _terminal_id = str(terminal_id)
@@ -312,13 +292,6 @@ def setup_agent_event_broadcasting(websocket_server: WebSocketServer) -> None:
                 await pty_manager.stop_reader(run_id)
 
             _schedule_agent_broadcast(stop_pty_reader(), event_type=event_type)
-
-            # Stop tmux reader when agent finishes
-
-            async def stop_tmux_reader() -> None:
-                await tmux_reader.stop_reader(run_id)
-
-            _schedule_agent_broadcast(stop_tmux_reader(), event_type=event_type)
 
             # Notify Terminals page so it auto-refreshes
             _killed_id = data.get("terminal_id")
@@ -365,7 +338,7 @@ def setup_agent_event_broadcasting(websocket_server: WebSocketServer) -> None:
 
     # Store module-level reference for direct invocation from spawn/completion paths
     _agent_event_callback = broadcast_agent_event
-    _agent_output_readers = (pty_manager, tmux_reader)
+    _agent_output_readers = (pty_manager,)
 
     logger.debug("Agent event broadcasting and PTY reading enabled")
 

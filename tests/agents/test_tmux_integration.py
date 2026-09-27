@@ -34,7 +34,7 @@ from gobby.terminals.services import TerminalServices
 from gobby.terminals.tmux_runtime import TmuxTerminalRuntime
 from gobby.utils.machine_id import require_machine_id
 from tests.agents.cleanup_test_support import _handler, _stub_runtime_cleanup
-from tests.servers.test_tmux_mixin import MockWebSocket
+from tests.servers.terminal_fakes import MockWebSocket
 
 pytestmark = pytest.mark.integration
 

@@ -14,7 +14,6 @@ from gobby.agents.prompt_detector import PromptDetector
 from gobby.terminals.error_classification import is_vanished_terminal_target
 
 if TYPE_CHECKING:
-    from gobby.agents.tmux.session_manager import TmuxSessionManager
     from gobby.config.tmux import TmuxConfig
     from gobby.storage.agents import AgentRun
     from gobby.terminals.runtime import SnapshotMode
@@ -59,7 +58,6 @@ class TerminalPromptMonitor:
         self,
         *,
         get_active_terminal_runs: Callable[[], list[AgentRun]],
-        get_tmux: Callable[[], TmuxSessionManager],
         prompt_detector: PromptDetector,
         idle_detector: IdleDetector,
         loop_tracker: LoopTracker,
@@ -71,7 +69,6 @@ class TerminalPromptMonitor:
         terminal_services: Any | None = None,
     ) -> None:
         self._get_active_terminal_runs = get_active_terminal_runs
-        self._get_tmux = get_tmux
         self._prompt_detector = prompt_detector
         self._idle_detector = idle_detector
         self._loop_tracker = loop_tracker

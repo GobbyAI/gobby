@@ -18,7 +18,7 @@ from gobby.terminals.input_grants import sync_host_input_grant
 from gobby.terminals.leases import HolderChange, TerminalLeaseRegistry
 from gobby.terminals.runtime import Delivered, TerminalRuntime, WriteOutcome
 from gobby.terminals.write_coordinator import WriteCoordinator
-from tests.servers.test_tmux_mixin import MockWebSocket
+from tests.servers.terminal_fakes import MockWebSocket
 from tests.storage.test_terminals import LOCAL_MACHINE_ID, _create_pending, _manager
 
 pytestmark = pytest.mark.unit
@@ -365,7 +365,7 @@ async def test_direct_delivery_registers_without_frame_relay(
     result = ws.messages_of_type("terminal_attach_result")[-1]
     assert result["frame_delivery"] == "direct"
     old = result["attachment_id"]
-    await server._cleanup_tmux_client(ws)
+    await server._cleanup_terminal_client(ws)
     ws2 = MockWebSocket()
     server.clients[ws2] = {"subscriptions": {"*"}}
     await _send(
@@ -483,7 +483,7 @@ async def test_disconnect_releases_direct_and_proxy_leases(
             "takeover": False,
         },
     )
-    await server._cleanup_tmux_client(ws)
+    await server._cleanup_terminal_client(ws)
     ws2 = MockWebSocket()
     server.clients[ws2] = {"subscriptions": {"*"}}
     await _send(
@@ -865,5 +865,5 @@ async def test_direct_gclient_holder_is_granted_and_revoked_on_transitions(
     # The direct viewer takes again, then loses its socket: grant, then revoke.
     await _send(server, gclient, take)
     assert gclient.messages_of_type("terminal_control_result")[-1]["host_input_granted"] is True
-    await server._cleanup_tmux_client(gclient)
+    await server._cleanup_terminal_client(gclient)
     assert runtime.grants[-2:] == [(terminal_id, direct), (terminal_id, None)]

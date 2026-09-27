@@ -16,7 +16,7 @@ from gobby.storage.projects import GLOBAL_PROJECT_ID
 from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.runtime import TerminalRuntime
 from gobby.terminals.web_spawn import WebSpawnResult, spawn_web_terminal
-from tests.servers.test_tmux_mixin import MockWebSocket
+from tests.servers.terminal_fakes import MockWebSocket
 from tests.storage.test_terminals import LOCAL_MACHINE_ID, _create_pending, _manager
 
 pytestmark = pytest.mark.unit
@@ -317,12 +317,6 @@ async def test_create_and_kill_dispatch_bind_terminal_create_mixin(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     server, _runtime = _create_server(temp_db)
-    teardown = AsyncMock()
-    monkeypatch.setattr(
-        "gobby.servers.websocket.terminal_ws_create.teardown_terminal_bridges",
-        teardown,
-        raising=False,
-    )
     websocket = MockWebSocket()
     server.clients[websocket] = {}
     missing_terminal_id = str(uuid.uuid4())
@@ -344,7 +338,7 @@ async def test_create_and_kill_dispatch_bind_terminal_create_mixin(
     assert getattr(server._dispatch_table["terminal_kill"], "__func__", None) is (
         TerminalCreateMixin._handle_terminal_kill
     )
-    teardown.assert_awaited_once_with(server, missing_terminal_id)
+    assert websocket.last_message()["code"] == "terminal_not_live"
     await server.lease_registry.shutdown_lifecycle_publication()
 
 

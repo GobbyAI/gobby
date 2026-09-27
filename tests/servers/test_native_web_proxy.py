@@ -43,7 +43,7 @@ from gobby.terminals.ws_protocol import (
     TERMINAL_WS_SAFE_INTEGER_MAX,
     decode_message,
 )
-from tests.servers.test_tmux_mixin import MockWebSocket
+from tests.servers.terminal_fakes import MockWebSocket
 from tests.storage.test_terminals import LOCAL_MACHINE_ID, _create_pending, _manager
 
 pytestmark = pytest.mark.unit
@@ -617,7 +617,7 @@ async def test_disconnect_releases_lease(
     attachment = await _attach(harness, ws, harness.native_row)
     await _take(harness, ws, harness.native_row, attachment)
     frame = _frame_for(harness, harness.native_row)
-    await harness.server._cleanup_tmux_client(ws)
+    await harness.server._cleanup_terminal_client(ws)
     assert harness.server.lease_registry.get(attachment) is None
     assert frame.closed or frame.detached
 
@@ -682,21 +682,6 @@ async def test_web_read_only_until_explicit_takeover(
         == gclient.messages_of_type("terminal_control_result")[-1]["lease_generation"]
     )
     frame = _frame_for(harness, harness.native_row)
-    tmux_att = await _attach(harness, web, harness.tmux_row, request_id="tmux")
-    await _take(harness, web, harness.tmux_row, tmux_att)
-    await _send(
-        harness.server,
-        web,
-        {
-            "type": "terminal_input",
-            "terminal_id": harness.tmux_row.id,
-            "attachment_id": tmux_att,
-            "data": "y",
-            "client_write_seq": 2,
-        },
-    )
-    await _until(lambda: harness.tmux_rt.write_log)
-    assert harness.tmux_rt.tmux_commands
     assert not frame.writes
     native_frame = _frame_for(harness, harness.native_row)
     assert not native_frame.writes
@@ -806,21 +791,9 @@ async def test_viewport_independent_of_resize_and_only_paste_is_leased(
     assert not any(kind == "paste" for kind, _ in harness.native_rt.write_log)
 
     ext_ws = MockWebSocket()
-    ext_att = await _attach(harness, ext_ws, harness.external_row, request_id="ext")
-    await _take(harness, ext_ws, harness.external_row, ext_att)
-    await _send(
-        harness.server,
-        ext_ws,
-        {
-            "type": "terminal_resize",
-            "terminal_id": harness.external_row.id,
-            "attachment_id": ext_att,
-            "rows": 12,
-            "cols": 40,
-        },
-    )
-    await _until(lambda: harness.tmux_rt.resize_calls == [(12, 40)])
-    assert harness.tmux_rt.tmux_commands[-1] == ["resize-pane", "12", "40"]
+    refused = await _attach_result(harness, ext_ws, harness.external_row, request_id="ext")
+    assert refused["code"] == "unsupported_terminal_backend"
+    assert harness.tmux_rt.resize_calls == []
 
 
 @pytest.mark.asyncio
@@ -1037,7 +1010,7 @@ async def test_scroll_offset_and_wrapped_attach_history(
 
 
 @pytest.mark.asyncio
-async def test_write_outcome_indeterminate_tmux_and_native(
+async def test_write_outcome_indeterminate_native(
     temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     harness = _harness(temp_db, sample_project)
@@ -1072,26 +1045,6 @@ async def test_write_outcome_indeterminate_tmux_and_native(
     lost = ws.messages_of_type("terminal_write_outcome")[-1]
     assert lost["outcome"] == "indeterminate"
     assert lost["client_write_seq"] == 2
-    tmux_att = await _attach(harness, ws, harness.tmux_row, request_id="t")
-    await _take(harness, ws, harness.tmux_row, tmux_att)
-    harness.tmux_rt.drop_next = True
-    await _send(
-        harness.server,
-        ws,
-        {
-            "type": "terminal_paste",
-            "terminal_id": harness.tmux_row.id,
-            "attachment_id": tmux_att,
-            "text": "p",
-            "client_write_seq": 3,
-        },
-    )
-    tmux_lost = [
-        item
-        for item in ws.messages_of_type("terminal_write_outcome")
-        if item.get("client_write_seq") == 3
-    ][-1]
-    assert tmux_lost["outcome"] == "indeterminate"
 
 
 @pytest.mark.asyncio
@@ -1265,7 +1218,7 @@ async def test_semantic_frame_proxy_relays_bincode_payloads(
         await _until(lambda attached_ws=ws: attached_ws.messages_of_type("terminal_output"))
         output = ws.messages_of_type("terminal_output")[-1]
         assert output["data"] == expected_ansi
-        await harness.server._cleanup_tmux_client(ws)
+        await harness.server._cleanup_terminal_client(ws)
 
     invalid_ws = MockWebSocket()
     harness.server.clients[invalid_ws] = {"subscriptions": {"*"}}
@@ -1286,7 +1239,7 @@ async def test_semantic_frame_proxy_relays_bincode_payloads(
         "code": "invalid_encoding",
     }
     assert not invalid_ws.messages_of_type("terminal_attach_result")
-    await harness.server._cleanup_tmux_client(semantic_ws)
+    await harness.server._cleanup_terminal_client(semantic_ws)
 
 
 @pytest.mark.asyncio
@@ -1309,18 +1262,8 @@ async def test_direct_attach_result_carries_locator(
 
     tmux_ws = MockWebSocket()
     tmux = await _attach_result(harness, tmux_ws, harness.tmux_row, request_id="direct-tmux")
-    assert tmux["success"] is True
-    assert tmux["direct"] == {
-        "host_epoch": "epoch-1",
-        "frame_socket_path": _FRAME_SOCKET,
-        "host_terminal_id": "%9",
-        "pane": {
-            "socket_path": _SOCKET,
-            "pane_id": "%9",
-            "server_pid": 9,
-            "server_start_time": 9,
-        },
-    }
+    assert tmux["success"] is False
+    assert tmux["code"] == "unsupported_terminal_backend"
 
     proxy_ws = MockWebSocket()
     proxy = await _attach_result(
@@ -1381,17 +1324,7 @@ async def test_direct_attach_result_carries_locator(
             server_start_time=9,
         ),
     ]
-    partial_tmux = AttachLocator(
-        backend="tmux",
-        frame_host_epoch="epoch-1",
-        host_socket=_FRAME_SOCKET,
-        host_terminal_id="%9",
-        socket_path=_SOCKET,
-        pane_id="%9",
-        server_pid=9,
-    )
     cases = [(harness.native_row, harness.native_rt, locator) for locator in malformed]
-    cases.append((harness.tmux_row, harness.tmux_rt, partial_tmux))
     for index, (row, runtime, locator) in enumerate(cases):
         runtime.locator_result = locator
         ws = MockWebSocket()
@@ -1401,58 +1334,29 @@ async def test_direct_attach_result_carries_locator(
         assert harness.server.lease_registry.get(result["attachment_id"]) is None
         runtime.locator_result = None
 
-    await harness.server._cleanup_tmux_client(native_ws)
-    await harness.server._cleanup_tmux_client(tmux_ws)
-    await harness.server._cleanup_tmux_client(proxy_ws)
+    await harness.server._cleanup_terminal_client(native_ws)
+    await harness.server._cleanup_terminal_client(tmux_ws)
+    await harness.server._cleanup_terminal_client(proxy_ws)
 
 
 @pytest.mark.asyncio
-async def test_tmux_semantic_proxy_uses_host_frames(
+async def test_legacy_tmux_attach_is_refused_without_opening_a_frame(
     temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     harness = _harness(temp_db, sample_project)
-    semantic_ws = MockWebSocket()
-    semantic = await _attach_result(
-        harness,
-        semantic_ws,
-        harness.tmux_row,
-        request_id="tmux-semantic",
-        frame_delivery="proxy",
-        encoding="semantic_frame",
-    )
-    frame = _frame_for(harness, harness.tmux_row)
-    raw = (_WIRE_GOLDEN / "frame.bin").read_bytes()[4:]
-    assert semantic["direct"] is None
-    assert frame.encoding == "semantic_frame"
-    assert semantic["attachment_id"] in harness.server._proxy().attachments
-    assert semantic["attachment_id"] not in harness.server._tmux_pending
-    await frame.queue.put({"type": "frame", "raw": raw})
-    await _until(
-        lambda: semantic_ws.messages_of_type("terminal_frame")
-        or semantic_ws.messages_of_type("terminal_ws_fragment")
-    )
-    assert _reassemble(semantic_ws.all_messages())["payload"] == base64.b64encode(raw).decode(
-        "ascii"
-    )
-
-    frame_count = len(harness.frame_list)
-    for suffix, encoding in (("omitted", None), ("explicit", "terminal_ansi")):
+    for suffix, encoding in (("semantic", "semantic_frame"), ("ansi", "terminal_ansi")):
         ws = MockWebSocket()
         result = await _attach_result(
             harness,
             ws,
             harness.tmux_row,
-            request_id=f"tmux-ansi-{suffix}",
+            request_id=f"tmux-{suffix}",
             frame_delivery="proxy",
             encoding=encoding,
         )
-        assert result["direct"] is None
-        assert result["attachment_id"] in harness.server._tmux_pending
-        assert result["attachment_id"] not in harness.server._proxy().attachments
-        assert len(harness.frame_list) == frame_count
-        await harness.server._cleanup_tmux_client(ws)
-
-    await harness.server._cleanup_tmux_client(semantic_ws)
+        assert result["success"] is False
+        assert result["code"] == "unsupported_terminal_backend"
+    assert harness.frame_list == []
 
 
 @pytest.mark.asyncio

@@ -14,7 +14,6 @@ from gobby.agents.terminal_delivery import (
 from gobby.mcp_proxy.tools.sessions._terminal import (
     _INTERRUPT_OBSERVATION_UNAVAILABLE_ERROR_CODE,
     _authorize_send_keys_target,
-    _backfill_tmux_context_from_sibling,
     _interrupt_observer,
     _resolve_pane_io,
     _resolve_session_for_compaction,
@@ -40,10 +39,7 @@ from gobby.sessions.handoff import (
     staged_handoff_tool_result,
 )
 from gobby.sessions.handoff_records import HandoffPayload
-from gobby.terminal_context import (
-    parse_terminal_context_value,
-    terminal_context_has_tmux_target,
-)
+from gobby.terminal_context import parse_terminal_context_value
 from gobby.terminal_ownership import terminal_session_identity
 from gobby.utils.session_context import get_current_session_id
 from gobby.workflows.state_manager import SessionVariableManager
@@ -401,21 +397,6 @@ async def prepare_clear_session(
         terminal_manager=terminal_manager,
         terminal_runtime_registry=terminal_runtime_registry,
     )
-    if error and not terminal_context_has_tmux_target(session.terminal_context):
-        recovered_session = _backfill_tmux_context_from_sibling(
-            resolved_session_id,
-            session,
-            session_manager,
-        )
-        if recovered_session is not None:
-            session = recovered_session
-            pane, error = _resolve_pane_io(
-                resolved_session_id,
-                session_manager,
-                agent_run_manager,
-                terminal_manager=terminal_manager,
-                terminal_runtime_registry=terminal_runtime_registry,
-            )
     if error:
         return _error(error, "terminal_target_unavailable")
     assert pane is not None
