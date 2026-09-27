@@ -20,7 +20,9 @@ Placement runs in two steps. A side-effect-free preflight runs before isolation 
 created, so a refused preflight spawns nothing. The guarded reservation runs later, at
 dispatch. By then every existing guard has passed and the isolation, child session and
 agent run exist, but no terminal row does. A reservation that fails or is cancelled
-leaves no pane, and the existing spawn cleanup removes what dispatch created. The
+removes its pane before it returns, and the existing spawn cleanup removes what
+dispatch created. If that removal itself fails, the unbound pane is left for the next
+workspace sweep to prune. The
 reserved pane is bound to the agent's terminal while that terminal is still `pending`,
 which is before provider exec, so a placed agent never exists unplaced.
 
@@ -128,8 +130,10 @@ which is before provider exec, so a placed agent never exists unplaced.
    behaviour.
 5. **Compensation.** The placed branch runs in `run_placed_spawn` (`_placement.py`),
    which has two phases.
-   - Reserve. `reserve` either returns a reserved pane or leaves nothing: no pane or
-     tab row, no in-flight mark and no seat entry (1.1). `run_placed_spawn` wraps the
+   - Reserve. `reserve` either returns a reserved pane or compensates before it
+     raises (1.1). Successful compensation leaves no pane or tab row, no in-flight
+     mark and no seat entry. A failed rollback leaves only an unbound row that the
+     next `sweep_dead_panes` prunes. `run_placed_spawn` wraps the
      call in the same exits that `_execute_spawn_phase` uses. A typed refusal and any
      other exception return through `_spawn_failure`, and a `CancelledError` runs
      `_spawn_failure` and is re-raised. `_spawn_failure` runs `cleanup_failed_spawn`,
@@ -154,6 +158,8 @@ which is before provider exec, so a placed agent never exists unplaced.
      `exited` before release runs.
    - Release follows the order of `WorkspaceOps.pane_close`: remove the row, publish
      the removal, then kill an owned terminal that is still `pending` or `live`.
+     Each step runs on its own, from the terminal id captured at bind, so a removal
+     or publish failure never skips the kill check or the mark clear (1.1).
      After a completed cleanup the terminal is already inactive, so release kills
      nothing and no terminal is killed twice.
    - When `cleanup_failed_spawn` raises before its terminate step, release finds the
@@ -428,8 +434,9 @@ New API (all names are new):
   an existing tab, so it stores no worktree. `reserve` returns
   `ReservedPane(pane_id, tab_id, workspace_id, pane_ref, tab_ref)`. Nothing is emitted
   yet.
-- `reserve` is atomic. It returns a `ReservedPane`, or it raises and leaves no pane
-  row, tab row, in-flight mark or seat entry. It is built from existing facilities:
+- `reserve` is compensated. It returns a `ReservedPane`, or it compensates and then
+  raises. When the compensation succeeds, no pane row, tab row, in-flight mark or seat
+  entry remains. It is built from existing facilities:
   - The mark is an in-memory set (`WorkspaceManager.mark_spawn_in_flight`), and the
     seat entry lives in the reserver's own map. Both are set on the event-loop thread
     with no await before the insert starts. Both are cleared in a `finally` on every
@@ -445,24 +452,39 @@ New API (all names are new):
     `WorkspaceOps._roll_back` does. It tolerates `WorkspaceNotFoundError` when the
     insert never committed, and it runs shielded so a repeated cancellation cannot
     strand it.
-  - If the rollback itself fails, the mark is still cleared. The unbound row is then
-    out of flight, and the next `sweep_dead_panes` prunes it, which is the fallback
-    `_roll_back` documents. `reserve` raises the original error.
+  - If the rollback's `remove_pane` itself fails, that row is recoverable residue.
+    The mark and the seat entry are still cleared. The row holds no terminal and is
+    out of flight, so the seat check ignores it and the next `sweep_dead_panes`
+    prunes it. That is the fallback `_roll_back` documents. `reserve` logs the
+    rollback failure at WARNING with the pane id and `exc_info`, as
+    `WorkspaceOps._kill` logs a failed kill, then raises the original error.
 - `bind(reserved, terminal_id)`: calls `set_pane_terminal(owns_terminal=True)`, clears
   the in-flight mark and the seat entry, and emits `tab.created` or `pane.added` with
   the bound pane. A `UniqueViolation` or a missing row raises
   `AgentPlacementError("busy"/"not_found")`.
-- `release(reserved)`: removes the pane (and a tab it emptied), publishes the removal,
-  and clears the in-flight mark and the seat entry. It follows the order of
-  `WorkspaceOps.pane_close`: `remove_pane`, then the removal events, then
-  `kill_terminal` for the removed pane's owned terminal when that terminal is still
-  `pending` or `live`. A kill that fails marks the row orphaned, as
-  `WorkspaceOps._kill` does. In a placed spawn `cleanup_failed_spawn` has normally
-  already killed the terminal and marked it inactive. Release therefore kills only
-  when that cleanup raised before its terminate step (decision 5). It is idempotent and
-  tolerates a row that is already gone.
+- `release(reserved, *, terminal_id)`: `terminal_id` is the id `bind` succeeded
+  with, captured by the 1.4 boundary, or `None` when bind never succeeded. A
+  successful bind always stores `owns_terminal=True`, so that id is the owned
+  terminal. Release follows the order of `WorkspaceOps.pane_close`, with each step
+  independent of the others:
+  - `remove_pane` removes the pane and a tab it emptied. A row that is already gone
+    raises `WorkspaceNotFoundError`, which counts as removed.
+  - The removal events publish only after a successful removal.
+  - In a `finally`, the mark and the seat entry are cleared. Then, when `terminal_id`
+    is set and that terminal is still `pending` or `live`, `kill_terminal` kills it.
+    A kill that fails marks the row orphaned, as `WorkspaceOps._kill` does.
 
-**Granularity:** eleven acceptance items, but one production file and one lifecycle
+  A removal or publish failure therefore never skips the kill check or the mark
+  clear. Each failed step is logged at WARNING with the pane id, the terminal id and
+  `exc_info`, and release never raises, so the boundary's reply stays the spawn
+  outcome. A row that a failed `remove_pane` leaves behind is out of flight once the
+  mark is cleared, and its terminal is inactive once killed, so the next
+  `sweep_dead_panes` prunes it. In a placed spawn `cleanup_failed_spawn` has normally
+  already killed the terminal and marked it inactive. Release then issues no kill, so
+  it kills only when that cleanup raised before its terminate step (decision 5).
+  Release is idempotent.
+
+**Granularity:** thirteen acceptance items, but one production file and one lifecycle
 owner: the reservation state machine (preflight, reserve, bind, release) of one agent
 pane. The items are that machine's refusals and transitions, and none is closeable
 without the others.
@@ -503,6 +525,8 @@ without the others.
 - 1.1.9 - A `create_tab` or `add_pane` failure, and a `rename_pane` failure after `add_pane` committed, each leave no pane row, tab row, in-flight mark or seat entry, and a later reserve of the same seat succeeds. test: `tests/terminals/test_workspace_agent_panes.py::test_reserve_insert_failure_leaves_nothing`.
 - 1.1.10 - A reserve cancelled while its insert is running waits for the insert to settle, removes any committed row, clears the mark and the seat entry, and re-raises `CancelledError`. A later reserve of the same seat succeeds. test: `tests/terminals/test_workspace_agent_panes.py::test_reserve_cancelled_before_return_leaves_nothing`.
 - 1.1.11 - Release kills an owned terminal that is still `pending` or `live`, kills nothing when that terminal is already inactive, and marks the row orphaned when the kill fails. test: `tests/terminals/test_workspace_agent_panes.py::test_release_kills_only_an_active_owned_terminal`.
+- 1.1.12 - With an active owned terminal, release still kills it and clears the mark and the seat entry when `remove_pane` raises, when the removal publish raises, and when the row is already gone. Each failure is logged with the pane and terminal ids, release does not raise, and after a successful cleanup has marked the terminal inactive release issues no kill. test: `tests/terminals/test_workspace_agent_panes.py::test_release_steps_are_independent`.
+- 1.1.13 - When the rollback's `remove_pane` fails, reserve logs that failure with the pane id, clears the mark and the seat entry, and raises the original error. The residual unbound row is not a live seat, a same-seat reserve succeeds, and the next `sweep_dead_panes` removes the row. test: `tests/terminals/test_workspace_agent_panes.py::test_reserve_rollback_failure_leaves_sweepable_residue`.
 
 ### 1.2 Executor binds a placed terminal before exec [category: code]
 `kind: deliverable`
@@ -729,7 +753,8 @@ grow past the ceiling: `spawn_agent_impl` gains only two call sites.
 2. At dispatch, after every existing guard and `build_spawn_request`:
    `run_placed_spawn(...)` replaces the background scheduling for a placed launch. It
    calls `reserve(resolved, worktree_id=isolation_ctx.worktree_id)`, sets
-   `SpawnRequest.placement_binder` to bind the reserved pane, awaits
+   `SpawnRequest.placement_binder` to a closure that binds the reserved pane and
+   records the terminal id it bound, awaits
    `_execute_spawn_phase()` inline, and on success returns `build_spawn_response(...)`
    with the new `workspace`, `tab_ref` and `pane_ref` fields. `build_spawn_response`
    gains an optional `placement` argument that adds them. `spawn_agent_impl` passes
@@ -743,7 +768,7 @@ grow past the ceiling: `spawn_agent_impl` gains only two call sites.
 `run_placed_spawn` is the decision 5 compensation boundary. From the successful
 `reserve` to the final response, it retains the pane only when the response has
 `success: true`, and it releases in a `finally` so release still runs when cleanup
-raises. Release kills the bound terminal only when that cleanup raised before killing
+raises. The `finally` passes the recorded terminal id to `release`. Release kills the bound terminal only when that cleanup raised before killing
 it (decision 5). It reuses the cleanup that `finalize_executed_spawn` and
 `_spawn_failure` already run, so no path cleans up twice. A placed launch defaults
 `cleanup_isolation_on_failure` to true for isolation it created, so a refused or failed
@@ -1022,5 +1047,14 @@ refused re-run. Researchers never touch the live daemon or its seats.
     from the guarded reservation;
   - the `gobby-client` cargo package in 2.1 and V1.
   The `workspace_ops.py` size is re-measured at 982 lines.
+- Program Director diff review of e071a6ce72 (gobby#14610, 2026-09-27) accepted the
+  Overview, order, package and reserve-level compensation, and asked for two
+  failure-semantics repairs, folded here without new scope:
+  - release steps that run independently from the terminal id captured at bind, so
+    a removal or publish failure never skips the kill check or the mark clear
+    (decision 5, 1.1 `release`, 1.1.12, 1.4 step 2);
+  - reserve wording that separates successful compensation from recoverable residue
+    after a failed rollback, with that residue logged and pruned by
+    `sweep_dead_panes` (Overview, decision 5, 1.1 `reserve`, 1.1.13).
 - next: Program Director check of these repairs, then Josh's approval, then the Plan
   Adversary.
