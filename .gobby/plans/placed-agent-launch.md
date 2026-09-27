@@ -422,6 +422,12 @@ before the agent is placed or rolled back. A launch terminal whose kill fails st
       body keeps the key.
     - No bypass: #22961 made config writes operator-only, the storage guard makes
       the selector sync-only, and 1.8 refuses any config that is not enabled SRT.
+    - Trust limitation, for the approval summary: any agent or worker that is
+      allowed to spawn `researcher` gets a child with the research profile's
+      egress (the Trusted seed plus the Gobby hosts). #22899's decision 15 is not
+      built, so a sandboxed caller is not stopped from doing this. This plan adds
+      no new capability or credential boundary. Decision 13's trust statement
+      applies unchanged.
 
 ## Evidence (as-is, VERIFIED unless marked)
 `kind: framing`
@@ -1813,6 +1819,21 @@ Targets:
 - `tests/agents/test_sandbox_profiles.py`
 - `tests/agents/test_resume_sandbox_gate.py`
 
+**Granularity:** four acceptance items and seven production Target files, with
+spawn and resume owners, but one independently closeable outcome: a recorded
+profile resolves the same way at every launch. The seven files are one resolver
+(`sandbox_profiles.py`), its two call sites in the 1.8 helpers, the one-argument
+pass-throughs in `_implementation.py`, `_placement.py` and `resume_executor.py`,
+and the one-line `researcher.yaml` binding. Splitting spawn from resume was
+considered and rejected. A spawn-only leaf would record `sandbox_profile` in
+resume metadata that nothing reads, so a resumed research run would replay its
+spawn-time snapshot. An edited or deleted profile would then be ignored on
+resume, which contradicts decision 14 (#22899's decision 5), and the leaf could
+not close honestly on its own. A resume-only leaf has no recorded name to act
+on. Binding `researcher.yaml` before either lands would put every research-stage
+spawn on a selector that no code resolves yet. 1.8 is split the same way and
+for the same reason.
+
 Consumers unchanged:
 - `src/gobby/dispatch/spawn.py` — no-edit-reason: it passes the loaded `agent_body` (a deep copy that keeps `sandbox_profile`) to `spawn_agent_impl` (`:357-361`), so the `research` stage's `researcher` resolves the `research` profile with no dispatch change.
 - `src/gobby/scheduler/executor.py` — no-edit-reason: same call signature; cron definitions carry no selector.
@@ -2141,4 +2162,8 @@ SRT smoke, after P4 and D2 land, in an isolated Program Director slot:
   - 4.4 documents it.
   - 1.8.4 moves to 4.3.1. Researcher facts come from gobby#14550 on 0.5.0
     `c52269ccd5`.
+- Program Director review of `8f94a67996`: 4.3 records its Granularity decision
+  (one outcome, and the spawn/resume split was rejected). Decision 14 states the
+  trust limitation outright: whoever can spawn `researcher` gets research-profile
+  egress, and no new boundary is promised.
 - next: Program Director design review, then routing to Josh and the Adversary.
