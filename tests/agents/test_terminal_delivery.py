@@ -258,13 +258,16 @@ async def test_durable_boundary_caller_cancellation_before_cross_loop_admission(
 async def test_submitted_delivery_reports_background_failure(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
+    marker = "private marker"
+
     async def operation() -> None:
-        raise RuntimeError("terminal test failure")
+        raise RuntimeError(marker)
 
     await terminal_delivery.submit_terminal_delivery("failed-submit", operation)
     await terminal_delivery.drain_shielded_terminal_deliveries()
     assert "Submitted terminal delivery failed for agent failed-submit" in caplog.text
-    assert "terminal test failure" in caplog.text
+    assert "RuntimeError" in caplog.text
+    assert marker not in caplog.text
 
 
 async def test_shielded_terminal_delivery_settles_before_cancellation_propagates() -> None:
@@ -408,20 +411,61 @@ class FailingCompletionRegistry(AcknowledgingCompletionRegistry):
         raise RuntimeError(f"notify failed for {completion_id}: {result!r} {message}")
 
 
-async def test_terminal_delivery_notify_failure_preserves_registry_state() -> None:
+async def test_terminal_delivery_notify_failure_preserves_registry_state(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    marker = "private marker"
     registry = FailingCompletionRegistry(None)
 
-    delivery = await terminal_delivery.deliver_and_cleanup_terminal_run(
-        db=cast("HubDatabase", RecordingDb()),
-        completion_registry=cast(Any, registry),
-        run_id="run-1",
-        result={"status": "completed"},
-        message="Agent completed",
-        run_db=AsyncMock(),
-    )
+    with (
+        caplog.at_level(logging.WARNING, logger="gobby.agents.terminal_delivery"),
+        patch.object(registry, "notify", new=AsyncMock(side_effect=RuntimeError(marker))),
+    ):
+        delivery = await terminal_delivery.deliver_and_cleanup_terminal_run(
+            db=cast("HubDatabase", RecordingDb()),
+            completion_registry=cast(Any, registry),
+            run_id="run-1",
+            result={"status": "completed"},
+            message="Agent completed",
+            run_db=AsyncMock(),
+        )
 
     assert delivery is None
     assert registry.cleaned == []
+    assert "RuntimeError" in caplog.text
+    assert marker not in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["subscriber_read", "durable_wake"])
+async def test_terminal_delivery_subscriber_failures_do_not_log_exception_text(
+    phase: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    marker = "private marker"
+    with caplog.at_level(logging.WARNING, logger="gobby.agents.terminal_delivery"):
+        if phase == "subscriber_read":
+            subscribers, succeeded = await terminal_delivery._read_durable_subscribers_safely(
+                db=cast("HubDatabase", RecordingDb()),
+                run_id="run-1",
+                run_db=AsyncMock(side_effect=RuntimeError(marker)),
+            )
+            assert subscribers == []
+            assert succeeded is False
+        else:
+            registry = MagicMock()
+            registry.wake_sessions = AsyncMock(side_effect=RuntimeError(marker))
+            delivery = await terminal_delivery._wake_durable_subscribers(
+                completion_registry=registry,
+                run_id="run-1",
+                result={"status": "error"},
+                message="Agent failed",
+                subscribers=["session-1"],
+                registry_delivery=None,
+            )
+            assert delivery is None
+
+    assert "RuntimeError" in caplog.text
+    assert marker not in caplog.text
 
 
 async def test_terminal_delivery_orders_remove_and_cleanup_after_awaited_notify(

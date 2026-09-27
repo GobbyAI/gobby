@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -27,6 +27,31 @@ class _Run:
     terminal_id: str | None = None
     terminal_reason: str | None = None
     resume_metadata_json: dict[str, str] | None = None
+
+
+@pytest.mark.asyncio
+async def test_task_recovery_failure_does_not_log_exception_text(
+    temp_db: HubDatabase, caplog: pytest.LogCaptureFixture
+) -> None:
+    marker = "private marker"
+    handler = TaskRecoveryHandler(
+        LocalTaskManager(temp_db), _RunManager(), _Classifier(), run_db=_run_db
+    )
+    run = _Run("run-1", "error", "task-1", "child-1", "child-1")
+
+    with (
+        caplog.at_level("WARNING", logger="gobby.agents.task_recovery"),
+        patch.object(
+            handler,
+            "resolve_claimed_task_for_run",
+            new=AsyncMock(side_effect=RuntimeError(marker)),
+        ),
+    ):
+        recovered = await handler.recover_task_from_terminal_agent(run, outcome="failed")
+
+    assert recovered is False
+    assert "RuntimeError" in caplog.text
+    assert marker not in caplog.text
 
 
 class _RunManager:

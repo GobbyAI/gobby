@@ -1054,6 +1054,7 @@ class TestExecuteSpawn:
             agent_run_id="run-abc123def456",
             agent_name="qa-reviewer",
             session_manager=mock_session_manager,
+            run_manager=MagicMock(),
             prepared_spawn=prepared_spawn(),
             terminal_backend="tmux",
         )
@@ -1110,6 +1111,7 @@ class TestExecuteSpawn:
             project_path="/main/repo",
             agent_run_id="run-local123456",
             session_manager=mock_session_manager,
+            run_manager=MagicMock(),
             model="ollama/qwen3-coder",
             is_local=True,
             codex_oss_provider="ollama",
@@ -1164,6 +1166,7 @@ class TestExecuteSpawn:
             project_id="proj",
             agent_run_id="run-abc123def456",
             session_manager=MagicMock(),
+            run_manager=MagicMock(),
             prepared_spawn=prepared_spawn(),
             terminal_backend="tmux",
         )
@@ -2989,6 +2992,38 @@ class TestCodexPromptDelivery:
         assert terminal.id in runtime.killed_ids
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("phase", ["snapshot", "liveness"])
+    async def test_composer_inspection_failure_does_not_log_exception_text(
+        self, phase: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        marker = "private marker"
+        runtime = FakeRuntime()
+        runtime.snapshot_effects = [
+            RuntimeError(marker) if phase == "snapshot" else "Codex starting",
+            "› ",
+        ]
+        coordinator, terminal = _codex_delivery_target(runtime)
+        run_manager = MagicMock()
+
+        with ExitStack() as stack:
+            stack.enter_context(_fast_codex_delivery())
+            stack.enter_context(
+                caplog.at_level(logging.DEBUG, logger="gobby.agents.spawn_executor_support")
+            )
+            if phase == "liveness":
+                stack.enter_context(
+                    patch.object(
+                        runtime, "is_live", new=AsyncMock(side_effect=RuntimeError(marker))
+                    )
+                )
+            await _deliver_codex_prompt(coordinator, terminal, "Do the task", "run-1", run_manager)
+
+        assert "RuntimeError" in caplog.text
+        assert marker not in caplog.text
+        assert runtime.write_log == [("text", "Do the task"), ("key", "enter")]
+        run_manager.fail_uninitialized_prompt_delivery.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_registered_child_is_not_failed_or_terminated_by_late_delivery(self) -> None:
         runtime = FakeRuntime()
         runtime.snapshot_text = "Codex is already working"
@@ -3001,6 +3036,49 @@ class TestCodexPromptDelivery:
 
         run_manager.fail_uninitialized_prompt_delivery.assert_called_once()
         assert not runtime.killed_ids
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("phase", ["persistence", "termination", "cleanup"])
+    async def test_prompt_failure_logs_only_exception_type(
+        self, phase: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        marker = "private marker"
+        runtime = FakeRuntime()
+        _coordinator, terminal = _codex_delivery_target(runtime)
+        run_manager = MagicMock()
+        run_manager.fail_uninitialized_prompt_delivery.return_value = object()
+        cleanup_agent = AsyncMock()
+        if phase == "persistence":
+            run_manager.fail_uninitialized_prompt_delivery.side_effect = RuntimeError(marker)
+        elif phase == "cleanup":
+            cleanup_agent.side_effect = RuntimeError(marker)
+
+        with ExitStack() as stack:
+            stack.enter_context(
+                caplog.at_level(logging.ERROR, logger="gobby.agents.spawn_executor_support")
+            )
+            if phase == "termination":
+                stack.enter_context(
+                    patch.object(
+                        runtime, "terminate", new=AsyncMock(side_effect=RuntimeError(marker))
+                    )
+                )
+            await spawn_executor_support._fail_codex_prompt_delivery(
+                runtime,
+                terminal,
+                "run-1",
+                run_manager,
+                "codex_composer_not_ready: safe diagnostic",
+                cleanup_agent,
+            )
+
+        assert "RuntimeError" in caplog.text
+        assert marker not in caplog.text
+        if phase == "persistence":
+            cleanup_agent.assert_not_awaited()
+            assert not runtime.killed_ids
+        else:
+            cleanup_agent.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_failed_paste_fails_run_and_kills_terminal(self) -> None:

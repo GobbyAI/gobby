@@ -177,11 +177,11 @@ async def shielded_terminal_delivery[T](
     if cancellation is not None:
         try:
             owned.result()
-        except BaseException:
+        except BaseException as error:
             logger.warning(
-                "Terminal delivery failed while caller cancellation settled for agent %s",
+                "Terminal delivery failed while caller cancellation settled for agent %s: %s",
                 run_id,
-                exc_info=True,
+                type(error).__name__,
             )
         raise cancellation
     return owned.result()
@@ -206,7 +206,9 @@ async def submit_terminal_delivery[T](
             result.cancel()
         elif (error := task.exception()) is not None:
             result.set_exception(error)
-            logger.error("Submitted terminal delivery failed for agent %s", run_id, exc_info=error)
+            logger.error(
+                "Submitted terminal delivery failed for agent %s: %s", run_id, type(error).__name__
+            )
         else:
             result.set_result(task.result())
 
@@ -340,11 +342,11 @@ async def _read_durable_subscribers_safely(
     """
     try:
         return list(await run_db(_read_durable_subscribers, db, run_id)), True
-    except Exception:
+    except Exception as error:
         logger.warning(
-            "Failed to read durable completion subscribers for agent %s",
+            "Failed to read durable completion subscribers for agent %s: %s",
             run_id,
-            exc_info=True,
+            type(error).__name__,
         )
         return [], False
 
@@ -385,11 +387,11 @@ async def _wake_durable_subscribers(
         )
     try:
         durable_delivery = await wake_sessions(run_id, pending, result, message)
-    except Exception:
+    except Exception as error:
         logger.warning(
-            "Durable completion wake failed for agent %s",
+            "Durable completion wake failed for agent %s: %s",
             run_id,
-            exc_info=True,
+            type(error).__name__,
         )
         return registry_delivery
     return {**(registry_delivery or {}), **durable_delivery}
@@ -496,8 +498,12 @@ async def _deliver_and_cleanup_terminal_run_once(
 
     try:
         review_delivery = await run_db(terminal_review_delivery, db, run_id)
-    except Exception:
-        logger.warning("Failed to resolve task-close review delivery for %s", run_id, exc_info=True)
+    except Exception as error:
+        logger.warning(
+            "Failed to resolve task-close review delivery for %s: %s",
+            run_id,
+            type(error).__name__,
+        )
         review_delivery = None
     if isinstance(review_delivery, tuple) and len(review_delivery) == 2:
         result, message = review_delivery
@@ -522,8 +528,8 @@ async def _deliver_and_cleanup_terminal_run_once(
                 durable_subscriber_count=len(durable_subscribers),
             )
             notification_succeeded = True
-        except Exception:
-            logger.warning("Failed to notify completion for %s", run_id, exc_info=True)
+        except Exception as error:
+            logger.warning("Failed to notify completion for %s: %s", run_id, type(error).__name__)
         delivery = await _wake_durable_subscribers(
             completion_registry=completion_registry,
             run_id=run_id,
@@ -554,12 +560,12 @@ async def _deliver_and_cleanup_terminal_run_once(
                     )
 
             await run_db(remove_delivered_subscribers)
-    except Exception:
+    except Exception as error:
         subscriber_cleanup_succeeded = False
         logger.warning(
-            "Failed to remove delivered completion subscribers for agent %s",
+            "Failed to remove delivered completion subscribers for agent %s: %s",
             run_id,
-            exc_info=True,
+            type(error).__name__,
         )
     if delivered_session_ids and result is not None:
         try:
@@ -571,11 +577,11 @@ async def _deliver_and_cleanup_terminal_run_once(
                 result,
                 delivered_session_ids,
             )
-        except Exception:
+        except Exception as error:
             logger.warning(
-                "Failed to mark task-close review delivery for agent %s",
+                "Failed to mark task-close review delivery for agent %s: %s",
                 run_id,
-                exc_info=True,
+                type(error).__name__,
             )
     if notification_succeeded:
         completion_registry.cleanup(run_id)

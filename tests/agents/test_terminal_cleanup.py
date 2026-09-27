@@ -7,7 +7,7 @@ from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -30,6 +30,74 @@ from tests.agents.cleanup_test_support import (
 )
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["runtime_probe", "terminal_settlement"])
+async def test_nested_terminal_close_does_not_log_exception_text(
+    phase: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    marker = "private marker"
+    run = replace(_run(task_id=None), terminal_id="terminal-1")
+    agent_run_manager = MagicMock()
+    agent_run_manager.get.return_value = run
+    manager = MagicMock()
+    manager.get.return_value = SimpleNamespace(id="terminal-1", state="live")
+    if phase == "terminal_settlement":
+        manager.mark_exited.side_effect = RuntimeError(marker)
+    terminal_services = MagicMock()
+    handler = _handler(
+        RecordingDb(), agent_run_manager=agent_run_manager, terminal_services=terminal_services
+    )
+    probe = AsyncMock(
+        side_effect=RuntimeError(marker) if phase == "runtime_probe" else None,
+        return_value=False,
+    )
+
+    with (
+        caplog.at_level("WARNING", logger="gobby.agents.terminal_cleanup"),
+        patch("gobby.storage.terminals.TerminalManager", return_value=manager),
+        patch("gobby.agents.capture.backend_session_present", new=probe),
+    ):
+        closed = await handler._resource_cleaner._close_tmux_session(run)
+
+    assert closed is False
+    assert "RuntimeError" in caplog.text
+    assert marker not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_terminal_cleanup_failure_logs_do_not_include_exception_text(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    marker = "private marker"
+    _stub_runtime_cleanup(monkeypatch)
+    session_coordinator = MagicMock()
+    session_coordinator.release_session_worktrees.side_effect = RuntimeError(marker)
+    handler = _handler(
+        RecordingDb(),
+        completion_registry=MagicMock(),
+        session_coordinator=session_coordinator,
+    )
+
+    with (
+        caplog.at_level("WARNING", logger="gobby.agents.terminal_cleanup"),
+        patch.object(
+            terminal_cleanup.terminal_delivery,
+            "deliver_and_cleanup_terminal_run",
+            new=AsyncMock(side_effect=RuntimeError(marker)),
+        ),
+    ):
+        await handler.post_terminal_cleanup(
+            _run(task_id=None),
+            notification_result={"status": "error"},
+            notification_message="Agent failed",
+        )
+
+    assert "Failed to deliver terminal result" in caplog.text
+    assert "Failed to release worktrees" in caplog.text
+    assert "RuntimeError" in caplog.text
+    assert marker not in caplog.text
 
 
 @pytest.fixture(autouse=True)

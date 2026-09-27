@@ -171,7 +171,7 @@ def _record_resume_launch_details(
 
         LocalAgentRunManager(db).update_resume_metadata(agent_run_id, metadata)
     except psycopg.DatabaseError as exc:
-        logger.warning("Failed to persist resume launch metadata: %s", exc)
+        logger.warning("Failed to persist resume launch metadata: %s", type(exc).__name__)
 
 
 def _session_manager_validation_error(
@@ -319,16 +319,24 @@ async def _fail_codex_prompt_delivery(
             run_id,
             error=error,
         )
-    except Exception:
-        logger.exception("Cannot persist Codex prompt delivery failure for run %s", run_id)
+    except Exception as exc:
+        logger.error(
+            "Cannot persist Codex prompt delivery failure for run %s: %s",
+            run_id,
+            type(exc).__name__,
+        )
         return
     if transitioned is None:
         logger.info("Skipping stale Codex prompt delivery failure for run %s", run_id)
         return
     try:
         await runtime.terminate(terminal, grace_seconds=_CODEX_PROMPT_FAILURE_KILL_GRACE_SECONDS)
-    except Exception:
-        logger.exception("Cannot terminate Codex terminal after prompt failure for run %s", run_id)
+    except Exception as exc:
+        logger.error(
+            "Cannot terminate Codex terminal after prompt failure for run %s: %s",
+            run_id,
+            type(exc).__name__,
+        )
     try:
         if cleanup_agent is not None:
             await cleanup_agent(
@@ -338,8 +346,10 @@ async def _fail_codex_prompt_delivery(
             )
         else:
             logger.warning("No immediate cleanup handler for Codex prompt failure run %s", run_id)
-    except Exception:
-        logger.exception("Codex prompt failure cleanup failed for run %s", run_id)
+    except Exception as exc:
+        logger.error(
+            "Codex prompt failure cleanup failed for run %s: %s", run_id, type(exc).__name__
+        )
 
 
 def schedule_codex_prompt_delivery(
@@ -399,11 +409,11 @@ async def _deliver_codex_prompt(
                 pane = snapshot.text
                 if pane:
                     last_pane = pane
-            except Exception:
+            except Exception as exc:
                 logger.debug(
-                    "Failed to inspect Codex composer readiness for run %s",
+                    "Failed to inspect Codex composer readiness for run %s: %s",
                     run_id,
-                    exc_info=True,
+                    type(exc).__name__,
                 )
                 pane = None
             if pane and _CODEX_COMPOSER_MARKER in pane:
@@ -423,11 +433,11 @@ async def _deliver_codex_prompt(
             try:
                 async with asyncio.timeout_at(deadline):
                     live = await runtime.is_live(terminal)
-            except Exception:
+            except Exception as exc:
                 logger.debug(
-                    "Failed to inspect Codex terminal liveness for run %s",
+                    "Failed to inspect Codex terminal liveness for run %s: %s",
                     run_id,
-                    exc_info=True,
+                    type(exc).__name__,
                 )
             else:
                 if not live:
