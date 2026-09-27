@@ -335,7 +335,8 @@ fn hovered_read_only_metadata_underlines_only_while_actionable() {
 
 #[test]
 fn empty_state_names_the_next_step_without_exclamation() {
-    let chrome = Chrome::dark();
+    let mut chrome = Chrome::dark();
+    chrome.sidebar.pinned = false;
     let mut terminal = Terminal::new(TestBackend::new(60, 10)).unwrap();
     terminal
         .draw(|frame| render_empty(frame, frame.area(), &chrome))
@@ -343,12 +344,19 @@ fn empty_state_names_the_next_step_without_exclamation() {
     let text = screen(&terminal);
     assert!(cells(&terminal, 3, 0, 60).contains("No pane open."));
     assert!(cells(&terminal, 4, 0, 60).contains("ctrl+b w  attach a terminal"));
-    assert!(cells(&terminal, 5, 0, 60).contains("File › New Terminal  start one"));
+    assert!(cells(&terminal, 5, 0, 60).contains("File › New terminal  start one"));
     assert!(cells(&terminal, 6, 0, 60).contains("ctrl+b b  open the sidebar"));
     assert!((0..3).all(|y| cells(&terminal, y, 0, 60).trim().is_empty()));
     assert!((7..10).all(|y| cells(&terminal, y, 0, 60).trim().is_empty()));
     assert!(!text.contains("select a terminal in the sidebar"));
     assert!(!text.contains('!'));
+
+    // A pinned column is what the same chord takes away.
+    chrome.sidebar.pinned = true;
+    terminal
+        .draw(|frame| render_empty(frame, frame.area(), &chrome))
+        .unwrap();
+    assert!(cells(&terminal, 6, 0, 60).contains("ctrl+b b  hide the sidebar"));
 }
 
 #[test]

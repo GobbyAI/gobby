@@ -239,9 +239,15 @@ pub fn render_empty(frame: &mut Frame, area: Rect, chrome: &Chrome) {
     };
     let picker_label = binding_label("terminal_picker");
     let sidebar_label = binding_label("toggle_sidebar");
+    // The toggle unpins a pinned column and otherwise opens the overlay.
+    let sidebar_step = if chrome.sidebar.pinned {
+        "hide the sidebar"
+    } else {
+        "open the sidebar"
+    };
     let width = 30usize
         .max(display_width(&picker_label) + 2 + display_width("attach a terminal"))
-        .max(display_width(&sidebar_label) + 2 + display_width("open the sidebar"))
+        .max(display_width(&sidebar_label) + 2 + display_width(sidebar_step))
         .min(usize::from(area.width)) as u16;
     let lines = vec![
         Line::styled(
@@ -249,8 +255,8 @@ pub fn render_empty(frame: &mut Frame, area: Rect, chrome: &Chrome) {
             Style::default().fg(p.overlay1).add_modifier(Modifier::BOLD),
         ),
         row(&picker_label, "attach a terminal", width),
-        row("File › New Terminal", "start one", width),
-        row(&sidebar_label, "open the sidebar", width),
+        row("File › New terminal", "start one", width),
+        row(&sidebar_label, sidebar_step, width),
     ];
     let rect = Rect::new(
         area.x + (area.width - width) / 2,
