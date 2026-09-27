@@ -65,8 +65,9 @@ before the agent is placed or rolled back. A launch terminal whose kill fails st
 - Monolith ceiling: on main `cb4f91b49b` these targets are at or above 850 lines:
   - `_implementation.py`: 964
   - `spawn_executor.py`: 962
-  - `workspace_ops.py`: 1004 on main; 893 after #22883's pane-access extraction
-    (`workspace_pane_access.py`), which 1.5 builds on
+  - `workspace_ops.py`: 893 on 0.5.0 `070a19c3d4`, after #22883's pane-access
+    extraction (`workspace_pane_access.py`), which 1.5 builds on and follows
+    with the pane I/O move
   - `storage/workspaces.py`: 973
   - `resume_executor.py`: 972
 
@@ -314,10 +315,13 @@ before the agent is placed or rolled back. A launch terminal whose kill fails st
     - #22883 (owned-shell workspace ops, gobby#14642) owns the extraction of the
       pane-source policy from `workspace_ops.py` into `workspace_pane_access.py`
       (`WorkspacePaneAccess`: scope, admission, source selection, adoption, held-
-      terminal refusal). 1.5 consumes that landed extraction and does not repeat
-      it. The guarded methods it changes (`workspace_close`, `tab_close`,
-      `tab_move`, `pane_swap`, `pane_move`, `pane_close`, `_closing`,
-      `_db_guarded`, `_kill`) stay in `workspace_ops.py`.
+      terminal refusal), landed on 0.5.0 as `070a19c3d4`. 1.5 consumes that
+      extraction and does not repeat it. The guarded methods it changes
+      (`workspace_close`, `tab_close`, `tab_move`, `pane_swap`, `pane_move`,
+      `pane_close`, `_closing`, `_db_guarded`, `_kill`) stay in
+      `workspace_ops.py`. The file is still 893 lines after the extraction, so
+      1.5 also moves the pane I/O group, which it does not change, into
+      `workspace_pane_io.py`.
 
 13. **Every `spawn_agent` launch runs under managed SRT (2026-09-27).** Josh's final
     ruling, relayed by the Program Director (gobby#14610) and replacing every
@@ -864,7 +868,6 @@ Consumers unchanged:
 - `tests/mcp_proxy/tools/test_agent_worktree_checkpoint.py` — no-edit-reason: Constructs AgentsRegistryContext without the appended field, which defaults to None.
 - `tests/agents/test_backend_ingress.py` — no-edit-reason: Builds the spawn registry without the new optional resolver.
 - `tests/mcp_proxy/tools/spawn_agent/test_execution.py` — no-edit-reason: Builds the spawn registry without the new optional resolver.
-- `tests/mcp_proxy/tools/spawn_agent/test_factory.py` — no-edit-reason: Builds the spawn registry without the new optional resolver.
 - `tests/mcp_proxy/tools/spawn_agent/test_fallback_agent.py` — no-edit-reason: Builds the spawn registry without the new optional resolver.
 - `tests/mcp_proxy/tools/spawn_agent/test_initial_variables.py` — no-edit-reason: Builds the spawn registry without the new optional resolver.
 - `tests/mcp_proxy/tools/spawn_agent/test_mcp_proxy_tools_spawn_agent_dedup.py` — no-edit-reason: Builds the spawn registry without the new optional resolver.
@@ -994,7 +997,6 @@ Consumers unchanged:
 - `src/gobby/feedback/agent.py` — no-edit-reason: Unplaced caller; the placement default None keeps the background path.
 - `src/gobby/scheduler/executor.py` — no-edit-reason: Cron agent jobs stay unplaced; cron runbooks reach placement through pipeline mcp steps.
 - `src/gobby/servers/routes/agent_spawn.py` — no-edit-reason: The HTTP spawn route stays unplaced; placement is an MCP input reached by pipelines.
-- `tests/mcp_proxy/tools/spawn_agent/test_factory.py` — no-edit-reason: Existing unplaced calls are unaffected by an optional parameter.
 - `tests/mcp_proxy/tools/spawn_agent/test_execution.py` — no-edit-reason: Existing unplaced calls are unaffected by an optional parameter.
 - `tests/mcp_proxy/tools/spawn_agent/test_error_handling.py` — no-edit-reason: Existing unplaced failure paths are unchanged.
 - `tests/mcp_proxy/tools/spawn_agent/test_fallback_agent.py` — no-edit-reason: Unplaced registry calls; the optional parameter defaults to None.
@@ -1036,8 +1038,9 @@ Targets:
 - `src/gobby/storage/workspaces.py::WorkspaceManager`
 - `src/gobby/storage/workspace_layout.py`
 - `src/gobby/terminals/workspace_ops.py::WorkspaceOps`
+- `src/gobby/terminals/workspace_pane_io.py`
 - `tests/storage/test_workspaces.py::*` — scope-reason: add the guard, race, moved-target and sweep tests
-- `tests/terminals/test_workspace_ops.py::*` — scope-reason: add the busy and orphaned-retry tests
+- `tests/terminals/test_workspace_ops.py::*` — scope-reason: add the busy and orphaned-retry tests; retarget the wait-cap test's clock patches to the new module
 
 As-is, the only in-flight guard is `WorkspaceOps._closing`, an in-memory read that
 refuses a pane only while its `terminal_id` is NULL and runs before a separate
@@ -1092,9 +1095,29 @@ Storage (`WorkspaceManager`):
   `pane_wait_for_output` also reads it.
 - User closes keep remove-then-kill (decision 7). `_kill` marks a failed kill with
   `mark_kill_failed` (1.6).
-- Size: this leaf starts from a base that contains #22883's landed extraction,
-  after which `workspace_ops.py` is 893 lines, so the guard lines fit under the
-  ceiling. It performs no extraction of its own.
+
+Size: `src/gobby/terminals/workspace_ops.py` is 893 lines on 0.5.0 `070a19c3d4`,
+after #22883's landed `workspace_pane_access.py` extraction, and 1.5 adds guard
+lines to it. Move the pane I/O group, which 1.5 does not change, into the new
+`src/gobby/terminals/workspace_pane_io.py` as `WorkspacePaneIOMixin`, and have
+`WorkspaceOps` inherit it. The group is `pane_send_text`, `pane_send_keys`,
+`pane_read`, `pane_wait_for_output`, `_runtime` and `_write` (lines ~472-592 and
+~848-893), plus `WAIT_CAPTURE_LINES`, `WAIT_CAPTURE_FAILURE_LIMIT`,
+`IDEMPOTENCY_KEY_PATTERN` and `_ACTIVE_STATES`. Once `_closing` reads
+`_KILLABLE_STATES`, only `pane_wait_for_output` reads `_ACTIVE_STATES`.
+- The mixin declares the attributes it reads (`_terminals`, `_registry`,
+  `_coordinator`, `_sessions`, `_detection_registry`) and the
+  `_pane_terminal`/`_db` methods as annotations, the same way the websocket
+  `TerminalWsMixin` does.
+- `_pane_terminal` stays in `WorkspaceOps`, because it needs `_enter` and
+  `_pane_access`.
+- Callers keep calling `ops.pane_*` unchanged.
+- `test_pane_wait_for_output_caps_a_huge_timeout` patches `time.monotonic` and
+  `asyncio.sleep` through `gobby.terminals.workspace_ops`; it retargets to
+  `gobby.terminals.workspace_pane_io`.
+- `workspace_ops.py` ends near 730 lines and the new module near 200.
+- This is not #22883's pane-source extraction and does not touch
+  `workspace_pane_access.py`.
 
 **Granularity:** seven acceptance items and three production files, but one
 invariant: a workspace mutation and an agent-pane insert serialize
@@ -1121,6 +1144,7 @@ Consumers unchanged:
 - `src/gobby/runner.py` — no-edit-reason: constructs WorkspaceManager unchanged.
 - `src/gobby/runner_init/terminal_wiring.py` — no-edit-reason: wires WorkspaceManager and WorkspaceOps unchanged.
 - `src/gobby/storage/workspace_address.py` — no-edit-reason: reads workspace rows only.
+- `src/gobby/terminals/workspace_pane_access.py` — no-edit-reason: reads `db`, `get_pane_for_terminal` and `resolve_reference`, whose signatures 1.5 leaves unchanged.
 - `src/gobby/servers/websocket/workspace_ws.py` — no-edit-reason: calls WorkspaceOps methods whose signatures are unchanged.
 - `tests/mcp_proxy/test_workspaces_registry.py` — no-edit-reason: exercises unchanged WorkspaceOps signatures on panes that are not in flight.
 - `tests/servers/test_workspace_ws.py` — no-edit-reason: exercises unchanged WorkspaceOps signatures on panes that are not in flight.
@@ -1136,7 +1160,8 @@ Consumers unchanged:
 - 1.5.4 - An empty-workspace close and a concurrent `create_tab` serialize: either the close wins and the insert fails not found, or the insert wins and the close refuses busy. test: `tests/storage/test_workspaces.py::test_empty_workspace_close_serializes_with_new_tab`.
 - 1.5.5 - `sweep_dead_panes` keeps a pane whose terminal is `orphaned` and removes it once the terminal is `exited`. test: `tests/storage/test_workspaces.py::test_sweep_keeps_orphaned_panes`.
 - 1.5.6 - `WorkspaceOps` close, move and swap return `busy` for an in-flight pane, and a `pane_close` on an `orphaned` pane retries its kill. test: `tests/terminals/test_workspace_ops.py::test_ops_refuse_in_flight_and_retry_orphaned_kill`.
-- 1.5.7 - `storage/workspaces.py` and `workspace_ops.py` are each under 1,000 lines, and the moved names import from their new modules. file: `src/gobby/storage/workspace_layout.py`.
+- 1.5.7 - `storage/workspaces.py` is under 1,000 lines and `workspace_ops.py` under 850, and the moved names import from their new modules. file: `src/gobby/storage/workspace_layout.py`.
+- 1.5.8 - The pane I/O methods live in `WorkspacePaneIOMixin`, `WorkspaceOps` inherits them with unchanged signatures, and the existing pane I/O tests pass unchanged apart from the retargeted clock patches. file: `src/gobby/terminals/workspace_pane_io.py`.
 
 ### 1.6 Spawn failure cleanup: one attempt, cancellation-safe, kill truth [category: code]
 `kind: deliverable`
@@ -1227,7 +1252,6 @@ Consumers unchanged:
 - `src/gobby/servers/routes/agent_spawn.py` — no-edit-reason: spawn_agent_impl keeps its signature.
 - `tests/agents/test_backend_ingress.py` — no-edit-reason: spawn_agent_impl keeps its signature.
 - `tests/agents/test_local_context_setup.py` — no-edit-reason: spawn_agent_impl keeps its signature.
-- `tests/mcp_proxy/tools/spawn_agent/test_factory.py` — no-edit-reason: spawn_agent_impl keeps its signature.
 - `tests/mcp_proxy/tools/spawn_agent/test_initial_variables.py` — no-edit-reason: spawn_agent_impl keeps its signature.
 - `tests/tasks/test_plan_gate.py` — no-edit-reason: spawn_agent_impl keeps its signature.
 
@@ -1331,6 +1355,8 @@ Targets:
 - `tests/servers/routes/test_agent_spawn_routes.py::*` — scope-reason: the disabled-sandbox route test now asserts refusal
 - `tests/mcp_proxy/tools/spawn_agent/test_sandbox_gate.py`
 - `tests/agents/test_resume_sandbox_gate.py`
+- `tests/conftest.py::*` — scope-reason: add the autouse SRT verification stub for the gate
+- `tests/mcp_proxy/tools/spawn_agent/test_factory.py::*` — scope-reason: `test_agent_sandbox_defaults_come_from_daemon_config` spawns with `enabled` false and now expects `sandbox_required`
 
 Decision 13 makes managed SRT unconditional for `spawn_agent`.
 
@@ -1365,9 +1391,22 @@ Splitting spawn from resume would leave one unsandboxed path open.
   `_runtime_spawn`. Placed launch goes through `execute_spawn` and `_runtime_spawn`
   (1.2), so it inherits the wrap.
 - `tests/conftest.py` disables `agent_sandbox` only on the CLI mock config, so CLI
-  start tests never probe SRT; spawn tests that need a launch use the executor
-  fakes, which never reach the gate's `verify_srt_installation` because the tests
-  patch it.
+  start tests never probe SRT. No spawn test patches `verify_srt_installation`
+  today (checked on 0.5.0 `070a19c3d4`), and `agent_sandbox_config` defaults to
+  enabled `srt`. Once the gate lands, every `spawn_agent_impl` test that expects
+  success would therefore probe the real pinned install, and would fail on a
+  machine without it.
+- Test stub: `tests/conftest.py` gains an autouse fixture that patches
+  `gobby.agents.sandbox_gate.verify_srt_installation` to return a stub
+  installation.
+  - The two gate test modules patch it again per case to raise, and the inner
+    patch wins, so the gate's refusal paths are tested for real.
+  - Every other `spawn_agent_impl` test module runs unchanged under the stub,
+    because it leaves `agent_sandbox` at its enabled `srt` default. The one
+    exception is `test_factory.py`: its daemon-config case spawns with `enabled`
+    false and now expects `sandbox_required`.
+- `tests/dispatch/test_daemon_resume.py` replaces `resume_agent_run` with a fake,
+  so the resume gate never runs there.
 - Size: the sandbox resolution in
   `src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py` (964 lines) is a
   split: it and its new checks move to
@@ -1389,6 +1428,14 @@ Consumers unchanged:
 - `src/gobby/feedback/agent.py` — no-edit-reason: passes through the same gate.
 - `src/gobby/dispatch/spawn.py` — no-edit-reason: passes through the same gate.
 - `tests/agents/test_srt_spawn.py` — no-edit-reason: the wrap call site is unchanged.
+- `src/gobby/servers/routes/agent_spawn.py` — no-edit-reason: it returns `spawn_agent_impl`'s error payload unchanged, so a refusal surfaces as `sandbox_required`; its route test is a Target.
+- `tests/dispatch/test_daemon_resume.py` — no-edit-reason: it replaces `resume_agent_run` with a fake, so the resume gate never runs.
+- `tests/mcp_proxy/tools/spawn_agent/test_error_handling.py` — no-edit-reason: it leaves `agent_sandbox` at the enabled `srt` default, so its spawns pass under the autouse stub.
+- `tests/mcp_proxy/tools/spawn_agent/test_initial_variables.py` — no-edit-reason: it leaves `agent_sandbox` at the enabled `srt` default, so its spawns pass under the autouse stub.
+- `tests/agents/test_backend_ingress.py` — no-edit-reason: it leaves `agent_sandbox` at the enabled `srt` default, so its spawns pass under the autouse stub.
+- `tests/agents/test_local_context_setup.py` — no-edit-reason: its spawns leave `agent_sandbox` at the enabled `srt` default and pass under the autouse stub; its disabled `SandboxConfig` is a Codex local-context case that does not reach `spawn_agent_impl`.
+- `tests/tasks/test_plan_gate.py` — no-edit-reason: it leaves `agent_sandbox` at the enabled `srt` default, so its spawns pass under the autouse stub.
+- `tests/workflows/test_step_snapshot_semantics.py` — no-edit-reason: it leaves `agent_sandbox` at the enabled `srt` default, so its spawns pass under the autouse stub.
 
 **Acceptance:**
 
@@ -1714,4 +1761,13 @@ SRT smoke, after D1 and D2 land, in an isolated Program Director slot:
   web option A stays proposed with the local WebFetch gap named, and its SRT
   smoke is unrun; credential hardening and the escape-surface audit are design
   findings, not leaf scope.
+- #22883 landed on 0.5.0 as `070a19c3d4` (source candidate `41622e0782`), leaving
+  `workspace_ops.py` at 893 lines and the new `workspace_pane_access.py` at 148.
+  The size lint still fires at 893, so 1.5 moves the pane I/O group, which it
+  does not change, into `workspace_pane_io.py` (new 1.5.8; 1.5.7 now bounds
+  `workspace_ops.py` under 850).
+- 1.8 test fix: no spawn test patches `verify_srt_installation`, so the earlier
+  research note claiming they do was wrong. 1.8 now adds an autouse stub in
+  `tests/conftest.py` and retargets `test_factory.py`'s disabled-config case.
+  The other six spawn test modules pass unchanged under the stub.
 - next: Program Director design review, then routing to Josh and the Adversary.
