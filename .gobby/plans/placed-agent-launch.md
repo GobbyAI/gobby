@@ -158,7 +158,8 @@ which is before provider exec, so a placed agent never exists unplaced.
      `exited` before release runs.
    - Release follows the order of `WorkspaceOps.pane_close`: remove the row, publish
      the removal, then kill an owned terminal that is still `pending` or `live`.
-     Each step runs on its own, from the terminal id captured at bind, so a removal
+     Each step runs on its own, from the launch terminal id the binder recorded
+     before bind ran, so a removal
      or publish failure never skips the kill check or the mark clear (1.1).
      After a completed cleanup the terminal is already inactive, so release kills
      nothing and no terminal is killed twice.
@@ -461,12 +462,18 @@ New API (all names are new):
 - `bind(reserved, terminal_id)`: calls `set_pane_terminal(owns_terminal=True)`, clears
   the in-flight mark and the seat entry, and emits `tab.created` or `pane.added` with
   the bound pane. A `UniqueViolation` or a missing row raises
-  `AgentPlacementError("busy"/"not_found")`.
-- `release(reserved, *, terminal_id)`: `terminal_id` is the id `bind` succeeded
-  with, captured by the 1.4 boundary, or `None` when bind never succeeded. A
-  successful bind always stores `owns_terminal=True`, so that id is the owned
-  terminal. Release follows the order of `WorkspaceOps.pane_close`, with each step
-  independent of the others:
+  `AgentPlacementError("busy"/"not_found")`. A publish failure raises after
+  `set_pane_terminal` has persisted the binding, so the pane then holds the
+  launch's terminal even though bind raised.
+- `release(reserved, *, terminal_id)`: `terminal_id` is the launch terminal that
+  the 1.4 binder closure recorded before it awaited `bind`, or `None` when the
+  binder never ran or bind refused the terminal as `busy`. `_runtime_spawn` hands
+  the binder only the id `create_pending` just returned for this launch, so that
+  terminal is the launch's own whether bind succeeded, failed before persisting,
+  or persisted the binding and then raised while publishing. Release acts only on
+  that id and never reads a terminal id from the pane row, so it never kills a
+  terminal that another pane holds. Release follows the order of
+  `WorkspaceOps.pane_close`, with each step independent of the others:
   - `remove_pane` removes the pane and a tab it emptied. A row that is already gone
     raises `WorkspaceNotFoundError`, which counts as removed.
   - The removal events publish only after a successful removal.
@@ -545,9 +552,12 @@ before `reserve_observer`/`prepare_spawn`. The provider command was already
 SRT-wrapped before `create_pending`, so the order is the decision 3 invariant:
 `prepare_sandbox_launch`/`--preflight`, then `wrap_provider_command`, then
 `create_pending`, then bind, then `reserve_observer`/`prepare_spawn`, then provider
-exec. A binder failure (`busy` or `not_found`) fails the pending terminal through the
-existing `_settle_native_spawn_failure` path and returns a failed `SpawnResult`, so the
-provider never executes. Without a binder the order is unchanged.
+exec. A binder failure fails the pending terminal through the existing
+`_settle_native_spawn_failure` path and returns a failed `SpawnResult`, so the
+provider never executes. That covers `busy`, `not_found` and any other exception,
+including a publish failure after the binding persisted, because
+`classify_native_spawn_failure` settles an exception it does not recognize as
+`fail_pending`. Without a binder the order is unchanged.
 
 Split `spawn_executor.py` (962 lines): move `_runtime_spawn` and `_promote_prepared`
 into the new `spawn_executor_runtime.py` and re-export both names from
@@ -607,7 +617,7 @@ Consumers unchanged:
 **Acceptance:**
 
 - 1.2.1 - With a binder, the executor runs `wrap_provider_command`, `create_pending`, the bind, `reserve_observer`/`prepare_spawn` and provider exec in that order, and the provider argv is the SRT-wrapped command. Without a binder the order is unchanged. test: `tests/agents/test_spawn_executor_placement_bind.py::test_bind_follows_wrap_and_precedes_exec`.
-- 1.2.2 - A binder failure fails the pending terminal through `_settle_native_spawn_failure`, returns a failed `SpawnResult`, and never starts the provider. test: `tests/agents/test_spawn_executor_placement_bind.py::test_bind_failure_fails_pending_terminal`.
+- 1.2.2 - A binder failure, including a publish failure raised after `set_pane_terminal` persisted the binding, fails the pending terminal through `_settle_native_spawn_failure`, returns a failed `SpawnResult`, and never starts the provider. test: `tests/agents/test_spawn_executor_placement_bind.py::test_bind_failure_fails_pending_terminal`.
 - 1.2.3 - `spawn_executor` re-exports `_runtime_spawn` and `_promote_prepared` from `spawn_executor_runtime`. symbol: `_runtime_spawn`. file: `src/gobby/agents/spawn_executor_runtime.py`.
 
 ### 1.3 One daemon-scoped reserver reaches spawn_agent [category: code] (depends: 1.1)
@@ -753,8 +763,8 @@ grow past the ceiling: `spawn_agent_impl` gains only two call sites.
 2. At dispatch, after every existing guard and `build_spawn_request`:
    `run_placed_spawn(...)` replaces the background scheduling for a placed launch. It
    calls `reserve(resolved, worktree_id=isolation_ctx.worktree_id)`, sets
-   `SpawnRequest.placement_binder` to a closure that binds the reserved pane and
-   records the terminal id it bound, awaits
+   `SpawnRequest.placement_binder` to a closure that records the terminal id it
+   receives and then binds the reserved pane, awaits
    `_execute_spawn_phase()` inline, and on success returns `build_spawn_response(...)`
    with the new `workspace`, `tab_ref` and `pane_ref` fields. `build_spawn_response`
    gains an optional `placement` argument that adds them. `spawn_agent_impl` passes
@@ -768,14 +778,22 @@ grow past the ceiling: `spawn_agent_impl` gains only two call sites.
 `run_placed_spawn` is the decision 5 compensation boundary. From the successful
 `reserve` to the final response, it retains the pane only when the response has
 `success: true`, and it releases in a `finally` so release still runs when cleanup
-raises. The `finally` passes the recorded terminal id to `release`. Release kills the bound terminal only when that cleanup raised before killing
-it (decision 5). It reuses the cleanup that `finalize_executed_spawn` and
+raises. The `finally` passes the recorded terminal id to `release`.
+
+The closure records that id before it awaits `bind`. Bind persists the binding and
+then publishes, so a publish failure raises after the pane already holds the
+terminal, and recording after `bind` returns would leave release no id. The id is
+always the pending terminal `create_pending` made for this launch, never one read
+from a pane row. The closure drops it only when bind raises `busy`: another pane
+then holds that terminal, so release must not claim it, and the executor's
+pending-failure path alone settles it (1.2). Release kills the recorded terminal
+only when cleanup raised before killing it (decision 5). It reuses the cleanup that `finalize_executed_spawn` and
 `_spawn_failure` already run, so no path cleans up twice. A placed launch defaults
 `cleanup_isolation_on_failure` to true for isolation it created, so a refused or failed
 seat leaves no worktree or clone. Reused `worktree_id` / `clone_id` isolation is never
 removed.
 
-**Granularity:** eleven acceptance items and five production Target files, but one
+**Granularity:** twelve acceptance items and five production Target files, but one
 lifecycle owner: one placed `spawn_agent` call from preflight to reply. The refusals,
 the compensation boundary and the reply are the exits of that one call. Splitting
 them would land a reservation without its compensation.
@@ -835,13 +853,14 @@ Consumers unchanged:
 - 1.4.2 - A placed spawn with a sandbox config that is not SRT, or not enabled, is refused with `sandbox_required` before any side effect. Unplaced spawns are unaffected. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_placed_launch_requires_managed_srt`.
 - 1.4.3 - A provider or SRT preparation failure that `finalize_executed_spawn` returns as `success: false` releases the pane, runs `cleanup_failed_spawn` exactly once, and never starts the provider. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_wrap_failure_refuses_and_releases_pane`.
 - 1.4.4 - A later returned failure (terminal liveness or start-run) releases the pane, kills the bound terminal, and runs `cleanup_failed_spawn` exactly once. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_late_returned_failure_releases_pane_once`.
-- 1.4.5 - An exception, a `CancelledError` and a bind `busy` conflict each release the pane, and release still runs when `cleanup_failed_spawn` raises. When that cleanup raises before its terminate step, release kills the bound terminal, or marks it orphaned when the kill fails. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_exceptions_and_cancellation_release_pane`.
+- 1.4.5 - An exception, a `CancelledError` and a bind `busy` conflict each release the pane, and release still runs when `cleanup_failed_spawn` raises. When that cleanup raises before its terminate step, release kills the recorded launch terminal, or marks it orphaned when the kill fails. After a `busy` conflict release kills nothing. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_exceptions_and_cancellation_release_pane`.
 - 1.4.6 - A successful placed spawn returns synchronously with run_id, terminal_id, workspace, tab_ref and pane_ref, and keeps its pane bound. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_placed_spawn_reply_carries_refs`.
 - 1.4.7 - A slot, lease or active-task refusal leaves no pane, and the loser of a reserve-time `seat_live` race cleans its run, child session and created isolation. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_late_refusals_leave_no_pane`.
 - 1.4.8 - An explicit `project_path` is accepted. A resolved parent is accepted, including a pipeline child parented to the system or cron session. An ambient-only project and a parent that is the system session itself are refused with `parent_unresolved` before any side effect. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_parent_and_project_provenance`.
 - 1.4.9 - A placed spawn that fails after creating its own worktree removes that worktree, and one that reused a `worktree_id` keeps it. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_failed_placed_spawn_cleans_created_isolation_only`.
 - 1.4.10 - Two concurrent placed spawns of one seat through the registry yield one placed agent and one `seat_live`, and the winner's bind publishes `tab.created` or `pane.added` through the server's workspace broadcast before provider exec. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_concurrent_placed_spawns_share_one_reserver`.
 - 1.4.11 - A `reserve` that raises, and a cancellation that arrives while `reserve` is running, each run `_spawn_failure` once, which removes the run, the child session and created isolation, and leave no pane, tab or in-flight mark. The cancellation is re-raised. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_reserve_failure_and_cancellation_clean_dispatch_state`.
+- 1.4.12 - When bind's publish raises after `set_pane_terminal` persisted the binding, release still receives the launch terminal id. When the pending-failure settlement and `cleanup_failed_spawn` then both raise before that terminal is inactive, release removes the pane and kills the terminal exactly once. When cleanup completes instead, release issues no kill. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_bind_publish_failure_keeps_release_kill_backstop`.
 
 ## P2: gclient placement reconciliation
 `kind: framing`
@@ -1056,5 +1075,12 @@ refused re-run. Researchers never touch the live daemon or its seats.
   - reserve wording that separates successful compensation from recoverable residue
     after a failed rollback, with that residue logged and pruned by
     `sweep_dead_panes` (Overview, decision 5, 1.1 `reserve`, 1.1.13).
-- next: Program Director check of these repairs, then Josh's approval, then the Plan
-  Adversary.
+- Program Director review of dc724cacfa (gobby#14610, 2026-09-27) accepted the
+  independent release steps and the sweep-recoverable residue, and asked for one
+  ownership clarification inside the same release invariant, folded here without
+  new scope: the binder records the launch-created pending terminal before it
+  awaits `bind`, so a publish failure after the binding persisted still leaves
+  release the owned id, and a `busy` conflict drops it so no terminal another pane
+  holds is claimed (decision 5, 1.1 `bind` and `release`, 1.2, 1.2.2, 1.4 step 2
+  and boundary, 1.4.5, 1.4.12).
+- next: Josh's approval of the design, then the Plan Adversary.
