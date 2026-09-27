@@ -8,8 +8,8 @@
 02 : text/-+b*12 overlay1/surface0*3 -/surface0*105
 03 |▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀|
 03 : line/-*120
-04 |┌ Codex ───────────────────────────────────────────────────┐┌────────────────────────────┐┌────────────────────────────┐|
-04 : overlay0/-*90 accent/-*30
+04 |┌ ○ Codex ─────────────────────────────────────────────────┐┌ ○ nvim ────────────────────┐┌ ○ term-gam · Focused ──────┐|
+04 : overlay0/-*90 accent/-*1 accent/-+b*22 accent/-*7
 05 |│                                                          ││                            ││                            │|
 05 : overlay0/-*1 -/-*58 overlay0/-*2 -/-*28 overlay0/-*1 accent/-*1 -/-*28 accent/-*1
 06 |│                                                          ││                            ││                            │|
@@ -76,7 +76,7 @@
 36 : overlay0/-*1 -/-*58 overlay0/-*2 -/-*28 overlay0/-*1 accent/-*1 -/-*28 accent/-*1
 37 |│                                                          ││                            ││                            │|
 37 : overlay0/-*1 -/-*58 overlay0/-*2 -/-*28 overlay0/-*1 accent/-*1 -/-*28 accent/-*1
-38 |└ Codex ────────────────────────────────────────── gclient ┘└ nvim ───────────── gclient ┘└────────────────────────────┘|
-38 : overlay0/-*90 accent/-*30
-39 | term-gam · Focused                                                                                       prefix ctrl+b |
-39 : -/surface0*1 accent/surface0+b*18 -/surface0*87 subtext0/surface0*13 -/surface0*1
+38 |└───────────────────────────────────────────────── gclient ┘└─────────────────── gclient ┘└─────────────────── gclient ┘|
+38 : overlay0/-*90 accent/-*20 accent/-+b*9 accent/-*1
+39 | 1 idle                                                                                                   prefix ctrl+b |
+39 : -/surface0*1 subtext0/surface0*6 -/surface0*99 subtext0/surface0*13 -/surface0*1

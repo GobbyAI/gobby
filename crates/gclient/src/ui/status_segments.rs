@@ -5,7 +5,7 @@
 
 use crate::app::sidebar_model::state_class;
 use crate::ui::chrome::{Chrome, RowState, WorkspaceView};
-use crate::ui::pane_chrome::pane_footer;
+use crate::ui::pane_chrome::pane_corners;
 use crate::ui::sidebar::agents::agent_state;
 use crate::ui::status::focused_overflow;
 
@@ -65,7 +65,7 @@ pub fn segment_text<W: WorkspaceView>(
     chrome: &Chrome,
 ) -> Option<String> {
     if segment == StatusSegment::Focus {
-        return focused_overflow(ws, chrome).map(|pane| pane_footer(ws, pane, true).left);
+        return focused_overflow(ws, chrome).map(|pane| pane_corners(ws, chrome, pane, true).title);
     }
     let pane = ws.pane(chrome.focused_pane()?);
     let agent = ws
