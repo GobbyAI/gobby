@@ -410,10 +410,11 @@ before the agent is placed or rolled back. A launch terminal whose kill fails st
     - Network permission is separate from the sandbox: decision 13 keeps SRT
       mandatory for every value, and 1.8 refuses any config that is not enabled
       SRT.
-    - Only the bundled template sync writes `trusted` (4.2). The definition MCP
-      tools carry no actor check today. #22965 (Lane 4, gobby#14506) adds an
-      agent-token refusal for every definition field. The storage guard here does
-      not depend on it.
+    - Only the bundled template sync writes `trusted` (4.2). #22965 landed at
+      `b024c6e096` (activation pending): once active, the definition MCP tools
+      and HTTP routes refuse agent-token mutation requests for every field. That
+      endpoint actor check is separate from this plan's storage guard, which
+      does not depend on it.
     - Spawn resolves the field inside the 1.8 gate (4.3). Resume replays the
       spawn-time snapshot, so a definition edit applies to later spawns.
     - Assignment: this plan changes no bundled definition, so every agent stays
@@ -1731,9 +1732,9 @@ Consumers unchanged:
   `workflows/imports.py` all call these. Only `agents/sync.py` calls
   `upsert_from_sync` (`:209`, `:236`), and nothing outside the manager calls its
   `update_from_sync`.
-- The MCP definition tools carry no agent-token or actor check, so today any
-  agent can create or edit a definition. #22965 (Lane 4, gobby#14506) adds that
-  refusal for every definition field. 4.2 does not depend on it: the storage
+- #22965 landed at `b024c6e096` (activation pending); once active, the MCP
+  definition tools and HTTP routes refuse agent-token mutation requests for
+  every field. 4.2 does not depend on that endpoint actor check: the storage
   guard alone keeps `trusted` sync-only. The HTTP request models accept `tags`,
   so the bundled-row marker can be forged too. The storage guard is therefore
   the only sound place to stop a widened network.
