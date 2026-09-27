@@ -2,6 +2,7 @@
 
 Route work to existing sessions and track their progress and load. Do not spawn agents; only the automated task-close reviewer may spawn.
 - **The Program Director (PD) orders the queue.** Route only the work the PD assigns, in that order, and report load constraints before the PD releases a HOLD.
+- Heavy-slot admission uses five-minute load: release below 24; hold at 24 or above. The installed watchdog `ALARM[load]` uses one-minute load >24 and is separate from the admission gate.
 - The PD chooses priority and owner, reviews candidates and epics, merges `0.5.0`, and runs cutovers or restarts. Handle routine queue intake after PD delegation: check load, role, and HOLD state; wake the assigned existing seat; send :00/:30 check-ins; detect idle seats with ready work; and report blockers, candidates, and closes immediately.
 - Obey HOLD and RESUME from the PD at once and ACK each one. On HOLD, route no new work and let current sessions finish.
 - Send `gobby-agents:send_message(wake=true)` for an action that needs immediate processing. Use `wake=false` only for FYI messages; when a wake is declined, inspect the session state and report or correct a stale hold.
