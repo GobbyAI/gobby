@@ -254,6 +254,9 @@ pub struct ViewState {
     /// Buttons of the open dialog, in its button order (confirm close:
     /// `close`, `cancel`); empty while no dialog is drawn.
     pub dialog_button_hit_areas: Vec<Rect>,
+    /// The furthest keybinding-help scroll the frame drew; the scroll keys
+    /// stop there, so the first key back always moves the view.
+    pub help_last_scroll: usize,
 }
 
 impl ViewState {
@@ -272,8 +275,10 @@ impl ViewState {
             menu_rows: _,
             parent_menu_rows: _,
             dialog_buttons,
+            help_last_scroll,
         } = hits;
         self.dialog_button_hit_areas = dialog_buttons;
+        self.help_last_scroll = help_last_scroll;
         self.menu_title_hit_areas = menu_bar.titles;
         self.tab_hit_areas = tab_bar.tabs;
         self.tab_scroll_left_hit_area = tab_bar.scroll_left;

@@ -308,12 +308,13 @@ fn draw(terminal: &mut Terminal<TestBackend>, fixture: &mut LiveMenuFixture) {
     fixture.chrome.apply_hits(hits.expect("frame drawn"));
 }
 
-/// Open the View menu from its title, then its theme row, the live loop's
-/// way: each press routed and its menu outcome applied, a frame drawn after
-/// each. Hands back the theme row as the View menu drew it.
-async fn open_the_theme_choices(
+/// Open the View menu from its title, then the row that runs `action`, the
+/// live loop's way: each press routed and its menu outcome applied, a frame
+/// drawn after each. Hands back the row as the View menu drew it.
+async fn pick_view_row(
     terminal: &mut Terminal<TestBackend>,
     fixture: &mut LiveMenuFixture,
+    action: MenuAction,
 ) -> Rect {
     draw(terminal, fixture);
     let view = MenuBarMenu::ALL
@@ -338,28 +339,60 @@ async fn open_the_theme_choices(
     let row = menu
         .items
         .iter()
-        .position(|item| item.action == MenuAction::ThemeMenu)
+        .position(|item| item.action == action)
         .map(|index| menu.item_rects[index])
-        .expect("theme row drawn");
+        .expect("row drawn");
 
     let press = left_press((row.x + 1, row.y));
     let outcome = route_mouse(&fixture.workspace, &mut fixture.chrome, &press);
-    let MouseOutcome::Menu { kind, action } = outcome else {
-        panic!("the theme row click dispatches: {outcome:?}");
+    let MouseOutcome::Menu {
+        kind,
+        action: picked,
+    } = outcome
+    else {
+        panic!("the row click dispatches: {outcome:?}");
     };
     assert_eq!(kind, ContextMenuKind::MenuBar(MenuBarMenu::View));
-    assert_eq!(action, MenuAction::ThemeMenu);
-    let exit = apply_live_menu_action(&mut fixture.workspace, &mut fixture.chrome, kind, action)
+    assert_eq!(picked, action);
+    let exit = apply_live_menu_action(&mut fixture.workspace, &mut fixture.chrome, kind, picked)
         .await
-        .expect("dispatch the theme row");
+        .expect("dispatch the row");
     assert!(!exit);
+    draw(terminal, fixture);
+    row
+}
+
+/// Open the Theme choices through the View menu's Theme row.
+async fn open_the_theme_choices(
+    terminal: &mut Terminal<TestBackend>,
+    fixture: &mut LiveMenuFixture,
+) -> Rect {
+    let row = pick_view_row(terminal, fixture, MenuAction::ThemeMenu).await;
     assert_eq!(
         fixture.chrome.mode,
         Mode::ContextMenu,
         "the choices stay open"
     );
-    draw(terminal, fixture);
     row
+}
+
+fn key(code: KeyCode) -> KeyInput {
+    KeyInput {
+        key: KeyEvent::new(code, KeyModifiers::NONE),
+        bytes: Vec::new(),
+    }
+}
+
+fn screen(terminal: &Terminal<TestBackend>) -> String {
+    let buffer = terminal.backend().buffer();
+    (0..buffer.area.height)
+        .map(|y| {
+            (0..buffer.area.width)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 // Regression: the drawn Theme row once did nothing when the loop dispatched
@@ -438,16 +471,112 @@ async fn the_view_menu_behind_the_theme_choices_stays_live() {
     assert!(fixture.chrome.menu.is_none(), "the row ran and both closed");
 
     open_the_theme_choices(&mut terminal, &mut fixture).await;
-    let esc = KeyInput {
-        key: KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
-        bytes: Vec::new(),
-    };
-    let outcome = route_modal_key(&fixture.workspace, &mut fixture.chrome, &esc);
+    let outcome = route_modal_key(&fixture.workspace, &mut fixture.chrome, &key(KeyCode::Esc));
     assert!(matches!(outcome, ModalOutcome::Close));
     assert!(
         fixture.chrome.menu.is_none(),
         "Esc closes the choices and the View menu"
     );
     assert_eq!(fixture.chrome.mode, Mode::Terminal);
+    fixture.mock.shutdown().await;
+}
+
+/// On a frame too narrow for the choices right of the View menu, they open
+/// on its left rather than over it.
+#[tokio::test]
+async fn the_theme_choices_open_left_of_the_view_menu_on_a_narrow_frame() {
+    let mut fixture = live_menu_fixture(true, false).await;
+    let mut terminal = Terminal::new(TestBackend::new(50, 24)).expect("test backend");
+    fixture
+        .chrome
+        .compute_view(&fixture.workspace, Rect::new(0, 0, 50, 24));
+    let row = open_the_theme_choices(&mut terminal, &mut fixture).await;
+    let choices = fixture.chrome.menu.as_ref().expect("theme choices open");
+    let view_left = choices
+        .parent
+        .as_deref()
+        .and_then(|parent| parent.item_rects.iter().map(|rect| rect.x).min())
+        .expect("View rows drawn");
+    let first = choices.item_rects[0];
+    assert!(
+        first.right() < view_left,
+        "left of the View menu: {first:?}, View rows from x {view_left}"
+    );
+    assert_eq!(first.y, row.y, "the first choice lines up with Theme");
+    fixture.mock.shutdown().await;
+}
+
+/// A search hides the legend; Help opened again from View › Legend drops
+/// that search and shows the legend.
+#[tokio::test]
+async fn help_reopened_from_the_legend_row_drops_the_old_search() {
+    let mut fixture = live_menu_fixture(true, false).await;
+    let mut terminal = Terminal::new(TestBackend::new(100, 30)).expect("test backend");
+    let legend = MenuAction::Act(Action::Help);
+    pick_view_row(&mut terminal, &mut fixture, legend.clone()).await;
+    assert_eq!(fixture.chrome.mode, Mode::KeybindHelp);
+    assert!(
+        screen(&terminal).contains("running a turn"),
+        "Help opens on the legend"
+    );
+    for ch in "/split".chars() {
+        route_modal_key(
+            &fixture.workspace,
+            &mut fixture.chrome,
+            &key(KeyCode::Char(ch)),
+        );
+    }
+    draw(&mut terminal, &mut fixture);
+    assert!(
+        !screen(&terminal).contains("running a turn"),
+        "the search hides the legend"
+    );
+    route_modal_key(&fixture.workspace, &mut fixture.chrome, &key(KeyCode::Esc));
+    route_modal_key(&fixture.workspace, &mut fixture.chrome, &key(KeyCode::Esc));
+    assert_eq!(fixture.chrome.mode, Mode::Terminal, "esc, esc closes Help");
+
+    pick_view_row(&mut terminal, &mut fixture, legend).await;
+    assert_eq!(fixture.chrome.keybind_help.query, "");
+    assert!(
+        screen(&terminal).contains("running a turn"),
+        "the legend is back"
+    );
+    fixture.mock.shutdown().await;
+}
+
+/// From the bottom of Help, the first key back scrolls the view.
+#[tokio::test]
+async fn the_first_key_back_from_the_bottom_of_help_scrolls() {
+    let mut fixture = live_menu_fixture(true, false).await;
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("test backend");
+    fixture
+        .chrome
+        .compute_view(&fixture.workspace, Rect::new(0, 0, 80, 24));
+    pick_view_row(&mut terminal, &mut fixture, MenuAction::Act(Action::Help)).await;
+    let last = fixture.chrome.view.help_last_scroll;
+    assert!(last > 1, "Help overflows at 80x24: {last}");
+    for _ in 0..=last {
+        route_modal_key(
+            &fixture.workspace,
+            &mut fixture.chrome,
+            &key(KeyCode::PageDown),
+        );
+        draw(&mut terminal, &mut fixture);
+    }
+    assert_eq!(
+        fixture.chrome.keybind_help.scroll, last,
+        "PageDown stops at the drawn bottom"
+    );
+    let bottom = screen(&terminal);
+    route_modal_key(
+        &fixture.workspace,
+        &mut fixture.chrome,
+        &key(KeyCode::Char('k')),
+    );
+    draw(&mut terminal, &mut fixture);
+    assert_eq!(fixture.chrome.keybind_help.scroll, last - 1);
+    assert_ne!(screen(&terminal), bottom, "the first k scrolls up");
+    route_modal_key(&fixture.workspace, &mut fixture.chrome, &key(KeyCode::Up));
+    assert_eq!(fixture.chrome.keybind_help.scroll, last - 2);
     fixture.mock.shutdown().await;
 }

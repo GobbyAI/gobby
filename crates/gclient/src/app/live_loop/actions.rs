@@ -12,6 +12,7 @@ use crate::prefs::{load_prefs, prefs_path};
 use crate::startup::load_keymap;
 use crate::ui::chrome::{attention_pane, Tab};
 use crate::ui::dialogs::{CloseScope, CloseTarget, Dialog, RenameKind};
+use crate::ui::keybind_help::KeybindHelpState;
 use crate::ui::navigator::NavigatorState;
 use crate::ui::sidebar::attention_order;
 use crate::ui::status::Toast;
@@ -284,7 +285,12 @@ pub(super) async fn handle_live_action(
         }
         Action::Respond => open_response_dialog(workspace, chrome, None).await?,
         Action::CopyMode => chrome.mode = Mode::Copy,
-        Action::Help => chrome.mode = Mode::KeybindHelp,
+        // Help opens fresh: a search left from an earlier visit would hide
+        // the legend.
+        Action::Help => {
+            chrome.keybind_help = KeybindHelpState::default();
+            chrome.mode = Mode::KeybindHelp;
+        }
         Action::Settings => chrome.mode = Mode::Settings,
         Action::ResizeMode => chrome.mode = Mode::Resize,
         Action::TerminalPicker | Action::Goto => {

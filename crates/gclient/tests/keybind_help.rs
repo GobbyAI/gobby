@@ -1,4 +1,4 @@
-use gobby_client::ui::keybind_help::{help_rows, last_scroll, legend_groups, render_keybind_help};
+use gobby_client::ui::keybind_help::{help_rows, legend_groups, render_keybind_help};
 use gobby_client::ui::Chrome;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
@@ -20,6 +20,18 @@ fn rendered_help(chrome: &Chrome, width: u16, height: u16) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// The furthest scroll help reports after drawing at `width` x `height`.
+fn drawn_last_scroll(chrome: &Chrome, width: u16, height: u16) -> usize {
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("test terminal");
+    let mut last = 0;
+    terminal
+        .draw(|frame| {
+            last = render_keybind_help(frame, Rect::new(0, 0, width, height), chrome).1;
+        })
+        .expect("render keybind help");
+    last
 }
 
 fn compact(value: &str) -> String {
@@ -101,7 +113,7 @@ fn name_stays_searchable_when_hidden() {
 fn wrapped_rows_keep_the_last_binding_reachable_by_logical_scroll() {
     let mut chrome = Chrome::dark();
     let last = chrome.keymap.help_entries().pop().expect("last binding");
-    chrome.keybind_help.scroll = last_scroll(&chrome);
+    chrome.keybind_help.scroll = drawn_last_scroll(&chrome, 56, 24);
     let screen = rendered_help(&chrome, 56, 24);
     assert!(
         compact(&screen).contains(&compact(last.description)),

@@ -178,7 +178,6 @@ fn help_groups(chrome: &Chrome, width: u16) -> Vec<Vec<Line<'static>>> {
 }
 
 /// Body rows: the prefix chord first, then every visible binding.
-/// This unbounded form also supplies the binding rows `last_scroll` counts.
 pub fn help_lines(chrome: &Chrome) -> Vec<Line<'static>> {
     help_rows(chrome, u16::MAX)
 }
@@ -299,21 +298,17 @@ pub fn legend_groups(chrome: &Chrome, width: u16) -> Vec<Vec<Line<'static>>> {
     groups
 }
 
-/// The furthest `KeybindHelpState::scroll` reaches: one step per legend and
-/// binding group, as `render_body` scrolls them.
-pub fn last_scroll(chrome: &Chrome) -> usize {
-    (legend_groups(chrome, u16::MAX).len() + help_lines(chrome).len()).saturating_sub(1)
-}
-
-pub fn render_keybind_help(frame: &mut Frame, area: Rect, chrome: &Chrome) -> Vec<Rect> {
+/// Draw the help over `area`. Returns the close button, and the furthest
+/// scroll the drawn body shows, which bounds the scroll keys.
+pub fn render_keybind_help(frame: &mut Frame, area: Rect, chrome: &Chrome) -> (Vec<Rect>, usize) {
     let p = &chrome.palette;
     let popup_w = area.width.saturating_sub(4).min(HELP_MAX_WIDTH);
     let popup_h = area.height.saturating_sub(2).min(HELP_MAX_HEIGHT);
     let Some(inner) = render_modal_shell(frame, area, popup_w, popup_h, p) else {
-        return Vec::new();
+        return (Vec::new(), 0);
     };
     if inner.height < 6 || inner.width < 20 {
-        return Vec::new();
+        return (Vec::new(), 0);
     }
 
     let stack = modal_stack_areas(inner, 2, 1, 0, 1);
@@ -363,7 +358,7 @@ pub fn render_keybind_help(frame: &mut Frame, area: Rect, chrome: &Chrome) -> Ve
     };
     frame.render_widget(Paragraph::new(search_line), search_row);
 
-    render_body(frame, stack.content, chrome);
+    let last_scroll = render_body(frame, stack.content, chrome);
 
     let dim = Style::default().fg(p.overlay0);
     let key = Style::default().fg(p.text);
@@ -424,14 +419,15 @@ pub fn render_keybind_help(frame: &mut Frame, area: Rect, chrome: &Chrome) -> Ve
         ])
     };
     frame.render_widget(Paragraph::new(footer), footer_area);
-    vec![button]
+    (vec![button], last_scroll)
 }
 
 /// Lay logical bindings out column-major, wrapping descriptions within each row.
-/// Scroll by bindings so the existing keyboard bound still reaches the last one.
-fn render_body(frame: &mut Frame, body: Rect, chrome: &Chrome) {
+/// Scroll by groups, and return the furthest scroll: the first group of the
+/// last full view.
+fn render_body(frame: &mut Frame, body: Rect, chrome: &Chrome) -> usize {
     if body.width == 0 || body.height == 0 {
-        return;
+        return 0;
     }
     let p = &chrome.palette;
     let entries = visible_entries(chrome);
@@ -485,7 +481,7 @@ fn render_body(frame: &mut Frame, body: Rect, chrome: &Chrome) {
     }
 
     let Some(track) = track else {
-        return;
+        return max_scroll;
     };
     let track_rows = track.height as usize;
     let thumb_len = ((track_rows * capacity) / total_lines).max(1);
@@ -501,6 +497,7 @@ fn render_body(frame: &mut Frame, body: Rect, chrome: &Chrome) {
         })
         .collect();
     frame.render_widget(Paragraph::new(cells), track);
+    max_scroll
 }
 
 #[cfg(test)]

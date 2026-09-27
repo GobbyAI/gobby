@@ -786,17 +786,17 @@ write to lose, and retaking control re-grants its input on the host. If the host
 itself was drained or replaced, the affected terminals are gone and their panes
 disappear on the next roster refresh.
 
-On launch, a splash appears in the pane area while four stages complete:
-**daemon health**, **workspace attach**, **roster**, and **first frame**. It shows
-the `gclient` version, daemon version (or `—` while unknown), machine, each
-stage's elapsed time, and which stage is waiting. The menu bar works while a
-stage waits, including **Help › Daemon** for health and stage details. Each
+On launch, the goblin and the wordmark stand alone on the terminal's ground
+while four stages complete: **daemon health**, **workspace attach**,
+**roster**, and **first frame**. The splash has no menu bar, tabs, sidebar, or
+status line; they arrive with the first frame, and `prefix+shift+q` quits
+meanwhile. **Help › Daemon** then reports health and stage details. Each
 completed stage's timing and the final summary are logged to
 `~/.gobby/logs/gclient.log`.
 
-Launching with the daemon stopped leaves the splash on its daemon-health stage
-and shows `× Daemon unreachable · retry in <n> s` in the status bar. Once the
-daemon answers, the remaining stages run, the status segment clears, and the
+With the daemon stopped, the first failed health check ends the splash: the
+chrome opens and the status bar shows `× Daemon unreachable · retry in <n> s`.
+Once the daemon answers, the remaining stages run, the status segment clears, and the
 workspace opens. A malformed daemon URL, refused token, unusable gterm host,
 or broken prefs file still reports its own error.
 

@@ -37,6 +37,8 @@ pub struct ChromeHits {
     pub parent_menu_rows: Option<Vec<Rect>>,
     /// Buttons of the open dialog as drawn, in its button order.
     pub dialog_buttons: Vec<Rect>,
+    /// The furthest scroll the keybinding help's drawn body shows.
+    pub help_last_scroll: usize,
 }
 
 /// Compose the whole frame; `content` paints each pane's terminal grid.
@@ -80,7 +82,8 @@ pub fn render_workspace_with<W: WorkspaceView>(
         }
         Mode::KeybindHelp => {
             dim_background(frame, area);
-            hits.dialog_buttons = keybind_help::render_keybind_help(frame, area, chrome);
+            (hits.dialog_buttons, hits.help_last_scroll) =
+                keybind_help::render_keybind_help(frame, area, chrome);
         }
         Mode::Navigator => {
             dim_background(frame, area);

@@ -17,7 +17,6 @@ use crate::daemon::Daemon;
 use crate::key_input::KeyInput;
 use crate::prefs::save_prefs;
 use crate::ui::dialogs::{CloseTarget, Dialog, OrphanRow, RenameKind};
-use crate::ui::keybind_help::last_scroll;
 use crate::ui::navigator::{
     navigator_rows, NavigatorRow, NavigatorState, NavigatorStateFilter, NavigatorTarget,
 };
@@ -204,7 +203,7 @@ fn menu_key(chrome: &mut Chrome, key: &KeyEvent) -> ModalOutcome {
 }
 
 pub(super) fn keybind_help_key(chrome: &mut Chrome, key: &KeyEvent) -> ModalOutcome {
-    let last_line = last_scroll(chrome);
+    let last_line = chrome.view.help_last_scroll;
     let help = &mut chrome.keybind_help;
     let scroll_by = |help: &mut crate::ui::keybind_help::KeybindHelpState, delta: isize| {
         help.scroll = step(help.scroll, delta, last_line);
