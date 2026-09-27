@@ -170,4 +170,15 @@ production-resource fence that agent runs require.
 When a test fails, keep the rerun focused on the failing file or marker until
 the failure is understood. Broaden only when the change touches shared behavior.
 
+## gclient capture and QA
+
+Run agent-driven gclient screenshots, captures, and lifecycle probes against an
+isolated test daemon with temporary state and ports. Record the test workspace
+and terminal IDs before and after each run, close the workspace created by that
+run, and verify its owned shells have exited. If a live-daemon preview is
+unavoidable, use a clearly named disposable workspace and close only the
+terminal and workspace rows created by that preview. Recheck current process
+state and pane ownership before cleanup; an old terminal ID alone is never
+evidence that a live shell still belongs to the preview.
+
 _Last verified: 2026-09-12_

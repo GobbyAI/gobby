@@ -2,14 +2,14 @@
 
 use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use gobby_client::app::{
-    route_mouse, MouseGesture, MouseOutcome, PaneId, Placement, Workspace, TAB_DRAG_THRESHOLD,
+    route_mouse, MouseGesture, MouseOutcome, PaneId, Workspace, TAB_DRAG_THRESHOLD,
 };
 use gobby_client::daemon::{ProjectRow, SidebarRows};
 use gobby_client::ui::chrome::Tab;
 use gobby_client::ui::chrome_render::render_workspace;
 use gobby_client::ui::tabs::{render_tab_bar, tab_display_name, tab_width, TabBarHits};
 use gobby_client::ui::text::display_width_u16;
-use gobby_client::ui::Chrome;
+use gobby_client::ui::{Action, Chrome};
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier};
@@ -359,7 +359,7 @@ fn pane(ws: &Workspace, index: usize) -> PaneId {
 }
 
 #[test]
-fn tab_bar_clicks_activate_spawn_and_scroll() {
+fn tab_bar_clicks_activate_new_tab_and_scroll() {
     let (ws, mut chrome, _) = tab_bar_chrome(80, &["alpha", "beta", "gamma"]);
     let (col, row) = tab_cell(&chrome, 1);
 
@@ -414,7 +414,7 @@ fn tab_bar_clicks_activate_spawn_and_scroll() {
         &mouse(LEFT_UP, col, row, KeyModifiers::NONE),
     );
 
-    // The new-tab button spawns into a fresh tab.
+    // The new-tab button requests an empty tab.
     let plus = chrome.view.new_tab_hit_area.expect("new-tab button drawn");
     assert_eq!(
         route_mouse(
@@ -422,9 +422,7 @@ fn tab_bar_clicks_activate_spawn_and_scroll() {
             &mut chrome,
             &mouse(LEFT_DOWN, plus.x + 1, plus.y, KeyModifiers::NONE)
         ),
-        MouseOutcome::Spawn {
-            placement: Placement::Tab
-        }
+        MouseOutcome::Action(Action::NewTab)
     );
     assert_eq!(chrome.gesture, None, "the button starts no drag");
 

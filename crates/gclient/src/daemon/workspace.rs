@@ -218,6 +218,8 @@ pub enum WorkspaceOp {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         terminal_id: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        cwd: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         node: Option<String>,
     },
     #[serde(rename = "tab.rename")]
@@ -248,6 +250,8 @@ pub enum WorkspaceOp {
         axis: LayoutAxis,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         terminal_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cwd: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         node: Option<String>,
     },

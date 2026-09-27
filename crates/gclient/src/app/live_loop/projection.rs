@@ -46,8 +46,13 @@ pub fn sync_live_chrome(workspace: &mut Workspace<LiveDaemon>, chrome: &mut Chro
             }
         }
     }
-    set.tabs
-        .retain(|tab| !tab.is_local() || !tab.slots.is_empty());
+    set.tabs.retain(|tab| {
+        !tab.is_local()
+            || !tab.slots.is_empty()
+            || tab
+                .id
+                .starts_with(super::super::viewer_state::EMPTY_LOCAL_TAB_PREFIX)
+    });
     chrome.settle_active_index(index);
     if focused_pane_removed {
         if let Some(survivor) = chrome.focused_pane() {

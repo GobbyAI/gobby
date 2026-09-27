@@ -77,6 +77,9 @@ struct MockState {
     kill_refusals: VecDeque<String>,
     /// `(code, reason)` the next `workspace_op` replies refuse with, in order.
     workspace_refusals: VecDeque<(String, String)>,
+    /// `(op, occurrence, code, reason)` for a specific workspace mutation.
+    workspace_refusals_at: Vec<(String, usize, String, String)>,
+    snapshot_refusal_after_ops: Option<(usize, String)>,
     workspace_results: VecDeque<Value>,
     workspace_requests: Vec<Value>,
     detach_replies: VecDeque<(bool, Option<String>)>,
@@ -134,6 +137,8 @@ impl MockDaemon {
             write_outcomes: VecDeque::new(),
             kill_refusals: VecDeque::new(),
             workspace_refusals: VecDeque::new(),
+            workspace_refusals_at: Vec::new(),
+            snapshot_refusal_after_ops: None,
             workspace_results: VecDeque::new(),
             workspace_requests: Vec::new(),
             detach_replies: VecDeque::new(),
@@ -300,6 +305,14 @@ impl MockDaemon {
             .seed(project, tabs)
     }
 
+    pub fn queue_owned_terminal_id(&self, terminal_id: &str) {
+        self.state
+            .lock()
+            .expect("mock state")
+            .workspace
+            .queue_owned_terminal_id(terminal_id);
+    }
+
     pub fn seed_other_workspace(&self, project: &str, tabs: &[(&[&str], &str)]) -> String {
         self.state
             .lock()
@@ -429,6 +442,21 @@ impl MockDaemon {
             .expect("mock state")
             .workspace_refusals
             .push_back((code.to_string(), reason.to_string()));
+    }
+
+    pub fn refuse_workspace_op_at(&self, op: &str, occurrence: usize, code: &str, reason: &str) {
+        self.state
+            .lock()
+            .expect("mock state")
+            .workspace_refusals_at
+            .push((op.into(), occurrence, code.into(), reason.into()));
+    }
+
+    pub fn refuse_snapshot_after_ops(&self, count: usize, reason: &str) {
+        self.state
+            .lock()
+            .expect("mock state")
+            .snapshot_refusal_after_ops = Some((count, reason.into()));
     }
 
     pub fn enqueue_workspace_result(&self, result: Value) {
@@ -1033,7 +1061,23 @@ fn websocket_reply(state: &Arc<Mutex<MockState>>, request: &Value) -> Option<Val
             Some(state.workspace.attach_reply(request.get("request_id")))
         }
         "workspace_snapshot" => {
-            let state = state.lock().expect("mock state");
+            let mut state = state.lock().expect("mock state");
+            if state
+                .snapshot_refusal_after_ops
+                .as_ref()
+                .is_some_and(|(count, _)| state.workspace_requests.len() >= *count)
+            {
+                let (_, reason) = state
+                    .snapshot_refusal_after_ops
+                    .take()
+                    .expect("snapshot refusal");
+                return Some(json!({
+                    "type": "workspace_error",
+                    "request_id": request.get("request_id"),
+                    "code": "invalid_op",
+                    "reason": reason,
+                }));
+            }
             state.workspace.snapshot_reply_for(
                 request.get("workspace")?.as_str()?,
                 request.get("request_id"),
@@ -1048,6 +1092,28 @@ fn websocket_reply(state: &Arc<Mutex<MockState>>, request: &Value) -> Option<Val
                     "request_id": request.get("request_id"),
                     "op": "workspace.list",
                     "result": state.workspace.list(),
+                }));
+            }
+            let op = request
+                .get("op")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let occurrence = state
+                .workspace_requests
+                .iter()
+                .filter(|request| request.get("op").and_then(Value::as_str) == Some(op))
+                .count();
+            if let Some(index) = state
+                .workspace_refusals_at
+                .iter()
+                .position(|(target, nth, _, _)| target == op && *nth == occurrence)
+            {
+                let (_, _, code, reason) = state.workspace_refusals_at.remove(index);
+                return Some(json!({
+                    "type": "workspace_error",
+                    "request_id": request.get("request_id"),
+                    "code": code,
+                    "reason": reason,
                 }));
             }
             if let Some((code, reason)) = state.workspace_refusals.pop_front() {
