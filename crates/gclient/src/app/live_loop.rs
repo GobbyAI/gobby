@@ -489,7 +489,7 @@ pub async fn run_live_loop<B: Backend>(
                         None
                     }
                     Err(error) => {
-                        workspace.request_focused_sessions();
+                        workspace.requeue_failed_sidebar_fetch();
                         Some(error)
                     }
                 };
@@ -635,7 +635,7 @@ pub async fn run_live_loop<B: Backend>(
             && reconnect_stage.is_none()
             && chrome
                 .focused_pane()
-                .is_none_or(|pane_id| workspace.pane(pane_id).frames_rendered() > 0)
+                .is_none_or(|pane_id| workspace.pane(pane_id).first_frame_settled())
         {
             startup::mark_done(chrome, StartupStage::FirstFrame);
             if let Err(error) = render_live_workspace(terminal, workspace, chrome) {
@@ -905,17 +905,15 @@ fn render_live_workspace<B: Backend>(
     terminal
         .draw(|frame| {
             chrome.compute_view(workspace, frame.area());
-            // Read focus and palette out before the closure exists: capturing
-            // `chrome` inside it would borrow across the `apply_hits` below.
+            // Read focus out before the closure exists: capturing `chrome`
+            // inside it would borrow across the `apply_hits` below.
             let focused = chrome.cursor_pane();
-            let palette = chrome.palette;
             let mut content = |frame: &mut ratatui::Frame<'_>, area, pane| {
                 crate::views::grid::render(
                     frame,
                     area,
                     workspace.pane(pane),
                     focused == Some(pane),
-                    &palette,
                 );
             };
             let hits = crate::ui::render_workspace_with(frame, workspace, chrome, &mut content);

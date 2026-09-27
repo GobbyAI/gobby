@@ -284,6 +284,16 @@ pub struct Palette {
     pub ink: Color,
     pub glint: Color,
     pub dim: Color,
+    /// The menu bar's ground: the light theme's accent in both themes.
+    pub bar: Color,
+    /// The menu bar's ink: the light theme's `panel_bg` in both themes.
+    pub bar_ink: Color,
+    /// Ink of the open title, which sits on `bar_ink`: the light theme's text.
+    pub bar_open_ink: Color,
+    /// The one-row line under the menu bar and under the tab row.
+    pub line: Color,
+    /// The wordmark and the marks' braille: accent in dark, text in light.
+    pub wordmark: Color,
 }
 
 impl Palette {
@@ -325,6 +335,12 @@ impl Palette {
             ThemeKind::Dark => (n.panel_bg, n.text),
             ThemeKind::Light => (n.text, n.panel_bg),
         };
+        // The menu bar is the light version whatever the theme.
+        let light = Theme::new(ThemeKind::Light);
+        let wordmark = match theme.kind {
+            ThemeKind::Dark => theme.accent,
+            ThemeKind::Light => n.text,
+        };
         Self {
             accent: theme.accent.color(),
             panel_bg: n.panel_bg.color(),
@@ -345,6 +361,11 @@ impl Palette {
             ink: ink.color(),
             glint: glint.color(),
             dim: n.dim.color(),
+            bar: light.accent.color(),
+            bar_ink: light.neutrals.panel_bg.color(),
+            bar_open_ink: light.neutrals.text.color(),
+            line: Color::Rgb(0, 0, 0),
+            wordmark: wordmark.color(),
         }
     }
 }

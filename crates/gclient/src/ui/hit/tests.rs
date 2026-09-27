@@ -110,6 +110,9 @@ fn hit_test_covers_split_live_layout() {
     let new_tab = view.new_tab_hit_area.expect("new-tab button drawn");
     assert_eq!(at(view, new_tab.x, new_tab.y), Hit::NewTab);
     assert_eq!(at(view, bar.right() - 1, bar.y), Hit::TabBarEmpty);
+    let line = view.tab_bar_line;
+    assert_eq!(line, Rect::new(bar.x, bar.y + 1, bar.width, 1));
+    assert_eq!(at(view, line.right() - 1, line.y), Hit::TabBarEmpty);
 
     // Sidebar: divider column, band controls, rows, then bare cells.
     let sidebar = view.sidebar_rect;
@@ -208,6 +211,8 @@ fn hit_test_covers_split_live_layout() {
         assert_eq!(at(view, rect.right() - 1, rect.y), Hit::MenuTitle(*index));
     }
     assert_eq!(at(view, WIDTH - 1, 0), Hit::MenuBarEmpty);
+    assert_eq!(view.menu_bar_line, Rect::new(0, 1, WIDTH, 1));
+    assert_eq!(at(view, 0, 1), Hit::MenuBarEmpty);
     // The menu bar is tested before the tab bar: a tab bar reaching row 0
     // still yields the title and the bare bar there.
     let mut overlapped = view.clone();

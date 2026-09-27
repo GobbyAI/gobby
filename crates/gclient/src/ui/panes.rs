@@ -19,7 +19,7 @@ use gobby_terminal::selection::Selection;
 use ratatui::layout::{Alignment, Direction, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::{Borders, Paragraph};
 use ratatui::Frame;
 use std::collections::HashMap;
 
@@ -191,15 +191,11 @@ pub fn highlight_selection(
 /// Placeholder body when no pane is open.
 pub fn render_empty(frame: &mut Frame, area: Rect, chrome: &Chrome) {
     let p = &chrome.palette;
-    frame.render_widget(
-        Block::default().style(Style::default().bg(p.panel_bg)),
-        area,
-    );
     if area.height < 2 || area.width < 8 {
         return;
     }
 
-    let mark = marks::goblin_small();
+    let mark = marks::goblin_large();
     let show_mark = area.width >= mark.cols && area.height >= mark.rows + 5;
     let text_y = if show_mark {
         let mark_y = area.y + (area.height - (mark.rows + 5)) / 2;

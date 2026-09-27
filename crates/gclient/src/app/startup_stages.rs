@@ -96,6 +96,9 @@ impl StartupStages {
     pub fn elapsed(&self, stage: StartupStage) -> Option<Duration> {
         match self.states[stage as usize] {
             StageState::Pending => None,
+            // `now` moves only on a stage transition, so a running stage reads
+            // the time up to the last one, not the wall clock. Nothing may show
+            // it as a live timer without first advancing `now`.
             StageState::Running { since } => Some(self.now.saturating_duration_since(since)),
             StageState::Done { took } => Some(took),
         }

@@ -1,6 +1,5 @@
 use super::*;
 use crate::app::{Backend, Pane, PaneId};
-use crate::theme::{Theme, ThemeKind};
 use gobby_terminal::protocol::{CellData, CursorState, FrameData};
 use ratatui::backend::TestBackend;
 use ratatui::Terminal;
@@ -49,10 +48,9 @@ fn paint_pane(
 ) -> Terminal<TestBackend> {
     let mut pane = Pane::new_detached(PaneId(1), "term-1", Backend::parse(backend), "epoch");
     pane.latest_frame = Some(frame);
-    let palette = Theme::new(ThemeKind::Dark).palette();
     let mut terminal = Terminal::new(TestBackend::new(size.0, size.1)).expect("test backend");
     terminal
-        .draw(|f| render(f, area, &pane, focused, &palette))
+        .draw(|f| render(f, area, &pane, focused))
         .expect("draw frame");
     terminal
 }
@@ -166,12 +164,11 @@ fn only_the_focused_pane_places_the_cursor() {
     let mut other = Pane::new_detached(PaneId(2), "term-2", Backend::Native, "epoch");
     other.latest_frame = Some(coordinate_frame(10, 4, cursor(3, 3)));
 
-    let palette = Theme::new(ThemeKind::Dark).palette();
     let mut terminal = Terminal::new(TestBackend::new(20, 4)).expect("test backend");
     terminal
         .draw(|f| {
-            render(f, Rect::new(0, 0, 10, 4), &focused, true, &palette);
-            render(f, Rect::new(10, 0, 10, 4), &other, false, &palette);
+            render(f, Rect::new(0, 0, 10, 4), &focused, true);
+            render(f, Rect::new(10, 0, 10, 4), &other, false);
         })
         .expect("draw frame");
 
@@ -182,11 +179,12 @@ fn only_the_focused_pane_places_the_cursor() {
     );
 }
 
-/// A hosted terminal sends its default colours as wire 0 (`Color::Reset`).
-/// Written through, that cleared the chrome's `panel_bg` fill, so the light
-/// theme showed the outer terminal's own dark background inside every pane.
+/// A hosted terminal sends its default colours as wire 0. They are written
+/// through as `Color::Reset`, so the pane shows the hosting terminal's own
+/// colours: the chrome no longer fills the frame with `panel_bg`, so there is
+/// no theme ground for a default cell to stand on.
 #[test]
-fn default_cells_take_the_theme_terminal_colours() {
+fn default_cells_pass_the_terminal_default_through() {
     let named_red = 2;
     let indexed_42 = (1 << 24) | 42;
     let rgb = (2 << 24) | 0x12_34_56;
@@ -196,38 +194,27 @@ fn default_cells_take_the_theme_terminal_colours() {
     // Each channel resolves on its own: a default fg over an explicit bg.
     source.cells[3].bg = named_red;
 
-    for kind in [ThemeKind::Dark, ThemeKind::Light] {
-        let palette = Theme::new(kind).palette();
-        let mut pane = Pane::new_detached(PaneId(1), "term-1", Backend::Native, "epoch");
-        pane.latest_frame = Some(source.clone());
-        let mut terminal = Terminal::new(TestBackend::new(4, 1)).expect("test backend");
-        terminal
-            .draw(|f| render(f, Rect::new(0, 0, 4, 1), &pane, true, &palette))
-            .expect("draw frame");
-        let colours = |x| {
-            let cell = &terminal.backend().buffer()[(x, 0)];
-            (cell.fg, cell.bg)
-        };
+    let mut pane = Pane::new_detached(PaneId(1), "term-1", Backend::Native, "epoch");
+    pane.latest_frame = Some(source);
+    let mut terminal = Terminal::new(TestBackend::new(4, 1)).expect("test backend");
+    terminal
+        .draw(|f| render(f, Rect::new(0, 0, 4, 1), &pane, true))
+        .expect("draw frame");
+    let colours = |x| {
+        let cell = &terminal.backend().buffer()[(x, 0)];
+        (cell.fg, cell.bg)
+    };
 
-        assert_eq!(
-            colours(0),
-            (palette.text, palette.panel_bg),
-            "{kind:?}: default cell"
-        );
-        assert_eq!(
-            colours(1),
-            (Color::Red, Color::Indexed(42)),
-            "{kind:?}: named, indexed"
-        );
-        assert_eq!(
-            colours(2),
-            (Color::Rgb(0x12, 0x34, 0x56), Color::Rgb(0x12, 0x34, 0x56)),
-            "{kind:?}: RGB"
-        );
-        assert_eq!(
-            colours(3),
-            (palette.text, Color::Red),
-            "{kind:?}: default fg only"
-        );
-    }
+    assert_eq!(colours(0), (Color::Reset, Color::Reset), "default cell");
+    assert_eq!(
+        colours(1),
+        (Color::Red, Color::Indexed(42)),
+        "named, indexed"
+    );
+    assert_eq!(
+        colours(2),
+        (Color::Rgb(0x12, 0x34, 0x56), Color::Rgb(0x12, 0x34, 0x56)),
+        "RGB"
+    );
+    assert_eq!(colours(3), (Color::Reset, Color::Red), "default fg only");
 }

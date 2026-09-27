@@ -388,6 +388,15 @@ impl Pane {
         self.frames_rendered
     }
 
+    /// Whether this pane has drawn what startup waits for: a frame, or the
+    /// reason its attach failed. A pane the daemon refused, or one waiting out
+    /// an attach retry, never draws a frame, so waiting for one would keep
+    /// startup on the splash for as long as the daemon stays slow.
+    pub(super) fn first_frame_settled(&self) -> bool {
+        self.frames_rendered > 0
+            || (matches!(self.attach, AttachState::Detached) && self.status_message.is_some())
+    }
+
     pub fn in_flight_write(&self) -> Option<u64> {
         self.in_flight_write
     }
