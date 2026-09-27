@@ -760,18 +760,11 @@ Consumers unchanged:
 - `tests/agents/test_spawn_executor.py` — no-edit-reason: Patches through the spawn_executor facade, which keeps the moved names.
 - `tests/agents/test_srt_spawn.py` — no-edit-reason: Reads `_runtime_spawn` source through the facade re-export, and the moved body keeps exactly one bare `wrap_provider_command` call.
 - `tests/agents/conftest.py` — no-edit-reason: Builds SpawnRequest without a binder; the new field defaults to None.
-- `tests/agents/test_backend_ingress.py` — no-edit-reason: Unplaced spawn path; the field defaults to None.
-- `tests/agents/test_local_context_setup.py` — no-edit-reason: Unplaced spawn path; the field defaults to None.
 - `tests/agents/test_native_spawn.py` — no-edit-reason: Unplaced native spawn; the bind step is skipped without a binder.
 - `tests/agents/test_spawn_executor_providers.py` — no-edit-reason: The provider wrap is unchanged.
 - `tests/agents/test_verified_review_regressions.py` — no-edit-reason: Unplaced SpawnRequest construction; the field defaults to None.
-- `tests/ask/test_permissions.py` — no-edit-reason: Unplaced SpawnRequest construction; the field defaults to None.
-- `tests/mcp_proxy/tools/spawn_agent/test_agy_gate.py` — no-edit-reason: Patches _runtime_spawn through the facade re-export.
 - `tests/terminals/fakes.py` — no-edit-reason: Fake SpawnRequest consumers need no binder field.
 - `tests/terminals/test_tmux_runtime.py` — no-edit-reason: Imports `_promote_prepared` through the facade re-export and runs the unplaced tmux path.
-- `tests/mcp_proxy/tools/spawn_agent/test_error_handling.py` — no-edit-reason: Uses SpawnRequest only to annotate a fake executor; unplaced requests carry the None binder default.
-- `tests/mcp_proxy/tools/spawn_agent/test_execution.py` — no-edit-reason: Uses SpawnRequest only to annotate fake executors; unplaced requests carry the None binder default.
-- `tests/mcp_proxy/tools/spawn_agent/test_initial_variables.py` — no-edit-reason: Uses SpawnRequest only as an annotation and a cast; the new field defaults to None.
 - `tests/agents/test_spawn_executor_droid.py` — no-edit-reason: `_droid_request` builds SpawnRequest without a binder; the new field defaults to None.
 
 **Acceptance:**
@@ -857,7 +850,6 @@ Consumers unchanged:
 - `tests/skills/reference_library_helpers.py` — no-edit-reason: Calls setup_internal_registries without the new optional resolver.
 - `tests/test_wiki_retirement_contract.py` — no-edit-reason: Calls setup_internal_registries without the new optional resolver and asserts only registry names.
 - `src/gobby/mcp_proxy/tools/agents.py` — no-edit-reason: Re-exports create_agents_registry by name only.
-- `tests/ask/test_permissions.py` — no-edit-reason: Calls create_agents_registry without the new optional resolver.
 - `tests/events/test_coordination_waits.py` — no-edit-reason: Calls create_agents_registry without the new optional resolver.
 - `tests/runner_init/test_detection_registry_composition.py` — no-edit-reason: Its registrar and spawn factory fakes accept the context and keyword arguments, so the added resolver passes through.
 - `src/gobby/mcp_proxy/tools/agents_checkpoint_tools.py` — no-edit-reason: Reads existing AgentsRegistryContext fields only.
@@ -866,14 +858,6 @@ Consumers unchanged:
 - `src/gobby/mcp_proxy/tools/coordination.py` — no-edit-reason: Reads existing AgentsRegistryContext fields only.
 - `tests/agents/test_terminal_timeout_checkpoint.py` — no-edit-reason: Constructs AgentsRegistryContext without the appended field, which defaults to None.
 - `tests/mcp_proxy/tools/test_agent_worktree_checkpoint.py` — no-edit-reason: Constructs AgentsRegistryContext without the appended field, which defaults to None.
-- `tests/agents/test_backend_ingress.py` — no-edit-reason: Builds the spawn registry without the new optional resolver.
-- `tests/mcp_proxy/tools/spawn_agent/test_execution.py` — no-edit-reason: Builds the spawn registry without the new optional resolver.
-- `tests/mcp_proxy/tools/spawn_agent/test_fallback_agent.py` — no-edit-reason: Builds the spawn registry without the new optional resolver.
-- `tests/mcp_proxy/tools/spawn_agent/test_initial_variables.py` — no-edit-reason: Builds the spawn registry without the new optional resolver.
-- `tests/mcp_proxy/tools/spawn_agent/test_mcp_proxy_tools_spawn_agent_dedup.py` — no-edit-reason: Builds the spawn registry without the new optional resolver.
-- `tests/mcp_proxy/tools/spawn_agent/test_project_context.py` — no-edit-reason: Builds the spawn registry without the new optional resolver.
-- `tests/mcp_proxy/tools/spawn_agent/test_project_scope.py` — no-edit-reason: Builds the spawn registry without the new optional resolver.
-- `tests/mcp_proxy/tools/spawn_agent/test_worktree_reference_resolution.py` — no-edit-reason: Builds the spawn registry without the new optional resolver.
 - `tests/mcp_proxy/tools/tasks/test_lifecycle_close_orchestration.py` — no-edit-reason: Builds the spawn registry from a runner alone to validate close-reviewer launch arguments; the resolver defaults to None.
 - `tests/mcp_proxy/tools/test_parallel_dispatch.py` — no-edit-reason: Builds the spawn registry without the new optional resolver.
 - `tests/skills/test_reference_library.py` — no-edit-reason: Builds the spawn registry from a runner alone to validate launch arguments; the resolver defaults to None.
@@ -997,23 +981,11 @@ Consumers unchanged:
 - `src/gobby/feedback/agent.py` — no-edit-reason: Unplaced caller; the placement default None keeps the background path.
 - `src/gobby/scheduler/executor.py` — no-edit-reason: Cron agent jobs stay unplaced; cron runbooks reach placement through pipeline mcp steps.
 - `src/gobby/servers/routes/agent_spawn.py` — no-edit-reason: The HTTP spawn route stays unplaced; placement is an MCP input reached by pipelines.
-- `tests/mcp_proxy/tools/spawn_agent/test_execution.py` — no-edit-reason: Existing unplaced calls are unaffected by an optional parameter.
-- `tests/mcp_proxy/tools/spawn_agent/test_error_handling.py` — no-edit-reason: Existing unplaced failure paths are unchanged.
-- `tests/mcp_proxy/tools/spawn_agent/test_fallback_agent.py` — no-edit-reason: Unplaced registry calls; the optional parameter defaults to None.
-- `tests/mcp_proxy/tools/spawn_agent/test_initial_variables.py` — no-edit-reason: The two-value project resolver keeps its signature and results.
 - `tests/mcp_proxy/tools/test_agents_spawn_evaluation.py` — no-edit-reason: Patches the two-value project resolver, which keeps its name and signature.
-- `tests/mcp_proxy/tools/spawn_agent/test_mcp_proxy_tools_spawn_agent_dedup.py` — no-edit-reason: Task dedupe is unchanged for unplaced spawns.
 - `tests/mcp_proxy/tools/spawn_agent/test_mcp_proxy_tools_spawn_agent_runtime.py` — no-edit-reason: Calls build_spawn_response without placement.
-- `tests/mcp_proxy/tools/spawn_agent/test_project_context.py` — no-edit-reason: Project resolution is unchanged.
-- `tests/mcp_proxy/tools/spawn_agent/test_project_scope.py` — no-edit-reason: Project scope is unchanged.
-- `tests/mcp_proxy/tools/spawn_agent/test_worktree_reference_resolution.py` — no-edit-reason: Isolation resolution is unchanged.
 - `tests/mcp_proxy/tools/tasks/test_lifecycle_close_orchestration.py` — no-edit-reason: Validates unplaced close-reviewer launch arguments against the spawn_agent schema; placement is optional.
 - `tests/mcp_proxy/tools/test_parallel_dispatch.py` — no-edit-reason: dispatch_batch gains no placement.
 - `tests/skills/test_reference_library.py` — no-edit-reason: Validates unplaced launch arguments against the spawn_agent schema; placement is optional.
-- `tests/tasks/test_plan_gate.py` — no-edit-reason: The unplaced plan-gate spawn path is unchanged.
-- `tests/workflows/test_step_snapshot_semantics.py` — no-edit-reason: Unplaced spawn_agent_impl calls; the optional parameter defaults to None.
-- `tests/agents/test_backend_ingress.py` — no-edit-reason: Unplaced registry and spawn_agent_impl calls; placement defaults to None.
-- `tests/agents/test_local_context_setup.py` — no-edit-reason: Unplaced spawn_agent_impl calls; placement defaults to None.
 
 **Acceptance:**
 
@@ -1242,18 +1214,11 @@ Consumers unchanged:
 - `src/gobby/agents/lifecycle_reconciliation.py` — no-edit-reason: `reap_stale_pending` still fails only rows that remain `pending`.
 - `src/gobby/storage/terminals.py` — no-edit-reason: TerminalManager inherits the new CAS from the mixin.
 - `tests/mcp_proxy/tools/spawn_agent/test_durable_spawn_error.py` — no-edit-reason: calls cleanup_failed_spawn without an owner; the keyword defaults to None and runs one attempt.
-- `tests/mcp_proxy/tools/spawn_agent/test_error_handling.py` — no-edit-reason: the owner keyword is optional.
-- `tests/workflows/test_step_snapshot_semantics.py` — no-edit-reason: the owner keyword is optional and spawn_agent_impl keeps its signature.
-- `tests/mcp_proxy/tools/spawn_agent/test_execution.py` — no-edit-reason: finalize_executed_spawn gains only an optional keyword.
 - `src/gobby/ask/agents.py` — no-edit-reason: spawn_agent_impl keeps its signature.
 - `src/gobby/dispatch/spawn.py` — no-edit-reason: spawn_agent_impl keeps its signature.
 - `src/gobby/feedback/agent.py` — no-edit-reason: spawn_agent_impl keeps its signature.
 - `src/gobby/scheduler/executor.py` — no-edit-reason: spawn_agent_impl keeps its signature.
 - `src/gobby/servers/routes/agent_spawn.py` — no-edit-reason: spawn_agent_impl keeps its signature.
-- `tests/agents/test_backend_ingress.py` — no-edit-reason: spawn_agent_impl keeps its signature.
-- `tests/agents/test_local_context_setup.py` — no-edit-reason: spawn_agent_impl keeps its signature.
-- `tests/mcp_proxy/tools/spawn_agent/test_initial_variables.py` — no-edit-reason: spawn_agent_impl keeps its signature.
-- `tests/tasks/test_plan_gate.py` — no-edit-reason: spawn_agent_impl keeps its signature.
 
 **Acceptance:**
 
@@ -1331,7 +1296,6 @@ and the moves exist only to make room for the call.
   plus ruff and mypy on `src/`.
 
 Consumers unchanged:
-- `tests/agents/test_resume_executor.py` — no-edit-reason: unplaced resumes carry no `placement` and take today's path; moved helpers are re-imported.
 - `tests/dispatch/test_daemon_resume.py` — no-edit-reason: the new reserver keyword is optional and the fake resume accepts keywords.
 
 **Acceptance:**
@@ -1355,8 +1319,26 @@ Targets:
 - `tests/servers/routes/test_agent_spawn_routes.py::*` — scope-reason: the disabled-sandbox route test now asserts refusal
 - `tests/mcp_proxy/tools/spawn_agent/test_sandbox_gate.py`
 - `tests/agents/test_resume_sandbox_gate.py`
-- `tests/conftest.py::*` — scope-reason: add the stub_srt_verifier fixture, the SRT_STUB_MODULES allowlist and the collection hook that applies it
-- `tests/mcp_proxy/tools/spawn_agent/test_factory.py::*` — scope-reason: `test_agent_sandbox_defaults_come_from_daemon_config` spawns with `enabled` false and now expects `sandbox_required`
+- `tests/conftest.py::*` — scope-reason: add the non-autouse stub_srt_verifier fixture
+- `tests/mcp_proxy/tools/spawn_agent/test_factory.py::*` — scope-reason: `test_agent_sandbox_defaults_come_from_daemon_config` spawns with `enabled` false and now expects `sandbox_required`; add the stub_srt_verifier pytestmark
+- `tests/mcp_proxy/tools/spawn_agent/test_agy_gate.py::*` — scope-reason: add `pytestmark = pytest.mark.usefixtures("stub_srt_verifier")`; its unit spawns reach the gate with the enabled `srt` default
+- `tests/mcp_proxy/tools/spawn_agent/test_error_handling.py::*` — scope-reason: add `pytestmark = pytest.mark.usefixtures("stub_srt_verifier")`; its unit spawns reach the gate with the enabled `srt` default
+- `tests/mcp_proxy/tools/spawn_agent/test_event_loop.py::*` — scope-reason: add `pytestmark = pytest.mark.usefixtures("stub_srt_verifier")`; its unit spawns reach the gate with the enabled `srt` default
+- `tests/mcp_proxy/tools/spawn_agent/test_execution.py::*` — scope-reason: add `pytestmark = pytest.mark.usefixtures("stub_srt_verifier")`; its unit spawns reach the gate with the enabled `srt` default
+- `tests/mcp_proxy/tools/spawn_agent/test_failure_cleanup.py::*` — scope-reason: add `pytestmark = pytest.mark.usefixtures("stub_srt_verifier")`; its unit spawns reach the gate with the enabled `srt` default
+- `tests/mcp_proxy/tools/spawn_agent/test_fallback_agent.py::*` — scope-reason: add `pytestmark = pytest.mark.usefixtures("stub_srt_verifier")`; its unit spawns reach the gate with the enabled `srt` default
+- `tests/mcp_proxy/tools/spawn_agent/test_initial_variables.py::*` — scope-reason: add `pytestmark = pytest.mark.usefixtures("stub_srt_verifier")`; its unit spawns reach the gate with the enabled `srt` default
+- `tests/mcp_proxy/tools/spawn_agent/test_mcp_proxy_tools_spawn_agent_dedup.py::*` — scope-reason: add `pytestmark = pytest.mark.usefixtures("stub_srt_verifier")`; its unit spawns reach the gate with the enabled `srt` default
+- `tests/mcp_proxy/tools/spawn_agent/test_project_context.py::*` — scope-reason: add `pytestmark = pytest.mark.usefixtures("stub_srt_verifier")`; its unit spawns reach the gate with the enabled `srt` default
+- `tests/mcp_proxy/tools/spawn_agent/test_project_scope.py::*` — scope-reason: add `pytestmark = pytest.mark.usefixtures("stub_srt_verifier")`; its unit spawns reach the gate with the enabled `srt` default
+- `tests/mcp_proxy/tools/spawn_agent/test_worktree_reference_resolution.py::*` — scope-reason: add `pytestmark = pytest.mark.usefixtures("stub_srt_verifier")`; its unit spawns reach the gate with the enabled `srt` default
+- `tests/mcp_proxy/tools/test_agents_spawn_tools.py::*` — scope-reason: add `pytestmark = pytest.mark.usefixtures("stub_srt_verifier")`; its unit spawns reach the gate with the enabled `srt` default
+- `tests/agents/test_backend_ingress.py::*` — scope-reason: add `pytestmark = pytest.mark.usefixtures("stub_srt_verifier")`; its unit spawns reach the gate with the enabled `srt` default
+- `tests/agents/test_local_context_setup.py::*` — scope-reason: add `pytestmark = pytest.mark.usefixtures("stub_srt_verifier")`; its unit spawns reach the gate with the enabled `srt` default
+- `tests/tasks/test_plan_gate.py::*` — scope-reason: add `pytestmark = pytest.mark.usefixtures("stub_srt_verifier")`; its unit spawns reach the gate with the enabled `srt` default
+- `tests/workflows/test_step_snapshot_semantics.py::*` — scope-reason: add `pytestmark = pytest.mark.usefixtures("stub_srt_verifier")`; its unit spawns reach the gate with the enabled `srt` default
+- `tests/agents/test_resume_executor.py::*` — scope-reason: add the stub_srt_verifier pytestmark and give each resumed run an `srt` snapshot config; a case with none now expects `sandbox_required`
+- `tests/ask/test_permissions.py::*` — scope-reason: its existing verifier patch also covers `gobby.agents.sandbox_gate.verify_srt_installation`, which ask runtime-profile spawns now reach
 
 Decision 13 makes managed SRT unconditional for `spawn_agent`.
 
@@ -1396,49 +1378,45 @@ Splitting spawn from resume would leave one unsandboxed path open.
   enabled `srt`. Once the gate lands, every `spawn_agent_impl` test that expects
   success would therefore probe the real pinned install, and would fail on a
   machine without it.
-- Test stub, scoped by an explicit allowlist rather than autouse (Program
-  Director design review, 2026-09-27). `tests/conftest.py` gains a non-autouse
-  fixture, `stub_srt_verifier`, which patches
+- Test stub (Program Director design review, 2026-09-27). `tests/conftest.py`
+  gains one named, non-autouse fixture, `stub_srt_verifier`. It patches
   `gobby.agents.sandbox_gate.verify_srt_installation` to return a stub
-  installation. It also gains a `pytest_collection_modifyitems` hook that adds
-  `usefixtures("stub_srt_verifier")` to an item only when the item's path is in
-  `SRT_STUB_MODULES`.
-- `SRT_STUB_MODULES` is one list in `tests/conftest.py`, and a comment beside it
-  states the rule: only modules that reach the gate through a success-path spawn
-  and do not test SRT itself. It holds:
-  - every module under `tests/mcp_proxy/tools/spawn_agent/` except
-    `test_sandbox_gate.py`
-  - `tests/mcp_proxy/tools/test_spawn_agent_impl_provider.py`
-  - `tests/mcp_proxy/tools/test_agents_spawn_tools.py`
-  - `tests/servers/routes/test_agent_spawn_routes.py`
-  - `tests/agents/test_backend_ingress.py`
-  - `tests/agents/test_local_context_setup.py`
-  - `tests/tasks/test_plan_gate.py`
-  - `tests/workflows/test_step_snapshot_semantics.py`
-- Everything outside the list runs the real verifier, including:
-  - `test_sandbox_gate.py` and `tests/agents/test_resume_sandbox_gate.py`, which
-    stub the verifier per case to raise or to pass, and so exercise the gate's
-    refusal paths against the real call site;
-  - `tests/agents/test_srt_spawn.py` and the `tests/integration/sandbox/`
-    suite, which check the real SRT install.
-- Consumer sweep: once the gate is implemented, the executor runs every test
-  module that calls `spawn_agent_impl` or `resume_agent_run` directly and is not
-  in the list. From 0.5.0 `070a19c3d4` those are:
-  - `tests/ask/test_permissions.py`
-  - `tests/dispatch/test_dispatcher.py`
-  - `tests/build_pipeline/test_build_pipeline_service.py`
-  - `tests/e2e/test_build_dispatcher_autonomy.py`
-  - `tests/feedback/test_feedback_agent.py`
-  - `tests/dispatch/test_spawn_forwarding.py`
-  - `tests/build/test_dispatcher_stage_wake.py`
-  - `tests/storage/test_stage_review_findings.py`
-  - `tests/scheduler/test_cron_executor.py`
-  - `tests/agents/test_resume_executor.py`
-  A module that fails with `sandbox_required` or an SRT verification error,
-  and does not test SRT, joins the list. The close summary names every
-  module added and why.
+  installation.
+- Each unit module whose spawns reach the gate opts in with
+  `pytestmark = pytest.mark.usefixtures("stub_srt_verifier")`. Those modules are
+  the Targets above: they call `spawn_agent_impl` or the spawn registry for
+  real, or call `resume_agent_run` for real, from 0.5.0 `070a19c3d4`.
+- `test_resume_executor.py` also gives its resumed runs an `srt` snapshot
+  config.
+- `test_permissions.py` extends its existing verifier patch to the gate's
+  import.
 - `test_factory.py`'s daemon-config case spawns with `enabled` false and now
   expects `sandbox_required`.
+- There is no collection hook and no path allowlist.
+- Two separate kinds of verifier coverage:
+  - (a) Gate unit cases. `test_sandbox_gate.py` and `test_resume_sandbox_gate.py`
+    do not use the fixture; each case patches the gate's verifier explicitly to
+    pass or to raise, and asserts the outcome.
+  - (b) Real verifier cases, with no stub. `tests/agents/test_srt_runtime.py`
+    already checks the verifier against an isolated `GOBBY_HOME`. One new gate
+    case,
+    `test_sandbox_gate.py::test_gate_refuses_when_isolated_srt_is_missing`,
+    runs with no patch and `GOBBY_HOME` set to an empty `tmp_path`, so the real
+    verifier fails and the spawn is refused `sandbox_required`.
+- Not stubbed:
+  - Modules that replace `spawn_agent_impl` or `resume_agent_run` with fakes
+    never reach the gate and stay unchanged. Those are
+    `tests/dispatch/test_dispatcher.py`, `tests/dispatch/test_daemon_resume.py`,
+    `tests/dispatch/test_spawn_forwarding.py`,
+    `tests/build/test_dispatcher_stage_wake.py`,
+    `tests/build_pipeline/test_build_pipeline_service.py`,
+    `tests/feedback/test_feedback_agent.py`,
+    `tests/storage/test_stage_review_findings.py` and
+    `tests/scheduler/test_cron_executor.py`.
+  - e2e and integration suites are never stubbed.
+  - V1 runs all of these. If one fails on the gate, the fix is an explicit
+    per-case patch in a unit module, or isolated real SRT in e2e and
+    integration; never a blanket stub.
 - `tests/dispatch/test_daemon_resume.py` replaces `resume_agent_run` with a fake,
   so the resume gate never runs there.
 - Size: the sandbox resolution in
@@ -1464,12 +1442,6 @@ Consumers unchanged:
 - `tests/agents/test_srt_spawn.py` — no-edit-reason: the wrap call site is unchanged.
 - `src/gobby/servers/routes/agent_spawn.py` — no-edit-reason: it returns `spawn_agent_impl`'s error payload unchanged, so a refusal surfaces as `sandbox_required`; its route test is a Target.
 - `tests/dispatch/test_daemon_resume.py` — no-edit-reason: it replaces `resume_agent_run` with a fake, so the resume gate never runs.
-- `tests/mcp_proxy/tools/spawn_agent/test_error_handling.py` — no-edit-reason: it leaves `agent_sandbox` at the enabled `srt` default, and is in `SRT_STUB_MODULES`, so its spawns pass under the stub.
-- `tests/mcp_proxy/tools/spawn_agent/test_initial_variables.py` — no-edit-reason: it leaves `agent_sandbox` at the enabled `srt` default, and is in `SRT_STUB_MODULES`, so its spawns pass under the stub.
-- `tests/agents/test_backend_ingress.py` — no-edit-reason: it leaves `agent_sandbox` at the enabled `srt` default, and is in `SRT_STUB_MODULES`, so its spawns pass under the stub.
-- `tests/agents/test_local_context_setup.py` — no-edit-reason: its spawns leave `agent_sandbox` at the enabled `srt` default and pass under the stub (`SRT_STUB_MODULES`); its disabled `SandboxConfig` is a Codex local-context case that does not reach `spawn_agent_impl`.
-- `tests/tasks/test_plan_gate.py` — no-edit-reason: it leaves `agent_sandbox` at the enabled `srt` default, and is in `SRT_STUB_MODULES`, so its spawns pass under the stub.
-- `tests/workflows/test_step_snapshot_semantics.py` — no-edit-reason: it leaves `agent_sandbox` at the enabled `srt` default, and is in `SRT_STUB_MODULES`, so its spawns pass under the stub.
 
 **Acceptance:**
 
@@ -1478,7 +1450,7 @@ Consumers unchanged:
 - 1.8.3 - A resume with no snapshot config, `enabled: false` or a non-`srt` backend parks the successor, returns `sandbox_required` and starts no provider. test: `tests/agents/test_resume_sandbox_gate.py::test_resume_refuses_unsandboxed_config`.
 - 1.8.4 - A spawned `research`-profile agent resolves to SRT with the Trusted seed plus the Gobby hosts. test: `tests/mcp_proxy/tools/spawn_agent/test_sandbox_gate.py::test_research_profile_is_srt_with_trusted_seed`.
 - 1.8.5 - From a spawned agent, a REST or CLI MCP call is rule-enforced. test: `tests/mcp_proxy/tools/spawn_agent/test_sandbox_gate.py::test_loopback_mcp_calls_are_rule_enforced`.
-- 1.8.6 - The SRT verification stub reaches only modules in `SRT_STUB_MODULES`: an item outside the list, including every `test_sandbox_gate.py` case, calls the real `verify_srt_installation`. test: `tests/mcp_proxy/tools/spawn_agent/test_sandbox_gate.py::test_srt_stub_is_scoped_to_allowlist`.
+- 1.8.6 - With no verifier patch and `GOBBY_HOME` set to an empty directory, the real `verify_srt_installation` fails and the gate refuses the spawn `sandbox_required`; gate unit cases that patch the verifier assert both outcomes explicitly. test: `tests/mcp_proxy/tools/spawn_agent/test_sandbox_gate.py::test_gate_refuses_when_isolated_srt_is_missing`.
 
 ## P2: gclient placement reconciliation
 `kind: framing`
@@ -1802,10 +1774,11 @@ SRT smoke, after D1 and D2 land, in an isolated Program Director slot:
   does not change, into `workspace_pane_io.py` (new 1.5.8; 1.5.7 now bounds
   `workspace_ops.py` under 850).
 - 1.8 test fix: no spawn test patches `verify_srt_installation`, so the earlier
-  research note claiming they do was wrong. 1.8 now adds a stub fixture that
-  `tests/conftest.py` applies only to an explicit `SRT_STUB_MODULES` allowlist,
-  following Program Director review; gate, SRT and integration tests keep the
-  real verifier. It also adds a consumer sweep that decides the remaining
-  direct callers, retargets `test_factory.py`'s disabled-config case, and
-  pins the scoping in new 1.8.6.
+  research note claiming they do was wrong. After Program Director review, 1.8
+  adds one named, non-autouse `stub_srt_verifier` fixture. Each affected unit
+  module opts in through an explicit `pytestmark` edit, and those modules are
+  now 1.8 Targets, removed from the unchanged inventories of 1.2, 1.3, 1.4 and
+  1.6. Gate unit cases control the verifier per case; one new gate case runs the
+  real verifier against an isolated empty `GOBBY_HOME` (1.8.6). e2e and
+  integration suites are never stubbed.
 - next: Program Director design review, then routing to Josh and the Adversary.
