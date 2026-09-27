@@ -772,45 +772,90 @@ settled inline and the claim released. Once it is dispatched, every outcome
 other than a completed promotion goes to the owner, because a prepare failure
 is never proof (1.9, I1).
 
-| Exit after the claim | Row | Claim |
-| --- | --- | --- |
-| `create_pending` or the retry bump raises | not written, or unchanged | released inline |
-| Cancellation during `create_pending` or the bump | the owner awaits the `to_thread` future; a row that commits late gets `fail_pending_attempt` | owner |
-| `cancel_event` set | `fail_pending` | released inline |
-| The binder raises | `_settle_native_spawn_failure` (native) or `fail_pending_attempt` (tmux) | released inline |
-| Cancellation during the bind | the owner awaits the bind, then `fail_pending_attempt` | owner |
-| `native_reserve_unavailable` | `fail_pending` | released inline |
-| `reserve_observer` raises | `_settle_native_spawn_failure` | released inline |
-| Cancellation during `reserve_observer` | the owner awaits it, then `fail_pending_attempt` | owner |
-| Prepare `TimeoutError` or `CancelledError`, done or not | owner steps 1-6 | owner |
-| Prepare raises `TerminalSpawnFailed` or any other exception | owner steps 1-6 | owner |
-| `_promote_prepared` settles the row | promoted | released after that settlement |
-| `_promote_prepared` raises or is cancelled | the owner awaits the promotion future, then steps 1-6 | owner |
+Every step after the claim that can outlive a cancellation is dispatched as a
+task and awaited through `asyncio.shield`. That covers `create_pending` or the
+bump, the bind, `reserve_observer`, the prepare, the promotion and every inline
+settlement write. A caller cancellation therefore cancels only the wait, and the
+task and its `to_thread` worker keep running. The handoff hands the owner that
+live task, so the owner awaits the worker's real completion. The handoff itself
+is synchronous (create the owner task, retain it, set the flag) with no await, so
+a repeated cancellation cannot interrupt it, and it finds the flag set
+afterwards.
 
-An inline settlement that is itself cancelled hands its pending write to the
-owner the same way. For a placed spawn, a prepare that raises no longer settles
-`failed` inline: the row goes `orphaned`, then `exited` once the owner proves
-absence, and `_runtime_spawn` returns the same failed result code as today.
+The exits, each a case of 1.2.9:
+- E1. `create_pending` or the retry bump raises: no row is written, or it is
+  unchanged, and the claim is released inline.
+- E2. Cancellation during `create_pending` or the bump: the owner (stage
+  `create`) awaits the task and settles a row that commits late with
+  `fail_pending_attempt`.
+- E3. `cancel_event` is set: `fail_pending`, and the claim is released inline.
+- E4. The binder raises: `_settle_native_spawn_failure` (native) or
+  `fail_pending_attempt` (tmux), and the claim is released inline.
+- E5. Cancellation during the bind: the owner (stage `bind`) awaits the bind,
+  then `fail_pending_attempt`.
+- E6. `native_reserve_unavailable`: `fail_pending`, and the claim is released
+  inline.
+- E7. `reserve_observer` raises: `_settle_native_spawn_failure`, and the claim
+  is released inline.
+- E8. Cancellation during `reserve_observer`: the owner (stage `reserve`) awaits
+  it, then `fail_pending_attempt`.
+- E9. The prepare hits `TimeoutError` or `CancelledError`, done or not: the owner
+  (stage `prepare`).
+- E10. The prepare raises `TerminalSpawnFailed` or any other exception: the
+  owner (stage `prepare`).
+- E11. `_promote_prepared` returns a promoted result: the claim is released after
+  that settlement.
+- E12. `_promote_prepared` returns a failed result: an observer bind failure,
+  `CommitSpawnRefusedError`, a native commit error, or a lost CAS. The owner
+  gets stage `promote` with the resolved promotion.
+- E13. `_promote_prepared` raises or is cancelled: the owner (stage `promote`)
+  awaits the promotion task.
+- E14. The id is already held at claim time: a failed `terminal_in_doubt` result,
+  and no row is touched.
+
+An inline settlement that is itself cancelled hands its still-running write task
+to the owner the same way. For a placed spawn, a prepare that raises no longer
+settles `failed` inline: the row goes `orphaned`, then `exited` once the owner
+proves absence, and `_runtime_spawn` returns the same failed result code as
+today.
+
+Placed promotion defers every failure to the owner. `_promote_prepared` gains
+keyword `defer_failure: bool = False`, and the placed path passes true. With
+it, the observer bind failure, `CommitSpawnRefusedError`, native commit error,
+commit cancellation and lost-CAS branches call neither `kill_spawn_key` nor
+`_settle_native_spawn_failure` nor `fail_pending`. They return, or re-raise,
+their failure with the row left as they found it, so no row is terminalized
+`failed` before the owner's proof. `_runtime_spawn` already holds `prepared`
+(locator, host epoch, process) and hands it to the owner, so the identity
+survives a promotion that returns only a `SpawnResult`. Without the keyword the
+branches are unchanged.
 
 Handoff: the owner is a task created at that moment, retained in
 `_TIMEOUT_CLEANUP_TASKS`, and never a done-callback. `_schedule_timeout_cleanup`
-gains keyword `in_doubt_owner: bool = False` and a `stage` naming the future it
-drains (`create`, `bind`, `reserve`, `prepare` or `promote`). The placed path
-passes true, and the unplaced paths keep today's done-callback. `_runtime_spawn`
-awaits nothing after the handoff: a timeout returns the failed `spawn_timeout`
-result, bounded by `timeout_seconds`, a prepare or promotion error returns its
-failed result, and a cancellation returns `cancelled` as today. A later
-cancellation finds the claim already owned and starts no second owner.
+gains keyword `in_doubt_owner: bool = False`, a `stage` (`create`, `bind`,
+`reserve`, `prepare` or `promote`), the live task for that stage, and `prepared`
+when there is one. The placed path passes true, and the unplaced paths keep
+today's done-callback. `_runtime_spawn` awaits nothing after the handoff: a
+timeout returns the failed `spawn_timeout` result, bounded by
+`timeout_seconds`, a prepare or promotion error returns its failed result, and a
+cancellation returns `cancelled` as today.
 
-The owner, in `spawn_executor_runtime.py`, first awaits the future it was handed
-and catches every outcome, so nothing it owns is abandoned. For the `create`,
-`bind` and `reserve` stages no prepare was dispatched: it settles a committed row
-with `fail_pending_attempt` and releases. For the `prepare` and `promote` stages
-it:
+The owner, in `spawn_executor_runtime.py`, catches every outcome of the task it
+was handed, so nothing it owns is abandoned. The order depends on the stage:
+- `create`, `bind` and `reserve`: no prepare was dispatched. The owner awaits the
+  task, settles a committed row with `fail_pending_attempt`, and releases.
+- `prepare`: step 1 runs first, while the prepare may still be unresolved, so the
+  row is `orphaned` before the owner waits. Then the owner drains the prepare
+  (step 2) and continues with steps 3-6.
+- `promote`: the owner awaits the promotion task first, then rereads the row under
+  `settle_lock` and runs steps 1 and 3-6 with the `prepared` it was handed.
+
+The steps:
 1. moves the row from `pending` or `live` to `orphaned` with `mark_kill_failed`
    (1.6), so the pane and the seat are kept (decision 5). A promotion that
    committed before the cancellation left the row `live`, and this step covers
-   it;
+   it. If the CAS finds the row in any other state, the owner logs that state
+   and still makes the kill decision from the prepared identity;
 2. consumes the prepare outcome, including one that completed as the
    cancellation arrived;
 3. on a prepare failure, proves absence. A failure is never proof by itself:
@@ -841,12 +886,18 @@ it:
    `record_orphan_identity` for a kept orphan) succeeds.
 
 Storage failures are contained. A failed write never skips consuming the handed
-future or the kill decision. Each write (`mark_kill_failed`,
+task or the kill decision. Each write (`mark_kill_failed`,
 `fail_pending_attempt`, `record_orphan_identity`, the `exited` mark) is retried
-three times with backoff. If it still fails, the owner logs at WARNING with the
-terminal id and the exception type name and keeps the claim held, so no path can
-settle or free the row until a restart empties the registry and reconcile
-recovers it (1.9).
+three times with backoff. What each failure leaves:
+- `mark_kill_failed` fails: the row stays `pending` or `live`, and the owner goes
+  on to drain and decide. The claim still keeps every other path off the row.
+- `fail_pending_attempt`, `record_orphan_identity` or the `exited` mark fails:
+  that settlement did not happen. The owner logs at WARNING with the terminal id
+  and the exception type name and keeps the claim held.
+
+A held claim means no path can settle or free the row until a restart empties
+the registry and reconcile recovers it (1.9). The claim is released only after
+the final settlement write succeeds.
 
 The owner never calls `kill_spawn_key`. While the claim is held:
 - `terminal_kill` and `cleanup_failed_spawn`'s terminate step (1.6) refuse
@@ -880,6 +931,13 @@ time. Facade patches therefore stay effective, and the source check in
 
 This deliverable adds no placement input and no caller that sets the binder, so it
 lands safely on its own.
+
+**Granularity:** ten acceptance items, one outcome: a placed spawn's terminal id
+has exactly one owner from before the row is written until a proven settlement.
+The bind order, the exits, placed promotion and the owner are that one
+lifecycle. A split would land a commit where some exit holds the claim with no
+owner, or where promotion still settles rows the owner must prove. The executor
+split is the size move that lets it fit.
 
 **Research context:**
 - The terminal path is in the Evidence section. `_prepare_provider_sandbox` catches
@@ -917,13 +975,13 @@ Consumers unchanged:
 - 1.2.1 - With a binder, the executor runs `wrap_provider_command`, `create_pending`, the bind, `reserve_observer`/`prepare_spawn` and provider exec in that order, and the provider argv is the SRT-wrapped command. Without a binder the order is unchanged. test: `tests/agents/test_spawn_executor_placement_bind.py::test_bind_follows_wrap_and_precedes_exec`.
 - 1.2.2 - A binder failure, including a publish failure raised after `set_pane_terminal` persisted the binding, fails the pending terminal through `_settle_native_spawn_failure`, returns a failed `SpawnResult`, and never starts the provider. test: `tests/agents/test_spawn_executor_placement_bind.py::test_bind_failure_fails_pending_terminal`.
 - 1.2.3 - `spawn_executor` re-exports `_runtime_spawn` and `_promote_prepared` from `spawn_executor_runtime`. symbol: `_runtime_spawn`. file: `src/gobby/agents/spawn_executor_runtime.py`.
-- 1.2.4 - With a binder, a `timeout_seconds` expiry hands the held claim to the owner, the row becomes `orphaned`, and `spawn_timeout` returns without awaiting the prepare. A late success with a proven kill settles the row `exited`. A tmux kill that leaves the session present, a tmux terminate that raises, and a native stale-epoch kill whose host cannot answer and that has no process each leave the row `orphaned`, with the prepared locator, epoch and process recorded. A native stale-epoch kill with a process whose group is then dead settles `exited`. The claim is released in every case, for native and tmux. test: `tests/agents/test_spawn_executor_placement_bind.py::test_placed_timeout_orphans_then_late_settlement`.
+- 1.2.4 - With a binder, a `timeout_seconds` expiry hands the held claim to the owner, the row becomes `orphaned`, and `spawn_timeout` returns without awaiting the prepare. A late success with a proven kill settles the row `exited`. A tmux kill that leaves the session present, a tmux terminate that raises, and a native stale-epoch kill whose host cannot answer and that has no process each leave the row `orphaned`, with the prepared locator, epoch and process recorded. A native stale-epoch kill with a process whose group is then dead settles `exited`. When the final settlement write succeeds, the claim is released in every case, for native and tmux. test: `tests/agents/test_spawn_executor_placement_bind.py::test_placed_timeout_orphans_then_late_settlement`.
 - 1.2.5 - Without a binder, a timeout keeps today's pending row and late cleanup. test: `tests/agents/test_spawn_executor_placement_bind.py::test_unplaced_timeout_unchanged`.
 - 1.2.6 - With a binder, repeated cancellation while the prepare is unresolved, and a cancellation that arrives as the prepare completes with either a success or a failure, each hand the prepare to exactly one owner, which consumes it, and return `cancelled`. test: `tests/agents/test_spawn_executor_placement_bind.py::test_placed_cancellation_has_one_owner`.
 - 1.2.7 - The claim is taken before `create_pending` is dispatched and released after a successful promote or a bind failure. While it is held, `cleanup_failed_spawn` and `terminal_kill` each report not settled, leave the row `orphaned` and start no runtime terminate. A prepare slower than `spawn_in_doubt_seconds` is reaped by neither reaper. test: `tests/agents/test_spawn_executor_placement_bind.py::test_in_doubt_claim_spans_prepare`.
 - 1.2.8 - A late prepare failure is not proof. A tmux session created before a failing dimension query, and a native terminal created on the host whose spawn response was lost, are each found and killed with proof before the row settles `exited`. A native probe that cannot reach the host leaves the row `orphaned`. test: `tests/agents/test_spawn_executor_placement_bind.py::test_late_prepare_failure_requires_proven_absence`.
-- 1.2.9 - With a binder, every exit in the ownership table either releases the claim inline or hands it to exactly one owner, and none leaves the id held without an owner. The table-driven cases are a create or bump failure, cancellation during create, bind, reserve and promotion, `cancel_event`, `native_reserve_unavailable`, a `reserve_observer` error, a prepare that raises, and an id already held. A `create_pending` cancelled while its row commits late gets that row settled by the owner. test: `tests/agents/test_spawn_executor_placement_bind.py::test_every_exit_releases_or_hands_off_the_claim`.
-- 1.2.10 - An injected failure of `mark_kill_failed` still lets the owner consume the prepare and make its kill decision. A final settlement write that fails after three retries leaves the claim held and the row unsettled. test: `tests/agents/test_spawn_executor_placement_bind.py::test_owner_contains_storage_failures`.
+- 1.2.9 - With a binder, each exit E1-E14 either releases the claim inline or hands it to exactly one owner, and none leaves the id held without an owner. Each case is one parametrized row. Cancellation cases cancel the caller repeatedly while the stage's worker is still running, and the owner awaits that worker's real completion. A `create_pending` whose row commits after the cancellation gets that row settled by the owner. The E12 cases (observer bind failure, `CommitSpawnRefusedError`, native commit error, lost CAS), with a kill that raises or is swallowed, leave the row unterminalized until the owner's proof, and the owner kills through the `prepared` identity. test: `tests/agents/test_spawn_executor_placement_bind.py::test_every_exit_releases_or_hands_off_the_claim`.
+- 1.2.10 - An injected failure of `mark_kill_failed` still lets the owner consume the prepare and make its kill decision. A final settlement write that fails after three retries leaves the claim held and the row unsettled. On a timeout the row is `orphaned` while the prepare is still unresolved. test: `tests/agents/test_spawn_executor_placement_bind.py::test_owner_contains_storage_failures`.
 
 ### 1.3 One daemon-scoped reserver reaches spawn_agent [category: code] (depends: 1.1)
 `kind: deliverable`
@@ -1649,6 +1707,7 @@ Targets:
 - `src/gobby/terminals/native_runtime.py::NativeTerminalRuntime`
 - `src/gobby/terminals/native_host_probe.py`
 - `src/gobby/terminals/host_reconcile.py::reconcile_host_inventory`
+- `src/gobby/terminals/host_reconcile.py::SupportsIdentityLookup`
 - `src/gobby/agents/lifecycle_reconciliation.py::LifecycleReconciliation`
 - `tests/terminals/test_in_doubt_kill_truth.py`
 - `tests/terminals/test_host_reconcile_orphans.py`
@@ -1737,16 +1796,22 @@ Changes:
   - the listing does not contain it: it reaps the recorded process when there is
     one and returns. This is the #22530 path (I3), and absence from a strict
     listing with no claim held is proof (I1);
-  - the host cannot answer, or the connect fails: it reaps the recorded process
-    when there is one and returns only when `recorded_process_group_is_alive` is
-    then false. Otherwise it re-raises the host error, and `kill_terminal`
-    reports the row not settled.
+  - the host cannot answer, or the connect fails: the dead-group proof is
+    admitted only for a usable process identity, meaning a `process` mapping
+    whose `pgid` is a positive integer. `recorded_process_group_is_alive`
+    (`host_reap.py:39-49`) also answers false for `None` or an invalid `pgid`,
+    so that false is never read as death. With a usable identity, it reaps and
+    returns only when `recorded_process_group_is_alive` is then false. No
+    process, a host id with no process, or an invalid `pgid` re-raises the host
+    error, and `kill_terminal` reports the row not settled.
   An identity-less orphan takes the same branch, so `kill_terminal` needs no
   separate refusal for it. The branch stays in `native_runtime.py`, which keeps
   the existing `reap_recorded_process` patch target, and calls the probe it
   inherits from the mixin.
 - `TerminalSettlementMixin.record_orphan_identity(terminal_id, *, locator,
-  host_epoch, process)` is a CAS on `orphaned` only. It records every identity
+  host_epoch, process)` is a CAS on `orphaned` only. `SupportsIdentityLookup`, the
+  protocol reconcile takes its manager as, gains `record_orphan_identity` and
+  `settle_lock`, so the new reconcile calls stay inside its declared surface. It records every identity
   known, so that a later `terminal_kill` can address the session or reap its
   process group.
 - `reconcile_host_inventory`:
@@ -1765,6 +1830,13 @@ Changes:
 - `LifecycleReconciliation.reap_stale_pending` skips a held id. The executor's
   `reap_stale_pending_terminals` gets the same skip in 1.2, which already splits
   `spawn_executor.py`.
+
+**Granularity:** seven production files, one outcome: invariants I1-I3 hold for
+every path that can settle a terminal. The registry, the kill proof, the strict
+stale branch, reconcile and the reaper skip each close a path the others
+assume closed. Landed apart, a reconcile or kill could settle a held row, or an
+identity-less orphan, on unproven state between commits. `native_host_probe.py`
+is the size split that keeps `native_runtime.py` under the ceiling.
 
 **Research context:**
 - `reconcile_host_inventory` (`host_reconcile.py:122-278`) runs on host connect
@@ -1810,7 +1882,7 @@ Consumers unchanged:
 
 - 1.9.1 - `claim`, `holds`, `defer` and `release` track one id; `defer` on an unheld id returns false; `release` returns the deferred steps once, and a `defer` after it returns false. `holds` called from a worker thread while the loop claims and releases answers consistently. test: `tests/terminals/test_in_doubt_kill_truth.py::test_in_doubt_registry_claims_defers_and_releases`.
 - 1.9.2 - `kill_terminal` on a held id raises `TerminalInDoubtError`, calls no runtime terminate and leaves the row unchanged. After `release`, the same call kills the terminal and marks it `exited`. test: `tests/terminals/test_in_doubt_kill_truth.py::test_kill_terminal_refuses_held_ids`.
-- 1.9.3 - A tmux terminate that leaves the session present makes `kill_terminal` raise `TerminalKillUnprovenError` and leave the row unsettled. Before any reconcile, a native row with a stale non-NULL epoch that the current host still lists is killed through the host id the strict probe returns before it is marked `exited`. The same row absent from the listing is reaped and settles `exited` (#22530). With the host unreachable it settles only when its recorded process group is then dead, and otherwise stays unsettled. An identity-less orphan follows the same three cases, and a current-epoch row is not treated as stale while the client is unconnected. A `kill_terminal` given a stale `Terminal` decides from the row it reread under `settle_lock`. test: `tests/terminals/test_in_doubt_kill_truth.py::test_kill_terminal_requires_proven_kill`.
+- 1.9.3 - A tmux terminate that leaves the session present makes `kill_terminal` raise `TerminalKillUnprovenError` and leave the row unsettled. Before any reconcile, a native row with a stale non-NULL epoch that the current host still lists is killed through the host id the strict probe returns before it is marked `exited`. The same row absent from the listing is reaped and settles `exited` (#22530). With the host unreachable, it settles only when a usable recorded process (a positive integer `pgid`) has a dead group afterwards. A live group, no process, a host id with no process, and a non-integer or non-positive `pgid` each stay unsettled. An identity-less orphan follows the same three cases, and a current-epoch row is not treated as stale while the client is unconnected. A `kill_terminal` given a stale `Terminal` decides from the row it reread under `settle_lock`. test: `tests/terminals/test_in_doubt_kill_truth.py::test_kill_terminal_requires_proven_kill`.
 - 1.9.4 - `record_orphan_identity` writes the locator, epoch and process on an `orphaned` row and changes no row in any other state. test: `tests/terminals/test_in_doubt_kill_truth.py::test_record_orphan_identity_cas`.
 - 1.9.5 - After a simulated restart, an `orphaned` row with no identity that the host lists gets the host identity and process from reconcile, and `terminal_kill` then calls the host kill before it marks the row `exited`. A listed row that reconcile finds held, or that changed state under the lock, is untouched. An identity-less orphan absent from the host settles `exited` only after the in-doubt window. test: `tests/terminals/test_host_reconcile_orphans.py::test_reconcile_recovers_orphan_identity`.
 - 1.9.6 - `find_host_terminal` returns the matching host id or `None`, and raises when the host is unreachable. `LifecycleReconciliation.reap_stale_pending` skips a held `pending` row older than `spawn_in_doubt_seconds`. test: `tests/terminals/test_in_doubt_kill_truth.py::test_probe_is_strict_and_reaper_honors_claims`.
@@ -2521,4 +2593,19 @@ brings its own sync-owned fixtures:
   - Program Director name correction: the rename is reverted, and the sample
     is `runbook-two-seat-example` again. Carrying a `runbook` tag onto the row
     is #22895's, because bundled pipeline sync writes `tags=["gobby"]` today.
+- Plan Adversary round on `37ff136247` (gobby#14579). C is resolved.
+  - PAL-10, process identity: accepted. The dead-group proof requires a usable
+    identity (a positive integer `pgid`). No process, a host id only, or an
+    invalid `pgid` stays unproven, and 1.9.3 pins each case.
+  - PAL-06/07, promotion: accepted. Placed `_promote_prepared` takes
+    `defer_failure`, so its failed-result and raise branches neither kill nor
+    settle. Failed results go to the owner with the retained `prepared` (E12).
+  - Cancellation-safe handoff: accepted. Every stage is a shielded, retained
+    task, and the handoff is synchronous. Owner order is per stage: `prepare`
+    orphans before draining, and `promote` drains then rereads.
+  - Coverage: accepted. The exits are prose cases E1-E14 under the
+    table-driven 1.2.9. 1.9 targets `SupportsIdentityLookup`, and 1.2 and 1.9
+    record Granularity decisions.
+  - Storage retry: the plan states what each failed write leaves. The
+    unconditional release in 1.2.4 is scoped to a successful final write.
 - next: Adversary review of the repaired candidate.
