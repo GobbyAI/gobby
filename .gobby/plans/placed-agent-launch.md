@@ -365,9 +365,9 @@ before the agent is placed or rolled back. A launch terminal whose kill fails st
       and that is a product decision returned through the Program Director. There is
       no allow-all fallback: `render_srt_settings` keeps `strictAllowlist` and
       `_raise_srt_lockout` refuses unrestricted network.
-    - Loopback is allowed, so until #22961 lands a sandboxed agent can reach MCP
-      servers through daemon REST or `gobby mcp-proxy call-tool` without rule
-      enforcement. The governance claim above holds only after #22961 (deferred D2).
+    - Loopback is allowed. #22961 landed at `08e54acb95` and `2c2b569fe3`, so a
+      sandboxed agent's MCP call through daemon REST or `gobby mcp-proxy call-tool`
+      is rule-enforced, and 1.8.5 verifies it.
     - Credential boundary. VERIFIED denied: `_credential_roots` (`bootstrap.yaml`,
       `.secret_kek`, `local_cli_token`, `tools/srt`) and `_TOOLCHAIN_CREDENTIAL_PATHS`.
       A spawned agent reaches daemon REST only with its identity-bound agent token.
@@ -711,7 +711,7 @@ without the others.
 - 1.1.14 - `settle` clears the mark and the seat entry after a successful reply, and until then a guarded close, move or swap of the bound pane is refused `busy`. test: `tests/terminals/test_workspace_agent_panes.py::test_mark_held_until_settle`.
 - 1.1.15 - A split whose beside pane, or that pane's tab, moved to another tab, workspace or project after preflight is refused `not_found` at reserve and inserts nothing. test: `tests/terminals/test_workspace_agent_panes.py::test_split_reserve_refuses_moved_target`.
 
-### 1.2 Executor binds a placed terminal before exec [category: code] (depends: 1.6)
+### 1.2 Executor binds a placed terminal before exec [category: code] (depends: 1.6, 1.9)
 `kind: deliverable`
 
 Targets:
@@ -719,6 +719,8 @@ Targets:
 - `src/gobby/agents/spawn_executor.py::_runtime_spawn`
 - `src/gobby/agents/spawn_executor.py::_promote_prepared`
 - `src/gobby/agents/spawn_executor.py::_cleanup_timed_out_prepare`
+- `src/gobby/agents/spawn_executor.py::_schedule_timeout_cleanup`
+- `src/gobby/agents/spawn_executor.py::reap_stale_pending_terminals`
 - `src/gobby/agents/spawn_executor_runtime.py`
 - `tests/agents/test_spawn_executor_placement_bind.py`
 
@@ -737,25 +739,57 @@ including a publish failure after the binding persisted, because
 `classify_native_spawn_failure` settles an exception it does not recognize as
 `fail_pending`. Without a binder the order is unchanged.
 
-Placed timeout. As-is, a `timeout_seconds` expiry schedules
+Placed timeout and cancellation. As-is, a `timeout_seconds` expiry schedules
 `_schedule_timeout_cleanup` and returns at once, leaving the row `pending` until a
-late settlement. With a binder, `_runtime_spawn` instead moves the row from
-`pending` to `orphaned` through `mark_kill_failed` (1.6) before it returns the failed
-`spawn_timeout` result: the prepare may still start a process, so the row is in
-doubt, and `orphaned` keeps the pane and the seat (decision 5). The reply is bounded
-by `timeout_seconds`. The late done-callback still runs and settles the row in
-whatever state it holds. `_cleanup_timed_out_prepare` keeps `fail_pending_attempt`
-for a `pending` row, and when that returns `None` for a row that is `orphaned` it
-calls `mark_exited`, which already accepts `orphaned`:
-- a late prepare failure settles the row `exited`;
-- a late success is killed with `kill_spawn_key` (native and tmux) and then settled
-  `exited`;
-- a late kill that fails, including native `HostUnavailableError`, leaves the row
-  `orphaned`, listed for `terminal_kill`.
+late settlement. A `CancelledError` awaits `asyncio.shield(prepare_task)` once,
+catches only `Exception`, and returns `cancelled` without consuming the prepared
+result, so a second cancellation abandons a prepare that may still create the
+session. The late cleanup kills through `kill_spawn_key`, which swallows a tmux
+terminate error and ignores a native epoch mismatch.
 
-The row is no longer `pending`, so `reap_stale_pending` never settles it without a
-kill. Without a binder the timeout path is unchanged, and `timeout_seconds=None`
-keeps today's unbounded wait.
+With a binder, on a `TimeoutError` or any `CancelledError` while the prepare is
+unresolved, `_runtime_spawn` synchronously claims the terminal id in the 1.9
+in-doubt registry and hands `prepare_task` to one background owner. The owner is a
+task created at claim time, before the prepare resolves, and retained in
+`_TIMEOUT_CLEANUP_TASKS`; it is not a done-callback. `_schedule_timeout_cleanup`
+gains keyword `in_doubt_owner: bool = False`: the placed path passes true, and the
+unplaced paths keep today's done-callback. `_runtime_spawn` awaits
+nothing after the handoff: a timeout returns the failed `spawn_timeout` result,
+bounded by `timeout_seconds`, and a cancellation returns `cancelled` as today. A
+second cancellation finds the prepare already owned and starts no second owner.
+The owner, in `spawn_executor_runtime.py`:
+1. moves the row from `pending` or `live` to `orphaned` with `mark_kill_failed`
+   (1.6), so the pane and the seat are kept (decision 5);
+2. awaits the prepare outcome;
+3. on a prepare failure, settles the row `exited` with `mark_exited`, which
+   already accepts `orphaned`;
+4. on a prepare success, kills from the prepared handle. It builds a `Terminal`
+   from the current row with the prepared locator and host epoch and calls the
+   runtime `terminate`. For tmux the kill is proven only when
+   `backend_session_present` then returns false. For native it is proven only
+   when the prepared epoch equals the client's epoch both before and after the
+   call and `terminate` returned, because the host's `kill` raises on a failure.
+   `is_live` answers false for an unreachable host, so it is never native proof.
+   A prepared epoch that differs before the call is unproven without a
+   terminate, and any exception, including `HostUnavailableError`, is unproven.
+   A proven kill
+   settles `exited`. An unproven kill calls `record_orphan_identity` (1.9) with
+   the prepared locator and epoch and leaves the row `orphaned`, listed for
+   `terminal_kill`, which can now address the session;
+5. releases the claim in a `finally`.
+
+The owner never calls `kill_spawn_key`. While the claim is held, every other kill
+path refuses through 1.9: `terminal_kill`, `cleanup_failed_spawn`'s terminate step
+(1.6), and, once 1.1 and 1.5 land, the release kill and a `pane_close` retry each
+report not settled,
+leave the row `orphaned` and keep the pane. None of them can mark the row
+`exited` or free the pane before the late prepare creates the session, and the
+owner's settlement is what lets `sweep_dead_panes` prune the pane (1.5).
+`reap_stale_pending_terminals` skips a held id. The row is no longer `pending`, so
+`reap_stale_pending` never settles it without a kill. Without a binder the timeout
+and cancellation paths are unchanged, and `timeout_seconds=None` keeps today's
+unbounded wait. 1.4.14 and 1.7.6 run the same race through the placed spawn and
+placed resume boundaries.
 
 Split `spawn_executor.py` (962 lines): move `_runtime_spawn` and `_promote_prepared`
 into the new `spawn_executor_runtime.py` and re-export both names from
@@ -786,6 +820,10 @@ lands safely on its own.
   executor as a failed `SpawnResult` with no terminal row.
 - The binder is a plain async callable, so `spawn_models.py` does not import the
   terminals package.
+- #22932 (Lane 3, gobby#14531) owns the upstream gap where
+  `asyncio.to_thread(prepare_terminal_spawn)` keeps running after cancellation.
+  The owner here waits on `prepare_task` whatever that path does, so this plan
+  neither targets nor depends on the prepare path.
 - Planned checks: `DATABASE_URL=<isolated hub> GOBBY_TEST_PROTECT=1 uv run pytest
   tests/agents/test_spawn_executor_placement_bind.py tests/agents/test_spawn_executor.py
   tests/agents/test_native_spawn.py -v`, plus ruff, and mypy on `src/`.
@@ -804,14 +842,17 @@ Consumers unchanged:
 - `tests/terminals/fakes.py` — no-edit-reason: Fake SpawnRequest consumers need no binder field.
 - `tests/terminals/test_tmux_runtime.py` — no-edit-reason: Imports `_promote_prepared` through the facade re-export and runs the unplaced tmux path.
 - `tests/agents/test_spawn_executor_droid.py` — no-edit-reason: `_droid_request` builds SpawnRequest without a binder; the new field defaults to None.
+- `src/gobby/terminals/web_spawn.py` — no-edit-reason: its unplaced timeout calls `_schedule_timeout_cleanup` with the existing keywords; the placed owner is selected by `in_doubt_owner`, which defaults to false.
 
 **Acceptance:**
 
 - 1.2.1 - With a binder, the executor runs `wrap_provider_command`, `create_pending`, the bind, `reserve_observer`/`prepare_spawn` and provider exec in that order, and the provider argv is the SRT-wrapped command. Without a binder the order is unchanged. test: `tests/agents/test_spawn_executor_placement_bind.py::test_bind_follows_wrap_and_precedes_exec`.
 - 1.2.2 - A binder failure, including a publish failure raised after `set_pane_terminal` persisted the binding, fails the pending terminal through `_settle_native_spawn_failure`, returns a failed `SpawnResult`, and never starts the provider. test: `tests/agents/test_spawn_executor_placement_bind.py::test_bind_failure_fails_pending_terminal`.
 - 1.2.3 - `spawn_executor` re-exports `_runtime_spawn` and `_promote_prepared` from `spawn_executor_runtime`. symbol: `_runtime_spawn`. file: `src/gobby/agents/spawn_executor_runtime.py`.
-- 1.2.4 - With a binder, a `timeout_seconds` expiry marks the pending row `orphaned` and returns `spawn_timeout` without waiting for the prepare. A late failure then settles the row `exited`, a late success is killed and settled `exited`, and a late kill failure leaves it `orphaned`, for native and tmux. test: `tests/agents/test_spawn_executor_placement_bind.py::test_placed_timeout_orphans_then_late_settlement`.
+- 1.2.4 - With a binder, a `timeout_seconds` expiry claims the id in-doubt, the row becomes `orphaned`, and `spawn_timeout` returns without awaiting the prepare. A late failure then settles the row `exited` and a late success with a proven kill settles it `exited`. A tmux kill that leaves the session present, a tmux terminate that raises, and a native prepared epoch that no longer matches each leave the row `orphaned` with the prepared locator and epoch recorded. The claim is released in every case, for native and tmux. test: `tests/agents/test_spawn_executor_placement_bind.py::test_placed_timeout_orphans_then_late_settlement`.
 - 1.2.5 - Without a binder, a timeout keeps today's pending row and late cleanup. test: `tests/agents/test_spawn_executor_placement_bind.py::test_unplaced_timeout_unchanged`.
+- 1.2.6 - With a binder, repeated cancellation while the prepare is unresolved hands the prepare to exactly one owner and returns `cancelled` each time. A late success or failure then settles as in 1.2.4. test: `tests/agents/test_spawn_executor_placement_bind.py::test_placed_repeated_cancellation_has_one_owner`.
+- 1.2.7 - While the owner holds the claim, `cleanup_failed_spawn` and `terminal_kill` each report not settled, leave the row `orphaned`, and start no runtime terminate, and `reap_stale_pending_terminals` skips the id. After the late prepare creates the session, the owner's proven kill settles the row `exited`, for native and tmux. test: `tests/agents/test_spawn_executor_placement_bind.py::test_in_doubt_claim_blocks_other_kill_paths`.
 
 ### 1.3 One daemon-scoped reserver reaches spawn_agent [category: code] (depends: 1.1)
 `kind: deliverable`
@@ -1040,14 +1081,15 @@ Consumers unchanged:
 - 1.4.11 - A `reserve` that raises, and a cancellation that arrives while `reserve` is running, each run `_spawn_failure` once, which removes the run, the child session and created isolation, and leave no pane, tab or in-flight mark. The cancellation is re-raised. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_reserve_failure_and_cancellation_clean_dispatch_state`.
 - 1.4.12 - When bind's publish raises after `set_pane_terminal` persisted the binding, release still receives the launch terminal id. When the pending-failure settlement fails and `cleanup_failed_spawn`'s terminate step also fails before that terminal is inactive, release removes the pane and kills the terminal exactly once. When cleanup completes instead, release issues no kill. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_bind_publish_failure_keeps_release_kill_backstop`.
 - 1.4.13 - Through the registry, a placed request for a free seat whose task already has an active run is refused `task_active` with that run id and removes the isolation it created. A placed request for the occupied seat is `seat_live`. An unplaced duplicate keeps the skipped reply, and no second agent starts. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_duplicate_placed_request_precedence`.
+- 1.4.14 - A placed spawn whose `timeout_seconds` expires while the prepare is unresolved runs finalize, `cleanup_failed_spawn`, release and a `pane_close` of the bound pane with the claim held: the row stays `orphaned`, the pane stays bound and holds the seat, and nothing is marked `exited`. When the late prepare succeeds, the owner's proven kill settles the row `exited` and `sweep_dead_panes` then frees the pane, for native and tmux. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_placed_timeout_race_keeps_pane_until_owner_settles`.
 
-### 1.5 Workspace mutations refuse in-flight panes atomically [category: code]
+### 1.5 Workspace mutations refuse in-flight panes atomically [category: code] (depends: 1.6)
 `kind: deliverable`
 
 Targets:
-- `src/gobby/storage/workspaces.py::WorkspaceManager`
+- `src/gobby/storage/workspaces.py::*` — scope-reason: add the in-flight guards, `expected_panes` and the expected ids to `WorkspaceManager`, and move the module-level layout symbols (`LayoutLeaf`, `LayoutSplit`, `validate_layout`, `layout_pane_ids`, `_validate_node`, `_axis`, `_ratio`, `_leaf`, `_split`, `_map_leaves`, `_without_panes`, `_place`, `_with_ratio`) to `workspace_layout.py` behind a re-import
 - `src/gobby/storage/workspace_layout.py`
-- `src/gobby/terminals/workspace_ops.py::WorkspaceOps`
+- `src/gobby/terminals/workspace_ops.py::*` — scope-reason: pass the guard and `expected_panes` from `WorkspaceOps`, add `_KILLABLE_STATES`, and move `WAIT_CAPTURE_LINES`, `WAIT_CAPTURE_FAILURE_LIMIT`, `IDEMPOTENCY_KEY_PATTERN` and `_ACTIVE_STATES` with the pane I/O group to `workspace_pane_io.py`
 - `src/gobby/terminals/workspace_pane_io.py`
 - `tests/storage/test_workspaces.py::*` — scope-reason: add the guard, race, moved-target and sweep tests
 - `tests/terminals/test_workspace_ops.py::*` — scope-reason: add the busy and orphaned-retry tests; retarget the wait-cap test's clock patches to the new module
@@ -1070,6 +1112,13 @@ Storage (`WorkspaceManager`):
   `move_tab` already locks both workspace rows and adds the tab row. The pane
   operations lock their tab rows through `_lock_pane_tabs` after the owning
   workspace row.
+- `close` and `close_tab` also take keyword `expected_panes: Mapping[str, str |
+  None] | None = None`, the pane ids the caller read mapped to their bound terminal
+  ids. When it is given, the transaction reads the current pane ids and bindings
+  under its locks, and if they differ from `expected_panes` it raises
+  `WorkspaceBusyError` and deletes nothing. A close that read its panes before a
+  reservation inserted, bound and settled a new pane therefore refuses instead of
+  deleting a pane it never authorized.
 - `add_pane` gains `expected_workspace_id` and `expected_tab_id`. It locks the
   expected workspace row, then the beside pane's tab rows, and inside the insert
   transaction requires the beside pane's current tab to be `expected_tab_id`, that
@@ -1098,6 +1147,9 @@ Storage (`WorkspaceManager`):
 - `workspace_close`, `tab_close`, `tab_move`, `pane_swap`, `pane_move` and
   `pane_close` pass `refuse_in_flight=True`. `_db_guarded` maps
   `WorkspaceBusyError` to `WorkspaceOpError("busy")`.
+- `workspace_close` and `tab_close` pass `expected_panes`, the exact map they
+  computed `doomed` from. The terminals they kill after the delete are therefore
+  exactly those of the panes the delete removed.
 - `_closing` drops its NULL-terminal in-flight check, which the storage guard
   replaces, and collects doomed terminals from the new `_KILLABLE_STATES`
   (`pending`, `live`, `orphaned`), so a `pane_close` on a seat held by an
@@ -1172,8 +1224,9 @@ Consumers unchanged:
 - 1.5.6 - `WorkspaceOps` close, move and swap return `busy` for an in-flight pane, and a `pane_close` on an `orphaned` pane retries its kill. test: `tests/terminals/test_workspace_ops.py::test_ops_refuse_in_flight_and_retry_orphaned_kill`.
 - 1.5.7 - `storage/workspaces.py` is under 1,000 lines and `workspace_ops.py` under 850, and the moved names import from their new modules. file: `src/gobby/storage/workspace_layout.py`.
 - 1.5.8 - The pane I/O methods live in `WorkspacePaneIOMixin`, `WorkspaceOps` inherits them with unchanged signatures, and the existing pane I/O tests pass unchanged apart from the retargeted clock patches. file: `src/gobby/terminals/workspace_pane_io.py`.
+- 1.5.9 - A `workspace_close` or `tab_close` whose pane read precedes a reservation that inserts, binds and settles a pane before the close's transaction runs is refused `busy`, deletes nothing and kills nothing. test: `tests/terminals/test_workspace_ops.py::test_close_refuses_membership_drift_since_read`.
 
-### 1.6 Spawn failure cleanup: one attempt, cancellation-safe, kill truth [category: code]
+### 1.6 Spawn failure cleanup: one attempt, cancellation-safe, kill truth [category: code] (depends: 1.9)
 `kind: deliverable`
 
 Targets:
@@ -1197,9 +1250,12 @@ As-is, three defects hold for every spawn:
 Changes:
 - `TerminalSettlementMixin.mark_kill_failed(terminal_id)`: a CAS from `pending` or
   `live` to `orphaned`. `mark_orphaned` keeps its host-loss meaning (`live` only).
-- `_terminate_spawn_process` returns whether the terminal settled. A successful kill
-  settles as today (`fail_pending` for `pending`, `mark_exited` for `live` or
-  `orphaned`). A failed kill calls `mark_kill_failed` and returns false.
+- `_terminate_spawn_process` returns whether the terminal settled, using the 1.9
+  kill truth. A held in-doubt id is not terminated. After a terminate, a session
+  that `backend_session_present` still reports counts as a failed kill. A proven
+  kill settles as today (`fail_pending` for `pending`, `mark_exited` for `live`
+  or `orphaned`). A failed kill or a held id calls `mark_kill_failed` and returns
+  false.
 - `cleanup_failed_spawn` runs its steps independently: record the spawn error,
   terminate, forget the run, terminalize the run, clean runtime state, clean
   created isolation, delete the child session. Each failed step is logged at
@@ -1270,7 +1326,7 @@ Consumers unchanged:
 **Acceptance:**
 
 - 1.6.1 - `mark_kill_failed` moves `pending` and `live` rows to `orphaned` and leaves other states unchanged. test: `tests/storage/test_terminal_kill_settlement.py::test_mark_kill_failed_cas`.
-- 1.6.2 - A failed runtime kill of a native pid-less `pending` terminal, and of a tmux terminal, leaves the row `orphaned` and listed and keeps created isolation; a successful kill settles it and cleanup removes created isolation. test: `tests/mcp_proxy/tools/spawn_agent/test_failure_cleanup.py::test_failed_kill_orphans_and_keeps_isolation`.
+- 1.6.2 - A failed runtime kill of a native pid-less `pending` terminal, a tmux terminal whose session is still present after terminate, and a held in-doubt id each leave the row `orphaned` and listed and keep created isolation; a successful kill settles it and cleanup removes created isolation. test: `tests/mcp_proxy/tools/spawn_agent/test_failure_cleanup.py::test_failed_kill_orphans_and_keeps_isolation`.
 - 1.6.3 - A failure inside `finalize_executed_spawn`'s cleanup followed by `_spawn_failure` runs cleanup once. test: `tests/mcp_proxy/tools/spawn_agent/test_failure_cleanup.py::test_cleanup_runs_once_per_attempt`.
 - 1.6.4 - A cancellation during cleanup, and a second cancellation during a later step, let every step finish once and re-raise the first cancellation; a cancellation after cleanup settled starts nothing. test: `tests/mcp_proxy/tools/spawn_agent/test_failure_cleanup.py::test_cleanup_survives_cancellation`.
 - 1.6.5 - With each step failing in turn, every later step still runs, each failure is logged with the phase, the run id and the exception type name, a synthetic secret in the exception message is absent from the log, and cleanup does not raise. test: `tests/mcp_proxy/tools/spawn_agent/test_failure_cleanup.py::test_cleanup_steps_are_independent`.
@@ -1352,6 +1408,7 @@ Consumers unchanged:
 - 1.7.3 - A moved or missing target, an occupied seat (including `orphaned`), a forbidden project, a wrap failure and a missing reserver each park the successor, return a typed error, start no provider and leave no pane. test: `tests/agents/test_resume_placement.py::test_placed_resume_refusals_park_successor`.
 - 1.7.4 - A placed resume failure or cancellation runs cleanup and release once each and never falls back to an unplaced launch. test: `tests/agents/test_resume_placement.py::test_placed_resume_cleanup_once`.
 - 1.7.5 - `resume_executor.py` is under 1,000 lines and the moved helpers import from `resume_executor_settlement.py`. file: `src/gobby/agents/resume_executor_settlement.py`.
+- 1.7.6 - A placed resume cancelled repeatedly while its prepare is unresolved hands the prepare to the 1.2 owner and keeps the pane bound to the `orphaned` row. The owner's late settlement then lets the pane be freed, and no unplaced fallback runs. test: `tests/agents/test_resume_placement.py::test_placed_resume_cancel_keeps_in_doubt_owner`.
 
 ### 1.8 spawn_agent and resume never launch unsandboxed [category: code] (depends: 1.4, 1.6, 1.7)
 `kind: deliverable`
@@ -1466,6 +1523,10 @@ Splitting spawn from resume would leave one unsandboxed path open.
     integration; never a blanket stub.
 - `tests/dispatch/test_daemon_resume.py` replaces `resume_agent_run` with a fake,
   so the resume gate never runs there.
+- 1.8.5 needs no deferral. #22961 landed at `08e54acb95`, which enforces the
+  agent MCP workflow on unmarked REST and CLI calls in
+  `servers/routes/mcp/endpoints/execution.py`, and at `2c2b569fe3`, which makes
+  config writes operator-only. It has been live since the 2026-09-27 restart.
 - Size: the sandbox resolution in
   `src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py` (964 lines) is a
   split: it and its new checks move to
@@ -1497,6 +1558,83 @@ Consumers unchanged:
 - 1.8.3 - A resume with no snapshot config, `enabled: false` or a non-`srt` backend parks the successor, returns `sandbox_required` and starts no provider. test: `tests/agents/test_resume_sandbox_gate.py::test_resume_refuses_unsandboxed_config`.
 - 1.8.5 - From a spawned agent, a REST or CLI MCP call is rule-enforced. test: `tests/mcp_proxy/tools/spawn_agent/test_sandbox_gate.py::test_loopback_mcp_calls_are_rule_enforced`.
 - 1.8.6 - With no verifier patch and `GOBBY_HOME` set to an empty directory, the real `verify_srt_installation` fails and the gate refuses the spawn `sandbox_required`; gate unit cases that patch the verifier assert both outcomes explicitly. test: `tests/mcp_proxy/tools/spawn_agent/test_sandbox_gate.py::test_gate_refuses_when_isolated_srt_is_missing`.
+
+### 1.9 In-doubt spawn ownership and kill truth [category: code]
+`kind: deliverable`
+
+Targets:
+- `src/gobby/terminals/in_doubt.py`
+- `src/gobby/terminals/termination.py::kill_terminal`
+- `src/gobby/storage/terminal_settlement.py::TerminalSettlementMixin`
+- `tests/terminals/test_in_doubt_kill_truth.py`
+- `tests/terminals/test_termination.py::*` — scope-reason: the existing kill cases give their fake runtime a presence answer for the post-kill check
+
+As-is, no kill path knows that a prepare it cannot see may still create the
+session, and a runtime kill can report success without proving it.
+`TmuxTerminalRuntime.terminate` calls `kill_session` and ignores its `False`
+return. `kill_terminal` then marks the row `exited`.
+
+Changes:
+- `in_doubt.py` holds a process-level registry of terminal ids whose prepare is
+  unresolved and owned by the 1.2 background owner. `claim(terminal_id)`,
+  `release(terminal_id)` and `holds(terminal_id)` are synchronous and run only on the
+  event-loop thread. The registry lives in the terminals package so that
+  `termination.py`, `WorkspaceOps` and the spawn executor can all import it. It is
+  empty after a restart, which means no owner survived.
+- `kill_terminal` raises the new `TerminalInDoubtError` before any terminate when
+  `holds(terminal.id)`. Its callers already treat a raised kill as not settled:
+  `terminal_kill` surfaces it as `TerminalTerminationError`, the lifecycle route
+  and the terminal websocket report it, and `WorkspaceOps._kill` and the 1.1
+  release move the row to `orphaned`.
+- After terminate, `kill_terminal` checks `agents/capture.py::backend_session_present`,
+  imported inside the function body. While the session is still present it raises
+  `TerminalKillUnprovenError` and does not mark the row `exited`. This is the
+  root-cause fix for the ignored tmux `kill_session` result, and
+  `TmuxTerminalRuntime.terminate` is unchanged. The check adds no native proof:
+  a failed native kill of a current-epoch row already raises in `terminate`, and
+  native presence is `is_live`, which answers `False` for a missing or stale
+  epoch or an unreachable host. The #22530 destroy-orphans path therefore settles
+  as today.
+- `TerminalSettlementMixin.record_orphan_identity(terminal_id, *, locator,
+  host_epoch)` is a CAS on `orphaned` only. It records the prepared locator and host
+  epoch so that a later `terminal_kill` can address a session the 1.2 owner could
+  not prove killed.
+
+Limits, recorded here and not changed:
+- After a restart the registry is empty.
+  `host_reconcile.reconcile_host_inventory` leaves an `orphaned` row that has a
+  matching host row untouched, and the row stays listed for `terminal_kill`.
+- A native orphan whose recorded epoch is stale and that has no recorded process
+  is settled by `terminal_kill` without a kill. That is the #22530 contract.
+- Neither limit is repaired in this plan. Both are pre-existing, and the Program
+  Director may reassign them.
+
+**Research context:**
+- `kill_terminal` callers: `servers/routes/sessions/lifecycle.py:381`,
+  `servers/websocket/terminal_ws_create.py:173`, `terminal_kill` in
+  `termination.py:106`, and `WorkspaceOps._kill` in `workspace_ops.py:821`.
+- `backend_session_present` (`agents/capture.py:619`) is already the post-kill
+  check in `capture.py:650` and `agents/terminal_cleanup.py:307`.
+- `NativeTerminalRuntime.terminate` (`native_runtime.py:727`) raises on a failed
+  kill for a current-epoch row, and for a missing or stale epoch it reaps the
+  recorded process, if there is one, and returns.
+- Planned checks: `DATABASE_URL=<isolated hub> GOBBY_TEST_PROTECT=1 uv run pytest
+  tests/terminals/test_in_doubt_kill_truth.py tests/terminals/test_termination.py -v`,
+  plus ruff and mypy on `src/`.
+
+Consumers unchanged:
+- `src/gobby/servers/routes/sessions/lifecycle.py` — no-edit-reason: already catches a raised kill and reports it.
+- `src/gobby/servers/websocket/terminal_ws_create.py` — no-edit-reason: already treats a raised kill as not transitioned.
+- `src/gobby/terminals/tmux_runtime.py` — no-edit-reason: `terminate` is unchanged; `kill_terminal` proves the kill with `session_present`.
+- `src/gobby/terminals/native_runtime.py` — no-edit-reason: `terminate` and `is_live` are unchanged.
+- `src/gobby/storage/terminals.py` — no-edit-reason: TerminalManager inherits `record_orphan_identity` from the mixin.
+
+**Acceptance:**
+
+- 1.9.1 - `claim`, `holds` and `release` track one id, and `release` of an unheld id is a no-op. test: `tests/terminals/test_in_doubt_kill_truth.py::test_in_doubt_registry_claims_and_releases`.
+- 1.9.2 - `kill_terminal` on a held id raises `TerminalInDoubtError`, calls no runtime terminate and leaves the row unchanged. After `release`, the same call kills the terminal and marks it `exited`. test: `tests/terminals/test_in_doubt_kill_truth.py::test_kill_terminal_refuses_held_ids`.
+- 1.9.3 - A tmux terminate that leaves the session present makes `kill_terminal` raise `TerminalKillUnprovenError` and leave the row unsettled. A native stale-epoch orphan still settles `exited`. test: `tests/terminals/test_in_doubt_kill_truth.py::test_kill_terminal_requires_proven_kill`.
+- 1.9.4 - `record_orphan_identity` writes the locator and epoch on an `orphaned` row and changes no row in any other state. test: `tests/terminals/test_in_doubt_kill_truth.py::test_record_orphan_identity_cas`.
 
 ## P2: gclient placement reconciliation
 `kind: framing`
@@ -1894,21 +2032,6 @@ project `extra_write_paths` merge.
 
 - 4.4.1 - The guide documents the `network` field, the seed and its refresh, the write guard and the refusal. behavior: "Agent network policy" in `docs/guides/sandboxing.md`.
 
-## D2 Rule-enforced loopback MCP calls (depends: 1.8)
-`kind: deferred`
-
-SRT allows loopback. Until #22961 lands, a sandboxed agent can reach MCP servers
-through daemon REST or `gobby mcp-proxy call-tool` without rule enforcement.
-
-```yaml
-deferral:
-  task_ref: "#22961"
-  reason: "External prerequisite: REST and CLI proxy rule enforcement is #22961's."
-  owner: "program-director"
-  original_acceptance_items:
-    - 1.8.5
-```
-
 ## V1: Verification
 `kind: verification`
 
@@ -1927,7 +2050,7 @@ gobby pipelines run runbook-two-seat-example
 It runs against a scratch workspace and must show two placed, SRT-wrapped seats and a
 refused re-run. Researchers never touch the live daemon or its seats.
 
-SRT smoke, after P4 and D2 land, in an isolated Program Director slot. This plan
+SRT smoke, after P4 lands, in an isolated Program Director slot. This plan
 assigns `trusted` to no production definition (decision 14); that assignment
 stays with Josh and #22902 and is not a prerequisite of this smoke. The smoke
 brings its own sync-owned fixtures:
@@ -2157,4 +2280,22 @@ brings its own sync-owned fixtures:
   prerequisite is assumed. The `none` negative probe uses a derived Trusted-only
   host that is absent from the provider, `api_base`, operator, git and registry
   allowlists. A positive operator-host check shows `none` keeps operator policy.
-- next: Program Director design review, then routing to Josh and the Adversary.
+- Plan Adversary round on `f6947365b4` (gobby#14579). Per-id dispositions:
+  - PAL-01 accepted for an actual reported kill failure only, not final.
+  - PAL-02, PAL-03, PAL-05, PAL-08 and PAL-09 resolved in the Adversary's
+    review.
+  - PAL-04 accepted: `close` and `close_tab` take `expected_panes` and refuse
+    `busy` on any membership or binding drift since the read (1.5, 1.5.9).
+  - PAL-06, PAL-07 and PAL-10 accepted as one repair. New leaf 1.9 adds the
+    in-doubt registry, `kill_terminal`'s refusal and proof, and
+    `record_orphan_identity`. 1.2 hands an unresolved placed prepare to one
+    background owner on timeout or any cancellation. The owner kills from the
+    prepared handle with a proof, not `kill_spawn_key`. 1.2.4, 1.2.6, 1.2.7,
+    1.4.14 and 1.7.6 cover the races.
+  - PAL-11 accepted: 1.5 depends on 1.6.
+  - PAL-12 accepted: both files are `::*` targets that name the moved symbols.
+  - PAL-13 accepted: D2 is deleted, since #22961 landed at `08e54acb95` and
+    `2c2b569fe3`. 1.8.5 is ordinary acceptance, and the decision text and the
+    V1 smoke no longer wait on it.
+  - The restart limits in 1.9 are recorded for the Program Director.
+- next: Adversary review of the repaired candidate.
