@@ -128,6 +128,9 @@ pub struct ContextMenuState {
     /// Screen row of each item as last drawn; seeded from the anchor so the
     /// pointer finds rows before the first render.
     pub item_rects: Vec<Rect>,
+    /// The menu this one opened from, drawn behind it and still live, with
+    /// the row that opened it selected.
+    pub parent: Option<Box<ContextMenuState>>,
 }
 
 /// Narrowest popup, in columns, so short menus still read as a panel.
@@ -162,6 +165,7 @@ fn menu_state(kind: ContextMenuKind, anchor: (u16, u16), items: Vec<MenuItem>) -
         items,
         selected: 0,
         item_rects,
+        parent: None,
     }
 }
 
@@ -254,7 +258,8 @@ where
 }
 
 /// The theme choices open beside the View menu's theme row and level with
-/// it, where that menu draws under its title.
+/// it, where that menu draws under its title. The View menu stays open
+/// behind them with that row selected.
 fn open_theme_choices<W: WorkspaceView>(ws: &W, chrome: &mut Chrome) {
     let view = MenuBarMenu::View;
     let anchor = chrome
@@ -263,20 +268,20 @@ fn open_theme_choices<W: WorkspaceView>(ws: &W, chrome: &mut Chrome) {
         .iter()
         .find(|(index, _)| MenuBarMenu::ALL.get(*index) == Some(&view))
         .map_or((0, 1), |(_, cell)| (cell.x, cell.bottom()));
-    let parent = build_menu(ws, chrome, ContextMenuKind::MenuBar(view), anchor);
-    let anchor = parent
+    let mut parent = build_menu(ws, chrome, ContextMenuKind::MenuBar(view), anchor);
+    let theme_row = parent
         .items
         .iter()
-        .position(|item| item.action == MenuAction::ThemeMenu)
+        .position(|item| item.action == MenuAction::ThemeMenu);
+    let anchor = theme_row
         .and_then(|index| parent.item_rects.get(index))
         .map_or(anchor, |row| {
             (row.right().saturating_add(1), row.y.saturating_sub(1))
         });
-    chrome.menu = Some(menu_state(
-        ContextMenuKind::Theme,
-        anchor,
-        theme_items(chrome),
-    ));
+    parent.selected = theme_row.unwrap_or(parent.selected);
+    let mut choices = menu_state(ContextMenuKind::Theme, anchor, theme_items(chrome));
+    choices.parent = Some(Box::new(parent));
+    chrome.menu = Some(choices);
     chrome.mode = Mode::ContextMenu;
 }
 

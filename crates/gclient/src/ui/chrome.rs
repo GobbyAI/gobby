@@ -254,6 +254,9 @@ pub struct ViewState {
     /// Buttons of the open dialog, in its button order (confirm close:
     /// `close`, `cancel`); empty while no dialog is drawn.
     pub dialog_button_hit_areas: Vec<Rect>,
+    /// The furthest keybinding-help scroll the frame drew; the scroll keys
+    /// stop there, so the first key back always moves the view.
+    pub help_last_scroll: usize,
 }
 
 impl ViewState {
@@ -270,9 +273,12 @@ impl ViewState {
             settings,
             // The open menu owns its rows; `Chrome::apply_hits` places them.
             menu_rows: _,
+            parent_menu_rows: _,
             dialog_buttons,
+            help_last_scroll,
         } = hits;
         self.dialog_button_hit_areas = dialog_buttons;
+        self.help_last_scroll = help_last_scroll;
         self.menu_title_hit_areas = menu_bar.titles;
         self.tab_hit_areas = tab_bar.tabs;
         self.tab_scroll_left_hit_area = tab_bar.scroll_left;
@@ -651,10 +657,19 @@ impl Chrome {
     }
 
     /// Write the rects the renderers drew back where the hit tests read
-    /// them: the chrome map into `view`, the menu rows into the open menu.
+    /// them: the chrome map into `view`, the menu rows into the open menu
+    /// and the menu it opened from.
     pub fn apply_hits(&mut self, mut hits: ChromeHits) {
         if let (Some(menu), Some(rows)) = (self.menu.as_mut(), hits.menu_rows.take()) {
             menu.item_rects = rows;
+        }
+        if let (Some(parent), Some(rows)) = (
+            self.menu
+                .as_mut()
+                .and_then(|menu| menu.parent.as_deref_mut()),
+            hits.parent_menu_rows.take(),
+        ) {
+            parent.item_rects = rows;
         }
         self.view.apply_hits(hits);
     }

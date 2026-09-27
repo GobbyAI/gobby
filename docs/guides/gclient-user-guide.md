@@ -74,7 +74,7 @@ and the status bar the last row. With default pane gaps, every pane draws all
 four edges. This example shows the sidebar hidden for clarity. By default it
 starts pinned in a saved column beside the content. `prefix+b` unpins it; a
 later `prefix+b` opens the overlay on the configured side without resizing
-tabs or panes. `esc` or `prefix+b` rolls the overlay up. **View › pin sidebar**
+tabs or panes. `esc` or `prefix+b` rolls the overlay up. **View › Pin sidebar**
 pins it again. The menus remain usable while the client connects.
 
 **Menus.** Click a title on row 0 or move between open menus with the keyboard.
@@ -83,19 +83,24 @@ when those conditions are absent. Slashes below separate alternative labels:
 
 | Menu | Items |
 | --- | --- |
-| Gobby | settings, reload config, quit |
-| File | new terminal, new tab, new workspace…, rename tab, close tab, destroy orphaned terminals…, detach |
-| Edit | copy mode, rename pane, rename tab, rename terminal, clear pane name (when named), send right-clicks to pane / use gclient menu |
-| View | this project / all projects, grouped / priority, working projects / all projects, show sidebar, pin sidebar |
-| Window | split right, split down, zoom / unzoom, close pane, resize mode, arrange: even horizontal, arrange: even vertical, arrange: main horizontal, arrange: main vertical, arrange: tiled, new grid… |
-| Agent | respond, mark seen, take control, release control, take back, detach, open alert target, next attention, previous attention |
-| Help | keys, alerts…, daemon, about gobby |
+| Gobby | Settings, Reload config, Quit |
+| File | New terminal, New tab, New workspace…, Rename tab, Close tab, Destroy orphaned terminals…, Detach |
+| Edit | Copy mode, Rename pane, Rename tab, Rename terminal, Clear pane name (when named), Send right-clicks to pane / Use gclient menu |
+| View | This project / All projects, Grouped / Priority, Working projects / All projects, Show sidebar, Pin sidebar, Legend, Theme ▸ |
+| Window | Split right, Split down, Zoom / Unzoom, Close pane, Resize mode, Arrange: even horizontal, Arrange: even vertical, Arrange: main horizontal, Arrange: main vertical, Arrange: tiled, New grid… |
+| Agent | Respond, Mark seen, Take control, Release control, Take back, Detach, Open alert target, Next attention, Previous attention |
+| Help | Keys, Alerts…, Daemon, About Gobby |
 
-The five **Window › arrange: …** items redistribute the panes in the active
-tab into the chosen layout. **Window › new grid…** asks for rows and columns
-and starts a terminal in each new cell. **Help › daemon** shows the daemon URL, client and daemon
+**View › Theme** opens Dark, Light, and System beside the View menu, which
+stays drawn with its Theme row lit. A click on another View row still acts on
+it, and `esc` closes both. **View › Legend** opens the keybinding help on its
+attention legend.
+
+The five **Window › Arrange: …** items redistribute the panes in the active
+tab into the chosen layout. **Window › New grid…** asks for rows and columns
+and starts a terminal in each new cell. **Help › Daemon** shows the daemon URL, client and daemon
 versions, health, last roster refresh, and completed startup timings. **Help ›
-about gobby** shows the versions, URL, and machine.
+About Gobby** shows the versions, URL, and machine.
 
 **Sidebar.** Shown and pinned by default. Its side and pinned state are saved
 in preferences; unpinned it opens as an overlay on the saved side.
@@ -140,17 +145,18 @@ Agents and Terminals share the rest.
   name or foreground command, with the backend below. Click or right-click
   one as you would an agent row.
 
-State glyphs, on machine, project, and session rows alike:
+State glyphs, on machine, project, and session rows alike. The same table opens
+first in the keybinding help as the attention legend:
 
-| Glyph | State |
-| --- | --- |
-| `▶` | working |
-| `⍾` | needs you (an attention prompt is waiting; the row's first line also carries the words `needs you` when they fit beside the title) |
-| `◆` | unseen (new output since you last looked) |
-| `‖` | paused (the session's turn ended waiting on input, approval, or a handoff) |
-| `○` | idle |
-| `◌` | orphaned (the terminal's host is gone; see *Orphaned terminals*) |
-| `·` | unknown |
+| Glyph | State | Counts as | Means |
+| --- | --- | --- | --- |
+| `⍾` | needs you | need you | waiting on you: an approval, a question, an error it cannot pass; the row's first line also carries the words `needs you` when they fit beside the title |
+| `▶` | active | active | running a turn |
+| `○` | idle | idle | at its prompt, nothing pending |
+| `◆` | output unseen | idle | finished since you last looked; clears when its pane is focused |
+| `‖` | held | idle | a run someone paused on purpose; never an agent idle at its prompt |
+| `◌` | gone | gone | process or relay missing (see *Orphaned terminals*) |
+| `·` | no state yet | idle | the first seconds after a spawn, before the daemon has a state |
 
 Only needs-you rows carry a word. A font without U+237E shows a box in place of
 `⍾`; the words still identify the row.
@@ -184,7 +190,7 @@ a frame says `waiting for frames`; a pane whose size another viewer set says
 `sized by <viewer>` on its bottom row. An empty tab shows a dimmed goblin mark
 above **No pane open.** when there is room; a small window keeps the text and
 omits the mark. From there, use the live `prefix+w` binding to attach a
-terminal, **File › new terminal** to start one, or `prefix+b` to open the
+terminal, **File › New terminal** to start one, or `prefix+b` to open the
 sidebar. If you changed the keymap, these hints show your current chords.
 
 **Status line.** The fixed left slot shows connection progress as
@@ -207,7 +213,7 @@ condition, not a button.
 **Alerts.** Messages that used to sit in the status line are toasts: they
 stack at the top-right corner of the pane area, newest at the bottom, up to
 three at once, and leave after six seconds or at the next keypress. Every
-toast is kept in the alert log (**Help › alerts…**; the last 200),
+toast is kept in the alert log (**Help › Alerts…**; the last 200),
 newest first; `j` / `k` or the arrows scroll it, `enter`, `esc`, or `q` closes
 it. A condition rather than an event, such as `Daemon unreachable`, stays in
 the status line.
@@ -409,7 +415,7 @@ the focused terminal.
 | `prefix+q` | Release control of the focused terminal (same as `release_control`; it does not exit) | `detach` |
 | `prefix+shift+q` | Quit the client | `quit` |
 
-The **Help › keys** overlay shows the current bindings after overrides. In a
+The **Help › Keys** overlay shows the current bindings after overrides. In a
 narrow window it hides binding names, keeping chords and descriptions readable;
 you can still search by a binding name.
 
@@ -571,7 +577,8 @@ idle rows. `prefix+g` opens with the search box already focused.
 and worktree rows. `enter` focuses the selected project or opens the selected
 worktree; `esc` returns to the terminal.
 
-**Keybinding help (`prefix+?`).** The live keymap with names. `j` / `k`, the
+**Keybinding help (`prefix+?`).** The attention legend, then the live keymap
+with names. A search hides the legend. `j` / `k`, the
 arrows, and `PageUp` / `PageDown` scroll, `/` searches by key, description, or
 name, `enter` or `esc` closes. The `close` button closes too; while the search
 has focus it reads `back` and returns to the list, as `esc` does.
@@ -590,7 +597,7 @@ the `done` and `close` buttons. Rows are clickable. Every change is written to
 
 | Row | Default | Effect |
 | --- | --- | --- |
-| theme | `dark` | `dark`, `light`, or `system`; system follows OS appearance while the client is open (dark if the OS does not specify one) |
+| theme | `dark` | `dark`, `light`, or `system`; system follows OS appearance while the client is open (dark if the OS does not specify one); also changed by **View › Theme** |
 | mouse capture | on | Off leaves selection and scrolling to your terminal emulator |
 | pane scrollbars | on | Draw a scrollbar lane beside scrolled panes |
 | pane gaps | on | Leave a gap between split panes |
@@ -598,7 +605,7 @@ the `done` and `close` buttons. Rows are clickable. Every change is written to
 | hide tab bar with one tab | off | Hide the tab bar when a project has a single tab |
 | sidebar width | 26 | Columns; also set by dragging the sidebar edge |
 | sidebar side | `left` | Put the overlay or pinned sidebar on the left or right |
-| sidebar pinned | on | Keep the sidebar in its own column; also changed by **View › pin sidebar** |
+| sidebar pinned | on | Keep the sidebar in its own column; also changed by **View › Pin sidebar** |
 | right-click passthrough | none | Modifier that sends a right-click to the pane's application instead of opening the pane menu (`shift`, `alt`, `ctrl`, or none) |
 | agent sort | `grouped` | `grouped` or `priority` order in the Agents section |
 | title scrolling | `left` | `off`, `left`, or `right`: which way over-long session titles and pane headers scroll, on one shared ticker |
@@ -699,30 +706,30 @@ and `esc` to close.
 
 | Target | Items |
 | --- | --- |
-| Pane | rename pane, clear pane name, swap with focused pane, split right, split down, zoom / unzoom, arrange: even horizontal / even vertical / main horizontal / main vertical / tiled, new grid…, take / release control, respond (when it needs you), copy mode, send right-clicks to pane / use gclient menu, close pane |
-| Tab | new tab, rename tab, close tab |
-| Project card | rename, close, new worktree, open worktree…, collapse / expand |
-| Worktree row | rename, close, delete worktree checkout… |
-| Agent or bare terminal row | focus, open in new tab, respond (when it needs you), mark seen, take / release control, close terminal / destroy orphaned terminal (when orphaned) |
-| Empty tab bar or empty sidebar | new terminal, new tab, new workspace…, settings, keybinding help, reload config, toggle sidebar, destroy orphaned terminals…, detach, quit |
-| `[view]` on the Agents band (left click) | this project / all projects, grouped / priority; the same choices are under **View** |
-| **Gobby** on the menu bar (click) | settings, reload config, quit |
-| **File** on the menu bar (click) | new terminal, new tab, new workspace…, rename tab, close tab, destroy orphaned terminals…, detach |
-| **Edit** on the menu bar (click) | copy mode, rename pane, rename tab, rename terminal, clear pane name, send right-clicks to pane / use gclient menu |
-| **View** on the menu bar (click) | this project / all projects, grouped / priority, working projects / all projects, show sidebar, pin sidebar |
-| **Window** on the menu bar (click) | split right, split down, zoom / unzoom, close pane, resize mode, five arrange layouts, new grid… |
-| **Agent** on the menu bar (click) | respond, mark seen, take / release control, take back, detach, open alert target, next / previous attention |
-| **Help** on the menu bar (click) | keys, alerts…, daemon, about gobby |
+| Pane | Rename pane, Clear pane name, Swap with focused pane, Split right, Split down, Zoom / Unzoom, Arrange: even horizontal / even vertical / main horizontal / main vertical / tiled, New grid…, Take / Release control, Respond (when it needs you), Copy mode, Send right-clicks to pane / Use gclient menu, Close pane |
+| Tab | New tab, Rename tab, Close tab |
+| Project card | Rename, Close, New worktree, Open worktree…, Collapse / Expand |
+| Worktree row | Rename, Close, Delete worktree checkout… |
+| Agent or bare terminal row | Focus, Open in new tab, Respond (when it needs you), Mark seen, Take / Release control, Close terminal / Destroy orphaned terminal (when orphaned) |
+| Empty tab bar or empty sidebar | New terminal, New tab, New workspace…, Settings, Keybinding help, Reload config, Toggle sidebar, Destroy orphaned terminals…, Detach, Quit |
+| `[view]` on the Agents band (left click) | This project / All projects, Grouped / Priority; the same choices are under **View** |
+| **Gobby** on the menu bar (click) | Settings, Reload config, Quit |
+| **File** on the menu bar (click) | New terminal, New tab, New workspace…, Rename tab, Close tab, Destroy orphaned terminals…, Detach |
+| **Edit** on the menu bar (click) | Copy mode, Rename pane, Rename tab, Rename terminal, Clear pane name, Send right-clicks to pane / Use gclient menu |
+| **View** on the menu bar (click) | This project / All projects, Grouped / Priority, Working projects / All projects, Show sidebar, Pin sidebar, Legend, Theme ▸ |
+| **Window** on the menu bar (click) | Split right, Split down, Zoom / Unzoom, Close pane, Resize mode, five Arrange layouts, New grid… |
+| **Agent** on the menu bar (click) | Respond, Mark seen, Take / Release control, Take back, Detach, Open alert target, Next / Previous attention |
+| **Help** on the menu bar (click) | Keys, Alerts…, Daemon, About Gobby |
 
-`send right-clicks to pane` flips a per-pane flag so the pane's application gets
+`Send right-clicks to pane` flips a per-pane flag so the pane's application gets
 right-clicks; the `right-click passthrough` setting does the same for every pane
-while its modifier is held. `close terminal` acts on the row you right-clicked
+while its modifier is held. `Close terminal` acts on the row you right-clicked
 rather than on the focused pane, and on an external terminal (a tmux pane
 `gclient` never created) it releases the lease and drops the pane instead of
-killing it. `close` on a project card kills every terminal in the
+killing it. `Close` on a project card kills every terminal in the
 project's tabs (after a confirm-close dialog) but leaves the project registered.
-`delete worktree checkout…` kills the worktree's terminals and removes the
-checkout through the daemon. `destroy orphaned terminals…` opens the dialog
+`Delete worktree checkout…` kills the worktree's terminals and removes the
+checkout through the daemon. `Destroy orphaned terminals…` opens the dialog
 described under *Orphaned terminals*.
 
 ## Workspace persistence
@@ -779,17 +786,17 @@ write to lose, and retaking control re-grants its input on the host. If the host
 itself was drained or replaced, the affected terminals are gone and their panes
 disappear on the next roster refresh.
 
-On launch, a splash appears in the pane area while four stages complete:
-**daemon health**, **workspace attach**, **roster**, and **first frame**. It shows
-the `gclient` version, daemon version (or `—` while unknown), machine, each
-stage's elapsed time, and which stage is waiting. The menu bar works while a
-stage waits, including **Help › daemon** for health and stage details. Each
+On launch, the goblin and the wordmark stand alone on the terminal's ground
+while four stages complete: **daemon health**, **workspace attach**,
+**roster**, and **first frame**. The splash has no menu bar, tabs, sidebar, or
+status line; they arrive with the first frame, and `prefix+shift+q` quits
+meanwhile. **Help › Daemon** then reports health and stage details. Each
 completed stage's timing and the final summary are logged to
 `~/.gobby/logs/gclient.log`.
 
-Launching with the daemon stopped leaves the splash on its daemon-health stage
-and shows `× Daemon unreachable · retry in <n> s` in the status bar. Once the
-daemon answers, the remaining stages run, the status segment clears, and the
+With the daemon stopped, the first failed health check ends the splash: the
+chrome opens and the status bar shows `× Daemon unreachable · retry in <n> s`.
+Once the daemon answers, the remaining stages run, the status segment clears, and the
 workspace opens. A malformed daemon URL, refused token, unusable gterm host,
 or broken prefs file still reports its own error.
 
@@ -804,12 +811,12 @@ both from one place:
 - A native terminal whose host epoch is gone (the daemon marks the row
   `orphaned`). Its session row carries the `◌` glyph in the sidebar (the glyph
   alone marks it; no word is printed), and its context menu offers
-  `destroy orphaned terminal` in place of `close terminal`.
+  `Destroy orphaned terminal` in place of `Close terminal`.
 - A tmux session on the default or gobby socket with no attached client, for
   example one you started by hand and detached from. Gobby-owned agent sessions
   are always detached and are never listed.
 
-Choose **File › destroy orphaned terminals…** or the same item on the empty
+Choose **File › Destroy orphaned terminals…** or the same item on the empty
 chrome context menu. The client fetches the current candidates from the daemon
 and opens a checklist with every row checked. Each row shows the session name or
 title, the backend, the Gobby session that still owns it (or `no session`), and

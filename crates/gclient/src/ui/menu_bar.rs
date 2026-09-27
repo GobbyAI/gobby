@@ -125,6 +125,7 @@ mod tests {
             items: Vec::new(),
             selected: 0,
             item_rects: Vec::new(),
+            parent: None,
         });
     }
 

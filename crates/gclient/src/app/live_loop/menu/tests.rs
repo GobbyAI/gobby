@@ -248,8 +248,8 @@ fn menu_bar_menus_regroup_items_per_title() {
         ]
     );
 
-    // View is the sessions band's view menu, the sidebar's openers, then
-    // the one theme row.
+    // View is the sessions band's view menu, the sidebar's openers, the
+    // legend, then the one theme row.
     let view = menu(&ws, &chrome, MenuBarMenu::View);
     let band = build_menu(&ws, &chrome, ContextMenuKind::AgentsView, (0, 1)).items;
     assert_eq!(view.items[..band.len()], band[..]);
@@ -259,6 +259,7 @@ fn menu_bar_menus_regroup_items_per_title() {
             "Working projects",
             "Show sidebar",
             "Pin sidebar",
+            "Legend",
             "Theme: Dark ▸"
         ]
     );
@@ -268,6 +269,7 @@ fn menu_bar_menus_regroup_items_per_title() {
             MenuAction::Act(Action::ToggleProjectsFilter),
             MenuAction::Act(Action::ToggleSidebar),
             MenuAction::PinSidebar,
+            MenuAction::Act(Action::Help),
             MenuAction::ThemeMenu
         ]
     );

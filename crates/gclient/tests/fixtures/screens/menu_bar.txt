@@ -18,12 +18,12 @@
 07 : accent/-*1 -/-*18 surface0/panel_bg*1 text/panel_bg*18 surface0/panel_bg*1 -/-*80 accent/-*1
 08 |│                  │ Pin sidebar      │                                                                                │|
 08 : accent/-*1 -/-*18 surface0/panel_bg*1 text/panel_bg*18 surface0/panel_bg*1 -/-*80 accent/-*1
-09 |│                  │ Theme: Dark ▸    │                                                                                │|
+09 |│                  │ Legend           │                                                                                │|
 09 : accent/-*1 -/-*18 surface0/panel_bg*1 text/panel_bg*18 surface0/panel_bg*1 -/-*80 accent/-*1
-10 |│                  └──────────────────┘                                                                                │|
-10 : accent/-*1 -/-*18 surface0/panel_bg*20 -/-*80 accent/-*1
-11 |│                                                                                                                      │|
-11 : accent/-*1 -/-*118 accent/-*1
+10 |│                  │ Theme: Dark ▸    │                                                                                │|
+10 : accent/-*1 -/-*18 surface0/panel_bg*1 text/panel_bg*18 surface0/panel_bg*1 -/-*80 accent/-*1
+11 |│                  └──────────────────┘                                                                                │|
+11 : accent/-*1 -/-*18 surface0/panel_bg*20 -/-*80 accent/-*1
 12 |│                                                                                                                      │|
 12 : accent/-*1 -/-*118 accent/-*1
 13 |│                                                                                                                      │|

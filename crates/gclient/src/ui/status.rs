@@ -84,15 +84,15 @@ pub struct ActiveToast {
 }
 
 /// Glyph plus colour for a roster row state, one shape per state so the
-/// rows read without colour: `▶` working (accent), `⍾` needs you (warning),
-/// `◆` unseen output (info), `○` idle, `◌` orphaned (destructive), `·`
-/// unknown.
+/// rows read without colour: `▶` active (accent), `⍾` needs you (warning),
+/// `◆` output unseen (info), `○` idle, `‖` held, `◌` gone (destructive),
+/// `·` no state yet.
 pub fn state_dot(state: RowState, p: &Palette) -> (&'static str, Color) {
     match state {
         RowState::Attention => ("⍾", p.peach),
         RowState::Orphaned => ("◌", p.red),
         // U+2016, one cell in a mono face; the emoji pause would not be.
-        RowState::Paused => ("‖", p.yellow),
+        RowState::Paused => ("‖", p.overlay1),
         RowState::Working => ("▶", p.accent),
         RowState::Unseen => ("◆", p.teal),
         RowState::Idle => ("○", p.overlay0),
@@ -101,15 +101,16 @@ pub fn state_dot(state: RowState, p: &Palette) -> (&'static str, Color) {
 }
 
 /// herdr `state_label`: the word beside a row's glyph where a surface
-/// spells the state out.
+/// spells the state out, and the Help legend's words.
 pub fn state_label(state: RowState) -> &'static str {
     match state {
         RowState::Attention => "needs you",
-        RowState::Orphaned => "orphaned",
-        RowState::Paused => "paused",
-        RowState::Working => "working",
-        RowState::Unseen => "unseen",
-        RowState::Idle | RowState::Unknown => "idle",
+        RowState::Orphaned => "gone",
+        RowState::Paused => "held",
+        RowState::Working => "active",
+        RowState::Unseen => "output unseen",
+        RowState::Idle => "idle",
+        RowState::Unknown => "no state yet",
     }
 }
 

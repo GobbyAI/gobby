@@ -70,7 +70,7 @@ parity_tests! {
                 (RowState::Idle, "○", palette.overlay0),
                 (RowState::Unknown, "·", palette.overlay0),
                 (RowState::Orphaned, "◌", palette.red),
-                (RowState::Paused, "‖", palette.yellow),
+                (RowState::Paused, "‖", palette.overlay1),
             ] {
                 let (actual_symbol, actual_color) = state_dot(state, &palette);
                 assert_eq!(actual_symbol, symbol);

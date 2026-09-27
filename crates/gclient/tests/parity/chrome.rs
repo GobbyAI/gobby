@@ -1390,6 +1390,7 @@ fn overlay_rolls_up_once_the_terminal_takes_the_keys() {
             items: Vec::new(),
             selected: 0,
             item_rects: Vec::new(),
+            parent: None,
         });
         chrome.compute_view(&ws, area);
         let terminal_area = chrome.view.terminal_area;
