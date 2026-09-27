@@ -155,9 +155,13 @@ def test_latest_for_session_includes_orphaned_terminal_evidence(
     assert orphaned is not None
 
     assert manager.get_live_for_session(session_id) is None
-    latest = manager.get_latest_for_session(session_id)
-    assert latest is not None
-    assert (latest.id, latest.session_id, latest.state) == (terminal_id, session_id, "orphaned")
+    rows = manager.list_for_session(session_id)
+    assert len(rows) == 1
+    assert (rows[0].id, rows[0].session_id, rows[0].state) == (
+        terminal_id,
+        session_id,
+        "orphaned",
+    )
 
 
 def test_failed_spawn_leaves_reapable_pending_row(

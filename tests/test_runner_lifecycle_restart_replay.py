@@ -202,9 +202,7 @@ class TestAgentRestartReconciliation:
             start=MagicMock(),
         )
         runner = self._runner(storage, provisional_runs=[run])
-        runner.terminal_manager = SimpleNamespace(
-            get_latest_for_session=MagicMock(return_value=row)
-        )
+        runner.terminal_manager = SimpleNamespace(list_for_session=MagicMock(return_value=[row]))
         resolved: set[str] = set()
 
         with (
@@ -218,7 +216,7 @@ class TestAgentRestartReconciliation:
 
         assert count == 1
         assert resolved == {run.id}
-        runner.terminal_manager.get_latest_for_session.assert_called_once_with(run.child_session_id)
+        runner.terminal_manager.list_for_session.assert_called_once_with(run.child_session_id)
         storage.update_runtime.assert_called_once_with(run.id, pid=222, terminal_id=row.id)
         storage.transition_resume_phase.assert_called_once_with(
             run.id, expected_phase="launch_requested", new_phase="runtime_persisted"
@@ -254,9 +252,7 @@ class TestAgentRestartReconciliation:
             update_runtime=MagicMock(),
         )
         runner = self._runner(storage, provisional_runs=[run])
-        runner.terminal_manager = SimpleNamespace(
-            get_latest_for_session=MagicMock(return_value=row)
-        )
+        runner.terminal_manager = SimpleNamespace(list_for_session=MagicMock(return_value=[row]))
 
         with patch(
             "gobby.agents.resume_finalization.finalize_resume_handoff_async",
@@ -298,9 +294,7 @@ class TestAgentRestartReconciliation:
             ),
         )
         runner = self._runner(storage, provisional_runs=[run])
-        runner.terminal_manager = SimpleNamespace(
-            get_latest_for_session=MagicMock(return_value=row)
-        )
+        runner.terminal_manager = SimpleNamespace(list_for_session=MagicMock(return_value=[row]))
 
         with (
             patch(
@@ -318,7 +312,7 @@ class TestAgentRestartReconciliation:
         assert run.resume_metadata_json["reconciliation_blocked_reason"] == (
             "provisional_terminal_orphaned"
         )
-        runner.terminal_manager.get_latest_for_session.assert_called_once_with(run.child_session_id)
+        runner.terminal_manager.list_for_session.assert_called_once_with(run.child_session_id)
         storage.merge_resume_metadata.assert_called_once_with(
             run.id,
             {
@@ -382,9 +376,7 @@ class TestAgentRestartReconciliation:
         )
         storage = SimpleNamespace(list_active_for_machine=MagicMock(return_value=[]))
         runner = self._runner(storage, parked_run=run, provisional_runs=[run])
-        runner.terminal_manager = SimpleNamespace(
-            get_latest_for_session=MagicMock(return_value=row)
-        )
+        runner.terminal_manager = SimpleNamespace(list_for_session=MagicMock(return_value=[row]))
 
         with (
             patch(
@@ -403,6 +395,73 @@ class TestAgentRestartReconciliation:
         finalize.assert_awaited_once()
         runner.agent_lifecycle_monitor.terminalize_cancelled_run.assert_awaited_once_with(
             run.id, terminal_reason="daemon_stop"
+        )
+        resume.assert_awaited_once()
+
+    async def test_provisional_original_exited_row_does_not_mask_absent_successor(
+        self,
+        temp_db: HubDatabase,
+        sample_project: dict[str, Any],
+        session_manager: SessionManager,
+    ) -> None:
+        session = session_manager.register(
+            external_id="provisional-original-exited",
+            machine_id=require_machine_id(),
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        runs = LocalAgentRunManager(temp_db)
+        original = runs.create(
+            parent_session_id=session.id,
+            provider="claude",
+            prompt="original",
+        )
+        successor = runs.create(
+            parent_session_id=session.id,
+            provider="claude",
+            prompt="successor",
+        )
+        terminals = TerminalManager(temp_db)
+        original_terminal = terminals.create_pending(
+            terminal_id="5c0a4b6e-7f1d-4c1e-9d2a-3e4f5a6b7c8d",
+            project_id=sample_project["id"],
+            backend="native",
+            ownership="gobby",
+            spawn_key=original.id,
+            session_id=session.id,
+            agent_run_id=original.id,
+        )
+        assert terminals.fail_pending(original_terminal.id) is not None
+        run = SimpleNamespace(
+            id=successor.id,
+            child_session_id=session.id,
+            resume_metadata_json={
+                "daemon_stop_resume_phase": "launch_requested",
+                "resumed_from_run_id": original.id,
+            },
+        )
+        storage = SimpleNamespace(list_active_for_machine=MagicMock(return_value=[]))
+        runner = self._runner(storage, db=temp_db, parked_run=run, provisional_runs=[run])
+        runner.terminal_manager = terminals
+
+        with (
+            patch(
+                "gobby.agents.resume_finalization.finalize_resume_handoff_async",
+                new_callable=AsyncMock,
+            ) as finalize,
+            patch(
+                "gobby.agents.resume_executor.resume_agent_run",
+                new=AsyncMock(return_value=SimpleNamespace(success=True, error=None)),
+            ) as resume,
+        ):
+            count = await _resolve_provisional_daemon_resumes(runner)
+
+        assert count == 1
+        assert terminals.list_for_session(session.id)[0].agent_run_id == original.id
+        runner.agent_runner.run_storage.merge_resume_metadata.assert_not_called()
+        finalize.assert_awaited_once()
+        runner.agent_lifecycle_monitor.terminalize_cancelled_run.assert_awaited_once_with(
+            successor.id, terminal_reason="daemon_stop"
         )
         resume.assert_awaited_once()
 

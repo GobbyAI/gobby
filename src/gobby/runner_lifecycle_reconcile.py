@@ -261,13 +261,23 @@ async def _resolve_provisional_daemon_resume_row(
             "terminal state cannot be verified during daemon resume",
         )
         return False
-    row = await _run_db(runner, terminal_manager.get_latest_for_session, child_session_id)
-    if row is not None and row.agent_run_id != run.id:
+    rows = await _run_db(runner, terminal_manager.list_for_session, child_session_id)
+    unsettled = [candidate for candidate in rows if candidate.state != "exited"]
+    if len(unsettled) > 1 or (unsettled and unsettled[0].agent_run_id != run.id):
         await _fence_reconciliation_run(
             runner,
             run,
             "provisional_terminal_ownership_mismatch",
-            f"terminal {row.id} belongs to a different agent run",
+            "session has another terminal with uncertain liveness",
+        )
+        return False
+    row = next((candidate for candidate in rows if candidate.agent_run_id == run.id), None)
+    if row is not None and row.state == "exited" and unsettled:
+        await _fence_reconciliation_run(
+            runner,
+            run,
+            "provisional_terminal_ownership_mismatch",
+            "an older terminal for this run has uncertain liveness",
         )
         return False
     if row is not None and row.state == "orphaned":
