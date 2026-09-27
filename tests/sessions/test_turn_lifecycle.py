@@ -484,10 +484,98 @@ def test_attention_screen_updates_preserve_lifecycle_namespace(
     assert updated.current.payload["dialog"] == {"title": "Confirm?"}
     assert "screen" not in updated.current.payload
 
+    lifecycle.end_turn(
+        session_id, "ended_non_user", TurnEvidence(source="agy", provider_turn_key="turn-1")
+    )
+    preserved = attention.get(entry_id)
+    assert preserved is not None
+    assert preserved.payload["dialog"] == {"title": "Confirm?"}
+
     cleared = attention.transition(entry_id, state=None)
     assert cleared.current is not None
     assert cleared.current.state is None
     assert set(cleared.current.payload) == {"turn_lifecycle"}
+
+
+def test_provider_failure_count_persists_until_completed_turn(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    sessions = SessionManager(temp_db)
+    session_id = _session(sessions, sample_project["id"], external_id="provider-retry")
+    attention = AttentionStateManager(temp_db)
+    lifecycle = TurnLifecycleReducer(sessions, attention)
+    entry_id = session_attention_entry_id(session_id)
+
+    for turn in range(1, 5):
+        evidence = TurnEvidence(source="claude", provider_turn_key=f"turn-{turn}")
+        lifecycle.begin_turn(session_id, evidence)
+        failed = lifecycle.record_provider_failure(
+            session_id,
+            error_type="api_error",
+            message="API Error: 500 Internal server error",
+            retryable=True,
+            max_resumes=3,
+            evidence=evidence,
+        )
+        assert failed.applied
+        assert failed.status == "paused"
+        assert failed.lifecycle.provider_error is not None
+        assert failed.lifecycle.provider_error.attempts == turn
+        assert TurnLifecycleReducer(sessions, attention).get(session_id).provider_error == (
+            failed.lifecycle.provider_error
+        )
+        duplicate = lifecycle.record_provider_failure(
+            session_id,
+            error_type="api_error",
+            message="API Error: 500 Internal server error",
+            retryable=True,
+            max_resumes=3,
+            evidence=evidence,
+        )
+        assert not duplicate.applied
+        current = attention.get(entry_id)
+        assert current is not None
+        assert current.state == ("blocked" if turn == 4 else None)
+
+    assert current is not None
+    assert current.reason == "provider_error"
+    assert current.payload["message"] == "API Error: 500 Internal server error"
+    assert current.payload["error_type"] == "api_error"
+
+    completed_evidence = TurnEvidence(source="claude", provider_turn_key="turn-5")
+    lifecycle.begin_turn(session_id, completed_evidence)
+    lifecycle.end_turn(session_id, "completed", completed_evidence)
+    assert lifecycle.get(session_id).provider_error is None
+    cleared = attention.get(entry_id)
+    assert cleared is not None
+    assert cleared.state is None
+
+
+def test_nonretryable_provider_failure_blocks_without_resume(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    sessions = SessionManager(temp_db)
+    session_id = _session(sessions, sample_project["id"], external_id="provider-auth")
+    attention = AttentionStateManager(temp_db)
+    lifecycle = TurnLifecycleReducer(sessions, attention)
+    evidence = TurnEvidence(source="claude", provider_turn_key="turn-1")
+    lifecycle.begin_turn(session_id, evidence)
+    failed = lifecycle.record_provider_failure(
+        session_id,
+        error_type="authentication_failed",
+        message="API Error: 401 Invalid API key",
+        retryable=False,
+        max_resumes=3,
+        evidence=evidence,
+    )
+
+    assert failed.lifecycle.provider_error is not None
+    assert failed.lifecycle.provider_error.attempts == 1
+    current = attention.get(session_attention_entry_id(session_id))
+    assert current is not None
+    assert current.state == "blocked"
+    assert current.reason == "provider_error"
+    assert current.payload["message"] == "API Error: 401 Invalid API key"
 
 
 @pytest.mark.parametrize("terminal_status", ["expired", "deleted"])

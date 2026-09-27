@@ -91,6 +91,49 @@ class OutstandingWait:
 
 
 @dataclass(frozen=True)
+class ProviderErrorState:
+    """Last failed provider turn and its consecutive recovery count."""
+
+    error_type: str
+    message: str
+    attempts: int
+    retryable: bool
+    generation: int
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "error_type": self.error_type,
+            "message": self.message,
+            "attempts": self.attempts,
+            "retryable": self.retryable,
+            "generation": self.generation,
+        }
+
+    @classmethod
+    def from_value(cls, value: object) -> ProviderErrorState | None:
+        if not isinstance(value, Mapping):
+            return None
+        error_type = _optional_str(value.get("error_type"))
+        message = _optional_str(value.get("message"))
+        attempts = value.get("attempts")
+        retryable = value.get("retryable")
+        generation = value.get("generation")
+        if (
+            error_type is None
+            or message is None
+            or not isinstance(attempts, int)
+            or isinstance(attempts, bool)
+            or attempts < 1
+            or not isinstance(retryable, bool)
+            or not isinstance(generation, int)
+            or isinstance(generation, bool)
+            or generation < 0
+        ):
+            return None
+        return cls(error_type, message, attempts, retryable, generation)
+
+
+@dataclass(frozen=True)
 class TurnLifecycleState:
     """Durable correlation for the current local turn generation."""
 
@@ -102,6 +145,7 @@ class TurnLifecycleState:
     request_ids: tuple[str, ...] = ()
     evidence_source: str | None = None
     cursor: str | int | None = None
+    provider_error: ProviderErrorState | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -113,6 +157,7 @@ class TurnLifecycleState:
             "request_ids": list(self.request_ids),
             "evidence_source": self.evidence_source,
             "cursor": self.cursor,
+            "provider_error": self.provider_error.to_dict() if self.provider_error else None,
         }
 
     @classmethod
@@ -145,6 +190,7 @@ class TurnLifecycleState:
             request_ids=request_ids,
             evidence_source=_optional_str(raw.get("evidence_source")),
             cursor=_cursor(raw.get("cursor")),
+            provider_error=ProviderErrorState.from_value(raw.get("provider_error")),
         )
 
 
@@ -226,6 +272,7 @@ class TurnLifecycleReducer:
                     request_ids=request_ids,
                     evidence_source=evidence.source,
                     cursor=evidence.cursor,
+                    provider_error=current.provider_error,
                 ),
                 "active",
             )
@@ -325,12 +372,108 @@ class TurnLifecycleReducer:
             if disposition == "unknown":
                 return current, status
             next_status = "interrupted" if disposition == "user_interrupted" else "paused"
+            updated = self._with_evidence(current, evidence, waits=(), turn_state="terminal")
+            if disposition == "completed":
+                updated = replace(updated, provider_error=None)
             return (
-                self._with_evidence(current, evidence, waits=(), turn_state="terminal"),
+                updated,
                 next_status,
             )
 
-        return self._apply(session_id, evidence, mutate)
+        return self._apply(
+            session_id,
+            evidence,
+            mutate,
+            clear_provider_error=disposition == "completed",
+        )
+
+    def record_provider_failure(
+        self,
+        session_id: str,
+        *,
+        error_type: str,
+        message: str,
+        retryable: bool,
+        max_resumes: int,
+        evidence: TurnEvidence,
+    ) -> TurnLifecycleTransitionResult:
+        """Persist a failed turn once per generation and block terminal failures."""
+
+        def mutate(current: TurnLifecycleState, status: str) -> tuple[TurnLifecycleState, str]:
+            previous = current.provider_error
+            if (
+                current.turn_state == "terminal"
+                and previous is not None
+                and previous.generation == current.generation
+            ):
+                return current, status
+            attempts = (previous.attempts if previous is not None else 0) + 1
+            updated = self._with_evidence(current, evidence, waits=(), turn_state="terminal")
+            return (
+                replace(
+                    updated,
+                    provider_error=ProviderErrorState(
+                        error_type, message, attempts, retryable, current.generation
+                    ),
+                ),
+                "paused",
+            )
+
+        return self._apply(
+            session_id,
+            evidence,
+            mutate,
+            provider_failure_limit=max_resumes,
+        )
+
+    def block_provider_failure(
+        self,
+        session_id: str,
+        *,
+        generation: int,
+        attempts: int,
+    ) -> bool:
+        """Show a delivery failure only if its failed turn is still current."""
+        entry_id = session_attention_entry_id(session_id)
+        with self._db.transaction() as transaction:
+            row = transaction.execute(
+                "SELECT * FROM attention_states WHERE entry_id = %s FOR UPDATE",
+                (entry_id,),
+            ).fetchone()
+            if row is None:
+                return False
+            attention = AttentionState.from_row(row)
+            lifecycle = TurnLifecycleState.from_payload(attention.payload)
+            failure = lifecycle.provider_error
+            if (
+                failure is None
+                or lifecycle.generation != generation
+                or failure.attempts != attempts
+                or lifecycle.turn_state != "terminal"
+            ):
+                return False
+            return self._attention.transition(
+                entry_id,
+                state="blocked",
+                session_id=session_id,
+                reason="provider_error",
+                kind="non_actionable",
+                fingerprint=f"provider_error:{generation}:{attempts}",
+                payload=self._provider_error_payload(lifecycle, attention.payload),
+                expected_attention_id=attention.attention_id,
+            ).applied
+
+    @staticmethod
+    def _provider_error_payload(
+        lifecycle: TurnLifecycleState, existing: Mapping[str, object] | None = None
+    ) -> dict[str, object]:
+        failure = lifecycle.provider_error
+        payload = dict(existing or {})
+        payload["turn_lifecycle"] = lifecycle.to_dict()
+        if failure is not None:
+            payload["error_type"] = failure.error_type
+            payload["message"] = failure.message
+        return payload
 
     def _apply(
         self,
@@ -340,6 +483,8 @@ class TurnLifecycleReducer:
         *,
         allow_new_turn: bool = False,
         accept_resolving_provider_key: bool = False,
+        clear_provider_error: bool = False,
+        provider_failure_limit: int | None = None,
     ) -> TurnLifecycleTransitionResult:
         entry_id = session_attention_entry_id(session_id)
         with self._db.transaction() as transaction:
@@ -394,15 +539,36 @@ class TurnLifecycleReducer:
                 return TurnLifecycleTransitionResult(
                     False, session_id, current.generation, session_status, current, "duplicate"
                 )
+            next_attention_state = attention.state if attention else None
+            next_reason = attention.reason if attention else None
+            next_kind = attention.kind if attention else None
+            next_fingerprint = attention.fingerprint if attention else None
+            payload = dict(attention.payload) if attention else {}
+            payload["turn_lifecycle"] = updated.to_dict()
+            failure = updated.provider_error
+            if clear_provider_error and next_reason == "provider_error":
+                next_attention_state = None
+                next_reason = None
+                next_kind = None
+            elif (
+                provider_failure_limit is not None
+                and failure is not None
+                and (not failure.retryable or failure.attempts > provider_failure_limit)
+            ):
+                next_attention_state = "blocked"
+                next_reason = "provider_error"
+                next_kind = "non_actionable"
+                next_fingerprint = f"provider_error:{updated.generation}:{failure.attempts}"
+                payload = self._provider_error_payload(updated, payload)
             self._attention.transition(
                 entry_id,
-                state=attention.state if attention else None,
+                state=next_attention_state,
                 run_id=attention.run_id if attention else None,
                 session_id=session_id,
-                reason=attention.reason if attention else None,
-                kind=attention.kind if attention else None,
-                fingerprint=attention.fingerprint if attention else None,
-                payload={"turn_lifecycle": updated.to_dict()},
+                reason=next_reason,
+                kind=next_kind,
+                fingerprint=next_fingerprint,
+                payload=payload,
                 expected_attention_id=attention.attention_id if attention else None,
             )
             if next_status != session_status:
@@ -448,4 +614,5 @@ class TurnLifecycleReducer:
             request_ids=request_ids,
             evidence_source=evidence.source,
             cursor=evidence.cursor if evidence.cursor is not None else current.cursor,
+            provider_error=current.provider_error,
         )
