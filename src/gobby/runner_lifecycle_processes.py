@@ -15,38 +15,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger("gobby.runner_lifecycle")
 
 
-async def _agent_live_sessions_by_name(
-    socket_name: str | None,
-    socket_path: str | None,
-) -> dict[str, Any] | None:
-    """List live tmux sessions for one socket identity; None on failure."""
-    try:
-        from gobby.agents.tmux import get_tmux_session_manager
-        from gobby.agents.tmux.session_manager import TmuxSessionManager
-
-        manager = get_tmux_session_manager()
-        config = manager.config
-        if (socket_name and socket_name != config.socket_name) or (
-            socket_path and socket_path != config.socket_path
-        ):
-            config = config.model_copy(
-                update={
-                    "socket_name": socket_name or config.socket_name,
-                    "socket_path": socket_path,
-                }
-            )
-            manager = TmuxSessionManager(config)
-        live_sessions = await manager.list_sessions()
-    except Exception as e:
-        logger.warning("Failed to verify tmux panes for agent preservation: %s", e)
-        return None
-    return {
-        session.name: session
-        for session in live_sessions
-        if not getattr(session, "pane_dead", False)
-    }
-
-
 def _host_preserve_pids(runner: GobbyRunner) -> set[int]:
     """Identity-checked gterm host PID to keep out of the child reap.
 
@@ -65,14 +33,10 @@ def _host_preserve_pids(runner: GobbyRunner) -> set[int]:
 
 
 async def _preserved_agent_terminal_pids(runner: GobbyRunner) -> set[int] | None:
-    """Resolve PIDs for managed agents that must survive shutdown.
+    """Preserve the native host and active agent process IDs during shutdown.
 
-    Fenced (reconciliation_pending) runs are preserved like any other managed
-    run, sessions are verified against each run's persisted tmux socket
-    identity, and tmux failures fall back to the stored run PID. Returns None
-    when the managed-run set cannot be determined at all; the caller must then
-    skip child reaping rather than risk killing live agents (including the
-    daemon-owned tmux server).
+    The managed-run set must be known before reaping any daemon descendants.
+    A lost hub query therefore returns None and the caller skips child reaping.
     """
     pids = _host_preserve_pids(runner)
     agent_runner = getattr(runner, "agent_runner", None)
@@ -91,60 +55,11 @@ async def _preserved_agent_terminal_pids(runner: GobbyRunner) -> set[int] | None
         logger.warning("Failed to list active agent runs for restart preservation: %s", e)
         return None
 
-    listings: dict[tuple[str | None, str | None], dict[str, Any] | None] = {}
-    terminal_sessions = _live_terminal_session_names(runner)
     for run in runs:
-        stored_pid = getattr(run, "pid", None)
-        fallback_pid = stored_pid if isinstance(stored_pid, int) and stored_pid > 0 else None
-        run_id = getattr(run, "id", None)
-        session_name = terminal_sessions.get(run_id) if isinstance(run_id, str) else None
-        if not isinstance(session_name, str):
-            if fallback_pid is not None:
-                pids.add(fallback_pid)
-            continue
-        metadata = getattr(run, "resume_metadata_json", None) or {}
-        socket_name = metadata.get("tmux_socket_name")
-        socket_path = metadata.get("tmux_socket_path")
-        key = (
-            socket_name if isinstance(socket_name, str) and socket_name else None,
-            socket_path if isinstance(socket_path, str) and socket_path else None,
-        )
-        if key not in listings:
-            listings[key] = await _agent_live_sessions_by_name(*key)
-        live_by_name = listings[key]
-        if live_by_name is None:
-            if fallback_pid is not None:
-                pids.add(fallback_pid)
-            continue
-        live = live_by_name.get(session_name)
-        pane_pid = getattr(live, "pane_pid", None)
-        if isinstance(pane_pid, int) and pane_pid > 0:
-            pids.add(pane_pid)
-        elif live is not None and fallback_pid is not None:
-            pids.add(fallback_pid)
+        pid = getattr(run, "pid", None)
+        if isinstance(pid, int) and pid > 0:
+            pids.add(pid)
     return pids
-
-
-def _live_terminal_session_names(runner: GobbyRunner) -> dict[str, str]:
-    """Map agent_run_id → session/spawn name from pending|live terminal rows."""
-    manager = getattr(runner, "terminal_manager", None)
-    list_live = getattr(manager, "list_live_by_machine", None)
-    if not callable(list_live):
-        return {}
-    try:
-        from gobby.utils.machine_id import require_machine_id
-
-        rows = list_live(require_machine_id())
-    except Exception:
-        logger.debug("Failed to list terminal rows for shutdown preservation", exc_info=True)
-        return {}
-    names: dict[str, str] = {}
-    for row in rows:
-        run_id = getattr(row, "agent_run_id", None)
-        name = getattr(row, "session_name", None) or getattr(row, "spawn_key", None)
-        if isinstance(run_id, str) and isinstance(name, str):
-            names[run_id] = name
-    return names
 
 
 def _describe_child_process(process: Any, *, root_pid: int) -> str:

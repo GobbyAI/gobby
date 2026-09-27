@@ -258,8 +258,7 @@ async def test_session_end_cleanup_unblocks_session_targeted_read_only_calls(
             project_id=checkout.project.id,
             machine_id=checkout.machine_id,
         )
-        with patch("gobby.agents.tmux.get_tmux_pane_monitor", return_value=None):
-            response = handler.handle_session_end(_make_session_end_event(child_session_id))
+        response = handler.handle_session_end(_make_session_end_event(child_session_id))
         assert response.decision == "allow"
         assert instance_manager.get_for_session(child_session_id) is None
 
@@ -351,10 +350,7 @@ async def test_inbox_replays_codex_session_end_once_with_real_cleanup(
     envelope_path.write_text(json.dumps(envelope))
     os.utime(envelope_path, (0, 0))
 
-    with (
-        patch("gobby.hooks.inbox.read_local_api_token", return_value="test-local-token"),
-        patch("gobby.agents.tmux.get_tmux_pane_monitor", return_value=None),
-    ):
+    with patch("gobby.hooks.inbox.read_local_api_token", return_value="test-local-token"):
         first_replay = await drain_hook_inbox_once(app, inbox_dir=inbox_dir)
         second_replay = await drain_hook_inbox_once(app, inbox_dir=inbox_dir)
 

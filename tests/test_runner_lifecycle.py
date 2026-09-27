@@ -18,7 +18,6 @@ import gobby.ai._text_generation_adapters as text_generation_adapters
 import gobby.runner_lifecycle as runner_lifecycle
 import gobby.runner_lifecycle_agents as runner_lifecycle_agents
 import gobby.runner_lifecycle_processes as runner_lifecycle_processes
-import gobby.runner_lifecycle_reconcile as runner_lifecycle_reconcile
 import gobby.runner_lifecycle_shutdown as runner_lifecycle_shutdown
 import gobby.runner_lifecycle_subsystems as runner_lifecycle_subsystems
 from gobby import runner_shutdown_storage
@@ -2500,7 +2499,7 @@ class TestShutdownDaemonServices:
         assert provider_task.cancelled()
         assert events == ["provider-cleanup", "reap"]
 
-    async def test_restart_preserve_set_paginates_every_active_tmux_run(self) -> None:
+    async def test_restart_preserve_set_paginates_every_active_run(self) -> None:
         run_count = 1_005
         runs = [
             SimpleNamespace(
@@ -2525,34 +2524,9 @@ class TestShutdownDaemonServices:
             ),
             db_executor=SimpleNamespace(run=run_db),
         )
-        tmux_manager = SimpleNamespace(
-            config=SimpleNamespace(socket_name="gobby", socket_path=None),
-            list_sessions=AsyncMock(
-                return_value=[
-                    SimpleNamespace(
-                        name=f"agent-{index}",
-                        pane_pid=20_000 + index,
-                        pane_dead=False,
-                    )
-                    for index in range(run_count)
-                ]
-            ),
-        )
+        preserved_pids = await runner_lifecycle_processes._preserved_agent_terminal_pids(runner)
 
-        with (
-            patch.object(
-                runner_lifecycle_processes,
-                "_live_terminal_session_names",
-                return_value={f"run-{index}": f"agent-{index}" for index in range(run_count)},
-            ),
-            patch(
-                "gobby.agents.tmux.get_tmux_session_manager",
-                return_value=tmux_manager,
-            ),
-        ):
-            preserved_pids = await runner_lifecycle_processes._preserved_agent_terminal_pids(runner)
-
-        assert preserved_pids == {20_000 + index for index in range(run_count)}
+        assert preserved_pids == {10_000 + index for index in range(run_count)}
         assert db_calls == [
             (
                 cast(Any, runner_lifecycle_processes)._list_active_agent_runs_once,
@@ -5045,40 +5019,6 @@ class TestAgentRestartRecoveryHelpers:
         # false cancellation redelivery at startup.
         subscriber_manager.get_completion_subscribers.assert_called_once_with("genuine-run")
 
-    def test_find_live_tmux_by_planned_name_prefers_exact_then_sorted_prefix(self) -> None:
-        exact = SimpleNamespace(name="wf-agent")
-        suffixed_a = SimpleNamespace(name="wf-agent-aaaa1111")
-        suffixed_b = SimpleNamespace(name="wf-agent-bbbb2222")
-
-        assert (
-            runner_lifecycle_reconcile._find_live_tmux_by_planned_name(
-                {"wf-agent": exact, "wf-agent-aaaa1111": suffixed_a},
-                "wf-agent",
-            )
-            is exact
-        )
-        assert (
-            runner_lifecycle_reconcile._find_live_tmux_by_planned_name(
-                {"wf-agent-aaaa1111": suffixed_a},
-                "wf-agent",
-            )
-            is suffixed_a
-        )
-        assert (
-            runner_lifecycle_reconcile._find_live_tmux_by_planned_name(
-                {"wf-agent-bbbb2222": suffixed_b, "wf-agent-aaaa1111": suffixed_a},
-                "wf-agent",
-            )
-            is suffixed_a
-        )
-        assert (
-            runner_lifecycle_reconcile._find_live_tmux_by_planned_name(
-                {"other-session": exact, "wf-agent2-aaaa1111": suffixed_a},
-                "wf-agent",
-            )
-            is None
-        )
-
     @pytest.mark.asyncio
     async def test_retry_parked_non_task_resumes_honors_failure_budget(self) -> None:
         missing_metadata = SimpleNamespace(id="run-missing-metadata", resume_metadata_json=None)
@@ -5288,113 +5228,28 @@ class TestAgentRestartRecoveryHelpers:
         assert events[-1] == "executor"
 
 
-async def test_restart_preserve_set_uses_and_caches_persisted_tmux_socket() -> None:
+async def test_restart_preserve_set_keeps_host_and_active_run_pids() -> None:
     runs = [
-        SimpleNamespace(
-            id=f"run-{index}",
-            pid=1_000 + index,
-            resume_metadata_json={
-                "tmux_socket_name": "persisted",
-                "tmux_socket_path": "/tmp/persisted.sock",
-            },
-        )
-        for index in range(2)
-    ]
-    run_db = AsyncMock(return_value=runs)
-    runner = SimpleNamespace(
-        agent_runner=SimpleNamespace(run_storage=object()),
-        db_executor=SimpleNamespace(run=run_db),
-    )
-    persisted_config = object()
-    default_config = SimpleNamespace(
-        socket_name="gobby",
-        socket_path=None,
-        model_copy=MagicMock(return_value=persisted_config),
-    )
-    default_manager = SimpleNamespace(config=default_config)
-    persisted_manager = SimpleNamespace(
-        list_sessions=AsyncMock(
-            return_value=[
-                SimpleNamespace(name=f"agent-{index}", pane_pid=2_000 + index) for index in range(2)
-            ]
-        )
-    )
-
-    with (
-        patch.object(
-            runner_lifecycle_processes,
-            "_live_terminal_session_names",
-            return_value={f"run-{index}": f"agent-{index}" for index in range(2)},
-        ),
-        patch(
-            "gobby.agents.tmux.get_tmux_session_manager",
-            return_value=default_manager,
-        ),
-        patch(
-            "gobby.agents.tmux.session_manager.TmuxSessionManager",
-            return_value=persisted_manager,
-        ) as manager_type,
-    ):
-        preserved_pids = await runner_lifecycle_processes._preserved_agent_terminal_pids(
-            cast(GobbyRunner, runner)
-        )
-
-    assert preserved_pids == {2_000, 2_001}
-    assert default_config.model_copy.call_count == 1
-    assert default_config.model_copy.call_args == call(
-        update={
-            "socket_name": "persisted",
-            "socket_path": "/tmp/persisted.sock",
-        }
-    )
-    assert manager_type.call_args_list == [call(persisted_config)]
-    assert persisted_manager.list_sessions.await_count == 1
-
-
-async def test_restart_preserve_set_falls_back_to_stored_pids() -> None:
-    runs = [
-        SimpleNamespace(
-            id="lookup-failed",
-            pid=1_001,
-            resume_metadata_json={"tmux_socket_name": "failed"},
-        ),
-        SimpleNamespace(
-            id="pane-pid-unusable",
-            pid=1_002,
-            resume_metadata_json={"tmux_socket_name": "unusable"},
-        ),
+        SimpleNamespace(id="native-run", pid=1_001),
+        SimpleNamespace(id="headless-run", pid=1_002),
+        SimpleNamespace(id="unspawned-run", pid=None),
     ]
     runner = SimpleNamespace(
         agent_runner=SimpleNamespace(run_storage=object()),
         db_executor=SimpleNamespace(run=AsyncMock(return_value=runs)),
+        terminal_host_manager=SimpleNamespace(preserved_host_pid=lambda: 2_000),
     )
 
-    with (
-        patch.object(
-            runner_lifecycle_processes,
-            "_live_terminal_session_names",
-            return_value={
-                "lookup-failed": "lookup-failed",
-                "pane-pid-unusable": "pane-pid-unusable",
-            },
-        ),
-        patch.object(
-            runner_lifecycle_processes,
-            "_agent_live_sessions_by_name",
-            AsyncMock(
-                side_effect=[
-                    None,
-                    {"pane-pid-unusable": SimpleNamespace(pane_pid=0)},
-                ]
-            ),
-        ) as live_sessions,
-    ):
-        preserved_pids = await runner_lifecycle_processes._preserved_agent_terminal_pids(
-            cast(GobbyRunner, runner)
-        )
+    preserved_pids = await runner_lifecycle_processes._preserved_agent_terminal_pids(
+        cast(GobbyRunner, runner)
+    )
 
-    assert preserved_pids == {1_001, 1_002}
-    assert live_sessions.await_args_list == [call("failed", None), call("unusable", None)]
+    assert preserved_pids == {1_001, 1_002, 2_000}
+    runner.db_executor.run.assert_awaited_once_with(
+        runner_lifecycle_processes._list_active_agent_runs_once,
+        runner,
+        include_fenced=True,
+    )
 
 
 async def test_restart_preserve_set_returns_none_when_run_enumeration_fails() -> None:

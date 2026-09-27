@@ -1,30 +1,19 @@
-"""Tmux pane death monitor.
-
-Polls ``tmux -L gobby list-sessions`` to detect when agent tmux sessions
-disappear (process exit, crash, user kill-pane) and synthesizes
-``session_end`` events so the full teardown flow runs.
-"""
+"""Monitor interactive terminal snapshots for prompts and provider stalls."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
-import time
-from collections.abc import Callable, Mapping, Sequence
-from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from collections.abc import Callable, Sequence
+from typing import TYPE_CHECKING
 
 from gobby.agents.detection.provider import DetectionRegistry
-from gobby.agents.kill import pid_matches_agent_identity
 from gobby.agents.prompt_detector import PromptDetector, PromptKind
 from gobby.agents.stall_classifier import StallClassifier, StallStatus
-from gobby.agents.tmux.session_activation import TMUX_COMMAND_TIMEOUT_SECONDS
-from gobby.agents.tmux.session_manager import TmuxSessionManager
-from gobby.config.tmux import TmuxConfig
-from gobby.hooks.events import HookEvent, HookEventType, SessionSource, parse_session_source
 from gobby.storage.attention import session_attention_entry_id
 from gobby.storage.hub.postgres_pool import is_pool_unavailable
 from gobby.storage.sessions import LIVE_SESSION_STATUS_ORDER
+from gobby.terminals.host_client import HostUnavailableError
 from gobby.utils.logging import ThrottledLogger
 from gobby.utils.machine_id import require_machine_id
 
@@ -37,29 +26,18 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# How long (seconds) a session_id stays in the recently-ended set
-_RECENTLY_ENDED_TTL = 60.0
 _AGENT_RUN_PAGE_SIZE = 100
 _INTERACTIVE_SESSION_PAGE_SIZE = 100
 _pool_outage_log = ThrottledLogger()
+_host_outage_log = ThrottledLogger()
 
 
-class TmuxPaneMonitor:
-    """Background task that detects dead tmux panes and fires session_end.
-
-    Args:
-        session_end_callback: Called with a synthesized :class:`HookEvent`
-            when a tmux session vanishes.  Typically
-            ``EventHandlers.handle_session_end``.
-        config: Tmux configuration (socket name, binary path, etc.).
-        poll_interval: Seconds between polls (default 5).
-    """
+class InteractiveAttentionMonitor:
+    """Background poller for interactive terminal attention."""
 
     def __init__(
         self,
-        session_end_callback: Callable[[HookEvent], Any],
         detection_registry: DetectionRegistry,
-        config: TmuxConfig | None = None,
         poll_interval: float = 5.0,
         session_manager: SessionManager | None = None,
         attention_manager: AttentionStateManager | None = None,
@@ -69,30 +47,17 @@ class TmuxPaneMonitor:
         registry: TerminalRuntimeRegistry,
         startup_ready: Callable[[], bool] | None = None,
     ) -> None:
-        self._callback = session_end_callback
-        if config is None:
-            from gobby.agents.tmux import get_configured_tmux_config
-
-            try:
-                config = get_configured_tmux_config()
-            except RuntimeError as exc:
-                logger.warning("Configured tmux config unavailable, using defaults: %s", exc)
-                config = TmuxConfig()
-        self._config = config
         self._poll_interval = poll_interval
         self._session_manager = session_manager
         self._attention_manager = attention_manager
         self._detection_registry = detection_registry
         self._prompt_detector = prompt_detector or PromptDetector(detection_registry)
         self._stall_classifier = stall_classifier or StallClassifier(detection_registry)
-        # Interactive-pane snapshots resolve their runtime per row; the monitor
-        # sees native rows as readily as tmux ones, and binding one runtime here
-        # would snapshot a native pane through the tmux backend.
+        # Resolve the runtime per terminal row so native and external terminals
+        # use their own snapshot implementations.
         self._registry = registry
         self._startup_ready = startup_ready
         self._task: asyncio.Task[None] | None = None
-        # session_id -> timestamp when it was marked ended
-        self._recently_ended: dict[str, float] = {}
 
     @property
     def detection_registry(self) -> DetectionRegistry:
@@ -106,8 +71,8 @@ class TmuxPaneMonitor:
         """Start the background polling task."""
         if self._task is not None:
             return
-        self._task = asyncio.create_task(self._poll_loop(), name="tmux-pane-monitor")
-        logger.info("TmuxPaneMonitor started (interval=%.1fs)", self._poll_interval)
+        self._task = asyncio.create_task(self._poll_loop(), name="interactive-attention-monitor")
+        logger.info("InteractiveAttentionMonitor started (interval=%.1fs)", self._poll_interval)
 
     async def stop(self) -> None:
         """Cancel the background polling task."""
@@ -119,15 +84,7 @@ class TmuxPaneMonitor:
         except asyncio.CancelledError:
             pass
         self._task = None
-        logger.info("TmuxPaneMonitor stopped")
-
-    def mark_recently_ended(self, session_id: str) -> None:
-        """Record that *session_id* just had a normal session_end.
-
-        This prevents the monitor from firing a duplicate event when it
-        next polls and notices the tmux session is gone.
-        """
-        self._recently_ended[session_id] = time.monotonic()
+        logger.info("InteractiveAttentionMonitor stopped")
 
     # ------------------------------------------------------------------
     # Internal
@@ -138,151 +95,37 @@ class TmuxPaneMonitor:
         while True:
             try:
                 await asyncio.sleep(self._poll_interval)
-                await self._check_panes()
+                await self._check_attention()
             except asyncio.CancelledError:
                 raise
             except Exception:
-                logger.exception("TmuxPaneMonitor poll error (continuing)")
+                logger.exception("InteractiveAttentionMonitor poll error (continuing)")
 
-    async def _check_panes(self) -> None:
-        """Core detection: cross-reference live tmux sessions with DB agent runs."""
-        # Restart recovery must classify missing terminals before normal death detection.
+    async def _check_attention(self) -> None:
+        """Refresh interactive attention from live terminal snapshots."""
         if self._startup_ready is not None and not self._startup_ready():
+            return
+        if self._session_manager is None:
             return
         from gobby.storage.agents import LocalAgentRunManager
 
-        # 1. Prune expired entries from recently-ended set
-        now = time.monotonic()
-        expired = [
-            sid for sid, ts in self._recently_ended.items() if now - ts > _RECENTLY_ENDED_TTL
-        ]
-        for sid in expired:
-            del self._recently_ended[sid]
-
-        # 2. Get live tmux sessions (includes pane_dead status)
-        mgr = TmuxSessionManager(self._config)
-        try:
-            live_sessions = await mgr.list_sessions()
-        except TimeoutError as exc:
-            logger.debug(
-                "TmuxPaneMonitor: timed out listing tmux sessions",
-                extra={
-                    "tmux_command": self._config.command,
-                    "tmux_subcommand": "list-sessions",
-                    "socket_name": self._config.socket_name,
-                    "socket_path": self._config.socket_path,
-                    "config_file": self._config.config_file,
-                    "timeout_seconds": TMUX_COMMAND_TIMEOUT_SECONDS,
-                    "poll_interval_seconds": self._poll_interval,
-                    "error": str(exc),
-                },
-            )
-            return
-        except Exception:
-            logger.warning("TmuxPaneMonitor: failed to list tmux sessions", exc_info=True)
-            return
-        live_lookup = {s.name: s for s in live_sessions}
-
-        # 3. Get all active agent runs with a live tmux terminal row from DB
-        if not self._session_manager:
-            return
         try:
             arm = LocalAgentRunManager(self._session_manager.db)
-            all_runs = await self._list_active_runs(arm)
+            active_runs = await self._list_active_runs(arm)
         except Exception as exc:
             if is_pool_unavailable(exc):
                 _pool_outage_log(
                     logger,
                     logging.WARNING,
-                    "TmuxPaneMonitor: hub temporarily unavailable; skipping pass",
+                    "InteractiveAttentionMonitor: hub temporarily unavailable; skipping pass",
                 )
             else:
-                logger.warning("TmuxPaneMonitor: failed to list active agent runs", exc_info=True)
-            return
-        await self._check_attention_panes(active_runs=all_runs)
-        from gobby.storage.terminals import TerminalManager
-
-        terminal_manager = TerminalManager(self._session_manager.db)
-        tmux_agents: list[tuple[Any, str]] = []
-        terminal_rows = await asyncio.to_thread(
-            terminal_manager.get_many,
-            [run.terminal_id for run in all_runs if run.terminal_id],
-        )
-        for run in all_runs:
-            if not run.terminal_id:
-                continue
-            row = terminal_rows.get(run.terminal_id)
-            if row is None or row.backend != "tmux" or not row.session_name:
-                continue
-            tmux_agents.append((run, row.session_name))
-
-        if not tmux_agents:
-            return
-
-        # 4. Fire session_end for agents whose tmux session is gone,
-        #    whose pane process has exited (remain-on-exit keeps session alive),
-        #    or whose registered PID is no longer running.
-        for agent, session_name in tmux_agents:
-            live_info = live_lookup.get(session_name)
-
-            # Check if the agent's PID is still alive (catches remain-on-exit cases)
-            pid_dead = False
-            if live_info and not live_info.pane_dead and agent.pid:
-                session_id = agent.child_session_id or agent.parent_session_id
-                if not await pid_matches_agent_identity(
-                    agent.pid,
-                    provider=agent.provider,
-                    session_id=session_id,
-                    unverifiable_result=True,
-                ):
-                    pid_dead = True
-                    logger.info(
-                        "Agent PID %s no longer matches identity but tmux session %s is alive",
-                        agent.pid,
-                        session_name,
-                    )
-
-            if live_info and not live_info.pane_dead and not pid_dead:
-                continue
-            child_sid = agent.child_session_id or agent.id
-            if child_sid in self._recently_ended:
-                continue
-
-            logger.info(
-                "Detected dead tmux pane for agent session=%s (tmux=%s)",
-                child_sid,
-                session_name,
-            )
-
-            # Look up the session to get external_id and source
-            session = await asyncio.to_thread(self._lookup_session, child_sid)
-            if session is None:
                 logger.warning(
-                    "Cannot synthesize session_end: session %s not found in DB", child_sid
+                    "InteractiveAttentionMonitor: failed to list active agent runs",
+                    exc_info=True,
                 )
-                self._recently_ended[child_sid] = now
-                continue
-
-            event = HookEvent(
-                event_type=HookEventType.SESSION_END,
-                session_id=session.external_id,
-                source=(
-                    parse_session_source(session.source) if session.source else SessionSource.CLAUDE
-                ),
-                timestamp=datetime.now(UTC),
-                data={"cwd": None},
-                metadata={
-                    "_platform_session_id": session.id,
-                    "_tmux_pane_death": True,
-                },
-            )
-
-            try:
-                await asyncio.to_thread(self._callback, event)
-            except Exception:
-                logger.exception("TmuxPaneMonitor: callback error for session %s", child_sid)
-
-            self._recently_ended[child_sid] = now
+            return
+        await self._check_attention_panes(active_runs=active_runs)
 
     async def _check_attention_panes(self, *, active_runs: Sequence[AgentRun]) -> None:
         """Report attention for interactive panes without injecting input."""
@@ -294,7 +137,10 @@ class TmuxPaneMonitor:
         try:
             sessions = await self._list_interactive_sessions()
         except Exception:
-            logger.warning("TmuxPaneMonitor: failed to list interactive sessions", exc_info=True)
+            logger.warning(
+                "InteractiveAttentionMonitor: failed to list interactive sessions",
+                exc_info=True,
+            )
             return
 
         active_agent_sessions = {
@@ -315,18 +161,10 @@ class TmuxPaneMonitor:
                     expected_fingerprint=attention.fingerprint,
                 )
 
+        native_unavailable = False
         for session in sessions:
             if session.id in active_agent_sessions:
                 continue
-            # Diagnostic only. tmux_pane comes from $TMUX_PANE, so a native
-            # terminal never has one; gating on it skipped every native session.
-            # The live terminals row below is the backend-neutral gate.
-            terminal_context = session.terminal_context
-            pane_id = (
-                terminal_context.get("tmux_pane") if isinstance(terminal_context, Mapping) else None
-            )
-            if not isinstance(pane_id, str):
-                pane_id = ""
             row = None
             try:
                 from gobby.storage.terminals import TerminalManager
@@ -341,13 +179,14 @@ class TmuxPaneMonitor:
                 if row is None:
                     await self._clear_attention_if_current(session_attention_entry_id(session.id))
                     continue
+                if row.backend == "native" and native_unavailable:
+                    continue
                 snapshot = await self._registry.resolve(row.backend).snapshot(row, 15)
                 pane_output = snapshot.text
             except TimeoutError as exc:
                 logger.debug(
-                    "TmuxPaneMonitor: interactive pane capture timed out",
+                    "InteractiveAttentionMonitor: interactive terminal capture timed out",
                     extra={
-                        "pane_id": pane_id,
                         "terminal_id": row.id if row is not None else "",
                         "session_id": session.id,
                         "provider": session.source or "",
@@ -355,9 +194,24 @@ class TmuxPaneMonitor:
                     },
                 )
                 continue
+            except HostUnavailableError:
+                if row is not None and row.backend == "native":
+                    native_unavailable = True
+                    _host_outage_log(
+                        logger,
+                        logging.INFO,
+                        "InteractiveAttentionMonitor: native host unavailable; retrying next pass",
+                    )
+                    continue
+                logger.warning(
+                    "InteractiveAttentionMonitor: failed to capture terminal for session %s",
+                    session.id,
+                    exc_info=True,
+                )
+                continue
             except Exception:
                 logger.warning(
-                    "TmuxPaneMonitor: failed to capture terminal for session %s",
+                    "InteractiveAttentionMonitor: failed to capture terminal for session %s",
                     session.id,
                     exc_info=True,
                 )
@@ -535,14 +389,3 @@ class TmuxPaneMonitor:
                 return sessions
             cursor_updated_at = page[-1].updated_at.isoformat()
             cursor_id = page[-1].id
-
-    def _lookup_session(self, session_id: str) -> Session | None:
-        """Look up a session from the database."""
-        if not self._session_manager:
-            logger.debug("No _session_manager configured, cannot look up %s", session_id)
-            return None
-        try:
-            return self._session_manager.get(session_id)
-        except Exception:
-            logger.debug("Failed to look up session %s", session_id, exc_info=True)
-            return None

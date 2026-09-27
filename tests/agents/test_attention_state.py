@@ -13,9 +13,9 @@ import pytest
 
 from gobby.agents.attention_tracker import AgentAttentionTracker
 from gobby.agents.idle_check_handler import IdleCheckHandler
+from gobby.agents.interactive_attention_monitor import InteractiveAttentionMonitor
 from gobby.agents.prompt_detector import PromptDetector
 from gobby.agents.stall_classifier import StallClassifier
-from gobby.agents.tmux.pane_monitor import TmuxPaneMonitor
 from gobby.agents.watchdog import WatchdogReaderRegistry
 from gobby.storage.agents import AgentRun
 from gobby.storage.hub.protocol import HubDatabase
@@ -641,9 +641,8 @@ async def test_tmux_monitor_reads_interactive_terminal_off_loop_and_reports_prom
     sessions.update_session_status.side_effect = session_manager.update_session_status
     sessions.list.return_value = [session]
     runtime = LifecycleRuntime(snapshot_text=APPROVAL_PANE)
-    monitor = TmuxPaneMonitor(
+    monitor = InteractiveAttentionMonitor(
         detection_registry=DETECTION_REGISTRY,
-        session_end_callback=MagicMock(),
         session_manager=sessions,
         attention_manager=manager,
         prompt_detector=PromptDetector(DETECTION_REGISTRY, "claude"),
@@ -687,9 +686,8 @@ async def test_tmux_monitor_keeps_attention_on_capture_timeout_and_recovers(
     sessions.update_session_status.side_effect = session_manager.update_session_status
     sessions.list.return_value = [session]
     runtime = LifecycleRuntime(snapshot_text=APPROVAL_PANE)
-    monitor = TmuxPaneMonitor(
+    monitor = InteractiveAttentionMonitor(
         detection_registry=DETECTION_REGISTRY,
-        session_end_callback=MagicMock(),
         session_manager=sessions,
         attention_manager=manager,
         prompt_detector=PromptDetector(DETECTION_REGISTRY, "claude"),
@@ -703,7 +701,7 @@ async def test_tmux_monitor_keeps_attention_on_capture_timeout_and_recovers(
     runtime.snapshot_calls.clear()
     runtime.snapshot_error = TimeoutError("tmux command timed out")
     caplog.clear()
-    logger_name = "gobby.agents.tmux.pane_monitor"
+    logger_name = "gobby.agents.interactive_attention_monitor"
     with caplog.at_level(logging.DEBUG, logger=logger_name):
         await monitor._check_attention_panes(active_runs=[])
 
@@ -716,10 +714,10 @@ async def test_tmux_monitor_keeps_attention_on_capture_timeout_and_recovers(
     records = [record for record in caplog.records if record.name == logger_name]
     assert not [record for record in records if record.levelno >= logging.WARNING]
     timeout_record = next(
-        record for record in records if record.getMessage().endswith("pane capture timed out")
+        record for record in records if record.getMessage().endswith("terminal capture timed out")
     )
     assert timeout_record.exc_info is None
-    assert timeout_record.__dict__["pane_id"] == "%42"
+    assert timeout_record.__dict__["terminal_id"]
     assert timeout_record.__dict__["session_id"] == session.id
     assert timeout_record.__dict__["provider"] == "claude"
 
