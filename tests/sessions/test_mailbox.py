@@ -31,6 +31,7 @@ from gobby.storage.sessions import SessionManager, system_session_id
 from gobby.storage.tasks import LocalTaskManager
 from tests._timing import drain_asyncio_tasks
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory, insert_isolated_machine
+from tests.terminals.fakes import MemoryTerminalStore, make_memory_terminal
 
 pytestmark = pytest.mark.unit
 
@@ -270,7 +271,7 @@ async def _send_project_broadcast(
 class TestMailboxDirectSend:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("fanout", [False, True])
-    async def test_parked_tmux_wakes_finish_beyond_former_shared_deadline(
+    async def test_parked_terminal_wakes_finish_beyond_former_shared_deadline(
         self,
         temp_db: HubDatabase,
         session_manager: SessionManager,
@@ -283,9 +284,18 @@ class TestMailboxDirectSend:
             _register_session(session_manager, sample_project["id"], f"recipient-{index}").id
             for index in range(3 if fanout else 1)
         ]
-        for index, recipient in enumerate(recipients):
+        terminals = MemoryTerminalStore()
+        terminal_ids: list[str] = []
+        for recipient in recipients:
+            terminal = replace(
+                make_memory_terminal(backend="native"),
+                session_id=recipient,
+                project_id=sample_project["id"],
+            )
+            terminals.rows[terminal.id] = terminal
+            terminal_ids.append(terminal.id)
             session_manager.update(
-                recipient, status="paused", terminal_context={"tmux_pane": f"%{index}"}
+                recipient, status="paused", terminal_context={"gobby_terminal_id": terminal.id}
             )
         started: set[str] = set()
         submitted: set[str] = set()
@@ -294,9 +304,8 @@ class TestMailboxDirectSend:
         first_submitted = asyncio.Event()
 
         async def send_keys(
-            pane_id: str,
+            identity: str,
             message: str,
-            tmux_socket_path: str | None,
             *,
             submit: bool = False,
             clear_before_submit: bool = False,
@@ -304,22 +313,23 @@ class TestMailboxDirectSend:
         ) -> None:
             assert message == CONTINUE_WAKE_MESSAGE
             assert submit is True
-            started.add(pane_id)
+            started.add(identity)
             if len(started) == len(recipients):
                 all_started.set()
             # Model a slow paste/Enter sequence followed by other recipients.
-            if pane_id == "%0":
+            if identity == terminal_ids[0]:
                 await release.wait()
             else:
                 await first_submitted.wait()
-            submitted.add(pane_id)
-            if pane_id == "%0":
+            submitted.add(identity)
+            if identity == terminal_ids[0]:
                 first_submitted.set()
 
         dispatcher = WakeDispatcher(
             session_manager=session_manager,
             ism_manager=InterSessionMessageManager(temp_db),
-            tmux_pane_sender=send_keys,
+            tmux_sender=send_keys,
+            terminal_manager=terminals,
         )
         send_task = asyncio.create_task(
             _mailbox(temp_db, session_manager, dispatcher).send(
@@ -343,7 +353,9 @@ class TestMailboxDirectSend:
             with monkeypatch.context() as clock_patch:
                 clock_patch.setattr(loop, "time", lambda: original_time() + 10)
                 await drain_asyncio_tasks(cycles=10)
-                assert not send_task.done(), "An outer timeout cancelled pending tmux submission"
+                assert not send_task.done(), (
+                    "An outer timeout cancelled pending terminal submission"
+                )
                 release.set()
                 result = await asyncio.wait_for(send_task, timeout=3)
         finally:
@@ -354,12 +366,12 @@ class TestMailboxDirectSend:
         assert set(result.message_ids) == {row["id"] for row in rows}
         assert len(result.message_ids) == len(recipients)
         assert [item["session_id"] for item in result.wake_results] == result.recipient_session_ids
-        assert submitted == {f"%{index}" for index in range(len(recipients))}
+        assert submitted == set(terminal_ids)
         assert result.wake_results == [
             {
                 "session_id": recipient,
                 "delivered": True,
-                "method": "tmux_pane",
+                "method": "terminal",
                 "session_status": "paused",
                 "message_id": result.message_ids[index],
             }
@@ -379,12 +391,18 @@ class TestMailboxDirectSend:
     ) -> None:
         sender = _register_session(session_manager, sample_project["id"], "sender")
         recipient = _register_session(session_manager, sample_project["id"], "recipient")
-        session_manager.update(recipient.id, terminal_context={"tmux_pane": "%7"})
-        pane_sender = AsyncMock()
+        terminal = replace(
+            make_memory_terminal(backend="native"),
+            session_id=recipient.id,
+            project_id=sample_project["id"],
+        )
+        session_manager.update(recipient.id, terminal_context={"gobby_terminal_id": terminal.id})
+        native_sender = AsyncMock()
         dispatcher = WakeDispatcher(
             session_manager=session_manager,
             ism_manager=InterSessionMessageManager(temp_db),
-            tmux_pane_sender=pane_sender,
+            tmux_sender=native_sender,
+            terminal_manager=MemoryTerminalStore(terminal),
         )
 
         result = await _mailbox(temp_db, session_manager, dispatcher).send(
@@ -409,18 +427,20 @@ class TestMailboxDirectSend:
                     "message_id": result.message_ids[0],
                 }
             ]
-            pane_sender.assert_not_awaited()
+            native_sender.assert_not_awaited()
         else:
             assert result.wake_results == [
                 {
                     "session_id": recipient.id,
                     "delivered": True,
-                    "method": "tmux_pane",
+                    "method": "terminal",
                     "session_status": "active",
                     "message_id": result.message_ids[0],
                 }
             ]
-            pane_sender.assert_awaited_once()
+            native_sender.assert_awaited_once()
+            assert native_sender.await_args is not None
+            assert native_sender.await_args.args[0] == terminal.id
         rows = temp_db.fetchall("SELECT id, priority FROM inter_session_messages")
         assert rows == [{"id": result.message_ids[0], "priority": priority}]
 

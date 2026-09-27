@@ -20,6 +20,7 @@ pub(crate) enum FailureKind {
     Http,
     Connect,
     Timeout,
+    Enqueue,
     DirectPostAfterEnqueueFailure,
     Other,
 }
@@ -32,6 +33,7 @@ impl FailureKind {
             Self::Http => "http",
             Self::Connect => "connect",
             Self::Timeout => "timeout",
+            Self::Enqueue => "enqueue",
             Self::DirectPostAfterEnqueueFailure => "direct_post_after_enqueue_failure",
             Self::Other => "other",
         }
@@ -49,6 +51,7 @@ impl From<transport::DeliveryFailureKind> for FailureKind {
     }
 }
 
+#[derive(Clone, Copy)]
 pub(crate) struct FailureContext<'a> {
     pub envelope: &'a Envelope,
     pub envelope_id: Option<&'a str>,
@@ -106,6 +109,10 @@ pub(crate) fn failure_dir() -> Result<PathBuf> {
         .join("failures"))
 }
 
+fn fallback_failure_dir() -> Result<PathBuf> {
+    Ok(gobby_core::gobby_home()?.join("hooks").join("failures"))
+}
+
 pub(crate) fn failure_inventory() -> FailureInventory {
     let failure_dir = failure_dir().unwrap_or_else(|_| {
         PathBuf::from(".gobby")
@@ -114,6 +121,9 @@ pub(crate) fn failure_inventory() -> FailureInventory {
             .join("failures")
     });
     let mut entries = read_failure_entries(&failure_dir);
+    if let Ok(fallback_dir) = fallback_failure_dir() {
+        entries.extend(read_failure_entries(&fallback_dir));
+    }
     let recent_failure_count = entries.len();
     entries.sort_by(|a, b| b.modified_at.cmp(&a.modified_at).then(a.path.cmp(&b.path)));
     entries.truncate(RECENT_FAILURE_LIMIT);
@@ -134,7 +144,17 @@ pub(crate) fn failure_inventory() -> FailureInventory {
 
 pub(crate) fn record_failure(ctx: FailureContext<'_>) -> Result<PathBuf> {
     let dir = failure_dir()?;
-    record_failure_to_dir(&dir, ctx)
+    match record_failure_to_dir(&dir, ctx) {
+        Ok(path) => Ok(path),
+        Err(primary_error) => {
+            let fallback_dir = fallback_failure_dir()?;
+            record_failure_to_dir(&fallback_dir, ctx).with_context(|| {
+                format!(
+                    "write ghook failure artifact to fallback after {dir:?} failed: {primary_error}"
+                )
+            })
+        }
+    }
 }
 
 fn record_failure_to_dir(dir: &Path, ctx: FailureContext<'_>) -> Result<PathBuf> {

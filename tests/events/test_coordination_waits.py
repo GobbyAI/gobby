@@ -398,7 +398,6 @@ async def test_protected_wakes_preserve_mailbox(
         session_manager=SessionManager(harness.db),
         ism_manager=harness.messages,
         tmux_sender=sender,
-        tmux_pane_sender=sender,
         sdk_resumer=sender,
     )
     row = harness.wait()

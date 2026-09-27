@@ -185,7 +185,8 @@ def expire_orphaned_handoff_sessions(
     Compaction is an in-place handoff: the awaiting_handoff row IS the live
     session, so this sweep only flips status. Typed instances are kept for
     revival; prune_stale_compact_workflow_instances reclaims them once the
-    revival horizon has passed.
+    revival horizon has passed. A managed native terminal must be confirmed
+    exited, with no alternate live binding, before its session can expire.
 
     Args:
         db: Database connection.
@@ -198,12 +199,31 @@ def expire_orphaned_handoff_sessions(
     with db.transaction() as conn:
         rows = conn.execute(
             f"""
-            UPDATE sessions
+            UPDATE sessions s
             SET status = 'expired', updated_at = CURRENT_TIMESTAMP
-            WHERE status = 'awaiting_handoff'
-              AND source != %s
+            WHERE s.status = 'awaiting_handoff'
+              AND s.source != %s
               AND {updated_stale_sql}
-            RETURNING *, (SELECT name FROM projects WHERE projects.id = sessions.project_id) AS project_name
+              AND (
+                  s.session_type IS DISTINCT FROM 'terminal'
+                  OR NULLIF(s.terminal_context->>'gobby_terminal_id', '') IS NULL
+                  OR (
+                      EXISTS (
+                          SELECT 1 FROM terminals t
+                          WHERE t.id::text = s.terminal_context->>'gobby_terminal_id'
+                            AND t.project_id = s.project_id
+                            AND t.machine_id = s.machine_id
+                            AND t.backend = 'native'
+                            AND t.state = 'exited'
+                      )
+                      AND NOT EXISTS (
+                          SELECT 1 FROM terminals live
+                          WHERE live.session_id = s.id
+                            AND live.state IN ('pending', 'live')
+                      )
+                  )
+              )
+            RETURNING s.*, (SELECT name FROM projects WHERE projects.id = s.project_id) AS project_name
             """,  # nosec B608 # cutoff expression is selected by storage dialect.
             (SYSTEM_SESSION_SOURCE, timeout_minutes),
         ).fetchall()

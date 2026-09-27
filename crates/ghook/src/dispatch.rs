@@ -106,16 +106,26 @@ pub(crate) fn run_gobby_owned(args: &Args) -> ExitCode {
         return emit_exit(continue_action(cfg.source, hook_type));
     }
 
-    if planned_shutdown::should_skip_dispatch(hook_type) {
-        return emit_exit(continue_action(cfg.source, hook_type));
-    }
-
     let env = build_dispatch_envelope(&cfg, hook_type, input_data, context.project_id.as_deref());
 
     let direct_post_after_enqueue_failure =
         |failure_detail: String| -> Result<HookAction, ExitCode> {
             if args.enqueue_only {
                 let enqueue_error = format!("enqueue failed: {failure_detail}");
+                if planned_shutdown::fail_open_after_enqueue_failure(hook_type) {
+                    let daemon_url = gobby_core::daemon_url::daemon_url();
+                    let _ = diagnostics::record_failure(diagnostics::FailureContext {
+                        envelope: &env,
+                        envelope_id: None,
+                        failure_kind: diagnostics::FailureKind::Enqueue,
+                        status_code: None,
+                        error: Some(&enqueue_error),
+                        response_body: None,
+                        transport_error: None,
+                        daemon_url: &daemon_url,
+                    });
+                    return Ok(continue_action(cfg.source, hook_type));
+                }
                 return Ok(action_from_failure(
                     hook_type,
                     &cfg,
@@ -229,20 +239,6 @@ pub(crate) fn run_gobby_owned(args: &Args) -> ExitCode {
                 return emit_exit(continue_action(cfg.source, hook_type));
             }
 
-            // Noncritical hooks fail open on an adapter timeout; the per-CLI
-            // matrix alone decides criticality (AGY declares none).
-            if report.is_adapter_timeout() && !is_critical {
-                return emit_exit(continue_action(cfg.source, hook_type));
-            }
-
-            if planned_shutdown::suppress_after_failed_post(
-                hook_type,
-                report.failure_kind,
-                &enqueued_path,
-            ) {
-                return emit_exit(continue_action(cfg.source, hook_type));
-            }
-
             let failure_kind = report
                 .failure_kind
                 .map(diagnostics::FailureKind::from)
@@ -255,6 +251,19 @@ pub(crate) fn run_gobby_owned(args: &Args) -> ExitCode {
                 failure_kind,
                 report.transport_error.as_deref(),
             );
+
+            // Keep the inbox file durable and log the failed POST before
+            // returning a fail-open action, including adapter timeouts.
+            if report.is_adapter_timeout() && !is_critical {
+                return emit_exit(continue_action(cfg.source, hook_type));
+            }
+            if planned_shutdown::suppress_after_failed_post(
+                hook_type,
+                report.failure_kind,
+                &enqueued_path,
+            ) {
+                return emit_exit(continue_action(cfg.source, hook_type));
+            }
 
             let detail = report
                 .response_body

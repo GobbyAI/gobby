@@ -20,7 +20,6 @@ from gobby.config.tasks import GobbyTasksConfig, TaskExpansionConfig, TaskValida
 from gobby.runner import GobbyRunner
 from gobby.runner_init.orchestration import (
     RETIRED_SYSTEM_CRON_JOBS,
-    _send_tmux_pane_wake,
     _send_tmux_session_wake,
 )
 from gobby.runner_lifecycle_subsystems import _start_system_automation_loop
@@ -534,47 +533,6 @@ class TestWakeTmuxSenders:
         kinds = [kind for kind, _payload in runtime.write_log]
         assert kinds != ["key", "text", "key"]
         assert "enter" not in [payload for _kind, payload in runtime.write_log]
-
-    @pytest.mark.asyncio
-    async def test_pane_wake_forwards_clear_before_submit(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        calls: list[tuple[str, str, list[str], bool, str | None]] = []
-
-        async def fake_submit_literal_text_to_tmux_target(
-            pane_id: str,
-            message: str,
-            *,
-            tmux_cmd: list[str],
-            clear_before_submit: bool = False,
-            cli_source: str | None = None,
-        ) -> None:
-            calls.append((pane_id, message, tmux_cmd, clear_before_submit, cli_source))
-
-        monkeypatch.setattr(
-            "gobby.agents.tmux.text_injection.submit_literal_text_to_tmux_target",
-            fake_submit_literal_text_to_tmux_target,
-        )
-
-        await _send_tmux_pane_wake(
-            "%12",
-            "Message from Gobby daemon: New activity available.",
-            "/tmp/tmux-501/gobby",
-            submit=True,
-            clear_before_submit=True,
-            cli_source="codex",
-        )
-
-        assert calls == [
-            (
-                "%12",
-                "Message from Gobby daemon: New activity available.",
-                ["tmux", "-S", "/tmp/tmux-501/gobby"],
-                True,
-                "codex",
-            )
-        ]
 
 
 class TestSetMockDefault:
