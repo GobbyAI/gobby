@@ -1926,10 +1926,32 @@ gobby pipelines run runbook-two-seat-example
 It runs against a scratch workspace and must show two placed, SRT-wrapped seats and a
 refused re-run. Researchers never touch the live daemon or its seats.
 
-SRT smoke, after P4 and D2 land, in an isolated Program Director slot:
-- a spawned bundled definition declaring `network: trusted` records
-  `sandbox_enabled=true` and backend `srt`, and a `none` definition cannot
-  reach a Trusted-list host;
+SRT smoke, after P4 and D2 land, in an isolated Program Director slot. This plan
+assigns `trusted` to no production definition (decision 14); that assignment
+stays with Josh and #22902 and is not a prerequisite of this smoke. The smoke
+brings its own sync-owned fixtures:
+- Fixtures. The slot runs its isolated daemon, with its own database and ports,
+  from a throwaway worktree of the landed commit
+  (`GOBBY_ALLOW_WORKTREE_DAEMON=1`, announced as testing). Before start, the
+  worktree's `src/gobby/install/shared/workflows/agents/` gains two uncommitted
+  files, each a copy of the bundled `default.yaml`
+  with its `name` changed:
+  - `smoke-network-trusted.yaml` adds `network: trusted`;
+  - `smoke-network-none.yaml` adds no `network` key.
+  Startup `sync_bundled_agents` writes both as sync-owned rows in the slot
+  database only. The worktree and database are discarded after the smoke, and
+  nothing is committed.
+- Probe host. The smoke derives one host from the slot's resolved policy: a host
+  in the vendored Trusted seed that is absent from the provider API domains, the
+  `api_base` host, the slot's operator `agent_sandbox.allowed_domains`,
+  `GIT_DOMAINS` and `PACKAGE_REGISTRY_DOMAINS`. It records the host and that set
+  difference with the result. If the difference is empty, the negative probe is
+  reported as not runnable, never as passed.
+- A spawned `smoke-network-trusted` records `sandbox_enabled=true` and backend
+  `srt` and reaches the probe host. A spawned `smoke-network-none` records the
+  same sandbox fields and cannot reach the probe host, while it can still reach
+  a host from the slot's operator `allowed_domains` when that list is non-empty.
+  That keeps `none` equal to the `agent_sandbox` policy, operator hosts included.
 - its WebFetch to a host outside the allowlist fails (confirms the named gap);
 - `brave-search` through the MCP proxy works;
 - a REST or CLI MCP call is rule-enforced;
@@ -2127,4 +2149,11 @@ SRT smoke, after P4 and D2 land, in an isolated Program Director slot:
     sets the existing git and registry flags, as the Researcher recommended.
   - `researcher.yaml` is no longer a target. #22902 decides each seat's value.
   - Facts come from the Researcher (gobby#14550) on 0.5.0 `8965cc963f`.
+- Program Director review of `9fb360322a`: the V1 SRT smoke brings its own
+  sync-owned fixtures, `smoke-network-trusted` and `smoke-network-none`, copied
+  from `default.yaml` into a throwaway worktree that the slot's isolated daemon
+  syncs. Nothing is committed, and no production definition or #22902
+  prerequisite is assumed. The `none` negative probe uses a derived Trusted-only
+  host that is absent from the provider, `api_base`, operator, git and registry
+  allowlists. A positive operator-host check shows `none` keeps operator policy.
 - next: Program Director design review, then routing to Josh and the Adversary.
