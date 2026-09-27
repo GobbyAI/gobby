@@ -67,7 +67,7 @@ decision-complete; every deliverable below carries its settled design.
   `gcode grep -w <symbol> src tests crates -l` on branch `0.5.0` at commit
   `569960eab3` (2026-09-10) and re-swept for 1.1, 1.3, 4.3, and 5.2 at
   `09b0f41781` (2026-09-26), with the 1.4 and 4.5 splits and the new 5.2 runner
-  Targets swept on 2026-09-27, and every consumer the code index reports for an exact
+  Targets swept at `0cc1ad1ea8` (2026-09-27), and every consumer the code index reports for an exact
   Target is in some deliverable's Targets (validation reports zero consumer-coverage
   warnings). Conventions used: a symbol the plan changes is an exact Target; a file
   that only consumes a changed symbol is a `::*` entry whose scope-reason names the
@@ -1290,7 +1290,13 @@ systemd restart policy. On 78 the supervisor does not respawn; it tees the backe
 stderr to the log, keeps the last non-empty stderr line as the refusal text, and
 reports the typed 503 with `"backend": {"state": "refused", "refusal": "<text>",
 "target": ...}` (`status` stays `unavailable`, so 1.4's ghook check is unchanged).
-gdaemon stays up holding the lease and the pid claim. `gobby start` stops waiting when
+gdaemon stays up holding the lease and the pid claim. In hub mode this blocks a standby
+from taking over while the refusal stands; that is the chosen trade: the schema refusal
+would refuse on every standby against the same database, and the per-machine refusals
+(worktree, dirty bundled content) are operator errors fixed by `gobby restart` on that
+machine. Rejected: releasing the lease on refusal (a standby would promote into the
+same schema refusal, and the refusing machine would lose its place without operator
+action). `gobby start` stops waiting when
 public health reports `refused`, prints the refusal, and exits 1 with gdaemon left up;
 `gobby status` prints `refused` and the text. Because the Python admin routes are down
 while the backend is refused or down, `gobby restart` without `--full` reads public
@@ -1368,10 +1374,11 @@ for a healthy daemon or adopts a claim.
 - 5.2.7 - `POST /api/admin/restart` keeps its admission checks, writes intent `restart`, spawns no helper, and the deleted helper functions are gone. test: `tests/servers/routes/test_admin.py::test_restart_writes_intent_without_helper`.
 - 5.2.8 - The supervisor parses a Python-written shutdown-intent marker and respawns on `restart`, exits on `stop`, and backs off on a crash. test: `crates/gdaemon/tests/lifecycle.rs::shutdown_intent_marker_drives_respawn`.
 - 5.2.9 - `gobby restart` (both forms) and `gobby cutover` refuse before any stop when `restart_start_refusal` fails, leaving the running daemon untouched, and cutover restarts with `--full`. test: `tests/cli/test_cli_daemon.py::test_restart_backend_only_runs_start_preflight`.
-- 5.2.10 - The supervisor does not respawn after a start-refusal exit, and the spawned backend holds no pid-lock descriptor. test: `crates/gdaemon/tests/lifecycle.rs::start_refusal_is_not_respawned`.
+- 5.2.10 - The supervisor does not respawn after a start-refusal exit (status 78) and reports the typed 503 with `backend.state: refused` and the refusal text, and the spawned backend holds no pid-lock descriptor. test: `crates/gdaemon/tests/lifecycle.rs::start_refusal_is_not_respawned`.
 - 5.2.11 - `gobby stop` reaches the pid-record SIGTERM fallback only after the singleton, protected-run, and handoff admissions pass. test: `tests/cli/test_daemon_handoffs.py::test_stop_fallback_runs_after_admissions`.
-- 5.2.12 - `runner.main` exits 78 for the worktree, dirty-bundled-content, and startup schema refusals and 1 for any other failure; on 78 public health reports `backend.state: refused` with the refusal text, `gobby start` prints it and exits 1, and `gobby restart` without `--full` takes the `--full` form while the backend is not serving. test: `tests/test_runner_shutdown.py::test_start_refusals_exit_78`.
-- 5.2.13 - The backend drains and exits when the supervisor's liveness pipe reaches EOF, including after gdaemon is killed with SIGKILL. test: `crates/gdaemon/tests/lifecycle.rs::backend_exits_when_supervisor_dies`.
+- 5.2.12 - `runner.main` exits 78 for the worktree, dirty-bundled-content, and startup schema refusals and 1 for any other failure. test: `tests/test_runner_shutdown.py::test_start_refusals_exit_78`.
+- 5.2.13 - `gobby start` stops waiting when public health reports `backend.state: refused`, prints the refusal text, and exits 1; `gobby restart` without `--full` takes the `--full` form while the backend is not serving. test: `tests/cli/test_cli_daemon.py::test_start_and_restart_handle_refused_backend`.
+- 5.2.14 - The runner requests the shutdown drain with intent `stop` when the supervisor's liveness pipe reaches EOF. test: `tests/test_runner_shutdown.py::test_supervisor_pipe_eof_requests_shutdown`.
 
 ### 5.3 Retire the Python lease modules [category: refactor] (depends: 5.2)
 `kind: deliverable`
@@ -1553,17 +1560,19 @@ built and installed binaries:
   gdaemon; the plan does not yet say how the probe gets that row. All four resolved
   2026-09-27 (next entry).
 - 2026-09-27: Open review points resolved under #22951 by Lane 7 (gobby#14682), from
-  source at `0.5.0` HEAD; pending PD design review. (a) 4.5 keeps the refusal: a
+  source at `0.5.0` `0cc1ad1ea8`; pending PD design review. (a) 4.5 keeps the refusal: a
   mode switch cannot yield a loadable bootstrap (`_validate_managed_database_url`
   rejects loopback DSNs in remote mode) and would strand `files_home`; login also stops
   writing `hub_daemon_url` and refuses a differing `--hub` (4.5.3).
   `docs/guides/shared-stack.md` joins 4.3 for the token-copy removal. (b) 5.2: cutover
   `--full` confirmed from `run_cutover`; start refusals become a typed `StartRefusal`
-  with exit 78, the typed 503 gains `backend.state: refused` with the refusal text,
-  `gobby start` stops waiting on it, and `gobby restart` falls back to `--full` while the
-  backend is not serving (5.2.12); the no-pid-lock-descriptor rule is confirmed with its
-  reason. New finding beyond (a)-(d): nothing stopped an orphaned backend after an
-  abrupt gdaemon death, so 5.2 adds a supervisor liveness pipe (5.2.13). (c) 1.3 splits
+  with exit 78 (5.2.12), the typed 503 gains `backend.state: refused` with the refusal
+  text (5.2.10 extended), `gobby start` stops waiting on it, and `gobby restart` falls
+  back to `--full` while the backend is not serving (5.2.13); holding the lease while
+  refused is recorded with its rejected alternative; the no-pid-lock-descriptor rule is
+  confirmed with its reason. New finding beyond (a)-(d): nothing stopped an orphaned
+  backend after an abrupt gdaemon death, so 5.2 adds a supervisor liveness pipe
+  (5.2.14). (c) 1.3 splits
   the ghook typed-503 suppression into new 1.4, re-derived against current ghook
   because `daemon_is_reachable` no longer exists (suppression keys on
   `DeliveryFailureKind`, so `post_and_cleanup` classifies the typed 503 as `Connect`;
