@@ -24,6 +24,7 @@ from gobby.sessions.compact_continuation import (
     CompactBoundaryWaiter,
     arm_compact_boundary_waiter,
     clear_handoff_compact_continuation_pending,
+    consume_and_schedule_handoff_compact_continuation,
     mark_handoff_compact_continuation_pending,
     register_compact_boundary_waiter,
     schedule_codex_handoff_compact_continuation_readiness,
@@ -31,6 +32,7 @@ from gobby.sessions.compact_continuation import (
 )
 from gobby.sessions.handoff import build_handoff_continue_prompt
 from gobby.sessions.transcript_cursor import (
+    CodexRolloutCursor,
     TranscriptObservationError,
     TranscriptTailCursor,
     TurnSettledObserver,
@@ -95,12 +97,27 @@ async def _wait_for_compact_boundary(
     cursor: TranscriptTailCursor | None,
     *,
     timeout_seconds: float | None = None,
+    codex_cursor: CodexRolloutCursor | None = None,
+    on_codex_boundary: Callable[[], bool] | None = None,
 ) -> str | None:
     """Return an error or wait for one boundary within this delivery operation."""
     deadline = asyncio.get_running_loop().time() + (
         _COMPACT_BOUNDARY_CONFIRM_SECONDS if timeout_seconds is None else timeout_seconds
     )
     while not waiter.event.is_set():
+        if codex_cursor is not None:
+            try:
+                if await asyncio.to_thread(codex_cursor.saw_fresh_compacted):
+                    if on_codex_boundary is not None:
+                        try:
+                            await asyncio.to_thread(on_codex_boundary)
+                        except Exception:
+                            logger.warning(
+                                "Failed settling Codex rollout compact boundary", exc_info=True
+                            )
+            except TranscriptObservationError:
+                logger.warning("Codex compact rollout observation ended", exc_info=True)
+                codex_cursor = None
         error = await asyncio.to_thread(_fresh_compact_error, cursor) if cursor else None
         if error is not None:
             return error
@@ -192,6 +209,17 @@ async def deliver_staged_compact_handoff(
     waiter = register_compact_boundary_waiter(
         session_id, attempt_id, handoff_record_id, getattr(session, "terminal_context", None)
     )
+    codex_cursor: CodexRolloutCursor | None = None
+
+    def command_submitting() -> None:
+        nonlocal codex_cursor
+        if source == "codex":
+            try:
+                codex_cursor = CodexRolloutCursor.at_eof(getattr(session, "transcript_path", None))
+            except TranscriptObservationError:
+                logger.warning("Codex compact rollout is unavailable for session %s", session_id)
+        arm_compact_boundary_waiter(session_id, attempt_id)
+
     continuation_pending = False
     detail: dict[str, Any] | None = None
     failure_result: dict[str, Any] | None = None
@@ -224,18 +252,28 @@ async def deliver_staged_compact_handoff(
             observe_interrupt=observe_interrupt,
             turn_settled=turn_settled,
             composer_read=composer_reader(db, source),
-            on_command_submitting=lambda: arm_compact_boundary_waiter(session_id, attempt_id),
+            on_command_submitting=command_submitting,
         )
         if not ok and not _compact_receipt_exists(db, handoff_record_id, attempt_id):
             failure_result = {"compacted": False, "reason": reason}
             if detail is not None:
                 failure_result.update(detail)
         elif ok:
+            delivery_loop = asyncio.get_running_loop()
             failure = await _wait_for_compact_boundary(
                 waiter,
                 pane,
                 before_command,
                 cursor,
+                codex_cursor=codex_cursor,
+                on_codex_boundary=lambda: consume_and_schedule_handoff_compact_continuation(
+                    db,
+                    pending_session_id=session_id,
+                    target_session=session,
+                    loop=delivery_loop,
+                    terminal_manager=terminal_manager,
+                    terminal_runtime_registry=terminal_runtime_registry,
+                ),
             )
             if (
                 failure is not None
@@ -265,6 +303,20 @@ async def deliver_staged_compact_handoff(
             "compacted": False,
             "reason": "compact boundary receipt is missing",
         }
+    if source == "codex" and not schedule_codex_handoff_compact_continuation_readiness(
+        db,
+        pane=pane,
+        pending_session_id=session_id,
+        before_command=before_command,
+        attempt_id=attempt_id,
+    ):
+        consume_and_schedule_handoff_compact_continuation(
+            db,
+            pending_session_id=session_id,
+            target_session=session,
+            terminal_manager=terminal_manager,
+            terminal_runtime_registry=terminal_runtime_registry,
+        )
     clear_queued_context(session_manager, session_id)
     return {
         "compacted": True,

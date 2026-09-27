@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from textwrap import dedent
 from types import SimpleNamespace
@@ -23,6 +23,7 @@ from gobby.sessions.clear_continuation import (
     stage_clear_attempt,
     take_clear_handoff_marker,
 )
+from gobby.sessions.compact_markers import HANDOFF_COMPACT_CONTINUE_VARIABLE
 from gobby.sessions.handoff import (
     FOUND_WORK_VARIABLE,
     HANDOFF_DISPATCH_GATE_VARIABLE,
@@ -952,6 +953,7 @@ async def test_failed_compact_payload_requires_explicit_recovery(
         session.id,
         attempt_id,
         failure_result={
+            "attempt_id": attempt_id,
             "delivery_failed": True,
             "delivery_pending": False,
             "reason": "CLI did not confirm interruption after 3 attempts",
@@ -988,6 +990,9 @@ async def test_failed_compact_payload_requires_explicit_recovery(
         recovered = await registry.call("get_handoff", {"failed_attempt_id": attempt_id})
 
     assert automatic["found"] is False
+    assert automatic["delivery_failed"] is True
+    assert automatic["attempt_id"] == attempt_id
+    assert automatic["delivery_state"] == "failed_not_deliverable"
     assert recovered == {
         "success": True,
         "found": True,
@@ -1120,6 +1125,11 @@ async def test_unconfirmed_compact_is_delivered_by_next_get_handoff_after_late_b
             "error_code": "compact_unconfirmed",
         },
     )
+    SessionVariableManager(temp_db).set_variable(
+        session.id,
+        HANDOFF_COMPACT_CONTINUE_VARIABLE,
+        {"attempt_id": attempt_id, "prompt": "Call get_handoff"},
+    )
     registry = create_session_messages_registry(session_manager=session_manager, db=temp_db)
     with session_context_for_test(session.id):
         pending = await registry.call("get_handoff", {})
@@ -1138,6 +1148,91 @@ async def test_unconfirmed_compact_is_delivered_by_next_get_handoff_after_late_b
     variables = SessionVariableManager(temp_db).get_variables(session.id)
     assert "failed_handoff_attempt" not in variables
     assert HANDOFF_DISPATCH_GATE_VARIABLE not in variables
+    assert HANDOFF_COMPACT_CONTINUE_VARIABLE not in variables
+
+
+async def test_codex_rollout_recovers_compact_without_hook_after_restart(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    tmp_path: Path,
+) -> None:
+    session = _registered_session(session_manager)
+    attempt_id = "b" * 32
+    payload = build_handoff_payload(
+        current_state="The provider compacted after an uncertain Enter.",
+        next_steps=["Resume the assigned task."],
+    )
+    staged = stage_handoff_attempt(
+        temp_db, session.id, attempt_id=attempt_id, handoff=payload, clear_session=False
+    )
+    assert restore_staged_handoff(
+        temp_db,
+        session.id,
+        attempt_id,
+        failure_result={
+            "attempt_id": attempt_id,
+            "clear_session": False,
+            "delivery_failed": True,
+            "delivery_state": "failed_not_deliverable",
+            "error_code": "compact_unconfirmed",
+        },
+    )
+    SessionVariableManager(temp_db).set_variable(
+        session.id,
+        HANDOFF_COMPACT_CONTINUE_VARIABLE,
+        {"attempt_id": attempt_id, "prompt": "Call get_handoff"},
+    )
+    authored_row = temp_db.fetchone(
+        "SELECT authored_at FROM session_handoffs WHERE id = %s", (staged.handoff_record_id,)
+    )
+    assert authored_row is not None
+    rollout = tmp_path / "codex-rollout.jsonl"
+    compacted = json.dumps(
+        {
+            "type": "compacted",
+            "timestamp": (authored_row["authored_at"] + timedelta(seconds=1)).isoformat(),
+        }
+    )
+    rollout.write_text(
+        json.dumps({"type": "session_meta", "payload": {"id": "another-session"}})
+        + "\n"
+        + compacted
+        + "\n"
+    )
+    with temp_db.transaction() as conn:
+        conn.execute(
+            "UPDATE sessions SET transcript_path = %s WHERE id = %s", (str(rollout), session.id)
+        )
+
+    registry = create_session_messages_registry(session_manager=session_manager, db=temp_db)
+    with session_context_for_test(session.id):
+        unrelated = await registry.call("get_handoff", {})
+    assert unrelated["found"] is False
+    assert unrelated["delivery_unconfirmed"] is True
+
+    rollout.write_bytes(
+        (
+            json.dumps({"type": "session_meta", "payload": {"id": session.external_id}}) + "\n"
+        ).encode()
+        + b"\xffcompacted\n"
+        + (compacted + "\n").encode()
+    )
+    with session_context_for_test(session.id):
+        delivered = await registry.call("get_handoff", {})
+        duplicate = await registry.call("get_handoff", {})
+
+    assert delivered["found"] is True
+    assert delivered["handoff"] == payload.rendered_markdown
+    assert delivered["delivery_state"] == "reconciled_late_compact"
+    assert duplicate["found"] is False
+    assert HANDOFF_COMPACT_CONTINUE_VARIABLE not in SessionVariableManager(temp_db).get_variables(
+        session.id
+    )
+    receipt = temp_db.fetchone(
+        "SELECT count(*) AS n FROM session_handoff_deliveries WHERE attempt_id = %s",
+        (attempt_id,),
+    )
+    assert receipt is not None and receipt["n"] == 1
 
 
 @pytest.mark.asyncio

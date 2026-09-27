@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 from gobby.agents.detection.registry import DetectionManifestRegistry
 from gobby.agents.idle_detector import COMPOSER_PROBE_LINES, IdleDetector
 from gobby.terminals.pane_io import (
+    ENTER_DELIVERY_UNCONFIRMED_ERROR_CODE,
     SUBMIT_VERIFY_SECONDS,
     ComposerReader,
     PaneIO,
@@ -537,6 +538,16 @@ async def _send_terminal_compaction_command(
             composer_read=composer_read,
             verify_seconds=verify_seconds,
         )
+        if (
+            not ok
+            and submit_detail is not None
+            and submit_detail.get("error_code") == ENTER_DELIVERY_UNCONFIRMED_ERROR_CODE
+        ):
+            # The text write included a newline, which may have launched /compact.
+            # Keep the marker and await a provider boundary; never type it again.
+            if schedule_continuation_readiness is not None:
+                schedule_continuation_readiness(readiness_before_command)
+            return True, None, continuation_pending, {"enter_delivery_unconfirmed": True}
         if ok:
             submit_detail = None
             ok, reason = await _confirm_compaction_prompt(

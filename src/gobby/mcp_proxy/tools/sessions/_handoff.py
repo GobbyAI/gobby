@@ -270,35 +270,41 @@ def register_handoff_tools(
         failed_marker = variables.get(FAILED_HANDOFF_VARIABLE)
         if (
             isinstance(gate, Mapping)
-            and gate.get("delivery_failed") is True
-            and gate.get("error_code") == "compact_unconfirmed"
+            and (gate.get("delivery_failed") is True or gate.get("delivery_abandoned") is True)
             and isinstance(gate.get("attempt_id"), str)
             and isinstance(failed_marker, Mapping)
             and failed_marker.get("attempt_id") == gate.get("attempt_id")
             and PENDING_HANDOFF_VARIABLE not in variables
         ):
             attempt_id = str(gate["attempt_id"])
-            result = reconcile_late_compact_handoff(session_manager.db, session_id, attempt_id)
-            if result is not None:
-                late_handoff, gate_armed = result
-                return {
-                    "success": True,
-                    "found": True,
-                    "session_id": session_id,
-                    "attempt_id": attempt_id,
-                    "delivery_state": "reconciled_late_compact",
-                    "handoff": late_handoff.markdown,
-                    "found_work": [entry.as_dict() for entry in late_handoff.found_work],
-                    "found_work_gate_armed": gate_armed,
-                }
+            if gate.get("error_code") == "compact_unconfirmed":
+                result = reconcile_late_compact_handoff(session_manager.db, session_id, attempt_id)
+                if result is not None:
+                    late_handoff, gate_armed = result
+                    return {
+                        "success": True,
+                        "found": True,
+                        "session_id": session_id,
+                        "attempt_id": attempt_id,
+                        "delivery_state": "reconciled_late_compact",
+                        "handoff": late_handoff.markdown,
+                        "found_work": [entry.as_dict() for entry in late_handoff.found_work],
+                        "found_work_gate_armed": gate_armed,
+                    }
             return {
                 "success": True,
                 "found": False,
                 "session_id": session_id,
                 "attempt_id": attempt_id,
-                "delivery_unconfirmed": True,
+                "delivery_failed": True,
+                "delivery_abandoned": gate.get("delivery_abandoned") is True,
+                "delivery_state": "failed_not_deliverable",
+                "delivery_unconfirmed": gate.get("error_code") == "compact_unconfirmed",
+                "error_code": gate.get("error_code"),
+                "reason": gate.get("reason"),
+                "retry_guidance": gate.get("retry_guidance"),
+                "recovery_guidance": gate.get("recovery_guidance"),
                 "handoff": "",
-                "message": "Compact boundary is unconfirmed; wait for it before starting another compact",
             }
         pending_marker = variables.get(PENDING_HANDOFF_VARIABLE)
         if variables.get(HANDOFF_TURN_END_PENDING_VARIABLE) is True and isinstance(
