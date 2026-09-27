@@ -141,16 +141,24 @@ def create_communications_registry(
         except ValueError as e:
             return {"success": False, "error": str(e)}
 
-    def _registered_worktree_roots(project_context: dict[str, Any] | None) -> list[Path]:
+    async def _registered_worktree_roots(project_context: dict[str, Any] | None) -> list[Path]:
         """Paths of the caller project's active or stale worktrees on this machine."""
+        from gobby.app_context import get_app_context
+
         project_id = project_context.get("id") if project_context else None
         if db is None or not project_id:
             return []
-        worktrees = LocalWorktreeManager(db).list_worktrees(
-            project_id=str(project_id),
-            status=(WorktreeStatus.ACTIVE.value, WorktreeStatus.STALE.value),
-            limit=1000,
-        )
+        list_worktrees = LocalWorktreeManager(db).list_worktrees
+        kwargs: dict[str, Any] = {
+            "project_id": str(project_id),
+            "status": (WorktreeStatus.ACTIVE.value, WorktreeStatus.STALE.value),
+            "limit": 1000,
+        }
+        app_context = get_app_context()
+        if app_context is not None and app_context.db_executor is not None:
+            worktrees = await app_context.run_db(list_worktrees, **kwargs)
+        else:
+            worktrees = await asyncio.to_thread(list_worktrees, **kwargs)
         return [Path(worktree.worktree_path) for worktree in worktrees]
 
     @registry.tool(
@@ -180,8 +188,10 @@ def create_communications_registry(
             )
             if configured_root is None:
                 return {"success": False, "error": "Attachment workspace is unavailable"}
-            allowed_roots = [configured_root, *_registered_worktree_roots(project_context)]
-            if not any(_is_within(resolved_path, root) for root in allowed_roots):
+            if not _is_within(resolved_path, configured_root) and not any(
+                _is_within(resolved_path, root)
+                for root in await _registered_worktree_roots(project_context)
+            ):
                 return {
                     "success": False,
                     "error": f"Attachment path is outside the workspace: {file_path}",

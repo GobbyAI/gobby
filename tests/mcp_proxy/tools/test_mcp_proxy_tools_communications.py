@@ -1,8 +1,11 @@
 """Tests for gobby-communications MCP tool registry."""
 
+import asyncio
+import threading
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -682,6 +685,80 @@ async def test_send_attachment_accepts_registered_worktree_file(
 
     assert result["success"] is True
     assert mock_manager.send_attachment.await_args.kwargs["file_path"] == evidence.resolve()
+
+
+@pytest.mark.asyncio
+async def test_send_attachment_root_file_skips_worktree_lookup(
+    mock_manager: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.communications.get_project_context",
+        lambda: {"id": "project-1", "project_path": str(tmp_path)},
+    )
+    failing_db = MagicMock()
+    failing_db.fetchall.side_effect = RuntimeError("hub unavailable")
+    evidence = tmp_path / "evidence.txt"
+    evidence.write_text("root evidence")
+    mock_manager.send_attachment.return_value = (
+        MagicMock(status="sent", error=None),
+        MagicMock(),
+    )
+    tool = create_communications_registry(
+        mock_manager, db=failing_db, workspace_root=tmp_path
+    ).get_tool("send_attachment")
+    assert tool is not None
+
+    result = await tool(channel="telegram", file_path=str(evidence))
+
+    assert result["success"] is True
+    failing_db.fetchall.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_send_attachment_worktree_lookup_does_not_block_event_loop(
+    mock_manager: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "checkout"
+    root.mkdir()
+    worktree = tmp_path / "wt-lane"
+    worktree.mkdir()
+    evidence = worktree / "evidence.txt"
+    evidence.write_text("worktree evidence")
+    started = threading.Event()
+    release = threading.Event()
+
+    class SlowWorktreeManager:
+        def __init__(self, _db: object) -> None:
+            pass
+
+        def list_worktrees(self, **_kwargs: object) -> list[SimpleNamespace]:
+            started.set()
+            release.wait(timeout=5)
+            return [SimpleNamespace(worktree_path=str(worktree))]
+
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.communications.LocalWorktreeManager", SlowWorktreeManager
+    )
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.communications.get_project_context",
+        lambda: {"id": "project-1", "project_path": str(root)},
+    )
+    mock_manager.send_attachment.return_value = (
+        MagicMock(status="sent", error=None),
+        MagicMock(),
+    )
+    tool = create_communications_registry(
+        mock_manager, db=MagicMock(), workspace_root=root
+    ).get_tool("send_attachment")
+    assert tool is not None
+
+    pending = asyncio.create_task(tool(channel="telegram", file_path=str(evidence)))
+    assert await asyncio.to_thread(started.wait, 5) is True
+    assert pending.done() is False
+    release.set()
+    result = await asyncio.wait_for(pending, timeout=5)
+
+    assert result["success"] is True
 
 
 @pytest.mark.asyncio
