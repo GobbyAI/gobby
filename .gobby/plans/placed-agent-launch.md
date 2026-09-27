@@ -273,7 +273,8 @@ before the agent is placed or rolled back. A launch terminal whose kill fails st
      at `run_pipeline`, because pipeline `mcp` steps call the proxy with
      `enforce_workflow=False` and skip the rule engine (VERIFIED by R2:
      `workflows/pipeline/handlers.py`, `tool_execution.py`).
-   - Runbook pipelines are started by the operator (CLI) or by the PD.
+   - Runbook pipelines start through Josh's model: the operator asks the
+     Assistant, and the Assistant starts the pipeline.
 10. **gclient reconciliation.** gclient must not show a placed agent twice or unplaced.
     - A `created` event for a terminal that a known pane already holds opens nothing
       new. This is today's behaviour in `apply_event`.
@@ -349,7 +350,7 @@ before the agent is placed or rolled back. A launch terminal whose kill fails st
       (https://code.claude.com/docs/en/cloud-environments#default-allowed-domains),
       fetch date and sha256, refreshed only by a manual command that prints a diff
       and lands through review; the daemon never fetches it. That profile work is
-      #22899's (deferred D1).
+      deferred (D1): it amends the #22899 plan and needs its own implementation.
     - The Trusted list is a developer-dependency allowlist, not web-research
       coverage: it has no search engines or general research sites. The cloud
       environment's bypasses (a separate GitHub proxy, MCP connectors through
@@ -586,8 +587,8 @@ New API (all names are new):
     The mark and the seat entry are still cleared. The row holds no terminal and is
     out of flight, so the seat check ignores it and the next `sweep_dead_panes`
     prunes it. That is the fallback `_roll_back` documents. `reserve` logs the
-    rollback failure at WARNING with the pane id and `exc_info`, as
-    `WorkspaceOps._kill` logs a failed kill, then raises the original error.
+    rollback failure at WARNING with the phase, the pane id and the exception
+    type name only (the sanitized form below), then raises the original error.
 - `bind(reserved, terminal_id)`: calls `set_pane_terminal(owns_terminal=True)` and
   emits `tab.created` or `pane.added` with the bound pane. It leaves the in-flight
   mark and the seat entry in place, so a guarded workspace mutation (1.5) refuses
@@ -616,8 +617,8 @@ New API (all names are new):
   - In a `finally`, the mark and the seat entry are cleared.
 
   A kill, removal or publish failure therefore never skips the mark clear. Each
-  failed step is logged at WARNING with the pane id, the terminal id and
-  `exc_info`, and release never raises, so the boundary's reply stays the spawn
+  failed step is logged at WARNING with the phase, the pane id, the terminal id
+  and the exception type name, and release never raises, so the boundary's reply stays the spawn
   outcome. A row that a failed `remove_pane` leaves behind is out of flight once the
   mark is cleared, and its terminal is inactive, so the next `sweep_dead_panes`
   prunes it. In a placed spawn `cleanup_failed_spawn` has normally already settled
@@ -668,8 +669,8 @@ without the others.
 - 1.1.9 - A `create_tab` or `add_pane` failure, and a `rename_pane` failure after `add_pane` committed, each leave no pane row, tab row, in-flight mark or seat entry, and a later reserve of the same seat succeeds. test: `tests/terminals/test_workspace_agent_panes.py::test_reserve_insert_failure_leaves_nothing`.
 - 1.1.10 - A reserve cancelled while its insert is running waits for the insert to settle, removes any committed row, clears the mark and the seat entry, and re-raises `CancelledError`. A later reserve of the same seat succeeds. test: `tests/terminals/test_workspace_agent_panes.py::test_reserve_cancelled_before_return_leaves_nothing`.
 - 1.1.11 - Release kills an owned terminal that is still `pending` or `live` and then removes the pane, kills nothing when that terminal is already inactive, and when the kill fails, or the terminal is already `orphaned`, keeps the pane bound to the `orphaned` terminal so a same-seat preflight is `seat_live`. After that terminal settles `exited`, `sweep_dead_panes` removes the pane and the seat is free. test: `tests/terminals/test_workspace_agent_panes.py::test_release_kills_only_an_active_owned_terminal`.
-- 1.1.12 - With an active owned terminal, release still kills it and clears the mark and the seat entry when the kill raises, when `remove_pane` raises, when the removal publish raises, and when the row is already gone. Each failure is logged with the pane and terminal ids, release does not raise, and after a successful cleanup has marked the terminal inactive release issues no kill. test: `tests/terminals/test_workspace_agent_panes.py::test_release_steps_are_independent`.
-- 1.1.13 - When the rollback's `remove_pane` fails, reserve logs that failure with the pane id, clears the mark and the seat entry, and raises the original error. The residual unbound row is not a live seat, a same-seat reserve succeeds, and the next `sweep_dead_panes` removes the row. test: `tests/terminals/test_workspace_agent_panes.py::test_reserve_rollback_failure_leaves_sweepable_residue`.
+- 1.1.12 - With an active owned terminal, release still kills it and clears the mark and the seat entry when the kill raises, when `remove_pane` raises, when the removal publish raises, and when the row is already gone. Each failure is logged with the phase, the pane and terminal ids and the exception type name, a synthetic secret in the exception message is absent from the log, release does not raise, and after a successful cleanup has marked the terminal inactive release issues no kill. test: `tests/terminals/test_workspace_agent_panes.py::test_release_steps_are_independent`.
+- 1.1.13 - When the rollback's `remove_pane` fails, reserve logs that failure with the pane id and the exception type name and without the exception message (a synthetic secret marker is absent from the log), clears the mark and the seat entry, and raises the original error. The residual unbound row is not a live seat, a same-seat reserve succeeds, and the next `sweep_dead_panes` removes the row. test: `tests/terminals/test_workspace_agent_panes.py::test_reserve_rollback_failure_leaves_sweepable_residue`.
 - 1.1.14 - `settle` clears the mark and the seat entry after a successful reply, and until then a guarded close, move or swap of the bound pane is refused `busy`. test: `tests/terminals/test_workspace_agent_panes.py::test_mark_held_until_settle`.
 - 1.1.15 - A split whose beside pane, or that pane's tab, moved to another tab, workspace or project after preflight is refused `not_found` at reserve and inserts nothing. test: `tests/terminals/test_workspace_agent_panes.py::test_split_reserve_refuses_moved_target`.
 
@@ -990,7 +991,7 @@ Consumers unchanged:
 **Acceptance:**
 
 - 1.4.1 - A refused preflight (`invalid_placement`, `seat_live`, `not_found`, `forbidden`) creates no isolation, no child session, no agent run, no terminal and no pane. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_refused_placement_has_no_side_effects`.
-- 1.4.2 - A placed spawn with a sandbox config that is not SRT, or not enabled, is refused with `sandbox_required` before any side effect. Unplaced spawns are unaffected. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_placed_launch_requires_managed_srt`.
+- 1.4.2 - A placed spawn with a sandbox config that is not SRT, or not enabled, is refused with `sandbox_required` before any side effect. Leaf-local: until 1.8 lands, unplaced spawns are unaffected; 1.8 extends the refusal to every launch. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_placed_launch_requires_managed_srt`.
 - 1.4.3 - A provider or SRT preparation failure that `finalize_executed_spawn` returns as `success: false` releases the pane, runs `cleanup_failed_spawn` exactly once, and never starts the provider. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_wrap_failure_refuses_and_releases_pane`.
 - 1.4.4 - A later returned failure (terminal liveness or start-run) releases the pane, kills the bound terminal, and runs `cleanup_failed_spawn` exactly once. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_late_returned_failure_releases_pane_once`.
 - 1.4.5 - An exception, a `CancelledError` and a bind `busy` conflict each release the pane, and release still runs when a `cleanup_failed_spawn` step fails. When cleanup's terminate step did not reach the terminal, release kills the recorded launch terminal, or marks it orphaned when the kill fails. After a `busy` conflict release kills nothing. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_exceptions_and_cancellation_release_pane`.
@@ -1165,9 +1166,18 @@ Changes:
 - `cleanup_failed_spawn` runs its steps independently: record the spawn error,
   terminate, forget the run, terminalize the run, clean runtime state, clean
   created isolation, delete the child session. Each failed step is logged at
-  WARNING with the run id and `exc_info`, and cleanup never raises. When the
+  WARNING with the phase, the run id, the terminal id when known and the
+  exception type name, and cleanup never raises. When the
   terminate step returned false, the isolation step keeps created isolation and
   logs why.
+- Sanitized failure logs (1.1 and 1.6). Spawn, bind, release and cleanup
+  exceptions can carry prompt text, environment values or command lines, and
+  #22962 (`682d7cf957`) removed that exposure from terminal cleanup. These exits
+  log `type(exc).__name__` with the phase and the run, pane and terminal ids.
+  They never pass `exc_info`, the exception message or a traceback. Each test
+  that drives one of these failures raises an exception whose message holds a
+  synthetic secret marker and asserts the type name is in the captured log and
+  the marker is not, as `tests/agents/test_terminal_cleanup.py::test_terminal_cleanup_failure_logs_do_not_include_exception_text` does.
 - `SpawnCleanupOnce`, a small class in `_failure_cleanup.py`, owns cleanup for one
   spawn attempt. `spawn_agent_impl` creates one per call and passes it to every
   `cleanup_failed_spawn` call site, including `finalize_executed_spawn` and
@@ -1226,7 +1236,7 @@ Consumers unchanged:
 - 1.6.2 - A failed runtime kill of a native pid-less `pending` terminal, and of a tmux terminal, leaves the row `orphaned` and listed and keeps created isolation; a successful kill settles it and cleanup removes created isolation. test: `tests/mcp_proxy/tools/spawn_agent/test_failure_cleanup.py::test_failed_kill_orphans_and_keeps_isolation`.
 - 1.6.3 - A failure inside `finalize_executed_spawn`'s cleanup followed by `_spawn_failure` runs cleanup once. test: `tests/mcp_proxy/tools/spawn_agent/test_failure_cleanup.py::test_cleanup_runs_once_per_attempt`.
 - 1.6.4 - A cancellation during cleanup, and a second cancellation during a later step, let every step finish once and re-raise the first cancellation; a cancellation after cleanup settled starts nothing. test: `tests/mcp_proxy/tools/spawn_agent/test_failure_cleanup.py::test_cleanup_survives_cancellation`.
-- 1.6.5 - With each step failing in turn, every later step still runs, each failure is logged with the run id, and cleanup does not raise. test: `tests/mcp_proxy/tools/spawn_agent/test_failure_cleanup.py::test_cleanup_steps_are_independent`.
+- 1.6.5 - With each step failing in turn, every later step still runs, each failure is logged with the phase, the run id and the exception type name, a synthetic secret in the exception message is absent from the log, and cleanup does not raise. test: `tests/mcp_proxy/tools/spawn_agent/test_failure_cleanup.py::test_cleanup_steps_are_independent`.
 - 1.6.6 - Every production `cleanup_failed_spawn` call passes the attempt's `SpawnCleanupOnce`. symbol: `SpawnCleanupOnce`. file: `src/gobby/mcp_proxy/tools/spawn_agent/_failure_cleanup.py`.
 
 ### 1.7 Placed resume re-places against current state [category: code] (depends: 1.4)
@@ -1571,15 +1581,26 @@ the managed wrapper stubbed at the SRT binary boundary.
 ## D1 Research profile and Trusted seed (depends: 1.8)
 `kind: deferred`
 
-#22899 owns sandbox profiles. Decision 13 amends it: `research` becomes SRT with the
-vendored Trusted seed plus the Gobby hosts, profiles may widen but never disable,
-its decision 3 is superseded and its decisions 6 and 15 become moot. 1.8.4 is
-verifiable only once that profile mechanism exists.
+#22899 ("Plan per-agent sandbox profiles") is a closed planning task that
+delivered an architecture document and no code. It does not deliver the
+per-definition `sandbox_profile` mechanism, the `research` profile or the
+vendored Trusted seed, so it cannot discharge 1.8.4. Decision 13 amends the
+#22899 design: `research` becomes SRT with the vendored Trusted seed plus the
+Gobby hosts, profiles may widen but never disable, its decision 3 is superseded
+and its decisions 6 and 15 become moot. That work needs an amendment to the
+#22899 plan and an implementation leaf. 1.8.4 is verifiable only once both land.
+
+The `task_ref` is a placeholder. No task is created while this plan is drafted
+or reviewed. At expansion, apply creates the `needs-planning` tail task under
+this plan's epic with `deferred-from` provenance and a `blocked-by` edge to
+1.8. The Program Director then routes the #22899 amendment and its
+implementation through that task, and the coordinator writes the created ref
+over the placeholder at finalization.
 
 ```yaml
 deferral:
-  task_ref: "#22899"
-  reason: "External prerequisite: the per-definition sandbox_profile mechanism and the research profile are delivered by the amended #22899 plan."
+  task_ref: "TBD-22899-amendment-research-profile"
+  reason: "Future implementation: the per-definition sandbox_profile mechanism, the research profile and the vendored Trusted seed need a #22899 plan amendment and an implementation leaf; closed planning task #22899 delivered no code."
   owner: "program-director"
   original_acceptance_items:
     - 1.8.4
@@ -1761,7 +1782,8 @@ SRT smoke, after D1 and D2 land, in an isolated Program Director slot:
   runs under managed SRT with no unsandboxed fallback (new 1.8); gclient hand
   launches and shells are out of scope; no seat migration. Researcher evidence:
   gobby#14550, `.gobby/plans/research/researcher-srt-egress-2026-09-27.md` rev 2.
-- typed deferrals: D1 (#22899 research profile and Trusted seed), D2 (#22961
+- typed deferrals: D1 (research profile and Trusted seed, a placeholder for a
+  future #22899 amendment and implementation), D2 (#22961
   loopback enforcement).
 - Program Director rulings (2026-09-27): the Trusted seed goes on `research` only,
   specified by #22899 (D1), and the default profile keeps its required hosts;
@@ -1781,4 +1803,12 @@ SRT smoke, after D1 and D2 land, in an isolated Program Director slot:
   1.6. Gate unit cases control the verifier per case; one new gate case runs the
   real verifier against an isolated empty `GOBBY_HOME` (1.8.6). e2e and
   integration suites are never stubbed.
+- Program Director consolidated review of `e0c3a08b89` (2026-09-27): D1 no
+  longer credits closed planning task #22899 with the implementation. It is a
+  placeholder that expansion turns into a tail task. The 1.1 and 1.6 failure
+  logs are sanitized, logging the exception type name and ids, never
+  `exc_info`, message or traceback, and their tests assert a synthetic secret
+  is absent (the #22962 precedent). Decision 9 names the operator, Assistant
+  and pipeline model. 1.4.2's unplaced clause is marked leaf-local ahead of
+  1.8.
 - next: Program Director design review, then routing to Josh and the Adversary.
