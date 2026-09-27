@@ -93,10 +93,21 @@ light `#e5e7e3`, and its informational text is subtext, dark `#b0b2ae` and light
   event stream, with or without panes. That is a debug-build cost. It did not
   change what was drawn.
 
-## Findings for #22944
+## Findings and their owners
 
-None of these touches the four #22941 items. All are in gclient code that #22944
-already owns, so they are fixed there with no new task.
+None of these touches the four #22941 items. All five were open when this
+report was written.
+
+| Finding | Owner | Disposition |
+| --- | --- | --- |
+| 1. Projects fetch never retried | #22944 | Open. The fix is in slice 1, not yet landed. |
+| 2. Connecting timer never ticks | #22944 | Open. Slice 1 deletes the only display that reads the clock. |
+| 3. Log ignores GOBBY_HOME | #22944 | Open. The fix is in slice 1, not yet landed. |
+| 4. First-frame stall | #22944 | Open. Root-caused after the run. The fix is in slice 1, not yet landed. |
+| 5. Automatic shell tab vanished | #22883 | Open. Handed to the session that owns automatic shell creation. |
+
+#22883 is "gclient-spawned shells are adopted rather than owned, so quit, crash
+and workspace close leave live zsh rows in every sidebar".
 
 Confirmed in code:
 
@@ -119,7 +130,7 @@ Confirmed in code:
    prefs honour `GOBBY_HOME`. The scratch-home QA clients appended their startup
    and teardown lines to the real `~/.gobby/logs/gclient.log`.
 
-Observed, not yet explained:
+Observed live:
 
 4. **The first-frame stage can stall indefinitely.** While the daemon was slow
    (project and session fetches and `terminal_attach` requests timing out), one
@@ -127,8 +138,10 @@ Observed, not yet explained:
    and never completed. A second start drew the tab with no pane at all. A start
    into a healthy daemon completed first frame in 116 ms. Under #22944 slice 1 the
    splash is the whole frame until startup finishes. A stalled stage would then
-   leave only the splash on screen with no status line. Slice 1 needs a way out,
-   either an attach failure or a stage deadline, before it ships.
+   leave only the splash on screen with no status line. The cause, found in code
+   after the run: the live loop ends the stage only once the focused pane has
+   drawn a frame (`crates/gclient/src/app/live_loop.rs`). A pane whose attach was
+   refused, or is waiting to retry, never draws one.
 5. **An automatically created shell tab vanished.** In the dark run, the shell
    tab gclient opened in the empty workspace was removed on the daemon side at
    23:28:16Z (workspace `602fe4ef-4b94-4720-a901-069bdad2e543`) with no log
