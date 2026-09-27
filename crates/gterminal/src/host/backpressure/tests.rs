@@ -592,6 +592,26 @@ impl AsyncWrite for FailingWriter {
     }
 }
 
+struct StalledFlushWriter;
+
+impl AsyncWrite for StalledFlushWriter {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        Poll::Ready(Ok(buf.len()))
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Poll::Pending
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+}
+
 #[tokio::test]
 async fn write_outbound_distinguishes_disconnect_from_peer_error() {
     let (tx, rx) = mpsc::channel(4);
@@ -603,7 +623,79 @@ async fn write_outbound_distinguishes_disconnect_from_peer_error() {
     tx.try_send(json!({"ok": true})).expect("enqueue");
     drop(tx);
     let errored = write_outbound(FailingWriter, rx, Duration::from_millis(50)).await;
-    assert_eq!(errored, ControlClose::Overflow);
+    assert_eq!(errored, ControlClose::Io);
+}
+
+#[tokio::test]
+async fn write_outbound_bounds_flush_by_control_deadline() {
+    let (tx, rx) = mpsc::channel(1);
+    tx.try_send(json!({"ok": true})).expect("enqueue");
+    drop(tx);
+    let closed = timeout(
+        Duration::from_secs(1),
+        write_outbound(StalledFlushWriter, rx, Duration::from_millis(10)),
+    )
+    .await
+    .expect("control close is bounded");
+    assert_eq!(closed, ControlClose::Deadline);
+}
+
+#[cfg(not(feature = "vt-engine"))]
+#[tokio::test]
+async fn native_broadcast_skips_unchanged_semantic_frames_per_attachment() {
+    let state = test_state(HostConfig::default());
+    insert_native_slot(&state, "ht-native", 4, 5).await;
+    let (first_id, first) = state
+        .attach("ht-native", None, RenderEncoding::SemanticFrame, 4, 5)
+        .await
+        .expect("first viewer");
+    let (second_id, second) = state
+        .attach("ht-native", None, RenderEncoding::SemanticFrame, 3, 6)
+        .await
+        .expect("second viewer");
+
+    state.broadcast_frames().await;
+    assert!(
+        matches!(first.try_pop(), Some(ServerMessage::Frame(frame)) if (frame.height, frame.width) == (4, 5))
+    );
+    first.note_drain();
+    assert!(
+        matches!(second.try_pop(), Some(ServerMessage::Frame(frame)) if (frame.height, frame.width) == (3, 6))
+    );
+    second.note_drain();
+    state.broadcast_frames().await;
+    assert!(first.try_pop().is_none());
+    assert!(second.try_pop().is_none());
+
+    state.set_scroll(first_id, 0).await.expect("scroll reset");
+    state.broadcast_frames().await;
+    assert!(matches!(first.try_pop(), Some(ServerMessage::Frame(_))));
+    first.note_drain();
+    assert!(second.try_pop().is_none());
+
+    state
+        .set_viewport(second_id, 5, 7)
+        .await
+        .expect("resize viewer");
+    state.broadcast_frames().await;
+    assert!(first.try_pop().is_none());
+    assert!(
+        matches!(second.try_pop(), Some(ServerMessage::Frame(frame)) if (frame.height, frame.width) == (5, 7))
+    );
+    second.note_drain();
+
+    let (_, reconnected) = state
+        .attach("ht-native", None, RenderEncoding::SemanticFrame, 4, 5)
+        .await
+        .expect("reconnected viewer");
+    state.broadcast_frames().await;
+    assert!(matches!(
+        reconnected.try_pop(),
+        Some(ServerMessage::Frame(_))
+    ));
+    reconnected.note_drain();
+    assert!(first.try_pop().is_none());
+    assert!(second.try_pop().is_none());
 }
 
 /// A frame of the attachment's viewport, as the frame pass renders one, with

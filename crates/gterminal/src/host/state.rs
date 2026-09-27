@@ -18,8 +18,8 @@ use super::helpers::{err, list_rows, resolved_spawn_cwd, s, spawn_fingerprint};
 use super::spawn::{spawn_prepared, PreparedChild};
 use crate::protocol::render_ansi::BlitEncoder;
 use crate::protocol::{
-    validate_dimensions, ObservationReason, ObservationState, RenderEncoding, ServerMessage,
-    LIFECYCLE_RESERVED_SLOTS,
+    validate_dimensions, FrameData, ObservationReason, ObservationState, RenderEncoding,
+    ServerMessage, LIFECYCLE_RESERVED_SLOTS,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -122,6 +122,8 @@ pub struct Attachment {
     pub desynced: bool,
     pub delta_len: usize,
     pub delta_bytes: usize,
+    /// Last semantic frame queued for this attachment's viewport.
+    pub(crate) last_semantic_frame: Option<FrameData>,
     /// Per-attachment diff state for `terminal_ansi` frames.
     pub(crate) encoder: BlitEncoder,
 }
@@ -474,6 +476,7 @@ impl HostState {
                 desynced: true,
                 delta_len: 0,
                 delta_bytes: 0,
+                last_semantic_frame: None,
                 encoder: BlitEncoder::new(),
             },
         );
