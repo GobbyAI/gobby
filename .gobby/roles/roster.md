@@ -13,6 +13,8 @@
 | lane-manager.md | gobby#14556 |
 | code-reviewer.md | gobby#14527 |
 | code-reviewer.md | gobby#14641 |
+| code-reviewer.md | gobby#14680 |
+| code-reviewer.md | gobby#14681 |
 | researcher.md | gobby#14550 |
 | researcher.md | gobby#14640 |
 | archivist.md | gobby#14308 |
