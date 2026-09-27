@@ -421,30 +421,24 @@ async def evaluate_spawn(
                 )
             )
 
-    # Terminal availability check (all agents use the runtime registry backend)
+    # The runner owns the native runtime registry used by real spawns.
+    registry = getattr(runner, "terminal_runtime_registry", None)
     try:
-        from gobby.agents.tmux import get_tmux_session_manager
-
-        if not get_tmux_session_manager().is_available():
-            result.items.append(
-                EvaluationItem(
-                    layer="runtime",
-                    level="warning",
-                    code="NO_TERMINALS_AVAILABLE",
-                    message="tmux is not available — agent may fail to spawn",
-                )
-            )
-        else:
-            result.items.append(
-                EvaluationItem(
-                    layer="runtime",
-                    level="info",
-                    code="TERMINALS_AVAILABLE",
-                    message="Available terminals: ['tmux']",
-                )
-            )
-    except Exception:
-        logger.debug("Failed to check terminal availability", exc_info=True)
+        native_runtime = registry.resolve("native") if registry is not None else None
+    except KeyError:
+        native_runtime = None
+    result.items.append(
+        EvaluationItem(
+            layer="runtime",
+            level="info" if native_runtime is not None else "warning",
+            code="TERMINALS_AVAILABLE" if native_runtime is not None else "NO_TERMINALS_AVAILABLE",
+            message=(
+                "Native terminal runtime is configured"
+                if native_runtime is not None
+                else "Native terminal runtime is unavailable — agent may fail to spawn"
+            ),
+        )
+    )
 
     # ---- Layer 5: Pipeline Evaluation (delegates to evaluate_pipeline_definition) ----
     if effective_workflow and workflow_loader is not None:

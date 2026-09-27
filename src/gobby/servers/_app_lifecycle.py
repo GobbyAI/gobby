@@ -390,10 +390,10 @@ def create_lifespan(
             except Exception as e:
                 logger.warning("Failed to stop SessionLivenessMonitor: %s", e)
 
-        monitor = getattr(app.state, "interactive_attention_monitor", None)
-        if monitor is not None:
+        attention_monitor = getattr(app.state, "interactive_attention_monitor", None)
+        if attention_monitor is not None:
             try:
-                await monitor.stop()
+                await attention_monitor.stop()
                 app.state.interactive_attention_monitor = None
                 logger.debug("InteractiveAttentionMonitor stopped")
             except Exception as e:

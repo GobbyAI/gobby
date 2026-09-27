@@ -37,7 +37,6 @@ from gobby.terminal_ownership import (
     inspect_foreground_ownership,
     log_pane_ownership_decision,
     resolve_pane_ownership,
-    terminal_session_identity,
 )
 from gobby.terminals.lookup import manager_for_terminal_context
 from gobby.utils import spawn
@@ -130,6 +129,7 @@ class SessionLivenessMonitor:
         self._task: asyncio.Task[None] | None = None
         # session_id -> monotonic timestamp when we handled it
         self._recently_handled: dict[str, float] = {}
+        self._legacy_tmux_fenced_ids: set[str] = set()
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -192,17 +192,12 @@ class SessionLivenessMonitor:
         # 2. Query active sessions with terminal_context
         active_sessions = await asyncio.to_thread(self._get_active_terminal_sessions)
         if not active_sessions:
+            self._legacy_tmux_fenced_ids.clear()
             return
 
-        inventories = await asyncio.to_thread(
-            self._get_tmux_inventories_by_socket,
-            active_sessions,
+        self._legacy_tmux_fenced_ids.intersection_update(
+            record.session_id for record in active_sessions
         )
-
-        pane_groups: dict[
-            tuple[str, str, str],
-            tuple[list[_TerminalLivenessRecord], _TmuxLivenessInventory],
-        ] = {}
 
         for record in active_sessions:
             if record.session_id in self._recently_handled:
@@ -238,31 +233,13 @@ class SessionLivenessMonitor:
 
             has_tmux_target = bool(record.tmux_pane or getattr(record, "tmux_window_id", None))
             if has_tmux_target:
-                socket = self._socket_identity(record)
-                inventory = inventories.get(socket)
-                if inventory is None:
-                    # A failed tmux probe is inconclusive, so preserve lifecycle
-                    # and title state until the next sweep.
-                    continue
-                repaired = await self._repair_tmux_target(record, inventory)
-                if repaired is None:
-                    if await self._expire_record(record, now):
-                        await self._release_tmux_title(record)
-                    continue
-                record = repaired
-                identity = terminal_session_identity(record)
-                if identity is None:
-                    # A live tmux target is sufficient lifecycle evidence even
-                    # when persisted socket metadata cannot form a group key.
-                    continue
-
-                records, existing_inventory = pane_groups.setdefault(
-                    identity,
-                    ([], inventory),
-                )
-                records.append(record)
-                if existing_inventory is not inventory:
-                    logger.warning("Conflicting tmux socket classification for %s", identity)
+                if record.session_id not in self._legacy_tmux_fenced_ids:
+                    logger.warning(
+                        "Session %s has a legacy tmux target; liveness is fenced until "
+                        "an operator resolves its terminal ownership",
+                        record.session_id,
+                    )
+                    self._legacy_tmux_fenced_ids.add(record.session_id)
                 continue
 
             inspection = await asyncio.to_thread(
@@ -280,13 +257,6 @@ class SessionLivenessMonitor:
                 record.session_id,
             )
             await self._expire_record(record, now)
-
-        for records, inventory in pane_groups.values():
-            await self._handle_live_pane_group(
-                records,
-                now,
-                inventory=inventory,
-            )
 
     async def _handle_live_pane_group(
         self,

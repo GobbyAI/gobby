@@ -5211,11 +5211,11 @@ async def test_restart_preserve_set_keeps_host_and_active_run_pids() -> None:
     )
 
     assert preserved_pids == {1_001, 1_002, 2_000}
-    runner.db_executor.run.assert_awaited_once_with(
-        runner_lifecycle_processes._list_active_agent_runs_once,
-        runner,
-        include_fenced=True,
-    )
+    runner.db_executor.run.assert_awaited_once()
+    args, kwargs = runner.db_executor.run.await_args
+    assert args[0].__name__ == "_list_active_agent_runs_once"
+    assert args[1] is runner
+    assert kwargs == {"include_fenced": True}
 
 
 async def test_restart_preserve_set_returns_none_when_run_enumeration_fails() -> None:

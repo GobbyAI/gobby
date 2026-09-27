@@ -192,8 +192,8 @@ async def test_scheduled_task_is_retained_and_multiline_prompt_is_sent_once() ->
 
     with (
         patch(
-            "gobby.sessions.compact_continuation.manager_for_terminal_context",
-            return_value=tmux,
+            "gobby.sessions.compact_continuation._continuation_pane",
+            return_value=TmuxPaneIO(tmux, "%12"),
         ),
         patch(
             "gobby.sessions.compact_continuation.SUBMIT_VERIFY_SECONDS",
@@ -250,18 +250,15 @@ async def test_shutdown_stops_readiness_watcher_and_preserves_pending_marker(
             loop=loop,
         )
 
-    with patch(
-        "gobby.sessions.compact_continuation.manager_for_terminal_context", return_value=tmux
-    ):
-        scheduled = await asyncio.to_thread(schedule) if from_worker else schedule()
-        assert scheduled
-        await asyncio.wait_for(snapshot_started.wait(), timeout=2)
-        # Exercise the daemon's cancellation-resistant finalizer, which runs
-        # before its database pool closes even when graceful shutdown is cancelled.
-        cancellation = asyncio.CancelledError()
-        result = await _settle_finalizers_under_cancellation(
-            cast(GobbyRunner, SimpleNamespace()), cancellation
-        )
+    scheduled = await asyncio.to_thread(schedule) if from_worker else schedule()
+    assert scheduled
+    await asyncio.wait_for(snapshot_started.wait(), timeout=2)
+    # Exercise the daemon's cancellation-resistant finalizer, which runs
+    # before its database pool closes even when graceful shutdown is cancelled.
+    cancellation = asyncio.CancelledError()
+    result = await _settle_finalizers_under_cancellation(
+        cast(GobbyRunner, SimpleNamespace()), cancellation
+    )
 
     assert result is cancellation
     assert snapshot_cancelled.is_set()
@@ -1093,8 +1090,8 @@ class TestPullPromptFallback:
 
         with (
             patch(
-                "gobby.sessions.compact_continuation.manager_for_terminal_context",
-                return_value=tmux,
+                "gobby.sessions.compact_continuation._continuation_pane",
+                return_value=TmuxPaneIO(tmux, "%12"),
             ),
             patch("gobby.sessions.compact_continuation.SUBMIT_VERIFY_SECONDS", 0.0),
             patch(
@@ -1124,8 +1121,8 @@ class TestPullPromptFallback:
         )
         with (
             patch(
-                "gobby.sessions.compact_continuation.manager_for_terminal_context",
-                return_value=_FakeTmux(),
+                "gobby.sessions.compact_continuation._continuation_pane",
+                return_value=TmuxPaneIO(_FakeTmux(), "%12"),
             ),
             patch(
                 "gobby.sessions.compact_continuation._type_handoff_compact_continuation",
@@ -1224,3 +1221,15 @@ def test_continuation_pane_uses_unbound_gterm_named_by_context() -> None:
 
     assert isinstance(pane, RuntimePaneIO)
     assert (pane.backend, pane.target) == ("native", terminal_id)
+
+
+def test_continuation_pane_rejects_legacy_tmux_context() -> None:
+    session = SimpleNamespace(id="session-1", terminal_context={"tmux_pane": "%12"})
+    manager = MagicMock()
+    manager.get_live_for_session.return_value = None
+    registry = MagicMock()
+
+    pane = _continuation_pane(session, "session-1", manager, registry)
+
+    assert pane is None
+    registry.resolve.assert_not_called()

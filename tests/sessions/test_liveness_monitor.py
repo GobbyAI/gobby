@@ -417,42 +417,26 @@ class TestPaneOwnershipLifecycle:
         assert record.status == "active"
 
     @pytest.mark.asyncio
-    async def test_missing_target_expires_session_then_releases_title(
+    async def test_legacy_tmux_target_is_fenced_without_probe_or_expiry(
         self,
         monitor: SessionLivenessMonitor,
+        caplog: pytest.LogCaptureFixture,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         owner = _record("owner")
-        socket = monitor._socket_identity(owner)
 
-        with (
-            patch.object(
-                monitor,
-                "_get_active_terminal_sessions",
-                return_value=[owner],
-            ),
-            patch.object(
-                monitor,
-                "_get_tmux_inventories_by_socket",
-                return_value={socket: _TmuxLivenessInventory(set(), set(), {}, {}, {})},
-            ),
-            patch.object(
-                monitor,
-                "_expire_session",
-                new=AsyncMock(return_value=True),
-            ) as expire,
-            patch.object(
-                monitor,
-                "_release_tmux_title",
-                new=AsyncMock(),
-            ) as release,
-        ):
-            await monitor._check_sessions()
+        def forbidden(*_args: Any, **_kwargs: Any) -> None:
+            raise AssertionError("legacy tmux target was probed or mutated")
 
-        assert expire.await_count == 1
-        assert expire.await_args_list == [call("owner")]
-        assert release.await_count == 1
-        assert release.await_args_list == [call(owner)]
-        assert owner.tmux_pane == "%1"
+        monkeypatch.setattr(monitor, "_get_active_terminal_sessions", lambda: [owner])
+        monkeypatch.setattr(monitor, "_get_tmux_inventories_by_socket", forbidden)
+        monkeypatch.setattr(monitor, "_expire_session", forbidden)
+        monkeypatch.setattr(monitor, "_release_tmux_title", forbidden)
+        await monitor._check_sessions()
+        await monitor._check_sessions()
+
+        assert monitor._legacy_tmux_fenced_ids == {"owner"}
+        assert sum("liveness is fenced" in record.getMessage() for record in caplog.records) == 1
 
     @pytest.mark.asyncio
     async def test_tmux_probe_failure_preserves_state(

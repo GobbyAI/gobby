@@ -454,10 +454,6 @@ async def test_finalise_kills_remain_on_exit_session_and_agrees_with_terminal_li
     ws_server.terminal_manager = terminals
     ws_server.lease_registry = TerminalLeaseRegistry(daemon_epoch="test-epoch")
     ws_server.session_manager = session_manager
-    ws_server._tmux_mgr_gobby = tmux_manager
-    ws_server._tmux_mgr_default = TmuxSessionManager(
-        TmuxConfig(socket_name=f"gobby-empty-{uuid4().hex}", config_file="/dev/null")
-    )
     ws = MockWebSocket()
     await ws_server._handle_terminal_list(ws, {"type": "terminal_list", "request_id": "proof"})
     page = ws.last_message()

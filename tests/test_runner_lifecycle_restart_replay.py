@@ -241,9 +241,14 @@ class TestAgentRestartReconciliation:
             state="pending",
             agent_run_id=run.id,
         )
+        metadata_updates: dict[str, dict[str, object]] = {}
+
+        def merge_resume_metadata(run_id: str, metadata: dict[str, object]) -> None:
+            metadata_updates[run_id] = metadata
+
         storage = SimpleNamespace(
-            list_active_for_machine=MagicMock(return_value=[]),
-            merge_resume_metadata=MagicMock(),
+            list_active_for_machine=lambda *_args, **_kwargs: [],
+            merge_resume_metadata=merge_resume_metadata,
             update_runtime=MagicMock(),
         )
         runner = self._runner(storage, provisional_runs=[run])
@@ -256,13 +261,12 @@ class TestAgentRestartReconciliation:
             count = await _resolve_provisional_daemon_resumes(runner)
 
         assert count == 0
-        storage.merge_resume_metadata.assert_called_once_with(
-            run.id,
-            {
+        assert metadata_updates == {
+            run.id: {
                 "reconciliation_pending": True,
                 "reconciliation_blocked_reason": "provisional_native_terminal_pending",
             },
-        )
+        }
         storage.update_runtime.assert_not_called()
         finalize.assert_not_awaited()
         runner.agent_lifecycle_monitor.terminalize_cancelled_run.assert_not_awaited()

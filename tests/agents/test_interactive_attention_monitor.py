@@ -6,6 +6,7 @@ import logging
 import threading
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -43,7 +44,7 @@ async def test_active_runs_are_paginated_on_worker_thread() -> None:
         del machine_id
         calls.append((limit, offset))
         worker_threads.add(threading.get_ident())
-        return runs[offset : offset + limit]
+        return cast(list[AgentRun], runs[offset : offset + limit])
 
     with (
         patch("gobby.storage.agents.LocalAgentRunManager") as arm_class,
@@ -96,7 +97,7 @@ async def test_lost_host_skips_remaining_native_snapshots_then_recovers(
     session_manager.list.return_value = sessions
     runtime = LifecycleRuntime(backend="native", snapshot_error=HostConnectionLost("closed"))
     monitor = _monitor(session_manager, runtime)
-    monitor._attention_manager.list_blocked.return_value = []
+    cast(Mock, monitor._attention_manager).list_blocked.return_value = []
 
     with (
         patch.object(monitor, "_sync_interactive_attention", new_callable=AsyncMock) as sync,
@@ -129,7 +130,7 @@ async def test_unexpected_capture_failure_still_reports_each_session(
     session_manager.list.return_value = sessions
     runtime = LifecycleRuntime(backend="native", snapshot_error=RuntimeError("bad snapshot"))
     monitor = _monitor(session_manager, runtime)
-    monitor._attention_manager.list_blocked.return_value = []
+    cast(Mock, monitor._attention_manager).list_blocked.return_value = []
 
     with caplog.at_level(logging.WARNING, logger="gobby.agents.interactive_attention_monitor"):
         await monitor._check_attention_panes(active_runs=[])

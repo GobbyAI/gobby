@@ -3,6 +3,8 @@
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from gobby.agents.interactive_attention_monitor import InteractiveAttentionMonitor
 from gobby.sessions.liveness_monitor import SessionLivenessMonitor, _TerminalLivenessRecord
 from gobby.terminal_ownership import OwnershipState
@@ -10,7 +12,9 @@ from tests.agents.detection_test_support import BundledDetectionRegistry
 from tests.terminals.fakes import FakeRuntime, runtime_registry
 
 
-async def test_interactive_attention_waits_for_startup_reconciliation() -> None:
+async def test_interactive_attention_waits_for_startup_reconciliation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     ready = False
     monitor = InteractiveAttentionMonitor(
         detection_registry=BundledDetectionRegistry(),
@@ -18,17 +22,22 @@ async def test_interactive_attention_waits_for_startup_reconciliation() -> None:
         registry=runtime_registry(FakeRuntime()),
         startup_ready=lambda: ready,
     )
-    with (
-        patch.object(monitor, "_list_active_runs", new=AsyncMock(return_value=[])) as runs,
-        patch.object(monitor, "_check_attention_panes", new=AsyncMock()) as attention,
-    ):
-        await monitor._check_attention()
-        runs.assert_not_awaited()
-        attention.assert_not_awaited()
-        ready = True
-        await monitor._check_attention()
-    runs.assert_awaited_once()
-    attention.assert_awaited_once_with(active_runs=[])
+    events: list[object] = []
+
+    async def list_runs(_arm: object) -> list[object]:
+        events.append("listed")
+        return []
+
+    async def check_attention(*, active_runs: list[object]) -> None:
+        events.append(("checked", active_runs))
+
+    monkeypatch.setattr(monitor, "_list_active_runs", list_runs)
+    monkeypatch.setattr(monitor, "_check_attention_panes", check_attention)
+    await monitor._check_attention()
+    assert events == []
+    ready = True
+    await monitor._check_attention()
+    assert events == ["listed", ("checked", [])]
 
 
 async def test_session_liveness_waits_for_startup_reconciliation() -> None:
