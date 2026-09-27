@@ -417,12 +417,19 @@ fn list_travel(rows: &[SidebarRow], body: Rect) -> usize {
         .unwrap_or(0)
 }
 
-/// The longest overrun of an Agents title drawn in the section `area`, the
-/// only rows that scroll, for `ViewState::title_travel`.
-pub fn agents_title_travel<W: WorkspaceView>(ws: &W, chrome: &Chrome, area: Rect) -> usize {
-    let rows = agent_rows(ws, chrome);
-    let (_, body) = section_list(area, SidebarSection::Agents, &rows, chrome);
-    list_travel(&rows, body)
+/// The longest overrun of a scrolling sidebar title, for
+/// `ViewState::title_travel`: an Agents task line or a Projects worktree
+/// name, each measured in its section of `rects`.
+pub fn title_travel<W: WorkspaceView>(ws: &W, chrome: &Chrome, rects: &[Rect; 4]) -> usize {
+    [SidebarSection::Projects, SidebarSection::Agents]
+        .into_iter()
+        .map(|section| {
+            let rows = section_rows(ws, chrome, section);
+            let (_, body) = section_list(rects[section.index()], section, &rows, chrome);
+            list_travel(&rows, body)
+        })
+        .max()
+        .unwrap_or(0)
 }
 
 /// The scrollbar lane: the section's last column beside `body`.

@@ -50,14 +50,14 @@
 23 : -/-*34 -/-+d*24 -/-*1 yellow/-*1 accent/-*1 -/-*58 accent/-*1
 24 | Terminals                                                 ││                                                          │|
 24 : -/surface0*1 subtext0/surface0+b*9 -/surface0*23 -/-*1 -/-+d*24 -/-*1 yellow/-*1 accent/-*1 -/-*58 accent/-*1
-25 | ○ term-beta                                               ││                                                          │|
-25 : -/surface_dim*1 overlay0/surface_dim*1 overlay0/surface_dim+d*1 text/surface_dim+b*9 -/surface_dim*21 -/-*1 -/-+d*24 -/-*1 yellow/-*1 accent/-*1 -/-*58 accent/-*1
-26 |   gclient                                                 ││                                                          │|
-26 : -/surface_dim*3 subtext0/surface_dim*7 -/surface_dim*23 -/-*1 -/-+d*24 -/-*1 yellow/-*1 accent/-*1 -/-*58 accent/-*1
-27 | ○ term-gamma                                              ││                                                          │|
-27 : -/-*1 overlay0/-*1 overlay0/-+d*1 subtext0/-*10 -/-*21 -/-+d*24 -/-*1 yellow/-*1 accent/-*1 -/-*58 accent/-*1
-28 |   gclient                                                 ││                                                          │|
-28 : -/-*3 subtext0/-*7 -/-*24 -/-+d*24 -/-*1 yellow/-*1 accent/-*1 -/-*58 accent/-*1
+25 | ○ term-beta              gclient                          ││                                                          │|
+25 : -/surface_dim*1 overlay0/surface_dim*1 overlay0/surface_dim+d*1 text/surface_dim+b*9 -/surface_dim*14 overlay0/surface_dim*7 -/-*1 -/-+d*24 -/-*1 yellow/-*1 accent/-*1 -/-*58 accent/-*1
+26 |                                                           ││                                                          │|
+26 : -/surface_dim*33 -/-*1 -/-+d*24 -/-*1 yellow/-*1 accent/-*1 -/-*58 accent/-*1
+27 | ○ term-gamma             gclient                          ││                                                          │|
+27 : -/-*1 overlay0/-*1 overlay0/-+d*1 subtext0/-*10 -/-*13 overlay0/-*7 -/-*1 -/-+d*24 -/-*1 yellow/-*1 accent/-*1 -/-*58 accent/-*1
+28 |                                                           ││                                                          │|
+28 : -/-*34 -/-+d*24 -/-*1 yellow/-*1 accent/-*1 -/-*58 accent/-*1
 29 |                                                           ││                                                          │|
 29 : -/-*34 -/-+d*24 -/-*1 yellow/-*1 accent/-*1 -/-*58 accent/-*1
 30 |                                                           ││                                                          │|

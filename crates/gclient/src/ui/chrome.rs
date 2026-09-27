@@ -12,7 +12,7 @@ use crate::daemon::{DaemonError, LayoutAxis, LayoutNode};
 use crate::theme::{Palette, Theme, ThemeKind};
 use crate::ui::chrome_render::ChromeHits;
 use crate::ui::dialogs::Dialog;
-use crate::ui::hit::{Hit, SidebarSection};
+use crate::ui::hit::Hit;
 use crate::ui::keybind_help::KeybindHelpState;
 use crate::ui::keymap::{Keymap, HERDR_PREFIX};
 use crate::ui::navigator::NavigatorState;
@@ -750,8 +750,8 @@ impl Chrome {
         let sidebar_divider_x = (self.sidebar.pinned && sidebar_rect.width > 0)
             .then(|| self.sidebar.edge_x(sidebar_rect));
         let sidebar_section_rects = sidebar::section_rects(ws, self, sidebar_rect);
-        let agents_rect = sidebar_section_rects[SidebarSection::Agents.index()];
-        let title_travel = title_travel.max(sidebar::agents_title_travel(ws, self, agents_rect));
+        let title_travel =
+            title_travel.max(sidebar::title_travel(ws, self, &sidebar_section_rects));
         self.view = ViewState {
             menu_bar_rect,
             menu_bar_line,

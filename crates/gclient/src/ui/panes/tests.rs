@@ -1,6 +1,5 @@
 use super::*;
 use crate::app::Workspace;
-use crate::ui::hit::SidebarSection;
 use crate::ui::keymap::Keymap;
 use crate::ui::settings::TitleScrolling;
 use crate::ui::sidebar;
@@ -143,7 +142,7 @@ fn bottom_metadata_renders_with_and_without_pane_gaps() {
                 "gaps={pane_gaps}: bottom edge {edge:?}"
             );
             assert!(
-                edge.ends_with(" gclient 0:0:1:2 "),
+                edge.ends_with(" 0:0:1:2 "),
                 "gaps={pane_gaps}: bottom edge {edge:?}"
             );
         }
@@ -281,8 +280,7 @@ fn header_titles_share_the_sidebar_period() {
     chrome.compute_view(&ws, area);
     let info = info_of(&ws, &chrome, "term-alpha");
     let own = pane_chrome::title_travel(&ws, ws.pane(alpha), &info);
-    let agents = chrome.view.sidebar_section_rects[SidebarSection::Agents.index()];
-    let side = sidebar::agents_title_travel(&ws, &chrome, agents);
+    let side = sidebar::title_travel(&ws, &chrome, &chrome.view.sidebar_section_rects);
     assert!(own > 0 && side > own, "header {own}, sidebar {side}");
     assert_eq!(chrome.view.title_travel, side);
 

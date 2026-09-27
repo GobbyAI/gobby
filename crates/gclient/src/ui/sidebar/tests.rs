@@ -184,8 +184,8 @@ fn expanded_sidebar_draws_the_bands_and_records_the_hits() {
     assert_eq!(lines[9], "   gpt-6-sol");
     assert!(blank(lines[22]), "{:?}", lines[22]);
     assert_eq!(lines[23], " Terminals");
-    assert_eq!(lines[24], " ○ term-beta");
-    assert_eq!(lines[25], "   gclient");
+    assert_eq!(lines[24], " ○ term-beta      gclient");
+    assert!(blank(lines[25]), "{:?}", lines[25]);
     // No footer: the terminals run to the last row.
     assert!(blank(lines[39]), "{:?}", lines[39]);
     // The edge column is the bare drag lane: no row writes into it.

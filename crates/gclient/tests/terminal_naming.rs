@@ -296,6 +296,6 @@ async fn an_attention_row_for_an_unknown_terminal_reads_as_its_short_id() {
         "the terminal-less entry drew a row: {rows:?}"
     );
     assert_eq!(rows[0].label, "nvim");
-    assert_eq!(rows[0].detail, "gclient");
+    assert_eq!(rows[0].detail, "", "no directory reported");
     assert_eq!(named, [&ABSENT[..8]]);
 }
