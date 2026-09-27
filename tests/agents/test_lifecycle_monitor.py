@@ -4449,6 +4449,7 @@ class TestCheckInitializationTimeout:
             source="qwen",
             project_id=sample_project["id"],
         )
+        assert session_manager.update(session_id=child.id, external_id=child.id) is not None
 
         run = _make_terminal_run(
             agent_run_manager,
@@ -4500,6 +4501,7 @@ class TestCheckInitializationTimeout:
             source="qwen",
             project_id=sample_project["id"],
         )
+        assert session_manager.update(session_id=child.id, external_id=child.id) is not None
         run = agent_run_manager.create(
             parent_session_id=sample_session["id"],
             provider="claude",
@@ -4553,6 +4555,7 @@ class TestCheckInitializationTimeout:
             source="codex",
             project_id=sample_project["id"],
         )
+        assert session_manager.update(session_id=child.id, external_id=child.id) is not None
         task_manager = LocalTaskManager(temp_db)
         task, run, mutexes = _make_dispatched_stage_run(
             agent_run_manager=agent_run_manager,
@@ -4567,10 +4570,16 @@ class TestCheckInitializationTimeout:
         assert run.terminal_id is not None
         agent_run_manager.update_runtime(run.id, pid=999)
         assert TerminalManager(temp_db).mark_exited(run.terminal_id) is not None
-        backdated = (datetime.now(UTC) - timedelta(seconds=200)).isoformat()
+        launch = datetime.now(UTC) - timedelta(seconds=200)
+        created = launch - timedelta(seconds=12)
         temp_db.execute(
             "UPDATE agent_runs SET started_at = %s WHERE id = %s",
-            (backdated, run.id),
+            (launch.isoformat(), run.id),
+        )
+        temp_db.execute(
+            "UPDATE sessions SET created_at = %s, updated_at = %s, last_activity = %s "
+            "WHERE id = %s",
+            (created.isoformat(), launch.isoformat(), created.isoformat(), child.id),
         )
         completion_registry = CompletionEventRegistry()
         completion_registry.register(run.id, [sample_session["id"]])
@@ -4619,6 +4628,8 @@ class TestCheckInitializationTimeout:
             "unverifiable",
             "terminal_orphaned",
             "session_activity",
+            "last_activity_only",
+            "provider_registration",
             "terminal_rebound",
             "pid_changed",
             "run_completed",
@@ -4641,6 +4652,7 @@ class TestCheckInitializationTimeout:
             source="claude",
             project_id=sample_project["id"],
         )
+        assert session_manager.update(session_id=child.id, external_id=child.id) is not None
         run = _make_terminal_run(
             agent_run_manager,
             sample_session,
@@ -4669,6 +4681,16 @@ class TestCheckInitializationTimeout:
                 temp_db.execute(
                     "UPDATE sessions SET updated_at = %s WHERE id = %s",
                     ((datetime.now(UTC) + timedelta(seconds=10)).isoformat(), child.id),
+                )
+            elif scenario == "last_activity_only":
+                temp_db.execute(
+                    "UPDATE sessions SET last_activity = %s WHERE id = %s",
+                    ((datetime.now(UTC) + timedelta(seconds=10)).isoformat(), child.id),
+                )
+            elif scenario == "provider_registration":
+                temp_db.execute(
+                    "UPDATE sessions SET external_id = %s WHERE id = %s",
+                    ("native-provider-session", child.id),
                 )
             elif scenario == "terminal_rebound":
                 temp_db.execute(
@@ -4713,6 +4735,7 @@ class TestCheckInitializationTimeout:
             source="codex",
             project_id=sample_project["id"],
         )
+        assert session_manager.update(session_id=child.id, external_id=child.id) is not None
         task_manager = LocalTaskManager(temp_db)
         task, run, mutexes = _make_dispatched_stage_run(
             agent_run_manager=agent_run_manager,
@@ -4755,21 +4778,26 @@ class TestCheckInitializationTimeout:
         assert updated.status == "error"
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "signal", ["provider_registration", "transcript_count", "recent_last_activity"]
+    )
     async def test_skips_initialized_agent(
         self,
+        signal: str,
         monitor: AgentLifecycleMonitor,
         agent_run_manager: LocalAgentRunManager,
         session_manager: SessionManager,
         sample_session: dict,
         sample_project: dict,
     ) -> None:
-        """Agent whose session was updated is NOT killed."""
+        """Confirmed child activity prevents startup recovery."""
         child = session_manager.register(
             external_id="child-init",
             machine_id="21000000-0000-4000-8000-000000000001",
             source="qwen",
             project_id=sample_project["id"],
         )
+        assert session_manager.update(session_id=child.id, external_id=child.id) is not None
 
         run = _make_terminal_run(
             agent_run_manager,
@@ -4786,13 +4814,27 @@ class TestCheckInitializationTimeout:
             (backdated, run.id),
         )
 
-        # Simulate agent activity: backdate created_at so the touch() delta > 5s
+        # A provider ID or confirmed activity is enough, even inside the old 5s grace.
         old_created = (datetime.now(UTC) - timedelta(seconds=30)).isoformat()
         session_manager.db.execute(
             "UPDATE sessions SET created_at = %s WHERE id = %s",
             (old_created, child.id),
         )
-        session_manager.touch(child.id)
+        if signal == "provider_registration":
+            assert (
+                session_manager.update(session_id=child.id, external_id="native-provider-id")
+                is not None
+            )
+        elif signal == "transcript_count":
+            assert session_manager.update_stats(child.id, message_count=1) is not None
+        else:
+            session_manager.db.execute(
+                "UPDATE sessions SET last_activity = %s WHERE id = %s",
+                (
+                    (datetime.fromisoformat(old_created) + timedelta(seconds=1)).isoformat(),
+                    child.id,
+                ),
+            )
 
         monitor._session_manager = session_manager
 
@@ -4865,6 +4907,7 @@ class TestCheckInitializationTimeout:
             source="qwen",
             project_id=sample_project["id"],
         )
+        assert session_manager.update(session_id=child.id, external_id=child.id) is not None
         run = _make_terminal_run(
             agent_run_manager,
             sample_session,
@@ -4879,8 +4922,9 @@ class TestCheckInitializationTimeout:
             (started, run.id),
         )
         session_manager.db.execute(
-            "UPDATE sessions SET created_at = %s, updated_at = %s WHERE id = %s",
-            (session_time, session_time, child.id),
+            "UPDATE sessions SET created_at = %s, updated_at = %s, last_activity = %s "
+            "WHERE id = %s",
+            (session_time, session_time, session_time, child.id),
         )
         monitor._session_manager = session_manager
 
@@ -4913,6 +4957,7 @@ class TestCheckInitializationTimeout:
             source="qwen",
             project_id=sample_project["id"],
         )
+        assert session_manager.update(session_id=child.id, external_id=child.id) is not None
 
         run = _make_terminal_run(
             agent_run_manager,

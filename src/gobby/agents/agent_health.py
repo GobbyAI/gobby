@@ -345,13 +345,23 @@ class AgentHealthMonitor:
                 if not session or not session.updated_at or not session.created_at:
                     continue
 
-                updated = parse_stored_datetime(session.updated_at)
                 created = parse_stored_datetime(session.created_at)
-                if updated is None or created is None:
+                if created is None:
                     continue
+                # Provisional child setup changes updated_at before the CLI starts.
+                # Only provider registration or confirmed activity proves initialization.
                 if (
-                    updated - created
-                ).total_seconds() > self._tmux_config.init_activity_grace_seconds:
+                    session.external_id != session.id
+                    or session.context_injected
+                    or _session_counter(session, "message_count")
+                    or _session_counter(session, "turn_count")
+                    or _session_counter(session, "tool_call_count")
+                    or (run.turns_used or 0) > 0
+                    or (run.tool_calls_count or 0) > 0
+                ):
+                    continue
+                activity = parse_stored_datetime(session.last_activity)
+                if activity is not None and activity > created:
                     continue
 
                 logger.warning(
@@ -389,6 +399,7 @@ class AgentHealthMonitor:
                                 expected_child_session_id=session_id,
                                 expected_session_created_at=session.created_at,
                                 expected_session_updated_at=session.updated_at,
+                                expected_session_last_activity=session.last_activity,
                                 expected_terminal_id=run.terminal_id,
                             )
                             if transitioned is not None:
