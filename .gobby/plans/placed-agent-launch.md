@@ -899,6 +899,22 @@ A held claim means no path can settle or free the row until a restart empties
 the registry and reconcile recovers it (1.9). The claim is released only after
 the final settlement write succeeds.
 
+Success means a confirmed settlement, not merely no exception. The owner reads
+the row back under `settle_lock` after each final write and releases only when
+it shows the required result:
+- `exited`: the row is `exited`. A row already `exited` counts as settled.
+- `fail_pending_attempt`: the row is `failed` for this attempt generation. A row
+  that never committed (stage `create`) counts as settled.
+- a kept orphan: the row is `orphaned` and carries the recorded locator, host
+  epoch and process. `record_orphan_identity` is an `orphaned`-only CAS, so when
+  the kill is unproven and the row is still `pending` or `live` (because
+  `mark_kill_failed` exhausted its retries), the owner retries
+  `mark_kill_failed` first, then records the identity, then verifies.
+
+A CAS that matches no row, or a read-back in any other state, keeps the claim
+held and is logged at WARNING. The row is then left for restart recovery rather
+than released unrecorded to ordinary reaping.
+
 The owner never calls `kill_spawn_key`. While the claim is held:
 - `terminal_kill` and `cleanup_failed_spawn`'s terminate step (1.6) refuse
   through 1.9.
@@ -981,7 +997,7 @@ Consumers unchanged:
 - 1.2.7 - The claim is taken before `create_pending` is dispatched and released after a successful promote or a bind failure. While it is held, `cleanup_failed_spawn` and `terminal_kill` each report not settled, leave the row `orphaned` and start no runtime terminate. A prepare slower than `spawn_in_doubt_seconds` is reaped by neither reaper. test: `tests/agents/test_spawn_executor_placement_bind.py::test_in_doubt_claim_spans_prepare`.
 - 1.2.8 - A late prepare failure is not proof. A tmux session created before a failing dimension query, and a native terminal created on the host whose spawn response was lost, are each found and killed with proof before the row settles `exited`. A native probe that cannot reach the host leaves the row `orphaned`. test: `tests/agents/test_spawn_executor_placement_bind.py::test_late_prepare_failure_requires_proven_absence`.
 - 1.2.9 - With a binder, each exit E1-E14 either releases the claim inline or hands it to exactly one owner, and none leaves the id held without an owner. Each case is one parametrized row. Cancellation cases cancel the caller repeatedly while the stage's worker is still running, and the owner awaits that worker's real completion. A `create_pending` whose row commits after the cancellation gets that row settled by the owner. The E12 cases (observer bind failure, `CommitSpawnRefusedError`, native commit error, lost CAS), with a kill that raises or is swallowed, leave the row unterminalized until the owner's proof, and the owner kills through the `prepared` identity. test: `tests/agents/test_spawn_executor_placement_bind.py::test_every_exit_releases_or_hands_off_the_claim`.
-- 1.2.10 - An injected failure of `mark_kill_failed` still lets the owner consume the prepare and make its kill decision. A final settlement write that fails after three retries leaves the claim held and the row unsettled. On a timeout the row is `orphaned` while the prepare is still unresolved. test: `tests/agents/test_spawn_executor_placement_bind.py::test_owner_contains_storage_failures`.
+- 1.2.10 - An injected failure of `mark_kill_failed` still lets the owner consume the prepare and make its kill decision. A final settlement write that fails after three retries leaves the claim held and the row unsettled. With `mark_kill_failed` failing on every retry and the kill unproven, a `record_orphan_identity` CAS that matches no row keeps the claim held, and the row keeps its prepared identity for restart recovery. A final `exited` or `fail_pending_attempt` read back in the wrong state also keeps the claim, and an already-`exited` row releases. On a timeout the row is `orphaned` while the prepare is still unresolved. test: `tests/agents/test_spawn_executor_placement_bind.py::test_owner_contains_storage_failures`.
 
 ### 1.3 One daemon-scoped reserver reaches spawn_agent [category: code] (depends: 1.1)
 `kind: deliverable`
@@ -1810,8 +1826,9 @@ Changes:
   inherits from the mixin.
 - `TerminalSettlementMixin.record_orphan_identity(terminal_id, *, locator,
   host_epoch, process)` is a CAS on `orphaned` only. `SupportsIdentityLookup`, the
-  protocol reconcile takes its manager as, gains `record_orphan_identity` and
-  `settle_lock`, so the new reconcile calls stay inside its declared surface. It records every identity
+  protocol reconcile takes its manager as, already declares `settle_lock` and
+  gains `record_orphan_identity`, so the new reconcile call stays inside its
+  declared surface. It records every identity
   known, so that a later `terminal_kill` can address the session or reap its
   process group.
 - `reconcile_host_inventory`:
@@ -2608,4 +2625,12 @@ brings its own sync-owned fixtures:
     record Granularity decisions.
   - Storage retry: the plan states what each failed write leaves. The
     unconditional release in 1.2.4 is scoped to a successful final write.
+- Plan Adversary round on `bd306027eb` (gobby#14579). PAL-10, the promotion
+  deferral, the shielded tasks, stage ordering, the protocol Target and the
+  granularity repairs are resolved. PAL-07 storage boundary: accepted. A final
+  write counts only when the read-back row confirms the required state and
+  identity. A CAS that matches no row keeps the claim held, and the owner
+  retries the orphan transition before recording the identity (1.2.10).
+  `SupportsIdentityLookup` wording corrected: only `record_orphan_identity` is
+  new.
 - next: Adversary review of the repaired candidate.
