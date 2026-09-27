@@ -372,15 +372,40 @@ class AgentHealthMonitor:
                         killed += 1
                     continue
                 elif run.pid:
-                    if not await pid_matches_agent_identity(
+                    identity = await inspect_agent_process_identity(
                         run.pid,
                         provider=run.provider,
                         session_id=session_id,
-                    ):
+                    )
+                    if identity in ("mismatched", "exited"):
+                        services = self._terminal_services
+                        if run.terminal_id and services is not None:
+                            transitioned = await self._run_db(
+                                self._agent_run_manager.fail_uninitialized_with_exited_terminal,
+                                run.id,
+                                error=error_msg,
+                                expected_pid=run.pid,
+                                expected_started_at=run.started_at,
+                                expected_child_session_id=session_id,
+                                expected_session_created_at=session.created_at,
+                                expected_session_updated_at=session.updated_at,
+                                expected_terminal_id=run.terminal_id,
+                            )
+                            if transitioned is not None:
+                                await self._cleanup_handler.cleanup_agent(
+                                    run,
+                                    terminal_payload=error_msg,
+                                    preterminalized_run=transitioned,
+                                )
+                                killed += 1
+                                continue
+                    if identity != "matched":
                         logger.warning(
-                            "Skipping init-timeout cleanup for run %s: PID %s does not match identity",
+                            "Skipping init-timeout cleanup for run %s: PID %s identity is %s "
+                            "or managed terminal is not confirmed exited",
                             run.id,
                             run.pid,
+                            identity,
                         )
                         continue
                     try:

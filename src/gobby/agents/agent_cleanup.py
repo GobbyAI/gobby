@@ -544,18 +544,19 @@ class AgentCleanupHandler:
         is_success: bool = False,
         is_timeout: bool = False,
         terminal_reason: AgentRunTerminalReason | None = None,
+        preterminalized_run: AgentRun | None = None,
     ) -> None:
         """Full cleanup chain for an agent that needs cleanup.
 
         ``terminal_payload`` is stored as the success result or the failure/
         timeout error, depending on the terminal transition.
         """
-        terminal_run = run
-        transitioned = False
+        terminal_run = preterminalized_run or run
+        transitioned = preterminalized_run is not None
         notification_result: dict[str, str] | None = None
         notification_message = ""
 
-        if run.status in ("pending", "running"):
+        if not transitioned and run.status in ("pending", "running"):
             tool_calls_count, turns_used = await self._completion_stats_for_run(run)
             if is_success:
                 completion_result = await self._run_db(
@@ -614,6 +615,10 @@ class AgentCleanupHandler:
 
         if transitioned:
             if not is_success:
+                if preterminalized_run is not None:
+                    # Prompt delivery may have killed the pane while its durable row
+                    # is still live. Settle it before task recovery checks liveness.
+                    await self._resource_cleaner._close_tmux_session(terminal_run)
                 await self._task_recovery.recover_task_from_terminal_agent(
                     terminal_run, outcome="failed"
                 )

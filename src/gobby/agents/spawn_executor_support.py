@@ -4,7 +4,7 @@ import asyncio
 import inspect
 import json
 import logging
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from typing import TYPE_CHECKING
 
 import psycopg
@@ -171,7 +171,7 @@ def _record_resume_launch_details(
 
         LocalAgentRunManager(db).update_resume_metadata(agent_run_id, metadata)
     except psycopg.DatabaseError as exc:
-        logger.warning("Failed to persist resume launch metadata: %s", exc)
+        logger.warning("Failed to persist resume launch metadata: %s", type(exc).__name__)
 
 
 def _session_manager_validation_error(
@@ -300,24 +300,56 @@ async def _fail_codex_prompt_delivery(
     run_id: str,
     run_manager: "LocalAgentRunManager | None",
     error: str,
+    cleanup_agent: Callable[..., Awaitable[None]] | None = None,
 ) -> None:
-    """Settle a run whose Codex prompt never arrived: fail it, then kill the terminal.
+    """Fail a still-uninitialized run before terminating its Codex terminal.
 
     Leaving the run alive would hand the diagnosis to the session-init watchdog,
-    which reports an unrelated provider-connection timeout. The error already
-    carries the redacted pane, so the run is failed before the terminal dies
-    (#20844).
+    which reports an unrelated provider-connection timeout. A child that has
+    registered since the readiness probe must not be failed or terminated.
+    The redacted pre-prompt pane is persisted before termination (#20844).
     """
     logger.error("Codex prompt delivery failed for run %s: %s", run_id, error)
+    if run_manager is None:
+        logger.error("Cannot persist Codex prompt delivery failure for run %s", run_id)
+        return
     try:
-        if run_manager is None:
-            logger.error("Cannot persist Codex prompt delivery failure for run %s", run_id)
-        else:
-            run_manager.fail(run_id, error=error, tool_calls_count=0, turns_used=0)
-    except Exception:
-        logger.exception("Cannot persist Codex prompt delivery failure for run %s", run_id)
-    finally:
+        transitioned = await asyncio.to_thread(
+            run_manager.fail_uninitialized_prompt_delivery,
+            run_id,
+            error=error,
+        )
+    except Exception as exc:
+        logger.error(
+            "Cannot persist Codex prompt delivery failure for run %s: %s",
+            run_id,
+            type(exc).__name__,
+        )
+        return
+    if transitioned is None:
+        logger.info("Skipping stale Codex prompt delivery failure for run %s", run_id)
+        return
+    try:
         await runtime.terminate(terminal, grace_seconds=_CODEX_PROMPT_FAILURE_KILL_GRACE_SECONDS)
+    except Exception as exc:
+        logger.error(
+            "Cannot terminate Codex terminal after prompt failure for run %s: %s",
+            run_id,
+            type(exc).__name__,
+        )
+    try:
+        if cleanup_agent is not None:
+            await cleanup_agent(
+                transitioned,
+                terminal_payload=error,
+                preterminalized_run=transitioned,
+            )
+        else:
+            logger.warning("No immediate cleanup handler for Codex prompt failure run %s", run_id)
+    except Exception as exc:
+        logger.error(
+            "Codex prompt failure cleanup failed for run %s: %s", run_id, type(exc).__name__
+        )
 
 
 def schedule_codex_prompt_delivery(
@@ -326,6 +358,7 @@ def schedule_codex_prompt_delivery(
     prompt: str,
     run_id: str,
     run_manager: "LocalAgentRunManager | None",
+    cleanup_agent: Callable[..., Awaitable[None]] | None = None,
 ) -> bool:
     """Schedule a typed-paste prompt delivery to a spawned Codex terminal.
 
@@ -334,10 +367,22 @@ def schedule_codex_prompt_delivery(
     if not prompt or coordinator is None or terminal is None:
         return False
     task = asyncio.get_running_loop().create_task(
-        _deliver_codex_prompt(coordinator, terminal, prompt, run_id, run_manager)
+        _deliver_codex_prompt(coordinator, terminal, prompt, run_id, run_manager, cleanup_agent)
     )
     _CODEX_PROMPT_DELIVERY_TASKS.add(task)
-    task.add_done_callback(_CODEX_PROMPT_DELIVERY_TASKS.discard)
+
+    def finish_delivery(done: asyncio.Task[None]) -> None:
+        _CODEX_PROMPT_DELIVERY_TASKS.discard(done)
+        if done.cancelled():
+            logger.warning("Codex prompt delivery task cancelled for run %s", run_id)
+        elif error := done.exception():
+            logger.error(
+                "Codex prompt delivery task crashed for run %s: %s",
+                run_id,
+                type(error).__name__,
+            )
+
+    task.add_done_callback(finish_delivery)
     return True
 
 
@@ -347,6 +392,7 @@ async def _deliver_codex_prompt(
     prompt: str,
     run_id: str,
     run_manager: "LocalAgentRunManager | None",
+    cleanup_agent: Callable[..., Awaitable[None]] | None = None,
 ) -> None:
     from gobby.terminals.runtime import Delivered, IndeterminateWrite
     from gobby.terminals.write_coordinator import SequenceDelay, WriteRequest
@@ -358,15 +404,16 @@ async def _deliver_codex_prompt(
         deadline = loop.time() + _CODEX_COMPOSER_READY_TIMEOUT_SECONDS
         while True:
             try:
-                snapshot = await runtime.snapshot(terminal, _CODEX_COMPOSER_CAPTURE_LINES)
+                async with asyncio.timeout_at(deadline):
+                    snapshot = await runtime.snapshot(terminal, _CODEX_COMPOSER_CAPTURE_LINES)
                 pane = snapshot.text
                 if pane:
                     last_pane = pane
-            except Exception:
+            except Exception as exc:
                 logger.debug(
-                    "Failed to inspect Codex composer readiness for run %s",
+                    "Failed to inspect Codex composer readiness for run %s: %s",
                     run_id,
-                    exc_info=True,
+                    type(exc).__name__,
                 )
                 pane = None
             if pane and _CODEX_COMPOSER_MARKER in pane:
@@ -380,8 +427,38 @@ async def _deliver_codex_prompt(
                     run_id,
                     run_manager,
                     _codex_prompt_failure_reason(last_pane),
+                    cleanup_agent=cleanup_agent,
                 )
                 return
+            try:
+                async with asyncio.timeout_at(deadline):
+                    live = await runtime.is_live(terminal)
+            except Exception as exc:
+                logger.debug(
+                    "Failed to inspect Codex terminal liveness for run %s: %s",
+                    run_id,
+                    type(exc).__name__,
+                )
+            else:
+                if not live:
+                    await _fail_codex_prompt_delivery(
+                        runtime,
+                        terminal,
+                        run_id,
+                        run_manager,
+                        _codex_prompt_failure_reason(
+                            last_pane,
+                            code="codex_terminal_exited_before_composer",
+                            detail=(
+                                "Codex terminal exited before its composer rendered; "
+                                "no startup pane snapshot was captured"
+                                if last_pane is None
+                                else "Codex terminal exited before its composer rendered"
+                            ),
+                        ),
+                        cleanup_agent=cleanup_agent,
+                    )
+                    return
             await asyncio.sleep(_CODEX_COMPOSER_POLL_SECONDS)
         await asyncio.sleep(_CODEX_COMPOSER_SETTLE_SECONDS)
         # A composer still settling the bracketed paste can swallow the
@@ -431,11 +508,12 @@ async def _deliver_codex_prompt(
                         f"{type(outcome).__name__}"
                     ),
                 ),
+                cleanup_agent=cleanup_agent,
             )
     except asyncio.CancelledError:
         raise
     except Exception as exc:
-        logger.exception("Codex prompt delivery failed for run %s", run_id)
+        logger.error("Codex prompt delivery raised %s for run %s", type(exc).__name__, run_id)
         await _fail_codex_prompt_delivery(
             runtime,
             terminal,
@@ -444,8 +522,11 @@ async def _deliver_codex_prompt(
             _codex_prompt_failure_reason(
                 last_pane,
                 code="codex_prompt_delivery_failed",
-                detail=f"the spawn prompt write into the Codex composer failed: {exc!r}",
+                detail=(
+                    f"the spawn prompt write into the Codex composer failed: {type(exc).__name__}"
+                ),
             ),
+            cleanup_agent=cleanup_agent,
         )
 
 
