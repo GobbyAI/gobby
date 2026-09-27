@@ -166,6 +166,23 @@ def test_numbered_criteria_extract_real_tests_after_quoted_example() -> None:
     )
 
 
+def test_numbered_criterion_keeps_a_quoted_real_test_reference() -> None:
+    criteria = '7. Verify the named "test: `tests/x.py::test_x`" passes.'
+
+    assert artifacts_module.extract_artifact_references(criteria, "test") == ("tests/x.py::test_x",)
+
+
+def test_numbered_criterion_ignores_example_with_an_apostrophe() -> None:
+    criteria = (
+        "7. For example, 'it's a test: `tests/fake.py::test_fake`'; "
+        "test: `tests/real.py::test_real`."
+    )
+
+    assert artifacts_module.extract_artifact_references(criteria, "test") == (
+        "tests/real.py::test_real",
+    )
+
+
 def test_inline_code_examples_are_not_artifact_references() -> None:
     criteria = (
         "The schema describes `test: path::test_symbol`, examples use "
