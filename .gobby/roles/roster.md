@@ -7,7 +7,7 @@
 | lane-1-gclient.md | gobby#14672 |
 | lane-2-stability.md | gobby#14505 |
 | lane-3-hooks.md | gobby#14531 |
-| lane-4-backlog.md | gobby#14506 |
+| lane-4-backlog.md | gobby#14674 |
 | lane-5-functional.md | gobby#14642 |
 | rust-migration.md | gobby#14639 |
 | design-lead.md | gobby#14607 |
