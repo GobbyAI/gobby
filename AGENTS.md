@@ -1,9 +1,10 @@
 # AGENTS.md
 
-Gobby is a local-first daemon that unifies AI coding tools: session tracking and
-handoffs across Claude Code, Codex, Droid, Grok, Qwen, and AGY; an MCP proxy with
-progressive discovery; task management with dependencies and validation gates; agent
-spawning with worktree isolation; persistent memory, rules, workflows, and pipelines.
+Gobby is fleet management for AI coding agents, a local-first daemon that unifies
+them: session tracking and handoffs across Claude Code, Codex, Droid, Grok, Qwen,
+and AGY; an MCP proxy with progressive discovery; task management with
+dependencies and validation gates; agent spawning with worktree isolation;
+persistent memory, rules, workflows, and pipelines.
 
 This file is the canonical instruction set for every coding agent in this repo.
 Claude Code loads it through the `@`-import in `CLAUDE.md`; other CLIs read it

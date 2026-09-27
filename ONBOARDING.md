@@ -30,7 +30,7 @@ Top MCP Servers:
 - [ ] gobby-web — https://github.com/gobbyai/gobby-web
 
 ### MCP Servers to Activate
-- [ ] gobby — The local-first Gobby daemon: MCP proxy with progressive discovery, task management, sessions, memory, and code search. This is the workhorse (6000+ calls/month). Run the daemon locally with `uv run gobby start` and connect via the bundled MCP config.
+- [ ] gobby — Fleet management for AI coding agents: MCP proxy with progressive discovery, task management, sessions, memory, and code search. This is the workhorse (6000+ calls/month). Run the daemon locally with `uv run gobby start` and connect via the bundled MCP config.
 - [ ] claude_ai_Gmail — Gmail access through claude.ai connectors. Activate via the claude.ai connector settings (used occasionally for email lookups).
 - [ ] claude_ai_Google_Drive — Google Drive access through claude.ai connectors. Activate via the claude.ai connector settings (used occasionally for docs).
 

@@ -6,8 +6,7 @@ use std::time::Instant;
 
 use crate::app::startup_stages::{StageState, StartupStage};
 use crate::daemon::{
-    Daemon, DaemonError, Generation, LiveDaemon, RosterEntry, SpawnOutcome, SpawnRequest,
-    TerminalRow, WorkspaceSnapshot,
+    Daemon, DaemonError, Generation, LiveDaemon, RosterEntry, TerminalRow, WorkspaceSnapshot,
 };
 use crate::startup::AttachTarget;
 use crate::ui::Chrome;
@@ -21,11 +20,6 @@ pub(super) enum StartupAnswer {
 }
 
 pub(super) type StartupFuture = Pin<Box<dyn Future<Output = Result<StartupAnswer, DaemonError>>>>;
-pub(super) type ShellSpawnFuture = Pin<Box<dyn Future<Output = Result<SpawnOutcome, DaemonError>>>>;
-
-pub(super) fn spawn_first_shell(daemon: LiveDaemon, request: SpawnRequest) -> ShellSpawnFuture {
-    Box::pin(async move { daemon.spawn(request).await })
-}
 
 pub(super) fn connect(daemon: LiveDaemon) -> StartupFuture {
     Box::pin(async move {

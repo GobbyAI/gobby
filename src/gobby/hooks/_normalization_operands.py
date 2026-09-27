@@ -184,7 +184,28 @@ _FIND_MUTATION_PREDICATES = frozenset({"-delete", "-exec", "-execdir", "-ok", "-
 
 def _find_has_mutation_predicate(parts: list[str]) -> bool:
     """Return whether a find invocation may mutate matched paths."""
-    return any(part in _FIND_MUTATION_PREDICATES for part in parts[1:])
+    index = 1
+    while index < len(parts):
+        part = parts[index]
+        if part not in _FIND_MUTATION_PREDICATES:
+            index += 1
+            continue
+        if part != "-exec" or parts[index + 1 : index + 2] != ["stat"]:
+            return True
+        end = next(
+            (
+                offset
+                for offset in range(index + 2, len(parts))
+                if parts[offset] == "+" and parts[offset - 1] == "{}"
+            ),
+            None,
+        )
+        if end is None or any(
+            _contains_unexpanded_shell_reference(arg) for arg in parts[index + 2 : end]
+        ):
+            return True
+        index = end + 1
+    return False
 
 
 def _git_grep_is_revision_scoped(parts: list[str]) -> bool:

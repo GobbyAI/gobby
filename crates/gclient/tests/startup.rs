@@ -487,13 +487,12 @@ async fn nested_pane_launch_shifts_prefix_and_opens_nothing() {
         Keymap::defaults(default_prefix(true)).active_chords()
     );
 
-    // Inside a pane the loop attaches and opens nothing; outside it seeds
-    // the first-run shell (the control).
-    for (in_pane, creates) in [(true, 0), (false, 1)] {
+    // Both launches attach without opening a shell; nested status only
+    // changes the keymap prefix.
+    for in_pane in [true, false] {
         let mock = MockDaemon::start("local-token").await;
         mock.enqueue("GET", "/api/projects", 200, project_rows());
         mock.enqueue("GET", "/api/terminals?", 200, terminal_page(&[]));
-        mock.enqueue("GET", "/api/terminals?", 200, terminal_page(&[SPAWNED]));
         let daemon = LiveDaemon::connect(mock.url(), "local-token")
             .await
             .expect("connect live daemon");
@@ -506,12 +505,7 @@ async fn nested_pane_launch_shifts_prefix_and_opens_nothing() {
         let (input_tx, input_rx) = mpsc::channel(8);
         let driver = async {
             wait_for_websocket_requests(&mock, "workspace_attach", 1).await;
-            if creates > 0 {
-                wait_for_websocket_requests(&mock, "terminal_create", creates).await;
-                wait_for_http_requests(&mock, "GET", "/api/terminals?", 2).await;
-            } else {
-                wait_for_http_requests(&mock, "GET", "/api/terminals?", 1).await;
-            }
+            wait_for_http_requests(&mock, "GET", "/api/terminals?", 1).await;
             settle_live_event().await;
             drop(input_tx);
         };
@@ -529,15 +523,13 @@ async fn nested_pane_launch_shifts_prefix_and_opens_nothing() {
         result.expect("live loop");
         assert_eq!(
             websocket_requests(&mock, "terminal_create").len(),
-            creates,
+            0,
             "in_pane={in_pane}"
         );
-        assert_eq!(chrome.tabs().tabs.len(), creates, "in_pane={in_pane}");
+        assert!(chrome.tabs().tabs.is_empty(), "in_pane={in_pane}");
         mock.shutdown().await;
     }
 }
-
-const SPAWNED: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 
 fn project_rows() -> Value {
     json!([{

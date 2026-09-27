@@ -41,6 +41,7 @@ from gobby.sessions.compact_continuation import (
     CompactBoundaryWaiter,
     mark_handoff_compact_continuation_pending,
 )
+from gobby.sessions.compact_markers import COMPACT_NOTIFICATION_STARTED_AT_VARIABLE
 from gobby.sessions.handoff import (
     FAILED_HANDOFF_VARIABLE,
     FOUND_WORK_VARIABLE,
@@ -55,7 +56,11 @@ from gobby.sessions.handoff import (
     stage_handoff_attempt,
     staged_handoff_tool_result,
 )
-from gobby.sessions.handoff_records import build_handoff_payload, record_handoff_delivery
+from gobby.sessions.handoff_records import (
+    FoundWorkEntry,
+    build_handoff_payload,
+    record_handoff_delivery,
+)
 from gobby.sessions.transcript_cursor import TranscriptTailCursor
 from gobby.storage.attention import AttentionStateManager, session_attention_entry_id
 from gobby.storage.hub.protocol import HubDatabase
@@ -671,10 +676,10 @@ async def test_rejected_grok_compaction_settles_as_delivery_failed(
             terminal_runtime_registry=None,
         )
 
-    # Grok is interrupted with Ctrl+C (never Esc) and the rejected /compact is retried once.
+    # Grok is interrupted with Ctrl+C (never Esc); a rejected /compact is not resubmitted.
     assert pane.keys[0] == "ctrl_c"
     assert "escape" not in pane.keys
-    assert pane.typed == ["/compact\n", "/compact\n"]
+    assert pane.typed == ["/compact\n"]
     clear_pending.assert_called_once()
     restore.assert_called_once()
     assert restore.call_args.args[1:] == (SESSION_ID, ATTEMPT_ID)
@@ -1071,12 +1076,18 @@ async def test_native_worker_receives_the_continuation_after_set_handoff_compact
     )
 
 
-def _claimed_compact_attempt(hub_db: HubDatabase) -> ClaimedHandoffDelivery:
+def _claimed_compact_attempt(
+    hub_db: HubDatabase,
+    *,
+    found_work: tuple[FoundWorkEntry, ...] = (),
+) -> ClaimedHandoffDelivery:
     staged = stage_handoff_attempt(
         hub_db,
         SESSION_ID,
         attempt_id=ATTEMPT_ID,
-        handoff=build_handoff_payload(current_state="working", next_steps=["continue"]),
+        handoff=build_handoff_payload(
+            current_state="working", next_steps=["continue"], found_work=found_work
+        ),
         clear_session=False,
     )
     SessionVariableManager(hub_db).merge_variables(
@@ -1283,10 +1294,12 @@ async def test_compact_confirmation_wait_has_a_deadline() -> None:
 
 
 @pytest.mark.asyncio
-async def test_claude_compact_boundary_timeout_does_not_resubmit_without_rejection(
+@pytest.mark.parametrize("source", ["claude", "codex"])
+async def test_compact_boundary_timeout_does_not_resubmit_without_rejection(
     hub_db: HubDatabase,
+    source: str,
 ) -> None:
-    session_manager = _compact_session_manager(hub_db, _NATIVE_WORKER_CONTEXT)
+    session_manager = _compact_session_manager(hub_db, _NATIVE_WORKER_CONTEXT, source=source)
     claimed = _claimed_compact_attempt(hub_db)
     pane = SimpleNamespace(backend="native", snapshot=AsyncMock(return_value="Compacting..."))
     submissions = 0
@@ -1304,7 +1317,7 @@ async def test_claude_compact_boundary_timeout_does_not_resubmit_without_rejecti
         patch(f"{_COMPACT_DELIVERY}._turn_settled_observer", return_value=None),
         patch(f"{_COMPACT_DELIVERY}._send_terminal_compaction_command", side_effect=send_command),
         patch(f"{_COMPACT_DELIVERY}.composer_reader", return_value=None),
-        patch(f"{_COMPACT_DELIVERY}._CLAUDE_COMPACT_BOUNDARY_CONFIRM_SECONDS", 0.01),
+        patch(f"{_COMPACT_DELIVERY}._COMPACT_BOUNDARY_CONFIRM_SECONDS", 0.01),
         patch(f"{_COMPACT_DELIVERY}._COMPACT_BOUNDARY_POLL_SECONDS", 0.005),
         patch(
             "gobby.hooks.terminal_handoff_delivery.shielded_terminal_delivery",
@@ -1323,65 +1336,73 @@ async def test_claude_compact_boundary_timeout_does_not_resubmit_without_rejecti
     gate = SessionVariableManager(hub_db).get_variables(SESSION_ID)[HANDOFF_DISPATCH_GATE_VARIABLE]
     assert gate["delivery_failed"] is True
     assert gate["delivery_pending"] is False
-    assert gate["error_code"] == "compact_failed"
+    assert gate["error_code"] == "compact_unconfirmed"
+    assert "get_handoff" in gate["retry_guidance"]
+    assert "set_handoff" not in gate["retry_guidance"]
+    assert "reconcile_late_compact=true" in gate["recovery_guidance"]
+    assert HANDOFF_COMPACT_CONTINUE_VARIABLE in SessionVariableManager(hub_db).get_variables(
+        SESSION_ID
+    )
+
+
+def test_late_post_compact_stamps_unconfirmed_attempt_for_recovery(hub_db: HubDatabase) -> None:
+    session_manager = _compact_session_manager(hub_db, _NATIVE_WORKER_CONTEXT, source="codex")
+    claimed = _claimed_compact_attempt(hub_db)
+    terminal_handoff_delivery._compensate_delivery_failure(
+        hub_db,
+        claimed,
+        "compact boundary was not observed before the confirmation deadline",
+        error_code="compact_unconfirmed",
+    )
+    handler = EventHandlers(session_manager=session_manager, agent_run_manager=MagicMock())
+
+    handler.handle_post_compact(
+        HookEvent(
+            event_type=HookEventType.POST_COMPACT,
+            session_id=SESSION_ID,
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data={},
+            metadata={"_platform_session_id": SESSION_ID},
+        )
+    )
+
+    variables = SessionVariableManager(hub_db).get_variables(SESSION_ID)
+    assert COMPACT_NOTIFICATION_STARTED_AT_VARIABLE in variables
 
 
 @pytest.mark.asyncio
-async def test_compact_provider_failure_resubmits_same_attempt(hub_db: HubDatabase) -> None:
+async def test_compact_boundary_wins_submit_verification_race(hub_db: HubDatabase) -> None:
     session_manager = _compact_session_manager(hub_db, _NATIVE_WORKER_CONTEXT)
     claimed = _claimed_compact_attempt(hub_db)
-    output = ""
-    pane = SimpleNamespace(backend="native", snapshot=AsyncMock(side_effect=lambda *_a: output))
+    pane = SimpleNamespace(backend="native", snapshot=AsyncMock(return_value="Compacting..."))
     submissions: list[str] = []
-    stale_boundary_receipted: list[bool] = []
     handler = EventHandlers(session_manager=session_manager, agent_run_manager=MagicMock())
 
-    def clear_failed_submission(*args: Any, **kwargs: Any) -> bool:
-        compact_continuation.notify_compact_boundary(hub_db, SESSION_ID, _NATIVE_WORKER_CONTEXT)
-        stale_boundary_receipted.append(
-            hub_db.fetchone(
-                "SELECT 1 FROM session_handoff_deliveries WHERE attempt_id = %s", (ATTEMPT_ID,)
-            )
-            is not None
-        )
-        return compact_continuation.clear_handoff_compact_continuation_pending(*args, **kwargs)
-
     async def send_command(*_args: Any, **kwargs: Any) -> tuple[bool, str | None, bool, None]:
-        nonlocal output
         kwargs["on_command_submitting"]()
         kwargs["mark_continuation_pending"]()
         submissions.append(kwargs["cli_source"])
-        if len(submissions) == 1:
-            output = "Error during compaction: API Error: 500 Internal server error"
-        else:
-            output = "Compacting..."
-            handler.handle_post_compact(
-                HookEvent(
-                    event_type=HookEventType.POST_COMPACT,
-                    session_id=SESSION_ID,
-                    source=SessionSource.CLAUDE,
-                    timestamp=datetime.now(UTC),
-                    data={},
-                    metadata={"_platform_session_id": SESSION_ID},
-                )
+        handler.handle_post_compact(
+            HookEvent(
+                event_type=HookEventType.POST_COMPACT,
+                session_id=SESSION_ID,
+                source=SessionSource.CLAUDE,
+                timestamp=datetime.now(UTC),
+                data={},
+                metadata={"_platform_session_id": SESSION_ID},
             )
-            # Provider boundary wins even if submit verification loses the race.
-            return False, "submit verification missed the boundary", True, None
-        return True, None, True, None
+        )
+        return False, "submit verification missed the boundary", True, None
 
     with (
         patch(f"{_COMPACT_DELIVERY}._resolve_pane_io", return_value=(pane, None)),
         patch(f"{_COMPACT_DELIVERY}._interrupt_observer", return_value=(None, None)),
         patch(f"{_COMPACT_DELIVERY}._turn_settled_observer", return_value=None),
         patch(f"{_COMPACT_DELIVERY}._send_terminal_compaction_command", side_effect=send_command),
-        patch(
-            f"{_COMPACT_DELIVERY}.clear_handoff_compact_continuation_pending",
-            side_effect=clear_failed_submission,
-        ),
         patch(f"{_COMPACT_DELIVERY}.composer_reader", return_value=None),
         patch(f"{_COMPACT_DELIVERY}._COMPACT_BOUNDARY_CONFIRM_SECONDS", 0.05),
         patch(f"{_COMPACT_DELIVERY}._COMPACT_BOUNDARY_POLL_SECONDS", 0.01),
-        patch(f"{_COMPACT_DELIVERY}._COMPACT_RETRY_BACKOFF_SECONDS", 0),
         patch(
             "gobby.hooks.terminal_handoff_delivery.shielded_terminal_delivery",
             side_effect=_run_operation,
@@ -1395,8 +1416,7 @@ async def test_compact_provider_failure_resubmits_same_attempt(hub_db: HubDataba
             terminal_runtime_registry=None,
         )
 
-    assert submissions == ["claude", "claude"]
-    assert stale_boundary_receipted == [False]
+    assert submissions == ["claude"]
     handoffs = hub_db.fetchone(
         "SELECT count(*) AS n FROM session_handoffs WHERE session_id = %s", (SESSION_ID,)
     )
@@ -1473,7 +1493,7 @@ async def test_queued_compact_waits_for_boundary_before_delivery(hub_db: HubData
 
 
 @pytest.mark.asyncio
-async def test_compact_provider_failure_exhausts_to_failure_settlement(hub_db: HubDatabase) -> None:
+async def test_compact_provider_failure_settles_without_resubmission(hub_db: HubDatabase) -> None:
     session_manager = _compact_session_manager(hub_db, _NATIVE_WORKER_CONTEXT)
     claimed = _claimed_compact_attempt(hub_db)
     output = ""
@@ -1496,7 +1516,6 @@ async def test_compact_provider_failure_exhausts_to_failure_settlement(hub_db: H
         patch(f"{_COMPACT_DELIVERY}.composer_reader", return_value=None),
         patch(f"{_COMPACT_DELIVERY}._COMPACT_BOUNDARY_CONFIRM_SECONDS", 0.05),
         patch(f"{_COMPACT_DELIVERY}._COMPACT_BOUNDARY_POLL_SECONDS", 0.01),
-        patch(f"{_COMPACT_DELIVERY}._COMPACT_RETRY_BACKOFF_SECONDS", 0),
         patch(
             "gobby.hooks.terminal_handoff_delivery.shielded_terminal_delivery",
             side_effect=_run_operation,
@@ -1510,7 +1529,7 @@ async def test_compact_provider_failure_exhausts_to_failure_settlement(hub_db: H
             terminal_runtime_registry=None,
         )
 
-    assert submissions == 3
+    assert submissions == 1
     gate = SessionVariableManager(hub_db).get_variables(SESSION_ID)[HANDOFF_DISPATCH_GATE_VARIABLE]
     assert gate["delivery_failed"] is True
     assert gate["delivery_pending"] is False
@@ -1532,7 +1551,10 @@ async def test_held_compact_failed_interrupt_preserves_undelivered_payload(
     hub_db: HubDatabase,
 ) -> None:
     session_manager = _compact_session_manager(hub_db, _NATIVE_WORKER_CONTEXT)
-    claimed = _claimed_compact_attempt(hub_db)
+    found_work = FoundWorkEntry(
+        finding="Terminal capture outage", disposition="escalated", ref="gobby#14531"
+    )
+    claimed = _claimed_compact_attempt(hub_db, found_work=(found_work,))
     pane = SimpleNamespace(backend="native", snapshot=AsyncMock(return_value="/compact"))
     reason = "CLI did not confirm interruption after 3 attempts"
     send_command = AsyncMock(return_value=(False, reason, False, {"interrupted": False}))
@@ -1565,6 +1587,7 @@ async def test_held_compact_failed_interrupt_preserves_undelivered_payload(
         "attempt_id": ATTEMPT_ID,
         "handoff_record_id": claimed.handoff_record_id,
         "delivery_state": "failed_not_deliverable",
+        "found_work": [found_work.as_dict()],
     }
     assert PENDING_HANDOFF_VARIABLE not in variables
     assert (

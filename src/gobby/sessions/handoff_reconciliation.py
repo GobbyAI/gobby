@@ -48,7 +48,8 @@ def reconcile_late_compact_handoff(
             or gate.get("attempt_id") != attempt_id
             or gate.get("delivery_failed") is not True
             or gate.get("clear_session") is not False
-            or gate.get("error_code") != "interrupt_unconfirmed"
+            or gate.get("error_code")
+            not in {"interrupt_unconfirmed", "compact_unconfirmed", "compact_failed"}
             or PENDING_HANDOFF_VARIABLE in variables
         ):
             return None
@@ -80,10 +81,15 @@ def reconcile_late_compact_handoff(
         except (TypeError, ValueError):
             return None
         authored = handoff["authored_at"]
+        freshness = (
+            timedelta(minutes=20)
+            if gate.get("error_code") == "compact_unconfirmed"
+            else timedelta(minutes=10)
+        )
         if (
             boundary.tzinfo is None
             or authored.tzinfo is None
-            or not authored <= boundary <= authored + timedelta(minutes=10)
+            or not authored <= boundary <= authored + freshness
         ):
             return None
         insert_delivery_receipt(

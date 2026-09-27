@@ -4,7 +4,7 @@
 
 ## Project Overview
 
-**Gobby** is a local-first daemon that unifies AI coding assistants (Claude Code, Codex, AGY, Qwen, Droid, and Grok) through a hook interface for session tracking and provides an MCP proxy with progressive tool discovery for efficient access to downstream servers.
+**Gobby** is fleet management for AI coding agents. It unifies AI coding assistants (Claude Code, Codex, AGY, Qwen, Droid, and Grok) through a hook interface for session tracking and provides an MCP proxy with progressive tool discovery for efficient access to downstream servers.
 
 ### Quick Facts
 

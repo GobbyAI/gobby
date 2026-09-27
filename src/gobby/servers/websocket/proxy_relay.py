@@ -9,6 +9,8 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
 
+from websockets.exceptions import ConnectionClosed
+
 from gobby.config.tmux import ATTACH_HISTORY_LINES
 from gobby.storage.terminals import AttachLocator
 from gobby.terminals.frame_client import FrameLagError, FrameProtocolError
@@ -125,6 +127,9 @@ class SocketRelay:
                 self._current = item
                 try:
                     await asyncio.wait_for(self.websocket.send(item.raw), timeout=timeout)
+                except ConnectionClosed:
+                    await self.shutdown("ws_close")
+                    return
                 except (TimeoutError, OSError, ConnectionError):
                     await self.shutdown(fail)
                     return

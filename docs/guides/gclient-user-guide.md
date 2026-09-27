@@ -25,7 +25,7 @@ Usage: gclient [--project PROJECT] [--node NODE] [--workspace WORKSPACE] [--daem
 
 | Flag | Meaning |
 | --- | --- |
-| `--project PROJECT` | A project UUID or a checkout path. Without it the client walks up from the current directory to the nearest `.gobby/project.json`; outside every checkout it opens the project the workspace's rows say was focused last, or the personal project with one shell in the directory it was launched from. |
+| `--project PROJECT` | A project UUID or a checkout path. Without it the client walks up from the current directory to the nearest `.gobby/project.json`; outside every checkout it opens the project the workspace's rows say was focused last, or the personal project. No shell starts until you ask for one. |
 | `--workspace WORKSPACE` | The workspace to attach: a ref (`1`, or `2:1`, whose node overrides `--node`) or a name. Defaults to `default`, which is created on first use. See [Workspaces](#workspaces). |
 | `--node NODE` | The node that owns the workspace: a ref (`2`), a node id, a hostname, or a label. Defaults to the daemon's own node. |
 | `--daemon-url URL` | Daemon endpoint. Defaults to the local daemon's configured URL. |
@@ -360,7 +360,7 @@ and only work after you bind them; every action also appears in the help popup
 
 | Chord | Action | Name |
 | --- | --- | --- |
-| `prefix+c` | Open a new tab with a fresh shell | `new_tab` |
+| `prefix+c` | Open an empty tab without starting a shell | `new_tab` |
 | `prefix+shift+g` | Switch to the next workspace on this node | `next_workspace` |
 | `prefix+n` / `prefix+p` | Next / previous tab | `next_tab` / `previous_tab` |
 | `prefix+1` … `prefix+9` | Switch to tab 1–9 | `switch_tab` |
@@ -444,11 +444,14 @@ cannot be rebound.
 
 ## Tabs and panes
 
-A new tab starts its shell in the focused project's checkout and is named for
-its address (`tab-0:0:1`) until you rename it; a split starts a fresh shell for
-the same project. Worktree rows
+A new tab opens empty. Use New Terminal or a split to start a shell in the
+focused project's checkout; that shell and its pane are created together in the
+daemon workspace. The tab stays `Untitled` until you rename it. Worktree rows
 in the sidebar open a tab whose shell starts in that worktree, or reveal the tab
-that already shows it.
+that already shows it. An empty tab is a draft in this window; once you open a
+shell in it, the daemon-owned tab takes its place and survives reattachment.
+Splitting a tab of bare terminals moves its current pane layout into the daemon
+workspace. Those existing terminals stay adopted; the new shell is owned.
 
 **Closing kills gobby's terminals, not yours.** `close_pane`, `close_terminal`,
 and `close tab` ask the daemon to kill a terminal gobby started. The terminal is
@@ -754,10 +757,11 @@ described under *Orphaned terminals*.
 
 ## Workspace persistence
 
-The layout is the daemon's, not the client's. Tabs, splits, names, and the focus
+The populated layout is the daemon's, not the client's. Tabs, splits, names, and the focus
 hints live in the workspace rows on the daemon, and the gterm host keeps the
 terminals themselves, so the same workspace comes back in the next window and
-after a daemon restart. The client writes nothing about layout.
+after a daemon restart. An empty New Tab draft exists only in its current window
+until a terminal is opened in it. The client writes nothing about layout.
 
 | Where | What it holds |
 | --- | --- |
@@ -767,12 +771,10 @@ after a daemon restart. The client writes nothing about layout.
 
 On launch the client attaches the workspace — the project's own workspace when
 the launch names a registered project and no `--workspace` was given — and opens
-the focused project. A
-project with no tabs gets one shell in its checkout (for the personal project,
-the directory `gclient` was launched from). A pane whose terminal died is dropped
+the focused project without starting a shell. A pane whose terminal died is dropped
 from its split by the daemon's restart sweep, and a tab with no surviving panes
-is dropped with it; a project that lost every tab starts again with that one
-shell. There is no snapshot file to move aside.
+is dropped with it; a project that lost every tab remains empty until you open
+another terminal. There is no snapshot file to move aside.
 
 ## Daemon restarts and reconnects
 

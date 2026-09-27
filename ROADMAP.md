@@ -1,8 +1,8 @@
 # Gobby Roadmap
 
-Gobby is a local-first control plane for AI coding tools: persistent sessions,
-task graphs, workflows, hooks, MCP proxying, agents, memory, and deterministic
-automation around the tools developers already use.
+Gobby is fleet management for AI coding agents, a local-first control plane:
+persistent sessions, task graphs, workflows, hooks, MCP proxying, agents, memory,
+and deterministic automation around the tools developers already use.
 
 Last refreshed: 2026-09-16 (decision 18). This document is the roadmap and the
 architecture decision record. The live tracker is epic #21542.

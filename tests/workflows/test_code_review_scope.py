@@ -158,6 +158,16 @@ async def test_include_pathspec_commit_also_reads_staged_paths(repo: Path) -> No
     assert await _reviewable("git commit -i docs/guide.md -m mixed", repo) is True
 
 
+async def test_cd_tail_wrapped_only_commit_excludes_unrelated_staged_code(repo: Path) -> None:
+    _edit(repo, "src/app.py", "value = 2\n")
+    _git(repo, "add", "--", "src/app.py")
+    _edit(repo, "docs/guide.md", "changed guide\n")
+    wrapper = f"cd {repo} && git commit --only -m docs -- docs/guide.md 2>&1 | tail -20"
+
+    assert await _reviewable(wrapper, repo, cwd=repo.parent) is False
+    assert await _reviewable(wrapper.replace("--only", "--include"), repo, cwd=repo.parent)
+
+
 async def test_commit_all_reads_unstaged_tracked_changes(repo: Path) -> None:
     _edit(repo, "docs/guide.md", "changed guide\n")
     assert await _reviewable("git commit -am docs", repo) is False
@@ -323,6 +333,19 @@ async def test_gate_allows_a_documentation_only_commit(
     response = await handler._evaluate_rules(
         _gate_event("git commit -m docs", session, project, repo)
     )
+
+    assert response.decision == "allow"
+
+
+async def test_gate_allows_cd_tail_wrapped_only_documentation_commit(
+    gate_handler: tuple[WorkflowHookHandler, Session, Project],
+    repo: Path,
+) -> None:
+    handler, session, project = gate_handler
+    _edit(repo, "docs/guide.md", "changed guide\n")
+    command = f"cd {repo} && git commit --only -m docs -- docs/guide.md 2>&1 | tail -20"
+
+    response = await handler._evaluate_rules(_gate_event(command, session, project, repo))
 
     assert response.decision == "allow"
 

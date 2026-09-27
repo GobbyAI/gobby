@@ -1,6 +1,6 @@
 <p align="center">
     <img src="img/logo.png" alt="Gobby" width="200" />
-    <h3 align="center">Gobby<br>Start with a task. Walk away. End with a PR.</h3>
+    <h3 align="center">Gobby<br>Fleet management for AI coding agents.</h3>
 </p>
 
 
@@ -50,13 +50,13 @@ every diff because you can't actually trust what comes back.
 
 The fix isn't a better prompt. The fix is infrastructure around the agent.
 
-Gobby is a local daemon that sits underneath the AI coding CLIs you already use
-— Claude Code, Codex, Factory Droid, Grok, Qwen CLI, and AGY — and gives them what
-they're missing: shared sessions, a durable task ledger, hook-time rules,
+Gobby is fleet management for the AI coding CLIs you already use — Claude Code,
+Codex, Factory Droid, Grok, Qwen CLI, and AGY — and gives them what they're
+missing: shared sessions, a durable task ledger, hook-time rules,
 progressive MCP discovery, agent isolation, review gates, and a build loop that
 turns a task into a PR without you in the middle.
 
-It is **not another agent.** It is the control plane the agents you already
+It is **not another agent.** It is the fleet manager the agents you already
 have are missing.
 
 ---

@@ -430,6 +430,26 @@ def test_validate_helper_expansion_mode_fails_closed_without_project(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     plan = _write_contract_plan(tmp_path)
+    plan.write_text(
+        plan.read_text(encoding="utf-8")
+        + """
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: "Update docs"
+  category: docs
+  task_type: task
+  depends_on: []
+  validation_criteria: "Docs exist"
+  labels:
+    - "covers:cli-plan:1.1:1.1.1"
+  tdd: false
+  source_section: "1.1"
+```
+""",
+        encoding="utf-8",
+    )
     monkeypatch.setattr(plans_module, "resolve_project_ref", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(plans_module, "get_project_context", lambda *_args, **_kwargs: None)
 
@@ -438,6 +458,19 @@ def test_validate_helper_expansion_mode_fails_closed_without_project(
     assert result["valid"] is False
     assert result["symbol_validation"]["status"] == "failed"
     assert result["symbol_validation"]["issues"][0]["code"] == "symbol_index_unavailable"
+
+
+def test_validate_helper_expansion_mode_requires_manifest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan = _write_contract_plan(tmp_path)
+    monkeypatch.setattr(plans_module, "get_project_context", lambda *_args: None)
+
+    result = plans_module._validate_plan_for_cli(plan, None, mode="expansion")
+
+    assert result["valid"] is False
+    assert any('missing manifest (parse_mode="expansion"' in error for error in result["errors"])
 
 
 def test_validate_helper_uses_isolated_overlay_context(

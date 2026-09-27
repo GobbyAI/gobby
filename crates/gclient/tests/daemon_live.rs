@@ -2511,6 +2511,7 @@ async fn workspace_attach_op_and_event_round_trip() {
         pane: "ffffffff-ffff-4fff-8fff-ffffffffffff".into(),
         axis: LayoutAxis::Horizontal,
         terminal_id: None,
+        cwd: None,
         node: None,
     };
     let reply = daemon

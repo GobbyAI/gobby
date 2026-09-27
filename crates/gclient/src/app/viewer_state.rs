@@ -17,6 +17,8 @@ pub type TabId = String;
 
 /// Prefix of every `local_tab_id`.
 pub const LOCAL_TAB_PREFIX: &str = "local-";
+/// An empty tab is a per-window draft until the user opens a terminal in it.
+pub const EMPTY_LOCAL_TAB_PREFIX: &str = "local-empty-";
 
 /// The id of a tab opened without the daemon (scripted and parity paths);
 /// the daemon issues uuids, so the two never meet.
