@@ -1020,7 +1020,7 @@ class TestExecuteSpawn:
             # startup. It is typed into the composer post-launch instead.
             assert request.prompt not in command
             mock_codex_prompt_delivery.assert_called_once()
-            _coordinator, terminal, prompt, run_id, delivery_run_manager = (
+            _coordinator, terminal, prompt, run_id, delivery_run_manager, _cleanup_agent = (
                 mock_codex_prompt_delivery.call_args.args
             )
             assert terminal.id == result.terminal_id
@@ -2842,7 +2842,7 @@ class TestCodexPromptDelivery:
 
         assert runtime.snapshot_effects == []
         assert runtime.write_log == [("text", "Do the task"), ("key", "enter")]
-        run_manager.fail.assert_not_called()
+        run_manager.fail_uninitialized_prompt_delivery.assert_not_called()
         assert not runtime.killed_ids
 
     @pytest.mark.asyncio
@@ -2857,17 +2857,15 @@ class TestCodexPromptDelivery:
             await _deliver_codex_prompt(coordinator, terminal, "Do the task", "run-1", run_manager)
 
         assert runtime.write_log == []
-        error = run_manager.fail.call_args.kwargs["error"]
+        error = run_manager.fail_uninitialized_prompt_delivery.call_args.kwargs["error"]
         assert error.startswith("codex_composer_not_ready:")
         assert "Update available!" in error
         assert "sk-<redacted>" in error
         assert secret not in error
         assert len(error.rsplit("Pane output:\n", 1)[1]) <= 1024
-        run_manager.fail.assert_called_once_with(
+        run_manager.fail_uninitialized_prompt_delivery.assert_called_once_with(
             "run-1",
             error=error,
-            tool_calls_count=0,
-            turns_used=0,
         )
         assert terminal.id in runtime.killed_ids
 
@@ -2885,12 +2883,15 @@ class TestCodexPromptDelivery:
             await _deliver_codex_prompt(coordinator, terminal, "Do the task", "run-1", run_manager)
 
         assert runtime.snapshot_effects == []
-        assert "Update available! 0.148.0 -> 0.149.0" in run_manager.fail.call_args.kwargs["error"]
+        assert (
+            "Update available! 0.148.0 -> 0.149.0"
+            in run_manager.fail_uninitialized_prompt_delivery.call_args.kwargs["error"]
+        )
         assert runtime.write_log == []
         assert terminal.id in runtime.killed_ids
 
     @pytest.mark.asyncio
-    async def test_timeout_kills_terminal_when_failure_persistence_raises(
+    async def test_timeout_preserves_terminal_when_failure_persistence_raises(
         self,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
@@ -2898,13 +2899,15 @@ class TestCodexPromptDelivery:
         runtime.snapshot_text = "Update available!"
         coordinator, terminal = _codex_delivery_target(runtime)
         run_manager = MagicMock()
-        run_manager.fail.side_effect = RuntimeError("database unavailable")
+        run_manager.fail_uninitialized_prompt_delivery.side_effect = RuntimeError(
+            "database unavailable"
+        )
 
         with _fast_codex_delivery(_CODEX_COMPOSER_READY_TIMEOUT_SECONDS=0.0):
             await _deliver_codex_prompt(coordinator, terminal, "Do the task", "run-1", run_manager)
 
         assert runtime.write_log == []
-        assert terminal.id in runtime.killed_ids
+        assert terminal.id not in runtime.killed_ids
         assert "Codex prompt delivery failed for run run-1" in caplog.text
         assert "codex_composer_not_ready:" in caplog.text
 
@@ -2920,10 +2923,84 @@ class TestCodexPromptDelivery:
             await _deliver_codex_prompt(coordinator, terminal, "Do the task", "run-1", run_manager)
 
         assert runtime.write_log == []
-        error = run_manager.fail.call_args.kwargs["error"]
+        error = run_manager.fail_uninitialized_prompt_delivery.call_args.kwargs["error"]
         assert error.startswith("codex_composer_not_ready:")
         assert "zsh: command not found: codex" in error
         assert terminal.id in runtime.killed_ids
+
+    @pytest.mark.asyncio
+    async def test_blocked_snapshot_obeys_composer_deadline(self) -> None:
+        runtime = FakeRuntime()
+        coordinator, terminal = _codex_delivery_target(runtime)
+        run_manager = MagicMock()
+        blocker = asyncio.Event()
+
+        async def blocked_snapshot(*_args: object, **_kwargs: object) -> None:
+            await blocker.wait()
+
+        with (
+            _fast_codex_delivery(_CODEX_COMPOSER_READY_TIMEOUT_SECONDS=0.01),
+            patch.object(runtime, "snapshot", side_effect=blocked_snapshot),
+        ):
+            await _deliver_codex_prompt(coordinator, terminal, "Do the task", "run-1", run_manager)
+
+        assert runtime.write_log == []
+        error = run_manager.fail_uninitialized_prompt_delivery.call_args.kwargs["error"]
+        assert error.startswith("codex_composer_not_ready:")
+        assert terminal.id in runtime.killed_ids
+
+    @pytest.mark.asyncio
+    async def test_early_terminal_exit_preserves_last_pre_prompt_pane(self) -> None:
+        runtime = FakeRuntime()
+        runtime.snapshot_effects = ["Codex startup failed", RuntimeError("pane gone")]
+        coordinator, terminal = _codex_delivery_target(runtime)
+        run_manager = MagicMock()
+
+        with (
+            _fast_codex_delivery(),
+            patch.object(runtime, "is_live", new=AsyncMock(side_effect=[True, False])),
+        ):
+            await _deliver_codex_prompt(coordinator, terminal, "Do the task", "run-1", run_manager)
+
+        assert runtime.write_log == []
+        error = run_manager.fail_uninitialized_prompt_delivery.call_args.kwargs["error"]
+        assert error.startswith("codex_terminal_exited_before_composer:")
+        assert "Codex startup failed" in error
+        assert "Do the task" not in error
+        assert terminal.id in runtime.killed_ids
+
+    @pytest.mark.asyncio
+    async def test_exit_before_first_snapshot_reports_unavailable_evidence(self) -> None:
+        runtime = FakeRuntime()
+        runtime.snapshot_effects = [RuntimeError("pane gone")]
+        coordinator, terminal = _codex_delivery_target(runtime)
+        run_manager = MagicMock()
+
+        with (
+            _fast_codex_delivery(),
+            patch.object(runtime, "is_live", new=AsyncMock(return_value=False)),
+        ):
+            await _deliver_codex_prompt(coordinator, terminal, "Do the task", "run-1", run_manager)
+
+        error = run_manager.fail_uninitialized_prompt_delivery.call_args.kwargs["error"]
+        assert error.startswith("codex_terminal_exited_before_composer:")
+        assert "no startup pane snapshot was captured" in error
+        assert error.endswith("Pane output:\n<unavailable>")
+        assert terminal.id in runtime.killed_ids
+
+    @pytest.mark.asyncio
+    async def test_registered_child_is_not_failed_or_terminated_by_late_delivery(self) -> None:
+        runtime = FakeRuntime()
+        runtime.snapshot_text = "Codex is already working"
+        coordinator, terminal = _codex_delivery_target(runtime)
+        run_manager = MagicMock()
+        run_manager.fail_uninitialized_prompt_delivery.return_value = None
+
+        with _fast_codex_delivery(_CODEX_COMPOSER_READY_TIMEOUT_SECONDS=0.0):
+            await _deliver_codex_prompt(coordinator, terminal, "Do the task", "run-1", run_manager)
+
+        run_manager.fail_uninitialized_prompt_delivery.assert_called_once()
+        assert not runtime.killed_ids
 
     @pytest.mark.asyncio
     async def test_failed_paste_fails_run_and_kills_terminal(self) -> None:
@@ -2939,15 +3016,13 @@ class TestCodexPromptDelivery:
             await _deliver_codex_prompt(coordinator, terminal, "Do the task", "run-1", run_manager)
 
         assert runtime.write_log == []
-        error = run_manager.fail.call_args.kwargs["error"]
+        error = run_manager.fail_uninitialized_prompt_delivery.call_args.kwargs["error"]
         assert error.startswith("codex_prompt_delivery_failed:")
         assert "Provider connection" not in error
         assert error.endswith("Pane output:\n›")
-        run_manager.fail.assert_called_once_with(
+        run_manager.fail_uninitialized_prompt_delivery.assert_called_once_with(
             "run-1",
             error=error,
-            tool_calls_count=0,
-            turns_used=0,
         )
         assert terminal.id in runtime.killed_ids
 
@@ -2967,35 +3042,38 @@ class TestCodexPromptDelivery:
             await _deliver_codex_prompt(coordinator, terminal, "Do the task", "run-1", run_manager)
 
         assert runtime.write_log == [("text", "Do the task")]
-        error = run_manager.fail.call_args.kwargs["error"]
+        error = run_manager.fail_uninitialized_prompt_delivery.call_args.kwargs["error"]
         assert error.startswith("codex_prompt_delivery_failed:")
-        run_manager.fail.assert_called_once()
+        run_manager.fail_uninitialized_prompt_delivery.assert_called_once()
         assert terminal.id in runtime.killed_ids
 
     @pytest.mark.asyncio
-    async def test_paste_exception_fails_run_and_kills_terminal(self) -> None:
+    async def test_paste_exception_fails_run_without_retaining_prompt(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
         runtime = FakeRuntime()
         runtime.snapshot_text = "› "
-        runtime.raise_on_write = OSError("tmux socket vanished")
+        runtime.raise_on_write = OSError("tmux socket vanished; Do the task; sk-test-secret")
         coordinator, terminal = _codex_delivery_target(runtime)
         run_manager = MagicMock()
 
         with _fast_codex_delivery():
             await _deliver_codex_prompt(coordinator, terminal, "Do the task", "run-1", run_manager)
 
-        error = run_manager.fail.call_args.kwargs["error"]
+        error = run_manager.fail_uninitialized_prompt_delivery.call_args.kwargs["error"]
         assert error.startswith("codex_prompt_delivery_failed:")
-        assert "OSError('tmux socket vanished')" in error
-        run_manager.fail.assert_called_once_with(
+        assert "OSError" in error
+        assert "Do the task" not in error
+        assert "sk-test-secret" not in error
+        assert "sk-test-secret" not in caplog.text
+        run_manager.fail_uninitialized_prompt_delivery.assert_called_once_with(
             "run-1",
             error=error,
-            tool_calls_count=0,
-            turns_used=0,
         )
         assert terminal.id in runtime.killed_ids
 
     @pytest.mark.asyncio
-    async def test_failed_paste_without_run_manager_still_kills_terminal(
+    async def test_failed_paste_without_run_manager_preserves_terminal(
         self,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
@@ -3010,7 +3088,7 @@ class TestCodexPromptDelivery:
             await _deliver_codex_prompt(coordinator, terminal, "Do the task", "run-1", None)
 
         assert runtime.write_log == []
-        assert terminal.id in runtime.killed_ids
+        assert terminal.id not in runtime.killed_ids
         assert "Cannot persist Codex prompt delivery failure for run run-1" in caplog.text
         assert "codex_prompt_delivery_failed:" in caplog.text
 
@@ -3025,39 +3103,57 @@ class TestCodexPromptDelivery:
             await _deliver_codex_prompt(coordinator, terminal, "Do the task", "run-1", run_manager)
 
         assert runtime.write_log == []
-        assert run_manager.fail.call_count == 0
+        assert run_manager.fail_uninitialized_prompt_delivery.call_count == 0
         assert not runtime.killed_ids
 
     @pytest.mark.asyncio
     async def test_pane_output_is_persisted_before_the_terminal_is_killed(self) -> None:
-        """The failure error carries the redacted pane, and run_manager.fail
+        """The failure error carries the redacted pane, and run_manager.fail_uninitialized_prompt_delivery
         persists it before the terminal dies. If the kill ever moved ahead of
         the persist, the pane would be lost on the one path where it is the
         evidence (#20844).
         """
         order: list[str] = []
+        transitioned_run = object()
+        cleanup_calls: list[tuple[object, object]] = []
 
         class _OrderedRuntime(FakeRuntime):
             async def terminate(self, terminal: Terminal, grace_seconds: float) -> None:
                 order.append("kill")
                 await super().terminate(terminal, grace_seconds)
 
-        def record_persist(*_args: object, **_kwargs: object) -> None:
+        def record_persist(*_args: object, **_kwargs: object) -> object:
             order.append("persist")
+            return transitioned_run
+
+        async def record_cleanup(run: object, **kwargs: object) -> None:
+            order.append("cleanup")
+            cleanup_calls.append((run, kwargs["preterminalized_run"]))
 
         runtime = _OrderedRuntime()
         runtime.snapshot_text = "composer never rendered"
         coordinator, terminal = _codex_delivery_target(runtime)
         run_manager = MagicMock()
-        run_manager.fail.side_effect = record_persist
+        run_manager.fail_uninitialized_prompt_delivery.side_effect = record_persist
 
         with _fast_codex_delivery(_CODEX_COMPOSER_READY_TIMEOUT_SECONDS=0.0):
-            await _deliver_codex_prompt(coordinator, terminal, "Do the task", "run-1", run_manager)
+            await _deliver_codex_prompt(
+                coordinator,
+                terminal,
+                "Do the task",
+                "run-1",
+                run_manager,
+                record_cleanup,
+            )
 
-        assert order == ["persist", "kill"], (
-            f"the pane must be persisted before the kill; got {order}"
+        assert order == ["persist", "kill", "cleanup"], (
+            f"the pane must be persisted before the kill and cleanup; got {order}"
         )
-        assert "composer never rendered" in run_manager.fail.call_args.kwargs["error"]
+        assert cleanup_calls == [(transitioned_run, transitioned_run)]
+        assert (
+            "composer never rendered"
+            in run_manager.fail_uninitialized_prompt_delivery.call_args.kwargs["error"]
+        )
 
     @pytest.mark.asyncio
     async def test_codex_prompt_aborts_on_indeterminate_without_enter(self) -> None:
@@ -3076,7 +3172,7 @@ class TestCodexPromptDelivery:
         kinds = [kind for kind, _payload in runtime.write_log]
         assert "enter" not in kinds
         assert kinds == ["text"]
-        run_manager.fail.assert_not_called()
+        run_manager.fail_uninitialized_prompt_delivery.assert_not_called()
         assert not runtime.killed_ids
 
     @pytest.mark.asyncio
@@ -3084,6 +3180,44 @@ class TestCodexPromptDelivery:
         assert schedule_codex_prompt_delivery(MagicMock(), MagicMock(), "", "run-1", None) is False
 
         assert not spawn_executor_support._CODEX_PROMPT_DELIVERY_TASKS
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("missing", ["write_coordinator", "terminal_row", "run_manager"])
+    async def test_spawn_fails_when_prompt_delivery_cannot_be_scheduled(
+        self, missing: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        from gobby.agents import spawn_executor_codex
+
+        prompt = "private task prompt"
+        plan = MagicMock(codex_prompt=prompt, inject_persona=False, agent_run_id="run-1")
+        result = SpawnResult(True, "run-1", "child-1", "running", terminal_id="terminal-1")
+        manager = MagicMock()
+        manager.get.return_value = None if missing == "terminal_row" else MagicMock(id="terminal-1")
+        request = cast(
+            SpawnRequest,
+            MagicMock(
+                write_coordinator=None if missing == "write_coordinator" else MagicMock(),
+                terminal_manager=manager,
+                run_manager=None if missing == "run_manager" else MagicMock(),
+            ),
+        )
+
+        with (
+            patch.object(
+                spawn_executor_codex, "prepare_codex_spawn", new=AsyncMock(return_value=plan)
+            ),
+            patch("gobby.agents.spawn_executor._runtime_spawn", new=AsyncMock(return_value=result)),
+            patch.object(spawn_executor_codex, "schedule_codex_prompt_delivery") as schedule,
+        ):
+            returned = await spawn_executor_codex._spawn_codex_terminal(request)
+
+        assert returned is result
+        assert returned.success is False
+        assert returned.status == "failed"
+        assert returned.error == f"codex_prompt_delivery_unavailable: {missing}"
+        assert missing in caplog.text
+        assert prompt not in caplog.text
+        schedule.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_schedule_tracks_and_releases_the_delivery_task(self) -> None:
@@ -3102,7 +3236,7 @@ class TestCodexPromptDelivery:
             assert pending
             await asyncio.gather(*pending)
 
-        deliver.assert_awaited_once_with(coordinator, terminal, "Go", "run-1", run_manager)
+        deliver.assert_awaited_once_with(coordinator, terminal, "Go", "run-1", run_manager, None)
         assert not spawn_executor_support._CODEX_PROMPT_DELIVERY_TASKS
 
 

@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 from gobby.agents.spawn_executor_providers import prepare_codex_spawn
 from gobby.agents.spawn_executor_support import schedule_codex_prompt_delivery
 from gobby.agents.spawn_models import SpawnRequest, SpawnResult
+
+logger = logging.getLogger(__name__)
 
 
 async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
@@ -28,14 +31,44 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
             )
         coordinator = request.write_coordinator
         manager = request.terminal_manager
-        if result.terminal_id and coordinator is not None and manager is not None:
+        missing = [
+            name
+            for name, available in (
+                ("terminal_id", result.terminal_id is not None),
+                ("write_coordinator", coordinator is not None),
+                ("terminal_manager", manager is not None),
+                ("run_manager", request.run_manager is not None),
+            )
+            if not available
+        ]
+        terminal = None
+        if not missing and result.terminal_id is not None and manager is not None:
             terminal = await asyncio.to_thread(manager.get, result.terminal_id)
-            if terminal is not None:
-                schedule_codex_prompt_delivery(
-                    coordinator,
-                    terminal,
-                    plan.codex_prompt,
-                    plan.agent_run_id,
-                    request.run_manager,
-                )
+            if terminal is None:
+                missing.append("terminal_row")
+        if missing or terminal is None or coordinator is None:
+            result.success = False
+            result.status = "failed"
+            result.error = f"codex_prompt_delivery_unavailable: {', '.join(missing)}"
+            logger.error(
+                "Codex prompt delivery unavailable for run %s: %s", plan.agent_run_id, missing
+            )
+        elif schedule_codex_prompt_delivery(
+            coordinator,
+            terminal,
+            plan.codex_prompt,
+            plan.agent_run_id,
+            request.run_manager,
+            request.cleanup_agent,
+        ):
+            logger.info(
+                "Codex prompt delivery scheduled for run %s terminal %s",
+                plan.agent_run_id,
+                terminal.id,
+            )
+        else:
+            result.success = False
+            result.status = "failed"
+            result.error = "codex_prompt_delivery_unavailable: scheduling refused"
+            logger.error("Codex prompt delivery scheduling refused for run %s", plan.agent_run_id)
     return result
