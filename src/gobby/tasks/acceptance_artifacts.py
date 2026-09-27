@@ -21,8 +21,9 @@ _ARTIFACT_REF_RE = re.compile(
     re.IGNORECASE | re.MULTILINE,
 )
 _INLINE_CRITERION_LINE_RE = re.compile(
-    r"^[ \t]*(?:>[ \t]*)?(?:[-*+][ \t]+|\d+[.)][ \t]+)?"
-    r"[A-Za-z0-9]+(?:\.[A-Za-z0-9]+)+:[ \t]+(?P<body>[^\n]*)",
+    r"^[ \t]*(?:>[ \t]*)?(?:(?:[-*+][ \t]+|\d+[.)][ \t]+)?"
+    r"[A-Za-z0-9]+(?:\.[A-Za-z0-9]+)+:|(?P<numbered>\d+[.)]))"
+    r"[ \t]+(?P<body>[^\n]*)",
     re.MULTILINE,
 )
 _INLINE_ARTIFACT_REF_RE = re.compile(
@@ -86,8 +87,16 @@ def extract_artifact_references(criteria: str, kind: str) -> tuple[str, ...]:
     for criterion in _INLINE_CRITERION_LINE_RE.finditer(criteria):
         body = criterion.group("body")
         code_spans = tuple(re.finditer(r"`[^`\n]*`", body))
+        quoted_examples = (
+            tuple(re.finditer(r"""(?<!\w)(?:'[^'\n]*'|"[^"\n]*")""", body))
+            if criterion.group("numbered")
+            else ()
+        )
         for match in _INLINE_ARTIFACT_REF_RE.finditer(body):
-            if any(span.start() <= match.start() < span.end() for span in code_spans):
+            if any(
+                span.start() <= match.start() < span.end()
+                for span in (*code_spans, *quoted_examples)
+            ):
                 continue
             matches.append((criterion.start("body") + match.start(), match))
     for _, match in sorted(matches, key=lambda item: item[0]):
