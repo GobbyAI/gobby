@@ -631,7 +631,7 @@ async def test_edit_agent_menu_replaces_keyboard_with_live_callbacks(
     assert button["text"] == "✓ Lane Developer"
     assert (
         adapter._callback_registry.resolve(
-            button["callback_data"], chat_id="chat999", thread_id=None
+            button["callback_data"], chat_id="chat999", thread_id=None, message_id="12345"
         ).value
         == "select-lane"
     )
@@ -679,14 +679,11 @@ async def test_edit_agent_menu_invalidates_previous_keyboard_tokens(
         "callback_data"
     ]
 
-    assert (
-        adapter._callback_registry.resolve(old_token, chat_id="chat999", thread_id=None).status
-        == "invalid"
-    )
-    assert (
-        adapter._callback_registry.resolve(new_token, chat_id="chat999", thread_id=None).value
-        == "select-b"
-    )
+    registry = adapter._callback_registry
+    old = registry.resolve(old_token, chat_id="chat999", thread_id=None, message_id="12345")
+    new = registry.resolve(new_token, chat_id="chat999", thread_id=None, message_id="12345")
+    assert old.status == "invalid"
+    assert new.value == "select-b"
 
 
 @pytest.mark.asyncio

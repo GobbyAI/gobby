@@ -85,7 +85,9 @@ class TelegramAdapter(BaseChannelAdapter):
         self,
         message_key: tuple[str, str],
         markup: dict[str, list[list[dict[str, str]]]],
+        keyboard_message_id: str,
     ) -> None:
+        self._callback_registry.bind_keyboard(markup, keyboard_message_id)
         previous = self._message_callback_keyboards.pop(message_key, None)
         if previous is not None:
             self._callback_registry.discard_keyboard(previous)
@@ -294,6 +296,7 @@ class TelegramAdapter(BaseChannelAdapter):
                 ttl_seconds=message.metadata_json.get("callback_ttl_seconds", 300),
                 action=message.metadata_json.get("callback_action"),
                 project_id=message.metadata_json.get("callback_project_id"),
+                source_id=message.id or None,
             )
         link_preview_options = resolve_link_preview_options(
             self._link_preview_options,
@@ -335,7 +338,7 @@ class TelegramAdapter(BaseChannelAdapter):
         root_message_id = message_ids[0]
         message_key = (str(chat_id), root_message_id)
         if reply_markup is not None:
-            self._remember_callback_keyboard(message_key, reply_markup)
+            self._remember_callback_keyboard(message_key, reply_markup, message_ids[-1])
         if link_preview_options != self._link_preview_options:
             self._message_link_preview_options[message_key] = link_preview_options
             self._message_link_preview_options.move_to_end(message_key)
@@ -414,9 +417,10 @@ class TelegramAdapter(BaseChannelAdapter):
                 action=callback_source.metadata_json.get("callback_action"),
                 project_id=callback_source.metadata_json.get("callback_project_id"),
                 generation=callback_generation,
+                source_id=callback_source.id or None,
             )
 
-        keyboard_attached = False
+        keyboard_message_id: str | None = None
         try:
             for index, chunk in enumerate(chunks):
                 if index < len(target_ids):
@@ -439,7 +443,7 @@ class TelegramAdapter(BaseChannelAdapter):
                         ):
                             raise RuntimeError(f"Telegram editMessageText failed: {description}")
                     if reply_markup is not None and index == len(chunks) - 1:
-                        keyboard_attached = True
+                        keyboard_message_id = target_ids[index]
                     continue
 
                 payload = {
@@ -454,9 +458,9 @@ class TelegramAdapter(BaseChannelAdapter):
                 result = await self._post_json("sendMessage", payload)
                 if not result.get("ok"):
                     raise RuntimeError("Telegram sendMessage did not return a message")
-                if reply_markup is not None and index == len(chunks) - 1:
-                    keyboard_attached = True
                 target_ids.append(str(result["result"]["message_id"]))
+                if reply_markup is not None and index == len(chunks) - 1:
+                    keyboard_message_id = target_ids[-1]
 
             for stale_message_id in target_ids[len(chunks) :]:
                 await self._post_json(
@@ -468,8 +472,8 @@ class TelegramAdapter(BaseChannelAdapter):
                 )
         finally:
             if reply_markup is not None:
-                if keyboard_attached:
-                    self._remember_callback_keyboard(message_key, reply_markup)
+                if keyboard_message_id is not None:
+                    self._remember_callback_keyboard(message_key, reply_markup, keyboard_message_id)
                 else:
                     self._callback_registry.discard_keyboard(reply_markup)
 
@@ -482,34 +486,40 @@ class TelegramAdapter(BaseChannelAdapter):
         else:
             self._edit_overflow_ids.pop(message_key, None)
 
-    async def reissue_callback_keyboard(
-        self, source: CommsMessage, chat_id: str, message_id: str, *, generation: int
-    ) -> None:
-        """Replace a stored decision message's buttons with freshly registered tokens."""
-        reply_markup = self._callback_registry.register_keyboard(
-            source.metadata_json.get("inline_keyboard"),
-            session_id=source.session_id,
-            chat_id=chat_id,
-            thread_id=source.platform_thread_id,
-            ttl_seconds=source.metadata_json.get("callback_ttl_seconds", 300),
-            action=source.metadata_json.get("callback_action"),
-            project_id=source.metadata_json.get("callback_project_id"),
-            generation=generation,
+    async def edit_stored_message(
+        self,
+        source: CommsMessage,
+        content: str,
+        conversation_id: str,
+        *,
+        sender_label: str | None,
+        inline_keyboard: list[list[dict[str, str]]] | None,
+        callback_generation: int,
+    ) -> list[str]:
+        """Edit every chunk of a stored message in place; return its chunk IDs afterwards.
+
+        The stored chunk IDs seed the edit, so a multi-chunk message is rewritten as a
+        whole even when this process never sent or edited it (after a restart).
+        """
+        root_id = source.platform_message_id
+        if not root_id:
+            raise ValueError("Cannot edit a stored Telegram message without its platform ID")
+        stored_ids = source.metadata_json.get("platform_message_ids")
+        message_key = (conversation_id, root_id)
+        if isinstance(stored_ids, list) and stored_ids and str(stored_ids[0]) == root_id:
+            overflow = [str(chunk_id) for chunk_id in stored_ids[1:]]
+            if overflow:
+                self._edit_overflow_ids[message_key] = overflow
+        await self.edit_message(
+            root_id,
+            content,
+            conversation_id,
+            sender_label=sender_label,
+            inline_keyboard=inline_keyboard,
+            callback_source=source if inline_keyboard is not None else None,
+            callback_generation=callback_generation,
         )
-        try:
-            result = await self._post_json(
-                "editMessageReplyMarkup",
-                {"chat_id": chat_id, "message_id": message_id, "reply_markup": reply_markup},
-            )
-            if not result.get("ok"):
-                description = str(result.get("description", "unknown Telegram API error"))
-                raise RuntimeError(f"Telegram editMessageReplyMarkup failed: {description}")
-        except BaseException:
-            self._callback_registry.discard_keyboard(reply_markup)
-            raise
-        self._remember_callback_keyboard(
-            (chat_id, source.platform_message_id or message_id), reply_markup
-        )
+        return [root_id, *self._edit_overflow_ids.get(message_key, [])]
 
     async def send_attachment(
         self, message: CommsMessage, attachment: CommsAttachment, file_path: Path

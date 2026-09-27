@@ -7,7 +7,7 @@ import time
 import uuid
 from collections import OrderedDict
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any, Literal
 
@@ -33,6 +33,7 @@ class TelegramCallbackResolution:
     value: str | None = None
     action: str | None = None
     project_id: str | None = None
+    source_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -44,6 +45,9 @@ class _CallbackEntry:
     expires_at: float
     action: str | None
     project_id: str | None = None
+    source_id: str | None = None
+    # The message the keyboard was delivered on; None until delivery is confirmed.
+    message_id: str | None = None
 
 
 class TelegramCallbackRegistry:
@@ -74,11 +78,13 @@ class TelegramCallbackRegistry:
         action: object = None,
         project_id: object = None,
         generation: int = 0,
+        source_id: str | None = None,
     ) -> dict[str, list[list[dict[str, str]]]]:
         """Validate a keyboard and replace button values with opaque callback tokens.
 
         A nonzero ``generation`` is carried in each token so a click on a replaced
         keyboard stays recognizable after its token has left this registry.
+        ``source_id`` is the stored message that owns the keyboard.
         """
         normalized_action = _optional_string(action)
         normalized_session_id = (
@@ -113,6 +119,7 @@ class TelegramCallbackRegistry:
                     expires_at=expires_at,
                     action=normalized_action,
                     project_id=normalized_project_id,
+                    source_id=source_id,
                 )
                 self._evict_excess()
                 telegram_row.append({"text": text, "callback_data": callback_data})
@@ -125,8 +132,13 @@ class TelegramCallbackRegistry:
         *,
         chat_id: str,
         thread_id: str | None,
+        message_id: str | None,
     ) -> TelegramCallbackResolution:
-        """Authenticate, scope, and consume one callback token."""
+        """Authenticate, scope, and consume one callback token.
+
+        Telegram lets a client send any callback data from any message, so a token
+        only resolves from the message its keyboard was delivered on.
+        """
         if not isinstance(callback_data, str) or not callback_data.startswith(_CALLBACK_PREFIX):
             return TelegramCallbackResolution(status="invalid")
         token = callback_data.removeprefix(_CALLBACK_PREFIX)
@@ -138,7 +150,12 @@ class TelegramCallbackRegistry:
         if entry.expires_at <= self._clock():
             self._entries.pop(token, None)
             return TelegramCallbackResolution(status="expired")
-        if entry.chat_id != str(chat_id) or entry.thread_id != _optional_string(thread_id):
+        if (
+            entry.chat_id != str(chat_id)
+            or entry.thread_id != _optional_string(thread_id)
+            or entry.message_id is None
+            or entry.message_id != message_id
+        ):
             return TelegramCallbackResolution(status="invalid")
 
         self._entries.pop(token, None)
@@ -148,24 +165,20 @@ class TelegramCallbackRegistry:
             value=entry.value,
             action=entry.action,
             project_id=entry.project_id,
+            source_id=entry.source_id,
         )
+
+    def bind_keyboard(self, markup: object, message_id: str) -> None:
+        """Pin a delivered keyboard's tokens to the message that carries them."""
+        for token in _keyboard_tokens(markup):
+            entry = self._entries.get(token)
+            if entry is not None:
+                self._entries[token] = replace(entry, message_id=message_id)
 
     def discard_keyboard(self, markup: object) -> None:
         """Remove callback tokens allocated for a keyboard that was not delivered."""
-        if not isinstance(markup, dict):
-            return
-        rows = markup.get("inline_keyboard")
-        if not isinstance(rows, list):
-            return
-        for row in rows:
-            if not isinstance(row, list):
-                continue
-            for button in row:
-                if not isinstance(button, dict):
-                    continue
-                callback_data = button.get("callback_data")
-                if isinstance(callback_data, str) and callback_data.startswith(_CALLBACK_PREFIX):
-                    self._entries.pop(callback_data.removeprefix(_CALLBACK_PREFIX), None)
+        for token in _keyboard_tokens(markup):
+            self._entries.pop(token, None)
 
     def _new_token(self, generation: int) -> str:
         for _attempt in range(10):
@@ -215,10 +228,12 @@ def telegram_callback_message(
     if chat_id is None or user_id is None:
         return None
     thread_id = _positive_integer_identifier(source_message.get("message_thread_id"))
+    source_message_id = _platform_identifier(source_message.get("message_id"))
     resolution = registry.resolve(
         callback_data,
         chat_id=chat_id,
         thread_id=thread_id,
+        message_id=source_message_id,
     )
     username = from_user.get("username")
     external_username = username if isinstance(username, str) and username else user_id
@@ -251,8 +266,9 @@ def telegram_callback_message(
             metadata["callback_action"] = resolution.action
         if resolution.project_id is not None:
             metadata["callback_project_id"] = resolution.project_id
+        if resolution.source_id is not None:
+            metadata["callback_source_id"] = resolution.source_id
 
-    source_message_id = _platform_identifier(source_message.get("message_id"))
     if source_message_id is not None:
         metadata["callback_source_message_id"] = source_message_id
     return CommsMessage(
@@ -307,6 +323,25 @@ def _normalized_keyboard(keyboard: object) -> list[list[tuple[str, str]]]:
             f"Telegram inline_keyboard supports at most {_MAX_TOTAL_BUTTONS} total buttons"
         )
     return normalized
+
+
+def _keyboard_tokens(markup: object) -> list[str]:
+    if not isinstance(markup, dict):
+        return []
+    rows = markup.get("inline_keyboard")
+    if not isinstance(rows, list):
+        return []
+    tokens: list[str] = []
+    for row in rows:
+        if not isinstance(row, list):
+            continue
+        for button in row:
+            if not isinstance(button, dict):
+                continue
+            callback_data = button.get("callback_data")
+            if isinstance(callback_data, str) and callback_data.startswith(_CALLBACK_PREFIX):
+                tokens.append(callback_data.removeprefix(_CALLBACK_PREFIX))
+    return tokens
 
 
 def callback_generation(callback_data: object) -> int:

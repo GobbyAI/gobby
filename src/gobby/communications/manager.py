@@ -275,14 +275,7 @@ class CommunicationsManager:
                 inline_keyboard is not None or stored_message.metadata_json.get("inline_keyboard")
             ):
                 await edit_keyboard_message(
-                    self,
-                    telegram,
-                    stored_message.id,
-                    platform_message_id,
-                    content,
-                    conversation_id,
-                    label,
-                    inline_keyboard,
+                    self, telegram, stored_message.id, content, conversation_id, inline_keyboard
                 )
                 return
             await telegram.edit_message(

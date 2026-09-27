@@ -2861,7 +2861,7 @@ async def test_telegram_edit_supersedes_or_replaces_decision_keyboard(
     manager._channel_by_name[channel.name] = channel
     adapter = make_adapter(channel_type="telegram")
     adapter.supports_message_edit = True
-    adapter.edit_message = AsyncMock()
+    adapter.edit_stored_message = AsyncMock(return_value=["platform-1"])
     manager._adapters[channel.name] = adapter
     replacement = [[{"text": "Ship", "value": "ship"}]]
 
@@ -2872,6 +2872,7 @@ async def test_telegram_edit_supersedes_or_replaces_decision_keyboard(
     assert replaced is not None
     assert replaced.metadata_json["inline_keyboard"] == replacement
     assert replaced.metadata_json.get("callback_state") is None
+    assert replaced.content == "Approve v2?"
 
     await manager.edit_message(channel.name, "platform-1", "Withdrawn", "99")
     withdrawn = store.get_message(decision_id)

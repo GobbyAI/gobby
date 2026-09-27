@@ -616,6 +616,20 @@ SELECT
             ).fetchone()
         return row is not None
 
+    def record_platform_message_ids(self, message_id: str, platform_message_ids: list[str]) -> None:
+        """Record the chunk IDs a published edit left the message on."""
+        with self.db.transaction() as conn:
+            conn.execute(
+                """
+                UPDATE comms_messages
+                   SET metadata_json = jsonb_set(
+                           metadata_json, '{platform_message_ids}', %s::jsonb
+                       )
+                 WHERE id = %s
+                """,
+                (json.dumps(platform_message_ids), message_id),
+            )
+
     def restore_callback_edit(self, previous: CommsMessage, staged_generation: int) -> bool:
         """Undo a staged edit that Telegram refused; False when the row moved on."""
         restored = {
