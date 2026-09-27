@@ -546,7 +546,7 @@ pub async fn run_live_loop<B: Backend>(
                 }
             }
             _ = render_tick.tick() => {
-                if chrome.prefs.theme.eq_ignore_ascii_case("system") {
+                if chrome.prefs.follows_system() {
                     if !system_theme_watch_attempted {
                         system_theme_watcher = dark_light::subscribe().ok();
                         system_theme_watch_attempted = true;

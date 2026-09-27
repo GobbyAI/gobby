@@ -3,80 +3,80 @@
 00 | Gobby  File  Edit  View  Window  Agent  Help                                                                           |
 00 : bar_ink/bar+b*120
 01 |▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀|
-01 : line/-*120
+01 : line/panel_bg*120
 02 | alpha       +                                                                                                          |
-02 : text/-+b*12 overlay1/surface0*3 -/surface0*105
+02 : text/panel_bg+b*12 overlay1/surface0*3 text/surface0*105
 03 |▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀|
-03 : line/-*120
+03 : line/panel_bg*120
 04 |┌ ○ #1742: Codex ───────────────────────────────────────────────────────────────────────────────────────────── gclient ┐|
-04 : overlay0/-*120
+04 : overlay0/panel_bg*120
 05 |│                                                                                                                      │|
-05 : overlay0/-*1 -/-*118 overlay0/-*1
+05 : overlay0/panel_bg*1 text/panel_bg*118 overlay0/panel_bg*1
 06 |│                                                                                                                      │|
-06 : overlay0/-*1 -/-*118 overlay0/-*1
+06 : overlay0/panel_bg*1 text/panel_bg*118 overlay0/panel_bg*1
 07 |│                                                                                                                      │|
-07 : overlay0/-*1 -/-*118 overlay0/-*1
+07 : overlay0/panel_bg*1 text/panel_bg*118 overlay0/panel_bg*1
 08 |│                                                                                                                      │|
-08 : overlay0/-*1 -/-*118 overlay0/-*1
+08 : overlay0/panel_bg*1 text/panel_bg*118 overlay0/panel_bg*1
 09 |│                                                                                                                      │|
-09 : overlay0/-*1 -/-*118 overlay0/-*1
+09 : overlay0/panel_bg*1 text/panel_bg*118 overlay0/panel_bg*1
 10 |│                                                                                                                      │|
-10 : overlay0/-*1 -/-*118 overlay0/-*1
+10 : overlay0/panel_bg*1 text/panel_bg*118 overlay0/panel_bg*1
 11 |│                                                                                                                      │|
-11 : overlay0/-*1 -/-*118 overlay0/-*1
+11 : overlay0/panel_bg*1 text/panel_bg*118 overlay0/panel_bg*1
 12 |│                                                                                                                      │|
-12 : overlay0/-*1 -/-*118 overlay0/-*1
+12 : overlay0/panel_bg*1 text/panel_bg*118 overlay0/panel_bg*1
 13 |│                                                 waiting for frames                                                   │|
-13 : overlay0/-*1 -/-*49 overlay0/-*18 -/-*51 overlay0/-*1
+13 : overlay0/panel_bg*1 text/panel_bg*49 overlay0/panel_bg*18 text/panel_bg*51 overlay0/panel_bg*1
 14 |│                                                                                                                      │|
-14 : overlay0/-*1 -/-*118 overlay0/-*1
+14 : overlay0/panel_bg*1 text/panel_bg*118 overlay0/panel_bg*1
 15 |│                                                                                                                      │|
-15 : overlay0/-*1 -/-*118 overlay0/-*1
+15 : overlay0/panel_bg*1 text/panel_bg*118 overlay0/panel_bg*1
 16 |│                                                                                                                      │|
-16 : overlay0/-*1 -/-*118 overlay0/-*1
+16 : overlay0/panel_bg*1 text/panel_bg*118 overlay0/panel_bg*1
 17 |│                                                                                                                      │|
-17 : overlay0/-*1 -/-*118 overlay0/-*1
+17 : overlay0/panel_bg*1 text/panel_bg*118 overlay0/panel_bg*1
 18 |│                                                                                                                      │|
-18 : overlay0/-*1 -/-*118 overlay0/-*1
+18 : overlay0/panel_bg*1 text/panel_bg*118 overlay0/panel_bg*1
 19 |│                                                                                                                      │|
-19 : overlay0/-*1 -/-*118 overlay0/-*1
+19 : overlay0/panel_bg*1 text/panel_bg*118 overlay0/panel_bg*1
 20 |│                                                                                                                      │|
-20 : overlay0/-*1 -/-*118 overlay0/-*1
+20 : overlay0/panel_bg*1 text/panel_bg*118 overlay0/panel_bg*1
 21 |│                                                                                                                      │|
-21 : overlay0/-*1 -/-*118 overlay0/-*1
+21 : overlay0/panel_bg*1 text/panel_bg*118 overlay0/panel_bg*1
 22 |├ ○ term-bet · Focused ────────────────────────────────────────────────────────────────────────────────────────────────┤|
-22 : accent/-*1 accent/-+b*22 accent/-*97
+22 : accent/panel_bg*1 accent/panel_bg+b*22 accent/panel_bg*97
 23 |│                                                                                                                      │|
-23 : accent/-*1 -/-*118 accent/-*1
+23 : accent/panel_bg*1 text/panel_bg*118 accent/panel_bg*1
 24 |│                                                                                                                      │|
-24 : accent/-*1 -/-*118 accent/-*1
+24 : accent/panel_bg*1 text/panel_bg*118 accent/panel_bg*1
 25 |│                                                                                                                      │|
-25 : accent/-*1 -/-*118 accent/-*1
+25 : accent/panel_bg*1 text/panel_bg*118 accent/panel_bg*1
 26 |│                                                                                                                      │|
-26 : accent/-*1 -/-*118 accent/-*1
+26 : accent/panel_bg*1 text/panel_bg*118 accent/panel_bg*1
 27 |│                                                                                                                      │|
-27 : accent/-*1 -/-*118 accent/-*1
+27 : accent/panel_bg*1 text/panel_bg*118 accent/panel_bg*1
 28 |│                                                                                                                      │|
-28 : accent/-*1 -/-*118 accent/-*1
+28 : accent/panel_bg*1 text/panel_bg*118 accent/panel_bg*1
 29 |│                                                                                                                      │|
-29 : accent/-*1 -/-*118 accent/-*1
+29 : accent/panel_bg*1 text/panel_bg*118 accent/panel_bg*1
 30 |│                                                 waiting for frames                                                   │|
-30 : accent/-*1 -/-*49 overlay0/-*18 -/-*51 accent/-*1
+30 : accent/panel_bg*1 text/panel_bg*49 overlay0/panel_bg*18 text/panel_bg*51 accent/panel_bg*1
 31 |│                                                                                                                      │|
-31 : accent/-*1 -/-*118 accent/-*1
+31 : accent/panel_bg*1 text/panel_bg*118 accent/panel_bg*1
 32 |│                                                                                                                      │|
-32 : accent/-*1 -/-*118 accent/-*1
+32 : accent/panel_bg*1 text/panel_bg*118 accent/panel_bg*1
 33 |│                                                                                                                      │|
-33 : accent/-*1 -/-*118 accent/-*1
+33 : accent/panel_bg*1 text/panel_bg*118 accent/panel_bg*1
 34 |│                                                                                                                      │|
-34 : accent/-*1 -/-*118 accent/-*1
+34 : accent/panel_bg*1 text/panel_bg*118 accent/panel_bg*1
 35 |│                                                                                                                      │|
-35 : accent/-*1 -/-*118 accent/-*1
+35 : accent/panel_bg*1 text/panel_bg*118 accent/panel_bg*1
 36 |│                                                                                                                      │|
-36 : accent/-*1 -/-*118 accent/-*1
+36 : accent/panel_bg*1 text/panel_bg*118 accent/panel_bg*1
 37 |│                                                                                                                      │|
-37 : accent/-*1 -/-*118 accent/-*1
+37 : accent/panel_bg*1 text/panel_bg*118 accent/panel_bg*1
 38 |└──────────────────────────────────────────────────────────────────────────────────────────────────────────────── tmux ┘|
-38 : accent/-*113 accent/-+b*6 accent/-*1
+38 : accent/panel_bg*113 accent/panel_bg+b*6 accent/panel_bg*1
 39 | 1 idle                                                                                                   prefix ctrl+b |
-39 : -/surface0*1 subtext0/surface0*6 -/surface0*99 subtext0/surface0*13 -/surface0*1
+39 : text/surface0*1 subtext0/surface0*6 text/surface0*99 subtext0/surface0*13 text/surface0*1

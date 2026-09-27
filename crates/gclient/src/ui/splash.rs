@@ -1,6 +1,6 @@
 // upstream: none (native Gobby connection splash)
 //! The connection splash: the goblin beside the wordmark, alone on the
-//! terminal's ground until startup draws its first frame.
+//! ground until startup draws its first frame.
 
 use ratatui::layout::Rect;
 use ratatui::Frame;

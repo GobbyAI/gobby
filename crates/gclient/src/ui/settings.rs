@@ -207,6 +207,12 @@ impl Default for ClientPrefs {
 }
 
 impl ClientPrefs {
+    /// System follows the terminal: its appearance picks the palette and its
+    /// own colours stay the ground.
+    pub fn follows_system(&self) -> bool {
+        self.theme.eq_ignore_ascii_case("system")
+    }
+
     pub fn theme_kind(&self) -> ThemeKind {
         match self.theme.to_ascii_lowercase().as_str() {
             "light" => ThemeKind::Light,

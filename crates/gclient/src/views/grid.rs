@@ -15,8 +15,9 @@ use ratatui::Frame;
 /// which is not where the user is typing.
 ///
 /// A hosted terminal sends its default fg and bg as wire 0; they are written
-/// through as `Color::Reset`, so the pane shows the hosting terminal's own
-/// colours, the same ground the chrome around it sits on.
+/// through as `Color::Reset`, so the pane sits on the same ground as the
+/// chrome around it: the theme's under Dark and Light, the hosting
+/// terminal's own under System.
 pub fn render(frame: &mut Frame<'_>, area: Rect, pane: &Pane, focused: bool) {
     let Some(grid) = pane.latest_frame() else {
         return;

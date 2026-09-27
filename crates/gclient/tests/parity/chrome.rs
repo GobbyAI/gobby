@@ -699,7 +699,7 @@ parity_tests! {
             assert_eq!(auto_style.bg, Some(palette().surface0));
             assert!(!auto_style.add_modifier.contains(Modifier::DIM));
             assert_eq!(custom_style.fg, Some(palette().text));
-            assert_eq!(custom_style.bg, Some(Color::Reset));
+            assert_eq!(custom_style.bg, Some(palette().panel_bg));
             assert!(custom_style.add_modifier.contains(Modifier::BOLD));
         }
 
@@ -1229,12 +1229,13 @@ switch_project = "ctrl+1..9"
                     // took the pane's address at their right edge over a
                     // blank directory line, and pane corners took V18's
                     // glyph-led title top left and the address alone bottom
-                    // right (#22944):
+                    // right, and Dark painted its own ground under every
+                    // default cell (#22944):
                     // 4.1.3 requires a glyph change to fail here, so this
                     // digest moves only alongside a deliberate render change.
                     assert_eq!(
                         frame_digest(&terminal),
-                        "f4198facdb8ac2fdd4dd64e4f377a6fd99db1151481624a60664a541fdd8365a",
+                        "a4769bdbdec97dc68f0befc66123f3fcd20959cadfcd3f3c11ae56994d658a54",
                         "the frame moved; read it against the boards before pinning:\n{}",
                         rect_rows(&terminal, frame).join("\n")
                     );
@@ -1772,7 +1773,14 @@ fn tab_bar_opens_the_active_tab_onto_the_terminal_ground() {
     let active = tab_view(&ws, &chrome, area).tab_hit_areas[1];
     let style = cell(&terminal, active.x + 1, active.y).style();
 
+    // Dark paints the ground; System leaves the terminal's own.
+    assert_eq!(style.fg, Some(palette().text));
+    assert_eq!(style.bg, Some(palette().panel_bg));
+    assert!(style.add_modifier.contains(Modifier::BOLD));
+
+    chrome.prefs.theme = "system".to_string();
+    let terminal = render_full(&ws, &chrome, area);
+    let style = cell(&terminal, active.x + 1, active.y).style();
     assert_eq!(style.fg, Some(palette().text));
     assert_eq!(style.bg, Some(Color::Reset));
-    assert!(style.add_modifier.contains(Modifier::BOLD));
 }
