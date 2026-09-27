@@ -104,9 +104,10 @@ pub fn render_workspace_with<W: WorkspaceView>(
 
 /// Light and Dark own the ground: every cell still on the terminal's default
 /// colours, hosted panes included, takes the theme's text on `panel_bg`, so
-/// the hosting terminal's background, foreground and opacity no longer show
-/// through. System leaves the terminal's own colours in place. Runs last:
-/// overlays `Clear` their cells back to the default.
+/// the hosting terminal's configured background and foreground no longer show
+/// through; host opacity that applies to explicit cells still does. System
+/// leaves the terminal's own colours in place. Runs last: overlays `Clear`
+/// their cells back to the default.
 fn paint_ground(frame: &mut Frame, chrome: &Chrome) {
     if chrome.prefs.follows_system() {
         return;

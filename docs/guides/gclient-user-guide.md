@@ -97,10 +97,12 @@ it, and `esc` closes both. **View › Legend** opens the keybinding help on its
 attention legend.
 
 Dark and Light paint their own ground: every cell and every pane's default
-colours take the theme's text and background, whatever the hosting terminal
-(Ghostty included) sets for its background, foreground, or opacity. System
-keeps the hosting terminal's own background and foreground, translucency
-included, and only picks the palette from the OS appearance.
+colours take the theme's text and background, whatever background and
+foreground the hosting terminal (Ghostty included) configures. Those cells are
+explicit colours, so a terminal setting that applies opacity to explicit cells
+(Ghostty's `background-opacity-cells`) still applies. System keeps the hosting
+terminal's own background and foreground and only picks the palette from the
+OS appearance.
 
 The five **Window › Arrange: …** items redistribute the panes in the active
 tab into the chosen layout. **Window › New grid…** asks for rows and columns
