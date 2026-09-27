@@ -58,6 +58,7 @@ from gobby.sessions.handoff import (
     stage_handoff_attempt,
     staged_handoff_tool_result,
 )
+from gobby.sessions.handoff_reconciliation import is_legacy_codex_ambiguous_enter_failure
 from gobby.sessions.handoff_records import (
     FOUND_WORK_DISPOSITIONS,
     FoundWorkEntry,
@@ -311,7 +312,12 @@ def register_terminal_tools(
             if (
                 isinstance(gate, Mapping)
                 and gate.get("delivery_failed") is True
-                and gate.get("error_code") == "compact_unconfirmed"
+                and (
+                    gate.get("error_code") == "compact_unconfirmed"
+                    or is_legacy_codex_ambiguous_enter_failure(
+                        gate, getattr(session_manager.get(session_id), "source", None)
+                    )
+                )
                 and isinstance(gate.get("attempt_id"), str)
                 and isinstance(failed, Mapping)
                 and failed.get("attempt_id") == gate.get("attempt_id")

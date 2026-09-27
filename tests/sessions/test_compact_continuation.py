@@ -35,7 +35,12 @@ from gobby.sessions.compact_continuation import (
     schedule_codex_handoff_compact_continuation_readiness,
     schedule_handoff_compact_continuation,
 )
-from gobby.sessions.handoff import build_handoff_continue_prompt
+from gobby.sessions.handoff import (
+    HANDOFF_DISPATCH_GATE_VARIABLE,
+    build_handoff_continue_prompt,
+    stage_handoff_attempt,
+)
+from gobby.sessions.handoff_records import build_handoff_payload, record_handoff_delivery
 from gobby.sessions.transcript_cursor import CodexRolloutCursor, TranscriptObservationError
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
@@ -331,6 +336,67 @@ async def test_codex_waits_for_fresh_compaction_marker_before_continuing(
     assert tmux.sent_keys == [*_CODEX_DRAIN, ("%12", f"{prompt}\n", True), _ENTER]
     variables = SessionVariableManager(session_db).get_variables(SESSION_ID)
     assert HANDOFF_COMPACT_CONTINUE_VARIABLE not in variables
+
+
+@pytest.mark.asyncio
+async def test_codex_readiness_keeps_prompt_until_compact_receipt(session_db: HubDatabase) -> None:
+    attempt_id = "a" * 32
+    mark_handoff_compact_continuation_pending(
+        session_db, SESSION_ID, prompt="Call get_handoff", attempt_id=attempt_id
+    )
+    SessionVariableManager(session_db).set_variable(
+        SESSION_ID,
+        HANDOFF_DISPATCH_GATE_VARIABLE,
+        {"attempt_id": attempt_id, "delivery_pending": True},
+    )
+
+    class ReadyTmux(_FakeTmux):
+        async def capture_pane(self, pane_id: str, *, lines: int) -> str:
+            return "• Context compacted\n›"
+
+    tmux = ReadyTmux()
+    await _continue_after_codex_compaction_ready(
+        session_db,
+        pane=TmuxPaneIO(tmux, "%12"),
+        pending_session_id=SESSION_ID,
+        before_command="Before /compact\n›",
+        poll_seconds=0,
+        attempt_id=attempt_id,
+    )
+
+    assert tmux.sent_keys == []
+    marker = SessionVariableManager(session_db).get_variables(SESSION_ID)[
+        HANDOFF_COMPACT_CONTINUE_VARIABLE
+    ]
+    assert marker["attempt_id"] == attempt_id
+
+    staged = stage_handoff_attempt(
+        session_db,
+        SESSION_ID,
+        attempt_id=attempt_id,
+        handoff=build_handoff_payload(current_state="Compacted", next_steps=["Continue"]),
+        clear_session=False,
+    )
+    record_handoff_delivery(
+        session_db,
+        handoff_id=staged.handoff_record_id,
+        attempt_id=attempt_id,
+        boundary_kind="compact",
+        continuation_session_id=SESSION_ID,
+    )
+    await _continue_after_codex_compaction_ready(
+        session_db,
+        pane=TmuxPaneIO(tmux, "%12"),
+        pending_session_id=SESSION_ID,
+        before_command="Before /compact\n›",
+        poll_seconds=0,
+        attempt_id=attempt_id,
+    )
+
+    assert sum(text == "Call get_handoff\n" for _, text, literal in tmux.sent_keys if literal) == 1
+    assert HANDOFF_COMPACT_CONTINUE_VARIABLE not in SessionVariableManager(
+        session_db
+    ).get_variables(SESSION_ID)
 
 
 @pytest.mark.asyncio
@@ -704,6 +770,27 @@ def test_failed_schedule_does_not_replace_newer_pending_marker(session_db: HubDa
 
     assert scheduled is False
     assert sv_mgr.get_variables(SESSION_ID)[HANDOFF_COMPACT_CONTINUE_VARIABLE] == new_payload
+
+
+def test_schedule_exception_restores_compact_prompt(session_db: HubDatabase) -> None:
+    mark_handoff_compact_continuation_pending(
+        session_db, SESSION_ID, prompt="Call get_handoff", attempt_id="current-attempt"
+    )
+    with patch(
+        "gobby.sessions.compact_continuation.schedule_handoff_compact_continuation",
+        side_effect=RuntimeError("terminal unavailable"),
+    ):
+        scheduled = consume_and_schedule_handoff_compact_continuation(
+            session_db,
+            pending_session_id=SESSION_ID,
+            target_session=SimpleNamespace(id=SESSION_ID),
+        )
+
+    assert scheduled is False
+    marker = SessionVariableManager(session_db).get_variables(SESSION_ID)[
+        HANDOFF_COMPACT_CONTINUE_VARIABLE
+    ]
+    assert marker["attempt_id"] == "current-attempt"
 
 
 def test_in_place_compact_consumes_pending_on_same_terminal_row(

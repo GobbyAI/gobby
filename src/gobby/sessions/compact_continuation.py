@@ -20,7 +20,7 @@ from gobby.sessions.compact_markers import (
     HANDOFF_COMPACT_CONTINUE_SEND_DELAY_SECONDS,
     HANDOFF_COMPACT_CONTINUE_VARIABLE,
 )
-from gobby.sessions.handoff import build_handoff_continue_prompt
+from gobby.sessions.handoff import HANDOFF_DISPATCH_GATE_VARIABLE, build_handoff_continue_prompt
 from gobby.sessions.handoff_identity import terminal_process_contexts_match
 from gobby.sessions.handoff_records import record_handoff_delivery
 from gobby.sessions.tmux_context import parse_terminal_context_value
@@ -431,21 +431,30 @@ def consume_and_schedule_handoff_compact_continuation(
     prompt, payload = pending
     attempt_id = payload.get("attempt_id") if isinstance(payload, dict) else None
     target_session_id = str(getattr(target_session, "id", source_session_id))
-    if schedule_handoff_compact_continuation(
-        target_session,
-        prompt,
-        loop=loop,
-        db=db,
-        terminal_manager=terminal_manager,
-        terminal_runtime_registry=terminal_runtime_registry,
-        on_send_failure=partial(
-            persist_pull_prompt_message,
-            db,
-            target_session_id,
+    try:
+        scheduled = schedule_handoff_compact_continuation(
+            target_session,
             prompt,
-            str(attempt_id) if attempt_id is not None else None,
-        ),
-    ):
+            loop=loop,
+            db=db,
+            terminal_manager=terminal_manager,
+            terminal_runtime_registry=terminal_runtime_registry,
+            on_send_failure=partial(
+                persist_pull_prompt_message,
+                db,
+                target_session_id,
+                prompt,
+                str(attempt_id) if attempt_id is not None else None,
+            ),
+        )
+    except Exception:
+        logger.warning(
+            "Failed scheduling compact continuation for session %s",
+            target_session_id,
+            exc_info=True,
+        )
+        scheduled = False
+    if scheduled:
         return True
     try:
         _restore_session_variable_if_absent(
@@ -664,6 +673,22 @@ async def _continue_after_codex_compaction_ready(
             or _count_codex_compact_ready_status_lines(fresh_output) > 0
         )
         if ready:
+            gate = variables.get(HANDOFF_DISPATCH_GATE_VARIABLE)
+            if (
+                attempt_id is not None
+                and isinstance(gate, dict)
+                and gate.get("attempt_id") == attempt_id
+            ):
+                receipt = await asyncio.to_thread(
+                    db.fetchone,
+                    "SELECT 1 FROM session_handoff_deliveries WHERE attempt_id = %s "
+                    "AND boundary_kind = 'compact'",
+                    (attempt_id,),
+                )
+                if receipt is None:
+                    # The provider can render its status before the delivery receipt.
+                    # The delivery waiter restarts readiness after recording it.
+                    return
             if poll_seconds > 0:
                 await asyncio.sleep(poll_seconds)
             pending = await asyncio.to_thread(

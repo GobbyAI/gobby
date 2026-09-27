@@ -23,6 +23,7 @@ import os
 import stat
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Self
 
@@ -214,6 +215,48 @@ class CodexRolloutCursor(TranscriptTailCursor):
             if isinstance(payload, dict) and payload.get("type") == "turn_aborted":
                 return True
         return False
+
+    def saw_fresh_compacted(self) -> bool:
+        """Return whether Codex appended a provider compact boundary after this cursor."""
+        return any(record.get("type") == "compacted" for record in self.fresh_records())
+
+
+def codex_compact_boundary_between(
+    transcript_path: str | Path | None,
+    external_id: str,
+    authored_at: datetime,
+    deadline: datetime,
+) -> datetime | None:
+    """Find a durable compact record in this exact Codex rollout and time window."""
+    if not transcript_path:
+        return None
+    try:
+        with Path(transcript_path).expanduser().open("rb") as stream:
+            if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                return None
+            first = json.loads(stream.readline())
+            if (
+                not isinstance(first, dict)
+                or first.get("type") != "session_meta"
+                or not isinstance(first.get("payload"), dict)
+                or first["payload"].get("id") != external_id
+            ):
+                return None
+            for raw in stream:
+                if b"compacted" not in raw:
+                    continue
+                try:
+                    record = json.loads(raw)
+                    if not isinstance(record, dict) or record.get("type") != "compacted":
+                        continue
+                    boundary = datetime.fromisoformat(record["timestamp"])
+                except (TypeError, ValueError, KeyError, json.JSONDecodeError, UnicodeDecodeError):
+                    continue
+                if boundary.tzinfo is not None and authored_at <= boundary <= deadline:
+                    return boundary
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    return None
 
 
 @dataclass
