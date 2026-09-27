@@ -40,19 +40,22 @@ before the agent is placed or rolled back. A launch terminal whose kill fails st
 - Validation happens before side effects: a refused preflight spawns nothing. A
   reservation refused at dispatch starts no agent, and the existing spawn cleanup
   removes what dispatch created.
-- Sandbox and role authority follow the closed #22899 decisions. Profiles are
-  definition-only, and `spawn_agent` gains no sandbox input.
+- Sandbox and role authority follow the closed #22899 decisions, except where
+  decision 13 supersedes them. Profiles are definition-only, and `spawn_agent` gains
+  no sandbox input.
 - This planning task contains no code and no live spawning.
 - Josh's acceptance (via PD #14610, 2026-09-26; scope clarified the same day):
-  - Every developer seat launched through a pipeline runs inside managed SRT before
-    provider exec.
+  - Every agent that `spawn_agent` launches, from a pipeline or the daemon, placed
+    or not, runs inside managed SRT before provider exec, with no unsandboxed
+    fallback (decision 13).
   - Placement preserves canonical SRT wrapping, policy, grants, leases, isolation and
     resume.
   - Any invalid input or wrap failure is refused before any unplaced or unsandboxed
     agent side effect.
   - The isolated acceptance tests include a two-seat tab+split ordinary pipeline and a
     live-seat refusal.
-  - Current hand-launched seats are out of scope; they need no relaunch.
+  - gclient hand launches and plain shells have no sandbox mechanism and are out of
+    scope. Current hand-launched seats are not relaunched.
 - Josh's rulings of record:
   - Spawned agents already run in gclient panes, and plans keep the as-is state
     separate from the to-be design (memory 556ec801).
@@ -62,8 +65,8 @@ before the agent is placed or rolled back. A launch terminal whose kill fails st
 - Monolith ceiling: on main `cb4f91b49b` these targets are at or above 850 lines:
   - `_implementation.py`: 964
   - `spawn_executor.py`: 962
-  - `workspace_ops.py`: 1004 (already over the ceiling; 1.5 moves the pane-source
-    policy out, the extraction #22883 announced)
+  - `workspace_ops.py`: 1004 on main; 893 after #22883's pane-access extraction
+    (`workspace_pane_access.py`), which 1.5 builds on
   - `storage/workspaces.py`: 973
   - `resume_executor.py`: 972
 
@@ -190,8 +193,8 @@ before the agent is placed or rolled back. A launch terminal whose kill fails st
      `OSError`/`ValueError`/`SrtRuntimeError`, fails the run, and returns "Sandbox
      startup failed closed" before `create_pending`. Placed launches reuse that path
      unchanged, and its failure releases the reservation.
-   - Unplaced spawns keep today's config-driven behaviour. Hand-launched seats are out
-     of scope.
+   - Unplaced spawns and resumes get the same requirement in 1.8 (decision 13).
+     Hand-launched seats are out of scope.
 7. **Live-seat refusal.** The seat key is `(workspace_id, truncate_title(title))`
    for both placement kinds. Preflight refuses with `placement_error: "seat_live"`
    when the target workspace already holds a tab title or a pane label equal to the
@@ -308,9 +311,80 @@ before the agent is placed or rolled back. A launch terminal whose kill fails st
       re-placed through the same preflight, reserve and bind against current state
       (1.7). A persisted placement is input, never authority, and there is no
       unplaced fallback.
-    - #22883 is extracting the pane-source policy from `workspace_ops.py`. 1.5
-      names that move as its own Target, so it is complete whether or not #22883
-      lands first, and no leaf depends on another task.
+    - #22883 (owned-shell workspace ops, gobby#14642) owns the extraction of the
+      pane-source policy from `workspace_ops.py` into `workspace_pane_access.py`
+      (`WorkspacePaneAccess`: scope, admission, source selection, adoption, held-
+      terminal refusal). 1.5 consumes that landed extraction and does not repeat
+      it. The guarded methods it changes (`workspace_close`, `tab_close`,
+      `tab_move`, `pane_swap`, `pane_move`, `pane_close`, `_closing`,
+      `_db_guarded`, `_kill`) stay in `workspace_ops.py`.
+
+13. **Every `spawn_agent` launch runs under managed SRT (2026-09-27).** Josh's final
+    ruling, relayed by the Program Director (gobby#14610) and replacing every
+    earlier interpretation: "A pipeline opens windows using spawn_agent. These are
+    always sandboxed." and "gclient itself doesn't sandbox".
+    - Scope: every agent `spawn_agent` launches, from a pipeline or the daemon, placed
+      or not, and every resume of such an agent. gclient hand launches and plain
+      shells are out of scope, and no current seat is relaunched. The Assistant is
+      hand-launched, so it needs no exemption mechanism.
+    - As-is, two unsandboxed fallbacks exist: `agent_sandbox.enabled` is
+      operator-settable (`agent_sandbox_config` only defaults it to true), and
+      `backend: provider-native` is a debug override. A resume whose snapshot has no
+      sandbox config launches with `SandboxLaunch(backend="provider-native",
+      enforced=False)`. 1.8 refuses all three with the typed `sandbox_required`
+      error; nothing is downgraded.
+    - Cross-plan: #22899 profiles become named SRT policies that may widen domains and
+      paths but never disable the sandbox. Its decision 3 (an unsandboxed `research`
+      profile) is superseded, and its decisions 6 and 15 become moot. The `research`
+      profile is SRT with the Anthropic Trusted-domain seed plus the Gobby hosts
+      (provider API domains, the api_base host and loopback, already computed by
+      `sandbox_policy.allowed_domains`). The seed applies to `research` only; the
+      daemon default keeps its existing required hosts and stays least-privilege.
+      The seed is a vendored data file that
+      records its source URL
+      (https://code.claude.com/docs/en/cloud-environments#default-allowed-domains),
+      fetch date and sha256, refreshed only by a manual command that prints a diff
+      and lands through review; the daemon never fetches it. That profile work is
+      #22899's (deferred D1).
+    - The Trusted list is a developer-dependency allowlist, not web-research
+      coverage: it has no search engines or general research sites. The cloud
+      environment's bypasses (a separate GitHub proxy, MCP connectors through
+      Anthropic's servers) are cloud-proxy properties and are not assumed of local
+      SRT.
+    - Researcher web transport, option A: provider-native search runs server-side at
+      the provider (INFERRED); `brave-search` and `context7` run as daemon MCP
+      children outside the agent sandbox, reached over the loopback MCP proxy under
+      Gobby rules. Named gap: local WebFetch to a host outside the allowlist is
+      blocked (INFERRED; the V1 smoke confirms it). `playwright` and
+      `chrome-devtools` can navigate anywhere, so rules deny them to spawned agents
+      unless the definition allows them. A scoped research-host list or a governed
+      daemon fetch tool is added only if the smoke shows option A is insufficient,
+      and that is a product decision returned through the Program Director. There is
+      no allow-all fallback: `render_srt_settings` keeps `strictAllowlist` and
+      `_raise_srt_lockout` refuses unrestricted network.
+    - Loopback is allowed, so until #22961 lands a sandboxed agent can reach MCP
+      servers through daemon REST or `gobby mcp-proxy call-tool` without rule
+      enforcement. The governance claim above holds only after #22961 (deferred D2).
+    - Credential boundary. VERIFIED denied: `_credential_roots` (`bootstrap.yaml`,
+      `.secret_kek`, `local_cli_token`, `tools/srt`) and `_TOOLCHAIN_CREDENTIAL_PATHS`.
+      A spawned agent reaches daemon REST only with its identity-bound agent token.
+      Provider auth stays readable because the provider needs it.
+    - Design findings, recorded for the tightening Josh schedules closer to launch
+      and not in any leaf here (Program Director ruling, 2026-09-27):
+      - Credential hardening (recommended): a spawned agent can still read
+        `~/.config/gh` and `~/.ssh`, and git may consult the macOS keychain
+        credential helper, so it can act on GitHub as Josh. Denying those reads and
+        clearing the helper in the wrapped environment would close that.
+      - Escape surface: the security goal also forbids a sandboxed agent creating or
+        driving an unsandboxed shell through MCP, daemon REST, gterm or gclient. The
+        Researcher (gobby#14550) is auditing those paths; its findings return
+        through the Program Director.
+    - Trust statement: SRT bounds a spawned agent's network and filesystem. Any
+      credential it can still read acts with full authority on allowlisted hosts.
+      #22961 closes only the daemon REST/CLI bypass.
+    - Rollout: no migration. After #22899's amendment, #22961 and this plan land, the
+      Program Director restarts the daemon under the normal announcement and
+      quiet-window protocol, and only new spawns pick up the policy.
 
 ## Evidence (as-is, VERIFIED unless marked)
 `kind: framing`
@@ -933,7 +1007,6 @@ Consumers unchanged:
 - `tests/mcp_proxy/tools/spawn_agent/test_worktree_reference_resolution.py` — no-edit-reason: Isolation resolution is unchanged.
 - `tests/mcp_proxy/tools/tasks/test_lifecycle_close_orchestration.py` — no-edit-reason: Validates unplaced close-reviewer launch arguments against the spawn_agent schema; placement is optional.
 - `tests/mcp_proxy/tools/test_parallel_dispatch.py` — no-edit-reason: dispatch_batch gains no placement.
-- `tests/mcp_proxy/tools/test_spawn_agent_impl_provider.py` — no-edit-reason: Provider resolution is unchanged.
 - `tests/skills/test_reference_library.py` — no-edit-reason: Validates unplaced launch arguments against the spawn_agent schema; placement is optional.
 - `tests/tasks/test_plan_gate.py` — no-edit-reason: The unplaced plan-gate spawn path is unchanged.
 - `tests/workflows/test_step_snapshot_semantics.py` — no-edit-reason: Unplaced spawn_agent_impl calls; the optional parameter defaults to None.
@@ -963,10 +1036,6 @@ Targets:
 - `src/gobby/storage/workspaces.py::WorkspaceManager`
 - `src/gobby/storage/workspace_layout.py`
 - `src/gobby/terminals/workspace_ops.py::WorkspaceOps`
-- `src/gobby/terminals/workspace_ops.py::WorkspaceOps._pane_source`
-- `src/gobby/terminals/workspace_ops.py::WorkspaceOps._adoptable`
-- `src/gobby/terminals/workspace_ops.py::WorkspaceOps._refuse_held`
-- `src/gobby/terminals/workspace_pane_source.py`
 - `tests/storage/test_workspaces.py::*` — scope-reason: add the guard, race, moved-target and sweep tests
 - `tests/terminals/test_workspace_ops.py::*` — scope-reason: add the busy and orphaned-retry tests
 
@@ -1023,13 +1092,12 @@ Storage (`WorkspaceManager`):
   `pane_wait_for_output` also reads it.
 - User closes keep remove-then-kill (decision 7). `_kill` marks a failed kill with
   `mark_kill_failed` (1.6).
-- Size: `workspace_ops.py` is 1004 lines on main. `_pane_source`, `_adoptable` and
-  `_refuse_held` move to the new `workspace_pane_source.py`, the
-  extraction #22883's owner announced. If #22883 has already landed it, this step
-  only verifies the module and the size.
+- Size: this leaf starts from a base that contains #22883's landed extraction,
+  after which `workspace_ops.py` is 893 lines, so the guard lines fit under the
+  ceiling. It performs no extraction of its own.
 
-**Granularity:** eight acceptance items and three production files (two after the
-moves), but one invariant: a workspace mutation and an agent-pane insert serialize
+**Granularity:** seven acceptance items and three production files, but one
+invariant: a workspace mutation and an agent-pane insert serialize
 on the same rows, and neither acts on an in-flight pane. The storage guard is inert
 without the `WorkspaceOps` flag and the flag is meaningless without the guard.
 
@@ -1069,7 +1137,6 @@ Consumers unchanged:
 - 1.5.5 - `sweep_dead_panes` keeps a pane whose terminal is `orphaned` and removes it once the terminal is `exited`. test: `tests/storage/test_workspaces.py::test_sweep_keeps_orphaned_panes`.
 - 1.5.6 - `WorkspaceOps` close, move and swap return `busy` for an in-flight pane, and a `pane_close` on an `orphaned` pane retries its kill. test: `tests/terminals/test_workspace_ops.py::test_ops_refuse_in_flight_and_retry_orphaned_kill`.
 - 1.5.7 - `storage/workspaces.py` and `workspace_ops.py` are each under 1,000 lines, and the moved names import from their new modules. file: `src/gobby/storage/workspace_layout.py`.
-- 1.5.8 - `_pane_source`, `_adoptable` and `_refuse_held` live in `workspace_pane_source.py`. symbol: `_pane_source`. file: `src/gobby/terminals/workspace_pane_source.py`.
 
 ### 1.6 Spawn failure cleanup: one attempt, cancellation-safe, kill truth [category: code]
 `kind: deliverable`
@@ -1162,7 +1229,6 @@ Consumers unchanged:
 - `tests/agents/test_local_context_setup.py` — no-edit-reason: spawn_agent_impl keeps its signature.
 - `tests/mcp_proxy/tools/spawn_agent/test_factory.py` — no-edit-reason: spawn_agent_impl keeps its signature.
 - `tests/mcp_proxy/tools/spawn_agent/test_initial_variables.py` — no-edit-reason: spawn_agent_impl keeps its signature.
-- `tests/mcp_proxy/tools/test_spawn_agent_impl_provider.py` — no-edit-reason: spawn_agent_impl keeps its signature.
 - `tests/tasks/test_plan_gate.py` — no-edit-reason: spawn_agent_impl keeps its signature.
 
 **Acceptance:**
@@ -1251,6 +1317,86 @@ Consumers unchanged:
 - 1.7.3 - A moved or missing target, an occupied seat (including `orphaned`), a forbidden project, a wrap failure and a missing reserver each park the successor, return a typed error, start no provider and leave no pane. test: `tests/agents/test_resume_placement.py::test_placed_resume_refusals_park_successor`.
 - 1.7.4 - A placed resume failure or cancellation runs cleanup and release once each and never falls back to an unplaced launch. test: `tests/agents/test_resume_placement.py::test_placed_resume_cleanup_once`.
 - 1.7.5 - `resume_executor.py` is under 1,000 lines and the moved helpers import from `resume_executor_settlement.py`. file: `src/gobby/agents/resume_executor_settlement.py`.
+
+### 1.8 spawn_agent and resume never launch unsandboxed [category: code] (depends: 1.4, 1.6, 1.7)
+`kind: deliverable`
+
+Targets:
+- `src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py::spawn_agent_impl`
+- `src/gobby/mcp_proxy/tools/spawn_agent/_sandbox_gate.py`
+- `src/gobby/agents/sandbox_gate.py`
+- `src/gobby/mcp_proxy/tools/spawn_agent/_placement.py`
+- `src/gobby/agents/resume_executor.py::resume_agent_run`
+- `tests/mcp_proxy/tools/test_spawn_agent_impl_provider.py::*` — scope-reason: the disabled-sandbox test now asserts refusal
+- `tests/servers/routes/test_agent_spawn_routes.py::*` — scope-reason: the disabled-sandbox route test now asserts refusal
+- `tests/mcp_proxy/tools/spawn_agent/test_sandbox_gate.py`
+- `tests/agents/test_resume_sandbox_gate.py`
+
+Decision 13 makes managed SRT unconditional for `spawn_agent`.
+
+- The new `src/gobby/agents/sandbox_gate.py` holds `require_managed_srt(config) ->
+  SandboxConfig` and `SandboxRequiredError`. It raises unless the config is
+  `enabled` with `backend == "srt"` and `verify_srt_installation` passes. The
+  effective-config resolution in `spawn_agent_impl` (the
+  `managed_runtime_profile.sandbox_config` or `apply_write_grant(...)` expression)
+  moves into the new `src/gobby/mcp_proxy/tools/spawn_agent/_sandbox_gate.py` as
+  `resolve_spawn_sandbox`, which returns the gated config.
+  `spawn_agent_impl` calls it where the expression stood, before isolation, and a
+  refusal returns `{"success": false, "error_code": "sandbox_required"}` with no side
+  effect. `preflight_placement` (1.4) uses the same helper, so placed and unplaced
+  launches share one check.
+- The sandbox resolution block of `resume_agent_run` (snapshot or runtime-profile
+  config, then the `SandboxLaunch` default) moves into the new
+  `src/gobby/agents/sandbox_gate.py` as `resolve_resume_sandbox`, which ends in
+  `require_managed_srt`. A missing snapshot config, `enabled: false` and a
+  non-`srt` backend each park the successor through `_park_unlaunched_successor`
+  and return `sandbox_required`; the `SandboxLaunch(backend="provider-native",
+  enforced=False)` default is removed.
+- The `provider-native` backend value stays valid in config for other surfaces;
+  `spawn_agent` refuses it.
+
+**Granularity:** five acceptance items across five production files, but one
+invariant: no `spawn_agent` launch or resume starts a provider outside managed SRT.
+Splitting spawn from resume would leave one unsandboxed path open.
+
+**Research context:**
+- Resolution site: `spawn_agent/_implementation.py` resolves the effective config
+  once; `_runtime_spawn` wraps with `wrap_provider_command`, and resume re-enters
+  `_runtime_spawn`. Placed launch goes through `execute_spawn` and `_runtime_spawn`
+  (1.2), so it inherits the wrap.
+- `tests/conftest.py` disables `agent_sandbox` only on the CLI mock config, so CLI
+  start tests never probe SRT; spawn tests that need a launch use the executor
+  fakes, which never reach the gate's `verify_srt_installation` because the tests
+  patch it.
+- Size: the sandbox resolution in
+  `src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py` (964 lines) is a
+  split: it and its new checks move to
+  `src/gobby/mcp_proxy/tools/spawn_agent/_sandbox_gate.py`, so the file shrinks.
+- Size: the sandbox resolution block in `src/gobby/agents/resume_executor.py`
+  (972 lines) is a split: it and its new checks move to
+  `src/gobby/agents/sandbox_gate.py`, so the file shrinks.
+- Planned checks: `DATABASE_URL=<isolated hub> GOBBY_TEST_PROTECT=1 uv run pytest
+  tests/mcp_proxy/tools/spawn_agent/test_sandbox_gate.py
+  tests/agents/test_resume_sandbox_gate.py
+  tests/mcp_proxy/tools/test_spawn_agent_impl_provider.py
+  tests/servers/routes/test_agent_spawn_routes.py tests/agents/test_srt_spawn.py -v`,
+  plus ruff and mypy on `src/`.
+
+Consumers unchanged:
+- `src/gobby/agents/sandbox.py` — no-edit-reason: `agent_sandbox_config` still reads the config store; the gate refuses a disabled result.
+- `src/gobby/ask/agents.py` — no-edit-reason: its managed runtime profile config passes through the same gate.
+- `src/gobby/scheduler/executor.py` — no-edit-reason: cron spawns pass through the same gate.
+- `src/gobby/feedback/agent.py` — no-edit-reason: passes through the same gate.
+- `src/gobby/dispatch/spawn.py` — no-edit-reason: passes through the same gate.
+- `tests/agents/test_srt_spawn.py` — no-edit-reason: the wrap call site is unchanged.
+
+**Acceptance:**
+
+- 1.8.1 - An unplaced spawn whose effective config is `enabled: false`, or whose backend is `provider-native`, is refused `sandbox_required` before isolation, a child session or a run exists. test: `tests/mcp_proxy/tools/spawn_agent/test_sandbox_gate.py::test_unsandboxed_config_refused_before_side_effects`.
+- 1.8.2 - A managed runtime profile config goes through the same gate. test: `tests/mcp_proxy/tools/spawn_agent/test_sandbox_gate.py::test_runtime_profile_config_is_gated`.
+- 1.8.3 - A resume with no snapshot config, `enabled: false` or a non-`srt` backend parks the successor, returns `sandbox_required` and starts no provider. test: `tests/agents/test_resume_sandbox_gate.py::test_resume_refuses_unsandboxed_config`.
+- 1.8.4 - A spawned `research`-profile agent resolves to SRT with the Trusted seed plus the Gobby hosts. test: `tests/mcp_proxy/tools/spawn_agent/test_sandbox_gate.py::test_research_profile_is_srt_with_trusted_seed`.
+- 1.8.5 - From a spawned agent, a REST or CLI MCP call is rule-enforced. test: `tests/mcp_proxy/tools/spawn_agent/test_sandbox_gate.py::test_loopback_mcp_calls_are_rule_enforced`.
 
 ## P2: gclient placement reconciliation
 `kind: framing`
@@ -1368,11 +1514,43 @@ the managed wrapper stubbed at the SRT binary boundary.
 - 3.1.4 - An SRT wrap failure for seat B fails the step, leaves no seat B pane and no provider process, and leaves seat A unaffected. test: `tests/workflows/test_runbook_placed_pipeline.py::test_wrap_failure_refuses_seat`.
 - 3.1.5 - A CLI-started run parents both agents to the pipeline child session, whose parent is the system session, and resolves the pipeline's project. test: `tests/workflows/test_runbook_placed_pipeline.py::test_cli_run_parent_and_project`.
 
+## D1 Research profile and Trusted seed (depends: 1.8)
+`kind: deferred`
+
+#22899 owns sandbox profiles. Decision 13 amends it: `research` becomes SRT with the
+vendored Trusted seed plus the Gobby hosts, profiles may widen but never disable,
+its decision 3 is superseded and its decisions 6 and 15 become moot. 1.8.4 is
+verifiable only once that profile mechanism exists.
+
+```yaml
+deferral:
+  task_ref: "#22899"
+  reason: "External prerequisite: the per-definition sandbox_profile mechanism and the research profile are delivered by the amended #22899 plan."
+  owner: "program-director"
+  original_acceptance_items:
+    - 1.8.4
+```
+
+## D2 Rule-enforced loopback MCP calls (depends: 1.8)
+`kind: deferred`
+
+SRT allows loopback. Until #22961 lands, a sandboxed agent can reach MCP servers
+through daemon REST or `gobby mcp-proxy call-tool` without rule enforcement.
+
+```yaml
+deferral:
+  task_ref: "#22961"
+  reason: "External prerequisite: REST and CLI proxy rule enforcement is #22961's."
+  owner: "program-director"
+  original_acceptance_items:
+    - 1.8.5
+```
+
 ## V1: Verification
 `kind: verification`
 
-End-to-end check after 1.1 to 1.7, 2.1 and 3.1 land, run in an isolated environment only:
-- 1.1 to 1.7 focused pytest;
+End-to-end check after 1.1 to 1.8, 2.1 and 3.1 land, run in an isolated environment only:
+- 1.1 to 1.8 focused pytest;
 - `cargo test -p gobby-client --test placed_agent`;
 - the 3.1 isolated-daemon pipeline test.
 
@@ -1384,6 +1562,15 @@ gobby pipelines run runbook-two-seat-example
 
 It runs against a scratch workspace and must show two placed, SRT-wrapped seats and a
 refused re-run. Researchers never touch the live daemon or its seats.
+
+SRT smoke, after D1 and D2 land, in an isolated Program Director slot:
+- a spawned `research` agent records `sandbox_enabled=true` and backend `srt`;
+- its WebFetch to a host outside the allowlist fails (confirms the named gap);
+- `brave-search` through the MCP proxy works;
+- a REST or CLI MCP call is rule-enforced;
+- reads of `local_cli_token` and `bootstrap.yaml` fail;
+- an `enabled: false` config is refused;
+- the vendored seed's sha256 matches its recorded provenance.
 
 **Round 1 of 1** `kind: enhancement`
 
@@ -1499,8 +1686,8 @@ refused re-run. Researchers never touch the live daemon or its seats.
   - PAL-09 placed resume: Program Director ruling Option A (1.7).
 - follow-up constraints from the Adversary (2026-09-27), folded: both expected ids
   checked under one lock order; the seat survives a failed kill in its own pane;
-  the cleanup owner's lifetime is the spawn attempt; no dependency on #22883 or
-  #22663; the refusal precedence.
+  the cleanup owner's lifetime is the spawn attempt; no dependency on #22663; the
+  refusal precedence.
 - scope delta against the approved design: three new leaves (1.5, 1.6, 1.7); two
   reversed statements (decision 12); a shared failure-cleanup change that also
   applies to unplaced spawns (1.6); `sweep_dead_panes` keeps `orphaned` panes for
@@ -1509,3 +1696,22 @@ refused re-run. Researchers never touch the live daemon or its seats.
   cycle, and no leaf depends on another task.
 - next: the Adversary verifies these bytes; consensus, then M1 by the Adversary and
   the Program Director's confirmation.
+
+**Program Director consolidation (2026-09-27)** `kind: enhancement`
+
+- base: 84d2acad1a (PAL-01 to PAL-09 repairs)
+- #22883 reconciliation: 1.5 no longer extracts the pane-source policy. It builds on
+  #22883's `workspace_pane_access.py` extraction (gobby#14642), cited by commit
+  when it lands (decision 12).
+- Josh's final sandbox scope (decision 13): every `spawn_agent` launch and resume
+  runs under managed SRT with no unsandboxed fallback (new 1.8); gclient hand
+  launches and shells are out of scope; no seat migration. Researcher evidence:
+  gobby#14550, `.gobby/plans/research/researcher-srt-egress-2026-09-27.md` rev 2.
+- typed deferrals: D1 (#22899 research profile and Trusted seed), D2 (#22961
+  loopback enforcement).
+- Program Director rulings (2026-09-27): the Trusted seed goes on `research` only,
+  specified by #22899 (D1), and the default profile keeps its required hosts;
+  web option A stays proposed with the local WebFetch gap named, and its SRT
+  smoke is unrun; credential hardening and the escape-surface audit are design
+  findings, not leaf scope.
+- next: Program Director design review, then routing to Josh and the Adversary.
