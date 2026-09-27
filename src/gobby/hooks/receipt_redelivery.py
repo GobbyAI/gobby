@@ -53,7 +53,7 @@ def _carry_forward_staged_effects(
     session_id: str,
     envelope_id: str,
     staged_payload: dict[str, Any] | None,
-) -> dict[str, Any] | None:
+) -> tuple[dict[str, Any] | None, bool]:
     """Re-prepare the session's lost delivery onto this envelope and merge effects."""
     from gobby.storage.hook_receipts import release_and_reprepare_for_session
 
@@ -69,16 +69,16 @@ def _carry_forward_staged_effects(
             envelope_id,
             exc_info=True,
         )
-        return staged_payload
+        return staged_payload, False
     if carried is None:
-        return staged_payload
+        return staged_payload, False
     logger.info(
         "Re-delivering hook receipt %s (generation %s) on envelope %s",
         carried.receipt_id,
         carried.delivery_generation,
         envelope_id,
     )
-    return merge_staged_payloads(carried.staged_payload, staged_payload or {})
+    return merge_staged_payloads(carried.staged_payload, staged_payload or {}), True
 
 
 def attach_delivery_receipt(
@@ -89,6 +89,7 @@ def attach_delivery_receipt(
     session_id: str,
     staged_payload: dict[str, Any] | None = None,
     force_continue_execution_num: int | None = None,
+    skip_empty_receipt: bool = False,
 ) -> dict[str, Any]:
     """Prepare (or carry forward) the receipt for this envelope and attach it."""
     if db is None:
@@ -96,12 +97,19 @@ def attach_delivery_receipt(
     try:
         from gobby.storage.hook_receipts import prepare_receipt
 
-        staged_payload = _carry_forward_staged_effects(
+        staged_payload, carried = _carry_forward_staged_effects(
             db,
             session_id=session_id,
             envelope_id=envelope_id,
             staged_payload=staged_payload,
         )
+        if (
+            skip_empty_receipt
+            and not staged_payload
+            and not carried
+            and force_continue_execution_num is None
+        ):
+            return strip_unbudgeted_force_continue(response)
         receipt = prepare_receipt(
             db,
             session_id=session_id,

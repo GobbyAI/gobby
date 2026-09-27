@@ -96,6 +96,13 @@ def _agy_pre_invocation_envelope(*, conversation_id: str = "agy-conv-1") -> dict
     }
 
 
+def _agy_pretool_envelope(*, conversation_id: str = "agy-conv-1") -> dict[str, Any]:
+    envelope = _agy_pre_invocation_envelope(conversation_id=conversation_id)
+    envelope["hook_type"] = "PreToolUse"
+    envelope["input_data"]["hookEventName"] = "PreToolUse"
+    return envelope
+
+
 def _agy_post_invocation_envelope(
     *,
     conversation_id: str = "agy-conv-1",
@@ -1329,6 +1336,78 @@ def _delivery_receipt_server(session_storage: SessionManager) -> Any:
 
 
 class TestExecuteHookDeliveryReceipt:
+    def test_effect_free_pretool_strips_unbudgeted_force_continue(
+        self,
+        session_storage: SessionManager,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
+        server = _delivery_receipt_server(session_storage)
+        with (
+            TestClient(server.app) as client,
+            patch(
+                "gobby.servers.routes.mcp.hooks._run_adapter_hook",
+                new_callable=AsyncMock,
+                return_value=_force_continue_body(),
+            ),
+        ):
+            response = client.post(
+                "/api/hooks/execute",
+                headers={ENVELOPE_ID_HEADER: "env-pretool-unbudgeted"},
+                json=_agy_pretool_envelope(),
+            )
+
+        assert response.status_code == 200
+        assert "terminationBehavior" not in response.json()
+        assert "_gobby_delivery_receipt" not in response.json()
+
+    @pytest.mark.parametrize("hook_type", ["PreToolUse", "pre-tool-use", "BeforeTool"])
+    def test_effect_free_pretool_replays_without_receipt(
+        self,
+        hook_type: str,
+        session_storage: SessionManager,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
+        server = _delivery_receipt_server(session_storage)
+        session_id = str(uuid4())
+        envelope = _agy_pretool_envelope(conversation_id=session_id)
+        envelope["hook_type"] = hook_type
+        envelope["input_data"]["hookEventName"] = hook_type
+        envelope_id = f"env-empty-{hook_type}"
+
+        with (
+            TestClient(server.app) as client,
+            patch(
+                "gobby.servers.routes.mcp.hooks._run_adapter_hook",
+                new_callable=AsyncMock,
+                return_value={"decision": "block"},
+            ) as run_adapter,
+            patch("gobby.storage.hook_receipts.prepare_receipt") as prepare_receipt,
+        ):
+            first = client.post(
+                "/api/hooks/execute",
+                headers={ENVELOPE_ID_HEADER: envelope_id},
+                json=envelope,
+            )
+            duplicate = client.post(
+                "/api/hooks/execute",
+                headers={ENVELOPE_ID_HEADER: envelope_id},
+                json=envelope,
+            )
+
+        assert first.status_code == duplicate.status_code == 200
+        assert first.json() == duplicate.json() == {"decision": "block"}
+        run_adapter.assert_awaited_once()
+        prepare_receipt.assert_not_called()
+        row = session_storage.db.fetchone(
+            "SELECT count(*) AS n FROM hook_receipt_effects WHERE session_id = %s",
+            (session_id,),
+        )
+        assert row is not None and int(row["n"]) == 0
+
     def test_durable_envelope_attaches_delivery_receipt(
         self,
         session_storage: SessionManager,
@@ -1421,8 +1500,10 @@ class TestExecuteHookDeliveryReceipt:
         assert response.json()["_gobby_delivery_receipt"]["receipt_id"] == "receipt-off-loop-1"
         assert on_event_loop == [False]
 
+    @pytest.mark.parametrize("hook_type", ["PreInvocation", "PreToolUse"])
     def test_durable_envelope_stages_pending_message_effects(
         self,
+        hook_type: str,
         session_storage: SessionManager,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -1430,6 +1511,8 @@ class TestExecuteHookDeliveryReceipt:
         monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
         server = _delivery_receipt_server(session_storage)
         envelope = _agy_pre_invocation_envelope()
+        envelope["hook_type"] = hook_type
+        envelope["input_data"]["hookEventName"] = hook_type
         staged = {
             "pending_message_ids": ["msg-lossless"],
             "pending_message_session_id": "recipient-session",
@@ -1520,8 +1603,10 @@ class TestExecuteHookDeliveryReceipt:
         assert response.json() == {"decision": "allow"}
         prepare_receipt.assert_not_called()
 
+    @pytest.mark.parametrize("hook_type", ["PreInvocation", "PreToolUse"])
     def test_prepare_failure_still_emits_adapter_result(
         self,
+        hook_type: str,
         session_storage: SessionManager,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -1529,13 +1614,21 @@ class TestExecuteHookDeliveryReceipt:
         monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
         server = _delivery_receipt_server(session_storage)
         envelope = _agy_pre_invocation_envelope()
+        envelope["hook_type"] = hook_type
+        envelope["input_data"]["hookEventName"] = hook_type
+        adapter_result: dict[str, Any] = {"decision": "allow"}
+        if hook_type == "PreToolUse":
+            adapter_result["_gobby_staged_effects"] = {
+                "pending_message_ids": ["msg-outage"],
+                "pending_message_session_id": "recipient-session",
+            }
 
         with (
             TestClient(server.app) as client,
             patch(
                 "gobby.servers.routes.mcp.hooks._run_adapter_hook",
                 new_callable=AsyncMock,
-                return_value={"decision": "allow"},
+                return_value=adapter_result,
             ),
             patch(
                 "gobby.storage.hook_receipts.prepare_receipt",
@@ -1554,6 +1647,53 @@ class TestExecuteHookDeliveryReceipt:
 
 
 class TestExecuteHookReceiptRedelivery:
+    def test_empty_lifecycle_receipt_carries_to_effect_free_pretool(
+        self,
+        session_storage: SessionManager,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from gobby.storage.hook_receipts import release_receipt
+
+        monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
+        server = _delivery_receipt_server(session_storage)
+        session_id = str(uuid4())
+        headers = {"X-Gobby-Session-Id": session_id}
+
+        with (
+            TestClient(server.app) as client,
+            patch(
+                "gobby.servers.routes.mcp.hooks._run_adapter_hook",
+                new_callable=AsyncMock,
+                return_value={"decision": "allow"},
+            ),
+        ):
+            first = client.post(
+                "/api/hooks/execute",
+                headers={**headers, ENVELOPE_ID_HEADER: "env-empty-lifecycle"},
+                json=_agy_post_invocation_envelope(conversation_id=session_id),
+            )
+            assert first.status_code == 200
+            first_receipt = first.json()["_gobby_delivery_receipt"]
+            assert release_receipt(session_storage.db, receipt_id=first_receipt["receipt_id"])
+
+            second = client.post(
+                "/api/hooks/execute",
+                headers={**headers, ENVELOPE_ID_HEADER: "env-empty-pretool"},
+                json=_agy_pretool_envelope(conversation_id=session_id),
+            )
+
+        assert second.status_code == 200
+        second_receipt = second.json()["_gobby_delivery_receipt"]
+        assert second_receipt["receipt_id"] == first_receipt["receipt_id"]
+        assert second_receipt["original_envelope_id"] == "env-empty-lifecycle"
+        assert second_receipt["delivery_generation"] == 2
+        row = session_storage.db.fetchone(
+            "SELECT count(*) AS n FROM hook_receipt_effects WHERE session_id = %s",
+            (session_id,),
+        )
+        assert row is not None and int(row["n"]) == 1
+
     def test_next_live_hook_carries_the_lost_delivery_and_stale_ack_is_a_noop(
         self,
         session_storage: SessionManager,

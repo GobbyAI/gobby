@@ -309,12 +309,14 @@ def test_delivered_gate_clears_itself_once_its_receipt_is_acknowledged(
     assert variables.get_variables(session_id).get(ACK_VARIABLE) is True
     assert not _blocked(second), second
 
-    # And it stages the acknowledge_variable only once. The first delivery's
-    # staging used to survive on the shared runtime thread and be re-staged
-    # here (#21427).
-    second_receipt = second.get(DELIVERY_RECEIPT_FIELD)
-    assert isinstance(second_receipt, dict)
-    assert _staged_variables(receipts_db, second_receipt["receipt_id"]) == {}
+    # The satisfied gate stages nothing and needs no new receipt. The first
+    # delivery's staging used to survive on the shared runtime thread here.
+    assert DELIVERY_RECEIPT_FIELD not in second
+    row = receipts_db.fetchone(
+        "SELECT count(*) AS n FROM hook_receipt_effects WHERE session_id = %s",
+        (session_id,),
+    )
+    assert row is not None and int(row["n"]) == 1
 
 
 def test_one_sessions_staged_gate_never_reaches_another_session(
@@ -357,12 +359,12 @@ def test_one_sessions_staged_gate_never_reaches_another_session(
 
     second = _post_set_handoff(hook_client, quiet_session, f"n-{uuid4()}")
     assert not _blocked(second), second
-    second_receipt = second.get(DELIVERY_RECEIPT_FIELD)
-    assert isinstance(second_receipt, dict)
-
-    # This is where the borrowed payload used to land: re-attributed to this
-    # session id and ready to commit on acknowledgment.
-    assert _staged_variables(receipts_db, second_receipt["receipt_id"]) == {}
+    assert DELIVERY_RECEIPT_FIELD not in second
+    row = receipts_db.fetchone(
+        "SELECT count(*) AS n FROM hook_receipt_effects WHERE session_id = %s",
+        (quiet_session,),
+    )
+    assert row is not None and int(row["n"]) == 0
 
 
 def test_route_stages_nothing_when_the_gate_does_not_fire(
@@ -384,6 +386,9 @@ def test_route_stages_nothing_when_the_gate_does_not_fire(
     body = _post_set_handoff(hook_client, session_id, f"n-{uuid4()}")
 
     assert not _blocked(body), body
-    receipt = body.get(DELIVERY_RECEIPT_FIELD)
-    assert isinstance(receipt, dict)
-    assert ACK_VARIABLE not in _staged_variables(receipts_db, receipt["receipt_id"])
+    assert DELIVERY_RECEIPT_FIELD not in body
+    row = receipts_db.fetchone(
+        "SELECT count(*) AS n FROM hook_receipt_effects WHERE session_id = %s",
+        (session_id,),
+    )
+    assert row is not None and int(row["n"]) == 0
