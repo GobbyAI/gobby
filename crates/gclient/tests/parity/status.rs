@@ -251,7 +251,8 @@ fn status_bar_orders_fixed_slots_and_configured_segments() {
                 "run_id": "run-alpha",
                 "terminal": {"terminal_id": "term-alpha", "backend": "native"},
                 "provider": "codex",
-                "model_display_name": "Fable 5.1",
+                "model": "gpt-6-sol",
+                "model_display_name": "GPT-6 Sol",
                 "context_percent": 63,
                 "tokens_used": 12345
             },
@@ -285,7 +286,7 @@ fn status_bar_orders_fixed_slots_and_configured_segments() {
         line.starts_with(" ⍾ 1 needs you · 2 agents · 0 terminals"),
         "{line:?}"
     );
-    assert!(line.contains("fable-5.1-xhigh"), "{line:?}");
+    assert!(line.contains("gpt-6-sol-xhigh"), "{line:?}");
     assert!(line.contains("63% · 12,345"), "{line:?}");
     assert!(line.ends_with("prefix ctrl+b │ navigate "), "{line:?}");
     let count = count.expect("attention count hit area");
@@ -366,7 +367,7 @@ fn status_bar_orders_fixed_slots_and_configured_segments() {
         "{line:?}"
     );
     assert!(
-        !line.contains("fable") || line.contains("fable-5.1-xhigh"),
+        !line.contains("gpt") || line.contains("gpt-6-sol-xhigh"),
         "optional model must render whole or disappear: {line:?}"
     );
     assert!(!line.contains("xhigh63%"), "{line:?}");

@@ -15,6 +15,7 @@ use crate::ui::dialogs::{CloseScope, CloseTarget, Dialog, RenameKind};
 use crate::ui::navigator::NavigatorState;
 use crate::ui::sidebar::attention_order;
 use crate::ui::status::Toast;
+use crate::ui::tabs::tab_label;
 use crate::ui::{Action, Chrome, Mode};
 use crossterm::event::KeyEvent;
 use gobby_terminal::layout::{self, find_in_direction, NavDirection};
@@ -258,12 +259,13 @@ pub(super) async fn handle_live_action(
             }
         }
         Action::CloseTab => {
-            let Some((id, title, panes)) = chrome
+            let Some((id, panes)) = chrome
                 .active_tab()
-                .map(|tab| (tab.id.clone(), tab.title.clone(), tab.slots.len()))
+                .map(|tab| (tab.id.clone(), tab.slots.len()))
             else {
                 return Ok(());
             };
+            let title = tab_label(&*workspace, &chrome.tabs().tabs, chrome.active_index());
             if chrome.prefs.confirm_close {
                 chrome.dialog = Some(Dialog::ConfirmClose {
                     target: CloseTarget::Tab(id),

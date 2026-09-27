@@ -125,8 +125,9 @@ impl AgentEntry {
             .unwrap_or_else(|| provider_label(&self.provider).to_string())
     }
 
-    /// `fable-5.1-xhigh`: the display name (else the raw model) lowercased,
-    /// each whitespace run one `-`, with the effort appended.
+    /// `claude-fable-5.1-xhigh`: the display name (else the raw model) lowercased,
+    /// each whitespace run one `-`, with the effort appended. When the display
+    /// name drops the family (`Fable 5.1`), the raw id's first token leads.
     pub fn model_slug(&self) -> String {
         let model = self
             .model_display_name
@@ -134,12 +135,18 @@ impl AgentEntry {
             .or(self.model.as_deref())
             .unwrap_or_default()
             .to_lowercase();
-        let slug = model.split_whitespace().collect::<Vec<_>>().join("-");
-        let provider_prefix = format!("{}-", self.provider.to_lowercase());
-        let mut slug = slug
-            .strip_prefix(&provider_prefix)
-            .unwrap_or(&slug)
-            .to_string();
+        let mut slug = model.split_whitespace().collect::<Vec<_>>().join("-");
+        let family = self
+            .model
+            .as_deref()
+            .and_then(|raw| raw.split('-').next())
+            .map(str::to_lowercase)
+            .filter(|family| !family.is_empty());
+        if let Some(family) = family {
+            if !slug.is_empty() && slug.split('-').next() != Some(family.as_str()) {
+                slug = format!("{family}-{slug}");
+            }
+        }
         if let Some(effort) = &self.effort {
             slug.push('-');
             slug.push_str(effort);

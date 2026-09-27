@@ -191,7 +191,6 @@ fn agent_rows_render_three_lines_with_the_model_slug() {
     assert_eq!(rows[0].height(), 3);
     assert_eq!(rows[0].definition, "Codex");
     assert_eq!(rows[0].reference, "#77");
-    assert_eq!(rows[0].provider, None);
     assert_eq!(rows[0].model_slug, "gpt-5-high");
     let third = row_third_line(&rows[0], 34, &Chrome::dark());
     assert_eq!(line_text(&third), "   gpt-5-high");
@@ -200,6 +199,16 @@ fn agent_rows_render_three_lines_with_the_model_slug() {
         .iter()
         .all(|span| !span.style.add_modifier.contains(Modifier::DIM)));
     assert_eq!(rows[1].model_slug, "gpt-5");
+    let fable = SidebarRow {
+        model_slug: "claude-fable-5.1-xhigh".into(),
+        kind: RowKind::Agent,
+        ..SidebarRow::default()
+    };
+    assert_eq!(
+        line_text(&row_third_line(&fable, 34, &Chrome::dark())),
+        "   claude-fable-5.1-xhigh",
+        "the whole model shows while the width holds it"
+    );
 
     let long = SidebarRow {
         definition: "An extraordinarily long agent name".into(),
@@ -208,7 +217,7 @@ fn agent_rows_render_three_lines_with_the_model_slug() {
         ..SidebarRow::default()
     };
     let line = line_text(&row_line(&long, 34, &Chrome::dark(), 0));
-    assert!(line.contains("… (#77)"), "{line}");
+    assert!(line.ends_with(" #77: An extraordinarily long a…"), "{line}");
 
     let mut all = Chrome::dark();
     all.sidebar.all_sessions = true;
@@ -311,10 +320,10 @@ fn agent_lines_carry_needs_you_and_nest_under_their_session() {
         ..SidebarRow::default()
     };
     let wide = line_text(&row_line(&row, 60, &chrome, 0));
-    assert_eq!(wide, " ⍾ Backend (#123)");
+    assert_eq!(wide, " ⍾ #123: Backend");
     assert_eq!(
         line_text(&row_second_line(&row, 60, &chrome)),
-        "   Task #123 - Review auth"
+        "   Working task 123 Review auth"
     );
     assert_eq!(line_text(&row_third_line(&row, 60, &chrome)), "   gpt-5");
     let idle = SidebarRow {
@@ -323,7 +332,7 @@ fn agent_lines_carry_needs_you_and_nest_under_their_session() {
     };
     assert_eq!(
         line_text(&row_line(&idle, 60, &chrome, 0)),
-        " ○ Backend (#123)"
+        " ○ #123: Backend"
     );
     let nested = SidebarRow {
         nested: true,
@@ -331,11 +340,11 @@ fn agent_lines_carry_needs_you_and_nest_under_their_session() {
     };
     assert_eq!(
         line_text(&row_line(&nested, 60, &chrome, 0)),
-        " ├─ ⍾ Backend (#123)"
+        " ├─ ⍾ #123: Backend"
     );
     assert_eq!(
         line_text(&row_second_line(&nested, 60, &chrome)),
-        "      Task #123 - Review auth"
+        "      Working task 123 Review auth"
     );
     let bare = SidebarRow { task: None, ..row };
     assert_eq!(
@@ -389,48 +398,48 @@ fn every_overflowing_row_uses_the_selected_scroll_direction() {
         kind: RowKind::Agent,
         ..SidebarRow::default()
     };
-    assert_eq!(row_travel(&row, 19), 4);
+    assert_eq!(row_travel(&row, 24), 4);
     assert_eq!(row_travel(&row, 60), 0);
     // A plain row scrolls like the active one.
     assert_eq!(
-        line_text(&row_second_line(&row, 19, &chrome)),
-        "   Task #1 - cdefgh"
+        line_text(&row_second_line(&row, 24, &chrome)),
+        "   rking task 1 abcdefgh"
     );
     // Beside a longer title it reads the same clock, then parks at its
     // end while the longer one walks on.
     chrome.view.title_travel = 10;
     assert_eq!(
-        line_text(&row_second_line(&row, 19, &chrome)),
-        "   Task #1 - cdefgh"
+        line_text(&row_second_line(&row, 24, &chrome)),
+        "   rking task 1 abcdefgh"
     );
     chrome.ticker = (TICKER_PAUSE + 8) * TICKER_STEP;
     assert_eq!(
-        line_text(&row_second_line(&row, 19, &chrome)),
-        "   Task #1 - efghij"
+        line_text(&row_second_line(&row, 24, &chrome)),
+        "   ing task 1 abcdefghij"
     );
     // Off truncates like any other title.
     chrome.prefs.title_scrolling = TitleScrolling::Off;
     assert_eq!(
-        line_text(&row_second_line(&row, 19, &chrome)),
-        "   Task #1 - abcde…"
+        line_text(&row_second_line(&row, 24, &chrome)),
+        "   Working task 1 abcde…"
     );
 
     // Right uses the same clock in the opposite direction.
     chrome.prefs.title_scrolling = TitleScrolling::Right;
     chrome.ticker = 0;
     assert_eq!(
-        line_text(&row_second_line(&row, 19, &chrome)),
-        "   Task #1 - efghij"
+        line_text(&row_second_line(&row, 24, &chrome)),
+        "   ing task 1 abcdefghij"
     );
     chrome.ticker = (TICKER_PAUSE + 2) * TICKER_STEP;
     assert_eq!(
-        line_text(&row_second_line(&row, 19, &chrome)),
-        "   Task #1 - cdefgh"
+        line_text(&row_second_line(&row, 24, &chrome)),
+        "   rking task 1 abcdefgh"
     );
 }
 
 #[test]
-fn task_prefix_stays_fixed_while_the_title_scrolls() {
+fn the_whole_task_line_tickers_as_one_string() {
     let mut chrome = Chrome::dark();
     let row = SidebarRow {
         id: "session:one".into(),
@@ -443,9 +452,8 @@ fn task_prefix_stays_fixed_while_the_title_scrolls() {
     let first = line_text(&row_second_line(&row, 24, &chrome));
     chrome.ticker = (TICKER_PAUSE + 2) * TICKER_STEP;
     let later = line_text(&row_second_line(&row, 24, &chrome));
-    assert!(first.contains("Task #13936 - "), "{first}");
-    assert!(later.contains("Task #13936 - "), "{later}");
-    assert_ne!(first, later);
+    assert_eq!(first, "   Working task 13936 修");
+    assert_eq!(later, "   rking task 13936 修复");
     assert!(row_travel(&row, 24) > 0);
 
     let unassigned = SidebarRow { task: None, ..row };

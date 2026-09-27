@@ -167,7 +167,6 @@ async fn a_managed_run_is_named_by_its_command_without_a_provider_token() {
     .await;
 
     assert_eq!(roster[0].label, "node");
-    assert_eq!(roster[0].provider, None);
     assert_eq!(named, ["node"]);
 }
 
@@ -269,7 +268,6 @@ async fn an_attention_row_keyed_by_session_names_the_terminal_that_hosts_it() {
         rows[0].label, "node",
         "the agent row is named by its terminal's command"
     );
-    assert_eq!(rows[0].provider, None);
     assert!(rows[0].reference.is_empty());
     assert_eq!(
         rows[0].state,

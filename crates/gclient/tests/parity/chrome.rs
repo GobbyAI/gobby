@@ -28,12 +28,11 @@ use gobby_client::ui::settings::{
     SettingsRow, SidebarSide, SETTINGS_POPUP_HEIGHT, SETTINGS_POPUP_WIDTH,
 };
 use gobby_client::ui::sidebar::section_body_rect;
-use gobby_client::ui::sidebar_rows::project_label;
 use gobby_client::ui::status::{
     render_copy_feedback, render_status_line, toast_notification_rect, Toast, ToastKind,
 };
 use gobby_client::ui::tab_surface::render_tab_surface;
-use gobby_client::ui::tabs::{render_tab_bar, tab_display_name, TabBarHits};
+use gobby_client::ui::tabs::{render_tab_bar, tab_label, TabBarHits};
 use gobby_client::ui::text::{display_width, middle_elide, truncate_end};
 use gobby_client::ui::widgets::centered_popup_rect;
 use gobby_terminal::layout::{self, PaneInfo, ScrollMetrics};
@@ -700,7 +699,7 @@ parity_tests! {
             assert_eq!(auto_style.bg, Some(palette().surface0));
             assert!(!auto_style.add_modifier.contains(Modifier::DIM));
             assert_eq!(custom_style.fg, Some(palette().text));
-            assert_eq!(custom_style.bg, Some(palette().panel_bg));
+            assert_eq!(custom_style.bg, Some(Color::Reset));
             assert!(custom_style.add_modifier.contains(Modifier::BOLD));
         }
 
@@ -719,7 +718,9 @@ parity_tests! {
             let custom_rect = tabs.tab_hit_areas[1];
             let custom_style = cell(&terminal, custom_rect.x + 1, custom_rect.y).style();
 
-            assert_eq!(custom_style.bg, Some(palette().surface_dim));
+            // gclient: the active tab is always on the terminal's own
+            // ground, so a reset panel background changes nothing.
+            assert_eq!(custom_style.bg, Some(Color::Reset));
             assert_eq!(custom_style.fg, Some(palette().text));
             assert!(custom_style.add_modifier.contains(Modifier::BOLD));
         }
@@ -1220,12 +1221,13 @@ switch_project = "ctrl+1..9"
                     // populated the status row (#22752), and the separate
                     // agent and bare-terminal totals joined it (#22941), and
                     // lines drew under the menu bar and the tabs while the
-                    // sidebar edge lost its glyph (#22944):
+                    // sidebar edge lost its glyph, then the menus, tab labels
+                    // and agent rows took their approved wording (#22944):
                     // 4.1.3 requires a glyph change to fail here, so this
                     // digest moves only alongside a deliberate render change.
                     assert_eq!(
                         frame_digest(&terminal),
-                        "c332de2db7ed8781c7f45f847d91165489016290064fee14155f70382309cfde"
+                        "08679b7253a3e2c99845da46b010b8b9b685917cf7cfc9bd8b08812450103500"
                     );
                 });
         }
@@ -1553,11 +1555,8 @@ fn rendered_hits_match_drawn_cells() {
         "tabs overflow"
     );
     for (index, rect) in &view.tab_hit_areas {
-        let name = tab_display_name(&chrome.tabs().tabs, *index).expect("tab name");
+        let expected = tab_label(&ws, &chrome.tabs().tabs, *index);
         let text = hit_text(&terminal, *rect);
-        let project_id = ws.project_id().expect("project selected");
-        let project = project_label(&ws, &chrome, project_id).expect("project label");
-        let expected = format!("{project}:{name}");
         let visible = text
             .trim()
             .trim_start_matches('…')
@@ -1738,9 +1737,9 @@ fn open_pane_below_stacks_the_new_slot_under_the_focused_one() {
 }
 
 // The upstream parity case keeps its pinned identity above; this names the
-// new tab treatment directly for the Chrome refresh acceptance check.
+// tab treatment directly: the active tab opens onto the terminal's ground.
 #[test]
-fn tab_bar_cuts_the_active_tab_out_in_panel_bg() {
+fn tab_bar_opens_the_active_tab_onto_the_terminal_ground() {
     let ws = scripted(&["test"]);
     let mut chrome = chrome_for(&ws, "test");
     add_tab(&mut chrome, "logs");
@@ -1753,6 +1752,6 @@ fn tab_bar_cuts_the_active_tab_out_in_panel_bg() {
     let style = cell(&terminal, active.x + 1, active.y).style();
 
     assert_eq!(style.fg, Some(palette().text));
-    assert_eq!(style.bg, Some(palette().panel_bg));
+    assert_eq!(style.bg, Some(Color::Reset));
     assert!(style.add_modifier.contains(Modifier::BOLD));
 }

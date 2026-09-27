@@ -4,24 +4,24 @@
 00 : bar_ink/bar+b*19 surface_dim/bar_ink+b*6 bar_ink/bar+b*95
 01 |▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀┌──────────────────┐▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀|
 01 : line/-*19 surface0/panel_bg*20 line/-*81
-02 | 1           +     │ ✓ this project   │                                                                                 |
-02 : text/panel_bg+b*12 overlay1/surface0*3 -/surface0*4 surface0/panel_bg*1 overlay0/panel_bg+dv*18 surface0/panel_bg*1 -/surface0*81
-03 |▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀│   all projects   │▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀|
+02 | 1: Untitled    +  │ ✓ This project   │                                                                                 |
+02 : text/-+b*15 overlay1/surface0*3 -/surface0*1 surface0/panel_bg*1 overlay0/panel_bg+dv*18 surface0/panel_bg*1 -/surface0*81
+03 |▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀│   All projects   │▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀|
 03 : line/-*19 surface0/panel_bg*1 text/panel_bg*18 surface0/panel_bg*1 line/-*81
-04 |┌ ▸ term-alpha ────│ ✓ grouped        │────────────────────────────────────────────────────────────────────────────────┐|
+04 |┌ ▸ term-alpha ────│ ✓ Grouped        │────────────────────────────────────────────────────────────────────────────────┐|
 04 : accent/-*1 accent/-+b*14 accent/-*4 surface0/panel_bg*1 overlay0/panel_bg+d*18 surface0/panel_bg*1 accent/-*81
-05 |│                  │   priority       │                                                                                │|
+05 |│                  │   Priority       │                                                                                │|
 05 : accent/-*1 -/-*18 surface0/panel_bg*1 text/panel_bg*18 surface0/panel_bg*1 -/-*80 accent/-*1
-06 |│                  │ working projects │                                                                                │|
+06 |│                  │ Working projects │                                                                                │|
 06 : accent/-*1 -/-*18 surface0/panel_bg*1 text/panel_bg*18 surface0/panel_bg*1 -/-*80 accent/-*1
-07 |│                  │ show sidebar     │                                                                                │|
+07 |│                  │ Show sidebar     │                                                                                │|
 07 : accent/-*1 -/-*18 surface0/panel_bg*1 text/panel_bg*18 surface0/panel_bg*1 -/-*80 accent/-*1
-08 |│                  │ pin sidebar      │                                                                                │|
+08 |│                  │ Pin sidebar      │                                                                                │|
 08 : accent/-*1 -/-*18 surface0/panel_bg*1 text/panel_bg*18 surface0/panel_bg*1 -/-*80 accent/-*1
-09 |│                  └──────────────────┘                                                                                │|
-09 : accent/-*1 -/-*18 surface0/panel_bg*20 -/-*80 accent/-*1
-10 |│                                                                                                                      │|
-10 : accent/-*1 -/-*118 accent/-*1
+09 |│                  │ Theme: Dark ▸    │                                                                                │|
+09 : accent/-*1 -/-*18 surface0/panel_bg*1 text/panel_bg*18 surface0/panel_bg*1 -/-*80 accent/-*1
+10 |│                  └──────────────────┘                                                                                │|
+10 : accent/-*1 -/-*18 surface0/panel_bg*20 -/-*80 accent/-*1
 11 |│                                                                                                                      │|
 11 : accent/-*1 -/-*118 accent/-*1
 12 |│                                                                                                                      │|

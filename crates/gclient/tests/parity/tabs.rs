@@ -12,7 +12,7 @@ use gobby_client::ui::text::display_width_u16;
 use gobby_client::ui::Chrome;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
-use ratatui::style::Modifier;
+use ratatui::style::{Color, Modifier};
 use ratatui::Terminal;
 use serde_json::json;
 
@@ -93,8 +93,9 @@ parity_tests! {
             let (term, _) = draw_tab_bar(&chrome, tab_bar_rect);
 
             let row = buffer_row_text(&term, tab_bar_rect, 0);
-            assert!(row.contains(" gobby:0:0:1 Z"), "tab row: {row:?}");
-            assert!(row.contains(" gobby:test Z"), "tab row: {row:?}");
+            assert!(row.contains(" 1: Untitled Z"), "tab row: {row:?}");
+            assert!(row.contains(" test Z"), "tab row: {row:?}");
+            assert!(!row.contains("gobby"), "no project prefix: {row:?}");
             assert_eq!(tab_display_name(&chrome.tabs().tabs, 0).as_deref(), Some("1"));
             assert_eq!(
                 tab_display_name(&chrome.tabs().tabs, custom_tab).as_deref(),
@@ -111,7 +112,7 @@ parity_tests! {
             let (_, tab_rect) = hits.tabs[0];
             let style = cell(&term, tab_rect.x + 1, tab_rect.y).style();
 
-            assert_eq!(style.bg, Some(palette().panel_bg));
+            assert_eq!(style.bg, Some(Color::Reset), "the terminal's own ground");
             assert!(!style.add_modifier.contains(Modifier::DIM));
             assert!(style.add_modifier.contains(Modifier::BOLD));
         }
@@ -122,8 +123,8 @@ parity_tests! {
             zoom_tab(&mut chrome, 0);
 
             let (_, hits) = draw_tab_bar(&chrome, Rect::new(0, 0, 50, 1));
-            let expected = tab_width(&["gobby:abcdefgh Z".into()], 0);
-            assert_eq!(expected, display_width_u16("gobby:abcdefgh Z") + 4);
+            let expected = tab_width(&["abcdefgh Z".into()], 0);
+            assert_eq!(expected, display_width_u16("abcdefgh Z") + 4);
             assert_eq!(hits.tabs[0].1.width, expected);
         }
 
@@ -132,8 +133,8 @@ parity_tests! {
             set_custom_name(&mut chrome, 0, "提交 herdr 的反馈");
 
             let (_, hits) = draw_tab_bar(&chrome, Rect::new(0, 0, 50, 1));
-            let expected = tab_width(&["gobby:提交 herdr 的反馈".into()], 0);
-            assert_eq!(expected, display_width_u16("gobby:提交 herdr 的反馈") + 4);
+            let expected = tab_width(&["提交 herdr 的反馈".into()], 0);
+            assert_eq!(expected, display_width_u16("提交 herdr 的反馈") + 4);
             assert_eq!(hits.tabs[0].1.width, expected);
         }
 
@@ -190,8 +191,8 @@ fn hidden_tab_with_attention_carries_the_mark() {
         hits = render_tab_bar(frame, area, &ws, &chrome);
     });
     let row = buffer_row_text(&term, area, 0);
-    assert!(row.contains("⍾ 0:0:2"), "tab row: {row:?}");
-    assert!(!row.contains("⍾ 0:0:1"), "tab row: {row:?}");
+    assert!(row.contains("⍾ 2: Untitled"), "tab row: {row:?}");
+    assert!(!row.contains("⍾ 1: Untitled"), "tab row: {row:?}");
     let second_rect = hits.tabs[1].1;
     assert_eq!(cell(&term, second_rect.x + 1, second_rect.y).symbol(), "⍾");
     assert_eq!(

@@ -1,15 +1,12 @@
 // upstream: herdr v0.8.0 src/ui/tabs.rs
 //! Tab bar with scroll arrows, hit areas, and the new-tab button.
 
-use crate::app::viewer_state::LOCAL_TAB_PREFIX;
 use crate::app::MouseGesture;
 use crate::ui::chrome::{Chrome, Tab, WorkspaceView};
 use crate::ui::settings::SidebarSide;
-use crate::ui::sidebar_rows::project_label;
 use crate::ui::text::display_width_u16;
-use crate::ui::widgets::panel_contrast_fg;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
@@ -62,32 +59,38 @@ pub fn tab_display_name(tabs: &[Tab], tab_idx: usize) -> Option<String> {
     })
 }
 
+/// A tab's name wherever the chrome shows it: the title alone, or until it
+/// has one its number and `Untitled`. The number is the tab's segment of the
+/// daemon address, or the position of a tab the daemon has not seen. The
+/// project is never repeated here.
+pub fn tab_label<W: WorkspaceView>(ws: &W, tabs: &[Tab], tab_idx: usize) -> String {
+    let Some(tab) = tabs.get(tab_idx) else {
+        return String::new();
+    };
+    if !tab_is_auto_named(tab) {
+        return tab.title.trim().to_string();
+    }
+    let number = ws
+        .workspace_model()
+        .and_then(|model| model.tab(&tab.id))
+        .map_or_else(
+            || (tab_idx + 1).to_string(),
+            |row| row.reference.to_string(),
+        );
+    format!("{number}: Untitled")
+}
+
 fn tab_chrome_label<W: WorkspaceView>(
     ws: &W,
     chrome: &Chrome,
     tabs: &[Tab],
     tab_idx: usize,
 ) -> String {
-    let Some(tab) = tabs.get(tab_idx) else {
-        return String::new();
-    };
-    let name = if tab_is_auto_named(tab) {
-        if tab.id.starts_with(LOCAL_TAB_PREFIX) {
-            (tab_idx + 1).to_string()
-        } else {
-            tab.id.clone()
-        }
-    } else {
-        tab.title.trim().to_string()
-    };
-    let project = ws
-        .focused_project()
-        .map(|id| project_label(ws, chrome, id).unwrap_or_else(|| "Project".to_string()));
-    let mut label = match project {
-        Some(project) => format!("{project}:{name}"),
-        None => name,
-    };
-    if chrome.viewer.zoomed.contains(&tab.id) {
+    let mut label = tab_label(ws, tabs, tab_idx);
+    if tabs
+        .get(tab_idx)
+        .is_some_and(|tab| chrome.viewer.zoomed.contains(&tab.id))
+    {
         label.push_str(" Z");
     }
     label
@@ -369,10 +372,11 @@ pub fn render_tab_bar<W: WorkspaceView>(
             continue;
         }
         let active = idx == chrome.active_index();
+        // The active tab opens onto the terminal's own ground below it.
         let style = if active {
             Style::default()
                 .fg(p.text)
-                .bg(panel_contrast_fg(p))
+                .bg(Color::Reset)
                 .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(p.overlay1).bg(p.surface0)
@@ -481,15 +485,16 @@ mod tests {
 
     #[test]
     fn fitting_tabs_expose_every_tab_and_the_new_tab_button() {
-        assert!(MIN_TAB_WIDTH > display_width_u16("gobby:0:0:1"));
         let chrome = chrome_with_tabs(&["alpha", "second", ""]);
         let (hits, text) = draw(&chrome, 80);
         assert_eq!(hits.tabs.len(), 3);
         assert_eq!(hits.tabs[0], (0, Rect::new(0, 0, 12, 1)));
         assert_eq!(hits.tabs[1].1.x, 13);
+        assert_eq!(hits.tabs[2].1.width, display_width_u16("3: Untitled") + 4);
         assert!(hits.scroll_left.is_none() && hits.scroll_right.is_none());
-        assert_eq!(hits.new_tab, Some(Rect::new(38, 0, 3, 1)));
-        assert!(text.contains(" alpha") && text.contains(" second") && text.contains(" 3 "));
+        assert_eq!(hits.new_tab, Some(Rect::new(41, 0, 3, 1)));
+        assert!(text.contains(" alpha") && text.contains(" second"));
+        assert!(text.contains(" 3: Untitled "), "{text}");
         assert!(text.contains(" + "));
     }
 
@@ -501,10 +506,10 @@ mod tests {
         chrome.sidebar.overlay = true;
         chrome.view.sidebar_rect = Rect::new(0, 0, 34, 1);
         let (hits, text) = draw(&chrome, 80);
-        assert_eq!(hits.tabs[0], (0, Rect::new(39, 0, 12, 1)));
+        assert_eq!(hits.tabs[0], (0, Rect::new(36, 0, 12, 1)));
         assert_eq!(hits.new_tab, Some(Rect::new(77, 0, 3, 1)));
         assert!(
-            text.starts_with(&" ".repeat(39)) && text.ends_with(" + "),
+            text.starts_with(&" ".repeat(36)) && text.ends_with(" + "),
             "{text}"
         );
 
@@ -512,7 +517,7 @@ mod tests {
         chrome.view.sidebar_rect = Rect::new(46, 0, 34, 1);
         let (hits, _) = draw(&chrome, 80);
         assert_eq!(hits.tabs[0], (0, Rect::new(0, 0, 12, 1)));
-        assert_eq!(hits.new_tab, Some(Rect::new(38, 0, 3, 1)));
+        assert_eq!(hits.new_tab, Some(Rect::new(41, 0, 3, 1)));
     }
 
     #[test]

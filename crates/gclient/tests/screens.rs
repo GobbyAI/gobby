@@ -361,7 +361,8 @@ fn status_segments() -> (Workspace, Chrome) {
                 "entry_id": "run:term-alpha",
                 "run_id": "run-alpha",
                 "terminal": {"terminal_id": "term-alpha", "backend": "native"},
-                "provider": "codex",
+                "provider": "claude",
+                "model": "claude-fable-5-1",
                 "model_display_name": "Fable 5.1",
                 "context_percent": 63,
                 "tokens_used": 12345
@@ -715,8 +716,16 @@ fn agent_rows_golden() {
     let theme = Theme::new(ThemeKind::Dark);
     let rendered = deterministic_capture("agent_rows", agent_rows, &theme);
     let rows = glyph_rows(&rendered);
-    assert!(rows[9].contains("backend-developer-work… (#123)"));
-    assert!(rows[10].contains("Task #123 - Implement the full"));
+    assert!(
+        rows[9].contains("#123: backend-developer-work"),
+        "{:?}",
+        rows[9]
+    );
+    assert!(
+        rows[10].contains("Working task 123 Implement"),
+        "{:?}",
+        rows[10]
+    );
     assert!(rows[11].contains("gpt-5"));
     assert!(
         rows[25].contains("○ nvim"),
@@ -740,7 +749,7 @@ fn status_segments_golden() {
     let rows = glyph_rows(&rendered);
     let status = rows[usize::from(HEIGHT - 1)];
     assert!(status.contains("1 needs you"), "{status:?}");
-    assert!(status.contains("fable-5.1-xhigh"), "{status:?}");
+    assert!(status.contains("claude-fable-5.1-xhigh"), "{status:?}");
     assert!(status.contains("63% · 12,345"), "{status:?}");
     assert!(status.contains("prefix ctrl+b"), "{status:?}");
 }

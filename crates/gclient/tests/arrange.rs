@@ -183,12 +183,12 @@ fn arrange_entries_appear_in_window_and_pane_menus() {
     let mut chrome = Chrome::dark();
     chrome.open_tab(pane, "menu tab");
     let expected = [
-        "arrange: even horizontal",
-        "arrange: even vertical",
-        "arrange: main horizontal",
-        "arrange: main vertical",
-        "arrange: tiled",
-        "new grid…",
+        "Arrange: even horizontal",
+        "Arrange: even vertical",
+        "Arrange: main horizontal",
+        "Arrange: main vertical",
+        "Arrange: tiled",
+        "New grid…",
     ];
     let window = build_menu(
         &workspace,
@@ -203,7 +203,7 @@ fn arrange_entries_appear_in_window_and_pane_menus() {
     let pane_labels: Vec<_> = pane_menu.items.iter().map(|item| item.label).collect();
     let zoom = pane_labels
         .iter()
-        .position(|label| *label == "zoom")
+        .position(|label| *label == "Zoom")
         .expect("pane zoom item");
     assert!(
         pane_labels[zoom + 1..].starts_with(&expected),

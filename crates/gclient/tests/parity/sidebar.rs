@@ -700,7 +700,6 @@ parity_tests! {
 
             let entries = agent_rows(&board, &chrome);
             assert_eq!(entries[0].label, "bridge");
-            assert_eq!(entries[0].provider, None);
         }
 
         fn expanded_sidebar_sections_handle_tiny_heights() {
@@ -951,13 +950,13 @@ parity_tests! {
 
             let text = line_text(&row, 60, &chrome);
             assert_eq!(text, format!(" {} repo", dot(RowState::Attention)));
-            assert_eq!(second_text(&row, 60, &chrome), "   Task #1 - reviewing auth");
+            assert_eq!(second_text(&row, 60, &chrome), "   Working task 1 reviewing auth");
             let working = plain_row("repo", RowState::Working, &["reviewing auth"]);
             assert_eq!(
                 line_text(&working, 60, &chrome),
                 format!(" {} repo", dot(RowState::Working))
             );
-            assert_eq!(second_text(&working, 60, &chrome), "   Task #1 - reviewing auth");
+            assert_eq!(second_text(&working, 60, &chrome), "   Working task 1 reviewing auth");
         }
 
         fn terminal_title_builtins_are_distinct_from_custom_tokens() {
@@ -970,24 +969,23 @@ parity_tests! {
             let text = line_text(&row, 60, &chrome);
             assert!(!text.contains('⠋'));
             assert_eq!(text, format!(" {} raw title", dot(RowState::Working)));
-            assert_eq!(second_text(&row, 60, &chrome), "   Task #1 - custom title");
+            assert_eq!(second_text(&row, 60, &chrome), "   Working task 1 custom title");
         }
 
         fn known_agent_override_replaces_default_rows() {
             // herdr: `rows_by_agent["pi"]` wins while `entry.agent` is `Pi`
             // and the default rows return once it is `None`; gclient's row
-            // keeps the roster's provider token and name once its pane is
-            // gone, and only the state changes.
+            // keeps the roster's name once its pane is gone, and only the
+            // state changes.
             let mut board = Board::new(&[]);
             board.add("repo", "renamed pi");
             let chrome = chrome();
 
             let rows = agent_rows(&board, &chrome);
-            assert_eq!(rows[0].provider, None);
+            assert_eq!(rows[0].label, "repo");
 
             board.set_state("repo", RowState::Unknown);
             let rows = agent_rows(&board, &chrome);
-            assert_eq!(rows[0].provider, None);
             assert_eq!(rows[0].label, "repo");
             assert!(!line_text(&rows[0], 60, &chrome).contains("detached"));
         }
@@ -1012,7 +1010,7 @@ parity_tests! {
             let text = line_text(&row, 60, &chrome);
             assert_eq!(text, format!(" {} repo", dot(RowState::Idle)));
             let second = second_text(&row, 60, &chrome);
-            assert_eq!(second, "   Task #1 - 2 changes");
+            assert_eq!(second, "   Working task 1 2 changes");
             assert!(!second.contains('↑') && !second.contains('↓'));
         }
     }
@@ -1285,10 +1283,10 @@ fn agent_rows_follow_project_and_machine_filter() {
     assert_eq!(
         items,
         [
-            ("✓ this project", false),
-            ("  all projects", true),
-            ("  grouped", true),
-            ("✓ priority", false),
+            ("✓ This project", false),
+            ("  All projects", true),
+            ("  Grouped", true),
+            ("✓ Priority", false),
         ]
     );
     chrome.menu = None;

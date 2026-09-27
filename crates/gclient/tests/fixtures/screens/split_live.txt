@@ -4,8 +4,8 @@
 00 : bar_ink/bar+b*120
 01 |▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀|
 01 : line/-*120
-02 | Machines                  alpha:alpha     ⍾ alpha:second    +                                                          |
-02 : -/surface0*1 subtext0/surface0+b*8 -/surface0*16 -/-*1 text/panel_bg+b*15 -/surface0*1 overlay1/surface0*1 yellow/surface0*1 overlay1/surface0*19 -/surface0*57
+02 | Machines                  alpha        ⍾ second    +                                                                   |
+02 : -/surface0*1 subtext0/surface0+b*8 -/surface0*16 -/-*1 text/-+b*12 -/surface0*1 overlay1/surface0*1 yellow/surface0*1 overlay1/surface0*13 -/surface0*66
 03 | ⍾ scripted · local       ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀|
 03 : -/surface_dim*1 yellow/surface_dim*1 overlay0/surface_dim+d*1 text/surface_dim+b*8 overlay0/surface_dim*8 -/surface_dim*6 -/-*1 line/-*94
 04 |                          ⍾ term-alpha ─────────────────────────────────┐┌ ▸ term-beta ────────────────────────────────┐|
