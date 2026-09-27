@@ -298,7 +298,6 @@ async def disconnect_server(manager: Any, server_id: str, logger: logging.Logger
     )
     if connection is not None:
         await disconnect_connection(server_id, connection, logger)
-    manager.health.pop(server_id, None)
 
 
 async def _ensure_connected_once(manager: Any, server_id: str) -> ClientSession:

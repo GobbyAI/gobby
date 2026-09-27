@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable, Coroutine, Mapping, MutableSet
+import time
+from collections.abc import Awaitable, Callable, Coroutine, Mapping, MutableSet, Set
 from typing import Any, Protocol
 
-from gobby.mcp_proxy.models import HealthState
+from gobby.mcp_proxy.lazy import LazyServerConnector
+from gobby.mcp_proxy.models import HealthState, MCPServerConfig
+
+LAZY_IDLE_TIMEOUT_SECONDS = 300.0
 
 
 class _HealthConnection(Protocol):
@@ -32,6 +36,17 @@ class _HealthStatus(Protocol):
 
 
 class _HealthManager(Protocol):
+    lazy_connect: bool
+
+    @property
+    def preconnect_servers(self) -> Set[str]: ...
+
+    @property
+    def _configs(self) -> Mapping[str, MCPServerConfig]: ...
+
+    @property
+    def _lazy_connector(self) -> LazyServerConnector: ...
+
     @property
     def _connections(self) -> Mapping[str, _HealthConnection]: ...
 
@@ -48,6 +63,8 @@ class _HealthManager(Protocol):
     def health(self) -> Mapping[str, _HealthStatus]: ...
 
     def _reconnect(self, server_id: str) -> Coroutine[Any, Any, None]: ...
+
+    def disconnect_server(self, server_id: str) -> Coroutine[Any, Any, None]: ...
 
 
 def _reconnect_done_callback(
@@ -119,12 +136,38 @@ async def monitor_health(
             tasks: list[Awaitable[Any]] = []
             server_ids: list[str] = []
             connections: list[_HealthConnection] = []
+            idle_connections: list[tuple[str, _HealthConnection]] = []
 
             for server_id, connection in manager._connections.items():
-                if connection.is_connected:
-                    tasks.append(connection.health_check(timeout=5.0))
-                    server_ids.append(server_id)
-                    connections.append(connection)
+                if not connection.is_connected:
+                    continue
+                config = manager._configs.get(server_id)
+                if (
+                    manager.lazy_connect
+                    and config is not None
+                    and config.name not in manager.preconnect_servers
+                ):
+                    idle_connections.append((server_id, connection))
+                    continue
+                tasks.append(connection.health_check(timeout=5.0))
+                server_ids.append(server_id)
+                connections.append(connection)
+
+            for server_id, connection in idle_connections:
+                state = manager._lazy_connector.get_state(server_id)
+                if (
+                    state is not None
+                    and state.last_used_at is not None
+                    and state.active_requests == 0
+                    and time.monotonic() - state.last_used_at >= LAZY_IDLE_TIMEOUT_SECONDS
+                    and manager._connections.get(server_id) is connection
+                ):
+                    config = manager._configs.get(server_id)
+                    logger.info(
+                        "Disconnecting idle on-demand MCP server: %s",
+                        config.name if config is not None else server_id,
+                    )
+                    await manager.disconnect_server(server_id)
 
             if not tasks:
                 continue

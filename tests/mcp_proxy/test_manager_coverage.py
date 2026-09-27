@@ -2293,6 +2293,7 @@ class TestMCPClientManagerMonitorHealth:
         manager = MCPClientManager(
             server_configs=[config],
             health_check_interval=0.01,  # Fast for testing
+            lazy_connect=False,
         )
 
         mock_connection = AsyncMock()
@@ -2328,6 +2329,7 @@ class TestMCPClientManagerMonitorHealth:
         manager = MCPClientManager(
             server_configs=[config],
             health_check_interval=0.01,
+            lazy_connect=False,
         )
 
         mock_connection = AsyncMock()
@@ -2377,7 +2379,9 @@ class TestMCPClientManagerMonitorHealth:
             transport="http",
             url="http://localhost:8001",
         )
-        manager = MCPClientManager(server_configs=[config], health_check_interval=0.01)
+        manager = MCPClientManager(
+            server_configs=[config], health_check_interval=0.01, lazy_connect=False
+        )
         mock_connection = AsyncMock()
         mock_connection.is_connected = True
         mock_connection.health_check.return_value = False
@@ -2414,7 +2418,9 @@ class TestMCPClientManagerMonitorHealth:
             transport="http",
             url="http://localhost:8001",
         )
-        manager = MCPClientManager(server_configs=[config], health_check_interval=0.01)
+        manager = MCPClientManager(
+            server_configs=[config], health_check_interval=0.01, lazy_connect=False
+        )
         mock_connection = AsyncMock()
         mock_connection.is_connected = True
         mock_connection.health_check.return_value = False
@@ -2451,7 +2457,9 @@ class TestMCPClientManagerMonitorHealth:
             transport="http",
             url="http://localhost:8001",
         )
-        manager = MCPClientManager(server_configs=[config], health_check_interval=0.01)
+        manager = MCPClientManager(
+            server_configs=[config], health_check_interval=0.01, lazy_connect=False
+        )
         mock_connection = AsyncMock()
         mock_connection.is_connected = True
         mock_connection.health_check.return_value = False
@@ -2526,6 +2534,7 @@ class TestMCPClientManagerMonitorHealth:
         manager = MCPClientManager(
             server_configs=[config],
             health_check_interval=0.01,
+            lazy_connect=False,
         )
 
         mock_connection = AsyncMock()
