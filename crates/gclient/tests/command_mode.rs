@@ -7,6 +7,31 @@ use std::process::{Command, Output};
 
 const PROJECT: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 
+#[test]
+fn help_scopes_workspace_option_to_supported_verbs() {
+    let output = Command::new(env!("CARGO_BIN_EXE_gclient"))
+        .arg("help")
+        .output()
+        .expect("run gclient help");
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let help = stdout(&output);
+    assert!(help.contains("list [--workspace REF]"));
+    assert!(help.contains("new-tab --project NAME|ID [--workspace REF]"));
+    assert!(help.contains("select [REF] [--workspace REF]"));
+    assert!(help.contains("--workspace applies to list, new-tab, select"));
+    assert!(help.contains("list/new-tab default to GOBBY_WORKSPACE_ID"));
+    assert!(help.contains("select derives workspace from a full REF"));
+    assert!(help.contains("Omitted pane REF uses GOBBY_PANE_REF"));
+    assert!(!help.contains("Common: --json, --daemon-url URL, --token-file PATH, --workspace"));
+
+    let unsupported = Command::new(env!("CARGO_BIN_EXE_gclient"))
+        .args(["capture-pane", "0:0:0:0", "--workspace", "0"])
+        .output()
+        .expect("run unsupported option");
+    assert_eq!(unsupported.status.code(), Some(2));
+    assert!(stderr(&unsupported).contains("unexpected arguments for capture-pane"));
+}
+
 async fn invoke(daemon: &MockDaemon, args: &[&str]) -> Output {
     let directory = tempfile::tempdir().expect("token directory");
     let token_file = directory.path().join("token");
