@@ -116,7 +116,9 @@ class TestWebChatRuntimeManager:
             daemon_config=DaemonConfig(web_chat_sandbox={"enabled": False}),
         )
 
-        record = SimpleNamespace(supported=True, reason="AGY 1.1.18 meets required version 1.1.18.")
+        record = SimpleNamespace(
+            supported=True, reason="Antigravity 1.1.18 meets required version 1.1.18."
+        )
         with patch(
             "gobby.providers.version_gate.ensure_agy_support",
             AsyncMock(return_value=record),
@@ -222,7 +224,7 @@ class TestWebChatRuntimeManager:
         manager = WebChatRuntimeManager(codex_client=None)
         record = SimpleNamespace(
             supported=True,
-            reason="AGY 1.1.18 meets required version 1.1.18.",
+            reason="Antigravity 1.1.18 meets required version 1.1.18.",
         )
         assert hasattr(manager, "_agy_backend")
         manager._agy_backend._health = ProviderBackendHealth(provider="agy", available=True)
@@ -243,7 +245,7 @@ class TestWebChatRuntimeManager:
         manager = WebChatRuntimeManager(codex_client=None)
         record = SimpleNamespace(
             supported=True,
-            reason="AGY 1.1.18 meets required version 1.1.18.",
+            reason="Antigravity 1.1.18 meets required version 1.1.18.",
         )
 
         error: Exception | None = None

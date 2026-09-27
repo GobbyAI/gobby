@@ -555,7 +555,7 @@ def agy_support_refusal(record: AgySupportRecord) -> str:
 
 
 async def prepare_agy_spawn(request: SpawnRequest) -> ProviderSpawnPlan | SpawnResult:
-    if validation_error := _session_manager_validation_error(request, "AGY"):
+    if validation_error := _session_manager_validation_error(request, "Antigravity"):
         return validation_error
     spawn_context = request.prepared_spawn
     gobby_session_id = spawn_context.session_id

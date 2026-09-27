@@ -1907,7 +1907,10 @@ async def test_text_generation_service_rejects_invalid_agy_effort_pair_and_falls
     assert result.provider == "codex"
     assert agy.requests == []
     assert codex.requests[0].reasoning_effort == "high"
-    assert "Unsupported AGY reasoning_effort 'medium' for model 'gemini-3.1-pro'" in caplog.text
+    assert (
+        "Unsupported Antigravity reasoning_effort 'medium' for model 'gemini-3.1-pro'"
+        in caplog.text
+    )
 
 
 @pytest.mark.parametrize(
@@ -1938,7 +1941,7 @@ async def test_text_generation_service_rejects_invalid_agy_effort_pair(
     agy = RecordingAdapter("agy")
     service = TextGenerationService(registry, {"agy": agy})
 
-    with pytest.raises(ValueError, match="Unsupported AGY reasoning_effort"):
+    with pytest.raises(ValueError, match="Unsupported Antigravity reasoning_effort"):
         await service.generate_result(
             TextGenerationRequest(
                 prompt="summarize",
@@ -4313,7 +4316,7 @@ def test_agy_cli_text_generate_adapter_rejects_invalid_effort_model_pair(
 ) -> None:
     adapter = AgyCLITextGenerateAdapter(command_path="/usr/local/bin/agy")
 
-    with pytest.raises(ValueError, match="Unsupported AGY reasoning_effort"):
+    with pytest.raises(ValueError, match="Unsupported Antigravity reasoning_effort"):
         adapter.build_command(
             TextGenerationRequest(prompt="explain", model=model, reasoning_effort=effort)
         )
@@ -4322,14 +4325,14 @@ def test_agy_cli_text_generate_adapter_rejects_invalid_effort_model_pair(
 def test_agy_cli_text_generate_adapter_rejects_unmapped_explicit_model() -> None:
     adapter = AgyCLITextGenerateAdapter(command_path="/usr/local/bin/agy")
 
-    with pytest.raises(ValueError, match="Unsupported AGY model"):
+    with pytest.raises(ValueError, match="Unsupported Antigravity model"):
         adapter.build_command(TextGenerationRequest(prompt="explain", model="not-real"))
 
 
 def test_agy_cli_text_generate_adapter_rejects_blank_explicit_model() -> None:
     adapter = AgyCLITextGenerateAdapter(command_path="/usr/local/bin/agy")
 
-    with pytest.raises(ValueError, match="Unsupported AGY model"):
+    with pytest.raises(ValueError, match="Unsupported Antigravity model"):
         adapter.build_command(TextGenerationRequest(prompt="explain", model="   "))
 
 
@@ -4400,7 +4403,7 @@ async def test_agy_cli_text_generate_adapter_generate_json_uses_directive(
         env_overrides: dict[str, str],
     ) -> str:
         commands.append(command)
-        assert provider_name == "AGY"
+        assert provider_name == "Antigravity"
         assert timeout_seconds == 600.0
         assert neutral_cwd.name.startswith("gobby-textgen-")
         assert env_overrides == {}

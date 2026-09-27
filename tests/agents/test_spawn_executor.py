@@ -1487,7 +1487,7 @@ class TestExecuteSpawn:
         )
         record = SimpleNamespace(
             supported=False,
-            reason="Installed AGY version 1.1.0 does not meet required version 1.1.18.",
+            reason="Installed Antigravity version 1.1.0 does not meet required version 1.1.18.",
         )
         with (
             patch(
@@ -1516,8 +1516,8 @@ class TestExecuteSpawn:
     @pytest.mark.parametrize(
         "reason",
         [
-            "Installed AGY version none does not meet required version 1.1.18.",
-            "Installed AGY version unparseable does not meet required version 1.1.18.",
+            "Installed Antigravity version none does not meet required version 1.1.18.",
+            "Installed Antigravity version unparseable does not meet required version 1.1.18.",
             "version probe has not run",
         ],
     )
@@ -1576,7 +1576,7 @@ class TestExecuteSpawn:
         )
         record = SimpleNamespace(
             supported=True,
-            reason="AGY 1.1.18 meets required version 1.1.18.",
+            reason="Antigravity 1.1.18 meets required version 1.1.18.",
         )
         with (
             patch(
@@ -1636,7 +1636,7 @@ class TestExecuteSpawn:
         )
         record = SimpleNamespace(
             supported=True,
-            reason="AGY 1.1.18 meets required version 1.1.18.",
+            reason="Antigravity 1.1.18 meets required version 1.1.18.",
         )
         launch = SandboxLaunch(
             backend="srt",
@@ -1695,7 +1695,7 @@ class TestExecuteSpawn:
         )
         record = SimpleNamespace(
             supported=True,
-            reason="AGY 1.1.18 meets required version 1.1.18.",
+            reason="Antigravity 1.1.18 meets required version 1.1.18.",
         )
         with (
             patch(

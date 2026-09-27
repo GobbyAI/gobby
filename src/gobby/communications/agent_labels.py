@@ -6,6 +6,7 @@ from collections import Counter
 from collections.abc import Sequence
 
 from gobby.storage.session_models import Session
+from gobby.storage.sessions._title_defaults import provider_title_label
 
 
 def agent_label(session: Session) -> str:
@@ -16,7 +17,9 @@ def agent_label(session: Session) -> str:
         title = remainder.strip()
     if title and not title.rsplit("#", maxsplit=1)[-1].isdigit():
         return title
-    return session.source.replace("_", " ").title()
+    source = session.source.strip()
+    label = provider_title_label(source)
+    return label if label != source else source.replace("_", " ").title()
 
 
 def agent_menu_labels(sessions: Sequence[Session]) -> dict[str, str]:

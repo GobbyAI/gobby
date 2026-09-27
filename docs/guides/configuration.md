@@ -487,11 +487,11 @@ policy; inspect the write response and active snapshot for application failures.
 A `hooks.provider_timeout` change also requires `gobby install`
 to rewrite provider settings. Qwen stores the provider value in milliseconds;
 Claude caps `SessionEnd` at 60 seconds; Codex keeps its enqueue-only `SessionEnd`
-hook at 3 seconds. AGY stores a `timeout` on every action in
+hook at 3 seconds. Antigravity stores a `timeout` on every action in
 `~/.gemini/config/hooks.json`; the bundled template uses 45 seconds through
-`AGY_HOOK_TIMEOUT_SECONDS`. Unlike the other standard installers, that AGY
+`AGY_HOOK_TIMEOUT_SECONDS`. Unlike the other standard installers, that Antigravity
 per-hook timeout is not rewritten from `hooks.provider_timeout`, so changing the
-provider ceiling does not change AGY's 45-second action deadline.
+provider ceiling does not change Antigravity's 45-second action deadline.
 
 ### Code Index
 

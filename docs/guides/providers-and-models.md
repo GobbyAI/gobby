@@ -59,7 +59,7 @@ format for backends such as:
 Feature configs choose preferred candidate order; provider availability, auth
 mode, and model details come from provider collectors, configured local
 backends, and bundled cold-start rows. Gemini-family model IDs remain available
-through AGY and Droid; they are models, not a separate Gobby provider.
+through Antigravity and Droid; they are models, not a separate Gobby provider.
 
 Auth modes are provider-specific. Examples include subscription auth, API-key
 auth, and ADC-style auth for providers that support it.
@@ -146,11 +146,11 @@ capability rows; a successful collection replaces the provider snapshot in one
 transaction.
 
 Capability collectors own provider-specific discovery for Claude, Codex, Droid,
-Grok, Qwen, and AGY. On an empty database, bundled Claude, Droid, and AGY snapshots
+Grok, Qwen, and Antigravity. On an empty database, bundled Claude, Droid, and Antigravity snapshots
 provide cold-start rows with `stale` source health and `bundled` provenance. Startup then
 refreshes collectors concurrently, with a 30-second source timeout, and repeats
 every 24 hours. Successful live facts retain their `source_key`, optional
-`source_url`, and `observed_at` per field. The AGY collector reads live
+`source_url`, and `observed_at` per field. The Antigravity collector reads live
 `agy --output-format json models` data; the bundled seed remains the fallback when
 that 6.3 collector cannot produce a fresh snapshot.
 

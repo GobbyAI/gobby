@@ -1,7 +1,7 @@
 # ghook User Guide
 
 ghook receives lifecycle and tool-use events from Claude Code, Codex, Factory
-Droid, Grok, Qwen CLI, and AGY. Managed hook dispatch normally enqueues an
+Droid, Grok, Qwen CLI, and Antigravity. Managed hook dispatch normally enqueues an
 envelope to `$GOBBY_HOME/hooks/inbox/` before attempting delivery, so the daemon
 can replay an interrupted delivery. If enqueue fails, the live path attempts a
 bounded direct POST; `--enqueue-only` cannot use that fallback.
@@ -58,11 +58,11 @@ removes the file. Mapping, stdout, or receipt-write failures retain the original
 
 Dispatch skips unmanaged directories without enqueueing. A project marker,
 managed environment identity, or payload project identity establishes managed
-context; AGY can resolve a marker from `workspacePaths`. Environment project ID
+context; Antigravity can resolve a marker from `workspacePaths`. Environment project ID
 takes precedence over marker ID and payload project ID. `GOBBY_HOOKS_DISABLED=1`
 skips before any dispatch side effects. `gobby hooks disable` and `enable`, run
 at the project root, set/remove the boolean `hooks_disabled` in `project.json`;
-the dispatcher also finds this flag from nested directories and AGY workspaces.
+the dispatcher also finds this flag from nested directories and Antigravity workspaces.
 
 ### Planned Shutdown Fail-Open Handling
 
@@ -129,7 +129,7 @@ ghook schema-identity --json
 | `--diagnose` | introspection | Prints a JSON snapshot of what *would* happen. No network, no envelope write. |
 | `--version` | metadata | Prints version and writes `~/.gobby/bin/.ghook-runtime.json` for the daemon. |
 | `--cli` | required for dispatch/diagnose | Host CLI name: `claude`, `codex`, `qwen`, `droid`, `grok`, `agy`. Case-insensitive. |
-| `--type` | required for dispatch/diagnose | Hook type. CLI-specific (e.g. `session-start` for Claude, `SessionStart` for Codex/Qwen, `PreInvocation`/`PreToolUse` for AGY, `PostToolUse`, `Stop`, `pre-compact`, `session-end`). |
+| `--type` | required for dispatch/diagnose | Hook type. CLI-specific (e.g. `session-start` for Claude, `SessionStart` for Codex/Qwen, `PreInvocation`/`PreToolUse` for Antigravity, `PostToolUse`, `Stop`, `pre-compact`, `session-end`). |
 | `--detach` | dispatch | After enqueue and project-root walk-up, call `setsid(2)` to escape the host CLI's process group before the POST. Useful for hooks where the host CLI tears down its session immediately. |
 | `--enqueue-only` | dispatch | Durably queue the event and return the provider skip response without live POST. Cannot supply a synchronous decision. |
 | `schema-identity --json` | metadata | Print the embedded datastore schema contract; no runtime stamp write. |
@@ -209,7 +209,7 @@ Claude Code uses lowercase-hyphenated names internally for some hooks (`session-
 
 Lifecycle hook criticality (`session-start`, `session-end`, `pre-compact`) comes from ghook's per-CLI registry. Tool-use hooks are non-critical — the envelope still spools, but a transient daemon outage won't block your tool call. Turn-level `Stop` is never critical, so a daemon outage does not freeze the CLI on every turn.
 
-### Codex, Qwen, Droid, Grok, AGY
+### Codex, Qwen, Droid, Grok, Antigravity
 
 Same pattern with different `--cli` and `--type` values. ghook's per-CLI
 registry (see `crates/ghook/src/cli_config.rs`) defines which hooks are
@@ -239,10 +239,10 @@ errors, and crashes before settlement leave the file for daemon recovery.
 
 Droid uses PascalCase hook types (`SessionStart`, `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `Notification`, `Stop`, `SubagentStop`, `PreCompact`, `SessionEnd`) and ghook forwards droid's stdin payload unchanged to the daemon with `source: "droid"`. Droid-specific block handling differs slightly from the other CLIs: daemon responses containing `continue:false` exit 2, while other meaningful response JSON is written to stdout with exit 0.
 
-AGY uses exactly five PascalCase hook types: `PreInvocation`, `PreToolUse`,
+Antigravity uses exactly five PascalCase hook types: `PreInvocation`, `PreToolUse`,
 `PostToolUse`, `PostInvocation`, and `Stop`. ghook forwards them with
-`source: "agy"`. The registry marks all five non-critical; AGY has no native
-`SessionStart` or `UserPromptSubmit` hook. Every AGY failure fails open,
+`source: "agy"`. The registry marks all five non-critical; Antigravity has no native
+`SessionStart` or `UserPromptSubmit` hook. Every Antigravity failure fails open,
 including malformed stdin: ghook exits `0` with the skip JSON on stdout
 (`{"decision":"allow"}` for `PreToolUse`, `{}` otherwise) and the diagnostic
 on stderr, because a non-zero exit would block the tool call.
