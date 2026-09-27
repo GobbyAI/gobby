@@ -271,7 +271,10 @@ def test_ordering_coordinator_no_regression(temp_db: HubDatabase) -> None:
 
 def test_snapshot_filters_null_rows_and_sweeps_legacy_empty_rows(
     temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    clock = [1000.0]
+    monkeypatch.setattr("gobby.storage.attention.monotonic", lambda: clock[0])
     manager = AttentionStateManager(temp_db, epoch="prune-snapshot")
     manager.transition(
         "session:lifecycle",
@@ -296,6 +299,7 @@ def test_snapshot_filters_null_rows_and_sweeps_legacy_empty_rows(
             """
         )
 
+    clock[0] += 61.0
     first = manager.snapshot()
     remaining = temp_db.fetchone(
         "SELECT COUNT(*) AS count FROM attention_states WHERE state IS NULL AND payload = '{}'::jsonb AND updated_at < now() - interval '1 hour'"

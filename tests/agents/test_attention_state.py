@@ -363,6 +363,45 @@ def test_clear_preserves_turn_lifecycle_payload(temp_db: HubDatabase) -> None:
     assert manager.snapshot().states == ()
 
 
+def test_transition_sweeps_old_empty_rows_without_roster_requests(temp_db: HubDatabase) -> None:
+    manager = _attention_manager(temp_db)
+    with temp_db.transaction() as transaction:
+        transaction.execute(
+            """
+            INSERT INTO attention_states (entry_id, attention_id, updated_at)
+            SELECT 'run:legacy-' || n, 'legacy-' || n, now() - interval '2 hours'
+            FROM generate_series(1, 257) AS n
+            """
+        )
+
+    opened = manager.transition(
+        "run:active",
+        state="blocked",
+        run_id="active",
+        reason="approval",
+        kind="actionable",
+        fingerprint="prompt-1",
+    )
+    remaining = temp_db.fetchone(
+        "SELECT COUNT(*) AS count FROM attention_states WHERE state IS NULL"
+    )
+    assert opened.applied is True
+    assert opened.current is not None
+    assert remaining is not None and remaining["count"] == 1
+
+    cleared = manager.transition(
+        "run:active",
+        state=None,
+        expected_attention_id=opened.current.attention_id,
+    )
+    remaining = temp_db.fetchone(
+        "SELECT COUNT(*) AS count FROM attention_states WHERE state IS NULL"
+    )
+    assert cleared.applied is True
+    assert remaining is not None and remaining["count"] == 1
+    assert manager.get("run:active") == cleared.current
+
+
 @pytest.mark.asyncio
 async def test_attention_tracker_tracks_prompts_stalls_and_injection_clear(
     temp_db: HubDatabase,

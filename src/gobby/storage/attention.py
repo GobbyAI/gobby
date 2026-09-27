@@ -403,29 +403,7 @@ class AttentionStateManager:
     ) -> AttentionRosterSnapshot:
         """Capture all attention and transient metadata at one cursor."""
         with self.ordering.synchronized():
-            # Recent clears retain their stale-response identity; lifecycle payloads stay durable.
-            if monotonic() >= self._next_empty_row_sweep_at:
-                with self.db.transaction() as transaction:
-                    removed = transaction.execute(
-                        """
-                        DELETE FROM attention_states
-                        WHERE entry_id IN (
-                            SELECT entry_id FROM attention_states
-                            WHERE state IS NULL AND payload = '{}'::jsonb
-                              AND updated_at < now() - interval '1 hour'
-                            ORDER BY entry_id LIMIT %s
-                        )
-                          AND state IS NULL AND payload = '{}'::jsonb
-                          AND updated_at < now() - interval '1 hour'
-                        RETURNING entry_id
-                        """,
-                        (_EMPTY_ROW_SWEEP_LIMIT,),
-                    ).fetchall()
-                self._next_empty_row_sweep_at = monotonic() + (
-                    0.0
-                    if len(removed) == _EMPTY_ROW_SWEEP_LIMIT
-                    else _EMPTY_ROW_SWEEP_INTERVAL_SECONDS
-                )
+            self._sweep_empty_rows_locked()
             rows = self.db.fetchall(
                 "SELECT * FROM attention_states WHERE state IS NOT NULL ORDER BY entry_id"
             )
@@ -443,6 +421,30 @@ class AttentionStateManager:
                 states=states,
                 metadata=metadata,
             )
+
+    def _sweep_empty_rows_locked(self) -> None:
+        # Recent clears retain their stale-response identity; lifecycle payloads stay durable.
+        if monotonic() < self._next_empty_row_sweep_at:
+            return
+        with self.db.transaction() as transaction:
+            removed = transaction.execute(
+                """
+                DELETE FROM attention_states
+                WHERE entry_id IN (
+                    SELECT entry_id FROM attention_states
+                    WHERE state IS NULL AND payload = '{}'::jsonb
+                      AND updated_at < now() - interval '1 hour'
+                    ORDER BY entry_id LIMIT %s
+                )
+                  AND state IS NULL AND payload = '{}'::jsonb
+                  AND updated_at < now() - interval '1 hour'
+                RETURNING entry_id
+                """,
+                (_EMPTY_ROW_SWEEP_LIMIT,),
+            ).fetchall()
+        self._next_empty_row_sweep_at = monotonic() + (
+            0.0 if len(removed) == _EMPTY_ROW_SWEEP_LIMIT else _EMPTY_ROW_SWEEP_INTERVAL_SECONDS
+        )
 
     async def snapshot_async(
         self,
@@ -514,6 +516,7 @@ class AttentionStateManager:
             raise ValueError("blocked transitions require reason, kind, and fingerprint")
 
         with self.ordering.synchronized():
+            self._sweep_empty_rows_locked()
             result, opened_episode = self._transition_locked(
                 entry_id,
                 state=state,
