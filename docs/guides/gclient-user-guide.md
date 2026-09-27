@@ -821,7 +821,7 @@ write to lose, and retaking control re-grants its input on the host. If the host
 itself was drained or replaced, the affected terminals are gone and their panes
 disappear on the next roster refresh.
 
-On launch, the goblin and the wordmark stand alone on the theme's ground
+On launch, the goblin and the wordmark stand alone on the selected ground
 while four stages complete: **daemon health**, **workspace attach**,
 **roster**, and **first frame**. The splash has no menu bar, tabs, sidebar, or
 status line; they arrive with the first frame, and `prefix+shift+q` quits
