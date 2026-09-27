@@ -73,8 +73,13 @@ class TelegramCallbackRegistry:
         ttl_seconds: object,
         action: object = None,
         project_id: object = None,
+        generation: int = 0,
     ) -> dict[str, list[list[dict[str, str]]]]:
-        """Validate a keyboard and replace button values with opaque callback tokens."""
+        """Validate a keyboard and replace button values with opaque callback tokens.
+
+        A nonzero ``generation`` is carried in each token so a click on a replaced
+        keyboard stays recognizable after its token has left this registry.
+        """
         normalized_action = _optional_string(action)
         normalized_session_id = (
             None
@@ -96,7 +101,7 @@ class TelegramCallbackRegistry:
         for row in buttons:
             telegram_row: list[dict[str, str]] = []
             for text, value in row:
-                token = self._new_token()
+                token = self._new_token(generation)
                 callback_data = f"{_CALLBACK_PREFIX}{token}"
                 if len(callback_data.encode("utf-8")) > 64:
                     raise ValueError("Telegram callback token exceeds the 64-byte platform limit")
@@ -162,9 +167,11 @@ class TelegramCallbackRegistry:
                 if isinstance(callback_data, str) and callback_data.startswith(_CALLBACK_PREFIX):
                     self._entries.pop(callback_data.removeprefix(_CALLBACK_PREFIX), None)
 
-    def _new_token(self) -> str:
+    def _new_token(self, generation: int) -> str:
         for _attempt in range(10):
             token = self._token_factory()
+            if generation:
+                token = f"{generation}.{token}"
             if token and token not in self._entries:
                 return token
         raise RuntimeError("Could not allocate a unique Telegram callback token")
@@ -228,6 +235,7 @@ def telegram_callback_message(
         "telegram_update_id": payload.get("update_id"),
         "telegram_callback_query_id": callback_id,
         "callback_status": resolution.status,
+        "callback_generation": callback_generation(callback_data),
         "user_id": user_id,
         "username": username,
         "external_username": external_username,
@@ -299,6 +307,14 @@ def _normalized_keyboard(keyboard: object) -> list[list[tuple[str, str]]]:
             f"Telegram inline_keyboard supports at most {_MAX_TOTAL_BUTTONS} total buttons"
         )
     return normalized
+
+
+def callback_generation(callback_data: object) -> int:
+    """Return the keyboard generation a callback token was issued for (0 when untagged)."""
+    if not isinstance(callback_data, str) or not callback_data.startswith(_CALLBACK_PREFIX):
+        return 0
+    tag, separator, _ = callback_data.removeprefix(_CALLBACK_PREFIX).partition(".")
+    return int(tag) if separator and tag.isdigit() else 0
 
 
 def _bounded_ttl(value: object) -> int:

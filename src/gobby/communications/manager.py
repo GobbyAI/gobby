@@ -33,6 +33,7 @@ from gobby.communications.telegram_access import (
     is_telegram_dm,
     telegram_dm_sender,
 )
+from gobby.communications.telegram_decisions import DecisionLocks, edit_keyboard_message
 from gobby.communications.threads import ThreadManager
 from gobby.communications.voice import VoiceTranscriber, VoiceTranscriberGetter
 from gobby.storage.sessions import LIVE_SESSION_STATUSES
@@ -100,6 +101,7 @@ class CommunicationsManager:
 
         self.attachment_manager = AttachmentManager()
         self._rate_limiter = TokenBucketRateLimiter.from_defaults(config.channel_defaults)
+        self.decision_locks = DecisionLocks()
         self._polling_manager = PollingManager(self)
 
         self._lifecycle = AdapterLifecycleOperations(self)
@@ -269,19 +271,23 @@ class CommunicationsManager:
                 stored_message.session_id if stored_message is not None else None,
             )
             telegram = cast(TelegramAdapter, adapter)
-            if inline_keyboard is None:
-                await telegram.edit_message(
-                    platform_message_id, content, conversation_id, sender_label=label
-                )
-            else:
-                await telegram.edit_message(
+            if stored_message is not None and (
+                inline_keyboard is not None or stored_message.metadata_json.get("inline_keyboard")
+            ):
+                await edit_keyboard_message(
+                    self,
+                    telegram,
+                    stored_message.id,
                     platform_message_id,
                     content,
                     conversation_id,
-                    sender_label=label,
-                    inline_keyboard=inline_keyboard,
-                    callback_source=stored_message,
+                    label,
+                    inline_keyboard,
                 )
+                return
+            await telegram.edit_message(
+                platform_message_id, content, conversation_id, sender_label=label
+            )
         else:
             await adapter.edit_message(platform_message_id, content, conversation_id)
         if stored_message is not None:
@@ -290,15 +296,6 @@ class CommunicationsManager:
                 stored_message.id,
                 content,
             )
-            if inline_keyboard is not None:
-                await asyncio.to_thread(
-                    self._store.replace_callback_keyboard, stored_message.id, inline_keyboard
-                )
-            elif channel.channel_type == "telegram" and stored_message.metadata_json.get(
-                "inline_keyboard"
-            ):
-                # editMessageText without reply_markup removes Telegram's buttons.
-                await asyncio.to_thread(self._store.supersede_callback_decision, stored_message.id)
 
     def telegram_sender_label(self, channel: ChannelConfig, session_id: str | None) -> str | None:
         """Return the agent name to add after Telegram rendering."""

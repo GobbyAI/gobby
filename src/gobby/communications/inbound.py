@@ -8,7 +8,10 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.communications.models import CommsAttachment, CommsMessage
 from gobby.communications.sticker_vision import apply_sticker_vision
-from gobby.communications.telegram_decisions import settle_decision_callback
+from gobby.communications.telegram_decisions import (
+    accept_decision_callback,
+    settle_decision_callback,
+)
 from gobby.communications.voice import apply_voice_transcription
 from gobby.communications.webhook_verification import verify_webhook_with_timeout
 
@@ -227,6 +230,12 @@ class InboundCommunications:
                             manager.attachment_manager.delete_paths,
                             orphan_paths,
                         )
+                elif message.metadata_json.get("callback_decision_id"):
+                    accepted = await accept_decision_callback(manager, adapter, message)
+                    if accepted is None:
+                        handled.append(message)
+                        continue
+                    persisted = accepted
                 else:
                     persisted = await asyncio.to_thread(manager._store.create_message, message)
                 downloaded_attachments = []

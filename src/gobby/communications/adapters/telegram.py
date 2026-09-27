@@ -388,6 +388,7 @@ class TelegramAdapter(BaseChannelAdapter):
         *,
         inline_keyboard: list[list[dict[str, str]]] | None = None,
         callback_source: CommsMessage | None = None,
+        callback_generation: int = 0,
     ) -> None:
         """Replace a Telegram message, maintaining overflow chunks when needed."""
         chunks = _labeled_chunks(content, self.max_message_length, sender_label)
@@ -412,6 +413,7 @@ class TelegramAdapter(BaseChannelAdapter):
                 ttl_seconds=callback_source.metadata_json.get("callback_ttl_seconds", 300),
                 action=callback_source.metadata_json.get("callback_action"),
                 project_id=callback_source.metadata_json.get("callback_project_id"),
+                generation=callback_generation,
             )
 
         keyboard_attached = False
@@ -481,7 +483,7 @@ class TelegramAdapter(BaseChannelAdapter):
             self._edit_overflow_ids.pop(message_key, None)
 
     async def reissue_callback_keyboard(
-        self, source: CommsMessage, chat_id: str, message_id: str
+        self, source: CommsMessage, chat_id: str, message_id: str, *, generation: int
     ) -> None:
         """Replace a stored decision message's buttons with freshly registered tokens."""
         reply_markup = self._callback_registry.register_keyboard(
@@ -492,6 +494,7 @@ class TelegramAdapter(BaseChannelAdapter):
             ttl_seconds=source.metadata_json.get("callback_ttl_seconds", 300),
             action=source.metadata_json.get("callback_action"),
             project_id=source.metadata_json.get("callback_project_id"),
+            generation=generation,
         )
         try:
             result = await self._post_json(
@@ -787,13 +790,13 @@ class TelegramAdapter(BaseChannelAdapter):
             if status == "ok":
                 text = "Selection received."
             elif status == "reissued":
-                text = (
-                    "These buttons had expired. Fresh buttons are attached; tap your choice again."
-                )
+                text = "These buttons were out of date. Current buttons are attached; tap again."
             elif status == "answered":
                 text = "This decision was already answered."
             elif status == "superseded":
-                text = "This decision was withdrawn or replaced."
+                text = "This decision was withdrawn."
+            elif status == "retry":
+                text = "These buttons could not be refreshed. Tap again in a moment."
             elif status == "expired":
                 text = "This action has expired."
             else:

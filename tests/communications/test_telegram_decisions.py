@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from typing import Any, Literal
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 from gobby.communications.adapters.telegram import TelegramAdapter
@@ -14,6 +16,7 @@ from gobby.communications.identities import IdentityManager, IdentityResolution
 from gobby.communications.inbound import InboundCommunications
 from gobby.communications.models import ChannelConfig, CommsIdentity, CommsMessage
 from gobby.communications.telegram_callbacks import TelegramCallbackRegistry
+from gobby.communications.telegram_decisions import DecisionLocks, edit_keyboard_message
 from gobby.config.communications import CommunicationsConfig
 from gobby.storage.communications import LocalCommunicationsStore
 from gobby.storage.hub.protocol import HubDatabase
@@ -26,6 +29,7 @@ _CHAT_ID = "2222222"
 _SOURCE_MESSAGE_ID = 99
 _TS = datetime(2026, 9, 27, tzinfo=UTC)
 _KEYBOARD = [[{"text": "Approve", "value": "approve"}, {"text": "Changes", "value": "changes"}]]
+_OK: dict[str, Any] = {"ok": True, "result": True}
 
 
 @dataclass
@@ -92,7 +96,20 @@ class _RecordingAdapter(TelegramAdapter):
         return result
 
 
-def _adapter(post_json: AsyncMock) -> TelegramAdapter:
+class _ContendedLock(asyncio.Lock):
+    """Decision lock that signals when a second caller has to wait for it."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.contended = asyncio.Event()
+
+    async def acquire(self) -> Literal[True]:
+        if self.locked():
+            self.contended.set()
+        return await super().acquire()
+
+
+def _adapter(post_json: AsyncMock) -> _RecordingAdapter:
     """A freshly started adapter: its callback registry holds no tokens."""
     adapter = _RecordingAdapter(post_json)
     adapter._callback_registry = TelegramCallbackRegistry()
@@ -104,6 +121,7 @@ def _adapter(post_json: AsyncMock) -> TelegramAdapter:
 def _manager(decision: _Decision, adapter: TelegramAdapter) -> MagicMock:
     manager = MagicMock()
     manager._store = decision.store
+    manager.decision_locks = DecisionLocks()
     manager._channel_by_name = {"telegram": decision.channel}
     manager._adapters = {"telegram": adapter}
     manager.admit_inbound_message = AsyncMock(return_value=True)
@@ -136,30 +154,45 @@ def _click(
     return adapter.parse_webhook(payload, {})[0]
 
 
-def _reissued_tokens(post_json: AsyncMock) -> list[str]:
-    calls = [c for c in post_json.await_args_list if c.args[0] == "editMessageReplyMarkup"]
+def _calls(post_json: AsyncMock, method: str) -> list[dict[str, Any]]:
+    return [c.args[1] for c in post_json.await_args_list if c.args[0] == method]
+
+
+def _reissued_buttons(post_json: AsyncMock) -> list[dict[str, str]]:
+    calls = _calls(post_json, "editMessageReplyMarkup")
     assert calls, "expected the decision buttons to be reissued"
-    payload = calls[-1].args[1]
+    payload = calls[-1]
     assert payload["chat_id"] == _CHAT_ID
     assert payload["message_id"] == str(_SOURCE_MESSAGE_ID)
-    return [button["callback_data"] for button in payload["reply_markup"]["inline_keyboard"][0]]
+    buttons: list[dict[str, str]] = payload["reply_markup"]["inline_keyboard"][0]
+    return buttons
 
 
-def _edit_count(post_json: AsyncMock) -> int:
-    return sum(1 for c in post_json.await_args_list if c.args[0] == "editMessageReplyMarkup")
+def _reissued_tokens(post_json: AsyncMock) -> list[str]:
+    return [button["callback_data"] for button in _reissued_buttons(post_json)]
 
 
-def _state(decision: _Decision) -> object:
+def _row(decision: _Decision) -> dict[str, Any]:
     row = decision.store.get_message(decision.source.id)
     assert row is not None
-    return row.metadata_json.get("callback_state")
+    return row.metadata_json
+
+
+def _routed(decision: _Decision, query_id: str) -> CommsMessage | None:
+    return decision.store.get_message_by_platform_id("telegram", f"callback:{query_id}")
+
+
+async def _reissue(adapter: _RecordingAdapter, inbound: InboundCommunications) -> list[str]:
+    handled = await inbound.handle_messages("telegram", [_click(adapter, "gobby:lost", "q-0")])
+    assert handled[0].metadata_json["callback_status"] == "reissued"
+    return _reissued_tokens(adapter._recorder)
 
 
 @pytest.mark.asyncio
 async def test_restart_lost_click_reissues_buttons_that_route_once_to_original_session(
     decision: _Decision,
 ) -> None:
-    post_json = AsyncMock(return_value={"ok": True, "result": True})
+    post_json = AsyncMock(return_value=_OK)
     adapter = _adapter(post_json)
     inbound = InboundCommunications(_manager(decision, adapter))
 
@@ -169,50 +202,309 @@ async def test_restart_lost_click_reissues_buttons_that_route_once_to_original_s
 
     assert handled[0].metadata_json["callback_status"] == "reissued"
     approve_token, changes_token = _reissued_tokens(post_json)
-    assert _state(decision) is None
+    assert _row(decision).get("callback_state") is None
+    assert _row(decision)["callback_generation"] == 1
 
     post_json.reset_mock()
     await adapter.acknowledge_webhook_messages(handled)
-    answer = post_json.await_args
-    assert answer is not None
-    assert answer.args[1]["show_alert"] is True
-    assert "Fresh buttons" in answer.args[1]["text"]
+    answer = _calls(post_json, "answerCallbackQuery")[0]
+    assert answer["show_alert"] is True
+    assert "Current buttons are attached" in answer["text"]
 
     routed = await inbound.handle_messages("telegram", [_click(adapter, approve_token, "q-ok")])
     assert routed[0].metadata_json["callback_status"] == "ok"
     assert routed[0].session_id == decision.session_id
     assert routed[0].content == "approve"
-    assert _state(decision) == "answered"
+    assert _row(decision)["callback_state"] == "answered"
 
-    # The sibling button from the same keyboard is still a live token, but the
-    # decision is closed: it must not reach the session a second time.
+    # The sibling button is still a live token, but the decision is closed.
     second = await inbound.handle_messages("telegram", [_click(adapter, changes_token, "q-2")])
     assert second[0].metadata_json["callback_status"] == "answered"
-    assert decision.store.get_message_by_platform_id("telegram", "callback:q-2") is None
+    assert _routed(decision, "q-2") is None
 
     # A later stale click cannot revive the answered decision.
     post_json.reset_mock()
-    late = await inbound.handle_messages("telegram", [_click(adapter, "gobby:gone", "q-late")])
+    late = await inbound.handle_messages("telegram", [_click(adapter, "gobby:1.gone", "q-late")])
     assert late[0].metadata_json["callback_status"] == "answered"
-    assert _edit_count(post_json) == 0
+    assert _calls(post_json, "editMessageReplyMarkup") == []
+
+
+@pytest.mark.asyncio
+async def test_failed_answer_persistence_leaves_decision_pending(decision: _Decision) -> None:
+    post_json = AsyncMock(return_value=_OK)
+    adapter = _adapter(post_json)
+    inbound = InboundCommunications(_manager(decision, adapter))
+    approve_token, _ = await _reissue(adapter, inbound)
+
+    with patch.object(
+        decision.store, "_insert_message", side_effect=RuntimeError("database write failed")
+    ):
+        handled = await inbound.handle_messages(
+            "telegram", [_click(adapter, approve_token, "q-ok")]
+        )
+
+    assert handled == []  # not acknowledged: polling redelivers the update
+    assert _row(decision).get("callback_state") is None
+    assert _routed(decision, "q-ok") is None
+
+    # The redelivered click's token was consumed, so it reissues; the fresh
+    # buttons then answer the still-pending decision exactly once.
+    post_json.reset_mock()
+    retry = await inbound.handle_messages("telegram", [_click(adapter, approve_token, "q-ok")])
+    assert retry[0].metadata_json["callback_status"] == "reissued"
+    fresh_approve, _ = _reissued_tokens(post_json)
+    routed = await inbound.handle_messages("telegram", [_click(adapter, fresh_approve, "q-ok2")])
+    assert routed[0].metadata_json["callback_status"] == "ok"
+    assert _row(decision)["callback_state"] == "answered"
+
+
+@pytest.mark.asyncio
+async def test_concurrent_answers_route_exactly_once(decision: _Decision) -> None:
+    adapter = _adapter(AsyncMock(return_value=_OK))
+    inbound = InboundCommunications(_manager(decision, adapter))
+    approve_token, changes_token = await _reissue(adapter, inbound)
+
+    first, second = await asyncio.gather(
+        inbound.handle_messages("telegram", [_click(adapter, approve_token, "q-a")]),
+        inbound.handle_messages("telegram", [_click(adapter, changes_token, "q-b")]),
+    )
+
+    statuses = sorted(
+        [first[0].metadata_json["callback_status"], second[0].metadata_json["callback_status"]]
+    )
+    assert statuses == ["answered", "ok"]
+    assert [_routed(decision, "q-a") is None, _routed(decision, "q-b") is None].count(False) == 1
+
+
+@pytest.mark.asyncio
+async def test_stale_click_waiting_on_an_edit_cannot_revive_the_old_keyboard(
+    decision: _Decision,
+) -> None:
+    edit_publishing = asyncio.Event()
+    release_edit = asyncio.Event()
+
+    async def telegram_api(method: str, payload: dict[str, Any]) -> dict[str, Any]:
+        if method == "editMessageText":
+            edit_publishing.set()
+            await release_edit.wait()
+        return _OK
+
+    post_json = AsyncMock(side_effect=telegram_api)
+    adapter = _adapter(post_json)
+    manager = _manager(decision, adapter)
+    lock = _ContendedLock()
+    manager.decision_locks = lambda _decision_id: lock
+    inbound = InboundCommunications(manager)
+    replacement = [[{"text": "Ship", "value": "ship"}]]
+
+    edit = asyncio.create_task(
+        edit_keyboard_message(
+            manager,
+            adapter,
+            decision.source.id,
+            str(_SOURCE_MESSAGE_ID),
+            "Ship it?",
+            _CHAT_ID,
+            None,
+            replacement,
+        )
+    )
+    await edit_publishing.wait()
+    stale = asyncio.create_task(
+        inbound.handle_messages("telegram", [_click(adapter, "gobby:old", "q-stale")])
+    )
+    await lock.contended.wait()
+    release_edit.set()
+    await edit
+    handled = await stale
+
+    # The stale click waited for the edit, then republished the edited keyboard.
+    assert handled[0].metadata_json["callback_status"] == "reissued"
+    buttons = _reissued_buttons(post_json)
+    assert [button["text"] for button in buttons] == ["Ship"]
+    assert buttons[0]["callback_data"].startswith("gobby:2.")
+    assert _row(decision)["inline_keyboard"] == replacement
+    assert _row(decision)["callback_generation"] == 2
+
+
+@pytest.mark.asyncio
+async def test_answer_to_a_replaced_keyboard_republishes_the_current_one(
+    decision: _Decision,
+) -> None:
+    post_json = AsyncMock(return_value=_OK)
+    adapter = _adapter(post_json)
+    manager = _manager(decision, adapter)
+    inbound = InboundCommunications(manager)
+    approve_token, _ = await _reissue(adapter, inbound)
+    resolved = _click(adapter, approve_token, "q-ok")
+    assert resolved.metadata_json["callback_status"] == "ok"
+
+    await edit_keyboard_message(
+        manager,
+        adapter,
+        decision.source.id,
+        str(_SOURCE_MESSAGE_ID),
+        "Ship it?",
+        _CHAT_ID,
+        None,
+        [[{"text": "Ship", "value": "ship"}]],
+    )
+    handled = await inbound.handle_messages("telegram", [resolved])
+
+    assert handled[0].metadata_json["callback_status"] == "reissued"
+    assert [button["text"] for button in _reissued_buttons(post_json)] == ["Ship"]
+    assert _routed(decision, "q-ok") is None
+    assert _row(decision).get("callback_state") is None
+    assert _row(decision)["callback_generation"] == 3
+
+
+@pytest.mark.asyncio
+async def test_failed_reissue_reports_retry_and_the_next_click_repairs_it(
+    decision: _Decision,
+) -> None:
+    failing = AsyncMock(return_value={"ok": False, "description": "Bad Request"})
+    adapter = _adapter(failing)
+    inbound = InboundCommunications(_manager(decision, adapter))
+
+    handled = await inbound.handle_messages("telegram", [_click(adapter, "gobby:lost", "q-1")])
+
+    # The generation advanced before the publish failed; Telegram still shows gen 0.
+    assert handled[0].metadata_json["callback_status"] == "retry"
+    assert _row(decision)["callback_generation"] == 1
+    assert adapter._callback_registry._entries == {}
+    failing.reset_mock()
+    await adapter.acknowledge_webhook_messages(handled)
+    assert "could not be refreshed" in _calls(failing, "answerCallbackQuery")[0]["text"]
+
+    failing.return_value = _OK
+    retried = await inbound.handle_messages("telegram", [_click(adapter, "gobby:lost", "q-2")])
+    assert retried[0].metadata_json["callback_status"] == "reissued"
+    approve_token, _ = _reissued_tokens(failing)
+    assert approve_token.startswith("gobby:2.")
+    routed = await inbound.handle_messages("telegram", [_click(adapter, approve_token, "q-ok")])
+    assert routed[0].metadata_json["callback_status"] == "ok"
+    assert _row(decision)["callback_state"] == "answered"
+
+
+@pytest.mark.asyncio
+async def test_refused_keyboard_edit_restores_the_live_decision(decision: _Decision) -> None:
+    async def telegram_api(method: str, payload: dict[str, Any]) -> dict[str, Any]:
+        if method == "editMessageText":
+            return {"ok": False, "description": "Bad Request: message can't be edited"}
+        return _OK
+
+    post_json = AsyncMock(side_effect=telegram_api)
+    adapter = _adapter(post_json)
+    manager = _manager(decision, adapter)
+    inbound = InboundCommunications(manager)
+    approve_token, _ = await _reissue(adapter, inbound)
+
+    with pytest.raises(RuntimeError, match="editMessageText failed"):
+        await edit_keyboard_message(
+            manager,
+            adapter,
+            decision.source.id,
+            str(_SOURCE_MESSAGE_ID),
+            "Ship it?",
+            _CHAT_ID,
+            None,
+            [[{"text": "Ship", "value": "ship"}]],
+        )
+
+    restored = decision.store.get_message(decision.source.id)
+    assert restored is not None
+    assert restored.content == "Approve the design?"
+    assert restored.metadata_json["inline_keyboard"] == _KEYBOARD
+    assert restored.metadata_json["callback_generation"] == 1
+    routed = await inbound.handle_messages("telegram", [_click(adapter, approve_token, "q-ok")])
+    assert routed[0].metadata_json["callback_status"] == "ok"
+    assert routed[0].content == "approve"
+
+
+@pytest.mark.asyncio
+async def test_ambiguous_keyboard_edit_failure_keeps_the_staged_keyboard(
+    decision: _Decision,
+) -> None:
+    async def telegram_api(method: str, payload: dict[str, Any]) -> dict[str, Any]:
+        if method == "editMessageText":
+            raise httpx.ConnectError("connection reset")
+        return _OK
+
+    post_json = AsyncMock(side_effect=telegram_api)
+    adapter = _adapter(post_json)
+    manager = _manager(decision, adapter)
+    inbound = InboundCommunications(manager)
+    approve_token, _ = await _reissue(adapter, inbound)
+
+    with pytest.raises(httpx.ConnectError):
+        await edit_keyboard_message(
+            manager,
+            adapter,
+            decision.source.id,
+            str(_SOURCE_MESSAGE_ID),
+            "Ship it?",
+            _CHAT_ID,
+            None,
+            [[{"text": "Ship", "value": "ship"}]],
+        )
+
+    # Telegram may have applied the edit, so the row stays at the staged keyboard.
+    assert _row(decision)["callback_generation"] == 2
+    post_json.reset_mock()
+    handled = await inbound.handle_messages("telegram", [_click(adapter, approve_token, "q-old")])
+    assert handled[0].metadata_json["callback_status"] == "reissued"
+    assert _routed(decision, "q-old") is None
+    ship_token = _reissued_tokens(post_json)[0]
+    routed = await inbound.handle_messages("telegram", [_click(adapter, ship_token, "q-ok")])
+    assert routed[0].content == "ship"
+    assert _row(decision)["callback_state"] == "answered"
+
+
+@pytest.mark.asyncio
+async def test_refused_button_removal_keeps_the_decision_pending(decision: _Decision) -> None:
+    async def telegram_api(method: str, payload: dict[str, Any]) -> dict[str, Any]:
+        if method == "editMessageText":
+            return {"ok": False, "description": "Bad Request: message can't be edited"}
+        return _OK
+
+    adapter = _adapter(AsyncMock(side_effect=telegram_api))
+    manager = _manager(decision, adapter)
+    inbound = InboundCommunications(manager)
+    approve_token, _ = await _reissue(adapter, inbound)
+
+    with pytest.raises(RuntimeError, match="editMessageText failed"):
+        await edit_keyboard_message(
+            manager,
+            adapter,
+            decision.source.id,
+            str(_SOURCE_MESSAGE_ID),
+            "Withdrawn",
+            _CHAT_ID,
+            None,
+            None,
+        )
+
+    assert _row(decision).get("callback_state") is None
+    routed = await inbound.handle_messages("telegram", [_click(adapter, approve_token, "q-ok")])
+    assert routed[0].metadata_json["callback_status"] == "ok"
 
 
 @pytest.mark.asyncio
 async def test_superseded_decision_is_refused_without_reissue(decision: _Decision) -> None:
-    decision.store.supersede_callback_decision(decision.source.id)
-    post_json = AsyncMock(return_value={"ok": True, "result": True})
+    assert decision.store.stage_callback_edit(decision.source.id, 0, "Withdrawn", None)
+    post_json = AsyncMock(return_value=_OK)
     adapter = _adapter(post_json)
     inbound = InboundCommunications(_manager(decision, adapter))
 
     handled = await inbound.handle_messages("telegram", [_click(adapter, "gobby:old", "q-1")])
 
     assert handled[0].metadata_json["callback_status"] == "superseded"
-    assert _edit_count(post_json) == 0
+    assert _calls(post_json, "editMessageReplyMarkup") == []
 
 
 @pytest.mark.asyncio
 async def test_click_from_another_chat_is_not_reissued(decision: _Decision) -> None:
-    post_json = AsyncMock(return_value={"ok": True, "result": True})
+    post_json = AsyncMock(return_value=_OK)
     adapter = _adapter(post_json)
     inbound = InboundCommunications(_manager(decision, adapter))
 
@@ -220,8 +512,8 @@ async def test_click_from_another_chat_is_not_reissued(decision: _Decision) -> N
     handled = await inbound.handle_messages("telegram", [click])
 
     assert handled[0].metadata_json["callback_status"] == "invalid"
-    assert _edit_count(post_json) == 0
-    assert _state(decision) is None
+    assert _calls(post_json, "editMessageReplyMarkup") == []
+    assert _row(decision).get("callback_state") is None
 
 
 @pytest.mark.asyncio
@@ -233,38 +525,45 @@ async def test_action_keyboard_is_not_reissued(decision: _Decision) -> None:
         str(_SOURCE_MESSAGE_ID),
         {**decision.source.metadata_json, "callback_action": "agent_menu"},
     )
-    post_json = AsyncMock(return_value={"ok": True, "result": True})
+    post_json = AsyncMock(return_value=_OK)
     adapter = _adapter(post_json)
     inbound = InboundCommunications(_manager(decision, adapter))
 
     handled = await inbound.handle_messages("telegram", [_click(adapter, "gobby:old", "q-1")])
 
     assert handled[0].metadata_json["callback_status"] == "invalid"
-    assert _edit_count(post_json) == 0
+    assert _calls(post_json, "editMessageReplyMarkup") == []
 
 
-def test_concurrent_reissue_claims_admit_one_winner(decision: _Decision) -> None:
+def test_decision_state_transitions_are_compare_and_set(decision: _Decision) -> None:
     store = decision.store
     source_id = decision.source.id
-
-    # Two stale clicks that both observed generation 0.
-    assert store.claim_callback_reissue(source_id, 0) is True
-    assert store.claim_callback_reissue(source_id, 0) is False
-
-    assert store.answer_callback_decision(source_id) is True
-    assert store.answer_callback_decision(source_id) is False
-    assert store.claim_callback_reissue(source_id, 1) is False
-    store.supersede_callback_decision(source_id)
-    assert _state(decision) == "answered"
-
-
-def test_replaced_keyboard_is_recorded_for_reissue(decision: _Decision) -> None:
     replacement = [[{"text": "Ship", "value": "ship"}]]
 
-    decision.store.replace_callback_keyboard(decision.source.id, replacement)
+    # Two writers that both observed generation 0: one wins.
+    assert store.claim_callback_reissue(source_id, 0) is True
+    assert store.claim_callback_reissue(source_id, 0) is False
+    assert store.stage_callback_edit(source_id, 0, "Ship it?", replacement) is False
+    assert store.stage_callback_edit(source_id, 1, "Ship it?", replacement) is True
+    assert _row(decision)["inline_keyboard"] == replacement
 
-    row = decision.store.get_message(decision.source.id)
-    assert row is not None
-    assert row.metadata_json["inline_keyboard"] == replacement
-    assert row.metadata_json["callback_generation"] == 1
-    assert row.metadata_json.get("callback_state") is None
+    def answer(query_id: str, generation: int) -> CommsMessage | None:
+        callback = CommsMessage(
+            id="",
+            channel_id=decision.channel.id,
+            direction="inbound",
+            content="ship",
+            content_type="callback",
+            platform_message_id=f"callback:{query_id}",
+            created_at=_TS,
+        )
+        return store.accept_callback_decision(source_id, generation, callback)
+
+    assert answer("q-old", 1) is None
+    assert answer("q-new", 2) is not None
+    assert answer("q-again", 2) is None
+    # Removing the buttons of an answered decision keeps its answer.
+    assert store.stage_callback_edit(source_id, 2, "Shipped", None) is True
+    assert _row(decision)["callback_state"] == "answered"
+    assert _routed(decision, "q-old") is None
+    assert _routed(decision, "q-again") is None
