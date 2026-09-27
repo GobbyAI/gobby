@@ -96,6 +96,26 @@ async def test_operator_token_can_create_agent_definition(
     assert AgentDefinitionManager(definition_db).get_by_name("operator-agent") is not None
 
 
+async def test_unseeded_reload_cache_syncs_bundled_agent(
+    definition_db: PostgresHubDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.workflows._import.sync_imported_workflows",
+        lambda *_args, **_kwargs: {"synced": 0, "errors": []},
+    )
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.workflows._import._RELOAD_ONLY", frozenset({"agents"})
+    )
+    manager = AgentDefinitionManager(definition_db)
+    assert manager.get_by_name("default") is None
+
+    result = await create_workflows_registry(db=definition_db).call("reload_cache", {})
+
+    assert result["success"] is True
+    assert result["agents_synced"] > 0
+    assert manager.get_by_name("default") is not None
+
+
 def _setup(db: PostgresHubDatabase) -> AgentDefinitionManager:
     return AgentDefinitionManager(db)
 
