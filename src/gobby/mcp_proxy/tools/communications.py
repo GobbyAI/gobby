@@ -141,25 +141,35 @@ def create_communications_registry(
         except ValueError as e:
             return {"success": False, "error": str(e)}
 
-    async def _registered_worktree_roots(project_context: dict[str, Any] | None) -> list[Path]:
-        """Paths of the caller project's active or stale worktrees on this machine."""
+    async def _registered_worktree_roots(
+        project_context: dict[str, Any] | None, requested: Path, resolved: Path
+    ) -> list[Path]:
+        """Active or stale worktrees of the caller's project registered at an ancestor path.
+
+        One exact-path lookup per ancestor of the requested and resolved file paths, so
+        the lookup is bounded by path depth rather than the project's worktree count.
+        """
         from gobby.app_context import get_app_context
 
         project_id = project_context.get("id") if project_context else None
         if db is None or not project_id:
             return []
-        list_worktrees = LocalWorktreeManager(db).list_worktrees
-        kwargs: dict[str, Any] = {
-            "project_id": str(project_id),
-            "status": (WorktreeStatus.ACTIVE.value, WorktreeStatus.STALE.value),
-            "limit": 1000,
-        }
+        live = {WorktreeStatus.ACTIVE.value, WorktreeStatus.STALE.value}
+
+        def lookup() -> list[Path]:
+            manager = LocalWorktreeManager(db)
+            roots: list[Path] = []
+            for ancestor in dict.fromkeys([*requested.parents, *resolved.parents]):
+                worktree = manager.get_by_path(str(ancestor))
+                if worktree and worktree.project_id == project_id and worktree.status in live:
+                    roots.append(Path(worktree.worktree_path))
+            return roots
+
         app_context = get_app_context()
         if app_context is not None and app_context.db_executor is not None:
-            worktrees = await app_context.run_db(list_worktrees, **kwargs)
-        else:
-            worktrees = await asyncio.to_thread(list_worktrees, **kwargs)
-        return [Path(worktree.worktree_path) for worktree in worktrees]
+            roots: list[Path] = await app_context.run_db(lookup)
+            return roots
+        return await asyncio.to_thread(lookup)
 
     @registry.tool(
         description=(
@@ -178,7 +188,8 @@ def create_communications_registry(
     ) -> dict[str, Any]:
         """Validate and send a local image or document."""
         try:
-            resolved_path = Path(file_path).expanduser().resolve(strict=True)
+            requested_path = Path(file_path).expanduser().absolute()
+            resolved_path = requested_path.resolve(strict=True)
             if not resolved_path.is_file():
                 return {"success": False, "error": f"Attachment path is not a file: {file_path}"}
             project_context = get_project_context()
@@ -190,7 +201,9 @@ def create_communications_registry(
                 return {"success": False, "error": "Attachment workspace is unavailable"}
             if not _is_within(resolved_path, configured_root) and not any(
                 _is_within(resolved_path, root)
-                for root in await _registered_worktree_roots(project_context)
+                for root in await _registered_worktree_roots(
+                    project_context, requested_path, resolved_path
+                )
             ):
                 return {
                     "success": False,

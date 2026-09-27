@@ -731,10 +731,12 @@ async def test_send_attachment_worktree_lookup_does_not_block_event_loop(
         def __init__(self, _db: object) -> None:
             pass
 
-        def list_worktrees(self, **_kwargs: object) -> list[SimpleNamespace]:
+        def get_by_path(self, path: str) -> SimpleNamespace | None:
             started.set()
             release.wait(timeout=5)
-            return [SimpleNamespace(worktree_path=str(worktree))]
+            if path != str(worktree):
+                return None
+            return SimpleNamespace(worktree_path=path, project_id="project-1", status="active")
 
     monkeypatch.setattr(
         "gobby.mcp_proxy.tools.communications.LocalWorktreeManager", SlowWorktreeManager
@@ -757,6 +759,31 @@ async def test_send_attachment_worktree_lookup_does_not_block_event_loop(
     assert pending.done() is False
     release.set()
     result = await asyncio.wait_for(pending, timeout=5)
+
+    assert result["success"] is True
+
+
+@pytest.mark.asyncio
+async def test_send_attachment_finds_worktree_outside_any_listing_page(
+    worktree_project: tuple[HubDatabase, str, Path],
+    mock_manager: MagicMock,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A registered worktree past any bounded listing page must still be found."""
+    db, project_id, _root = worktree_project
+    worktree = _register_worktree(db, project_id, tmp_path / "wt-oldest")
+    evidence = worktree / "evidence.txt"
+    evidence.write_text("old worktree evidence")
+    monkeypatch.setattr(LocalWorktreeManager, "list_worktrees", lambda *_a, **_k: [])
+    mock_manager.send_attachment.return_value = (
+        MagicMock(status="sent", error=None),
+        MagicMock(),
+    )
+    tool = create_communications_registry(mock_manager, db=db).get_tool("send_attachment")
+    assert tool is not None
+
+    result = await tool(channel="telegram", file_path=str(evidence))
 
     assert result["success"] is True
 
