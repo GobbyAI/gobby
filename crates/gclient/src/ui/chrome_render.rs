@@ -15,7 +15,7 @@ use crate::ui::{
     sidebar, splash, status, tab_surface,
 };
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::{Clear, Paragraph};
 use ratatui::Frame;
 
@@ -49,8 +49,8 @@ pub fn render_workspace_with<W: WorkspaceView>(
     content: &mut PaneContent<'_>,
 ) -> ChromeHits {
     let area = frame.area();
-    // Nothing fills the frame: the ground is the terminal's own, so a hosted
-    // default colour passes straight through.
+    // Nothing fills the frame first: `paint_ground` settles what the default
+    // colours mean once everything is drawn.
     let mut hits = if splashing(ws, chrome) {
         splash::render_splash(frame, area, chrome);
         ChromeHits::default()
@@ -98,7 +98,29 @@ pub fn render_workspace_with<W: WorkspaceView>(
         }
         Mode::Terminal | Mode::Navigate | Mode::Prefix | Mode::Copy | Mode::Resize => {}
     }
+    paint_ground(frame, chrome);
     hits
+}
+
+/// Light and Dark own the ground: every cell still on the terminal's default
+/// colours, hosted panes included, takes the theme's text on `panel_bg`, so
+/// the hosting terminal's configured background and foreground no longer show
+/// through; host opacity that applies to explicit cells still does. System
+/// leaves the terminal's own colours in place. Runs last: overlays `Clear`
+/// their cells back to the default.
+fn paint_ground(frame: &mut Frame, chrome: &Chrome) {
+    if chrome.prefs.follows_system() {
+        return;
+    }
+    let p = &chrome.palette;
+    for cell in &mut frame.buffer_mut().content {
+        if cell.fg == Color::Reset {
+            cell.fg = p.text;
+        }
+        if cell.bg == Color::Reset {
+            cell.bg = p.panel_bg;
+        }
+    }
 }
 
 /// Until startup draws its first frame, the goblin and the wordmark stand alone
@@ -286,6 +308,7 @@ pub fn rects_overlap(a: Rect, b: Rect) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::theme::ThemeKind;
     use crate::ui::status::Toast;
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
@@ -351,5 +374,40 @@ mod tests {
         let buffer = terminal.backend().buffer();
         assert!(buffer[(3, 2)].modifier.contains(Modifier::DIM));
         assert!(!buffer[(0, 0)].modifier.contains(Modifier::DIM));
+    }
+
+    /// Paint one default cell and one explicit cell, then settle the ground.
+    fn grounded(chrome: &Chrome) -> [(Color, Color); 2] {
+        let mut terminal = Terminal::new(TestBackend::new(2, 1)).unwrap();
+        terminal
+            .draw(|frame| {
+                frame.buffer_mut()[(1, 0)]
+                    .set_fg(Color::Red)
+                    .set_bg(Color::Blue);
+                paint_ground(frame, chrome);
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        [
+            (buffer[(0, 0)].fg, buffer[(0, 0)].bg),
+            (buffer[(1, 0)].fg, buffer[(1, 0)].bg),
+        ]
+    }
+
+    #[test]
+    fn light_and_dark_paint_the_ground_system_leaves_the_terminals() {
+        let mut chrome = Chrome::dark();
+        let explicit = (Color::Red, Color::Blue);
+        let dark = (chrome.palette.text, chrome.palette.panel_bg);
+        assert_eq!(grounded(&chrome), [dark, explicit]);
+
+        chrome.prefs.theme = "light".to_string();
+        chrome.set_theme(ThemeKind::Light);
+        let light = (chrome.palette.text, chrome.palette.panel_bg);
+        assert_ne!(light, dark);
+        assert_eq!(grounded(&chrome), [light, explicit]);
+
+        chrome.prefs.theme = "System".to_string();
+        assert_eq!(grounded(&chrome), [(Color::Reset, Color::Reset), explicit]);
     }
 }

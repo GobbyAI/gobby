@@ -745,8 +745,8 @@ fn agent_rows_golden() {
         .lines()
         .find(|line| line.starts_with("11 :"))
         .expect("model slug style");
-    assert!(slug_style.contains("subtext0/-*5"));
-    assert!(!slug_style.contains("subtext0/-+d"));
+    assert!(slug_style.contains("subtext0/panel_bg*5"));
+    assert!(!slug_style.contains("subtext0/panel_bg+d"));
 }
 
 #[test]

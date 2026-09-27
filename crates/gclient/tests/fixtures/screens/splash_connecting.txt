@@ -1,82 +1,82 @@
 # gclient screen golden: splash_connecting
 # 120x40, dark theme, colours normalised to theme::Palette roles
 00 |                                                                                                                        |
-00 : -/-*120
+00 : text/panel_bg*120
 01 |                                                                                                                        |
-01 : -/-*120
+01 : text/panel_bg*120
 02 |                                                                                                                        |
-02 : -/-*120
+02 : text/panel_bg*120
 03 |                                                                                                                        |
-03 : -/-*120
+03 : text/panel_bg*120
 04 |                                                                                                                        |
-04 : -/-*120
+04 : text/panel_bg*120
 05 |                                                                                                                        |
-05 : -/-*120
+05 : text/panel_bg*120
 06 |                                                                                                                        |
-06 : -/-*120
+06 : text/panel_bg*120
 07 |                                                                                                                        |
-07 : -/-*120
+07 : text/panel_bg*120
 08 |                                                                                                                        |
-08 : -/-*120
+08 : text/panel_bg*120
 09 |                                                                                                                        |
-09 : -/-*120
+09 : text/panel_bg*120
 10 |                                                                                                                        |
-10 : -/-*120
+10 : text/panel_bg*120
 11 |                                                                                                                        |
-11 : -/-*120
+11 : text/panel_bg*120
 12 |                                            ▄▄▀                                                                         |
-12 : -/-*44 panel_bg/-*2 panel_bg/panel_bg*1 -/-*73
+12 : text/panel_bg*44 panel_bg/panel_bg*3 text/panel_bg*73
 13 |              ▀▀▄▄        ▄▄▄▄▄▄▄▄▄    ▄▄▄▀▀▀▀▀                                                                         |
-13 : -/-*14 panel_bg/panel_bg*2 panel_bg/-*2 -/-*8 panel_bg/-*9 -/-*4 panel_bg/-*3 panel_bg/accent*2 accent/accent*1 accent/panel_bg*1 panel_bg/-*1 -/-*73
+13 : text/panel_bg*14 panel_bg/panel_bg*4 text/panel_bg*8 panel_bg/panel_bg*9 text/panel_bg*4 panel_bg/panel_bg*3 panel_bg/accent*2 accent/accent*1 accent/panel_bg*1 panel_bg/panel_bg*1 text/panel_bg*73
 14 |              ▀▀▀▀▀▀▀▀▄▄▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                                                          |
-14 : -/-*14 panel_bg/panel_bg*1 accent/panel_bg*1 accent/accent*1 accent/panel_bg*1 panel_bg/accent*4 panel_bg/-*2 panel_bg/panel_bg*1 panel_bg/accent*2 accent/accent*8 panel_bg/accent*3 panel_bg/panel_bg*1 accent/panel_bg*2 panel_bg/accent*2 accent/accent*1 accent/panel_bg*1 panel_bg/panel_bg*1 -/-*74
+14 : text/panel_bg*14 panel_bg/panel_bg*1 accent/panel_bg*1 accent/accent*1 accent/panel_bg*1 panel_bg/accent*4 panel_bg/panel_bg*3 panel_bg/accent*2 accent/accent*8 panel_bg/accent*3 panel_bg/panel_bg*1 accent/panel_bg*2 panel_bg/accent*2 accent/accent*1 accent/panel_bg*1 panel_bg/panel_bg*1 text/panel_bg*74
 15 |               ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                                                           |
-15 : -/-*15 panel_bg/panel_bg*1 accent/accent*1 panel_bg/panel_bg*1 panel_bg/accent*2 accent/accent*2 panel_bg/accent*1 accent/accent*21 panel_bg/panel_bg*1 -/-*75
+15 : text/panel_bg*15 panel_bg/panel_bg*1 accent/accent*1 panel_bg/panel_bg*1 panel_bg/accent*2 accent/accent*2 panel_bg/accent*1 accent/accent*21 panel_bg/panel_bg*1 text/panel_bg*75
 16 |               ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                            ⢸⣿⣿⣿⡇      ⢸⣿⣿⣿⡇                               |
-16 : -/-*15 panel_bg/panel_bg*1 accent/accent*7 accent/panel_bg*1 panel_bg/panel_bg*1 panel_bg/accent*4 panel_bg/panel_bg*1 accent/panel_bg*1 accent/accent*4 accent/panel_bg*1 panel_bg/panel_bg*1 panel_bg/accent*5 panel_bg/panel_bg*1 accent/panel_bg*1 panel_bg/panel_bg*1 -/-*28 accent/-*5 -/-*6 accent/-*5 -/-*31
+16 : text/panel_bg*15 panel_bg/panel_bg*1 accent/accent*7 accent/panel_bg*1 panel_bg/panel_bg*1 panel_bg/accent*4 panel_bg/panel_bg*1 accent/panel_bg*1 accent/accent*4 accent/panel_bg*1 panel_bg/panel_bg*1 panel_bg/accent*5 panel_bg/panel_bg*1 accent/panel_bg*1 panel_bg/panel_bg*1 text/panel_bg*28 accent/panel_bg*5 text/panel_bg*6 accent/panel_bg*5 text/panel_bg*31
 17 |               ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀       ⢀⣠⣤⣤⣄⢀⣤⣤⣤⡀  ⣀⣤⣤⣤⣤⣤⣀  ⢸⣿⣿⣿⣇⣠⣤⣤⣄⡀ ⢸⣿⣿⣿⡇⣠⣤⣤⣄⡀ ⣤⣤⣤⣄  ⣤⣤⣤⣤               |
-17 : -/-*15 panel_bg/-*1 panel_bg/panel_bg*1 accent/panel_bg*5 panel_bg/panel_bg*1 panel_bg/accent*1 accent/accent*1 accent/panel_bg*1 accent/text*2 accent/panel_bg*1 accent/accent*1 panel_bg/accent*1 panel_bg/panel_bg*1 accent/panel_bg*2 panel_bg/panel_bg*2 accent/accent*1 accent/panel_bg*1 text/text*1 panel_bg/panel_bg*1 accent/panel_bg*1 accent/accent*2 panel_bg/panel_bg*1 panel_bg/-*1 -/-*7 accent/-*10 -/-*2 accent/-*7 -/-*2 accent/-*10 -/-*1 accent/-*10 -/-*1 accent/-*4 -/-*2 accent/-*4 -/-*15
+17 : text/panel_bg*15 panel_bg/panel_bg*2 accent/panel_bg*5 panel_bg/panel_bg*1 panel_bg/accent*1 accent/accent*1 accent/panel_bg*1 accent/text*2 accent/panel_bg*1 accent/accent*1 panel_bg/accent*1 panel_bg/panel_bg*1 accent/panel_bg*2 panel_bg/panel_bg*2 accent/accent*1 accent/panel_bg*1 text/text*1 panel_bg/panel_bg*1 accent/panel_bg*1 accent/accent*2 panel_bg/panel_bg*2 text/panel_bg*7 accent/panel_bg*10 text/panel_bg*2 accent/panel_bg*7 text/panel_bg*2 accent/panel_bg*10 text/panel_bg*1 accent/panel_bg*10 text/panel_bg*1 accent/panel_bg*4 text/panel_bg*2 accent/panel_bg*4 text/panel_bg*15
 18 |                ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀       ⢀⣾⣿⣿⡿⠿⢿⣿⣿⣿⡇⢀⣾⣿⣿⡟⠛⢿⣿⣿⣷ ⢸⣿⣿⣿⡿⠿⢿⣿⣿⣷ ⢸⣿⣿⣿⡿⠿⢿⣿⣿⣷⡀⢹⣿⣿⣿⡀⢀⣿⣿⣿⠇               |
-18 : -/-*16 panel_bg/panel_bg*1 panel_bg/accent*1 accent/accent*3 panel_bg/accent*1 panel_bg/panel_bg*1 accent/accent*2 panel_bg/accent*1 panel_bg/panel_bg*3 panel_bg/accent*1 accent/accent*1 panel_bg/panel_bg*1 accent/accent*3 panel_bg/panel_bg*1 accent/accent*1 panel_bg/accent*1 panel_bg/panel_bg*2 panel_bg/accent*1 accent/accent*2 panel_bg/panel_bg*1 -/-*7 accent/-*21 -/-*1 accent/-*10 -/-*1 accent/-*21 -/-*15
+18 : text/panel_bg*16 panel_bg/panel_bg*1 panel_bg/accent*1 accent/accent*3 panel_bg/accent*1 panel_bg/panel_bg*1 accent/accent*2 panel_bg/accent*1 panel_bg/panel_bg*3 panel_bg/accent*1 accent/accent*1 panel_bg/panel_bg*1 accent/accent*3 panel_bg/panel_bg*1 accent/accent*1 panel_bg/accent*1 panel_bg/panel_bg*2 panel_bg/accent*1 accent/accent*2 panel_bg/panel_bg*1 text/panel_bg*7 accent/panel_bg*21 text/panel_bg*1 accent/panel_bg*10 text/panel_bg*1 accent/panel_bg*21 text/panel_bg*15
 19 |                ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀       ⢸⣿⣿⣿⡇ ⢸⣿⣿⣿⡇⢸⣿⣿⣿⡇ ⢸⣿⣿⣿⡆⢸⣿⣿⣿⡇ ⢸⣿⣿⣿⡇⢸⣿⣿⣿⡇ ⢸⣿⣿⣿⡇ ⢿⣿⣿⡇⢸⣿⣿⡟                |
-19 : -/-*16 panel_bg/-*1 panel_bg/panel_bg*1 accent/accent*4 panel_bg/accent*1 panel_bg/panel_bg*1 accent/panel_bg*2 accent/accent*2 accent/panel_bg*2 panel_bg/panel_bg*1 panel_bg/accent*1 accent/accent*4 panel_bg/accent*1 panel_bg/panel_bg*1 accent/panel_bg*3 panel_bg/panel_bg*1 panel_bg/accent*1 panel_bg/panel_bg*1 -/-*7 accent/-*5 -/-*1 accent/-*10 -/-*1 accent/-*10 -/-*1 accent/-*10 -/-*1 accent/-*5 -/-*1 accent/-*8 -/-*16
+19 : text/panel_bg*16 panel_bg/panel_bg*2 accent/accent*4 panel_bg/accent*1 panel_bg/panel_bg*1 accent/panel_bg*2 accent/accent*2 accent/panel_bg*2 panel_bg/panel_bg*1 panel_bg/accent*1 accent/accent*4 panel_bg/accent*1 panel_bg/panel_bg*1 accent/panel_bg*3 panel_bg/panel_bg*1 panel_bg/accent*1 panel_bg/panel_bg*1 text/panel_bg*7 accent/panel_bg*5 text/panel_bg*1 accent/panel_bg*10 text/panel_bg*1 accent/panel_bg*10 text/panel_bg*1 accent/panel_bg*10 text/panel_bg*1 accent/panel_bg*5 text/panel_bg*1 accent/panel_bg*8 text/panel_bg*16
 20 |                 ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀       ⢸⣿⣿⣿⡇ ⣸⣿⣿⣿⡇⢸⣿⣿⣿⡇ ⢸⣿⣿⣿⠃⢸⣿⣿⣿⡇ ⢸⣿⣿⣿⡇⢸⣿⣿⣿⡇ ⢸⣿⣿⣿⡇ ⠘⣿⣿⣷⣾⣿⣿⠁                |
-20 : -/-*17 panel_bg/-*1 panel_bg/panel_bg*1 accent/accent*4 accent/panel_bg*2 accent/accent*1 panel_bg/accent*2 accent/accent*10 accent/panel_bg*2 accent/accent*2 accent/panel_bg*1 panel_bg/-*1 -/-*7 accent/-*5 -/-*1 accent/-*10 -/-*1 accent/-*10 -/-*1 accent/-*10 -/-*1 accent/-*5 -/-*1 accent/-*8 -/-*16
+20 : text/panel_bg*17 panel_bg/panel_bg*2 accent/accent*4 accent/panel_bg*2 accent/accent*1 panel_bg/accent*2 accent/accent*10 accent/panel_bg*2 accent/accent*2 accent/panel_bg*1 panel_bg/panel_bg*1 text/panel_bg*7 accent/panel_bg*5 text/panel_bg*1 accent/panel_bg*10 text/panel_bg*1 accent/panel_bg*10 text/panel_bg*1 accent/panel_bg*10 text/panel_bg*1 accent/panel_bg*5 text/panel_bg*1 accent/panel_bg*8 text/panel_bg*16
 21 |                   ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀         ⠻⣿⣿⣿⣿⢿⣿⣿⣿⡇⠈⢿⣿⣿⣷⣤⣾⣿⣿⠟ ⢸⣿⣿⣿⣷⣶⣾⣿⣿⡿ ⢸⣿⣿⣿⣷⣶⣾⣿⣿⡿   ⢹⣿⣿⣿⣿⡏                 |
-21 : -/-*19 panel_bg/-*1 accent/panel_bg*1 accent/accent*4 panel_bg/accent*3 accent/panel_bg*7 panel_bg/accent*4 accent/accent*2 panel_bg/panel_bg*1 panel_bg/-*1 -/-*9 accent/-*20 -/-*1 accent/-*10 -/-*1 accent/-*10 -/-*3 accent/-*6 -/-*17
+21 : text/panel_bg*19 panel_bg/panel_bg*1 accent/panel_bg*1 accent/accent*4 panel_bg/accent*3 accent/panel_bg*7 panel_bg/accent*4 accent/accent*2 panel_bg/panel_bg*2 text/panel_bg*9 accent/panel_bg*20 text/panel_bg*1 accent/panel_bg*10 text/panel_bg*1 accent/panel_bg*10 text/panel_bg*3 accent/panel_bg*6 text/panel_bg*17
 22 |                     ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▄▄        ⣀⣈⣉⡉⠁⣸⣿⣿⣿⠃  ⠉⠛⠛⠛⠛⠋⠁  ⠘⠛⠛⠛⠁⠙⠛⠛⠋  ⠈⠛⠛⠛⠁⠙⠛⠛⠋   ⣀⣀⣿⣿⣿⡿                  |
-22 : -/-*21 panel_bg/-*1 panel_bg/panel_bg*1 accent/panel_bg*2 accent/accent*7 accent/panel_bg*1 panel_bg/overlay1*9 overlay1/-*1 panel_bg/-*1 -/-*8 accent/-*10 -/-*2 accent/-*7 -/-*2 accent/-*9 -/-*2 accent/-*9 -/-*3 accent/-*6 -/-*18
+22 : text/panel_bg*21 panel_bg/panel_bg*2 accent/panel_bg*2 accent/accent*7 accent/panel_bg*1 panel_bg/overlay1*9 overlay1/panel_bg*1 panel_bg/panel_bg*1 text/panel_bg*8 accent/panel_bg*10 text/panel_bg*2 accent/panel_bg*7 text/panel_bg*2 accent/panel_bg*9 text/panel_bg*2 accent/panel_bg*9 text/panel_bg*3 accent/panel_bg*6 text/panel_bg*18
 23 |                      ▄▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀         ⠙⠿⣿⣿⣿⣿⣿⠿⠋                                   ⣿⣿⣿⡿⠟⠁                  |
-23 : -/-*22 panel_bg/-*1 panel_bg/accent*2 panel_bg/panel_bg*1 panel_bg/accent*3 accent/panel_bg*3 panel_bg/overlay1*1 overlay1/overlay1*9 overlay1/panel_bg*1 -/-*9 accent/-*9 -/-*35 accent/-*6 -/-*18
+23 : text/panel_bg*22 panel_bg/panel_bg*1 panel_bg/accent*2 panel_bg/panel_bg*1 panel_bg/accent*3 accent/panel_bg*3 panel_bg/overlay1*1 overlay1/overlay1*9 overlay1/panel_bg*1 text/panel_bg*9 accent/panel_bg*9 text/panel_bg*35 accent/panel_bg*6 text/panel_bg*18
 24 |                     ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▄                                                                             |
-24 : -/-*21 panel_bg/panel_bg*1 accent/accent*4 panel_bg/panel_bg*1 accent/accent*2 accent/panel_bg*2 panel_bg/panel_bg*1 overlay1/accent*2 overlay1/panel_bg*1 overlay1/overlay1*1 overlay1/panel_bg*2 overlay1/overlay1*3 panel_bg/panel_bg*1 panel_bg/-*1 -/-*77
+24 : text/panel_bg*21 panel_bg/panel_bg*1 accent/accent*4 panel_bg/panel_bg*1 accent/accent*2 accent/panel_bg*2 panel_bg/panel_bg*1 overlay1/accent*2 overlay1/panel_bg*1 overlay1/overlay1*1 overlay1/panel_bg*2 overlay1/overlay1*3 panel_bg/panel_bg*2 text/panel_bg*77
 25 |                     ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▄                                                                            |
-25 : -/-*21 panel_bg/panel_bg*1 accent/accent*4 panel_bg/accent*2 accent/accent*6 accent/panel_bg*1 panel_bg/overlay1*1 overlay1/overlay1*3 overlay1/panel_bg*1 panel_bg/panel_bg*1 accent/accent*2 panel_bg/-*1 -/-*76
+25 : text/panel_bg*21 panel_bg/panel_bg*1 accent/accent*4 panel_bg/accent*2 accent/accent*6 accent/panel_bg*1 panel_bg/overlay1*1 overlay1/overlay1*3 overlay1/panel_bg*1 panel_bg/panel_bg*1 accent/accent*2 panel_bg/panel_bg*1 text/panel_bg*76
 26 |                      ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                                                             |
-26 : -/-*22 panel_bg/panel_bg*1 accent/accent*8 accent/panel_bg*2 panel_bg/overlay1*1 overlay1/overlay1*4 panel_bg/panel_bg*1 accent/panel_bg*1 accent/accent*1 accent/panel_bg*1 panel_bg/panel_bg*1 -/-*77
+26 : text/panel_bg*22 panel_bg/panel_bg*1 accent/accent*8 accent/panel_bg*2 panel_bg/overlay1*1 overlay1/overlay1*4 panel_bg/panel_bg*1 accent/panel_bg*1 accent/accent*1 accent/panel_bg*1 panel_bg/panel_bg*1 text/panel_bg*77
 27 |                       ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                                                                |
-27 : -/-*23 panel_bg/-*2 accent/-*1 accent/panel_bg*1 panel_bg/panel_bg*3 accent/panel_bg*2 panel_bg/panel_bg*4 panel_bg/-*4 -/-*80
+27 : text/panel_bg*23 panel_bg/panel_bg*2 accent/panel_bg*2 panel_bg/panel_bg*3 accent/panel_bg*2 panel_bg/panel_bg*8 text/panel_bg*80
 28 |                                                                                                                        |
-28 : -/-*120
+28 : text/panel_bg*120
 29 |                                                                                                                        |
-29 : -/-*120
+29 : text/panel_bg*120
 30 |                                                                                                                        |
-30 : -/-*120
+30 : text/panel_bg*120
 31 |                                                                                                                        |
-31 : -/-*120
+31 : text/panel_bg*120
 32 |                                                                                                                        |
-32 : -/-*120
+32 : text/panel_bg*120
 33 |                                                                                                                        |
-33 : -/-*120
+33 : text/panel_bg*120
 34 |                                                                                                                        |
-34 : -/-*120
+34 : text/panel_bg*120
 35 |                                                                                                                        |
-35 : -/-*120
+35 : text/panel_bg*120
 36 |                                                                                                                        |
-36 : -/-*120
+36 : text/panel_bg*120
 37 |                                                                                                                        |
-37 : -/-*120
+37 : text/panel_bg*120
 38 |                                                                                                                        |
-38 : -/-*120
+38 : text/panel_bg*120
 39 |                                                                                                                        |
-39 : -/-*120
+39 : text/panel_bg*120

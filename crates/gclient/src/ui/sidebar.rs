@@ -2,7 +2,7 @@
 //! Sidebar: machines, project cards, agents and bare terminals, each under a
 //! one-row band.
 //!
-//! The sidebar sits on the terminal's ground with no fill and no separator
+//! The sidebar sits on the ground with no fill and no separator
 //! glyph; herdr's edge column stays reserved as the drag lane of a pinned
 //! sidebar. The section rules herdr let the user drag are gone: the
 //! machines take up to `MACHINES_MAX_ROWS`, the projects what their cards

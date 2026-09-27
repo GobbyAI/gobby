@@ -96,6 +96,14 @@ stays drawn with its Theme row lit. A click on another View row still acts on
 it, and `esc` closes both. **View › Legend** opens the keybinding help on its
 attention legend.
 
+Dark and Light paint their own ground: every cell and every pane's default
+colours take the theme's text and background, whatever background and
+foreground the hosting terminal (Ghostty included) configures. Those cells are
+explicit colours, so a terminal setting that applies opacity to explicit cells
+(Ghostty's `background-opacity-cells`) still applies. System keeps the hosting
+terminal's own background and foreground and only picks the palette from the
+OS appearance.
+
 The five **Window › Arrange: …** items redistribute the panes in the active
 tab into the chosen layout. **Window › New grid…** asks for rows and columns
 and starts a terminal in each new cell. **Help › Daemon** shows the daemon URL, client and daemon
@@ -815,7 +823,7 @@ write to lose, and retaking control re-grants its input on the host. If the host
 itself was drained or replaced, the affected terminals are gone and their panes
 disappear on the next roster refresh.
 
-On launch, the goblin and the wordmark stand alone on the terminal's ground
+On launch, the goblin and the wordmark stand alone on the selected ground
 while four stages complete: **daemon health**, **workspace attach**,
 **roster**, and **first frame**. The splash has no menu bar, tabs, sidebar, or
 status line; they arrive with the first frame, and `prefix+shift+q` quits

@@ -113,6 +113,9 @@ fn goblin_and_wordmark_stand_alone_centred_and_drop_as_the_area_shrinks() {
 fn the_splash_is_the_whole_frame_until_a_failed_first_connect_falls_through() {
     let ws = Workspace::scripted();
     let mut chrome = waiting_chrome();
+    // Under System the ground stays the terminal's, so the frame is the
+    // marks alone; Dark and Light paint theirs over it (chrome_render).
+    chrome.prefs.theme = "system".to_string();
     chrome.compute_view(&ws, Rect::new(0, 0, 120, 40));
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
     terminal
