@@ -56,7 +56,11 @@ from gobby.sessions.handoff import (
     stage_handoff_attempt,
     staged_handoff_tool_result,
 )
-from gobby.sessions.handoff_records import build_handoff_payload, record_handoff_delivery
+from gobby.sessions.handoff_records import (
+    FoundWorkEntry,
+    build_handoff_payload,
+    record_handoff_delivery,
+)
 from gobby.sessions.transcript_cursor import TranscriptTailCursor
 from gobby.storage.attention import AttentionStateManager, session_attention_entry_id
 from gobby.storage.hub.protocol import HubDatabase
@@ -1072,12 +1076,18 @@ async def test_native_worker_receives_the_continuation_after_set_handoff_compact
     )
 
 
-def _claimed_compact_attempt(hub_db: HubDatabase) -> ClaimedHandoffDelivery:
+def _claimed_compact_attempt(
+    hub_db: HubDatabase,
+    *,
+    found_work: tuple[FoundWorkEntry, ...] = (),
+) -> ClaimedHandoffDelivery:
     staged = stage_handoff_attempt(
         hub_db,
         SESSION_ID,
         attempt_id=ATTEMPT_ID,
-        handoff=build_handoff_payload(current_state="working", next_steps=["continue"]),
+        handoff=build_handoff_payload(
+            current_state="working", next_steps=["continue"], found_work=found_work
+        ),
         clear_session=False,
     )
     SessionVariableManager(hub_db).merge_variables(
@@ -1541,7 +1551,10 @@ async def test_held_compact_failed_interrupt_preserves_undelivered_payload(
     hub_db: HubDatabase,
 ) -> None:
     session_manager = _compact_session_manager(hub_db, _NATIVE_WORKER_CONTEXT)
-    claimed = _claimed_compact_attempt(hub_db)
+    found_work = FoundWorkEntry(
+        finding="Terminal capture outage", disposition="escalated", ref="gobby#14531"
+    )
+    claimed = _claimed_compact_attempt(hub_db, found_work=(found_work,))
     pane = SimpleNamespace(backend="native", snapshot=AsyncMock(return_value="/compact"))
     reason = "CLI did not confirm interruption after 3 attempts"
     send_command = AsyncMock(return_value=(False, reason, False, {"interrupted": False}))
@@ -1574,7 +1587,7 @@ async def test_held_compact_failed_interrupt_preserves_undelivered_payload(
         "attempt_id": ATTEMPT_ID,
         "handoff_record_id": claimed.handoff_record_id,
         "delivery_state": "failed_not_deliverable",
-        "found_work": [],
+        "found_work": [found_work.as_dict()],
     }
     assert PENDING_HANDOFF_VARIABLE not in variables
     assert (
