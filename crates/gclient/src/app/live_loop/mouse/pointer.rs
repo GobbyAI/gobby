@@ -280,7 +280,9 @@ pub(super) fn down<W: WorkspaceView>(
                 }
                 None => {
                     let offset = scrollbar_offset_from_row(metrics, track, row);
-                    *chrome.sidebar.scroll_mut(section) = metrics.max_offset_from_bottom - offset;
+                    chrome
+                        .sidebar
+                        .set_scroll(section, metrics.max_offset_from_bottom - offset);
                 }
             }
             MouseOutcome::Handled
@@ -412,7 +414,9 @@ pub(super) fn drag<W: WorkspaceView>(
             };
             let metrics = section_metrics(ws, chrome, section);
             let offset = scrollbar_offset_from_drag_row(metrics, track, mouse.row, grab_offset);
-            *chrome.sidebar.scroll_mut(section) = metrics.max_offset_from_bottom - offset;
+            chrome
+                .sidebar
+                .set_scroll(section, metrics.max_offset_from_bottom - offset);
             MouseOutcome::Handled
         }
         Some(MouseGesture::SplitDrag { border }) => {

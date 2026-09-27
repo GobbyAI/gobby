@@ -568,7 +568,7 @@ parity_tests! {
             assert_eq!(metrics.max_offset_from_bottom, 2);
             // herdr: `agent_panel_scroll_for_target(&app, area, 0, 2) == 1`;
             // scrolling one row reveals the target row the packed layout hid.
-            *chrome.sidebar.scroll_mut(SidebarSection::Agents) = 2;
+            chrome.sidebar.set_scroll(SidebarSection::Agents, 2);
             let (_, hits) = draw_sidebar(&board, &chrome, area.width, area.height);
             let ids: Vec<&str> = hits.agents.iter().map(|(id, _)| id.as_str()).collect();
             assert_eq!(ids, ["agent:three"]);
@@ -805,7 +805,7 @@ parity_tests! {
             let board = Board::new(&["main", "one", "two"]);
             let mut chrome = chrome();
             let area = Rect::new(0, 0, 30, 30);
-            *chrome.sidebar.scroll_mut(SidebarSection::Projects) = 2;
+            chrome.sidebar.set_scroll(SidebarSection::Projects, 2);
             let body = section_body(&board, &chrome, area, SidebarSection::Projects);
 
             let (_, hits) = draw_sidebar(&board, &chrome, area.width, area.height);
@@ -833,7 +833,7 @@ parity_tests! {
             let board = Board::new(&["main", "notes"]);
             let mut chrome = chrome();
             chrome.mode = Mode::Terminal;
-            *chrome.sidebar.scroll_mut(SidebarSection::Projects) = 1;
+            chrome.sidebar.set_scroll(SidebarSection::Projects, 1);
             let area = Rect::new(0, 0, 30, 11);
             assert_eq!(
                 section_body(&board, &chrome, area, SidebarSection::Projects).height,
@@ -1506,6 +1506,15 @@ fn sidebar_drags_reorder_resize_and_scroll() {
     assert_eq!(projects_scroll(&chrome), projects_max - MOUSE_SCROLL_LINES);
     route(&ws, &mut chrome, MouseEventKind::ScrollUp, col, row);
     assert_eq!(projects_scroll(&chrome), 0, "clamped at the top");
+    let projects_lit_at =
+        |chrome: &Chrome| chrome.sidebar.scrolled_at[SidebarSection::Projects.index()];
+    chrome.sidebar.scrolled_at = [None; 4];
+    route(&ws, &mut chrome, MouseEventKind::ScrollUp, col, row);
+    assert_eq!(
+        projects_lit_at(&chrome),
+        None,
+        "a notch past the top leaves the thumb dim"
+    );
     let terminals_max =
         section_metrics(&ws, &chrome, SidebarSection::Terminals).max_offset_from_bottom;
     assert!(terminals_max > 0, "bare terminals overflow their section");
@@ -1602,6 +1611,13 @@ fn sidebar_drags_reorder_resize_and_scroll() {
         "a thumb press starts a drag"
     );
     assert_eq!(projects_scroll(&chrome), 0, "a thumb press does not jump");
+    chrome.sidebar.scrolled_at = [None; 4];
+    route(&ws, &mut chrome, LEFT_DRAG, track.x, track.y);
+    assert_eq!(
+        projects_lit_at(&chrome),
+        None,
+        "a drag that holds still leaves the thumb dim"
+    );
     assert_eq!(
         route(&ws, &mut chrome, LEFT_DRAG, track.x, bottom),
         MouseOutcome::Handled
@@ -1610,6 +1626,10 @@ fn sidebar_drags_reorder_resize_and_scroll() {
         projects_scroll(&chrome),
         projects_max,
         "the thumb follows the pointer"
+    );
+    assert!(
+        projects_lit_at(&chrome).is_some(),
+        "a drag that moves lights the thumb"
     );
     assert_eq!(
         route(&ws, &mut chrome, LEFT_UP, track.x, bottom),
@@ -1949,7 +1969,7 @@ fn a_band_thumb_rests_dim_and_lights_while_it_scrolls_or_holds_the_cursor() {
         vec![Some(p.overlay0); rest.len()],
     );
     assert_eq!(rest, dim, "at rest");
-    *scrolling.sidebar.scroll_mut(agents) = 1;
+    scrolling.sidebar.set_scroll(agents, 1);
     assert_eq!(
         band_thumb(&board, &scrolling, 13, agents),
         lit,

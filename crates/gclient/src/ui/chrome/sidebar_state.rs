@@ -83,11 +83,14 @@ impl SidebarState {
         self.scrolls[section.index()]
     }
 
-    /// The scroll position of one list section, to move it; the move lights
-    /// that section's thumb.
-    pub fn scroll_mut(&mut self, section: SidebarSection) -> &mut usize {
-        self.scrolled_at[section.index()] = Some(Instant::now());
-        &mut self.scrolls[section.index()]
+    /// Move one list section to `offset`; a move that changes it lights that
+    /// section's thumb, and one that lands where it was leaves the thumb be.
+    pub fn set_scroll(&mut self, section: SidebarSection, offset: usize) {
+        let scroll = &mut self.scrolls[section.index()];
+        if *scroll != offset {
+            *scroll = offset;
+            self.scrolled_at[section.index()] = Some(Instant::now());
+        }
     }
 
     /// Fold `project_id`'s worktree rows when it is the expanded card, else
