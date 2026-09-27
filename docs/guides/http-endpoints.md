@@ -388,6 +388,11 @@ boundary: a process holding it acts as the operator, even when that process was
 launched from an agent shell. Managed agents use their run-scoped API token for
 daemon calls.
 
+Configuration mutation through `gobby-config:patch_config_values` requires
+operator authority. Agent API tokens cannot change daemon settings through the
+MCP proxy, and the direct `PATCH /api/config/values` route does not accept agent
+tokens. Internal configuration updates retain their existing service path.
+
 ## Hooks And Webhooks
 
 | Method | Route | Purpose |
