@@ -10,7 +10,6 @@
 | lane-4-backlog.md | gobby#14674 |
 | lane-5-functional.md | gobby#14642 |
 | rust-migration.md | gobby#14639 |
-| design-lead.md | gobby#14607 |
 | lane-manager.md | gobby#14556 |
 | code-reviewer.md | gobby#14527 |
 | code-reviewer.md | gobby#14641 |
