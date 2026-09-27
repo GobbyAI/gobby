@@ -183,6 +183,22 @@ def test_numbered_criterion_ignores_example_with_an_apostrophe() -> None:
     )
 
 
+@pytest.mark.parametrize("cue", ["For example", "Example", "e.g.", "such as"])
+@pytest.mark.parametrize("separator", [",", ":"])
+@pytest.mark.parametrize("quote", ["'", '"'])
+def test_numbered_criterion_ignores_illustrative_quoted_test(
+    cue: str, separator: str, quote: str
+) -> None:
+    criteria = (
+        f"7. {cue}{separator} {quote}it's a test: `tests/fake.py::test_fake`{quote}; "
+        "test: `tests/real.py::test_real`."
+    )
+
+    assert artifacts_module.extract_artifact_references(criteria, "test") == (
+        "tests/real.py::test_real",
+    )
+
+
 def test_inline_code_examples_are_not_artifact_references() -> None:
     criteria = (
         "The schema describes `test: path::test_symbol`, examples use "

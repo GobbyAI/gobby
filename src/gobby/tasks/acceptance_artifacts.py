@@ -32,7 +32,7 @@ _INLINE_ARTIFACT_REF_RE = re.compile(
     re.IGNORECASE,
 )
 _ILLUSTRATIVE_QUOTE_RE = re.compile(
-    r"\b(?:such as|for example|e\.g\.)[ \t,]*"
+    r"\b(?:such as|for example|example|e\.g\.)[ \t]*[:,]?[ \t]*"
     r"(?P<quote>'(?:[^'\n]|'(?=\w))*'|\"[^\"\n]*\")",
     re.IGNORECASE,
 )
