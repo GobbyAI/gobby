@@ -834,12 +834,21 @@ class WorkspaceOps:
                 raise WorkspaceOpError(
                     "terminal_failed", f"Pane spawn failed: {result.error_detail or result.error}"
                 )
-            bound = await self._db(
-                self._workspaces.set_pane_terminal,
-                pane.id,
-                result.terminal_id,
-                owns_terminal=True,
-            )
+            try:
+                bound = await self._db(
+                    self._workspaces.set_pane_terminal,
+                    pane.id,
+                    result.terminal_id,
+                    owns_terminal=True,
+                )
+            except Exception as exc:
+                try:
+                    await self._roll_back(pane.id)
+                finally:
+                    minted = await self._db(self._terminals.get, result.terminal_id)
+                    if minted is not None:
+                        await self._kill([minted])
+                raise WorkspaceOpError("terminal_failed", f"Pane bind raised: {exc}") from exc
             minted = (
                 None
                 if bound is not None
