@@ -119,7 +119,7 @@ fn observable_state(fixture: &LiveMenuFixture) -> String {
         )
     });
     format!(
-        "{:?}:{:?}:{}:{}:{}:{}:{:?}:{}:{}:{}:{pane:?}",
+        "{:?}:{:?}:{}:{}:{}:{}:{:?}:{}:{}:{}:{}:{pane:?}",
         fixture.chrome.mode,
         fixture.chrome.dialog,
         fixture.chrome.sidebar.pinned,
@@ -130,6 +130,7 @@ fn observable_state(fixture: &LiveMenuFixture) -> String {
         fixture.chrome.is_zoomed(),
         fixture.chrome.toasts.len(),
         fixture.chrome.alert_log.len(),
+        fixture.chrome.tabs().tabs.len(),
     ) + &format!(":{:?}", fixture.chrome.focused_pane())
 }
 

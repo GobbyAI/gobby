@@ -783,10 +783,9 @@ async fn pane_attach_wait_keeps_input_responsive_under_the_splash() {
 }
 
 #[tokio::test]
-async fn first_shell_spawn_wait_keeps_menus_responsive() {
+async fn empty_first_run_keeps_menus_responsive() {
     let mock = MockDaemon::start("local-token").await;
     mock.seed_workspace("project-1", &[]);
-    mock.suppress_ws("terminal_create");
     let daemon = LiveDaemon::connect_or_wait(mock.url(), "local-token")
         .await
         .expect("connect to mock daemon");
@@ -805,9 +804,7 @@ async fn first_shell_spawn_wait_keeps_menus_responsive() {
         timeout(Duration::from_secs(5), async {
             loop {
                 if mock.requests().iter().any(|request| {
-                    request.method == "WS"
-                        && request.body.as_ref().and_then(|body| body.get("type"))
-                            == Some(&serde_json::json!("terminal_create"))
+                    request.method == "GET" && request.target.starts_with("/api/projects")
                 }) {
                     break;
                 }
@@ -815,11 +812,8 @@ async fn first_shell_spawn_wait_keeps_menus_responsive() {
             }
         })
         .await
-        .expect("first shell spawn request");
-        assert!(
-            draws.load(Ordering::SeqCst) > 0,
-            "a frame precedes shell spawn"
-        );
+        .expect("sidebar project request");
+        assert!(draws.load(Ordering::SeqCst) > 0, "first frame drawn");
         timeout(Duration::from_millis(300), async {
             for kind in [
                 MouseEventKind::Down(MouseButton::Left),
@@ -837,8 +831,7 @@ async fn first_shell_spawn_wait_keeps_menus_responsive() {
             }
         })
         .await
-        .expect("menu input remains responsive during first shell spawn");
-        mock.allow_ws("terminal_create");
+        .expect("menu input remains responsive on an empty first run");
         drop(input_tx);
     };
     timeout(Duration::from_secs(10), async {
@@ -855,10 +848,15 @@ async fn first_shell_spawn_wait_keeps_menus_responsive() {
         result.expect("input close ends the window");
     })
     .await
-    .expect("first shell spawn stays responsive");
+    .expect("empty first run stays responsive");
+    assert!(chrome.menu.is_some(), "menu opens without an initial shell");
     assert!(
-        chrome.menu.is_some(),
-        "menu opened while shell spawn waited"
+        mock.requests().iter().all(|request| {
+            request.method != "WS"
+                || request.body.as_ref().and_then(|body| body.get("type"))
+                    != Some(&serde_json::json!("terminal_create"))
+        }),
+        "first run does not spawn a shell"
     );
     mock.shutdown().await;
 }

@@ -22,6 +22,7 @@ import secrets
 import time
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Literal, TypeVar
 
 from psycopg import Error as PsycopgError
@@ -33,6 +34,7 @@ from gobby.storage.machines import Machine
 from gobby.storage.project_checkouts import (
     require_root,
 )
+from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.storage.sessions import SessionManager
 from gobby.storage.terminals import Terminal, TerminalManager
 from gobby.storage.workspace_address import resolve_launch_workspace
@@ -49,7 +51,12 @@ from gobby.storage.workspaces import (
     mint_pane_id,
 )
 from gobby.storage.worktrees import LocalWorktreeManager
-from gobby.terminals.actor_scope import ActorScope, ActorScopeError, resolve_actor_scope
+from gobby.terminals.actor_scope import (
+    OPERATOR_ACTOR,
+    ActorScope,
+    ActorScopeError,
+    resolve_actor_scope,
+)
 from gobby.terminals.key_bytes import normalize_named_key
 from gobby.terminals.runtime import (
     InputPayloadTooLargeError,
@@ -268,13 +275,14 @@ class WorkspaceOps:
         worktree_id: str | None = None,
         title: str | None = None,
         terminal_id: str | None = None,
+        cwd: str | None = None,
         node: str | None = None,
     ) -> LayoutChange:
         """Make a tab whose first pane spawns a shell in the checkout or adopts ``terminal_id``."""
         target = await self._enter(workspace, node)
         home = _workspace_of(target, workspace)
         source = await self._db(
-            self._pane_source, actor, home, project_id, worktree_id, terminal_id
+            self._pane_source, actor, home, project_id, worktree_id, terminal_id, cwd
         )
         pane_id = mint_pane_id()
         await self._db(self._workspaces.mark_spawn_in_flight, pane_id)
@@ -358,6 +366,7 @@ class WorkspaceOps:
         axis: str,
         *,
         terminal_id: str | None = None,
+        cwd: str | None = None,
         node: str | None = None,
     ) -> LayoutChange:
         """Split ``pane`` with a new pane that spawns a shell or adopts ``terminal_id``.
@@ -374,6 +383,7 @@ class WorkspaceOps:
             tab.project_id,
             tab.worktree_id,
             terminal_id,
+            cwd,
         )
         pane_id = mint_pane_id()
         await self._db(self._workspaces.mark_spawn_in_flight, pane_id)
@@ -728,6 +738,7 @@ class WorkspaceOps:
         project_id: str,
         worktree_id: str | None,
         terminal_id: str | None,
+        cwd: str | None,
     ) -> _ShellSpawn | Terminal:
         """Check scope and resolve what fills a new pane, before any row is inserted."""
         scope = self._scope(actor)
@@ -743,6 +754,17 @@ class WorkspaceOps:
             raise WorkspaceOpError(
                 "terminal_failed", "The native terminal runtime is unavailable"
             ) from exc
+        if cwd is not None:
+            if (
+                actor != OPERATOR_ACTOR
+                or project_id != PERSONAL_PROJECT_ID
+                or worktree_id is not None
+                or not Path(cwd).is_absolute()
+            ):
+                raise WorkspaceOpError(
+                    "invalid_op", "cwd requires an absolute operator personal-project path"
+                )
+            return _ShellSpawn(runtime, cwd)
         with storage_errors():
             if worktree_id is None:
                 return _ShellSpawn(

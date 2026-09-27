@@ -19,7 +19,7 @@ use crate::ui::{Action, Chrome, WorkspaceView};
 use super::super::menu::{open_menu, ContextMenuKind};
 use super::super::modal_input::persist_prefs;
 use super::{
-    focus_active_tab, forward, links, on_roster, select, MouseGesture, MouseOutcome, Placement,
+    focus_active_tab, forward, links, on_roster, select, MouseGesture, MouseOutcome,
     PROJECT_DRAG_THRESHOLD, TAB_DRAG_THRESHOLD,
 };
 
@@ -203,9 +203,7 @@ pub(super) fn down<W: WorkspaceView>(
             chrome.tab_scroll_follow_active = false;
             MouseOutcome::Handled
         }
-        Hit::NewTab => MouseOutcome::Spawn {
-            placement: Placement::Tab,
-        },
+        Hit::NewTab => MouseOutcome::Action(Action::NewTab),
         Hit::Project(project_id) => {
             // The tab set swaps at once so the frame after the press shows
             // the project's tabs; the live loop's focus swap is idempotent.

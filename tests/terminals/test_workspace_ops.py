@@ -9,6 +9,7 @@ import uuid
 from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass, field
 from functools import partial
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Literal
 from unittest.mock import MagicMock, patch
@@ -34,7 +35,7 @@ from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.project_checkouts import require_root
-from gobby.storage.projects import LocalProjectManager
+from gobby.storage.projects import PERSONAL_PROJECT_ID, LocalProjectManager
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.terminals import (
@@ -379,6 +380,35 @@ async def test_adopt_close_and_move_semantics(harness: _Harness) -> None:
     assert h.native.terminated_host_ids == terminated
     agent_row = h.terminals.get(agent.id)
     assert agent_row is not None and agent_row.state == "live"
+
+
+async def test_closing_a_migrated_tab_kills_only_its_new_shell(harness: _Harness) -> None:
+    h = harness
+    workspace = await h.ops.workspace_create(OPERATOR)
+    first = _live_terminal(h.terminals, h.project_id, "native")
+    second = _live_terminal(h.terminals, h.project_id, "native")
+    created = await h.ops.tab_create(OPERATOR, workspace.id, h.project_id, terminal_id=first.id)
+    tab, first_pane = created.tabs[0], created.panes[0]
+    second_pane = (
+        await h.ops.pane_split(OPERATOR, first_pane.id, "horizontal", terminal_id=second.id)
+    ).panes[0]
+    await h.ops.pane_resize(OPERATOR, first_pane.id, 0.3)
+    owned = (await h.ops.pane_split(OPERATOR, second_pane.id, "horizontal")).panes[0]
+    assert (first_pane.owns_terminal, second_pane.owns_terminal, owned.owns_terminal) == (
+        False,
+        False,
+        True,
+    )
+
+    await h.ops.tab_close(OPERATOR, tab.id)
+    assert not h.workspaces.list_tabs(workspace.id)
+    for terminal_id in (first.id, second.id):
+        row = h.terminals.get(terminal_id)
+        assert row is not None and row.state == "live"
+    owned_row = h.terminals.get(str(owned.terminal_id))
+    assert owned_row is not None and owned_row.state == "exited"
+    assert h.native.create_calls == 1
+    assert len(h.native.terminated_host_ids) == 1
 
 
 async def test_actor_scope_guards_kill_spawn_and_adopt(harness: _Harness) -> None:
@@ -817,6 +847,46 @@ async def test_worktree_tabs_and_splits_spawn_in_the_worktree_checkout(
         )
     assert h.native.create_calls == spawns
     assert len(h.workspaces.list_panes(workspace.id)) == panes
+
+
+async def test_personal_workspace_shell_uses_operator_launch_directory(
+    harness: _Harness, tmp_path: Path
+) -> None:
+    h = harness
+    h.db.execute(
+        "INSERT INTO projects (id, name) VALUES (%s, %s) ON CONFLICT (id) DO NOTHING",
+        (PERSONAL_PROJECT_ID, "_personal"),
+    )
+    workspace = await h.ops.workspace_create(OPERATOR)
+    launch_dir = str(tmp_path)
+    await _raises(
+        "invalid_op",
+        h.ops.tab_create(OPERATOR, workspace.id, h.project_id, cwd=launch_dir),
+    )
+    await _raises(
+        "invalid_op",
+        h.ops.tab_create(OPERATOR, workspace.id, PERSONAL_PROJECT_ID, cwd="relative/path"),
+    )
+    await _raises(
+        "invalid_op",
+        h.ops.tab_create(
+            OPERATOR, workspace.id, PERSONAL_PROJECT_ID, worktree_id="foreign", cwd=launch_dir
+        ),
+    )
+
+    created = await h.ops.tab_create(OPERATOR, workspace.id, PERSONAL_PROJECT_ID, cwd=launch_dir)
+    first = created.panes[0]
+    assert first.terminal_id is not None and first.owns_terminal
+    assert h.native.last_request is not None and h.native.last_request.cwd == launch_dir
+    split = await h.ops.pane_split(OPERATOR, first.id, "horizontal", cwd=launch_dir)
+    second = split.panes[0]
+    assert second.terminal_id is not None and second.owns_terminal
+    assert h.native.last_request is not None and h.native.last_request.cwd == launch_dir
+
+    await h.ops.workspace_close(OPERATOR, workspace.id)
+    for terminal_id in (first.terminal_id, second.terminal_id):
+        terminal = h.terminals.get(terminal_id)
+        assert terminal is not None and terminal.state == "exited"
 
 
 async def test_adopt_race_on_the_unique_index_raises_busy(harness: _Harness) -> None:

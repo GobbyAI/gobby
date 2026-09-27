@@ -4,7 +4,7 @@
 //! `src/gobby/terminals/workspace_ops.py` does. Ids are `mock-tab-N` and
 //! `mock-pane-N`; refs are the lowest free number per scope.
 
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 
 use serde_json::{json, Value};
 
@@ -23,6 +23,7 @@ pub struct WorkspaceSim {
     daemon_epoch: String,
     seq: u64,
     next_id: u64,
+    owned_terminal_ids: VecDeque<String>,
 }
 
 impl WorkspaceSim {
@@ -41,7 +42,12 @@ impl WorkspaceSim {
                 .to_string(),
             seq: fixture["snapshot"]["seq"].as_u64().unwrap_or(0),
             next_id: 1,
+            owned_terminal_ids: VecDeque::new(),
         }
+    }
+
+    pub fn queue_owned_terminal_id(&mut self, terminal_id: &str) {
+        self.owned_terminal_ids.push_back(terminal_id.to_owned());
     }
 
     pub fn workspace_id(&self) -> String {
@@ -81,7 +87,7 @@ impl WorkspaceSim {
                 }
                 let reference = pane_ids.len() as u64 + 1;
                 self.panes
-                    .push(pane_row(&pane_id, &tab_id, Some(terminal), reference));
+                    .push(pane_row(&pane_id, &tab_id, terminal, reference, true));
                 pane_ids.push(pane_id);
             }
             let layout = pane_ids
@@ -346,7 +352,13 @@ impl WorkspaceSim {
                 let position = self.tabs.len() as u64;
                 let reference =
                     lowest_free(self.tabs.iter().map(|tab| tab["ref"].as_u64().unwrap_or(0)));
-                let pane = pane_row(&pane_id, &tab_id, field("terminal_id").as_deref(), 1);
+                let adopted = field("terminal_id");
+                let terminal_id = adopted.clone().unwrap_or_else(|| {
+                    self.owned_terminal_ids
+                        .pop_front()
+                        .unwrap_or_else(|| self.mint("mock-terminal"))
+                });
+                let pane = pane_row(&pane_id, &tab_id, &terminal_id, 1, adopted.is_none());
                 self.panes.push(pane.clone());
                 let tab = json!({
                     "id": tab_id,
@@ -382,7 +394,13 @@ impl WorkspaceSim {
                         .filter(|pane| pane["tab_id"] == tab_id)
                         .map(|pane| pane["ref"].as_u64().unwrap_or(0)),
                 );
-                let pane = pane_row(&new_id, &tab_id, field("terminal_id").as_deref(), reference);
+                let adopted = field("terminal_id");
+                let terminal_id = adopted.clone().unwrap_or_else(|| {
+                    self.owned_terminal_ids
+                        .pop_front()
+                        .unwrap_or_else(|| self.mint("mock-terminal"))
+                });
+                let pane = pane_row(&new_id, &tab_id, &terminal_id, reference, adopted.is_none());
                 self.panes.push(pane.clone());
                 let axis = field("axis").unwrap_or_else(|| "horizontal".into());
                 let split = json!({
@@ -667,13 +685,19 @@ impl WorkspaceSim {
     }
 }
 
-fn pane_row(id: &str, tab_id: &str, terminal_id: Option<&str>, reference: u64) -> Value {
+fn pane_row(
+    id: &str,
+    tab_id: &str,
+    terminal_id: &str,
+    reference: u64,
+    owns_terminal: bool,
+) -> Value {
     json!({
         "id": id,
         "tab_id": tab_id,
         "ref": reference,
         "terminal_id": terminal_id,
-        "owns_terminal": true,
+        "owns_terminal": owns_terminal,
         "label": null,
         "created_at": TIMESTAMP,
         "updated_at": TIMESTAMP,

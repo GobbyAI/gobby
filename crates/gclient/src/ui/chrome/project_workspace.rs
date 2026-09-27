@@ -53,10 +53,21 @@ impl Chrome {
             tab.worktree_id = row.worktree_id.clone();
             tabs.push(tab);
         }
-        // Tabs a scripted path opened never came from the model, so it
-        // cannot end them: they stay after the daemon's rows.
+        // Empty drafts keep their positions until filled; populated local tabs
+        // follow daemon tabs as before.
         if let Some(set) = self.project_tabs.sets.get_mut(project_id) {
-            tabs.extend(set.tabs.drain(..).filter(Tab::is_local));
+            for (index, tab) in set.tabs.drain(..).enumerate() {
+                if tab.is_local() {
+                    if tab
+                        .id
+                        .starts_with(crate::app::viewer_state::EMPTY_LOCAL_TAB_PREFIX)
+                    {
+                        tabs.insert(index.min(tabs.len()), tab);
+                    } else {
+                        tabs.push(tab);
+                    }
+                }
+            }
         }
         let active = self
             .viewer

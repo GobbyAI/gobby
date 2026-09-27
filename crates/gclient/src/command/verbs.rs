@@ -369,6 +369,7 @@ impl Action {
                         worktree_id: None,
                         title,
                         terminal_id: None,
+                        cwd: None,
                         node: None,
                     })
                     .await
@@ -382,6 +383,7 @@ impl Action {
                         pane,
                         axis,
                         terminal_id: None,
+                        cwd: None,
                         node: None,
                     })
                     .await
