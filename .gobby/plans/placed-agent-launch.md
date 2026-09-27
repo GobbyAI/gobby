@@ -40,8 +40,8 @@ before the agent is placed or rolled back. A launch terminal whose kill fails st
 - Validation happens before side effects: a refused preflight spawns nothing. A
   reservation refused at dispatch starts no agent, and the existing spawn cleanup
   removes what dispatch created.
-- Sandbox and role authority follow the closed #22899 decisions, except where
-  decision 13 supersedes them. Profiles are definition-only, and `spawn_agent` gains
+- Sandbox and role authority follow the #22899 design as decision 14 adopts it,
+  with decision 13 superseding its unsandboxed profile. Profiles are definition-only, and `spawn_agent` gains
   no sandbox input.
 - This planning task contains no code and no live spawning.
 - Josh's acceptance (via PD #14610, 2026-09-26; scope clarified the same day):
@@ -349,8 +349,8 @@ before the agent is placed or rolled back. A launch terminal whose kill fails st
       records its source URL
       (https://code.claude.com/docs/en/cloud-environments#default-allowed-domains),
       fetch date and sha256, refreshed only by a manual command that prints a diff
-      and lands through review; the daemon never fetches it. That profile work is
-      deferred (D1): it amends the #22899 plan and needs its own implementation.
+      and lands through review; the daemon never fetches it. P4 delivers that
+      profile work (decision 14).
     - The Trusted list is a developer-dependency allowlist, not web-research
       coverage: it has no search engines or general research sites. The cloud
       environment's bypasses (a separate GitHub proxy, MCP connectors through
@@ -387,9 +387,41 @@ before the agent is placed or rolled back. A launch terminal whose kill fails st
     - Trust statement: SRT bounds a spawned agent's network and filesystem. Any
       credential it can still read acts with full authority on allowlisted hosts.
       #22961 closes only the daemon REST/CLI bypass.
-    - Rollout: no migration. After #22899's amendment, #22961 and this plan land, the
-      Program Director restarts the daemon under the normal announcement and
+    - Rollout: no migration. #22961 is live (restart of 2026-09-27). After this
+      plan lands, the Program Director restarts the daemon under the normal announcement and
       quiet-window protocol, and only new spawns pick up the policy.
+14. **Profile wiring is folded in (2026-09-27).** Josh, relayed by the Program
+    Director: "Fold in wiring the profile". P4 replaces the D1 deferral, so the
+    research profile ships in this epic.
+    - Adopted from the #22899 design (`.gobby/plans/agent-sandbox-profiles.md`,
+      an unimplemented plan; #22899 closed as planning with no code): profiles are
+      named entries under `agent_sandbox.profiles` and definitions select one by
+      name through `AgentDefinitionBody.sandbox_profile`, with no `spawn_agent`
+      input (its decisions 1 and 4). Profiles may widen (2). Resume re-resolves
+      the recorded name and refuses a deleted profile (5). An unknown name fails
+      closed (7). No selector means the top-level `agent_sandbox` (8). Ask runtime
+      profiles keep precedence (9). The write grant and project paths still
+      stack (10). Fallback agents resolve their own profile (11). A sync test
+      proves the selector survives `extra="ignore"` (12). Only the template sync
+      writes the selector (13), and only sync-owned rows are honored (14).
+    - Superseded by decision 13: its decision 3 (an unsandboxed `research`
+      profile). Its decisions 6 and 15 guarded `enabled: false` profiles, which
+      can no longer exist, so they are not built.
+    - Changed from #22899: a profile is an `AgentSandboxProfile` whose validator
+      refuses `enabled` false, a non-`srt` backend and `allow_network` true.
+      `research` is enabled SRT with `trusted_domain_seed` true. The seed is
+      expanded into the profile's `allowed_domains` at resolution, and
+      `allowed_domains` adds the Gobby hosts as for every agent.
+    - Resolution runs inside the 1.8 helpers, so placed, unplaced and resumed
+      launches share it and every result ends in `require_managed_srt`. Resume
+      re-resolves only a recorded profile; a run with no profile keeps 1.8's
+      snapshot path. #22899's plan re-resolved the top-level default too, and that
+      would reopen 1.8's accepted design.
+    - The bundled `researcher` definition selects `research` (4.3). This
+      discharges the prerequisite #22902 records as its D2; #22902 3.3's seat
+      body keeps the key.
+    - No bypass: #22961 made config writes operator-only, the storage guard makes
+      the selector sync-only, and 1.8 refuses any config that is not enabled SRT.
 
 ## Evidence (as-is, VERIFIED unless marked)
 `kind: framing`
@@ -1458,7 +1490,6 @@ Consumers unchanged:
 - 1.8.1 - An unplaced spawn whose effective config is `enabled: false`, or whose backend is `provider-native`, is refused `sandbox_required` before isolation, a child session or a run exists. test: `tests/mcp_proxy/tools/spawn_agent/test_sandbox_gate.py::test_unsandboxed_config_refused_before_side_effects`.
 - 1.8.2 - A managed runtime profile config goes through the same gate. test: `tests/mcp_proxy/tools/spawn_agent/test_sandbox_gate.py::test_runtime_profile_config_is_gated`.
 - 1.8.3 - A resume with no snapshot config, `enabled: false` or a non-`srt` backend parks the successor, returns `sandbox_required` and starts no provider. test: `tests/agents/test_resume_sandbox_gate.py::test_resume_refuses_unsandboxed_config`.
-- 1.8.4 - A spawned `research`-profile agent resolves to SRT with the Trusted seed plus the Gobby hosts. test: `tests/mcp_proxy/tools/spawn_agent/test_sandbox_gate.py::test_research_profile_is_srt_with_trusted_seed`.
 - 1.8.5 - From a spawned agent, a REST or CLI MCP call is rule-enforced. test: `tests/mcp_proxy/tools/spawn_agent/test_sandbox_gate.py::test_loopback_mcp_calls_are_rule_enforced`.
 - 1.8.6 - With no verifier patch and `GOBBY_HOME` set to an empty directory, the real `verify_srt_installation` fails and the gate refuses the spawn `sandbox_required`; gate unit cases that patch the verifier assert both outcomes explicitly. test: `tests/mcp_proxy/tools/spawn_agent/test_sandbox_gate.py::test_gate_refuses_when_isolated_srt_is_missing`.
 
@@ -1578,33 +1609,320 @@ the managed wrapper stubbed at the SRT binary boundary.
 - 3.1.4 - An SRT wrap failure for seat B fails the step, leaves no seat B pane and no provider process, and leaves seat A unaffected. test: `tests/workflows/test_runbook_placed_pipeline.py::test_wrap_failure_refuses_seat`.
 - 3.1.5 - A CLI-started run parents both agents to the pipeline child session, whose parent is the system session, and resolves the pipeline's project. test: `tests/workflows/test_runbook_placed_pipeline.py::test_cli_run_parent_and_project`.
 
-## D1 Research profile and Trusted seed (depends: 1.8)
-`kind: deferred`
+## P4: Sandbox profiles and the research Trusted seed
+`kind: framing`
 
-#22899 ("Plan per-agent sandbox profiles") is a closed planning task that
-delivered an architecture document and no code. It does not deliver the
-per-definition `sandbox_profile` mechanism, the `research` profile or the
-vendored Trusted seed, so it cannot discharge 1.8.4. Decision 13 amends the
-#22899 design: `research` becomes SRT with the vendored Trusted seed plus the
-Gobby hosts, profiles may widen but never disable, its decision 3 is superseded
-and its decisions 6 and 15 become moot. That work needs an amendment to the
-#22899 plan and an implementation leaf. 1.8.4 is verifiable only once both land.
+Decision 14 folds in the profile wiring that D1 deferred. 4.1 adds the profile
+config and the vendored seed, 4.2 adds the definition selector with its
+sync-only write guard, and 4.3 resolves profiles at spawn and resume inside the
+1.8 gate and binds the bundled `researcher` definition. 4.4 documents it. 4.1 and
+4.2 are independent; 4.3 consumes both and 1.8.
 
-The `task_ref` is a placeholder. No task is created while this plan is drafted
-or reviewed. At expansion, apply creates the `needs-planning` tail task under
-this plan's epic with `deferred-from` provenance and a `blocked-by` edge to
-1.8. The Program Director then routes the #22899 amendment and its
-implementation through that task, and the coordinator writes the created ref
-over the placeholder at finalization.
+### 4.1 Named SRT profiles and the vendored Trusted seed [category: config]
+`kind: deliverable`
 
-```yaml
-deferral:
-  task_ref: "TBD-22899-amendment-research-profile"
-  reason: "Future implementation: the per-definition sandbox_profile mechanism, the research profile and the vendored Trusted seed need a #22899 plan amendment and an implementation leaf; closed planning task #22899 delivered no code."
-  owner: "program-director"
-  original_acceptance_items:
-    - 1.8.4
-```
+Targets:
+- `src/gobby/config/daemon_sandbox.py::*` — scope-reason: add `AgentSandboxProfile` and `AgentSandboxConfig` beside `DaemonOwnedSandboxConfig` and export them
+- `src/gobby/config/app.py::*` — scope-reason: retype only the `agent_sandbox` field of `DaemonConfig`; every other field keeps its type
+- `crates/gcore/assets/config/runtime_config_contract.json::*` — scope-reason: regenerated wholesale by `scripts/generate_runtime_config_contract.py --stdout`
+- `web/src/api/runtimeConfigCodecVectors.gen.ts::*` — scope-reason: regenerated wholesale by `scripts/generate_runtime_config_contract.py --stdout-web`
+- `src/gobby/agents/sandbox_domains.py::*` — scope-reason: add the cached `trusted_domains()` loader beside the existing domain groups
+- `src/gobby/data/sandbox/trusted_domains.json`
+- `scripts/refresh_trusted_domains.py`
+- `tests/config/test_daemon_sandbox.py::*` — scope-reason: add the profile default and validation tests beside the existing ones
+- `tests/agents/test_trusted_domains.py`
+- `tests/scripts/test_refresh_trusted_domains.py`
+
+Consumers unchanged:
+- `src/gobby/agents/sandbox.py` — no-edit-reason: `daemon_owned_sandbox_config` reads the base fields through `getattr`, and both new classes keep them.
+- `src/gobby/cli/daemon.py` — no-edit-reason: its startup preflight reads only `agent_sandbox.enabled` and `web_chat_sandbox.enabled`.
+- `src/gobby/agents/sandbox_policy.py` — no-edit-reason: `allowed_domains` already composes the provider domains, `config.allowed_domains`, the `api_base` host, the git and registry groups and loopback, and dedupes them; 4.3 puts the seed into `config.allowed_domains`.
+
+**Research context:**
+- `DaemonOwnedSandboxConfig` (`config/daemon_sandbox.py`, 64 lines) has 13 fields
+  and no validators. Its defaults are `enabled` true, `backend` `srt`,
+  `allow_network`, `allow_git_network` and `allow_package_registries` false, and
+  empty lists. `DaemonConfig.agent_sandbox` (`config/app.py:276`) builds it with
+  `backend="srt", allow_network=False`. `web_chat_sandbox` shares the class and
+  gains no profiles.
+- The config store is DB-first with flattened dotted keys, and `dict[str, Model]`
+  fields have precedent (`endpoints` in `config/ai.py`, `hubs` in
+  `config/skills.py`), so `agent_sandbox.profiles.research.*` stays editable
+  through `/api/config/values`. `runner_init/config_subscribers.py` routes
+  `agent_sandbox` edits to the next launch, so a profile edit needs no restart.
+  #22961 made the config write path operator-only: `patch_config_values` refuses
+  agent API tokens with 403 (`mcp_proxy/tools/config.py`, commits `2c2b569fe3`
+  and `fda6c553ad`).
+- `sandbox_domains.py` (32 lines) holds `GIT_DOMAINS` and
+  `PACKAGE_REGISTRY_DOMAINS`. Package data already ships `gobby/data/**/*`
+  (`pyproject.toml` `[tool.setuptools.package-data]`), and
+  `cli/installers/postgres.py` reads it through
+  `importlib.resources.files("gobby").joinpath("data/...")`.
+- Seed source: the markdown source of the Trusted list,
+  `https://code.claude.com/docs/en/cloud-environments.md`, section
+  `## Default allowed domains` (checked 2026-09-27; the Researcher counted 146
+  entries in 17 categories). Each category is an `<Accordion title="...">` block of
+  `* ` bullets. Some bullets are markdown links (`[www.github.com](http://www.github.com)`)
+  or carry an escaped dot (`raw\.githubusercontent.com`), and wildcard entries are
+  written `* *.gcr.io`.
+- SRT's domain rule (VERIFIED by the Researcher in
+  `~/.gobby/tools/srt/0.0.76/.../dist/sandbox/sandbox-config.js:14-40,49`): an
+  entry is a domain, `*.` followed by at least two labels, `localhost`, or a
+  bracketed IPv6 address. It carries no scheme, path or port, and `*` and `*.com`
+  are rejected. One bad seed entry would therefore fail every research launch
+  closed.
+
+**Approach:**
+- `AgentSandboxProfile(DaemonOwnedSandboxConfig)` adds
+  `trusted_domain_seed: bool = False`. A validator refuses `enabled` false, a
+  `backend` other than `srt` and `allow_network` true: a profile may widen domains
+  and paths but never disables or opens the sandbox (decision 13).
+- `AgentSandboxConfig(DaemonOwnedSandboxConfig)` adds
+  `profiles: dict[str, AgentSandboxProfile]`, whose default is
+  `{"research": AgentSandboxProfile(trusted_domain_seed=True)}`, described as "SRT
+  with the vendored Trusted seed plus the Gobby hosts". A validator refuses profile
+  names that do not match `^[a-z][a-z0-9-]*$`. `DaemonConfig.agent_sandbox` is
+  retyped to `AgentSandboxConfig` with its current default arguments. Both
+  carriers are regenerated.
+- `src/gobby/data/sandbox/trusted_domains.json` holds `source_url` (the page
+  above, with the `#default-allowed-domains` anchor), `fetched_at` (UTC date),
+  `sha256` and `categories`, an ordered map from category title to its domain
+  list. `sha256` is the hex digest of the UTF-8 domain list in file order, one
+  domain per line with a trailing newline.
+- `sandbox_domains.trusted_domains() -> tuple[str, ...]` loads the file once
+  (`functools.cache`) and returns the flattened domains in file order. It never
+  fetches. A missing or unreadable file raises, so a research launch fails closed.
+- `scripts/refresh_trusted_domains.py` is the only writer of the seed. It fetches
+  the markdown source and extracts the section with
+  `parse_default_allowed_domains(markdown) -> dict[str, list[str]]`: each
+  `<Accordion title=...>` starts a category, each bullet drops its `* ` marker,
+  a markdown link is reduced to its text, and backslash escapes are removed. Every
+  parsed entry is checked against the SRT rule, and any offender makes the script
+  exit nonzero with the offenders listed. The script prints a unified diff
+  against the vendored list and writes nothing unless `--write` is passed; with
+  `--write` it rewrites the file with a fresh `fetched_at` and `sha256`. The
+  refreshed file lands through review like any other change. The executor
+  creates the initial file with `--write` and commits the diff.
+- Rejected: expanding the seed into the config default, which would put about
+  146 domains into the config contract and let an operator edit drift from the
+  recorded provenance; fetching at runtime (decision 13).
+
+Verification: `uv run python scripts/generate_runtime_config_contract.py --stdout`
+compared with the asset;
+`DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/config/test_daemon_sandbox.py tests/config/test_runtime_config_contract.py tests/config/test_app_config.py tests/agents/test_trusted_domains.py tests/scripts/test_refresh_trusted_domains.py -q`.
+
+**Acceptance:**
+
+- 4.1.1 - `DaemonConfig.agent_sandbox` is an `AgentSandboxConfig` whose default `profiles` holds `research` as an enabled `srt` profile with `trusted_domain_seed` true. symbol: `AgentSandboxConfig`. test: `tests/config/test_daemon_sandbox.py::test_agent_sandbox_default_research_profile_is_srt_with_seed`.
+- 4.1.2 - A profile with `enabled` false, a non-`srt` backend, `allow_network` true or an invalid name is refused at config validation. test: `tests/config/test_daemon_sandbox.py::test_agent_sandbox_profile_validation_refuses_disable_and_bad_names`.
+- 4.1.3 - The runtime config contract and web codec vectors match fresh generator output. test: `tests/config/test_runtime_config_contract.py::test_checked_in_contract_matches_registry`. test: `tests/config/test_runtime_config_contract.py::test_checked_in_web_codec_vectors_match_registry`.
+- 4.1.4 - The vendored seed records its source URL and fetch date, its `sha256` matches its domain list, and every entry passes SRT's domain rule. symbol: `trusted_domains`. test: `tests/agents/test_trusted_domains.py::test_seed_provenance_and_entries_are_valid`.
+- 4.1.5 - The refresh script parses the Accordion bullet format, including link and escaped entries, rejects an entry SRT would refuse, prints a diff and writes only with `--write`. test: `tests/scripts/test_refresh_trusted_domains.py::test_parse_diff_and_write_gate`.
+
+### 4.2 Definition selector and sync-only write guard [category: code]
+`kind: deliverable`
+
+Targets:
+- `src/gobby/workflows/agent_models.py::AgentDefinitionBody`
+- `src/gobby/storage/definitions/agents.py::*` — scope-reason: one guard covers every non-sync write entry point of `AgentDefinitionManager` (create, update, _write_update, toggle_enabled, restore, duplicate, upsert_with_steps, set_step_workflow, move_to_project, move_to_global)
+- `src/gobby/agents/sync.py::*` — scope-reason: make the sync-ownership predicate public and move the new-row branch of `sync_bundled_agents` onto `upsert_from_sync`
+- `tests/storage/definitions/test_agents_manager.py::*` — scope-reason: add the write-guard tests beside the existing manager tests
+- `tests/agents/test_agents_sync.py::*` — scope-reason: add the selector sync tests to `TestSyncBundledAgents`
+
+Consumers unchanged:
+- `src/gobby/ask/agents.py` — no-edit-reason: Ask builds bodies with no `sandbox_profile`; the new optional field defaults to None.
+- `src/gobby/servers/routes/agents.py` — no-edit-reason: its writes end in `AgentDefinitionManager`, where the guard refuses the selector.
+- `src/gobby/workflows/imports.py` — no-edit-reason: writes through the manager, which carries the guard.
+- `src/gobby/workflows/definitions.py` — no-edit-reason: validates bodies; an absent optional field changes nothing.
+- `docs/evidence/wiki-bakeoff-code-2026-09/test_ask_cohort.py` — no-edit-reason: archived evidence, not a live consumer.
+- `src/gobby/mcp_proxy/tools/spawn_agent/_step_state.py` — no-edit-reason: reads step fields only.
+- `src/gobby/workflows/step_instances.py` — no-edit-reason: reads step fields only.
+- `tests/agents/test_merge_orchestrator_contract.py` — no-edit-reason: builds bodies without the optional field.
+- `tests/mcp_proxy/tools/skills/test_list_skills.py` — no-edit-reason: builds bodies without the optional field.
+- `tests/workflows/test_agent_models.py` — no-edit-reason: existing model tests stay valid with a defaulted optional field.
+- `tests/workflows/test_agent_workflow_completion.py` — no-edit-reason: builds bodies without the optional field.
+- `tests/workflows/test_handler_route_lint.py` — no-edit-reason: builds bodies without the optional field.
+- `tests/workflows/test_step_enforcement.py` — no-edit-reason: builds bodies without the optional field.
+- `tests/workflows/test_step_instances.py` — no-edit-reason: builds bodies without the optional field.
+- `tests/workflows/test_workflows_dry_run.py` — no-edit-reason: builds bodies without the optional field.
+
+**Research context:** #22899 1.2 carries the design and its R8 write-path
+evidence (#22808 council, 2026-09-24); the facts were rechecked on 0.5.0
+`c52269ccd5`.
+- `AgentDefinitionBody` (`workflows/agent_models.py`, 219 lines) has no sandbox
+  field and sets `extra="ignore"`, so a misspelled key disappears silently.
+- Every definition write ends in `AgentDefinitionManager`
+  (`storage/definitions/agents.py`, 740 lines): `create` `:270`, `update` `:350`,
+  `update_from_sync` `:357` over `_write_update` `:360`, `toggle_enabled` `:402`,
+  `restore` `:461`, `move_to_project` `:513`, `move_to_global` `:526`,
+  `duplicate` `:539`, `upsert_with_steps` `:554`, `upsert_from_sync` `:628`,
+  `set_step_workflow` `:715`. The MCP `create_agent_definition`, the HTTP routes
+  and `workflows/imports.py` all call these.
+- `sync.py` (299 lines) decides ownership with `_is_sync_managed_bundled_agent`
+  `:62` (global row, `source == "installed"`, `"gobby"` in tags) and creates new
+  rows through `upsert_with_steps` at `:258`, its one non-sync write. The HTTP
+  request models accept `tags`, so the tag alone can be forged; the guard is
+  what makes the marker sound.
+- The executor reruns `gcode grep -w upsert_with_steps src/`, the same grep for
+  `.update(` over the HTTP agents routes module, and
+  `gcode grep -w create_agent_definition src/` before editing, and adds any new
+  write path to the guard.
+
+**Approach:**
+- Add `sandbox_profile: StrictStr | None = None` to `AgentDefinitionBody`,
+  described as "Named agent_sandbox profile; bundled templates only".
+- In `storage/definitions/agents.py` add one private guard,
+  `_refuse_sandbox_profile_write(incoming_body, current_row)`. It raises
+  `ValueError("sandbox_profile is sync-owned")` when the incoming parent body
+  carries a non-null `sandbox_profile` or the locked current row's body carries
+  one. Every non-sync entry point in the scope-reason calls it inside the
+  transaction that holds the row lock; `update_from_sync` and
+  `upsert_from_sync` skip it. A selector-carrying row is therefore immutable
+  outside the sync, whether the edit is a rename, a rule patch, a restore or a
+  re-tag.
+- Rename `_is_sync_managed_bundled_agent` to public
+  `is_sync_managed_bundled_agent` and switch the new-row branch of
+  `sync_bundled_agents` to `upsert_from_sync`.
+- Rejected: per-route checks (every route ends in the manager); comparing the row
+  with the bundled YAML at launch (a second mechanism that fails closed on an
+  unsynced template edit).
+
+Verification:
+`DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/storage/definitions/test_agents_manager.py tests/agents/test_agents_sync.py tests/servers/routes/test_agents_routes.py -q`,
+plus the MCP definition-tool tests the executor finds with
+`gcode grep -lw create_agent_definition tests/`.
+
+**Acceptance:**
+
+- 4.2.1 - `AgentDefinitionBody` accepts an optional `sandbox_profile`, and a bundled template's value survives sync into the stored row. symbol: `AgentDefinitionBody`. test: `tests/agents/test_agents_sync.py::TestSyncBundledAgents::test_sync_preserves_sandbox_profile`.
+- 4.2.2 - Every non-sync write that brings in a body with `sandbox_profile` is refused: create, update, upsert_with_steps and duplicate. test: `tests/storage/definitions/test_agents_manager.py::test_non_sync_writes_refuse_sandbox_profile`.
+- 4.2.3 - A row carrying `sandbox_profile` is immutable outside the sync: update, toggle, restore, set_step_workflow and both moves refuse. test: `tests/storage/definitions/test_agents_manager.py::test_selector_row_is_immutable_outside_sync`.
+- 4.2.4 - The sync creates, updates and restores selector-carrying rows through sync entry points only, and the predicate is public. symbol: `is_sync_managed_bundled_agent`. test: `tests/agents/test_agents_sync.py::TestSyncBundledAgents::test_sync_new_row_uses_sync_entry_point`.
+
+### 4.3 Resolve profiles at spawn and resume, and bind the researcher [category: code] (depends: 1.8, 4.1, 4.2)
+`kind: deliverable`
+
+Targets:
+- `src/gobby/agents/sandbox_profiles.py`
+- `src/gobby/mcp_proxy/tools/spawn_agent/_sandbox_gate.py`
+- `src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py::spawn_agent_impl`
+- `src/gobby/mcp_proxy/tools/spawn_agent/_placement.py`
+- `src/gobby/agents/sandbox_gate.py`
+- `src/gobby/agents/resume_executor.py::resume_agent_run`
+- `src/gobby/install/shared/workflows/agents/researcher.yaml::*` — scope-reason: add `sandbox_profile: research`
+- `tests/agents/test_sandbox_profiles.py`
+- `tests/agents/test_resume_sandbox_gate.py`
+
+Consumers unchanged:
+- `src/gobby/dispatch/spawn.py` — no-edit-reason: it passes the loaded `agent_body` (a deep copy that keeps `sandbox_profile`) to `spawn_agent_impl` (`:357-361`), so the `research` stage's `researcher` resolves the `research` profile with no dispatch change.
+- `src/gobby/scheduler/executor.py` — no-edit-reason: same call signature; cron definitions carry no selector.
+- `src/gobby/feedback/agent.py` — no-edit-reason: same call signature; the feedback definition carries no selector.
+- `src/gobby/servers/routes/agent_spawn.py` — no-edit-reason: it returns `spawn_agent_impl`'s error payload unchanged, so profile refusals surface with their codes.
+- `src/gobby/ask/agents.py` — no-edit-reason: it passes a managed runtime profile, whose branch stays first in `resolve_spawn_sandbox`.
+- `tests/dispatch/test_daemon_resume.py` — no-edit-reason: it replaces `resume_agent_run` with a fake, so profile re-resolution never runs there.
+- `src/gobby/agents/spawn_cache_policy.py` — no-edit-reason: `sandbox_config_for_spawn` still merges project and cache write paths onto the resolved config.
+- `tests/agents/test_discovery_agents.py` — no-edit-reason: it pins the researcher's steps, marker and MCP allowlist, and the new key is a valid body field.
+
+**Research context:**
+- After 1.8, `resolve_spawn_sandbox` (`_sandbox_gate.py`) returns the gated config
+  for `spawn_agent_impl` and `preflight_placement`, and `resolve_resume_sandbox`
+  (`agents/sandbox_gate.py`) does the same for `resume_agent_run`. Profile
+  resolution goes inside both, so placed, unplaced and resumed launches share
+  one path and every result still ends in `require_managed_srt`.
+- Today's choice (0.5.0 `c52269ccd5`, `_implementation.py:393-398`): an Ask
+  managed runtime profile's `sandbox_config` first, else
+  `apply_write_grant(agent_sandbox_config(daemon_config), write_grant)`. The
+  grant is stored in `resume_metadata[GRANT_KEY]`. Resume reads the snapshot at
+  `resume_executor.py:391-394` and revalidates the stored grant near `:163`.
+  `_RESUME_METADATA_ENV_KEYS` keeps the spawn cache variables, so
+  `sandbox_config_for_spawn` can rebuild the project and cache paths on resume.
+- `daemon_owned_sandbox_config(profile)` (`agents/sandbox.py:100`) maps the
+  profile's base fields onto `SandboxConfig`. `allowed_domains`
+  (`agents/sandbox_policy.py:486`) then adds the Gobby hosts: provider domains,
+  the `api_base` host, the git and registry groups when enabled, and loopback.
+- `AgentDefinitionManager.get_by_name(name, project_id=...)` returns the row.
+  Resolution keys on `agent_body.name`, so fallback agents resolve their own
+  profile.
+- `researcher.yaml` is today the `research`-stage one-shot
+  (`registry/stages.yaml:16`). #22902 3.3 replaces its body with the seat body,
+  and its D2 waits for exactly this selector. This leaf adds only the key, and
+  the #22902 seat body must keep it.
+- Size: `src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py` (964 lines at
+  `c52269ccd5`) and `src/gobby/agents/resume_executor.py` (972) are a split:
+  profile resolution does not enter them but moves to the new
+  `src/gobby/agents/sandbox_profiles.py`. They only pass the agent body and
+  record the profile name, and neither ends above its `c52269ccd5` size.
+
+**Approach:**
+- `src/gobby/agents/sandbox_profiles.py` defines
+  `SandboxProfileError(ValueError)` with stable codes (`sandbox_profile_unknown`,
+  `sandbox_profile_unmanaged_row`, `sandbox_profile_missing_on_resume`) and two
+  functions:
+  - `profile_sandbox_config(daemon_config, name) -> SandboxConfig` looks up
+    `daemon_config.agent_sandbox.profiles[name]`, raising
+    `sandbox_profile_unknown` when it is missing (never a fallback). It returns
+    `daemon_owned_sandbox_config(profile)` with `trusted_domains()` appended to
+    `allowed_domains` when `trusted_domain_seed` is true.
+  - `resolve_agent_profile(daemon_config, agent_body, *, db, project_id) -> tuple[SandboxConfig | None, str | None]`
+    returns `(None, None)` when the body has no `sandbox_profile`. Otherwise it
+    loads the row by `agent_body.name` and raises
+    `sandbox_profile_unmanaged_row` unless the row exists, satisfies
+    `is_sync_managed_bundled_agent` and stores the same `sandbox_profile`; then
+    it returns `profile_sandbox_config(...)` and the name.
+- Spawn: `resolve_spawn_sandbox` keeps the Ask managed runtime profile first. It
+  then uses the resolved profile config, or `agent_sandbox_config(daemon_config)`
+  when there is none, applies the write grant and ends in
+  `require_managed_srt`. A `SandboxProfileError` returns
+  `{"success": false, "error_code": "<code>"}` before any side effect, as
+  `sandbox_required` does. `spawn_agent_impl` stores
+  `resume_metadata["sandbox_profile"] = name` beside the grant.
+- Resume: when `resume_metadata` records `sandbox_profile`,
+  `resolve_resume_sandbox` re-resolves it with `profile_sandbox_config`, applies
+  the stored grant and rebuilds the project and cache paths through
+  `sandbox_config_for_spawn(..., resume_metadata_json=None)`, so an edited
+  profile takes effect. A profile deleted since spawn raises
+  `sandbox_profile_missing_on_resume`, which parks the successor through
+  `_park_unlaunched_successor` like `sandbox_required`. A run with no recorded
+  profile keeps 1.8's snapshot path unchanged. The row checks are not rerun at
+  resume: the run was authorized at spawn, the row is immutable outside the sync
+  (4.2), and the resuming actor is the daemon.
+- `researcher.yaml` gains `sandbox_profile: research`.
+
+Verification:
+`DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/agents/test_sandbox_profiles.py tests/agents/test_resume_sandbox_gate.py tests/mcp_proxy/tools/spawn_agent/test_sandbox_gate.py tests/agents/test_discovery_agents.py tests/agents/test_agents_sync.py -q`,
+plus ruff and mypy on `src/`. The new spawn test module opts into
+`stub_srt_verifier` (1.8) with a module `pytestmark`.
+
+**Acceptance:**
+
+- 4.3.1 - A spawned `research`-profile agent resolves to enabled SRT whose domains are the Trusted seed plus the Gobby hosts, and a body with no selector gets exactly the top-level `agent_sandbox` policy plus the write grant. symbol: `resolve_agent_profile`. test: `tests/agents/test_sandbox_profiles.py::test_research_profile_is_srt_with_trusted_seed`.
+- 4.3.2 - An unknown profile name, and a selector on a row that is not sync-managed or whose stored selector differs, refuse the spawn with the stable code before any side effect, placed or not. test: `tests/agents/test_sandbox_profiles.py::test_unknown_and_unmanaged_profiles_refuse_before_side_effects`.
+- 4.3.3 - The spawn records the profile name in resume metadata, resume re-resolves it so an edited profile takes effect, and a deleted profile parks the successor with `sandbox_profile_missing_on_resume`. test: `tests/agents/test_resume_sandbox_gate.py::test_resume_reresolves_recorded_profile`.
+- 4.3.4 - The bundled `researcher` definition selects `research`, and neither `_implementation.py` nor `resume_executor.py` ends above its `c52269ccd5` size. behavior: "sandbox_profile: research" in `src/gobby/install/shared/workflows/agents/researcher.yaml`. file: `src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py`.
+
+### 4.4 Document profiles in the sandboxing guide [category: docs] (depends: 4.3)
+`kind: deliverable`
+
+Targets:
+- `docs/guides/sandboxing.md`
+
+**Research context:** `docs/guides/sandboxing.md` documents both backends, the
+`agent_sandbox` and `web_chat_sandbox` parameter table, and the order in which
+project `extra_write_paths` merge.
+
+**Approach:** Add a "Named agent profiles" section covering:
+- the `agent_sandbox.profiles` shape, the rule that a profile widens but never
+  disables, and the bundled `research` profile;
+- the vendored Trusted seed, its provenance fields and the reviewed
+  `scripts/refresh_trusted_domains.py` refresh;
+- `sandbox_profile` in bundled definitions and the sync-only write rule;
+- the refusal codes at spawn and resume;
+- that the Trusted list is a developer-dependency allowlist, not general web
+  access (decision 13).
+
+**Acceptance:**
+
+- 4.4.1 - The guide documents profile configuration, the seed and its refresh, definition selection, the write guard and the refusal codes. behavior: "Named agent profiles" in `docs/guides/sandboxing.md`.
 
 ## D2 Rule-enforced loopback MCP calls (depends: 1.8)
 `kind: deferred`
@@ -1624,8 +1942,9 @@ deferral:
 ## V1: Verification
 `kind: verification`
 
-End-to-end check after 1.1 to 1.8, 2.1 and 3.1 land, run in an isolated environment only:
-- 1.1 to 1.8 focused pytest;
+End-to-end check after 1.1 to 1.8, 2.1, 3.1 and 4.1 to 4.4 land, run in an isolated
+environment only:
+- 1.1 to 1.8 and 4.1 to 4.3 focused pytest;
 - `cargo test -p gobby-client --test placed_agent`;
 - the 3.1 isolated-daemon pipeline test.
 
@@ -1638,8 +1957,9 @@ gobby pipelines run runbook-two-seat-example
 It runs against a scratch workspace and must show two placed, SRT-wrapped seats and a
 refused re-run. Researchers never touch the live daemon or its seats.
 
-SRT smoke, after D1 and D2 land, in an isolated Program Director slot:
-- a spawned `research` agent records `sandbox_enabled=true` and backend `srt`;
+SRT smoke, after P4 and D2 land, in an isolated Program Director slot:
+- a spawned `researcher` resolves the `research` profile and records
+  `sandbox_enabled=true` and backend `srt`;
 - its WebFetch to a host outside the allowlist fails (confirms the named gap);
 - `brave-search` through the MCP proxy works;
 - a REST or CLI MCP call is rule-enforced;
@@ -1782,8 +2102,7 @@ SRT smoke, after D1 and D2 land, in an isolated Program Director slot:
   runs under managed SRT with no unsandboxed fallback (new 1.8); gclient hand
   launches and shells are out of scope; no seat migration. Researcher evidence:
   gobby#14550, `.gobby/plans/research/researcher-srt-egress-2026-09-27.md` rev 2.
-- typed deferrals: D1 (research profile and Trusted seed, a placeholder for a
-  future #22899 amendment and implementation), D2 (#22961
+- typed deferrals: D2 (#22961
   loopback enforcement).
 - Program Director rulings (2026-09-27): the Trusted seed goes on `research` only,
   specified by #22899 (D1), and the default profile keeps its required hosts;
@@ -1811,4 +2130,15 @@ SRT smoke, after D1 and D2 land, in an isolated Program Director slot:
   is absent (the #22962 precedent). Decision 9 names the operator, Assistant
   and pipeline model. 1.4.2's unplaced clause is marked leaf-local ahead of
   1.8.
+- Josh's decision on `0713ee76fc`, relayed by the Program Director
+  (2026-09-27): "Fold in wiring the profile". New decision 14 and phase P4
+  replace D1:
+  - 4.1 adds named SRT-only profiles, the vendored Trusted seed and its reviewed
+    refresh script.
+  - 4.2 adds the definition selector and the sync-only write guard.
+  - 4.3 resolves profiles inside the 1.8 spawn and resume helpers and binds
+    `researcher` to `research`.
+  - 4.4 documents it.
+  - 1.8.4 moves to 4.3.1. Researcher facts come from gobby#14550 on 0.5.0
+    `c52269ccd5`.
 - next: Program Director design review, then routing to Josh and the Adversary.
