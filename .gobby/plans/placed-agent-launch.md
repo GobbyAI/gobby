@@ -1696,6 +1696,7 @@ Targets:
 - `src/gobby/agents/sync.py::*` — scope-reason: move the new-row branch of `sync_bundled_agents` onto `upsert_from_sync`
 - `tests/storage/definitions/test_agents_manager.py::*` — scope-reason: add the write-guard tests beside the existing manager tests
 - `tests/agents/test_agents_sync.py::*` — scope-reason: add the network sync tests to `TestSyncBundledAgents`
+- `tests/workflows/test_workflows_sync.py::*` — scope-reason: add the imported-YAML refusal test beside the existing import sync tests
 
 Consumers unchanged:
 - `src/gobby/ask/agents.py` — no-edit-reason: Ask builds bodies without `network`; the field defaults to `none`.
@@ -1736,6 +1737,14 @@ Consumers unchanged:
   guard alone keeps `trusted` sync-only. The HTTP request models accept `tags`,
   so the bundled-row marker can be forged too. The storage guard is therefore
   the only sound place to stop a widened network.
+- A second writer also stores rows as `source="installed"`:
+  `workflows/imports.py::sync_imported_workflows` (`:202`) reads
+  `~/.gobby/workflows` and `<project_path>/.gobby/workflows/agents/*.yaml`
+  (`:209-213`), and `_upsert_agent` (`:65-91`) writes through the ordinary
+  `update` and `upsert_with_steps`. An agent can trigger it through
+  `gobby-workflows:reload_cache(project_path=...)`
+  (`mcp_proxy/tools/workflows/_import.py:16-37`) after writing a YAML in its own
+  worktree (Researcher gobby#14550, code paths VERIFIED, exploit INFERRED).
 - `sync.py` (299 lines, 0.5.0 `8965cc963f`) creates new rows through
   `upsert_with_steps` at `:258`, its one non-sync write. It updates and restores
   tombstoned bundled rows through `upsert_from_sync` (`:209`, `restore=True`).
@@ -1760,6 +1769,13 @@ Consumers unchanged:
   edit is a rename, a rule patch, a restore or a re-tag.
 - Switch the new-row branch of `sync_bundled_agents` to `upsert_from_sync`, so
   a bundled template that declares `trusted` can be created.
+- Writer classification: only `agents/sync.py::sync_bundled_agents`, reading
+  the bundled `src/gobby/install/shared/workflows/agents/`, may write a
+  `network` other than `none`, and it is the only caller of `upsert_from_sync`
+  and `update_from_sync` for agent rows. `imports.py` global and project imports
+  write through `update` and `upsert_with_steps`, so they are refused like any
+  other non-sync write, whatever `source` they store. The executor keeps
+  `imports.py` off the sync entry points.
 - Rejected: per-route checks (every route ends in the manager); comparing the row
   with the bundled YAML at launch (a second mechanism that fails closed on an
   unsynced template edit); a launch-time ownership check (the guard already makes
@@ -1776,6 +1792,7 @@ plus the MCP definition-tool tests the executor finds with
 - 4.2.2 - Every non-sync write that brings in a body with `network: trusted` is refused: create, update, upsert_with_steps and duplicate. test: `tests/storage/definitions/test_agents_manager.py::test_non_sync_writes_refuse_widened_network`.
 - 4.2.3 - A row with `network: trusted` is immutable outside the sync: update, toggle, restore, set_step_workflow and both moves refuse. test: `tests/storage/definitions/test_agents_manager.py::test_widened_network_row_is_immutable_outside_sync`.
 - 4.2.4 - The sync creates, updates and restores rows carrying `network: trusted` through sync entry points only. test: `tests/agents/test_agents_sync.py::TestSyncBundledAgents::test_sync_new_row_uses_sync_entry_point`.
+- 4.2.5 - An imported global or project agent YAML carrying `network: trusted`, loaded through `sync_imported_workflows` (the `reload_cache` path), is refused and leaves no row with a widened network. test: `tests/workflows/test_workflows_sync.py::test_imported_agent_yaml_cannot_widen_network`.
 
 ### 4.3 Resolve the definition's network at spawn [category: code] (depends: 1.8, 4.1, 4.2)
 `kind: deliverable`
