@@ -2638,5 +2638,5 @@ brings its own sync-owned fixtures:
   substantive findings are resolved at plan level. The final wording correction
   is in 1.2.10: when both writes fail, the claim stays held and restart recovers
   the row from the strict host inventory; no durable prepared identity is
-  asserted. The Adversary derives M1, and the Program Director applies it.
-  Expansion waits for the Program Director.
+  asserted. The Adversary derives and applies M1. The Program Director reviews
+  and gates expansion after Josh approves.
