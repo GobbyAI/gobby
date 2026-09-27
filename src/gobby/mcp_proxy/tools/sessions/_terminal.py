@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio as asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any, Literal
 from uuid import uuid4
 
@@ -54,6 +54,9 @@ from gobby.mcp_proxy.tools.sessions._terminal_transcripts import (
 )
 from gobby.prompts.loader import PromptLoader
 from gobby.sessions.handoff import (
+    FAILED_HANDOFF_VARIABLE,
+    HANDOFF_DISPATCH_GATE_VARIABLE,
+    PENDING_HANDOFF_VARIABLE,
     normalize_found_work,
     restore_handoff_attempt,
     stage_handoff_attempt,
@@ -388,6 +391,31 @@ def register_terminal_tools(
         found_work: list[dict[str, Any]] | None = None,
         clear_session: bool = False,
     ) -> dict[str, Any]:
+        from gobby.utils.session_context import get_current_session_id
+
+        session_id = get_current_session_id()
+        if session_id is not None:
+            variables = SessionVariableManager(db).get_variables(session_id)
+            gate = variables.get(HANDOFF_DISPATCH_GATE_VARIABLE)
+            failed = variables.get(FAILED_HANDOFF_VARIABLE)
+            if (
+                isinstance(gate, Mapping)
+                and gate.get("delivery_failed") is True
+                and gate.get("error_code") == "compact_unconfirmed"
+                and isinstance(gate.get("attempt_id"), str)
+                and isinstance(failed, Mapping)
+                and failed.get("attempt_id") == gate.get("attempt_id")
+                and PENDING_HANDOFF_VARIABLE not in variables
+            ):
+                return {
+                    "success": False,
+                    "compacted": False,
+                    "handoff_staged": False,
+                    "delivery_unconfirmed": True,
+                    "attempt_id": gate["attempt_id"],
+                    "error_code": "compact_unconfirmed",
+                    "reason": "Call gobby-sessions:get_handoff to settle the unconfirmed compact first",
+                }
         feedback_status = _require_handoff_prerequisites(clear_session=clear_session)
         if feedback_status.get("success") is False:
             return feedback_status

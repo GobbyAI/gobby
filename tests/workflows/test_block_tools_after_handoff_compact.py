@@ -430,6 +430,45 @@ async def test_background_delivery_failure_blocks_until_set_handoff_retry(
 
 
 @pytest.mark.asyncio
+async def test_unconfirmed_compact_gate_blocks_resubmission_but_allows_recovery(
+    handler: WorkflowHookHandler,
+    temp_db: HubDatabase,
+) -> None:
+    attempt_id = "a" * 32
+    SessionVariableManager(temp_db).merge_variables(
+        SESSION_ID,
+        {
+            "context_compact_handoff_result": {
+                "delivery_failed": True,
+                "error_code": "compact_unconfirmed",
+                "attempt_id": attempt_id,
+            },
+            "failed_handoff_attempt": {"attempt_id": attempt_id},
+        },
+    )
+
+    resubmit = await handler._evaluate_rules(
+        _arbitrary_tool_event(
+            tool_name="mcp__gobby__call_tool",
+            mcp_server="gobby-sessions",
+            mcp_tool="set_handoff",
+        )
+    )
+    recover = await handler._evaluate_rules(
+        _arbitrary_tool_event(
+            tool_name="mcp__gobby__call_tool",
+            mcp_server="gobby-sessions",
+            mcp_tool="get_handoff",
+        )
+    )
+
+    assert resubmit.decision == "block"
+    assert "get_handoff" in (resubmit.reason or "")
+    assert "Retry gobby-sessions:set_handoff" not in (resubmit.reason or "")
+    assert recover.decision == "allow"
+
+
+@pytest.mark.asyncio
 async def test_context_limit_blocks_bash_with_self_contained_handoff_sequence(
     handler: WorkflowHookHandler,
     session_manager: Any,
