@@ -505,6 +505,123 @@ async fn first_frame_stage_waits_for_the_focused_pane() {
     mock.shutdown().await;
 }
 
+/// The workspace is projected on attach, before the roster opens any pane, so
+/// the focused tab's terminals are unresolved then. Opening them must
+/// re-project the tab without a generation bump or a tab switch (#22972).
+#[tokio::test]
+async fn focused_tab_panes_are_drawn_after_startup_opens_them() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.seed_workspace(
+        "project-1",
+        &[
+            (&["terminal-a", "terminal-b"], "terminal-a"),
+            (&["terminal-c"], "terminal-c"),
+        ],
+    );
+    let row = |terminal_id: &str| serde_json::json!({"terminal_id": terminal_id, "backend": "native", "state": "live"});
+    // The roster's first row fetch waits, so the loop projects the attached
+    // workspace while none of its terminals has a pane yet.
+    let roster_hold = mock.enqueue_held("GET", "/api/terminals/terminal-a", 200, row("terminal-a"));
+    for terminal_id in ["terminal-b", "terminal-c"] {
+        mock.enqueue(
+            "GET",
+            &format!("/api/terminals/{terminal_id}"),
+            200,
+            row(terminal_id),
+        );
+    }
+    let daemon = LiveDaemon::connect_or_wait(mock.url(), "local-token")
+        .await
+        .expect("connect to mock daemon");
+    let mut workspace = Workspace::live(daemon);
+    workspace.select_project("project-1");
+    workspace.set_frame_delivery(FrameDelivery::Proxy);
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    chrome.connection.stages = Some(StartupStages::begin(Instant::now()));
+    let (input_tx, input_rx) = mpsc::channel(1);
+    let mut switch = TerminalGuard::recording().0;
+
+    let drive = async {
+        timeout(Duration::from_secs(5), async {
+            while !mock.requests().iter().any(|request| {
+                request.method == "GET" && request.target.starts_with("/api/terminals/terminal-a")
+            }) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("roster fetches the focused tab's rows");
+        // Any daemon event while the roster waits re-syncs the chrome.
+        mock.send_event_and_wait(serde_json::json!({
+            "type": "attention_event",
+            "daemon_epoch": "epoch-1",
+            "seq": 1
+        }))
+        .await;
+        roster_hold.notify_one();
+        timeout(Duration::from_secs(5), async {
+            loop {
+                let attached = |terminal_id: &str| {
+                    mock.requests().iter().any(|request| {
+                        request.method == "WS"
+                            && request.body.as_ref().is_some_and(|body| {
+                                body.get("type") == Some(&serde_json::json!("terminal_attach"))
+                                    && body.get("terminal_id")
+                                        == Some(&serde_json::json!(terminal_id))
+                            })
+                    })
+                };
+                if attached("terminal-a") && attached("terminal-b") {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("focused tab panes attach");
+        drop(input_tx);
+    };
+    timeout(Duration::from_secs(10), async {
+        let (result, ()) = tokio::join!(
+            run_live_loop(
+                &mut workspace,
+                &mut terminal,
+                &mut chrome,
+                input_rx,
+                &mut switch,
+            ),
+            drive,
+        );
+        result.expect("input close ends the window");
+    })
+    .await
+    .expect("startup stays responsive");
+
+    let tab = chrome.active_tab().expect("focused tab shown");
+    assert_eq!(
+        tab.slots.len(),
+        2,
+        "both focused-tab panes fill their slots"
+    );
+    assert!(
+        chrome.focused_pane().is_some(),
+        "the focused slot holds a pane"
+    );
+    let screen: String = terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(Cell::symbol)
+        .collect();
+    assert!(
+        !screen.contains("No pane open."),
+        "the focused tab draws its panes, not the empty-tab note"
+    );
+    mock.shutdown().await;
+}
+
 /// Run startup with the focused pane's attach refused with `code`, and return
 /// the first-frame stage once the sidebar fetch has started. A pane whose
 /// attach fails draws its reason instead of a frame, and startup must treat
