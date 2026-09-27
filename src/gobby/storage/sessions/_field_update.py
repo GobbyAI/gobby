@@ -152,7 +152,7 @@ class _FieldUpdateMixin(
         *,
         observed_updated_at: datetime,
     ) -> Session | None:
-        """Pause one exact active Claude row that is idle at its prompt.
+        """Pause one exact active row proved idle at its prompt.
 
         The compare-and-set refuses a row whose activity timestamp moved, so a
         turn that started during the probe stays active. last_activity is left
@@ -166,7 +166,6 @@ class _FieldUpdateMixin(
                 SET status = 'paused', updated_at = %s
                 WHERE id = %s
                   AND status = 'active'
-                  AND source = 'claude'
                   AND updated_at = %s
                 """,
                 (now, session_id, observed_updated_at),
@@ -267,6 +266,59 @@ class _FieldUpdateMixin(
                 (now, session_id, list(TERMINAL_OWNER_STATUSES)),
             )
         if cursor.rowcount <= 0:
+            return None
+        self._notify_session_change("session_expired", session_id)
+        updated = self.get(session_id)
+        if updated is not None:
+            self._notify_status_transition(
+                SessionStatusTransition.from_session(updated, transitioned_at=now)
+            )
+        return updated
+
+    def expire_if_paused_terminal_exited(
+        self: _ManagerState,
+        session_id: str,
+        *,
+        terminal_id: str,
+        machine_id: str,
+        observed_updated_at: datetime,
+    ) -> Session | None:
+        """Expire an unchanged paused session bound to a confirmed exited native terminal."""
+        now = utc_now()
+        with self.db.transaction():
+            cursor = self.db.execute(
+                """
+                UPDATE sessions s
+                SET status = 'expired', updated_at = %s
+                WHERE s.id = %s
+                  AND s.status = 'paused'
+                  AND s.machine_id = %s
+                  AND s.updated_at = %s
+                  AND s.terminal_context->>'gobby_terminal_id' = %s
+                  AND EXISTS (
+                      SELECT 1 FROM terminals t
+                      WHERE t.id = %s
+                        AND t.project_id = s.project_id
+                        AND t.machine_id = s.machine_id
+                        AND t.backend = 'native'
+                        AND t.state = 'exited'
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM terminals live
+                      WHERE live.session_id = s.id
+                        AND live.state IN ('pending', 'live')
+                  )
+                """,
+                (
+                    now,
+                    session_id,
+                    machine_id,
+                    observed_updated_at,
+                    terminal_id,
+                    terminal_id,
+                ),
+            )
+        if cursor.rowcount != 1:
             return None
         self._notify_session_change("session_expired", session_id)
         updated = self.get(session_id)

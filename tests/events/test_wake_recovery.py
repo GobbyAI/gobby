@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
+from fastapi import FastAPI, Request
 
 from gobby.agents.idle_detector import ComposerRead
 from gobby.events.live_wake import TerminalActivity
@@ -21,7 +24,12 @@ from gobby.events.wake_active_recovery import (
     session_precedes_restart_horizon,
 )
 from gobby.events.wake_recovery import WakeReplayCoordinator
+from gobby.hooks.event_handlers import EventHandlers
+from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.hooks.inbox import drain_hook_inbox_once
 from gobby.hooks.receipt_effects import apply_acknowledged_receipt
+from gobby.hooks.runtime_compat import SUPPORTED_HOOK_RESPONSE_CAPABILITY
+from gobby.hooks.session_types import HookSessionManager
 from gobby.sessions.mailbox import MailboxService
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
@@ -429,12 +437,10 @@ async def test_restart_reconciliation_reaches_delivered_without_manual_input(
     terminal = replace(make_memory_terminal(backend="native"), session_id=recipient_id)
     terminals = MemoryTerminalStore(terminal)
     native_sender = AsyncMock()
-    pane_sender = AsyncMock()
     dispatcher = WakeDispatcher(
         session_manager=session_manager,
         ism_manager=messages,
         tmux_sender=native_sender,
-        tmux_pane_sender=pane_sender,
         terminal_manager=terminals,
         run_db=_run_db,
         activity_probe=_empty_activity,
@@ -458,10 +464,155 @@ async def test_restart_reconciliation_reaches_delivered_without_manual_input(
     native_sender.assert_awaited_once()
     assert native_sender.await_args is not None
     assert native_sender.await_args.args[0] == terminal.id
-    pane_sender.assert_not_awaited()
     apply_acknowledged_receipt(
         SimpleNamespace(
             receipt_id="restart-receipt",
+            staged_payload={
+                "pending_message_ids": [message_id],
+                "pending_message_session_id": recipient_id,
+            },
+        ),
+        message_manager=messages,
+    )
+    delivered = messages.get_message(message_id)
+    assert delivered is not None and delivered.delivered_at is not None
+
+
+@pytest.mark.asyncio
+async def test_replayed_stop_settles_active_session_before_queued_terminal_wake(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+) -> None:
+    """A Stop retained across daemon downtime changes the next wake's route."""
+    sender_id = _session(session_manager, sample_project["id"], "stop-replay-sender")
+    recipient_id = _session(session_manager, sample_project["id"], "stop-replay-recipient")
+    session_manager.update_status(sender_id, "paused")
+    session_manager.update_status(recipient_id, "active")
+    inbox_dir = tmp_path / "hooks" / "inbox"
+    inbox_dir.mkdir(parents=True)
+    envelope_path = inbox_dir / f"n-{int(datetime.now(UTC).timestamp() * 1000)}-stop.json"
+    envelope_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "enqueued_at": datetime.now(UTC).isoformat(),
+                "critical": False,
+                "response_capability": SUPPORTED_HOOK_RESPONSE_CAPABILITY,
+                "hook_type": "Stop",
+                "source": "codex",
+                "input_data": {"session_id": recipient_id},
+                "headers": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    handlers = EventHandlers(session_manager=cast(HookSessionManager, session_manager))
+    app = FastAPI()
+
+    @app.post("/api/hooks/execute")
+    async def execute_stop(request: Request) -> dict[str, str]:
+        envelope = await request.json()
+        assert envelope["hook_type"] == "Stop"
+        handlers.handle_stop(
+            HookEvent(
+                event_type=HookEventType.STOP,
+                session_id=recipient_id,
+                source=SessionSource.CODEX,
+                timestamp=datetime.now(UTC),
+                data=envelope["input_data"],
+                metadata={"_platform_session_id": recipient_id},
+                turn_disposition="completed",
+            )
+        )
+        return {"status": "ok"}
+
+    with patch("gobby.hooks.inbox.read_local_api_token", return_value="test-token"):
+        replayed = await drain_hook_inbox_once(app, inbox_dir=inbox_dir, include_fresh=True)
+    assert replayed == 1
+    assert not envelope_path.exists()
+    settled = session_manager.get(recipient_id)
+    assert settled is not None and settled.status == "paused"
+
+    messages = InterSessionMessageManager(temp_db)
+    _pending_wake(messages, sender_id, recipient_id)
+    terminal = replace(make_memory_terminal(backend="native"), session_id=recipient_id)
+    native_sender = AsyncMock()
+    dispatcher = WakeDispatcher(
+        session_manager=session_manager,
+        ism_manager=messages,
+        tmux_sender=native_sender,
+        terminal_manager=MemoryTerminalStore(terminal),
+        run_db=_run_db,
+    )
+    result = await dispatcher.dispatch_live_wake(recipient_id)
+    assert result["delivered"] is True
+    assert result["method"] == "terminal"
+    native_sender.assert_awaited_once()
+
+
+async def test_post_restart_codex_idle_prompt_replays_one_queued_wake(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+) -> None:
+    sender_id = _session(session_manager, sample_project["id"], "late-sender")
+    recipient_id = _session(session_manager, sample_project["id"], "late-recipient")
+    session_manager.update_status(sender_id, "paused")
+    horizon = datetime.now(UTC) - timedelta(seconds=3)
+    _set_lifecycle_time(session_manager, recipient_id, horizon + timedelta(seconds=1))
+    messages = InterSessionMessageManager(temp_db)
+    message_id = _pending_wake(messages, sender_id, recipient_id)
+    terminal = replace(make_memory_terminal(backend="native"), session_id=recipient_id)
+    terminals = MemoryTerminalStore(terminal)
+    wake_delivered = asyncio.Event()
+
+    async def send_terminal(*_args: object, **_kwargs: object) -> None:
+        wake_delivered.set()
+
+    native_sender = AsyncMock(side_effect=send_terminal)
+
+    async def flush(_session_id: str) -> None:
+        return None
+
+    dispatcher = WakeDispatcher(
+        session_manager=session_manager,
+        ism_manager=messages,
+        tmux_sender=native_sender,
+        terminal_manager=terminals,
+        run_db=_run_db,
+        lifecycle_refresh=flush,
+        activity_probe=_empty_activity,
+    )
+    coordinator = WakeReplayCoordinator(
+        message_manager=messages,
+        session_manager=session_manager,
+        dispatcher=dispatcher,
+        run_db=_run_db,
+    )
+    coordinator.bind_owner_loop(asyncio.get_running_loop())
+
+    paused = await dispatcher.reconcile_restart_active_sessions(
+        restart_horizon_ms=int(horizon.timestamp() * 1_000),
+        excluded_session_ids=frozenset(),
+        recovery_safe=True,
+    )
+    assert paused == ()
+    await coordinator.open()
+    await asyncio.wait_for(wake_delivered.wait(), timeout=1)
+
+    settled = session_manager.get(recipient_id)
+    assert settled is not None and settled.status == "paused"
+    native_sender.assert_awaited_once()
+    assert messages.get_undelivered_wake_messages(recipient_id)
+
+    await coordinator.request_replay(recipient_id)
+    native_sender.assert_awaited_once()
+    apply_acknowledged_receipt(
+        SimpleNamespace(
+            receipt_id="late-restart-receipt",
             staged_payload={
                 "pending_message_ids": [message_id],
                 "pending_message_session_id": recipient_id,

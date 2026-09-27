@@ -18,6 +18,7 @@ from gobby.storage.memories import LocalMemoryManager
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import LIVE_SESSION_STATUS_ORDER, SessionManager
+from gobby.storage.terminals import TerminalManager, native_locator_key
 from gobby.terminal_ownership import (
     OwnershipReason,
     PaneOwnershipDecision,
@@ -249,7 +250,7 @@ class TestSessionManagerLifecycle:
         current = session_manager.get(session.id)
         assert current is not None and current.status == "active"
 
-    def test_idle_prompt_pause_is_claude_only_and_exact_updated_at(
+    def test_idle_prompt_pause_accepts_codex_and_preserves_exact_updated_at(
         self,
         session_manager: SessionManager,
         sample_project: dict[str, str],
@@ -294,15 +295,11 @@ class TestSessionManagerLifecycle:
             )
         codex_row = session_manager.get(codex.id)
         assert codex_row is not None
-        assert (
-            session_manager._pause_idle_prompt_active(
-                codex.id,
-                observed_updated_at=codex_row.updated_at,
-            )
-            is None
+        paused_codex = session_manager._pause_idle_prompt_active(
+            codex.id,
+            observed_updated_at=codex_row.updated_at,
         )
-        still_codex = session_manager.get(codex.id)
-        assert still_codex is not None and still_codex.status == "active"
+        assert paused_codex is not None and paused_codex.status == "paused"
 
         with session_manager.db.transaction():
             session_manager.db.execute(
@@ -2294,3 +2291,150 @@ class TestSessionManagerLifecycle:
 
         sessions = session_manager.list()  # No filters
         assert len(sessions) >= 2
+
+
+@pytest.mark.parametrize(
+    "guard",
+    [
+        "confirmed_exited",
+        "active_session",
+        "wrong_machine",
+        "changed_context",
+        "changed_row",
+        "alternate_live",
+        "terminal_live",
+        "missing_terminal",
+    ],
+)
+def test_expire_paused_session_requires_confirmed_exited_native_terminal(
+    session_manager: SessionManager,
+    sample_project: dict[str, str],
+    guard: str,
+) -> None:
+    """The expiry CAS preserves a newer session or terminal binding."""
+    terminals = TerminalManager(session_manager.db)
+    terminal_id = str(uuid.uuid4())
+    session = session_manager.register(
+        external_id=f"exited-native-{guard}",
+        machine_id=LOCAL_MACHINE_ID,
+        source="codex",
+        project_id=sample_project["id"],
+        terminal_context={"gobby_terminal_id": terminal_id},
+    )
+    session_manager.update_status(session.id, "paused")
+    paused = session_manager.get(session.id)
+    assert paused is not None
+
+    if guard != "missing_terminal":
+        terminal = terminals.create_pending(
+            terminal_id=terminal_id,
+            project_id=sample_project["id"],
+            backend="native",
+            ownership="gobby",
+            spawn_key=terminal_id,
+            machine_id=LOCAL_MACHINE_ID,
+            session_id=session.id,
+        )
+        assert terminal is not None
+        host_epoch = "exited-native-test"
+        host_terminal_id = f"host-{guard}"
+        assert (
+            terminals.promote_to_live(
+                terminal_id,
+                locator={"host_terminal_id": host_terminal_id},
+                locator_key=native_locator_key(host_epoch, host_terminal_id),
+                host_epoch=host_epoch,
+            )
+            is not None
+        )
+        if guard != "terminal_live":
+            assert terminals.mark_exited(terminal_id) is not None
+
+    if guard == "active_session":
+        session_manager.update_status(session.id, "active")
+    elif guard == "changed_context":
+        session_manager.update(
+            session.id,
+            terminal_context={"gobby_terminal_id": str(uuid.uuid4())},
+        )
+    elif guard == "changed_row":
+        session_manager.update(session.id, title="new activity")
+    elif guard == "alternate_live":
+        alternate_id = str(uuid.uuid4())
+        terminals.create_pending(
+            terminal_id=alternate_id,
+            project_id=sample_project["id"],
+            backend="native",
+            ownership="gobby",
+            spawn_key=alternate_id,
+            machine_id=LOCAL_MACHINE_ID,
+            session_id=session.id,
+        )
+
+    expired = session_manager.expire_if_paused_terminal_exited(
+        session.id,
+        terminal_id=terminal_id,
+        machine_id=(str(uuid.uuid4()) if guard == "wrong_machine" else LOCAL_MACHINE_ID),
+        observed_updated_at=paused.updated_at,
+    )
+
+    assert (expired is not None) is (guard == "confirmed_exited")
+    current = session_manager.get(session.id)
+    assert current is not None
+    assert current.status == (
+        "expired"
+        if guard == "confirmed_exited"
+        else ("active" if guard == "active_session" else "paused")
+    )
+
+
+def test_shared_exited_terminal_expires_older_paused_session(
+    session_manager: SessionManager,
+    sample_project: dict[str, str],
+) -> None:
+    """An exited terminal may have last been bound to a newer session."""
+    terminals = TerminalManager(session_manager.db)
+    terminal_id = str(uuid.uuid4())
+    older = session_manager.register(
+        external_id="older-shared-terminal",
+        machine_id=LOCAL_MACHINE_ID,
+        source="claude",
+        project_id=sample_project["id"],
+        terminal_context={"gobby_terminal_id": terminal_id},
+    )
+    newer = session_manager.register(
+        external_id="newer-shared-terminal",
+        machine_id=LOCAL_MACHINE_ID,
+        source="claude",
+        project_id=sample_project["id"],
+        terminal_context={"gobby_terminal_id": terminal_id},
+    )
+    for session in (older, newer):
+        session_manager.update_status(session.id, "paused")
+    observed = session_manager.get(older.id)
+    assert observed is not None
+    terminals.create_pending(
+        terminal_id=terminal_id,
+        project_id=sample_project["id"],
+        backend="native",
+        ownership="gobby",
+        spawn_key=terminal_id,
+        machine_id=LOCAL_MACHINE_ID,
+        session_id=newer.id,
+    )
+    assert terminals.promote_to_live(
+        terminal_id,
+        locator={"host_terminal_id": "host-shared"},
+        locator_key=native_locator_key("shared-epoch", "host-shared"),
+        host_epoch="shared-epoch",
+    )
+    assert terminals.mark_exited(terminal_id)
+
+    expired = session_manager.expire_if_paused_terminal_exited(
+        older.id,
+        terminal_id=terminal_id,
+        machine_id=LOCAL_MACHINE_ID,
+        observed_updated_at=observed.updated_at,
+    )
+
+    assert expired is not None and expired.status == "expired"
