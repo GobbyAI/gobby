@@ -405,6 +405,8 @@ def _is_command_shaped_span(command: str) -> bool:
     tokens = safe_split(command)
     if len(tokens) < 2:
         return False
+    if tokens[:2] == ["git", "add"] and command.endswith(" and commit"):
+        return False
     equivalence = classify_validation_command_equivalence(command)
     if _looks_like_criterion_command(command, equivalence.core_command, set()):
         return True

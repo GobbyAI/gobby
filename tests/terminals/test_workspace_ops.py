@@ -307,6 +307,22 @@ async def test_split_spawns_with_pane_identity_env_and_rolls_back(harness: _Harn
     assert killed is not None and killed.state == "exited"
 
 
+async def test_spawned_shell_is_killed_when_pane_binding_raises(harness: _Harness) -> None:
+    h = harness
+    workspace = await h.ops.workspace_create(OPERATOR)
+    first = (await h.ops.tab_create(OPERATOR, workspace.id, h.project_id)).panes[0]
+
+    with patch.object(h.workspaces, "set_pane_terminal", side_effect=RuntimeError("bind failed")):
+        await _raises("terminal_failed", h.ops.pane_split(OPERATOR, first.id, "horizontal"))
+
+    minted = h.native.last_request
+    assert minted is not None
+    terminal = h.terminals.get(str(minted.terminal_id))
+    assert terminal is not None and terminal.state == "exited"
+    assert ("ht-1", str(minted.terminal_id)) in h.native.terminated_host_ids
+    assert [pane.id for pane in h.workspaces.list_panes(workspace.id)] == [first.id]
+
+
 async def test_adopt_close_and_move_semantics(harness: _Harness) -> None:
     h = harness
     workspace = await h.ops.workspace_create(OPERATOR)

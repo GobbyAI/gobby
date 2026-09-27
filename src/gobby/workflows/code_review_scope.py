@@ -15,6 +15,7 @@ code change land; a redundant one costs one review pass.
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import PurePosixPath
@@ -150,7 +151,7 @@ class CommitReviewScope:
 
 
 def parse_commit_scope(command: str | None) -> CommitScope | None:
-    """Return what a lone `git commit` shell command records, else ``None``.
+    """Return the paths a plain or narrowly wrapped `git commit` records.
 
     ``None`` means the recorded paths are not determinable from the command:
     another segment could stage or move files first, the subcommand is not
@@ -160,13 +161,28 @@ def parse_commit_scope(command: str | None) -> CommitScope | None:
         return None
 
     parsed = parse_shell_command(command)
-    # One segment only. Anything else — `git add x.py && git commit`,
-    # `cd other && git commit`, a second Git operation — decides the recorded
-    # paths after this event is evaluated.
-    if len(parsed.segments) != 1:
+    wrapper_chdir: str | None = None
+    if len(parsed.segments) == 1:
+        tokens = list(parsed.segments[0])
+    elif len(parsed.segments) == 3 and parsed.operators == ("&&", "|"):
+        wrapper = re.fullmatch(r"(?s)\s*(.*?)\s+2>&1\s*\|\s*tail\s+-20\s*", command)
+        if wrapper is None:
+            return None
+        prefix = wrapper.group(1)
+        if prefix.count("&&") != 1 or any(
+            char in prefix.replace("&&", "") for char in ";|&<>$`\\*?[]{}()\n\r"
+        ):
+            return None
+        cd, commit, tail = parsed.segments
+        if len(cd) != 2 or cd[0] != "cd" or cd[1].startswith(("-", "~")):
+            return None
+        if tail != ("tail", "-20"):
+            return None
+        wrapper_chdir = cd[1]
+        tokens = list(commit)
+    else:
         return None
 
-    tokens = list(parsed.segments[0])
     if not tokens or tokens[0].rsplit("/", maxsplit=1)[-1] != "git":
         return None
 
@@ -174,7 +190,9 @@ def parse_commit_scope(command: str | None) -> CommitScope | None:
     if parsed_globals is None:
         return None
     index, chdir = parsed_globals
-    return _parse_commit_arguments(tokens[1 + index :], chdir)
+    if wrapper_chdir is not None and chdir is not None:
+        return None
+    return _parse_commit_arguments(tokens[1 + index :], wrapper_chdir or chdir)
 
 
 def _parse_git_global_options(tokens: Sequence[str]) -> tuple[int, str | None] | None:
