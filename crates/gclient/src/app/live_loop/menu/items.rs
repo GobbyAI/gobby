@@ -11,23 +11,23 @@ use super::{ArrangeLayout, MenuAction, MenuItem};
 pub(in crate::app::live_loop) fn arrange_items() -> Vec<MenuItem> {
     vec![
         item(
-            "arrange: even horizontal",
+            "Arrange: even horizontal",
             MenuAction::Arrange(ArrangeLayout::EvenHorizontal),
         ),
         item(
-            "arrange: even vertical",
+            "Arrange: even vertical",
             MenuAction::Arrange(ArrangeLayout::EvenVertical),
         ),
         item(
-            "arrange: main horizontal",
+            "Arrange: main horizontal",
             MenuAction::Arrange(ArrangeLayout::MainHorizontal),
         ),
         item(
-            "arrange: main vertical",
+            "Arrange: main vertical",
             MenuAction::Arrange(ArrangeLayout::MainVertical),
         ),
-        item("arrange: tiled", MenuAction::Arrange(ArrangeLayout::Tiled)),
-        item("new grid…", MenuAction::OpenNewGrid),
+        item("Arrange: tiled", MenuAction::Arrange(ArrangeLayout::Tiled)),
+        item("New grid…", MenuAction::OpenNewGrid),
     ]
 }
 
@@ -39,45 +39,45 @@ pub(in crate::app::live_loop) fn arrange_items() -> Vec<MenuItem> {
 pub(super) fn pane_items<W: WorkspaceView>(ws: &W, chrome: &Chrome, pane: PaneId) -> Vec<MenuItem> {
     let state = ws.pane(pane);
     let zoomed = chrome.is_zoomed();
-    let mut items = vec![item("rename pane", MenuAction::Act(Action::RenamePane))];
+    let mut items = vec![item("Rename pane", MenuAction::Act(Action::RenamePane))];
     if state.label.is_some() {
-        items.push(item("clear pane name", MenuAction::ClearPaneName(pane)));
+        items.push(item("Clear pane name", MenuAction::ClearPaneName(pane)));
     }
     if chrome.focused_pane() != Some(pane) {
         items.push(item(
-            "swap with focused pane",
+            "Swap with focused pane",
             MenuAction::SwapWithFocused(pane),
         ));
     }
     items.extend([
-        item("split right", MenuAction::Act(Action::SplitVertical)),
-        item("split down", MenuAction::Act(Action::SplitHorizontal)),
+        item("Split right", MenuAction::Act(Action::SplitVertical)),
+        item("Split down", MenuAction::Act(Action::SplitHorizontal)),
         item(
-            if zoomed { "unzoom" } else { "zoom" },
+            if zoomed { "Unzoom" } else { "Zoom" },
             MenuAction::Act(Action::Zoom),
         ),
     ]);
     items.extend(arrange_items());
     items.push(control_item(state, pane));
     if let Some(entry_id) = blocked_entry(ws, pane) {
-        items.push(item("respond", MenuAction::Respond(entry_id)));
+        items.push(item("Respond", MenuAction::Respond(entry_id)));
     }
     items.extend([
-        item("copy mode", MenuAction::Act(Action::CopyMode)),
+        item("Copy mode", MenuAction::Act(Action::CopyMode)),
         item(
             passthrough_label(state),
             MenuAction::TogglePassthrough(pane),
         ),
-        item("close pane", MenuAction::Act(Action::ClosePane)),
+        item("Close pane", MenuAction::Act(Action::ClosePane)),
     ]);
     items
 }
 
 pub(super) fn tab_items() -> Vec<MenuItem> {
     vec![
-        item("new tab", MenuAction::Act(Action::NewTab)),
-        item("rename tab", MenuAction::Act(Action::RenameTab)),
-        item("close tab", MenuAction::Act(Action::CloseTab)),
+        item("New tab", MenuAction::Act(Action::NewTab)),
+        item("Rename tab", MenuAction::Act(Action::RenameTab)),
+        item("Close tab", MenuAction::Act(Action::CloseTab)),
     ]
 }
 
@@ -92,8 +92,8 @@ pub(super) fn project_items<W: WorkspaceView>(
 ) -> Vec<MenuItem> {
     let id = || project_id.to_owned();
     let mut items = vec![
-        item("rename", MenuAction::RenameProject(id())),
-        item("close", MenuAction::CloseProject(id())),
+        item("Rename", MenuAction::RenameProject(id())),
+        item("Close", MenuAction::CloseProject(id())),
     ];
     let Some(project) = ws
         .sidebar()
@@ -104,13 +104,13 @@ pub(super) fn project_items<W: WorkspaceView>(
         return items;
     };
     if project.branch.is_some() {
-        items.push(item("new worktree", MenuAction::NewWorktree(id())));
-        items.push(item("open worktree…", MenuAction::OpenWorktree(id())));
+        items.push(item("New worktree", MenuAction::NewWorktree(id())));
+        items.push(item("Open worktree…", MenuAction::OpenWorktree(id())));
     }
     if !project.worktrees.is_empty() {
         let folded = !chrome.sidebar.is_expanded(project_id);
         items.push(item(
-            if folded { "expand" } else { "collapse" },
+            if folded { "Expand" } else { "Collapse" },
             MenuAction::ToggleGroup(id()),
         ));
     }
@@ -128,10 +128,10 @@ pub(super) fn worktree_items(chrome: &Chrome, worktree_id: &str) -> Vec<MenuItem
         .flat_map(|set| set.tabs.iter())
         .any(|tab| tab.worktree_id.as_deref() == Some(worktree_id));
     vec![
-        enabled_if(item("rename", MenuAction::Act(Action::RenameTab)), shown),
-        enabled_if(item("close", MenuAction::Act(Action::CloseTab)), shown),
+        enabled_if(item("Rename", MenuAction::Act(Action::RenameTab)), shown),
+        enabled_if(item("Close", MenuAction::Act(Action::CloseTab)), shown),
         item(
-            "delete worktree checkout…",
+            "Delete worktree checkout…",
             MenuAction::RemoveWorktree(worktree_id.to_owned()),
         ),
     ]
@@ -145,30 +145,30 @@ pub(super) fn agent_items<W: WorkspaceView>(ws: &W, entry_id: &str) -> Vec<MenuI
     let id = || entry_id.to_owned();
     let pane = attention_pane(ws, entry_id);
     let mut items = vec![
-        item("focus", MenuAction::FocusAgent(id())),
-        item("open in new tab", MenuAction::OpenAgentInNewTab(id())),
+        item("Focus", MenuAction::FocusAgent(id())),
+        item("Open in new tab", MenuAction::OpenAgentInNewTab(id())),
     ];
     if agent_blocked(ws, entry_id) {
-        items.push(item("respond", MenuAction::Respond(id())));
+        items.push(item("Respond", MenuAction::Respond(id())));
     }
     items.push(enabled_if(
-        item("mark seen", MenuAction::MarkSeen(id())),
+        item("Mark seen", MenuAction::MarkSeen(id())),
         attention_id(ws, entry_id).is_some(),
     ));
     // Disabled no-pane rows never dispatch either `Act` placeholder.
     let control = pane.map_or_else(
-        || item("take control", MenuAction::Act(Action::TakeControl)),
+        || item("Take control", MenuAction::Act(Action::TakeControl)),
         |pane| control_item(ws.pane(pane), pane),
     );
     // An orphaned row has no host to close; the daemon can only destroy it.
     let close = match orphaned_terminal(ws, entry_id) {
         Some(terminal_id) => item(
-            "destroy orphaned terminal",
+            "Destroy orphaned terminal",
             MenuAction::DestroyTerminal(terminal_id),
         ),
         None => enabled_if(
             item(
-                "close terminal",
+                "Close terminal",
                 pane.map_or(
                     MenuAction::Act(Action::CloseTerminal),
                     MenuAction::CloseTerminal,
@@ -212,10 +212,10 @@ pub(in crate::app::live_loop) fn agents_view_items(chrome: &Chrome) -> Vec<MenuI
     let scope = MenuAction::Act(Action::ToggleSessionsScope);
     let sort = MenuAction::Act(Action::ToggleAgentSort);
     vec![
-        choice(("✓ this project", "  this project"), !all, scope.clone()),
-        choice(("✓ all projects", "  all projects"), all, scope),
-        choice(("✓ grouped", "  grouped"), !priority, sort.clone()),
-        choice(("✓ priority", "  priority"), priority, sort),
+        choice(("✓ This project", "  This project"), !all, scope.clone()),
+        choice(("✓ All projects", "  All projects"), all, scope),
+        choice(("✓ Grouped", "  Grouped"), !priority, sort.clone()),
+        choice(("✓ Priority", "  Priority"), priority, sort),
     ]
 }
 
@@ -228,21 +228,54 @@ fn choice(labels: (&'static str, &'static str), active: bool, action: MenuAction
     enabled_if(item(if active { marked } else { plain }, action), !active)
 }
 
+/// Each theme preference with its View row and its marked and plain choice.
+const THEMES: [(&str, &str, (&str, &str)); 3] = [
+    ("dark", "Theme: Dark ▸", ("● Dark", "  Dark")),
+    ("light", "Theme: Light ▸", ("● Light", "  Light")),
+    ("system", "Theme: System ▸", ("● System", "  System")),
+];
+
+/// The preference in force, read the way `ClientPrefs::theme_kind` reads it:
+/// anything but light or system draws dark.
+fn theme_in_force(chrome: &Chrome) -> usize {
+    THEMES
+        .iter()
+        .position(|(value, ..)| value.eq_ignore_ascii_case(&chrome.prefs.theme))
+        .unwrap_or(0)
+}
+
+/// The View menu's one theme row, naming the preference in force.
+pub(in crate::app::live_loop) fn theme_row_label(chrome: &Chrome) -> &'static str {
+    THEMES[theme_in_force(chrome)].1
+}
+
+/// Dark, Light and System; System follows the terminal's appearance.
+pub(super) fn theme_items(chrome: &Chrome) -> Vec<MenuItem> {
+    let chosen = theme_in_force(chrome);
+    THEMES
+        .iter()
+        .enumerate()
+        .map(|(index, (value, _, labels))| {
+            choice(*labels, index == chosen, MenuAction::SetTheme(value))
+        })
+        .collect()
+}
+
 pub(super) fn global_items() -> Vec<MenuItem> {
     vec![
-        item("new terminal", MenuAction::Act(Action::NewTerminal)),
-        item("new tab", MenuAction::Act(Action::NewTab)),
-        item("new workspace…", MenuAction::Act(Action::NewProject)),
-        item("settings", MenuAction::Act(Action::Settings)),
-        item("keybinding help", MenuAction::Act(Action::Help)),
-        item("reload config", MenuAction::Act(Action::ReloadConfig)),
-        item("toggle sidebar", MenuAction::Act(Action::ToggleSidebar)),
+        item("New terminal", MenuAction::Act(Action::NewTerminal)),
+        item("New tab", MenuAction::Act(Action::NewTab)),
+        item("New workspace…", MenuAction::Act(Action::NewProject)),
+        item("Settings", MenuAction::Act(Action::Settings)),
+        item("Keybinding help", MenuAction::Act(Action::Help)),
+        item("Reload config", MenuAction::Act(Action::ReloadConfig)),
+        item("Toggle sidebar", MenuAction::Act(Action::ToggleSidebar)),
         // Always enabled: the candidates are fetched on activation, and an
         // empty result reports itself in a toast.
-        item("destroy orphaned terminals…", MenuAction::DestroyOrphans),
-        item("detach", MenuAction::Act(Action::Detach)),
+        item("Destroy orphaned terminals…", MenuAction::DestroyOrphans),
+        item("Detach", MenuAction::Act(Action::Detach)),
         // The chord is prefix+shift+q; the menu is where a new user finds it.
-        item("quit", MenuAction::Act(Action::Quit)),
+        item("Quit", MenuAction::Act(Action::Quit)),
     ]
 }
 
@@ -250,9 +283,9 @@ pub(super) fn global_items() -> Vec<MenuItem> {
 /// title that names them. The Agent menu's items are section 3.11's.
 pub(in crate::app::live_loop) fn passthrough_label(state: &crate::app::Pane) -> &'static str {
     if state.right_click_passthrough {
-        "use gclient menu"
+        "Use gclient menu"
     } else {
-        "send right-clicks to pane"
+        "Send right-clicks to pane"
     }
 }
 
@@ -270,8 +303,8 @@ pub(in crate::app::live_loop) fn enabled_if(item: MenuItem, enabled: bool) -> Me
 
 fn control_item(state: &crate::app::Pane, pane: PaneId) -> MenuItem {
     match state.control {
-        ControlState::Held => item("release control", MenuAction::ReleaseControl(pane)),
-        _ => item("take control", MenuAction::TakeControl(pane)),
+        ControlState::Held => item("Release control", MenuAction::ReleaseControl(pane)),
+        _ => item("Take control", MenuAction::TakeControl(pane)),
     }
 }
 

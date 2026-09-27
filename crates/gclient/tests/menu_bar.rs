@@ -1,14 +1,22 @@
 mod mock_daemon;
 
+use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use gobby_client::app::apply_live_menu_action;
-use gobby_client::app::{build_menu, ContextMenuKind, ControlState};
+use gobby_client::app::{
+    build_menu, route_mouse, ContextMenuKind, ControlState, MenuAction, MouseOutcome,
+};
 use gobby_client::daemon::LiveDaemon;
+use gobby_client::prefs::load_prefs;
+use gobby_client::theme::ThemeKind;
+use gobby_client::ui::chrome::Mode;
 use gobby_client::ui::keymap::BINDINGS;
 use gobby_client::ui::menu_bar::MenuBarMenu;
 use gobby_client::ui::status::Toast;
-use gobby_client::ui::Chrome;
+use gobby_client::ui::{render_workspace, Chrome};
 use gobby_client::Workspace;
+use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
+use ratatui::Terminal;
 use serde_json::json;
 use tempfile::TempDir;
 
@@ -19,7 +27,7 @@ struct LiveMenuFixture {
     workspace: Workspace<LiveDaemon>,
     chrome: Chrome,
     pane: Option<gobby_client::app::PaneId>,
-    _home: TempDir,
+    home: TempDir,
 }
 
 async fn live_menu_fixture(focused: bool, held: bool) -> LiveMenuFixture {
@@ -95,7 +103,7 @@ async fn live_menu_fixture(focused: bool, held: bool) -> LiveMenuFixture {
         workspace,
         chrome,
         pane,
-        _home: home,
+        home,
     }
 }
 
@@ -140,15 +148,15 @@ fn agent_menu_lists_the_nine_actions_in_order() {
     assert_eq!(
         labels,
         [
-            "respond",
-            "mark seen",
-            "take control",
-            "release control",
-            "take back",
-            "detach",
-            "open alert target",
-            "next attention",
-            "previous attention",
+            "Respond",
+            "Mark seen",
+            "Take control",
+            "Release control",
+            "Take back",
+            "Detach",
+            "Open alert target",
+            "Next attention",
+            "Previous attention",
         ]
     );
     assert!(!menu.items[0].enabled, "no pane can respond");
@@ -170,22 +178,22 @@ fn file_menu_says_new_workspace_and_help_holds_the_alert_log() {
     assert_eq!(
         labels(MenuBarMenu::File),
         [
-            "new terminal",
-            "new tab",
-            "new workspace…",
-            "rename tab",
-            "close tab",
-            "destroy orphaned terminals…",
-            "detach",
+            "New terminal",
+            "New tab",
+            "New workspace…",
+            "Rename tab",
+            "Close tab",
+            "Destroy orphaned terminals…",
+            "Detach",
         ]
     );
     assert_eq!(
         labels(MenuBarMenu::Help),
-        ["keys", "alerts…", "daemon", "about gobby"]
+        ["Keys", "Alerts…", "Daemon", "About Gobby"]
     );
     assert_eq!(
         labels(MenuBarMenu::Gobby),
-        ["settings", "reload config", "quit"]
+        ["Settings", "Reload config", "Quit"]
     );
     assert_eq!(
         BINDINGS
@@ -216,29 +224,30 @@ async fn every_menu_bar_item_dispatches_to_a_handler() {
     assert_eq!(
         labels(MenuBarMenu::View),
         [
-            "✓ this project",
-            "  all projects",
-            "✓ grouped",
-            "  priority",
-            "working projects",
-            "show sidebar",
-            "pin sidebar",
+            "✓ This project",
+            "  All projects",
+            "✓ Grouped",
+            "  Priority",
+            "Working projects",
+            "Show sidebar",
+            "Pin sidebar",
+            "Theme: Dark ▸",
         ]
     );
     assert_eq!(
         labels(MenuBarMenu::Window),
         [
-            "split right",
-            "split down",
-            "zoom",
-            "close pane",
-            "resize mode",
-            "arrange: even horizontal",
-            "arrange: even vertical",
-            "arrange: main horizontal",
-            "arrange: main vertical",
-            "arrange: tiled",
-            "new grid…",
+            "Split right",
+            "Split down",
+            "Zoom",
+            "Close pane",
+            "Resize mode",
+            "Arrange: even horizontal",
+            "Arrange: even vertical",
+            "Arrange: main horizontal",
+            "Arrange: main vertical",
+            "Arrange: tiled",
+            "New grid…",
         ]
     );
 
@@ -276,4 +285,99 @@ async fn every_menu_bar_item_dispatches_to_a_handler() {
             }
         }
     }
+}
+
+fn left_press((column, row): (u16, u16)) -> MouseEvent {
+    MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column,
+        row,
+        modifiers: KeyModifiers::NONE,
+    }
+}
+
+/// Draw a frame and hand its rects back to the hit tests, as the loop does.
+fn draw(terminal: &mut Terminal<TestBackend>, fixture: &mut LiveMenuFixture) {
+    let mut hits = None;
+    terminal
+        .draw(|frame| hits = Some(render_workspace(frame, &fixture.workspace, &fixture.chrome)))
+        .expect("draw frame");
+    fixture.chrome.apply_hits(hits.expect("frame drawn"));
+}
+
+// Regression: the drawn Theme row once did nothing when the loop dispatched
+// it. Each click here goes the live loop's way, the press routed and its menu
+// outcome applied, so the row must open its choices and a pick must save.
+#[tokio::test]
+async fn clicking_the_theme_row_opens_its_choices_and_a_pick_saves_it() {
+    let mut fixture = live_menu_fixture(true, false).await;
+    let mut terminal = Terminal::new(TestBackend::new(100, 30)).expect("test backend");
+    draw(&mut terminal, &mut fixture);
+    let view = MenuBarMenu::ALL
+        .iter()
+        .position(|menu| *menu == MenuBarMenu::View)
+        .expect("view title");
+    let title = fixture
+        .chrome
+        .view
+        .menu_title_hit_areas
+        .iter()
+        .find(|(index, _)| *index == view)
+        .map(|(_, rect)| *rect)
+        .expect("View title drawn");
+    let press = left_press((title.x + 1, title.y));
+    assert_eq!(
+        route_mouse(&fixture.workspace, &mut fixture.chrome, &press),
+        MouseOutcome::Handled
+    );
+    draw(&mut terminal, &mut fixture);
+    let menu = fixture.chrome.menu.as_ref().expect("View menu open");
+    let row = menu
+        .items
+        .iter()
+        .position(|item| item.action == MenuAction::ThemeMenu)
+        .map(|index| menu.item_rects[index])
+        .expect("theme row drawn");
+
+    let press = left_press((row.x + 1, row.y));
+    let outcome = route_mouse(&fixture.workspace, &mut fixture.chrome, &press);
+    let MouseOutcome::Menu { kind, action } = outcome else {
+        panic!("the theme row click dispatches: {outcome:?}");
+    };
+    assert_eq!(kind, ContextMenuKind::MenuBar(MenuBarMenu::View));
+    assert_eq!(action, MenuAction::ThemeMenu);
+    let exit = apply_live_menu_action(&mut fixture.workspace, &mut fixture.chrome, kind, action)
+        .await
+        .expect("dispatch the theme row");
+    assert!(!exit);
+    assert_eq!(
+        fixture.chrome.mode,
+        Mode::ContextMenu,
+        "the choices stay open"
+    );
+    draw(&mut terminal, &mut fixture);
+    let choices = fixture.chrome.menu.as_ref().expect("theme choices open");
+    assert_eq!(choices.kind, ContextMenuKind::Theme);
+    let labels: Vec<&str> = choices.items.iter().map(|item| item.label).collect();
+    assert_eq!(labels, ["● Dark", "  Light", "  System"]);
+    assert!(
+        choices.item_rects[0].x > row.right(),
+        "beside the View menu"
+    );
+    assert_eq!(choices.item_rects[0].y, row.y, "level with the theme row");
+
+    let light = choices.item_rects[1];
+    let press = left_press((light.x + 1, light.y));
+    let outcome = route_mouse(&fixture.workspace, &mut fixture.chrome, &press);
+    let MouseOutcome::Menu { kind, action } = outcome else {
+        panic!("the Light click dispatches: {outcome:?}");
+    };
+    assert_eq!(action, MenuAction::SetTheme("light"));
+    apply_live_menu_action(&mut fixture.workspace, &mut fixture.chrome, kind, action)
+        .await
+        .expect("dispatch the pick");
+    assert_eq!(fixture.chrome.theme.kind, ThemeKind::Light);
+    let saved = load_prefs(fixture.home.path()).expect("load prefs");
+    assert_eq!(saved.theme, "light");
+    fixture.mock.shutdown().await;
 }

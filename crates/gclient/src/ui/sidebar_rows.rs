@@ -50,7 +50,6 @@ pub struct SidebarRow {
     pub id: String,
     pub definition: String,
     pub reference: String,
-    pub provider: Option<String>,
     pub task: Option<(String, String)>,
     pub model_slug: String,
     pub label: String,
@@ -345,28 +344,15 @@ pub(crate) fn row_line_with_scrolling<'a>(
             let prefix = nest_prefix(row);
             spans.push(Span::styled(prefix, prefix_style));
             let budget = budget.saturating_sub(display_width(prefix));
-            let reference = (!row.reference.is_empty()).then(|| format!(" ({})", row.reference));
-            let suffix_width = reference.as_deref().map_or(0, display_width);
-            let name_budget = budget.saturating_sub(2 + suffix_width);
             spans.push(Span::styled(glyph.0.to_string(), glyph.1));
             if budget > 1 {
                 spans.push(Span::raw(" "));
-                let name = truncate_end(&row.definition, name_budget);
-                let remaining = budget.saturating_sub(2 + display_width(&name));
-                spans.push(Span::styled(name, title_style));
-                if let Some(reference) = reference {
-                    spans.push(Span::styled(
-                        truncate_end(&reference, remaining),
-                        title_style,
-                    ));
-                }
-                let used: usize = spans.iter().map(|span| display_width(&span.content)).sum();
-                if let Some(provider) = row.provider.as_deref() {
-                    let trailing = format!(" · {provider}");
-                    if used + display_width(&trailing) <= usize::from(width) {
-                        spans.push(Span::styled(trailing, Style::default().fg(p.overlay0)));
-                    }
-                }
+                let name = if row.reference.is_empty() {
+                    row.definition.clone()
+                } else {
+                    format!("{}: {}", row.reference, row.definition)
+                };
+                spans.push(Span::styled(truncate_end(&name, budget - 2), title_style));
             }
         }
         RowKind::Group => {
@@ -430,16 +416,22 @@ pub fn row_travel(row: &SidebarRow, width: u16) -> usize {
     if row.kind != RowKind::Agent {
         return 0;
     }
-    let Some((reference, title)) = row.task.as_ref() else {
+    let Some(task) = task_line(row) else {
         return 0;
     };
-    let prefix = format!("Task {reference} - ");
-    let budget = usize::from(width)
-        .saturating_sub(3 + display_width(nest_prefix(row)) + display_width(&prefix));
+    let budget = usize::from(width).saturating_sub(3 + display_width(nest_prefix(row)));
     if budget < TICKER_MIN_WINDOW {
         return 0;
     }
-    display_width(title).saturating_sub(budget)
+    display_width(&task).saturating_sub(budget)
+}
+
+/// An agent's second line, `Working task 22944 Title`: the number is the
+/// task ref after its last `#`, and the whole line tickers as one string.
+fn task_line(row: &SidebarRow) -> Option<String> {
+    let (reference, title) = row.task.as_ref()?;
+    let number = reference.rsplit('#').next().unwrap_or(reference);
+    Some(format!("Working task {number} {title}"))
 }
 
 /// The `budget`-cell window of `text` the marquee shows at `ticker`: the
@@ -514,15 +506,11 @@ pub(crate) fn row_second_line_with_travel<'a>(
     let style = Style::default().fg(chrome.palette.subtext0);
     match row.kind {
         RowKind::Agent => {
-            if let Some((reference, title)) = row.task.as_ref() {
-                let prefix = format!("Task {reference} - ");
-                let prefix = truncate_end(&prefix, budget);
-                let title_budget = budget.saturating_sub(display_width(&prefix));
-                spans.push(Span::styled(prefix, style));
+            if let Some(task) = task_line(row) {
                 spans.push(Span::styled(
                     ticker_window(
-                        title,
-                        title_budget,
+                        &task,
+                        budget,
                         chrome.ticker,
                         max_travel,
                         chrome.prefs.title_scrolling,
@@ -547,7 +535,7 @@ pub fn row_third_line<'a>(row: &'a SidebarRow, width: u16, chrome: &Chrome) -> L
         return Line::default();
     }
     let indent = 3 + display_width(nest_prefix(row));
-    let budget = usize::from(width).saturating_sub(indent).min(17);
+    let budget = usize::from(width).saturating_sub(indent);
     Line::from(vec![
         Span::raw(" ".repeat(indent.min(usize::from(width)))),
         Span::styled(

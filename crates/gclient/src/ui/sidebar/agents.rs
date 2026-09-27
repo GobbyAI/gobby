@@ -20,7 +20,6 @@ use crate::ui::chrome::{Chrome, RowState, WorkspaceView};
 use crate::ui::hit::SidebarSection;
 use crate::ui::settings::AgentSort;
 use crate::ui::sidebar_rows::{displayed_project_ids, project_label, RowKind, SidebarRow};
-use crate::ui::text::truncate_end;
 use ratatui::layout::Rect;
 use ratatui::Frame;
 
@@ -324,7 +323,7 @@ fn agent_candidate<W: WorkspaceView>(ws: &W, chrome: &Chrome, visible: Visible<'
             definition: agent.definition_label(),
             reference,
             task: agent.task_ref.clone().zip(agent.task_title.clone()),
-            model_slug: truncate_end(&agent.model_slug(), 17),
+            model_slug: agent.model_slug(),
             label: agent_title(agent),
             kind: RowKind::Agent,
             state,

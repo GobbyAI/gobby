@@ -125,7 +125,7 @@ impl AgentEntry {
             .unwrap_or_else(|| provider_label(&self.provider).to_string())
     }
 
-    /// `fable-5.1-xhigh`: the display name (else the raw model) lowercased,
+    /// `claude-fable-5.1-xhigh`: the display name (else the raw model) lowercased,
     /// each whitespace run one `-`, with the effort appended.
     pub fn model_slug(&self) -> String {
         let model = self
@@ -134,12 +134,7 @@ impl AgentEntry {
             .or(self.model.as_deref())
             .unwrap_or_default()
             .to_lowercase();
-        let slug = model.split_whitespace().collect::<Vec<_>>().join("-");
-        let provider_prefix = format!("{}-", self.provider.to_lowercase());
-        let mut slug = slug
-            .strip_prefix(&provider_prefix)
-            .unwrap_or(&slug)
-            .to_string();
+        let mut slug = model.split_whitespace().collect::<Vec<_>>().join("-");
         if let Some(effort) = &self.effort {
             slug.push('-');
             slug.push_str(effort);

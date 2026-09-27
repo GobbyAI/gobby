@@ -715,8 +715,16 @@ fn agent_rows_golden() {
     let theme = Theme::new(ThemeKind::Dark);
     let rendered = deterministic_capture("agent_rows", agent_rows, &theme);
     let rows = glyph_rows(&rendered);
-    assert!(rows[9].contains("backend-developer-work… (#123)"));
-    assert!(rows[10].contains("Task #123 - Implement the full"));
+    assert!(
+        rows[9].contains("#123: backend-developer-work"),
+        "{:?}",
+        rows[9]
+    );
+    assert!(
+        rows[10].contains("Working task 123 Implement"),
+        "{:?}",
+        rows[10]
+    );
     assert!(rows[11].contains("gpt-5"));
     assert!(
         rows[25].contains("○ nvim"),

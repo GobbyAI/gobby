@@ -555,7 +555,11 @@ fn model_slug_lowercases_hyphenates_and_appends_effort() {
     );
     let mut claude = agent(Some("Claude Opus 5.5"), None, Some("high"));
     claude.provider = "claude".to_string();
-    assert_eq!(claude.model_slug(), "opus-5.5-high");
+    assert_eq!(
+        claude.model_slug(),
+        "claude-opus-5.5-high",
+        "the provider's own name stays in the slug"
+    );
     assert_eq!(
         agent(None, Some("GPT-5-Codex"), Some("high")).model_slug(),
         "gpt-5-codex-high",

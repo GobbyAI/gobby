@@ -6,7 +6,7 @@ use crate::ui::{Action, Chrome, WorkspaceView};
 
 use super::menu::{
     agents_view_items, arrange_items, blocked_entry, enabled_if, item, passthrough_label,
-    MenuAction, MenuItem,
+    theme_row_label, MenuAction, MenuItem,
 };
 
 pub fn menu_bar_items<W: WorkspaceView>(
@@ -19,63 +19,64 @@ pub fn menu_bar_items<W: WorkspaceView>(
     let held = focused.is_some_and(|pane| ws.pane(pane).control == ControlState::Held);
     match menu {
         MenuBarMenu::Gobby => vec![
-            act("settings", Action::Settings),
-            act("reload config", Action::ReloadConfig),
-            act("quit", Action::Quit),
+            act("Settings", Action::Settings),
+            act("Reload config", Action::ReloadConfig),
+            act("Quit", Action::Quit),
         ],
         MenuBarMenu::File => vec![
-            act("new terminal", Action::NewTerminal),
-            act("new tab", Action::NewTab),
-            act("new workspace…", Action::NewProject),
+            act("New terminal", Action::NewTerminal),
+            act("New tab", Action::NewTab),
+            act("New workspace…", Action::NewProject),
             enabled_if(
-                act("rename tab", Action::RenameTab),
+                act("Rename tab", Action::RenameTab),
                 chrome.focused_pane().is_some(),
             ),
             enabled_if(
-                act("close tab", Action::CloseTab),
+                act("Close tab", Action::CloseTab),
                 chrome.focused_pane().is_some(),
             ),
-            item("destroy orphaned terminals…", MenuAction::DestroyOrphans),
-            enabled_if(act("detach", Action::Detach), held),
+            item("Destroy orphaned terminals…", MenuAction::DestroyOrphans),
+            enabled_if(act("Detach", Action::Detach), held),
         ],
         MenuBarMenu::Edit => edit_items(ws, chrome),
         MenuBarMenu::View => {
             let mut items = agents_view_items(chrome);
             items.push(act(
                 if chrome.sidebar.all_projects {
-                    "all projects"
+                    "All projects"
                 } else {
-                    "working projects"
+                    "Working projects"
                 },
                 Action::ToggleProjectsFilter,
             ));
-            items.push(act("show sidebar", Action::ToggleSidebar));
-            items.push(item("pin sidebar", MenuAction::PinSidebar));
+            items.push(act("Show sidebar", Action::ToggleSidebar));
+            items.push(item("Pin sidebar", MenuAction::PinSidebar));
+            items.push(item(theme_row_label(chrome), MenuAction::ThemeMenu));
             items
         }
         MenuBarMenu::Window => {
             let mut items = vec![
                 enabled_if(
-                    act("split right", Action::SplitVertical),
+                    act("Split right", Action::SplitVertical),
                     chrome.focused_pane().is_some(),
                 ),
                 enabled_if(
-                    act("split down", Action::SplitHorizontal),
+                    act("Split down", Action::SplitHorizontal),
                     chrome.focused_pane().is_some(),
                 ),
                 enabled_if(
                     act(
-                        if chrome.is_zoomed() { "unzoom" } else { "zoom" },
+                        if chrome.is_zoomed() { "Unzoom" } else { "Zoom" },
                         Action::Zoom,
                     ),
                     chrome.focused_pane().is_some(),
                 ),
                 enabled_if(
-                    act("close pane", Action::ClosePane),
+                    act("Close pane", Action::ClosePane),
                     chrome.focused_pane().is_some(),
                 ),
                 enabled_if(
-                    act("resize mode", Action::ResizeMode),
+                    act("Resize mode", Action::ResizeMode),
                     chrome.focused_pane().is_some(),
                 ),
             ];
@@ -91,37 +92,37 @@ pub fn menu_bar_items<W: WorkspaceView>(
                     .first()
                     .is_some_and(|only| entry.as_ref() != Some(only));
             vec![
-                enabled_if(act("respond", Action::Respond), has_entry),
+                enabled_if(act("Respond", Action::Respond), has_entry),
                 enabled_if(
-                    item("mark seen", MenuAction::MarkSeen(entry.unwrap_or_default())),
+                    item("Mark seen", MenuAction::MarkSeen(entry.unwrap_or_default())),
                     has_entry,
                 ),
                 enabled_if(
-                    act("take control", Action::TakeControl),
+                    act("Take control", Action::TakeControl),
                     focused.is_some() && !held,
                 ),
-                enabled_if(act("release control", Action::ReleaseControl), held),
+                enabled_if(act("Release control", Action::ReleaseControl), held),
                 enabled_if(
-                    act("take back", Action::TakeBack),
+                    act("Take back", Action::TakeBack),
                     focused.is_some() && !held,
                 ),
-                enabled_if(act("detach", Action::Detach), held),
+                enabled_if(act("Detach", Action::Detach), held),
                 enabled_if(
-                    act("open alert target", Action::OpenNotificationTarget),
+                    act("Open alert target", Action::OpenNotificationTarget),
                     chrome.latest_alert_target().is_some(),
                 ),
-                enabled_if(act("next attention", Action::NextAttention), can_step),
+                enabled_if(act("Next attention", Action::NextAttention), can_step),
                 enabled_if(
-                    act("previous attention", Action::PreviousAttention),
+                    act("Previous attention", Action::PreviousAttention),
                     can_step,
                 ),
             ]
         }
         MenuBarMenu::Help => vec![
-            act("keys", Action::Help),
-            item("alerts…", MenuAction::ShowAlerts),
-            item("daemon", MenuAction::ShowDaemon),
-            item("about gobby", MenuAction::ShowAbout),
+            act("Keys", Action::Help),
+            item("Alerts…", MenuAction::ShowAlerts),
+            item("Daemon", MenuAction::ShowDaemon),
+            item("About Gobby", MenuAction::ShowAbout),
         ],
     }
 }
@@ -131,10 +132,10 @@ pub fn menu_bar_items<W: WorkspaceView>(
 fn edit_items<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Vec<MenuItem> {
     let focused = chrome.focused_pane();
     let mut items: Vec<MenuItem> = [
-        ("copy mode", Action::CopyMode),
-        ("rename pane", Action::RenamePane),
-        ("rename tab", Action::RenameTab),
-        ("rename terminal", Action::RenameTerminal),
+        ("Copy mode", Action::CopyMode),
+        ("Rename pane", Action::RenamePane),
+        ("Rename tab", Action::RenameTab),
+        ("Rename terminal", Action::RenameTerminal),
     ]
     .into_iter()
     .map(|(label, action)| enabled_if(item(label, MenuAction::Act(action)), focused.is_some()))
@@ -142,7 +143,7 @@ fn edit_items<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Vec<MenuItem> {
     if let Some(pane) = focused {
         let state = ws.pane(pane);
         if state.label.is_some() {
-            items.push(item("clear pane name", MenuAction::ClearPaneName(pane)));
+            items.push(item("Clear pane name", MenuAction::ClearPaneName(pane)));
         }
         items.push(item(
             passthrough_label(state),
