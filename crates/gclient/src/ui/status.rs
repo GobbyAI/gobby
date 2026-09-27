@@ -10,7 +10,7 @@ use crate::theme::Palette;
 use crate::ui::chrome::{Chrome, Mode, RowState, WorkspaceView};
 use crate::ui::dialogs::Dialog;
 use crate::ui::hit::Hit;
-use crate::ui::pane_chrome::{footer_rects, pane_footer};
+use crate::ui::pane_chrome::{pane_corners, title_rect};
 use crate::ui::status_segments::{agent_counts, segment_text, StatusSegment};
 use crate::ui::text::display_width_u16;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -467,9 +467,9 @@ pub fn render_status_line<W: WorkspaceView>(
         let mut style = base.fg(p.subtext0);
         let actionable = if segment == StatusSegment::Focus {
             focused_overflow(ws, chrome).map(|pane| {
-                let footer = pane_footer(ws, pane, true);
-                style = base.fg(footer.tone.color(p)).add_modifier(Modifier::BOLD);
-                footer.actionable
+                let corners = pane_corners(ws, chrome, pane, true);
+                style = base.fg(corners.tone.color(p)).add_modifier(Modifier::BOLD);
+                corners.actionable
             })
         } else {
             None
@@ -583,7 +583,7 @@ pub(super) fn focused_overflow<'a, W: WorkspaceView>(
 ) -> Option<&'a Pane> {
     let pane = ws.pane(chrome.focused_pane()?);
     let info = chrome.view.pane_infos.iter().find(|info| info.is_focused)?;
-    footer_rects(info, &pane_footer(ws, pane, true))
+    title_rect(info, &pane_corners(ws, chrome, pane, true))
         .is_none()
         .then_some(pane)
 }
@@ -795,7 +795,7 @@ mod tests {
     }
 
     #[test]
-    fn focused_pane_footer_overflows_to_the_status_row() {
+    fn a_pane_too_narrow_for_its_title_overflows_to_the_status_row() {
         let mut ws = Workspace::scripted();
         ws.daemon_mut().set_roster(json!({
             "epoch": "e1",
@@ -812,18 +812,23 @@ mod tests {
         chrome.prefs.status_left = vec!["focus".to_string()];
         chrome.prefs.status_right.clear();
         let focused = chrome.focused_pane().unwrap();
-        let info = chrome.view.pane_infos.iter().find(|info| info.is_focused);
+        // Bordered, but too narrow for any title on its top edge.
+        let info = chrome
+            .view
+            .pane_infos
+            .iter_mut()
+            .find(|info| info.is_focused);
         let info = info.unwrap();
-        // Bordered, but narrower than its padded metadata.
+        info.rect.width = 4;
         assert!(!info.borders.is_empty());
-        let footer = pane_footer(&ws, ws.pane(focused), true);
-        assert_eq!(footer_rects(info, &footer), None, "{:?}", info.rect);
+        let info = info.clone();
+        let corners = pane_corners(&ws, &chrome, ws.pane(focused), true);
+        assert_eq!(title_rect(&info, &corners), None, "{:?}", info.rect);
 
-        // The title keeps the pane's top edge; only the metadata moves.
         let (text, indicator) = draw_status(&ws, &chrome);
         assert_eq!(
             text,
-            format!(" term-beta · Focused{:>60}", "prefix ctrl+b ")
+            format!(" ○ term-beta · Focused{:>58}", "prefix ctrl+b ")
         );
         assert_eq!(indicator, None);
 
@@ -832,9 +837,9 @@ mod tests {
         let (text, indicator) = draw_status(&ws, &chrome);
         assert_eq!(
             text,
-            format!(" term-beta · Read-only{:>58}", "prefix ctrl+b ")
+            format!(" ○ term-beta · Read-only{:>56}", "prefix ctrl+b ")
         );
-        let width = display_width_u16("term-beta · Read-only") + 1;
+        let width = display_width_u16("○ term-beta · Read-only") + 1;
         assert_eq!(indicator, Some(Rect::new(0, 0, width, 1)));
         assert_eq!(
             crate::ui::pane_chrome::control_indicator_hit_area(&ws, &chrome),

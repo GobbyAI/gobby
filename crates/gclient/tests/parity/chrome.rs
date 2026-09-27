@@ -1227,12 +1227,14 @@ switch_project = "ctrl+1..9"
                     // status row traded its totals and placeholders for this
                     // machine's agents by legend class, and Terminals rows
                     // took the pane's address at their right edge over a
-                    // blank directory line (#22944):
+                    // blank directory line, and pane corners took V18's
+                    // glyph-led title top left and the address alone bottom
+                    // right (#22944):
                     // 4.1.3 requires a glyph change to fail here, so this
                     // digest moves only alongside a deliberate render change.
                     assert_eq!(
                         frame_digest(&terminal),
-                        "e937e05caffaa9e677a00c51e58574a21d74b9845042782cce524adfafe6041e",
+                        "f4198facdb8ac2fdd4dd64e4f377a6fd99db1151481624a60664a541fdd8365a",
                         "the frame moved; read it against the boards before pinning:\n{}",
                         rect_rows(&terminal, frame).join("\n")
                     );
@@ -1647,17 +1649,16 @@ fn rendered_hits_match_drawn_cells() {
         );
     }
 
-    // Each tab shows one pane framed on all four edges, so the pane's
-    // metadata sits on its bottom edge, where its Read-only is the
-    // take-control button; the status row stays plain status.
+    // The pane's title sits top left, where its Read-only makes the whole
+    // title the take-control button; the status row stays plain status.
     let indicator = view.control_indicator_hit_area.expect("control indicator");
     let pane = view.pane_infos.first().expect("pane info").rect;
-    assert_eq!(indicator.y, pane.bottom() - 1);
+    assert_eq!((indicator.x, indicator.y), (pane.x + 1, pane.y));
     assert_ne!(indicator.y, view.status_rect.y);
-    assert_eq!(hit_text(&terminal, indicator), " term-alpha · Read-only");
+    assert_eq!(hit_text(&terminal, indicator), " ⍾ term-alpha · Read-only");
     assert_eq!(
         usize::from(indicator.width),
-        display_width(" term-alpha · Read-only ")
+        display_width(" ⍾ term-alpha · Read-only ")
     );
 }
 

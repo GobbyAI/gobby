@@ -300,11 +300,14 @@ fn push_children(
     }
 }
 
-fn agent_candidate<W: WorkspaceView>(ws: &W, chrome: &Chrome, visible: Visible<'_>) -> Candidate {
-    let Visible { agent, state, .. } = visible;
-    let focused = chrome.focused_pane();
-    let pane = ws.pane_for_terminal(&agent.terminal_id);
-    let reference = agent
+/// An agent's session ref as its row and pane corner print it: `#N`, led
+/// by the project only where rows from every project mix.
+pub(crate) fn agent_reference<W: WorkspaceView>(
+    ws: &W,
+    chrome: &Chrome,
+    agent: &AgentEntry,
+) -> String {
+    agent
         .session_ref
         .as_deref()
         .map_or_else(String::new, |reference| {
@@ -316,12 +319,18 @@ fn agent_candidate<W: WorkspaceView>(ws: &W, chrome: &Chrome, visible: Visible<'
                 project.as_deref().unwrap_or_default(),
                 reference = short_session_ref(reference)
             )
-        });
+        })
+}
+
+fn agent_candidate<W: WorkspaceView>(ws: &W, chrome: &Chrome, visible: Visible<'_>) -> Candidate {
+    let Visible { agent, state, .. } = visible;
+    let focused = chrome.focused_pane();
+    let pane = ws.pane_for_terminal(&agent.terminal_id);
     Candidate {
         row: SidebarRow {
             id: agent.entry_id.clone(),
             definition: agent.definition_label(),
-            reference,
+            reference: agent_reference(ws, chrome, agent),
             task: agent.task_ref.clone().zip(agent.task_title.clone()),
             model_slug: agent.model_slug(),
             label: agent_title(agent),

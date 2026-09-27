@@ -739,7 +739,7 @@ impl Chrome {
                     self.prefs.pane_scrollbars,
                     metrics,
                 );
-                title_travel = title_travel.max(pane_chrome::title_travel(ws, pane, info));
+                title_travel = title_travel.max(pane_chrome::title_travel(ws, self, pane, info));
             }
         }
         let rows = sidebar_rows::project_rows(ws, self).len();

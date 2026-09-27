@@ -9,7 +9,7 @@ use gobby_client::ui::pane_layout::{
     PaneInfo, SplitBorder,
 };
 use gobby_client::ui::panes::{self, highlight_selection, render_pane_borders, selection_style};
-use gobby_client::ui::text::{display_width, display_width_u16};
+use gobby_client::ui::text::display_width;
 use gobby_terminal::selection::Selection;
 use ratatui::layout::{Direction, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -43,14 +43,10 @@ fn chrome() -> Chrome {
 /// `.impeccable.md`) prefixes the focused pane's title with a marker so
 /// focus never rides on colour alone. The fixture reserves the marker's
 /// width and strips it, so herdr's title text stays verbatim.
-fn pane_border_title(label: &str, pane_width: u16, focused: bool) -> Option<String> {
-    if !focused {
-        return panes::pane_border_title(label, pane_width, false);
-    }
-    let marker = format!("{} ", theme().focus_ring().marker);
-    let reserved = display_width_u16(&marker);
-    let title = panes::pane_border_title(label, pane_width.saturating_add(reserved), true)?;
-    Some(title.replacen(&marker, "", 1))
+fn pane_border_title(label: &str, pane_width: u16, _focused: bool) -> Option<String> {
+    // gclient draws no focus marker (V18: the state glyph leads the title),
+    // so the focused title reads as herdr's with its marker stripped.
+    panes::pane_border_title(label, pane_width)
 }
 
 /// herdr `Workspace::test_new("test")` as a gclient tab: one slot showing
@@ -492,7 +488,9 @@ fn frame_colour_follows_focus_attention_and_exit() {
     let terminal = render(90, 18, |frame| {
         panes::render_panes(frame, &ws, &chrome, &mut |_, _, _| {});
     });
-    let corner = |pane| {
+    // The state glyph leads the title (V18), so the corner no longer
+    // repeats it; the frame keeps its hue along the pane's own edge.
+    let at = |pane, dx: fn(u16) -> u16| {
         let tab = chrome.active_tab().unwrap();
         let slot = tab.slots.iter().find(|(_, id)| **id == pane).unwrap().0;
         let info = chrome
@@ -501,13 +499,19 @@ fn frame_colour_follows_focus_attention_and_exit() {
             .iter()
             .find(|info| info.id == *slot)
             .unwrap();
-        cell(&terminal, info.rect.x, info.rect.y)
+        cell(&terminal, info.rect.x + dx(info.rect.width), info.rect.y)
     };
-    assert_eq!(corner(focused).style().fg, Some(palette().accent));
-    assert_eq!(corner(attention).symbol(), "⍾");
-    assert_eq!(corner(attention).style().fg, Some(palette().yellow));
-    assert_eq!(corner(exited).symbol(), "◌");
-    assert_eq!(corner(exited).style().fg, Some(palette().red));
+    let corner = |_| 0;
+    let glyph = |_| 2;
+    let edge = |width| width - 2;
+    assert_eq!(at(focused, corner).style().fg, Some(palette().accent));
+    assert_ne!(at(attention, corner).symbol(), "⍾");
+    assert_eq!(at(attention, edge).style().fg, Some(palette().yellow));
+    assert_eq!(at(attention, glyph).symbol(), "⍾");
+    assert_eq!(at(attention, glyph).style().fg, Some(palette().yellow));
+    assert_ne!(at(exited, corner).symbol(), "◌");
+    assert_eq!(at(exited, edge).style().fg, Some(palette().red));
+    assert_eq!(at(exited, glyph).symbol(), "◌");
 }
 
 // gclient-only mouse coverage for the pane surface: herdr drives its split

@@ -145,6 +145,15 @@ fn control_indicator_is_a_button() {
     let mut chrome = Chrome::dark();
     chrome.open_pane(pane, "alpha");
     chrome.compute_view(&ws, Rect::new(0, 0, 18, 10));
+    // Only a pane too narrow for any title hands it to the status row.
+    chrome
+        .view
+        .pane_infos
+        .iter_mut()
+        .find(|info| info.is_focused)
+        .expect("focused pane info")
+        .rect
+        .width = 4;
 
     let mut indicator = None;
     let focused = render(80, 1, |frame| {
@@ -152,8 +161,8 @@ fn control_indicator_is_a_button() {
     });
     assert_eq!(indicator, None, "focus is not a button");
     assert_eq!(
-        rect_rows(&focused, Rect::new(0, 0, 21, 1)),
-        vec![" term-alpha · Focused".to_string()]
+        rect_rows(&focused, Rect::new(0, 0, 23, 1)),
+        vec![" ○ term-alpha · Focused".to_string()]
     );
 
     ws.pane_mut(pane).control = ControlState::LeaseLost;
@@ -162,7 +171,7 @@ fn control_indicator_is_a_button() {
         indicator = render_status_line(frame, frame.area(), &ws, &chrome).control_indicator;
     });
     let indicator = indicator.expect("an exception draws the indicator");
-    let button = vec![" term-alpha · Read-only".to_string()];
+    let button = vec![" ○ term-alpha · Read-only".to_string()];
     let words = || indicator.x + 1..indicator.right();
     let underlined = |terminal: &Terminal<TestBackend>| -> Vec<bool> {
         words()
@@ -180,8 +189,8 @@ fn control_indicator_is_a_button() {
     );
     assert_eq!(
         cell(&lost, indicator.x + 1, indicator.y).fg,
-        palette.yellow,
-        "the colour is the warning token"
+        palette.subtext0,
+        "a held pane reads in the held tone"
     );
 
     chrome.hover = Some(Hit::ControlIndicator);
@@ -204,7 +213,7 @@ fn control_indicator_is_a_button() {
         render_status_line(frame, frame.area(), &ws, &chrome);
     });
     assert!(
-        rect_rows(&uncertain, Rect::new(0, 0, 23, 1))[0].starts_with(" term-alpha · Uncertain"),
+        rect_rows(&uncertain, Rect::new(0, 0, 25, 1))[0].starts_with(" ○ term-alpha · Uncertain"),
         "Uncertain reads apart from Read-only"
     );
 
