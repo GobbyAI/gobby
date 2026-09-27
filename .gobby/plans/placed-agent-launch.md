@@ -93,18 +93,18 @@ placed agent therefore never exists unplaced, and a refused placement spawns not
    placements.
 3. **Bind before exec.** The reserved pane is bound with
    `set_pane_terminal(owns_terminal=True)` to the terminal row that
-   `TerminalManager.create_pending` creates in the spawn executor. The as-is order,
-   VERIFIED by R2 #14640, is:
+   `TerminalManager.create_pending` creates in the spawn executor. The placed-launch
+   order is the as-is order, VERIFIED by R2 #14640, with one new step (5):
    1. `_prepare_provider_sandbox`;
    2. `prepare_sandbox_launch` (SRT policy plus a real `--preflight`);
    3. `wrap_provider_command`;
    4. `create_pending`;
-   5. `reserve_observer` / `prepare_spawn`;
-   6. provider exec.
+   5. bind (new, placed launches only);
+   6. `reserve_observer` / `prepare_spawn`;
+   7. provider exec.
 
-   Binding right after `create_pending` therefore follows a successful SRT wrap and
-   precedes exec. A wrap failure never creates a terminal row, so only the
-   reservation needs releasing.
+   Binding therefore follows a successful SRT wrap and precedes exec. A wrap failure
+   never creates a terminal row, so only the reservation needs releasing.
    - Rejected: adopting after launch via `tab_create`/`pane_split(terminal_id=...)`.
      `WorkspaceOps._adoptable` requires `state == "live"`, which means the agent would
      run unplaced first, and gclient's `created` handler would already have opened it
@@ -120,10 +120,22 @@ placed agent therefore never exists unplaced, and a refused placement spawns not
    A pipeline `mcp` step therefore fails deterministically, and a later split step can
    use `${{steps.<id>.output.pane_ref}}`. Unplaced spawns keep today's background
    behaviour.
-5. **Compensation.** Every failure after reservation runs the existing
-   `cleanup_failed_spawn` path and then removes the reserved pane or tab (the same
-   removal as `WorkspaceOps._roll_back`). The failures covered are: guard refusal after
-   reservation, provider or wrap failure, bind conflict, and cancellation.
+5. **Compensation.** The placed branch runs inside one compensation boundary in
+   `_placement.py`. The boundary opens when the reservation succeeds and closes with
+   the final response. The pane is retained only when that response has
+   `success: true`. Every other exit releases the reservation in a `finally`-style
+   path, so release still runs when cleanup raises. The exits are:
+   - a returned `success: false`. `finalize_executed_spawn` (`_execution.py`) reports
+     provider and SRT preparation failure, terminal liveness failure, start-run
+     failure and auto-claim failure this way, after it has already run
+     `cleanup_failed_spawn`;
+   - an exception or `CancelledError`, which `_execute_spawn_phase` routes to
+     `_spawn_failure`, which runs `cleanup_failed_spawn`;
+   - a bind conflict, which the executor turns into a failed `SpawnResult` (1.2).
+
+   The boundary reuses those existing cleanups and adds only the release, so no path
+   cleans up twice. Release removes the reserved pane or tab, which is the same
+   removal as `WorkspaceOps._roll_back`.
    - A pane whose terminal was bound with `owns_terminal=True` kills that terminal on
      removal, so no orphan shell or unplaced agent survives.
    - Placed launches default `cleanup_isolation_on_failure` to true for isolation that
@@ -142,9 +154,12 @@ placed agent therefore never exists unplaced, and a refused placement spawns not
      unchanged, and its failure releases the reservation.
    - Unplaced spawns keep today's config-driven behaviour. Hand-launched seats are out
      of scope.
-7. **Live-seat refusal.** Preflight refuses with `placement_error: "seat_live"` when
-   the target workspace already holds a tab (for `tab`) or a pane (for `split`) whose
-   title or label equals `title` and whose bound terminal is `pending` or `live`.
+7. **Live-seat refusal.** The seat key is `(workspace_id, truncate_title(title))`
+   for both placement kinds. Preflight refuses with `placement_error: "seat_live"`
+   when the target workspace already holds a tab title or a pane label equal to the
+   canonical title whose bound terminal is `pending` or `live`. Both kinds are checked
+   for both variants, so a tab seat and a split seat cannot share a title in one
+   workspace. Two titles that truncate to the same stored value are one seat.
    Re-running a runbook pipeline therefore cannot double-launch a seat. A seat whose
    terminal has ended can be relaunched.
    - An in-flight reservation with the same title also counts as live.
@@ -187,6 +202,12 @@ placed agent therefore never exists unplaced, and a refused placement spawns not
      `placement_error: "parent_unresolved"` when its parent is the system session
      itself, or when the project did not come from an explicit `project_path` or the
      parent session.
+   - That provenance is carried from the factory. `_factory.py` computes one
+     `project_context_authoritative` boolean in the same resolution that selects the
+     agent definition. It is true when the context came from an explicit
+     `project_path` or from the resolved parent session, and false for the ambient
+     cwd fallback. It is never inferred from a non-null normalized path. The separate
+     refusal for `parent_session_id == system_session_id()` stays.
 9. **Seat spawn blocks are policy, not code, today.** No bundled rule blocks
    `spawn_agent` by seat. The blocks live in role files, and #22899 /
    `agent-definition-profiles.md` plan their enforcement.
@@ -205,8 +226,9 @@ placed agent therefore never exists unplaced, and a refused placement spawns not
       unplaced, gclient moves the terminal into that pane and drops the unplaced
       surface.
 
-    This covers any ordering of the workspace stream and the lifecycle stream, with no
-    change to daemon event payloads.
+    This covers any ordering of the workspace stream and the lifecycle stream, and a
+    client that starts or reconnects after the agent is already bound and live. It
+    needs no change to daemon event payloads.
 11. **Deferred elsewhere, not here:**
     - closing a pane when its agent ends (`end_agent_run` closes pane and terminal,
       memory 7faa183d, constraint 4);
@@ -240,9 +262,13 @@ placed agent therefore never exists unplaced, and a refused placement spawns not
   7. `reserve_agent_slot` (`_spawn_guards.py`, per-project lock);
   8. the background `_run_spawn_phase`.
 
-  Failures route to `_spawn_failure`, which calls `cleanup_failed_spawn`
-  (`_failure_cleanup.py`) with these steps: record error, kill terminal, terminalize
-  the run, clean up isolation, delete the child session. `reserved_run_id` is only for
+  Exceptions and cancellation in `_execute_spawn_phase` route to `_spawn_failure`,
+  which calls `cleanup_failed_spawn` (`_failure_cleanup.py`) with these steps: record
+  error, kill terminal, terminalize the run, clean up isolation, delete the child
+  session. Typed failures do not raise. `finalize_executed_spawn` (`_execution.py`)
+  runs `cleanup_failed_spawn` itself and returns `success: false` for a failed
+  `SpawnResult` (including provider and SRT preparation failure), terminal liveness
+  failure, start-run failure and auto-claim failure. `reserved_run_id` is only for
   the close reviewer; it is not an idempotency key. Task retries dedupe through
   `task_spawn_lease`.
 - **Terminal path:** `execute_spawn` calls `_runtime_spawn` (`spawn_executor.py`), which
@@ -278,6 +304,33 @@ placed agent therefore never exists unplaced, and a refused placement spawns not
   - The agent `created` broadcast comes from `broadcast_agent_event`
     (`runner_broadcasting.py`), after the terminal exists (INFERRED: after
     promotion).
+- **Axis vocabulary:** `WorkspaceManager.add_pane` (`storage/workspaces.py`) accepts
+  only `horizontal` and `vertical` (`_axis`). `horizontal` divides the width, so its
+  children sit side by side (gclient sizes `LayoutAxis::Horizontal` children by
+  width). The placement input `right` therefore maps to `horizontal`, and `down` maps
+  to `vertical`.
+- **Composition:** `WebSocketServer.configure_terminals`
+  (`servers/websocket/server.py`) builds the one `WorkspaceOps` from the workspace
+  manager, terminal manager, runtime registry, write coordinator, `SessionManager`
+  and `publish=self.broadcast_workspace_event`. MCP tools reach it through
+  `workspace_ops_resolver`, which `HTTPServer._init_mcp_subsystems` passes to
+  `setup_internal_registries` (`mcp_proxy/registries.py`). The spawn tool chain is
+  `setup_internal_registries`, then `create_agents_registry` (`agents_registry.py`),
+  then `AgentsRegistryContext` (`agents_context.py`), then
+  `register_agent_spawn_tools` (`agents_spawn_tools.py`), then
+  `create_spawn_agent_registry`. None of those carries the workspace services today.
+- **Project provenance:** `_resolve_spawn_project_context` (`_factory.py`) returns
+  `(context, path)`. It can return the parent context with the ambient cwd path, or
+  the ambient context alone, and nothing marks which source won.
+- **gclient live path:** `apply_live_event` (`app/live.rs`) hands workspace events to
+  `apply_live_workspace_event` (`app/live_workspace.rs`). That function applies the
+  model change and moves `pending_placements` matches into `placed_panes`.
+  `project_live_workspace` (`app/live_loop/projection.rs`) projects the model onto
+  Chrome and focuses `placed_panes`. `ensure_live_pane` reuses a pane by terminal id.
+  `pane_for_terminal` (`app/workspace_panes.rs`) sees only instantiated panes, while
+  `WorkspaceModel::pane_ref_for_terminal` (`app/workspace_ops.rs`) answers from the
+  daemon model. Startup and reconnect run `reconcile_subscribe_first` (`app/live.rs`,
+  `app/mod.rs`): the workspace snapshot first, then the live roster, then projection.
 - **Pipeline identity:** `PipelineExecutor` registers the child session
   (`source="pipeline"`, `project_id`, `parent_session_id=caller`, `agent_depth=0`) and
   falls back to the caller session if creation fails. `_inject_agent_parent_session_argument`
@@ -297,7 +350,9 @@ placed agent therefore never exists unplaced, and a refused placement spawns not
 ## P1: Daemon placement
 `kind: framing`
 
-Daemon-side reservation primitives (1.1) and their use by `spawn_agent` (1.2).
+Reservation primitives (1.1), the executor bind hook (1.2), the daemon-scoped
+reserver composition (1.3), and the `spawn_agent` placement input that uses them
+(1.4).
 
 ### 1.1 Agent pane reservation primitives [category: code]
 `kind: deliverable`
@@ -308,11 +363,12 @@ Targets:
 
 Add a new module, `workspace_agent_panes.py`. It owns the placement lifecycle for
 agent panes, so `workspace_ops.py` (973 lines) and `storage/workspaces.py` (973 lines)
-stay unchanged. It is constructed from the same `WorkspaceManager`, `TerminalManager`
-and event-publish callback that `WorkspaceOps` receives. It reuses `_pane_of`
-(`workspace_contract.py`), `mint_pane_id`, `mark_spawn_in_flight`,
-`clear_spawn_in_flight`, `create_tab`, `add_pane`, `set_pane_terminal` and
-`remove_pane`.
+stay unchanged. `AgentPaneReserver` is constructed from the same `WorkspaceManager`,
+`TerminalManager`, `SessionManager` (for `ActorScope`) and event-publish callback that
+`WorkspaceOps` receives, and it holds the per-workspace lock map. 1.3 builds the one
+daemon-scoped instance. It reuses `_pane_of` (`workspace_contract.py`),
+`mint_pane_id`, `mark_spawn_in_flight`, `clear_spawn_in_flight`, `create_tab`,
+`add_pane`, `set_pane_terminal`, `remove_pane` and `truncate_title`.
 
 New API (all names are new):
 - `AgentPlacement`: a frozen dataclass parsed from the `placement` input. It has two
@@ -321,31 +377,43 @@ New API (all names are new):
   - `split`: pane ref, axis in {`right`, `down`}, and title.
 
   A missing or empty title, an unknown axis, an unknown key or both variants at once
-  each raise `AgentPlacementError("invalid_placement")`.
-- `AgentPaneReserver.preflight(actor, project_id, worktree_id, placement)`: read-only.
-  It does the following:
+  each raise `AgentPlacementError("invalid_placement")`. A parsed split carries the
+  storage axis: `right` maps to `horizontal` and `down` maps to `vertical`, the only
+  values `WorkspaceManager.add_pane` accepts.
+- `AgentPaneReserver.preflight(actor, project_id, placement)`: read-only. It runs
+  before isolation exists, so it takes no worktree. It does the following:
   - resolves the ref through the workspace resolver (`not_found` / `invalid_ref`);
   - checks that the actor scope admits `project_id` (`forbidden`);
   - requires the workspace's machine to be this node (`invalid_op`);
   - for `split`, requires the target pane's tab project to equal `project_id`
     (`forbidden`);
-  - applies the live-seat check: the same title on a tab (for `tab`) or pane label
-    (for `split`) in that workspace whose terminal state is in `_ACTIVE_STATES`
-    (`pending`/`live`) gives `seat_live`.
+  - applies the live-seat check on the seat key `(workspace_id,
+    truncate_title(title))`. Any tab title or pane label in that workspace equal to
+    the canonical title, whose terminal state is in `_ACTIVE_STATES`
+    (`pending`/`live`), gives `seat_live`. Both kinds are scanned for both variants.
 
-  It returns a `ResolvedPlacement`.
-- `reserve(resolved)`: under a per-workspace `asyncio.Lock` held across check and
-  insert, repeats the live-seat check (counting in-flight reservations with the same
-  title as live), then marks the pane in flight and inserts it. It uses `create_tab`
-  with the title for `tab`, or `add_pane` beside the pane plus the label for `split`.
-  It returns `ReservedPane(pane_id, tab_id, workspace_id, pane_ref, tab_ref)`. Nothing
-  is emitted yet.
+  It returns an immutable `ResolvedPlacement`.
+- `reserve(resolved, *, worktree_id)`: under the per-workspace `asyncio.Lock` held
+  across check and insert, it repeats the live-seat check on the same key, counting
+  in-flight reservations with the same canonical title as live. Then it marks the
+  pane in flight and inserts it. It uses `create_tab` with the title and `worktree_id`
+  for `tab`, or `add_pane` beside the pane with the mapped axis plus the label for
+  `split`. `worktree_id` is the finalized isolation association: `None` for isolation
+  none, the existing id for a reused worktree, and the new id for a fresh worktree. A
+  split joins an existing tab, so it stores no worktree. `reserve` returns
+  `ReservedPane(pane_id, tab_id, workspace_id, pane_ref, tab_ref)`. Nothing is emitted
+  yet.
 - `bind(reserved, terminal_id)`: calls `set_pane_terminal(owns_terminal=True)`, clears
   the in-flight mark, and emits `tab.created` or `pane.added` with the bound pane. A
   `UniqueViolation` or a missing row raises `AgentPlacementError("busy"/"not_found")`.
 - `release(reserved)`: clears the in-flight mark and removes the pane (and a tab it
   emptied), publishing the removal. It is idempotent and tolerates a row that is
   already gone. It does not kill the terminal: the spawn cleanup owns that.
+
+**Granularity:** eight acceptance items, but one production file and one lifecycle
+owner: the reservation state machine (preflight, reserve, bind, release) of one agent
+pane. The items are that machine's refusals and transitions, and none is closeable
+without the others.
 
 **Research context:**
 - The reserve-then-fill order mirrors `WorkspaceOps.tab_create` and
@@ -355,11 +423,16 @@ New API (all names are new):
 - `_adoptable` is deliberately not reused, because it requires a `live` terminal
   (decision 3).
 - Seat label: `workspace_tabs.title` via `create_tab(title=)`, and pane labels via
-  `rename_pane`. Both are truncated by `truncate_title`, so compare the truncated
-  value.
+  `rename_pane`. Both are truncated by `truncate_title`, so the seat key uses the
+  truncated value.
+- Axis: `storage/workspaces.py::_axis` rejects anything but `horizontal` and
+  `vertical` (Evidence).
 - Errors: reuse the `WorkspaceOpError` codes (`invalid_ref`, `not_found`, `forbidden`,
   `invalid_op`, `busy`) plus the new `invalid_placement`, `seat_live` and
-  `sandbox_required` (the last is raised by 1.2) under a new `AgentPlacementError`.
+  `sandbox_required` (the last is raised by 1.4) under a new `AgentPlacementError`.
+- Rejected: moving preflight after isolation, or adding mutable worktree state to
+  `ResolvedPlacement`. The first leaves worktrees behind for refused placements
+  (decision 2); the second is not needed once `reserve` takes the final id.
 - Planned checks: `DATABASE_URL=<isolated hub> GOBBY_TEST_PROTECT=1 uv run pytest
   tests/terminals/test_workspace_agent_panes.py -v`, plus ruff and mypy on the new
   module.
@@ -368,180 +441,370 @@ New API (all names are new):
 
 - 1.1.1 - Invalid placement shapes (no title, bad axis, both variants, unknown key) raise `invalid_placement` without touching storage. test: `tests/terminals/test_workspace_agent_panes.py::test_invalid_placement_shapes_refused`.
 - 1.1.2 - Preflight refuses an unknown ref, an out-of-scope project and a foreign node, and inserts no row. test: `tests/terminals/test_workspace_agent_panes.py::test_preflight_refusals_have_no_side_effects`.
-- 1.1.3 - Preflight refuses `seat_live` when the same-titled tab or pane holds a pending or live terminal, and allows relaunch when that terminal has ended. test: `tests/terminals/test_workspace_agent_panes.py::test_live_seat_refused_ended_seat_allowed`.
+- 1.1.3 - Preflight refuses `seat_live` when a tab title or pane label with the same canonical title holds a pending or live terminal, across kinds in both directions (an existing tab then a split request, an existing split then a tab request). Two titles that truncate to the same stored value are one seat, and relaunch is allowed once that terminal has ended. test: `tests/terminals/test_workspace_agent_panes.py::test_live_seat_refused_across_kinds_ended_seat_allowed`.
 - 1.1.4 - Reserve then bind produces a bound pane with `owns_terminal=True`, clears the in-flight mark, and emits exactly one `tab.created` or `pane.added`. test: `tests/terminals/test_workspace_agent_panes.py::test_reserve_bind_emits_once`.
-- 1.1.6 - Two concurrent reservations of the same workspace and title yield exactly one reservation and one `seat_live` refusal. test: `tests/terminals/test_workspace_agent_panes.py::test_concurrent_same_seat_reserves_once`.
 - 1.1.5 - Release removes the reserved pane, and the tab it emptied, and is idempotent. test: `tests/terminals/test_workspace_agent_panes.py::test_release_is_idempotent`.
+- 1.1.6 - Two concurrent reservations of the same workspace and canonical title yield exactly one reservation and one `seat_live` refusal, for same-kind and cross-kind pairs. test: `tests/terminals/test_workspace_agent_panes.py::test_concurrent_same_seat_reserves_once`.
+- 1.1.7 - A `right` split is stored with axis `horizontal`, and a `down` split with axis `vertical`. test: `tests/terminals/test_workspace_agent_panes.py::test_split_axis_maps_to_storage_axis`.
+- 1.1.8 - A tab reservation stores the `worktree_id` passed to `reserve`: none for isolation none, the reused id for a reused worktree, and the new id for a fresh worktree. test: `tests/terminals/test_workspace_agent_panes.py::test_reserve_stores_final_worktree_association`.
 
-### 1.2 spawn_agent placement input, SRT requirement, binding and reply [category: code] (depends: 1.1)
+### 1.2 Executor binds a placed terminal before exec [category: code]
 `kind: deliverable`
 
 Targets:
-- `src/gobby/mcp_proxy/tools/spawn_agent/_factory.py::create_spawn_agent_registry`
-- `src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py::spawn_agent_impl`
-- `src/gobby/mcp_proxy/tools/spawn_agent/_placement.py`
-- `src/gobby/mcp_proxy/tools/spawn_agent/_response.py::build_spawn_response`
 - `src/gobby/agents/spawn_models.py::SpawnRequest`
 - `src/gobby/agents/spawn_executor.py::_runtime_spawn`
 - `src/gobby/agents/spawn_executor_runtime.py`
-- `tests/mcp_proxy/tools/spawn_agent/test_placement.py`
+- `tests/agents/test_spawn_executor_placement_bind.py`
 
-Add `placement: dict | None = None` to the `spawn_agent` tool in
-`create_spawn_agent_registry` and pass it to `spawn_agent_impl`. Placement handling
-lives in a new module, `_placement.py`; `spawn_agent_impl` gains only three call sites.
-Move the placed-launch branch into the new `_placement.py` so that `_implementation.py`
-(964 lines) does not grow past the ceiling. The three call sites are:
-
-1. Right after the parent/`can_spawn` checks and the sandbox config resolution, and
-   before isolation is created: `preflight_placement(...)`. It returns `None` when no
-   placement is given. It does the following:
-   - raises `sandbox_required` unless the effective sandbox config is `enabled` with
-     `backend == "srt"` and `verify_srt_installation` passes;
-   - raises `parent_unresolved` when the parent session is the system session itself,
-     or when the project came from ambient context rather than from `project_path` or
-     the parent session;
-   - runs `AgentPaneReserver.preflight`. On
-   refusal, return `{"success": false, "placement_error": code, "error": message}`
-   before any side effect.
-2. After `reserve_agent_slot` succeeds: `reserve_placement(...)`. It calls
-   `AgentPaneReserver.reserve` and stores the reservation on the `SpawnRequest` (new
-   optional field `SpawnRequest.placement_reservation`, together with the binder
-   callback).
-3. At dispatch: with a reservation, await `_execute_spawn_phase()` inline instead of
-   scheduling `_run_spawn_phase` in the background. On success, return
-   `build_spawn_response(...)` with the new `workspace`, `tab_ref` and `pane_ref`
-   fields. `build_spawn_response` gains an optional `placement` argument that adds
-   them.
-
-Every failure path after reservation, including `CancelledError`, calls `release`
-after `cleanup_failed_spawn` inside the `_spawn_failure` routing. A placed launch
-defaults `cleanup_isolation_on_failure` to true for isolation it created, so a refused
-or failed seat leaves no worktree or clone. Reused `worktree_id` / `clone_id`
-isolation is never removed.
-
-In `spawn_executor.py`, `_runtime_spawn` calls `request.placement_reservation`'s bind
-callback immediately after `manager.create_pending` returns the terminal id. That is
-before `reserve_observer`/`prepare_spawn`, so it precedes provider exec and the SRT
-wrap. A bind failure fails the pending terminal through the existing
-`_settle_native_spawn_failure` path and returns a failed `SpawnResult`, so the
-provider never executes.
+Add one optional field, `SpawnRequest.placement_binder: Callable[[str],
+Awaitable[None]] | None = None`. 1.4 sets it to the reserver's `bind` for the reserved
+pane, and every other caller leaves it `None`. When the binder is set, `_runtime_spawn`
+awaits it with the terminal id immediately after `manager.create_pending` returns, and
+before `reserve_observer`/`prepare_spawn`. The provider command was already
+SRT-wrapped before `create_pending`, so the order is the decision 3 invariant:
+`prepare_sandbox_launch`/`--preflight`, then `wrap_provider_command`, then
+`create_pending`, then bind, then `reserve_observer`/`prepare_spawn`, then provider
+exec. A binder failure (`busy` or `not_found`) fails the pending terminal through the
+existing `_settle_native_spawn_failure` path and returns a failed `SpawnResult`, so the
+provider never executes. Without a binder the order is unchanged.
 
 Split `spawn_executor.py` (962 lines): move `_runtime_spawn` and `_promote_prepared`
 into the new `spawn_executor_runtime.py` and re-export both names from
 `spawn_executor.py`. The facade stays the patch target (memory e82d82f5), and existing
 `patch("gobby.agents.spawn_executor....")` sites keep working.
 
+The facade imports the runtime module to re-export those two names, so the runtime
+module never imports the facade at module level, because that import would be
+circular. Each moved function imports the helpers that stay in `spawn_executor.py`
+inside its body, which is the pattern `spawn_executor_codex` already uses. Today those
+helpers are `wrap_provider_command`, `derive_spawn_key`, `resolve_terminal_services`,
+`kill_spawn_key`, `settle_promotion`, `_settle_native_spawn_failure`,
+`_schedule_timeout_cleanup`, `_tmux_duplicate_session_error` and
+`_same_live_identity`. Each call stays a bare name resolved from the facade at call
+time. Facade patches therefore stay effective, and the source check in
+`test_srt_spawn.py` still finds exactly one bare `wrap_provider_command` call in
+`_runtime_spawn`. Provider functions that stay in the facade call the re-exported
+`_runtime_spawn` global, and the moved `_runtime_spawn` calls the moved
+`_promote_prepared` directly. No test patches `_promote_prepared`.
+
+This deliverable adds no placement input and no caller that sets the binder, so it
+lands safely on its own.
+
 **Research context:**
-- The guard order and the cleanup path are as described in the Evidence section.
-  Placement preflight sits before isolation (decision 2). Reservation sits after
-  `reserve_agent_slot` so that slot, lease and task refusals never leave a pane. The
-  path is `release_unattached`, then the existing refusals, and only then the
-  reservation.
-- Parent and project: `_resolve_spawn_project_context` (`_factory.py`) resolves the
-  project from the parent session. For pipeline `mcp` steps the parent is the
-  pipeline child session (decision 8). The workspace actor passed to preflight is
-  `parent_session_id`.
+- The terminal path is in the Evidence section. `_prepare_provider_sandbox` catches
+  `OSError`/`ValueError`/`SrtRuntimeError` and returns "Sandbox startup failed closed"
+  before `create_pending` (decision 6, VERIFIED by R2), so a wrap failure reaches the
+  executor as a failed `SpawnResult` with no terminal row.
+- The binder is a plain async callable, so `spawn_models.py` does not import the
+  terminals package.
+- Planned checks: `DATABASE_URL=<isolated hub> GOBBY_TEST_PROTECT=1 uv run pytest
+  tests/agents/test_spawn_executor_placement_bind.py tests/agents/test_spawn_executor.py
+  tests/agents/test_native_spawn.py -v`, plus ruff, and mypy on `src/`.
+
+Consumers unchanged:
+- `src/gobby/mcp_proxy/tools/spawn_agent/_request.py` — no-edit-reason: Builds SpawnRequest; the new placement_binder field defaults to None.
+- `src/gobby/agents/resume_executor.py` — no-edit-reason: Resume imports _runtime_spawn from the facade re-export and never carries a binder.
+- `src/gobby/agents/spawn_executor_codex.py` — no-edit-reason: Imports _runtime_spawn from the facade re-export; the call is unchanged.
+- `src/gobby/agents/spawn_executor_providers.py` — no-edit-reason: Reads SpawnRequest fields only; the SRT wrap is reused unchanged.
+- `src/gobby/agents/spawn_executor_support.py` — no-edit-reason: The wrap_provider_command path is reused unchanged.
+- `tests/agents/test_spawn_executor.py` — no-edit-reason: Patches through the spawn_executor facade, which keeps the moved names.
+- `tests/agents/test_srt_spawn.py` — no-edit-reason: Reads `_runtime_spawn` source through the facade re-export, and the moved body keeps exactly one bare `wrap_provider_command` call.
+- `tests/agents/conftest.py` — no-edit-reason: Builds SpawnRequest without a binder; the new field defaults to None.
+- `tests/agents/test_backend_ingress.py` — no-edit-reason: Unplaced spawn path; the field defaults to None.
+- `tests/agents/test_local_context_setup.py` — no-edit-reason: Unplaced spawn path; the field defaults to None.
+- `tests/agents/test_native_spawn.py` — no-edit-reason: Unplaced native spawn; the bind step is skipped without a binder.
+- `tests/agents/test_spawn_executor_providers.py` — no-edit-reason: The provider wrap is unchanged.
+- `tests/agents/test_verified_review_regressions.py` — no-edit-reason: Unplaced SpawnRequest construction; the field defaults to None.
+- `tests/ask/test_permissions.py` — no-edit-reason: Unplaced SpawnRequest construction; the field defaults to None.
+- `tests/mcp_proxy/tools/spawn_agent/test_agy_gate.py` — no-edit-reason: Patches _runtime_spawn through the facade re-export.
+- `tests/terminals/fakes.py` — no-edit-reason: Fake SpawnRequest consumers need no binder field.
+- `tests/terminals/test_tmux_runtime.py` — no-edit-reason: Imports `_promote_prepared` through the facade re-export and runs the unplaced tmux path.
+- `tests/mcp_proxy/tools/spawn_agent/test_error_handling.py` — no-edit-reason: Uses SpawnRequest only to annotate a fake executor; unplaced requests carry the None binder default.
+- `tests/mcp_proxy/tools/spawn_agent/test_execution.py` — no-edit-reason: Uses SpawnRequest only to annotate fake executors; unplaced requests carry the None binder default.
+- `tests/mcp_proxy/tools/spawn_agent/test_initial_variables.py` — no-edit-reason: Uses SpawnRequest only as an annotation and a cast; the new field defaults to None.
+
+**Acceptance:**
+
+- 1.2.1 - With a binder, the executor runs `wrap_provider_command`, `create_pending`, the bind, `reserve_observer`/`prepare_spawn` and provider exec in that order, and the provider argv is the SRT-wrapped command. Without a binder the order is unchanged. test: `tests/agents/test_spawn_executor_placement_bind.py::test_bind_follows_wrap_and_precedes_exec`.
+- 1.2.2 - A binder failure fails the pending terminal through `_settle_native_spawn_failure`, returns a failed `SpawnResult`, and never starts the provider. test: `tests/agents/test_spawn_executor_placement_bind.py::test_bind_failure_fails_pending_terminal`.
+- 1.2.3 - `spawn_executor` re-exports `_runtime_spawn` and `_promote_prepared` from `spawn_executor_runtime`. symbol: `_runtime_spawn`. file: `src/gobby/agents/spawn_executor_runtime.py`.
+
+### 1.3 One daemon-scoped reserver reaches spawn_agent [category: code] (depends: 1.1)
+`kind: deliverable`
+
+Targets:
+- `src/gobby/servers/websocket/server.py::WebSocketServer.configure_terminals`
+- `src/gobby/servers/http.py::HTTPServer._init_mcp_subsystems`
+- `src/gobby/mcp_proxy/registries.py::setup_internal_registries`
+- `src/gobby/mcp_proxy/tools/agents_registry.py::create_agents_registry`
+- `src/gobby/mcp_proxy/tools/agents_context.py::AgentsRegistryContext`
+- `src/gobby/mcp_proxy/tools/agents_spawn_tools.py::register_agent_spawn_tools`
+- `src/gobby/mcp_proxy/tools/spawn_agent/_factory.py::create_spawn_agent_registry`
+- `tests/terminals/test_composition_roots.py::*` — scope-reason: add the reserver construction test beside the existing configure_terminals tests
+- `tests/mcp_proxy/tools/test_agents_spawn_tools.py::*` — scope-reason: add the resolver pass-through test beside the existing spawn tool registration tests
+
+`WebSocketServer.configure_terminals` builds one `AgentPaneReserver` next to
+`WorkspaceOps`, from the same workspace manager, terminal manager, `SessionManager`
+and `publish=self.broadcast_workspace_event`, under the same condition: a workspace
+manager is present and the sessions are a `SessionManager`. Otherwise it stays `None`.
+The server stores it as `agent_pane_reserver`.
+
+The spawn tool reaches it through the existing resolver pattern of
+`workspace_ops_resolver`. `HTTPServer._init_mcp_subsystems` passes
+`agent_pane_reserver_resolver=lambda: getattr(services.websocket_server,
+"agent_pane_reserver", None)` to `setup_internal_registries`. That passes it to
+`create_agents_registry`, which stores it on `AgentsRegistryContext`, and
+`register_agent_spawn_tools` passes it to `create_spawn_agent_registry`. The resolver
+is called per tool call, so the registry never caches a value read before
+`configure_terminals` runs, and every call gets the one instance and its lock map.
+
+`configure_terminals` keeps its signature. Every new parameter is optional,
+defaults to `None` and sits after the existing ones. The new
+`AgentsRegistryContext.agent_pane_reserver_resolver` field is appended with a
+`None` default, and the reserver type is imported under `TYPE_CHECKING` only.
+Constructing the reserver stores references and an empty lock map and touches no
+storage, so test servers that build `WorkspaceOps` also get an inert reserver.
+
+**Granularity:** seven production Target files, but one behavior: one resolver
+threaded through a fixed composition chain. Each file gains one parameter or one
+attribute. Splitting the chain would leave a resolver that reaches nothing.
+
+**Research context:**
+- The chain and the `workspace_ops_resolver` precedent are in the Evidence section
+  (`mcp_proxy/registries.py` passes `workspace_ops_resolver` to the workspaces
+  registry; `servers/http.py` builds it from `services.websocket_server`).
+- `tests/terminals/test_composition_roots.py` already drives `configure_terminals`
+  (`test_configure_terminals_installs_input_activity_sink`).
+- Rejected: a global singleton, a second event bus, or a reserver built per tool
+  call. A per-call reserver makes the per-workspace lock ineffective, and a reserver
+  without the server's publish callback bypasses the workspace event sequence gclient
+  consumes.
+- Planned checks: `DATABASE_URL=<isolated hub> GOBBY_TEST_PROTECT=1 uv run pytest
+  tests/terminals/test_composition_roots.py tests/mcp_proxy/tools/test_agents_spawn_tools.py
+  -v`, plus ruff, and mypy on `src/`.
+
+Consumers unchanged:
+- `src/gobby/runner_init/servers.py` — no-edit-reason: Calls configure_terminals with the same arguments; the reserver is built inside it from services it already receives.
+- `tests/mcp_proxy/test_workspaces_registry.py` — no-edit-reason: Calls configure_terminals and setup_internal_registries with unchanged arguments; the new resolver defaults to None.
+- `tests/servers/test_native_web_proxy.py` — no-edit-reason: Calls configure_terminals with an unchanged signature.
+- `tests/servers/test_terminal_ws_input.py` — no-edit-reason: Calls configure_terminals with an unchanged signature.
+- `tests/servers/test_terminal_ws_lease.py` — no-edit-reason: Calls configure_terminals with an unchanged signature.
+- `tests/servers/test_workspace_ws.py` — no-edit-reason: Calls configure_terminals with an unchanged signature; the inert reserver it now builds changes no workspace event.
+- `tests/servers/websocket/test_servers_websocket_auth.py` — no-edit-reason: Its stub configure_terminals accepts any arguments and the call shape does not change.
+- `src/gobby/ai/embedding_switch_runner.py` — no-edit-reason: Calls setup_internal_registries without the new optional resolver.
+- `tests/ask/test_native_probe_harness.py` — no-edit-reason: Calls setup_internal_registries without the new optional resolver.
+- `tests/config/test_config_runtime_config_resolution.py` — no-edit-reason: Calls setup_internal_registries without the new optional resolver.
+- `tests/dispatch/test_bundled_agent_contract.py` — no-edit-reason: Calls setup_internal_registries without the new optional resolver.
+- `tests/mcp_proxy/test_merge_integration.py` — no-edit-reason: Calls setup_internal_registries without the new optional resolver.
+- `tests/mcp_proxy/test_registries.py` — no-edit-reason: Calls setup_internal_registries without the new optional resolver; no registry is added or removed.
+- `tests/mcp_proxy/tools/sessions/test_mcp_proxy_tools_sessions_registration.py` — no-edit-reason: Calls setup_internal_registries without the new optional resolver.
+- `tests/mcp_proxy/tools/test_ask.py` — no-edit-reason: Calls setup_internal_registries without the new optional resolver.
+- `tests/mcp_proxy/tools/test_review_learning.py` — no-edit-reason: Calls setup_internal_registries without the new optional resolver.
+- `tests/skills/reference_library_helpers.py` — no-edit-reason: Calls setup_internal_registries without the new optional resolver.
+- `tests/test_wiki_retirement_contract.py` — no-edit-reason: Calls setup_internal_registries without the new optional resolver and asserts only registry names.
+- `src/gobby/mcp_proxy/tools/agents.py` — no-edit-reason: Re-exports create_agents_registry by name only.
+- `tests/ask/test_permissions.py` — no-edit-reason: Calls create_agents_registry without the new optional resolver.
+- `tests/events/test_coordination_waits.py` — no-edit-reason: Calls create_agents_registry without the new optional resolver.
+- `tests/runner_init/test_detection_registry_composition.py` — no-edit-reason: Its registrar and spawn factory fakes accept the context and keyword arguments, so the added resolver passes through.
+- `src/gobby/mcp_proxy/tools/agents_checkpoint_tools.py` — no-edit-reason: Reads existing AgentsRegistryContext fields only.
+- `src/gobby/mcp_proxy/tools/agents_lifecycle_tools.py` — no-edit-reason: Reads existing AgentsRegistryContext fields only.
+- `src/gobby/mcp_proxy/tools/agents_query_tools.py` — no-edit-reason: Reads existing AgentsRegistryContext fields only.
+- `src/gobby/mcp_proxy/tools/coordination.py` — no-edit-reason: Reads existing AgentsRegistryContext fields only.
+- `tests/agents/test_terminal_timeout_checkpoint.py` — no-edit-reason: Constructs AgentsRegistryContext without the appended field, which defaults to None.
+- `tests/mcp_proxy/tools/test_agent_worktree_checkpoint.py` — no-edit-reason: Constructs AgentsRegistryContext without the appended field, which defaults to None.
+- `tests/agents/test_backend_ingress.py` — no-edit-reason: Builds the spawn registry without the new optional resolver.
+- `tests/mcp_proxy/tools/spawn_agent/test_execution.py` — no-edit-reason: Builds the spawn registry without the new optional resolver.
+- `tests/mcp_proxy/tools/spawn_agent/test_factory.py` — no-edit-reason: Builds the spawn registry without the new optional resolver.
+- `tests/mcp_proxy/tools/spawn_agent/test_fallback_agent.py` — no-edit-reason: Builds the spawn registry without the new optional resolver.
+- `tests/mcp_proxy/tools/spawn_agent/test_initial_variables.py` — no-edit-reason: Builds the spawn registry without the new optional resolver.
+- `tests/mcp_proxy/tools/spawn_agent/test_mcp_proxy_tools_spawn_agent_dedup.py` — no-edit-reason: Builds the spawn registry without the new optional resolver.
+- `tests/mcp_proxy/tools/spawn_agent/test_project_context.py` — no-edit-reason: Builds the spawn registry without the new optional resolver.
+- `tests/mcp_proxy/tools/spawn_agent/test_project_scope.py` — no-edit-reason: Builds the spawn registry without the new optional resolver.
+- `tests/mcp_proxy/tools/spawn_agent/test_worktree_reference_resolution.py` — no-edit-reason: Builds the spawn registry without the new optional resolver.
+- `tests/mcp_proxy/tools/tasks/test_lifecycle_close_orchestration.py` — no-edit-reason: Builds the spawn registry from a runner alone to validate close-reviewer launch arguments; the resolver defaults to None.
+- `tests/mcp_proxy/tools/test_parallel_dispatch.py` — no-edit-reason: Builds the spawn registry without the new optional resolver.
+- `tests/skills/test_reference_library.py` — no-edit-reason: Builds the spawn registry from a runner alone to validate launch arguments; the resolver defaults to None.
+
+**Acceptance:**
+
+- 1.3.1 - `configure_terminals` builds exactly one `AgentPaneReserver` with the same workspace manager, terminal manager, sessions and publish callback as `WorkspaceOps`, and builds none when `WorkspaceOps` is not built. test: `tests/terminals/test_composition_roots.py::test_configure_terminals_builds_one_agent_pane_reserver`.
+- 1.3.2 - `register_agent_spawn_tools` hands the context's resolver to `create_spawn_agent_registry` unchanged, and each resolution returns the server's single reserver. test: `tests/mcp_proxy/tools/test_agents_spawn_tools.py::test_spawn_registry_resolves_one_daemon_reserver`.
+
+### 1.4 spawn_agent placement input, compensation and reply [category: code] (depends: 1.1, 1.2, 1.3)
+`kind: deliverable`
+
+Targets:
+- `src/gobby/mcp_proxy/tools/spawn_agent/_factory.py::create_spawn_agent_registry`
+- `src/gobby/mcp_proxy/tools/spawn_agent/_factory.py::_resolve_spawn_project_context`
+- `src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py::spawn_agent_impl`
+- `src/gobby/mcp_proxy/tools/spawn_agent/_placement.py`
+- `src/gobby/mcp_proxy/tools/spawn_agent/_response.py::build_spawn_response`
+- `tests/mcp_proxy/tools/spawn_agent/test_placement.py`
+
+Add `placement: dict | None = None` to the `spawn_agent` tool in
+`create_spawn_agent_registry`. Pass it to `spawn_agent_impl` with the resolved
+reserver and `project_context_authoritative`. The boolean comes from
+`_resolve_spawn_project_context_with_provenance`, a new sibling in `_factory.py` that
+holds the body of `_resolve_spawn_project_context` and also returns whether the
+context came from the explicit `project_path` or the resolved parent session.
+`_resolve_spawn_project_context` becomes a two-value wrapper over it, so its other
+consumers are unchanged. The spawn tool calls the new function once, in the
+resolution that already selects the agent definition, so placement never re-resolves
+the project.
+
+Placement handling lives in a new module, `_placement.py`. Move the placed-launch
+branch into the new `_placement.py` so that `_implementation.py` (964 lines) does not
+grow past the ceiling: `spawn_agent_impl` gains only two call sites.
+
+1. Right after the parent/`can_spawn` checks and the sandbox config resolution, and
+   before isolation is created: `preflight_placement(...)`. It returns `None` when no
+   placement is given. It does the following:
+   - raises `sandbox_required` unless the effective sandbox config is `enabled` with
+     `backend == "srt"` and `verify_srt_installation` passes;
+   - raises `parent_unresolved` when `parent_session_id == system_session_id()`, or
+     when `project_context_authoritative` is false;
+   - raises `invalid_op` when no reserver resolves;
+   - runs `AgentPaneReserver.preflight`.
+
+   On refusal, return `{"success": false, "placement_error": code, "error": message}`
+   before any side effect.
+2. At dispatch, after every existing guard and `build_spawn_request`:
+   `run_placed_spawn(...)` replaces the background scheduling for a placed launch. It
+   calls `reserve(resolved, worktree_id=isolation_ctx.worktree_id)`, sets
+   `SpawnRequest.placement_binder` to bind the reserved pane, awaits
+   `_execute_spawn_phase()` inline, and on success returns `build_spawn_response(...)`
+   with the new `workspace`, `tab_ref` and `pane_ref` fields. `build_spawn_response`
+   gains an optional `placement` argument that adds them. A reserve-time refusal
+   (`seat_live` lost to a concurrent launch, or `busy`) returns through the existing
+   `_spawn_failure`, which cleans the run, the child session and created isolation.
+
+`run_placed_spawn` is the decision 5 compensation boundary. From the successful
+`reserve` to the final response, it retains the pane only when the response has
+`success: true`, and it releases in a `finally` so release still runs when cleanup
+raises. It reuses the cleanup that `finalize_executed_spawn` and `_spawn_failure`
+already run, so no path cleans up twice. A placed launch defaults
+`cleanup_isolation_on_failure` to true for isolation it created, so a refused or failed
+seat leaves no worktree or clone. Reused `worktree_id` / `clone_id` isolation is never
+removed.
+
+**Granularity:** ten acceptance items and five production Target files, but one
+lifecycle owner: one placed `spawn_agent` call from preflight to reply. The refusals,
+the compensation boundary and the reply are the exits of that one call. Splitting
+them would land a reservation without its compensation.
+
+**Research context:**
+- The guard order and both cleanup routes are in the Evidence section. Placement
+  preflight sits before isolation (decision 2). Reservation sits at dispatch, after
+  every existing guard, so slot, lease and task refusals never leave a pane.
+- Parent and project: decision 8. For pipeline `mcp` steps the parent is the pipeline
+  child session. The workspace actor passed to preflight is `parent_session_id`.
+  `system_session_id` is in `storage/sessions/_constants.py`.
 - SRT: the effective config is `managed_runtime_profile.sandbox_config` or
-  `apply_write_grant(agent_sandbox_config(daemon_config), write_grant)`. `wrap_provider_command`
-  is the single wrap entry. Verify that a wrap exception returns a failed
-  `SpawnResult` before any provider process starts (memory 0a4ac03d says fail-closed,
-  INFERRED). If it does not, fixing that path is part of this deliverable.
+  `apply_write_grant(agent_sandbox_config(daemon_config), write_grant)`.
+  `wrap_provider_command` is the single wrap entry, and a wrap failure returns a failed
+  `SpawnResult` before any provider process starts (decision 6).
 - `dispatch_batch` does not gain placement: it retires with `gobby build`.
 - Rejected alternatives:
   - A separate `place_agent` tool: it duplicates the guards and cannot bind before
     exec.
   - Post-launch adoption: see decision 3.
+  - Re-resolving the project inside placement: it can disagree with the resolution
+    that selected the agent definition.
 - Planned checks:
-  - `DATABASE_URL=<isolated hub> GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/tools/spawn_agent/test_placement.py tests/mcp_proxy/tools/spawn_agent/test_failure_cleanup.py tests/mcp_proxy/tools/spawn_agent/test_factory.py -v`
+  - `DATABASE_URL=<isolated hub> GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/tools/spawn_agent/test_placement.py tests/mcp_proxy/tools/spawn_agent/test_failure_cleanup.py tests/mcp_proxy/tools/spawn_agent/test_factory.py tests/mcp_proxy/tools/spawn_agent/test_initial_variables.py -v`
   - ruff, and mypy on `src/`.
 
 Consumers unchanged:
-- `src/gobby/mcp_proxy/tools/agents_spawn_tools.py` — no-edit-reason: Registers the registry; the new optional `placement` parameter defaults to None.
 - `src/gobby/ask/agents.py` — no-edit-reason: Unplaced caller of spawn_agent_impl; the placement default None keeps the background path.
 - `src/gobby/dispatch/spawn.py` — no-edit-reason: Unplaced dispatch caller; retires with gobby build and gains no placement.
 - `src/gobby/feedback/agent.py` — no-edit-reason: Unplaced caller; the placement default None keeps the background path.
 - `src/gobby/scheduler/executor.py` — no-edit-reason: Cron agent jobs stay unplaced; cron runbooks reach placement through pipeline mcp steps.
 - `src/gobby/servers/routes/agent_spawn.py` — no-edit-reason: The HTTP spawn route stays unplaced; placement is an MCP input reached by pipelines.
 - `src/gobby/mcp_proxy/tools/spawn_agent/_execution.py` — no-edit-reason: Calls build_spawn_response without placement; the new argument is optional.
-- `src/gobby/mcp_proxy/tools/spawn_agent/_request.py` — no-edit-reason: Builds SpawnRequest; the new placement_reservation field defaults to None.
-- `src/gobby/agents/resume_executor.py` — no-edit-reason: Resume imports _runtime_spawn from the facade re-export and never carries a placement.
-- `src/gobby/agents/spawn_executor_codex.py` — no-edit-reason: Imports _runtime_spawn from the facade re-export; the call is unchanged.
-- `src/gobby/agents/spawn_executor_providers.py` — no-edit-reason: Reads SpawnRequest fields only; the SRT wrap is reused unchanged.
-- `src/gobby/agents/spawn_executor_support.py` — no-edit-reason: The wrap_provider_command path is reused unchanged.
-- `tests/agents/test_spawn_executor.py` — no-edit-reason: Patches through the spawn_executor facade, which keeps the moved names.
-- `tests/agents/test_srt_spawn.py` — no-edit-reason: The SRT wrap behaviour is unchanged for unplaced spawns.
 - `tests/mcp_proxy/tools/spawn_agent/test_factory.py` — no-edit-reason: Existing unplaced calls are unaffected by an optional parameter.
 - `tests/mcp_proxy/tools/spawn_agent/test_execution.py` — no-edit-reason: Existing unplaced calls are unaffected by an optional parameter.
 - `tests/mcp_proxy/tools/spawn_agent/test_error_handling.py` — no-edit-reason: Existing unplaced failure paths are unchanged.
-- `tests/agents/conftest.py` — no-edit-reason: Builds SpawnRequest without a placement; the new field defaults to None.
-- `tests/agents/test_backend_ingress.py` — no-edit-reason: Unplaced spawn path; optional parameter and field defaults.
-- `tests/agents/test_local_context_setup.py` — no-edit-reason: Unplaced spawn path; optional parameter and field defaults.
-- `tests/agents/test_native_spawn.py` — no-edit-reason: Unplaced native spawn; the bind hook is skipped without a reservation.
-- `tests/agents/test_spawn_executor_providers.py` — no-edit-reason: The provider wrap is unchanged.
-- `tests/agents/test_verified_review_regressions.py` — no-edit-reason: Unplaced SpawnRequest construction; the field defaults to None.
-- `tests/ask/test_permissions.py` — no-edit-reason: Unplaced SpawnRequest construction; the field defaults to None.
-- `tests/mcp_proxy/tools/spawn_agent/test_agy_gate.py` — no-edit-reason: Patches _runtime_spawn through the facade re-export.
 - `tests/mcp_proxy/tools/spawn_agent/test_fallback_agent.py` — no-edit-reason: Unplaced registry calls; the optional parameter defaults to None.
-- `tests/mcp_proxy/tools/spawn_agent/test_initial_variables.py` — no-edit-reason: Unplaced calls; optional parameter and field defaults.
+- `tests/mcp_proxy/tools/spawn_agent/test_initial_variables.py` — no-edit-reason: The two-value project resolver keeps its signature and results.
+- `tests/mcp_proxy/tools/test_agents_spawn_evaluation.py` — no-edit-reason: Patches the two-value project resolver, which keeps its name and signature.
 - `tests/mcp_proxy/tools/spawn_agent/test_mcp_proxy_tools_spawn_agent_dedup.py` — no-edit-reason: Task dedupe is unchanged for unplaced spawns.
 - `tests/mcp_proxy/tools/spawn_agent/test_mcp_proxy_tools_spawn_agent_runtime.py` — no-edit-reason: Calls build_spawn_response without placement.
 - `tests/mcp_proxy/tools/spawn_agent/test_project_context.py` — no-edit-reason: Project resolution is unchanged.
 - `tests/mcp_proxy/tools/spawn_agent/test_project_scope.py` — no-edit-reason: Project scope is unchanged.
 - `tests/mcp_proxy/tools/spawn_agent/test_worktree_reference_resolution.py` — no-edit-reason: Isolation resolution is unchanged.
-- `tests/mcp_proxy/tools/tasks/test_lifecycle_close_orchestration.py` — no-edit-reason: The close reviewer spawn stays unplaced.
-- `tests/mcp_proxy/tools/test_agents_spawn_tools.py` — no-edit-reason: Unplaced calls; the optional parameter defaults to None.
+- `tests/mcp_proxy/tools/tasks/test_lifecycle_close_orchestration.py` — no-edit-reason: Validates unplaced close-reviewer launch arguments against the spawn_agent schema; placement is optional.
 - `tests/mcp_proxy/tools/test_parallel_dispatch.py` — no-edit-reason: dispatch_batch gains no placement.
 - `tests/mcp_proxy/tools/test_spawn_agent_impl_provider.py` — no-edit-reason: Provider resolution is unchanged.
-- `tests/skills/test_reference_library.py` — no-edit-reason: References the registry name only.
+- `tests/skills/test_reference_library.py` — no-edit-reason: Validates unplaced launch arguments against the spawn_agent schema; placement is optional.
 - `tests/tasks/test_plan_gate.py` — no-edit-reason: The unplaced plan-gate spawn path is unchanged.
-- `tests/terminals/fakes.py` — no-edit-reason: Fake SpawnRequest consumers need no placement field.
-- `tests/terminals/test_tmux_runtime.py` — no-edit-reason: The tmux backend is unplaced; placement uses native terminals.
 - `tests/workflows/test_step_snapshot_semantics.py` — no-edit-reason: Unplaced spawn_agent_impl calls; the optional parameter defaults to None.
+- `tests/agents/test_backend_ingress.py` — no-edit-reason: Unplaced registry and spawn_agent_impl calls; placement defaults to None.
+- `tests/agents/test_local_context_setup.py` — no-edit-reason: Unplaced spawn_agent_impl calls; placement defaults to None.
 
 **Acceptance:**
 
-- 1.2.1 - A refused preflight (`invalid_placement`, `seat_live`, `not_found`, `forbidden`) creates no isolation, no child session, no agent run, no terminal and no pane. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_refused_placement_has_no_side_effects`.
-- 1.2.2 - A placed spawn with a sandbox config that is not SRT, or not enabled, is refused with `sandbox_required` before any side effect. Unplaced spawns are unaffected. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_placed_launch_requires_managed_srt`.
-- 1.2.3 - The pane is bound to the pending terminal before `reserve_observer`/`prepare_spawn`, and the provider argv is the SRT-wrapped command. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_bind_precedes_provider_exec_and_srt_wrap`.
-- 1.2.4 - An SRT wrap failure returns `success: false`, runs `cleanup_failed_spawn`, releases the pane, and never starts the provider. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_wrap_failure_refuses_and_releases_pane`.
-- 1.2.5 - A successful placed spawn returns synchronously with run_id, terminal_id, workspace, tab_ref and pane_ref. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_placed_spawn_reply_carries_refs`.
-- 1.2.6 - A slot, lease or active-task refusal after preflight leaves no pane, and a bind `busy` conflict fails the terminal and releases the pane. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_late_refusals_release_reservation`.
-- 1.2.8 - A placed spawn whose parent is the system session, or whose project resolved from ambient context, is refused with `parent_unresolved` before any side effect. A pipeline child parented to the system or cron session is accepted. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_system_parent_fallback_refused`.
-- 1.2.9 - A placed spawn that fails after creating its own worktree removes that worktree, and one that reused a `worktree_id` keeps it. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_failed_placed_spawn_cleans_created_isolation_only`.
-- 1.2.7 - `spawn_executor` re-exports `_runtime_spawn` and `_promote_prepared` from `spawn_executor_runtime`. symbol: `_runtime_spawn`. file: `src/gobby/agents/spawn_executor_runtime.py`.
+- 1.4.1 - A refused preflight (`invalid_placement`, `seat_live`, `not_found`, `forbidden`) creates no isolation, no child session, no agent run, no terminal and no pane. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_refused_placement_has_no_side_effects`.
+- 1.4.2 - A placed spawn with a sandbox config that is not SRT, or not enabled, is refused with `sandbox_required` before any side effect. Unplaced spawns are unaffected. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_placed_launch_requires_managed_srt`.
+- 1.4.3 - A provider or SRT preparation failure that `finalize_executed_spawn` returns as `success: false` releases the pane, runs `cleanup_failed_spawn` exactly once, and never starts the provider. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_wrap_failure_refuses_and_releases_pane`.
+- 1.4.4 - A later returned failure (terminal liveness or start-run) releases the pane, kills the bound terminal, and runs `cleanup_failed_spawn` exactly once. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_late_returned_failure_releases_pane_once`.
+- 1.4.5 - An exception, a `CancelledError` and a bind `busy` conflict each release the pane, and release still runs when `cleanup_failed_spawn` raises. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_exceptions_and_cancellation_release_pane`.
+- 1.4.6 - A successful placed spawn returns synchronously with run_id, terminal_id, workspace, tab_ref and pane_ref, and keeps its pane bound. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_placed_spawn_reply_carries_refs`.
+- 1.4.7 - A slot, lease or active-task refusal leaves no pane, and the loser of a reserve-time `seat_live` race cleans its run, child session and created isolation. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_late_refusals_leave_no_pane`.
+- 1.4.8 - An explicit `project_path` is accepted. A resolved parent is accepted, including a pipeline child parented to the system or cron session. An ambient-only project and a parent that is the system session itself are refused with `parent_unresolved` before any side effect. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_parent_and_project_provenance`.
+- 1.4.9 - A placed spawn that fails after creating its own worktree removes that worktree, and one that reused a `worktree_id` keeps it. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_failed_placed_spawn_cleans_created_isolation_only`.
+- 1.4.10 - Two concurrent placed spawns of one seat through the registry yield one placed agent and one `seat_live`, and the winner's bind publishes `tab.created` or `pane.added` through the server's workspace broadcast before provider exec. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_concurrent_placed_spawns_share_one_reserver`.
 
 ## P2: gclient placement reconciliation
 `kind: framing`
 
 Client-side handling of daemon-placed terminals.
 
-### 2.1 gclient reconciliation of daemon-placed terminals [category: code] (depends: 1.2)
+### 2.1 gclient reconciliation of daemon-placed terminals [category: code] (depends: 1.4)
 `kind: deliverable`
 
 Targets:
 - `crates/gclient/src/app/apply.rs::apply_event`
 - `crates/gclient/src/app/live.rs::apply_live_event`
+- `crates/gclient/src/app/live_workspace.rs::apply_live_workspace_event`
+- `crates/gclient/src/app/live_loop/projection.rs::project_live_workspace`
 - `crates/gclient/tests/placed_agent.rs`
 
 gclient already skips an unplaced open when `pane_for_terminal` knows the terminal
-(`apply_event`). This deliverable covers the reverse ordering: a `created` lifecycle
-event is handled, and `ensure_live_pane` opens an unplaced surface, before the
-`tab.created`/`pane.added` workspace event that binds the terminal arrives. When that
-binding event arrives, gclient moves the already-open terminal into the bound pane
-and removes the unplaced surface; it neither duplicates the terminal nor leaves it
-unplaced. It also handles the case where a `created` event arrives for a terminal
-that is already bound: it opens nothing new.
+(`apply_event`), and `ensure_live_pane` reuses a pane by terminal id. This deliverable
+makes the live path hold that for daemon-placed terminals in every order. It reuses
+the existing workspace model and projection and adds no placement registry.
+
+- Bind first: the `tab.created`/`pane.added` event that binds the terminal reaches
+  `apply_live_workspace_event` before the `created` lifecycle event.
+  `pane_for_terminal` cannot see that pane yet, because it scans instantiated panes
+  only. The `created` handler in `apply_live_event` therefore also asks
+  `WorkspaceModel::pane_ref_for_terminal`, and when the daemon model already binds the
+  terminal it opens no unplaced surface. `project_live_workspace` places the terminal
+  in the bound daemon pane.
+- Created first: `ensure_live_pane` has already opened an unplaced surface when the
+  binding event arrives. `apply_live_workspace_event` records the bound pane as placed
+  through the `placed_panes` path that client-side placement already uses. Then
+  `project_live_workspace` reuses the open terminal pane in the daemon pane's slot and
+  drops the local surface.
+- A `created` event for a terminal that is already bound opens nothing new.
+- Startup and reconnect: `reconcile_subscribe_first` attaches the workspace snapshot,
+  fetches the live roster, then projects. A snapshot that already binds a live
+  terminal projects it into its saved pane with no local surface.
 
 **Research context:**
-- The `created` handlers are `apply_event` (`crates/gclient/src/app/apply.rs`) and
-  `apply_live_event` → `ensure_live_pane` (`crates/gclient/src/app/live.rs`).
-- Workspace layout events are applied through the workspace ops/panes modules
-  (`crates/gclient/src/app/workspace_ops.rs`, `workspace_panes.rs`).
+- The live event path, the model lookup and the reconnect flow are in the Evidence
+  section. The `created` handlers are `apply_event` (`crates/gclient/src/app/apply.rs`)
+  and `apply_live_event`, then `ensure_live_pane` (`crates/gclient/src/app/live.rs`).
 - Client-side placement for user spawns is `placement_op`
   (`live_loop/workspace_actions.rs`), which is unchanged.
 - The daemon binds before exec (1.2), so the workspace event is normally emitted
   first. The lifecycle and workspace streams are separate, which is why both orders
   are tested.
+- Tests drive the real path: `apply_live_event`, the workspace model generation, the
+  projection, and the final Chrome state, against the isolated `mock_daemon` harness
+  that `crates/gclient/tests/arrange.rs` uses. Tests limited to `apply_event` would not
+  prove the live behaviour.
 - Load the `rust` skill and `crates/CLAUDE.md` before editing.
 - Planned checks: `cargo test -p gclient --test placed_agent`, `cargo clippy -p gclient`.
   A crate change goes live only after a rebuild and install through
@@ -550,15 +813,16 @@ that is already bound: it opens nothing new.
 
 **Acceptance:**
 
-- 2.1.1 - A binding workspace event that arrives before `created` means the terminal opens only in its bound pane. test: `crates/gclient/tests/placed_agent.rs::bind_then_created_opens_once_in_pane`.
-- 2.1.2 - A `created` event that arrives before the binding workspace event gets its unplaced surface moved into the bound pane, leaving exactly one surface. test: `crates/gclient/tests/placed_agent.rs::created_then_bind_moves_into_pane`.
+- 2.1.1 - A binding workspace event that arrives before `created` means the terminal opens only in its bound daemon pane, with no local surface in the final Chrome state. test: `crates/gclient/tests/placed_agent.rs::bind_then_created_opens_once_in_pane`.
+- 2.1.2 - A `created` event that arrives before the binding workspace event gets its unplaced surface moved into the bound daemon pane, leaving exactly one surface and no local tab. test: `crates/gclient/tests/placed_agent.rs::created_then_bind_moves_into_pane`.
+- 2.1.3 - A client that starts or reconnects through `reconcile_subscribe_first`, with a snapshot holding the bound pane and a roster holding the already-live terminal, shows exactly one surface in the saved pane, no local surface, and stable focus. test: `crates/gclient/tests/placed_agent.rs::reconnect_projects_bound_terminal_once`.
 
 ## P3: Runbook pipeline acceptance
 `kind: framing`
 
 The ordinary-pipeline runbook proof for Josh's acceptance.
 
-### 3.1 Two-seat runbook pipeline acceptance [category: code] (depends: 1.2, 2.1)
+### 3.1 Two-seat runbook pipeline acceptance [category: code] (depends: 1.4, 2.1)
 `kind: deliverable`
 
 Targets:
@@ -601,17 +865,17 @@ the managed wrapper stubbed at the SRT binary boundary.
 
 **Acceptance:**
 
-- 3.1.1 - The two-seat pipeline places seat A in a new titled tab and seat B in a right split of seat A's pane. Both terminals are SRT-wrapped and bound before exec, and both replies carry pane refs. test: `tests/workflows/test_runbook_placed_pipeline.py::test_two_seat_tab_and_split`.
+- 3.1.1 - The two-seat pipeline places seat A in a new titled tab and seat B in a right split of seat A's pane, stored with axis `horizontal`. Both terminals are SRT-wrapped and bound before exec, and both replies carry pane refs. test: `tests/workflows/test_runbook_placed_pipeline.py::test_two_seat_tab_and_split`.
 - 3.1.2 - Re-running the pipeline while seat A is live fails at `seat_a` with `seat_live` and spawns nothing. test: `tests/workflows/test_runbook_placed_pipeline.py::test_rerun_refuses_live_seat`.
 - 3.1.3 - An invalid pane ref for seat B fails the step with no spawn, and seat A is unaffected. test: `tests/workflows/test_runbook_placed_pipeline.py::test_invalid_ref_refuses_without_spawn`.
 - 3.1.4 - An SRT wrap failure for seat B fails the step, leaves no seat B pane and no provider process, and leaves seat A unaffected. test: `tests/workflows/test_runbook_placed_pipeline.py::test_wrap_failure_refuses_seat`.
 - 3.1.5 - A CLI-started run parents both agents to the pipeline child session, whose parent is the system session, and resolves the pipeline's project. test: `tests/workflows/test_runbook_placed_pipeline.py::test_cli_run_parent_and_project`.
 
-## 4 Verification
+## V1: Verification
 `kind: verification`
 
-End-to-end check after 1.1, 1.2, 2.1 and 3.1 land, run in an isolated environment only:
-- 1.1 and 1.2 focused pytest;
+End-to-end check after 1.1 to 1.4, 2.1 and 3.1 land, run in an isolated environment only:
+- 1.1 to 1.4 focused pytest;
 - `cargo test -p gclient --test placed_agent`;
 - the 3.1 isolated-daemon pipeline test.
 
@@ -623,3 +887,65 @@ gobby pipelines run runbook-two-seat-example
 
 It runs against a scratch workspace and must show two placed, SRT-wrapped seats and a
 refused re-run. Researchers never touch the live daemon or its seats.
+
+**Round 1 of 1** `kind: enhancement`
+
+- enhancer_run: a3d33670-527b-454c-87b6-280d8ef8b9f2 (plan-enhancer-taskless, isolation none)
+- enhancer_session: cbcdadc7-a9c0-430f-8b91-5bd9ea36a99d
+- round: 1 of 1 (cap 1)
+- plan_head_reviewed: 4b9eb0e523
+- converged: false
+- suggestions_presented: 9, each with its full description, suggested_enhancement and
+  metadata, to the Program Director gobby#14610 on 2026-09-27
+- presented_by: Plan Writer gobby#14578, after checking every code claim against 0.5.0
+- votes (all ACCEPT, ruled individually by the Program Director):
+  - placed-launch-better-failure-compensation: accept. Typed failures return
+    `success: false` from `finalize_executed_spawn` and never reach `_spawn_failure`,
+    so the old routing leaked the pane. Folded into decision 5, the Evidence failure
+    paragraph and 1.4 (the `run_placed_spawn` boundary, 1.4.3 to 1.4.5).
+  - placed-launch-better-seat-key: accept. The per-kind lookup allowed a tab seat and
+    a split seat with one title in one workspace. Folded into decision 7 and 1.1
+    (1.1.3, 1.1.6).
+  - placed-launch-better-source-contracts: accept. `add_pane` accepts only
+    `horizontal`/`vertical`, and the old 1.2 text put the SRT wrap after the bind.
+    Folded into decision 3, the Evidence axis bullet, 1.1 (1.1.7), 1.2 (1.2.1) and
+    3.1.1.
+  - placed-launch-better-project-provenance: accept. The factory collapses the
+    project source before `spawn_agent_impl`, so the `parent_unresolved` rule could
+    not be implemented as written. Folded into decision 8 and 1.4 (the provenance
+    sibling of `_resolve_spawn_project_context`, 1.4.8).
+  - placed-launch-better-composition: accept. No workspace service reaches
+    `create_spawn_agent_registry`, so a per-call reserver would defeat the
+    per-workspace lock. Folded into the Evidence composition bullet and the new 1.3,
+    which reuses the `workspace_ops_resolver` pattern.
+  - placed-launch-better-gclient-live-path: accept. The live workspace path runs
+    through `apply_live_workspace_event` and `project_live_workspace`, which the old
+    P2 did not target. Folded into the Evidence gclient bullet and 2.1.
+  - placed-launch-better-reserve-isolation-context: accept. Preflight runs before
+    isolation, so it cannot know a fresh worktree id. Folded into 1.1
+    (`reserve(resolved, *, worktree_id)`, 1.1.8) and 1.4.
+  - placed-launch-better-granularity: accept. The old 1.2 had nine acceptance items,
+    seven production Targets and two lifecycle owners with no Granularity record. It
+    is split at the `SpawnRequest` boundary into three independently closeable
+    sections, each with a Granularity record where a count trigger applies: 1.2 (the
+    executor bind hook, inert without a caller), 1.3 (the daemon-scoped reserver
+    composition, inert without a caller) and 1.4 (the placement input, preflight,
+    reservation, compensation and reply, with the end-to-end placed-spawn acceptance
+    1.4.10). The executor hook lands first so every leaf is safe to land alone.
+    Reservation moves to dispatch inside 1.4, so the compensation boundary lives
+    entirely in `_placement.py`. Old acceptance IDs map as follows: 1.2.1 to 1.4.1,
+    1.2.2 to 1.4.2, 1.2.3 to 1.2.1, 1.2.4 to 1.4.3, 1.2.5 to 1.4.6, 1.2.6 to 1.4.7
+    and 1.2.2, 1.2.7 to 1.2.3, 1.2.8 to 1.4.8, and 1.2.9 to 1.4.9. 2.1 and 3.1 now
+    depend on 1.4.
+  - placed-launch-bigger-reconnect: accept. The gclient invariant covers a client
+    that starts or reconnects after the agent is bound. Folded into decision 10 and
+    2.1 (2.1.3), using the existing `reconcile_subscribe_first` flow.
+- writer additions while folding, each from a source check and outside the nine
+  suggestions: the Consumers unchanged inventories for 1.2, 1.3 and 1.4, the 1.3
+  statement that every new parameter and field defaults to `None`, and the 1.2 rule
+  that the moved functions import the facade helpers inside their bodies, which
+  avoids a circular import and keeps facade patches effective.
+- declined: none
+- no new product scope was approved; each change repairs a stated invariant with an
+  existing mechanism. No second enhancer pass.
+- next: Program Director design review, then Josh's approval, then the Plan Adversary.
