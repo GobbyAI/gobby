@@ -303,7 +303,6 @@ def create_lifespan(
                     app.state.hook_manager, "_dispatch_session_summaries", None
                 ),
                 message_processor_resolver=lambda: server.message_processor,
-                tmux_config=config.tmux if config else None,
                 terminal_manager=getattr(server.services, "terminal_manager", None),
                 startup_ready=lambda: server.services.startup_ready,
             )

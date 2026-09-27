@@ -43,7 +43,7 @@ async def test_interactive_attention_waits_for_startup_reconciliation(
 async def test_session_liveness_waits_for_startup_reconciliation() -> None:
     ready = False
     monitor = SessionLivenessMonitor(session_storage=MagicMock(), startup_ready=lambda: ready)
-    record = _TerminalLivenessRecord("parked", "codex", 123, None, None)
+    record = _TerminalLivenessRecord(session_id="parked", parent_pid=123, tmux_pane=None)
     with (
         patch.object(monitor, "_get_active_terminal_sessions", return_value=[record]),
         patch.object(monitor, "_expire_session", new=AsyncMock(return_value=True)) as expire,
