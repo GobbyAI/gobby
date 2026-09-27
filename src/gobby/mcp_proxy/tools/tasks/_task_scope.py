@@ -251,6 +251,26 @@ async def collect_commit_paths_async(commit_shas: Iterable[str], repo_path: str)
     return paths
 
 
+async def collect_surviving_python_tests_async(paths: Iterable[str], repo_path: str) -> set[str]:
+    """Keep changed Python test paths present in the resolved worktree's HEAD tree."""
+    candidates = {path for path in paths if path.startswith("tests/") and path.endswith(".py")}
+    if not candidates:
+        return set()
+    result = await daemon_git.run(
+        ["ls-tree", "-r", "--name-only", "-z", "HEAD", "--", "tests/"],
+        cwd=repo_path,
+        timeout=10,
+    )
+    if not isinstance(result, GitOk):
+        raise RuntimeError("Cannot inspect surviving Python tests in the close worktree.")
+    tracked = {
+        normalized
+        for path in result.stdout.split("\0")
+        if (normalized := _normalize_git_repo_path(path)) is not None
+    }
+    return candidates & tracked
+
+
 def collect_commit_paths(commit_shas: Iterable[str], repo_path: str) -> set[str]:
     """Offline synchronous facade for direct-library consumers."""
     return asyncio.run(collect_commit_paths_async(commit_shas, repo_path))

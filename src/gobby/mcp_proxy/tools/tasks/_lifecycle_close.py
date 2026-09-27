@@ -58,6 +58,9 @@ from gobby.mcp_proxy.tools.tasks._task_scope import (
     collect_commit_paths_async as collect_commit_paths,
 )
 from gobby.mcp_proxy.tools.tasks._task_scope import (
+    collect_surviving_python_tests_async as collect_surviving_python_tests,
+)
+from gobby.mcp_proxy.tools.tasks._task_scope import (
     evaluate_task_scope_async as evaluate_task_scope,
 )
 from gobby.sessions.machine_scope import RemoteSessionOwnershipError
@@ -527,6 +530,15 @@ async def _evaluate_close(
             f"Cannot determine changed paths for validation requirements: {exc}",
         ).block_remaining()
     validation_paths = evaluation.edited_paths | committed_paths
+    try:
+        surviving_python_tests = await collect_surviving_python_tests(validation_paths, repo_path)
+    except RuntimeError as exc:
+        return evaluation.fail(
+            10,
+            "validation_commands",
+            "validation_paths_unavailable",
+            f"Cannot determine surviving Python tests for validation requirements: {exc}",
+        ).block_remaining()
     transcript = TranscriptEvidence()
     command_gate = replace(
         evaluate_validation_commands(
@@ -534,6 +546,7 @@ async def _evaluate_close(
             evidence=TranscriptEvidence(),
             has_attributed_edits=evaluation.had_attributed_edits,
             changed_paths=validation_paths,
+            surviving_python_test_paths=surviving_python_tests,
         ),
         item=10,
     )
@@ -608,6 +621,7 @@ async def _evaluate_close(
                 has_attributed_edits=evaluation.had_attributed_edits,
                 validation_criteria=task.validation_criteria or "",
                 changed_paths=validation_paths,
+                surviving_python_test_paths=surviving_python_tests,
             ),
             item=10,
         )

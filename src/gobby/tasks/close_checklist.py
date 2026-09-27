@@ -14,6 +14,9 @@ from gobby.tasks.close_test_coverage import (
     changed_python_test_paths as _changed_python_test_paths,
 )
 from gobby.tasks.close_test_coverage import (
+    pytest_module_paths as _pytest_module_paths,
+)
+from gobby.tasks.close_test_coverage import (
     test_types_audit_targets as _test_types_audit_targets,
 )
 from gobby.tasks.close_test_coverage import (
@@ -130,17 +133,22 @@ def evaluate_validation_commands(
     has_attributed_edits: bool,
     validation_criteria: str = "",
     changed_paths: Iterable[str] = (),
+    surviving_python_test_paths: Iterable[str] | None = None,
 ) -> CloseGateResult:
     """Keep credit decisions separate from observed-run explanations."""
     from gobby.tasks.validation_diagnostics import excluded_validation_records, observed_message
 
     paths = tuple(changed_paths)
+    surviving = (
+        tuple(surviving_python_test_paths) if surviving_python_test_paths is not None else paths
+    )
     gate = _evaluate_validation_commands(
         task_category=task_category,
         evidence=evidence,
         has_attributed_edits=has_attributed_edits,
         validation_criteria=validation_criteria,
         changed_paths=paths,
+        surviving_python_test_paths=surviving,
     )
     changed_tests = _changed_python_test_paths(paths)
 
@@ -194,6 +202,8 @@ def evaluate_validation_commands(
             for record in records
             if set(record["categories"]).intersection(gate.details["unresolved_failure_categories"])
         ]
+    elif gate.details.get("pytest_uncovered_paths"):
+        relevant = []
     elif task_category in _TEST_REQUIRED_CATEGORIES:
         relevant = [record for record in records if "test" in record["categories"]]
     nearest = relevant[0] if relevant else None
@@ -238,6 +248,7 @@ def _evaluate_validation_commands(
     has_attributed_edits: bool,
     validation_criteria: str = "",
     changed_paths: Iterable[str] = (),
+    surviving_python_test_paths: Iterable[str] = (),
 ) -> CloseGateResult:
     """Evaluate checklist item 9 from transcript-derived validation commands.
 
@@ -252,6 +263,7 @@ def _evaluate_validation_commands(
     """
     category = (task_category or "").strip().casefold()
     changed_python_test_paths = _changed_python_test_paths(changed_paths)
+    pytest_test_paths = _pytest_module_paths(surviving_python_test_paths)
     test_types_audit_required = bool(changed_python_test_paths)
     details = _validation_details(evidence)
 
@@ -446,14 +458,14 @@ def _evaluate_validation_commands(
             details=details,
         )
 
-    if changed_python_test_paths:
+    if pytest_test_paths:
         uncovered_pytest = uncovered_pytest_paths(
             (
                 run.core_command if run.core_command is not None else run.command
                 for run in credited
                 if run.outcome == "success"
             ),
-            changed_python_test_paths,
+            pytest_test_paths,
         )
         details["pytest_uncovered_paths"] = list(uncovered_pytest)
         if uncovered_pytest:

@@ -548,6 +548,81 @@ def test_pytest_node_id_covers_the_changed_python_test() -> None:
     assert gate.details["pytest_uncovered_paths"] == []
 
 
+def test_pytest_requires_only_surviving_collected_modules() -> None:
+    changed = (
+        "tests/tasks/test_deleted.py",
+        "tests/tasks/test_surviving.py",
+        "tests/tasks/terminal_fakes.py",
+        "tests/tasks/conftest.py",
+    )
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(
+            validation_runs=(
+                _scoped_audit_run(1, "tests/tasks/"),
+                _run(2, command="uv run pytest tests/tasks/test_surviving.py -q"),
+            )
+        ),
+        has_attributed_edits=True,
+        changed_paths=changed,
+        surviving_python_test_paths=changed[1:],
+    )
+
+    assert gate.status == "passed", gate.message
+    assert gate.details["changed_python_test_paths"] == sorted(changed)
+    assert gate.details["test_types_audit_uncovered_paths"] == []
+    assert gate.details["pytest_uncovered_paths"] == []
+
+
+def test_pytest_gap_names_surviving_module_without_stale_audit_blame() -> None:
+    quality = (
+        "uv run gobby test-quality audit tests/tasks/ "
+        "--baseline .gobby/test-quality-baseline.json --fail-on-new --min-severity low"
+    )
+    survivor = "tests/tasks/test_surviving.py"
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(
+            validation_runs=(
+                _run(1, outcome="failure", command=quality),
+                _scoped_audit_run(3, "tests/tasks/"),
+                _run(4, command=quality),
+                _run(5, command="uv run pytest tests/tasks/test_other.py -q"),
+            ),
+            edits=(replace(_edit(2), path=survivor),),
+        ),
+        has_attributed_edits=True,
+        changed_paths=("tests/tasks/test_deleted.py", survivor),
+        surviving_python_test_paths=(survivor,),
+    )
+
+    assert gate.status == "failed"
+    assert gate.details["pytest_uncovered_paths"] == [survivor]
+    assert gate.details["latest_outcomes"]["test"] == "success"
+    assert gate.details["nearest_observed_run"] is None
+    assert survivor in gate.message
+    assert quality not in gate.message
+
+
+def test_repo_sandbox_module_pattern_still_requires_pytest_coverage() -> None:
+    sandbox = "tests/tasks/run_agent_sandbox.py"
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(
+            validation_runs=(
+                _scoped_audit_run(1, "tests/tasks/"),
+                _run(2, command="uv run pytest tests/tasks/test_surviving.py -q"),
+            )
+        ),
+        has_attributed_edits=True,
+        changed_paths=(sandbox,),
+        surviving_python_test_paths=(sandbox,),
+    )
+
+    assert gate.status == "failed"
+    assert gate.details["pytest_uncovered_paths"] == [sandbox]
+
+
 def _changed_test_gate(pytest_command: str) -> CloseGateResult:
     return evaluate_validation_commands(
         task_category="code",

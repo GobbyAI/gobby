@@ -3090,12 +3090,17 @@ class TestCodexPromptDelivery:
             cleanup_agent.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_failed_paste_fails_run_and_kills_terminal(self) -> None:
+    async def test_failed_paste_fails_run_and_kills_terminal(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        from gobby.terminals.host_client import HostConnectionLost
         from gobby.terminals.runtime import TerminalWriteError
 
         runtime = FakeRuntime()
         runtime.snapshot_text = "› "
-        runtime.raise_on_write = TerminalWriteError(stage="none")
+        failure = TerminalWriteError(stage="none")
+        failure.__cause__ = HostConnectionLost("control closed; sk-test-secret")
+        runtime.raise_on_write = failure
         coordinator, terminal = _codex_delivery_target(runtime)
         run_manager = MagicMock()
 
@@ -3112,6 +3117,8 @@ class TestCodexPromptDelivery:
             error=error,
         )
         assert terminal.id in runtime.killed_ids
+        assert "stage=none cause=HostConnectionLost" in caplog.text
+        assert "sk-test-secret" not in caplog.text
 
     @pytest.mark.asyncio
     async def test_failed_enter_fails_run_and_kills_terminal(self) -> None:

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import posixpath
 from collections.abc import Iterable
+from fnmatch import fnmatchcase
+from pathlib import PurePosixPath
 
 from gobby.config.shell_lexing import parse_shell_command, safe_split
 from gobby.tasks.command_equivalence import pytest_targets
@@ -29,6 +31,18 @@ def changed_python_test_paths(changed_paths: Iterable[str]) -> tuple[str, ...]:
         ):
             python_tests.add(normalized)
     return tuple(sorted(python_tests))
+
+
+def pytest_module_paths(changed_paths: Iterable[str]) -> tuple[str, ...]:
+    """Select modules collected by this repository's ``python_files`` patterns."""
+    return tuple(
+        path
+        for path in changed_python_test_paths(changed_paths)
+        if any(
+            fnmatchcase(PurePosixPath(path).name, pattern)
+            for pattern in ("test_*.py", "run_*_sandbox.py")
+        )
+    )
 
 
 def test_types_audit_targets(run: TranscriptValidationRun) -> tuple[str, ...] | None:

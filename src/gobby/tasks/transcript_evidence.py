@@ -131,6 +131,7 @@ class _DerivationState:
     detection_config: ValidationDetectionConfig
     task_edited_files: set[str]
     repo_path: str
+    task_checkout_paths: frozenset[tuple[str, str]] | None
     window_start: datetime | None
     pending: dict[str, _PendingTool] = field(default_factory=dict)
     runs: list[TranscriptValidationRun] = field(default_factory=list)
@@ -274,6 +275,7 @@ def _derivation_fingerprint(
     detection_config: ValidationDetectionConfig,
     task_edited_files: set[str],
     repo_path: str,
+    task_checkout_paths: frozenset[tuple[str, str]] | None,
 ) -> str:
     """Fingerprint every input the derived records are a function of."""
     payload = json.dumps(
@@ -282,6 +284,9 @@ def _derivation_fingerprint(
             "source": session.source,
             "window_start": window_start.isoformat() if window_start is not None else None,
             "repo_path": repo_path,
+            "task_checkout_paths": sorted(task_checkout_paths)
+            if task_checkout_paths is not None
+            else None,
             "task_edited_files": sorted(task_edited_files),
             "detection": detection_config.model_dump(mode="json"),
         },
@@ -356,6 +361,7 @@ async def derive_transcript_evidence(
     repo_path: str,
     *,
     archive_dir: str | None = None,
+    task_checkout_paths: frozenset[tuple[str, str]] | None = None,
 ) -> TranscriptEvidence:
     """Parse a complete provider transcript and derive close-checklist evidence."""
     local_machine_id = require_local_session_ownership(session)
@@ -366,6 +372,7 @@ async def derive_transcript_evidence(
         detection_config,
         set(task_edited_files),
         repo_path,
+        task_checkout_paths,
         archive_dir,
         local_machine_id,
         _load_snapshot(session.id),
@@ -474,6 +481,7 @@ def _derive_transcript_evidence_sync(
     detection_config: ValidationDetectionConfig,
     task_edited_files: set[str],
     repo_path: str,
+    task_checkout_paths: frozenset[tuple[str, str]] | None,
     archive_dir: str | None,
     local_machine_id: str,
     resume: _EvidenceSnapshot | None,
@@ -495,6 +503,7 @@ def _derive_transcript_evidence_sync(
             detection_config,
             task_edited_files,
             repo_path,
+            task_checkout_paths,
             attempted_paths,
             resume_enabled=index == 0,
             resume=resume if index == 0 else None,
@@ -520,6 +529,7 @@ def _derive_transcript_path_evidence(
     detection_config: ValidationDetectionConfig,
     task_edited_files: set[str],
     repo_path: str,
+    task_checkout_paths: frozenset[tuple[str, str]] | None,
     attempted_paths: list[str],
     *,
     resume_enabled: bool,
@@ -527,7 +537,12 @@ def _derive_transcript_path_evidence(
 ) -> tuple[TranscriptEvidence, _EvidenceSnapshot | None]:
     normalized_task_files = {_normalize_known_path(item, repo_path) for item in task_edited_files}
     fingerprint = _derivation_fingerprint(
-        session, window_start, detection_config, normalized_task_files, repo_path
+        session,
+        window_start,
+        detection_config,
+        normalized_task_files,
+        repo_path,
+        task_checkout_paths,
     )
     if resume is not None and (
         resume.fingerprint != fingerprint or resume.transcript_path != path or path.endswith(".gz")
@@ -566,6 +581,7 @@ def _derive_transcript_path_evidence(
         detection_config=detection_config,
         task_edited_files=normalized_task_files,
         repo_path=repo_path,
+        task_checkout_paths=task_checkout_paths,
         window_start=window_start,
     )
     if resume is not None:
@@ -926,7 +942,9 @@ def _record_edit(
     else:
         return
     for path in paths:
-        task_file = _match_task_file(path, state.task_edited_files)
+        task_file = _match_task_file(
+            path, state.task_edited_files, state.repo_path, state.task_checkout_paths
+        )
         if task_file is None:
             continue
         state.edits.append(

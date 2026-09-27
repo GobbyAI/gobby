@@ -149,6 +149,7 @@ async def _derive_session_evidence_at_sync_point(
     detection: ValidationDetectionConfig,
     task_edited_files: set[str],
     repo_path: str,
+    task_checkout_paths: frozenset[tuple[str, str]],
     *,
     archive_dir: str | None,
 ) -> TranscriptEvidence:
@@ -170,6 +171,7 @@ async def _derive_session_evidence_at_sync_point(
             detection,
             task_edited_files,
             repo_path,
+            task_checkout_paths=task_checkout_paths,
             archive_dir=archive_dir,
         )
         if sync_point is None:
@@ -228,6 +230,8 @@ async def derive_close_transcript_evidence(
         windows = {session_id: start for session_id, start in windows.items() if start is not None}
         required = required.intersection(windows)
     evidence: list[TranscriptEvidence] = []
+    from gobby.workflows.task_claim_state import task_edited_checkout_paths
+
     for session_id, window_start in windows.items():
         session = ctx.session_manager.get(session_id)
         if session is None:
@@ -240,6 +244,8 @@ async def derive_close_transcript_evidence(
             logger.debug("Skipping close evidence for missing linked session %s", session_id)
             continue
         effective_window: str | datetime | None = window_start
+        variables = ctx.session_var_manager.get_variables(session_id)
+        task_checkout_paths = task_edited_checkout_paths(variables, task_id)
         if session_id != owner_session_id:
             effective_window = window_start or session.created_at
         try:
@@ -249,6 +255,7 @@ async def derive_close_transcript_evidence(
                 detection,
                 task_edited_files,
                 repo_path,
+                task_checkout_paths,
                 archive_dir=archive_dir,
             )
             try:

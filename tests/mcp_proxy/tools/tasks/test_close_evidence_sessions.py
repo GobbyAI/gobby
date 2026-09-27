@@ -162,6 +162,57 @@ async def test_single_session_close_derives_once_from_the_owner_window() -> None
 
 
 @pytest.mark.asyncio
+async def test_close_uses_only_target_task_checkout_paths_for_linked_session() -> None:
+    session = _session(IMPLEMENTER, "2026-08-27T00:30:00+00:00")
+    session.workspace_path = "/work/task-260"
+    ctx = _context(
+        [_link(IMPLEMENTER, "claimed", "2026-08-27T01:00:00+00:00")],
+        {IMPLEMENTER: session},
+    )
+    ctx.session_var_manager.get_variables.return_value = {
+        "task_edited_file_checkouts": {
+            "task": {
+                "/work/task-259-runbook": ["docs/replenishment.md"],
+                "/work/task-259-supply": ["docs/replenishment.md"],
+            },
+            "task-260": {"/work/task-260": ["docs/replenishment.md"]},
+        }
+    }
+    seen_paths: list[frozenset[tuple[str, str]]] = []
+
+    async def record(*args: Any, **kwargs: Any) -> TranscriptEvidence:
+        assert args[4] == "/work/task-260"
+        seen_paths.append(kwargs["task_checkout_paths"])
+        return TranscriptEvidence()
+
+    with (
+        patch(f"{_SUPPORT}.resolve_validation_detection_config"),
+        patch(f"{_SUPPORT}.transcript_sync_point", return_value=None),
+        patch(f"{_SUPPORT}.derive_transcript_evidence", new=AsyncMock(side_effect=record)),
+        patch(f"{_SUPPORT}.derive_prelink_runs", new=AsyncMock(return_value=())),
+    ):
+        merged = await derive_close_transcript_evidence(
+            ctx,
+            task_id="task",
+            owner_session_id=IMPLEMENTER,
+            closing_session_id=IMPLEMENTER,
+            owner_window_start="2026-08-27T01:00:00+00:00",
+            task_edited_files={"docs/replenishment.md"},
+            repo_path="/work/task-260",
+        )
+
+    assert merged == TranscriptEvidence()
+    assert seen_paths == [
+        frozenset(
+            {
+                ("/work/task-259-runbook", "docs/replenishment.md"),
+                ("/work/task-259-supply", "docs/replenishment.md"),
+            }
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_prelink_runs_are_attached_without_changing_credited_runs() -> None:
     window = "2026-08-27T02:10:00+00:00"
     ctx = _context(

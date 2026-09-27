@@ -14,6 +14,7 @@ from gobby.mcp_proxy.tools.tasks._task_scope import (
     TaskScopeEvaluation,
     collect_commit_paths,
     collect_declared_task_targets,
+    collect_surviving_python_tests_async,
     evaluate_task_scope,
     find_targets_not_found,
 )
@@ -352,3 +353,29 @@ def test_collect_commit_paths_includes_root_and_later_commits(tmp_path: Path) ->
         "tests/test_line\nfeed.py",
         "tests/test_service.py",
     }
+
+
+@pytest.mark.asyncio
+async def test_surviving_python_tests_use_close_worktree_head(tmp_path: Path) -> None:
+    def git(*args: str) -> None:
+        subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True)
+
+    git("init", "-q")
+    git("config", "user.email", "test@example.com")
+    git("config", "user.name", "Test User")
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    for name in ("test_deleted.py", "test_surviving.py", "terminal_fakes.py"):
+        (tests / name).write_text("VALUE = 1\n")
+    git("add", "tests")
+    git("-c", "core.hooksPath=/dev/null", "commit", "-qm", "root")
+    (tests / "test_deleted.py").unlink()
+    git("add", "-u")
+    git("-c", "core.hooksPath=/dev/null", "commit", "-qm", "delete")
+
+    surviving = await collect_surviving_python_tests_async(
+        {"tests/test_deleted.py", "tests/test_surviving.py", "tests/terminal_fakes.py"},
+        str(tmp_path),
+    )
+
+    assert surviving == {"tests/test_surviving.py", "tests/terminal_fakes.py"}

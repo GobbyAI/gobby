@@ -52,8 +52,25 @@ def extract_edit_paths(
     return values
 
 
-def match_task_file(path: str, task_files: set[str]) -> str | None:
-    """Map a path from any checkout to the matching task-attributed file."""
+def match_task_file(
+    path: str,
+    task_files: set[str],
+    repo_path: str | None = None,
+    task_checkout_paths: frozenset[tuple[str, str]] | None = None,
+) -> str | None:
+    """Map an edit only from an exact task-attributed checkout/path pair."""
+    if task_checkout_paths is not None:
+        if repo_path is None:
+            return None
+        absolute = os.path.realpath(os.path.join(repo_path, path))
+        for root, task_path in task_checkout_paths:
+            try:
+                relative = os.path.relpath(absolute, root).replace(os.sep, "/")
+            except ValueError:
+                continue
+            if relative == task_path and relative in task_files:
+                return relative
+        return None
     if path in task_files:
         return path
     if not (os.path.isabs(path) or path.startswith("../")):

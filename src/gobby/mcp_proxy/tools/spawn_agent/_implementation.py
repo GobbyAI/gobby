@@ -37,6 +37,7 @@ from gobby.providers.version_gate import (
     ensure_agy_support,
     peek_agy_support,
 )
+from gobby.utils.git import run_thread_to_completion, run_to_completion
 from gobby.utils.local_token import read_local_api_token
 from gobby.utils.machine_id import get_machine_id
 from gobby.utils.project_context import get_project_context
@@ -706,7 +707,7 @@ async def spawn_agent_impl(
             # grant materialization are synchronous. PostgreSQL pool acquisition alone
             # can wait for its full timeout, so keep the complete transactional
             # preparation chain off the daemon event loop.
-            prepared_spawn = await asyncio.to_thread(
+            prepared_spawn = await run_thread_to_completion(
                 prepare_terminal_spawn,
                 session_manager=child_session_manager,
                 credential_manager=runner.run_storage.credential_manager,
@@ -738,6 +739,23 @@ async def spawn_agent_impl(
                 clone_id=isolation_ctx.clone_id,
                 workspace_path=str(isolation_ctx.cwd),
             )
+        except asyncio.CancelledError:
+
+            async def rollback_cancelled_prepare() -> None:
+                await asyncio.to_thread(task_spawn_lease.release_unattached)
+                await cleanup_failed_spawn(
+                    runner,
+                    run_id,
+                    "Agent spawn cancelled during preparation",
+                    handler,
+                    spawn_config,
+                    completion_registry=completion_registry,
+                    cleanup_isolation=cleanup_isolation_on_failure,
+                    task_manager=task_manager,
+                )
+
+            await run_to_completion(rollback_cancelled_prepare())
+            raise
         except Exception as exc:
             await asyncio.to_thread(task_spawn_lease.release_unattached)
             await cleanup_created_isolation(
