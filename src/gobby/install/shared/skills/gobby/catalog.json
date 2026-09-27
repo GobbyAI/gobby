@@ -990,6 +990,12 @@
           "description": "Connect browser, terminal, and provider clients",
           "path": "references/admin/clients.md",
           "when": "Setting up client access or diagnosing reconnect and protocol failures"
+        },
+        {
+          "name": "gclient-commands",
+          "description": "Use gclient command-mode verbs and pane refs",
+          "path": "references/gclient/commands.md",
+          "when": "Inspecting or operating gclient workspaces from shell command mode"
         }
       ]
     },

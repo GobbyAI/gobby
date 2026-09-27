@@ -5,17 +5,20 @@ use tokio::time::{Duration, Instant};
 
 pub(super) const HELP: &str = "gclient <verb> [options]\n\
   list [--workspace REF]              List tabs and panes\n\
-  new-tab --project NAME|ID           Create a tab\n\
+  new-tab --project NAME|ID [--workspace REF]  Create a tab\n\
   split [REF] --right|--down           Split a pane\n\
   resize [REF] RATIO                   Resize a split\n\
   title [REF] TEXT                     Rename a tab or pane\n\
-  select [REF]                         Set focus hints\n\
+  select [REF] [--workspace REF]       Set focus hints\n\
   send-keys [REF] TEXT [--enter]       Send pane text\n\
   capture-pane [REF] [--lines N]      Read pane text\n\
   wait-for-output [REF] --pattern REGEX [--timeout S] [--interval S]\n\
   kill [REF]                           Close a tab or pane\n\
   help                                 Show this table\n\
-Common: --json, --daemon-url URL, --token-file PATH, --workspace REF.\n\
+Action options: --json, --daemon-url URL, --token-file PATH.\n\
+--workspace applies to list, new-tab, select; list/new-tab default to GOBBY_WORKSPACE_ID.\n\
+select derives workspace from a full REF, otherwise from GOBBY_WORKSPACE_ID.\n\
+Omitted pane REF uses GOBBY_PANE_REF; outside a pane, pass explicit values.\n\
 UUID tab refs: use --kind tab with title/kill; UUID pane focus: use --tab-ref TAB.\n";
 
 #[derive(Debug)]
