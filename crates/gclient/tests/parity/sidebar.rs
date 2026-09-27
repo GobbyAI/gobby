@@ -386,14 +386,14 @@ parity_tests! {
             assert_eq!(workspace_style.fg, Some(p.text));
             assert!(workspace_style.add_modifier.contains(Modifier::BOLD));
             assert!(!workspace_style.add_modifier.contains(Modifier::DIM));
-            assert_eq!(workspace_style.bg, Some(p.surface_dim));
+            assert_eq!(workspace_style.bg, Some(p.surface0));
 
             let agent_x = find_symbol_x(&terminal, body.y + 1, body.width, "N");
             let agent_style = style_at(&terminal, agent_x, body.y + 1);
             assert_eq!(agent_style.fg, Some(p.overlay1));
             assert!(!agent_style.add_modifier.contains(Modifier::DIM));
             assert!(!agent_style.add_modifier.contains(Modifier::BOLD));
-            assert_eq!(agent_style.bg, Some(p.surface_dim));
+            assert_eq!(agent_style.bg, Some(p.surface0));
         }
 
         fn occurrence_false_removes_default_workspace_bold_and_agent_dim() {
@@ -435,7 +435,7 @@ parity_tests! {
             assert_eq!(active.fg, Some(p.text));
             assert!(active.add_modifier.contains(Modifier::BOLD));
             assert!(!active.add_modifier.contains(Modifier::DIM));
-            assert_eq!(active.bg, Some(p.surface_dim));
+            assert_eq!(active.bg, Some(p.surface0));
 
             let inactive = style_at(&terminal, find_symbol_x(&terminal, second_row, 25, "t"), second_row);
             assert_eq!(inactive.fg, Some(p.subtext0));
@@ -467,7 +467,7 @@ parity_tests! {
                 assert_eq!(style.fg, Some(p.text));
                 assert!(style.add_modifier.contains(Modifier::BOLD));
                 assert!(!style.add_modifier.contains(Modifier::DIM));
-                assert_eq!(style.bg, Some(p.surface_dim));
+                assert_eq!(style.bg, Some(p.surface0));
             }
         }
 
@@ -707,7 +707,7 @@ parity_tests! {
             // gclient has no ratio: the top half of five rows (two) goes to
             // the machines band and its row, nothing is left for the
             // projects; Agents and Terminals split the other three.
-            let layout = sidebar_layout(Rect::new(0, 0, 20, 5), SidebarSide::Left, 1, 4, 0);
+            let layout = sidebar_layout(Rect::new(0, 0, 20, 5), SidebarSide::Left, 1, 4, 1, 0);
 
             assert_eq!(
                 layout.sections,

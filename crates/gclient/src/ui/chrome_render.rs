@@ -149,7 +149,6 @@ fn render_chrome<W: WorkspaceView>(
 ) -> ChromeHits {
     let menu_bar = menu_bar::render_menu_bar(frame, chrome.view.menu_bar_rect, chrome);
     render_line(frame, chrome.view.menu_bar_line, chrome);
-    render_line(frame, chrome.view.tab_bar_line, chrome);
     // The sidebar after the content: the overlay lies over it.
     let tab_bar = render_content_column(frame, ws, chrome, content);
     let sidebar = render_navigation_chrome(frame, ws, chrome);
@@ -177,7 +176,7 @@ fn render_chrome<W: WorkspaceView>(
 }
 
 /// One row of `▀` in the line colour over the ground: the upper half of the
-/// row reads as a thin black line under the bar or under the tabs.
+/// row reads as a thin dark line under the menu bar.
 fn render_line(frame: &mut Frame, rect: Rect, chrome: &Chrome) {
     if rect.is_empty() {
         return;

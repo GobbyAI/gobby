@@ -138,15 +138,12 @@ pub fn hit_test(view: &ViewState, column: u16, row: u16) -> Hit {
     if view.menu_bar_line.contains(at) {
         return Hit::MenuBarEmpty;
     }
-    // Before the tab bar and its line: the overlay lies over both.
+    // Before the tab bar: the overlay lies over it.
     if view.sidebar_rect.contains(at) {
         return sidebar_hit(view, at);
     }
     if view.tab_bar_rect.is_some_and(|bar| bar.contains(at)) {
         return tab_bar_hit(view, at);
-    }
-    if view.tab_bar_line.contains(at) {
-        return Hit::TabBarEmpty;
     }
     if view
         .control_indicator_hit_area

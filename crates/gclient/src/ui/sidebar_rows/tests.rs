@@ -357,7 +357,7 @@ fn agent_lines_carry_needs_you_and_nest_under_their_session() {
 }
 
 #[test]
-fn marquee_shares_one_period_and_parks_shorter_titles() {
+fn marquee_shares_one_period_and_rests_shorter_titles_at_the_start() {
     assert_eq!(
         ticker_window("abcdefghij", 12, 500, 0, TitleScrolling::Left),
         "abcdefghij"
@@ -375,8 +375,8 @@ fn marquee_shares_one_period_and_parks_shorter_titles() {
     assert_eq!(at(TICKER_PAUSE + 4), "efghij");
     assert_eq!(at(2 * TICKER_PAUSE + 3), "efghij");
     assert_eq!(at(2 * TICKER_PAUSE + 4), "abcdef");
-    // Beside a ten-cell overrun it parks until that one has arrived, so
-    // both restart together (D7).
+    // Beside a ten-cell overrun it rests back at the start once its own
+    // pass ends, and both restart together (D7).
     let beside = |step: u64| {
         ticker_window(
             "abcdefghij",
@@ -387,8 +387,10 @@ fn marquee_shares_one_period_and_parks_shorter_titles() {
         )
     };
     assert_eq!(beside(TICKER_PAUSE + 4), "efghij");
-    assert_eq!(beside(2 * TICKER_PAUSE + 9), "efghij");
+    assert_eq!(beside(2 * TICKER_PAUSE + 3), "efghij");
+    assert_eq!(beside(2 * TICKER_PAUSE + 4), "abcdef");
     assert_eq!(beside(2 * TICKER_PAUSE + 10), "abcdef");
+    assert_eq!(beside(3 * TICKER_PAUSE + 12), "cdefgh");
 }
 
 #[test]
