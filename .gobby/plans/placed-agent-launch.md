@@ -1355,7 +1355,7 @@ Targets:
 - `tests/servers/routes/test_agent_spawn_routes.py::*` — scope-reason: the disabled-sandbox route test now asserts refusal
 - `tests/mcp_proxy/tools/spawn_agent/test_sandbox_gate.py`
 - `tests/agents/test_resume_sandbox_gate.py`
-- `tests/conftest.py::*` — scope-reason: add the autouse SRT verification stub for the gate
+- `tests/conftest.py::*` — scope-reason: add the stub_srt_verifier fixture, the SRT_STUB_MODULES allowlist and the collection hook that applies it
 - `tests/mcp_proxy/tools/spawn_agent/test_factory.py::*` — scope-reason: `test_agent_sandbox_defaults_come_from_daemon_config` spawns with `enabled` false and now expects `sandbox_required`
 
 Decision 13 makes managed SRT unconditional for `spawn_agent`.
@@ -1396,15 +1396,49 @@ Splitting spawn from resume would leave one unsandboxed path open.
   enabled `srt`. Once the gate lands, every `spawn_agent_impl` test that expects
   success would therefore probe the real pinned install, and would fail on a
   machine without it.
-- Test stub: `tests/conftest.py` gains an autouse fixture that patches
+- Test stub, scoped by an explicit allowlist rather than autouse (Program
+  Director design review, 2026-09-27). `tests/conftest.py` gains a non-autouse
+  fixture, `stub_srt_verifier`, which patches
   `gobby.agents.sandbox_gate.verify_srt_installation` to return a stub
-  installation.
-  - The two gate test modules patch it again per case to raise, and the inner
-    patch wins, so the gate's refusal paths are tested for real.
-  - Every other `spawn_agent_impl` test module runs unchanged under the stub,
-    because it leaves `agent_sandbox` at its enabled `srt` default. The one
-    exception is `test_factory.py`: its daemon-config case spawns with `enabled`
-    false and now expects `sandbox_required`.
+  installation. It also gains a `pytest_collection_modifyitems` hook that adds
+  `usefixtures("stub_srt_verifier")` to an item only when the item's path is in
+  `SRT_STUB_MODULES`.
+- `SRT_STUB_MODULES` is one list in `tests/conftest.py`, and a comment beside it
+  states the rule: only modules that reach the gate through a success-path spawn
+  and do not test SRT itself. It holds:
+  - every module under `tests/mcp_proxy/tools/spawn_agent/` except
+    `test_sandbox_gate.py`
+  - `tests/mcp_proxy/tools/test_spawn_agent_impl_provider.py`
+  - `tests/mcp_proxy/tools/test_agents_spawn_tools.py`
+  - `tests/servers/routes/test_agent_spawn_routes.py`
+  - `tests/agents/test_backend_ingress.py`
+  - `tests/agents/test_local_context_setup.py`
+  - `tests/tasks/test_plan_gate.py`
+  - `tests/workflows/test_step_snapshot_semantics.py`
+- Everything outside the list runs the real verifier, including:
+  - `test_sandbox_gate.py` and `tests/agents/test_resume_sandbox_gate.py`, which
+    stub the verifier per case to raise or to pass, and so exercise the gate's
+    refusal paths against the real call site;
+  - `tests/agents/test_srt_spawn.py` and the `tests/integration/sandbox/`
+    suite, which check the real SRT install.
+- Consumer sweep: once the gate is implemented, the executor runs every test
+  module that calls `spawn_agent_impl` or `resume_agent_run` directly and is not
+  in the list. From 0.5.0 `070a19c3d4` those are:
+  - `tests/ask/test_permissions.py`
+  - `tests/dispatch/test_dispatcher.py`
+  - `tests/build_pipeline/test_build_pipeline_service.py`
+  - `tests/e2e/test_build_dispatcher_autonomy.py`
+  - `tests/feedback/test_feedback_agent.py`
+  - `tests/dispatch/test_spawn_forwarding.py`
+  - `tests/build/test_dispatcher_stage_wake.py`
+  - `tests/storage/test_stage_review_findings.py`
+  - `tests/scheduler/test_cron_executor.py`
+  - `tests/agents/test_resume_executor.py`
+  A module that fails with `sandbox_required` or an SRT verification error,
+  and does not test SRT, joins the list. The close summary names every
+  module added and why.
+- `test_factory.py`'s daemon-config case spawns with `enabled` false and now
+  expects `sandbox_required`.
 - `tests/dispatch/test_daemon_resume.py` replaces `resume_agent_run` with a fake,
   so the resume gate never runs there.
 - Size: the sandbox resolution in
@@ -1430,12 +1464,12 @@ Consumers unchanged:
 - `tests/agents/test_srt_spawn.py` — no-edit-reason: the wrap call site is unchanged.
 - `src/gobby/servers/routes/agent_spawn.py` — no-edit-reason: it returns `spawn_agent_impl`'s error payload unchanged, so a refusal surfaces as `sandbox_required`; its route test is a Target.
 - `tests/dispatch/test_daemon_resume.py` — no-edit-reason: it replaces `resume_agent_run` with a fake, so the resume gate never runs.
-- `tests/mcp_proxy/tools/spawn_agent/test_error_handling.py` — no-edit-reason: it leaves `agent_sandbox` at the enabled `srt` default, so its spawns pass under the autouse stub.
-- `tests/mcp_proxy/tools/spawn_agent/test_initial_variables.py` — no-edit-reason: it leaves `agent_sandbox` at the enabled `srt` default, so its spawns pass under the autouse stub.
-- `tests/agents/test_backend_ingress.py` — no-edit-reason: it leaves `agent_sandbox` at the enabled `srt` default, so its spawns pass under the autouse stub.
-- `tests/agents/test_local_context_setup.py` — no-edit-reason: its spawns leave `agent_sandbox` at the enabled `srt` default and pass under the autouse stub; its disabled `SandboxConfig` is a Codex local-context case that does not reach `spawn_agent_impl`.
-- `tests/tasks/test_plan_gate.py` — no-edit-reason: it leaves `agent_sandbox` at the enabled `srt` default, so its spawns pass under the autouse stub.
-- `tests/workflows/test_step_snapshot_semantics.py` — no-edit-reason: it leaves `agent_sandbox` at the enabled `srt` default, so its spawns pass under the autouse stub.
+- `tests/mcp_proxy/tools/spawn_agent/test_error_handling.py` — no-edit-reason: it leaves `agent_sandbox` at the enabled `srt` default, and is in `SRT_STUB_MODULES`, so its spawns pass under the stub.
+- `tests/mcp_proxy/tools/spawn_agent/test_initial_variables.py` — no-edit-reason: it leaves `agent_sandbox` at the enabled `srt` default, and is in `SRT_STUB_MODULES`, so its spawns pass under the stub.
+- `tests/agents/test_backend_ingress.py` — no-edit-reason: it leaves `agent_sandbox` at the enabled `srt` default, and is in `SRT_STUB_MODULES`, so its spawns pass under the stub.
+- `tests/agents/test_local_context_setup.py` — no-edit-reason: its spawns leave `agent_sandbox` at the enabled `srt` default and pass under the stub (`SRT_STUB_MODULES`); its disabled `SandboxConfig` is a Codex local-context case that does not reach `spawn_agent_impl`.
+- `tests/tasks/test_plan_gate.py` — no-edit-reason: it leaves `agent_sandbox` at the enabled `srt` default, and is in `SRT_STUB_MODULES`, so its spawns pass under the stub.
+- `tests/workflows/test_step_snapshot_semantics.py` — no-edit-reason: it leaves `agent_sandbox` at the enabled `srt` default, and is in `SRT_STUB_MODULES`, so its spawns pass under the stub.
 
 **Acceptance:**
 
@@ -1444,6 +1478,7 @@ Consumers unchanged:
 - 1.8.3 - A resume with no snapshot config, `enabled: false` or a non-`srt` backend parks the successor, returns `sandbox_required` and starts no provider. test: `tests/agents/test_resume_sandbox_gate.py::test_resume_refuses_unsandboxed_config`.
 - 1.8.4 - A spawned `research`-profile agent resolves to SRT with the Trusted seed plus the Gobby hosts. test: `tests/mcp_proxy/tools/spawn_agent/test_sandbox_gate.py::test_research_profile_is_srt_with_trusted_seed`.
 - 1.8.5 - From a spawned agent, a REST or CLI MCP call is rule-enforced. test: `tests/mcp_proxy/tools/spawn_agent/test_sandbox_gate.py::test_loopback_mcp_calls_are_rule_enforced`.
+- 1.8.6 - The SRT verification stub reaches only modules in `SRT_STUB_MODULES`: an item outside the list, including every `test_sandbox_gate.py` case, calls the real `verify_srt_installation`. test: `tests/mcp_proxy/tools/spawn_agent/test_sandbox_gate.py::test_srt_stub_is_scoped_to_allowlist`.
 
 ## P2: gclient placement reconciliation
 `kind: framing`
@@ -1767,7 +1802,10 @@ SRT smoke, after D1 and D2 land, in an isolated Program Director slot:
   does not change, into `workspace_pane_io.py` (new 1.5.8; 1.5.7 now bounds
   `workspace_ops.py` under 850).
 - 1.8 test fix: no spawn test patches `verify_srt_installation`, so the earlier
-  research note claiming they do was wrong. 1.8 now adds an autouse stub in
-  `tests/conftest.py` and retargets `test_factory.py`'s disabled-config case.
-  The other six spawn test modules pass unchanged under the stub.
+  research note claiming they do was wrong. 1.8 now adds a stub fixture that
+  `tests/conftest.py` applies only to an explicit `SRT_STUB_MODULES` allowlist,
+  following Program Director review; gate, SRT and integration tests keep the
+  real verifier. It also adds a consumer sweep that decides the remaining
+  direct callers, retargets `test_factory.py`'s disabled-config case, and
+  pins the scoping in new 1.8.6.
 - next: Program Director design review, then routing to Josh and the Adversary.
