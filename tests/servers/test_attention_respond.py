@@ -161,6 +161,12 @@ def test_respond_cas_and_recurrence(temp_db: HubDatabase) -> None:
         accepted_state = manager.get(state.entry_id)
         assert accepted_state is not None
         assert accepted_state.state is None
+        retired = client.post(
+            f"/api/attention/{state.entry_id}/respond",
+            json=_request(state, {"option": 1}),
+        )
+        assert retired.status_code == 409
+        assert retired.json()["detail"]["code"] == "stale_episode"
 
         recurring = _open_prompt(manager)
         assert recurring.attention_id != state.attention_id

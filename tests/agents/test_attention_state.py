@@ -287,6 +287,82 @@ def test_stale_request_races(temp_db: HubDatabase) -> None:
     assert manager.get("run:run-1") == replacement.current
 
 
+def test_clear_retains_recent_tombstone_after_ordered_event(temp_db: HubDatabase) -> None:
+    events: list[dict[str, object]] = []
+    manager = _attention_manager(temp_db, event_publisher=events.append)
+    blocked = manager.transition(
+        "run:pruned",
+        state="blocked",
+        run_id="pruned",
+        reason="approval",
+        kind="actionable",
+        fingerprint="prompt-1",
+    )
+
+    cleared = manager.transition(
+        "run:pruned",
+        state=None,
+        expected_attention_id=blocked.current.attention_id,
+        expected_fingerprint="prompt-1",
+    )
+
+    assert cleared.applied is True
+    assert cleared.current is not None
+    assert cleared.current.state is None
+    assert manager.get("run:pruned") == cleared.current
+    assert [(event["seq"], event["state"]) for event in events] == [
+        (1, "blocked"),
+        (2, None),
+    ]
+
+    stale = manager.transition(
+        "run:pruned",
+        state=None,
+        expected_attention_id=blocked.current.attention_id,
+    )
+    assert stale.applied is False
+    reopened = manager.transition(
+        "run:pruned",
+        state="blocked",
+        run_id="pruned",
+        reason="approval",
+        kind="actionable",
+        fingerprint="prompt-1",
+    )
+    assert reopened.current.attention_id != blocked.current.attention_id
+
+
+def test_clear_preserves_turn_lifecycle_payload(temp_db: HubDatabase) -> None:
+    manager = _attention_manager(temp_db)
+    lifecycle = {"turn_lifecycle": {"generation": 3}}
+    manager.transition(
+        "session:live",
+        state=None,
+        session_id="live",
+        payload=lifecycle,
+    )
+    blocked = manager.transition(
+        "session:live",
+        state="blocked",
+        session_id="live",
+        reason="approval",
+        kind="actionable",
+        fingerprint="prompt-1",
+    )
+    cleared = manager.transition(
+        "session:live",
+        state=None,
+        expected_attention_id=blocked.current.attention_id,
+    )
+
+    assert cleared.applied is True
+    persisted = manager.get("session:live")
+    assert persisted is not None
+    assert persisted.state is None
+    assert persisted.payload == lifecycle
+    assert manager.snapshot().states == ()
+
+
 @pytest.mark.asyncio
 async def test_attention_tracker_tracks_prompts_stalls_and_injection_clear(
     temp_db: HubDatabase,

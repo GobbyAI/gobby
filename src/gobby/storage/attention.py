@@ -11,6 +11,7 @@ from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
+from time import monotonic
 from types import MappingProxyType
 from typing import Any, Literal, cast
 
@@ -22,6 +23,8 @@ logger = logging.getLogger(__name__)
 AttentionKind = Literal["actionable", "non_actionable"]
 AttentionStatus = Literal["blocked"]
 AttentionRosterKind = Literal["run", "session"]
+_EMPTY_ROW_SWEEP_LIMIT = 256
+_EMPTY_ROW_SWEEP_INTERVAL_SECONDS = 60.0
 
 
 def run_attention_entry_id(run_id: str) -> str:
@@ -248,6 +251,7 @@ class AttentionStateManager:
         self._event_publisher = event_publisher
         self._notification_publisher = notification_publisher
         self.ordering = ordering or AttentionOrderingCoordinator(epoch=epoch)
+        self._next_empty_row_sweep_at = 0.0
 
     @property
     def epoch(self) -> str:
@@ -399,7 +403,32 @@ class AttentionStateManager:
     ) -> AttentionRosterSnapshot:
         """Capture all attention and transient metadata at one cursor."""
         with self.ordering.synchronized():
-            rows = self.db.fetchall("SELECT * FROM attention_states ORDER BY entry_id")
+            # Recent clears retain their stale-response identity; lifecycle payloads stay durable.
+            if monotonic() >= self._next_empty_row_sweep_at:
+                with self.db.transaction() as transaction:
+                    removed = transaction.execute(
+                        """
+                        DELETE FROM attention_states
+                        WHERE entry_id IN (
+                            SELECT entry_id FROM attention_states
+                            WHERE state IS NULL AND payload = '{}'::jsonb
+                              AND updated_at < now() - interval '1 hour'
+                            ORDER BY entry_id LIMIT %s
+                        )
+                          AND state IS NULL AND payload = '{}'::jsonb
+                          AND updated_at < now() - interval '1 hour'
+                        RETURNING entry_id
+                        """,
+                        (_EMPTY_ROW_SWEEP_LIMIT,),
+                    ).fetchall()
+                self._next_empty_row_sweep_at = monotonic() + (
+                    0.0
+                    if len(removed) == _EMPTY_ROW_SWEEP_LIMIT
+                    else _EMPTY_ROW_SWEEP_INTERVAL_SECONDS
+                )
+            rows = self.db.fetchall(
+                "SELECT * FROM attention_states WHERE state IS NOT NULL ORDER BY entry_id"
+            )
             states = tuple(AttentionState.from_row(row) for row in rows)
             raw_metadata = metadata_snapshot() if metadata_snapshot is not None else {}
             metadata = MappingProxyType(
