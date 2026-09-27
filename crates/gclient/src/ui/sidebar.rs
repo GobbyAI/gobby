@@ -16,7 +16,7 @@ pub mod terminals;
 use crate::theme::Palette;
 use crate::ui::chrome::{Chrome, Mode, WorkspaceView};
 use crate::ui::hit::SidebarSection;
-use crate::ui::scrollbar::{render_scrollbar, should_show_scrollbar};
+use crate::ui::scrollbar::{render_scrollbar, scrolled_recently, should_show_scrollbar};
 use crate::ui::settings::SidebarSide;
 use crate::ui::settings::TitleScrolling;
 use crate::ui::sidebar_rows::{
@@ -384,7 +384,13 @@ pub(super) fn render_section_rows(
     }
     if has_scrollbar {
         let track = scrollbar_track(area, body);
-        render_scrollbar(frame, metrics, track, p.surface_dim, p.overlay0, "▕");
+        // No track: the thumb draws in the dim token at rest, and in
+        // overlay0 for a second after its band scrolls or while navigate
+        // mode's cursor is in it.
+        let lit = scrolled_recently(chrome.sidebar.scrolled_at[section.index()])
+            || (chrome.mode == Mode::Navigate && rows.iter().any(|row| row.selected));
+        let thumb = if lit { p.overlay0 } else { p.dim };
+        render_scrollbar(frame, metrics, track, None, thumb, "▕");
         hits.scrollbars[section.index()] = Some(track);
     }
 }

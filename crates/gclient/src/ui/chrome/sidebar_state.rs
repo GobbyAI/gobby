@@ -7,6 +7,7 @@ use crate::ui::hit::SidebarSection;
 use crate::ui::settings::SidebarSide;
 use ratatui::layout::Rect;
 use std::collections::BTreeMap;
+use std::time::Instant;
 
 /// The overlay's width in columns, at most the width it lies over.
 pub const OVERLAY_WIDTH: u16 = 34;
@@ -26,6 +27,8 @@ pub struct SidebarState {
     pub max_width: u16,
     /// Scroll position of each section, by `SidebarSection::index`.
     pub scrolls: [usize; 4],
+    /// When each section last scrolled; its thumb stays lit a second after.
+    pub scrolled_at: [Option<Instant>; 4],
     /// Selected project-section row, worktree rows included (navigate mode).
     pub selected: usize,
     /// Project ids in the order the user dragged them into; projects the
@@ -62,6 +65,7 @@ impl Default for SidebarState {
             min_width: 18,
             max_width: 36,
             scrolls: [0; 4],
+            scrolled_at: [None; 4],
             selected: 0,
             project_order: Vec::new(),
             expanded_project: None,
@@ -79,7 +83,10 @@ impl SidebarState {
         self.scrolls[section.index()]
     }
 
+    /// The scroll position of one list section, to move it; the move lights
+    /// that section's thumb.
     pub fn scroll_mut(&mut self, section: SidebarSection) -> &mut usize {
+        self.scrolled_at[section.index()] = Some(Instant::now());
         &mut self.scrolls[section.index()]
     }
 

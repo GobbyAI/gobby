@@ -237,6 +237,66 @@ const LEFT_UP: MouseEventKind = MouseEventKind::Up(MouseButton::Left);
 /// One roster terminal per title, each in its own tab, drawn once so the
 /// tab-bar hit map is populated. Returns the workspace, the chrome and the
 /// frame area.
+/// A tab shows whole or hides, and each edge counts the tabs beyond it. The
+/// count takes the needs-you glyph and colour when one of them needs you.
+#[test]
+fn an_edge_count_turns_needs_you_when_a_hidden_tab_does() {
+    let mut ws = Workspace::scripted();
+    let mut chrome = Chrome::new(theme());
+    for index in 0..5 {
+        let pane = ws
+            .open_terminal(&format!("term-{index}"), "native", "epoch")
+            .expect("open scripted terminal");
+        chrome.open_tab(pane, "");
+    }
+    chrome.activate_tab(0);
+    ws.daemon_mut().set_roster(json!({
+        "epoch": "attention-1",
+        "seq": 1,
+        "entries": [{
+            "entry_id": "run:last",
+            "terminal": {"terminal_id": "term-4", "backend": "native"},
+            "attention": {"attention_id": "att-last", "kind": "actionable"}
+        }],
+    }));
+    ws.reconcile_subscribe_first().expect("attention roster");
+
+    let area = Rect::new(0, 0, 50, 1);
+    let draw_bar = |chrome: &Chrome| {
+        let mut term = terminal(area.width, area.height);
+        let mut hits = TabBarHits::default();
+        draw(&mut term, |frame| {
+            hits = render_tab_bar(frame, area, &ws, chrome);
+        });
+        (term, hits)
+    };
+
+    let (term, hits) = draw_bar(&chrome);
+    let row = buffer_row_text(&term, area, 0);
+    let whole: Vec<(usize, Rect)> = vec![(0, Rect::new(0, 0, 15, 1)), (1, Rect::new(16, 0, 15, 1))];
+    assert_eq!(hits.tabs, whole, "tab row: {row:?}");
+    assert_eq!(hits.scroll_left, None);
+    assert_eq!(hits.scroll_right, Some(Rect::new(40, 0, 7, 1)));
+    assert!(row.ends_with(" ⍾ 3 ›  +"), "tab row: {row:?}");
+    for x in [41, 43, 45] {
+        assert_eq!(
+            cell(&term, x, 0).style().fg,
+            Some(palette().peach),
+            "column {x}"
+        );
+    }
+
+    // Following the needs-you tab to the end: the left edge counts the
+    // three before it, none of which needs you.
+    chrome.activate_tab(4);
+    let (term, hits) = draw_bar(&chrome);
+    let row = buffer_row_text(&term, area, 0);
+    assert_eq!(hits.scroll_left, Some(Rect::new(0, 0, 5, 1)));
+    assert_eq!(hits.scroll_right, None);
+    assert!(row.starts_with(" ‹ 3 "), "tab row: {row:?}");
+    assert_eq!(cell(&term, 1, 0).style().fg, Some(palette().overlay1));
+}
+
 fn tab_bar_chrome(width: u16, titles: &[&str]) -> (Workspace, Chrome, Rect) {
     let mut ws = Workspace::scripted();
     let mut chrome = Chrome::new(theme());
@@ -401,25 +461,16 @@ fn tab_bar_clicks_activate_spawn_and_scroll() {
         "down from the last tab wraps to the first"
     );
 
-    // Scroll arrows move `tab_scroll` by one and stop following the active
-    // tab; the next tab click follows it again.
-    let (ws, mut chrome, area) = tab_bar_chrome(
-        54,
-        &[
-            "the first long title",
-            "the second long title",
-            "the third long title",
-            "the fourth long title",
-        ],
-    );
+    // An edge count pages the strip one screen and stops following the
+    // active tab; the next tab click follows it again. Nothing hides before
+    // the first tab, so that edge draws no count.
+    let (ws, mut chrome, area) =
+        tab_bar_chrome(54, &["one", "two", "three", "four", "five", "six"]);
+    assert_eq!(chrome.view.tab_scroll_left_hit_area, None);
     let right = chrome
         .view
         .tab_scroll_right_hit_area
-        .expect("overflowing tabs draw the scroll-right arrow");
-    let left = chrome
-        .view
-        .tab_scroll_left_hit_area
-        .expect("overflowing tabs draw the scroll-left arrow");
+        .expect("tabs hidden on the right draw their count");
     assert!(chrome.tab_scroll_follow_active);
     assert_eq!(
         route_mouse(
@@ -429,25 +480,32 @@ fn tab_bar_clicks_activate_spawn_and_scroll() {
         ),
         MouseOutcome::Handled
     );
-    assert_eq!(chrome.tab_scroll, 1);
+    assert_eq!(chrome.tab_scroll, 3, "the first hidden tab leads the page");
     assert!(!chrome.tab_scroll_follow_active);
     draw_with_hits(&ws, &mut chrome, area);
+    let shown: Vec<usize> = chrome
+        .view
+        .tab_hit_areas
+        .iter()
+        .map(|(index, _)| *index)
+        .collect();
+    assert_eq!(shown, [3, 4, 5], "the bar paged one screen");
     assert_eq!(
-        chrome.view.tab_hit_areas.first().map(|(index, _)| *index),
-        Some(1),
-        "the bar scrolled one tab"
+        chrome.view.tab_scroll_right_hit_area, None,
+        "nothing hides on the right"
     );
-    for _ in 0..2 {
-        route_mouse(
-            &ws,
-            &mut chrome,
-            &mouse(LEFT_DOWN, left.x + 1, left.y, KeyModifiers::NONE),
-        );
-    }
-    assert_eq!(
-        chrome.tab_scroll, 0,
-        "scrolling left stops at the first tab"
+    let left = chrome
+        .view
+        .tab_scroll_left_hit_area
+        .expect("tabs hidden on the left draw their count");
+    route_mouse(
+        &ws,
+        &mut chrome,
+        &mouse(LEFT_DOWN, left.x + 1, left.y, KeyModifiers::NONE),
     );
+    assert_eq!(chrome.tab_scroll, 0, "the left count pages back a screen");
+    draw_with_hits(&ws, &mut chrome, area);
+    assert_eq!(chrome.view.tab_scroll_left_hit_area, None);
     let (col, row) = tab_cell(&chrome, 1);
     route_mouse(
         &ws,

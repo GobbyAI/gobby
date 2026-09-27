@@ -153,6 +153,9 @@ pub struct Pane {
     pub take_back: bool,
     pub frames_rendered: u32,
     pub scroll_offset: u32,
+    /// When this client last moved `scroll_offset`; the pane's scrollbar
+    /// thumb stays lit a second after.
+    pub scrolled_at: Option<std::time::Instant>,
     pub max_scroll: u32,
     pub new_output: bool,
     pub attach_history: Option<String>,
@@ -239,6 +242,7 @@ impl Pane {
             take_back: false,
             frames_rendered: 0,
             scroll_offset: 0,
+            scrolled_at: None,
             max_scroll: 0,
             new_output: false,
             attach_history: None,

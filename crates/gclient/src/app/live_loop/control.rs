@@ -343,6 +343,9 @@ pub(super) async fn set_live_scroll_offset(
             rows_from_live_edge: rows,
         })
         .await?;
+    if pane.scroll_offset != rows {
+        pane.scrolled_at = Some(std::time::Instant::now());
+    }
     pane.scroll_offset = rows;
     if rows == 0 {
         pane.new_output = false;

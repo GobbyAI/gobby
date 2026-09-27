@@ -112,7 +112,7 @@ pub fn render_panes<W: WorkspaceView>(
         {
             highlight_selection(frame, selection, info.inner_rect, metrics, &chrome.palette);
         }
-        render_pane_scrollbar(frame, &info, metrics, &chrome.palette);
+        render_pane_scrollbar(frame, &info, metrics, &chrome.palette, pane.scrolled_at);
 
         let should_dim = !info.is_focused && multi_pane && !terminal_active;
         if should_dim {

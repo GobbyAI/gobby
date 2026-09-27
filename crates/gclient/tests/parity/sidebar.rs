@@ -1914,3 +1914,66 @@ fn key(code: KeyCode) -> KeyInput {
         bytes: Vec::new(),
     }
 }
+
+/// The fg of each thumb cell in `section`'s lane; the lane draws no track,
+/// so every other row is blank.
+fn band_thumb(
+    board: &Board,
+    chrome: &Chrome,
+    height: u16,
+    section: SidebarSection,
+) -> Vec<Option<Color>> {
+    let (terminal, hits) = draw_sidebar(board, chrome, 20, height);
+    let lane = hits.scrollbars[section.index()].expect("the band overflows");
+    (lane.y..lane.bottom())
+        .map(|y| cell(&terminal, lane.x, y))
+        .filter(|cell| cell.symbol() == "▕")
+        .map(|cell| cell.style().fg)
+        .collect()
+}
+
+/// A band's thumb draws in the dim token at rest and in overlay0 for a
+/// second after the band scrolls, or while navigate mode's cursor is in it.
+#[test]
+fn a_band_thumb_rests_dim_and_lights_while_it_scrolls_or_holds_the_cursor() {
+    use std::time::{Duration, Instant};
+    let p = palette();
+
+    let board = Board::new(&["one", "two", "three"]);
+    let mut scrolling = chrome();
+    let agents = SidebarSection::Agents;
+    let rest = band_thumb(&board, &scrolling, 13, agents);
+    assert!(!rest.is_empty(), "a thumb draws");
+    let (dim, lit) = (
+        vec![Some(p.dim); rest.len()],
+        vec![Some(p.overlay0); rest.len()],
+    );
+    assert_eq!(rest, dim, "at rest");
+    *scrolling.sidebar.scroll_mut(agents) = 1;
+    assert_eq!(
+        band_thumb(&board, &scrolling, 13, agents),
+        lit,
+        "just scrolled"
+    );
+    scrolling.sidebar.scrolled_at[agents.index()] =
+        Instant::now().checked_sub(Duration::from_secs(2));
+    assert_eq!(
+        band_thumb(&board, &scrolling, 13, agents),
+        dim,
+        "a second after"
+    );
+
+    let board = Board::new(&["one", "two"]);
+    let mut chrome = chrome();
+    let projects = SidebarSection::Projects;
+    let rest = band_thumb(&board, &chrome, 11, projects);
+    assert!(!rest.is_empty(), "a thumb draws");
+    assert_eq!(rest, vec![Some(p.dim); rest.len()], "at rest");
+    chrome.mode = Mode::Navigate;
+    chrome.sidebar.selected = 0;
+    assert_eq!(
+        band_thumb(&board, &chrome, 11, projects),
+        vec![Some(p.overlay0); rest.len()],
+        "holding the cursor"
+    );
+}

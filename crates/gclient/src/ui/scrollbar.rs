@@ -1,12 +1,21 @@
 // upstream: herdr v0.8.0 src/ui/scrollbar.rs
-//! Pane scrollbar geometry and rendering: thumb placement, and the click and
-//! drag mappings back to a scroll offset.
+//! Pane scrollbar geometry and rendering: thumb placement, the click and
+//! drag mappings back to a scroll offset, and when a thumb is lit.
 
 use crate::theme::Palette;
 use gobby_terminal::layout::{PaneInfo, ScrollMetrics};
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 use ratatui::Frame;
+use std::time::{Duration, Instant};
+
+/// How long a thumb stays lit after its band or pane last scrolled.
+const SCROLL_LIT_FOR: Duration = Duration::from_secs(1);
+
+/// Whether a scroll at `at` still lights its thumb.
+pub fn scrolled_recently(at: Option<Instant>) -> bool {
+    at.is_some_and(|at| at.elapsed() < SCROLL_LIT_FOR)
+}
 
 pub fn pane_scrollbar_rect(info: &PaneInfo) -> Option<Rect> {
     info.scrollbar_rect
@@ -111,7 +120,7 @@ pub fn render_scrollbar(
     frame: &mut Frame,
     metrics: ScrollMetrics,
     track: Rect,
-    track_color: Color,
+    track_color: Option<Color>,
     thumb_color: Color,
     thumb_symbol: &str,
 ) {
@@ -124,10 +133,12 @@ pub fn render_scrollbar(
     };
 
     let buf = frame.buffer_mut();
-    for y in track.y..track.y + track.height {
-        let cell = &mut buf[(track.x, y)];
-        cell.set_symbol("▕");
-        cell.set_style(Style::default().fg(track_color));
+    if let Some(track_color) = track_color {
+        for y in track.y..track.y + track.height {
+            let cell = &mut buf[(track.x, y)];
+            cell.set_symbol("▕");
+            cell.set_style(Style::default().fg(track_color));
+        }
     }
     for y in thumb.top..thumb.top + thumb.len {
         let cell = &mut buf[(track.x, y)];
@@ -143,30 +154,29 @@ pub fn render_pane_scrollbar(
     info: &PaneInfo,
     metrics: ScrollMetrics,
     p: &Palette,
+    scrolled_at: Option<Instant>,
 ) {
     let Some(track) = pane_scrollbar_rect(info) else {
         return;
     };
 
-    let (track_color, thumb_color, thumb_symbol) = if info.is_focused {
-        (p.overlay0, p.overlay1, "▐")
-    } else {
-        (p.surface_dim, p.overlay0, "▕")
-    };
-
-    render_scrollbar(
-        frame,
-        metrics,
-        track,
-        track_color,
-        thumb_color,
-        thumb_symbol,
-    );
+    // No track: the thumb draws in the dim token at rest, and in overlay0
+    // while its pane holds focus or for a second after it scrolls.
+    let lit = info.is_focused || scrolled_recently(scrolled_at);
+    let thumb_color = if lit { p.overlay0 } else { p.dim };
+    let thumb_symbol = if info.is_focused { "▐" } else { "▕" };
+    render_scrollbar(frame, metrics, track, None, thumb_color, thumb_symbol);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui::chrome::Chrome;
+    use crate::ui::pane_layout::PaneId;
+    use ratatui::backend::TestBackend;
+    use ratatui::buffer::Cell;
+    use ratatui::widgets::Borders;
+    use ratatui::Terminal;
 
     fn metrics(offset: usize, max: usize, rows: usize) -> ScrollMetrics {
         ScrollMetrics {
@@ -194,5 +204,44 @@ mod tests {
         assert_eq!(scrollbar_thumb_grab_offset(m, track, 9), Some(0));
         assert_eq!(scrollbar_thumb_grab_offset(m, track, 3), None);
         assert_eq!(scrollbar_offset_from_drag_row(m, track, 0, 0), 90);
+    }
+
+    /// The top and bottom cells of a ten-row pane lane scrolled to the live
+    /// edge, where the one-row thumb sits at the bottom.
+    fn draw_pane_lane(p: &Palette, is_focused: bool, scrolled_at: Option<Instant>) -> (Cell, Cell) {
+        let track = Rect::new(4, 0, 1, 10);
+        let info = PaneInfo {
+            id: PaneId::from_raw(1),
+            rect: Rect::new(0, 0, 5, 10),
+            inner_rect: Rect::new(0, 0, 4, 10),
+            scrollbar_rect: Some(track),
+            borders: Borders::NONE,
+            is_focused,
+        };
+        let mut terminal = Terminal::new(TestBackend::new(5, 10)).unwrap();
+        terminal
+            .draw(|frame| render_pane_scrollbar(frame, &info, metrics(0, 90, 10), p, scrolled_at))
+            .unwrap();
+        let buf = terminal.backend().buffer();
+        (buf[(4, 0)].clone(), buf[(4, 9)].clone())
+    }
+
+    #[test]
+    fn a_pane_thumb_rests_dim_and_lights_while_focused_or_just_scrolled() {
+        let p = Chrome::dark().palette;
+        let now = Instant::now();
+        let two_seconds_ago = now.checked_sub(Duration::from_secs(2)).expect("uptime");
+        for (is_focused, scrolled_at, symbol, fg) in [
+            (false, None, "▕", p.dim),
+            (false, Some(now), "▕", p.overlay0),
+            (false, Some(two_seconds_ago), "▕", p.dim),
+            (true, None, "▐", p.overlay0),
+        ] {
+            let (top, thumb) = draw_pane_lane(&p, is_focused, scrolled_at);
+            let case = format!("focused {is_focused}, scrolled {scrolled_at:?}");
+            assert_eq!(top.symbol(), " ", "{case}: no track");
+            assert_eq!(thumb.symbol(), symbol, "{case}");
+            assert_eq!(thumb.style().fg, Some(fg), "{case}");
+        }
     }
 }
