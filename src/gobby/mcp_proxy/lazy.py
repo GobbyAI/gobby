@@ -123,6 +123,8 @@ class LazyConnectionState:
 
     configured_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     connected_at: datetime | None = None
+    last_used_at: float | None = None
+    active_requests: int = 0
     last_attempt_at: datetime | None = None
     last_error: str | None = None
     connection_attempts: int = 0
@@ -141,6 +143,7 @@ class LazyConnectionState:
     def record_connection_success(self) -> None:
         """Record successful connection."""
         self.connected_at = datetime.now(UTC)
+        self.last_used_at = time.monotonic()
         self.last_error = None
         self.circuit_breaker.record_success()
 
@@ -260,6 +263,23 @@ class LazyServerConnector:
         if state:
             state.record_connection_success()
             logger.info("Server '%s' connected", server_name)
+
+    def mark_used(self, server_name: str) -> None:
+        state = self._states.get(server_name)
+        if state:
+            state.last_used_at = time.monotonic()
+
+    def start_request(self, server_name: str) -> None:
+        state = self._states.get(server_name)
+        if state:
+            state.active_requests += 1
+            state.last_used_at = time.monotonic()
+
+    def finish_request(self, server_name: str) -> None:
+        state = self._states.get(server_name)
+        if state:
+            state.active_requests = max(0, state.active_requests - 1)
+            state.last_used_at = time.monotonic()
 
     def mark_failed(self, server_name: str, error: str) -> None:
         """
