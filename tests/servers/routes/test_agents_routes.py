@@ -27,6 +27,7 @@ from gobby.storage.definitions import AgentDefinitionManager
 from gobby.storage.executor import DatabaseExecutor
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
+from gobby.utils.local_token import AgentApiTokenClaims
 from gobby.workflows.definitions import AgentDefinitionBody
 from tests.fixtures.agent_definitions import make_agent_definition
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
@@ -273,6 +274,46 @@ def server(temp_db, task_manager):
 @pytest.fixture
 def client(server) -> TestClient:
     return TestClient(server.app)
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "body"),
+    [
+        ("POST", "/api/agents/definitions", _agent_request("blocked")),
+        ("PUT", f"/api/agents/definitions/{UNKNOWN_ID}", {"description": "blocked"}),
+        ("DELETE", f"/api/agents/definitions/{UNKNOWN_ID}", None),
+        ("POST", f"/api/agents/definitions/{UNKNOWN_ID}/restore", None),
+        ("PATCH", f"/api/agents/definitions/{UNKNOWN_ID}/rules", {}),
+        ("PATCH", f"/api/agents/definitions/{UNKNOWN_ID}/rule-selectors", {}),
+        ("PATCH", f"/api/agents/definitions/{UNKNOWN_ID}/variables", {}),
+        ("POST", "/api/agents/definitions/import/bundled", None),
+    ],
+)
+def test_agent_token_cannot_mutate_definitions(
+    server: HTTPServer,
+    client: TestClient,
+    method: str,
+    path: str,
+    body: dict[str, Any] | None,
+) -> None:
+    claims = AgentApiTokenClaims(
+        session_id="agent-session",
+        project_id="project",
+        machine_id="machine",
+        iat=1,
+        exp=2,
+    )
+    with (
+        patch.object(server.auth_service, "request_principal", return_value=claims),
+        patch(
+            "gobby.storage.definitions.AgentDefinitionManager",
+            side_effect=AssertionError("definition storage was touched"),
+        ),
+    ):
+        response = client.request(method, path, json=body)
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Agent API tokens cannot modify agent definitions"
 
 
 @pytest.fixture
