@@ -38,6 +38,10 @@ def test_redact_terminal_output_scrubs_url_credentials() -> None:
         ("token: ab1", "ab1", "token: <redacted>"),
         ("client_secret=s3cr retry", "s3cr", "client_secret=<redacted> retry"),
         ("password=ab;c,d} retry", "c,d", "password=<redacted> retry"),
+        ('{"password":"ab\\"secretTAIL"}', "secretTAIL", '{"password":<redacted>}'),
+        ("{'token': 'ab\\'secretTAIL'}", "secretTAIL", "{'token': <redacted>}"),
+        ('{"password":"ab\\\\"} next', "ab", '{"password":<redacted>} next'),
+        ('body={"password":"hunter2 secretTAIL', "secretTAIL", 'body={"password":<redacted>'),
     ],
 )
 def test_redact_terminal_output_scrubs_quoted_keys_and_short_values(

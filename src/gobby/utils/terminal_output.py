@@ -28,12 +28,14 @@ _SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     ),
     # Generic secret-bearing key/value assignments, including quoted JSON keys
     # ({"password": "x"}) and prefixed keys (client_secret=x). Any non-empty
-    # value is redacted; a quoted value is replaced whole, spaces included. A bare
+    # value is redacted; a quoted value is replaced whole, spaces and escaped
+    # quotes included, and an unterminated one runs to the end of the line. A bare
     # value runs to whitespace or a quote, so punctuation inside it is not a leak.
     (
         re.compile(
             r"(?i)\b([a-z0-9_-]*(?:api[_-]?key|secret|token|password|passwd))"
-            r"([\"']?\s*[:=]\s*)(\"[^\"\n]*\"|'[^'\n]*'|[^\s\"']+)"
+            r"([\"']?\s*[:=]\s*)"
+            r"(\"(?:[^\"\\\n]|\\.)*\"?|'(?:[^'\\\n]|\\.)*'?|[^\s\"']+)"
         ),
         r"\1\2<redacted>",
     ),

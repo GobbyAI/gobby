@@ -147,6 +147,21 @@ def test_send_redact_scrubs_quoted_keys_and_short_values(
     assert content == 'ALARM body={"password":<redacted>} retry password=<redacted>'
 
 
+def test_send_redact_scrubs_quoted_value_with_escaped_quote(
+    runner: CliRunner, mock_client: MagicMock
+) -> None:
+    """send --redact never leaks the suffix after an escaped quote in a JSON value."""
+    mock_client.call_http_api.return_value = _mock_response(status_code=200)
+    message = 'ALARM body={"password":"ab\\"secretTAIL"} end'
+
+    with patch("gobby.cli.communications.get_daemon_client", return_value=mock_client):
+        result = runner.invoke(comms, ["send", "--redact", "gobby-telegram", message])
+
+    assert result.exit_code == 0
+    content = mock_client.call_http_api.call_args.kwargs["json_data"]["content"]
+    assert content == 'ALARM body={"password":<redacted>} end'
+
+
 def test_send_failure(runner: CliRunner, mock_client: MagicMock) -> None:
     """send command handles send failure."""
     mock_client.call_http_api.return_value = _mock_response(

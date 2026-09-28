@@ -48,6 +48,23 @@ def test_quoted_short_secret_straddling_the_cut_is_never_partially_sent(
     assert '"password":<' in result
 
 
+@pytest.mark.parametrize("chars_before_cut", [2, 6, 12])
+def test_escaped_quote_secret_straddling_the_cut_is_never_partially_sent(
+    chars_before_cut: int,
+) -> None:
+    max_chars = 80
+    cut = max_chars - len(TRUNCATION_MARKER)
+    prefix = "x" * (cut - len(' body={"password":') - chars_before_cut)
+    text = f'{prefix} body={{"password":"ab\\"secretTAIL"}} ' + "y" * 200
+
+    result = redact_and_bound(text, max_chars)
+
+    assert len(result) == max_chars
+    assert "secretTAIL" not in result
+    assert "TAIL" not in result
+    assert '"password":<' in result
+
+
 @pytest.mark.parametrize("max_chars", [64, 500, 4096])
 def test_result_never_exceeds_the_bound(max_chars: int) -> None:
     text = "\n".join(f"2026-09-28 01:{i % 60:02d}:00 - ERROR - line {i}" for i in range(2000))
