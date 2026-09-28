@@ -136,6 +136,63 @@ fn a_seat_without_a_definition_names_its_provider() {
     );
 }
 
+/// A seat whose session carries `title` with `title_source`, joined to an
+/// open pane on `term-seat`.
+fn titled_seat(title: &str, title_source: &str) -> (Workspace, PaneId) {
+    let mut ws = Workspace::scripted();
+    ws.daemon_mut().set_sidebar_rows(SidebarRows {
+        projects: vec![ProjectRow {
+            id: "proj-alpha".to_owned(),
+            name: "gobby".to_owned(),
+            display_name: "gobby".to_owned(),
+            ..ProjectRow::default()
+        }],
+        sessions: [(
+            "proj-alpha".to_owned(),
+            vec![SessionRow {
+                id: "sess-seat".to_owned(),
+                reference: Some("#14069".to_owned()),
+                title: Some(title.to_owned()),
+                title_source: Some(title_source.to_owned()),
+                ..SessionRow::default()
+            }],
+        )]
+        .into_iter()
+        .collect(),
+        ..SidebarRows::default()
+    });
+    ws.daemon_mut().set_roster(json!({
+        "epoch": "e1", "seq": 1,
+        "entries": [{
+            "entry_id": "session:sess-seat",
+            "session_id": "sess-seat",
+            "provider": "claude",
+            "terminal": {"terminal_id": "term-seat", "backend": "native"}
+        }]
+    }));
+    ws.select_project("proj-alpha");
+    ws.reconcile_subscribe_first().unwrap();
+    let pane = ws.open_terminal("term-seat", "native", "epoch").unwrap();
+    (ws, pane)
+}
+
+#[test]
+fn a_manual_session_title_names_the_seat_in_place_of_its_provider() {
+    let (ws, pane) = titled_seat("gobby#14069: Assistant", "manual");
+    assert_eq!(
+        pane_corners(&ws, &Chrome::dark(), ws.pane(pane), true).title,
+        "○ #14069: Assistant · Focused",
+        "the manual title drops the ref prefix the header already leads with"
+    );
+
+    let (ws, pane) = titled_seat("gobby#14069: Task #22974 - fix titles", "task");
+    assert_eq!(
+        pane_corners(&ws, &Chrome::dark(), ws.pane(pane), true).title,
+        "○ #14069: Claude · Focused",
+        "an automatic title keeps the provider"
+    );
+}
+
 #[test]
 fn bare_shell_title_uses_its_command_instead_of_unknown_agent_identity() {
     let mut ws = Workspace::scripted();

@@ -538,3 +538,75 @@ fn a_terminal_row_puts_its_address_at_the_right_edge_while_the_name_leaves_room(
         " ○ cargo-nextest-run"
     );
 }
+
+#[test]
+fn a_manual_session_title_takes_the_definition_slot_on_line_one() {
+    let mut ws = Workspace::scripted();
+    let session = |id: &str, reference: &str, title: &str, source: Option<&str>| SessionRow {
+        id: id.to_string(),
+        reference: Some(reference.to_string()),
+        title: Some(title.to_string()),
+        title_source: source.map(str::to_string),
+        ..SessionRow::default()
+    };
+    ws.daemon_mut().set_sidebar_rows(SidebarRows {
+        projects: vec![ProjectRow {
+            id: "proj-alpha".to_string(),
+            name: "alpha".to_string(),
+            display_name: "alpha".to_string(),
+            ..ProjectRow::default()
+        }],
+        sessions: [(
+            "proj-alpha".to_string(),
+            vec![
+                session("sess-named", "#77", "Assistant", Some("manual")),
+                session("sess-bare-ref", "#78", "alpha#78", Some("manual")),
+                session("sess-auto", "#79", "alpha#79: Codex", Some("provisional")),
+            ],
+        )]
+        .into_iter()
+        .collect(),
+        ..SidebarRows::default()
+    });
+    let seat = |id: &str| {
+        json!({
+            "entry_id": format!("session:{id}"),
+            "session_id": id,
+            "provider": "codex",
+            "terminal": {"terminal_id": format!("term-{id}"), "backend": "native"}
+        })
+    };
+    ws.daemon_mut().set_roster(json!({
+        "epoch": "e1",
+        "seq": 1,
+        "entries": [seat("sess-named"), seat("sess-bare-ref"), seat("sess-auto")]
+    }));
+    ws.select_project("proj-alpha");
+    ws.reconcile_subscribe_first().unwrap();
+    for id in ["sess-named", "sess-bare-ref", "sess-auto"] {
+        ws.open_terminal(&format!("term-{id}"), "native", "epoch")
+            .unwrap();
+    }
+
+    let chrome = Chrome::dark();
+    let rows = agent_rows(&ws, &chrome);
+    let line_one = |id: &str| {
+        let row = rows
+            .iter()
+            .find(|row| row.id == format!("session:{id}"))
+            .expect("agent row");
+        line_text(&row_line(row, 34, &chrome, 0))
+    };
+
+    assert_eq!(line_one("sess-named"), " ○ #77: Assistant");
+    assert_eq!(
+        line_one("sess-bare-ref"),
+        " ○ #78: Codex",
+        "a manual title that is only the ref names nothing"
+    );
+    assert_eq!(
+        line_one("sess-auto"),
+        " ○ #79: Codex",
+        "an automatic title keeps the provider"
+    );
+}

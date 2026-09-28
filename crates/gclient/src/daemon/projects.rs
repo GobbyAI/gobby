@@ -60,6 +60,9 @@ pub struct SessionRow {
     #[serde(rename = "ref")]
     pub reference: Option<String>,
     pub title: Option<String>,
+    /// `manual` when a person named the session; the automatic titles
+    /// (`task`, `provisional`) only restate the ref, task, and provider.
+    pub title_source: Option<String>,
     pub source: Option<String>,
     pub status: String,
     pub git_branch: Option<String>,
@@ -76,6 +79,24 @@ impl SessionRow {
         self.reasoning_effort
             .as_deref()
             .filter(|effort| !effort.is_empty())
+    }
+
+    /// The name a person gave the session, less a leading `<project>#<seq>:`
+    /// the ref already shows; `None` for an automatic or blank title.
+    pub fn manual_title(&self) -> Option<&str> {
+        if self.title_source.as_deref() != Some("manual") {
+            return None;
+        }
+        let title = self.title.as_deref()?.trim();
+        let name = match self.reference.as_deref() {
+            Some(reference) => match title.split_once(':') {
+                Some((head, rest)) if head.trim_end().ends_with(reference) => rest.trim(),
+                None if title.ends_with(reference) => "",
+                _ => title,
+            },
+            None => title,
+        };
+        (!name.is_empty()).then_some(name)
     }
 }
 

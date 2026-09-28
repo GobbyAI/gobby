@@ -137,8 +137,10 @@ second after the section scrolls or while the navigate cursor is in it.
   with a live session, run, or terminal on the current machine filter, plus the
   focused one) and `[all]`.
 - *Agents* lists active agents and sessions with their state, reference, name,
-  task title, and model. A provider name identifies a row when no agent
-  definition names it; it is not repeated beside the title. Runs can nest under their
+  task title, and model. A session named by hand shows that name where the
+  definition goes (`#14069: Assistant`). Otherwise the agent definition names
+  the row, or the provider when there is none; the provider is not repeated
+  beside the title. Runs can nest under their
   parent session. Selecting one in another workspace switches to that workspace
   and focuses its existing pane. If the
   terminal has gone away, the row refreshes and a warning explains that it is
@@ -202,7 +204,9 @@ settings.
 **Panes.** A tab holds one or more terminals in nested splits; each pane is a
 workspace row with a ref such as `0:0:1:2`, and its name is that row's label.
 A pane's top-left corner names who sits in it: the agent's state glyph, its
-session reference, and its definition, as in `○ #1742: Codex`. The project
+session reference, and its definition, as in `○ #1742: Codex`. A session named
+by hand shows that name in the definition's place, as in `○ #14069: Assistant`,
+without repeating the `project#seq:` prefix the title carries. The project
 leads the reference (`○ gobby#1742: Codex`) only in the all-projects priority
 view. A seat with no definition names its provider, such as `○ Claude Code`,
 and a bare shell shows its name, such as `○ zsh`. The focused pane appends
