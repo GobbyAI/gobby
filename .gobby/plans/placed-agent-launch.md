@@ -773,7 +773,9 @@ the rest of its body in one `try`/`except BaseException`/`finally`, and a local
 flag records whether the claim was released inline or handed to the owner, so
 exactly one of the two happens on every return and raise. The partition: before
 `prepare_spawn` is dispatched nothing can exist on the host, so the row is
-settled inline and the claim released. Once it is dispatched, every outcome
+settled inline and the claim released. The exceptions are a raised
+`create_pending` or bump and a raised inline settlement write. Their row
+state is indeterminate, so they go to the owner. Once it is dispatched, every outcome
 other than a completed promotion goes to the owner, because a prepare failure
 is never proof (1.9, I1).
 
@@ -788,8 +790,13 @@ a repeated cancellation cannot interrupt it, and it finds the flag set
 afterwards.
 
 The exits, each a case of 1.2.9:
-- E1. `create_pending` or the retry bump raises: no row is written, or it is
-  unchanged, and the claim is released inline.
+- E1. `create_pending` or the retry bump raises. A raise does not prove that
+  nothing committed: `create_pending` builds its `Terminal` after
+  `db.fetchone` has committed (`terminals.py:359`), `retry_attempt_unsettled`
+  does the same (`terminal_settlement.py:376`), `PostgresHubDatabase.fetchone`
+  leaves its transaction before it returns (`hub/postgres.py:353`), and a lost
+  commit acknowledgment is indeterminate. The owner (stage `create`) takes the
+  finished task and recovers the row as below.
 - E2. Cancellation during `create_pending` or the bump: the owner (stage
   `create`) awaits the task and settles a row that commits late with
   `fail_pending_attempt`.
@@ -819,7 +826,8 @@ The exits, each a case of 1.2.9:
   and no row is touched.
 
 An inline settlement that is itself cancelled hands its still-running write task
-to the owner the same way. For a placed spawn, a prepare that raises no longer
+to the owner the same way, and one that raises hands the finished task over for
+the same read-back recovery. For a placed spawn, a prepare that raises no longer
 settles the row inline: it stays `pending` under the claim, then goes `exited`
 once the owner proves absence, and `_runtime_spawn` returns the same failed
 result code as today.
@@ -851,9 +859,25 @@ was handed, so nothing it owns is abandoned. The order depends on the stage:
   can exist. The owner awaits the task first; it never infers absence from a
   write that is still running. It then settles a committed row with
   `fail_pending_attempt`, calls `release`, and runs the deferred steps it
-  returns once. When the drained create or bump task raised, no row for this
-  attempt committed: that is the settlement, with no write, and release and
-  compensation run the same way.
+  returns once.
+  When the drained create or bump task raised, the owner recovers the actual
+  row. Under `settle_lock` it reads the row by id. It never re-executes the
+  create or the bump:
+  - create (minted id): no row means the insert rolled back, and that is the
+    settlement. A `pending` row with this `spawn_key` is this attempt's commit:
+    the owner adopts its `attempt_generation` and `attempt_started_at` and
+    settles it with `fail_pending_attempt`.
+  - bump (existing id): the owner captured the pre-bump pair from `existing`.
+    A row that still carries that pair means the bump rolled back. The
+    pre-existing attempt is not this owner's, so it writes nothing and settles
+    with no write. A `pending` row with a newer pair is this attempt's bump,
+    because the held claim admits no other writer (E14). The owner adopts the
+    pair and settles it with `fail_pending_attempt`.
+  - A read that raises goes to the settlement retry below. The retry repeats
+    only the read and the settlement it decides, on the same cadence.
+  The create or bump task is drained before the read, so no write is still
+  in flight and the read is final. Release and compensation then run as for a
+  successful create.
 - `prepare`: the row stays `pending` under the held claim while the prepare may
   still be unresolved. A `pending` row holds the seat, the storage guard refuses
   its pane, and every reaper skips the held id, so nothing needs the row
@@ -983,21 +1007,25 @@ and repeated passes change nothing until the owner releases. The claim is held
 for the whole retry, so the unresolved-prepare shielding, the storage guard's
 pane refusal and the strict native and tmux proof are all unchanged.
 
-Cancellation and shutdown. The settlement and absence retries run as one retry
-task per claim, created synchronously by the owner, retained in
-`_TIMEOUT_CLEANUP_TASKS` and awaited by the owner through `asyncio.shield`,
-the same retention pattern as the handoff. Each offloaded settlement write
-inside it is also shielded. Cancelling the owner, or anything else that awaits
-it, cancels only that wait: the retry task keeps its frame, its claim and its
-deferred steps and goes on progressing while the daemon lives, so the one
-owner is never replaced and nothing is handed off or re-run. The retry task
-itself is cancelled only by event-loop teardown: `_TIMEOUT_CLEANUP_TASKS` has
+Cancellation and shutdown. The owner is one task for the whole claim
+lifetime after the handoff. The same task runs the stage drain, the read-back
+recovery, the proof and the kill decision, the first settlement, the
+settlement and absence retries, the `release` and the compensation it
+returns. The handoff creates it synchronously and retains it in
+`_TIMEOUT_CLEANUP_TASKS`. `_runtime_spawn` awaits nothing after the handoff,
+and no other code holds or awaits the task. Any future waiter must await it
+through `asyncio.shield`, so cancelling that waiter cancels only the wait.
+Inside it, every offloaded write, probe and kill is its own task awaited
+through `asyncio.shield`. The owner therefore keeps its frame, its claim and
+its deferred steps and goes on progressing while the daemon lives. It is
+never replaced, and nothing is handed off or re-run. The owner task itself is
+cancelled only by event-loop teardown: `_TIMEOUT_CLEANUP_TASKS` has
 no member-cancelling reader (`spawn_executor.py:837` adds and `:844`
 discards), and the runner's graceful shutdown cancels only the runner's named
 task attributes (`runner_lifecycle_shutdown.py::_cancel_periodic_tasks`,
 `_cancel_runner_task`), with no `asyncio.all_tasks` sweep, before the loop
 closes. A `CancelledError`
-raised inside the retry task is therefore the daemon stopping. It releases
+raised inside the owner, at any stage, is therefore the daemon stopping. It releases
 nothing, runs no deferred step, logs the pending settlement at WARNING and
 re-raises. The process exit empties the registry, and restart recovery (1.9)
 owns the row, so a restart remains only the fallback for a daemon that stops
@@ -1014,9 +1042,9 @@ it shows the required result:
   settled.
 - `fail_pending_attempt`: it CASes `pending` to `exited`
   (`terminal_settlement.py:278-295`), so the row is `exited` with the captured
-  pair. A create or bump task that the owner drained and that raised committed
-  no row for this attempt, and that outcome counts as settled; it is decided
-  from the drained task, never from a read-back.
+  or adopted pair. After a raised create or bump, a read-back that finds no row
+  (create), or the row still carrying the pre-bump pair (bump), counts as
+  settled with no write. A raise alone never counts.
 - a kept orphan: the row is `orphaned`, carries the captured pair and the
   recorded locator, locator key, host epoch and process. A `pending` row gets
   there in one `mark_kill_failed` CAS with the identity. A `live` row takes
@@ -1077,7 +1105,7 @@ time. Facade patches therefore stay effective, and the source check in
 This deliverable adds no placement input and no caller that sets the binder, so it
 lands safely on its own.
 
-**Granularity:** thirteen acceptance items, one outcome: a placed spawn's terminal
+**Granularity:** fourteen acceptance items, one outcome: a placed spawn's terminal
 id has exactly one owner from before the row is written until a proven
 settlement.
 The bind order, the exits, placed promotion and the owner are that one
@@ -1123,16 +1151,17 @@ Consumers unchanged:
 - 1.2.1 - With a binder, the executor runs `wrap_provider_command`, `create_pending`, the bind, `reserve_observer`/`prepare_spawn` and provider exec in that order, and the provider argv is the SRT-wrapped command. Without a binder the order is unchanged. test: `tests/agents/test_spawn_executor_placement_bind.py::test_bind_follows_wrap_and_precedes_exec`.
 - 1.2.2 - A binder failure, including a publish failure raised after `set_pane_terminal` persisted the binding, fails the pending terminal through `_settle_native_spawn_failure`, returns a failed `SpawnResult`, and never starts the provider. test: `tests/agents/test_spawn_executor_placement_bind.py::test_bind_failure_fails_pending_terminal`.
 - 1.2.3 - `spawn_executor` re-exports `_runtime_spawn` and `_promote_prepared` from `spawn_executor_runtime`. symbol: `_runtime_spawn`. file: `src/gobby/agents/spawn_executor_runtime.py`.
-- 1.2.4 - With a binder, a `timeout_seconds` expiry hands the held claim to the owner, the row becomes `orphaned`, and `spawn_timeout` returns without awaiting the prepare. A late success with a proven kill settles the row `exited`. A tmux kill that leaves the session present, a tmux terminate that raises, and a native stale-epoch kill whose host cannot answer and that has no process each leave the row `orphaned`, with the prepared locator, epoch and process recorded. A native stale-epoch kill with a process whose group is then dead settles `exited`. When the final settlement write succeeds, the claim is released in every case, for native and tmux. test: `tests/agents/test_spawn_executor_placement_bind.py::test_placed_timeout_orphans_then_late_settlement`.
+- 1.2.4 - With a binder, a `timeout_seconds` expiry hands the held claim to the owner, the row stays `pending` while the prepare is unresolved, and `spawn_timeout` returns without awaiting the prepare. A late success with a proven kill settles the row `exited`. After a late success, a tmux kill that leaves the session present, a tmux terminate that raises, and a native stale-epoch kill whose host cannot answer and that has no process each move the row from `pending` to `orphaned` in one CAS carrying the prepared locator, locator key, epoch and process. A native stale-epoch kill with a process whose group is then dead settles `exited`. When the final settlement write succeeds, the claim is released in every case, for native and tmux. test: `tests/agents/test_spawn_executor_placement_bind.py::test_placed_timeout_holds_pending_then_late_settlement`.
 - 1.2.5 - Without a binder, a timeout keeps today's pending row and late cleanup. test: `tests/agents/test_spawn_executor_placement_bind.py::test_unplaced_timeout_unchanged`.
 - 1.2.6 - With a binder, repeated cancellation while the prepare is unresolved, and a cancellation that arrives as the prepare completes with either a success or a failure, each hand the prepare to exactly one owner, which consumes it, and return `cancelled`. test: `tests/agents/test_spawn_executor_placement_bind.py::test_placed_cancellation_has_one_owner`.
-- 1.2.7 - The claim is taken before `create_pending` is dispatched and released after a successful promote or a bind failure. While it is held, `cleanup_failed_spawn` and `terminal_kill` each report not settled, leave the row `orphaned` and start no runtime terminate. A prepare slower than `spawn_in_doubt_seconds` is reaped by neither reaper. test: `tests/agents/test_spawn_executor_placement_bind.py::test_in_doubt_claim_spans_prepare`.
-- 1.2.8 - A late prepare failure is not proof. A tmux session created before a failing dimension query, and a native terminal created on the host whose spawn response was lost, are each found and killed with proof before the row settles `exited`. A native probe that cannot reach the host leaves the row `orphaned`. test: `tests/agents/test_spawn_executor_placement_bind.py::test_late_prepare_failure_requires_proven_absence`.
+- 1.2.7 - The claim is taken before `create_pending` is dispatched and released after a successful promote or a bind failure. While it is held, `cleanup_failed_spawn` and `terminal_kill` each report not settled, leave the unresolved row `pending` and start no runtime terminate. A prepare slower than `spawn_in_doubt_seconds` is reaped by neither reaper. test: `tests/agents/test_spawn_executor_placement_bind.py::test_in_doubt_claim_spans_prepare`.
+- 1.2.8 - A late prepare failure is not proof. A tmux session created before a failing dimension query, and a native terminal created on the host whose spawn response was lost, are each found and killed with proof before the row settles `exited`. A native probe that cannot reach the host leaves the row `pending` with the claim held, and the absence retry settles it once the host answers (1.2.12). test: `tests/agents/test_spawn_executor_placement_bind.py::test_late_prepare_failure_requires_proven_absence`.
 - 1.2.9 - With a binder, each exit E1-E14 either releases the claim inline or hands it to exactly one owner, and none leaves the id held without an owner. Each case is one parametrized row. Cancellation cases cancel the caller repeatedly while the stage's worker is still running, and the owner awaits that worker's real completion. A `create_pending` whose row commits after the cancellation gets that row settled by the owner. The E12 cases (observer bind failure, `CommitSpawnRefusedError`, native commit error, lost CAS), with a kill that raises or is swallowed, leave the row unterminalized until the owner's proof, and the owner kills through the `prepared` identity. test: `tests/agents/test_spawn_executor_placement_bind.py::test_every_exit_releases_or_hands_off_the_claim`.
 - 1.2.10 - An injected failure of `mark_kill_failed` still lets the owner consume the prepare and make its kill decision. A final settlement write that fails after three retries leaves the claim held and the row unsettled, and the owner enters its settlement retry. With `mark_kill_failed` failing on every attempt and the kill unproven, a `record_orphan_identity` CAS that matches no row keeps the claim held. A final `exited` or `fail_pending_attempt` read back in the wrong state also keeps the claim, and an already-`exited` row releases. On a timeout the row stays `pending` under the held claim while the prepare is still unresolved. test: `tests/agents/test_spawn_executor_placement_bind.py::test_owner_contains_storage_failures`.
-- 1.2.11 - With storage failing past the three immediate retries, the owner keeps the claim and retries on the capped backoff with no restart. Once storage recovers, it settles and releases exactly once for each settlement: `exited` after a proven kill, a kept orphan (from `pending` in one `mark_kill_failed` CAS with identity, and from `live` by `mark_kill_failed` then `record_orphan_identity`), and `fail_pending_attempt` at stages `create`, `bind` and `reserve`, including a drained create that raised and committed no row. Every re-issued write carries the captured `attempt_generation` and `attempt_started_at`, and a read-back with another pair is not confirmation. A CAS that first matches no row and a wrong-state read-back each retry and then settle. Compensation runs once for `exited` and for `fail_pending_attempt` and is dropped for a kept orphan. For `create`, `bind` and `reserve`, a created-isolation step deferred before the release runs once after the confirmed settlement, and one deferred after the release decides from the row: `exited` or no row removes, any other state keeps. No settlement cycle calls terminate, the host probe, the prepare or provider code. While the owner retries, `terminal_kill`, reconcile and both stale-pending reapers leave the row unchanged, and a second claim on the id is refused. test: `tests/agents/test_spawn_executor_placement_bind.py::test_owner_retries_settlement_until_storage_recovers`.
+- 1.2.11 - With storage failing past the three immediate retries, the owner keeps the claim and retries on the capped backoff with no restart. Once storage recovers, it settles and releases exactly once for each settlement: `exited` after a proven kill, a kept orphan (from `pending` in one `mark_kill_failed` CAS with identity, and from `live` by `mark_kill_failed` then `record_orphan_identity`), and `fail_pending_attempt` at stages `create`, `bind` and `reserve`. Every re-issued write carries the captured `attempt_generation` and `attempt_started_at`, and a read-back with another pair is not confirmation. A CAS that first matches no row and a wrong-state read-back each retry and then settle. Compensation runs once for `exited` and for `fail_pending_attempt` and is dropped for a kept orphan. For `create`, `bind` and `reserve`, a created-isolation step deferred before the release runs once after the confirmed settlement, and one deferred after the release decides from the row: `exited` or no row removes, any other state keeps. No settlement cycle calls terminate, the host probe, the prepare or provider code. While the owner retries, `terminal_kill`, reconcile and both stale-pending reapers leave the row unchanged, and a second claim on the id is refused. test: `tests/agents/test_spawn_executor_placement_bind.py::test_owner_retries_settlement_until_storage_recovers`.
 - 1.2.12 - A prepare that fails with absence unproven, for native (`find_host_terminal` raises) and tmux (`session_present` raises, or the session stays present after an unproven kill), leaves the row `pending`, never `orphaned`, with the claim held. On the capped backoff the owner re-runs the presence check and, while the session is present, re-issues the strict kill at most once per cycle; it never re-dispatches the prepare or runs provider code. Once the check proves absence or a kill is proven, it settles `fail_pending_attempt`, releases and runs compensation once, with no restart. A prepare that succeeded followed by an unproven kill moves the `pending` row to `orphaned` with the prepared identity in one CAS. After a simulated restart such a `pending` row settles only on proof: `LifecycleReconciliation.reap_stale_pending` delegates to the strict reaper, a tmux row whose session is present and a native row the host lists or cannot answer for stay `pending`, and a native row absent from the strict listing settles `exited`. test: `tests/agents/test_spawn_executor_placement_bind.py::test_identityless_row_stays_pending_until_absence_proven`.
-- 1.2.13 - Cancelling the owner during a backoff sleep, and again during a shielded offloaded settlement write, does not stop the retry task. When storage then recovers with no restart, there is one retry task, one confirmed settlement, one `release` and one compensation run. In a separate shutdown case, cancelling the retry task itself as loop teardown does releases nothing, runs no deferred step, leaves the claim until process exit and leaves the row for restart recovery. test: `tests/agents/test_spawn_executor_placement_bind.py::test_owner_retry_survives_cancellation_until_shutdown`.
+- 1.2.13 - Repeatedly cancelling the spawn caller and a waiter that awaits the owner through `asyncio.shield` does not stop the owner. The cancellations land during the stage drain, the first settlement, a backoff sleep and a shielded offloaded settlement write. When storage then recovers with no restart, there is one owner task, one confirmed settlement, one `release` and one compensation run. In a separate shutdown case, cancelling the owner task itself as loop teardown does, at each of those points, releases nothing, runs no deferred step, leaves the claim until process exit and leaves the row for restart recovery. test: `tests/agents/test_spawn_executor_placement_bind.py::test_owner_retry_survives_cancellation_until_shutdown`.
+- 1.2.14 - A raised `create_pending` or bump is recovered by read-back and never re-executed. A create that commits and then raises, and a bump that commits and then raises, each leave a `pending` row that the owner adopts by its pair and settles `fail_pending_attempt`. A create that rolls back leaves no row, and a bump that rolls back leaves the pre-existing attempt unchanged; each settles with no write. With the read-back failing during a storage outage, the claim stays held and the owner recovers and settles once storage returns, with no restart. Compensation runs once in every case. test: `tests/agents/test_spawn_executor_placement_bind.py::test_indeterminate_create_is_recovered_by_read_back`.
 
 ### 1.3 One daemon-scoped reserver reaches spawn_agent [category: code] (depends: 1.1)
 `kind: deliverable`
@@ -1565,8 +1594,8 @@ Changes:
   runs it once after a proven settlement. If `defer` returns false because the
   claim has already ended, the step decides from the current row: `exited`
   removes created isolation, and so does no row for the id, because the owner
-  drained the create or bump task before it released, so no row for that
-  attempt can commit later. Any other state keeps it. Reused worktrees and
+  drained the create or bump task and read the row back before it released, so
+  no row for that attempt can commit later. Any other state keeps it. Reused worktrees and
   clones are never registered.
 - Sanitized failure logs (1.1 and 1.6). Spawn, bind, release and cleanup
   exceptions can carry prompt text, environment values or command lines, and
@@ -2830,3 +2859,16 @@ brings its own sync-owned fixtures:
   3. PAL-15: the retry is a retained task behind `asyncio.shield`, so owner
      cancellation cannot stop it while the daemon lives. Only loop teardown
      cancels it, which releases nothing (1.2.13).
+- 2026-09-27: Adversary round on `8881c697b5` (gobby#14579), PAL-14 remainder
+  and PAL-16 accepted.
+  1. PAL-14: a raised create or bump is indeterminate. E1 hands it to the
+     owner, which drains the task, reads the row back under `settle_lock` and
+     adopts a committed attempt's pair or confirms a rollback. It never
+     re-executes the create or bump, and a raised inline settlement write goes
+     the same way (1.2.14).
+  2. PAL-16: 1.2.4, 1.2.7 and 1.2.8 are swept to the `pending` model. An
+     unresolved or identity-less row stays `pending`. Only a prepared identity
+     with an unproven kill becomes `orphaned`.
+  3. Owner lifetime: one retained owner task covers the drain, recovery,
+     proof, settlement, retries, release and compensation, and every inner
+     step is shielded.
