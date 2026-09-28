@@ -179,25 +179,30 @@ Josh's standing seats (Plan Writer, Program Director, Plan Adversary) run one
 interactive flow per plan, set on 2026-09-26, with no numbered review rounds:
 
 1. The Plan Writer drafts the plan and passes base validation.
-2. The Writer spawns `plan-enhancer-taskless` once and folds in accepted
-   suggestions.
-3. The Program Director reviews the design and puts product decisions to Josh
-   through the Assistant.
-4. Josh approves. Approval is mandatory and precedes review.
-5. The Program Director passes the plan to the Plan Adversary, which reviews
-   it and sends findings to the Writer.
+2. The Writer spawns `plan-enhancer-taskless` once and sends its edits to the
+   Program Director.
+3. The Program Director disposes each enhancer edit, or puts the product
+   decision to Josh through the Assistant.
+4. The Writer applies the dispositions and passes the plan to the Plan
+   Adversary.
+5. The Plan Adversary reviews it and sends findings to the Writer.
 6. The Writer edits, and the two seats converse through
    `gobby-agents:send_message` until consensus; unresolved disagreements go to
    the Program Director.
 7. On consensus the Writer records one dated prose consensus entry under
    `## V1 Plan Changelog` and commits. From those bytes the Adversary derives
    and applies `## M1 Task Manifest` through `derive_plan_handoff_manifest`
-   and `apply_plan_handoff_manifest`, then expansion-mode validation runs.
-   Any edit after derivation needs fresh hashes.
+   and `apply_plan_handoff_manifest`, then expansion-mode validation runs,
+   and the Writer commits the rendered bytes unchanged. Any edit after
+   derivation needs fresh hashes.
+8. The Program Director reviews the stamped plan and presents it to Josh
+   through the Assistant.
+9. Josh approves. Approval is mandatory and precedes expansion.
 
-The manifest is still written only after approval; the council changes the
-actor, not the gate. The evidence-round protocol above stays the contract for
-spawned taskless reviewers and `gobby build` stage reviews. Old plans, and
+The council stamps M1 before Josh's approval; approval gates expansion, and
+nothing expands until Josh approves the stamped bytes. The evidence-round
+protocol above stays the contract for spawned taskless reviewers and
+`gobby build` stage reviews. Old plans, and
 implemented plans that never had adversarial review, move to
 `.gobby/plans/completed/` (registered plans through `archive_plan`).
 
