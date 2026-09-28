@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import queue
 import re
 import threading
@@ -102,6 +101,7 @@ def test_after_commit_async_reader_uses_committed_state(postgres_db: Any) -> Non
 @pytest.mark.integration
 def test_after_commit_reader_respects_long_running_snapshot(
     postgres_db: Any,
+    postgres_database_url: str,
     postgres_schema: str,
 ) -> None:
     psycopg = pytest.importorskip("psycopg")
@@ -109,7 +109,7 @@ def test_after_commit_reader_respects_long_running_snapshot(
     _drop_table(postgres_db, table)
     postgres_db.execute(f'CREATE TABLE "{table}" (id INTEGER PRIMARY KEY, value TEXT NOT NULL)')
 
-    held = psycopg.connect(_scoped_dsn(postgres_schema), autocommit=True)
+    held = _scoped_connect(psycopg, postgres_database_url, postgres_schema)
     try:
         held.execute("BEGIN ISOLATION LEVEL REPEATABLE READ")
         first_count = held.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
@@ -531,12 +531,14 @@ def test_task_seq_allocation_serializes_across_project_visibility(postgres_db: A
 
 
 @pytest.mark.integration
-def test_deferrable_constraint_is_forced_before_marker(postgres_schema: str) -> None:
+def test_deferrable_constraint_is_forced_before_marker(
+    postgres_database_url: str, postgres_schema: str
+) -> None:
     psycopg = pytest.importorskip("psycopg")
     parent = "mvcc_parent"
     child = "mvcc_child"
 
-    with psycopg.connect(_scoped_dsn(postgres_schema), autocommit=True) as conn:
+    with _scoped_connect(psycopg, postgres_database_url, postgres_schema) as conn:
         conn.execute(f'DROP TABLE IF EXISTS "{child}"')
         conn.execute(f'DROP TABLE IF EXISTS "{parent}"')
         conn.execute(f'CREATE TABLE "{parent}" (id INTEGER PRIMARY KEY)')
@@ -600,11 +602,11 @@ def _parse_key_values(block: str) -> dict[str, str]:
     return values
 
 
-def _scoped_dsn(postgres_schema: str) -> str:
-    dsn = os.environ.get("DATABASE_URL")
-    if not dsn:
-        pytest.skip("DATABASE_URL is required for PostgreSQL MVCC tests")
-    return dsn + f"?options=-csearch_path%3D{postgres_schema}"
+def _scoped_connect(psycopg: Any, database_url: str, postgres_schema: str) -> Any:
+    # The schema lives in the per-run isolated database, not the one DATABASE_URL names.
+    return psycopg.connect(
+        database_url, options=f"-csearch_path={postgres_schema}", autocommit=True
+    )
 
 
 def _drop_table(postgres_db: Any, table: str) -> None:
