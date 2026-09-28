@@ -196,7 +196,8 @@ impl Tab {
 pub struct ViewState {
     /// Row 0 across the whole frame, reserved for the menu bar.
     pub menu_bar_rect: Rect,
-    /// Row 1 across the whole frame: the line under the menu bar.
+    /// Row 1 across the whole frame: a bare row of theme ground under the
+    /// menu bar.
     pub menu_bar_line: Rect,
     /// Menu bar title cells, by index into `MenuBarMenu::ALL`.
     pub menu_title_hit_areas: Vec<(usize, Rect)>,

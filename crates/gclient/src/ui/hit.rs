@@ -134,7 +134,7 @@ pub fn hit_test(view: &ViewState, column: u16, row: u16) -> Hit {
         return find_at(&view.menu_title_hit_areas, at)
             .map_or(Hit::MenuBarEmpty, |(index, _)| Hit::MenuTitle(*index));
     }
-    // The line under a bar is that bar's bare area.
+    // The gap under the menu bar is that bar's bare area.
     if view.menu_bar_line.contains(at) {
         return Hit::MenuBarEmpty;
     }

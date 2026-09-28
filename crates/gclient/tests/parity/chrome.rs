@@ -1230,12 +1230,13 @@ switch_project = "ctrl+1..9"
                     // blank directory line, and pane corners took V18's
                     // glyph-led title top left and the address alone bottom
                     // right, and Dark painted its own ground under every
-                    // default cell (#22944):
+                    // default cell (#22944), and the row under the menu bar
+                    // dropped its rule for bare theme ground (#22986):
                     // 4.1.3 requires a glyph change to fail here, so this
                     // digest moves only alongside a deliberate render change.
                     assert_eq!(
                         frame_digest(&terminal),
-                        "473c55f6da0afb0b52467e8a79d29f8c546cc47443e77142865fe601d23d3484",
+                        "15ccd0e8c8687591bf249da11dcf4dae9085c26e31abec811d965f09f9a5f445",
                         "the frame moved; read it against the boards before pinning:\n{}",
                         rect_rows(&terminal, frame).join("\n")
                     );
@@ -1785,4 +1786,33 @@ fn tab_bar_raises_the_active_tab_in_every_theme() {
 
     // The pane body starts right under the tab row: no rule between them.
     assert_eq!(chrome.view.terminal_area.y, active.y + 1);
+}
+
+// Josh chose divider_tinted (#22986): the row under the menu bar draws no
+// rule. It is the theme's ground, so System shows the host's own.
+#[test]
+fn menu_bar_gap_is_bare_theme_ground() {
+    let ws = scripted(&["test"]);
+    let mut chrome = chrome_for(&ws, "test");
+    let area = Rect::new(0, 0, 80, 20);
+    chrome.compute_view(&ws, area);
+    let gap = chrome.view.menu_bar_line;
+    let assert_gap = |chrome: &Chrome, ground: Color| {
+        let terminal = render_full(&ws, chrome, area);
+        for x in gap.x..gap.right() {
+            let gap_cell = cell(&terminal, x, gap.y);
+            assert_eq!(gap_cell.symbol(), " ", "column {x}");
+            assert_eq!(gap_cell.bg, ground, "column {x}");
+        }
+    };
+
+    assert_gap(&chrome, palette().panel_bg);
+
+    chrome.prefs.theme = "light".to_string();
+    chrome.set_theme(gobby_client::theme::ThemeKind::Light);
+    assert_ne!(chrome.palette.panel_bg, palette().panel_bg);
+    assert_gap(&chrome, chrome.palette.panel_bg);
+
+    chrome.prefs.theme = "system".to_string();
+    assert_gap(&chrome, Color::Reset);
 }
