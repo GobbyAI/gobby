@@ -138,7 +138,8 @@ The reference collector intentionally excludes these adjacent diagnostic
 surfaces:
 
 - `code-index-maintenance.log`, the code-index maintenance event log.
-- `recall_signal.jsonl`, which is structured recall data rather than a log.
+- `recall_signal.jsonl`, recall data from the retired recall-signal stack
+  (#22837); older installs may still hold the file, and nothing writes it now.
 - Standalone `ghook` stderr outside the daemon-managed hook surface.
 
 Add separate receivers only after choosing parsing, access, and retention rules

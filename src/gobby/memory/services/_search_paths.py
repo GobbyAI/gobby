@@ -248,23 +248,6 @@ class SearchPathHost(Protocol):
         candidate_vectors: dict[str, list[float]] | None = None,
     ) -> list[Memory]: ...
 
-    async def _emit_search_debug(
-        self,
-        *,
-        query: str,
-        project_id: str | None,
-        session_id: str | None,
-        recall_request_id: str | None,
-        caller: str,
-        merged_ids: list[str],
-        returned: list[Memory],
-        ranking_score_map: dict[str, float],
-        rrf_applied: bool,
-        embed_text: str | None = None,
-        graph_score_map: dict[str, float] | None = None,
-        graph_component_map: dict[str, dict[str, float | None]] | None = None,
-    ) -> None: ...
-
 
 async def search_with_graph(
     service: SearchPathHost,
@@ -284,7 +267,6 @@ async def search_with_graph(
     rrf_k: int,
     embed_text: str | None = None,
     session_id: str | None = None,
-    recall_request_id: str | None = None,
     caller: str = "memory.search",
     include_global: bool = True,
 ) -> list[Memory]:
@@ -450,23 +432,7 @@ async def search_with_graph(
             candidate_vectors=candidates.vectors,
         )
 
-    results, candidates = await service._collect_active_results(
-        limit=limit, collect=_collect, build=_build
-    )
-    await service._emit_search_debug(
-        query=query,
-        embed_text=embed_text,
-        project_id=project_id,
-        session_id=session_id,
-        recall_request_id=recall_request_id,
-        caller=caller,
-        merged_ids=candidates.merged_ids,
-        returned=results,
-        ranking_score_map=candidates.ranking_score_map,
-        rrf_applied=candidates.rrf_applied,
-        graph_score_map=candidates.graph_score_map,
-        graph_component_map=candidates.graph_component_map,
-    )
+    results, _ = await service._collect_active_results(limit=limit, collect=_collect, build=_build)
     return results
 
 
@@ -487,7 +453,6 @@ async def search_qdrant_keyword(
     rrf_k: int,
     embed_text: str | None = None,
     session_id: str | None = None,
-    recall_request_id: str | None = None,
     caller: str = "memory.search",
     include_global: bool = True,
 ) -> list[Memory]:
@@ -615,19 +580,5 @@ async def search_qdrant_keyword(
             candidate_vectors=candidates.vectors,
         )
 
-    results, candidates = await service._collect_active_results(
-        limit=limit, collect=_collect, build=_build
-    )
-    await service._emit_search_debug(
-        query=query,
-        embed_text=embed_text,
-        project_id=project_id,
-        session_id=session_id,
-        recall_request_id=recall_request_id,
-        caller=caller,
-        merged_ids=candidates.merged_ids,
-        returned=results,
-        ranking_score_map=candidates.ranking_score_map,
-        rrf_applied=candidates.rrf_applied,
-    )
+    results, _ = await service._collect_active_results(limit=limit, collect=_collect, build=_build)
     return results

@@ -11,10 +11,9 @@ from typing import Any, cast
 import pytest
 
 from gobby.config.persistence import MemoryConfig
-from gobby.memory.recall_constants import RecallConstants
 from gobby.memory.services._search_graph import GraphScoredResult
 from gobby.memory.services._search_keyword import KeywordSearch
-from gobby.memory.services.search import SearchDebugHit, SearchDebugSnapshot, SearchService
+from gobby.memory.services.search import SearchService
 from gobby.storage.memories import Memory
 from gobby.storage.memories_models import MemoryType
 
@@ -136,19 +135,17 @@ def _service(
     vector_store: Any = None,
     storage: Any = None,
     keyword_search: KeywordSearch | None = None,
-    search_debug_sink: Callable[[SearchDebugSnapshot], None] | None = None,
     falkordb_graph_search: bool = False,
-    recall_constants: RecallConstants | None = None,
     embed_fn: Callable[..., Any] | None = None,
 ) -> SearchService:
     async def _embed(text: str, is_query: bool = False) -> list[float]:
         return [1.0, 0.0]
 
     return SearchService(
-        storage=storage or _Storage(memory_ids),  # type: ignore[arg-type]
-        vector_store=vector_store or _VectorStore(vector_results or []),  # type: ignore[arg-type]
+        storage=cast(Any, storage or _Storage(memory_ids)),
+        vector_store=cast(Any, vector_store or _VectorStore(vector_results or [])),
         embed_fn=embed_fn or _embed,
-        kg_service=object() if falkordb_graph_search else None,  # type: ignore[arg-type]
+        kg_service=cast(Any, object()) if falkordb_graph_search else None,
         keyword_search=keyword_search
         or (lambda query, limit, project_id, *, include_global=True: []),
         config=MemoryConfig(),
@@ -158,8 +155,6 @@ def _service(
         falkordb_rrf_k=60,
         vector_store_failure_logger=lambda message, error: None,
         run_db=None,
-        search_debug_sink=search_debug_sink,
-        recall_constants=recall_constants,
     )
 
 
@@ -409,152 +404,6 @@ def test_build_results_leads_with_the_similarity_order_without_rrf() -> None:
     ]
 
 
-async def test_qdrant_keyword_path_emits_debug_snapshot() -> None:
-    snapshots: list[SearchDebugSnapshot] = []
-    recall_constants = RecallConstants(
-        half_life_days=30.0,
-        graph_synthetic_discount=0.9,
-        cooccur_alpha=0.5,
-        cooccur_support_cap=5,
-        source="fitted",
-        provenance="decision-digest-123",
-    )
-    service = _service(
-        ["semantic"],
-        vector_results=[("semantic", 0.9)],
-        search_debug_sink=snapshots.append,
-        recall_constants=recall_constants,
-    )
-
-    results = await service._search_qdrant_keyword(
-        query="query",
-        query_embedding=[1.0, 0.0],
-        limit=1,
-        filters={},
-        project_id=None,
-        memory_type=None,
-        tags_all=None,
-        tags_any=None,
-        tags_none=None,
-        half_life=0.0,
-        effective_min_score=0.0,
-        session_id="session-1",
-        recall_request_id="request-1",
-        caller="memory.recall",
-    )
-
-    assert [mem.id for mem in results] == ["semantic"]
-    assert snapshots == [
-        SearchDebugSnapshot(
-            merged_ids=["semantic"],
-            returned_ids=["semantic"],
-            ranking_score_map={"semantic": 0.9},
-            rrf_applied=False,
-            query="query",
-            session_id="session-1",
-            recall_request_id="request-1",
-            caller="memory.recall",
-            constants_provenance="decision-digest-123",
-            returned_hits=[
-                SearchDebugHit(
-                    memory_id="semantic",
-                    rank=0,
-                    search_via="semantic",
-                    similarity=0.9,
-                    raw_semantic_score=0.9,
-                    temporal_decay_factor=1.0,
-                    ranking_score=0.9,
-                    ranking_mode="semantic_only",
-                    graph_score=None,
-                    content_hash="3784070fe3e7e3de5f0ec08eadfa10acbaa0f543916b1ab2c68f371924ff7db3",
-                )
-            ],
-        )
-    ]
-
-
-async def test_graph_path_emits_debug_snapshot(monkeypatch: Any) -> None:
-    snapshots: list[SearchDebugSnapshot] = []
-    service = _service(
-        ["semantic", "graph"],
-        vector_results=[("semantic", 0.9)],
-        search_debug_sink=snapshots.append,
-        falkordb_graph_search=True,
-    )
-
-    async def graph_search(**kwargs: Any) -> GraphScoredResult:
-        return GraphScoredResult(
-            scored=[("graph", 0.05)],
-            component_map={
-                "graph": {
-                    "edge_cosine": 0.8,
-                    "edge_support_norm": 0.4,
-                    "edge_weight_blend": 0.6,
-                    "edge_decay_factor": 1.0,
-                }
-            },
-        )
-
-    monkeypatch.setattr(service, "_search_graph_scored", graph_search)
-    results = await service._search_with_graph(
-        query="query",
-        query_embedding=[1.0, 0.0],
-        limit=2,
-        filters={},
-        project_id=None,
-        memory_type=None,
-        tags_all=None,
-        tags_any=None,
-        tags_none=None,
-        half_life=0.0,
-        effective_min_score=0.0,
-    )
-
-    assert [mem.id for mem in results] == ["semantic", "graph"]
-    assert len(snapshots) == 1
-    assert snapshots[0].merged_ids == ["semantic", "graph"]
-    assert snapshots[0].returned_ids == ["semantic", "graph"]
-    assert snapshots[0].rrf_applied is True
-    assert snapshots[0].query == "query"
-    assert snapshots[0].graph_score_map == {"graph": 0.05}
-    assert snapshots[0].graph_component_map == {
-        "graph": {
-            "edge_cosine": 0.8,
-            "edge_support_norm": 0.4,
-            "edge_weight_blend": 0.6,
-            "edge_decay_factor": 1.0,
-        }
-    }
-    assert snapshots[0].returned_hits[1].memory_id == "graph"
-    assert snapshots[0].returned_hits[1].ranking_mode == "graph_synthetic"
-    assert snapshots[0].returned_hits[1].graph_score == 0.05
-
-
-@pytest.mark.asyncio
-async def test_debug_sink_failure_does_not_change_results() -> None:
-    sink_called = False
-
-    def failing_sink(snapshot: SearchDebugSnapshot) -> None:
-        nonlocal sink_called
-        sink_called = True
-        raise RuntimeError("diagnostic sink failed")
-
-    service = _service(["semantic"], search_debug_sink=failing_sink)
-
-    await service._emit_search_debug(
-        query="query",
-        project_id=None,
-        session_id=None,
-        recall_request_id=None,
-        caller="memory.search",
-        merged_ids=["semantic"],
-        returned=[],
-        ranking_score_map={},
-        rrf_applied=False,
-    )
-    assert sink_called is True
-
-
 @pytest.mark.asyncio
 async def test_search_backfills_until_limit_active_results() -> None:
     """Soft-hidden IDs eat the first over-fetch page; backfill recovers active results.
@@ -672,108 +521,6 @@ async def test_backfill_rounds_do_not_rescore_ids_already_scored() -> None:
     assert by_id["kw-a"].raw_semantic_score == 0.8
     # A keyword hit with no stored vector stays unscored rather than re-asked.
     assert by_id["kw-b"].similarity is None
-
-
-def _fallback_service(
-    memory_ids: list[str],
-    *,
-    keyword_results: list[tuple[str, float]],
-    search_debug_sink: Callable[[SearchDebugSnapshot], None] | None = None,
-) -> SearchService:
-    """SearchService with no vector store/embed_fn, so search() takes _keyword_fallback."""
-    return SearchService(
-        storage=_Storage(memory_ids),  # type: ignore[arg-type]
-        vector_store=None,
-        embed_fn=None,
-        kg_service=None,
-        keyword_search=lambda query, limit, project_id, *, include_global=True: keyword_results,
-        config=MemoryConfig(),
-        falkordb_graph_search=False,
-        falkordb_graph_min_score=0.0,
-        rrf_k=60,
-        falkordb_rrf_k=60,
-        vector_store_failure_logger=lambda message, error: None,
-        run_db=None,
-        search_debug_sink=search_debug_sink,
-    )
-
-
-@pytest.mark.asyncio
-async def test_keyword_fallback_emits_debug_snapshot_with_join_keys() -> None:
-    """Fallback searches are never silent: one event per completed search (#17491)."""
-    snapshots: list[SearchDebugSnapshot] = []
-    service = _fallback_service(
-        ["kw"],
-        keyword_results=[("kw", 0.7)],
-        search_debug_sink=snapshots.append,
-    )
-
-    results = await service.search(
-        "query",
-        limit=1,
-        session_id="session-1",
-        recall_request_id="request-1",
-        caller="memory.recall",
-    )
-
-    assert [mem.id for mem in results] == ["kw"]
-    assert results[0].search_via == "keyword"
-    # The normalized BM25 rank travels as ranking_score, never as similarity:
-    # with no vector store there is nothing to put these hits on the cosine
-    # axis, so recall's null-similarity backstop must see them unscored (#20874).
-    assert results[0].similarity is None
-    assert results[0].ranking_score == 0.7
-    assert snapshots == [
-        SearchDebugSnapshot(
-            merged_ids=["kw"],
-            returned_ids=["kw"],
-            ranking_score_map={"kw": 0.7},
-            rrf_applied=False,
-            query="query",
-            session_id="session-1",
-            recall_request_id="request-1",
-            caller="memory.recall",
-            returned_hits=[
-                SearchDebugHit(
-                    memory_id="kw",
-                    rank=0,
-                    search_via="keyword",
-                    similarity=None,
-                    raw_semantic_score=None,
-                    temporal_decay_factor=None,
-                    ranking_score=0.7,
-                    ranking_mode=None,
-                    graph_score=None,
-                    content_hash="103c54b6c5b1ad282520a33d86320b77259e797cabe194b9200fb23d965561a3",
-                )
-            ],
-        )
-    ]
-
-
-@pytest.mark.asyncio
-async def test_keyword_fallback_emits_debug_snapshot_when_empty() -> None:
-    """A fallback search with zero hits still emits its event."""
-    snapshots: list[SearchDebugSnapshot] = []
-    service = _fallback_service(
-        [],
-        keyword_results=[],
-        search_debug_sink=snapshots.append,
-    )
-
-    results = await service.search(
-        "query",
-        limit=1,
-        session_id="session-1",
-        recall_request_id="request-1",
-        caller="memory.recall",
-    )
-
-    assert results == []
-    assert len(snapshots) == 1
-    assert snapshots[0].caller == "memory.recall"
-    assert snapshots[0].session_id == "session-1"
-    assert snapshots[0].recall_request_id == "request-1"
 
 
 @pytest.mark.asyncio
@@ -949,95 +696,6 @@ async def test_facade_threads_embed_text_to_the_search_service() -> None:
     await facade.search_memories(query="webhook handler")
 
     assert [call["embed_text"] for call in calls] == [_NOISY_PROMPT, None]
-
-
-# ---------------------------------------------------------------------------
-# 2.4 — log the query that actually drove retrieval
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_graph_path_logs_embed_text(monkeypatch: Any) -> None:
-    """2.4.3: the graph path logs the embed text, keeping the term bag beside it.
-
-    The shadow judge renders the stored query as the user's question, so it has to
-    be the string retrieval was actually driven by. The term bag rides along
-    because an enriched embed text is the prompt plus a digest tail and no
-    deterministic function recovers the term bag from it.
-    """
-    snapshots: list[SearchDebugSnapshot] = []
-    service = _service(
-        ["m1"],
-        vector_results=[("m1", 0.9)],
-        search_debug_sink=snapshots.append,
-        falkordb_graph_search=True,
-    )
-
-    async def graph_search(**_kwargs: Any) -> GraphScoredResult:
-        return GraphScoredResult(scored=[], component_map={})
-
-    monkeypatch.setattr(service, "_search_graph_scored", graph_search)
-
-    await service.search("webhook handler", limit=1, embed_text=_NOISY_PROMPT)
-
-    assert [snapshot.query for snapshot in snapshots] == [_NOISY_PROMPT]
-    assert [snapshot.bm25_query for snapshot in snapshots] == ["webhook handler"]
-
-
-@pytest.mark.asyncio
-async def test_qdrant_keyword_and_fallback_paths_log_embed_text() -> None:
-    """2.4.2: every emission site is threaded, so no path logs the term bag alone."""
-    qdrant_snapshots: list[SearchDebugSnapshot] = []
-    qdrant_service = _service(
-        ["m1"],
-        vector_results=[("m1", 0.9)],
-        search_debug_sink=qdrant_snapshots.append,
-    )
-    await qdrant_service.search("webhook handler", limit=1, embed_text=_NOISY_PROMPT)
-
-    fallback_snapshots: list[SearchDebugSnapshot] = []
-    fallback_service = _fallback_service(
-        ["kw"],
-        keyword_results=[("kw", 0.7)],
-        search_debug_sink=fallback_snapshots.append,
-    )
-    await fallback_service.search("webhook handler", limit=1, embed_text=_NOISY_PROMPT)
-
-    for snapshots in (qdrant_snapshots, fallback_snapshots):
-        assert [snapshot.query for snapshot in snapshots] == [_NOISY_PROMPT]
-        assert [snapshot.bm25_query for snapshot in snapshots] == ["webhook handler"]
-
-
-@pytest.mark.asyncio
-async def test_search_without_embed_text_logs_the_query_alone() -> None:
-    """2.4.5: an unenriched caller logs one representation, the query it sent."""
-    snapshots: list[SearchDebugSnapshot] = []
-    service = _service(
-        ["m1"],
-        vector_results=[("m1", 0.9)],
-        search_debug_sink=snapshots.append,
-    )
-
-    await service.search(_NOISY_PROMPT, limit=1)
-
-    assert [snapshot.query for snapshot in snapshots] == [_NOISY_PROMPT]
-    assert [snapshot.bm25_query for snapshot in snapshots] == [None]
-
-
-@pytest.mark.asyncio
-async def test_embed_text_matching_the_query_records_no_second_leg() -> None:
-    """One representation stays one representation, whatever spelling produced it."""
-    snapshots: list[SearchDebugSnapshot] = []
-    service = _service(
-        ["m1"],
-        vector_results=[("m1", 0.9)],
-        search_debug_sink=snapshots.append,
-    )
-
-    await service.search("webhook handler", limit=1, embed_text="webhook handler")
-
-    assert [snapshot.query for snapshot in snapshots] == ["webhook handler"]
-    assert [snapshot.bm25_query for snapshot in snapshots] == [None]
 
 
 class _AgedStorage:

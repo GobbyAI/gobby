@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from typing import TYPE_CHECKING, Any, Literal
-from uuid import uuid4
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.memory.prompt_triage import is_substantive_prompt
@@ -126,9 +125,6 @@ def register_memory_surface_tools(
                 tags_none=list(EXCLUDED_TAGS),
                 min_score=SURFACE_MIN_SCORE,
                 session_id=resolved_session_id,
-                # Joinable correlation id, minted per call: without it
-                # insert_signal_event drops the event before the INSERT.
-                recall_request_id=str(uuid4()),
                 caller=SURFACE_CALLER,
             )
         except Exception:

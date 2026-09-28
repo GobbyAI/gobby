@@ -84,9 +84,6 @@ from gobby.runner_maintenance.telemetry_loops import (
 from gobby.runner_maintenance.telemetry_loops import (
     metric_snapshot_loop as metric_snapshot_loop,
 )
-from gobby.runner_maintenance.telemetry_loops import (
-    recall_drift_monitor_loop as recall_drift_monitor_loop,
-)
 from gobby.runner_maintenance.telemetry_loops import span_cleanup_loop as span_cleanup_loop
 from gobby.runner_maintenance.telemetry_loops import (
     unmodeled_observation_cleanup_loop as unmodeled_observation_cleanup_loop,
