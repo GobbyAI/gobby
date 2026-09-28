@@ -1,9 +1,10 @@
-"""Grok compact handoff delivery: Ctrl+C interrupt, one retry after a rejection.
+"""Grok handoff delivery: Ctrl+C interrupt, rejection handling per command.
 
 Grok 1.0.30 never cancels a turn on Esc; Ctrl+C on an empty composer cancels it,
-and its shell rejects ``/compact`` while a turn ("task") is still running. The
-sender must interrupt with Ctrl+C, detect the rejection, interrupt again, and
-resubmit exactly once before it reports the delivery as failed.
+and its shell rejects a slash command while a turn ("task") is still running. A
+rejected ``/compact`` may already have started, so it fails without being typed
+again; a rejected ``/clear`` is interrupted again and resubmitted exactly once
+before the delivery fails.
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from gobby.agents.idle_detector import ComposerRead, ComposerState
+from gobby.mcp_proxy.tools.sessions._terminal_clear import CLEAR_COMMAND
 from gobby.mcp_proxy.tools.sessions._terminal_compaction import (
     _COMPACTION_REJECTION_ERROR_CODE,
     _COMPOSER_OCCUPIED_ERROR_CODE,
@@ -42,6 +44,9 @@ _SETTLE = 0.02
 _COMMAND = "/compact"
 _REJECTION = f"'{_COMMAND}' is disabled while a task is in progress"
 _REJECTED_SCREEN = f"\n{_REJECTION}\n> "
+_CLEAR = CLEAR_COMMAND
+_CLEAR_REJECTION = f"'{_CLEAR}' is disabled while a task is in progress"
+_CLEAR_REJECTED_SCREEN = f"\n{_CLEAR_REJECTION}\n> "
 _DRAIN = composer_clear_sequence("grok")
 
 
@@ -80,12 +85,13 @@ async def _send(
     observe: Callable[[], bool | None] | None,
     *,
     turn_settled: Callable[[], bool | None] | None = None,
+    command: str = _COMMAND,
 ) -> tuple[tuple[bool, str | None, bool, dict[str, object] | None], MagicMock, MagicMock]:
     mark = MagicMock(return_value=True)
     clear = MagicMock(return_value=True)
     result = await _send_terminal_compaction_command(
         pane,
-        _COMMAND,
+        command,
         "session-grok",
         cli_source="grok",
         mark_continuation_pending=mark,
@@ -119,58 +125,20 @@ async def test_grok_compaction_interrupt_uses_ctrl_c(
 async def test_grok_compaction_retries_after_interrupt(
     observe: Callable[[], bool | None] | None,
 ) -> None:
-    pane = _GrokPane([_REJECTED_SCREEN])
+    pane = _GrokPane([_CLEAR_REJECTED_SCREEN])
 
-    result, mark, clear = await _send(pane, observe)
+    result, mark, clear = await _send(pane, observe, command=_CLEAR)
 
     assert result == (True, None, True, None)
     assert pane.keys == ["ctrl_c", *_DRAIN, "enter", "ctrl_c", *_DRAIN, "enter"]
-    assert pane.typed == [f"{_COMMAND}\n", f"{_COMMAND}\n"]
+    assert pane.typed == [f"{_CLEAR}\n", f"{_CLEAR}\n"]
     mark.assert_called_once()
     clear.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_grok_retry_resubmits_only_after_the_interrupt_is_confirmed() -> None:
+async def test_grok_rejected_compact_fails_without_being_typed_again() -> None:
     pane = _GrokPane([_REJECTED_SCREEN])
-    typed_at_confirmation: list[int] = []
-
-    def observe() -> bool:
-        typed_at_confirmation.append(len(pane.typed))
-        return True
-
-    result, _mark, _clear = await _send(pane, observe)
-
-    assert result == (True, None, True, None)
-    assert pane.typed == [f"{_COMMAND}\n", f"{_COMMAND}\n"]
-    # The first confirmation precedes both submissions; the second precedes the retry.
-    assert typed_at_confirmation == [0, 1]
-
-
-@pytest.mark.asyncio
-async def test_grok_retry_types_nothing_when_the_second_interrupt_is_unconfirmed() -> None:
-    pane = _GrokPane([_REJECTED_SCREEN])
-    confirmations = iter([True])
-
-    result, mark, clear = await _send(pane, lambda: next(confirmations, False))
-
-    ok, reason, pending, detail = result
-    assert ok is False
-    assert reason == f"CLI did not confirm interruption after {_INTERRUPT_ATTEMPTS} attempts"
-    assert pending is False
-    assert detail == {
-        "error_code": _INTERRUPT_UNCONFIRMED_ERROR_CODE,
-        "continuation_pending": False,
-    }
-    assert pane.keys == ["ctrl_c", *_DRAIN, "enter", *(["ctrl_c"] * _INTERRUPT_ATTEMPTS)]
-    assert pane.typed == [f"{_COMMAND}\n"]
-    mark.assert_called_once()
-    clear.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_grok_compaction_rejected_twice_fails_the_delivery() -> None:
-    pane = _GrokPane([_REJECTED_SCREEN, _REJECTED_SCREEN])
 
     result, mark, clear = await _send(pane, lambda: True)
 
@@ -184,8 +152,68 @@ async def test_grok_compaction_rejected_twice_fails_the_delivery() -> None:
             "rejection_message": _REJECTION,
         },
     )
+    assert pane.keys == ["ctrl_c", *_DRAIN, "enter"]
+    assert pane.typed == [f"{_COMMAND}\n"]
+    mark.assert_called_once()
+    clear.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_grok_retry_resubmits_only_after_the_interrupt_is_confirmed() -> None:
+    pane = _GrokPane([_CLEAR_REJECTED_SCREEN])
+    typed_at_confirmation: list[int] = []
+
+    def observe() -> bool:
+        typed_at_confirmation.append(len(pane.typed))
+        return True
+
+    result, _mark, _clear = await _send(pane, observe, command=_CLEAR)
+
+    assert result == (True, None, True, None)
+    assert pane.typed == [f"{_CLEAR}\n", f"{_CLEAR}\n"]
+    # The first confirmation precedes both submissions; the second precedes the retry.
+    assert typed_at_confirmation == [0, 1]
+
+
+@pytest.mark.asyncio
+async def test_grok_retry_types_nothing_when_the_second_interrupt_is_unconfirmed() -> None:
+    pane = _GrokPane([_CLEAR_REJECTED_SCREEN])
+    confirmations = iter([True])
+
+    result, mark, clear = await _send(pane, lambda: next(confirmations, False), command=_CLEAR)
+
+    ok, reason, pending, detail = result
+    assert ok is False
+    assert reason == f"CLI did not confirm interruption after {_INTERRUPT_ATTEMPTS} attempts"
+    assert pending is False
+    assert detail == {
+        "error_code": _INTERRUPT_UNCONFIRMED_ERROR_CODE,
+        "continuation_pending": False,
+    }
+    assert pane.keys == ["ctrl_c", *_DRAIN, "enter", *(["ctrl_c"] * _INTERRUPT_ATTEMPTS)]
+    assert pane.typed == [f"{_CLEAR}\n"]
+    mark.assert_called_once()
+    clear.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_grok_compaction_rejected_twice_fails_the_delivery() -> None:
+    pane = _GrokPane([_CLEAR_REJECTED_SCREEN, _CLEAR_REJECTED_SCREEN])
+
+    result, mark, clear = await _send(pane, lambda: True, command=_CLEAR)
+
+    assert result == (
+        False,
+        _CLEAR_REJECTION,
+        False,
+        {
+            "error_code": _COMPACTION_REJECTION_ERROR_CODE,
+            "rejected_command": _CLEAR,
+            "rejection_message": _CLEAR_REJECTION,
+        },
+    )
     assert pane.keys == ["ctrl_c", *_DRAIN, "enter", "ctrl_c", *_DRAIN, "enter"]
-    assert pane.typed == [f"{_COMMAND}\n", f"{_COMMAND}\n"]
+    assert pane.typed == [f"{_CLEAR}\n", f"{_CLEAR}\n"]
     mark.assert_called_once()
     clear.assert_called_once()
 
@@ -617,27 +645,29 @@ async def test_grok_live_or_unknown_turn_is_interrupted_before_compaction(
 @pytest.mark.asyncio
 async def test_grok_rejection_after_a_settled_submission_interrupts_before_resubmitting() -> None:
     # The rejection proves a turn is running after all: interrupt it, then resubmit once.
-    pane = _GrokPane([_REJECTED_SCREEN])
+    pane = _GrokPane([_CLEAR_REJECTED_SCREEN])
     reads = iter([True, True, False, False])
 
-    result, mark, clear = await _send(pane, lambda: True, turn_settled=lambda: next(reads, False))
+    result, mark, clear = await _send(
+        pane, lambda: True, turn_settled=lambda: next(reads, False), command=_CLEAR
+    )
 
     assert result == (True, None, True, None)
     assert pane.keys == [*_DRAIN, "enter", "ctrl_c", *_DRAIN, "enter"]
-    assert pane.typed == [f"{_COMMAND}\n", f"{_COMMAND}\n"]
+    assert pane.typed == [f"{_CLEAR}\n", f"{_CLEAR}\n"]
     mark.assert_called_once()
     clear.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_grok_rejection_resubmission_checks_idle_before_first_ctrl_c() -> None:
-    pane = _GrokPane([_REJECTED_SCREEN])
+    pane = _GrokPane([_CLEAR_REJECTED_SCREEN])
 
-    result, mark, clear = await _send(pane, lambda: True, turn_settled=lambda: True)
+    result, mark, clear = await _send(pane, lambda: True, turn_settled=lambda: True, command=_CLEAR)
 
     assert "ctrl_c" not in pane.keys
     assert result == (True, None, True, {"interrupted": False})
-    assert pane.typed == [f"{_COMMAND}\n", f"{_COMMAND}\n"]
+    assert pane.typed == [f"{_CLEAR}\n", f"{_CLEAR}\n"]
     mark.assert_called_once()
     clear.assert_not_called()
 

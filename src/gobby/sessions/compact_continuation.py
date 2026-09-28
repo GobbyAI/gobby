@@ -87,6 +87,13 @@ def arm_compact_boundary_waiter(session_id: str, attempt_id: str) -> None:
             waiter.submitted = True
 
 
+def compact_boundary_wait_submitted(session_id: str) -> bool:
+    """Return whether a delivery operation already watches this session's compact."""
+    with _COMPACT_BOUNDARY_WAITERS_LOCK:
+        waiter = _COMPACT_BOUNDARY_WAITERS.get(session_id)
+        return waiter is not None and waiter.submitted
+
+
 def disarm_compact_boundary_waiter(session_id: str, attempt_id: str) -> None:
     """Stop accepting boundaries while a failed submission awaits its retry."""
     with _COMPACT_BOUNDARY_WAITERS_LOCK:

@@ -17,6 +17,7 @@ from gobby.mcp_proxy.tools.sessions import create_session_messages_registry
 from gobby.mcp_proxy.tools.sessions._terminal import register_terminal_tools
 from gobby.servers.websocket.chat.session_registry import WebChatSessionRegistry
 from gobby.sessions.handoff import (
+    FAILED_HANDOFF_VARIABLE,
     HANDOFF_PULL_PENDING_VARIABLE,
     HANDOFF_TURN_END_PENDING_VARIABLE,
     PENDING_HANDOFF_VARIABLE,
@@ -92,12 +93,17 @@ def _assert_attempt_compensated(
     assert PENDING_HANDOFF_VARIABLE not in variables
     assert HANDOFF_PULL_PENDING_VARIABLE not in variables
     assert HANDOFF_TURN_END_PENDING_VARIABLE not in variables
+    # The undelivered content is kept for explicit recovery (#22710).
+    failed = variables[FAILED_HANDOFF_VARIABLE]
+    assert failed["attempt_id"] == attempt_id
+    assert failed["handoff_record_id"] == handoff_record_id
+    assert failed["delivery_state"] == "failed_not_deliverable"
     row = db.fetchone(
         "SELECT COUNT(*) AS count FROM session_handoffs WHERE id = %s",
         (handoff_record_id,),
     )
     assert row is not None
-    assert int(row["count"]) == 0
+    assert int(row["count"]) == 1
 
 
 def _insert_rules(db: HubDatabase) -> None:

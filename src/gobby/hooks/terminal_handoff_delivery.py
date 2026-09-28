@@ -8,6 +8,7 @@ import threading
 from collections.abc import Mapping
 from concurrent.futures import Future
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import Any
 
 from gobby.agents.terminal_delivery import (
@@ -16,6 +17,7 @@ from gobby.agents.terminal_delivery import (
 )
 from gobby.app_context import get_app_context
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.hooks.handoff_dispatch_recovery import settle_landed_boundary
 from gobby.hooks.tool_outcomes import tool_outcome_from_data
 from gobby.mcp_proxy.tools.sessions._terminal_clear import deliver_staged_clear_session
 from gobby.mcp_proxy.tools.sessions._terminal_handoff_delivery import (
@@ -23,6 +25,7 @@ from gobby.mcp_proxy.tools.sessions._terminal_handoff_delivery import (
 )
 from gobby.sessions.clear_continuation import clear_failed_attempt
 from gobby.sessions.handoff import (
+    DISPATCH_OWNER,
     HANDOFF_DELIVERY_FAILURES_VARIABLE,
     HANDOFF_DISPATCH_GATE_VARIABLE,
     HANDOFF_UNAVAILABLE_VARIABLE,
@@ -32,10 +35,12 @@ from gobby.sessions.handoff import (
     restore_staged_handoff,
     staged_handoff_rejection,
 )
+from gobby.sessions.handoff_shutdown import HANDOFF_IN_FLIGHT_MINUTES
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.attention import AttentionStateManager, session_attention_entry_id
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
+from gobby.utils.datetime import utc_now
 from gobby.workflows.state_manager import SessionVariableManager
 
 logger = logging.getLogger(__name__)
@@ -327,6 +332,16 @@ def _schedule_claimed_delivery(
     if event_loop is None or event_loop.is_closed():
         _compensate_delivery_failure(db, claimed, "daemon event loop is unavailable")
         return False
+    if claimed.reclaimed_dispatch_started_at is not None:
+        settled = _settle_dead_dispatch(
+            claimed,
+            session_manager=session_manager,
+            event_loop=event_loop,
+            terminal_manager=terminal_manager,
+            terminal_runtime_registry=terminal_runtime_registry,
+        )
+        if settled is not None:
+            return settled
 
     operation = _settle_delivery(
         claimed,
@@ -350,6 +365,88 @@ def _schedule_claimed_delivery(
         claimed.attempt_id,
     )
     return True
+
+
+def _settle_dead_dispatch(
+    claimed: ClaimedHandoffDelivery,
+    *,
+    session_manager: SessionManager,
+    event_loop: asyncio.AbstractEventLoop,
+    terminal_manager: Any | None,
+    terminal_runtime_registry: Any | None,
+) -> bool | None:
+    """Settle a claim a dead process left; ``None`` means dispatch it again."""
+    db = session_manager.db
+    session = session_manager.get(claimed.session_id)
+    try:
+        started_at = datetime.fromisoformat(str(claimed.reclaimed_dispatch_started_at))
+    except ValueError:
+        started_at = None
+    if session is None or started_at is None or started_at.tzinfo is None:
+        _compensate_delivery_failure(db, claimed, "dead dispatch claim is unreadable")
+        return False
+    if settle_landed_boundary(
+        db,
+        claimed,
+        session,
+        started_at,
+        event_loop=event_loop,
+        terminal_manager=terminal_manager,
+        terminal_runtime_registry=terminal_runtime_registry,
+    ):
+        return True
+    if started_at > utc_now() - timedelta(minutes=HANDOFF_IN_FLIGHT_MINUTES):
+        # PreCompact already moved the row: the compact is running and its
+        # SessionStart consumes the handoff, so typing it again would compact twice.
+        if not claimed.clear_session and getattr(session, "status", None) == "awaiting_handoff":
+            return False
+        return None
+    _compensate_delivery_failure(
+        db,
+        claimed,
+        f"dispatch died after claiming at {claimed.reclaimed_dispatch_started_at}",
+        error_code=None if claimed.clear_session else "compact_unconfirmed",
+    )
+    return False
+
+
+def resume_dead_handoff_dispatches(
+    machine_id: str,
+    *,
+    session_manager: SessionManager,
+    agent_run_manager: LocalAgentRunManager,
+    event_loop: asyncio.AbstractEventLoop,
+    terminal_manager: Any | None,
+    terminal_runtime_registry: Any | None,
+) -> int:
+    """Reclaim dispatches another daemon process claimed and died holding."""
+    rows = session_manager.db.fetchall(
+        """
+        SELECT s.id, v.variables -> 'set_handoff_pending' ->> 'attempt_id' AS attempt_id
+          FROM sessions s JOIN session_variables v ON v.session_id = s.id
+         WHERE s.machine_id = %s
+           AND s.status NOT IN ('expired', 'deleted')
+           AND v.variables -> 'set_handoff_pending' ->> 'dispatch_started_at' IS NOT NULL
+           AND (v.variables -> 'set_handoff_pending' ->> 'dispatch_owner') IS DISTINCT FROM %s
+        """,
+        (machine_id, DISPATCH_OWNER),
+    )
+    resumed = 0
+    for row in rows:
+        attempt_id = row["attempt_id"]
+        claimed = claim_staged_handoff_delivery(session_manager.db, str(row["id"]), attempt_id)
+        if claimed is None:
+            _log_skipped_delivery(row["id"], attempt_id, "dead dispatch claim changed")
+            continue
+        resumed += _schedule_claimed_delivery(
+            claimed,
+            session_manager=session_manager,
+            agent_run_manager=agent_run_manager,
+            event_loop=event_loop,
+            terminal_manager=terminal_manager,
+            terminal_runtime_registry=terminal_runtime_registry,
+        )
+    return resumed
 
 
 async def _settle_delivery(

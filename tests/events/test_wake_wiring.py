@@ -42,6 +42,12 @@ def _has_column(db: HubDatabase, table: str, column: str) -> bool:
     )
 
 
+def _managed_terminal() -> MagicMock:
+    manager = MagicMock()
+    manager.resolve_live_for_session.return_value = MagicMock(id="terminal-1")
+    return manager
+
+
 class TestWakeDispatcherSdkResume:
     """WakeDispatcher SDK resume path."""
 
@@ -133,6 +139,7 @@ class TestWakeDispatcherSdkResume:
             tmux_sender=tmux_sender,
             sdk_resumer=sdk_resumer,
             agent_run_manager=MagicMock(),
+            terminal_manager=_managed_terminal(),
         )
 
         await dispatcher.wake(
@@ -140,7 +147,7 @@ class TestWakeDispatcherSdkResume:
         )
 
         tmux_sender.assert_awaited_once_with(
-            "agent-1",
+            "terminal-1",
             CONTINUE_WAKE_MESSAGE,
             submit=True,
             clear_before_submit=True,
@@ -153,8 +160,8 @@ class TestWakeDispatcherSdkResume:
         assert sdk_resumer.await_args is None
 
     @pytest.mark.asyncio
-    async def test_tmux_fail_tries_sdk_then_ism(self) -> None:
-        """Tmux failure → SDK failure, with ISM already durable."""
+    async def test_terminal_failure_leaves_ism_without_sdk_fallback(self) -> None:
+        """A bound terminal is the only live route; its failure leaves the ISM durable."""
         session_mgr = MagicMock()
         session = MagicMock()
         session.status = "paused"
@@ -174,6 +181,7 @@ class TestWakeDispatcherSdkResume:
             tmux_sender=tmux_sender,
             sdk_resumer=sdk_resumer,
             agent_run_manager=MagicMock(),
+            terminal_manager=_managed_terminal(),
         )
 
         await dispatcher.wake(
@@ -181,7 +189,7 @@ class TestWakeDispatcherSdkResume:
         )
 
         tmux_sender.assert_awaited_once_with(
-            "agent-1",
+            "terminal-1",
             CONTINUE_WAKE_MESSAGE,
             submit=True,
             clear_before_submit=True,
@@ -189,8 +197,8 @@ class TestWakeDispatcherSdkResume:
         )
         assert tmux_sender.await_count == 1
         assert tmux_sender.await_args is not None
-        sdk_resumer.assert_awaited_once_with("sdk-999", CONTINUE_WAKE_SIGNAL)
-        assert sdk_resumer.await_count == 1
+        sdk_resumer.assert_not_awaited()
+        assert sdk_resumer.await_count == 0
         ism_mgr.create_message.assert_called_once()
         assert ism_mgr.create_message.call_count == 1
         assert ism_mgr.create_message.call_args is not None
