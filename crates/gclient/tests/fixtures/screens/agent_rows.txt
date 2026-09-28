@@ -2,8 +2,8 @@
 # 120x40, dark theme, colours normalised to theme::Palette roles
 00 | Gobby  File  Edit  View  Window  Agent  Help                                                                           |
 00 : bar_ink/bar+b*120
-01 |▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀|
-01 : line/panel_bg*120
+01 |                                                                                                                        |
+01 : text/panel_bg*120
 02 | Machines                                                                                                               |
 02 : text/surface0*1 subtext0/surface0+b*8 text/surface0*24 text/panel_bg*87
 03 | ○ scripted · local                                                                                                     |

@@ -2,8 +2,8 @@
 # 120x40, dark theme, colours normalised to theme::Palette roles
 00 | Gobby  File  Edit  View  Window  Agent  Help                                                                           |
 00 : bar_ink/bar+b*120
-01 |▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀|
-01 : line/panel_bg*120
+01 |                                                                                                                        |
+01 : text/panel_bg*120
 02 | alpha       +                                                                                                          |
 02 : text/surface1+b*12 overlay1/surface0*3 text/surface0*105
 03 |┌ ○ Codex ─────────────────────────────────────────────────┐┌ ○ nvim ────────────────────┐┌ ○ term-gam · Focused ──────┐|

@@ -2,8 +2,8 @@
 # 120x40, dark theme, colours normalised to theme::Palette roles
 00 | Gobby  File  Edit  View  Window  Agent  Help                                                                           |
 00 : bar_ink/bar+b*19 surface_dim/bar_ink+b*6 bar_ink/bar+b*95
-01 |▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀┌──────────────────┐▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀|
-01 : line/panel_bg*19 surface0/panel_bg*20 line/panel_bg*81
+01 |                   ┌──────────────────┐                                                                                 |
+01 : text/panel_bg*19 surface0/panel_bg*20 text/panel_bg*81
 02 | 1: Untitled    +  │ ✓ This project   │                                                                                 |
 02 : text/surface1+b*15 overlay1/surface0*3 text/surface0*1 surface0/panel_bg*1 overlay0/panel_bg+dv*18 surface0/panel_bg*1 text/surface0*81
 03 |┌ ○ term-alpha · Fo│   All projects   │────────────────────────────────────────────────────────────────────────────────┐|
