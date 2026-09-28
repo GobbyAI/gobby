@@ -1705,3 +1705,10 @@ No disagreements to escalate. This record is kept as history; the 2026-09-27 ref
   3.1). (3) Josh's review-lesson hold: no seat selects
   `tag:review-learning` or mentions lessons, and the contract test pins
   it (3.3, 3.4, 3.5).
+- 2026-09-28: Renewed consensus. The Plan Adversary (gobby#14579)
+  confirmed the PD repairs on `785b1babb5`: 3.2 depends on 3.1; routing
+  is split at the verified cutover restart (Decision 13, 3.2.5, 3.3.5,
+  4.1, V1); task-edit guidance is prompt-only and #22954 owns its
+  enforcement; the review-lesson hold is kept. No findings remain open, and
+  base validation passes. No implementation tests were run. The
+  artifact awaits a fresh M1 stamp and PD review.
