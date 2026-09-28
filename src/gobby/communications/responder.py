@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from gobby.communications.group_policy import evaluate_group_message
-from gobby.communications.models import ChannelConfig, CommsMessage
+from gobby.communications.models import AnswerOutcome, ChannelConfig, CommsMessage
 
 logger = logging.getLogger(__name__)
 
@@ -43,9 +43,9 @@ class CommunicationsManagerProtocol(Protocol):
 class DecisionAnswerLedger(Protocol):
     """Durable delivery record for decision answers the responder owes comms sessions."""
 
-    def answer_delivery_pending(self, answer_id: str) -> bool: ...
+    def claim_answer_delivery(self, answer_id: str, outcome: AnswerOutcome) -> bool: ...
 
-    def mark_answer_delivered(self, answer_id: str) -> None: ...
+    def record_answer_outcome(self, answer_id: str, outcome: AnswerOutcome) -> None: ...
 
     def list_pending_responder_answers(self) -> list[CommsMessage]: ...
 
@@ -200,6 +200,9 @@ class CommunicationsResponder:
             return None
 
         channel = self._manager.get_channel(message.channel_id)
+        if message.answer_delivery == "responder":
+            context = self._build_context(channel, message) if channel is not None else None
+            return await self._route_answer(message, context)
         if channel is None:
             logger.warning(
                 "Ignoring responder message %s for unknown channel %s",
@@ -224,36 +227,75 @@ class CommunicationsResponder:
             return None
 
         conversation_key = f"{channel.id}:{context.conversation_id}"
-        answers = self._answers
-        if message.answer_delivery == "responder" and answers is not None:
-            task = self._turn_queue.enqueue(
-                conversation_key, lambda: self._run_answer_turn(context, answers)
-            )
-        else:
-            task = self._turn_queue.enqueue(conversation_key, lambda: self._run_turn(context))
+        task = self._turn_queue.enqueue(conversation_key, lambda: self._run_turn(context))
         if task is None:
             await self._deliver_response(context, _BUSY_RESPONSE)
         return task
 
     async def recover_decision_answers(self) -> None:
-        """Re-run the turns of decision answers a restart or failed turn left undelivered."""
+        """Route decision answers accepted but never claimed, e.g. before a restart."""
         if self._answers is None:
             return
         pending = await asyncio.to_thread(self._answers.list_pending_responder_answers)
         for message in pending:
             await self.handle_message(message)
 
+    async def _route_answer(
+        self, message: CommsMessage, context: ResponderContext | None
+    ) -> asyncio.Task[None] | None:
+        # A decision answer is always an answer turn, even when its value looks like a
+        # /command. The click passed channel access policy when it was accepted; delivery
+        # re-applies current policy, so a revocation since then blocks it durably.
+        answers = self._answers
+        if answers is None or self._backend is None:
+            logger.warning(
+                "Decision answer %s stays pending: no responder backend or answer ledger",
+                message.id,
+            )
+            return None
+        if context is None:
+            if await asyncio.to_thread(answers.claim_answer_delivery, message.id, "blocked"):
+                logger.warning(
+                    "Decision answer %s for decision %s blocked by current responder policy "
+                    "on channel %s",
+                    message.id,
+                    message.metadata_json.get("callback_decision_id"),
+                    message.channel_id,
+                )
+            return None
+        conversation_key = f"{context.channel.id}:{context.conversation_id}"
+        task = self._turn_queue.enqueue(
+            conversation_key, lambda: self._run_answer_turn(context, answers)
+        )
+        if task is None:
+            logger.warning(
+                "Decision answer %s stays pending for startup recovery: conversation %s is busy",
+                message.id,
+                conversation_key,
+            )
+        return task
+
     async def _run_answer_turn(
         self, context: ResponderContext, answers: DecisionAnswerLedger
     ) -> None:
-        # Recovery and a live event can both queue one answer; the conversation queue
-        # runs them in order, so the later one finds it delivered. The row is marked
-        # only after the turn, so a failed or interrupted turn is recovered.
+        # Recovery and a live event can both queue one answer; only the claim's winner
+        # runs it. The claim precedes the turn's effects, so a crash or cancellation
+        # mid-turn leaves the answer ``started`` and a failed turn is not retried:
+        # replaying either could repeat the asker's actions.
         answer_id = context.message.id
-        if not await asyncio.to_thread(answers.answer_delivery_pending, answer_id):
+        if not await asyncio.to_thread(answers.claim_answer_delivery, answer_id, "started"):
             return
-        await self._run_turn(context)
-        await asyncio.to_thread(answers.mark_answer_delivered, answer_id)
+        try:
+            await self._run_turn(context)
+        except Exception:
+            logger.exception(
+                "Decision answer %s for decision %s failed its turn and will not be replayed",
+                answer_id,
+                context.message.metadata_json.get("callback_decision_id"),
+            )
+            await asyncio.to_thread(answers.record_answer_outcome, answer_id, "failed")
+            return
+        await asyncio.to_thread(answers.record_answer_outcome, answer_id, "delivered")
 
     async def drain(self) -> None:
         """Wait for all queued responder turns."""

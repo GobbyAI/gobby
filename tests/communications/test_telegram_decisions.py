@@ -958,6 +958,7 @@ class _ChatHost:
 
     def __init__(self, failures: int = 0) -> None:
         self.turns: list[tuple[str, str]] = []
+        self.resets: list[str] = []
         self._failures = failures
 
     async def configure_chat_session(
@@ -972,6 +973,7 @@ class _ChatHost:
             raise RuntimeError("chat turn failed")
 
     async def reset_chat_session(self, conversation_id: str) -> bool:
+        self.resets.append(conversation_id)
         return False
 
     def resolve_chat_binding(
@@ -990,6 +992,7 @@ class _AnswerRoute:
     wakes: _WakeRecorder
     observed: list[CommsMessage]
     approve_token: str
+    manager: MagicMock
 
 
 async def _answer_route(
@@ -1041,7 +1044,7 @@ async def _answer_route(
     host.turns.clear()
     post_json.reset_mock()
     return _AnswerRoute(
-        inbound, adapter, post_json, responder, host, wakes, observed, approve_token
+        inbound, adapter, post_json, responder, host, wakes, observed, approve_token, manager
     )
 
 
@@ -1057,6 +1060,12 @@ async def _click_approve(route: _AnswerRoute) -> CommsMessage:
 def _undelivered(decision: _Decision) -> list[str]:
     mailbox = InterSessionMessageManager(decision.store.db)
     return [message.id for message in mailbox.get_undelivered_messages(decision.session_id)]
+
+
+def _outcome(decision: _Decision, answer_id: str) -> object:
+    answer = decision.store.get_message(answer_id)
+    assert answer is not None
+    return answer.metadata_json.get("answer_outcome")
 
 
 @pytest.mark.asyncio
@@ -1091,6 +1100,7 @@ async def test_comms_asker_gets_its_answer_as_one_turn_in_its_own_chat(
     assert route.wakes.woken == []
     assert route.host.turns == [(decision.session_id, "approve")]
     assert _undelivered(decision) == []
+    assert _outcome(decision, answer.id) == "delivered"
     delivery = InterSessionMessageManager(decision.store.db).get_message(answer.id)
     assert delivery is not None
     assert delivery.from_session == system_session_id()
@@ -1104,18 +1114,92 @@ async def test_comms_asker_gets_its_answer_as_one_turn_in_its_own_chat(
 
 
 @pytest.mark.asyncio
-async def test_failed_comms_answer_turn_is_recovered_once(decision: _Decision) -> None:
+async def test_failed_comms_answer_turn_is_recorded_and_never_replayed(
+    decision: _Decision,
+) -> None:
     route = await _answer_route(decision, "comms", failed_turns=1)
 
     answer = await _click_approve(route)
 
+    # The turn may have acted before failing, so replaying it could repeat those actions.
     assert route.host.turns == [(decision.session_id, "approve")]
+    assert _outcome(decision, answer.id) == "failed"
+    await route.responder.recover_decision_answers()
+    await route.responder.drain()
+    assert route.host.turns == [(decision.session_id, "approve")]
+    assert _undelivered(decision) == []
+
+
+@pytest.mark.asyncio
+async def test_command_shaped_decision_value_is_answered_not_run(decision: _Decision) -> None:
+    decision.store.db.execute(
+        """UPDATE comms_messages
+              SET metadata_json = jsonb_set(metadata_json, '{inline_keyboard}', %s::jsonb)
+            WHERE id = %s""",
+        (
+            json.dumps([[{"text": "Start over", "value": "/reset"}, _KEYBOARD[0][1]]]),
+            decision.source.id,
+        ),
+    )
+    route = await _answer_route(decision, "comms")
+
+    answer = await _click_approve(route)
+
+    assert route.host.turns == [(decision.session_id, "/reset")]
+    assert route.host.resets == []
+    assert _outcome(decision, answer.id) == "delivered"
+
+
+@pytest.mark.asyncio
+async def test_sender_revoked_before_the_click_leaves_the_decision_open(
+    decision: _Decision,
+) -> None:
+    route = await _answer_route(decision, "comms")
+    route.manager.admit_inbound_message.return_value = False
+
+    await route.inbound.handle_messages(
+        "telegram", [_click(route.adapter, route.approve_token, "q-denied")]
+    )
+    await route.responder.drain()
+
+    assert "callback_state" not in _row(decision)
+    assert route.host.turns == []
+    # Once readmitted, the spent button reissues the still-open decision.
+    route.manager.admit_inbound_message.return_value = True
+    spent = await route.inbound.handle_messages(
+        "telegram", [_click(route.adapter, route.approve_token, "q-spent")]
+    )
+    assert spent[0].metadata_json["callback_status"] == "reissued"
+    route.approve_token = _reissued_tokens(route.adapter._recorder)[0]
+    await _click_approve(route)
+    assert route.host.turns == [(decision.session_id, "approve")]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "revoked",
+    [
+        {"responder": {"enabled": False}, "allow_from": ["1111111"]},
+        {"responder": {"enabled": True}, "allow_from": ["9999999"]},
+    ],
+    ids=["responder-disabled", "sender-removed"],
+)
+async def test_policy_revoked_after_the_click_blocks_the_answer_durably(
+    decision: _Decision, revoked: dict[str, object]
+) -> None:
+    route = await _answer_route(decision, "comms")
+    backend = ChatSessionCommsBackend(route.host, route.manager)
+    route.responder.set_backend(None)
+    answer = await _click_approve(route)
     assert _undelivered(decision) == [answer.id]
 
-    # Startup recovery re-runs the owed turn, then the answer is settled.
+    route.manager.get_channel.return_value = replace(decision.channel, config_json=revoked)
+    route.responder.set_backend(backend)
     await route.responder.recover_decision_answers()
     await route.responder.drain()
     await route.responder.recover_decision_answers()
     await route.responder.drain()
-    assert route.host.turns == [(decision.session_id, "approve")] * 2
+
+    assert route.host.turns == []
+    assert _outcome(decision, answer.id) == "blocked"
     assert _undelivered(decision) == []

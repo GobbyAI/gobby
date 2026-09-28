@@ -103,6 +103,11 @@ class ChannelConfig:
         )
 
 
+# How a responder-delivered decision answer ended: its turn is ``started`` at claim and
+# ends ``delivered`` or ``failed``; ``blocked`` means current delivery policy refused it.
+AnswerOutcome = Literal["started", "delivered", "failed", "blocked"]
+
+
 @normalize_datetime_model(required=("created_at",))
 @dataclass
 class CommsMessage:

@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
 
 from gobby.communications.models import (
+    AnswerOutcome,
     ChannelConfig,
     CommsAttachment,
     CommsIdentity,
@@ -545,8 +546,8 @@ SELECT
         The answer gets one mailbox row under the callback row's ID, from the system
         session with the Telegram sender in its metadata, and is stamped with who
         consumes it (``CommsMessage.answer_delivery``). A comms asking session has no
-        mailbox reader, so the responder consumes its answer and marks the row
-        delivered; any other asker reads its mailbox after the caller wakes it.
+        mailbox reader, so the responder claims the row before running its answer
+        turn; any other asker reads its mailbox after the caller wakes it.
         Returns None, persisting nothing, unless the decision is still pending at
         ``generation``. A persistence failure rolls the answer back.
         """
@@ -589,22 +590,28 @@ SELECT
             )
         return persisted
 
-    def answer_delivery_pending(self, answer_id: str) -> bool:
-        """True while a decision answer's mailbox row is undelivered."""
-        row = self.db.fetchone(
-            "SELECT 1 FROM inter_session_messages WHERE id = %s AND delivered_at IS NULL",
-            (answer_id,),
-        )
-        return row is not None
+    def claim_answer_delivery(self, answer_id: str, outcome: AnswerOutcome) -> bool:
+        """Take a decision answer's undelivered mailbox row, stamping its ``answer_outcome``.
 
-    def mark_answer_delivered(self, answer_id: str) -> None:
-        """Record that a decision answer reached its asking session."""
+        Exactly one caller wins and the row is never offered again, so an answer turn
+        interrupted after its claim is not replayed; its outcome stays ``started``.
+        """
         with self.db.transaction() as conn:
-            conn.execute(
+            claimed = conn.execute(
                 """UPDATE inter_session_messages SET delivered_at = %s
-                   WHERE id = %s AND delivered_at IS NULL""",
+                   WHERE id = %s AND delivered_at IS NULL
+                   RETURNING id""",
                 (utc_now(), answer_id),
-            )
+            ).fetchone()
+            if claimed is None:
+                return False
+            _set_answer_outcome(conn, answer_id, outcome)
+        return True
+
+    def record_answer_outcome(self, answer_id: str, outcome: AnswerOutcome) -> None:
+        """Record how a claimed decision answer's delivery ended."""
+        with self.db.transaction() as conn:
+            _set_answer_outcome(conn, answer_id, outcome)
 
     def list_pending_responder_answers(self) -> list[CommsMessage]:
         """Decision answers the responder still owes their comms asking sessions."""
@@ -807,3 +814,12 @@ def _decision_answer_metadata(decision_id: str, answer: CommsMessage) -> dict[st
         "telegram_chat_id": answer.metadata_json.get("chat_id"),
         "callback_data": answer.metadata_json.get("callback_value"),
     }
+
+
+def _set_answer_outcome(conn: Transaction, answer_id: str, outcome: AnswerOutcome) -> None:
+    conn.execute(
+        """UPDATE comms_messages
+              SET metadata_json = jsonb_set(metadata_json, '{answer_outcome}', to_jsonb(%s::text))
+            WHERE id = %s""",
+        (outcome, answer_id),
+    )
