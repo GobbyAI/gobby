@@ -2888,3 +2888,9 @@ brings its own sync-owned fixtures:
      carries `prior_attempt`, the pre-bump pair, and a late cleanup that finds
      the row still at that pair removes created isolation. Before the release
      the owner runs it instead. Both orders are pinned in 1.2.14 and 1.6.7.
+- 2026-09-27: Plan Adversary consensus (gobby#14579) on `4130a4042f`. PAL-14,
+  PAL-15 and PAL-16 are resolved, and the settlement-retry amendment has no
+  outstanding blocking findings. The Adversary derives and applies M1 from the
+  committed bytes and validates expansion from them. The Program Director
+  reviews the plan and gates expansion on Josh's approval. No expansion or
+  dispatch happens before that approval.
