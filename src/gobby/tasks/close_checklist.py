@@ -130,6 +130,7 @@ def evaluate_validation_commands(
     has_attributed_edits: bool,
     validation_criteria: str = "",
     changed_paths: Iterable[str] = (),
+    deleted_paths: Iterable[str] = (),
 ) -> CloseGateResult:
     """Keep credit decisions separate from observed-run explanations."""
     from gobby.tasks.validation_diagnostics import excluded_validation_records, observed_message
@@ -141,6 +142,7 @@ def evaluate_validation_commands(
         has_attributed_edits=has_attributed_edits,
         validation_criteria=validation_criteria,
         changed_paths=paths,
+        deleted_paths=deleted_paths,
     )
     changed_tests = _changed_python_test_paths(paths)
 
@@ -238,6 +240,7 @@ def _evaluate_validation_commands(
     has_attributed_edits: bool,
     validation_criteria: str = "",
     changed_paths: Iterable[str] = (),
+    deleted_paths: Iterable[str] = (),
 ) -> CloseGateResult:
     """Evaluate checklist item 9 from transcript-derived validation commands.
 
@@ -248,7 +251,9 @@ def _evaluate_validation_commands(
     definitive outcome for each validation category wins, so a later clean run cures
     an earlier failure in the same category. ``latest_runs`` records the latest
     definitive run for each distinct core command so the criteria reviewer can treat
-    them as the authoritative account of what ran.
+    them as the authoritative account of what ran. ``deleted_paths`` are tests that a
+    linked commit deleted and HEAD no longer tracks: pytest cannot target them, so only
+    the test type audit still has to cover them.
     """
     category = (task_category or "").strip().casefold()
     changed_python_test_paths = _changed_python_test_paths(changed_paths)
@@ -446,14 +451,19 @@ def _evaluate_validation_commands(
             details=details,
         )
 
-    if changed_python_test_paths:
+    deleted = frozenset(deleted_paths)
+    pytest_required_paths = tuple(path for path in changed_python_test_paths if path not in deleted)
+    details["pytest_exempt_deleted_paths"] = [
+        path for path in changed_python_test_paths if path in deleted
+    ]
+    if pytest_required_paths:
         uncovered_pytest = uncovered_pytest_paths(
             (
                 run.core_command if run.core_command is not None else run.command
                 for run in credited
                 if run.outcome == "success"
             ),
-            changed_python_test_paths,
+            pytest_required_paths,
         )
         details["pytest_uncovered_paths"] = list(uncovered_pytest)
         if uncovered_pytest:

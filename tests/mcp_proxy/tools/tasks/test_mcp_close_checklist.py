@@ -192,6 +192,7 @@ async def _evaluate(
     has_edits: bool = True,
     transcript_deriver: AsyncMock | None = None,
     linked_paths: set[str] | None = None,
+    deleted_paths: AsyncMock | None = None,
 ) -> CloseEvaluation:
     review = review or AsyncMock(
         return_value=ValidationResult(
@@ -245,7 +246,11 @@ async def _evaluate(
             "evaluate_task_scope",
             return_value=TaskScopeEvaluation((), (), ()),
         ),
-        patch.object(lifecycle, "collect_commit_paths", return_value=linked_paths or set()),
+        patch.multiple(
+            lifecycle,
+            collect_commit_paths=AsyncMock(return_value=linked_paths or set()),
+            collect_deleted_commit_paths=deleted_paths or AsyncMock(return_value=set()),
+        ),
         patch.object(
             lifecycle,
             "_derive_close_transcript_evidence",
@@ -279,12 +284,14 @@ async def _evaluate(
 @pytest.mark.asyncio
 async def test_linked_commit_paths_reach_both_validation_evaluations() -> None:
     evaluator = MagicMock(wraps=evaluate_validation_commands)
+    deleted = AsyncMock(return_value={"tests/deleted.py"})
     with patch.object(lifecycle, "evaluate_validation_commands", evaluator):
         evaluation = await _evaluate(
             _task(escalated=False),
             override_justification=None,
             transcript=_transcript_with_test_types_audit(),
             linked_paths={"tests/deleted.py"},
+            deleted_paths=deleted,
         )
 
     assert evaluation.error is None
@@ -293,6 +300,22 @@ async def test_linked_commit_paths_reach_both_validation_evaluations() -> None:
         {"src/a.py", "tests/deleted.py"},
         {"src/a.py", "tests/deleted.py"},
     ]
+    deleted.assert_awaited_once_with(["abc123"], "/repo")
+    assert evaluator.call_args_list[-1].kwargs["deleted_paths"] == {"tests/deleted.py"}
+
+
+async def test_deleted_paths_are_not_collected_without_a_linked_test() -> None:
+    deleted = AsyncMock(return_value=set())
+    evaluation = await _evaluate(
+        _task(escalated=False),
+        override_justification=None,
+        transcript=_transcript_with_test_types_audit(),
+        linked_paths={"src/b.py"},
+        deleted_paths=deleted,
+    )
+
+    assert evaluation.error is None
+    deleted.assert_not_awaited()
 
 
 @pytest.mark.parametrize("response_detail", ["concise", "diagnostic"])

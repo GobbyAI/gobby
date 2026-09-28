@@ -3,7 +3,6 @@
 Focuses on:
 - removed image/screenshot ingestion tools
 - backup_memories / restore_memories
-- judge_shadow_relevance
 - rebuild_crossrefs / rebuild_knowledge_graph
 - reindex_embeddings
 - search_knowledge_graph edge cases
@@ -360,42 +359,6 @@ class TestBackupMemories:
 
         assert result["success"] is False
         assert "Backup failed" in result["error"]
-
-
-# ─── judge_shadow_relevance ──────────────────────────────────────────────
-
-
-class TestJudgeShadowRelevance:
-    """Tests for judge_shadow_relevance tool."""
-
-    @pytest.mark.asyncio
-    async def test_no_session_id(self, mock_memory_manager: MagicMock) -> None:
-        """Returns error when session_id is empty."""
-        registry = create_memory_registry(lambda: mock_memory_manager)
-        result = await registry.call("judge_shadow_relevance", {"session_id": ""})
-        assert result["success"] is False
-        assert "required" in result["error"]
-
-    @pytest.mark.asyncio
-    async def test_success(
-        self,
-        mock_memory_manager: MagicMock,
-    ) -> None:
-        """Successful relevance judging returns the completed count."""
-        with patch(
-            "gobby.mcp_proxy.tools.memory.judge_shadow_candidate_relevance",
-            new_callable=AsyncMock,
-            return_value=2,
-        ):
-            registry = create_memory_registry(
-                lambda: mock_memory_manager,
-                llm_service_resolver=lambda: MagicMock(),
-                startup_config=MagicMock(),
-            )
-            result = await registry.call("judge_shadow_relevance", {"session_id": "sess-123"})
-
-        assert result["success"] is True
-        assert result["completed"] == 2
 
 
 # ─── rebuild_crossrefs ──────────────────────────────────────────────────

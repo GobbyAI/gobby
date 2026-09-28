@@ -89,7 +89,6 @@ const TMUX_PATHS = [
   "tmux.reasoning_watchdog_interrupt_enabled",
   "tmux.reasoning_watchdog_settle_seconds",
   "tmux.init_timeout_seconds",
-  "tmux.init_activity_grace_seconds",
   "tmux.registration_timeout_seconds",
   "tmux.auto_enter_approval_prompts",
   "tmux.auto_enter_agent_terminals",
@@ -483,13 +482,6 @@ function TmuxGroup({ fields }: { fields: SettingsSectionFields }) {
         path="tmux.init_timeout_seconds"
         label="Init timeout (seconds)"
         ariaLabel="Init timeout (seconds)"
-      />
-      <NumberConfigField
-        fields={fields}
-        path="tmux.init_activity_grace_seconds"
-        label="Init activity grace (seconds)"
-        ariaLabel="Init activity grace (seconds)"
-        step={0.5}
       />
       <NumberConfigField
         fields={fields}

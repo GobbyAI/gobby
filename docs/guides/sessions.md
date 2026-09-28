@@ -661,7 +661,7 @@ stop or turn-end event does not release the agent run.
 
 - [tasks.md](./tasks.md) - Task management
 - [agents.md](./agents.md) - Agent spawning and agent-run termination
-- [memory.md](./memory.md) - Persistent memory and shadow-relevance judging
+- [memory.md](./memory.md) - Persistent memory and surfacing
 - [mcp-tools.md](./mcp-tools.md) - MCP tool reference
 - [rules.md](./rules.md) - Semantic workflow events
 - [hook-schemas.md](./hook-schemas.md) - Raw hook mappings

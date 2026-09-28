@@ -2146,7 +2146,7 @@ class TestOverrideCollectsMcpCalls:
                     RuleEffect(
                         type="mcp_call",
                         server="gobby-memory",
-                        tool="judge_shadow_relevance",
+                        tool="surface_memories",
                         arguments={"session_id": "test"},
                         background=True,
                     )
@@ -2165,7 +2165,7 @@ class TestOverrideCollectsMcpCalls:
         # The critical assertion: mcp_calls must be collected despite the override block
         calls = response.metadata.get("mcp_calls", [])
         assert len(calls) == 1
-        assert calls[0]["tool"] == "judge_shadow_relevance"
+        assert calls[0]["tool"] == "surface_memories"
         # tool_block_pending should still be cleared
         assert variables["tool_block_pending"] is False
 
@@ -2184,7 +2184,7 @@ class TestOverrideCollectsMcpCalls:
                     RuleEffect(
                         type="mcp_call",
                         server="gobby-memory",
-                        tool="judge_shadow_relevance",
+                        tool="surface_memories",
                         arguments={"session_id": "test"},
                         background=True,
                     )
@@ -2201,7 +2201,7 @@ class TestOverrideCollectsMcpCalls:
         assert response.decision == "allow"
         calls = response.metadata.get("mcp_calls", [])
         assert len(calls) == 1
-        assert calls[0]["tool"] == "judge_shadow_relevance"
+        assert calls[0]["tool"] == "surface_memories"
         assert variables["force_allow_stop"] is False
 
     @pytest.mark.asyncio

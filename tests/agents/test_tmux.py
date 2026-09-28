@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import select
 import shlex
 import signal
 import subprocess
@@ -66,7 +67,6 @@ class TestTmuxConfig:
         assert config.session_prefix == "gobby"
         assert config.history_limit == 10000
         assert config.idle_reprompt_delay_seconds == 300
-        assert config.init_activity_grace_seconds == 5.0
 
     def test_custom_values(self) -> None:
         config = TmuxConfig(
@@ -78,7 +78,6 @@ class TestTmuxConfig:
             session_prefix="myprefix",
             history_limit=5000,
             idle_reprompt_delay_seconds=420,
-            init_activity_grace_seconds=7.5,
         )
         assert config.enabled is False
         assert config.command == "/usr/local/bin/tmux"
@@ -88,7 +87,6 @@ class TestTmuxConfig:
         assert config.session_prefix == "myprefix"
         assert config.history_limit == 5000
         assert config.idle_reprompt_delay_seconds == 420
-        assert config.init_activity_grace_seconds == 7.5
 
     def test_wsl_distribution_default(self) -> None:
         config = TmuxConfig()
@@ -101,10 +99,6 @@ class TestTmuxConfig:
     def test_history_limit_minimum(self) -> None:
         with pytest.raises(ValueError, match="greater than or equal to 100"):
             TmuxConfig(history_limit=50)
-
-    def test_init_activity_grace_must_be_positive(self) -> None:
-        with pytest.raises(ValueError, match="greater than 0"):
-            TmuxConfig(init_activity_grace_seconds=0)
 
     def test_re_export_matches_canonical(self) -> None:
         """agents/tmux/config.py re-exports the same class from config/tmux.py."""
@@ -1306,15 +1300,13 @@ class TestTmuxOutputReader:
 
         reader.set_output_callback(callback)
 
-        # output_reader_mod.os is the process-wide os module. Restore these
+        # The reader uses the process-wide os and select modules. Restore these
         # replacements before TemporaryDirectory teardown needs the real os.open.
         with monkeypatch.context() as context:
-            context.setattr(output_reader_mod.os, "open", lambda path, flags: 123)
-            context.setattr(output_reader_mod.os, "read", fake_read)
-            context.setattr(output_reader_mod.os, "close", lambda fd: None)
-            context.setattr(
-                output_reader_mod.select, "select", lambda r, w, e, timeout: (r, [], [])
-            )
+            context.setattr(os, "open", lambda path, flags: 123)
+            context.setattr(os, "read", fake_read)
+            context.setattr(os, "close", lambda fd: None)
+            context.setattr(select, "select", lambda r, w, e, timeout: (r, [], []))
 
             await asyncio.wait_for(
                 reader._read_loop("run-1", "ignored.pipe", stop_event),

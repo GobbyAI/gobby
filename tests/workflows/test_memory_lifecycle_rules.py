@@ -5,7 +5,6 @@ Rules that were merged into context-handoff (preserve-context-on-compact)
 are tested there instead.
 
 Active memory-lifecycle rules:
-- judge-shadow-relevance-on-response: background mcp_call on turn_end
 - reset-memory-tracking-on-start: set_variable on session_start
 - increment-parent-turn-seq: set_variable on turn_start
 - check-memory-guidance-on-initial-stop: acknowledged block on the first turn_end
@@ -48,7 +47,6 @@ SURFACE_RULES = (
 )
 
 MEMORY_RULES = {
-    "judge-shadow-relevance-on-response",
     "reset-memory-tracking-on-start",
     "increment-parent-turn-seq",
     "check-memory-guidance-on-initial-stop",
@@ -157,32 +155,6 @@ class TestMemoryLifecycleSync:
         assert result["orphaned"] >= 1
         deleted = manager.get(obsolete.id, include_deleted=True)
         assert deleted.deleted_at is not None
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# judge-shadow-relevance-on-response
-# ═══════════════════════════════════════════════════════════════════════
-
-
-class TestShadowRelevanceOnResponse:
-    """Judge pending shadow-memory rows independently at turn end."""
-
-    def test_event_and_effect(
-        self,
-        db: HubDatabase,
-        manager: RuleDefinitionManager,
-    ) -> None:
-        _sync_bundled(db)
-        row = manager.get_by_name("judge-shadow-relevance-on-response")
-        assert row is not None
-        body = RuleDefinitionBody.model_validate(row.definition_json)
-        assert body.event.value == "turn_end"
-        assert body.effects is not None
-        effect = body.effects[0]
-        assert effect.type == "mcp_call"
-        assert effect.server == "gobby-memory"
-        assert effect.tool == "judge_shadow_relevance"
-        assert effect.background is True
 
 
 # ═══════════════════════════════════════════════════════════════════════
