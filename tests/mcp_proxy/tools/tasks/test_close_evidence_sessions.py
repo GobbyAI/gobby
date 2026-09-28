@@ -262,9 +262,12 @@ async def test_close_commit_fallback_supplies_exact_checkout_paths() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("owner_commit_fallback", [False, True])
-async def test_linked_qa_other_task_edit_in_same_checkout_is_not_credited(
-    tmp_path: Path, owner_commit_fallback: bool
+@pytest.mark.parametrize(
+    "owner_task_ledger,owner_other_task_ledger",
+    [(True, False), (False, False), (False, True), (True, True)],
+)
+async def test_close_excludes_other_task_edit_in_same_checkout(
+    tmp_path: Path, owner_task_ledger: bool, owner_other_task_ledger: bool
 ) -> None:
     start = datetime(2026, 8, 27, 1, tzinfo=UTC)
     relative_path = "src/shared.py"
@@ -322,11 +325,13 @@ async def test_linked_qa_other_task_edit_in_same_checkout_is_not_credited(
             QA: session_with_edit(QA, 120),
         },
     )
-    owner_variables = (
-        {}
-        if owner_commit_fallback
-        else {"task_edited_file_checkouts": {"task": {str(tmp_path): [relative_path]}}}
-    )
+    owner_checkouts: dict[str, dict[str, list[str]]] = {}
+    if owner_task_ledger:
+        owner_checkouts["task"] = {str(tmp_path): [relative_path]}
+    if owner_other_task_ledger:
+        # The owner may edit the same path for B, with or without an A ledger.
+        owner_checkouts["other-task"] = {str(tmp_path): [relative_path]}
+    owner_variables = {"task_edited_file_checkouts": owner_checkouts}
     qa_variables = {"task_edited_file_checkouts": {"other-task": {str(tmp_path): [relative_path]}}}
     ctx.session_var_manager.get_variables.side_effect = {
         IMPLEMENTER: owner_variables,
@@ -349,13 +354,18 @@ async def test_linked_qa_other_task_edit_in_same_checkout_is_not_credited(
             owner_window_start=start.isoformat(),
             task_edited_files={relative_path},
             repo_path=str(tmp_path),
-            owner_used_commit_fallback=owner_commit_fallback,
+            owner_used_commit_fallback=not owner_task_ledger,
         )
 
-    assert [(edit.path, edit.timestamp) for edit in evidence.edits] == [
-        (relative_path, start + timedelta(seconds=30))
-    ]
-    assert [edit.session_id for edit in evidence.edits] == [IMPLEMENTER]
+    expected_owner_edits = (
+        []
+        if owner_other_task_ledger
+        else [(relative_path, start + timedelta(seconds=30), IMPLEMENTER)]
+    )
+    assert [(edit.path, edit.timestamp, edit.session_id) for edit in evidence.edits] == (
+        expected_owner_edits
+    )
+    assert all(edit.session_id != QA for edit in evidence.edits)
     assert ctx.session_var_manager.get_variables.call_count == 2
 
 

@@ -199,6 +199,19 @@ def task_edited_checkout_paths(
     )
 
 
+def other_task_edited_checkout_paths(
+    variables: dict[str, Any], task_id: str
+) -> frozenset[tuple[str, str]]:
+    """Return checkout/path pairs attributed to any task other than the target."""
+    return frozenset(
+        (root, path)
+        for other_task_id, checkouts in _task_edited_file_checkouts(variables).items()
+        if other_task_id != task_id
+        for root, files in checkouts.items()
+        for path in files
+    )
+
+
 def task_edited_file_times(variables: dict[str, Any], task_id: str) -> dict[str, float]:
     """Return epoch seconds of the session's newest recorded edit per path for one task."""
     raw = variables.get("task_edited_file_times") or {}

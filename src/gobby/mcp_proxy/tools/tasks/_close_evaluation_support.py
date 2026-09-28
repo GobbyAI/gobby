@@ -233,7 +233,10 @@ async def derive_close_transcript_evidence(
         windows = {session_id: start for session_id, start in windows.items() if start is not None}
         required = required.intersection(windows)
     evidence: list[TranscriptEvidence] = []
-    from gobby.workflows.task_claim_state import task_edited_checkout_paths
+    from gobby.workflows.task_claim_state import (
+        other_task_edited_checkout_paths,
+        task_edited_checkout_paths,
+    )
 
     for session_id, window_start in windows.items():
         session = ctx.session_manager.get(session_id)
@@ -249,6 +252,7 @@ async def derive_close_transcript_evidence(
         effective_window: str | datetime | None = window_start
         variables = ctx.session_var_manager.get_variables(session_id)
         task_checkout_paths = task_edited_checkout_paths(variables, task_id)
+        other_task_paths = other_task_edited_checkout_paths(variables, task_id)
         if (
             not task_checkout_paths
             and session_id == owner_session_id
@@ -259,6 +263,9 @@ async def derive_close_transcript_evidence(
             # the same path later for a different task.
             root = os.path.realpath(repo_path)
             task_checkout_paths = frozenset((root, path) for path in task_edited_files)
+        # A pair attributed to another task cannot identify which transcript edit
+        # belongs to this close, even when both task ledgers contain the pair.
+        task_checkout_paths -= other_task_paths
         if session_id != owner_session_id:
             effective_window = window_start or session.created_at
         try:
