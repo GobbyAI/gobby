@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Callable
 from dataclasses import asdict, replace
 from threading import RLock
@@ -49,6 +50,9 @@ if TYPE_CHECKING:
     from gobby.storage.communications import LocalCommunicationsStore
     from gobby.storage.secrets import SecretStore
     from gobby.storage.sessions import SessionManager
+
+
+logger = logging.getLogger(__name__)
 
 
 def _lookup_adapter_class(channel_type: str) -> type[BaseChannelAdapter] | None:
@@ -107,7 +111,7 @@ class CommunicationsManager:
         self._lifecycle = AdapterLifecycleOperations(self)
         self._outbound = OutboundCommunications(self)
         self._inbound = InboundCommunications(self)
-        self.responder = CommunicationsResponder(self)
+        self.responder = CommunicationsResponder(self, answers=store)
 
         self.event_callback: Callable[..., Any] | None = None
         self.reaction_handler: Any | None = None
@@ -130,6 +134,10 @@ class CommunicationsManager:
             self._restore_telegram_targets()
         finally:
             self._startup_complete.set()
+        try:
+            await self.responder.recover_decision_answers()
+        except Exception:
+            logger.exception("Failed to recover undelivered decision answers")
 
     def _restore_telegram_targets(self) -> None:
         """Recover private-chat target selections from channel configuration."""

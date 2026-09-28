@@ -45,7 +45,9 @@ class TelegramActionController:
         if channel is None or channel.channel_type != "telegram":
             return False
 
-        if message.is_decision_answer:
+        if message.answer_delivery == "responder":
+            return False  # the responder turn is this answer's delivery
+        if message.answer_delivery == "mailbox":
             # Accepting the answer already committed its mailbox row; only the wake is
             # left, and it is best effort because wake recovery retries the row.
             try:

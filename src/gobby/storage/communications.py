@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
+from dataclasses import replace
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
 
@@ -539,13 +540,15 @@ SELECT
     def accept_callback_decision(
         self, decision_id: str, generation: int, callback: CommsMessage
     ) -> CommsMessage | None:
-        """Answer a pending decision, persist its callback and enqueue it, in one transaction.
+        """Answer a pending decision, persist its callback and record its delivery, atomically.
 
-        The answer is enqueued in the asking session's inter-session mailbox under the
-        callback row's ID, from the system session with the Telegram sender in its
-        metadata. That row is the answer's only delivery; the caller wakes its
-        recipient after commit. Returns None, persisting nothing, unless the decision
-        is still pending at ``generation``. A persistence failure rolls the answer back.
+        The answer gets one mailbox row under the callback row's ID, from the system
+        session with the Telegram sender in its metadata, and is stamped with who
+        consumes it (``CommsMessage.answer_delivery``). A comms asking session has no
+        mailbox reader, so the responder consumes its answer and marks the row
+        delivered; any other asker reads its mailbox after the caller wakes it.
+        Returns None, persisting nothing, unless the decision is still pending at
+        ``generation``. A persistence failure rolls the answer back.
         """
         ensure_system_session(self.db)
         with self.db.transaction() as conn:
@@ -562,17 +565,60 @@ SELECT
             ).fetchone()
             if row is None:
                 return None
-            persisted, _ = self._insert_message(conn, callback)
-            if row["session_id"]:
-                InterSessionMessageManager(self.db).create_message(
-                    from_session=system_session_id(),
-                    to_session=str(row["session_id"]),
-                    content=f"Telegram decision {decision_id} was answered: {persisted.content}",
-                    message_type="telegram_message",
-                    metadata_json=json.dumps(_decision_answer_metadata(decision_id, persisted)),
-                    message_id=persisted.id,
-                )
+            asker = (
+                conn.execute(
+                    "SELECT id, source FROM sessions WHERE id = %s", (row["session_id"],)
+                ).fetchone()
+                if row["session_id"]
+                else None
+            )
+            if asker is None:
+                return self._insert_message(conn, callback)[0]
+            delivery = "responder" if asker["source"] == "comms" else "mailbox"
+            answer = replace(
+                callback, metadata_json={**callback.metadata_json, "answer_delivery": delivery}
+            )
+            persisted, _ = self._insert_message(conn, answer)
+            InterSessionMessageManager(self.db).create_message(
+                from_session=system_session_id(),
+                to_session=str(asker["id"]),
+                content=f"Telegram decision {decision_id} was answered: {persisted.content}",
+                message_type="telegram_message",
+                metadata_json=json.dumps(_decision_answer_metadata(decision_id, persisted)),
+                message_id=persisted.id,
+            )
         return persisted
+
+    def answer_delivery_pending(self, answer_id: str) -> bool:
+        """True while a decision answer's mailbox row is undelivered."""
+        row = self.db.fetchone(
+            "SELECT 1 FROM inter_session_messages WHERE id = %s AND delivered_at IS NULL",
+            (answer_id,),
+        )
+        return row is not None
+
+    def mark_answer_delivered(self, answer_id: str) -> None:
+        """Record that a decision answer reached its asking session."""
+        with self.db.transaction() as conn:
+            conn.execute(
+                """UPDATE inter_session_messages SET delivered_at = %s
+                   WHERE id = %s AND delivered_at IS NULL""",
+                (utc_now(), answer_id),
+            )
+
+    def list_pending_responder_answers(self) -> list[CommsMessage]:
+        """Decision answers the responder still owes their comms asking sessions."""
+        rows = self.db.fetchall(
+            """SELECT answer.* FROM comms_messages AS answer
+               JOIN inter_session_messages AS delivery ON delivery.id = answer.id
+               JOIN sessions AS asker ON asker.id = delivery.to_session
+               WHERE asker.machine_id = %s
+                 AND answer.metadata_json->>'answer_delivery' = 'responder'
+                 AND delivery.delivered_at IS NULL
+               ORDER BY answer.created_at""",
+            (self.machine_id,),
+        )
+        return [CommsMessage.from_row(dict(row)) for row in rows]
 
     def claim_callback_reissue(self, message_id: str, generation: int) -> bool:
         """Advance a pending decision's keyboard generation if it is still ``generation``."""
@@ -746,9 +792,12 @@ SELECT
 
 
 def _decision_answer_metadata(decision_id: str, answer: CommsMessage) -> dict[str, Any]:
-    """Describe a decision answer's mailbox row: who clicked what, on which decision."""
+    """Describe a decision answer's mailbox row: who clicked what, on which decision.
+
+    Only a mailbox-read answer requests a wake; wake recovery cannot reach a comms session.
+    """
     return {
-        "wake_requested": True,
+        "wake_requested": answer.answer_delivery == "mailbox",
         "comms_decision_id": decision_id,
         "comms_answer_id": answer.id,
         "comms_channel_id": answer.channel_id,

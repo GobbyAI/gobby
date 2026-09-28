@@ -40,6 +40,16 @@ class CommunicationsManagerProtocol(Protocol):
     ) -> None: ...
 
 
+class DecisionAnswerLedger(Protocol):
+    """Durable delivery record for decision answers the responder owes comms sessions."""
+
+    def answer_delivery_pending(self, answer_id: str) -> bool: ...
+
+    def mark_answer_delivered(self, answer_id: str) -> None: ...
+
+    def list_pending_responder_answers(self) -> list[CommsMessage]: ...
+
+
 @dataclass(frozen=True, slots=True)
 class ResponderContext:
     """Normalized context passed to responder backends."""
@@ -154,9 +164,11 @@ class CommunicationsResponder:
         manager: CommunicationsManagerProtocol,
         *,
         backend: ResponderBackend | None = None,
+        answers: DecisionAnswerLedger | None = None,
     ) -> None:
         self._manager = manager
         self._backend = backend
+        self._answers = answers
         self._turn_queue = ConversationTurnQueue()
 
     def set_backend(self, backend: ResponderBackend | None) -> None:
@@ -178,8 +190,10 @@ class CommunicationsResponder:
         if message.content_type == "reaction":
             logger.debug("Ignoring reaction event %s in responder pipeline", message.id)
             return None
-        if message.is_decision_answer:
-            logger.debug("Ignoring decision answer %s already in its session's mailbox", message.id)
+        if message.answer_delivery == "mailbox":
+            logger.debug(
+                "Ignoring decision answer %s delivered by its session's mailbox", message.id
+            )
             return None
         if not message.content.strip():
             logger.info("Ignoring responder message %s without text content", message.id)
@@ -210,13 +224,36 @@ class CommunicationsResponder:
             return None
 
         conversation_key = f"{channel.id}:{context.conversation_id}"
-        task = self._turn_queue.enqueue(
-            conversation_key,
-            lambda: self._run_turn(context),
-        )
+        answers = self._answers
+        if message.answer_delivery == "responder" and answers is not None:
+            task = self._turn_queue.enqueue(
+                conversation_key, lambda: self._run_answer_turn(context, answers)
+            )
+        else:
+            task = self._turn_queue.enqueue(conversation_key, lambda: self._run_turn(context))
         if task is None:
             await self._deliver_response(context, _BUSY_RESPONSE)
         return task
+
+    async def recover_decision_answers(self) -> None:
+        """Re-run the turns of decision answers a restart or failed turn left undelivered."""
+        if self._answers is None:
+            return
+        pending = await asyncio.to_thread(self._answers.list_pending_responder_answers)
+        for message in pending:
+            await self.handle_message(message)
+
+    async def _run_answer_turn(
+        self, context: ResponderContext, answers: DecisionAnswerLedger
+    ) -> None:
+        # Recovery and a live event can both queue one answer; the conversation queue
+        # runs them in order, so the later one finds it delivered. The row is marked
+        # only after the turn, so a failed or interrupted turn is recovered.
+        answer_id = context.message.id
+        if not await asyncio.to_thread(answers.answer_delivery_pending, answer_id):
+            return
+        await self._run_turn(context)
+        await asyncio.to_thread(answers.mark_answer_delivered, answer_id)
 
     async def drain(self) -> None:
         """Wait for all queued responder turns."""

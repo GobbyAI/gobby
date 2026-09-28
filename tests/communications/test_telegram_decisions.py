@@ -13,6 +13,7 @@ import httpx
 import pytest
 
 from gobby.communications.adapters.telegram import TelegramAdapter, TelegramEditNotApplied
+from gobby.communications.chat_backend import ChatSessionCommsBackend
 from gobby.communications.identities import IdentityManager, IdentityResolution
 from gobby.communications.inbound import InboundCommunications
 from gobby.communications.models import ChannelConfig, CommsIdentity, CommsMessage
@@ -251,7 +252,9 @@ async def test_restart_lost_click_reissues_buttons_that_route_once_to_original_s
     assert mailbox[0].from_session == system_session_id()
     assert mailbox[0].message_type == "telegram_message"
     metadata = json.loads(mailbox[0].metadata_json or "{}")
-    assert metadata["wake_requested"] is True
+    # The fixture's asker is a comms session: the responder delivers, so no wake.
+    assert routed[0].answer_delivery == "responder"
+    assert metadata["wake_requested"] is False
     assert metadata["sender"] == "1111111"
     assert metadata["comms_identity_id"] == decision.identity.id
     assert metadata["comms_decision_id"] == decision.source.id
@@ -950,17 +953,57 @@ class _WakeRecorder:
         return {"session_id": session_id, "delivered": True, "method": "terminal"}
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("wake_error", [None, ConnectionError("tmux unavailable")])
-@pytest.mark.parametrize("asker_source", ["comms", "claude"])
-async def test_answer_wakes_paused_asker_once_and_never_reaches_the_responder(
-    decision: _Decision, wake_error: Exception | None, asker_source: str
-) -> None:
+class _ChatHost:
+    """The websocket chat host's turn surface; fails the first ``failures`` turns."""
+
+    def __init__(self, failures: int = 0) -> None:
+        self.turns: list[tuple[str, str]] = []
+        self._failures = failures
+
+    async def configure_chat_session(
+        self, conversation_id: str, *, chat_mode: str, agent_name: str, project_id: str
+    ) -> None:
+        return None
+
+    async def _run_chat_turn(self, **kwargs: Any) -> None:
+        self.turns.append((str(kwargs["conversation_id"]), str(kwargs["content"])))
+        if self._failures:
+            self._failures -= 1
+            raise RuntimeError("chat turn failed")
+
+    async def reset_chat_session(self, conversation_id: str) -> bool:
+        return False
+
+    def resolve_chat_binding(
+        self, conversation_id: str, *, provider: str | None, model: str | None
+    ) -> tuple[str, str | None]:
+        return provider or "claude", model
+
+
+@dataclass
+class _AnswerRoute:
+    inbound: InboundCommunications
+    adapter: _RecordingAdapter
+    post_json: AsyncMock
+    responder: CommunicationsResponder
+    host: _ChatHost
+    wakes: _WakeRecorder
+    observed: list[CommsMessage]
+    approve_token: str
+
+
+async def _answer_route(
+    decision: _Decision,
+    asker_source: str,
+    *,
+    wake_error: Exception | None = None,
+    failed_turns: int = 0,
+) -> _AnswerRoute:
+    """Real accept, action, mailbox and responder paths on a responder-enabled channel."""
     post_json = AsyncMock(return_value=_OK)
     adapter = _adapter(post_json)
     manager = _manager(decision, adapter)
     sessions = SessionManager(decision.store.db)
-    # A CLI asker is the live-session route that once added its own mailbox copy.
     decision.store.db.execute(
         "UPDATE sessions SET source = %s WHERE id = %s", (asker_source, decision.session_id)
     )
@@ -978,8 +1021,10 @@ async def test_answer_wakes_paused_asker_once_and_never_reaches_the_responder(
         config_json={"responder": {"enabled": True}, "allow_from": ["1111111"]},
     )
     manager.handle_session_action = TelegramActionController(manager, sessions, mailbox).handle
-    backend = AsyncMock()
-    responder = CommunicationsResponder(manager, backend=backend)
+    host = _ChatHost(failed_turns)
+    responder = CommunicationsResponder(
+        manager, backend=ChatSessionCommsBackend(host, manager), answers=decision.store
+    )
     observed: list[CommsMessage] = []
 
     async def fan_out(event: str, **kwargs: Any) -> None:
@@ -991,20 +1036,86 @@ async def test_answer_wakes_paused_asker_once_and_never_reaches_the_responder(
     manager.event_callback = fan_out
     inbound = InboundCommunications(manager)
     approve_token, _ = await _reissue(adapter, inbound)
-    observed.clear()
-    post_json.reset_mock()
-
-    routed = await inbound.handle_messages("telegram", [_click(adapter, approve_token, "q-ok")])
-
-    assert routed[0].metadata_json["callback_status"] == "ok"
-    assert wakes.woken == [decision.session_id]
-    queued = InterSessionMessageManager(decision.store.db).get_undelivered_messages(
-        decision.session_id
-    )
-    assert [message.id for message in queued] == [routed[0].id]
-    # Observers still see the click; no responder turn delivers it a second time.
-    assert [message.id for message in observed] == [routed[0].id]
     await responder.drain()
-    backend.run_turn.assert_not_awaited()
-    # A failed wake leaves the durable row for wake recovery and never asks for a resend.
-    assert _calls(post_json, "sendMessage") == []
+    observed.clear()
+    host.turns.clear()
+    post_json.reset_mock()
+    return _AnswerRoute(
+        inbound, adapter, post_json, responder, host, wakes, observed, approve_token
+    )
+
+
+async def _click_approve(route: _AnswerRoute) -> CommsMessage:
+    routed = await route.inbound.handle_messages(
+        "telegram", [_click(route.adapter, route.approve_token, "q-ok")]
+    )
+    await route.responder.drain()
+    assert routed[0].metadata_json["callback_status"] == "ok"
+    return routed[0]
+
+
+def _undelivered(decision: _Decision) -> list[str]:
+    mailbox = InterSessionMessageManager(decision.store.db)
+    return [message.id for message in mailbox.get_undelivered_messages(decision.session_id)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("wake_error", [None, ConnectionError("tmux unavailable")])
+async def test_cli_asker_reads_its_answer_once_from_the_mailbox(
+    decision: _Decision, wake_error: Exception | None
+) -> None:
+    route = await _answer_route(decision, "claude", wake_error=wake_error)
+
+    answer = await _click_approve(route)
+
+    assert answer.answer_delivery == "mailbox"
+    assert route.wakes.woken == [decision.session_id]
+    assert _undelivered(decision) == [answer.id]
+    # Observers still see the click; the responder never delivers it a second time.
+    assert [message.id for message in route.observed] == [answer.id]
+    assert route.host.turns == []
+    # A failed wake leaves the row for wake recovery and never asks for a resend.
+    assert _calls(route.post_json, "sendMessage") == []
+
+
+@pytest.mark.asyncio
+async def test_comms_asker_gets_its_answer_as_one_turn_in_its_own_chat(
+    decision: _Decision,
+) -> None:
+    route = await _answer_route(decision, "comms")
+
+    answer = await _click_approve(route)
+
+    assert answer.answer_delivery == "responder"
+    # A comms session has no wake route or mailbox reader; its chat turn is the delivery.
+    assert route.wakes.woken == []
+    assert route.host.turns == [(decision.session_id, "approve")]
+    assert _undelivered(decision) == []
+    delivery = InterSessionMessageManager(decision.store.db).get_message(answer.id)
+    assert delivery is not None
+    assert delivery.from_session == system_session_id()
+    assert json.loads(delivery.metadata_json or "{}")["wake_requested"] is False
+
+    # A second queueing of the same answer (recovery racing the live event) is a no-op.
+    await route.responder.handle_message(answer)
+    await route.responder.recover_decision_answers()
+    await route.responder.drain()
+    assert len(route.host.turns) == 1
+
+
+@pytest.mark.asyncio
+async def test_failed_comms_answer_turn_is_recovered_once(decision: _Decision) -> None:
+    route = await _answer_route(decision, "comms", failed_turns=1)
+
+    answer = await _click_approve(route)
+
+    assert route.host.turns == [(decision.session_id, "approve")]
+    assert _undelivered(decision) == [answer.id]
+
+    # Startup recovery re-runs the owed turn, then the answer is settled.
+    await route.responder.recover_decision_answers()
+    await route.responder.drain()
+    await route.responder.recover_decision_answers()
+    await route.responder.drain()
+    assert route.host.turns == [(decision.session_id, "approve")] * 2
+    assert _undelivered(decision) == []

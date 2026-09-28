@@ -137,11 +137,15 @@ class CommsMessage:
     metadata_json: dict[str, Any] = field(default_factory=dict)
 
     @property
-    def is_decision_answer(self) -> bool:
-        """True for a decision button click, delivered only through the asking session's mailbox."""
-        return self.content_type == "callback" and bool(
-            self.metadata_json.get("callback_decision_id")
-        )
+    def answer_delivery(self) -> str | None:
+        """Who delivers an accepted decision answer: ``"mailbox"``, ``"responder"`` or None.
+
+        A mailbox answer is read by its asking session after a wake; a responder
+        answer reaches a comms asking session as a responder turn. Anything else is
+        not a decision answer.
+        """
+        delivery = self.metadata_json.get("answer_delivery")
+        return delivery if delivery in {"mailbox", "responder"} else None
 
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> CommsMessage:
