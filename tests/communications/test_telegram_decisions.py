@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from gobby.communications.adapters.telegram import TelegramAdapter
+from gobby.communications.adapters.telegram import TelegramAdapter, TelegramEditNotApplied
 from gobby.communications.identities import IdentityManager, IdentityResolution
 from gobby.communications.inbound import InboundCommunications
 from gobby.communications.models import ChannelConfig, CommsIdentity, CommsMessage
@@ -349,7 +349,14 @@ async def test_long_decision_is_republished_in_place_and_answered_once(
             created_at=_TS,
         )
     )
-    post_json = AsyncMock(return_value=_OK)
+
+    async def telegram_api(method: str, payload: dict[str, Any]) -> dict[str, Any]:
+        # Republishing the unchanged question leaves the first chunk as it was.
+        if method == "editMessageText" and payload["message_id"] == "200":
+            return {"ok": False, "description": "Bad Request: message is not modified"}
+        return _OK
+
+    post_json = AsyncMock(side_effect=telegram_api)
     adapter = _adapter(post_json)
     inbound = InboundCommunications(_manager(decision, adapter))
 
@@ -604,65 +611,164 @@ async def test_refused_button_removal_keeps_the_decision_pending(decision: _Deci
     assert routed[0].metadata_json["callback_status"] == "ok"
 
 
-@pytest.mark.asyncio
-async def test_buttons_move_to_an_added_chunk_only_after_it_is_recorded(
-    decision: _Decision,
-) -> None:
-    long_question = "Ship it?\n" + "word " * 1000  # two Telegram chunks
+def _markup_data(payload: dict[str, Any]) -> list[str]:
+    markup = payload.get("reply_markup") or {"inline_keyboard": []}
+    return [button["callback_data"] for row in markup["inline_keyboard"] for button in row]
+
+
+def _growing_api(
+    decision: _Decision, refuse_attach: bool = False
+) -> tuple[AsyncMock, list[object]]:
     recorded_at_attach: list[object] = []
 
     async def telegram_api(method: str, payload: dict[str, Any]) -> dict[str, Any]:
         if method == "sendMessage":
             return {"ok": True, "result": {"message_id": 300}}
-        if method == "editMessageReplyMarkup":
+        if method == "editMessageReplyMarkup" and payload.get("reply_markup"):
             recorded_at_attach.append(_row(decision).get("platform_message_ids"))
+            if refuse_attach:
+                return {"ok": False, "description": "Bad Request: message can't be edited"}
         return _OK
 
-    post_json = AsyncMock(side_effect=telegram_api)
+    return AsyncMock(side_effect=telegram_api), recorded_at_attach
+
+
+_LONG_QUESTION = "Ship it?\n" + "word " * 1000  # two Telegram chunks
+_SHIP = [[{"text": "Ship", "value": "ship"}]]
+
+
+@pytest.mark.asyncio
+async def test_growing_edit_publishes_new_buttons_last_on_a_recorded_chunk(
+    decision: _Decision,
+) -> None:
+    post_json, recorded_at_attach = _growing_api(decision)
     adapter = _adapter(post_json)
     manager = _manager(decision, adapter)
     inbound = InboundCommunications(manager)
     await _reissue(adapter, inbound)
     post_json.reset_mock()
 
-    # The database fails after Telegram accepted the added chunk.
+    await edit_keyboard_message(
+        manager, adapter, decision.source.id, _LONG_QUESTION, _CHAT_ID, _SHIP
+    )
+
+    steps = [(call.args[0], call.args[1].get("message_id")) for call in post_json.await_args_list]
+    root = str(_SOURCE_MESSAGE_ID)
+    assert steps == [
+        ("sendMessage", None),
+        ("editMessageText", root),
+        ("editMessageReplyMarkup", "300"),
+        ("editMessageReplyMarkup", root),
+    ]
+    # The old buttons stay clickable, as recovery buttons, until the new ones are out.
+    assert _markup_data(post_json.await_args_list[1].args[1]) == ["gobby:recover"] * 2
+    assert "reply_markup" not in post_json.await_args_list[3].args[1]
+    assert recorded_at_attach == [[root, "300"]]
+    ship_token = _markup_data(post_json.await_args_list[2].args[1])[0]
+
+    # After a restart the button on the added chunk still finds its decision.
+    restarted = _adapter(post_json)
+    manager._adapters["telegram"] = restarted
+    lost = await inbound.handle_messages(
+        "telegram", [_click(restarted, ship_token, "q-lost", message_id=300)]
+    )
+    assert lost[0].metadata_json["callback_status"] == "reissued"
+
+
+@pytest.mark.asyncio
+async def test_failed_chunk_record_restores_the_untouched_decision(decision: _Decision) -> None:
+    post_json, _ = _growing_api(decision)
+    adapter = _adapter(post_json)
+    manager = _manager(decision, adapter)
+    inbound = InboundCommunications(manager)
+    approve_token, _ = await _reissue(adapter, inbound)
+    post_json.reset_mock()
+
     with (
         patch.object(
             decision.store,
             "record_platform_message_ids",
             side_effect=ConnectionError("database unavailable"),
         ),
-        pytest.raises(ConnectionError),
+        pytest.raises(TelegramEditNotApplied, match="database unavailable"),
     ):
         await edit_keyboard_message(
-            manager,
-            adapter,
-            decision.source.id,
-            long_question,
-            _CHAT_ID,
-            [[{"text": "Ship", "value": "ship"}]],
+            manager, adapter, decision.source.id, _LONG_QUESTION, _CHAT_ID, _SHIP
         )
 
-    # The unrecorded chunk never got buttons, and the recorded chunk kept its own.
+    # Only the button-less added chunk went out; the decision and its buttons are intact.
     assert [call.args[0] for call in post_json.await_args_list] == ["sendMessage"]
     assert "reply_markup" not in _calls(post_json, "sendMessage")[0]
+    assert _row(decision)["callback_generation"] == 1
+    routed = await inbound.handle_messages("telegram", [_click(adapter, approve_token, "q-ok")])
+    assert routed[0].metadata_json["callback_status"] == "ok"
 
-    # A click on the original chunk republishes; this time the chunk is recorded first.
-    post_json.reset_mock()
-    handled = await inbound.handle_messages("telegram", [_click(adapter, "gobby:lost", "q-1")])
-    assert handled[0].metadata_json["callback_status"] == "reissued"
-    assert recorded_at_attach == [[str(_SOURCE_MESSAGE_ID), "300"]]
-    attach = _calls(post_json, "editMessageReplyMarkup")[0]
-    assert attach["message_id"] == "300"
-    ship_token = attach["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
 
-    # After a restart the button on the added chunk still finds its decision.
-    restarted = _adapter(AsyncMock(side_effect=telegram_api))
-    manager._adapters["telegram"] = restarted
-    lost = await inbound.handle_messages(
-        "telegram", [_click(restarted, ship_token, "q-2", message_id=300)]
+@pytest.mark.asyncio
+async def test_partly_applied_edit_stays_staged_behind_recovery_buttons(
+    decision: _Decision,
+) -> None:
+    post_json, _ = _growing_api(decision, refuse_attach=True)
+    adapter = _adapter(post_json)
+    manager = _manager(decision, adapter)
+    inbound = InboundCommunications(manager)
+    approve_token, _ = await _reissue(adapter, inbound)
+
+    with pytest.raises(RuntimeError, match="editMessageReplyMarkup failed"):
+        await edit_keyboard_message(
+            manager, adapter, decision.source.id, _LONG_QUESTION, _CHAT_ID, _SHIP
+        )
+
+    # Telegram shows the new text, so the row is not rolled back to the old question.
+    assert _row(decision)["callback_generation"] == 2
+    assert _row(decision)["platform_message_ids"] == [str(_SOURCE_MESSAGE_ID), "300"]
+    old = await inbound.handle_messages("telegram", [_click(adapter, approve_token, "q-old")])
+    assert old[0].metadata_json["callback_status"] == "reissued"
+    assert _routed(decision, "q-old") is None
+    recovery = await inbound.handle_messages(
+        "telegram", [_click(adapter, "gobby:recover", "q-recover")]
     )
-    assert lost[0].metadata_json["callback_status"] == "reissued"
+    assert recovery[0].metadata_json["callback_status"] == "reissued"
+
+
+@pytest.mark.asyncio
+async def test_refused_shrinking_edit_keeps_the_buttons_on_the_last_chunk(
+    decision: _Decision,
+) -> None:
+    long_decision = decision.store.create_message(
+        CommsMessage(
+            id="",
+            channel_id=decision.channel.id,
+            direction="outbound",
+            content="Review the plan below.\n" + "word " * 1000,
+            platform_message_id="200",
+            session_id=decision.session_id,
+            metadata_json={
+                "platform_destination": _CHAT_ID,
+                "platform_message_ids": ["200", "201"],
+                "inline_keyboard": [[{"text": "Approve", "value": "approve"}]],
+            },
+            created_at=_TS,
+        )
+    )
+
+    async def telegram_api(method: str, payload: dict[str, Any]) -> dict[str, Any]:
+        if method == "editMessageText":
+            return {"ok": False, "description": "Bad Request: message can't be edited"}
+        return _OK
+
+    post_json = AsyncMock(side_effect=telegram_api)
+    adapter = _adapter(post_json)
+    with pytest.raises(TelegramEditNotApplied):
+        await edit_keyboard_message(
+            _manager(decision, adapter), adapter, long_decision.id, "Short now?", _CHAT_ID, _SHIP
+        )
+
+    assert _calls(post_json, "deleteMessage") == []
+    restored = decision.store.get_message(long_decision.id)
+    assert restored is not None
+    assert restored.content.startswith("Review the plan below.")
+    assert restored.metadata_json["platform_message_ids"] == ["200", "201"]
 
 
 @pytest.mark.asyncio

@@ -22,9 +22,7 @@ import logging
 from typing import TYPE_CHECKING, cast
 from weakref import WeakValueDictionary
 
-import httpx
-
-from gobby.communications.adapters.telegram import TelegramAdapter
+from gobby.communications.adapters.telegram import TelegramAdapter, TelegramEditNotApplied
 from gobby.communications.models import CommsMessage
 
 if TYPE_CHECKING:
@@ -214,8 +212,9 @@ async def edit_keyboard_message(
 ) -> None:
     """Edit a stored keyboard message, staging its new generation before publishing.
 
-    When Telegram refuses the edit, the staged row is restored. A transport failure
-    leaves it staged, because Telegram may have applied the edit; the next click
+    The staged row is restored only when the edit definitely changed no existing
+    chunk. Any other failure leaves it staged, because Telegram may show part of
+    the edit; old buttons are refused at the staged generation, and the next click
     republishes the staged text and keyboard together.
     """
     store = manager._store
@@ -243,7 +242,7 @@ async def edit_keyboard_message(
                 inline_keyboard,
                 generation + 1,
             )
-        except (RuntimeError, httpx.HTTPStatusError):
+        except TelegramEditNotApplied:
             if not await asyncio.to_thread(store.restore_callback_edit, current, generation + 1):
                 logger.error("Could not restore decision %s after a refused edit", message_id)
             raise
