@@ -305,6 +305,9 @@ def create_lifespan(
                 message_processor_resolver=lambda: server.message_processor,
                 terminal_manager=getattr(server.services, "terminal_manager", None),
                 startup_ready=lambda: server.services.startup_ready,
+                live_host_epoch=lambda: getattr(
+                    getattr(server.services, "terminal_host_manager", None), "host_epoch", None
+                ),
             )
             app.state.liveness_monitor = liveness_monitor
             app.state.hook_manager.event_handlers.set_liveness_monitor(liveness_monitor)

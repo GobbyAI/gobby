@@ -51,6 +51,7 @@ class _Storage:
         self.expire_result = expire_result
         self.expire_calls: list[str] = []
         self.guarded_expire_calls: list[tuple[str, str, str, datetime]] = []
+        self.live_host_epochs: list[str | None] = []
         self.update = MagicMock()
 
     def expire_if_active(self, session_id: str) -> object | None:
@@ -64,8 +65,10 @@ class _Storage:
         terminal_id: str,
         machine_id: str,
         observed_updated_at: datetime,
+        live_host_epoch: str | None,
     ) -> object | None:
         self.guarded_expire_calls.append((session_id, terminal_id, machine_id, observed_updated_at))
+        self.live_host_epochs.append(live_host_epoch)
         return self.expire_result
 
 
@@ -362,6 +365,7 @@ async def test_only_local_paused_exited_native_candidate_enters_guarded_expiry(
         session_storage=cast(Any, storage),
         terminal_manager=terminal_manager,
         startup_ready=lambda: case != "startup",
+        live_host_epoch=lambda: "epoch-live",
     )
     with (
         patch.object(liveness_mod, "get_machine_id", return_value=local_id),
@@ -371,4 +375,6 @@ async def test_only_local_paused_exited_native_candidate_enters_guarded_expiry(
 
     expected = [("paused-seat", terminal_id, local_id, observed)] if case == "confirmed" else []
     assert storage.guarded_expire_calls == expected
+    # The live host epoch reaches storage, which decides whether the exit was a drain.
+    assert storage.live_host_epochs == (["epoch-live"] if case == "confirmed" else [])
     assert storage.expire_calls == []

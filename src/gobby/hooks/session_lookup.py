@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from gobby.hooks.codex_seat import codex_seat_available
 from gobby.hooks.events import HookEvent, HookEventType, require_hook_machine_id
 from gobby.hooks.project_context import apply_project_id_to_event, resolve_hook_project_context
 from gobby.hooks.session_types import HookSessionManager
@@ -549,8 +550,16 @@ class SessionLookupService:
         cwd = hook_cwd(event.data, event.cwd)
         raw_terminal_context = event.data.get("terminal_context")
         terminal_context = raw_terminal_context if isinstance(raw_terminal_context, dict) else None
+        # A new Codex thread may start in a seat that waited past the fresh window.
         terminal_context = enrich_terminal_context_with_cwd(
-            terminal_context, cwd, external_id=event.session_id
+            terminal_context,
+            cwd,
+            external_id=event.session_id,
+            seat_available=(
+                codex_seat_available(self._session_manager.db, machine_id)
+                if event.source.value == "codex" and machine_id
+                else None
+            ),
         )
         platform_session_id = self._session_manager.register_session(
             external_id=external_id,

@@ -17,6 +17,7 @@ from gobby.config.validation_detection import (
     resolve_validation_detection_config,
 )
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
+from gobby.mcp_proxy.tools.tasks._task_scope import collect_commit_paths_async
 from gobby.storage.session_models import Session
 from gobby.storage.tasks import Task
 from gobby.tasks.state_semantics import get_claimed_session_id
@@ -277,15 +278,18 @@ async def derive_close_transcript_evidence(
             # A live or overlapping historical pair cannot identify which
             # transcript edit belongs to this close.
             task_checkout_paths -= other_task_paths
-            if task_checkout_paths and _has_legacy_other_task_overlap(
+            legacy_closed_tasks = _legacy_closed_other_tasks(
                 task_links,
                 task_id,
                 effective_window,
                 variables.get("task_edited_file_checkouts_history_started_at"),
-            ):
-                # Older released edits may lack path history. Independent
-                # validation runs remain admissible with no credited edits.
-                task_checkout_paths = frozenset()
+            )
+            if task_checkout_paths and legacy_closed_tasks:
+                # A close before path history began dropped that task's ledger, so
+                # its commits are the proof of which paths it owned.
+                task_checkout_paths = await _without_closed_task_paths(
+                    task_checkout_paths, legacy_closed_tasks, repo_path
+                )
         try:
             session_evidence = await _derive_session_evidence_at_sync_point(
                 session,
@@ -362,32 +366,59 @@ def _closed_before_window_task_ids(
     return frozenset(completed - ambiguous)
 
 
-def _has_legacy_other_task_overlap(
+def _legacy_closed_other_tasks(
     task_links: Iterable[dict[str, Any]],
     task_id: str,
     window_start: str | datetime | None,
     history_started_at: Any,
-) -> bool:
-    """Deny edit credit when another task may predate durable path attribution."""
+) -> tuple[Any, ...]:
+    """Return closed other tasks whose edits may predate durable path history.
+
+    Closing a task drops its live ledger, so the history ledger is the only record
+    of its paths, and it holds nothing a task linked before history began edited
+    first. An open task keeps its live ledger, which the caller already
+    subtracts, so only these closes need other proof.
+    """
     window_epoch = _evidence_epoch(window_start)
     history_epoch = (
         float(history_started_at)
         if isinstance(history_started_at, (int, float)) and not isinstance(history_started_at, bool)
         else None
     )
+    closed: dict[str, Any] = {}
     for row in task_links:
         if (row.get("action") or row.get("session_action")) not in _EVIDENCE_LINK_ACTIONS:
             continue
         task = row.get("task")
-        if getattr(task, "id", None) == task_id:
+        other_id = getattr(task, "id", None)
+        if not isinstance(other_id, str) or other_id == task_id:
             continue
         closed_epoch = _evidence_epoch(getattr(task, "closed_at", None))
-        if window_epoch is not None and closed_epoch is not None and closed_epoch < window_epoch:
+        if closed_epoch is None:
+            continue
+        if window_epoch is not None and closed_epoch < window_epoch:
             continue
         link_epoch = _evidence_epoch(row.get("link_created_at"))
         if history_epoch is None or link_epoch is None or link_epoch <= history_epoch:
-            return True
-    return False
+            closed[other_id] = task
+    return tuple(closed.values())
+
+
+async def _without_closed_task_paths(
+    task_checkout_paths: frozenset[tuple[str, str]],
+    closed_tasks: Iterable[Any],
+    repo_path: str,
+) -> frozenset[tuple[str, str]]:
+    """Drop target paths that a closed task's own commits also touched."""
+    commit_shas = [sha for task in closed_tasks for sha in (getattr(task, "commits", None) or ())]
+    try:
+        owned = await collect_commit_paths_async(commit_shas, repo_path)
+    except RuntimeError as exc:
+        # Without the closed task's paths no edit is provably the target's own.
+        # Independent validation runs remain admissible with no credited edits.
+        logger.warning("Closed-task path ownership is unavailable: %s", exc)
+        return frozenset()
+    return frozenset(pair for pair in task_checkout_paths if pair[1] not in owned)
 
 
 def _linked_session_windows(ctx: RegistryContext, task_id: str) -> dict[str, str | None]:

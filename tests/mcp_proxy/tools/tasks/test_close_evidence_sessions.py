@@ -270,9 +270,12 @@ async def test_close_commit_fallback_supplies_exact_checkout_paths() -> None:
         (False, True, False, "none"),
         (True, True, False, "none"),
         (False, False, True, "none"),
-        (False, False, False, "overlap"),
-        (True, False, False, "overlap"),
-        (True, False, True, "overlap"),
+        (False, False, False, "open_overlap"),
+        (True, False, False, "open_overlap"),
+        (True, False, True, "open_overlap"),
+        (True, False, False, "closed_overlap"),
+        (True, False, False, "closed_disjoint"),
+        (True, False, False, "closed_unresolved"),
         (False, False, False, "closed_before_window"),
         (False, False, True, "closed_before_window"),
         (True, False, True, "closed_before_window"),
@@ -384,8 +387,11 @@ async def test_close_excludes_other_task_edit_in_same_checkout(
                     closed_at=(
                         start - timedelta(seconds=1)
                         if legacy_other_task == "closed_before_window"
+                        else start + timedelta(seconds=90)
+                        if legacy_other_task.startswith("closed_")
                         else None
                     ),
+                    commits=["other-commit"],
                 ),
                 "action": "claimed",
                 "link_created_at": start - timedelta(seconds=30),
@@ -420,6 +426,17 @@ async def test_close_excludes_other_task_edit_in_same_checkout(
         ),
         patch(f"{_SUPPORT}.transcript_sync_point", return_value=None),
         patch(f"{_SUPPORT}.derive_prelink_runs", new=AsyncMock(return_value=())),
+        patch(
+            f"{_SUPPORT}.collect_commit_paths_async",
+            new=AsyncMock(
+                side_effect=RuntimeError("Cannot inspect changed paths for commit other-commit.")
+                if legacy_other_task == "closed_unresolved"
+                else None,
+                return_value={
+                    "src/unrelated.py" if legacy_other_task == "closed_disjoint" else relative_path
+                },
+            ),
+        ) as commit_paths,
     ):
         evidence = await derive_close_transcript_evidence(
             ctx,
@@ -435,7 +452,9 @@ async def test_close_excludes_other_task_edit_in_same_checkout(
     history_overlaps = owner_other_task_history and legacy_other_task != "closed_before_window"
     expected_owner_edits = (
         []
-        if owner_other_task_ledger or history_overlaps or legacy_other_task == "overlap"
+        if owner_other_task_ledger
+        or history_overlaps
+        or legacy_other_task in ("closed_overlap", "closed_unresolved")
         else [(relative_path, start + timedelta(seconds=30), IMPLEMENTER)]
     )
     assert [(edit.path, edit.timestamp, edit.session_id) for edit in evidence.edits] == (
@@ -446,6 +465,10 @@ async def test_close_excludes_other_task_edit_in_same_checkout(
         "uv run pytest tests/tasks/test_validation.py -q"
     ]
     assert ctx.session_var_manager.get_variables.call_count == 2
+    # Only a close that dropped a legacy ledger needs its commits as proof.
+    assert commit_paths.await_count == (
+        1 if legacy_other_task in ("closed_overlap", "closed_disjoint", "closed_unresolved") else 0
+    )
 
 
 @pytest.mark.asyncio
