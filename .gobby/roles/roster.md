@@ -8,7 +8,7 @@
 | lane-2-stability.md | gobby#14713 |
 | lane-3-hooks.md | gobby#14725 |
 | lane-4-runbooks.md | gobby#14674 |
-| lane-5-functional.md | gobby#14642 |
+| lane-5-functional.md | gobby#14768 |
 | rust-migration.md | gobby#14639 |
 | lane-7-front-door.md | gobby#14682 |
 | lane-8-communications.md | gobby#14683 |
