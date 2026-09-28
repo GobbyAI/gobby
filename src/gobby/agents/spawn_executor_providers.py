@@ -446,6 +446,9 @@ async def prepare_codex_spawn(request: SpawnRequest) -> ProviderSpawnPlan | Spaw
         *request.codex_config_overrides,
     ]
     if request.agent_name == "task-close-reviewer":
+        # The reviewer loads skills through Gobby MCP and needs no Codex plugins.
+        config_overrides.append("features.plugins=false")
+        config_overrides.append("features.remote_plugin=false")
         # Its load_skills step permits Gobby MCP tools; hide execution wrappers.
         config_overrides.append('plugins."unified-computer-use@openai-bundled".enabled=false')
         config_overrides.append("mcp_servers.node_repl.enabled=false")
