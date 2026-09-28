@@ -16,9 +16,8 @@ Discover evidence through the review tools and operator `gobby plans review-evid
 - missing_v1_checkpoint: append via append_plan_changelog_round, then finalize.
 - invalid_repair: the atomic apply leaves bytes unchanged. Route a design decision to the planner; apply authorized prose fixes and exclude already handled finding IDs on the next typed repair call. Idempotent repairs report already_present.
 - Stale reviewed sections before approval intent: refuse apply and obtain fresh review; never forge source hashes.
-- Applied approval intent: resume append, finalize and lesson checkpointing from its durable result, even if later plan edits occurred.
+- Applied approval intent: resume append and finalize from its durable result, even if later plan edits occurred.
 - Pending intent: next prepare drains recovery; unchanged sections can converge, drift revokes the intent and requires re-review.
-- pending_lesson_mint: finish proven lesson recording once and checkpoint minted/none/failed before another round.
 
 ## Constraints
 Rejection checkpoint order is append canonical result, finalize, then apply accepted typed repairs and prose fixes. Approval order is in [approval](approval.md). Completed-round counts include only successful finalizations, never launch attempts or expired evidence.

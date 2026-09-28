@@ -58,11 +58,11 @@ def test_evidence_recovery_preserves_transaction_order(body: str) -> None:
         "invalid_repair: the atomic apply leaves bytes unchanged",
         "Idempotent repairs report already_present",
         "drift revokes the intent",
-        "pending_lesson_mint",
         "never forge source hashes",
         "never launch attempts or expired evidence",
     ):
         assert term in body
+    assert "lesson" not in body.lower()
 
 
 def test_plan_mechanic_applies_bounded_repairs_instead_of_rewriting() -> None:

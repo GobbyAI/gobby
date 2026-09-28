@@ -606,13 +606,22 @@ def _clone_pre_commit_store(source: Path, destination: Path) -> None:
                 ["/bin/cp", "-c", "-R", str(source), str(destination)],
                 check=True,
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                text=True,
             )
             cloned = True
-        except (OSError, subprocess.CalledProcessError):
-            pass
+        except subprocess.CalledProcessError as exc:
+            logger.warning(
+                "APFS clone of pre-commit store failed, copying instead: %s",
+                (exc.stderr or "").strip(),
+            )
+        except OSError:
+            logger.warning("APFS clone of pre-commit store failed, copying instead", exc_info=True)
     if not cloned:
-        shutil.copytree(source, destination, dirs_exist_ok=True)
+        # A failed cp leaves a partial clone whose read-only Git objects and venv
+        # symlinks a copy over it cannot overwrite.
+        _remove_pre_commit_store(destination)
+        shutil.copytree(source, destination, symlinks=True)
 
     try:
         spawn.run(  # nosec B603 # fixed system chmod and local path.
@@ -622,11 +631,18 @@ def _clone_pre_commit_store(source: Path, destination: Path) -> None:
             stderr=subprocess.DEVNULL,
         )
     except (OSError, subprocess.CalledProcessError):
-        for copied_path in (destination, *destination.rglob("*")):
-            required_mode = stat.S_IRUSR | stat.S_IWUSR
-            if copied_path.is_dir():
-                required_mode |= stat.S_IXUSR
-            copied_path.chmod(stat.S_IMODE(copied_path.stat().st_mode) | required_mode)
+        _make_owner_writable(destination)
+
+
+def _make_owner_writable(root: Path) -> None:
+    """Grant the owner read/write (and search on directories) without following symlinks."""
+    for path in (root, *root.rglob("*")):
+        if path.is_symlink():
+            continue
+        required_mode = stat.S_IRUSR | stat.S_IWUSR
+        if path.is_dir():
+            required_mode |= stat.S_IXUSR
+        path.chmod(stat.S_IMODE(path.stat().st_mode) | required_mode)
 
 
 def _remove_pre_commit_store(path: Path) -> None:
@@ -639,13 +655,7 @@ def _remove_pre_commit_store(path: Path) -> None:
     except FileNotFoundError:
         return
     except PermissionError:
-        for copied_path in (path, *path.rglob("*")):
-            if copied_path.is_symlink():
-                continue
-            required_mode = stat.S_IRUSR | stat.S_IWUSR
-            if copied_path.is_dir():
-                required_mode |= stat.S_IXUSR
-            copied_path.chmod(stat.S_IMODE(copied_path.stat().st_mode) | required_mode)
+        _make_owner_writable(path)
         shutil.rmtree(path)
 
 
@@ -741,7 +751,12 @@ def _prewarm_pre_commit_store(*, workspace: Path, destination: Path) -> None:
         return
 
     if not _consume_pre_commit_store_spare(destination):
-        _clone_pre_commit_store(source, destination)
+        try:
+            _clone_pre_commit_store(source, destination)
+        except OSError:
+            # The store is only a prewarm; pre-commit rebuilds hooks into an empty cache.
+            logger.warning("Failed to prewarm pre-commit store", exc_info=True)
+            _remove_pre_commit_store(destination)
     _schedule_pre_commit_store_spare(source)
 
 
